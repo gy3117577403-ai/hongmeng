@@ -1,0 +1,45 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: workorder_resource
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports: ["5432:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports: ["9000:9000","9001:9001"]
+    volumes: ["minio_data:/data"]
+  minio-init:
+    image: minio/mc:latest
+    depends_on: [minio]
+    entrypoint: /bin/sh -c "sleep 5; mc alias set local http://minio:9000 minioadmin minioadmin; mc mb -p local/workorder-resources || true; exit 0;"
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on: [db, minio-init]
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/workorder_resource?schema=public
+      SESSION_SECRET: local-dev-session-secret-change-before-production
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: auto
+      S3_BUCKET: workorder-resources
+      S3_ACCESS_KEY_ID: minioadmin
+      S3_SECRET_ACCESS_KEY: minioadmin
+      S3_FORCE_PATH_STYLE: "true"
+      APP_BASE_URL: http://localhost:3000
+      MAX_UPLOAD_SIZE_MB: "50"
+      SEED_ADMIN_USERNAME: admin
+      SEED_ADMIN_PASSWORD: "123"
+      SEED_RESET_ADMIN_PASSWORD: "false"
+    ports: ["3000:3000"]
+volumes:
+  postgres_data:
+  minio_data:

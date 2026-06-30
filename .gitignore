@@ -1,0 +1,21 @@
+node_modules/
+.next/
+.env
+.env.local
+.env.*.local
+npm-debug.log*
+*.log
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+coverage
+.vercel
+uploads/
+hongmeng-production.zip
+
+# Docker/local build artifacts
+.docker/
+docker-compose.override.yml
+*.tar
+*.tmp
