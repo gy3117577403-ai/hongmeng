@@ -12,4 +12,4 @@ export function verifyToken(t?:string|null):Session|null{if(!t)return null; cons
 export function cookieOptions(){return{httpOnly:true,sameSite:'lax' as const,secure:process.env.NODE_ENV==='production',path:'/',maxAge:604800}}
 export async function currentUser(){const s=verifyToken(cookies().get(SESSION_COOKIE)?.value); if(!s)return null; const u=await prisma.user.findUnique({where:{id:s.userId},select:{id:true,username:true,displayName:true,isActive:true}}); return u&&u.isActive?{id:u.id,username:u.username,displayName:u.displayName}:null}
 export async function requireUser(){const u=await currentUser(); if(!u)throw new UnauthorizedError(); return u}
-export function unauthorized(){return NextResponse.json({message:'未登录或登录已过期'},{status:401})}
+export function unauthorized(){return NextResponse.json({ok:false,error:'未登录或登录已过期',message:'未登录或登录已过期'},{status:401})}

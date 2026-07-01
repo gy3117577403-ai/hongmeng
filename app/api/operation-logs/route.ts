@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
@@ -15,20 +17,26 @@ const actionGroups: Record<string, string[]> = {
   delete_work_order: ['delete_work_order'],
   change_password: ['change_password'],
   update_resource_file: ['update_resource_file'],
+  move_resource_file: ['move_resource_file'],
+  restore: ['restore_work_order', 'restore_resource_file'],
+  user: ['create_user', 'update_user', 'disable_user', 'reset_user_password'],
   export: ['export_work_orders', 'export_resource_files', 'export_operation_logs', 'export_metadata'],
   import: ['import_work_orders'],
+  field: ['copy_work_order_link', 'print_work_order_qr', 'export_diagnostics'],
 };
 
-function sanitize(value: unknown): unknown {
-  if (value === null || value === undefined) return value;
-  if (Array.isArray(value)) return value.slice(0, 5).map(sanitize);
+const writableActions = new Set(['copy_work_order_link', 'print_work_order_qr']);
+
+function sanitize(value: unknown): Prisma.InputJsonValue | null {
+  if (value === null || value === undefined) return null;
+  if (Array.isArray(value)) return value.slice(0, 5).map(sanitize) as Prisma.InputJsonArray;
   if (typeof value === 'object') {
-    const out: Record<string, unknown> = {};
+    const out: Record<string, Prisma.InputJsonValue | null> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
       if (/password|secret|token|key|database_url|session/i.test(key)) continue;
       out[key] = sanitize(item);
     }
-    return out;
+    return out as Prisma.InputJsonObject;
   }
   if (typeof value === 'string') return value.length > 120 ? `${value.slice(0, 117)}...` : value;
   return value;
@@ -67,6 +75,26 @@ export async function GET(req: NextRequest) {
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     console.error(e);
-    return NextResponse.json({ message: '操作日志加载失败' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: '操作日志加载失败' }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const user = await requireUser();
+    const body = await req.json().catch(() => ({})) as { action?: string; targetType?: string; targetId?: string; detail?: unknown };
+    const action = String(body.action || '');
+    if (!writableActions.has(action)) return NextResponse.json({ ok: false, error: '操作类型不允许' }, { status: 400 });
+    await logOp({
+      userId: user.id,
+      action,
+      targetType: typeof body.targetType === 'string' ? body.targetType.slice(0, 80) : null,
+      targetId: typeof body.targetId === 'string' ? body.targetId.slice(0, 120) : null,
+      detail: sanitize(body.detail),
+    });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    if (e instanceof UnauthorizedError) return unauthorized();
+    return NextResponse.json({ ok: false, error: '操作日志写入失败' }, { status: 500 });
   }
 }

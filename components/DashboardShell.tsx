@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CurrentUserDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, WorkOrderDTO } from '@/types';
+import QRCode from 'qrcode';
+import type { CurrentUserDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
 type WorkOrderForm = {
   code: string;
@@ -15,9 +16,13 @@ type WorkOrderForm = {
 
 type WorkOrderModal = { mode: 'create' | 'edit'; order?: WorkOrderDTO } | null;
 type UploadJob = { id: string; name: string; status: 'waiting' | 'uploading' | 'success' | 'failed'; message?: string };
-type FileForm = { displayName: string; remark: string };
+type FileForm = { displayName: string; remark: string; workOrderId: string; categoryId: string };
 type ImportRow = { row: number; code: string; status: 'created' | 'updated' | 'skipped' | 'failed'; message: string };
 type ImportResult = { summary: { created: number; updated: number; skipped: number; failed: number; total: number }; results: ImportRow[] };
+type UserForm = { username: string; displayName: string; password: string };
+type AccountEdit = { id: string; displayName: string; isActive: boolean } | null;
+type PasswordReset = { id: string; username: string; password: string } | null;
+type SearchResult = { workOrders: WorkOrderDTO[]; resourceFiles: ResourceFileDTO[] };
 type SystemStatus = {
   ok: boolean;
   app: { name: string; version: string; mode: string };
@@ -87,6 +92,16 @@ const actionText: Record<string, string> = {
   export_operation_logs: '导出操作日志',
   export_metadata: '导出元数据',
   import_work_orders: '导入工单',
+  create_user: '新增账号',
+  update_user: '编辑账号',
+  disable_user: '禁用账号',
+  reset_user_password: '重置密码',
+  restore_work_order: '恢复工单',
+  restore_resource_file: '恢复文件',
+  move_resource_file: '移动文件',
+  copy_work_order_link: '复制工单链接',
+  print_work_order_qr: '打印工单二维码',
+  export_diagnostics: '导出诊断信息',
 };
 const categoryIcons: Record<string, string> = { drawing: '原', sop: 'SOP', product: '成', material: '辅', notice: '注' };
 const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG', jpeg: 'JPG' };
@@ -103,8 +118,12 @@ const logFilters = [
   ['delete_work_order', '删除工单'],
   ['change_password', '修改密码'],
   ['update_resource_file', '编辑文件信息'],
+  ['move_resource_file', '移动文件'],
+  ['restore', '恢复'],
+  ['user', '账号'],
   ['export', '导出'],
   ['import', '导入'],
+  ['field', '现场'],
 ];
 
 function completionOf(categories: ResourceCategoryDTO[], counts: Record<string, number>) {
@@ -166,7 +185,8 @@ export default function DashboardShell({
   const [orderFormError, setOrderFormError] = useState('');
   const [orderSaving, setOrderSaving] = useState(false);
   const [fileEditTarget, setFileEditTarget] = useState<ResourceFileDTO | null>(null);
-  const [fileForm, setFileForm] = useState<FileForm>({ displayName: '', remark: '' });
+  const [fileForm, setFileForm] = useState<FileForm>({ displayName: '', remark: '', workOrderId: '', categoryId: '' });
+  const [fileOrderKw, setFileOrderKw] = useState('');
   const [fileFormError, setFileFormError] = useState('');
   const [fileSaving, setFileSaving] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
@@ -181,9 +201,28 @@ export default function DashboardShell({
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [now, setNow] = useState<Date | null>(null);
+  const [globalKw, setGlobalKw] = useState('');
+  const [globalSearch, setGlobalSearch] = useState<SearchResult>({ workOrders: [], resourceFiles: [] });
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [fieldSummary, setFieldSummary] = useState<FieldSummaryDTO | null>(null);
+  const [accountsOpen, setAccountsOpen] = useState(false);
+  const [users, setUsers] = useState<UserDTO[]>([]);
+  const [userForm, setUserForm] = useState<UserForm>({ username: '', displayName: '', password: '' });
+  const [accountEdit, setAccountEdit] = useState<AccountEdit>(null);
+  const [passwordReset, setPasswordReset] = useState<PasswordReset>(null);
+  const [accountError, setAccountError] = useState('');
+  const [accountSaving, setAccountSaving] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trash, setTrash] = useState<TrashDTO>({ workOrders: [], resourceFiles: [] });
+  const [trashTab, setTrashTab] = useState<'workOrders' | 'files'>('workOrders');
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [qrLink, setQrLink] = useState('');
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
+  const camera = useRef<HTMLInputElement>(null);
   const csvImport = useRef<HTMLInputElement>(null);
 
   const list = useMemo(() => {
@@ -211,6 +250,10 @@ export default function DashboardShell({
   const visibleToday = list.filter(o => sameDay(o.createdAt));
   const visibleWeek = list.filter(o => inRecentWeek(o.createdAt));
   const managerFiles = managerCategory === 'all' ? allFiles : allFiles.filter(f => f.categoryId === managerCategory);
+  const fileOrderOptions = useMemo(() => {
+    const text = fileOrderKw.trim().toLowerCase();
+    return orders.filter(o => !text || o.code.toLowerCase().includes(text) || o.productName.toLowerCase().includes(text)).slice(0, 30);
+  }, [orders, fileOrderKw]);
 
   useEffect(() => {
     setNow(new Date());
@@ -225,6 +268,53 @@ export default function DashboardShell({
       window.removeEventListener('beforeinstallprompt', onInstall);
     };
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const workOrderId = params.get('workOrderId');
+    const workOrderCode = params.get('workOrderCode') || params.get('workOrder');
+    const storedWorkOrderId = window.localStorage.getItem('hongmeng:lastWorkOrderId');
+    const storedCategoryId = window.localStorage.getItem('hongmeng:lastCategoryId');
+    const target = workOrderId
+      ? orders.find(o => o.id === workOrderId)
+      : workOrderCode
+        ? orders.find(o => o.code === workOrderCode)
+        : storedWorkOrderId
+          ? orders.find(o => o.id === storedWorkOrderId)
+          : null;
+    if (target) setWo(target.id);
+    else if (workOrderId || workOrderCode) setMsg('未找到直达链接对应的工单');
+    if (storedCategoryId && categories.some(c => c.id === storedCategoryId)) setCat(storedCategoryId);
+    loadFieldSummary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (wo) window.localStorage.setItem('hongmeng:lastWorkOrderId', wo);
+    if (cat) window.localStorage.setItem('hongmeng:lastCategoryId', cat);
+  }, [wo, cat]);
+
+  useEffect(() => {
+    const text = globalKw.trim();
+    if (!text) {
+      setGlobalSearch({ workOrders: [], resourceFiles: [] });
+      setSearchOpen(false);
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/search?keyword=${encodeURIComponent(text)}`, { cache: 'no-store' });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok) {
+          setGlobalSearch({ workOrders: d.workOrders || [], resourceFiles: d.resourceFiles || [] });
+          setSearchOpen(true);
+        }
+      } catch {
+        setMsg('全局搜索失败');
+      }
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [globalKw]);
 
   function mergeOrder(next: WorkOrderDTO) {
     setOrders(v => {
@@ -309,6 +399,177 @@ export default function DashboardShell({
     }
   }
 
+  async function loadFieldSummary() {
+    try {
+      const r = await fetch('/api/dashboard/field-summary', { cache: 'no-store' });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) setFieldSummary(d);
+    } catch {
+      setMsg('现场概览加载失败');
+    }
+  }
+
+  async function openWorkOrder(targetId: string, targetCategoryId?: string, targetFileId?: string) {
+    setManagerOpen(false);
+    setWo(targetId);
+    if (targetCategoryId) setCat(targetCategoryId);
+    window.history.replaceState(null, '', `/dashboard?workOrderId=${encodeURIComponent(targetId)}`);
+    await loadFiles(targetId, targetCategoryId || cat, targetFileId);
+    await loadAllFiles(targetId);
+    setSearchOpen(false);
+  }
+
+  async function openFileResult(target: ResourceFileDTO) {
+    await openWorkOrder(target.workOrderId, target.categoryId, target.id);
+  }
+
+  async function loadUsers() {
+    try {
+      const r = await fetch('/api/users', { cache: 'no-store' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setAccountError(d.error || d.message || '账号加载失败');
+        return;
+      }
+      setUsers(Array.isArray(d.users) ? d.users : []);
+    } catch {
+      setAccountError('账号加载失败');
+    }
+  }
+
+  async function openAccounts() {
+    setUserMenu(false);
+    setAccountsOpen(true);
+    setAccountError('');
+    await loadUsers();
+  }
+
+  async function saveNewUser(e: React.FormEvent) {
+    e.preventDefault();
+    setAccountError('');
+    if (!userForm.username.trim()) return setAccountError('账号不能为空');
+    if (userForm.password.length < 6) return setAccountError('初始密码至少 6 位');
+    setAccountSaving(true);
+    try {
+      const r = await fetch('/api/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(userForm),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setAccountError(d.error || d.message || '新增账号失败');
+        return;
+      }
+      setUserForm({ username: '', displayName: '', password: '' });
+      await loadUsers();
+      setMsg('账号已新增');
+    } catch {
+      setAccountError('新增账号失败');
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function saveAccountEdit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!accountEdit) return;
+    setAccountSaving(true);
+    setAccountError('');
+    try {
+      const r = await fetch(`/api/users/${accountEdit.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName: accountEdit.displayName, isActive: accountEdit.isActive }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setAccountError(d.error || d.message || '保存账号失败');
+        return;
+      }
+      setAccountEdit(null);
+      await loadUsers();
+      setMsg(accountEdit.isActive ? '账号已更新' : '账号已禁用');
+    } catch {
+      setAccountError('保存账号失败');
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function resetUserPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!passwordReset) return;
+    if (passwordReset.password.length < 6) return setAccountError('新密码至少 6 位');
+    setAccountSaving(true);
+    setAccountError('');
+    try {
+      const r = await fetch(`/api/users/${passwordReset.id}/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: passwordReset.password }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setAccountError(d.error || d.message || '重置密码失败');
+        return;
+      }
+      setPasswordReset(null);
+      setMsg('密码已重置');
+    } catch {
+      setAccountError('重置密码失败');
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function loadTrash() {
+    try {
+      const r = await fetch('/api/trash', { cache: 'no-store' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.error || d.message || '回收站加载失败');
+        return;
+      }
+      setTrash({ workOrders: d.workOrders || [], resourceFiles: d.resourceFiles || [] });
+    } catch {
+      setMsg('回收站加载失败');
+    }
+  }
+
+  async function openTrash() {
+    setUserMenu(false);
+    setTrashOpen(true);
+    await loadTrash();
+  }
+
+  async function restoreWorkOrder(id: string) {
+    const r = await fetch(`/api/work-orders/${id}/restore`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      setMsg(d.error || d.message || '恢复工单失败');
+      return;
+    }
+    await refreshOrders(d.workOrder?.id);
+    await loadTrash();
+    setMsg('工单已恢复');
+  }
+
+  async function restoreFile(id: string) {
+    const r = await fetch(`/api/resource-files/${id}/restore`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      setMsg(d.error || d.message || '恢复文件失败');
+      return;
+    }
+    await loadTrash();
+    if (d.file?.workOrderId === order?.id) {
+      await loadFiles(order.id, d.file.categoryId, d.file.id);
+      await loadCategoryCounts(order.id);
+    }
+    setMsg('文件已恢复');
+  }
+
   useEffect(() => {
     setCategoryCounts(order?.categoryFileCounts || {});
     loadFiles(order?.id, category?.id);
@@ -377,6 +638,7 @@ export default function DashboardShell({
     setUploading(false);
     if (pdf.current) pdf.current.value = '';
     if (img.current) img.current.value = '';
+    if (camera.current) camera.current.value = '';
   }
 
   async function refresh() {
@@ -429,7 +691,8 @@ export default function DashboardShell({
 
   function openFileEdit(target: ResourceFileDTO) {
     setFileEditTarget(target);
-    setFileForm({ displayName: target.displayName || '', remark: target.remark || '' });
+    setFileForm({ displayName: target.displayName || '', remark: target.remark || '', workOrderId: target.workOrderId, categoryId: target.categoryId });
+    setFileOrderKw('');
     setFileFormError('');
   }
 
@@ -446,12 +709,18 @@ export default function DashboardShell({
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setFileFormError(d.message || '文件信息保存失败');
+        setFileFormError(d.error || d.message || '文件信息保存失败');
         return;
       }
-      mergeFile(d.file);
+      const movedAway = d.file?.workOrderId !== order?.id || d.file?.categoryId !== category?.id;
+      if (movedAway) {
+        await loadFiles(order?.id, category?.id);
+        await loadCategoryCounts(order?.id);
+      } else {
+        mergeFile(d.file);
+      }
       setFileEditTarget(null);
-      setMsg('文件信息已保存');
+      setMsg(movedAway ? '文件已移动到目标工单或分类' : '文件信息已保存');
     } catch {
       setFileFormError('网络异常，请稍后重试');
     } finally {
@@ -658,6 +927,19 @@ export default function DashboardShell({
     window.setTimeout(() => window.print(), 120);
   }
 
+  function workOrderLink(target = order) {
+    if (!target) return '';
+    return `${location.origin}/dashboard?workOrderId=${encodeURIComponent(target.id)}`;
+  }
+
+  async function writeClientLog(action: string, targetType?: string, targetId?: string, detail?: unknown) {
+    await fetch('/api/operation-logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, targetType, targetId, detail }),
+    }).catch(() => undefined);
+  }
+
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
     location.href = '/login';
@@ -665,13 +947,28 @@ export default function DashboardShell({
 
   async function copy() {
     if (!order) return;
-    const u = `${location.origin}/dashboard?workOrder=${encodeURIComponent(order.code)}`;
+    const u = workOrderLink(order);
     try {
       await navigator.clipboard.writeText(u);
       setMsg('当前工单链接已复制');
     } catch {
       setMsg(u);
     }
+    await writeClientLog('copy_work_order_link', 'work_order', order.id, { code: order.code });
+  }
+
+  async function openQrDialog() {
+    if (!order) return;
+    const link = workOrderLink(order);
+    setQrLink(link);
+    setQrDataUrl(await QRCode.toDataURL(link, { margin: 1, width: 220 }));
+    setQrOpen(true);
+  }
+
+  async function printQr() {
+    if (!order) return;
+    await writeClientLog('print_work_order_qr', 'work_order', order.id, { code: order.code });
+    window.setTimeout(() => window.print(), 120);
   }
 
   function openPasswordDialog() {
@@ -718,8 +1015,28 @@ export default function DashboardShell({
           <span>鸿蒙平板生产资料管理系统</span>
         </div>
         <div className="top-search">
-          <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索工单号 / 产品名称" />
+          <input value={globalKw} onFocus={() => globalKw.trim() && setSearchOpen(true)} onChange={e => setGlobalKw(e.target.value)} placeholder="全局搜索工单 / 文件" />
           <b>⌕</b>
+          {searchOpen && globalKw.trim() && (
+            <div className="global-search-panel">
+              <div className="search-group-title">工单</div>
+              {globalSearch.workOrders.map(item => (
+                <button key={item.id} type="button" onClick={() => openWorkOrder(item.id)}>
+                  <strong>{item.code}</strong>
+                  <span>{item.productName}</span>
+                </button>
+              ))}
+              {!globalSearch.workOrders.length && <div className="search-empty">未找到工单</div>}
+              <div className="search-group-title">文件</div>
+              {globalSearch.resourceFiles.map(item => (
+                <button key={item.id} type="button" onClick={() => openFileResult(item)}>
+                  <strong>{displayFileName(item)}</strong>
+                  <span>{item.workOrderCode || '-'} · {item.categoryName || '-'} · {item.version || 'V1.0'}</span>
+                </button>
+              ))}
+              {!globalSearch.resourceFiles.length && <div className="search-empty">未找到文件</div>}
+            </div>
+          )}
         </div>
         <div className="top-actions">
           <button className="notice-button" type="button" aria-label="通知">◇<span /></button>
@@ -743,6 +1060,9 @@ export default function DashboardShell({
             {userMenu && (
               <div className="user-menu">
                 <button type="button" onClick={openSystemSettings}>系统设置</button>
+                <button type="button" onClick={openAccounts}>账号管理</button>
+                <button type="button" onClick={openTrash}>回收站</button>
+                <button type="button" onClick={() => { setUserMenu(false); setHelpOpen(true); }}>使用帮助</button>
                 <button type="button" onClick={openPasswordDialog}>修改密码</button>
                 <button type="button" onClick={logout}>退出登录</button>
               </div>
@@ -781,6 +1101,31 @@ export default function DashboardShell({
             <div><span>今日订单</span><strong>{visibleToday.length}</strong></div>
             <div><span>本周订单</span><strong>{visibleWeek.length}</strong></div>
           </div>
+          {fieldSummary && (
+            <section className="field-summary">
+              <div className="field-summary-metrics">
+                <button type="button" onClick={() => setOrderFilter('all')}><span>缺资料</span><b>{fieldSummary.counts.missingWorkOrders}</b></button>
+                <button type="button" onClick={() => setOrderFilter('all')}><span>完整</span><b>{fieldSummary.counts.completeWorkOrders}</b></button>
+                <button type="button"><span>最近文件</span><b>{fieldSummary.counts.recentFiles}</b></button>
+                <button type="button" onClick={() => setOrderFilter('today')}><span>今日新增</span><b>{fieldSummary.counts.todayWorkOrders}</b></button>
+              </div>
+              <details>
+                <summary>缺资料 Top 5 / 最近更新</summary>
+                <div className="field-summary-list">
+                  {fieldSummary.missingWorkOrders.map(item => (
+                    <button key={item.id} type="button" onClick={() => openWorkOrder(item.id)}>
+                      <strong>{item.code}</strong><span>{item.productName}</span>
+                    </button>
+                  ))}
+                  {fieldSummary.recentFiles.map(item => (
+                    <button key={item.id} type="button" onClick={() => openFileResult(item)}>
+                      <strong>{displayFileName(item)}</strong><span>{item.workOrderCode || '-'} · {item.categoryName || '-'}</span>
+                    </button>
+                  ))}
+                </div>
+              </details>
+            </section>
+          )}
           <OrderGroup title="工单列表" orders={list} selected={order?.id} choose={setWo} categories={categories} />
           {!list.length && <div className="empty-orders large">未找到匹配工单</div>}
         </aside>
@@ -821,6 +1166,8 @@ export default function DashboardShell({
             <div className="title-actions">
               <button type="button" disabled={!order} onClick={() => order && openOrderModal('edit', order)}>编辑工单</button>
               <button type="button" disabled={!order} onClick={() => order && setOrderDeleteTarget(order)}>删除工单</button>
+              <button type="button" disabled={!order} onClick={copy}>复制链接</button>
+              <button type="button" disabled={!order} onClick={openQrDialog}>打印二维码</button>
               <button className="download-all-button" type="button" disabled={!order || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
               <button type="button" disabled={!order} onClick={printSummary}>打印摘要</button>
               <button className="refresh-button" type="button" onClick={refresh}>↻ 刷新</button>
@@ -872,6 +1219,7 @@ export default function DashboardShell({
                       <div className="empty-actions">
                         <button type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>上传 PDF</button>
                         <button type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>上传图片</button>
+                        <button type="button" disabled={uploading || !order} onClick={() => camera.current?.click()}>拍照上传</button>
                       </div>
                     </div>
                   )}
@@ -912,12 +1260,16 @@ export default function DashboardShell({
 
                 <section className="action-card">
                   <input ref={pdf} hidden multiple type="file" accept="application/pdf,.pdf" onChange={e => uploadMany(Array.from(e.target.files || []))} />
-                  <input ref={img} hidden multiple type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" capture="environment" onChange={e => uploadMany(Array.from(e.target.files || []))} />
+                  <input ref={img} hidden multiple type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" onChange={e => uploadMany(Array.from(e.target.files || []))} />
+                  <input ref={camera} hidden type="file" accept="image/*" capture="environment" onChange={e => uploadMany(Array.from(e.target.files || []))} />
                   <button className="upload-action primary" type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>
                     <span>⇧</span><b>{uploading ? '上传中，请稍候' : '批量上传 PDF'}</b>
                   </button>
                   <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>
-                    <span>▣</span><b>上传图片 / 拍照</b>
+                    <span>▣</span><b>上传图片</b>
+                  </button>
+                  <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => camera.current?.click()}>
+                    <span>◎</span><b>拍照上传</b>
                   </button>
                   <div className="secondary-actions file-actions">
                     <a className={!file ? 'disabled' : ''} href={file?.downloadUrl || '#'} target="_blank">下载当前</a>
@@ -988,6 +1340,9 @@ export default function DashboardShell({
           refreshStatus={loadSystemStatus}
           refreshData={refresh}
           openLogs={() => loadLogs('all')}
+          openAccounts={openAccounts}
+          openTrash={openTrash}
+          openHelp={() => setHelpOpen(true)}
           logout={logout}
           installApp={installApp}
           chooseImport={() => csvImport.current?.click()}
@@ -996,6 +1351,55 @@ export default function DashboardShell({
           exportResourceFiles={() => downloadExport('/api/export/resource-files.csv', '导出文件清单 CSV', '文件清单.csv')}
           exportOperationLogs={() => downloadExport('/api/export/operation-logs.csv', '导出操作日志 CSV', '操作日志.csv')}
           exportMetadata={() => downloadExport('/api/export/metadata.json', '导出元数据 JSON', '系统元数据.json')}
+          exportDiagnostics={() => downloadExport('/api/system/diagnostics.json', '导出问题诊断信息', '系统诊断信息.json')}
+        />
+      )}
+
+      {accountsOpen && (
+        <AccountManager
+          users={users}
+          userForm={userForm}
+          accountEdit={accountEdit}
+          passwordReset={passwordReset}
+          error={accountError}
+          saving={accountSaving}
+          close={() => setAccountsOpen(false)}
+          setUserForm={setUserForm}
+          setAccountEdit={setAccountEdit}
+          setPasswordReset={setPasswordReset}
+          saveNewUser={saveNewUser}
+          saveAccountEdit={saveAccountEdit}
+          resetUserPassword={resetUserPassword}
+        />
+      )}
+
+      {trashOpen && (
+        <TrashDialog
+          trash={trash}
+          tab={trashTab}
+          close={() => setTrashOpen(false)}
+          setTab={setTrashTab}
+          restoreWorkOrder={restoreWorkOrder}
+          restoreFile={restoreFile}
+        />
+      )}
+
+      {helpOpen && (
+        <HelpDialog
+          close={() => setHelpOpen(false)}
+          exportDiagnostics={() => downloadExport('/api/system/diagnostics.json', '导出问题诊断信息', '系统诊断信息.json')}
+        />
+      )}
+
+      {qrOpen && order && (
+        <QrDialog
+          order={order}
+          completionText={completion.text}
+          qrDataUrl={qrDataUrl}
+          qrLink={qrLink}
+          now={now}
+          close={() => setQrOpen(false)}
+          printQr={printQr}
         />
       )}
 
@@ -1034,6 +1438,13 @@ export default function DashboardShell({
             <div className="file-edit-source">{fileEditTarget.originalName} · {fileEditTarget.version || 'V1.0'}</div>
             <label>显示名称<input value={fileForm.displayName} onChange={e => setFileForm(v => ({ ...v, displayName: e.target.value }))} placeholder="可选，下载时优先使用" /></label>
             <label>备注<textarea value={fileForm.remark} onChange={e => setFileForm(v => ({ ...v, remark: e.target.value }))} placeholder="可选，填写资料说明" /></label>
+            <label>搜索目标工单<input value={fileOrderKw} onChange={e => setFileOrderKw(e.target.value)} placeholder="输入工单号 / 产品名称筛选" /></label>
+            <label>所属工单<select value={fileForm.workOrderId} onChange={e => setFileForm(v => ({ ...v, workOrderId: e.target.value }))}>
+              {fileOrderOptions.map(item => <option key={item.id} value={item.id}>{item.code} · {item.productName}</option>)}
+            </select></label>
+            <label>所属分类<select value={fileForm.categoryId} onChange={e => setFileForm(v => ({ ...v, categoryId: e.target.value }))}>
+              {categories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select></label>
             {fileFormError && <div className="form-error">{fileFormError}</div>}
             <div className="dialog-actions">
               <button type="button" onClick={() => setFileEditTarget(null)}>取消</button>
@@ -1251,6 +1662,235 @@ function UploadManager({
   );
 }
 
+function AccountManager({
+  users,
+  userForm,
+  accountEdit,
+  passwordReset,
+  error,
+  saving,
+  close,
+  setUserForm,
+  setAccountEdit,
+  setPasswordReset,
+  saveNewUser,
+  saveAccountEdit,
+  resetUserPassword,
+}: {
+  users: UserDTO[];
+  userForm: UserForm;
+  accountEdit: AccountEdit;
+  passwordReset: PasswordReset;
+  error: string;
+  saving: boolean;
+  close: () => void;
+  setUserForm: (value: UserForm | ((v: UserForm) => UserForm)) => void;
+  setAccountEdit: (value: AccountEdit) => void;
+  setPasswordReset: (value: PasswordReset) => void;
+  saveNewUser: (e: React.FormEvent) => void;
+  saveAccountEdit: (e: React.FormEvent) => void;
+  resetUserPassword: (e: React.FormEvent) => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="admin-dialog" role="dialog" aria-modal="true" aria-label="账号管理">
+        <div className="dialog-title">
+          <strong>账号管理</strong>
+          <button type="button" onClick={close}>×</button>
+        </div>
+        {error && <div className="form-error">{error}</div>}
+        <form className="inline-form" onSubmit={saveNewUser}>
+          <label>账号<input value={userForm.username} onChange={e => setUserForm(v => ({ ...v, username: e.target.value }))} /></label>
+          <label>姓名<input value={userForm.displayName} onChange={e => setUserForm(v => ({ ...v, displayName: e.target.value }))} /></label>
+          <label>初始密码<input type="password" value={userForm.password} onChange={e => setUserForm(v => ({ ...v, password: e.target.value }))} /></label>
+          <button className="primary-button" type="submit" disabled={saving}>{saving ? '保存中...' : '新增账号'}</button>
+        </form>
+        <div className="compact-table users-table">
+          <div className="compact-head"><span>账号</span><span>姓名</span><span>状态</span><span>创建时间</span><span>操作</span></div>
+          {users.map(item => (
+            <div className="compact-row" key={item.id}>
+              <span>{item.username}</span>
+              <span>{item.displayName}</span>
+              <span>{item.isActive ? '启用' : '禁用'}</span>
+              <span>{dt(item.createdAt)}</span>
+              <span className="row-actions">
+                <button type="button" onClick={() => setAccountEdit({ id: item.id, displayName: item.displayName, isActive: item.isActive })}>编辑</button>
+                <button type="button" onClick={() => setPasswordReset({ id: item.id, username: item.username, password: '' })}>重置密码</button>
+                {item.isActive && <button type="button" onClick={() => setAccountEdit({ id: item.id, displayName: item.displayName, isActive: false })}>禁用</button>}
+              </span>
+            </div>
+          ))}
+          {!users.length && <div className="empty-list">暂无账号</div>}
+        </div>
+
+        {accountEdit && (
+          <form className="nested-dialog" onSubmit={saveAccountEdit}>
+            <strong>编辑账号</strong>
+            <label>姓名<input value={accountEdit.displayName} onChange={e => setAccountEdit({ ...accountEdit, displayName: e.target.value })} /></label>
+            <label className="check-line"><input type="checkbox" checked={accountEdit.isActive} onChange={e => setAccountEdit({ ...accountEdit, isActive: e.target.checked })} /> 启用账号</label>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setAccountEdit(null)}>取消</button>
+              <button className={accountEdit.isActive ? 'primary-button' : 'danger-button'} type="submit" disabled={saving}>{saving ? '保存中...' : accountEdit.isActive ? '保存' : '确认禁用'}</button>
+            </div>
+          </form>
+        )}
+
+        {passwordReset && (
+          <form className="nested-dialog" onSubmit={resetUserPassword}>
+            <strong>重置密码：{passwordReset.username}</strong>
+            <label>新密码<input type="password" value={passwordReset.password} onChange={e => setPasswordReset({ ...passwordReset, password: e.target.value })} /></label>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setPasswordReset(null)}>取消</button>
+              <button className="primary-button" type="submit" disabled={saving}>{saving ? '保存中...' : '重置密码'}</button>
+            </div>
+          </form>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function TrashDialog({
+  trash,
+  tab,
+  close,
+  setTab,
+  restoreWorkOrder,
+  restoreFile,
+}: {
+  trash: TrashDTO;
+  tab: 'workOrders' | 'files';
+  close: () => void;
+  setTab: (tab: 'workOrders' | 'files') => void;
+  restoreWorkOrder: (id: string) => void;
+  restoreFile: (id: string) => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="admin-dialog" role="dialog" aria-modal="true" aria-label="回收站">
+        <div className="dialog-title">
+          <strong>回收站</strong>
+          <button type="button" onClick={close}>×</button>
+        </div>
+        <div className="trash-tabs">
+          <button className={tab === 'workOrders' ? 'active' : ''} type="button" onClick={() => setTab('workOrders')}>工单</button>
+          <button className={tab === 'files' ? 'active' : ''} type="button" onClick={() => setTab('files')}>文件</button>
+        </div>
+        {tab === 'workOrders' ? (
+          <div className="compact-table trash-table">
+            <div className="compact-head"><span>工单号</span><span>产品名称</span><span>删除时间</span><span>操作</span></div>
+            {trash.workOrders.map(item => (
+              <div className="compact-row" key={item.id}>
+                <span>{item.code}</span>
+                <span>{item.productName}</span>
+                <span>{item.deletedAt ? dt(item.deletedAt) : '-'}</span>
+                <span><button type="button" onClick={() => restoreWorkOrder(item.id)}>恢复</button></span>
+              </div>
+            ))}
+            {!trash.workOrders.length && <div className="empty-list">暂无已删除工单</div>}
+          </div>
+        ) : (
+          <div className="compact-table trash-table files">
+            <div className="compact-head"><span>文件名</span><span>所属工单</span><span>分类</span><span>版本</span><span>删除时间</span><span>操作</span></div>
+            {trash.resourceFiles.map(item => (
+              <div className="compact-row" key={item.id}>
+                <span>{displayFileName(item)}</span>
+                <span>{item.workOrderCode || '-'}</span>
+                <span>{item.categoryName || '-'}</span>
+                <span>{item.version || 'V1.0'}</span>
+                <span>{item.deletedAt ? dt(item.deletedAt) : '-'}</span>
+                <span><button type="button" onClick={() => restoreFile(item.id)}>恢复</button></span>
+              </div>
+            ))}
+            {!trash.resourceFiles.length && <div className="empty-list">暂无已删除文件</div>}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function HelpDialog({ close, exportDiagnostics }: { close: () => void; exportDiagnostics: () => void }) {
+  const items = [
+    ['如何新建工单', '点击左侧“新建工单”，填写工单号、产品名称、阶段、状态和进度后保存。'],
+    ['如何上传 PDF', '选择工单和分类后点击“批量上传 PDF”，等待上传队列显示成功。'],
+    ['如何拍照上传', '选择分类后点击“拍照上传”，平板会打开后置摄像头，拍完自动走图片上传流程。'],
+    ['如何移动错传文件', '选择文件后点击“编辑文件”，在弹窗里调整所属工单或所属分类并保存。'],
+    ['如何恢复误删文件', '打开“回收站”，切到文件或工单列表，点击恢复。'],
+    ['如何下载全部资料', '选择工单后点击“下载全部”，系统会按分类打包 ZIP。'],
+    ['如何导入 CSV', '系统设置中下载模板，填写后上传 CSV，查看逐行结果。'],
+    ['如何添加到桌面', '用平板浏览器打开系统，在浏览器菜单中选择添加到桌面或安装应用。'],
+  ];
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="help-dialog" role="dialog" aria-modal="true" aria-label="使用帮助">
+        <div className="dialog-title">
+          <strong>使用帮助</strong>
+          <button type="button" onClick={close}>×</button>
+        </div>
+        <div className="help-grid">
+          {items.map(([title, body]) => (
+            <article key={title}>
+              <strong>{title}</strong>
+              <p>{body}</p>
+            </article>
+          ))}
+        </div>
+        <section className="system-section wide">
+          <h3>常见错误</h3>
+          <p>上传失败：检查格式、大小和对象存储状态。预览打不开：刷新页面或联系管理员检查公开访问端点。找不到工单：使用全局搜索或二维码直达链接。密码忘记：请使用账号管理中的重置密码。</p>
+          <div className="system-actions">
+            <button className="primary-button" type="button" onClick={exportDiagnostics}>导出问题诊断信息</button>
+          </div>
+        </section>
+      </section>
+    </div>
+  );
+}
+
+function QrDialog({
+  order,
+  completionText,
+  qrDataUrl,
+  qrLink,
+  now,
+  close,
+  printQr,
+}: {
+  order: WorkOrderDTO;
+  completionText: string;
+  qrDataUrl: string;
+  qrLink: string;
+  now: Date | null;
+  close: () => void;
+  printQr: () => void;
+}) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="qr-dialog" role="dialog" aria-modal="true" aria-label="工单二维码">
+        <div className="dialog-title">
+          <strong>工单二维码</strong>
+          <button type="button" onClick={close}>×</button>
+        </div>
+        <div className="qr-print-area">
+          <h1>{order.code}</h1>
+          <p>{order.productName}</p>
+          {qrDataUrl && <img src={qrDataUrl} alt="工单直达二维码" />}
+          <dl>
+            <div><dt>资料状态</dt><dd>{completionText}</dd></div>
+            <div><dt>打印时间</dt><dd>{now ? dt(now.toISOString()) : '-'}</dd></div>
+            <div><dt>链接</dt><dd>{qrLink}</dd></div>
+          </dl>
+        </div>
+        <div className="dialog-actions">
+          <button type="button" onClick={close}>关闭</button>
+          <button className="primary-button" type="button" onClick={printQr}>打印二维码</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function SystemSettings({
   userName,
   now,
@@ -1264,6 +1904,9 @@ function SystemSettings({
   refreshStatus,
   refreshData,
   openLogs,
+  openAccounts,
+  openTrash,
+  openHelp,
   logout,
   installApp,
   chooseImport,
@@ -1272,6 +1915,7 @@ function SystemSettings({
   exportResourceFiles,
   exportOperationLogs,
   exportMetadata,
+  exportDiagnostics,
 }: {
   userName: string;
   now: Date | null;
@@ -1285,6 +1929,9 @@ function SystemSettings({
   refreshStatus: () => void;
   refreshData: () => void;
   openLogs: () => void;
+  openAccounts: () => void;
+  openTrash: () => void;
+  openHelp: () => void;
   logout: () => void;
   installApp: () => void;
   chooseImport: () => void;
@@ -1293,6 +1940,7 @@ function SystemSettings({
   exportResourceFiles: () => void;
   exportOperationLogs: () => void;
   exportMetadata: () => void;
+  exportDiagnostics: () => void;
 }) {
   const okText = (value?: boolean) => (value ? '正常' : '异常');
   return (
@@ -1301,7 +1949,7 @@ function SystemSettings({
         <div className="dialog-title">
           <div>
             <strong>系统设置</strong>
-            <small>v1.5.0-rc · Web / PWA</small>
+            <small>v1.6.0-rc.1 · Web / PWA</small>
           </div>
           <button type="button" onClick={close}>×</button>
         </div>
@@ -1310,7 +1958,7 @@ function SystemSettings({
           <section className="system-section">
             <h3>基础信息</h3>
             <Info label="系统名称" value={status?.app.name || '工单资料库'} />
-            <Info label="当前版本" value={status?.app.version || 'v1.5.0-rc'} />
+            <Info label="当前版本" value={status?.app.version || 'v1.6.0-rc.1'} />
             <Info label="部署模式" value={status?.app.mode || 'Web / PWA'} />
             <Info label="数据模式" value={status?.data.mode || '账号登录，共享数据'} />
             <Info label="权限模式" value={status?.data.permissions || '无角色权限'} />
@@ -1341,6 +1989,7 @@ function SystemSettings({
             <button type="button" disabled={!!exporting} onClick={exportResourceFiles}>{exporting === '导出文件清单 CSV' ? '导出中...' : '导出文件清单 CSV'}</button>
             <button type="button" disabled={!!exporting} onClick={exportOperationLogs}>{exporting === '导出操作日志 CSV' ? '导出中...' : '导出操作日志 CSV'}</button>
             <button type="button" disabled={!!exporting} onClick={exportMetadata}>{exporting === '导出元数据 JSON' ? '导出中...' : '导出元数据 JSON'}</button>
+            <button type="button" disabled={!!exporting} onClick={exportDiagnostics}>{exporting === '导出问题诊断信息' ? '导出中...' : '导出问题诊断信息'}</button>
           </div>
         </section>
 
@@ -1384,6 +2033,9 @@ function SystemSettings({
             <button type="button" onClick={refreshStatus}>重新检查状态</button>
             <button type="button" onClick={refreshData}>刷新当前数据</button>
             <button type="button" onClick={openLogs}>打开操作日志</button>
+            <button type="button" onClick={openAccounts}>账号管理</button>
+            <button type="button" onClick={openTrash}>回收站</button>
+            <button type="button" onClick={openHelp}>使用帮助</button>
             <button type="button" onClick={logout}>退出登录</button>
           </div>
         </section>

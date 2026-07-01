@@ -19,6 +19,8 @@ export type ResourceCategoryDTO = { id: string; name: string; code: string; sort
 export type ResourceFileDTO = {
   id: string;
   workOrderId: string;
+  workOrderCode?: string | null;
+  workOrderProductName?: string | null;
   categoryId: string;
   categoryName?: string | null;
   categoryCode?: string | null;
@@ -33,6 +35,7 @@ export type ResourceFileDTO = {
   uploadedBy?: string | null;
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string | null;
   viewUrl: string;
   downloadUrl: string;
 };
@@ -47,4 +50,31 @@ export type OperationLogDTO = {
   targetType?: string | null;
   targetId?: string | null;
   detailSummary: string;
+};
+
+export type UserDTO = {
+  id: string;
+  username: string;
+  displayName: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type FieldSummaryDTO = {
+  counts: {
+    missingWorkOrders: number;
+    completeWorkOrders: number;
+    recentFiles: number;
+    todayWorkOrders: number;
+  };
+  missingWorkOrders: WorkOrderDTO[];
+  completeWorkOrders: WorkOrderDTO[];
+  recentFiles: ResourceFileDTO[];
+  todayWorkOrders: WorkOrderDTO[];
+};
+
+export type TrashDTO = {
+  workOrders: WorkOrderDTO[];
+  resourceFiles: ResourceFileDTO[];
 };
