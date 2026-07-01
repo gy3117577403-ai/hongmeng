@@ -4,7 +4,7 @@ import { useState } from 'react';
 
 export default function LoginForm() {
   const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('123');
+  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
