@@ -36,15 +36,17 @@ ghcr.io/gy3117577403-ai/hongmeng:latest
 Sealos App Deploy 端口填 `3000`。
 
 ## 生产部署状态
-- 当前版本：v1.0.1
+- 当前生产版本：v1.5.0
 - 上线地址：https://qdowqencjyph.sealoshzh.site
 - 部署平台：Sealos
 - 镜像：`ghcr.io/gy3117577403-ai/hongmeng`
-- 当前镜像 digest：`sha256:226b2b6268882e99cf04c69903d3e94b5333d923e5ef12184a980eb9f6bef7da`
 - 数据库：Sealos PostgreSQL
 - 文件存储：Sealos Object Storage
-- 登录账号：`admin`
-- 说明：v1.0.1 修复生产 standalone 启动方式
+- 数据模式：账号登录，共享数据
+- 权限模式：无角色权限
+- v1.3.0：工单管理、资料完整性、ZIP 下载、操作日志
+- v1.4.0：批量上传、版本递增、文件编辑、上传管理增强
+- v1.5.0：PWA、系统设置、数据导入导出、打印摘要、错误页
 
 ## 开发版本 / Release Candidate
 
@@ -119,9 +121,8 @@ Sealos App Deploy 端口填 `3000`。
   - 后续将统一部署验收
 
 ### RC 说明
-- v1.3.0-rc.1、v1.4.0-rc.1 和 v1.5.0-rc.1 尚未部署 Sealos
-- v1.3.0-rc.1、v1.4.0-rc.1 和 v1.5.0-rc.1 尚未作为生产版本发布
-- 后续将统一部署验收
+- v1.3.0-rc.1、v1.4.0-rc.1 和 v1.5.0-rc.1 为历史候选版本记录
+- v1.5.0 已完成 Sealos 统一部署和线上验收
 
 ## 数据不丢验收
 1. 上传 PDF/JPG/PNG。
