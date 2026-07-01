@@ -1,0 +1,63 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { logOp } from '@/lib/logs';
+import { prisma } from '@/lib/prisma';
+import { parseWorkOrderBody, serializeWorkOrder } from '@/lib/work-orders';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const user = await requireUser();
+    const old = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null } });
+    if (!old) return NextResponse.json({ message: '工单不存在' }, { status: 404 });
+
+    const body = await req.json().catch(() => ({}));
+    const { data, errors } = parseWorkOrderBody(body, { partial: true });
+    if (errors.length) return NextResponse.json({ message: errors[0] }, { status: 400 });
+    if (Object.keys(data).length === 0) return NextResponse.json({ message: '没有可更新字段' }, { status: 400 });
+
+    const workOrder = await prisma.workOrder.update({
+      where: { id: params.id },
+      data,
+      include: {
+        resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } },
+      },
+    });
+
+    await logOp({
+      userId: user.id,
+      action: 'update_work_order',
+      targetType: 'work_order',
+      targetId: workOrder.id,
+      detail: { code: workOrder.code, fields: Object.keys(data) },
+    });
+    return NextResponse.json({ workOrder: serializeWorkOrder(workOrder) });
+  } catch (e) {
+    if (e instanceof UnauthorizedError) return unauthorized();
+    if ((e as { code?: string }).code === 'P2002') return NextResponse.json({ message: '工单号已存在' }, { status: 409 });
+    console.error(e);
+    return NextResponse.json({ message: '编辑工单失败' }, { status: 500 });
+  }
+}
+
+export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const user = await requireUser();
+    const old = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null } });
+    if (!old) return NextResponse.json({ message: '工单不存在' }, { status: 404 });
+
+    const workOrder = await prisma.workOrder.update({
+      where: { id: params.id },
+      data: { deletedAt: new Date() },
+    });
+
+    await logOp({ userId: user.id, action: 'delete_work_order', targetType: 'work_order', targetId: workOrder.id, detail: { code: workOrder.code, softDelete: true } });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    if (e instanceof UnauthorizedError) return unauthorized();
+    console.error(e);
+    return NextResponse.json({ message: '删除工单失败' }, { status: 500 });
+  }
+}

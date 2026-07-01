@@ -29,12 +29,15 @@ model WorkOrder {
   progress      Int            @default(0)
   priority      String         @default("normal")
   status        String         @default("processing")
+  remark        String?
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")
+  deletedAt     DateTime?      @map("deleted_at")
   resourceFiles ResourceFile[]
 
   @@index([priority])
   @@index([status])
+  @@index([deletedAt])
   @@map("work_orders")
 }
 

@@ -1,7 +1,19 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { CurrentUserDTO, ResourceCategoryDTO, ResourceFileDTO, WorkOrderDTO } from '@/types';
+import type { CurrentUserDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, WorkOrderDTO } from '@/types';
+
+type WorkOrderForm = {
+  code: string;
+  productName: string;
+  stage: string;
+  priority: string;
+  status: string;
+  progress: number;
+  remark: string;
+};
+
+type WorkOrderModal = { mode: 'create' | 'edit'; order?: WorkOrderDTO } | null;
 
 function bytes(n: number) {
   if (n < 1024) return `${n} B`;
@@ -22,10 +34,56 @@ function shortName(name: string) {
   return name.length > 20 ? `${name.slice(0, 10)}...${name.slice(-7)}` : name;
 }
 
+function sameDay(value: string) {
+  const d = new Date(value);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+}
+
+function inRecentWeek(value: string) {
+  const d = new Date(value).getTime();
+  if (Number.isNaN(d)) return false;
+  return d >= Date.now() - 6 * 24 * 60 * 60 * 1000;
+}
+
 const priorityText: Record<string, string> = { urgent: '紧急', high: '高', normal: '一般' };
+const statusText: Record<string, string> = { pending: '待处理', processing: '进行中', done: '已完成', uploaded: '已上传', deleted: '已删除' };
+const actionText: Record<string, string> = {
+  login: '登录',
+  logout: '退出登录',
+  upload: '上传文件',
+  delete: '软删除文件',
+  change_password: '修改密码',
+  create_work_order: '新建工单',
+  update_work_order: '编辑工单',
+  delete_work_order: '删除工单',
+  download: '下载文件',
+  download_work_order_package: '下载资料包',
+};
 const categoryIcons: Record<string, string> = { drawing: '原', sop: 'SOP', product: '成', material: '辅', notice: '注' };
 const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG' };
-const statusText: Record<string, string> = { uploaded: '已上传', deleted: '已删除' };
+const requiredCategoryCodes = new Set(['drawing', 'sop', 'product']);
+const emptyForm: WorkOrderForm = { code: '', productName: '', stage: '未发图', priority: 'normal', status: 'pending', progress: 0, remark: '' };
+
+function completionOf(categories: ResourceCategoryDTO[], counts: Record<string, number>) {
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  if (total === 0) return { key: 'empty', text: '空工单' };
+  const missingRequired = categories.some(c => requiredCategoryCodes.has(c.code) && !counts[c.id]);
+  return missingRequired ? { key: 'missing', text: '缺资料' } : { key: 'complete', text: '完整' };
+}
+
+function toForm(order?: WorkOrderDTO): WorkOrderForm {
+  if (!order) return emptyForm;
+  return {
+    code: order.code,
+    productName: order.productName,
+    stage: order.stage,
+    priority: order.priority,
+    status: order.status,
+    progress: order.progress,
+    remark: order.remark || '',
+  };
+}
 
 export default function DashboardShell({
   user,
@@ -38,13 +96,15 @@ export default function DashboardShell({
 }) {
   const [orders, setOrders] = useState(initialWorkOrders);
   const [kw, setKw] = useState('');
+  const [orderFilter, setOrderFilter] = useState('all');
   const [wo, setWo] = useState(initialWorkOrders[0]?.id || '');
   const [cat, setCat] = useState(categories[0]?.id || '');
   const [files, setFiles] = useState<ResourceFileDTO[]>([]);
   const [sel, setSel] = useState('');
-  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>(initialWorkOrders[0]?.categoryFileCounts || {});
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [downloadingAll, setDownloadingAll] = useState(false);
   const [msg, setMsg] = useState('');
   const [lib, setLib] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
@@ -53,28 +113,67 @@ export default function DashboardShell({
   const [passwordError, setPasswordError] = useState('');
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [deleteTarget, setDeleteTarget] = useState<ResourceFileDTO | null>(null);
+  const [orderDeleteTarget, setOrderDeleteTarget] = useState<WorkOrderDTO | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [orderModal, setOrderModal] = useState<WorkOrderModal>(null);
+  const [orderForm, setOrderForm] = useState<WorkOrderForm>(emptyForm);
+  const [orderFormError, setOrderFormError] = useState('');
+  const [orderSaving, setOrderSaving] = useState(false);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logs, setLogs] = useState<OperationLogDTO[]>([]);
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
 
   const list = useMemo(() => {
     const text = kw.trim().toLowerCase();
-    if (!text) return orders;
-    return orders.filter(o => o.code.toLowerCase().includes(text) || o.productName.toLowerCase().includes(text));
-  }, [orders, kw]);
+    return orders.filter(o => {
+      const matchesText = !text || o.code.toLowerCase().includes(text) || o.productName.toLowerCase().includes(text);
+      if (!matchesText) return false;
+      if (orderFilter === 'today') return sameDay(o.createdAt);
+      if (orderFilter === 'week') return inRecentWeek(o.createdAt);
+      if (orderFilter === 'done') return o.status === 'done';
+      if (orderFilter === 'processing') return o.status === 'processing';
+      return true;
+    });
+  }, [orders, kw, orderFilter]);
 
   const order = orders.find(o => o.id === wo) || orders[0];
   const category = categories.find(c => c.id === cat) || categories[0];
   const file = files.find(f => f.id === sel) || files[0];
   const accountName = user.displayName || user.username;
-  const completedCategories = categories.filter(c => (categoryCounts[c.id] || 0) > 0).length;
-  const completionText = categories.length ? `${completedCategories}/${categories.length} 类完整` : '未配置分类';
-  const visibleToday = list.slice(0, Math.min(3, list.length));
-  const visibleWeek = list.slice(Math.min(3, list.length));
+  const currentCounts = order?.id === wo ? categoryCounts : order?.categoryFileCounts || {};
+  const completedCategories = categories.filter(c => (currentCounts[c.id] || 0) > 0).length;
+  const completion = completionOf(categories, currentCounts);
+  const completionText = categories.length ? `${completion.text} · ${completedCategories}/${categories.length}` : '未配置分类';
+  const visibleToday = list.filter(o => sameDay(o.createdAt));
+  const visibleWeek = list.filter(o => inRecentWeek(o.createdAt));
+
+  function mergeOrder(next: WorkOrderDTO) {
+    setOrders(v => {
+      const exists = v.some(o => o.id === next.id);
+      return exists ? v.map(o => (o.id === next.id ? next : o)) : [next, ...v];
+    });
+  }
+
+  async function refreshOrders(preferredId?: string) {
+    const r = await fetch('/api/work-orders', { cache: 'no-store' });
+    if (!r.ok) throw new Error('refresh work orders failed');
+    const d = await r.json();
+    const nextOrders: WorkOrderDTO[] = Array.isArray(d.workOrders) ? d.workOrders : [];
+    setOrders(nextOrders);
+    const nextId = preferredId && nextOrders.some(o => o.id === preferredId) ? preferredId : nextOrders[0]?.id || '';
+    setWo(v => (v && nextOrders.some(o => o.id === v) ? v : nextId));
+    return nextOrders;
+  }
 
   async function loadFiles(w = order?.id, c = category?.id, preferredFileId?: string) {
-    if (!w || !c) return [];
+    if (!w || !c) {
+      setFiles([]);
+      setSel('');
+      return [];
+    }
     setLoading(true);
     try {
       const r = await fetch(`/api/resource-files?workOrderId=${w}&categoryId=${c}`, { cache: 'no-store' });
@@ -94,7 +193,10 @@ export default function DashboardShell({
   }
 
   async function loadCategoryCounts(w = order?.id) {
-    if (!w) return;
+    if (!w) {
+      setCategoryCounts({});
+      return {};
+    }
     try {
       const pairs = await Promise.all(
         categories.map(async c => {
@@ -104,13 +206,18 @@ export default function DashboardShell({
           return [c.id, Array.isArray(d.files) ? d.files.length : 0] as const;
         }),
       );
-      setCategoryCounts(Object.fromEntries(pairs));
+      const counts = Object.fromEntries(pairs);
+      setCategoryCounts(counts);
+      setOrders(v => v.map(o => (o.id === w ? { ...o, categoryFileCounts: counts, totalFileCount: Object.values(counts).reduce((sum, count) => sum + count, 0) } : o)));
+      return counts;
     } catch {
       setCategoryCounts({});
+      return {};
     }
   }
 
   useEffect(() => {
+    setCategoryCounts(order?.categoryFileCounts || {});
     loadFiles(order?.id, category?.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wo, cat]);
@@ -157,10 +264,7 @@ export default function DashboardShell({
 
   async function refresh() {
     try {
-      const r = await fetch('/api/work-orders', { cache: 'no-store' });
-      if (!r.ok) throw new Error('refresh failed');
-      const d = await r.json();
-      setOrders(d.workOrders);
+      await refreshOrders(order?.id);
       await loadFiles();
       await loadCategoryCounts();
       setMsg('已刷新');
@@ -169,7 +273,53 @@ export default function DashboardShell({
     }
   }
 
-  async function confirmDelete() {
+  function openOrderModal(mode: 'create' | 'edit', target?: WorkOrderDTO) {
+    setOrderModal({ mode, order: target });
+    setOrderForm(toForm(target));
+    setOrderFormError('');
+  }
+
+  async function saveWorkOrder(e: React.FormEvent) {
+    e.preventDefault();
+    setOrderFormError('');
+    if (!orderForm.code.trim()) {
+      setOrderFormError('工单号不能为空');
+      return;
+    }
+    if (!orderForm.productName.trim()) {
+      setOrderFormError('产品名称不能为空');
+      return;
+    }
+    if (orderForm.progress < 0 || orderForm.progress > 100) {
+      setOrderFormError('进度必须在 0-100 之间');
+      return;
+    }
+
+    setOrderSaving(true);
+    try {
+      const isEdit = orderModal?.mode === 'edit' && orderModal.order;
+      const r = await fetch(isEdit ? `/api/work-orders/${orderModal.order!.id}` : '/api/work-orders', {
+        method: isEdit ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(orderForm),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setOrderFormError(d.message || '保存工单失败');
+        return;
+      }
+      mergeOrder(d.workOrder);
+      setWo(d.workOrder.id);
+      setOrderModal(null);
+      setMsg(isEdit ? '工单已更新' : '工单已新建');
+    } catch {
+      setOrderFormError('网络异常，请稍后重试');
+    } finally {
+      setOrderSaving(false);
+    }
+  }
+
+  async function confirmDeleteFile() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
@@ -186,6 +336,77 @@ export default function DashboardShell({
       setMsg('网络错误，删除失败');
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function confirmDeleteOrder() {
+    if (!orderDeleteTarget) return;
+    setDeleting(true);
+    try {
+      const r = await fetch(`/api/work-orders/${orderDeleteTarget.id}`, { method: 'DELETE' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.message || '删除工单失败');
+        return;
+      }
+      setOrders(v => v.filter(o => o.id !== orderDeleteTarget.id));
+      setOrderDeleteTarget(null);
+      setMsg('工单已删除');
+      await refreshOrders();
+    } catch {
+      setMsg('网络错误，删除工单失败');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function downloadAll() {
+    if (!order) return;
+    if (!order.totalFileCount && Object.values(currentCounts).reduce((sum, count) => sum + count, 0) === 0) {
+      setMsg('当前工单暂无可下载文件');
+      return;
+    }
+    setDownloadingAll(true);
+    setMsg('正在打包资料，请稍候');
+    try {
+      const r = await fetch(`/api/work-orders/${order.id}/download-all`);
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        setMsg(d.message || '下载全部失败');
+        return;
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${order.code}-资料包.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setMsg('资料包下载已开始');
+    } catch {
+      setMsg('下载全部失败，请稍后重试');
+    } finally {
+      setDownloadingAll(false);
+    }
+  }
+
+  async function loadLogs() {
+    setLogsOpen(true);
+    setLogsLoading(true);
+    try {
+      const r = await fetch('/api/operation-logs?limit=100', { cache: 'no-store' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.message || '操作日志加载失败');
+        return;
+      }
+      setLogs(Array.isArray(d.logs) ? d.logs : []);
+    } catch {
+      setMsg('操作日志加载失败');
+    } finally {
+      setLogsLoading(false);
     }
   }
 
@@ -265,6 +486,7 @@ export default function DashboardShell({
         <div className="top-actions">
           <button className="notice-button" type="button" aria-label="通知">◇<span /></button>
           <button className="language-button" type="button">CN</button>
+          <button className="log-button" type="button" onClick={loadLogs}>操作日志</button>
           <div className="library-wrap">
             <button className="library-button" type="button" onClick={() => setLib(!lib)}>▱ 资料库</button>
             {lib && (
@@ -297,14 +519,27 @@ export default function DashboardShell({
               <span>生产工单</span>
               <strong>{list.length} 单</strong>
             </div>
-            <button type="button" onClick={refresh}>刷新</button>
+            <button className="new-order-button" type="button" onClick={() => openOrderModal('create')}>新建工单</button>
+          </div>
+          <div className="panel-search">
+            <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索工单号 / 产品名称" />
+          </div>
+          <div className="filter-tabs">
+            {[
+              ['all', '全部'],
+              ['today', '今日'],
+              ['week', '本周'],
+              ['done', '已完成'],
+              ['processing', '进行中'],
+            ].map(([key, label]) => (
+              <button key={key} className={orderFilter === key ? 'active' : ''} type="button" onClick={() => setOrderFilter(key)}>{label}</button>
+            ))}
           </div>
           <div className="order-stats">
             <div><span>今日订单</span><strong>{visibleToday.length}</strong></div>
-            <div><span>本周订单</span><strong>{list.length}</strong></div>
+            <div><span>本周订单</span><strong>{visibleWeek.length}</strong></div>
           </div>
-          <OrderGroup title="今日订单" orders={visibleToday} selected={order?.id} choose={setWo} />
-          <OrderGroup title="本周订单" orders={visibleWeek} selected={order?.id} choose={setWo} />
+          <OrderGroup title="工单列表" orders={list} selected={order?.id} choose={setWo} categories={categories} />
           {!list.length && <div className="empty-orders large">未找到匹配工单</div>}
         </aside>
 
@@ -314,12 +549,13 @@ export default function DashboardShell({
             <span>{completionText}</span>
           </div>
           {categories.map(c => {
-            const count = categoryCounts[c.id] || 0;
+            const count = currentCounts[c.id] || 0;
+            const required = requiredCategoryCodes.has(c.code);
             return (
               <button key={c.id} className={c.id === category?.id ? 'active' : ''} type="button" onClick={() => setCat(c.id)}>
                 <span className="category-mark">{categoryIcons[c.code] || c.name.slice(0, 1)}</span>
                 <b>{c.name}</b>
-                <i className={count ? 'state-dot ok' : 'state-dot'} />
+                <i className={count ? 'state-dot ok' : required ? 'state-dot warn' : 'state-dot'} />
                 <em>{count}</em>
               </button>
             );
@@ -331,7 +567,7 @@ export default function DashboardShell({
         </nav>
 
         <section className="main-card">
-          <div className="status-title-row">
+          <div className="status-title-row enhanced">
             <div className="status-title">
               <span className="doc-icon">▤</span>
               <div>
@@ -339,12 +575,16 @@ export default function DashboardShell({
                 <small>{order?.productName || '请选择工单'}</small>
               </div>
             </div>
-            <div className="current-order">
-              <span>{category?.name || '资料分类'}</span>
-              <b>{files.length ? '资料完整' : '待上传'}</b>
+            <div className={`completion-pill ${completion.key}`}>{completion.text}</div>
+            <div className="title-actions">
+              <button type="button" disabled={!order} onClick={() => order && openOrderModal('edit', order)}>编辑</button>
+              <button type="button" disabled={!order} onClick={() => order && setOrderDeleteTarget(order)}>删除</button>
+              <button className="download-all-button" type="button" disabled={!order || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
+              <button className="refresh-button" type="button" onClick={refresh}>↻ 刷新</button>
             </div>
-            <button className="refresh-button" type="button" onClick={refresh}>↻ 刷新</button>
           </div>
+
+          {order?.remark && <div className="order-remark">备注：{order.remark}</div>}
 
           <div className="content-grid">
             <section className="preview-card">
@@ -375,8 +615,8 @@ export default function DashboardShell({
                     <strong>当前分类暂无文件</strong>
                     <p>上传后所有登录账号都可以共享查看，文件将保存到对象存储。</p>
                     <div className="empty-actions">
-                      <button type="button" disabled={uploading} onClick={() => pdf.current?.click()}>上传 PDF</button>
-                      <button type="button" disabled={uploading} onClick={() => img.current?.click()}>上传图片</button>
+                      <button type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>上传 PDF</button>
+                      <button type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>上传图片</button>
                     </div>
                   </div>
                 )}
@@ -403,6 +643,7 @@ export default function DashboardShell({
                 </div>
                 <Info label="文件名" value={file?.originalName || '-'} />
                 <Info label="文件类型" value={file ? fileTypeText[file.fileType] || file.fileType.toUpperCase() : '-'} />
+                <Info label="文件版本" value={file?.version || 'V1.0'} />
                 <Info label="文件大小" value={file ? bytes(file.fileSize) : '-'} />
                 <Info label="上传人" value={file?.uploadedBy || accountName} />
                 <Info label="上传时间" value={file ? dt(file.createdAt) : '-'} />
@@ -413,16 +654,16 @@ export default function DashboardShell({
               <section className="action-card">
                 <input ref={pdf} hidden type="file" accept="application/pdf,.pdf" onChange={e => upload(e.target.files?.[0])} />
                 <input ref={img} hidden type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" capture="environment" onChange={e => upload(e.target.files?.[0])} />
-                <button className="upload-action primary" type="button" disabled={uploading} onClick={() => pdf.current?.click()}>
+                <button className="upload-action primary" type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>
                   <span>⇧</span><b>{uploading ? '上传中，请稍候' : '上传 PDF'}</b>
                 </button>
-                <button className="upload-action" type="button" disabled={uploading} onClick={() => img.current?.click()}>
+                <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>
                   <span>▣</span><b>上传图片 / 拍照</b>
                 </button>
                 <div className="secondary-actions">
                   <a className={!file ? 'disabled' : ''} href={file?.downloadUrl || '#'} target="_blank">下载</a>
                   <button type="button" disabled={!file} onClick={() => file && setDeleteTarget(file)}>删除</button>
-                  <button type="button" onClick={copy}>复制链接</button>
+                  <button type="button" disabled={!order} onClick={copy}>复制链接</button>
                 </div>
               </section>
             </aside>
@@ -432,18 +673,88 @@ export default function DashboardShell({
 
       {msg && <div className="status-toast">{msg}</div>}
 
+      {orderModal && (
+        <div className="modal-backdrop" role="presentation">
+          <form className="work-order-dialog" onSubmit={saveWorkOrder}>
+            <div className="dialog-title">
+              <strong>{orderModal.mode === 'create' ? '新建工单' : '编辑工单'}</strong>
+              <button type="button" onClick={() => setOrderModal(null)}>×</button>
+            </div>
+            <div className="form-grid">
+              <label>工单号<input value={orderForm.code} disabled={orderModal.mode === 'edit'} onChange={e => setOrderForm(v => ({ ...v, code: e.target.value }))} /></label>
+              <label>产品名称<input value={orderForm.productName} onChange={e => setOrderForm(v => ({ ...v, productName: e.target.value }))} /></label>
+              <label>阶段<select value={orderForm.stage} onChange={e => setOrderForm(v => ({ ...v, stage: e.target.value }))}><option>前端</option><option>后端</option><option>未发图</option></select></label>
+              <label>优先级<select value={orderForm.priority} onChange={e => setOrderForm(v => ({ ...v, priority: e.target.value }))}><option value="urgent">紧急</option><option value="high">高</option><option value="normal">一般</option></select></label>
+              <label>状态<select value={orderForm.status} onChange={e => setOrderForm(v => ({ ...v, status: e.target.value }))}><option value="pending">待处理</option><option value="processing">进行中</option><option value="done">已完成</option></select></label>
+              <label>进度<input type="number" min={0} max={100} value={orderForm.progress} onChange={e => setOrderForm(v => ({ ...v, progress: Number(e.target.value) }))} /></label>
+              <label className="wide">备注<textarea value={orderForm.remark} onChange={e => setOrderForm(v => ({ ...v, remark: e.target.value }))} /></label>
+            </div>
+            {orderFormError && <div className="form-error">{orderFormError}</div>}
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setOrderModal(null)}>取消</button>
+              <button className="primary-button" type="submit" disabled={orderSaving}>{orderSaving ? '保存中...' : '保存'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {logsOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="logs-dialog" role="dialog" aria-modal="true" aria-label="操作日志">
+            <div className="dialog-title">
+              <strong>操作日志</strong>
+              <button type="button" onClick={() => setLogsOpen(false)}>×</button>
+            </div>
+            {logsLoading ? (
+              <div className="empty-list">日志加载中...</div>
+            ) : (
+              <div className="logs-table">
+                <div className="logs-head"><span>时间</span><span>用户</span><span>操作</span><span>目标</span><span>详情摘要</span></div>
+                {logs.map(log => (
+                  <div className="logs-row" key={log.id}>
+                    <span>{dt(log.createdAt)}</span>
+                    <span>{log.user}</span>
+                    <span>{actionText[log.action] || log.action}</span>
+                    <span>{log.targetType || '-'}<small>{log.targetId || ''}</small></span>
+                    <span>{log.detailSummary || '-'}</span>
+                  </div>
+                ))}
+                {!logs.length && <div className="empty-list">暂无操作日志</div>}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
       {deleteTarget && (
         <div className="modal-backdrop" role="presentation">
           <section className="confirm-dialog" role="dialog" aria-modal="true" aria-label="删除确认">
             <div className="dialog-title">
-              <strong>确认软删除</strong>
+              <strong>确认软删除文件</strong>
               <button type="button" onClick={() => setDeleteTarget(null)}>×</button>
             </div>
             <p>文件将从当前资料列表移除，历史数据仍保留在数据库记录中。</p>
             <div className="delete-file-name">{deleteTarget.originalName}</div>
             <div className="dialog-actions">
               <button type="button" onClick={() => setDeleteTarget(null)}>取消</button>
-              <button className="danger-button" type="button" disabled={deleting} onClick={confirmDelete}>{deleting ? '删除中...' : '确认删除'}</button>
+              <button className="danger-button" type="button" disabled={deleting} onClick={confirmDeleteFile}>{deleting ? '删除中...' : '确认删除'}</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {orderDeleteTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="confirm-dialog" role="dialog" aria-modal="true" aria-label="删除工单确认">
+            <div className="dialog-title">
+              <strong>确认删除工单</strong>
+              <button type="button" onClick={() => setOrderDeleteTarget(null)}>×</button>
+            </div>
+            <p>仅软删除工单记录，S3 对象存储中的文件不会被删除。</p>
+            <div className="delete-file-name">{orderDeleteTarget.code} · {orderDeleteTarget.productName}</div>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setOrderDeleteTarget(null)}>取消</button>
+              <button className="danger-button" type="button" disabled={deleting} onClick={confirmDeleteOrder}>{deleting ? '删除中...' : '确认删除'}</button>
             </div>
           </section>
         </div>
@@ -476,33 +787,39 @@ function OrderGroup({
   orders,
   selected,
   choose,
+  categories,
 }: {
   title: string;
   orders: WorkOrderDTO[];
   selected?: string;
   choose: (id: string) => void;
+  categories: ResourceCategoryDTO[];
 }) {
   return (
     <section className="order-group">
       <h2><span>▣</span>{title}<em>{orders.length}</em></h2>
-      {orders.map(o => (
-        <button key={o.id} className={o.id === selected ? 'order-card active' : 'order-card'} type="button" onClick={() => choose(o.id)}>
-          <div className="order-topline">
-            <strong>{o.code}</strong>
-            <span className={`tag ${o.priority === 'urgent' ? 'tag-danger' : o.priority === 'high' ? 'tag-warning' : 'tag-blue'}`}>{priorityText[o.priority] || '一般'}</span>
-          </div>
-          <p>{o.productName}</p>
-          <div className="order-progress">
-            <span className={`stage ${o.stage === '前端' ? 'stage-blue' : o.stage === '后端' ? 'stage-green' : 'stage-gray'}`}>{o.stage}</span>
-            <b>{o.progress ? `${o.progress}%` : '待开始'}</b>
-            <i><em style={{ width: `${Math.min(Math.max(o.progress, 0), 100)}%` }} /></i>
-          </div>
-          <div className="order-status">
-            <span>{o.status === 'done' ? '已完成' : o.status === 'paused' ? '暂停' : '进行中'}</span>
-            <em>›</em>
-          </div>
-        </button>
-      ))}
+      {orders.map(o => {
+        const completion = completionOf(categories, o.categoryFileCounts || {});
+        return (
+          <button key={o.id} className={o.id === selected ? 'order-card active' : 'order-card'} type="button" onClick={() => choose(o.id)}>
+            <div className="order-topline">
+              <strong>{o.code}</strong>
+              <span className={`tag ${o.priority === 'urgent' ? 'tag-danger' : o.priority === 'high' ? 'tag-warning' : 'tag-blue'}`}>{priorityText[o.priority] || '一般'}</span>
+            </div>
+            <p>{o.productName}</p>
+            <div className="order-progress">
+              <span className={`stage ${o.stage === '前端' ? 'stage-blue' : o.stage === '后端' ? 'stage-green' : 'stage-gray'}`}>{o.stage}</span>
+              <b>{o.progress ? `${o.progress}%` : '0%'}</b>
+              <i><em style={{ width: `${Math.min(Math.max(o.progress, 0), 100)}%` }} /></i>
+            </div>
+            <div className="order-status">
+              <span>{statusText[o.status] || o.status}</span>
+              <strong className={`completion-chip ${completion.key}`}>{completion.text}</strong>
+              <em>›</em>
+            </div>
+          </button>
+        );
+      })}
       {!orders.length && <div className="empty-orders">暂无工单</div>}
     </section>
   );

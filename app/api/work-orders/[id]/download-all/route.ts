@@ -1,0 +1,81 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { Readable } from 'stream';
+import yazl from 'yazl';
+import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { logOp } from '@/lib/logs';
+import { prisma } from '@/lib/prisma';
+import { getObjectStream } from '@/lib/s3';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+function safeZipName(value: string) {
+  return value.normalize('NFKC').replace(/[\\/:*?"<>|#%{}^~`\[\]]/g, '_').replace(/\s+/g, '_').slice(0, 140) || 'file';
+}
+
+function uniquePath(base: string, used: Set<string>) {
+  if (!used.has(base)) {
+    used.add(base);
+    return base;
+  }
+  const dot = base.lastIndexOf('.');
+  const name = dot > -1 ? base.slice(0, dot) : base;
+  const ext = dot > -1 ? base.slice(dot) : '';
+  let index = 2;
+  while (used.has(`${name}-${index}${ext}`)) index += 1;
+  const next = `${name}-${index}${ext}`;
+  used.add(next);
+  return next;
+}
+
+export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const user = await requireUser();
+    const workOrder = await prisma.workOrder.findFirst({
+      where: { id: params.id, deletedAt: null },
+      include: {
+        resourceFiles: {
+          where: { deletedAt: null, status: 'uploaded' },
+          include: { category: { select: { name: true, sortOrder: true } } },
+          orderBy: [{ category: { sortOrder: 'asc' } }, { createdAt: 'asc' }],
+        },
+      },
+    });
+
+    if (!workOrder) return NextResponse.json({ message: '工单不存在' }, { status: 404 });
+    if (workOrder.resourceFiles.length === 0) return NextResponse.json({ message: '当前工单暂无可下载文件' }, { status: 400 });
+
+    const zip = new yazl.ZipFile();
+    const used = new Set<string>();
+
+    for (const file of workOrder.resourceFiles) {
+      const folder = safeZipName(file.category.name);
+      const filename = safeZipName(file.originalName);
+      const path = uniquePath(`${folder}/${filename}`, used);
+      zip.addReadStream(await getObjectStream(file.objectKey), path, { mtime: file.createdAt });
+    }
+    zip.end();
+
+    await logOp({
+      userId: user.id,
+      action: 'download_work_order_package',
+      targetType: 'work_order',
+      targetId: workOrder.id,
+      detail: { code: workOrder.code, fileCount: workOrder.resourceFiles.length },
+    });
+
+    const filename = `${workOrder.code}-资料包.zip`;
+    const body = Readable.toWeb(zip.outputStream as unknown as Readable) as unknown as BodyInit;
+    return new Response(body, {
+      headers: {
+        'Content-Type': 'application/zip',
+        'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        'Cache-Control': 'no-store',
+      },
+    });
+  } catch (e) {
+    if (e instanceof UnauthorizedError) return unauthorized();
+    console.error(e);
+    return NextResponse.json({ message: '下载全部失败' }, { status: 500 });
+  }
+}
