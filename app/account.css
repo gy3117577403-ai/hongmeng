@@ -1,0 +1,145 @@
+.user-wrap {
+  position: relative;
+}
+
+.user-button {
+  height: 50px;
+  max-width: 190px;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  color: #424956;
+  box-shadow: var(--shadow-soft);
+}
+
+.user-button span {
+  color: var(--orange);
+  font-size: 22px;
+}
+
+.user-button b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+
+.user-button em {
+  color: #8b93a1;
+  font-style: normal;
+}
+
+.user-menu {
+  position: absolute;
+  top: 58px;
+  right: 0;
+  z-index: 8;
+  width: 150px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.user-menu button {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 10px;
+  background: #fff;
+  color: #424956;
+  text-align: left;
+}
+
+.user-menu button:hover {
+  color: var(--orange);
+  background: var(--orange-soft);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(31, 35, 41, .34);
+}
+
+.password-dialog {
+  width: min(420px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.dialog-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2px;
+}
+
+.dialog-title strong {
+  font-size: 20px;
+}
+
+.dialog-title button {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 10px;
+  background: #f4f5f7;
+  color: #687080;
+  font-size: 22px;
+}
+
+.password-dialog label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.password-dialog input {
+  height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  outline: none;
+}
+
+.password-dialog input:focus {
+  border-color: var(--orange);
+  box-shadow: 0 0 0 4px var(--orange-soft);
+}
+
+.dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.dialog-actions button {
+  height: 46px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: #fff;
+  color: #424956;
+}
+
+.dialog-actions .primary-button {
+  border: none;
+  color: #fff;
+}
