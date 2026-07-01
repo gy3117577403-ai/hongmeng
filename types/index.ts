@@ -20,7 +20,11 @@ export type ResourceFileDTO = {
   id: string;
   workOrderId: string;
   categoryId: string;
+  categoryName?: string | null;
+  categoryCode?: string | null;
   originalName: string;
+  displayName?: string | null;
+  remark?: string | null;
   mimeType: string;
   fileType: string;
   fileSize: number;

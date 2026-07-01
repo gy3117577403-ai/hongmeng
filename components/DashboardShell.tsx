@@ -14,6 +14,8 @@ type WorkOrderForm = {
 };
 
 type WorkOrderModal = { mode: 'create' | 'edit'; order?: WorkOrderDTO } | null;
+type UploadJob = { id: string; name: string; status: 'waiting' | 'uploading' | 'success' | 'failed'; message?: string };
+type FileForm = { displayName: string; remark: string };
 
 function bytes(n: number) {
   if (n < 1024) return `${n} B`;
@@ -31,7 +33,7 @@ function dt(v: string, withTime = true) {
 }
 
 function shortName(name: string) {
-  return name.length > 20 ? `${name.slice(0, 10)}...${name.slice(-7)}` : name;
+  return name.length > 22 ? `${name.slice(0, 11)}...${name.slice(-8)}` : name;
 }
 
 function sameDay(value: string) {
@@ -42,8 +44,16 @@ function sameDay(value: string) {
 
 function inRecentWeek(value: string) {
   const d = new Date(value).getTime();
-  if (Number.isNaN(d)) return false;
-  return d >= Date.now() - 6 * 24 * 60 * 60 * 1000;
+  return Number.isFinite(d) && d >= Date.now() - 6 * 24 * 60 * 60 * 1000;
+}
+
+function displayFileName(file?: ResourceFileDTO | null) {
+  return file?.displayName || file?.originalName || '-';
+}
+
+function fileExtOk(file: File) {
+  const ext = file.name.split('.').pop()?.toLowerCase();
+  return !!ext && ['pdf', 'jpg', 'jpeg', 'png'].includes(ext);
 }
 
 const priorityText: Record<string, string> = { urgent: '紧急', high: '高', normal: '一般' };
@@ -59,11 +69,24 @@ const actionText: Record<string, string> = {
   delete_work_order: '删除工单',
   download: '下载文件',
   download_work_order_package: '下载资料包',
+  update_resource_file: '编辑文件信息',
 };
 const categoryIcons: Record<string, string> = { drawing: '原', sop: 'SOP', product: '成', material: '辅', notice: '注' };
-const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG' };
+const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG', jpeg: 'JPG' };
 const requiredCategoryCodes = new Set(['drawing', 'sop', 'product']);
 const emptyForm: WorkOrderForm = { code: '', productName: '', stage: '未发图', priority: 'normal', status: 'pending', progress: 0, remark: '' };
+const logFilters = [
+  ['all', '全部'],
+  ['upload', '上传'],
+  ['delete', '删除'],
+  ['download', '下载'],
+  ['download_all', '下载全部'],
+  ['create_work_order', '新建工单'],
+  ['update_work_order', '编辑工单'],
+  ['delete_work_order', '删除工单'],
+  ['change_password', '修改密码'],
+  ['update_resource_file', '编辑文件信息'],
+];
 
 function completionOf(categories: ResourceCategoryDTO[], counts: Record<string, number>) {
   const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
@@ -100,10 +123,14 @@ export default function DashboardShell({
   const [wo, setWo] = useState(initialWorkOrders[0]?.id || '');
   const [cat, setCat] = useState(categories[0]?.id || '');
   const [files, setFiles] = useState<ResourceFileDTO[]>([]);
+  const [allFiles, setAllFiles] = useState<ResourceFileDTO[]>([]);
+  const [managerOpen, setManagerOpen] = useState(false);
+  const [managerCategory, setManagerCategory] = useState('all');
   const [sel, setSel] = useState('');
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>(initialWorkOrders[0]?.categoryFileCounts || {});
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [msg, setMsg] = useState('');
   const [lib, setLib] = useState(false);
@@ -119,9 +146,14 @@ export default function DashboardShell({
   const [orderForm, setOrderForm] = useState<WorkOrderForm>(emptyForm);
   const [orderFormError, setOrderFormError] = useState('');
   const [orderSaving, setOrderSaving] = useState(false);
+  const [fileEditTarget, setFileEditTarget] = useState<ResourceFileDTO | null>(null);
+  const [fileForm, setFileForm] = useState<FileForm>({ displayName: '', remark: '' });
+  const [fileFormError, setFileFormError] = useState('');
+  const [fileSaving, setFileSaving] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logs, setLogs] = useState<OperationLogDTO[]>([]);
+  const [logFilter, setLogFilter] = useState('all');
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
@@ -142,6 +174,7 @@ export default function DashboardShell({
   const order = orders.find(o => o.id === wo) || orders[0];
   const category = categories.find(c => c.id === cat) || categories[0];
   const file = files.find(f => f.id === sel) || files[0];
+  const latestFileId = files[0]?.id || '';
   const accountName = user.displayName || user.username;
   const currentCounts = order?.id === wo ? categoryCounts : order?.categoryFileCounts || {};
   const completedCategories = categories.filter(c => (currentCounts[c.id] || 0) > 0).length;
@@ -149,12 +182,18 @@ export default function DashboardShell({
   const completionText = categories.length ? `${completion.text} · ${completedCategories}/${categories.length}` : '未配置分类';
   const visibleToday = list.filter(o => sameDay(o.createdAt));
   const visibleWeek = list.filter(o => inRecentWeek(o.createdAt));
+  const managerFiles = managerCategory === 'all' ? allFiles : allFiles.filter(f => f.categoryId === managerCategory);
 
   function mergeOrder(next: WorkOrderDTO) {
     setOrders(v => {
       const exists = v.some(o => o.id === next.id);
       return exists ? v.map(o => (o.id === next.id ? next : o)) : [next, ...v];
     });
+  }
+
+  function mergeFile(next: ResourceFileDTO) {
+    setFiles(v => v.map(f => (f.id === next.id ? next : f)));
+    setAllFiles(v => v.map(f => (f.id === next.id ? next : f)));
   }
 
   async function refreshOrders(preferredId?: string) {
@@ -192,23 +231,35 @@ export default function DashboardShell({
     }
   }
 
+  async function loadAllFiles(w = order?.id) {
+    if (!w) {
+      setAllFiles([]);
+      return [];
+    }
+    try {
+      const r = await fetch(`/api/resource-files?workOrderId=${w}`, { cache: 'no-store' });
+      if (!r.ok) throw new Error('load all files failed');
+      const d = await r.json();
+      const nextFiles: ResourceFileDTO[] = Array.isArray(d.files) ? d.files : [];
+      setAllFiles(nextFiles);
+      return nextFiles;
+    } catch {
+      setMsg('上传管理加载失败');
+      return [];
+    }
+  }
+
   async function loadCategoryCounts(w = order?.id) {
     if (!w) {
       setCategoryCounts({});
       return {};
     }
     try {
-      const pairs = await Promise.all(
-        categories.map(async c => {
-          const r = await fetch(`/api/resource-files?workOrderId=${w}&categoryId=${c.id}`, { cache: 'no-store' });
-          if (!r.ok) return [c.id, 0] as const;
-          const d = await r.json();
-          return [c.id, Array.isArray(d.files) ? d.files.length : 0] as const;
-        }),
-      );
-      const counts = Object.fromEntries(pairs);
+      const all = await loadAllFiles(w);
+      const counts: Record<string, number> = {};
+      for (const item of all) counts[item.categoryId] = (counts[item.categoryId] || 0) + 1;
       setCategoryCounts(counts);
-      setOrders(v => v.map(o => (o.id === w ? { ...o, categoryFileCounts: counts, totalFileCount: Object.values(counts).reduce((sum, count) => sum + count, 0) } : o)));
+      setOrders(v => v.map(o => (o.id === w ? { ...o, categoryFileCounts: counts, totalFileCount: all.length } : o)));
       return counts;
     } catch {
       setCategoryCounts({});
@@ -219,6 +270,7 @@ export default function DashboardShell({
   useEffect(() => {
     setCategoryCounts(order?.categoryFileCounts || {});
     loadFiles(order?.id, category?.id);
+    loadAllFiles(order?.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wo, cat]);
 
@@ -227,39 +279,62 @@ export default function DashboardShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wo]);
 
-  async function upload(f?: File | null) {
-    if (!f || !order || !category) return;
-    const ext = f.name.split('.').pop()?.toLowerCase();
-    if (!ext || !['pdf', 'jpg', 'jpeg', 'png'].includes(ext)) {
-      setMsg('格式不支持，仅支持 PDF、JPG、PNG');
+  async function uploadMany(fileList: File[]) {
+    if (!order) {
+      setMsg('未选择工单');
       return;
     }
-
-    setUploading(true);
-    setMsg('上传中，请稍候');
-    const fd = new FormData();
-    fd.append('file', f);
-    fd.append('workOrderId', order.id);
-    fd.append('categoryId', category.id);
-    fd.append('version', 'V1.0');
-
-    try {
-      const r = await fetch('/api/resource-files/upload', { method: 'POST', body: fd });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        setMsg(d.message || '上传失败，请稍后重试');
-        return;
-      }
-      await loadFiles(order.id, category.id, d.file?.id);
-      await loadCategoryCounts(order.id);
-      setMsg('上传成功');
-    } catch {
-      setMsg('上传失败，对象存储或网络异常');
-    } finally {
-      setUploading(false);
-      if (pdf.current) pdf.current.value = '';
-      if (img.current) img.current.value = '';
+    if (!category) {
+      setMsg('未选择分类');
+      return;
     }
+    if (!fileList.length) return;
+    if (uploading) return;
+
+    const jobs = fileList.map((f, index) => ({
+      id: `${Date.now()}-${index}`,
+      name: f.name,
+      status: fileExtOk(f) ? 'waiting' as const : 'failed' as const,
+      message: fileExtOk(f) ? '等待上传' : '文件格式不支持',
+    }));
+    setUploadJobs(jobs);
+    setUploading(true);
+    let ok = 0;
+    let failed = jobs.filter(j => j.status === 'failed').length;
+    let lastSuccessId = '';
+
+    for (let i = 0; i < fileList.length; i += 1) {
+      const f = fileList[i];
+      const job = jobs[i];
+      if (job.status === 'failed') continue;
+      setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'uploading', message: '上传中' } : j)));
+      const fd = new FormData();
+      fd.append('file', f);
+      fd.append('workOrderId', order.id);
+      fd.append('categoryId', category.id);
+      try {
+        const r = await fetch('/api/resource-files/upload', { method: 'POST', body: fd });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          failed += 1;
+          setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'failed', message: d.message || '上传失败' } : j)));
+          continue;
+        }
+        ok += 1;
+        lastSuccessId = d.file?.id || lastSuccessId;
+        setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'success', message: d.file?.version ? `上传成功 · ${d.file.version}` : '上传成功' } : j)));
+      } catch {
+        failed += 1;
+        setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'failed', message: '网络异常或对象存储异常' } : j)));
+      }
+    }
+
+    await loadFiles(order.id, category.id, lastSuccessId || undefined);
+    await loadCategoryCounts(order.id);
+    setMsg(`批量上传完成：成功 ${ok} 个，失败 ${failed} 个`);
+    setUploading(false);
+    if (pdf.current) pdf.current.value = '';
+    if (img.current) img.current.value = '';
   }
 
   async function refresh() {
@@ -282,18 +357,9 @@ export default function DashboardShell({
   async function saveWorkOrder(e: React.FormEvent) {
     e.preventDefault();
     setOrderFormError('');
-    if (!orderForm.code.trim()) {
-      setOrderFormError('工单号不能为空');
-      return;
-    }
-    if (!orderForm.productName.trim()) {
-      setOrderFormError('产品名称不能为空');
-      return;
-    }
-    if (orderForm.progress < 0 || orderForm.progress > 100) {
-      setOrderFormError('进度必须在 0-100 之间');
-      return;
-    }
+    if (!orderForm.code.trim()) return setOrderFormError('工单号不能为空');
+    if (!orderForm.productName.trim()) return setOrderFormError('产品名称不能为空');
+    if (orderForm.progress < 0 || orderForm.progress > 100) return setOrderFormError('进度必须在 0-100 之间');
 
     setOrderSaving(true);
     try {
@@ -319,8 +385,41 @@ export default function DashboardShell({
     }
   }
 
+  function openFileEdit(target: ResourceFileDTO) {
+    setFileEditTarget(target);
+    setFileForm({ displayName: target.displayName || '', remark: target.remark || '' });
+    setFileFormError('');
+  }
+
+  async function saveFileInfo(e: React.FormEvent) {
+    e.preventDefault();
+    if (!fileEditTarget) return;
+    setFileSaving(true);
+    setFileFormError('');
+    try {
+      const r = await fetch(`/api/resource-files/${fileEditTarget.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fileForm),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setFileFormError(d.message || '文件信息保存失败');
+        return;
+      }
+      mergeFile(d.file);
+      setFileEditTarget(null);
+      setMsg('文件信息已保存');
+    } catch {
+      setFileFormError('网络异常，请稍后重试');
+    } finally {
+      setFileSaving(false);
+    }
+  }
+
   async function confirmDeleteFile() {
     if (!deleteTarget) return;
+    const deletedCategoryId = deleteTarget.categoryId;
     setDeleting(true);
     try {
       const r = await fetch(`/api/resource-files/${deleteTarget.id}/delete`, { method: 'POST' });
@@ -330,7 +429,7 @@ export default function DashboardShell({
       }
       setMsg('删除成功');
       setDeleteTarget(null);
-      await loadFiles();
+      await loadFiles(order?.id, deletedCategoryId);
       await loadCategoryCounts();
     } catch {
       setMsg('网络错误，删除失败');
@@ -392,11 +491,23 @@ export default function DashboardShell({
     }
   }
 
-  async function loadLogs() {
+  async function selectManagedFile(target: ResourceFileDTO) {
+    setManagerOpen(false);
+    setCat(target.categoryId);
+    await loadFiles(target.workOrderId, target.categoryId, target.id);
+  }
+
+  async function openUploadManager() {
+    setManagerOpen(true);
+    await loadAllFiles(order?.id);
+  }
+
+  async function loadLogs(nextFilter = logFilter) {
     setLogsOpen(true);
     setLogsLoading(true);
+    setLogFilter(nextFilter);
     try {
-      const r = await fetch('/api/operation-logs?limit=100', { cache: 'no-store' });
+      const r = await fetch(`/api/operation-logs?limit=100&action=${encodeURIComponent(nextFilter)}`, { cache: 'no-store' });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
         setMsg(d.message || '操作日志加载失败');
@@ -436,19 +547,9 @@ export default function DashboardShell({
   async function changePassword(e: React.FormEvent) {
     e.preventDefault();
     setPasswordError('');
-
-    if (!passwordForm.currentPassword) {
-      setPasswordError('当前密码不能为空');
-      return;
-    }
-    if (passwordForm.newPassword.length < 6) {
-      setPasswordError('新密码格式不正确，至少 6 位');
-      return;
-    }
-    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setPasswordError('两次密码不一致');
-      return;
-    }
+    if (!passwordForm.currentPassword) return setPasswordError('当前密码不能为空');
+    if (passwordForm.newPassword.length < 6) return setPasswordError('新密码格式不正确，至少 6 位');
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) return setPasswordError('两次密码不一致');
 
     setPasswordSaving(true);
     try {
@@ -486,7 +587,7 @@ export default function DashboardShell({
         <div className="top-actions">
           <button className="notice-button" type="button" aria-label="通知">◇<span /></button>
           <button className="language-button" type="button">CN</button>
-          <button className="log-button" type="button" onClick={loadLogs}>操作日志</button>
+          <button className="log-button" type="button" onClick={() => loadLogs('all')}>操作日志</button>
           <div className="library-wrap">
             <button className="library-button" type="button" onClick={() => setLib(!lib)}>▱ 资料库</button>
             {lib && (
@@ -552,7 +653,7 @@ export default function DashboardShell({
             const count = currentCounts[c.id] || 0;
             const required = requiredCategoryCodes.has(c.code);
             return (
-              <button key={c.id} className={c.id === category?.id ? 'active' : ''} type="button" onClick={() => setCat(c.id)}>
+              <button key={c.id} className={!managerOpen && c.id === category?.id ? 'active' : ''} type="button" onClick={() => { setManagerOpen(false); setCat(c.id); }}>
                 <span className="category-mark">{categoryIcons[c.code] || c.name.slice(0, 1)}</span>
                 <b>{c.name}</b>
                 <i className={count ? 'state-dot ok' : required ? 'state-dot warn' : 'state-dot'} />
@@ -560,9 +661,9 @@ export default function DashboardShell({
               </button>
             );
           })}
-          <button className="upload-manage" type="button" disabled={uploading} onClick={() => pdf.current?.click()}>
+          <button className={managerOpen ? 'upload-manage active' : 'upload-manage'} type="button" disabled={!order} onClick={openUploadManager}>
             <span className="category-mark">↑</span>
-            <b>{uploading ? '上传中' : '上传管理'}</b>
+            <b>上传管理</b>
           </button>
         </nav>
 
@@ -571,14 +672,14 @@ export default function DashboardShell({
             <div className="status-title">
               <span className="doc-icon">▤</span>
               <div>
-                <strong>{order?.code || '暂无工单'}</strong>
-                <small>{order?.productName || '请选择工单'}</small>
+                <strong>{managerOpen ? '上传管理' : order?.code || '暂无工单'}</strong>
+                <small>{managerOpen ? `${order?.code || '-'} · 全部资料` : order?.productName || '请选择工单'}</small>
               </div>
             </div>
             <div className={`completion-pill ${completion.key}`}>{completion.text}</div>
             <div className="title-actions">
-              <button type="button" disabled={!order} onClick={() => order && openOrderModal('edit', order)}>编辑</button>
-              <button type="button" disabled={!order} onClick={() => order && setOrderDeleteTarget(order)}>删除</button>
+              <button type="button" disabled={!order} onClick={() => order && openOrderModal('edit', order)}>编辑工单</button>
+              <button type="button" disabled={!order} onClick={() => order && setOrderDeleteTarget(order)}>删除工单</button>
               <button className="download-all-button" type="button" disabled={!order || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
               <button className="refresh-button" type="button" onClick={refresh}>↻ 刷新</button>
             </div>
@@ -586,88 +687,108 @@ export default function DashboardShell({
 
           {order?.remark && <div className="order-remark">备注：{order.remark}</div>}
 
-          <div className="content-grid">
-            <section className="preview-card">
-              <div className="preview-toolbar">
-                <div>
-                  <span className={file?.fileType === 'pdf' ? 'file-type mini pdf' : 'file-type mini img'}>{file ? fileTypeText[file.fileType] || file.fileType.toUpperCase() : '空'}</span>
-                  <strong>{file?.originalName || '当前分类暂无文件'}</strong>
-                </div>
-                <div className="preview-meta">
-                  {file ? <span className="ok-dot">● 已就绪</span> : <span className="missing-dot">● 缺文件</span>}
-                  {file && <span>{bytes(file.fileSize)}</span>}
-                  {file && <span>{dt(file.createdAt)}</span>}
-                </div>
-              </div>
-
-              <div className="preview-stage">
-                {loading ? (
-                  <div className="preview-loading">
-                    <span />
-                    <strong>资料加载中</strong>
-                    <p>正在读取当前分类文件</p>
+          {managerOpen ? (
+            <UploadManager
+              files={managerFiles}
+              categories={categories}
+              managerCategory={managerCategory}
+              setManagerCategory={setManagerCategory}
+              selectFile={selectManagedFile}
+              openFileEdit={openFileEdit}
+              setDeleteTarget={setDeleteTarget}
+            />
+          ) : (
+            <div className="content-grid">
+              <section className="preview-card">
+                <div className="preview-toolbar">
+                  <div>
+                    <span className={file?.fileType === 'pdf' ? 'file-type mini pdf' : 'file-type mini img'}>{file ? fileTypeText[file.fileType] || file.fileType.toUpperCase() : '空'}</span>
+                    <strong>{file ? displayFileName(file) : '当前分类暂无文件'}</strong>
                   </div>
-                ) : file ? (
-                  file.fileType === 'pdf' ? <iframe src={file.viewUrl} title={file.originalName} /> : <img src={file.viewUrl} alt={file.originalName} />
-                ) : (
-                  <div className="empty-preview">
-                    <div className="empty-illustration">▤</div>
-                    <strong>当前分类暂无文件</strong>
-                    <p>上传后所有登录账号都可以共享查看，文件将保存到对象存储。</p>
-                    <div className="empty-actions">
-                      <button type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>上传 PDF</button>
-                      <button type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>上传图片</button>
+                  <div className="preview-meta">
+                    {file ? <span className="ok-dot">● 已就绪</span> : <span className="missing-dot">● 缺文件</span>}
+                    {file && <span>{file.version || 'V1.0'}</span>}
+                    {file && <span>{bytes(file.fileSize)}</span>}
+                    {file && <span>{dt(file.createdAt)}</span>}
+                  </div>
+                </div>
+
+                <div className="preview-stage">
+                  {loading ? (
+                    <div className="preview-loading">
+                      <span />
+                      <strong>资料加载中</strong>
+                      <p>正在读取当前分类文件</p>
                     </div>
+                  ) : file ? (
+                    file.fileType === 'pdf' ? <iframe src={file.viewUrl} title={displayFileName(file)} /> : <img src={file.viewUrl} alt={displayFileName(file)} />
+                  ) : (
+                    <div className="empty-preview">
+                      <div className="empty-illustration">▤</div>
+                      <strong>当前分类暂无文件</strong>
+                      <p>上传后所有登录账号都可以共享查看，文件将保存到对象存储。</p>
+                      <div className="empty-actions">
+                        <button type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>上传 PDF</button>
+                        <button type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>上传图片</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="file-strip" aria-label="当前分类文件列表">
+                  {files.length === 0 ? (
+                    <div className="strip-empty">当前分类暂无文件</div>
+                  ) : files.map(f => (
+                    <button key={f.id} className={f.id === file?.id ? 'strip-file thumb active' : 'strip-file thumb'} type="button" onClick={() => setSel(f.id)}>
+                      <FileThumb file={f} />
+                      <b>{shortName(displayFileName(f))}</b>
+                      <small>{f.version || 'V1.0'} · {dt(f.createdAt, false)}</small>
+                      <em className={f.id === latestFileId ? 'version-badge latest' : 'version-badge'}>{f.id === latestFileId ? '最新' : '历史'}</em>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <aside className="detail-column">
+                <section className="file-info-card">
+                  <div className="file-list-header">
+                    <strong>文件信息</strong>
+                    <span>{files.length ? `${files.length} 个文件` : '暂无文件'}</span>
                   </div>
-                )}
-              </div>
+                  <Info label="显示名称" value={file ? displayFileName(file) : '-'} />
+                  <Info label="原始文件名" value={file?.originalName || '-'} />
+                  <Info label="文件类型" value={file ? fileTypeText[file.fileType] || file.fileType.toUpperCase() : '-'} />
+                  <Info label="文件版本" value={file?.version || 'V1.0'} />
+                  <Info label="版本状态" value={file ? (file.id === latestFileId ? '最新' : '历史') : '-'} ok={file?.id === latestFileId} />
+                  <Info label="文件大小" value={file ? bytes(file.fileSize) : '-'} />
+                  <Info label="上传人" value={file?.uploadedBy || accountName} />
+                  <Info label="上传时间" value={file ? dt(file.createdAt) : '-'} />
+                  <Info label="当前分类" value={category?.name || '-'} />
+                  <Info label="文件状态" value={file ? statusText[file.status] || file.status : '缺失'} ok={!!file} />
+                  <Info label="备注" value={file?.remark || '-'} />
+                </section>
 
-              <div className="file-strip" aria-label="当前分类文件列表">
-                {files.length === 0 ? (
-                  <div className="strip-empty">当前分类暂无文件</div>
-                ) : files.map(f => (
-                  <button key={f.id} className={f.id === file?.id ? 'strip-file active' : 'strip-file'} type="button" onClick={() => setSel(f.id)}>
-                    <span className={f.fileType === 'pdf' ? 'file-type pdf' : 'file-type img'}>{fileTypeText[f.fileType] || f.fileType.toUpperCase()}</span>
-                    <b>{shortName(f.originalName)}</b>
-                    <small>{dt(f.createdAt, false)}</small>
+                <section className="action-card">
+                  <input ref={pdf} hidden multiple type="file" accept="application/pdf,.pdf" onChange={e => uploadMany(Array.from(e.target.files || []))} />
+                  <input ref={img} hidden multiple type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" capture="environment" onChange={e => uploadMany(Array.from(e.target.files || []))} />
+                  <button className="upload-action primary" type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>
+                    <span>⇧</span><b>{uploading ? '上传中，请稍候' : '批量上传 PDF'}</b>
                   </button>
-                ))}
-              </div>
-            </section>
-
-            <aside className="detail-column">
-              <section className="file-info-card">
-                <div className="file-list-header">
-                  <strong>文件信息</strong>
-                  <span>{files.length ? `${files.length} 个文件` : '暂无文件'}</span>
-                </div>
-                <Info label="文件名" value={file?.originalName || '-'} />
-                <Info label="文件类型" value={file ? fileTypeText[file.fileType] || file.fileType.toUpperCase() : '-'} />
-                <Info label="文件版本" value={file?.version || 'V1.0'} />
-                <Info label="文件大小" value={file ? bytes(file.fileSize) : '-'} />
-                <Info label="上传人" value={file?.uploadedBy || accountName} />
-                <Info label="上传时间" value={file ? dt(file.createdAt) : '-'} />
-                <Info label="当前分类" value={category?.name || '-'} />
-                <Info label="文件状态" value={file ? statusText[file.status] || file.status : '缺失'} ok={!!file} />
-              </section>
-
-              <section className="action-card">
-                <input ref={pdf} hidden type="file" accept="application/pdf,.pdf" onChange={e => upload(e.target.files?.[0])} />
-                <input ref={img} hidden type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" capture="environment" onChange={e => upload(e.target.files?.[0])} />
-                <button className="upload-action primary" type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>
-                  <span>⇧</span><b>{uploading ? '上传中，请稍候' : '上传 PDF'}</b>
-                </button>
-                <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>
-                  <span>▣</span><b>上传图片 / 拍照</b>
-                </button>
-                <div className="secondary-actions">
-                  <a className={!file ? 'disabled' : ''} href={file?.downloadUrl || '#'} target="_blank">下载</a>
-                  <button type="button" disabled={!file} onClick={() => file && setDeleteTarget(file)}>删除</button>
-                  <button type="button" disabled={!order} onClick={copy}>复制链接</button>
-                </div>
-              </section>
-            </aside>
-          </div>
+                  <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>
+                    <span>▣</span><b>上传图片 / 拍照</b>
+                  </button>
+                  <div className="secondary-actions file-actions">
+                    <a className={!file ? 'disabled' : ''} href={file?.downloadUrl || '#'} target="_blank">下载当前</a>
+                    <button type="button" disabled={!file} onClick={() => file && openFileEdit(file)}>编辑文件</button>
+                    <button type="button" disabled={!file} onClick={() => file && setDeleteTarget(file)}>删除文件</button>
+                    <button type="button" disabled={!order} onClick={downloadAll}>下载全部</button>
+                    <button type="button" disabled={!order} onClick={copy}>复制链接</button>
+                  </div>
+                  <UploadJobs jobs={uploadJobs} />
+                </section>
+              </aside>
+            </div>
+          )}
         </section>
       </section>
 
@@ -698,12 +819,36 @@ export default function DashboardShell({
         </div>
       )}
 
+      {fileEditTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <form className="file-edit-dialog" onSubmit={saveFileInfo}>
+            <div className="dialog-title">
+              <strong>编辑文件信息</strong>
+              <button type="button" onClick={() => setFileEditTarget(null)}>×</button>
+            </div>
+            <div className="file-edit-source">{fileEditTarget.originalName} · {fileEditTarget.version || 'V1.0'}</div>
+            <label>显示名称<input value={fileForm.displayName} onChange={e => setFileForm(v => ({ ...v, displayName: e.target.value }))} placeholder="可选，下载时优先使用" /></label>
+            <label>备注<textarea value={fileForm.remark} onChange={e => setFileForm(v => ({ ...v, remark: e.target.value }))} placeholder="可选，填写资料说明" /></label>
+            {fileFormError && <div className="form-error">{fileFormError}</div>}
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setFileEditTarget(null)}>取消</button>
+              <button className="primary-button" type="submit" disabled={fileSaving}>{fileSaving ? '保存中...' : '保存'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+
       {logsOpen && (
         <div className="modal-backdrop" role="presentation">
           <section className="logs-dialog" role="dialog" aria-modal="true" aria-label="操作日志">
             <div className="dialog-title">
               <strong>操作日志</strong>
               <button type="button" onClick={() => setLogsOpen(false)}>×</button>
+            </div>
+            <div className="log-filter-tabs">
+              {logFilters.map(([key, label]) => (
+                <button key={key} className={logFilter === key ? 'active' : ''} type="button" onClick={() => loadLogs(key)}>{label}</button>
+              ))}
             </div>
             {logsLoading ? (
               <div className="empty-list">日志加载中...</div>
@@ -734,7 +879,7 @@ export default function DashboardShell({
               <button type="button" onClick={() => setDeleteTarget(null)}>×</button>
             </div>
             <p>文件将从当前资料列表移除，历史数据仍保留在数据库记录中。</p>
-            <div className="delete-file-name">{deleteTarget.originalName}</div>
+            <div className="delete-file-name">{displayFileName(deleteTarget)}</div>
             <div className="dialog-actions">
               <button type="button" onClick={() => setDeleteTarget(null)}>取消</button>
               <button className="danger-button" type="button" disabled={deleting} onClick={confirmDeleteFile}>{deleting ? '删除中...' : '确认删除'}</button>
@@ -821,6 +966,82 @@ function OrderGroup({
         );
       })}
       {!orders.length && <div className="empty-orders">暂无工单</div>}
+    </section>
+  );
+}
+
+function FileThumb({ file }: { file: ResourceFileDTO }) {
+  if (file.fileType === 'pdf') {
+    return <span className="file-thumb pdf">PDF</span>;
+  }
+  return <span className="file-thumb img"><img src={file.viewUrl} alt="" /></span>;
+}
+
+function UploadJobs({ jobs }: { jobs: UploadJob[] }) {
+  if (!jobs.length) return null;
+  const ok = jobs.filter(j => j.status === 'success').length;
+  const failed = jobs.filter(j => j.status === 'failed').length;
+  return (
+    <div className="upload-jobs">
+      <div className="upload-jobs-head"><strong>上传队列</strong><span>成功 {ok} · 失败 {failed}</span></div>
+      {jobs.map(job => (
+        <div className={`upload-job ${job.status}`} key={job.id}>
+          <b>{shortName(job.name)}</b>
+          <span>{job.status === 'waiting' ? '等待上传' : job.status === 'uploading' ? '上传中' : job.status === 'success' ? '上传成功' : '上传失败'}</span>
+          <small>{job.message}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function UploadManager({
+  files,
+  categories,
+  managerCategory,
+  setManagerCategory,
+  selectFile,
+  openFileEdit,
+  setDeleteTarget,
+}: {
+  files: ResourceFileDTO[];
+  categories: ResourceCategoryDTO[];
+  managerCategory: string;
+  setManagerCategory: (v: string) => void;
+  selectFile: (file: ResourceFileDTO) => void;
+  openFileEdit: (file: ResourceFileDTO) => void;
+  setDeleteTarget: (file: ResourceFileDTO) => void;
+}) {
+  return (
+    <section className="upload-manager-panel">
+      <div className="manager-toolbar">
+        <strong>当前工单全部文件</strong>
+        <div className="manager-tabs">
+          <button className={managerCategory === 'all' ? 'active' : ''} type="button" onClick={() => setManagerCategory('all')}>全部</button>
+          {categories.map(c => (
+            <button key={c.id} className={managerCategory === c.id ? 'active' : ''} type="button" onClick={() => setManagerCategory(c.id)}>{c.name}</button>
+          ))}
+        </div>
+      </div>
+      <div className="manager-list">
+        {files.map(file => (
+          <article className="manager-file-card" key={file.id}>
+            <FileThumb file={file} />
+            <div>
+              <strong>{displayFileName(file)}</strong>
+              <span>{file.categoryName || '-'} · {file.version || 'V1.0'} · {bytes(file.fileSize)}</span>
+              <small>{dt(file.createdAt)} · {statusText[file.status] || file.status}</small>
+            </div>
+            <div className="manager-actions">
+              <button type="button" onClick={() => selectFile(file)}>预览</button>
+              <a href={file.downloadUrl} target="_blank">下载</a>
+              <button type="button" onClick={() => openFileEdit(file)}>编辑信息</button>
+              <button type="button" onClick={() => setDeleteTarget(file)}>删除</button>
+            </div>
+          </article>
+        ))}
+        {!files.length && <div className="empty-list">当前筛选下暂无文件</div>}
+      </div>
     </section>
   );
 }

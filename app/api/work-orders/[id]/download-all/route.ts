@@ -28,6 +28,14 @@ function uniquePath(base: string, used: Set<string>) {
   return next;
 }
 
+function versionedName(name: string, version: string | null) {
+  const safe = safeZipName(name);
+  const v = safeZipName(version || 'V1.0');
+  const dot = safe.lastIndexOf('.');
+  if (dot <= 0) return `${safe}-${v}`;
+  return `${safe.slice(0, dot)}-${v}${safe.slice(dot)}`;
+}
+
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
@@ -50,7 +58,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
     for (const file of workOrder.resourceFiles) {
       const folder = safeZipName(file.category.name);
-      const filename = safeZipName(file.originalName);
+      const filename = versionedName(file.displayName || file.originalName, file.version);
       const path = uniquePath(`${folder}/${filename}`, used);
       zip.addReadStream(await getObjectStream(file.objectKey), path, { mtime: file.createdAt });
     }

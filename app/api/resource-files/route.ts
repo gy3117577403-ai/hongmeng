@@ -1,5 +1,74 @@
-import {NextRequest,NextResponse} from 'next/server';
-import {requireUser,unauthorized,UnauthorizedError} from '@/lib/auth';
-import {prisma} from '@/lib/prisma';
-export const runtime='nodejs'; export const dynamic='force-dynamic';
-export async function GET(req:NextRequest){try{await requireUser(); const workOrderId=req.nextUrl.searchParams.get('workOrderId')||undefined, categoryId=req.nextUrl.searchParams.get('categoryId')||undefined; if(!workOrderId||!categoryId)return NextResponse.json({message:'缺少工单或分类参数'},{status:400}); const files=await prisma.resourceFile.findMany({where:{workOrderId,categoryId,deletedAt:null,status:'uploaded'},include:{uploadedBy:{select:{displayName:true}}},orderBy:{createdAt:'desc'}}); return NextResponse.json({files:files.map(f=>({id:f.id,workOrderId:f.workOrderId,categoryId:f.categoryId,originalName:f.originalName,mimeType:f.mimeType,fileType:f.fileType,fileSize:f.fileSize,version:f.version,status:f.status,uploadedBy:f.uploadedBy?.displayName||null,createdAt:f.createdAt.toISOString(),updatedAt:f.updatedAt.toISOString(),viewUrl:`/api/resource-files/${f.id}/view`,downloadUrl:`/api/resource-files/${f.id}/download`}))})}catch(e){if(e instanceof UnauthorizedError)return unauthorized(); console.error(e); return NextResponse.json({message:'文件加载失败'},{status:500})}}
+import { NextRequest, NextResponse } from 'next/server';
+import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+function serializeFile(f: {
+  id: string;
+  workOrderId: string;
+  categoryId: string;
+  originalName: string;
+  displayName: string | null;
+  remark: string | null;
+  mimeType: string;
+  fileType: string;
+  fileSize: number;
+  version: string;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+  uploadedBy?: { displayName: string } | null;
+  category?: { name: string; code: string } | null;
+}) {
+  return {
+    id: f.id,
+    workOrderId: f.workOrderId,
+    categoryId: f.categoryId,
+    categoryName: f.category?.name || null,
+    categoryCode: f.category?.code || null,
+    originalName: f.originalName,
+    displayName: f.displayName,
+    remark: f.remark,
+    mimeType: f.mimeType,
+    fileType: f.fileType,
+    fileSize: f.fileSize,
+    version: f.version || 'V1.0',
+    status: f.status,
+    uploadedBy: f.uploadedBy?.displayName || null,
+    createdAt: f.createdAt.toISOString(),
+    updatedAt: f.updatedAt.toISOString(),
+    viewUrl: `/api/resource-files/${f.id}/view`,
+    downloadUrl: `/api/resource-files/${f.id}/download`,
+  };
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    await requireUser();
+    const workOrderId = req.nextUrl.searchParams.get('workOrderId') || undefined;
+    const categoryId = req.nextUrl.searchParams.get('categoryId') || undefined;
+    if (!workOrderId) return NextResponse.json({ message: '缺少工单参数' }, { status: 400 });
+
+    const files = await prisma.resourceFile.findMany({
+      where: {
+        workOrderId,
+        ...(categoryId ? { categoryId } : {}),
+        deletedAt: null,
+        status: 'uploaded',
+      },
+      include: {
+        uploadedBy: { select: { displayName: true } },
+        category: { select: { name: true, code: true } },
+      },
+      orderBy: [{ createdAt: 'desc' }, { version: 'desc' }],
+    });
+
+    return NextResponse.json({ files: files.map(serializeFile) });
+  } catch (e) {
+    if (e instanceof UnauthorizedError) return unauthorized();
+    console.error(e);
+    return NextResponse.json({ message: '文件加载失败' }, { status: 500 });
+  }
+}

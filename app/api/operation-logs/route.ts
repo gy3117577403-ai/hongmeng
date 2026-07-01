@@ -5,6 +5,18 @@ import { prisma } from '@/lib/prisma';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+const actionGroups: Record<string, string[]> = {
+  upload: ['upload'],
+  delete: ['delete'],
+  download: ['download'],
+  download_all: ['download_work_order_package'],
+  create_work_order: ['create_work_order'],
+  update_work_order: ['update_work_order'],
+  delete_work_order: ['delete_work_order'],
+  change_password: ['change_password'],
+  update_resource_file: ['update_resource_file'],
+};
+
 function sanitize(value: unknown): unknown {
   if (value === null || value === undefined) return value;
   if (Array.isArray(value)) return value.slice(0, 5).map(sanitize);
@@ -30,7 +42,10 @@ export async function GET(req: NextRequest) {
   try {
     await requireUser();
     const limit = Math.max(1, Math.min(Number(req.nextUrl.searchParams.get('limit') || 100) || 100, 100));
+    const action = req.nextUrl.searchParams.get('action') || 'all';
+    const actions = actionGroups[action];
     const logs = await prisma.operationLog.findMany({
+      where: actions ? { action: { in: actions } } : undefined,
       take: limit,
       orderBy: { createdAt: 'desc' },
       include: { user: { select: { username: true, displayName: true } } },

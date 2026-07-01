@@ -58,11 +58,13 @@ model ResourceFile {
   workOrderId  String    @map("work_order_id")
   categoryId   String    @map("category_id")
   originalName String    @map("original_name")
+  displayName  String?   @map("display_name")
   mimeType     String    @map("mime_type")
   fileType     String    @map("file_type")
   fileSize     Int       @map("file_size")
   objectKey    String    @map("object_key")
   version      String    @default("V1.0")
+  remark       String?
   status       String    @default("uploaded")
   uploadedById String?   @map("uploaded_by_id")
   createdAt    DateTime  @default(now()) @map("created_at")
