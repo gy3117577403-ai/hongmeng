@@ -46,6 +46,26 @@ Sealos App Deploy 端口填 `3000`。
 - 登录账号：`admin`
 - 说明：v1.0.1 修复生产 standalone 启动方式
 
+## Release Candidate
+- 版本：v1.3.0-rc.1
+- 状态：本地验证通过，等待统一部署
+- 包含功能：
+  - 工单新增 / 编辑 / 软删除
+  - 工单搜索 / 筛选
+  - 资料完整性状态
+  - 当前工单全部资料 ZIP 下载
+  - 文件版本显示
+  - 操作日志
+- 本地验证：
+  - `npm run build` 通过
+  - `docker build` 通过
+  - `docker compose` 通过
+  - 上传 / 预览 / 下载 / ZIP 下载通过
+  - 修改密码回归通过
+- 说明：
+  - 尚未部署 Sealos
+  - 尚未作为生产版本发布
+
 ## 数据不丢验收
 1. 上传 PDF/JPG/PNG。
 2. 刷新页面仍在。
