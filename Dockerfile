@@ -13,5 +13,6 @@ WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000
 RUN apk add --no-cache openssl
 COPY --from=builder /app ./
+RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 EXPOSE 3000
-CMD ["sh","-c","npx prisma migrate deploy && node prisma/seed.cjs && node .next/standalone/server.js"]
+CMD ["./docker-entrypoint.sh"]
