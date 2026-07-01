@@ -16,6 +16,18 @@ type WorkOrderForm = {
 type WorkOrderModal = { mode: 'create' | 'edit'; order?: WorkOrderDTO } | null;
 type UploadJob = { id: string; name: string; status: 'waiting' | 'uploading' | 'success' | 'failed'; message?: string };
 type FileForm = { displayName: string; remark: string };
+type ImportRow = { row: number; code: string; status: 'created' | 'updated' | 'skipped' | 'failed'; message: string };
+type ImportResult = { summary: { created: number; updated: number; skipped: number; failed: number; total: number }; results: ImportRow[] };
+type SystemStatus = {
+  ok: boolean;
+  app: { name: string; version: string; mode: string };
+  data: { mode: string; permissions: string };
+  database: { ok: boolean; type: string };
+  storage: { ok: boolean; type: string; bucketConfigured: boolean; publicEndpointConfigured: boolean };
+  upload: { maxUploadSizeMb: number; supportedTypes: string[] };
+  serverTime: string;
+};
+type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice?: Promise<{ outcome: string }> };
 
 function bytes(n: number) {
   if (n < 1024) return `${n} B`;
@@ -70,6 +82,11 @@ const actionText: Record<string, string> = {
   download: '下载文件',
   download_work_order_package: '下载资料包',
   update_resource_file: '编辑文件信息',
+  export_work_orders: '导出工单',
+  export_resource_files: '导出文件清单',
+  export_operation_logs: '导出操作日志',
+  export_metadata: '导出元数据',
+  import_work_orders: '导入工单',
 };
 const categoryIcons: Record<string, string> = { drawing: '原', sop: 'SOP', product: '成', material: '辅', notice: '注' };
 const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG', jpeg: 'JPG' };
@@ -86,6 +103,8 @@ const logFilters = [
   ['delete_work_order', '删除工单'],
   ['change_password', '修改密码'],
   ['update_resource_file', '编辑文件信息'],
+  ['export', '导出'],
+  ['import', '导入'],
 ];
 
 function completionOf(categories: ResourceCategoryDTO[], counts: Record<string, number>) {
@@ -154,9 +173,18 @@ export default function DashboardShell({
   const [logsLoading, setLogsLoading] = useState(false);
   const [logs, setLogs] = useState<OperationLogDTO[]>([]);
   const [logFilter, setLogFilter] = useState('all');
+  const [systemOpen, setSystemOpen] = useState(false);
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
+  const [systemLoading, setSystemLoading] = useState(false);
+  const [exporting, setExporting] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [now, setNow] = useState<Date | null>(null);
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
+  const csvImport = useRef<HTMLInputElement>(null);
 
   const list = useMemo(() => {
     const text = kw.trim().toLowerCase();
@@ -183,6 +211,20 @@ export default function DashboardShell({
   const visibleToday = list.filter(o => sameDay(o.createdAt));
   const visibleWeek = list.filter(o => inRecentWeek(o.createdAt));
   const managerFiles = managerCategory === 'all' ? allFiles : allFiles.filter(f => f.categoryId === managerCategory);
+
+  useEffect(() => {
+    setNow(new Date());
+    const timer = window.setInterval(() => setNow(new Date()), 60_000);
+    const onInstall = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    window.addEventListener('beforeinstallprompt', onInstall);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('beforeinstallprompt', onInstall);
+    };
+  }, []);
 
   function mergeOrder(next: WorkOrderDTO) {
     setOrders(v => {
@@ -521,6 +563,101 @@ export default function DashboardShell({
     }
   }
 
+  async function loadSystemStatus() {
+    setSystemLoading(true);
+    try {
+      const r = await fetch('/api/system/status', { cache: 'no-store' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.error || d.message || '系统状态加载失败');
+        return;
+      }
+      setSystemStatus(d);
+    } catch {
+      setMsg('系统状态加载失败');
+    } finally {
+      setSystemLoading(false);
+    }
+  }
+
+  async function openSystemSettings() {
+    setUserMenu(false);
+    setSystemOpen(true);
+    await loadSystemStatus();
+  }
+
+  function downloadName(headers: Headers, fallback: string) {
+    const value = headers.get('Content-Disposition') || '';
+    const m = value.match(/filename\*=UTF-8''([^;]+)/);
+    return m ? decodeURIComponent(m[1]) : fallback;
+  }
+
+  async function downloadExport(path: string, label: string, fallback: string) {
+    setExporting(label);
+    try {
+      const r = await fetch(path, { cache: 'no-store' });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        setMsg(d.error || d.message || `${label}失败`);
+        return;
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = downloadName(r.headers, fallback);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setMsg(`${label}已开始下载`);
+    } catch {
+      setMsg(`${label}失败，请稍后重试`);
+    } finally {
+      setExporting('');
+    }
+  }
+
+  async function importWorkOrders(fileList: FileList | null) {
+    const file = fileList?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportResult(null);
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await fetch('/api/import/work-orders', { method: 'POST', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.error || d.message || '导入失败');
+        return;
+      }
+      setImportResult(d);
+      await refreshOrders(order?.id);
+      setMsg(`导入完成：新增 ${d.summary?.created || 0}，更新 ${d.summary?.updated || 0}，失败 ${d.summary?.failed || 0}`);
+    } catch {
+      setMsg('导入失败，请检查 CSV 格式');
+    } finally {
+      setImporting(false);
+      if (csvImport.current) csvImport.current.value = '';
+    }
+  }
+
+  async function installApp() {
+    if (!installPrompt) {
+      setMsg('请在浏览器菜单中选择“添加到桌面 / 安装应用”');
+      return;
+    }
+    await installPrompt.prompt();
+    setInstallPrompt(null);
+  }
+
+  function printSummary() {
+    if (!order) return;
+    setMsg('正在打开打印摘要');
+    window.setTimeout(() => window.print(), 120);
+  }
+
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
     location.href = '/login';
@@ -605,6 +742,7 @@ export default function DashboardShell({
             </button>
             {userMenu && (
               <div className="user-menu">
+                <button type="button" onClick={openSystemSettings}>系统设置</button>
                 <button type="button" onClick={openPasswordDialog}>修改密码</button>
                 <button type="button" onClick={logout}>退出登录</button>
               </div>
@@ -620,7 +758,10 @@ export default function DashboardShell({
               <span>生产工单</span>
               <strong>{list.length} 单</strong>
             </div>
-            <button className="new-order-button" type="button" onClick={() => openOrderModal('create')}>新建工单</button>
+            <div className="panel-head-actions">
+              <button className="import-order-button" type="button" onClick={openSystemSettings}>批量导入</button>
+              <button className="new-order-button" type="button" onClick={() => openOrderModal('create')}>新建工单</button>
+            </div>
           </div>
           <div className="panel-search">
             <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索工单号 / 产品名称" />
@@ -681,6 +822,7 @@ export default function DashboardShell({
               <button type="button" disabled={!order} onClick={() => order && openOrderModal('edit', order)}>编辑工单</button>
               <button type="button" disabled={!order} onClick={() => order && setOrderDeleteTarget(order)}>删除工单</button>
               <button className="download-all-button" type="button" disabled={!order || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
+              <button type="button" disabled={!order} onClick={printSummary}>打印摘要</button>
               <button className="refresh-button" type="button" onClick={refresh}>↻ 刷新</button>
             </div>
           </div>
@@ -792,7 +934,70 @@ export default function DashboardShell({
         </section>
       </section>
 
+      {order && (
+        <section className="print-summary" aria-hidden="true">
+          <h1>工单资料摘要</h1>
+          <div className="print-meta">
+            <span>工单号：{order.code}</span>
+            <span>产品名称：{order.productName}</span>
+            <span>阶段：{order.stage}</span>
+            <span>优先级：{priorityText[order.priority] || order.priority}</span>
+            <span>状态：{statusText[order.status] || order.status}</span>
+            <span>资料完整性：{completion.text}</span>
+            <span>打印时间：{now ? dt(now.toISOString()) : '-'}</span>
+          </div>
+          <h2>分类文件数量</h2>
+          <ul>
+            {categories.map(c => <li key={c.id}>{c.name}：{currentCounts[c.id] || 0} 个文件</li>)}
+          </ul>
+          <h2>文件清单</h2>
+          <table>
+            <thead><tr><th>分类</th><th>文件名</th><th>版本</th><th>类型</th><th>大小</th><th>上传时间</th></tr></thead>
+            <tbody>
+              {allFiles.map(item => (
+                <tr key={item.id}>
+                  <td>{item.categoryName || '-'}</td>
+                  <td>{displayFileName(item)}</td>
+                  <td>{item.version || 'V1.0'}</td>
+                  <td>{fileTypeText[item.fileType] || item.fileType}</td>
+                  <td>{bytes(item.fileSize)}</td>
+                  <td>{dt(item.createdAt)}</td>
+                </tr>
+              ))}
+              {!allFiles.length && <tr><td colSpan={6}>暂无文件</td></tr>}
+            </tbody>
+          </table>
+        </section>
+      )}
+
       {msg && <div className="status-toast">{msg}</div>}
+
+      <input ref={csvImport} hidden type="file" accept=".csv,text/csv" onChange={e => importWorkOrders(e.target.files)} />
+
+      {systemOpen && (
+        <SystemSettings
+          userName={accountName}
+          now={now}
+          status={systemStatus}
+          loading={systemLoading}
+          exporting={exporting}
+          importing={importing}
+          importResult={importResult}
+          canInstall={!!installPrompt}
+          close={() => setSystemOpen(false)}
+          refreshStatus={loadSystemStatus}
+          refreshData={refresh}
+          openLogs={() => loadLogs('all')}
+          logout={logout}
+          installApp={installApp}
+          chooseImport={() => csvImport.current?.click()}
+          downloadTemplate={() => downloadExport('/api/import/work-orders/template.csv', '下载导入模板', '工单导入模板.csv')}
+          exportWorkOrders={() => downloadExport('/api/export/work-orders.csv', '导出工单 CSV', '工单列表.csv')}
+          exportResourceFiles={() => downloadExport('/api/export/resource-files.csv', '导出文件清单 CSV', '文件清单.csv')}
+          exportOperationLogs={() => downloadExport('/api/export/operation-logs.csv', '导出操作日志 CSV', '操作日志.csv')}
+          exportMetadata={() => downloadExport('/api/export/metadata.json', '导出元数据 JSON', '系统元数据.json')}
+        />
+      )}
 
       {orderModal && (
         <div className="modal-backdrop" role="presentation">
@@ -1043,6 +1248,147 @@ function UploadManager({
         {!files.length && <div className="empty-list">当前筛选下暂无文件</div>}
       </div>
     </section>
+  );
+}
+
+function SystemSettings({
+  userName,
+  now,
+  status,
+  loading,
+  exporting,
+  importing,
+  importResult,
+  canInstall,
+  close,
+  refreshStatus,
+  refreshData,
+  openLogs,
+  logout,
+  installApp,
+  chooseImport,
+  downloadTemplate,
+  exportWorkOrders,
+  exportResourceFiles,
+  exportOperationLogs,
+  exportMetadata,
+}: {
+  userName: string;
+  now: Date | null;
+  status: SystemStatus | null;
+  loading: boolean;
+  exporting: string;
+  importing: boolean;
+  importResult: ImportResult | null;
+  canInstall: boolean;
+  close: () => void;
+  refreshStatus: () => void;
+  refreshData: () => void;
+  openLogs: () => void;
+  logout: () => void;
+  installApp: () => void;
+  chooseImport: () => void;
+  downloadTemplate: () => void;
+  exportWorkOrders: () => void;
+  exportResourceFiles: () => void;
+  exportOperationLogs: () => void;
+  exportMetadata: () => void;
+}) {
+  const okText = (value?: boolean) => (value ? '正常' : '异常');
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="system-dialog" role="dialog" aria-modal="true" aria-label="系统设置">
+        <div className="dialog-title">
+          <div>
+            <strong>系统设置</strong>
+            <small>v1.5.0-rc · Web / PWA</small>
+          </div>
+          <button type="button" onClick={close}>×</button>
+        </div>
+
+        <div className="system-grid">
+          <section className="system-section">
+            <h3>基础信息</h3>
+            <Info label="系统名称" value={status?.app.name || '工单资料库'} />
+            <Info label="当前版本" value={status?.app.version || 'v1.5.0-rc'} />
+            <Info label="部署模式" value={status?.app.mode || 'Web / PWA'} />
+            <Info label="数据模式" value={status?.data.mode || '账号登录，共享数据'} />
+            <Info label="权限模式" value={status?.data.permissions || '无角色权限'} />
+            <Info label="当前用户" value={userName} />
+            <Info label="当前时间" value={now ? dt(now.toISOString()) : '-'} />
+          </section>
+
+          <section className="system-section">
+            <h3>存储与健康</h3>
+            {loading ? <div className="empty-list">系统状态检查中...</div> : (
+              <>
+                <Info label="API 健康状态" value={okText(status?.ok)} ok={status?.ok} />
+                <Info label="数据库" value={`${status?.database.type || 'PostgreSQL'} · ${okText(status?.database.ok)}`} ok={status?.database.ok} />
+                <Info label="文件存储" value={`${status?.storage.type || 'S3 兼容对象存储'} · ${okText(status?.storage.ok)}`} ok={status?.storage.ok} />
+                <Info label="存储桶配置" value={status?.storage.bucketConfigured ? '已配置' : '未配置'} ok={status?.storage.bucketConfigured} />
+                <Info label="公开访问端点" value={status?.storage.publicEndpointConfigured ? '已配置' : '未配置'} ok={status?.storage.publicEndpointConfigured} />
+                <Info label="最大上传大小" value={`${status?.upload.maxUploadSizeMb || 50} MB`} />
+                <Info label="支持格式" value={(status?.upload.supportedTypes || ['PDF', 'JPG', 'PNG']).join('、')} />
+              </>
+            )}
+          </section>
+        </div>
+
+        <section className="system-section wide">
+          <h3>数据导出</h3>
+          <div className="system-actions">
+            <button type="button" disabled={!!exporting} onClick={exportWorkOrders}>{exporting === '导出工单 CSV' ? '导出中...' : '导出工单 CSV'}</button>
+            <button type="button" disabled={!!exporting} onClick={exportResourceFiles}>{exporting === '导出文件清单 CSV' ? '导出中...' : '导出文件清单 CSV'}</button>
+            <button type="button" disabled={!!exporting} onClick={exportOperationLogs}>{exporting === '导出操作日志 CSV' ? '导出中...' : '导出操作日志 CSV'}</button>
+            <button type="button" disabled={!!exporting} onClick={exportMetadata}>{exporting === '导出元数据 JSON' ? '导出中...' : '导出元数据 JSON'}</button>
+          </div>
+        </section>
+
+        <section className="system-section wide">
+          <h3>工单批量导入</h3>
+          <p>支持 UTF-8 CSV，可使用中文或英文表头。工单号已存在时默认更新未删除工单；已软删除记录会跳过。</p>
+          <div className="system-actions">
+            <button type="button" disabled={!!exporting} onClick={downloadTemplate}>{exporting === '下载导入模板' ? '下载中...' : '下载 CSV 模板'}</button>
+            <button className="primary-button" type="button" disabled={importing} onClick={chooseImport}>{importing ? '导入中...' : '上传 CSV 导入'}</button>
+          </div>
+          {importResult && (
+            <div className="import-result">
+              <div className="import-summary">
+                <span>新增 {importResult.summary.created}</span>
+                <span>更新 {importResult.summary.updated}</span>
+                <span>跳过 {importResult.summary.skipped}</span>
+                <span>失败 {importResult.summary.failed}</span>
+              </div>
+              <details>
+                <summary>查看逐行结果</summary>
+                <div className="import-result-list">
+                  {importResult.results.map(row => (
+                    <div className={`import-row ${row.status}`} key={`${row.row}-${row.code}`}>
+                      <span>第 {row.row} 行</span>
+                      <b>{row.code}</b>
+                      <em>{row.status === 'created' ? '新增' : row.status === 'updated' ? '更新' : row.status === 'skipped' ? '跳过' : '失败'}</em>
+                      <small>{row.message}</small>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </div>
+          )}
+        </section>
+
+        <section className="system-section wide">
+          <h3>添加到桌面</h3>
+          <p>在鸿蒙平板浏览器中打开系统后，点击浏览器菜单，选择“添加到桌面 / 安装应用”。添加后建议横屏使用。</p>
+          <div className="system-actions">
+            <button type="button" onClick={installApp}>{canInstall ? '安装应用' : '查看添加说明'}</button>
+            <button type="button" onClick={refreshStatus}>重新检查状态</button>
+            <button type="button" onClick={refreshData}>刷新当前数据</button>
+            <button type="button" onClick={openLogs}>打开操作日志</button>
+            <button type="button" onClick={logout}>退出登录</button>
+          </div>
+        </section>
+      </section>
+    </div>
   );
 }
 

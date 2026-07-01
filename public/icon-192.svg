@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192" role="img" aria-label="工单资料库">
+  <rect width="192" height="192" rx="42" fill="#ff6a00"/>
+  <rect x="43" y="36" width="106" height="120" rx="18" fill="#fffdfb"/>
+  <path d="M68 72h56M68 96h42M68 120h48" stroke="#ff6a00" stroke-width="10" stroke-linecap="round"/>
+  <path d="M132 36v34h17" fill="none" stroke="#ffd7b8" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

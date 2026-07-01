@@ -15,6 +15,8 @@ const actionGroups: Record<string, string[]> = {
   delete_work_order: ['delete_work_order'],
   change_password: ['change_password'],
   update_resource_file: ['update_resource_file'],
+  export: ['export_work_orders', 'export_resource_files', 'export_operation_logs', 'export_metadata'],
+  import: ['import_work_orders'],
 };
 
 function sanitize(value: unknown): unknown {
