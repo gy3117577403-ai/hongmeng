@@ -55,6 +55,7 @@ export default function DashboardShell({
   const order = orders.find(o => o.id === wo) || orders[0];
   const category = categories.find(c => c.id === cat) || categories[0];
   const file = files.find(f => f.id === sel) || files[0];
+  const accountName = user.displayName || user.username;
 
   async function loadFiles(w = order?.id, c = category?.id) {
     if (!w || !c) return;
@@ -150,12 +151,16 @@ export default function DashboardShell({
     e.preventDefault();
     setPasswordError('');
 
+    if (!passwordForm.currentPassword) {
+      setPasswordError('当前密码不能为空');
+      return;
+    }
     if (passwordForm.newPassword.length < 6) {
-      setPasswordError('新密码至少 6 位');
+      setPasswordError('新密码格式不正确，至少 6 位');
       return;
     }
     if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-      setPasswordError('两次输入的新密码不一致');
+      setPasswordError('两次密码不一致');
       return;
     }
 
@@ -171,7 +176,7 @@ export default function DashboardShell({
         setPasswordError(d.message || '修改密码失败');
         return;
       }
-      alert(d.message || '密码已修改，请重新登录');
+      alert(d.message || '密码修改成功，请重新登录');
       location.href = '/login';
     } catch {
       setPasswordError('网络异常，请稍后重试');
@@ -202,7 +207,7 @@ export default function DashboardShell({
         <div className="user-wrap">
           <button className="user-button" type="button" onClick={() => setUserMenu(!userMenu)}>
             <span>♙</span>
-            <b>{user.username}</b>
+            <b title={accountName}>{accountName}</b>
             <em>⌄</em>
           </button>
           {userMenu && (
@@ -284,7 +289,7 @@ export default function DashboardShell({
               <Info icon="▧" label="文件大小" value={file ? bytes(file.fileSize) : '-'} />
               <Info icon="◇" label="版本" value={file?.version || '-'} />
               <Info icon="▣" label="文件是否完整" value={files.length ? '完整' : '缺失'} ok={!!files.length} />
-              <Info icon="♙" label="上传人" value={file?.uploadedBy || user.displayName} />
+              <Info icon="♙" label="上传人" value={file?.uploadedBy || accountName} />
             </section>
 
             <section className="action-row">

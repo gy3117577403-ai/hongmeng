@@ -26,11 +26,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (newPassword.length < 6) {
-      return NextResponse.json({ message: '新密码至少 6 位' }, { status: 400 });
+      return NextResponse.json({ message: '新密码格式不正确，至少 6 位' }, { status: 400 });
     }
 
     if (newPassword !== confirmPassword) {
-      return NextResponse.json({ message: '两次输入的新密码不一致' }, { status: 400 });
+      return NextResponse.json({ message: '两次密码不一致' }, { status: 400 });
     }
 
     const user = await prisma.user.findUnique({ where: { id: sessionUser.id } });
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (!(await bcrypt.compare(currentPassword, user.passwordHash))) {
-      return NextResponse.json({ message: '当前密码不正确' }, { status: 400 });
+      return NextResponse.json({ message: '当前密码错误' }, { status: 400 });
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     });
     await logOp({ userId: user.id, action: 'change_password', targetType: 'user', targetId: user.id });
 
-    const res = NextResponse.json({ ok: true, message: '密码已修改，请重新登录' });
+    const res = NextResponse.json({ ok: true, message: '密码修改成功，请重新登录' });
     res.cookies.set(SESSION_COOKIE, '', {
       httpOnly: true,
       sameSite: 'lax',
