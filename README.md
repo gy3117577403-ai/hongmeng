@@ -3,7 +3,7 @@
 生产版 v1.0：账号登录后按工单管理 PDF/JPG/PNG 资料。数据存 PostgreSQL，文件存 S3 兼容对象存储，容器重启或重新部署后数据不丢。
 
 ## 功能
-- 登录：默认 `admin / 123`
+- 登录：默认账号 `admin`
 - 工单列表、搜索、进度、优先级
 - 资源分类：原图、SOP指导书、成品图、辅料规格、注意事项
 - PDF/JPG/PNG 上传到对象存储
@@ -21,7 +21,7 @@ npx prisma migrate dev
 npm run prisma:seed
 npm run dev
 ```
-访问 `http://localhost:3000`，账号 `admin / 123`。
+访问 `http://localhost:3000`，账号 `admin`。
 
 ## Docker 启动
 ```bash
@@ -36,12 +36,15 @@ ghcr.io/gy3117577403-ai/hongmeng:latest
 Sealos App Deploy 端口填 `3000`。
 
 ## 生产部署状态
-- 版本：v1.0.0
+- 当前版本：v1.0.1
+- 上线地址：https://qdowqencjyph.sealoshzh.site
 - 部署平台：Sealos
-- 镜像：`ghcr.io/gy3117577403-ai/hongmeng:latest`
-- 数据库：PostgreSQL
+- 镜像：`ghcr.io/gy3117577403-ai/hongmeng`
+- 当前镜像 digest：`sha256:226b2b6268882e99cf04c69903d3e94b5333d923e5ef12184a980eb9f6bef7da`
+- 数据库：Sealos PostgreSQL
 - 文件存储：Sealos Object Storage
 - 登录账号：`admin`
+- 说明：v1.0.1 修复生产 standalone 启动方式
 
 ## 数据不丢验收
 1. 上传 PDF/JPG/PNG。
