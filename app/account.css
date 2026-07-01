@@ -3,30 +3,37 @@
 }
 
 .user-button {
-  height: 50px;
-  max-width: 190px;
+  min-height: 46px;
+  max-width: 186px;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 16px;
+  grid-template-columns: 26px minmax(0, 1fr) 14px;
   align-items: center;
   gap: 8px;
-  padding: 0 14px;
+  padding: 0 13px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   background: #fff;
   color: #424956;
   box-shadow: var(--shadow-soft);
 }
 
 .user-button span {
-  color: var(--orange);
-  font-size: 22px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: #fff;
+  background: var(--orange);
+  font-size: 16px;
 }
 
 .user-button b {
   overflow: hidden;
+  font-size: 14px;
+  font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
 }
 
 .user-button em {
@@ -36,10 +43,10 @@
 
 .user-menu {
   position: absolute;
-  top: 58px;
+  top: 56px;
   right: 0;
-  z-index: 8;
-  width: 150px;
+  z-index: 9;
+  width: 152px;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 14px;
@@ -49,7 +56,7 @@
 
 .user-menu button {
   width: 100%;
-  height: 40px;
+  min-height: 40px;
   padding: 0 12px;
   border: none;
   border-radius: 10px;
@@ -66,15 +73,17 @@
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 40;
   display: grid;
   place-items: center;
   padding: 24px;
   background: rgba(31, 35, 41, .34);
+  backdrop-filter: blur(4px);
 }
 
-.password-dialog {
-  width: min(420px, 100%);
+.password-dialog,
+.confirm-dialog {
+  width: min(430px, 100%);
   display: grid;
   gap: 14px;
   padding: 24px;
@@ -82,6 +91,12 @@
   border-radius: 16px;
   background: #fff;
   box-shadow: var(--shadow);
+}
+
+.confirm-dialog p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
 }
 
 .dialog-title {
@@ -109,10 +124,12 @@
   display: grid;
   gap: 8px;
   color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
 }
 
 .password-dialog input {
-  height: 44px;
+  height: 46px;
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -132,14 +149,22 @@
 }
 
 .dialog-actions button {
-  height: 46px;
+  min-height: 46px;
   border: 1px solid var(--line);
-  border-radius: 13px;
+  border-radius: 12px;
   background: #fff;
   color: #424956;
+  font-weight: 700;
 }
 
-.dialog-actions .primary-button {
+.dialog-actions .primary-button,
+.dialog-actions .danger-button {
   border: none;
   color: #fff;
+}
+
+@media (max-width: 1024px) {
+  .user-button {
+    max-width: 152px;
+  }
 }
