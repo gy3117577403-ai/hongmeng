@@ -35,6 +35,14 @@ ghcr.io/gy3117577403-ai/hongmeng:latest
 ```
 Sealos App Deploy 端口填 `3000`。
 
+## 生产部署状态
+- 版本：v1.0.0
+- 部署平台：Sealos
+- 镜像：`ghcr.io/gy3117577403-ai/hongmeng:latest`
+- 数据库：PostgreSQL
+- 文件存储：Sealos Object Storage
+- 登录账号：`admin`
+
 ## 数据不丢验收
 1. 上传 PDF/JPG/PNG。
 2. 刷新页面仍在。
