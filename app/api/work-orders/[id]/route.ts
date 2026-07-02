@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { parseWorkOrderBody, serializeWorkOrder } from '@/lib/work-orders';
+import { parseWorkOrderBody, serializeWorkOrder, workOrderStageText } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -11,12 +11,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const user = await requireUser();
     const old = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null } });
-    if (!old) return NextResponse.json({ message: '工单不存在' }, { status: 404 });
+    if (!old) return NextResponse.json({ ok: false, error: '工单不存在', message: '工单不存在' }, { status: 404 });
 
     const body = await req.json().catch(() => ({}));
     const { data, errors } = parseWorkOrderBody(body, { partial: true });
-    if (errors.length) return NextResponse.json({ message: errors[0] }, { status: 400 });
-    if (Object.keys(data).length === 0) return NextResponse.json({ message: '没有可更新字段' }, { status: 400 });
+    if (errors.length) return NextResponse.json({ ok: false, error: errors[0], message: errors[0] }, { status: 400 });
+    if (Object.keys(data).length === 0) return NextResponse.json({ ok: false, error: '没有可更新字段', message: '没有可更新字段' }, { status: 400 });
 
     const workOrder = await prisma.workOrder.update({
       where: { id: params.id },
@@ -33,12 +33,39 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       targetId: workOrder.id,
       detail: { code: workOrder.code, fields: Object.keys(data) },
     });
-    return NextResponse.json({ workOrder: serializeWorkOrder(workOrder) });
+    if (old.stage !== workOrder.stage) {
+      await logOp({
+        userId: user.id,
+        action: 'update_work_order_status',
+        targetType: 'work_order',
+        targetId: workOrder.id,
+        detail: { code: workOrder.code, from: workOrderStageText(old.stage || old.status), to: workOrderStageText(workOrder.stage || workOrder.status) },
+      });
+    }
+    if (old.priority !== workOrder.priority) {
+      await logOp({
+        userId: user.id,
+        action: 'update_work_order_priority',
+        targetType: 'work_order',
+        targetId: workOrder.id,
+        detail: { code: workOrder.code, from: old.priority, to: workOrder.priority },
+      });
+    }
+    if ((old.plannedAt?.getTime() || 0) !== (workOrder.plannedAt?.getTime() || 0)) {
+      await logOp({
+        userId: user.id,
+        action: 'update_work_order_planned_at',
+        targetType: 'work_order',
+        targetId: workOrder.id,
+        detail: { code: workOrder.code, from: old.plannedAt?.toISOString() || null, to: workOrder.plannedAt?.toISOString() || null },
+      });
+    }
+    return NextResponse.json({ ok: true, workOrder: serializeWorkOrder(workOrder) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
-    if ((e as { code?: string }).code === 'P2002') return NextResponse.json({ message: '工单号已存在' }, { status: 409 });
+    if ((e as { code?: string }).code === 'P2002') return NextResponse.json({ ok: false, error: '工单号已存在', message: '工单号已存在' }, { status: 409 });
     console.error(e);
-    return NextResponse.json({ message: '编辑工单失败' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: '编辑工单失败', message: '编辑工单失败' }, { status: 500 });
   }
 }
 
@@ -46,7 +73,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   try {
     const user = await requireUser();
     const old = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null } });
-    if (!old) return NextResponse.json({ message: '工单不存在' }, { status: 404 });
+    if (!old) return NextResponse.json({ ok: false, error: '工单不存在', message: '工单不存在' }, { status: 404 });
 
     const workOrder = await prisma.workOrder.update({
       where: { id: params.id },
@@ -58,6 +85,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     console.error(e);
-    return NextResponse.json({ message: '删除工单失败' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: '删除工单失败', message: '删除工单失败' }, { status: 500 });
   }
 }

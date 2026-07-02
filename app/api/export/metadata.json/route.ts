@@ -2,6 +2,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { detailSummary, iso, jsonDownloadResponse, sanitizeDetail } from '@/lib/data-tools';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { workOrderStageText } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,15 +37,17 @@ export async function GET() {
 
     return jsonDownloadResponse('系统元数据.json', {
       exportedAt: new Date().toISOString(),
-      app: { name: '工单资料库', version: 'v1.5.0-rc' },
+      app: { name: '工单资料库', version: 'v1.7.0-rc.1' },
       workOrders: workOrders.map(o => ({
         id: o.id,
         code: o.code,
         productName: o.productName,
         stage: o.stage,
+        stageText: workOrderStageText(o.stage || o.status),
         priority: o.priority,
         status: o.status,
         progress: o.progress,
+        plannedAt: iso(o.plannedAt),
         remark: o.remark,
         createdAt: iso(o.createdAt),
         updatedAt: iso(o.updatedAt),

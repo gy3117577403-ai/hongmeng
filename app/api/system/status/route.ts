@@ -40,7 +40,7 @@ export async function GET() {
       ok: databaseOk && storage.ok,
       app: {
         name: '工单资料库',
-        version: 'v1.6.0-rc.1',
+        version: 'v1.7.0-rc.1',
         mode: 'Web / PWA',
       },
       data: {

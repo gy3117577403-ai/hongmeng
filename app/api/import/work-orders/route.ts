@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { parseCsv } from '@/lib/data-tools';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { legacyStatusForStage, normalizePriority, normalizeWorkOrderStage, parsePlannedAt } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,44 +13,18 @@ const headerMap: Record<string, string> = {
   产品名称: 'productName',
   阶段: 'stage',
   优先级: 'priority',
-  状态: 'status',
+  状态: 'stage',
   进度: 'progress',
+  计划时间: 'plannedAt',
   备注: 'remark',
   code: 'code',
   productName: 'productName',
   stage: 'stage',
   priority: 'priority',
-  status: 'status',
+  status: 'stage',
   progress: 'progress',
+  plannedAt: 'plannedAt',
   remark: 'remark',
-};
-
-const stageMap: Record<string, string> = {
-  前端: '前端',
-  frontend: '前端',
-  后端: '后端',
-  backend: '后端',
-  未发图: '未发图',
-  pending: '未发图',
-};
-
-const priorityMap: Record<string, string> = {
-  紧急: 'urgent',
-  urgent: 'urgent',
-  高: 'high',
-  high: 'high',
-  一般: 'normal',
-  normal: 'normal',
-};
-
-const statusMap: Record<string, string> = {
-  待处理: 'pending',
-  pending: 'pending',
-  进行中: 'processing',
-  processing: 'processing',
-  已完成: 'done',
-  completed: 'done',
-  done: 'done',
 };
 
 type ImportResult = {
@@ -76,24 +51,25 @@ function rowToData(headers: string[], row: string[]) {
   if (!code) errors.push('工单号必填');
   if (!productName) errors.push('产品名称必填');
 
-  const stage = stageMap[raw.stage || '未发图'] || '';
-  if (!stage) errors.push('阶段不正确');
-  const priority = priorityMap[raw.priority || '一般'] || '';
+  const stage = normalizeWorkOrderStage(raw.stage || '未发图');
+  if (!stage) errors.push('状态不合法');
+  const priority = normalizePriority(raw.priority || '一般') || '';
   if (!priority) errors.push('优先级不正确');
-  const status = statusMap[raw.status || '待处理'] || '';
-  if (!status) errors.push('状态不正确');
   const progress = Number(raw.progress || 0);
   if (!Number.isFinite(progress) || progress < 0 || progress > 100) errors.push('进度必须在 0-100 之间');
+  const planned = parsePlannedAt(raw.plannedAt);
+  if (planned.error) errors.push(planned.error);
 
   return {
     code,
     data: {
       code: code.slice(0, 80),
       productName: productName.slice(0, 120),
-      stage,
+      stage: stage || 'not_issued',
       priority,
-      status,
+      status: legacyStatusForStage(stage || 'not_issued'),
       progress: Math.round(progress),
+      plannedAt: planned.value ?? null,
       remark: raw.remark ? raw.remark.slice(0, 500) : null,
     },
     errors,
@@ -144,6 +120,7 @@ export async function POST(req: NextRequest) {
             priority: parsed.data.priority,
             status: parsed.data.status,
             progress: parsed.data.progress,
+            plannedAt: parsed.data.plannedAt,
             remark: parsed.data.remark,
           },
         });

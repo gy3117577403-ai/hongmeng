@@ -29,6 +29,7 @@ model WorkOrder {
   progress      Int            @default(0)
   priority      String         @default("normal")
   status        String         @default("processing")
+  plannedAt     DateTime?      @map("planned_at")
   remark        String?
   createdAt     DateTime       @default(now()) @map("created_at")
   updatedAt     DateTime       @updatedAt @map("updated_at")

@@ -3,10 +3,12 @@ export type WorkOrderDTO = {
   code: string;
   productName: string;
   stage: string;
+  stageText?: string;
   progress: number;
   priority: string;
   status: string;
   remark?: string | null;
+  plannedAt?: string | null;
   deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;

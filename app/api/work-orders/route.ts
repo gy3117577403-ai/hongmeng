@@ -1,22 +1,31 @@
 import { NextRequest, NextResponse } from 'next/server';
+import type { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { parseWorkOrderBody, serializeWorkOrder } from '@/lib/work-orders';
+import { normalizeWorkOrderStage, parseWorkOrderBody, serializeWorkOrder } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+function chinaDayStart(value = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const part = (type: string) => parts.find(item => item.type === type)?.value || '0';
+  return new Date(Date.UTC(Number(part('year')), Number(part('month')) - 1, Number(part('day')), -8));
+}
+
 function filterDate(filter: string | null) {
-  const now = new Date();
   if (filter === 'today') {
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    return { gte: start };
+    return { gte: chinaDayStart() };
   }
   if (filter === 'week') {
-    const start = new Date(now);
-    start.setDate(now.getDate() - 6);
-    start.setHours(0, 0, 0, 0);
+    const start = chinaDayStart();
+    start.setUTCDate(start.getUTCDate() - 6);
     return { gte: start };
   }
   return undefined;
@@ -27,15 +36,28 @@ export async function GET(req: NextRequest) {
     await requireUser();
     const keyword = req.nextUrl.searchParams.get('keyword')?.trim();
     const filter = req.nextUrl.searchParams.get('filter');
-    const status = filter === 'done' ? 'done' : filter === 'processing' ? 'processing' : null;
+    const stage = normalizeWorkOrderStage(filter);
     const createdAt = filterDate(filter);
+    const and: Prisma.WorkOrderWhereInput[] = [];
+    if (keyword) {
+      and.push({ OR: [{ code: { contains: keyword, mode: 'insensitive' } }, { productName: { contains: keyword, mode: 'insensitive' } }] });
+    }
+    if (stage) {
+      const legacyStages = stage === 'frontend'
+        ? ['前端', 'frontend', 'processing']
+        : stage === 'backend'
+          ? ['后端', 'backend']
+          : stage === 'completed'
+            ? ['已完成', 'completed', 'done']
+            : ['未发图', 'not_issued', 'pending'];
+      and.push({ OR: [{ stage }, { stage: { in: legacyStages } }] });
+    }
+    if (createdAt) and.push({ createdAt });
 
     const workOrders = await prisma.workOrder.findMany({
       where: {
         deletedAt: null,
-        ...(keyword ? { OR: [{ code: { contains: keyword, mode: 'insensitive' as const } }, { productName: { contains: keyword, mode: 'insensitive' as const } }] } : {}),
-        ...(status ? { status } : {}),
-        ...(createdAt ? { createdAt } : {}),
+        ...(and.length ? { AND: and } : {}),
       },
       include: {
         resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } },
@@ -56,7 +78,7 @@ export async function POST(req: NextRequest) {
     const user = await requireUser();
     const body = await req.json().catch(() => ({}));
     const { data, errors } = parseWorkOrderBody(body);
-    if (errors.length) return NextResponse.json({ message: errors[0] }, { status: 400 });
+    if (errors.length) return NextResponse.json({ ok: false, error: errors[0], message: errors[0] }, { status: 400 });
 
     const workOrder = await prisma.workOrder.create({
       data: {
@@ -66,6 +88,7 @@ export async function POST(req: NextRequest) {
         priority: String(data.priority),
         status: String(data.status),
         progress: Number(data.progress),
+        plannedAt: data.plannedAt instanceof Date ? data.plannedAt : null,
         remark: data.remark === null ? null : String(data.remark || ''),
       },
       include: {
@@ -74,11 +97,11 @@ export async function POST(req: NextRequest) {
     });
 
     await logOp({ userId: user.id, action: 'create_work_order', targetType: 'work_order', targetId: workOrder.id, detail: { code: workOrder.code } });
-    return NextResponse.json({ workOrder: serializeWorkOrder(workOrder) });
+    return NextResponse.json({ ok: true, workOrder: serializeWorkOrder(workOrder) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
-    if ((e as { code?: string }).code === 'P2002') return NextResponse.json({ message: '工单号已存在' }, { status: 409 });
+    if ((e as { code?: string }).code === 'P2002') return NextResponse.json({ ok: false, error: '工单号已存在', message: '工单号已存在' }, { status: 409 });
     console.error(e);
-    return NextResponse.json({ message: '新建工单失败' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: '新建工单失败', message: '新建工单失败' }, { status: 500 });
   }
 }

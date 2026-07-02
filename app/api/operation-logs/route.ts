@@ -13,7 +13,7 @@ const actionGroups: Record<string, string[]> = {
   download: ['download'],
   download_all: ['download_work_order_package'],
   create_work_order: ['create_work_order'],
-  update_work_order: ['update_work_order'],
+  update_work_order: ['update_work_order', 'update_work_order_status', 'update_work_order_priority', 'update_work_order_planned_at'],
   delete_work_order: ['delete_work_order'],
   change_password: ['change_password'],
   update_resource_file: ['update_resource_file'],

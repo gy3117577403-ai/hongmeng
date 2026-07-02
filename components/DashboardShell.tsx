@@ -11,6 +11,7 @@ type WorkOrderForm = {
   priority: string;
   status: string;
   progress: number;
+  plannedAt: string;
   remark: string;
 };
 
@@ -23,6 +24,7 @@ type UserForm = { username: string; displayName: string; password: string };
 type AccountEdit = { id: string; displayName: string; isActive: boolean } | null;
 type PasswordReset = { id: string; username: string; password: string } | null;
 type SearchResult = { workOrders: WorkOrderDTO[]; resourceFiles: ResourceFileDTO[] };
+type QuickMenu = { type: 'stage' | 'priority'; orderId: string; x: number; y: number } | null;
 type SystemStatus = {
   ok: boolean;
   app: { name: string; version: string; mode: string };
@@ -34,6 +36,30 @@ type SystemStatus = {
 };
 type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice?: Promise<{ outcome: string }> };
 
+const appTimeZone = 'Asia/Shanghai';
+
+function dateParts(v: string | Date) {
+  const d = typeof v === 'string' ? new Date(v) : v;
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: appTimeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(d);
+  const value = (type: string) => parts.find(part => part.type === type)?.value || '';
+  return {
+    year: value('year'),
+    month: value('month'),
+    day: value('day'),
+    hour: value('hour'),
+    minute: value('minute'),
+  };
+}
+
 function bytes(n: number) {
   if (n < 1024) return `${n} B`;
   const k = n / 1024;
@@ -42,11 +68,11 @@ function bytes(n: number) {
 }
 
 function dt(v: string, withTime = true) {
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return v;
-  const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const parts = dateParts(v);
+  if (!parts) return v;
+  const day = `${parts.year}-${parts.month}-${parts.day}`;
   if (!withTime) return day;
-  return `${day} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  return `${day} ${parts.hour}:${parts.minute}`;
 }
 
 function shortName(name: string) {
@@ -54,9 +80,9 @@ function shortName(name: string) {
 }
 
 function sameDay(value: string) {
-  const d = new Date(value);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const d = dateParts(value);
+  const now = dateParts(new Date());
+  return !!d && !!now && d.year === now.year && d.month === now.month && d.day === now.day;
 }
 
 function inRecentWeek(value: string) {
@@ -74,7 +100,32 @@ function fileExtOk(file: File) {
 }
 
 const priorityText: Record<string, string> = { urgent: '紧急', high: '高', normal: '一般' };
-const statusText: Record<string, string> = { pending: '待处理', processing: '进行中', done: '已完成', uploaded: '已上传', deleted: '已删除' };
+const flowStages = [
+  ['not_issued', '未发图'],
+  ['frontend', '在前端'],
+  ['backend', '在后端'],
+  ['completed', '已完成'],
+] as const;
+const flowStageText: Record<string, string> = Object.fromEntries(flowStages) as Record<string, string>;
+const flowAliases: Record<string, string> = {
+  not_issued: 'not_issued',
+  pending: 'not_issued',
+  未发图: 'not_issued',
+  待处理: 'not_issued',
+  frontend: 'frontend',
+  processing: 'frontend',
+  前端: 'frontend',
+  在前端: 'frontend',
+  进行中: 'frontend',
+  backend: 'backend',
+  后端: 'backend',
+  在后端: 'backend',
+  completed: 'completed',
+  complete: 'completed',
+  done: 'completed',
+  已完成: 'completed',
+};
+const fileStatusText: Record<string, string> = { uploaded: '已上传', deleted: '已删除' };
 const actionText: Record<string, string> = {
   login: '登录',
   logout: '退出登录',
@@ -83,6 +134,9 @@ const actionText: Record<string, string> = {
   change_password: '修改密码',
   create_work_order: '新建工单',
   update_work_order: '编辑工单',
+  update_work_order_status: '修改工单状态',
+  update_work_order_priority: '修改优先级',
+  update_work_order_planned_at: '修改计划时间',
   delete_work_order: '删除工单',
   download: '下载文件',
   download_work_order_package: '下载资料包',
@@ -106,7 +160,7 @@ const actionText: Record<string, string> = {
 const categoryIcons: Record<string, string> = { drawing: '原', sop: 'SOP', product: '成', material: '辅', notice: '注' };
 const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG', jpeg: 'JPG' };
 const requiredCategoryCodes = new Set(['drawing', 'sop', 'product']);
-const emptyForm: WorkOrderForm = { code: '', productName: '', stage: '未发图', priority: 'normal', status: 'pending', progress: 0, remark: '' };
+const emptyForm: WorkOrderForm = { code: '', productName: '', stage: 'not_issued', priority: 'normal', status: 'pending', progress: 0, plannedAt: '', remark: '' };
 const logFilters = [
   ['all', '全部'],
   ['upload', '上传'],
@@ -128,9 +182,45 @@ const logFilters = [
 
 function completionOf(categories: ResourceCategoryDTO[], counts: Record<string, number>) {
   const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
-  if (total === 0) return { key: 'empty', text: '空工单' };
-  const missingRequired = categories.some(c => requiredCategoryCodes.has(c.code) && !counts[c.id]);
-  return missingRequired ? { key: 'missing', text: '缺资料' } : { key: 'complete', text: '完整' };
+  if (total === 0) return { key: 'empty', text: '无资料', missing: requiredMissing(categories, counts) };
+  const missing = requiredMissing(categories, counts);
+  return missing ? { key: 'missing', text: `缺资料 ${missing}`, missing } : { key: 'complete', text: '完整', missing: 0 };
+}
+
+function requiredMissing(categories: ResourceCategoryDTO[], counts: Record<string, number>) {
+  return categories.filter(c => requiredCategoryCodes.has(c.code) && !counts[c.id]).length;
+}
+
+function normalizeFlowStage(value?: string | null) {
+  return flowAliases[String(value || '').trim()] || 'not_issued';
+}
+
+function flowText(value?: string | null) {
+  return flowStageText[normalizeFlowStage(value)];
+}
+
+function shortDt(v?: string | null) {
+  if (!v) return '';
+  const parts = dateParts(v);
+  if (!parts) return '';
+  return `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+function toDatetimeLocal(v?: string | null) {
+  if (!v) return '';
+  const parts = dateParts(v);
+  if (!parts) return '';
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+function plannedClass(order?: WorkOrderDTO | null) {
+  if (!order?.plannedAt) return '';
+  if (normalizeFlowStage(order.stage) === 'completed') return 'done';
+  const t = new Date(order.plannedAt).getTime();
+  if (!Number.isFinite(t)) return '';
+  if (t < Date.now()) return 'overdue';
+  if (t - Date.now() <= 24 * 60 * 60 * 1000) return 'soon';
+  return '';
 }
 
 function toForm(order?: WorkOrderDTO): WorkOrderForm {
@@ -142,6 +232,7 @@ function toForm(order?: WorkOrderDTO): WorkOrderForm {
     priority: order.priority,
     status: order.status,
     progress: order.progress,
+    plannedAt: toDatetimeLocal(order.plannedAt),
     remark: order.remark || '',
   };
 }
@@ -219,11 +310,15 @@ export default function DashboardShell({
   const [qrOpen, setQrOpen] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [qrLink, setQrLink] = useState('');
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+  const [quickMenu, setQuickMenu] = useState<QuickMenu>(null);
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
   const camera = useRef<HTMLInputElement>(null);
   const csvImport = useRef<HTMLInputElement>(null);
+  const drawerTouch = useRef<{ startX: number; startY: number; fromEdge: boolean; fromDrawer: boolean } | null>(null);
 
   const list = useMemo(() => {
     const text = kw.trim().toLowerCase();
@@ -232,8 +327,7 @@ export default function DashboardShell({
       if (!matchesText) return false;
       if (orderFilter === 'today') return sameDay(o.createdAt);
       if (orderFilter === 'week') return inRecentWeek(o.createdAt);
-      if (orderFilter === 'done') return o.status === 'done';
-      if (orderFilter === 'processing') return o.status === 'processing';
+      if (['not_issued', 'frontend', 'backend', 'completed'].includes(orderFilter)) return normalizeFlowStage(o.stage) === orderFilter;
       return true;
     });
   }, [orders, kw, orderFilter]);
@@ -417,10 +511,42 @@ export default function DashboardShell({
     await loadFiles(targetId, targetCategoryId || cat, targetFileId);
     await loadAllFiles(targetId);
     setSearchOpen(false);
+    setDrawerOpen(false);
   }
 
   async function openFileResult(target: ResourceFileDTO) {
     await openWorkOrder(target.workOrderId, target.categoryId, target.id);
+  }
+
+  function openQuickMenu(type: 'stage' | 'priority', target: WorkOrderDTO, event: React.MouseEvent<HTMLElement>) {
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setQuickMenu({ type, orderId: target.id, x: rect.left, y: rect.bottom + 8 });
+  }
+
+  async function updateWorkOrderQuick(target: WorkOrderDTO, patch: { stage?: string; priority?: string }) {
+    const before = orders;
+    mergeOrder({ ...target, ...patch, stage: patch.stage ? normalizeFlowStage(patch.stage) : target.stage });
+    setQuickMenu(null);
+    try {
+      const r = await fetch(`/api/work-orders/${target.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setOrders(before);
+        setMsg(d.error || d.message || '保存失败');
+        return;
+      }
+      mergeOrder(d.workOrder);
+      setMsg(patch.stage ? '状态已更新' : '优先级已更新');
+      await loadFieldSummary();
+    } catch {
+      setOrders(before);
+      setMsg('网络异常，保存失败');
+    }
   }
 
   async function loadUsers() {
@@ -581,6 +707,30 @@ export default function DashboardShell({
     loadCategoryCounts(order?.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wo]);
+
+  function onShellTouchStart(e: React.TouchEvent<HTMLElement>) {
+    const t = e.touches[0];
+    const target = e.target as HTMLElement;
+    const fromPreview = !!target.closest('.preview-card, .preview-stage, iframe, img');
+    drawerTouch.current = {
+      startX: t.clientX,
+      startY: t.clientY,
+      fromEdge: !drawerOpen && t.clientX <= 24 && !fromPreview,
+      fromDrawer: drawerOpen && !!target.closest('.orders-drawer'),
+    };
+  }
+
+  function onShellTouchEnd(e: React.TouchEvent<HTMLElement>) {
+    const touch = drawerTouch.current;
+    drawerTouch.current = null;
+    if (!touch) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touch.startX;
+    const dy = Math.abs(t.clientY - touch.startY);
+    if (dy > 48 || Math.abs(dx) < 70) return;
+    if (touch.fromEdge && dx > 0) setDrawerOpen(true);
+    if (touch.fromDrawer && dx < 0) setDrawerOpen(false);
+  }
 
   async function uploadMany(fileList: File[]) {
     if (!order) {
@@ -1007,7 +1157,7 @@ export default function DashboardShell({
   }
 
   return (
-    <main className="tablet-shell">
+    <main className="tablet-shell" onTouchStart={onShellTouchStart} onTouchEnd={onShellTouchEnd}>
       <header className="topbar">
         <button className="home-button" type="button" aria-label="首页">⌂</button>
         <div className="brand-block">
@@ -1072,7 +1222,7 @@ export default function DashboardShell({
       </header>
 
       <section className="workspace">
-        <aside className="orders-panel">
+        <aside className={drawerOpen ? 'orders-panel orders-drawer open' : 'orders-panel orders-drawer'} aria-hidden={!drawerOpen}>
           <div className="panel-head">
             <div>
               <span>生产工单</span>
@@ -1081,6 +1231,7 @@ export default function DashboardShell({
             <div className="panel-head-actions">
               <button className="import-order-button" type="button" onClick={openSystemSettings}>批量导入</button>
               <button className="new-order-button" type="button" onClick={() => openOrderModal('create')}>新建工单</button>
+              <button className="drawer-close" type="button" aria-label="关闭工单抽屉" onClick={() => setDrawerOpen(false)}>×</button>
             </div>
           </div>
           <div className="panel-search">
@@ -1091,26 +1242,30 @@ export default function DashboardShell({
               ['all', '全部'],
               ['today', '今日'],
               ['week', '本周'],
-              ['done', '已完成'],
-              ['processing', '进行中'],
+              ['not_issued', '未发图'],
+              ['frontend', '在前端'],
+              ['backend', '在后端'],
+              ['completed', '已完成'],
             ].map(([key, label]) => (
               <button key={key} className={orderFilter === key ? 'active' : ''} type="button" onClick={() => setOrderFilter(key)}>{label}</button>
             ))}
           </div>
-          <div className="order-stats">
-            <div><span>今日订单</span><strong>{visibleToday.length}</strong></div>
-            <div><span>本周订单</span><strong>{visibleWeek.length}</strong></div>
+          <div className="order-stats compact">
+            <span>今日 {visibleToday.length}</span>
+            <span>本周 {visibleWeek.length}</span>
+            {fieldSummary && (
+              <>
+                <span>缺资料 {fieldSummary.counts.missingWorkOrders}</span>
+                <span>完整 {fieldSummary.counts.completeWorkOrders}</span>
+                <span>最近文件 {fieldSummary.counts.recentFiles}</span>
+                <span>今日新增 {fieldSummary.counts.todayWorkOrders}</span>
+              </>
+            )}
           </div>
           {fieldSummary && (
             <section className="field-summary">
-              <div className="field-summary-metrics">
-                <button type="button" onClick={() => setOrderFilter('all')}><span>缺资料</span><b>{fieldSummary.counts.missingWorkOrders}</b></button>
-                <button type="button" onClick={() => setOrderFilter('all')}><span>完整</span><b>{fieldSummary.counts.completeWorkOrders}</b></button>
-                <button type="button"><span>最近文件</span><b>{fieldSummary.counts.recentFiles}</b></button>
-                <button type="button" onClick={() => setOrderFilter('today')}><span>今日新增</span><b>{fieldSummary.counts.todayWorkOrders}</b></button>
-              </div>
-              <details>
-                <summary>缺资料 Top 5 / 最近更新</summary>
+              <button className="field-summary-toggle" type="button" onClick={() => setSummaryOpen(v => !v)}>现场概览</button>
+              {summaryOpen && (
                 <div className="field-summary-list">
                   {fieldSummary.missingWorkOrders.map(item => (
                     <button key={item.id} type="button" onClick={() => openWorkOrder(item.id)}>
@@ -1123,12 +1278,13 @@ export default function DashboardShell({
                     </button>
                   ))}
                 </div>
-              </details>
+              )}
             </section>
           )}
-          <OrderGroup title="工单列表" orders={list} selected={order?.id} choose={setWo} categories={categories} />
+          <OrderGroup title="工单列表" orders={list} selected={order?.id} choose={id => openWorkOrder(id)} categories={categories} openQuickMenu={openQuickMenu} />
           {!list.length && <div className="empty-orders large">未找到匹配工单</div>}
         </aside>
+        {drawerOpen && <button className="drawer-mask" type="button" aria-label="关闭工单抽屉" onClick={() => setDrawerOpen(false)} />}
 
         <nav className="resource-menu">
           <div className="resource-head">
@@ -1154,6 +1310,20 @@ export default function DashboardShell({
         </nav>
 
         <section className="main-card">
+          <div className="current-order-capsule">
+            <div>
+              <span>当前工单</span>
+              <strong>{order ? `${order.code}  ${order.productName}` : '暂无工单'}</strong>
+            </div>
+            {order && (
+              <div className="capsule-tags">
+                <button className={`flow-chip ${normalizeFlowStage(order.stage)}`} type="button" onClick={e => openQuickMenu('stage', order, e)}>{flowText(order.stage)}</button>
+                <button className={`priority-chip ${order.priority}`} type="button" onClick={e => openQuickMenu('priority', order, e)}>{priorityText[order.priority] || '一般'}</button>
+                {order.plannedAt && <span className={`planned-chip ${plannedClass(order)}`}>{shortDt(order.plannedAt)}</span>}
+              </div>
+            )}
+            <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
+          </div>
           <div className="status-title-row enhanced">
             <div className="status-title">
               <span className="doc-icon">▤</span>
@@ -1254,7 +1424,7 @@ export default function DashboardShell({
                   <Info label="上传人" value={file?.uploadedBy || accountName} />
                   <Info label="上传时间" value={file ? dt(file.createdAt) : '-'} />
                   <Info label="当前分类" value={category?.name || '-'} />
-                  <Info label="文件状态" value={file ? statusText[file.status] || file.status : '缺失'} ok={!!file} />
+                  <Info label="文件状态" value={file ? fileStatusText[file.status] || file.status : '缺失'} ok={!!file} />
                   <Info label="备注" value={file?.remark || '-'} />
                 </section>
 
@@ -1292,9 +1462,9 @@ export default function DashboardShell({
           <div className="print-meta">
             <span>工单号：{order.code}</span>
             <span>产品名称：{order.productName}</span>
-            <span>阶段：{order.stage}</span>
+            <span>状态：{flowText(order.stage)}</span>
             <span>优先级：{priorityText[order.priority] || order.priority}</span>
-            <span>状态：{statusText[order.status] || order.status}</span>
+            {order.plannedAt && <span>计划时间：{dt(order.plannedAt)}</span>}
             <span>资料完整性：{completion.text}</span>
             <span>打印时间：{now ? dt(now.toISOString()) : '-'}</span>
           </div>
@@ -1323,6 +1493,23 @@ export default function DashboardShell({
       )}
 
       {msg && <div className="status-toast">{msg}</div>}
+
+      {quickMenu && (
+        <div className="quick-menu" style={{ left: quickMenu.x, top: quickMenu.y }}>
+          {(quickMenu.type === 'stage' ? flowStages : ([
+            ['urgent', '紧急'],
+            ['high', '高'],
+            ['normal', '一般'],
+          ] as const)).map(([key, label]) => {
+            const target = orders.find(o => o.id === quickMenu.orderId);
+            return (
+              <button key={key} type="button" disabled={!target} onClick={() => target && updateWorkOrderQuick(target, quickMenu.type === 'stage' ? { stage: key } : { priority: key })}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <input ref={csvImport} hidden type="file" accept=".csv,text/csv" onChange={e => importWorkOrders(e.target.files)} />
 
@@ -1410,13 +1597,13 @@ export default function DashboardShell({
               <strong>{orderModal.mode === 'create' ? '新建工单' : '编辑工单'}</strong>
               <button type="button" onClick={() => setOrderModal(null)}>×</button>
             </div>
-            <div className="form-grid">
-              <label>工单号<input value={orderForm.code} disabled={orderModal.mode === 'edit'} onChange={e => setOrderForm(v => ({ ...v, code: e.target.value }))} /></label>
-              <label>产品名称<input value={orderForm.productName} onChange={e => setOrderForm(v => ({ ...v, productName: e.target.value }))} /></label>
-              <label>阶段<select value={orderForm.stage} onChange={e => setOrderForm(v => ({ ...v, stage: e.target.value }))}><option>前端</option><option>后端</option><option>未发图</option></select></label>
-              <label>优先级<select value={orderForm.priority} onChange={e => setOrderForm(v => ({ ...v, priority: e.target.value }))}><option value="urgent">紧急</option><option value="high">高</option><option value="normal">一般</option></select></label>
-              <label>状态<select value={orderForm.status} onChange={e => setOrderForm(v => ({ ...v, status: e.target.value }))}><option value="pending">待处理</option><option value="processing">进行中</option><option value="done">已完成</option></select></label>
-              <label>进度<input type="number" min={0} max={100} value={orderForm.progress} onChange={e => setOrderForm(v => ({ ...v, progress: Number(e.target.value) }))} /></label>
+              <div className="form-grid">
+                <label>工单号<input value={orderForm.code} disabled={orderModal.mode === 'edit'} onChange={e => setOrderForm(v => ({ ...v, code: e.target.value }))} /></label>
+                <label>产品名称<input value={orderForm.productName} onChange={e => setOrderForm(v => ({ ...v, productName: e.target.value }))} /></label>
+                <label>状态<select value={normalizeFlowStage(orderForm.stage)} onChange={e => setOrderForm(v => ({ ...v, stage: e.target.value }))}>{flowStages.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+                <label>优先级<select value={orderForm.priority} onChange={e => setOrderForm(v => ({ ...v, priority: e.target.value }))}><option value="urgent">紧急</option><option value="high">高</option><option value="normal">一般</option></select></label>
+                <label>计划时间<input type="datetime-local" value={orderForm.plannedAt} onChange={e => setOrderForm(v => ({ ...v, plannedAt: e.target.value }))} /></label>
+                <label>进度<input type="number" min={0} max={100} value={orderForm.progress} onChange={e => setOrderForm(v => ({ ...v, progress: Number(e.target.value) }))} /></label>
               <label className="wide">备注<textarea value={orderForm.remark} onChange={e => setOrderForm(v => ({ ...v, remark: e.target.value }))} /></label>
             </div>
             {orderFormError && <div className="form-error">{orderFormError}</div>}
@@ -1549,12 +1736,14 @@ function OrderGroup({
   selected,
   choose,
   categories,
+  openQuickMenu,
 }: {
   title: string;
   orders: WorkOrderDTO[];
   selected?: string;
   choose: (id: string) => void;
   categories: ResourceCategoryDTO[];
+  openQuickMenu: (type: 'stage' | 'priority', target: WorkOrderDTO, event: React.MouseEvent<HTMLElement>) => void;
 }) {
   return (
     <section className="order-group">
@@ -1565,18 +1754,17 @@ function OrderGroup({
           <button key={o.id} className={o.id === selected ? 'order-card active' : 'order-card'} type="button" onClick={() => choose(o.id)}>
             <div className="order-topline">
               <strong>{o.code}</strong>
-              <span className={`tag ${o.priority === 'urgent' ? 'tag-danger' : o.priority === 'high' ? 'tag-warning' : 'tag-blue'}`}>{priorityText[o.priority] || '一般'}</span>
+              <span role="button" tabIndex={0} className={`tag priority-chip ${o.priority}`} onClick={e => openQuickMenu('priority', o, e)}>{priorityText[o.priority] || '一般'}</span>
             </div>
             <p>{o.productName}</p>
-            <div className="order-progress">
-              <span className={`stage ${o.stage === '前端' ? 'stage-blue' : o.stage === '后端' ? 'stage-green' : 'stage-gray'}`}>{o.stage}</span>
-              <b>{o.progress ? `${o.progress}%` : '0%'}</b>
-              <i><em style={{ width: `${Math.min(Math.max(o.progress, 0), 100)}%` }} /></i>
-            </div>
-            <div className="order-status">
-              <span>{statusText[o.status] || o.status}</span>
+            <div className="order-compact-meta">
+              <span role="button" tabIndex={0} className={`flow-chip ${normalizeFlowStage(o.stage)}`} onClick={e => openQuickMenu('stage', o, e)}>{flowText(o.stage)}</span>
               <strong className={`completion-chip ${completion.key}`}>{completion.text}</strong>
-              <em>›</em>
+              {o.plannedAt && <em className={`planned-text ${plannedClass(o)}`}>{shortDt(o.plannedAt)}</em>}
+            </div>
+            <div className="order-progress compact">
+              <i><em style={{ width: `${Math.min(Math.max(o.progress, 0), 100)}%` }} /></i>
+              <b>{o.progress ? `${o.progress}%` : '0%'}</b>
             </div>
           </button>
         );
@@ -1646,7 +1834,7 @@ function UploadManager({
             <div>
               <strong>{displayFileName(file)}</strong>
               <span>{file.categoryName || '-'} · {file.version || 'V1.0'} · {bytes(file.fileSize)}</span>
-              <small>{dt(file.createdAt)} · {statusText[file.status] || file.status}</small>
+              <small>{dt(file.createdAt)} · {fileStatusText[file.status] || file.status}</small>
             </div>
             <div className="manager-actions">
               <button type="button" onClick={() => selectFile(file)}>预览</button>
@@ -1949,7 +2137,7 @@ function SystemSettings({
         <div className="dialog-title">
           <div>
             <strong>系统设置</strong>
-            <small>v1.6.0-rc.1 · Web / PWA</small>
+            <small>v1.7.0-rc.1 · Web / PWA</small>
           </div>
           <button type="button" onClick={close}>×</button>
         </div>
@@ -1958,7 +2146,7 @@ function SystemSettings({
           <section className="system-section">
             <h3>基础信息</h3>
             <Info label="系统名称" value={status?.app.name || '工单资料库'} />
-            <Info label="当前版本" value={status?.app.version || 'v1.6.0-rc.1'} />
+            <Info label="当前版本" value={status?.app.version || 'v1.7.0-rc.1'} />
             <Info label="部署模式" value={status?.app.mode || 'Web / PWA'} />
             <Info label="数据模式" value={status?.data.mode || '账号登录，共享数据'} />
             <Info label="权限模式" value={status?.data.permissions || '无角色权限'} />
