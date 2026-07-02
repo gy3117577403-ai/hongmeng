@@ -36,7 +36,7 @@ ghcr.io/gy3117577403-ai/hongmeng:latest
 Sealos App Deploy 端口填 `3000`。
 
 ## 生产部署状态
-- 当前生产版本：v1.5.0
+- 当前生产版本：v1.6.0
 - 上线地址：https://qdowqencjyph.sealoshzh.site
 - 部署平台：Sealos
 - 镜像：`ghcr.io/gy3117577403-ai/hongmeng`
@@ -47,6 +47,7 @@ Sealos App Deploy 端口填 `3000`。
 - v1.3.0：工单管理、资料完整性、ZIP 下载、操作日志
 - v1.4.0：批量上传、版本递增、文件编辑、上传管理增强
 - v1.5.0：PWA、系统设置、数据导入导出、打印摘要、错误页
+- v1.6.0：账号管理、回收站恢复、文件错传纠正、全局搜索、工单直达链接和二维码、拍照上传、现场概览、使用帮助、诊断信息导出
 
 ## 开发版本 / Release Candidate
 
@@ -146,7 +147,15 @@ Sealos App Deploy 端口填 `3000`。
 
 ### RC 说明
 - v1.3.0-rc.1、v1.4.0-rc.1、v1.5.0-rc.1 和 v1.6.0-rc.1 为历史候选版本记录
-- v1.5.0 已完成 Sealos 统一部署和线上验收
+- v1.6.0 已完成 Sealos 统一部署和线上验收
+
+## 交付文档索引
+- [用户手册 v1.5.0](docs/USER_MANUAL_v1.5.0.md)
+- [运维手册 v1.5.0](docs/ADMIN_OPERATION_v1.5.0.md)
+- [现场使用指南 v1.6.0](docs/FIELD_USE_GUIDE_v1.6.0.md)
+- [备份计划 v1.5.0](docs/BACKUP_PLAN_v1.5.0.md)
+- [回滚指南 v1.5.0](docs/ROLLBACK_GUIDE_v1.5.0.md)
+- [部署 Smoke Test v1.5.0](docs/SMOKE_TEST_v1.5.0.md)
 
 ## 数据不丢验收
 1. 上传 PDF/JPG/PNG。
