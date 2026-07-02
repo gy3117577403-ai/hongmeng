@@ -1584,6 +1584,7 @@ input:focus-visible {
 
 .work-order-dialog {
   width: min(720px, 100%);
+  max-height: calc(100vh - 32px);
   display: grid;
   gap: 14px;
   padding: 24px;
@@ -1591,6 +1592,7 @@ input:focus-visible {
   border-radius: 16px;
   background: #fff;
   box-shadow: var(--shadow);
+  overflow: auto;
 }
 
 .form-grid {
@@ -1633,6 +1635,45 @@ input:focus-visible {
   min-height: 88px;
   padding: 12px;
   resize: vertical;
+}
+
+@media (max-height: 820px) {
+  .modal-backdrop {
+    padding: 16px;
+  }
+
+  .work-order-dialog {
+    gap: 10px;
+    padding: 20px;
+  }
+
+  .work-order-dialog .dialog-title strong {
+    font-size: 18px;
+  }
+
+  .work-order-dialog .form-grid {
+    gap: 10px 14px;
+  }
+
+  .work-order-dialog .form-grid label {
+    gap: 6px;
+    font-size: 13px;
+  }
+
+  .work-order-dialog .form-grid input,
+  .work-order-dialog .form-grid select,
+  .work-order-dialog .form-grid textarea {
+    min-height: 42px;
+    border-radius: 11px;
+  }
+
+  .work-order-dialog .form-grid textarea {
+    min-height: 66px;
+  }
+
+  .work-order-dialog .dialog-actions button {
+    min-height: 42px;
+  }
 }
 
 .form-grid input:focus,

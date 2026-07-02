@@ -163,6 +163,15 @@
   color: #fff;
 }
 
+.dialog-actions .primary-button {
+  background: linear-gradient(135deg, var(--orange), #ff8b26);
+  box-shadow: 0 10px 22px rgba(255, 106, 0, .18);
+}
+
+.dialog-actions .danger-button {
+  background: var(--red);
+}
+
 @media (max-width: 1024px) {
   .user-button {
     max-width: 152px;
