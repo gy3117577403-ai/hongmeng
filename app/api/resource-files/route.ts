@@ -39,6 +39,7 @@ function serializeFile(f: {
     uploadedBy: f.uploadedBy?.displayName || null,
     createdAt: f.createdAt.toISOString(),
     updatedAt: f.updatedAt.toISOString(),
+    contentUrl: `/api/resource-files/${f.id}/content`,
     viewUrl: `/api/resource-files/${f.id}/view`,
     downloadUrl: `/api/resource-files/${f.id}/download`,
   };

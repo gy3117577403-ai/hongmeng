@@ -47,6 +47,7 @@ function serializeFile(f: {
     version: f.version || 'V1.0',
     createdAt: f.createdAt.toISOString(),
     updatedAt: f.updatedAt.toISOString(),
+    contentUrl: `/api/resource-files/${f.id}/content`,
     viewUrl: `/api/resource-files/${f.id}/view`,
     downloadUrl: `/api/resource-files/${f.id}/download`,
   };

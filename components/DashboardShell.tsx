@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
+import { ImageViewer } from '@/components/ImageViewer';
+import { PdfViewer } from '@/components/PdfViewer';
+import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import type { CurrentUserDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
 type WorkOrderForm = {
@@ -76,7 +79,7 @@ function dt(v: string, withTime = true) {
 }
 
 function shortName(name: string) {
-  return name.length > 22 ? `${name.slice(0, 11)}...${name.slice(-8)}` : name;
+  return compactFilename(name, 24);
 }
 
 function sameDay(value: string) {
@@ -91,7 +94,7 @@ function inRecentWeek(value: string) {
 }
 
 function displayFileName(file?: ResourceFileDTO | null) {
-  return file?.displayName || file?.originalName || '-';
+  return safeDisplayFilename(file);
 }
 
 function fileExtOk(file: File) {
@@ -313,6 +316,7 @@ export default function DashboardShell({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [quickMenu, setQuickMenu] = useState<QuickMenu>(null);
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
@@ -708,6 +712,24 @@ export default function DashboardShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wo]);
 
+  useEffect(() => {
+    if (!quickMenu) return undefined;
+    const close = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest('.quick-menu, .flow-chip, .priority-chip')) return;
+      setQuickMenu(null);
+    };
+    const closeByKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setQuickMenu(null);
+    };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', closeByKey);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', closeByKey);
+    };
+  }, [quickMenu]);
+
   function onShellTouchStart(e: React.TouchEvent<HTMLElement>) {
     const t = e.touches[0];
     const target = e.target as HTMLElement;
@@ -1008,7 +1030,7 @@ export default function DashboardShell({
   function downloadName(headers: Headers, fallback: string) {
     const value = headers.get('Content-Disposition') || '';
     const m = value.match(/filename\*=UTF-8''([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : fallback;
+    return m ? safeDecodeFilename(m[1]) : fallback;
   }
 
   async function downloadExport(path: string, label: string, fallback: string) {
@@ -1334,13 +1356,20 @@ export default function DashboardShell({
             </div>
             <div className={`completion-pill ${completion.key}`}>{completion.text}</div>
             <div className="title-actions">
-              <button type="button" disabled={!order} onClick={() => order && openOrderModal('edit', order)}>编辑工单</button>
-              <button type="button" disabled={!order} onClick={() => order && setOrderDeleteTarget(order)}>删除工单</button>
-              <button type="button" disabled={!order} onClick={copy}>复制链接</button>
-              <button type="button" disabled={!order} onClick={openQrDialog}>打印二维码</button>
               <button className="download-all-button" type="button" disabled={!order || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
-              <button type="button" disabled={!order} onClick={printSummary}>打印摘要</button>
               <button className="refresh-button" type="button" onClick={refresh}>↻ 刷新</button>
+              <div className="more-actions-wrap">
+                <button type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多操作</button>
+                {moreActionsOpen && (
+                  <div className="more-actions-menu">
+                    <button type="button" onClick={() => { setMoreActionsOpen(false); order && openOrderModal('edit', order); }}>编辑工单</button>
+                    <button type="button" onClick={() => { setMoreActionsOpen(false); order && setOrderDeleteTarget(order); }}>删除工单</button>
+                    <button type="button" onClick={() => { setMoreActionsOpen(false); copy(); }}>复制链接</button>
+                    <button type="button" onClick={() => { setMoreActionsOpen(false); openQrDialog(); }}>打印二维码</button>
+                    <button type="button" onClick={() => { setMoreActionsOpen(false); printSummary(); }}>打印摘要</button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -1380,7 +1409,9 @@ export default function DashboardShell({
                       <p>正在读取当前分类文件</p>
                     </div>
                   ) : file ? (
-                    file.fileType === 'pdf' ? <iframe src={file.viewUrl} title={displayFileName(file)} /> : <img src={file.viewUrl} alt={displayFileName(file)} />
+                    file.fileType === 'pdf'
+                      ? <PdfViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} />
+                      : <ImageViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} />
                   ) : (
                     <div className="empty-preview">
                       <div className="empty-illustration">▤</div>
@@ -1415,8 +1446,8 @@ export default function DashboardShell({
                     <strong>文件信息</strong>
                     <span>{files.length ? `${files.length} 个文件` : '暂无文件'}</span>
                   </div>
-                  <Info label="显示名称" value={file ? displayFileName(file) : '-'} />
-                  <Info label="原始文件名" value={file?.originalName || '-'} />
+                  <Info label="显示名称" value={file ? displayFileName(file) : '-'} wrap />
+                  <Info label="原始文件名" value={file ? safeDisplayFilename({ originalName: file.originalName }) : '-'} wrap />
                   <Info label="文件类型" value={file ? fileTypeText[file.fileType] || file.fileType.toUpperCase() : '-'} />
                   <Info label="文件版本" value={file?.version || 'V1.0'} />
                   <Info label="版本状态" value={file ? (file.id === latestFileId ? '最新' : '历史') : '-'} ok={file?.id === latestFileId} />
@@ -1429,6 +1460,10 @@ export default function DashboardShell({
                 </section>
 
                 <section className="action-card">
+                  <div className="side-section-title">
+                    <strong>上传资料</strong>
+                    <span>{category?.name || '-'}</span>
+                  </div>
                   <input ref={pdf} hidden multiple type="file" accept="application/pdf,.pdf" onChange={e => uploadMany(Array.from(e.target.files || []))} />
                   <input ref={img} hidden multiple type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" onChange={e => uploadMany(Array.from(e.target.files || []))} />
                   <input ref={camera} hidden type="file" accept="image/*" capture="environment" onChange={e => uploadMany(Array.from(e.target.files || []))} />
@@ -1441,6 +1476,10 @@ export default function DashboardShell({
                   <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => camera.current?.click()}>
                     <span>◎</span><b>拍照上传</b>
                   </button>
+                  <div className="side-section-title compact">
+                    <strong>文件操作</strong>
+                    <span>{file ? file.version || 'V1.0' : '-'}</span>
+                  </div>
                   <div className="secondary-actions file-actions">
                     <a className={!file ? 'disabled' : ''} href={file?.downloadUrl || '#'} target="_blank">下载当前</a>
                     <button type="button" disabled={!file} onClick={() => file && openFileEdit(file)}>编辑文件</button>
@@ -1778,7 +1817,7 @@ function FileThumb({ file }: { file: ResourceFileDTO }) {
   if (file.fileType === 'pdf') {
     return <span className="file-thumb pdf">PDF</span>;
   }
-  return <span className="file-thumb img"><img src={file.viewUrl} alt="" /></span>;
+  return <span className="file-thumb img"><img src={file.contentUrl || file.viewUrl} alt={displayFileName(file)} /></span>;
 }
 
 function UploadJobs({ jobs }: { jobs: UploadJob[] }) {
@@ -2232,9 +2271,9 @@ function SystemSettings({
   );
 }
 
-function Info({ label, value, ok }: { label: string; value: string; ok?: boolean }) {
+function Info({ label, value, ok, wrap = false }: { label: string; value: string; ok?: boolean; wrap?: boolean }) {
   return (
-    <div className="info-item">
+    <div className={wrap ? 'info-item wrap' : 'info-item'}>
       <small>{label}</small>
       <strong className={ok ? 'success-text' : ''} title={value}>{value}</strong>
     </div>

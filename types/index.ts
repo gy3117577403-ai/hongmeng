@@ -38,6 +38,7 @@ export type ResourceFileDTO = {
   createdAt: string;
   updatedAt: string;
   deletedAt?: string | null;
+  contentUrl?: string;
   viewUrl: string;
   downloadUrl: string;
 };

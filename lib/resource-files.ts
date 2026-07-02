@@ -37,6 +37,7 @@ export function serializeResourceFile(f: {
     createdAt: f.createdAt.toISOString(),
     updatedAt: f.updatedAt.toISOString(),
     deletedAt: f.deletedAt?.toISOString() || null,
+    contentUrl: `/api/resource-files/${f.id}/content`,
     viewUrl: `/api/resource-files/${f.id}/view`,
     downloadUrl: `/api/resource-files/${f.id}/download`,
   };

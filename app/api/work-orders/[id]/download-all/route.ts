@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Readable } from 'stream';
 import yazl from 'yazl';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { safeDisplayFilename } from '@/lib/filenames';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { getObjectStream } from '@/lib/s3';
@@ -58,7 +59,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
     for (const file of workOrder.resourceFiles) {
       const folder = safeZipName(file.category.name);
-      const filename = versionedName(file.displayName || file.originalName, file.version);
+      const filename = versionedName(safeDisplayFilename(file), file.version);
       const path = uniquePath(`${folder}/${filename}`, used);
       zip.addReadStream(await getObjectStream(file.objectKey), path, { mtime: file.createdAt });
     }
