@@ -3198,9 +3198,14 @@ input:focus-visible {
   transition: transform .16s ease;
 }
 
-.preview-image.fit {
-  width: 100%;
-  height: 100%;
+.image-stage .preview-image.fit {
+  position: absolute;
+  inset: 16px;
+  width: calc(100% - 32px);
+  height: calc(100% - 32px);
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
 }
 
 .preview-image.original,
@@ -3435,10 +3440,51 @@ input:focus-visible {
 
   .current-order-capsule {
     margin-bottom: 8px;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    padding: 8px 10px;
   }
 
   .status-title-row.enhanced {
+    grid-template-columns: minmax(180px, 1fr) auto auto;
     margin-bottom: 8px;
+  }
+
+  .capsule-tags {
+    grid-column: auto;
+    max-width: 250px;
+    overflow: hidden;
+  }
+
+  .current-order-capsule strong {
+    font-size: 15px;
+  }
+
+  .switch-order-button {
+    min-height: 36px;
+    padding: 0 12px;
+  }
+
+  .status-title small {
+    display: none;
+  }
+
+  .title-actions {
+    grid-column: auto;
+    justify-content: flex-end;
+  }
+
+  .title-actions > button,
+  .more-actions-wrap > button {
+    min-height: 38px;
+    padding: 0 10px;
+  }
+
+  .order-remark {
+    margin: -2px 0 8px;
+    padding: 7px 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .content-grid {
@@ -3456,13 +3502,35 @@ input:focus-visible {
   }
 
   .file-strip {
-    flex-basis: 96px;
-    min-height: 96px;
+    flex-basis: 76px;
+    min-height: 76px;
+    padding-top: 8px;
   }
 
   .strip-file.thumb {
-    width: 176px;
-    flex-basis: 176px;
+    width: 156px;
+    flex-basis: 156px;
+    min-height: 66px;
+    grid-template-columns: 42px minmax(0, 1fr);
+    padding: 7px;
+  }
+
+  .file-thumb {
+    width: 42px;
+    height: 42px;
+    border-radius: 10px;
+  }
+
+  .strip-file.thumb small {
+    font-size: 11px;
+  }
+
+  .version-badge {
+    top: 5px;
+    right: 5px;
+    min-height: 20px;
+    padding: 0 6px;
+    font-size: 10px;
   }
 }
 
