@@ -97,6 +97,7 @@ export type ConnectorParameterDTO = {
   createdAt: string;
   updatedAt: string;
   deletedAt?: string | null;
+  importBatchId?: string | null;
 };
 
 export type ConnectorParameterFileDTO = {
@@ -142,4 +143,34 @@ export type ConnectorImportPreviewSummaryDTO = {
   invalidCount: number;
   skippedCount: number;
   highlightedCount: number;
+};
+
+export type ChangeSnapshotDTO = {
+  id: string;
+  entityType: string;
+  entityId: string;
+  action: string;
+  changedBy?: string | null;
+  createdAt: string;
+  beforeJson?: unknown;
+  afterJson?: unknown;
+  summary?: string;
+};
+
+export type ConnectorParameterImportBatchDTO = {
+  id: string;
+  sourceType: string;
+  fileName?: string | null;
+  totalRows: number;
+  readyCount: number;
+  duplicateCount: number;
+  invalidCount: number;
+  skippedCount: number;
+  insertedCount: number;
+  duplicateStrategy: string;
+  createdBy?: string | null;
+  createdAt: string;
+  rolledBackAt?: string | null;
+  rolledBackBy?: string | null;
+  activeParameterCount?: number;
 };

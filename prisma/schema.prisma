@@ -37,6 +37,12 @@ model WorkOrder {
   deletedAt     DateTime?      @map("deleted_at")
   resourceFiles ResourceFile[]
 
+  @@index([code])
+  @@index([productName])
+  @@index([customerName])
+  @@index([stage])
+  @@index([plannedAt])
+  @@index([createdAt])
   @@index([priority])
   @@index([status])
   @@index([deletedAt])
@@ -76,6 +82,11 @@ model ResourceFile {
   category     ResourceCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   uploadedBy   User?     @relation("UploadedFiles", fields: [uploadedById], references: [id], onDelete: SetNull)
 
+  @@index([workOrderId])
+  @@index([categoryId])
+  @@index([deletedAt])
+  @@index([createdAt])
+  @@index([version])
   @@index([workOrderId, categoryId, status, deletedAt])
   @@index([objectKey])
   @@map("resource_files")
@@ -111,12 +122,55 @@ model ConnectorParameter {
   createdAt         DateTime  @default(now()) @map("created_at")
   updatedAt         DateTime  @updatedAt @map("updated_at")
   deletedAt         DateTime? @map("deleted_at")
+  importBatchId     String?   @map("import_batch_id")
+  importBatch       ConnectorParameterImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
 
   @@index([rowNo])
   @@index([model])
   @@index([isHighlighted])
   @@index([deletedAt])
+  @@index([createdAt])
+  @@index([importBatchId])
   @@map("connector_parameters")
+}
+
+model ConnectorParameterImportBatch {
+  id                String    @id @default(cuid())
+  sourceType        String    @map("source_type")
+  fileName          String?   @map("file_name")
+  totalRows         Int       @map("total_rows")
+  readyCount        Int       @default(0) @map("ready_count")
+  duplicateCount    Int       @default(0) @map("duplicate_count")
+  invalidCount      Int       @default(0) @map("invalid_count")
+  skippedCount      Int       @default(0) @map("skipped_count")
+  insertedCount     Int       @default(0) @map("inserted_count")
+  duplicateStrategy String    @map("duplicate_strategy")
+  createdBy         String?   @map("created_by")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  rolledBackAt      DateTime? @map("rolled_back_at")
+  rolledBackBy      String?   @map("rolled_back_by")
+  summaryJson       Json?     @map("summary_json")
+  parameters        ConnectorParameter[]
+
+  @@index([createdAt])
+  @@index([rolledBackAt])
+  @@map("connector_parameter_import_batches")
+}
+
+model DataChangeSnapshot {
+  id         String   @id @default(cuid())
+  entityType String   @map("entity_type")
+  entityId   String   @map("entity_id")
+  action     String
+  beforeJson Json?    @map("before_json")
+  afterJson  Json?    @map("after_json")
+  changedBy  String?  @map("changed_by")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("data_change_snapshots")
 }
 
 model ConnectorParameterFile {

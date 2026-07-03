@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { serializeResourceFile } from '@/lib/resource-files';
+import { resourceFileSnapshot, snapshotChange } from '@/lib/change-snapshots';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,14 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
       },
     });
     await logOp({ userId: user.id, action: 'restore_resource_file', targetType: 'resource_file', targetId: file.id, detail: { fileName: file.displayName || file.originalName } });
+    await snapshotChange({
+      entityType: 'resource_file',
+      entityId: file.id,
+      action: 'restore_resource_file',
+      before: resourceFileSnapshot(old),
+      after: resourceFileSnapshot(file),
+      changedBy: user.displayName || user.username,
+    });
     return NextResponse.json({ ok: true, file: serializeResourceFile(file) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();

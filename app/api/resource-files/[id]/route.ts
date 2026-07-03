@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { serializeResourceFile } from '@/lib/resource-files';
+import { resourceFileSnapshot, snapshotChange } from '@/lib/change-snapshots';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -65,6 +66,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           toCategory: file.category.name,
         },
       });
+      await snapshotChange({
+        entityType: 'resource_file',
+        entityId: file.id,
+        action: 'move_resource_file',
+        before: resourceFileSnapshot(old),
+        after: resourceFileSnapshot(file),
+        changedBy: user.displayName || user.username,
+      });
     }
     if (body.displayName !== undefined || body.remark !== undefined) {
       await logOp({
@@ -73,6 +82,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         targetType: 'resource_file',
         targetId: file.id,
         detail: { displayName: file.displayName, hasRemark: !!file.remark },
+      });
+      await snapshotChange({
+        entityType: 'resource_file',
+        entityId: file.id,
+        action: 'update_resource_file',
+        before: resourceFileSnapshot(old),
+        after: resourceFileSnapshot(file),
+        changedBy: user.displayName || user.username,
       });
     }
 

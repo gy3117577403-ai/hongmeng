@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { serializeConnectorParameter } from '@/lib/connector-parameters';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { connectorParameterSnapshot, snapshotChange } from '@/lib/change-snapshots';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,14 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       targetType: 'connector_parameter',
       targetId: item.id,
       detail: { model: item.model, rowNo: item.rowNo },
+    });
+    await snapshotChange({
+      entityType: 'connector_parameter',
+      entityId: item.id,
+      action: 'restore_connector_parameter',
+      before: connectorParameterSnapshot(existing),
+      after: connectorParameterSnapshot(item),
+      changedBy: user.displayName || user.username,
     });
     return NextResponse.json({ ok: true, parameter: serializeConnectorParameter(item) });
   } catch (e) {

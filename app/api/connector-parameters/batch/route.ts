@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { connectorParameterSnapshot, snapshotChange } from '@/lib/change-snapshots';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,10 @@ export async function POST(req: NextRequest) {
     if (!['highlight', 'unhighlight', 'delete'].includes(action)) return NextResponse.json({ ok: false, error: '批量操作类型不支持' }, { status: 400 });
 
     const userName = user.displayName || user.username;
+    const beforeItems = await prisma.connectorParameter.findMany({
+      where: { id: { in: ids }, deletedAt: null },
+      take: 50,
+    });
     if (action === 'delete') {
       const result = await prisma.connectorParameter.updateMany({
         where: { id: { in: ids }, deletedAt: null },
@@ -28,6 +33,14 @@ export async function POST(req: NextRequest) {
         action: 'batch_delete_connector_parameters',
         targetType: 'connector_parameter',
         detail: { count: result.count },
+      });
+      await snapshotChange({
+        entityType: 'connector_parameter',
+        entityId: 'batch',
+        action: 'batch_delete_connector_parameters',
+        before: { count: beforeItems.length, items: beforeItems.map(connectorParameterSnapshot) },
+        after: { count: result.count, softDelete: true },
+        changedBy: userName,
       });
       return NextResponse.json({ ok: true, count: result.count });
     }
@@ -42,6 +55,14 @@ export async function POST(req: NextRequest) {
       action: 'batch_update_connector_parameters',
       targetType: 'connector_parameter',
       detail: { count: result.count, isHighlighted },
+    });
+    await snapshotChange({
+      entityType: 'connector_parameter',
+      entityId: 'batch',
+      action: 'batch_update_connector_parameters',
+      before: { count: beforeItems.length, isHighlightedBefore: beforeItems.filter(item => item.isHighlighted).length },
+      after: { count: result.count, isHighlighted },
+      changedBy: userName,
     });
     return NextResponse.json({ ok: true, count: result.count });
   } catch (e) {

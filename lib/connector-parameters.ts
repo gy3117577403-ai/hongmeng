@@ -142,6 +142,7 @@ export function serializeConnectorParameter(item: ConnectorParameter) {
     createdAt: item.createdAt.toISOString(),
     updatedAt: item.updatedAt.toISOString(),
     deletedAt: item.deletedAt?.toISOString() || null,
+    importBatchId: item.importBatchId || null,
   };
 }
 

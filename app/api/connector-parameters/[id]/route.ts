@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { parseConnectorParameterInput, serializeConnectorParameter } from '@/lib/connector-parameters';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { connectorParameterSnapshot, snapshotChange } from '@/lib/change-snapshots';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +31,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       targetId: item.id,
       detail: { model: item.model, rowNo: item.rowNo, isHighlighted: item.isHighlighted },
     });
+    await snapshotChange({
+      entityType: 'connector_parameter',
+      entityId: item.id,
+      action: 'update_connector_parameter',
+      before: connectorParameterSnapshot(existing),
+      after: connectorParameterSnapshot(item),
+      changedBy: user.displayName || user.username,
+    });
     return NextResponse.json({ ok: true, parameter: serializeConnectorParameter(item) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
@@ -53,6 +62,14 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
       targetType: 'connector_parameter',
       targetId: item.id,
       detail: { model: item.model, rowNo: item.rowNo },
+    });
+    await snapshotChange({
+      entityType: 'connector_parameter',
+      entityId: item.id,
+      action: 'delete_connector_parameter',
+      before: connectorParameterSnapshot(existing),
+      after: connectorParameterSnapshot(item),
+      changedBy: user.displayName || user.username,
     });
     return NextResponse.json({ ok: true });
   } catch (e) {

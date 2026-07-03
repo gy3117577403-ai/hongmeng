@@ -7,7 +7,7 @@ import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
-import type { CurrentUserDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
+import type { ChangeSnapshotDTO, CurrentUserDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
 type WorkOrderForm = {
   code: string;
@@ -22,7 +22,17 @@ type WorkOrderForm = {
 };
 
 type WorkOrderModal = { mode: 'create' | 'edit'; order?: WorkOrderDTO } | null;
-type UploadJob = { id: string; name: string; status: 'waiting' | 'uploading' | 'success' | 'failed'; message?: string };
+type UploadJob = {
+  id: string;
+  name: string;
+  fileType: string;
+  size: number;
+  file?: File;
+  workOrderId: string;
+  categoryId: string;
+  status: 'waiting' | 'uploading' | 'success' | 'failed';
+  message?: string;
+};
 type FileForm = { displayName: string; remark: string; workOrderId: string; categoryId: string };
 type ImportRow = { row: number; code: string; status: 'created' | 'updated' | 'skipped' | 'failed'; message: string };
 type ImportResult = { summary: { created: number; updated: number; skipped: number; failed: number; total: number }; results: ImportRow[] };
@@ -34,11 +44,14 @@ type QuickMenu = { type: 'stage' | 'priority'; orderId: string; x: number; y: nu
 type ToolTab = 'info' | 'upload' | 'actions' | 'queue';
 type SystemStatus = {
   ok: boolean;
-  app: { name: string; version: string; mode: string };
+  app: { name: string; version: string; mode: string; uptime?: number };
   data: { mode: string; permissions: string };
-  database: { ok: boolean; type: string };
-  storage: { ok: boolean; type: string; bucketConfigured: boolean; publicEndpointConfigured: boolean };
+  database: { ok: boolean; type: string; latencyMs?: number };
+  storage: { ok: boolean; type: string; bucketConfigured: boolean; publicEndpointConfigured: boolean; latencyMs?: number };
   upload: { maxUploadSizeMb: number; supportedTypes: string[] };
+  migrations?: { schemaReachable: boolean };
+  counts?: { workOrders: number; resourceFiles: number; connectorParameters: number; operationLogsRecent: number; dangerousOps: number; failedUploads: number; recentBatches: number; snapshotsRecent: number };
+  warnings?: string[];
   serverTime: string;
 };
 type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice?: Promise<{ outcome: string }> };
@@ -138,6 +151,7 @@ const actionText: Record<string, string> = {
   logout: '退出登录',
   upload: '上传文件',
   delete: '软删除文件',
+  delete_resource_file: '软删除文件',
   change_password: '修改密码',
   create_work_order: '新建工单',
   update_work_order: '编辑工单',
@@ -176,6 +190,8 @@ const actionText: Record<string, string> = {
   upload_connector_parameter_file: '上传连接器原始资料',
   delete_connector_parameter_file: '删除连接器原始资料',
   download_connector_parameter_file: '下载连接器原始资料',
+  create_connector_parameter_import_batch: '创建导入批次',
+  rollback_connector_parameter_import_batch: '回滚导入批次',
 };
 const categoryIcons: Record<string, string> = { drawing: '原', sop: 'SOP', product: '成', material: '辅', notice: '注' };
 const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG', jpeg: 'JPG' };
@@ -313,6 +329,8 @@ export default function DashboardShell({
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [deleteTarget, setDeleteTarget] = useState<ResourceFileDTO | null>(null);
   const [orderDeleteTarget, setOrderDeleteTarget] = useState<WorkOrderDTO | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [orderDeleteConfirmText, setOrderDeleteConfirmText] = useState('');
   const [deleting, setDeleting] = useState(false);
   const [orderModal, setOrderModal] = useState<WorkOrderModal>(null);
   const [orderForm, setOrderForm] = useState<WorkOrderForm>(emptyForm);
@@ -330,6 +348,9 @@ export default function DashboardShell({
   const [systemOpen, setSystemOpen] = useState(false);
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [systemLoading, setSystemLoading] = useState(false);
+  const [snapshotsOpen, setSnapshotsOpen] = useState(false);
+  const [snapshots, setSnapshots] = useState<ChangeSnapshotDTO[]>([]);
+  const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const [exporting, setExporting] = useState('');
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -446,6 +467,14 @@ export default function DashboardShell({
   useEffect(() => {
     if (!loading && !file && !toolOpen && toolTab !== 'upload') setToolTab('upload');
   }, [file, loading, toolOpen, toolTab]);
+
+  useEffect(() => {
+    setDeleteConfirmText('');
+  }, [deleteTarget?.id]);
+
+  useEffect(() => {
+    setOrderDeleteConfirmText('');
+  }, [orderDeleteTarget?.id]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -888,6 +917,55 @@ export default function DashboardShell({
     if (touch.fromDrawer && dx < 0) setDrawerOpen(false);
   }
 
+  function fileKind(file: File) {
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
+    if (ext === 'pdf') return 'PDF';
+    if (['jpg', 'jpeg', 'png'].includes(ext)) return '图片';
+    return '未知类型';
+  }
+
+  function uploadFailureMessage(status: number, data: { message?: string; error?: string }) {
+    const text = data.message || data.error || '';
+    if (status === 401) return '登录过期，请重新登录';
+    if (text.includes('超过')) return '文件过大';
+    if (text.includes('支持') || text.includes('格式')) return '格式不支持';
+    if (text.includes('对象存储')) return '对象存储异常';
+    if (text.includes('工单')) return '未选择工单或工单不存在';
+    if (text.includes('分类')) return '未选择分类或分类不存在';
+    return text || '网络异常';
+  }
+
+  async function uploadJobToServer(job: UploadJob) {
+    if (!job.file) return { ok: false, message: '页面会话中未保留文件，请重新选择' };
+    if (!job.workOrderId) return { ok: false, message: '未选择工单' };
+    if (!job.categoryId) return { ok: false, message: '未选择分类' };
+    if (!fileExtOk(job.file)) return { ok: false, message: '格式不支持' };
+
+    setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'uploading', message: '上传中' } : j)));
+    const fd = new FormData();
+    fd.append('file', job.file);
+    fd.append('workOrderId', job.workOrderId);
+    fd.append('categoryId', job.categoryId);
+    try {
+      const r = await fetch('/api/resource-files/upload', { method: 'POST', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const message = uploadFailureMessage(r.status, d);
+        setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'failed', message } : j)));
+        return { ok: false, message };
+      }
+      const message = d.file?.version ? `上传成功 · ${d.file.version}` : '上传成功';
+      setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'success', message } : j)));
+      await loadFiles(job.workOrderId, job.categoryId, d.file?.id);
+      await loadCategoryCounts(job.workOrderId);
+      return { ok: true, fileId: d.file?.id || '' };
+    } catch {
+      const message = '网络异常或对象存储异常';
+      setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'failed', message } : j)));
+      return { ok: false, message };
+    }
+  }
+
   async function uploadMany(fileList: File[]) {
     if (!order) {
       setMsg('未选择工单');
@@ -903,6 +981,11 @@ export default function DashboardShell({
     const jobs = fileList.map((f, index) => ({
       id: `${Date.now()}-${index}`,
       name: f.name,
+      fileType: fileKind(f),
+      size: f.size,
+      file: f,
+      workOrderId: order.id,
+      categoryId: category.id,
       status: fileExtOk(f) ? 'waiting' as const : 'failed' as const,
       message: fileExtOk(f) ? '等待上传' : '文件格式不支持',
     }));
@@ -910,36 +993,14 @@ export default function DashboardShell({
     setUploading(true);
     let ok = 0;
     let failed = jobs.filter(j => j.status === 'failed').length;
-    let lastSuccessId = '';
 
-    for (let i = 0; i < fileList.length; i += 1) {
-      const f = fileList[i];
-      const job = jobs[i];
+    for (const job of jobs) {
       if (job.status === 'failed') continue;
-      setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'uploading', message: '上传中' } : j)));
-      const fd = new FormData();
-      fd.append('file', f);
-      fd.append('workOrderId', order.id);
-      fd.append('categoryId', category.id);
-      try {
-        const r = await fetch('/api/resource-files/upload', { method: 'POST', body: fd });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          failed += 1;
-          setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'failed', message: d.message || '上传失败' } : j)));
-          continue;
-        }
-        ok += 1;
-        lastSuccessId = d.file?.id || lastSuccessId;
-        setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'success', message: d.file?.version ? `上传成功 · ${d.file.version}` : '上传成功' } : j)));
-      } catch {
-        failed += 1;
-        setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'failed', message: '网络异常或对象存储异常' } : j)));
-      }
+      const result = await uploadJobToServer(job);
+      if (result.ok) ok += 1;
+      else failed += 1;
     }
 
-    await loadFiles(order.id, category.id, lastSuccessId || undefined);
-    await loadCategoryCounts(order.id);
     setMsg(`批量上传完成：成功 ${ok} 个，失败 ${failed} 个`);
     setUploading(false);
     if (pdf.current) pdf.current.value = '';
@@ -950,6 +1011,28 @@ export default function DashboardShell({
     setToolTab('queue');
     setToolOpen(true);
     await uploadMany(fileList);
+  }
+
+  async function retryUploadJob(job: UploadJob) {
+    setUploading(true);
+    const result = await uploadJobToServer(job);
+    setUploading(false);
+    setMsg(result.ok ? `已重试成功：${job.name}` : `重试失败：${result.message}`);
+  }
+
+  async function retryFailedUploads() {
+    const failedJobs = uploadJobs.filter(job => job.status === 'failed');
+    if (!failedJobs.length) return setMsg('没有失败的上传任务');
+    setUploading(true);
+    let ok = 0;
+    let failed = 0;
+    for (const job of failedJobs) {
+      const result = await uploadJobToServer(job);
+      if (result.ok) ok += 1;
+      else failed += 1;
+    }
+    setUploading(false);
+    setMsg(`重试完成：成功 ${ok} 个，失败 ${failed} 个`);
   }
 
   async function refresh() {
@@ -1041,6 +1124,13 @@ export default function DashboardShell({
 
   async function confirmDeleteFile() {
     if (!deleteTarget) return;
+    const fileName = displayFileName(deleteTarget);
+    const suffix = fileName.slice(-4);
+    const typed = deleteConfirmText.trim();
+    if (typed !== 'DELETE' && typed !== suffix) {
+      setMsg(`请输入 DELETE 或文件名后 4 位：${suffix}`);
+      return;
+    }
     const deletedCategoryId = deleteTarget.categoryId;
     setDeleting(true);
     try {
@@ -1049,7 +1139,7 @@ export default function DashboardShell({
         setMsg('删除失败，请稍后重试');
         return;
       }
-      setMsg('删除成功');
+      setMsg('文件已软删除，可在回收站恢复');
       setDeleteTarget(null);
       await loadFiles(order?.id, deletedCategoryId);
       await loadCategoryCounts();
@@ -1062,6 +1152,10 @@ export default function DashboardShell({
 
   async function confirmDeleteOrder() {
     if (!orderDeleteTarget) return;
+    if (orderDeleteConfirmText.trim() !== orderDeleteTarget.code) {
+      setMsg('请输入完整工单号后再删除');
+      return;
+    }
     setDeleting(true);
     try {
       const r = await fetch(`/api/work-orders/${orderDeleteTarget.id}`, { method: 'DELETE' });
@@ -1072,7 +1166,7 @@ export default function DashboardShell({
       }
       setOrders(v => v.filter(o => o.id !== orderDeleteTarget.id));
       setOrderDeleteTarget(null);
-      setMsg('工单已删除');
+      setMsg('工单已软删除，可在回收站恢复');
       await refreshOrders();
     } catch {
       setMsg('网络错误，删除工单失败');
@@ -1157,6 +1251,24 @@ export default function DashboardShell({
       setMsg('系统状态加载失败');
     } finally {
       setSystemLoading(false);
+    }
+  }
+
+  async function loadChangeSnapshots() {
+    setSnapshotsOpen(true);
+    setSnapshotsLoading(true);
+    try {
+      const r = await fetch('/api/change-snapshots?limit=100', { cache: 'no-store' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.error || d.message || '变更记录加载失败');
+        return;
+      }
+      setSnapshots(Array.isArray(d.snapshots) ? d.snapshots : []);
+    } catch {
+      setMsg('变更记录加载失败');
+    } finally {
+      setSnapshotsLoading(false);
     }
   }
 
@@ -1668,8 +1780,11 @@ export default function DashboardShell({
                         <strong>最近上传结果</strong>
                         <span>成功 {uploadJobs.filter(j => j.status === 'success').length} · 失败 {uploadJobs.filter(j => j.status === 'failed').length}</span>
                       </div>
-                      <UploadJobs jobs={uploadJobs} />
-                      {!uploadJobs.length && <div className="empty-list">暂无上传队列</div>}
+                      {!!uploadJobs.filter(j => j.status === 'failed').length && (
+                        <button className="primary-button" type="button" disabled={uploading} onClick={retryFailedUploads}>重试全部失败</button>
+                      )}
+                      <UploadJobs jobs={uploadJobs} retry={retryUploadJob} remove={id => setUploadJobs(v => v.filter(job => job.id !== id))} uploading={uploading} />
+                      {!uploadJobs.length && <div className="empty-list">暂无上传任务。</div>}
                     </div>
                   )}
                 </section>
@@ -1761,6 +1876,7 @@ export default function DashboardShell({
           refreshStatus={loadSystemStatus}
           refreshData={refresh}
           openLogs={() => loadLogs('all')}
+          openSnapshots={loadChangeSnapshots}
           openAccounts={openAccounts}
           openTrash={openTrash}
           openHelp={() => setHelpOpen(true)}
@@ -1939,6 +2055,43 @@ export default function DashboardShell({
         </div>
       )}
 
+      {snapshotsOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="logs-dialog" role="dialog" aria-modal="true" aria-label="变更记录">
+            <div className="dialog-title">
+              <strong>变更记录</strong>
+              <button type="button" onClick={() => setSnapshotsOpen(false)}>×</button>
+            </div>
+            {snapshotsLoading ? (
+              <div className="empty-list">变更记录加载中...</div>
+            ) : (
+              <div className="logs-table snapshot-table">
+                <div className="logs-head"><span>时间</span><span>操作人</span><span>操作</span><span>对象</span><span>变更摘要</span></div>
+                {snapshots.map(item => (
+                  <div className="logs-row" key={item.id}>
+                    <span>{dt(item.createdAt)}</span>
+                    <span>{item.changedBy || '-'}</span>
+                    <span>{actionText[item.action] || item.action}</span>
+                    <span>{item.entityType}<small>{item.entityId}</small></span>
+                    <span>
+                      {item.summary || '-'}
+                      <details className="snapshot-detail">
+                        <summary>查看详情</summary>
+                        <div className="snapshot-json-grid">
+                          <div><b>修改前</b><pre>{JSON.stringify(item.beforeJson ?? null, null, 2)}</pre></div>
+                          <div><b>修改后</b><pre>{JSON.stringify(item.afterJson ?? null, null, 2)}</pre></div>
+                        </div>
+                      </details>
+                    </span>
+                  </div>
+                ))}
+                {!snapshots.length && <div className="empty-list">暂无变更记录</div>}
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
       {deleteTarget && (
         <div className="modal-backdrop" role="presentation">
           <section className="confirm-dialog" role="dialog" aria-modal="true" aria-label="删除确认">
@@ -1948,9 +2101,19 @@ export default function DashboardShell({
             </div>
             <p>文件将从当前资料列表移除，历史数据仍保留在数据库记录中。</p>
             <div className="delete-file-name">{displayFileName(deleteTarget)}</div>
+            <div className="danger-confirm-detail">
+              <span>版本：{deleteTarget.version || 'V1.0'}</span>
+              <span>所属工单：{deleteTarget.workOrderCode || order?.code || '-'}</span>
+              <span>分类：{deleteTarget.categoryName || category?.name || '-'}</span>
+            </div>
+            <label className="confirm-input-label">
+              输入 <b>DELETE</b> 或文件名后 4 位确认
+              <input value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} placeholder={`例如：${displayFileName(deleteTarget).slice(-4)}`} />
+            </label>
+            <p className="tool-note muted">删除后可在回收站恢复；不会物理删除对象存储文件。</p>
             <div className="dialog-actions">
               <button type="button" onClick={() => setDeleteTarget(null)}>取消</button>
-              <button className="danger-button" type="button" disabled={deleting} onClick={confirmDeleteFile}>{deleting ? '删除中...' : '确认删除'}</button>
+              <button className="danger-button" type="button" disabled={deleting || !deleteConfirmText.trim()} onClick={confirmDeleteFile}>{deleting ? '删除中...' : '确认删除'}</button>
             </div>
           </section>
         </div>
@@ -1965,9 +2128,19 @@ export default function DashboardShell({
             </div>
             <p>仅软删除工单记录，S3 对象存储中的文件不会被删除。</p>
             <div className="delete-file-name">{orderDeleteTarget.code} · {orderDeleteTarget.productName}</div>
+            <div className="danger-confirm-detail">
+              <span>客户：{orderDeleteTarget.customerName || '未填写'}</span>
+              <span>产品：{orderDeleteTarget.productName}</span>
+              <span>工单号：{orderDeleteTarget.code}</span>
+            </div>
+            <label className="confirm-input-label">
+              输入完整工单号确认删除
+              <input value={orderDeleteConfirmText} onChange={e => setOrderDeleteConfirmText(e.target.value)} placeholder={orderDeleteTarget.code} />
+            </label>
+            <p className="tool-note muted">删除后可在回收站恢复，不会删除 S3 文件。</p>
             <div className="dialog-actions">
               <button type="button" onClick={() => setOrderDeleteTarget(null)}>取消</button>
-              <button className="danger-button" type="button" disabled={deleting} onClick={confirmDeleteOrder}>{deleting ? '删除中...' : '确认删除'}</button>
+              <button className="danger-button" type="button" disabled={deleting || orderDeleteConfirmText.trim() !== orderDeleteTarget.code} onClick={confirmDeleteOrder}>{deleting ? '删除中...' : '确认删除'}</button>
             </div>
           </section>
         </div>
@@ -2048,7 +2221,17 @@ function FileThumb({ file }: { file: ResourceFileDTO }) {
   return <span className="file-thumb img"><img src={file.contentUrl || file.viewUrl} alt={displayFileName(file)} /></span>;
 }
 
-function UploadJobs({ jobs }: { jobs: UploadJob[] }) {
+function UploadJobs({
+  jobs,
+  retry,
+  remove,
+  uploading,
+}: {
+  jobs: UploadJob[];
+  retry: (job: UploadJob) => void;
+  remove: (id: string) => void;
+  uploading: boolean;
+}) {
   if (!jobs.length) return null;
   const ok = jobs.filter(j => j.status === 'success').length;
   const failed = jobs.filter(j => j.status === 'failed').length;
@@ -2058,8 +2241,12 @@ function UploadJobs({ jobs }: { jobs: UploadJob[] }) {
       {jobs.map(job => (
         <div className={`upload-job ${job.status}`} key={job.id}>
           <b>{shortName(job.name)}</b>
-          <span>{job.status === 'waiting' ? '等待上传' : job.status === 'uploading' ? '上传中' : job.status === 'success' ? '上传成功' : '上传失败'}</span>
+          <span>{job.fileType} · {bytes(job.size)} · {job.status === 'waiting' ? '等待上传' : job.status === 'uploading' ? '上传中' : job.status === 'success' ? '上传成功' : '上传失败'}</span>
           <small>{job.message}</small>
+          <div className="upload-job-actions">
+            {job.status === 'failed' && <button type="button" disabled={uploading} onClick={() => retry(job)}>重试</button>}
+            <button type="button" disabled={job.status === 'uploading'} onClick={() => remove(job.id)}>移除</button>
+          </div>
         </div>
       ))}
     </div>
@@ -2380,6 +2567,7 @@ function SystemSettings({
   refreshStatus,
   refreshData,
   openLogs,
+  openSnapshots,
   openAccounts,
   openTrash,
   openHelp,
@@ -2405,6 +2593,7 @@ function SystemSettings({
   refreshStatus: () => void;
   refreshData: () => void;
   openLogs: () => void;
+  openSnapshots: () => void;
   openAccounts: () => void;
   openTrash: () => void;
   openHelp: () => void;
@@ -2425,7 +2614,7 @@ function SystemSettings({
         <div className="dialog-title">
           <div>
             <strong>系统设置</strong>
-            <small>v1.7.0-rc.1 · Web / PWA</small>
+            <small>{status?.app.version || 'v1.12.0-rc.1'} · Web / PWA</small>
           </div>
           <button type="button" onClick={close}>×</button>
         </div>
@@ -2434,8 +2623,9 @@ function SystemSettings({
           <section className="system-section">
             <h3>基础信息</h3>
             <Info label="系统名称" value={status?.app.name || '工单资料库'} />
-            <Info label="当前版本" value={status?.app.version || 'v1.7.0-rc.1'} />
+            <Info label="当前版本" value={status?.app.version || 'v1.12.0-rc.1'} />
             <Info label="部署模式" value={status?.app.mode || 'Web / PWA'} />
+            <Info label="运行时长" value={status?.app.uptime ? `${Math.floor(status.app.uptime / 60)} 分钟` : '-'} />
             <Info label="数据模式" value={status?.data.mode || '账号登录，共享数据'} />
             <Info label="权限模式" value={status?.data.permissions || '无角色权限'} />
             <Info label="当前用户" value={userName} />
@@ -2447,16 +2637,50 @@ function SystemSettings({
             {loading ? <div className="empty-list">系统状态检查中...</div> : (
               <>
                 <Info label="API 健康状态" value={okText(status?.ok)} ok={status?.ok} />
-                <Info label="数据库" value={`${status?.database.type || 'PostgreSQL'} · ${okText(status?.database.ok)}`} ok={status?.database.ok} />
-                <Info label="文件存储" value={`${status?.storage.type || 'S3 兼容对象存储'} · ${okText(status?.storage.ok)}`} ok={status?.storage.ok} />
+                <Info label="数据库" value={`${status?.database.type || 'PostgreSQL'} · ${okText(status?.database.ok)} · ${status?.database.latencyMs ?? '-'}ms`} ok={status?.database.ok} />
+                <Info label="文件存储" value={`${status?.storage.type || 'S3 兼容对象存储'} · ${okText(status?.storage.ok)} · ${status?.storage.latencyMs ?? '-'}ms`} ok={status?.storage.ok} />
                 <Info label="存储桶配置" value={status?.storage.bucketConfigured ? '已配置' : '未配置'} ok={status?.storage.bucketConfigured} />
                 <Info label="公开访问端点" value={status?.storage.publicEndpointConfigured ? '已配置' : '未配置'} ok={status?.storage.publicEndpointConfigured} />
+                <Info label="Schema 可达" value={status?.migrations?.schemaReachable ? '可达' : '异常'} ok={status?.migrations?.schemaReachable} />
                 <Info label="最大上传大小" value={`${status?.upload.maxUploadSizeMb || 50} MB`} />
                 <Info label="支持格式" value={(status?.upload.supportedTypes || ['PDF', 'JPG', 'PNG']).join('、')} />
               </>
             )}
           </section>
         </div>
+
+        <section className="system-section wide">
+          <h3>生产健康检查</h3>
+          <div className="stability-grid">
+            <Info label="工单数量" value={String(status?.counts?.workOrders ?? '-')} />
+            <Info label="资料文件" value={String(status?.counts?.resourceFiles ?? '-')} />
+            <Info label="连接器参数" value={String(status?.counts?.connectorParameters ?? '-')} />
+            <Info label="近 24h 操作日志" value={String(status?.counts?.operationLogsRecent ?? '-')} />
+            <Info label="近 24h 危险操作" value={String(status?.counts?.dangerousOps ?? '-')} ok={(status?.counts?.dangerousOps || 0) === 0} />
+            <Info label="近 24h 导入批次" value={String(status?.counts?.recentBatches ?? '-')} />
+          </div>
+          {!!status?.warnings?.length && (
+            <div className="warning-list">
+              {status.warnings.map(item => <span key={item}>{item}</span>)}
+            </div>
+          )}
+        </section>
+
+        <section className="system-section wide">
+          <h3>生产稳定中心</h3>
+          <div className="stability-grid">
+            <Info label="最近危险操作" value={`${status?.counts?.dangerousOps ?? 0} 条`} ok={(status?.counts?.dangerousOps || 0) === 0} />
+            <Info label="最近失败上传" value="查看上传队列" />
+            <Info label="最近导入批次" value={`${status?.counts?.recentBatches ?? 0} 个`} />
+            <Info label="变更快照" value={`${status?.counts?.snapshotsRecent ?? 0} 条`} />
+          </div>
+          <p className="tool-note">数据库建议每日备份；对象存储 Bucket 不要清空；重大上线前请手动快照。</p>
+          <div className="system-actions">
+            <button type="button" onClick={refreshStatus}>一键刷新健康状态</button>
+            <button type="button" onClick={openSnapshots}>查看变更记录</button>
+            <button type="button" onClick={openLogs}>查看操作日志</button>
+          </div>
+        </section>
 
         <section className="system-section wide">
           <h3>数据导出</h3>

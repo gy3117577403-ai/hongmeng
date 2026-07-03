@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { serializeWorkOrder } from '@/lib/work-orders';
+import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,14 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
       include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
     });
     await logOp({ userId: user.id, action: 'restore_work_order', targetType: 'work_order', targetId: workOrder.id, detail: { code: workOrder.code } });
+    await snapshotChange({
+      entityType: 'work_order',
+      entityId: workOrder.id,
+      action: 'restore_work_order',
+      before: workOrderSnapshot(old),
+      after: workOrderSnapshot(workOrder),
+      changedBy: user.displayName || user.username,
+    });
     return NextResponse.json({ ok: true, workOrder: serializeWorkOrder(workOrder) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();

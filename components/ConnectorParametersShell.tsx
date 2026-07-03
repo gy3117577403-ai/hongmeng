@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ConnectorParameterDTO,
   ConnectorParameterFileDTO,
+  ConnectorParameterImportBatchDTO,
   ConnectorImportPreviewRowDTO,
   ConnectorImportPreviewSummaryDTO,
   ConnectorParameterStatsDTO,
@@ -48,6 +49,8 @@ const actionText: Record<string, string> = {
   upload_connector_parameter_file: '上传原始资料',
   delete_connector_parameter_file: '删除原始资料',
   download_connector_parameter_file: '下载原始资料',
+  create_connector_parameter_import_batch: '创建导入批次',
+  rollback_connector_parameter_import_batch: '回滚导入批次',
 };
 
 function bytes(n: number) {
@@ -122,6 +125,9 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ConnectorParameterDTO | null>(null);
   const [fileDeleteTarget, setFileDeleteTarget] = useState<ConnectorParameterFileDTO | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [batchDeleteConfirmText, setBatchDeleteConfirmText] = useState('');
+  const [fileDeleteConfirmText, setFileDeleteConfirmText] = useState('');
   const [importOpen, setImportOpen] = useState(false);
   const [importTab, setImportTab] = useState<'file' | 'paste'>('file');
   const [pasteText, setPasteText] = useState('');
@@ -129,6 +135,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [duplicateStrategy, setDuplicateStrategy] = useState<'skip' | 'import'>('skip');
+  const [importConfirmText, setImportConfirmText] = useState('');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [batching, setBatching] = useState(false);
@@ -139,6 +146,11 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const [uploadingFile, setUploadingFile] = useState(false);
   const [deletedOpen, setDeletedOpen] = useState(false);
   const [fileDrawerOpen, setFileDrawerOpen] = useState(false);
+  const [batchDrawerOpen, setBatchDrawerOpen] = useState(false);
+  const [importBatches, setImportBatches] = useState<ConnectorParameterImportBatchDTO[]>([]);
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [rollbackTarget, setRollbackTarget] = useState<ConnectorParameterImportBatchDTO | null>(null);
+  const [rollbackConfirmText, setRollbackConfirmText] = useState('');
   const [rowMenuId, setRowMenuId] = useState<string | null>(null);
   const fileImportRef = useRef<HTMLInputElement>(null);
   const sourceFileRef = useRef<HTMLInputElement>(null);
@@ -200,6 +212,23 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     }
   }
 
+  async function loadImportBatches() {
+    setBatchLoading(true);
+    try {
+      const r = await fetch('/api/connector-parameter-import-batches?limit=50', { cache: 'no-store' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.error || '导入批次加载失败');
+        return;
+      }
+      setImportBatches(Array.isArray(d.batches) ? d.batches : []);
+    } catch {
+      setMsg('导入批次加载失败');
+    } finally {
+      setBatchLoading(false);
+    }
+  }
+
   useEffect(() => {
     const timer = window.setTimeout(() => loadData(), 300);
     return () => window.clearTimeout(timer);
@@ -213,6 +242,18 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   useEffect(() => {
     setSelectedIds(prev => prev.filter(id => pageIds.includes(id)));
   }, [pageIds]);
+
+  useEffect(() => {
+    setDeleteConfirmText('');
+  }, [deleteTarget?.id]);
+
+  useEffect(() => {
+    setFileDeleteConfirmText('');
+  }, [fileDeleteTarget?.id]);
+
+  useEffect(() => {
+    setRollbackConfirmText('');
+  }, [rollbackTarget?.id]);
 
   function openModal(mode: 'create' | 'edit', item?: ConnectorParameterDTO) {
     setRowMenuId(null);
@@ -262,6 +303,10 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
 
   async function confirmDelete() {
     if (!deleteTarget) return;
+    if (deleteConfirmText.trim() !== 'DELETE') {
+      setMsg('请输入 DELETE 后再删除参数');
+      return;
+    }
     const r = await fetch(`/api/connector-parameters/${deleteTarget.id}`, { method: 'DELETE' });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) {
@@ -284,6 +329,8 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
 
   async function runBatch(action: 'highlight' | 'unhighlight' | 'delete') {
     if (!selectedIds.length) return setMsg('请先选择参数行');
+    if (action === 'delete' && batchDeleteConfirmText.trim() !== 'DELETE') return setMsg('请输入 DELETE 后再批量删除');
+    if (action !== 'delete' && !window.confirm(`将对已选 ${selectedIds.length} 条参数执行批量${action === 'highlight' ? '标记重点' : '取消重点'}，是否继续？`)) return;
     setBatching(true);
     try {
       const r = await fetch('/api/connector-parameters/batch', {
@@ -299,6 +346,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
       setMsg(`批量操作完成：${d.count || 0} 条`);
       setSelectedIds([]);
       setBatchDeleteOpen(false);
+      setBatchDeleteConfirmText('');
       await loadData();
       if (action === 'delete') await loadDeleted();
     } catch {
@@ -397,13 +445,17 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
 
   async function commitImport() {
     if (!importPreview) return;
+    if (importPreview.summary.totalRows > 100 && importConfirmText.trim() !== 'IMPORT') {
+      setMsg('导入超过 100 行，请输入 IMPORT 确认');
+      return;
+    }
     setImporting(true);
     setImportResult(null);
     try {
       const r = await fetch('/api/connector-parameters/import/commit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rows: importPreview.rows, duplicateStrategy }),
+        body: JSON.stringify({ rows: importPreview.rows, duplicateStrategy, sourceType: importTab, fileName: importPreview.sourceName }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -412,9 +464,11 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
       }
       setImportResult(d);
       setImportPreview(null);
+      setImportConfirmText('');
       setPasteText('');
       setMsg(`确认导入完成：新增 ${d.summary?.created || 0}，跳过 ${d.summary?.skipped || 0}，失败 ${d.summary?.failed || 0}`);
       await loadData();
+      await loadImportBatches();
     } catch {
       setMsg('确认导入失败');
     } finally {
@@ -449,6 +503,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
 
   async function confirmDeleteFile() {
     if (!fileDeleteTarget) return;
+    if (fileDeleteConfirmText.trim() !== 'DELETE') return setMsg('请输入 DELETE 后再删除原始资料');
     const r = await fetch(`/api/connector-parameter-files/${fileDeleteTarget.id}`, { method: 'DELETE' });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) return setMsg(d.error || '删除原始资料失败');
@@ -456,6 +511,30 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     setMsg('原始资料已删除');
     await loadFiles();
     await loadData();
+  }
+
+  async function rollbackBatch() {
+    if (!rollbackTarget) return;
+    if (rollbackConfirmText.trim() !== 'ROLLBACK') return setMsg('请输入 ROLLBACK 后再回滚批次');
+    setBatchLoading(true);
+    try {
+      const r = await fetch(`/api/connector-parameter-import-batches/${rollbackTarget.id}/rollback`, { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.error || '导入批次回滚失败');
+        return;
+      }
+      setMsg(`导入批次已回滚，软删除 ${d.count || 0} 条参数`);
+      setRollbackTarget(null);
+      setRollbackConfirmText('');
+      await loadImportBatches();
+      await loadData();
+      await loadDeleted();
+    } catch {
+      setMsg('导入批次回滚失败');
+    } finally {
+      setBatchLoading(false);
+    }
   }
 
   async function loadLogs() {
@@ -482,6 +561,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     setImportPreview(null);
     setImportResult(null);
     setPasteText('');
+    setImportConfirmText('');
   }
 
   async function writeClipboard(text: string) {
@@ -616,6 +696,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
           <div className="connector-actions">
             <button className="primary-button" type="button" onClick={() => openModal('create')}>新增参数</button>
             <button type="button" onClick={() => setImportOpen(true)}>导入 Excel / CSV</button>
+            <button type="button" onClick={() => { setBatchDrawerOpen(true); loadImportBatches(); }}>导入批次</button>
             <button type="button" disabled={!!exporting} onClick={() => downloadFile('/api/connector-parameters/export.csv', '导出 CSV', '连接器参数资料.csv')}>导出 CSV</button>
             <button type="button" disabled={!!exporting} onClick={() => downloadFile('/api/connector-parameters/template.csv', '下载模板', '连接器参数导入模板.csv')}>下载模板</button>
             <button type="button" onClick={() => { location.href = '/dashboard'; }}>返回生产资料</button>
@@ -632,6 +713,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
           <button className={filter === 'insertion' ? 'active' : ''} type="button" onClick={() => { setFilter('insertion'); setPage(1); }}><span>缺入长</span><strong>{stats.missingInsertion}</strong></button>
           <button className={filter === 'highlighted' ? 'active' : ''} type="button" onClick={() => { setFilter('highlighted'); setPage(1); }}><span>重点</span><strong>{stats.highlighted}</strong></button>
           <button className={fileDrawerOpen ? 'active' : ''} type="button" onClick={() => setFileDrawerOpen(true)}><span>附件</span><strong>{stats.fileCount}</strong></button>
+          <button className={batchDrawerOpen ? 'active' : ''} type="button" onClick={() => { setBatchDrawerOpen(true); loadImportBatches(); }}><span>导入批次</span><strong>{importBatches.length}</strong></button>
         </div>
 
         <div className="connector-filter-row">
@@ -772,6 +854,36 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
               {!files.length && <div className="empty-list">暂无原始资料，可上传 Excel / PDF / 图片作为留档。</div>}
             </div>
           </aside>
+        {batchDrawerOpen && <button className="connector-file-scrim" type="button" aria-label="关闭导入批次抽屉" onClick={() => setBatchDrawerOpen(false)} />}
+        <aside className={`connector-file-drawer import-batch-drawer ${batchDrawerOpen ? 'open' : ''}`} aria-hidden={!batchDrawerOpen}>
+          <div className="connector-file-head">
+            <strong>导入批次</strong>
+            <div>
+              <button type="button" disabled={batchLoading} onClick={loadImportBatches}>{batchLoading ? '刷新中...' : '刷新'}</button>
+              <button type="button" onClick={() => setBatchDrawerOpen(false)}>关闭</button>
+            </div>
+          </div>
+          <div className="connector-file-list">
+            {batchLoading && <div className="empty-list">导入批次加载中...</div>}
+            {importBatches.map(batch => (
+              <article key={batch.id} className="connector-file-card import-batch-card">
+                <div className="connector-file-meta">
+                  <span className="connector-file-icon csv">批次</span>
+                  <div>
+                    <strong title={batch.fileName || batch.id}>{batch.fileName || '粘贴导入'}</strong>
+                    <span>{dt(batch.createdAt)} · 新增 {batch.insertedCount} / 总行 {batch.totalRows}</span>
+                    <small>重复 {batch.duplicateCount} · 失败 {batch.invalidCount} · 跳过 {batch.skippedCount}</small>
+                    <small>{batch.rolledBackAt ? `已回滚：${dt(batch.rolledBackAt)}` : `可回滚 ${batch.activeParameterCount ?? 0} 条`}</small>
+                  </div>
+                </div>
+                <div>
+                  <button type="button" disabled={!!batch.rolledBackAt || !(batch.activeParameterCount || 0)} onClick={() => setRollbackTarget(batch)}>回滚</button>
+                </div>
+              </article>
+            ))}
+            {!batchLoading && !importBatches.length && <div className="empty-list">暂无导入批次。</div>}
+          </div>
+        </aside>
       </section>
 
       {msg && <div className="status-toast">{msg}</div>}
@@ -844,6 +956,17 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                   <label><input type="radio" checked={duplicateStrategy === 'skip'} onChange={() => setDuplicateStrategy('skip')} /> 跳过重复行</label>
                   <label><input type="radio" checked={duplicateStrategy === 'import'} onChange={() => setDuplicateStrategy('import')} /> 仍然导入重复行</label>
                 </div>
+                <div className="import-confirm-summary">
+                  <span>将新增 {importPreview.summary.readyCount + (duplicateStrategy === 'import' ? importPreview.summary.duplicateCount : 0)} 条</span>
+                  <span>跳过重复 {duplicateStrategy === 'skip' ? importPreview.summary.duplicateCount : 0} 条</span>
+                  <span>失败 {importPreview.summary.invalidCount} 条</span>
+                </div>
+                {importPreview.summary.totalRows > 100 && (
+                  <label className="confirm-input-label">
+                    超过 100 行，输入 IMPORT 后才能确认导入
+                    <input value={importConfirmText} onChange={e => setImportConfirmText(e.target.value)} placeholder="IMPORT" />
+                  </label>
+                )}
                 <div className="import-preview-table">
                   <div className="import-preview-head">
                     <span>行</span><span>型号</span><span>外剥皮</span><span>内剥皮</span><span>入长</span><span>备注</span><span>状态</span>
@@ -862,7 +985,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                 </div>
                 <div className="dialog-actions">
                   <button type="button" onClick={() => setImportPreview(null)}>重新选择</button>
-                  <button className="primary-button" type="button" onClick={commitImport} disabled={importing}>{importing ? '导入中...' : '确认导入'}</button>
+                  <button className="primary-button" type="button" onClick={commitImport} disabled={importing || (importPreview.summary.totalRows > 100 && importConfirmText.trim() !== 'IMPORT')}>{importing ? '导入中...' : '确认导入'}</button>
                 </div>
               </div>
             )}
@@ -928,9 +1051,18 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             </div>
             <p>仅软删除参数记录，可在恢复删除中找回。</p>
             <div className="delete-file-name">{deleteTarget.rowNo ?? '-'} · {deleteTarget.model || '未填型号'}</div>
+            <div className="danger-confirm-detail">
+              <span>外剥皮：{deleteTarget.outerPeelMm || '-'}</span>
+              <span>内剥皮：{deleteTarget.innerPeelMm || '-'}</span>
+              <span>入长：{deleteTarget.insertionLengthMm || '-'}</span>
+            </div>
+            <label className="confirm-input-label">
+              输入 DELETE 确认删除
+              <input value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} placeholder="DELETE" />
+            </label>
             <div className="dialog-actions">
               <button type="button" onClick={() => setDeleteTarget(null)}>取消</button>
-              <button className="danger-button" type="button" onClick={confirmDelete}>确认删除</button>
+              <button className="danger-button" type="button" disabled={deleteConfirmText.trim() !== 'DELETE'} onClick={confirmDelete}>确认删除</button>
             </div>
           </section>
         </div>
@@ -943,10 +1075,14 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
               <strong>确认批量删除</strong>
               <button type="button" onClick={() => setBatchDeleteOpen(false)}>×</button>
             </div>
-            <p>将软删除已选 {selectedIds.length} 条参数记录，可在恢复删除中找回。</p>
+            <p>将软删除已选 {selectedIds.length} 条参数记录，此操作可恢复。</p>
+            <label className="confirm-input-label">
+              输入 DELETE 确认批量删除
+              <input value={batchDeleteConfirmText} onChange={e => setBatchDeleteConfirmText(e.target.value)} placeholder="DELETE" />
+            </label>
             <div className="dialog-actions">
               <button type="button" onClick={() => setBatchDeleteOpen(false)}>取消</button>
-              <button className="danger-button" type="button" disabled={batching} onClick={() => runBatch('delete')}>{batching ? '删除中...' : '确认删除'}</button>
+              <button className="danger-button" type="button" disabled={batching || batchDeleteConfirmText.trim() !== 'DELETE'} onClick={() => runBatch('delete')}>{batching ? '删除中...' : '确认删除'}</button>
             </div>
           </section>
         </div>
@@ -961,9 +1097,34 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             </div>
             <p>仅软删除附件记录，不删除对象存储中的历史对象。</p>
             <div className="delete-file-name">{fileDeleteTarget.originalName}</div>
+            <label className="confirm-input-label">
+              输入 DELETE 确认删除附件
+              <input value={fileDeleteConfirmText} onChange={e => setFileDeleteConfirmText(e.target.value)} placeholder="DELETE" />
+            </label>
             <div className="dialog-actions">
               <button type="button" onClick={() => setFileDeleteTarget(null)}>取消</button>
-              <button className="danger-button" type="button" onClick={confirmDeleteFile}>确认删除</button>
+              <button className="danger-button" type="button" disabled={fileDeleteConfirmText.trim() !== 'DELETE'} onClick={confirmDeleteFile}>确认删除</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {rollbackTarget && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="confirm-dialog" role="dialog" aria-modal="true" aria-label="回滚导入批次">
+            <div className="dialog-title">
+              <strong>确认回滚导入批次</strong>
+              <button type="button" onClick={() => setRollbackTarget(null)}>×</button>
+            </div>
+            <p>将软删除该批次导入且尚未删除的 {rollbackTarget.activeParameterCount || 0} 条参数，不影响手动新增参数。</p>
+            <div className="delete-file-name">{rollbackTarget.fileName || '粘贴导入'} · {dt(rollbackTarget.createdAt)}</div>
+            <label className="confirm-input-label">
+              输入 ROLLBACK 确认回滚
+              <input value={rollbackConfirmText} onChange={e => setRollbackConfirmText(e.target.value)} placeholder="ROLLBACK" />
+            </label>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setRollbackTarget(null)}>取消</button>
+              <button className="danger-button" type="button" disabled={batchLoading || rollbackConfirmText.trim() !== 'ROLLBACK'} onClick={rollbackBatch}>{batchLoading ? '回滚中...' : '确认回滚'}</button>
             </div>
           </section>
         </div>

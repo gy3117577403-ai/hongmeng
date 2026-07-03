@@ -2382,6 +2382,133 @@ input:focus-visible {
   white-space: nowrap;
 }
 
+.danger-confirm-detail {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(220, 38, 38, .14);
+  border-radius: 12px;
+  background: #fff7f7;
+  color: #7f1d1d;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.confirm-input-label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.confirm-input-label input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid rgba(220, 38, 38, .28);
+  border-radius: 12px;
+  outline: none;
+  color: var(--text);
+}
+
+.confirm-input-label input:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, .12);
+}
+
+.upload-job-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.upload-job-actions button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.stability-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.warning-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.warning-list span {
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 106, 0, .22);
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.snapshot-table .logs-row {
+  align-items: start;
+}
+
+.snapshot-detail {
+  margin-top: 6px;
+}
+
+.snapshot-detail summary {
+  cursor: pointer;
+  color: var(--orange);
+  font-weight: 800;
+}
+
+.snapshot-json-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.snapshot-json-grid pre {
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 10px;
+  background: #111827;
+  color: #f8fafc;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.import-confirm-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.import-confirm-summary span {
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: var(--orange);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.import-batch-card {
+  align-items: flex-start;
+}
+
 @media (max-width: 1180px) {
   .tablet-shell {
     padding: 16px;
@@ -6104,5 +6231,24 @@ body:has(.qr-dialog) .modal-backdrop {
   .connector-filter-tabs button,
   .connector-filter-row > button {
     min-height: 28px;
+  }
+}
+
+@media (max-width: 1080px) {
+  .stability-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .snapshot-json-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .danger-confirm-detail {
+    gap: 6px;
+    font-size: 12px;
+  }
+
+  .confirm-input-label input {
+    min-height: 42px;
   }
 }

@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { parseWorkOrderBody, serializeWorkOrder, workOrderStageText } from '@/lib/work-orders';
+import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -33,6 +34,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       targetId: workOrder.id,
       detail: { code: workOrder.code, fields: Object.keys(data) },
     });
+    await snapshotChange({
+      entityType: 'work_order',
+      entityId: workOrder.id,
+      action: 'update_work_order',
+      before: workOrderSnapshot(old),
+      after: workOrderSnapshot(workOrder),
+      changedBy: user.displayName || user.username,
+    });
     if (old.stage !== workOrder.stage) {
       await logOp({
         userId: user.id,
@@ -40,6 +49,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         targetType: 'work_order',
         targetId: workOrder.id,
         detail: { code: workOrder.code, from: workOrderStageText(old.stage || old.status), to: workOrderStageText(workOrder.stage || workOrder.status) },
+      });
+      await snapshotChange({
+        entityType: 'work_order',
+        entityId: workOrder.id,
+        action: 'update_work_order_status',
+        before: { code: old.code, stage: old.stage, status: old.status },
+        after: { code: workOrder.code, stage: workOrder.stage, status: workOrder.status },
+        changedBy: user.displayName || user.username,
       });
     }
     if (old.priority !== workOrder.priority) {
@@ -50,6 +67,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         targetId: workOrder.id,
         detail: { code: workOrder.code, from: old.priority, to: workOrder.priority },
       });
+      await snapshotChange({
+        entityType: 'work_order',
+        entityId: workOrder.id,
+        action: 'update_work_order_priority',
+        before: { code: old.code, priority: old.priority },
+        after: { code: workOrder.code, priority: workOrder.priority },
+        changedBy: user.displayName || user.username,
+      });
     }
     if ((old.plannedAt?.getTime() || 0) !== (workOrder.plannedAt?.getTime() || 0)) {
       await logOp({
@@ -59,6 +84,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         targetId: workOrder.id,
         detail: { code: workOrder.code, from: old.plannedAt?.toISOString() || null, to: workOrder.plannedAt?.toISOString() || null },
       });
+      await snapshotChange({
+        entityType: 'work_order',
+        entityId: workOrder.id,
+        action: 'update_work_order_planned_at',
+        before: { code: old.code, plannedAt: old.plannedAt },
+        after: { code: workOrder.code, plannedAt: workOrder.plannedAt },
+        changedBy: user.displayName || user.username,
+      });
     }
     if ((old.customerName || '') !== (workOrder.customerName || '')) {
       await logOp({
@@ -67,6 +100,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         targetType: 'work_order',
         targetId: workOrder.id,
         detail: { code: workOrder.code, from: old.customerName || null, to: workOrder.customerName || null },
+      });
+      await snapshotChange({
+        entityType: 'work_order',
+        entityId: workOrder.id,
+        action: 'update_work_order_customer',
+        before: { code: old.code, customerName: old.customerName },
+        after: { code: workOrder.code, customerName: workOrder.customerName },
+        changedBy: user.displayName || user.username,
       });
     }
     return NextResponse.json({ ok: true, workOrder: serializeWorkOrder(workOrder) });
@@ -90,6 +131,14 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     });
 
     await logOp({ userId: user.id, action: 'delete_work_order', targetType: 'work_order', targetId: workOrder.id, detail: { code: workOrder.code, softDelete: true } });
+    await snapshotChange({
+      entityType: 'work_order',
+      entityId: workOrder.id,
+      action: 'delete_work_order',
+      before: workOrderSnapshot(old),
+      after: workOrderSnapshot(workOrder),
+      changedBy: user.displayName || user.username,
+    });
     return NextResponse.json({ ok: true });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
