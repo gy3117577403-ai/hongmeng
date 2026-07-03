@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
       action: 'upload',
       targetType: 'resource_file',
       targetId: f.id,
-      detail: { workOrderCode: wo.code, categoryCode: cat.code, version },
+      detail: { fileName: up.name, fileSize: up.size, workOrderCode: wo.code, categoryCode: cat.code, version },
     });
     return NextResponse.json({ file: serializeFile(f) });
   } catch (e) {

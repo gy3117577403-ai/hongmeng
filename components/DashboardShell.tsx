@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
+import { CameraCaptureModal } from '@/components/CameraCaptureModal';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import type { CurrentUserDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
@@ -329,10 +331,10 @@ export default function DashboardShell({
   const [toolTab, setToolTab] = useState<ToolTab>('info');
   const [toolWidth, setToolWidth] = useState(320);
   const [thumbsOpen, setThumbsOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
-  const camera = useRef<HTMLInputElement>(null);
   const csvImport = useRef<HTMLInputElement>(null);
   const drawerTouch = useRef<{ startX: number; startY: number; fromEdge: boolean; fromDrawer: boolean } | null>(null);
   const toolRef = useRef<HTMLElement>(null);
@@ -565,6 +567,20 @@ export default function DashboardShell({
   function openTool(tab: ToolTab) {
     setToolTab(tab);
     setToolOpen(true);
+  }
+
+  function openCameraCapture() {
+    if (!order) {
+      setMsg('未选择工单');
+      return;
+    }
+    if (!category) {
+      setMsg('未选择分类');
+      return;
+    }
+    setToolTab('queue');
+    setToolOpen(true);
+    setCameraOpen(true);
   }
 
   function startToolResize(event: React.PointerEvent<HTMLButtonElement>) {
@@ -884,7 +900,12 @@ export default function DashboardShell({
     setUploading(false);
     if (pdf.current) pdf.current.value = '';
     if (img.current) img.current.value = '';
-    if (camera.current) camera.current.value = '';
+  }
+
+  async function uploadCameraFiles(fileList: File[]) {
+    setToolTab('queue');
+    setToolOpen(true);
+    await uploadMany(fileList);
   }
 
   async function refresh() {
@@ -1267,6 +1288,7 @@ export default function DashboardShell({
         </div>
         <div className="top-search">
           <input value={globalKw} onFocus={() => globalKw.trim() && setSearchOpen(true)} onChange={e => setGlobalKw(e.target.value)} placeholder="全局搜索工单 / 文件" />
+          <VoiceInputButton value={globalKw} onChange={setGlobalKw} mode="replace" onApplied={() => setSearchOpen(true)} label="搜索语音输入" />
           <b>⌕</b>
           {searchOpen && globalKw.trim() && (
             <div className="global-search-panel">
@@ -1445,6 +1467,10 @@ export default function DashboardShell({
               categories={categories}
               managerCategory={managerCategory}
               setManagerCategory={setManagerCategory}
+              currentCategoryName={category?.name || '-'}
+              uploading={uploading}
+              chooseImage={() => img.current?.click()}
+              openCamera={openCameraCapture}
               selectFile={selectManagedFile}
               openFileEdit={openFileEdit}
               setDeleteTarget={setDeleteTarget}
@@ -1480,7 +1506,7 @@ export default function DashboardShell({
                       <div className="empty-actions">
                         <button type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>上传 PDF</button>
                         <button type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>上传图片</button>
-                        <button type="button" disabled={uploading || !order} onClick={() => camera.current?.click()}>拍照上传</button>
+                        <button type="button" disabled={uploading || !order} onClick={openCameraCapture}>拍照上传</button>
                       </div>
                     </div>
                   )}
@@ -1514,7 +1540,6 @@ export default function DashboardShell({
               >
                 <input ref={pdf} hidden multiple type="file" accept="application/pdf,.pdf" onChange={e => uploadMany(Array.from(e.target.files || []))} />
                 <input ref={img} hidden multiple type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" onChange={e => uploadMany(Array.from(e.target.files || []))} />
-                <input ref={camera} hidden type="file" accept="image/*" capture="environment" onChange={e => uploadMany(Array.from(e.target.files || []))} />
                 <div ref={toolRailRef} className="resource-tool-rail" aria-label="资料工具栏">
                   {([
                     ['info', '信息'],
@@ -1555,7 +1580,7 @@ export default function DashboardShell({
                       <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>
                         <span>▣</span><b>上传图片</b>
                       </button>
-                      <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => camera.current?.click()}>
+                      <button className="upload-action" type="button" disabled={uploading || !order} onClick={openCameraCapture}>
                         <span>◎</span><b>拍照上传</b>
                       </button>
                       <p className="tool-note">上传文件会保存到对象存储，元数据保存到 PostgreSQL。队列完成后会自动刷新当前分类。</p>
@@ -1647,6 +1672,15 @@ export default function DashboardShell({
         </div>
       )}
 
+      <CameraCaptureModal
+        open={cameraOpen}
+        workOrderCode={order?.code}
+        categoryCode={category?.code}
+        categoryName={category?.name}
+        onClose={() => setCameraOpen(false)}
+        onUpload={uploadCameraFiles}
+      />
+
       <input ref={csvImport} hidden type="file" accept=".csv,text/csv" onChange={e => importWorkOrders(e.target.files)} />
 
       {systemOpen && (
@@ -1734,14 +1768,34 @@ export default function DashboardShell({
               <button type="button" onClick={() => setOrderModal(null)}>×</button>
             </div>
               <div className="form-grid">
-                <label>工单号<input value={orderForm.code} disabled={orderModal.mode === 'edit'} onChange={e => setOrderForm(v => ({ ...v, code: e.target.value }))} /></label>
-                <label>客户名称<input value={orderForm.customerName} onChange={e => setOrderForm(v => ({ ...v, customerName: e.target.value }))} placeholder="可选" /></label>
-                <label>产品名称<input value={orderForm.productName} onChange={e => setOrderForm(v => ({ ...v, productName: e.target.value }))} /></label>
+                <label>工单号
+                  <div className="voice-field">
+                    <input value={orderForm.code} disabled={orderModal.mode === 'edit'} onChange={e => setOrderForm(v => ({ ...v, code: e.target.value }))} />
+                    {orderModal.mode === 'create' && <VoiceInputButton value={orderForm.code} onChange={value => setOrderForm(v => ({ ...v, code: value }))} mode="replace" label="工单号语音输入" />}
+                  </div>
+                </label>
+                <label>客户名称
+                  <div className="voice-field">
+                    <input value={orderForm.customerName} onChange={e => setOrderForm(v => ({ ...v, customerName: e.target.value }))} placeholder="可选" />
+                    <VoiceInputButton value={orderForm.customerName} onChange={value => setOrderForm(v => ({ ...v, customerName: value }))} label="客户名称语音输入" />
+                  </div>
+                </label>
+                <label>产品名称
+                  <div className="voice-field">
+                    <input value={orderForm.productName} onChange={e => setOrderForm(v => ({ ...v, productName: e.target.value }))} />
+                    <VoiceInputButton value={orderForm.productName} onChange={value => setOrderForm(v => ({ ...v, productName: value }))} label="产品名称语音输入" />
+                  </div>
+                </label>
                 <label>状态<select value={normalizeFlowStage(orderForm.stage)} onChange={e => setOrderForm(v => ({ ...v, stage: e.target.value }))}>{flowStages.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
                 <label>优先级<select value={orderForm.priority} onChange={e => setOrderForm(v => ({ ...v, priority: e.target.value }))}><option value="urgent">紧急</option><option value="high">高</option><option value="normal">一般</option></select></label>
                 <label>计划时间<input type="datetime-local" value={orderForm.plannedAt} onChange={e => setOrderForm(v => ({ ...v, plannedAt: e.target.value }))} /></label>
                 <label>进度<input type="number" min={0} max={100} value={orderForm.progress} onChange={e => setOrderForm(v => ({ ...v, progress: Number(e.target.value) }))} /></label>
-              <label className="wide">备注<textarea value={orderForm.remark} onChange={e => setOrderForm(v => ({ ...v, remark: e.target.value }))} /></label>
+              <label className="wide">备注
+                <div className="voice-field voice-field-textarea">
+                  <textarea value={orderForm.remark} onChange={e => setOrderForm(v => ({ ...v, remark: e.target.value }))} />
+                  <VoiceInputButton value={orderForm.remark} onChange={value => setOrderForm(v => ({ ...v, remark: value }))} label="备注语音输入" />
+                </div>
+              </label>
             </div>
             {orderFormError && <div className="form-error">{orderFormError}</div>}
             <div className="dialog-actions">
@@ -1760,8 +1814,18 @@ export default function DashboardShell({
               <button type="button" onClick={() => setFileEditTarget(null)}>×</button>
             </div>
             <div className="file-edit-source">{fileEditTarget.originalName} · {fileEditTarget.version || 'V1.0'}</div>
-            <label>显示名称<input value={fileForm.displayName} onChange={e => setFileForm(v => ({ ...v, displayName: e.target.value }))} placeholder="可选，下载时优先使用" /></label>
-            <label>备注<textarea value={fileForm.remark} onChange={e => setFileForm(v => ({ ...v, remark: e.target.value }))} placeholder="可选，填写资料说明" /></label>
+            <label>显示名称
+              <div className="voice-field">
+                <input value={fileForm.displayName} onChange={e => setFileForm(v => ({ ...v, displayName: e.target.value }))} placeholder="可选，下载时优先使用" />
+                <VoiceInputButton value={fileForm.displayName} onChange={value => setFileForm(v => ({ ...v, displayName: value }))} label="显示名称语音输入" />
+              </div>
+            </label>
+            <label>备注
+              <div className="voice-field voice-field-textarea">
+                <textarea value={fileForm.remark} onChange={e => setFileForm(v => ({ ...v, remark: e.target.value }))} placeholder="可选，填写资料说明" />
+                <VoiceInputButton value={fileForm.remark} onChange={value => setFileForm(v => ({ ...v, remark: value }))} label="文件备注语音输入" />
+              </div>
+            </label>
             <label>搜索目标工单<input value={fileOrderKw} onChange={e => setFileOrderKw(e.target.value)} placeholder="输入工单号 / 客户 / 产品名称筛选" /></label>
             <label>所属工单<select value={fileForm.workOrderId} onChange={e => setFileForm(v => ({ ...v, workOrderId: e.target.value }))}>
               {fileOrderOptions.map(item => <option key={item.id} value={item.id}>{item.code} · {customerLabel(item)} · {item.productName}</option>)}
@@ -1942,6 +2006,10 @@ function UploadManager({
   categories,
   managerCategory,
   setManagerCategory,
+  currentCategoryName,
+  uploading,
+  chooseImage,
+  openCamera,
   selectFile,
   openFileEdit,
   setDeleteTarget,
@@ -1950,6 +2018,10 @@ function UploadManager({
   categories: ResourceCategoryDTO[];
   managerCategory: string;
   setManagerCategory: (v: string) => void;
+  currentCategoryName: string;
+  uploading: boolean;
+  chooseImage: () => void;
+  openCamera: () => void;
   selectFile: (file: ResourceFileDTO) => void;
   openFileEdit: (file: ResourceFileDTO) => void;
   setDeleteTarget: (file: ResourceFileDTO) => void;
@@ -1957,7 +2029,14 @@ function UploadManager({
   return (
     <section className="upload-manager-panel">
       <div className="manager-toolbar">
-        <strong>当前工单全部文件</strong>
+        <div>
+          <strong>当前工单全部文件</strong>
+          <span>上传目标分类：{currentCategoryName}</span>
+        </div>
+        <div className="manager-upload-actions">
+          <button type="button" disabled={uploading} onClick={chooseImage}>上传图片</button>
+          <button className="primary-button" type="button" disabled={uploading} onClick={openCamera}>拍照上传</button>
+        </div>
         <div className="manager-tabs">
           <button className={managerCategory === 'all' ? 'active' : ''} type="button" onClick={() => setManagerCategory('all')}>全部</button>
           {categories.map(c => (
@@ -2140,7 +2219,8 @@ function HelpDialog({ close, exportDiagnostics }: { close: () => void; exportDia
   const items = [
     ['如何新建工单', '点击左侧“新建工单”，填写工单号、产品名称、阶段、状态和进度后保存。'],
     ['如何上传 PDF', '选择工单和分类后点击“批量上传 PDF”，等待上传队列显示成功。'],
-    ['如何拍照上传', '选择分类后点击“拍照上传”，平板会打开后置摄像头，拍完自动走图片上传流程。'],
+    ['如何拍照上传', '选择分类后点击“拍照上传”，平板会优先打开后置摄像头，拍完可重拍、继续拍照或确认上传。摄像头不可用时可改用上传图片。'],
+    ['如何语音输入', '全局搜索、工单表单和文件信息表单中的麦克风按钮可把普通话识别为文字。识别结果只写入当前输入框，不会自动提交表单。'],
     ['如何移动错传文件', '选择文件后点击“编辑文件”，在弹窗里调整所属工单或所属分类并保存。'],
     ['如何恢复误删文件', '打开“回收站”，切到文件或工单列表，点击恢复。'],
     ['如何下载全部资料', '选择工单后点击“下载全部”，系统会按分类打包 ZIP。'],
@@ -2162,6 +2242,10 @@ function HelpDialog({ close, exportDiagnostics }: { close: () => void; exportDia
             </article>
           ))}
         </div>
+        <section className="system-section wide">
+          <h3>拍照和语音输入说明</h3>
+          <p>拍照上传需要摄像头权限，语音输入需要麦克风权限。系统不会保存录音，也不会保存原始视频流；摄像头只在拍照弹窗打开时使用，关闭后会释放。浏览器不支持语音输入时仍可手动输入，摄像头不可用时可使用“上传图片”。线上使用时页面地址需要 HTTPS。</p>
+        </section>
         <section className="system-section wide">
           <h3>常见错误</h3>
           <p>上传失败：检查格式、大小和对象存储状态。预览打不开：刷新页面或联系管理员检查公开访问端点。找不到工单：使用全局搜索或二维码直达链接。密码忘记：请使用账号管理中的重置密码。</p>

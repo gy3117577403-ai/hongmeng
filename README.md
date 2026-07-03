@@ -231,14 +231,39 @@ Sealos App Deploy 端口填 `3000`。
   - 尚未部署 Sealos
   - 尚未作为生产版本发布
 
+### v1.9.0-rc.1
+- 状态：本地验证通过，等待统一部署
+- 功能：
+  - 实时拍照上传
+  - 后置摄像头优先
+  - 拍照预览 / 重拍 / 确认上传
+  - 摄像头权限错误处理
+  - capture fallback
+  - 语音输入按钮
+  - 全局搜索语音输入
+  - 工单表单语音输入
+  - 文件信息语音输入
+  - 语音输入权限和兼容提示
+- 本地验证：
+  - `npx prisma generate` 通过
+  - `npm run build` 通过
+  - `docker build` 通过
+  - `docker compose` 通过
+  - `npm run smoke` 通过
+  - 上传 / 预览 / 下载 / ZIP 下载回归通过
+- 说明：
+  - 尚未部署 Sealos
+  - 尚未作为生产版本发布
+
 ### RC 说明
-- v1.3.0-rc.1、v1.4.0-rc.1、v1.5.0-rc.1、v1.6.0-rc.1、v1.7.0-rc.1、v1.8.0-rc.1 和 v1.8.0-rc.3 为历史候选版本记录
+- v1.3.0-rc.1、v1.4.0-rc.1、v1.5.0-rc.1、v1.6.0-rc.1、v1.7.0-rc.1、v1.8.0-rc.1、v1.8.0-rc.3、v1.8.0-rc.4 和 v1.9.0-rc.1 为候选版本记录
 - v1.6.0 已完成 Sealos 统一部署和线上验收
 
 ## 交付文档索引
 - [用户手册 v1.5.0](docs/USER_MANUAL_v1.5.0.md)
 - [运维手册 v1.5.0](docs/ADMIN_OPERATION_v1.5.0.md)
 - [现场使用指南 v1.6.0](docs/FIELD_USE_GUIDE_v1.6.0.md)
+- [拍照与语音输入说明 v1.9.0](docs/CAMERA_VOICE_GUIDE_v1.9.0.md)
 - [备份计划 v1.5.0](docs/BACKUP_PLAN_v1.5.0.md)
 - [回滚指南 v1.5.0](docs/ROLLBACK_GUIDE_v1.5.0.md)
 - [部署 Smoke Test v1.5.0](docs/SMOKE_TEST_v1.5.0.md)
