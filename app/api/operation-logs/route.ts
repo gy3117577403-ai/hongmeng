@@ -23,6 +23,17 @@ const actionGroups: Record<string, string[]> = {
   export: ['export_work_orders', 'export_resource_files', 'export_operation_logs', 'export_metadata'],
   import: ['import_work_orders'],
   field: ['copy_work_order_link', 'print_work_order_qr', 'export_diagnostics'],
+  connector: [
+    'create_connector_parameter',
+    'update_connector_parameter',
+    'delete_connector_parameter',
+    'restore_connector_parameter',
+    'import_connector_parameters',
+    'export_connector_parameters',
+    'upload_connector_parameter_file',
+    'delete_connector_parameter_file',
+    'download_connector_parameter_file',
+  ],
 };
 
 const writableActions = new Set(['copy_work_order_link', 'print_work_order_qr']);

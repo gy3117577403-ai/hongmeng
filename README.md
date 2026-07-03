@@ -256,8 +256,32 @@ Sealos App Deploy 端口填 `3000`。
   - 尚未部署 Sealos
   - 尚未作为生产版本发布
 
+### v1.10.0-rc.1
+- 状态：本地验证通过，等待统一部署
+- 功能：
+  - 连接器参数资料模块
+  - 参数新增 / 编辑 / 软删除 / 恢复
+  - Excel / CSV 导入
+  - Excel 粘贴导入
+  - CSV 导出
+  - 原始资料附件上传
+  - 参数搜索和缺失筛选
+  - 重点标记
+  - 空缺字段保留为空
+- 本地验证：
+  - `npx prisma generate` 通过
+  - `npx prisma migrate deploy` 通过
+  - `npm run build` 通过
+  - `docker build` 通过
+  - `docker compose` 通过
+  - `npm run smoke` 通过
+  - 生产资料库主要功能回归通过
+- 说明：
+  - 尚未部署 Sealos
+  - 尚未作为生产版本发布
+
 ### RC 说明
-- v1.3.0-rc.1、v1.4.0-rc.1、v1.5.0-rc.1、v1.6.0-rc.1、v1.7.0-rc.1、v1.8.0-rc.1、v1.8.0-rc.3、v1.8.0-rc.4 和 v1.9.0-rc.1 为候选版本记录
+- v1.3.0-rc.1、v1.4.0-rc.1、v1.5.0-rc.1、v1.6.0-rc.1、v1.7.0-rc.1、v1.8.0-rc.1、v1.8.0-rc.3、v1.8.0-rc.4、v1.9.0-rc.1 和 v1.10.0-rc.1 为候选版本记录
 - v1.6.0 已完成 Sealos 统一部署和线上验收
 
 ## 交付文档索引
@@ -265,6 +289,7 @@ Sealos App Deploy 端口填 `3000`。
 - [运维手册 v1.5.0](docs/ADMIN_OPERATION_v1.5.0.md)
 - [现场使用指南 v1.6.0](docs/FIELD_USE_GUIDE_v1.6.0.md)
 - [拍照与语音输入说明 v1.9.0](docs/CAMERA_VOICE_GUIDE_v1.9.0.md)
+- [连接器参数资料指南 v1.10.0](docs/CONNECTOR_PARAMETERS_GUIDE_v1.10.0.md)
 - [备份计划 v1.5.0](docs/BACKUP_PLAN_v1.5.0.md)
 - [回滚指南 v1.5.0](docs/ROLLBACK_GUIDE_v1.5.0.md)
 - [部署 Smoke Test v1.5.0](docs/SMOKE_TEST_v1.5.0.md)

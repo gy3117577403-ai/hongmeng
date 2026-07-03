@@ -164,6 +164,15 @@ const actionText: Record<string, string> = {
   copy_work_order_link: '复制工单链接',
   print_work_order_qr: '打印工单二维码',
   export_diagnostics: '导出诊断信息',
+  create_connector_parameter: '新增连接器参数',
+  update_connector_parameter: '编辑连接器参数',
+  delete_connector_parameter: '删除连接器参数',
+  restore_connector_parameter: '恢复连接器参数',
+  import_connector_parameters: '导入连接器参数',
+  export_connector_parameters: '导出连接器参数',
+  upload_connector_parameter_file: '上传连接器原始资料',
+  delete_connector_parameter_file: '删除连接器原始资料',
+  download_connector_parameter_file: '下载连接器原始资料',
 };
 const categoryIcons: Record<string, string> = { drawing: '原', sop: 'SOP', product: '成', material: '辅', notice: '注' };
 const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG', jpeg: 'JPG' };
@@ -186,6 +195,7 @@ const logFilters = [
   ['export', '导出'],
   ['import', '导入'],
   ['field', '现场'],
+  ['connector', '连接器参数'],
 ];
 
 function completionOf(categories: ResourceCategoryDTO[], counts: Record<string, number>) {
@@ -1319,7 +1329,7 @@ export default function DashboardShell({
             <button className="library-button" type="button" onClick={() => setLib(!lib)}>▱ 资料库</button>
             {lib && (
               <div className="library-menu">
-                <button type="button">⚒ 治具资料</button>
+                <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
                 <button className="active" type="button">▤ 生产资料 ✓</button>
               </div>
             )}

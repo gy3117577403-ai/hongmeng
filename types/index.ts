@@ -82,3 +82,42 @@ export type TrashDTO = {
   workOrders: WorkOrderDTO[];
   resourceFiles: ResourceFileDTO[];
 };
+
+export type ConnectorParameterDTO = {
+  id: string;
+  rowNo?: number | null;
+  model?: string | null;
+  outerPeelMm?: string | null;
+  innerPeelMm?: string | null;
+  insertionLengthMm?: string | null;
+  remark?: string | null;
+  isHighlighted: boolean;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string | null;
+};
+
+export type ConnectorParameterFileDTO = {
+  id: string;
+  originalName: string;
+  displayName?: string | null;
+  mimeType: string;
+  fileType: string;
+  fileSize: number;
+  uploadedBy?: string | null;
+  createdAt: string;
+  deletedAt?: string | null;
+  downloadUrl: string;
+};
+
+export type ConnectorParameterStatsDTO = {
+  total: number;
+  missingOuter: number;
+  missingInner: number;
+  missingInsertion: number;
+  missingAny?: number;
+  highlighted: number;
+  fileCount: number;
+};

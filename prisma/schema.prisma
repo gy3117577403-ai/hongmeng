@@ -96,3 +96,42 @@ model OperationLog {
   @@index([createdAt])
   @@map("operation_logs")
 }
+
+model ConnectorParameter {
+  id                String    @id @default(cuid())
+  rowNo             Int?      @map("row_no")
+  model             String?
+  outerPeelMm       String?   @map("outer_peel_mm")
+  innerPeelMm       String?   @map("inner_peel_mm")
+  insertionLengthMm String?   @map("insertion_length_mm")
+  remark            String?
+  isHighlighted     Boolean   @default(false) @map("is_highlighted")
+  createdBy         String?   @map("created_by")
+  updatedBy         String?   @map("updated_by")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+  deletedAt         DateTime? @map("deleted_at")
+
+  @@index([rowNo])
+  @@index([model])
+  @@index([isHighlighted])
+  @@index([deletedAt])
+  @@map("connector_parameters")
+}
+
+model ConnectorParameterFile {
+  id           String    @id @default(cuid())
+  originalName String    @map("original_name")
+  displayName  String?   @map("display_name")
+  mimeType     String    @map("mime_type")
+  fileType     String    @map("file_type")
+  fileSize     Int       @map("file_size")
+  objectKey    String    @map("object_key")
+  uploadedBy   String?   @map("uploaded_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  @@index([deletedAt])
+  @@index([createdAt])
+  @@map("connector_parameter_files")
+}
