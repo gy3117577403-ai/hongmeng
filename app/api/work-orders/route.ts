@@ -40,7 +40,7 @@ export async function GET(req: NextRequest) {
     const createdAt = filterDate(filter);
     const and: Prisma.WorkOrderWhereInput[] = [];
     if (keyword) {
-      and.push({ OR: [{ code: { contains: keyword, mode: 'insensitive' } }, { productName: { contains: keyword, mode: 'insensitive' } }] });
+      and.push({ OR: [{ code: { contains: keyword, mode: 'insensitive' } }, { productName: { contains: keyword, mode: 'insensitive' } }, { customerName: { contains: keyword, mode: 'insensitive' } }] });
     }
     if (stage) {
       const legacyStages = stage === 'frontend'
@@ -83,6 +83,7 @@ export async function POST(req: NextRequest) {
     const workOrder = await prisma.workOrder.create({
       data: {
         code: String(data.code),
+        customerName: data.customerName === null ? null : String(data.customerName || ''),
         productName: String(data.productName),
         stage: String(data.stage),
         priority: String(data.priority),

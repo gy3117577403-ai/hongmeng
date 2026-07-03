@@ -41,6 +41,7 @@ export async function GET() {
       workOrders: workOrders.map(o => ({
         id: o.id,
         code: o.code,
+        customerName: o.customerName,
         productName: o.productName,
         stage: o.stage,
         stageText: workOrderStageText(o.stage || o.status),

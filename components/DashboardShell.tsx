@@ -9,6 +9,7 @@ import type { CurrentUserDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategory
 
 type WorkOrderForm = {
   code: string;
+  customerName: string;
   productName: string;
   stage: string;
   priority: string;
@@ -28,6 +29,7 @@ type AccountEdit = { id: string; displayName: string; isActive: boolean } | null
 type PasswordReset = { id: string; username: string; password: string } | null;
 type SearchResult = { workOrders: WorkOrderDTO[]; resourceFiles: ResourceFileDTO[] };
 type QuickMenu = { type: 'stage' | 'priority'; orderId: string; x: number; y: number } | null;
+type ToolTab = 'info' | 'upload' | 'actions' | 'queue';
 type SystemStatus = {
   ok: boolean;
   app: { name: string; version: string; mode: string };
@@ -137,6 +139,7 @@ const actionText: Record<string, string> = {
   change_password: '修改密码',
   create_work_order: '新建工单',
   update_work_order: '编辑工单',
+  update_work_order_customer: '修改客户名称',
   update_work_order_status: '修改工单状态',
   update_work_order_priority: '修改优先级',
   update_work_order_planned_at: '修改计划时间',
@@ -163,7 +166,7 @@ const actionText: Record<string, string> = {
 const categoryIcons: Record<string, string> = { drawing: '原', sop: 'SOP', product: '成', material: '辅', notice: '注' };
 const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG', jpeg: 'JPG' };
 const requiredCategoryCodes = new Set(['drawing', 'sop', 'product']);
-const emptyForm: WorkOrderForm = { code: '', productName: '', stage: 'not_issued', priority: 'normal', status: 'pending', progress: 0, plannedAt: '', remark: '' };
+const emptyForm: WorkOrderForm = { code: '', customerName: '', productName: '', stage: 'not_issued', priority: 'normal', status: 'pending', progress: 0, plannedAt: '', remark: '' };
 const logFilters = [
   ['all', '全部'],
   ['upload', '上传'],
@@ -209,6 +212,10 @@ function shortDt(v?: string | null) {
   return `${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
+function customerLabel(order?: WorkOrderDTO | null) {
+  return order?.customerName?.trim() || '未设置';
+}
+
 function toDatetimeLocal(v?: string | null) {
   if (!v) return '';
   const parts = dateParts(v);
@@ -230,6 +237,7 @@ function toForm(order?: WorkOrderDTO): WorkOrderForm {
   if (!order) return emptyForm;
   return {
     code: order.code,
+    customerName: order.customerName || '',
     productName: order.productName,
     stage: order.stage,
     priority: order.priority,
@@ -317,17 +325,24 @@ export default function DashboardShell({
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [quickMenu, setQuickMenu] = useState<QuickMenu>(null);
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+  const [toolOpen, setToolOpen] = useState(false);
+  const [toolTab, setToolTab] = useState<ToolTab>('info');
+  const [toolWidth, setToolWidth] = useState(300);
+  const [thumbsOpen, setThumbsOpen] = useState(true);
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
   const camera = useRef<HTMLInputElement>(null);
   const csvImport = useRef<HTMLInputElement>(null);
   const drawerTouch = useRef<{ startX: number; startY: number; fromEdge: boolean; fromDrawer: boolean } | null>(null);
+  const toolRef = useRef<HTMLElement>(null);
+  const toolRailRef = useRef<HTMLDivElement>(null);
+  const toolResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const list = useMemo(() => {
     const text = kw.trim().toLowerCase();
     return orders.filter(o => {
-      const matchesText = !text || o.code.toLowerCase().includes(text) || o.productName.toLowerCase().includes(text);
+      const matchesText = !text || o.code.toLowerCase().includes(text) || o.productName.toLowerCase().includes(text) || (o.customerName || '').toLowerCase().includes(text);
       if (!matchesText) return false;
       if (orderFilter === 'today') return sameDay(o.createdAt);
       if (orderFilter === 'week') return inRecentWeek(o.createdAt);
@@ -350,7 +365,7 @@ export default function DashboardShell({
   const managerFiles = managerCategory === 'all' ? allFiles : allFiles.filter(f => f.categoryId === managerCategory);
   const fileOrderOptions = useMemo(() => {
     const text = fileOrderKw.trim().toLowerCase();
-    return orders.filter(o => !text || o.code.toLowerCase().includes(text) || o.productName.toLowerCase().includes(text)).slice(0, 30);
+    return orders.filter(o => !text || o.code.toLowerCase().includes(text) || o.productName.toLowerCase().includes(text) || (o.customerName || '').toLowerCase().includes(text)).slice(0, 30);
   }, [orders, fileOrderKw]);
 
   useEffect(() => {
@@ -366,6 +381,25 @@ export default function DashboardShell({
       window.removeEventListener('beforeinstallprompt', onInstall);
     };
   }, []);
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem('hongmeng:resourceTool');
+    if (raw) {
+      try {
+        const saved = JSON.parse(raw) as { open?: boolean; tab?: ToolTab; width?: number };
+        setToolOpen(!!saved.open);
+        if (saved.tab && ['info', 'upload', 'actions', 'queue'].includes(saved.tab)) setToolTab(saved.tab);
+        if (typeof saved.width === 'number') setToolWidth(Math.min(420, Math.max(260, saved.width)));
+      } catch {
+        window.localStorage.removeItem('hongmeng:resourceTool');
+      }
+    }
+    if (window.innerWidth <= 1024) setThumbsOpen(false);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem('hongmeng:resourceTool', JSON.stringify({ open: toolOpen, tab: toolTab, width: toolWidth }));
+  }, [toolOpen, toolTab, toolWidth]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -526,6 +560,28 @@ export default function DashboardShell({
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
     setQuickMenu({ type, orderId: target.id, x: rect.left, y: rect.bottom + 8 });
+  }
+
+  function openTool(tab: ToolTab) {
+    setToolTab(tab);
+    setToolOpen(true);
+  }
+
+  function startToolResize(event: React.PointerEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    toolResizeRef.current = { startX: event.clientX, startWidth: toolWidth };
+    const move = (moveEvent: PointerEvent) => {
+      const start = toolResizeRef.current;
+      if (!start) return;
+      setToolWidth(Math.min(420, Math.max(260, start.startWidth - (moveEvent.clientX - start.startX))));
+    };
+    const stop = () => {
+      toolResizeRef.current = null;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
   }
 
   async function updateWorkOrderQuick(target: WorkOrderDTO, patch: { stage?: string; priority?: string }) {
@@ -729,6 +785,24 @@ export default function DashboardShell({
       window.removeEventListener('keydown', closeByKey);
     };
   }, [quickMenu]);
+
+  useEffect(() => {
+    if (!toolOpen) return undefined;
+    const close = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.closest('.resource-tools, .resource-tool-rail, .modal-backdrop')) return;
+      setToolOpen(false);
+    };
+    const closeByKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setToolOpen(false);
+    };
+    window.addEventListener('mousedown', close);
+    window.addEventListener('keydown', closeByKey);
+    return () => {
+      window.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', closeByKey);
+    };
+  }, [toolOpen]);
 
   function onShellTouchStart(e: React.TouchEvent<HTMLElement>) {
     const t = e.touches[0];
@@ -1101,7 +1175,12 @@ export default function DashboardShell({
 
   function workOrderLink(target = order) {
     if (!target) return '';
-    return `${location.origin}/dashboard?workOrderId=${encodeURIComponent(target.id)}`;
+    const params = new URLSearchParams({
+      workOrderId: target.id,
+      workOrderCode: target.code,
+      customerName: target.customerName || '',
+    });
+    return `${location.origin}/dashboard?${params.toString()}`;
   }
 
   async function writeClientLog(action: string, targetType?: string, targetId?: string, detail?: unknown) {
@@ -1195,7 +1274,7 @@ export default function DashboardShell({
               {globalSearch.workOrders.map(item => (
                 <button key={item.id} type="button" onClick={() => openWorkOrder(item.id)}>
                   <strong>{item.code}</strong>
-                  <span>{item.productName}</span>
+                  <span>{customerLabel(item)} · {item.productName}</span>
                 </button>
               ))}
               {!globalSearch.workOrders.length && <div className="search-empty">未找到工单</div>}
@@ -1257,7 +1336,7 @@ export default function DashboardShell({
             </div>
           </div>
           <div className="panel-search">
-            <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索工单号 / 产品名称" />
+            <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索工单号 / 客户 / 产品名称" />
           </div>
           <div className="filter-tabs">
             {[
@@ -1291,7 +1370,7 @@ export default function DashboardShell({
                 <div className="field-summary-list">
                   {fieldSummary.missingWorkOrders.map(item => (
                     <button key={item.id} type="button" onClick={() => openWorkOrder(item.id)}>
-                      <strong>{item.code}</strong><span>{item.productName}</span>
+                      <strong>{item.code}</strong><span>{customerLabel(item)} · {item.productName}</span>
                     </button>
                   ))}
                   {fieldSummary.recentFiles.map(item => (
@@ -1332,29 +1411,23 @@ export default function DashboardShell({
         </nav>
 
         <section className="main-card">
-          <div className="current-order-capsule">
-            <div>
-              <span>当前工单</span>
-              <strong>{order ? `${order.code}  ${order.productName}` : '暂无工单'}</strong>
+          <div className="current-order-strip">
+            <div className="order-strip-info">
+              <span className="order-strip-chip customer">客户：{customerLabel(order)}</span>
+              <strong>{order?.code || '暂无工单'}</strong>
+              <span className="order-strip-product">{order?.productName || '请选择工单'}</span>
+              {order && <button className={`flow-chip ${normalizeFlowStage(order.stage)}`} type="button" onClick={e => openQuickMenu('stage', order, e)}>{flowText(order.stage)}</button>}
+              {order && <button className={`priority-chip ${order.priority}`} type="button" onClick={e => openQuickMenu('priority', order, e)}>{priorityText[order.priority] || '一般'}</button>}
+              <span className={order?.plannedAt ? `planned-chip ${plannedClass(order)}` : 'planned-chip'}>{order?.plannedAt ? shortDt(order.plannedAt) : '计划未设'}</span>
+              <span className={`completion-pill ${completion.key}`}>{completion.text}</span>
             </div>
-            {order && (
-              <div className="capsule-tags">
-                <button className={`flow-chip ${normalizeFlowStage(order.stage)}`} type="button" onClick={e => openQuickMenu('stage', order, e)}>{flowText(order.stage)}</button>
-                <button className={`priority-chip ${order.priority}`} type="button" onClick={e => openQuickMenu('priority', order, e)}>{priorityText[order.priority] || '一般'}</button>
-                {order.plannedAt && <span className={`planned-chip ${plannedClass(order)}`}>{shortDt(order.plannedAt)}</span>}
-              </div>
-            )}
             <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
           </div>
-          <div className="status-title-row enhanced">
-            <div className="status-title">
-              <span className="doc-icon">▤</span>
-              <div>
-                <strong>{managerOpen ? '上传管理' : order?.code || '暂无工单'}</strong>
-                <small>{managerOpen ? `${order?.code || '-'} · 全部资料` : order?.productName || '请选择工单'}</small>
-              </div>
+          <div className="workspace-action-row">
+            <div className="workspace-context">
+              <strong>{managerOpen ? '上传管理' : category?.name || '资料预览'}</strong>
+              {order?.remark && <span title={order.remark}>备注：{order.remark}</span>}
             </div>
-            <div className={`completion-pill ${completion.key}`}>{completion.text}</div>
             <div className="title-actions">
               <button className="download-all-button" type="button" disabled={!order || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
               <button className="refresh-button" type="button" onClick={refresh}>↻ 刷新</button>
@@ -1373,8 +1446,6 @@ export default function DashboardShell({
             </div>
           </div>
 
-          {order?.remark && <div className="order-remark">备注：{order.remark}</div>}
-
           {managerOpen ? (
             <UploadManager
               files={managerFiles}
@@ -1386,7 +1457,7 @@ export default function DashboardShell({
               setDeleteTarget={setDeleteTarget}
             />
           ) : (
-            <div className="content-grid">
+            <div className={toolOpen ? 'content-grid tool-open' : 'content-grid'}>
               <section className="preview-card">
                 <div className="preview-toolbar">
                   <div>
@@ -1426,70 +1497,105 @@ export default function DashboardShell({
                   )}
                 </div>
 
-                <div className="file-strip" aria-label="当前分类文件列表">
-                  {files.length === 0 ? (
-                    <div className="strip-empty">当前分类暂无文件</div>
-                  ) : files.map(f => (
-                    <button key={f.id} className={f.id === file?.id ? 'strip-file thumb active' : 'strip-file thumb'} type="button" onClick={() => setSel(f.id)}>
-                      <FileThumb file={f} />
-                      <b>{shortName(displayFileName(f))}</b>
-                      <small>{f.version || 'V1.0'} · {dt(f.createdAt, false)}</small>
-                      <em className={f.id === latestFileId ? 'version-badge latest' : 'version-badge'}>{f.id === latestFileId ? '最新' : '历史'}</em>
-                    </button>
-                  ))}
+                <div className={thumbsOpen ? 'file-strip floating open' : 'file-strip floating collapsed'} aria-label="当前分类文件列表">
+                  <button className="strip-toggle" type="button" onClick={() => setThumbsOpen(v => !v)}>
+                    {thumbsOpen ? '收起' : `文件 ${files.length} 个 ︿`}
+                  </button>
+                  {thumbsOpen && (
+                    <div className="strip-scroll">
+                      {files.length === 0 ? (
+                        <div className="strip-empty">当前分类暂无文件</div>
+                      ) : files.map(f => (
+                        <button key={f.id} className={f.id === file?.id ? 'strip-file thumb active' : 'strip-file thumb'} type="button" onClick={() => setSel(f.id)}>
+                          <FileThumb file={f} />
+                          <b>{shortName(displayFileName(f))}</b>
+                          <small>{f.version || 'V1.0'} · {dt(f.createdAt, false)}</small>
+                          <em className={f.id === latestFileId ? 'version-badge latest' : 'version-badge'}>{f.id === latestFileId ? '最新' : '历史'}</em>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </section>
 
-              <aside className="detail-column">
-                <section className="file-info-card">
-                  <div className="file-list-header">
-                    <strong>文件信息</strong>
-                    <span>{files.length ? `${files.length} 个文件` : '暂无文件'}</span>
+              <aside
+                ref={toolRef}
+                className={toolOpen ? 'resource-tools open' : 'resource-tools'}
+                style={{ '--tool-width': `${toolWidth}px` } as React.CSSProperties}
+              >
+                <input ref={pdf} hidden multiple type="file" accept="application/pdf,.pdf" onChange={e => uploadMany(Array.from(e.target.files || []))} />
+                <input ref={img} hidden multiple type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" onChange={e => uploadMany(Array.from(e.target.files || []))} />
+                <input ref={camera} hidden type="file" accept="image/*" capture="environment" onChange={e => uploadMany(Array.from(e.target.files || []))} />
+                <div ref={toolRailRef} className="resource-tool-rail" aria-label="资料工具栏">
+                  {([
+                    ['info', '信息'],
+                    ['upload', '上传'],
+                    ['actions', '操作'],
+                    ['queue', '队列'],
+                  ] as const).map(([key, label]) => (
+                    <button key={key} className={toolTab === key && toolOpen ? 'active' : ''} type="button" onClick={() => openTool(key)}>{label}</button>
+                  ))}
+                </div>
+                <section className="resource-tool-window" aria-hidden={!toolOpen}>
+                  <button className="tool-resize-handle" type="button" aria-label="调整工具窗宽度" onPointerDown={startToolResize} />
+                  <div className="tool-window-head">
+                    <strong>{toolTab === 'info' ? '文件信息' : toolTab === 'upload' ? '上传资料' : toolTab === 'actions' ? '文件操作' : '上传队列'}</strong>
+                    <button type="button" onClick={() => setToolOpen(false)}>×</button>
                   </div>
-                  <Info label="显示名称" value={file ? displayFileName(file) : '-'} wrap />
-                  <Info label="原始文件名" value={file ? safeDisplayFilename({ originalName: file.originalName }) : '-'} wrap />
-                  <Info label="文件类型" value={file ? fileTypeText[file.fileType] || file.fileType.toUpperCase() : '-'} />
-                  <Info label="文件版本" value={file?.version || 'V1.0'} />
-                  <Info label="版本状态" value={file ? (file.id === latestFileId ? '最新' : '历史') : '-'} ok={file?.id === latestFileId} />
-                  <Info label="文件大小" value={file ? bytes(file.fileSize) : '-'} />
-                  <Info label="上传人" value={file?.uploadedBy || accountName} />
-                  <Info label="上传时间" value={file ? dt(file.createdAt) : '-'} />
-                  <Info label="当前分类" value={category?.name || '-'} />
-                  <Info label="文件状态" value={file ? fileStatusText[file.status] || file.status : '缺失'} ok={!!file} />
-                  <Info label="备注" value={file?.remark || '-'} />
-                </section>
-
-                <section className="action-card">
-                  <div className="side-section-title">
-                    <strong>上传资料</strong>
-                    <span>{category?.name || '-'}</span>
-                  </div>
-                  <input ref={pdf} hidden multiple type="file" accept="application/pdf,.pdf" onChange={e => uploadMany(Array.from(e.target.files || []))} />
-                  <input ref={img} hidden multiple type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" onChange={e => uploadMany(Array.from(e.target.files || []))} />
-                  <input ref={camera} hidden type="file" accept="image/*" capture="environment" onChange={e => uploadMany(Array.from(e.target.files || []))} />
-                  <button className="upload-action primary" type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>
-                    <span>⇧</span><b>{uploading ? '上传中，请稍候' : '批量上传 PDF'}</b>
-                  </button>
-                  <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>
-                    <span>▣</span><b>上传图片</b>
-                  </button>
-                  <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => camera.current?.click()}>
-                    <span>◎</span><b>拍照上传</b>
-                  </button>
-                  <div className="side-section-title compact">
-                    <strong>文件操作</strong>
-                    <span>{file ? file.version || 'V1.0' : '-'}</span>
-                  </div>
-                  <div className="secondary-actions file-actions">
-                    <a className={!file ? 'disabled' : ''} href={file?.downloadUrl || '#'} target="_blank">下载当前</a>
-                    <button type="button" disabled={!file} onClick={() => file && openFileEdit(file)}>编辑文件</button>
-                    <button type="button" disabled={!file} onClick={() => file && setDeleteTarget(file)}>删除文件</button>
-                    <button type="button" disabled={!order} onClick={downloadAll}>下载全部</button>
-                    <button type="button" disabled={!order} onClick={copy}>复制链接</button>
-                  </div>
-                  <UploadJobs jobs={uploadJobs} />
+                  {toolTab === 'info' && (
+                    <div className="tool-pane">
+                      <Info label="当前分类" value={category?.name || '-'} />
+                      <Info label="文件状态" value={file ? fileStatusText[file.status] || file.status : '缺失'} ok={!!file} />
+                      <Info label="文件类型" value={file ? fileTypeText[file.fileType] || file.fileType.toUpperCase() : '-'} />
+                      <Info label="版本" value={file?.version || 'V1.0'} />
+                      <Info label="大小" value={file ? bytes(file.fileSize) : '-'} />
+                      <Info label="上传时间" value={file ? dt(file.createdAt) : '-'} />
+                      <Info label="上传人" value={file?.uploadedBy || accountName} />
+                      <Info label="备注" value={file?.remark || '-'} wrap />
+                    </div>
+                  )}
+                  {toolTab === 'upload' && (
+                    <div className="tool-pane">
+                      <div className="side-section-title">
+                        <strong>{category?.name || '-'}</strong>
+                        <span>支持 PDF / JPG / PNG 批量上传</span>
+                      </div>
+                      <button className="upload-action primary" type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>
+                        <span>⇧</span><b>{uploading ? '上传中，请稍候' : '上传 PDF'}</b>
+                      </button>
+                      <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>
+                        <span>▣</span><b>上传图片</b>
+                      </button>
+                      <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => camera.current?.click()}>
+                        <span>◎</span><b>拍照上传</b>
+                      </button>
+                      <p className="tool-note">上传文件会保存到对象存储，元数据保存到 PostgreSQL。队列完成后会自动刷新当前分类。</p>
+                    </div>
+                  )}
+                  {toolTab === 'actions' && (
+                    <div className="tool-pane">
+                      <div className="secondary-actions file-actions">
+                        <a className={!file ? 'disabled' : ''} href={file?.downloadUrl || '#'} target="_blank">下载当前</a>
+                        <button type="button" disabled={!file} onClick={() => file && openFileEdit(file)}>编辑文件</button>
+                        <button type="button" disabled={!file} onClick={() => file && setDeleteTarget(file)}>删除文件</button>
+                        <button type="button" disabled={!order} onClick={downloadAll}>下载全部</button>
+                        <button type="button" disabled={!order} onClick={copy}>复制链接</button>
+                      </div>
+                    </div>
+                  )}
+                  {toolTab === 'queue' && (
+                    <div className="tool-pane">
+                      <div className="queue-summary">
+                        <strong>最近上传结果</strong>
+                        <span>成功 {uploadJobs.filter(j => j.status === 'success').length} · 失败 {uploadJobs.filter(j => j.status === 'failed').length}</span>
+                      </div>
+                      <UploadJobs jobs={uploadJobs} />
+                      {!uploadJobs.length && <div className="empty-list">暂无上传队列</div>}
+                    </div>
+                  )}
                 </section>
               </aside>
+              {toolOpen && <button className="tool-window-scrim" type="button" aria-label="关闭资料工具窗" onClick={() => setToolOpen(false)} />}
             </div>
           )}
         </section>
@@ -1498,7 +1604,8 @@ export default function DashboardShell({
       {order && (
         <section className="print-summary" aria-hidden="true">
           <h1>工单资料摘要</h1>
-          <div className="print-meta">
+            <div className="print-meta">
+            <span>客户：{customerLabel(order)}</span>
             <span>工单号：{order.code}</span>
             <span>产品名称：{order.productName}</span>
             <span>状态：{flowText(order.stage)}</span>
@@ -1638,6 +1745,7 @@ export default function DashboardShell({
             </div>
               <div className="form-grid">
                 <label>工单号<input value={orderForm.code} disabled={orderModal.mode === 'edit'} onChange={e => setOrderForm(v => ({ ...v, code: e.target.value }))} /></label>
+                <label>客户名称<input value={orderForm.customerName} onChange={e => setOrderForm(v => ({ ...v, customerName: e.target.value }))} placeholder="可选" /></label>
                 <label>产品名称<input value={orderForm.productName} onChange={e => setOrderForm(v => ({ ...v, productName: e.target.value }))} /></label>
                 <label>状态<select value={normalizeFlowStage(orderForm.stage)} onChange={e => setOrderForm(v => ({ ...v, stage: e.target.value }))}>{flowStages.map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
                 <label>优先级<select value={orderForm.priority} onChange={e => setOrderForm(v => ({ ...v, priority: e.target.value }))}><option value="urgent">紧急</option><option value="high">高</option><option value="normal">一般</option></select></label>
@@ -1664,9 +1772,9 @@ export default function DashboardShell({
             <div className="file-edit-source">{fileEditTarget.originalName} · {fileEditTarget.version || 'V1.0'}</div>
             <label>显示名称<input value={fileForm.displayName} onChange={e => setFileForm(v => ({ ...v, displayName: e.target.value }))} placeholder="可选，下载时优先使用" /></label>
             <label>备注<textarea value={fileForm.remark} onChange={e => setFileForm(v => ({ ...v, remark: e.target.value }))} placeholder="可选，填写资料说明" /></label>
-            <label>搜索目标工单<input value={fileOrderKw} onChange={e => setFileOrderKw(e.target.value)} placeholder="输入工单号 / 产品名称筛选" /></label>
+            <label>搜索目标工单<input value={fileOrderKw} onChange={e => setFileOrderKw(e.target.value)} placeholder="输入工单号 / 客户 / 产品名称筛选" /></label>
             <label>所属工单<select value={fileForm.workOrderId} onChange={e => setFileForm(v => ({ ...v, workOrderId: e.target.value }))}>
-              {fileOrderOptions.map(item => <option key={item.id} value={item.id}>{item.code} · {item.productName}</option>)}
+              {fileOrderOptions.map(item => <option key={item.id} value={item.id}>{item.code} · {customerLabel(item)} · {item.productName}</option>)}
             </select></label>
             <label>所属分类<select value={fileForm.categoryId} onChange={e => setFileForm(v => ({ ...v, categoryId: e.target.value }))}>
               {categories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -1795,6 +1903,7 @@ function OrderGroup({
               <strong>{o.code}</strong>
               <span role="button" tabIndex={0} className={`tag priority-chip ${o.priority}`} onClick={e => openQuickMenu('priority', o, e)}>{priorityText[o.priority] || '一般'}</span>
             </div>
+            <span className="order-customer">客户：{customerLabel(o)}</span>
             <p>{o.productName}</p>
             <div className="order-compact-meta">
               <span role="button" tabIndex={0} className={`flow-chip ${normalizeFlowStage(o.stage)}`} onClick={e => openQuickMenu('stage', o, e)}>{flowText(o.stage)}</span>
@@ -2101,6 +2210,7 @@ function QrDialog({
         </div>
         <div className="qr-print-area">
           <h1>{order.code}</h1>
+          <p>客户：{customerLabel(order)}</p>
           <p>{order.productName}</p>
           {qrDataUrl && <img src={qrDataUrl} alt="工单直达二维码" />}
           <dl>

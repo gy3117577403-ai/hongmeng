@@ -19,6 +19,7 @@ export async function GET(req: NextRequest) {
           deletedAt: null,
           OR: [
             { code: { contains: keyword, mode: 'insensitive' } },
+            { customerName: { contains: keyword, mode: 'insensitive' } },
             { productName: { contains: keyword, mode: 'insensitive' } },
             { remark: { contains: keyword, mode: 'insensitive' } },
           ],
@@ -37,6 +38,7 @@ export async function GET(req: NextRequest) {
             { remark: { contains: keyword, mode: 'insensitive' } },
             { version: { contains: keyword, mode: 'insensitive' } },
             { workOrder: { code: { contains: keyword, mode: 'insensitive' } } },
+            { workOrder: { customerName: { contains: keyword, mode: 'insensitive' } } },
             { workOrder: { productName: { contains: keyword, mode: 'insensitive' } } },
             { category: { name: { contains: keyword, mode: 'insensitive' } } },
           ],

@@ -80,6 +80,7 @@ export function parsePlannedAt(value: unknown): { value?: Date | null; error?: s
 
 type WorkOrderBody = {
   code?: unknown;
+  customerName?: unknown;
   productName?: unknown;
   stage?: unknown;
   status?: unknown;
@@ -108,6 +109,13 @@ export function parseWorkOrderBody(body: WorkOrderBody, options: { partial?: boo
     const productName = str(body.productName);
     if (!productName) errors.push('产品名称不能为空');
     else data.productName = productName.slice(0, 120);
+  }
+
+  if (body.customerName !== undefined) {
+    const customerName = str(body.customerName);
+    data.customerName = customerName ? customerName.slice(0, 120) : null;
+  } else if (!partial) {
+    data.customerName = null;
   }
 
   const stageInput = body.stage !== undefined ? body.stage : body.status;
@@ -158,6 +166,7 @@ export function serializeWorkOrder(order: WorkOrder & { resourceFiles?: { catego
   return {
     id: order.id,
     code: order.code,
+    customerName: order.customerName,
     productName: order.productName,
     stage,
     stageText: stageText[stage],

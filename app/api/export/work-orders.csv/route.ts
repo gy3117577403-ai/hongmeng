@@ -18,9 +18,10 @@ export async function GET() {
     await logOp({ userId: user.id, action: 'export_work_orders', targetType: 'export', detail: { count: workOrders.length } });
 
     const rows = [
-      ['工单号', '产品名称', '状态', '优先级', '进度', '计划时间', '备注', '创建时间', '更新时间', '是否删除'],
+      ['工单号', '客户', '产品名称', '状态', '优先级', '进度', '计划时间', '备注', '创建时间', '更新时间', '是否删除'],
       ...workOrders.map(o => [
         o.code,
+        o.customerName || '',
         o.productName,
         workOrderStageText(o.stage || o.status),
         priorityText[o.priority] || o.priority,

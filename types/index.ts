@@ -1,6 +1,7 @@
 export type WorkOrderDTO = {
   id: string;
   code: string;
+  customerName?: string | null;
   productName: string;
   stage: string;
   stageText?: string;

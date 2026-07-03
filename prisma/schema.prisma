@@ -24,6 +24,7 @@ model User {
 model WorkOrder {
   id            String         @id @default(uuid())
   code          String         @unique
+  customerName  String?        @map("customer_name")
   productName   String         @map("product_name")
   stage         String
   progress      Int            @default(0)

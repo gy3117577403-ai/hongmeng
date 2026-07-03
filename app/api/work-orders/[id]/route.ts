@@ -60,6 +60,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         detail: { code: workOrder.code, from: old.plannedAt?.toISOString() || null, to: workOrder.plannedAt?.toISOString() || null },
       });
     }
+    if ((old.customerName || '') !== (workOrder.customerName || '')) {
+      await logOp({
+        userId: user.id,
+        action: 'update_work_order_customer',
+        targetType: 'work_order',
+        targetId: workOrder.id,
+        detail: { code: workOrder.code, from: old.customerName || null, to: workOrder.customerName || null },
+      });
+    }
     return NextResponse.json({ ok: true, workOrder: serializeWorkOrder(workOrder) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();

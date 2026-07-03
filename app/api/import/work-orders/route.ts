@@ -10,6 +10,7 @@ export const dynamic = 'force-dynamic';
 
 const headerMap: Record<string, string> = {
   工单号: 'code',
+  客户: 'customerName',
   产品名称: 'productName',
   阶段: 'stage',
   优先级: 'priority',
@@ -18,6 +19,7 @@ const headerMap: Record<string, string> = {
   计划时间: 'plannedAt',
   备注: 'remark',
   code: 'code',
+  customerName: 'customerName',
   productName: 'productName',
   stage: 'stage',
   priority: 'priority',
@@ -47,6 +49,7 @@ function rowToData(headers: string[], row: string[]) {
 
   const errors: string[] = [];
   const code = raw.code || '';
+  const customerName = raw.customerName || '';
   const productName = raw.productName || '';
   if (!code) errors.push('工单号必填');
   if (!productName) errors.push('产品名称必填');
@@ -64,6 +67,7 @@ function rowToData(headers: string[], row: string[]) {
     code,
     data: {
       code: code.slice(0, 80),
+      customerName: customerName ? customerName.slice(0, 120) : null,
       productName: productName.slice(0, 120),
       stage: stage || 'not_issued',
       priority,
@@ -116,6 +120,7 @@ export async function POST(req: NextRequest) {
           where: { id: existing.id },
           data: {
             productName: parsed.data.productName,
+            customerName: parsed.data.customerName,
             stage: parsed.data.stage,
             priority: parsed.data.priority,
             status: parsed.data.status,
