@@ -4775,15 +4775,30 @@ body:has(.qr-dialog) .modal-backdrop {
 /* v1.10.0 connector parameter library */
 .connector-page {
   min-height: 100vh;
-  padding: 18px 22px 22px;
+  padding: 12px 18px 18px;
 }
 
 .connector-topbar {
+  height: 52px;
   grid-template-columns: 48px minmax(220px, 320px) minmax(260px, 1fr) auto;
+  margin-bottom: 8px;
+}
+
+.connector-topbar .home-button {
+  width: 44px;
+  height: 44px;
+}
+
+.connector-topbar .brand-block strong {
+  font-size: 20px;
+}
+
+.connector-topbar .brand-block span {
+  font-size: 11px;
 }
 
 .connector-search {
-  height: 48px;
+  height: 42px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -4819,20 +4834,20 @@ body:has(.qr-dialog) .modal-backdrop {
 }
 
 .connector-shell {
-  height: calc(100vh - 104px);
-  min-height: 620px;
+  height: calc(100vh - 78px);
+  min-height: 560px;
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr);
-  gap: 12px;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 8px;
 }
 
 .connector-hero {
-  min-height: 108px;
+  min-height: 54px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(440px, auto);
+  grid-template-columns: minmax(230px, 1fr) minmax(540px, auto);
   align-items: center;
-  gap: 18px;
-  padding: 18px;
+  gap: 14px;
+  padding: 8px 12px;
   border: 1px solid rgba(229, 231, 235, .9);
   border-radius: 16px;
   background: rgba(255, 255, 255, .9);
@@ -4841,13 +4856,13 @@ body:has(.qr-dialog) .modal-backdrop {
 
 .connector-hero span {
   color: var(--orange);
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 900;
 }
 
 .connector-hero h1 {
-  margin: 4px 0;
-  font-size: 28px;
+  margin: 1px 0;
+  font-size: 20px;
   line-height: 1.15;
 }
 
@@ -4855,17 +4870,18 @@ body:has(.qr-dialog) .modal-backdrop {
   max-width: 620px;
   margin: 0;
   color: var(--muted);
-  line-height: 1.6;
+  font-size: 12px;
+  line-height: 1.25;
 }
 
 .connector-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(118px, 1fr));
+  grid-template-columns: repeat(5, minmax(106px, 1fr));
   gap: 8px;
 }
 
 .connector-actions button {
-  min-height: 42px;
+  min-height: 34px;
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -4883,36 +4899,57 @@ body:has(.qr-dialog) .modal-backdrop {
 }
 
 .connector-stats {
-  display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.connector-stats button {
-  min-height: 78px;
-  display: grid;
-  gap: 4px;
-  align-content: center;
-  padding: 12px;
-  border: 1px solid rgba(255, 106, 0, .12);
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  padding: 4px 8px;
+  border: 1px solid rgba(255, 106, 0, .13);
   border-radius: 14px;
-  background: linear-gradient(145deg, #fff, #fff7ed);
-  text-align: left;
+  background: rgba(255, 255, 255, .86);
   box-shadow: var(--shadow-soft);
 }
 
-.connector-stats small {
+.connector-stats button {
+  min-height: 26px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  padding: 0 13px;
+  border: none;
+  border-right: 1px solid #edf0f4;
+  border-radius: 0;
+  background: transparent;
+  color: #424956;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.connector-stats button:last-child {
+  border-right: none;
+}
+
+.connector-stats button.active {
+  border-radius: 999px;
+  background: var(--orange-soft);
+  color: var(--orange-deep);
+}
+
+.connector-stats span {
   color: var(--muted);
-  font-weight: 800;
+  white-space: nowrap;
 }
 
 .connector-stats strong {
   color: var(--orange);
-  font-size: 26px;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .connector-filter-row {
-  min-height: 46px;
+  min-height: 36px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -4935,7 +4972,7 @@ body:has(.qr-dialog) .modal-backdrop {
 }
 
 .connector-filter-row > button {
-  min-height: 40px;
+  min-height: 34px;
   padding: 0 13px;
   border: 1px solid rgba(255, 106, 0, .22);
   border-radius: 12px;
@@ -4972,15 +5009,13 @@ body:has(.qr-dialog) .modal-backdrop {
 }
 
 .connector-content-grid {
-  grid-row: 5;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .connector-table-panel,
-.connector-file-panel {
+.connector-file-drawer {
   min-height: 0;
   overflow: hidden;
   border: 1px solid rgba(229, 231, 235, .9);
@@ -4990,6 +5025,7 @@ body:has(.qr-dialog) .modal-backdrop {
 }
 
 .connector-table-panel {
+  height: 100%;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
@@ -5030,7 +5066,8 @@ body:has(.qr-dialog) .modal-backdrop {
 
 .connector-table th,
 .connector-table td {
-  padding: 7px 9px;
+  height: 44px;
+  padding: 6px 9px;
   border-bottom: 1px solid #edf0f4;
   background: #fff;
   text-align: left;
@@ -5123,12 +5160,12 @@ body:has(.qr-dialog) .modal-backdrop {
 
 .connector-table th:nth-child(7),
 .connector-table td:nth-child(7) {
-  width: 220px;
+  width: 280px;
 }
 
 .connector-table th:nth-child(8),
 .connector-table td:nth-child(8) {
-  width: 70px;
+  width: 74px;
 }
 
 .connector-table th:nth-child(9),
@@ -5138,28 +5175,53 @@ body:has(.qr-dialog) .modal-backdrop {
 
 .connector-table th:nth-child(10),
 .connector-table td:nth-child(10) {
-  width: 160px;
+  width: 112px;
 }
 
 .connector-table .remark-cell {
-  max-width: 220px;
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.connector-empty-value {
-  color: #b8bec8;
+.connector-table td.missing-cell {
+  background: #fff2df;
+  box-shadow: inset 0 0 0 1px rgba(255, 106, 0, .16);
+}
+
+.connector-table tbody tr:hover td.missing-cell {
+  background: #ffeacf;
+}
+
+.connector-search-hit {
+  padding: 1px 2px;
+  border-radius: 4px;
+  background: #fff0a8;
+  color: inherit;
+}
+
+.connector-highlight-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #fff1a6;
+  color: #8a5a00;
+  font-size: 12px;
+  font-weight: 900;
 }
 
 .connector-row-actions {
   display: flex;
   gap: 6px;
+  align-items: center;
   white-space: nowrap;
 }
 
 .connector-batch-bar {
-  grid-row: 4;
   min-height: 48px;
   display: flex;
   align-items: center;
@@ -5191,7 +5253,7 @@ body:has(.qr-dialog) .modal-backdrop {
 }
 
 .connector-row-actions button {
-  min-height: 32px;
+  min-height: 34px;
   padding: 0 9px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -5203,6 +5265,33 @@ body:has(.qr-dialog) .modal-backdrop {
 
 .connector-row-actions .danger-text {
   color: var(--red);
+}
+
+.connector-more-wrap {
+  position: relative;
+}
+
+.connector-row-menu {
+  position: absolute;
+  z-index: 12;
+  top: 40px;
+  right: 0;
+  width: 148px;
+  display: grid;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.connector-row-menu button {
+  width: 100%;
+  justify-content: flex-start;
+  border: none;
+  background: #fff;
+  text-align: left;
 }
 
 .connector-empty-state {
@@ -5249,9 +5338,59 @@ body:has(.qr-dialog) .modal-backdrop {
   font-weight: 800;
 }
 
-.connector-file-panel {
+.connector-file-drawer-toggle {
+  position: fixed;
+  z-index: 42;
+  top: 154px;
+  right: 14px;
+  min-height: 42px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, var(--orange), #ff8b26);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: 0 10px 24px rgba(255, 106, 0, .22);
+}
+
+.connector-file-drawer-toggle span {
+  min-width: 22px;
+  min-height: 22px;
+  display: inline-grid;
+  place-items: center;
+  margin-left: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .2);
+}
+
+.connector-file-scrim {
+  position: fixed;
+  z-index: 44;
+  inset: 0;
+  border: none;
+  background: rgba(17, 24, 39, .06);
+}
+
+.connector-file-drawer {
+  position: fixed;
+  z-index: 45;
+  top: 88px;
+  right: 18px;
+  bottom: 22px;
+  width: 320px;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc(100% + 28px));
+  transition: transform .2s ease, opacity .2s ease;
+}
+
+.connector-file-drawer.open {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
 }
 
 .connector-file-head {
@@ -5262,6 +5401,11 @@ body:has(.qr-dialog) .modal-backdrop {
   gap: 10px;
   padding: 0 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.connector-file-head > div {
+  display: flex;
+  gap: 6px;
 }
 
 .connector-file-head button {
@@ -5526,22 +5670,24 @@ body:has(.qr-dialog) .modal-backdrop {
 
 @media (max-width: 1180px) {
   .connector-hero {
-    grid-template-columns: minmax(0, 1fr);
+    grid-template-columns: minmax(190px, 1fr) minmax(500px, auto);
   }
 
   .connector-content-grid {
-    grid-template-columns: minmax(0, 1fr) 270px;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
 @media (max-width: 1024px) {
   .connector-page {
-    padding: 14px;
+    padding: 8px 12px 10px;
   }
 
   .connector-topbar {
+    height: 46px;
     grid-template-columns: 46px 180px minmax(0, 1fr) auto;
     gap: 8px;
+    margin-bottom: 4px;
   }
 
   .connector-search {
@@ -5549,57 +5695,145 @@ body:has(.qr-dialog) .modal-backdrop {
   }
 
   .connector-shell {
-    height: calc(100vh - 92px);
-    min-height: 610px;
-    gap: 8px;
+    height: calc(100vh - 58px);
+    min-height: 0;
+    gap: 4px;
   }
 
   .connector-hero {
-    min-height: 86px;
-    padding: 12px;
+    min-height: 42px;
+    padding: 5px 9px;
   }
 
-  .connector-hero h1 {
-    font-size: 22px;
-  }
-
-  .connector-hero p {
+  .connector-hero span {
     display: none;
   }
 
+  .connector-hero h1 {
+    font-size: 18px;
+    margin: 0;
+  }
+
+  .connector-hero p {
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
   .connector-actions {
-    grid-template-columns: repeat(3, minmax(104px, 1fr));
+    grid-template-columns: repeat(5, minmax(92px, 1fr));
   }
 
   .connector-actions button {
-    min-height: 38px;
-    padding: 0 8px;
+    min-height: 34px;
+    padding: 0 6px;
     font-size: 12px;
   }
 
   .connector-stats {
-    grid-template-columns: repeat(6, minmax(96px, 1fr));
-    overflow-x: auto;
+    min-height: 28px;
+    padding: 2px 6px;
   }
 
   .connector-stats button {
-    min-height: 64px;
-    padding: 9px;
+    min-height: 24px;
+    padding: 0 9px;
+    font-size: 12px;
   }
 
   .connector-stats strong {
-    font-size: 22px;
+    font-size: 15px;
+  }
+
+  .connector-filter-row {
+    min-height: 30px;
+    padding: 2px 4px;
+  }
+
+  .connector-filter-tabs button {
+    min-height: 28px;
+    padding: 0 9px;
+  }
+
+  .connector-filter-row > button {
+    min-height: 28px;
+    padding: 0 9px;
   }
 
   .connector-content-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .connector-file-panel {
-    max-height: 210px;
+  .connector-file-drawer {
+    top: 76px;
+    right: 12px;
+    bottom: 14px;
+    width: 320px;
+    max-width: calc(100vw - 28px);
   }
 
   .connector-table {
     min-width: 960px;
+  }
+}
+
+@media (max-height: 820px) {
+  .connector-page {
+    padding-top: 8px;
+    padding-bottom: 10px;
+  }
+
+  .connector-topbar {
+    height: 46px;
+    margin-bottom: 4px;
+  }
+
+  .connector-shell {
+    height: calc(100vh - 58px);
+    min-height: 0;
+    gap: 4px;
+  }
+
+  .connector-hero {
+    min-height: 42px;
+    padding: 5px 9px;
+  }
+
+  .connector-hero span {
+    display: none;
+  }
+
+  .connector-hero h1 {
+    margin: 0;
+    font-size: 18px;
+  }
+
+  .connector-hero p {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+  }
+
+  .connector-stats {
+    min-height: 28px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .connector-stats button {
+    min-height: 24px;
+  }
+
+  .connector-filter-row {
+    min-height: 30px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .connector-filter-tabs button,
+  .connector-filter-row > button {
+    min-height: 28px;
   }
 }

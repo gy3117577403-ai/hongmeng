@@ -30,6 +30,7 @@ const actionGroups: Record<string, string[]> = {
     'restore_connector_parameter',
     'batch_update_connector_parameters',
     'batch_delete_connector_parameters',
+    'copy_connector_parameter',
     'import_connector_parameters',
     'export_connector_parameters',
     'upload_connector_parameter_file',
@@ -38,7 +39,7 @@ const actionGroups: Record<string, string[]> = {
   ],
 };
 
-const writableActions = new Set(['copy_work_order_link', 'print_work_order_qr']);
+const writableActions = new Set(['copy_work_order_link', 'print_work_order_qr', 'copy_connector_parameter']);
 
 function sanitize(value: unknown): Prisma.InputJsonValue | null {
   if (value === null || value === undefined) return null;

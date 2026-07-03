@@ -44,6 +44,7 @@ const actionText: Record<string, string> = {
   export_connector_parameters: '导出连接器参数',
   batch_update_connector_parameters: '批量更新连接器参数',
   batch_delete_connector_parameters: '批量删除连接器参数',
+  copy_connector_parameter: '复制连接器参数',
   upload_connector_parameter_file: '上传原始资料',
   delete_connector_parameter_file: '删除原始资料',
   download_connector_parameter_file: '下载原始资料',
@@ -137,6 +138,8 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const [exporting, setExporting] = useState('');
   const [uploadingFile, setUploadingFile] = useState(false);
   const [deletedOpen, setDeletedOpen] = useState(false);
+  const [fileDrawerOpen, setFileDrawerOpen] = useState(false);
+  const [rowMenuId, setRowMenuId] = useState<string | null>(null);
   const fileImportRef = useRef<HTMLInputElement>(null);
   const sourceFileRef = useRef<HTMLInputElement>(null);
 
@@ -146,6 +149,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const pageIds = useMemo(() => items.map(item => item.id), [items]);
   const allPageSelected = pageIds.length > 0 && pageIds.every(id => selectedSet.has(id));
+  const searchTerm = keyword.trim();
   const currentQuery = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (keyword.trim()) params.set('keyword', keyword.trim());
@@ -211,6 +215,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   }, [pageIds]);
 
   function openModal(mode: 'create' | 'edit', item?: ConnectorParameterDTO) {
+    setRowMenuId(null);
     setModal({ mode, item });
     setForm(formFrom(item));
     setFormError('');
@@ -243,6 +248,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   }
 
   async function toggleHighlight(item: ConnectorParameterDTO) {
+    setRowMenuId(null);
     const r = await fetch(`/api/connector-parameters/${item.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -430,6 +436,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
         return;
       }
       setMsg('原始资料已上传');
+      setFileDrawerOpen(true);
       await loadFiles();
       await loadData();
     } catch {
@@ -477,13 +484,82 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     setPasteText('');
   }
 
+  async function writeClipboard(text: string) {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', 'true');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    textarea.remove();
+    if (!ok) throw new Error('copy failed');
+  }
+
+  async function copyParameter(item: ConnectorParameterDTO) {
+    const text = [
+      `型号：${blank(item.model)}`,
+      `外剥皮：${blank(item.outerPeelMm)}`,
+      `内剥皮：${blank(item.innerPeelMm)}`,
+      `入长：${blank(item.insertionLengthMm)}`,
+      `备注：${blank(item.remark)}`,
+    ].join('\n');
+    try {
+      await writeClipboard(text);
+      await fetch('/api/operation-logs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'copy_connector_parameter',
+          targetType: 'connector_parameter',
+          targetId: item.id,
+          detail: { model: item.model || '', rowNo: item.rowNo ?? null },
+        }),
+      });
+      setMsg('已复制参数');
+      setRowMenuId(null);
+    } catch {
+      setMsg('复制失败，请手动选择文本');
+    }
+  }
+
+  function isMissingCell(field: 'outer' | 'inner' | 'insertion', value?: string | null) {
+    if (filter !== field && filter !== 'any') return false;
+    return !blank(value);
+  }
+
+  function highlightText(value?: string | number | null) {
+    const text = blank(value);
+    if (!searchTerm || !text) return text;
+    const lowerText = text.toLowerCase();
+    const lowerTerm = searchTerm.toLowerCase();
+    const parts = [];
+    let start = 0;
+    let index = lowerText.indexOf(lowerTerm);
+    let key = 0;
+    while (index >= 0) {
+      if (index > start) parts.push(text.slice(start, index));
+      parts.push(<mark className="connector-search-hit" key={`hit-${key}`}>{text.slice(index, index + searchTerm.length)}</mark>);
+      key += 1;
+      start = index + searchTerm.length;
+      index = lowerText.indexOf(lowerTerm, start);
+    }
+    if (start < text.length) parts.push(text.slice(start));
+    return parts;
+  }
+
   const filters = [
     ['all', '全部', stats.total],
     ['outer', '缺外剥皮', stats.missingOuter],
     ['inner', '缺内剥皮', stats.missingInner],
     ['insertion', '缺入长', stats.missingInsertion],
     ['any', '任意缺失', stats.missingAny || 0],
-    ['highlighted', '重点标记', stats.highlighted],
+    ['highlighted', '重点', stats.highlighted],
   ] as const;
 
   return (
@@ -541,7 +617,6 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             <button className="primary-button" type="button" onClick={() => openModal('create')}>新增参数</button>
             <button type="button" onClick={() => setImportOpen(true)}>导入 Excel / CSV</button>
             <button type="button" disabled={!!exporting} onClick={() => downloadFile('/api/connector-parameters/export.csv', '导出 CSV', '连接器参数资料.csv')}>导出 CSV</button>
-            <button type="button" disabled={uploadingFile} onClick={() => sourceFileRef.current?.click()}>{uploadingFile ? '上传中...' : '上传原始资料'}</button>
             <button type="button" disabled={!!exporting} onClick={() => downloadFile('/api/connector-parameters/template.csv', '下载模板', '连接器参数导入模板.csv')}>下载模板</button>
             <button type="button" onClick={() => { location.href = '/dashboard'; }}>返回生产资料</button>
           </div>
@@ -550,13 +625,13 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
         <input ref={fileImportRef} hidden type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={e => importFile(e.target.files)} />
         <input ref={sourceFileRef} hidden type="file" accept=".pdf,.jpg,.jpeg,.png,.csv,.xlsx,.xls,application/pdf,image/*,text/csv" onChange={e => uploadSourceFile(e.target.files)} />
 
-        <div className="connector-stats">
-          <button type="button" onClick={() => setFilter('all')}><small>总条数</small><strong>{stats.total}</strong></button>
-          <button type="button" onClick={() => setFilter('outer')}><small>缺外剥皮</small><strong>{stats.missingOuter}</strong></button>
-          <button type="button" onClick={() => setFilter('inner')}><small>缺内剥皮</small><strong>{stats.missingInner}</strong></button>
-          <button type="button" onClick={() => setFilter('insertion')}><small>缺入长</small><strong>{stats.missingInsertion}</strong></button>
-          <button type="button" onClick={() => setFilter('highlighted')}><small>重点标记</small><strong>{stats.highlighted}</strong></button>
-          <button type="button" onClick={() => sourceFileRef.current?.click()}><small>原始资料附件</small><strong>{stats.fileCount}</strong></button>
+        <div className="connector-stats" aria-label="连接器参数统计">
+          <button className={filter === 'all' ? 'active' : ''} type="button" onClick={() => { setFilter('all'); setPage(1); }}><span>总数</span><strong>{stats.total}</strong></button>
+          <button className={filter === 'outer' ? 'active' : ''} type="button" onClick={() => { setFilter('outer'); setPage(1); }}><span>缺外剥皮</span><strong>{stats.missingOuter}</strong></button>
+          <button className={filter === 'inner' ? 'active' : ''} type="button" onClick={() => { setFilter('inner'); setPage(1); }}><span>缺内剥皮</span><strong>{stats.missingInner}</strong></button>
+          <button className={filter === 'insertion' ? 'active' : ''} type="button" onClick={() => { setFilter('insertion'); setPage(1); }}><span>缺入长</span><strong>{stats.missingInsertion}</strong></button>
+          <button className={filter === 'highlighted' ? 'active' : ''} type="button" onClick={() => { setFilter('highlighted'); setPage(1); }}><span>重点</span><strong>{stats.highlighted}</strong></button>
+          <button className={fileDrawerOpen ? 'active' : ''} type="button" onClick={() => setFileDrawerOpen(true)}><span>附件</span><strong>{stats.fileCount}</strong></button>
         </div>
 
         <div className="connector-filter-row">
@@ -591,6 +666,10 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
           </section>
         )}
 
+        <button className="connector-file-drawer-toggle" type="button" onClick={() => setFileDrawerOpen(true)}>
+          原始资料 <span>{stats.fileCount}</span>
+        </button>
+
         <section className="connector-content-grid">
           <div className="connector-table-panel">
             <div className="connector-table-head">
@@ -618,18 +697,26 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                     <tr key={item.id} className={`${item.isHighlighted ? 'highlighted' : ''} ${selectedSet.has(item.id) ? 'selected' : ''}`}>
                       <td className="sticky-cell select-cell"><input type="checkbox" checked={selectedSet.has(item.id)} onChange={() => toggleSelected(item.id)} aria-label={`选择 ${item.model || item.rowNo || '参数'}`} /></td>
                       <td className="sticky-cell row-no">{blank(item.rowNo)}</td>
-                      <td className="sticky-cell model-cell">{blank(item.model)}</td>
-                      <td>{blank(item.outerPeelMm)}</td>
-                      <td>{blank(item.innerPeelMm)}</td>
-                      <td>{blank(item.insertionLengthMm)}</td>
-                      <td className="remark-cell">{blank(item.remark)}</td>
-                      <td>{item.isHighlighted ? '是' : '否'}</td>
+                      <td className="sticky-cell model-cell">{highlightText(item.model)}</td>
+                      <td className={isMissingCell('outer', item.outerPeelMm) ? 'missing-cell' : ''}>{highlightText(item.outerPeelMm)}</td>
+                      <td className={isMissingCell('inner', item.innerPeelMm) ? 'missing-cell' : ''}>{highlightText(item.innerPeelMm)}</td>
+                      <td className={isMissingCell('insertion', item.insertionLengthMm) ? 'missing-cell' : ''}>{highlightText(item.insertionLengthMm)}</td>
+                      <td className="remark-cell">{highlightText(item.remark)}</td>
+                      <td>{item.isHighlighted ? <span className="connector-highlight-tag">重点</span> : ''}</td>
                       <td>{dt(item.updatedAt)}</td>
                       <td>
                         <div className="connector-row-actions">
                           <button type="button" onClick={() => openModal('edit', item)}>编辑</button>
-                          <button type="button" onClick={() => toggleHighlight(item)}>{item.isHighlighted ? '取消重点' : '标记重点'}</button>
-                          <button className="danger-text" type="button" onClick={() => setDeleteTarget(item)}>删除</button>
+                          <div className="connector-more-wrap">
+                            <button type="button" aria-expanded={rowMenuId === item.id} onClick={() => setRowMenuId(rowMenuId === item.id ? null : item.id)}>更多</button>
+                            {rowMenuId === item.id && (
+                              <div className="connector-row-menu">
+                                <button type="button" onClick={() => toggleHighlight(item)}>{item.isHighlighted ? '取消重点' : '标记重点'}</button>
+                                <button type="button" onClick={() => copyParameter(item)}>复制整行参数</button>
+                                <button className="danger-text" type="button" onClick={() => { setRowMenuId(null); setDeleteTarget(item); }}>删除</button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -654,10 +741,16 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             </div>
           </div>
 
-          <aside className="connector-file-panel">
+        </section>
+
+        {fileDrawerOpen && <button className="connector-file-scrim" type="button" aria-label="关闭原始资料抽屉" onClick={() => setFileDrawerOpen(false)} />}
+        <aside className={`connector-file-drawer ${fileDrawerOpen ? 'open' : ''}`} aria-hidden={!fileDrawerOpen}>
             <div className="connector-file-head">
               <strong>原始资料附件</strong>
-              <button type="button" onClick={() => sourceFileRef.current?.click()}>上传</button>
+              <div>
+                <button type="button" disabled={uploadingFile} onClick={() => sourceFileRef.current?.click()}>{uploadingFile ? '上传中...' : '上传'}</button>
+                <button type="button" onClick={() => setFileDrawerOpen(false)}>关闭</button>
+              </div>
             </div>
             <div className="connector-file-list">
               {files.map(file => (
@@ -679,7 +772,6 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
               {!files.length && <div className="empty-list">暂无原始资料，可上传 Excel / PDF / 图片作为留档。</div>}
             </div>
           </aside>
-        </section>
       </section>
 
       {msg && <div className="status-toast">{msg}</div>}

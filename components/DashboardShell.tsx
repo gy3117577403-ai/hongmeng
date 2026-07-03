@@ -170,6 +170,7 @@ const actionText: Record<string, string> = {
   restore_connector_parameter: '恢复连接器参数',
   batch_update_connector_parameters: '批量更新连接器参数',
   batch_delete_connector_parameters: '批量删除连接器参数',
+  copy_connector_parameter: '复制连接器参数',
   import_connector_parameters: '导入连接器参数',
   export_connector_parameters: '导出连接器参数',
   upload_connector_parameter_file: '上传连接器原始资料',
