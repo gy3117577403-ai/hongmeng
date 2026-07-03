@@ -216,10 +216,24 @@ export function parseDelimited(textValue: string, options: { keepEmptyRows?: boo
 
 export function rowToConnectorInput(headers: string[], row: string[]) {
   const input: ConnectorParameterInput = {};
+  const extraRemarkParts: string[] = [];
   headers.forEach((header, index) => {
-    const key = headerMap[header.trim()];
-    if (key) input[key] = row[index] ?? '';
+    const cleanHeader = header.trim();
+    const key = headerMap[cleanHeader];
+    const value = row[index] ?? '';
+    if (key) {
+      input[key] = value;
+      return;
+    }
+    const textValue = String(value ?? '').trim();
+    if (cleanHeader && textValue) {
+      extraRemarkParts.push(`${cleanHeader}：${textValue}`);
+    }
   });
+  if (extraRemarkParts.length) {
+    const currentRemark = String(input.remark ?? '').trim();
+    input.remark = [currentRemark, ...extraRemarkParts].filter(Boolean).join('；');
+  }
   return input;
 }
 
