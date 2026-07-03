@@ -121,3 +121,25 @@ export type ConnectorParameterStatsDTO = {
   highlighted: number;
   fileCount: number;
 };
+
+export type ConnectorImportPreviewRowDTO = {
+  index: number;
+  rowNo?: number | null;
+  model?: string | null;
+  outerPeelMm?: string | null;
+  innerPeelMm?: string | null;
+  insertionLengthMm?: string | null;
+  remark?: string | null;
+  isHighlighted: boolean;
+  status: 'ready' | 'duplicate' | 'invalid' | 'skipped';
+  reason: string;
+};
+
+export type ConnectorImportPreviewSummaryDTO = {
+  totalRows: number;
+  readyCount: number;
+  duplicateCount: number;
+  invalidCount: number;
+  skippedCount: number;
+  highlightedCount: number;
+};

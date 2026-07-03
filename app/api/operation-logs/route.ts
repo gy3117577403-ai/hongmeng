@@ -28,6 +28,8 @@ const actionGroups: Record<string, string[]> = {
     'update_connector_parameter',
     'delete_connector_parameter',
     'restore_connector_parameter',
+    'batch_update_connector_parameters',
+    'batch_delete_connector_parameters',
     'import_connector_parameters',
     'export_connector_parameters',
     'upload_connector_parameter_file',

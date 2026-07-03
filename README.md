@@ -280,8 +280,31 @@ Sealos App Deploy 端口填 `3000`。
   - 尚未部署 Sealos
   - 尚未作为生产版本发布
 
+### v1.10.0-rc.2
+- 状态：本地验证通过，等待统一部署
+- 功能：
+  - 导入前预览
+  - 重复行检测
+  - 默认跳过重复行
+  - Excel 黄色重点行 best-effort 识别
+  - 表格 sticky 表头和型号列
+  - 批量标记重点 / 取消重点 / 删除
+  - 原始资料附件区优化
+  - 样例 CSV
+- 本地验证：
+  - `npx prisma generate` 通过
+  - `npx prisma migrate deploy` 通过
+  - `npm run build` 通过
+  - `docker build` 通过
+  - `docker compose` 通过
+  - `npm run smoke` 通过
+  - 生产资料库主要功能回归通过
+- 说明：
+  - 尚未部署 Sealos
+  - 尚未作为生产版本发布
+
 ### RC 说明
-- v1.3.0-rc.1、v1.4.0-rc.1、v1.5.0-rc.1、v1.6.0-rc.1、v1.7.0-rc.1、v1.8.0-rc.1、v1.8.0-rc.3、v1.8.0-rc.4、v1.9.0-rc.1 和 v1.10.0-rc.1 为候选版本记录
+- v1.3.0-rc.1、v1.4.0-rc.1、v1.5.0-rc.1、v1.6.0-rc.1、v1.7.0-rc.1、v1.8.0-rc.1、v1.8.0-rc.3、v1.8.0-rc.4、v1.9.0-rc.1、v1.10.0-rc.1 和 v1.10.0-rc.2 为候选版本记录
 - v1.6.0 已完成 Sealos 统一部署和线上验收
 
 ## 交付文档索引

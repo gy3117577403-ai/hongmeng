@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ConnectorParameterDTO,
   ConnectorParameterFileDTO,
+  ConnectorImportPreviewRowDTO,
+  ConnectorImportPreviewSummaryDTO,
   ConnectorParameterStatsDTO,
   CurrentUserDTO,
   OperationLogDTO,
@@ -20,7 +22,8 @@ type ParameterForm = {
 };
 type ParameterModal = { mode: 'create' | 'edit'; item?: ConnectorParameterDTO } | null;
 type ImportRow = { row: number; model: string; status: 'created' | 'skipped' | 'failed'; message: string };
-type ImportResult = { summary: { created: number; skipped: number; failed: number; total: number }; results: ImportRow[] };
+type ImportResult = { summary: { created: number; skipped: number; failed: number; duplicateSkipped?: number; total: number }; results: ImportRow[] };
+type ImportPreview = { rows: ConnectorImportPreviewRowDTO[]; summary: ConnectorImportPreviewSummaryDTO; sourceName: string };
 
 const emptyForm: ParameterForm = {
   rowNo: '',
@@ -39,6 +42,8 @@ const actionText: Record<string, string> = {
   restore_connector_parameter: '恢复连接器参数',
   import_connector_parameters: '导入连接器参数',
   export_connector_parameters: '导出连接器参数',
+  batch_update_connector_parameters: '批量更新连接器参数',
+  batch_delete_connector_parameters: '批量删除连接器参数',
   upload_connector_parameter_file: '上传原始资料',
   delete_connector_parameter_file: '删除原始资料',
   download_connector_parameter_file: '下载原始资料',
@@ -79,7 +84,16 @@ function formFrom(item?: ConnectorParameterDTO): ParameterForm {
 
 function blank(value?: string | number | null) {
   const text = String(value ?? '').trim();
-  return text || <span className="connector-empty-value">空</span>;
+  return text || '';
+}
+
+function fileIcon(type: string) {
+  const value = type.toLowerCase();
+  if (value === 'pdf') return 'PDF';
+  if (value === 'xlsx' || value === 'xls') return 'XLS';
+  if (value === 'csv') return 'CSV';
+  if (['jpg', 'jpeg', 'png'].includes(value)) return '图片';
+  return 'FILE';
 }
 
 function downloadName(headers: Headers, fallback: string) {
@@ -111,7 +125,12 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const [importTab, setImportTab] = useState<'file' | 'paste'>('file');
   const [pasteText, setPasteText] = useState('');
   const [importing, setImporting] = useState(false);
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [duplicateStrategy, setDuplicateStrategy] = useState<'skip' | 'import'>('skip');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [batching, setBatching] = useState(false);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logs, setLogs] = useState<OperationLogDTO[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -124,6 +143,9 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const pageSize = 80;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const accountName = user.displayName || user.username;
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const pageIds = useMemo(() => items.map(item => item.id), [items]);
+  const allPageSelected = pageIds.length > 0 && pageIds.every(id => selectedSet.has(id));
   const currentQuery = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (keyword.trim()) params.set('keyword', keyword.trim());
@@ -184,6 +206,10 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     loadFiles();
   }, []);
 
+  useEffect(() => {
+    setSelectedIds(prev => prev.filter(id => pageIds.includes(id)));
+  }, [pageIds]);
+
   function openModal(mode: 'create' | 'edit', item?: ConnectorParameterDTO) {
     setModal({ mode, item });
     setForm(formFrom(item));
@@ -242,6 +268,40 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     await loadDeleted();
   }
 
+  function toggleSelected(id: string) {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
+  }
+
+  function togglePageSelected() {
+    setSelectedIds(allPageSelected ? [] : pageIds);
+  }
+
+  async function runBatch(action: 'highlight' | 'unhighlight' | 'delete') {
+    if (!selectedIds.length) return setMsg('请先选择参数行');
+    setBatching(true);
+    try {
+      const r = await fetch('/api/connector-parameters/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: selectedIds, action }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.error || '批量操作失败');
+        return;
+      }
+      setMsg(`批量操作完成：${d.count || 0} 条`);
+      setSelectedIds([]);
+      setBatchDeleteOpen(false);
+      await loadData();
+      if (action === 'delete') await loadDeleted();
+    } catch {
+      setMsg('批量操作失败');
+    } finally {
+      setBatching(false);
+    }
+  }
+
   async function restoreParameter(id: string) {
     const r = await fetch(`/api/connector-parameters/${id}/restore`, { method: 'POST' });
     const d = await r.json().catch(() => ({}));
@@ -281,21 +341,22 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     const file = fileList?.[0];
     if (!file) return;
     setImporting(true);
+    setImportPreview(null);
     setImportResult(null);
     const fd = new FormData();
     fd.append('file', file);
     try {
-      const r = await fetch('/api/connector-parameters/import', { method: 'POST', body: fd });
+      const r = await fetch('/api/connector-parameters/import/preview', { method: 'POST', body: fd });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setMsg(d.error || '导入失败');
+        setMsg(d.error || '导入预览失败');
         return;
       }
-      setImportResult(d);
-      setMsg(`导入完成：新增 ${d.summary?.created || 0}，跳过 ${d.summary?.skipped || 0}，失败 ${d.summary?.failed || 0}`);
-      await loadData();
+      setImportPreview({ rows: d.rows || [], summary: d.summary, sourceName: file.name });
+      setDuplicateStrategy('skip');
+      setMsg(`预览完成：可导入 ${d.summary?.readyCount || 0}，重复 ${d.summary?.duplicateCount || 0}，异常 ${d.summary?.invalidCount || 0}`);
     } catch {
-      setMsg('导入失败，请检查文件格式');
+      setMsg('导入预览失败，请检查文件格式');
     } finally {
       setImporting(false);
       if (fileImportRef.current) fileImportRef.current.value = '';
@@ -305,23 +366,51 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   async function importPaste() {
     if (!pasteText.trim()) return setMsg('请先粘贴 Excel 表格内容');
     setImporting(true);
+    setImportPreview(null);
     setImportResult(null);
     try {
-      const r = await fetch('/api/connector-parameters/import', {
+      const r = await fetch('/api/connector-parameters/import/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: pasteText }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setMsg(d.error || '粘贴导入失败');
+        setMsg(d.error || '粘贴导入预览失败');
+        return;
+      }
+      setImportPreview({ rows: d.rows || [], summary: d.summary, sourceName: '粘贴内容' });
+      setDuplicateStrategy('skip');
+      setMsg(`预览完成：可导入 ${d.summary?.readyCount || 0}，重复 ${d.summary?.duplicateCount || 0}，异常 ${d.summary?.invalidCount || 0}`);
+    } catch {
+      setMsg('粘贴导入预览失败');
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function commitImport() {
+    if (!importPreview) return;
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const r = await fetch('/api/connector-parameters/import/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: importPreview.rows, duplicateStrategy }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setMsg(d.error || '确认导入失败');
         return;
       }
       setImportResult(d);
-      setMsg(`粘贴导入完成：新增 ${d.summary?.created || 0}，跳过 ${d.summary?.skipped || 0}，失败 ${d.summary?.failed || 0}`);
+      setImportPreview(null);
+      setPasteText('');
+      setMsg(`确认导入完成：新增 ${d.summary?.created || 0}，跳过 ${d.summary?.skipped || 0}，失败 ${d.summary?.failed || 0}`);
       await loadData();
     } catch {
-      setMsg('粘贴导入失败');
+      setMsg('确认导入失败');
     } finally {
       setImporting(false);
     }
@@ -379,6 +468,13 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
     location.href = '/login';
+  }
+
+  function closeImport() {
+    setImportOpen(false);
+    setImportPreview(null);
+    setImportResult(null);
+    setPasteText('');
   }
 
   const filters = [
@@ -486,6 +582,15 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
           </section>
         )}
 
+        {!!selectedIds.length && (
+          <section className="connector-batch-bar">
+            <strong>已选 {selectedIds.length} 条</strong>
+            <button type="button" disabled={batching} onClick={() => runBatch('highlight')}>批量标记重点</button>
+            <button type="button" disabled={batching} onClick={() => runBatch('unhighlight')}>批量取消重点</button>
+            <button className="danger-button" type="button" disabled={batching} onClick={() => setBatchDeleteOpen(true)}>批量删除</button>
+          </section>
+        )}
+
         <section className="connector-content-grid">
           <div className="connector-table-panel">
             <div className="connector-table-head">
@@ -496,6 +601,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
               <table className="connector-table">
                 <thead>
                   <tr>
+                    <th className="select-col"><input type="checkbox" checked={allPageSelected} onChange={togglePageSelected} aria-label="全选当前页" /></th>
                     <th>序号</th>
                     <th>型号</th>
                     <th>外剥皮mm</th>
@@ -509,7 +615,8 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                 </thead>
                 <tbody>
                   {items.map(item => (
-                    <tr key={item.id} className={item.isHighlighted ? 'highlighted' : ''}>
+                    <tr key={item.id} className={`${item.isHighlighted ? 'highlighted' : ''} ${selectedSet.has(item.id) ? 'selected' : ''}`}>
+                      <td className="sticky-cell select-cell"><input type="checkbox" checked={selectedSet.has(item.id)} onChange={() => toggleSelected(item.id)} aria-label={`选择 ${item.model || item.rowNo || '参数'}`} /></td>
                       <td className="sticky-cell row-no">{blank(item.rowNo)}</td>
                       <td className="sticky-cell model-cell">{blank(item.model)}</td>
                       <td>{blank(item.outerPeelMm)}</td>
@@ -529,7 +636,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                   ))}
                   {!items.length && (
                     <tr>
-                      <td colSpan={9}>
+                      <td colSpan={10}>
                         <div className="connector-empty-state">
                           <strong>未找到连接器参数</strong>
                           <p>可以清空搜索条件，或通过新增参数、导入 Excel / CSV、粘贴导入来补充资料。</p>
@@ -555,10 +662,13 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             <div className="connector-file-list">
               {files.map(file => (
                 <article key={file.id} className="connector-file-card">
-                  <div>
-                    <strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong>
-                    <span>{file.fileType.toUpperCase()} · {bytes(file.fileSize)}</span>
-                    <small>{dt(file.createdAt)} · {file.uploadedBy || '-'}</small>
+                  <div className="connector-file-meta">
+                    <span className={`connector-file-icon ${file.fileType}`}>{fileIcon(file.fileType)}</span>
+                    <div>
+                      <strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong>
+                      <span>{bytes(file.fileSize)}</span>
+                      <small>{dt(file.createdAt)} · {file.uploadedBy || '-'}</small>
+                    </div>
                   </div>
                   <div>
                     <a href={file.downloadUrl} target="_blank">下载</a>
@@ -566,7 +676,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                   </div>
                 </article>
               ))}
-              {!files.length && <div className="empty-list">暂无原始资料附件</div>}
+              {!files.length && <div className="empty-list">暂无原始资料，可上传 Excel / PDF / 图片作为留档。</div>}
             </div>
           </aside>
         </section>
@@ -604,7 +714,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
           <section className="connector-import-dialog" role="dialog" aria-modal="true" aria-label="导入连接器参数">
             <div className="dialog-title">
               <strong>导入连接器参数</strong>
-              <button type="button" onClick={() => setImportOpen(false)}>×</button>
+              <button type="button" onClick={closeImport}>×</button>
             </div>
             <div className="trash-tabs">
               <button className={importTab === 'file' ? 'active' : ''} type="button" onClick={() => setImportTab('file')}>文件导入</button>
@@ -612,19 +722,55 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             </div>
             {importTab === 'file' ? (
               <div className="connector-import-pane">
-                <p>支持 CSV、XLSX、XLS。表头可使用中文：序号、型号、外剥皮mm、内剥皮mm、入长mm、备注、重点。</p>
+                <p>支持 CSV、XLSX、XLS。选择文件后先解析预览，不会直接写入数据库。</p>
                 <div className="system-actions">
-                  <button type="button" onClick={() => fileImportRef.current?.click()} disabled={importing}>{importing ? '导入中...' : '选择 Excel / CSV'}</button>
+                  <button type="button" onClick={() => fileImportRef.current?.click()} disabled={importing}>{importing ? '解析中...' : '选择 Excel / CSV 预览'}</button>
                   <button type="button" onClick={() => downloadFile('/api/connector-parameters/template.csv', '下载模板', '连接器参数导入模板.csv')}>下载模板</button>
                 </div>
               </div>
             ) : (
               <div className="connector-import-pane">
-                <p>从 Excel 复制整块表格后粘贴到下方。支持 TSV / CSV，空单元格会保持为空。</p>
+                <p>从 Excel 复制整块表格后粘贴到下方。点击预览后不会直接入库，空单元格会保持为空。</p>
                 <textarea value={pasteText} onChange={e => setPasteText(e.target.value)} placeholder="序号	型号	外剥皮mm	内剥皮mm	入长mm	备注	重点" />
                 <div className="system-actions">
-                  <button className="primary-button" type="button" onClick={importPaste} disabled={importing}>{importing ? '导入中...' : '开始粘贴导入'}</button>
+                  <button className="primary-button" type="button" onClick={importPaste} disabled={importing}>{importing ? '解析中...' : '预览粘贴内容'}</button>
                   <button type="button" onClick={() => setPasteText('')}>清空</button>
+                </div>
+              </div>
+            )}
+            {importPreview && (
+              <div className="import-preview">
+                <div className="import-summary">
+                  <span>总行 {importPreview.summary.totalRows}</span>
+                  <span>可导入 {importPreview.summary.readyCount}</span>
+                  <span>重复 {importPreview.summary.duplicateCount}</span>
+                  <span>异常 {importPreview.summary.invalidCount}</span>
+                  <span>跳过 {importPreview.summary.skippedCount}</span>
+                  <span>重点 {importPreview.summary.highlightedCount}</span>
+                </div>
+                <div className="duplicate-strategy">
+                  <label><input type="radio" checked={duplicateStrategy === 'skip'} onChange={() => setDuplicateStrategy('skip')} /> 跳过重复行</label>
+                  <label><input type="radio" checked={duplicateStrategy === 'import'} onChange={() => setDuplicateStrategy('import')} /> 仍然导入重复行</label>
+                </div>
+                <div className="import-preview-table">
+                  <div className="import-preview-head">
+                    <span>行</span><span>型号</span><span>外剥皮</span><span>内剥皮</span><span>入长</span><span>备注</span><span>状态</span>
+                  </div>
+                  {importPreview.rows.slice(0, 120).map(row => (
+                    <div className={`import-preview-row ${row.status}`} key={`${row.index}-${row.model}-${row.status}`}>
+                      <span>{row.index}</span>
+                      <span title={row.model || ''}>{row.model || ''}</span>
+                      <span>{row.outerPeelMm || ''}</span>
+                      <span>{row.innerPeelMm || ''}</span>
+                      <span>{row.insertionLengthMm || ''}</span>
+                      <span title={row.remark || ''}>{row.remark || ''}</span>
+                      <span>{row.status === 'ready' ? '可导入' : row.status === 'duplicate' ? '疑似重复' : row.status === 'invalid' ? '异常' : '跳过'}{row.reason ? ` · ${row.reason}` : ''}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="dialog-actions">
+                  <button type="button" onClick={() => setImportPreview(null)}>重新选择</button>
+                  <button className="primary-button" type="button" onClick={commitImport} disabled={importing}>{importing ? '导入中...' : '确认导入'}</button>
                 </div>
               </div>
             )}
@@ -634,6 +780,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                   <span>新增 {importResult.summary.created}</span>
                   <span>跳过 {importResult.summary.skipped}</span>
                   <span>失败 {importResult.summary.failed}</span>
+                  {!!importResult.summary.duplicateSkipped && <span>重复跳过 {importResult.summary.duplicateSkipped}</span>}
                 </div>
                 <details>
                   <summary>查看明细</summary>
@@ -692,6 +839,22 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             <div className="dialog-actions">
               <button type="button" onClick={() => setDeleteTarget(null)}>取消</button>
               <button className="danger-button" type="button" onClick={confirmDelete}>确认删除</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {batchDeleteOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="confirm-dialog" role="dialog" aria-modal="true" aria-label="批量删除连接器参数">
+            <div className="dialog-title">
+              <strong>确认批量删除</strong>
+              <button type="button" onClick={() => setBatchDeleteOpen(false)}>×</button>
+            </div>
+            <p>将软删除已选 {selectedIds.length} 条参数记录，可在恢复删除中找回。</p>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setBatchDeleteOpen(false)}>取消</button>
+              <button className="danger-button" type="button" disabled={batching} onClick={() => runBatch('delete')}>{batching ? '删除中...' : '确认删除'}</button>
             </div>
           </section>
         </div>

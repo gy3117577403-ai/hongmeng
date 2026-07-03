@@ -19,7 +19,31 @@ export type ConnectorImportResult = {
   message: string;
 };
 
-const headerMap: Record<string, keyof ConnectorParameterInput> = {
+export type ConnectorImportPreviewStatus = 'ready' | 'duplicate' | 'invalid' | 'skipped';
+
+export type ConnectorImportPreviewRow = {
+  index: number;
+  rowNo: number | null;
+  model: string | null;
+  outerPeelMm: string | null;
+  innerPeelMm: string | null;
+  insertionLengthMm: string | null;
+  remark: string | null;
+  isHighlighted: boolean;
+  status: ConnectorImportPreviewStatus;
+  reason: string;
+};
+
+export type ConnectorImportPreviewSummary = {
+  totalRows: number;
+  readyCount: number;
+  duplicateCount: number;
+  invalidCount: number;
+  skippedCount: number;
+  highlightedCount: number;
+};
+
+export const headerMap: Record<string, keyof ConnectorParameterInput> = {
   序号: 'rowNo',
   型号: 'model',
   外剥皮mm: 'outerPeelMm',
@@ -38,6 +62,9 @@ const headerMap: Record<string, keyof ConnectorParameterInput> = {
   remark: 'remark',
   isHighlighted: 'isHighlighted',
 };
+
+export const connectorHeaderNames = new Set(Object.keys(headerMap));
+export const connectorHighlightHeaderNames = new Set(['重点', 'isHighlighted']);
 
 const connectorFileTypes = new Set(['pdf', 'jpg', 'jpeg', 'png', 'csv', 'xlsx', 'xls']);
 
@@ -133,17 +160,58 @@ export function serializeConnectorParameterFile(item: ConnectorParameterFile) {
   };
 }
 
-export function parseDelimited(textValue: string) {
+function parseCsvWithEmptyRows(textValue: string) {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = '';
+  let quoted = false;
+  const input = textValue.replace(/^\uFEFF/, '');
+
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    const next = input[i + 1];
+    if (quoted) {
+      if (ch === '"' && next === '"') {
+        cell += '"';
+        i += 1;
+      } else if (ch === '"') {
+        quoted = false;
+      } else {
+        cell += ch;
+      }
+    } else if (ch === '"') {
+      quoted = true;
+    } else if (ch === ',') {
+      row.push(cell.trim());
+      cell = '';
+    } else if (ch === '\n') {
+      row.push(cell.trim());
+      rows.push(row);
+      row = [];
+      cell = '';
+    } else if (ch !== '\r') {
+      cell += ch;
+    }
+  }
+
+  row.push(cell.trim());
+  rows.push(row);
+  let last = rows.length - 1;
+  while (last >= 0 && !rows[last].some(Boolean)) last -= 1;
+  return rows.slice(0, last + 1);
+}
+
+export function parseDelimited(textValue: string, options: { keepEmptyRows?: boolean } = {}) {
   const normalized = textValue.replace(/^\uFEFF/, '').trim();
   if (!normalized) return [];
   const firstLine = normalized.split(/\r?\n/)[0] || '';
   if (firstLine.includes('\t')) {
-    return normalized
+    const rows = normalized
       .split(/\r?\n/)
-      .map(line => line.split('\t').map(cell => cell.trim()))
-      .filter(row => row.some(Boolean));
+      .map(line => line.split('\t').map(cell => cell.trim()));
+    return options.keepEmptyRows ? rows : rows.filter(row => row.some(Boolean));
   }
-  return parseCsv(normalized);
+  return options.keepEmptyRows ? parseCsvWithEmptyRows(normalized) : parseCsv(normalized);
 }
 
 export function rowToConnectorInput(headers: string[], row: string[]) {
@@ -153,6 +221,71 @@ export function rowToConnectorInput(headers: string[], row: string[]) {
     if (key) input[key] = row[index] ?? '';
   });
   return input;
+}
+
+function normalizedDuplicateValue(value: unknown) {
+  return String(value ?? '').trim();
+}
+
+export function connectorDuplicateKey(input: Pick<ConnectorParameterInput, 'model' | 'outerPeelMm' | 'innerPeelMm' | 'insertionLengthMm' | 'remark'>) {
+  return [
+    normalizedDuplicateValue(input.model),
+    normalizedDuplicateValue(input.outerPeelMm),
+    normalizedDuplicateValue(input.innerPeelMm),
+    normalizedDuplicateValue(input.insertionLengthMm),
+    normalizedDuplicateValue(input.remark),
+  ].join('\u001f');
+}
+
+export function summarizeConnectorPreview(rows: ConnectorImportPreviewRow[]): ConnectorImportPreviewSummary {
+  return {
+    totalRows: rows.length,
+    readyCount: rows.filter(row => row.status === 'ready').length,
+    duplicateCount: rows.filter(row => row.status === 'duplicate').length,
+    invalidCount: rows.filter(row => row.status === 'invalid').length,
+    skippedCount: rows.filter(row => row.status === 'skipped').length,
+    highlightedCount: rows.filter(row => row.isHighlighted).length,
+  };
+}
+
+export function buildConnectorPreviewRows(options: {
+  headers: string[];
+  rows: string[][];
+  existingKeys: Set<string>;
+  rowHighlights?: boolean[];
+}) {
+  const hasHighlightColumn = options.headers.some(header => connectorHighlightHeaderNames.has(header.trim()));
+  const seenKeys = new Set<string>();
+  return options.rows.map((row, index): ConnectorImportPreviewRow => {
+    const input = rowToConnectorInput(options.headers, row);
+    if (!hasHighlightColumn && options.rowHighlights?.[index]) {
+      input.isHighlighted = true;
+    }
+    const parsed = parseConnectorParameterInput(input);
+    const base = {
+      index: index + 1,
+      rowNo: parsed.data.rowNo ?? null,
+      model: parsed.data.model ?? null,
+      outerPeelMm: parsed.data.outerPeelMm ?? null,
+      innerPeelMm: parsed.data.innerPeelMm ?? null,
+      insertionLengthMm: parsed.data.insertionLengthMm ?? null,
+      remark: parsed.data.remark ?? null,
+      isHighlighted: !!parsed.data.isHighlighted,
+    };
+    if (parsed.empty) {
+      return { ...base, status: 'skipped', reason: '空行' };
+    }
+    if (parsed.errors.length) {
+      return { ...base, status: 'invalid', reason: parsed.errors.join('；') };
+    }
+    const key = connectorDuplicateKey(parsed.data);
+    if (options.existingKeys.has(key) || seenKeys.has(key)) {
+      seenKeys.add(key);
+      return { ...base, status: 'duplicate', reason: '疑似重复' };
+    }
+    seenKeys.add(key);
+    return { ...base, status: 'ready', reason: '' };
+  });
 }
 
 export function connectorParameterCsv(items: ConnectorParameter[]) {
