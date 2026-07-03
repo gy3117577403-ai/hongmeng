@@ -327,8 +327,8 @@ export default function DashboardShell({
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
   const [toolOpen, setToolOpen] = useState(false);
   const [toolTab, setToolTab] = useState<ToolTab>('info');
-  const [toolWidth, setToolWidth] = useState(300);
-  const [thumbsOpen, setThumbsOpen] = useState(true);
+  const [toolWidth, setToolWidth] = useState(320);
+  const [thumbsOpen, setThumbsOpen] = useState(false);
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
@@ -1421,20 +1421,12 @@ export default function DashboardShell({
               <span className={order?.plannedAt ? `planned-chip ${plannedClass(order)}` : 'planned-chip'}>{order?.plannedAt ? shortDt(order.plannedAt) : '计划未设'}</span>
               <span className={`completion-pill ${completion.key}`}>{completion.text}</span>
             </div>
-            <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
-          </div>
-          <div className="workspace-action-row">
-            <div className="workspace-context">
-              <strong>{managerOpen ? '上传管理' : category?.name || '资料预览'}</strong>
-              {order?.remark && <span title={order.remark}>备注：{order.remark}</span>}
-            </div>
-            <div className="title-actions">
-              <button className="download-all-button" type="button" disabled={!order || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
-              <button className="refresh-button" type="button" onClick={refresh}>↻ 刷新</button>
+            <div className="order-strip-actions">
               <div className="more-actions-wrap">
-                <button type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多操作</button>
+                <button className="strip-more-button" type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多</button>
                 {moreActionsOpen && (
                   <div className="more-actions-menu">
+                    <button type="button" onClick={() => { setMoreActionsOpen(false); refresh(); }}>刷新资料</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && openOrderModal('edit', order); }}>编辑工单</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && setOrderDeleteTarget(order); }}>删除工单</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); copy(); }}>复制链接</button>
@@ -1443,6 +1435,7 @@ export default function DashboardShell({
                   </div>
                 )}
               </div>
+              <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
             </div>
           </div>
 
@@ -1459,18 +1452,14 @@ export default function DashboardShell({
           ) : (
             <div className={toolOpen ? 'content-grid tool-open' : 'content-grid'}>
               <section className="preview-card">
-                <div className="preview-toolbar">
-                  <div>
-                    <span className={file?.fileType === 'pdf' ? 'file-type mini pdf' : 'file-type mini img'}>{file ? fileTypeText[file.fileType] || file.fileType.toUpperCase() : '空'}</span>
-                    <strong>{file ? displayFileName(file) : '当前分类暂无文件'}</strong>
-                  </div>
-                  <div className="preview-meta">
-                    {file ? <span className="ok-dot">● 已就绪</span> : <span className="missing-dot">● 缺文件</span>}
-                    {file && <span>{file.version || 'V1.0'}</span>}
-                    {file && <span>{bytes(file.fileSize)}</span>}
-                    {file && <span>{dt(file.createdAt)}</span>}
-                  </div>
-                </div>
+                {file && (
+                  <button className="preview-file-capsule" type="button" onClick={() => openTool('info')} title={displayFileName(file)}>
+                    <span className={file.fileType === 'pdf' ? 'file-type mini pdf' : 'file-type mini img'}>{fileTypeText[file.fileType] || file.fileType.toUpperCase()}</span>
+                    <strong>{displayFileName(file)}</strong>
+                    <em>{file.version || 'V1.0'}</em>
+                    <i>{fileStatusText[file.status] || file.status}</i>
+                  </button>
+                )}
 
                 <div className="preview-stage">
                   {loading ? (
@@ -1499,7 +1488,7 @@ export default function DashboardShell({
 
                 <div className={thumbsOpen ? 'file-strip floating open' : 'file-strip floating collapsed'} aria-label="当前分类文件列表">
                   <button className="strip-toggle" type="button" onClick={() => setThumbsOpen(v => !v)}>
-                    {thumbsOpen ? '收起' : `文件 ${files.length} 个 ︿`}
+                    {thumbsOpen ? '收起缩略图' : `文件 ${files.length} 个 ︿`}
                   </button>
                   {thumbsOpen && (
                     <div className="strip-scroll">
@@ -1578,7 +1567,8 @@ export default function DashboardShell({
                         <a className={!file ? 'disabled' : ''} href={file?.downloadUrl || '#'} target="_blank">下载当前</a>
                         <button type="button" disabled={!file} onClick={() => file && openFileEdit(file)}>编辑文件</button>
                         <button type="button" disabled={!file} onClick={() => file && setDeleteTarget(file)}>删除文件</button>
-                        <button type="button" disabled={!order} onClick={downloadAll}>下载全部</button>
+                        <button type="button" disabled={!order || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
+                        <button type="button" onClick={refresh}>刷新资料</button>
                         <button type="button" disabled={!order} onClick={copy}>复制链接</button>
                       </div>
                     </div>
