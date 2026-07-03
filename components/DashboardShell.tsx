@@ -203,13 +203,30 @@ const logFilters = [
 
 function completionOf(categories: ResourceCategoryDTO[], counts: Record<string, number>) {
   const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
-  if (total === 0) return { key: 'empty', text: '无资料', missing: requiredMissing(categories, counts) };
-  const missing = requiredMissing(categories, counts);
-  return missing ? { key: 'missing', text: `缺资料 ${missing}`, missing } : { key: 'complete', text: '完整', missing: 0 };
+  const missingCategories = requiredMissingCategories(categories, counts);
+  const missing = missingCategories.length;
+  if (total === 0) {
+    return { key: 'empty', text: `资料 0/${categories.length || 0}`, missing, missingNames: missingCategories.map(c => c.name) };
+  }
+  return missing
+    ? { key: 'missing', text: `缺资料 ${missing}`, missing, missingNames: missingCategories.map(c => c.name) }
+    : { key: 'complete', text: '资料完整', missing: 0, missingNames: [] };
+}
+
+function requiredMissingCategories(categories: ResourceCategoryDTO[], counts: Record<string, number>) {
+  return categories.filter(c => requiredCategoryCodes.has(c.code) && !counts[c.id]);
 }
 
 function requiredMissing(categories: ResourceCategoryDTO[], counts: Record<string, number>) {
-  return categories.filter(c => requiredCategoryCodes.has(c.code) && !counts[c.id]).length;
+  return requiredMissingCategories(categories, counts).length;
+}
+
+function categoryNameLines(category?: ResourceCategoryDTO | null) {
+  if (!category) return ['-'];
+  if (category.code === 'sop') return ['SOP', '指导书'];
+  if (category.code === 'material') return ['辅料', '规格'];
+  if (category.code === 'notice') return ['注意', '事项'];
+  return [category.name];
 }
 
 function normalizeFlowStage(value?: string | null) {
@@ -374,7 +391,17 @@ export default function DashboardShell({
   const currentCounts = order?.id === wo ? categoryCounts : order?.categoryFileCounts || {};
   const completedCategories = categories.filter(c => (currentCounts[c.id] || 0) > 0).length;
   const completion = completionOf(categories, currentCounts);
-  const completionText = categories.length ? `${completion.text} · ${completedCategories}/${categories.length}` : '未配置分类';
+  const completionText = categories.length
+    ? completion.key === 'empty'
+      ? completion.text
+      : `${completion.text} · ${completedCategories}/${categories.length}`
+    : '未配置分类';
+  const missingCategoryNames = requiredMissingCategories(categories, currentCounts).map(c => c.name);
+  const missingCategoryText = missingCategoryNames.length ? `缺失：${missingCategoryNames.join('、')}` : '必填资料已齐全';
+  const currentOrderFileCount = Object.values(currentCounts).reduce((sum, count) => sum + count, 0);
+  const currentCategoryName = category?.name || '-';
+  const currentCategoryIsEmpty = !loading && !file;
+  const canDownloadAll = !!order && currentOrderFileCount > 0;
   const visibleToday = list.filter(o => sameDay(o.createdAt));
   const visibleWeek = list.filter(o => inRecentWeek(o.createdAt));
   const managerFiles = managerCategory === 'all' ? allFiles : allFiles.filter(f => f.categoryId === managerCategory);
@@ -415,6 +442,10 @@ export default function DashboardShell({
   useEffect(() => {
     window.localStorage.setItem('hongmeng:resourceTool', JSON.stringify({ open: toolOpen, tab: toolTab, width: toolWidth }));
   }, [toolOpen, toolTab, toolWidth]);
+
+  useEffect(() => {
+    if (!loading && !file && !toolOpen && toolTab !== 'upload') setToolTab('upload');
+  }, [file, loading, toolOpen, toolTab]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1433,7 +1464,7 @@ export default function DashboardShell({
             return (
               <button key={c.id} className={!managerOpen && c.id === category?.id ? 'active' : ''} type="button" onClick={() => { setManagerOpen(false); setCat(c.id); }}>
                 <span className="category-mark">{categoryIcons[c.code] || c.name.slice(0, 1)}</span>
-                <b>{c.name}</b>
+                <b className="category-name">{categoryNameLines(c).map(line => <span key={line}>{line}</span>)}</b>
                 <i className={count ? 'state-dot ok' : required ? 'state-dot warn' : 'state-dot'} />
                 <em>{count}</em>
               </button>
@@ -1441,7 +1472,7 @@ export default function DashboardShell({
           })}
           <button className={managerOpen ? 'upload-manage active' : 'upload-manage'} type="button" disabled={!order} onClick={openUploadManager}>
             <span className="category-mark">↑</span>
-            <b>上传管理</b>
+            <b className="category-name"><span>上传</span><span>管理</span></b>
           </button>
         </nav>
 
@@ -1454,23 +1485,23 @@ export default function DashboardShell({
               {order && <button className={`flow-chip ${normalizeFlowStage(order.stage)}`} type="button" onClick={e => openQuickMenu('stage', order, e)}>{flowText(order.stage)}</button>}
               {order && <button className={`priority-chip ${order.priority}`} type="button" onClick={e => openQuickMenu('priority', order, e)}>{priorityText[order.priority] || '一般'}</button>}
               <span className={order?.plannedAt ? `planned-chip ${plannedClass(order)}` : 'planned-chip'}>{order?.plannedAt ? shortDt(order.plannedAt) : '计划未设'}</span>
-              <span className={`completion-pill ${completion.key}`}>{completion.text}</span>
+              <span className={`completion-pill ${completion.key}`} title={missingCategoryText}>{completion.text}</span>
             </div>
             <div className="order-strip-actions">
+              <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
               <div className="more-actions-wrap">
                 <button className="strip-more-button" type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多</button>
                 {moreActionsOpen && (
                   <div className="more-actions-menu">
-                    <button type="button" onClick={() => { setMoreActionsOpen(false); refresh(); }}>刷新资料</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && openOrderModal('edit', order); }}>编辑工单</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && setOrderDeleteTarget(order); }}>删除工单</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); copy(); }}>复制链接</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); openQrDialog(); }}>打印二维码</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); printSummary(); }}>打印摘要</button>
+                    <button type="button" onClick={() => { setMoreActionsOpen(false); refresh(); }}>刷新</button>
                   </div>
                 )}
               </div>
-              <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
             </div>
           </div>
 
@@ -1512,11 +1543,24 @@ export default function DashboardShell({
                       ? <PdfViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} />
                       : <ImageViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} />
                   ) : (
-                    <div className="empty-preview">
-                      <div className="empty-illustration">▤</div>
-                      <strong>当前分类暂无文件</strong>
-                      <p>上传后所有登录账号都可以共享查看，文件将保存到对象存储。</p>
-                      <div className="empty-actions">
+                    <div className="empty-preview empty-resource-guide">
+                      <div className="empty-illustration">＋</div>
+                      <div className="empty-guide-copy">
+                        <strong>当前分类暂无文件</strong>
+                        <p>上传后所有登录账号都可共享查看，文件将保存到对象存储。</p>
+                      </div>
+                      <div className="empty-guide-grid">
+                        <span><b>当前分类</b><em>{currentCategoryName}</em></span>
+                        <span><b>支持格式</b><em>PDF、JPG、PNG</em></span>
+                        <span><b>建议</b><em>原图、SOP指导书、成品图为主要生产资料</em></span>
+                      </div>
+                      {missingCategoryNames.length > 0 && (
+                        <div className="empty-missing">
+                          <b>当前工单缺失：</b>
+                          <span>{missingCategoryNames.join('、')}</span>
+                        </div>
+                      )}
+                      <div className="empty-actions empty-guide-actions">
                         <button type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>上传 PDF</button>
                         <button type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>上传图片</button>
                         <button type="button" disabled={uploading || !order} onClick={openCameraCapture}>拍照上传</button>
@@ -1525,25 +1569,25 @@ export default function DashboardShell({
                   )}
                 </div>
 
-                <div className={thumbsOpen ? 'file-strip floating open' : 'file-strip floating collapsed'} aria-label="当前分类文件列表">
-                  <button className="strip-toggle" type="button" onClick={() => setThumbsOpen(v => !v)}>
-                    {thumbsOpen ? '收起缩略图' : `文件 ${files.length} 个 ︿`}
-                  </button>
-                  {thumbsOpen && (
-                    <div className="strip-scroll">
-                      {files.length === 0 ? (
-                        <div className="strip-empty">当前分类暂无文件</div>
-                      ) : files.map(f => (
-                        <button key={f.id} className={f.id === file?.id ? 'strip-file thumb active' : 'strip-file thumb'} type="button" onClick={() => setSel(f.id)}>
-                          <FileThumb file={f} />
-                          <b>{shortName(displayFileName(f))}</b>
-                          <small>{f.version || 'V1.0'} · {dt(f.createdAt, false)}</small>
-                          <em className={f.id === latestFileId ? 'version-badge latest' : 'version-badge'}>{f.id === latestFileId ? '最新' : '历史'}</em>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                {files.length > 0 && (
+                  <div className={thumbsOpen ? 'file-strip floating open' : 'file-strip floating collapsed'} aria-label="当前分类文件列表">
+                    <button className="strip-toggle" type="button" onClick={() => setThumbsOpen(v => !v)}>
+                      {thumbsOpen ? '收起缩略图' : `文件 ${files.length} 个 ︿`}
+                    </button>
+                    {thumbsOpen && (
+                      <div className="strip-scroll">
+                        {files.map(f => (
+                          <button key={f.id} className={f.id === file?.id ? 'strip-file thumb active' : 'strip-file thumb'} type="button" onClick={() => setSel(f.id)}>
+                            <FileThumb file={f} />
+                            <b>{shortName(displayFileName(f))}</b>
+                            <small>{f.version || 'V1.0'} · {dt(f.createdAt, false)}</small>
+                            <em className={f.id === latestFileId ? 'version-badge latest' : 'version-badge'}>{f.id === latestFileId ? '最新' : '历史'}</em>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </section>
 
               <aside
@@ -1560,7 +1604,7 @@ export default function DashboardShell({
                     ['actions', '操作'],
                     ['queue', '队列'],
                   ] as const).map(([key, label]) => (
-                    <button key={key} className={toolTab === key && toolOpen ? 'active' : ''} type="button" onClick={() => openTool(key)}>{label}</button>
+                    <button key={key} className={(toolOpen ? toolTab === key : currentCategoryIsEmpty && key === 'upload') ? 'active' : ''} type="button" onClick={() => openTool(key)}>{label}</button>
                   ))}
                 </div>
                 <section className="resource-tool-window" aria-hidden={!toolOpen}>
@@ -1571,14 +1615,19 @@ export default function DashboardShell({
                   </div>
                   {toolTab === 'info' && (
                     <div className="tool-pane">
-                      <Info label="当前分类" value={category?.name || '-'} />
-                      <Info label="文件状态" value={file ? fileStatusText[file.status] || file.status : '缺失'} ok={!!file} />
-                      <Info label="文件类型" value={file ? fileTypeText[file.fileType] || file.fileType.toUpperCase() : '-'} />
-                      <Info label="版本" value={file?.version || 'V1.0'} />
-                      <Info label="大小" value={file ? bytes(file.fileSize) : '-'} />
-                      <Info label="上传时间" value={file ? dt(file.createdAt) : '-'} />
-                      <Info label="上传人" value={file?.uploadedBy || accountName} />
-                      <Info label="备注" value={file?.remark || '-'} wrap />
+                      <Info label="当前分类" value={currentCategoryName} />
+                      <Info label="文件状态" value={file ? fileStatusText[file.status] || file.status : '暂无文件'} ok={!!file} />
+                      {!file && <Info label="支持格式" value="PDF、JPG、PNG" />}
+                      {file && (
+                        <>
+                          <Info label="文件类型" value={fileTypeText[file.fileType] || file.fileType.toUpperCase()} />
+                          <Info label="版本" value={file.version || 'V1.0'} />
+                          <Info label="大小" value={bytes(file.fileSize)} />
+                          <Info label="上传时间" value={dt(file.createdAt)} />
+                          <Info label="上传人" value={file.uploadedBy || accountName} />
+                          <Info label="备注" value={file.remark || '-'} wrap />
+                        </>
+                      )}
                     </div>
                   )}
                   {toolTab === 'upload' && (
@@ -1605,10 +1654,12 @@ export default function DashboardShell({
                         <a className={!file ? 'disabled' : ''} href={file?.downloadUrl || '#'} target="_blank">下载当前</a>
                         <button type="button" disabled={!file} onClick={() => file && openFileEdit(file)}>编辑文件</button>
                         <button type="button" disabled={!file} onClick={() => file && setDeleteTarget(file)}>删除文件</button>
-                        <button type="button" disabled={!order || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
+                        <button type="button" disabled={!canDownloadAll || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
                         <button type="button" onClick={refresh}>刷新资料</button>
                         <button type="button" disabled={!order} onClick={copy}>复制链接</button>
                       </div>
+                      {currentCategoryIsEmpty && <p className="tool-note">当前分类暂无文件，请先上传 PDF、图片或拍照上传。</p>}
+                      {!canDownloadAll && <p className="tool-note muted">当前工单暂无可下载文件，下载全部已暂时禁用。</p>}
                     </div>
                   )}
                   {toolTab === 'queue' && (
@@ -1964,6 +2015,7 @@ function OrderGroup({
       <h2><span>▣</span>{title}<em>{orders.length}</em></h2>
       {orders.map(o => {
         const completion = completionOf(categories, o.categoryFileCounts || {});
+        const missingText = completion.missingNames.length ? `缺失：${completion.missingNames.join('、')}` : '必填资料已齐全';
         return (
           <button key={o.id} className={o.id === selected ? 'order-card active' : 'order-card'} type="button" onClick={() => choose(o.id)}>
             <div className="order-topline">
@@ -1974,7 +2026,7 @@ function OrderGroup({
             <p>{o.productName}</p>
             <div className="order-compact-meta">
               <span role="button" tabIndex={0} className={`flow-chip ${normalizeFlowStage(o.stage)}`} onClick={e => openQuickMenu('stage', o, e)}>{flowText(o.stage)}</span>
-              <strong className={`completion-chip ${completion.key}`}>{completion.text}</strong>
+              <strong className={`completion-chip ${completion.key}`} title={missingText}>{completion.text}</strong>
               {o.plannedAt && <em className={`planned-text ${plannedClass(o)}`}>{shortDt(o.plannedAt)}</em>}
             </div>
             <div className="order-progress compact">
