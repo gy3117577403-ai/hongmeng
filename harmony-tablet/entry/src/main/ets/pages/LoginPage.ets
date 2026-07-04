@@ -1,9 +1,9 @@
 import router from '@ohos.router';
-import promptAction from '@ohos.promptAction';
 import type common from '@ohos.app.ability.common';
 import { Colors } from '../constants/colors';
 import { Routes } from '../constants/routes';
 import { CommonButton } from '../components/CommonButton';
+import { ToastAdapter } from '../platform/ToastAdapter';
 import { AuthStore } from '../stores/AuthStore';
 import { notBlank } from '../utils/validators';
 
@@ -15,6 +15,12 @@ struct LoginPage {
   @State loading: boolean = false;
   @State error: string = '';
 
+  aboutToAppear() {
+    if (AuthStore.isAuthenticated()) {
+      router.replaceUrl({ url: Routes.workbench });
+    }
+  }
+
   async doLogin() {
     if (!notBlank(this.username) || !notBlank(this.password)) {
       this.error = '请输入账号和密码';
@@ -25,7 +31,7 @@ struct LoginPage {
     try {
       const context = getContext(this) as common.UIAbilityContext;
       await AuthStore.login(context, this.username, this.password);
-      promptAction.showToast({ message: '登录成功' });
+      ToastAdapter.success('登录成功');
       router.replaceUrl({ url: Routes.workbench });
     } catch (err) {
       this.error = err instanceof Error ? err.message : '登录失败';

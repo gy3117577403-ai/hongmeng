@@ -7,8 +7,10 @@ export struct WorkOrderDrawer {
   visible: boolean = false;
   orders: WorkOrder[] = [];
   selectedId: string = '';
+  keyword: string = '';
   onClose: () => void = () => {};
   onSelect: (order: WorkOrder) => void = () => {};
+  onSearch: (keyword: string) => void = () => {};
 
   build() {
     if (this.visible) {
@@ -34,6 +36,25 @@ export struct WorkOrderDrawer {
               .onClick(() => this.onClose())
           }
           .padding({ left: 20, right: 20, top: 18, bottom: 10 })
+          Row() {
+            TextInput({ placeholder: '搜索工单号、客户、产品', text: this.keyword })
+              .height(46)
+              .layoutWeight(1)
+              .fontSize(15)
+              .backgroundColor(Colors.card)
+              .border({ width: 1, color: Colors.border })
+              .borderRadius(12)
+              .onChange(value => this.keyword = value)
+            Button('搜索')
+              .height(46)
+              .fontSize(15)
+              .fontColor(Color.White)
+              .backgroundColor(Colors.primary)
+              .borderRadius(12)
+              .margin({ left: 10 })
+              .onClick(() => this.onSearch(this.keyword))
+          }
+          .padding({ left: 16, right: 16, bottom: 12 })
           Scroll() {
             Column() {
               ForEach(this.orders, (item: WorkOrder) => {

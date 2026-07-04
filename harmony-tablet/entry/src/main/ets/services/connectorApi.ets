@@ -8,8 +8,22 @@ export interface ConnectorListData {
   total: number;
 }
 
-export async function fetchConnectorParameters(keyword: string = '', page: number = 1): Promise<ConnectorListData> {
-  return httpClient.get<ConnectorListData>(`/api/native/connector-parameters?page=${page}&pageSize=80&keyword=${encodeURIComponent(keyword)}`);
+export interface ConnectorQuery {
+  keyword?: string;
+  page?: number;
+  missing?: string;
+  highlighted?: boolean;
+}
+
+export async function fetchConnectorParameters(query: ConnectorQuery = {}): Promise<ConnectorListData> {
+  const params = [
+    `page=${query.page || 1}`,
+    'pageSize=80',
+    `keyword=${encodeURIComponent(query.keyword || '')}`
+  ];
+  if (query.missing) params.push(`missing=${encodeURIComponent(query.missing)}`);
+  if (query.highlighted) params.push('highlighted=true');
+  return httpClient.get<ConnectorListData>(`/api/native/connector-parameters?${params.join('&')}`);
 }
 
 export async function saveConnectorParameter(body: object): Promise<{ parameter: ConnectorParameter }> {
@@ -18,4 +32,8 @@ export async function saveConnectorParameter(body: object): Promise<{ parameter:
 
 export async function updateConnectorParameter(id: string, body: object): Promise<{ parameter: ConnectorParameter }> {
   return httpClient.patch<{ parameter: ConnectorParameter }>(`/api/native/connector-parameters/${id}`, body);
+}
+
+export async function deleteConnectorParameter(id: string): Promise<{ deleted: boolean }> {
+  return httpClient.delete<{ deleted: boolean }>(`/api/native/connector-parameters/${id}`, { confirmText: 'DELETE' });
 }

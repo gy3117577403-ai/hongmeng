@@ -1,6 +1,6 @@
 # HongmengWorkorderTablet
 
-这是工单资料库的鸿蒙平板原生 App 工程，目标版本为 `v2.0.0-native-rc.1`。
+这是工单资料库的鸿蒙平板原生 App 工程，目标版本为 `v2.0.0-native-rc.2`。
 
 ## 工程说明
 - 工程目录：`harmony-tablet`
@@ -42,26 +42,29 @@ https://qdowqencjyph.sealoshzh.site
 该地址为公开服务地址。工程不包含数据库连接、对象存储凭据或任何密钥。
 
 ## 当前已实现功能
-- 登录页
-- Bearer token HTTP 客户端
-- token 和当前用户本地 preferences 持久化
-- 工作台页面
+- 原生登录页，调用 `/api/native/auth/login`
+- Bearer token HTTP 客户端，支持 GET / POST / PATCH / DELETE
+- token 和当前用户本地 preferences 持久化，401 后回登录页
+- 工作台页面，拉取真实工单列表
 - 顶部栏
 - 当前工单信息条
-- 覆盖式工单抽屉
-- 资料分类栏
+- 覆盖式工单抽屉和工单搜索
+- 资料分类栏和文件列表
 - 图片原生 Image 预览
-- PDF 文件卡片和下载 / 打开入口占位
+- PDF 文件卡片和下载 / 打开入口
 - 右侧资料工具窗
-- 连接器参数搜索和表格
-- 设置页
+- 上传 PDF / 图片入口和上传队列
+- 拍照上传入口和 Camera adapter
+- 连接器参数搜索、筛选、新增、编辑、软删除
+- 设置页，调用 `/api/native/system/status`
+- 系统能力 adapter：FilePicker、Camera、Download、Permission、Preferences、Toast
 
 ## 当前未实现功能
-- 原生文件选择器上传
-- 原生相机拍照上传
+- DevEco 真机文件选择器 API 绑定
+- DevEco 真机相机预览 / 拍照 API 绑定
 - 原生 PDF 完整渲染
-- 系统状态详情页
 - 连接器参数原生导入预览
+- 原生 Excel 导入
 
 ## 如何运行
 1. 在 DevEco Studio 中打开工程。
@@ -73,4 +76,15 @@ https://qdowqencjyph.sealoshzh.site
 ## 真机调试
 - 确认平板网络可访问服务器地址。
 - 首次使用拍照上传前，需要在真机上确认相机权限。
-- 当前 RC 版本上传按钮为能力入口，文件选择和相机上传需要下一步在 DevEco 真机环境补齐。
+- 当前 RC 版本已经完成页面和 adapter 闭环；文件选择、下载保存和相机能力需要下一步在 DevEco 真机环境按 adapter 内 TODO 补齐系统 API。
+
+## v2.0.0-native-rc.2 功能范围
+- 原生登录、退出登录和 token 持久化。
+- 原生工作台接入真实工单、资料分类和文件列表。
+- 图片使用 ArkUI `Image` 组件预览。
+- PDF 暂以文件卡片方式显示，并提供下载 / 打开入口。
+- 上传 PDF / JPG / PNG 通过 `FilePickerAdapter` 与 `resourceApi.uploadResourceFile` 串联。
+- 拍照上传通过 `CameraAdapter` 保留完整入口和兜底上传图片路径。
+- 连接器参数接入真实查询、新增、编辑和软删除 API。
+- 设置页展示服务器、当前用户、登录状态和系统安全状态摘要。
+- 不使用 WebView，不包含数据库连接、对象存储凭据或任何真实密钥。

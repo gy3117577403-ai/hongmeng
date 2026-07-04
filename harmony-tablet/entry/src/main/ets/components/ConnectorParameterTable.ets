@@ -4,6 +4,8 @@ import type { ConnectorParameter } from '../models/ConnectorParameter';
 @Component
 export struct ConnectorParameterTable {
   items: ConnectorParameter[] = [];
+  onEdit: (item: ConnectorParameter) => void = () => {};
+  onDelete: (item: ConnectorParameter) => void = () => {};
 
   @Builder
   cell(text: string, width: number, bold: boolean = false) {
@@ -26,6 +28,7 @@ export struct ConnectorParameterTable {
         this.cell('入长mm', 120, true)
         this.cell('备注', 280, true)
         this.cell('重点', 70, true)
+        this.cell('操作', 150, true)
       }
       .height(48)
       .padding({ left: 14, right: 14 })
@@ -42,6 +45,24 @@ export struct ConnectorParameterTable {
               this.cell(item.insertionLengthMm || '', 120)
               this.cell(item.remark || '', 280)
               this.cell(item.isHighlighted ? '是' : '否', 70)
+              Row() {
+                Button('编辑')
+                  .height(34)
+                  .fontSize(13)
+                  .backgroundColor(Colors.primaryLight)
+                  .fontColor(Colors.primary)
+                  .borderRadius(10)
+                  .onClick(() => this.onEdit(item))
+                Button('删除')
+                  .height(34)
+                  .fontSize(13)
+                  .margin({ left: 8 })
+                  .backgroundColor('#FEF2F2')
+                  .fontColor(Colors.danger)
+                  .borderRadius(10)
+                  .onClick(() => this.onDelete(item))
+              }
+              .width(150)
             }
             .minHeight(54)
             .padding({ left: 14, right: 14, top: 8, bottom: 8 })

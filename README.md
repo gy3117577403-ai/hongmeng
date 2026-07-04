@@ -37,12 +37,13 @@ Sealos App Deploy 端口填 `3000`。
 
 ## Harmony Native App
 - 目录：`harmony-tablet`
-- 版本：v2.0.0-native-rc.1
+- 版本：v2.0.0-native-rc.2
 - 技术栈：ArkTS / ArkUI / Stage 模型
 - 设备优先：鸿蒙 Tablet
 - 主界面：原生 ArkUI，不使用 WebView 套壳
 - 后端：通过 HTTPS 调用 Sealos `/api/native/*`
 - 默认服务地址：https://qdowqencjyph.sealoshzh.site
+- 进度：原生 App 已接入后端真实登录、工单数据、资料分类 / 文件列表、连接器参数 CRUD、系统状态和上传 / 相机 adapter 闭环
 - 文档：[Harmony Native App Plan v2.0.0](docs/HARMONY_NATIVE_APP_PLAN_v2.0.0.md)
 - 工程说明：[Native README](harmony-tablet/README_NATIVE.md)
 
@@ -65,6 +66,27 @@ Sealos App Deploy 端口填 `3000`。
 - v1.12.0：危险操作防误触、数据变更快照、连接器参数导入批次、导入批次回滚、上传失败重试、生产健康检查增强、生产稳定中心、数据库索引优化
 
 ## 开发版本 / Release Candidate
+
+### v2.0.0-native-rc.2
+- 状态：本地 Web build / smoke 通过，Harmony 命令行构建需进入 DevEco Studio 环境验证
+- 说明：鸿蒙平板原生 App 数据闭环版，不使用 WebView
+- 功能：
+  - 原生登录、退出登录和 token 持久化
+  - 真实工单列表、工单搜索、资料分类和文件列表
+  - 图片原生预览
+  - PDF 文件卡片预览、下载 / 打开入口
+  - PDF / JPG / PNG 上传 adapter 和上传队列
+  - 拍照上传入口与 Camera adapter
+  - 连接器参数查询、筛选、新增、编辑、软删除
+  - 设置页系统状态
+- 验证：
+  - `npm run build` 通过
+  - `npm run smoke` 通过
+  - 本机缺少 `ohpm` / `hvigor` / `hvigorw`，未执行 HAP 命令行构建
+- 说明：
+  - 当前不部署 Sealos
+  - 当前不检查 GHCR digest
+  - 当前不作为生产版本发布
 
 ### v1.3.0-rc.1
 - 状态：本地验证通过，等待统一部署
