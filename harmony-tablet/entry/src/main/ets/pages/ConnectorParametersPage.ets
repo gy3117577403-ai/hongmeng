@@ -7,6 +7,7 @@ import type { ConnectorParameter } from '../models/ConnectorParameter';
 import { ToastAdapter } from '../platform/ToastAdapter';
 import { ApiException } from '../services/httpClient';
 import * as connectorApi from '../services/connectorApi';
+import type { ConnectorParameterRequest, ConnectorQuery } from '../services/connectorApi';
 import { AuthStore } from '../stores/AuthStore';
 
 @Entry
@@ -29,43 +30,44 @@ struct ConnectorParametersPage {
   @State formHighlighted: boolean = false;
   @State saving: boolean = false;
 
-  async aboutToAppear() {
+  async aboutToAppear(): Promise<void> {
     await this.load();
   }
 
-  async load() {
+  async load(): Promise<void> {
     this.loading = true;
     try {
-      const data = await connectorApi.fetchConnectorParameters({
+      const query: ConnectorQuery = {
         keyword: this.keyword,
         page: 1,
         missing: this.filter === 'outer' || this.filter === 'inner' || this.filter === 'insertion' ? this.filter : '',
         highlighted: this.filter === 'highlighted'
-      });
+      };
+      const data = await connectorApi.fetchConnectorParameters(query);
       this.parameters = data.parameters;
       this.total = data.total;
     } catch (err) {
-      await this.handleError(err, '连接器参数加载失败');
+      await this.handleError(err as Error, '连接器参数加载失败');
     } finally {
       this.loading = false;
     }
   }
 
-  async handleError(err: unknown, fallback: string) {
+  async handleError(err: Error, fallback: string): Promise<void> {
     if (err instanceof ApiException && err.needLogin) {
       const context = getContext(this) as common.UIAbilityContext;
       await AuthStore.handleUnauthorized(context);
       return;
     }
-    ToastAdapter.error(err instanceof Error ? err.message : fallback);
+    ToastAdapter.error(err.message || fallback);
   }
 
-  setFilter(value: string) {
+  setFilter(value: string): void {
     this.filter = value;
     this.load();
   }
 
-  openCreate() {
+  openCreate(): void {
     this.editing = undefined;
     this.formRowNo = '';
     this.formModel = '';
@@ -77,7 +79,7 @@ struct ConnectorParametersPage {
     this.editorOpen = true;
   }
 
-  openEdit(item: ConnectorParameter) {
+  openEdit(item: ConnectorParameter): void {
     this.editing = item;
     this.formRowNo = item.rowNo === null || item.rowNo === undefined ? '' : `${item.rowNo}`;
     this.formModel = item.model || '';
@@ -89,8 +91,8 @@ struct ConnectorParametersPage {
     this.editorOpen = true;
   }
 
-  formBody(): object {
-    return {
+  formBody(): ConnectorParameterRequest {
+    const body: ConnectorParameterRequest = {
       rowNo: this.formRowNo,
       model: this.formModel,
       outerPeelMm: this.formOuter,
@@ -99,9 +101,10 @@ struct ConnectorParametersPage {
       remark: this.formRemark,
       isHighlighted: this.formHighlighted
     };
+    return body;
   }
 
-  async save() {
+  async save(): Promise<void> {
     this.saving = true;
     try {
       if (this.editing) {
@@ -114,13 +117,13 @@ struct ConnectorParametersPage {
       this.editorOpen = false;
       await this.load();
     } catch (err) {
-      await this.handleError(err, '保存连接器参数失败');
+      await this.handleError(err as Error, '保存连接器参数失败');
     } finally {
       this.saving = false;
     }
   }
 
-  async confirmDelete() {
+  async confirmDelete(): Promise<void> {
     if (!this.deleting) return;
     try {
       await connectorApi.deleteConnectorParameter(this.deleting.id);
@@ -128,12 +131,12 @@ struct ConnectorParametersPage {
       this.deleting = undefined;
       await this.load();
     } catch (err) {
-      await this.handleError(err, '删除连接器参数失败');
+      await this.handleError(err as Error, '删除连接器参数失败');
     }
   }
 
   @Builder
-  filterButton(label: string, value: string) {
+  filterButton(label: string, value: string): void {
     Button(label)
       .height(38)
       .fontSize(14)
@@ -145,7 +148,7 @@ struct ConnectorParametersPage {
       .onClick(() => this.setFilter(value))
   }
 
-  build() {
+  build(): void {
     Column() {
       Row() {
         Button('返回工作台')
@@ -178,7 +181,7 @@ struct ConnectorParametersPage {
           .backgroundColor(Colors.card)
           .borderRadius(14)
           .onChange(value => this.keyword = value)
-        CommonButton({ label: this.loading ? '查询中...' : '查询', enabled: !this.loading, onTap: () => this.load() })
+        CommonButton({ label: this.loading ? '查询中...' : '查询', isEnabled: !this.loading, onTap: () => this.load() })
           .margin({ left: 12 })
       }
       .padding({ left: 20, right: 20, top: 16, bottom: 12 })
@@ -252,7 +255,7 @@ struct ConnectorParametersPage {
           }
           .margin({ top: 12, bottom: 18 })
           Row() {
-            CommonButton({ label: this.saving ? '保存中...' : '保存', enabled: !this.saving, onTap: () => this.save() })
+            CommonButton({ label: this.saving ? '保存中...' : '保存', isEnabled: !this.saving, onTap: () => this.save() })
               .margin({ right: 12 })
             CommonButton({ label: '取消', primary: false, onTap: () => this.editorOpen = false })
           }

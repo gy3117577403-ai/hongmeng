@@ -8,7 +8,7 @@ export struct ConnectorParameterTable {
   onDelete: (item: ConnectorParameter) => void = () => {};
 
   @Builder
-  cell(text: string, width: number, bold: boolean = false) {
+  cell(text: string, width: number, bold: boolean = false): void {
     Text(text)
       .width(width)
       .fontSize(14)
@@ -18,7 +18,7 @@ export struct ConnectorParameterTable {
       .textOverflow({ overflow: TextOverflow.Ellipsis })
   }
 
-  build() {
+  build(): void {
     Column() {
       Row() {
         this.cell('序号', 70, true)
@@ -64,7 +64,7 @@ export struct ConnectorParameterTable {
               }
               .width(150)
             }
-            .minHeight(54)
+            .height(54)
             .padding({ left: 14, right: 14, top: 8, bottom: 8 })
             .margin({ top: 8 })
             .backgroundColor(item.isHighlighted ? Colors.warningBg : Colors.card)

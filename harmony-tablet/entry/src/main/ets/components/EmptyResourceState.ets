@@ -5,7 +5,7 @@ export struct EmptyResourceState {
   title: string = '当前分类暂无资料';
   subtitle: string = '可通过右侧工具窗上传 PDF、图片或拍照资料。';
 
-  build() {
+  build(): void {
     Column() {
       Text('资料缺失')
         .fontSize(28)

@@ -38,7 +38,7 @@ struct WorkbenchPage {
   @State selectedFile?: ResourceFile = undefined;
   @State uploadQueue: UploadQueueItem[] = [];
 
-  async aboutToAppear() {
+  async aboutToAppear(): Promise<void> {
     if (!AuthStore.isAuthenticated()) {
       router.replaceUrl({ url: Routes.login });
       return;
@@ -46,7 +46,7 @@ struct WorkbenchPage {
     await this.load();
   }
 
-  async load() {
+  async load(): Promise<void> {
     this.loading = true;
     try {
       this.orders = await WorkOrderStore.load(this.orderKeyword);
@@ -61,7 +61,7 @@ struct WorkbenchPage {
     }
   }
 
-  async loadResources(workOrderId: string) {
+  async loadResources(workOrderId: string): Promise<void> {
     await ResourceStore.load(workOrderId);
     this.categories = ResourceStore.categories;
     this.selectedCategoryId = ResourceStore.currentCategoryId;
@@ -69,46 +69,70 @@ struct WorkbenchPage {
     this.selectedFile = ResourceStore.selectedFile || (this.files.length > 0 ? this.files[0] : undefined);
   }
 
-  async selectOrder(order: WorkOrder) {
+  async selectOrder(order: WorkOrder): Promise<void> {
     WorkOrderStore.select(order);
     this.current = order;
     this.drawerOpen = false;
     await this.loadResources(order.id);
   }
 
-  selectCategory(category: ResourceCategory) {
+  selectCategory(category: ResourceCategory): void {
     ResourceStore.selectCategory(category.id);
     this.selectedCategoryId = category.id;
     this.files = ResourceStore.filesForCategory(category.id);
     this.selectedFile = ResourceStore.selectedFile;
   }
 
-  selectFile(file: ResourceFile) {
+  selectFile(file: ResourceFile): void {
     ResourceStore.selectFile(file);
     this.selectedFile = file;
   }
 
-  async searchOrders(keyword: string) {
+  async searchOrders(keyword: string): Promise<void> {
     this.orderKeyword = keyword;
     await this.load();
   }
 
-  async logout() {
+  async logout(): Promise<void> {
     const context = getContext(this) as common.UIAbilityContext;
     await AuthStore.logout(context);
     router.replaceUrl({ url: Routes.login });
   }
 
-  async handleError(err: unknown, fallback: string) {
+  async handleError(err: Error, fallback: string): Promise<void> {
     if (err instanceof ApiException && err.needLogin) {
       const context = getContext(this) as common.UIAbilityContext;
       await AuthStore.handleUnauthorized(context);
       return;
     }
-    ToastAdapter.error(err instanceof Error ? err.message : fallback);
+    ToastAdapter.error(err.message || fallback);
   }
 
-  async uploadPickedFiles(files: PickedFile[]) {
+  addUploadJob(job: UploadQueueItem): void {
+    const nextQueue = this.uploadQueue.slice();
+    nextQueue.push(job);
+    this.uploadQueue = nextQueue;
+  }
+
+  updateUploadJob(jobId: string, status: string, message: string): void {
+    const nextQueue: UploadQueueItem[] = [];
+    this.uploadQueue.forEach((job: UploadQueueItem): void => {
+      if (job.id === jobId) {
+        const updated: UploadQueueItem = {
+          id: job.id,
+          name: job.name,
+          status: status,
+          message: message
+        };
+        nextQueue.push(updated);
+      } else {
+        nextQueue.push(job);
+      }
+    });
+    this.uploadQueue = nextQueue;
+  }
+
+  async uploadPickedFiles(files: PickedFile[]): Promise<void> {
     if (!this.current || !this.selectedCategoryId) {
       ToastAdapter.error('请先选择工单和资料分类');
       return;
@@ -119,28 +143,35 @@ struct WorkbenchPage {
     }
     for (const file of files) {
       const jobId = `${Date.now()}-${file.name}`;
-      this.uploadQueue = [...this.uploadQueue, { id: jobId, name: file.name, status: '上传中', message: '正在上传到对象存储' }];
+      const job: UploadQueueItem = {
+        id: jobId,
+        name: file.name,
+        status: '上传中',
+        message: '正在上传到对象存储'
+      };
+      this.addUploadJob(job);
       try {
         const uploaded = await ResourceStore.upload(this.current.id, this.selectedCategoryId, file);
         this.files = ResourceStore.filesForCategory(this.selectedCategoryId);
         this.selectedFile = uploaded;
-        this.uploadQueue = this.uploadQueue.map(job => job.id === jobId ? { ...job, status: '成功', message: '上传完成' } : job);
+        this.updateUploadJob(jobId, '成功', '上传完成');
       } catch (err) {
-        this.uploadQueue = this.uploadQueue.map(job => job.id === jobId ? { ...job, status: '失败', message: err instanceof Error ? err.message : '上传失败，可稍后重试' } : job);
-        await this.handleError(err, '上传失败');
+        const error = err as Error;
+        this.updateUploadJob(jobId, '失败', error.message || '上传失败，可稍后重试');
+        await this.handleError(error, '上传失败');
       }
     }
   }
 
-  async uploadPdf() {
+  async uploadPdf(): Promise<void> {
     await this.uploadPickedFiles(await FilePickerAdapter.pickPdf());
   }
 
-  async uploadImage() {
+  async uploadImage(): Promise<void> {
     await this.uploadPickedFiles(await FilePickerAdapter.pickImages());
   }
 
-  async cameraUpload() {
+  async cameraUpload(): Promise<void> {
     this.cameraOpen = true;
     if (!CameraAdapter.isSupported()) {
       ToastAdapter.show('当前原生相机能力需在 DevEco 真机环境补齐');
@@ -149,7 +180,7 @@ struct WorkbenchPage {
     await CameraAdapter.openCamera();
   }
 
-  async capturePhoto() {
+  async capturePhoto(): Promise<void> {
     const photo = await CameraAdapter.takePhoto();
     if (photo) {
       this.cameraOpen = false;
@@ -159,15 +190,15 @@ struct WorkbenchPage {
     }
   }
 
-  async downloadFile(file: ResourceFile) {
+  async downloadFile(file: ResourceFile): Promise<void> {
     await DownloadAdapter.downloadFile(file, nativeDownloadUrl(file));
   }
 
-  async openFile(file: ResourceFile) {
+  async openFile(file: ResourceFile): Promise<void> {
     await DownloadAdapter.openFile(file, nativeDownloadUrl(file));
   }
 
-  async deleteFile(file: ResourceFile) {
+  async deleteFile(file: ResourceFile): Promise<void> {
     if (!this.current) return;
     try {
       await ResourceStore.deleteSelected(this.current.id, file);
@@ -175,11 +206,11 @@ struct WorkbenchPage {
       this.selectedFile = ResourceStore.selectedFile;
       ToastAdapter.success('文件已软删除');
     } catch (err) {
-      await this.handleError(err, '文件删除失败');
+      await this.handleError(err as Error, '文件删除失败');
     }
   }
 
-  build() {
+  build(): void {
     Stack() {
       Column() {
         TopBar({
@@ -289,7 +320,7 @@ struct WorkbenchPage {
             .textAlign(TextAlign.Center)
             .margin({ top: 14, bottom: 20 })
           Row() {
-            CommonButton({ label: '拍照', enabled: CameraAdapter.isSupported(), onTap: () => this.capturePhoto() })
+            CommonButton({ label: '拍照', isEnabled: CameraAdapter.isSupported(), onTap: () => this.capturePhoto() })
               .margin({ right: 12 })
             CommonButton({ label: '上传图片', primary: false, onTap: () => { this.cameraOpen = false; this.uploadImage(); } })
               .margin({ right: 12 })

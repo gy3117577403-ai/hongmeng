@@ -24,7 +24,7 @@ export struct ResourceToolPanel {
   onOpen: (file: ResourceFile) => void = () => {};
   onDelete: (file: ResourceFile) => void = () => {};
 
-  build() {
+  build(): void {
     Column() {
       Row() {
         Text(this.collapsed ? '工具' : '资料工具')

@@ -10,6 +10,5 @@ export interface WorkOrder {
   progress: number;
   plannedAt?: string | null;
   remark?: string | null;
-  categoryFileCounts?: Record<string, number>;
   totalFileCount?: number;
 }

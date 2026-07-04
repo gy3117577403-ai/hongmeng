@@ -7,7 +7,7 @@ export struct ResourceCategoryRail {
   selectedId: string = '';
   onSelect: (category: ResourceCategory) => void = () => {};
 
-  build() {
+  build(): void {
     Column() {
       ForEach(this.categories, (category: ResourceCategory) => {
         Column() {

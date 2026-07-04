@@ -1,4 +1,18 @@
-export const Colors = {
+export interface ColorConfig {
+  primary: string;
+  primaryDark: string;
+  primaryLight: string;
+  bg: string;
+  card: string;
+  text: string;
+  textMuted: string;
+  border: string;
+  danger: string;
+  success: string;
+  warningBg: string;
+}
+
+export const Colors: ColorConfig = {
   primary: '#FF6A00',
   primaryDark: '#D95500',
   primaryLight: '#FFF3E8',

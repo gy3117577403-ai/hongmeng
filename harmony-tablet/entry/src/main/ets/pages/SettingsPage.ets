@@ -18,11 +18,11 @@ struct SettingsPage {
   @State countText: string = '-';
   @State warningText: string = '-';
 
-  async aboutToAppear() {
+  async aboutToAppear(): Promise<void> {
     await this.loadStatus();
   }
 
-  async loadStatus() {
+  async loadStatus(): Promise<void> {
     this.loading = true;
     try {
       const status = await systemApi.fetchSystemStatus();
@@ -32,25 +32,26 @@ struct SettingsPage {
       this.countText = `工单 ${status.counts.workOrders || 0} · 文件 ${status.counts.resourceFiles || 0} · 连接器 ${status.counts.connectorParameters || 0}`;
       this.warningText = status.warnings.length ? status.warnings.join('；') : '暂无';
     } catch (err) {
-      if (err instanceof ApiException && err.needLogin) {
+      const error = err as Error;
+      if (error instanceof ApiException && error.needLogin) {
         const context = getContext(this) as common.UIAbilityContext;
         await AuthStore.handleUnauthorized(context);
         return;
       }
-      ToastAdapter.error(err instanceof Error ? err.message : '系统状态加载失败');
+      ToastAdapter.error(error.message || '系统状态加载失败');
       this.statusText = '检查失败';
     } finally {
       this.loading = false;
     }
   }
 
-  async logout() {
+  async logout(): Promise<void> {
     const context = getContext(this) as common.UIAbilityContext;
     await AuthStore.logout(context);
     router.replaceUrl({ url: 'pages/LoginPage' });
   }
 
-  build() {
+  build(): void {
     Column() {
       Row() {
         Button('返回')
@@ -121,7 +122,7 @@ struct SettingsPage {
         CommonButton({
           label: this.loading ? '检查中...' : '刷新系统状态',
           primary: false,
-          enabled: !this.loading,
+          isEnabled: !this.loading,
           onTap: () => this.loadStatus()
         })
         .width(220)

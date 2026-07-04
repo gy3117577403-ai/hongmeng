@@ -33,13 +33,19 @@ export class ResourceStore {
     return files;
   }
 
-  static selectFile(file?: ResourceFile) {
+  static selectFile(file?: ResourceFile): void {
     ResourceStore.selectedFile = file;
   }
 
   static async upload(workOrderId: string, categoryId: string, file: PickedFile): Promise<ResourceFile> {
     const data = await resourceApi.uploadResourceFile(workOrderId, categoryId, file);
-    ResourceStore.files = [data.file, ...ResourceStore.files.filter(item => item.id !== data.file.id)];
+    const nextFiles: ResourceFile[] = [data.file];
+    ResourceStore.files.forEach((item: ResourceFile): void => {
+      if (item.id !== data.file.id) {
+        nextFiles.push(item);
+      }
+    });
+    ResourceStore.files = nextFiles;
     ResourceStore.currentCategoryId = categoryId;
     ResourceStore.selectedFile = data.file;
     return data.file;

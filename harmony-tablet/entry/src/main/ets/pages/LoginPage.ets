@@ -15,13 +15,13 @@ struct LoginPage {
   @State loading: boolean = false;
   @State error: string = '';
 
-  aboutToAppear() {
+  aboutToAppear(): void {
     if (AuthStore.isAuthenticated()) {
       router.replaceUrl({ url: Routes.workbench });
     }
   }
 
-  async doLogin() {
+  async doLogin(): Promise<void> {
     if (!notBlank(this.username) || !notBlank(this.password)) {
       this.error = '请输入账号和密码';
       return;
@@ -34,13 +34,14 @@ struct LoginPage {
       ToastAdapter.success('登录成功');
       router.replaceUrl({ url: Routes.workbench });
     } catch (err) {
-      this.error = err instanceof Error ? err.message : '登录失败';
+      const error = err as Error;
+      this.error = error.message || '登录失败';
     } finally {
       this.loading = false;
     }
   }
 
-  build() {
+  build(): void {
     Row() {
       Column() {
         Text('工单资料库')
@@ -71,7 +72,7 @@ struct LoginPage {
             .fontColor(Colors.danger)
             .margin({ top: 12 })
         }
-        CommonButton({ label: this.loading ? '登录中...' : '登录', enabled: !this.loading, onTap: () => this.doLogin() })
+        CommonButton({ label: this.loading ? '登录中...' : '登录', isEnabled: !this.loading, onTap: () => this.doLogin() })
           .width('100%')
           .margin({ top: 24 })
       }

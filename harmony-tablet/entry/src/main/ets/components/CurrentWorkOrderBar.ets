@@ -7,7 +7,7 @@ import { priorityLabel, stageLabel } from '../utils/format';
 export struct CurrentWorkOrderBar {
   order?: WorkOrder;
 
-  build() {
+  build(): void {
     Row() {
       if (this.order) {
         Column() {

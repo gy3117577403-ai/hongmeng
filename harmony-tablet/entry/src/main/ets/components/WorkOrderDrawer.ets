@@ -12,7 +12,7 @@ export struct WorkOrderDrawer {
   onSelect: (order: WorkOrder) => void = () => {};
   onSearch: (keyword: string) => void = () => {};
 
-  build() {
+  build(): void {
     if (this.visible) {
       Stack({ alignContent: Alignment.Start }) {
         Column()

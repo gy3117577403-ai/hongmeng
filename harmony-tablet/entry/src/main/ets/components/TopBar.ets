@@ -8,7 +8,7 @@ export struct TopBar {
   onOpenDrawer: () => void = () => {};
   onLogout: () => void = () => {};
 
-  build() {
+  build(): void {
     Row() {
       Button('工单')
         .height(44)

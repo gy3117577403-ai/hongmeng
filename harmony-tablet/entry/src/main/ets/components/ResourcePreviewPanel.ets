@@ -15,7 +15,7 @@ export struct ResourcePreviewPanel {
   onDownload: (file: ResourceFile) => void = () => {};
   onOpen: (file: ResourceFile) => void = () => {};
 
-  build() {
+  build(): void {
     Column() {
       if (!this.file) {
         Column() {

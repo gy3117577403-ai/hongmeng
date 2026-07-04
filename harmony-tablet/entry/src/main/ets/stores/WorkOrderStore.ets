@@ -14,7 +14,7 @@ export class WorkOrderStore {
     return WorkOrderStore.workOrders;
   }
 
-  static select(order: WorkOrder) {
+  static select(order: WorkOrder): void {
     WorkOrderStore.current = order;
   }
 }
