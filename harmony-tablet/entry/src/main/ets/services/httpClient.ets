@@ -9,7 +9,7 @@ export interface NativeApiBaseResponse {
 
 export interface HttpHeaders {
   Accept: string;
-  'Content-Type'?: string;
+  contentType: string;
   Authorization?: string;
 }
 
@@ -91,10 +91,11 @@ class NativeHttpClient {
   private async request(method: string, path: string, options?: HttpRequestOptions): Promise<HttpResponseText> {
     const client = http.createHttp();
     const headers: HttpHeaders = {
-      Accept: 'application/json'
+      Accept: 'application/json',
+      contentType: ''
     };
     if (options && options.contentType.length > 0) {
-      headers['Content-Type'] = options.contentType;
+      headers.contentType = options.contentType;
     }
     if (this.token.length > 0) {
       headers.Authorization = `Bearer ${this.token}`;
