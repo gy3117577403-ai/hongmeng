@@ -8,7 +8,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 const actionGroups: Record<string, string[]> = {
-  upload: ['upload'],
+  upload: ['upload', 'upload_retry', 'upload_failed'],
   delete: ['delete'],
   download: ['download'],
   download_all: ['download_work_order_package'],
@@ -36,6 +36,9 @@ const actionGroups: Record<string, string[]> = {
     'upload_connector_parameter_file',
     'delete_connector_parameter_file',
     'download_connector_parameter_file',
+    'create_connector_parameter_import_batch',
+    'rollback_connector_parameter_import_batch',
+    'rollback_import_batch',
   ],
 };
 

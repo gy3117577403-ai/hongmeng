@@ -1,7 +1,51 @@
-import {NextRequest,NextResponse} from 'next/server';
-import {requireUser,unauthorized,UnauthorizedError} from '@/lib/auth';
-import {logOp} from '@/lib/logs';
-import {prisma} from '@/lib/prisma';
-import {resourceFileSnapshot,snapshotChange} from '@/lib/change-snapshots';
-export const runtime='nodejs'; export const dynamic='force-dynamic';
-export async function POST(_req:NextRequest,{params}:{params:{id:string}}){try{const user=await requireUser(); const old=await prisma.resourceFile.findFirst({where:{id:params.id,deletedAt:null,status:'uploaded'},include:{workOrder:{select:{code:true}},category:{select:{name:true}}}}); if(!old)return NextResponse.json({message:'文件不存在'},{status:404}); const f=await prisma.resourceFile.update({where:{id:params.id},data:{status:'deleted',deletedAt:new Date()},include:{workOrder:{select:{code:true}},category:{select:{name:true}}}}); await logOp({userId:user.id,action:'delete_resource_file',targetType:'resource_file',targetId:f.id,detail:{fileName:f.displayName||f.originalName,version:f.version,softDelete:true}}); await snapshotChange({entityType:'resource_file',entityId:f.id,action:'delete_resource_file',before:resourceFileSnapshot(old),after:resourceFileSnapshot(f),changedBy:user.displayName||user.username}); return NextResponse.json({ok:true})}catch(e){if(e instanceof UnauthorizedError)return unauthorized(); console.error(e); return NextResponse.json({message:'文件删除失败'},{status:500})}}
+import { NextRequest, NextResponse } from 'next/server';
+import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { resourceFileSnapshot, snapshotChange } from '@/lib/change-snapshots';
+import { logOp } from '@/lib/logs';
+import { prisma } from '@/lib/prisma';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const user = await requireUser();
+    const old = await prisma.resourceFile.findFirst({
+      where: { id: params.id, deletedAt: null, status: 'uploaded' },
+      include: { workOrder: { select: { code: true } }, category: { select: { name: true } } },
+    });
+    if (!old) return NextResponse.json({ message: '文件不存在' }, { status: 404 });
+
+    const body = await req.json().catch(() => ({})) as { confirmText?: unknown };
+    const fileName = old.displayName || old.originalName;
+    const expected = `DELETE ${fileName.slice(-4)}`;
+    const confirmText = String(body.confirmText || '').trim().replace(/\s+/g, ' ');
+    if (confirmText !== expected) return NextResponse.json({ message: '删除确认不匹配' }, { status: 400 });
+
+    const f = await prisma.resourceFile.update({
+      where: { id: params.id },
+      data: { status: 'deleted', deletedAt: new Date() },
+      include: { workOrder: { select: { code: true } }, category: { select: { name: true } } },
+    });
+    await logOp({
+      userId: user.id,
+      action: 'delete_resource_file',
+      targetType: 'resource_file',
+      targetId: f.id,
+      detail: { fileName: f.displayName || f.originalName, version: f.version, softDelete: true },
+    });
+    await snapshotChange({
+      entityType: 'resource_file',
+      entityId: f.id,
+      action: 'delete_resource_file',
+      before: resourceFileSnapshot(old),
+      after: resourceFileSnapshot(f),
+      changedBy: user.displayName || user.username,
+    });
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    if (e instanceof UnauthorizedError) return unauthorized();
+    console.error(e);
+    return NextResponse.json({ message: '文件删除失败' }, { status: 500 });
+  }
+}

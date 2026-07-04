@@ -53,26 +53,70 @@ function serializeFile(f: {
   };
 }
 
+type UploadFailureDetail = {
+  reason: string;
+  message?: string;
+  fileName?: string;
+  fileSize?: number;
+  workOrderId?: string;
+  categoryId?: string;
+  retry?: boolean;
+};
+
+async function logUploadFailed(userId: string, detail: UploadFailureDetail) {
+  try {
+    await logOp({
+      userId,
+      action: 'upload_failed',
+      targetType: 'resource_file',
+      detail,
+    });
+  } catch {
+    // Upload failure logging must never block the user-facing upload response.
+  }
+}
+
 export async function POST(req: NextRequest) {
+  let userId = '';
+  let failureDetail: Partial<UploadFailureDetail> = {};
   try {
     const user = await requireUser();
+    userId = user.id;
     const form = await req.formData();
     const workOrderId = String(form.get('workOrderId') || '');
     const categoryId = String(form.get('categoryId') || '');
+    const retry = String(form.get('retry') || '') === 'true';
     const up = form.get('file');
+    failureDetail = { workOrderId, categoryId, retry };
 
-    if (!workOrderId) return NextResponse.json({ message: '未选择工单' }, { status: 400 });
-    if (!categoryId) return NextResponse.json({ message: '未选择分类' }, { status: 400 });
-    if (!(up instanceof File)) return NextResponse.json({ message: '请选择文件' }, { status: 400 });
+    if (!workOrderId) {
+      await logUploadFailed(user.id, { ...failureDetail, reason: 'missing_work_order', message: '未选择工单' });
+      return NextResponse.json({ message: '未选择工单' }, { status: 400 });
+    }
+    if (!categoryId) {
+      await logUploadFailed(user.id, { ...failureDetail, reason: 'missing_category', message: '未选择分类' });
+      return NextResponse.json({ message: '未选择分类' }, { status: 400 });
+    }
+    if (!(up instanceof File)) {
+      await logUploadFailed(user.id, { ...failureDetail, reason: 'missing_file', message: '请选择文件' });
+      return NextResponse.json({ message: '请选择文件' }, { status: 400 });
+    }
+    failureDetail = { ...failureDetail, fileName: up.name, fileSize: up.size };
 
     const err = validateFile(up.name, up.type, up.size);
-    if (err) return NextResponse.json({ message: err }, { status: 400 });
+    if (err) {
+      await logUploadFailed(user.id, { ...failureDetail, reason: 'invalid_file', message: err });
+      return NextResponse.json({ message: err }, { status: 400 });
+    }
 
     const [wo, cat] = await Promise.all([
       prisma.workOrder.findFirst({ where: { id: workOrderId, deletedAt: null } }),
       prisma.resourceCategory.findUnique({ where: { id: categoryId } }),
     ]);
-    if (!wo || !cat) return NextResponse.json({ message: '工单或分类不存在' }, { status: 404 });
+    if (!wo || !cat) {
+      await logUploadFailed(user.id, { ...failureDetail, reason: 'invalid_work_order_or_category', message: '工单或分类不存在' });
+      return NextResponse.json({ message: '工单或分类不存在' }, { status: 404 });
+    }
 
     const ft = fileType(up.name, up.type);
     const version = await nextVersion(wo.id, cat.id);
@@ -95,14 +139,21 @@ export async function POST(req: NextRequest) {
 
     await logOp({
       userId: user.id,
-      action: 'upload',
+      action: retry ? 'upload_retry' : 'upload',
       targetType: 'resource_file',
       targetId: f.id,
-      detail: { fileName: up.name, fileSize: up.size, workOrderCode: wo.code, categoryCode: cat.code, version },
+      detail: { fileName: up.name, fileSize: up.size, workOrderCode: wo.code, categoryCode: cat.code, version, retry },
     });
     return NextResponse.json({ file: serializeFile(f) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (userId) {
+      await logUploadFailed(userId, {
+        ...failureDetail,
+        reason: 'storage_or_server_error',
+        message: '上传失败，请检查对象存储配置',
+      });
+    }
     console.error(e);
     return NextResponse.json({ message: '上传失败，请检查对象存储配置' }, { status: 500 });
   }

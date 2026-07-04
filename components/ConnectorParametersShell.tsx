@@ -307,7 +307,11 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
       setMsg('请输入 DELETE 后再删除参数');
       return;
     }
-    const r = await fetch(`/api/connector-parameters/${deleteTarget.id}`, { method: 'DELETE' });
+    const r = await fetch(`/api/connector-parameters/${deleteTarget.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirmText: 'DELETE' }),
+    });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) {
       setMsg(d.error || '删除失败');
@@ -336,7 +340,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
       const r = await fetch('/api/connector-parameters/batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selectedIds, action }),
+        body: JSON.stringify({ ids: selectedIds, action, confirmText: action === 'delete' ? batchDeleteConfirmText.trim() : undefined }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -445,8 +449,8 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
 
   async function commitImport() {
     if (!importPreview) return;
-    if (importPreview.summary.totalRows > 100 && importConfirmText.trim() !== 'IMPORT') {
-      setMsg('导入超过 100 行，请输入 IMPORT 确认');
+    if (importPreview.summary.totalRows > 100 && importConfirmText.trim() !== 'IMPORT_CONFIRM') {
+      setMsg('导入超过 100 行，请输入 IMPORT_CONFIRM 确认');
       return;
     }
     setImporting(true);
@@ -963,8 +967,8 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                 </div>
                 {importPreview.summary.totalRows > 100 && (
                   <label className="confirm-input-label">
-                    超过 100 行，输入 IMPORT 后才能确认导入
-                    <input value={importConfirmText} onChange={e => setImportConfirmText(e.target.value)} placeholder="IMPORT" />
+                    超过 100 行，输入 IMPORT_CONFIRM 后才能确认导入
+                    <input value={importConfirmText} onChange={e => setImportConfirmText(e.target.value)} placeholder="IMPORT_CONFIRM" />
                   </label>
                 )}
                 <div className="import-preview-table">
@@ -985,7 +989,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                 </div>
                 <div className="dialog-actions">
                   <button type="button" onClick={() => setImportPreview(null)}>重新选择</button>
-                  <button className="primary-button" type="button" onClick={commitImport} disabled={importing || (importPreview.summary.totalRows > 100 && importConfirmText.trim() !== 'IMPORT')}>{importing ? '导入中...' : '确认导入'}</button>
+                  <button className="primary-button" type="button" onClick={commitImport} disabled={importing || (importPreview.summary.totalRows > 100 && importConfirmText.trim() !== 'IMPORT_CONFIRM')}>{importing ? '导入中...' : '确认导入'}</button>
                 </div>
               </div>
             )}

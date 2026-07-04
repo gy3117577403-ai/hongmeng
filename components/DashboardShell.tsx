@@ -50,7 +50,7 @@ type SystemStatus = {
   storage: { ok: boolean; type: string; bucketConfigured: boolean; publicEndpointConfigured: boolean; latencyMs?: number };
   upload: { maxUploadSizeMb: number; supportedTypes: string[] };
   migrations?: { schemaReachable: boolean };
-  counts?: { workOrders: number; resourceFiles: number; connectorParameters: number; operationLogsRecent: number; dangerousOps: number; failedUploads: number; recentBatches: number; snapshotsRecent: number };
+  counts?: { workOrders: number; resourceFiles: number; connectorParameters: number; operationLogs: number; operationLogsRecent: number; dangerousOps: number; failedUploads: number; recentBatches: number; snapshotsRecent: number };
   warnings?: string[];
   serverTime: string;
 };
@@ -150,6 +150,8 @@ const actionText: Record<string, string> = {
   login: '登录',
   logout: '退出登录',
   upload: '上传文件',
+  upload_retry: '重试上传',
+  upload_failed: '上传失败',
   delete: '软删除文件',
   delete_resource_file: '软删除文件',
   change_password: '修改密码',
@@ -192,6 +194,7 @@ const actionText: Record<string, string> = {
   download_connector_parameter_file: '下载连接器原始资料',
   create_connector_parameter_import_batch: '创建导入批次',
   rollback_connector_parameter_import_batch: '回滚导入批次',
+  rollback_import_batch: '回滚导入批次',
 };
 const categoryIcons: Record<string, string> = { drawing: '原', sop: 'SOP', product: '成', material: '辅', notice: '注' };
 const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG', jpeg: 'JPG' };
@@ -935,7 +938,7 @@ export default function DashboardShell({
     return text || '网络异常';
   }
 
-  async function uploadJobToServer(job: UploadJob) {
+  async function uploadJobToServer(job: UploadJob, retry = false) {
     if (!job.file) return { ok: false, message: '页面会话中未保留文件，请重新选择' };
     if (!job.workOrderId) return { ok: false, message: '未选择工单' };
     if (!job.categoryId) return { ok: false, message: '未选择分类' };
@@ -946,6 +949,7 @@ export default function DashboardShell({
     fd.append('file', job.file);
     fd.append('workOrderId', job.workOrderId);
     fd.append('categoryId', job.categoryId);
+    if (retry) fd.append('retry', 'true');
     try {
       const r = await fetch('/api/resource-files/upload', { method: 'POST', body: fd });
       const d = await r.json().catch(() => ({}));
@@ -1015,7 +1019,7 @@ export default function DashboardShell({
 
   async function retryUploadJob(job: UploadJob) {
     setUploading(true);
-    const result = await uploadJobToServer(job);
+    const result = await uploadJobToServer(job, true);
     setUploading(false);
     setMsg(result.ok ? `已重试成功：${job.name}` : `重试失败：${result.message}`);
   }
@@ -1027,7 +1031,7 @@ export default function DashboardShell({
     let ok = 0;
     let failed = 0;
     for (const job of failedJobs) {
-      const result = await uploadJobToServer(job);
+      const result = await uploadJobToServer(job, true);
       if (result.ok) ok += 1;
       else failed += 1;
     }
@@ -1126,15 +1130,20 @@ export default function DashboardShell({
     if (!deleteTarget) return;
     const fileName = displayFileName(deleteTarget);
     const suffix = fileName.slice(-4);
-    const typed = deleteConfirmText.trim();
-    if (typed !== 'DELETE' && typed !== suffix) {
-      setMsg(`请输入 DELETE 或文件名后 4 位：${suffix}`);
+    const expected = `DELETE ${suffix}`;
+    const typed = deleteConfirmText.trim().replace(/\s+/g, ' ');
+    if (typed !== expected) {
+      setMsg(`请输入 ${expected} 后再删除`);
       return;
     }
     const deletedCategoryId = deleteTarget.categoryId;
     setDeleting(true);
     try {
-      const r = await fetch(`/api/resource-files/${deleteTarget.id}/delete`, { method: 'POST' });
+      const r = await fetch(`/api/resource-files/${deleteTarget.id}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmText: expected }),
+      });
       if (!r.ok) {
         setMsg('删除失败，请稍后重试');
         return;
@@ -1152,13 +1161,18 @@ export default function DashboardShell({
 
   async function confirmDeleteOrder() {
     if (!orderDeleteTarget) return;
-    if (orderDeleteConfirmText.trim() !== orderDeleteTarget.code) {
-      setMsg('请输入完整工单号后再删除');
+    const expected = `${orderDeleteTarget.code} CONFIRM`;
+    if (orderDeleteConfirmText.trim().replace(/\s+/g, ' ') !== expected) {
+      setMsg(`请输入 ${expected} 后再删除`);
       return;
     }
     setDeleting(true);
     try {
-      const r = await fetch(`/api/work-orders/${orderDeleteTarget.id}`, { method: 'DELETE' });
+      const r = await fetch(`/api/work-orders/${orderDeleteTarget.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmText: expected }),
+      });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
         setMsg(d.message || '删除工单失败');
@@ -2107,13 +2121,13 @@ export default function DashboardShell({
               <span>分类：{deleteTarget.categoryName || category?.name || '-'}</span>
             </div>
             <label className="confirm-input-label">
-              输入 <b>DELETE</b> 或文件名后 4 位确认
-              <input value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} placeholder={`例如：${displayFileName(deleteTarget).slice(-4)}`} />
+              输入 <b>DELETE {displayFileName(deleteTarget).slice(-4)}</b> 确认
+              <input value={deleteConfirmText} onChange={e => setDeleteConfirmText(e.target.value)} placeholder={`DELETE ${displayFileName(deleteTarget).slice(-4)}`} />
             </label>
             <p className="tool-note muted">删除后可在回收站恢复；不会物理删除对象存储文件。</p>
             <div className="dialog-actions">
               <button type="button" onClick={() => setDeleteTarget(null)}>取消</button>
-              <button className="danger-button" type="button" disabled={deleting || !deleteConfirmText.trim()} onClick={confirmDeleteFile}>{deleting ? '删除中...' : '确认删除'}</button>
+              <button className="danger-button" type="button" disabled={deleting || deleteConfirmText.trim().replace(/\s+/g, ' ') !== `DELETE ${displayFileName(deleteTarget).slice(-4)}`} onClick={confirmDeleteFile}>{deleting ? '删除中...' : '确认删除'}</button>
             </div>
           </section>
         </div>
@@ -2134,13 +2148,13 @@ export default function DashboardShell({
               <span>工单号：{orderDeleteTarget.code}</span>
             </div>
             <label className="confirm-input-label">
-              输入完整工单号确认删除
-              <input value={orderDeleteConfirmText} onChange={e => setOrderDeleteConfirmText(e.target.value)} placeholder={orderDeleteTarget.code} />
+              输入 <b>{orderDeleteTarget.code} CONFIRM</b> 确认删除
+              <input value={orderDeleteConfirmText} onChange={e => setOrderDeleteConfirmText(e.target.value)} placeholder={`${orderDeleteTarget.code} CONFIRM`} />
             </label>
             <p className="tool-note muted">删除后可在回收站恢复，不会删除 S3 文件。</p>
             <div className="dialog-actions">
               <button type="button" onClick={() => setOrderDeleteTarget(null)}>取消</button>
-              <button className="danger-button" type="button" disabled={deleting || orderDeleteConfirmText.trim() !== orderDeleteTarget.code} onClick={confirmDeleteOrder}>{deleting ? '删除中...' : '确认删除'}</button>
+              <button className="danger-button" type="button" disabled={deleting || orderDeleteConfirmText.trim().replace(/\s+/g, ' ') !== `${orderDeleteTarget.code} CONFIRM`} onClick={confirmDeleteOrder}>{deleting ? '删除中...' : '确认删除'}</button>
             </div>
           </section>
         </div>
@@ -2614,7 +2628,7 @@ function SystemSettings({
         <div className="dialog-title">
           <div>
             <strong>系统设置</strong>
-            <small>{status?.app.version || 'v1.12.0-rc.1'} · Web / PWA</small>
+            <small>{status?.app.version || 'v1.13.0-rc.1'} · Web / PWA</small>
           </div>
           <button type="button" onClick={close}>×</button>
         </div>
@@ -2623,7 +2637,7 @@ function SystemSettings({
           <section className="system-section">
             <h3>基础信息</h3>
             <Info label="系统名称" value={status?.app.name || '工单资料库'} />
-            <Info label="当前版本" value={status?.app.version || 'v1.12.0-rc.1'} />
+            <Info label="当前版本" value={status?.app.version || 'v1.13.0-rc.1'} />
             <Info label="部署模式" value={status?.app.mode || 'Web / PWA'} />
             <Info label="运行时长" value={status?.app.uptime ? `${Math.floor(status.app.uptime / 60)} 分钟` : '-'} />
             <Info label="数据模式" value={status?.data.mode || '账号登录，共享数据'} />
@@ -2655,6 +2669,7 @@ function SystemSettings({
             <Info label="工单数量" value={String(status?.counts?.workOrders ?? '-')} />
             <Info label="资料文件" value={String(status?.counts?.resourceFiles ?? '-')} />
             <Info label="连接器参数" value={String(status?.counts?.connectorParameters ?? '-')} />
+            <Info label="操作日志总数" value={String(status?.counts?.operationLogs ?? '-')} />
             <Info label="近 24h 操作日志" value={String(status?.counts?.operationLogsRecent ?? '-')} />
             <Info label="近 24h 危险操作" value={String(status?.counts?.dangerousOps ?? '-')} ok={(status?.counts?.dangerousOps || 0) === 0} />
             <Info label="近 24h 导入批次" value={String(status?.counts?.recentBatches ?? '-')} />

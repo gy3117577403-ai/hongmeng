@@ -47,9 +47,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
+    const body = await req.json().catch(() => ({})) as { confirmText?: unknown };
+    if (String(body.confirmText || '').trim() !== 'DELETE') return NextResponse.json({ ok: false, error: '删除确认不匹配' }, { status: 400 });
     const existing = await prisma.connectorParameter.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!existing) return NextResponse.json({ ok: false, error: '连接器参数不存在' }, { status: 404 });
     const item = await prisma.connectorParameter.update({

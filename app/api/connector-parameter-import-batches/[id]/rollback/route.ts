@@ -35,6 +35,13 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
       targetId: batch.id,
       detail: { count: result.count, fileName: batch.fileName, softDelete: true },
     });
+    await logOp({
+      userId: user.id,
+      action: 'rollback_import_batch',
+      targetType: 'connector_parameter_import_batch',
+      targetId: batch.id,
+      detail: { count: result.count, fileName: batch.fileName, softDelete: true },
+    });
     await snapshotChange({
       entityType: 'connector_parameter_import_batch',
       entityId: batch.id,

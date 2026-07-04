@@ -119,11 +119,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
     const old = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!old) return NextResponse.json({ ok: false, error: '工单不存在', message: '工单不存在' }, { status: 404 });
+    const body = await req.json().catch(() => ({})) as { confirmText?: unknown };
+    const expected = `${old.code} CONFIRM`;
+    const confirmText = String(body.confirmText || '').trim().replace(/\s+/g, ' ');
+    if (confirmText !== expected) return NextResponse.json({ ok: false, error: '删除确认不匹配', message: '删除确认不匹配' }, { status: 400 });
 
     const workOrder = await prisma.workOrder.update({
       where: { id: params.id },

@@ -36,29 +36,31 @@ async function checkStorage() {
 
 function warningList() {
   const warnings: string[] = [];
-  if (!process.env.APP_BASE_URL) warnings.push('APP_BASE_URL 未配置');
-  if (!process.env.S3_PUBLIC_ENDPOINT) warnings.push('S3_PUBLIC_ENDPOINT 未配置');
-  if (process.env.SEED_RESET_ADMIN_PASSWORD !== 'false') warnings.push('SEED_RESET_ADMIN_PASSWORD 建议保持 false');
+  if (!process.env.APP_BASE_URL) warnings.push('APP_BASE_URL missing');
+  if (!process.env.S3_PUBLIC_ENDPOINT) warnings.push('S3_PUBLIC_ENDPOINT missing');
+  if (process.env.SEED_RESET_ADMIN_PASSWORD !== 'false') warnings.push('SEED_RESET_ADMIN_PASSWORD != false');
   return warnings;
 }
 
 async function loadCounts() {
   const recentSince = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const [workOrders, resourceFiles, connectorParameters, operationLogsRecent, dangerousOps, recentBatches, snapshotsRecent] = await Promise.all([
+  const [workOrders, resourceFiles, connectorParameters, operationLogs, operationLogsRecent, dangerousOps, failedUploads, recentBatches, snapshotsRecent] = await Promise.all([
     prisma.workOrder.count({ where: { deletedAt: null } }),
     prisma.resourceFile.count({ where: { deletedAt: null, status: 'uploaded' } }),
     prisma.connectorParameter.count({ where: { deletedAt: null } }),
+    prisma.operationLog.count(),
     prisma.operationLog.count({ where: { createdAt: { gte: recentSince } } }),
     prisma.operationLog.count({
       where: {
         createdAt: { gte: recentSince },
-        action: { in: ['delete_work_order', 'delete_resource_file', 'delete_connector_parameter', 'batch_delete_connector_parameters', 'rollback_connector_parameter_import_batch'] },
+        action: { in: ['delete_work_order', 'delete_resource_file', 'delete_connector_parameter', 'batch_delete_connector_parameters', 'rollback_connector_parameter_import_batch', 'rollback_import_batch'] },
       },
     }),
+    prisma.operationLog.count({ where: { createdAt: { gte: recentSince }, action: 'upload_failed' } }),
     prisma.connectorParameterImportBatch.count({ where: { createdAt: { gte: recentSince } } }),
     prisma.dataChangeSnapshot.count({ where: { createdAt: { gte: recentSince } } }),
   ]);
-  return { workOrders, resourceFiles, connectorParameters, operationLogsRecent, dangerousOps, failedUploads: 0, recentBatches, snapshotsRecent };
+  return { workOrders, resourceFiles, connectorParameters, operationLogs, operationLogsRecent, dangerousOps, failedUploads, recentBatches, snapshotsRecent };
 }
 
 export async function GET() {
@@ -69,7 +71,7 @@ export async function GET() {
       ok: database.ok && storage.ok,
       app: {
         name: '工单资料库',
-        version: 'v1.12.0-rc.1',
+        version: 'v1.13.0-rc.1',
         mode: 'Web / PWA',
         uptime: Math.floor(process.uptime()),
       },
