@@ -1,0 +1,2 @@
+# Obfuscation rules for release build.
+# Keep empty for v2.0.0-native-rc.1 scaffold.

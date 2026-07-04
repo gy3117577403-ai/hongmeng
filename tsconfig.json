@@ -37,6 +37,7 @@
   ],
   "exclude": [
     "node_modules",
-    "harmony-tablet"
+    "harmony-tablet",
+    "harmony-tablet-backup-before-deveco-fix"
   ]
 }

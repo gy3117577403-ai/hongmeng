@@ -18,6 +18,14 @@
 4. 等待 ohpm / hvigor 同步。
 5. 如果 SDK 版本提示不匹配，按本机 DevEco 推荐版本修正 `compatibleSdkVersion`。
 
+## DevEco 同步失败修复说明
+- 本工程已按本机 `DevEcoStudio26.0` 的 Empty Ability / Stage 模型模板对齐基础配置。
+- 根 `oh-package.json5` 不再把 `@ohos/hvigor-ohos-plugin` 或 `@ohos/hvigor` 写为 `latest` 依赖。
+- `@ohos/hvigor-ohos-plugin` 是 DevEco / Hvigor 内置插件，由 DevEco 环境提供，不应手动改成 `latest`。
+- 如果再次出现 `@ohos/hvigor-ohos-plugin@latest not found`，请先检查根 `oh-package.json5` 是否被改回 `latest`。
+- 推荐优先使用 DevEco Studio 内置工程升级 / Sync 工具处理 SDK 或模板格式差异。
+- 命令行构建需要本机 PATH 中存在 `ohpm`、`hvigor` 或工程自带 `hvigorw.bat`；若没有，请在 DevEco Studio 内点击 Sync / Build。
+
 ## API 配置
 默认服务器地址位于：
 
