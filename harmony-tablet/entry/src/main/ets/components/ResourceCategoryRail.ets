@@ -20,11 +20,42 @@ function categoryStateColor(category: ResourceCategory): string {
   return Colors.textMuted;
 }
 
+function categoryShortLabel(category: ResourceCategory): string {
+  if (category.code === 'drawing') return '原';
+  if (category.code === 'sop') return 'SOP';
+  if (category.code === 'product') return '成';
+  if (category.code === 'material') return '辅';
+  if (category.code === 'notice') return '注';
+  return category.name.slice(0, 1);
+}
+
+function missingCount(categories: ResourceCategory[]): number {
+  let count = 0;
+  for (let i = 0; i < categories.length; i++) {
+    const item = categories[i];
+    if (item.required && (item.fileCount || 0) === 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
+function finishedCount(categories: ResourceCategory[]): number {
+  let count = 0;
+  for (let i = 0; i < categories.length; i++) {
+    if ((categories[i].fileCount || 0) > 0) {
+      count++;
+    }
+  }
+  return count;
+}
+
 @Component
 export struct ResourceCategoryRail {
   categories: ResourceCategory[] = [];
   selectedId: string = '';
   onSelect: (category: ResourceCategory) => void = () => {};
+  onOpenUploadManager: () => void = () => {};
 
   build(): void {
     Column() {
@@ -32,15 +63,31 @@ export struct ResourceCategoryRail {
         .fontSize(16)
         .fontWeight(FontWeight.Bold)
         .fontColor(Colors.text)
-        .margin({ bottom: 12 })
+      Text(`缺资料 ${missingCount(this.categories)} · ${finishedCount(this.categories)}/${this.categories.length || 5}`)
+        .fontSize(12)
+        .fontColor(missingCount(this.categories) > 0 ? Colors.primary : Colors.success)
+        .margin({ top: 4, bottom: 12 })
       ForEach(this.categories, (category: ResourceCategory) => {
         Row() {
-          Column()
-            .width(8)
-            .height(8)
-            .backgroundColor(categoryStateColor(category))
-            .borderRadius(4)
-            .margin({ right: 10 })
+          Stack({ alignContent: Alignment.TopEnd }) {
+            Text(categoryShortLabel(category))
+              .fontSize(category.code === 'sop' ? 12 : 15)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(category.id === this.selectedId ? Color.White : Colors.primary)
+              .textAlign(TextAlign.Center)
+              .width(36)
+              .height(36)
+              .backgroundColor(category.id === this.selectedId ? Colors.primary : Colors.primaryLight)
+              .borderRadius(12)
+            Column()
+              .width(8)
+              .height(8)
+              .backgroundColor(categoryStateColor(category))
+              .borderRadius(4)
+          }
+          .width(40)
+          .height(40)
+          .margin({ right: 10 })
           Column() {
             Text(category.name)
               .fontSize(15)
@@ -73,11 +120,42 @@ export struct ResourceCategoryRail {
         .onClick(() => this.onSelect(category))
       })
       if (this.categories.length === 0) {
-        Text('分类加载中')
+        Text('分类暂未返回，请检查资料接口')
           .fontSize(13)
-          .fontColor(Colors.textMuted)
+          .fontColor(Colors.danger)
           .height(80)
       }
+      Row() {
+        Text('管')
+          .fontSize(15)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(Colors.text)
+          .textAlign(TextAlign.Center)
+          .width(36)
+          .height(36)
+          .backgroundColor('#F3F4F6')
+          .borderRadius(12)
+          .margin({ right: 10 })
+        Column() {
+          Text('上传管理')
+            .fontSize(15)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Colors.text)
+          Text('队列 / 文件')
+            .fontSize(11)
+            .fontColor(Colors.textMuted)
+            .margin({ top: 6 })
+        }
+        .alignItems(HorizontalAlign.Start)
+      }
+      .height(70)
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 12, right: 10 })
+      .backgroundColor(Colors.card)
+      .border({ width: 1, color: Colors.border })
+      .borderRadius(16)
+      .onClick(() => this.onOpenUploadManager())
     }
     .width(164)
     .height('100%')

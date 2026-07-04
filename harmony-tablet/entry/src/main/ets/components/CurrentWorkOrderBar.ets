@@ -24,6 +24,8 @@ function missingRequiredCount(categories: ResourceCategory[]): number {
 export struct CurrentWorkOrderBar {
   order?: WorkOrder;
   categories: ResourceCategory[] = [];
+  onSwitchOrder: () => void = () => {};
+  onMore: () => void = () => {};
 
   build(): void {
     Column() {
@@ -58,6 +60,23 @@ export struct CurrentWorkOrderBar {
             .padding({ left: 12, right: 12, top: 6, bottom: 6 })
             .backgroundColor('#F3F4F6')
             .borderRadius(12)
+          Button('切换工单')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Colors.primary)
+            .backgroundColor(Colors.primaryLight)
+            .borderRadius(12)
+            .margin({ left: 10 })
+            .onClick(() => this.onSwitchOrder())
+          Button('更多')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Colors.text)
+            .backgroundColor(Colors.card)
+            .border({ width: 1, color: Colors.border })
+            .borderRadius(12)
+            .margin({ left: 8 })
+            .onClick(() => this.onMore())
         }
         Row() {
           Text(`资料数量 ${this.order?.totalFileCount || 0}`)

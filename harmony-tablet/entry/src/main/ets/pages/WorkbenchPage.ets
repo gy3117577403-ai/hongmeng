@@ -30,7 +30,10 @@ struct WorkbenchPage {
   @State toolCollapsed: boolean = true;
   @State cameraOpen: boolean = false;
   @State orderKeyword: string = '';
+  @State globalKeyword: string = '';
   @State orderStageFilter: string = '';
+  @State loadError: string = '';
+  @State resourceError: string = '';
   @State orders: WorkOrder[] = [];
   @State current?: WorkOrder = undefined;
   @State categories: ResourceCategory[] = [];
@@ -49,10 +52,13 @@ struct WorkbenchPage {
 
   async load(): Promise<void> {
     this.loading = true;
+    this.loadError = '';
+    this.resourceError = '';
     try {
       this.orders = await WorkOrderStore.load(this.orderKeyword);
       this.current = WorkOrderStore.current;
       if (this.current) {
+        this.current = await WorkOrderStore.loadDetail(this.current.id);
         await this.loadResources(this.current.id);
       } else {
         this.categories = [];
@@ -61,25 +67,46 @@ struct WorkbenchPage {
         this.selectedFile = undefined;
       }
     } catch (err) {
-      await this.handleError(err, '工作台加载失败');
+      const error = err as Error;
+      this.loadError = this.errorText(error, '工单加载失败');
+      await this.handleError(error, '工单加载失败');
     } finally {
       this.loading = false;
     }
   }
 
   async loadResources(workOrderId: string): Promise<void> {
-    await ResourceStore.load(workOrderId);
-    this.categories = ResourceStore.categories;
-    this.selectedCategoryId = ResourceStore.currentCategoryId;
-    this.files = ResourceStore.filesForCategory(this.selectedCategoryId);
-    this.selectedFile = ResourceStore.selectedFile || (this.files.length > 0 ? this.files[0] : undefined);
+    this.resourceError = '';
+    try {
+      await ResourceStore.load(workOrderId);
+      this.categories = ResourceStore.categories;
+      this.selectedCategoryId = ResourceStore.currentCategoryId;
+      this.files = ResourceStore.filesForCategory(this.selectedCategoryId);
+      this.selectedFile = ResourceStore.selectedFile || (this.files.length > 0 ? this.files[0] : undefined);
+    } catch (err) {
+      const error = err as Error;
+      this.categories = ResourceStore.defaultCategories();
+      this.selectedCategoryId = this.categories.length > 0 ? this.categories[0].id : '';
+      this.files = [];
+      this.selectedFile = undefined;
+      this.resourceError = this.errorText(error, '资料分类加载失败');
+      await this.handleError(error, '资料分类加载失败');
+    }
   }
 
   async selectOrder(order: WorkOrder): Promise<void> {
     WorkOrderStore.select(order);
-    this.current = order;
     this.drawerOpen = false;
-    await this.loadResources(order.id);
+    this.loadError = '';
+    try {
+      this.current = await WorkOrderStore.loadDetail(order.id);
+      await this.loadResources(order.id);
+    } catch (err) {
+      const error = err as Error;
+      this.current = order;
+      this.loadError = this.errorText(error, '工单详情加载失败');
+      await this.handleError(error, '工单详情加载失败');
+    }
   }
 
   selectCategory(category: ResourceCategory): void {
@@ -99,6 +126,12 @@ struct WorkbenchPage {
     await this.load();
   }
 
+  async searchGlobal(): Promise<void> {
+    this.orderKeyword = this.globalKeyword;
+    this.drawerOpen = true;
+    await this.load();
+  }
+
   setOrderStageFilter(stage: string): void {
     this.orderStageFilter = stage;
   }
@@ -110,6 +143,33 @@ struct WorkbenchPage {
       }
     }
     return '';
+  }
+
+  missingCategoryNames(): string {
+    const names: string[] = [];
+    for (let i = 0; i < this.categories.length; i++) {
+      const category = this.categories[i];
+      if (category.required && (category.fileCount || 0) === 0) {
+        names.push(category.name);
+      }
+    }
+    if (names.length === 0) return '无';
+    return names.join('、');
+  }
+
+  missingCategoryCount(): number {
+    let count = 0;
+    for (let i = 0; i < this.categories.length; i++) {
+      if (this.categories[i].required && (this.categories[i].fileCount || 0) === 0) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  totalCategoryCount(): number {
+    if (this.categories.length > 0) return this.categories.length;
+    return 5;
   }
 
   async logout(): Promise<void> {
@@ -125,6 +185,11 @@ struct WorkbenchPage {
       return;
     }
     ToastAdapter.error(err.message || fallback);
+  }
+
+  errorText(err: Error, fallback: string): string {
+    if (err.message && err.message.length > 0) return err.message;
+    return fallback;
   }
 
   addUploadJob(job: UploadQueueItem): void {
@@ -234,25 +299,45 @@ struct WorkbenchPage {
       Column() {
         TopBar({
           username: AuthStore.user?.displayName || AuthStore.user?.username || '已登录',
+          keyword: this.globalKeyword,
+          onKeywordChange: (value: string) => this.globalKeyword = value,
+          onSearch: () => this.searchGlobal(),
           onOpenDrawer: () => this.drawerOpen = true,
+          onPlaceholder: (name: string) => ToastAdapter.show(`${name} 原生入口待补齐`),
           onLogout: () => this.logout()
         })
         Column() {
-          CurrentWorkOrderBar({ order: this.current, categories: this.categories })
+          CurrentWorkOrderBar({
+            order: this.current,
+            categories: this.categories,
+            onSwitchOrder: () => this.drawerOpen = true,
+            onMore: () => this.toolCollapsed = false
+          })
             .margin({ bottom: 14 })
+          if (this.loadError.length > 0 || this.resourceError.length > 0) {
+            Text(this.loadError.length > 0 ? this.loadError : this.resourceError)
+              .fontSize(14)
+              .fontColor(Colors.danger)
+              .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+              .backgroundColor('#FEF2F2')
+              .borderRadius(12)
+              .margin({ bottom: 12 })
+          }
           Stack({ alignContent: Alignment.TopEnd }) {
             if (this.current) {
               Row() {
                 ResourceCategoryRail({
                   categories: this.categories,
                   selectedId: this.selectedCategoryId,
-                  onSelect: (category: ResourceCategory) => this.selectCategory(category)
+                  onSelect: (category: ResourceCategory) => this.selectCategory(category),
+                  onOpenUploadManager: () => this.toolCollapsed = false
                 })
                 Stack({ alignContent: Alignment.Bottom }) {
                   ResourcePreviewPanel({
                     file: this.selectedFile,
                     categoryName: this.selectedCategoryName(),
                     fileCount: this.files.length,
+                    missingSummary: this.missingCategoryNames(),
                     onUploadPdf: () => this.uploadPdf(),
                     onUploadImage: () => this.uploadImage(),
                     onCameraUpload: () => this.cameraUpload(),
@@ -302,13 +387,13 @@ struct WorkbenchPage {
               .height('100%')
             } else {
               Column() {
-                Text('暂无选中工单')
+                Text(this.orders.length === 0 && this.loadError.length === 0 ? '暂无工单' : '暂无选中工单')
                   .fontSize(28)
                   .fontWeight(FontWeight.Bold)
                   .fontColor(Colors.text)
-                Text('登录后会自动选择第一条工单；如果没有显示，请打开左上角工单抽屉。')
+                Text(this.loadError.length > 0 ? this.loadError : '登录后会自动选择第一条工单；如果没有显示，请打开左上角工单抽屉。')
                   .fontSize(15)
-                  .fontColor(Colors.textMuted)
+                  .fontColor(this.loadError.length > 0 ? Colors.danger : Colors.textMuted)
                   .margin({ top: 12, bottom: 20 })
                   .textAlign(TextAlign.Center)
                 CommonButton({ label: '打开工单抽屉', onTap: () => this.drawerOpen = true })

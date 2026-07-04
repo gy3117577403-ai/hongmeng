@@ -30,4 +30,10 @@ export class WorkOrderStore {
   static select(order: WorkOrder): void {
     WorkOrderStore.current = order;
   }
+
+  static async loadDetail(id: string): Promise<WorkOrder> {
+    const data = await workOrderApi.fetchWorkOrder(id);
+    WorkOrderStore.current = data.workOrder;
+    return data.workOrder;
+  }
 }

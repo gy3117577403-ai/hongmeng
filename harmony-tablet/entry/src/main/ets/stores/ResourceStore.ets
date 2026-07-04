@@ -10,13 +10,29 @@ export class ResourceStore {
   static currentCategoryId: string = '';
   static selectedFile?: ResourceFile;
 
+  static defaultCategories(): ResourceCategory[] {
+    const categories: ResourceCategory[] = [
+      { id: 'drawing', code: 'drawing', name: '原图', required: true, sortOrder: 1, fileCount: 0 },
+      { id: 'sop', code: 'sop', name: 'SOP指导书', required: true, sortOrder: 2, fileCount: 0 },
+      { id: 'product', code: 'product', name: '成品图', required: true, sortOrder: 3, fileCount: 0 },
+      { id: 'material', code: 'material', name: '辅料规格', required: false, sortOrder: 4, fileCount: 0 },
+      { id: 'notice', code: 'notice', name: '注意事项', required: false, sortOrder: 5, fileCount: 0 }
+    ];
+    return categories;
+  }
+
   static async load(workOrderId: string): Promise<void> {
     const data = await workOrderApi.fetchWorkOrderResources(workOrderId);
-    ResourceStore.categories = data.categories;
+    ResourceStore.categories = data.categories.length > 0 ? data.categories : ResourceStore.defaultCategories();
     ResourceStore.files = data.files;
-    const stillExists = data.categories.some(category => category.id === ResourceStore.currentCategoryId);
-    if ((!ResourceStore.currentCategoryId || !stillExists) && data.categories.length > 0) {
-      ResourceStore.currentCategoryId = data.categories[0].id;
+    let stillExists = false;
+    for (let i = 0; i < ResourceStore.categories.length; i++) {
+      if (ResourceStore.categories[i].id === ResourceStore.currentCategoryId) {
+        stillExists = true;
+      }
+    }
+    if ((!ResourceStore.currentCategoryId || !stillExists) && ResourceStore.categories.length > 0) {
+      ResourceStore.currentCategoryId = ResourceStore.categories[0].id;
     }
     const files = ResourceStore.filesForCategory(ResourceStore.currentCategoryId);
     ResourceStore.selectedFile = files.length > 0 ? files[0] : undefined;
