@@ -2,6 +2,10 @@
   "string": [
     { "name": "app_name", "value": "工单资料库" },
     { "name": "module_desc", "value": "鸿蒙平板生产资料管理系统" },
-    { "name": "entryability_desc", "value": "工单资料库入口" }
+    { "name": "entryability_desc", "value": "工单资料库入口" },
+    { "name": "permission_camera_reason", "value": "用于拍照上传工单资料图片。" },
+    { "name": "permission_microphone_reason", "value": "用于在搜索和表单中进行语音输入。" },
+    { "name": "permission_media_reason", "value": "用于选择并上传本地图片资料。" },
+    { "name": "permission_file_reason", "value": "用于选择并上传 PDF 或文档资料。" }
   ]
 }
