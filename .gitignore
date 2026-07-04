@@ -19,3 +19,11 @@ hongmeng-production.zip
 docker-compose.override.yml
 *.tar
 *.tmp
+
+# HarmonyOS / DevEco local artifacts
+harmony-tablet/oh_modules/
+harmony-tablet/build/
+harmony-tablet/.hvigor/
+harmony-tablet/.idea/
+harmony-tablet/local.properties
+harmony-tablet/**/build/

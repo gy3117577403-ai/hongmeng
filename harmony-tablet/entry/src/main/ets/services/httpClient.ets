@@ -1,0 +1,106 @@
+import http from '@ohos.net.http';
+import { API_BASE_URL, API_TIMEOUT_MS } from '../constants/api';
+
+export interface ApiResult<T> {
+  ok: boolean;
+  data?: T;
+  error?: string;
+}
+
+export class ApiException extends Error {
+  status: number;
+
+  constructor(message: string, status: number = 0) {
+    super(message);
+    this.status = status;
+  }
+}
+
+class NativeHttpClient {
+  private token: string = '';
+
+  setToken(token: string) {
+    this.token = token;
+  }
+
+  clearToken() {
+    this.token = '';
+  }
+
+  async get<T>(path: string): Promise<T> {
+    return this.request<T>('GET', path);
+  }
+
+  async post<T>(path: string, body?: object): Promise<T> {
+    return this.request<T>('POST', path, body);
+  }
+
+  async patch<T>(path: string, body?: object): Promise<T> {
+    return this.request<T>('PATCH', path, body);
+  }
+
+  async delete<T>(path: string, body?: object): Promise<T> {
+    return this.request<T>('DELETE', path, body);
+  }
+
+  contentUrl(path: string): string {
+    return `${API_BASE_URL}${path}`;
+  }
+
+  private async request<T>(method: string, path: string, body?: object): Promise<T> {
+    const client = http.createHttp();
+    const headers: Record<string, string> = {
+      'Accept': 'application/json'
+    };
+    if (body) {
+      headers['Content-Type'] = 'application/json';
+    }
+    if (this.token) {
+      headers['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    try {
+      const response = await client.request(`${API_BASE_URL}${path}`, {
+        method: this.method(method),
+        header: headers,
+        extraData: body ? JSON.stringify(body) : undefined,
+        connectTimeout: API_TIMEOUT_MS,
+        readTimeout: API_TIMEOUT_MS
+      });
+      const status = Number(response.responseCode || 0);
+      const raw = typeof response.result === 'string' ? response.result : JSON.stringify(response.result || {});
+      let parsed: ApiResult<T>;
+      try {
+        parsed = JSON.parse(raw) as ApiResult<T>;
+      } catch (_) {
+        throw new ApiException('服务返回格式异常', status);
+      }
+      if (status === 401) {
+        throw new ApiException(parsed.error || '未登录或登录已过期', 401);
+      }
+      if (status >= 500) {
+        throw new ApiException(parsed.error || '服务端异常', status);
+      }
+      if (!parsed.ok) {
+        throw new ApiException(parsed.error || '请求失败', status);
+      }
+      return parsed.data as T;
+    } catch (err) {
+      if (err instanceof ApiException) {
+        throw err;
+      }
+      throw new ApiException('网络连接失败，请检查平板网络');
+    } finally {
+      client.destroy();
+    }
+  }
+
+  private method(method: string): http.RequestMethod {
+    if (method === 'POST') return http.RequestMethod.POST;
+    if (method === 'PATCH') return http.RequestMethod.PATCH;
+    if (method === 'DELETE') return http.RequestMethod.DELETE;
+    return http.RequestMethod.GET;
+  }
+}
+
+export const httpClient = new NativeHttpClient();

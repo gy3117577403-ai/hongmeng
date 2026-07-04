@@ -1,0 +1,7 @@
+{
+  "string": [
+    { "name": "app_name", "value": "工单资料库" },
+    { "name": "module_desc", "value": "鸿蒙平板生产资料管理系统" },
+    { "name": "entryability_desc", "value": "工单资料库入口" }
+  ]
+}

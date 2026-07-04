@@ -1,0 +1,13 @@
+{
+  "name": "hongmeng-workorder-tablet",
+  "version": "2.0.0-native-rc.1",
+  "description": "Native HarmonyOS tablet app for the work order resource system.",
+  "main": "",
+  "author": "factory",
+  "license": "UNLICENSED",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hvigor-ohos-plugin": "latest",
+    "@ohos/hvigor": "latest"
+  }
+}

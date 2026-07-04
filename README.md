@@ -35,6 +35,17 @@ ghcr.io/gy3117577403-ai/hongmeng:latest
 ```
 Sealos App Deploy 端口填 `3000`。
 
+## Harmony Native App
+- 目录：`harmony-tablet`
+- 版本：v2.0.0-native-rc.1
+- 技术栈：ArkTS / ArkUI / Stage 模型
+- 设备优先：鸿蒙 Tablet
+- 主界面：原生 ArkUI，不使用 WebView 套壳
+- 后端：通过 HTTPS 调用 Sealos `/api/native/*`
+- 默认服务地址：https://qdowqencjyph.sealoshzh.site
+- 文档：[Harmony Native App Plan v2.0.0](docs/HARMONY_NATIVE_APP_PLAN_v2.0.0.md)
+- 工程说明：[Native README](harmony-tablet/README_NATIVE.md)
+
 ## 生产部署状态
 - 当前生产版本：v1.12.0
 - 上线地址：https://qdowqencjyph.sealoshzh.site
