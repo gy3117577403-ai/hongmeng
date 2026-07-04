@@ -8,7 +8,20 @@ export class WorkOrderStore {
   static async load(keyword: string = ''): Promise<WorkOrder[]> {
     const data = await workOrderApi.fetchWorkOrders(keyword, 1);
     WorkOrderStore.workOrders = data.workOrders;
-    if (!WorkOrderStore.current && data.workOrders.length > 0) {
+    if (data.workOrders.length === 0) {
+      WorkOrderStore.current = undefined;
+      return WorkOrderStore.workOrders;
+    }
+
+    let currentStillVisible = false;
+    if (WorkOrderStore.current) {
+      for (let i = 0; i < data.workOrders.length; i++) {
+        if (data.workOrders[i].id === WorkOrderStore.current.id) {
+          currentStillVisible = true;
+        }
+      }
+    }
+    if (!WorkOrderStore.current || !currentStillVisible) {
       WorkOrderStore.current = data.workOrders[0];
     }
     return WorkOrderStore.workOrders;

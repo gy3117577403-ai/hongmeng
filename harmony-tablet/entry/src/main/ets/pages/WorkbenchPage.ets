@@ -27,9 +27,10 @@ import { WorkOrderStore } from '../stores/WorkOrderStore';
 struct WorkbenchPage {
   @State loading: boolean = true;
   @State drawerOpen: boolean = false;
-  @State toolCollapsed: boolean = false;
+  @State toolCollapsed: boolean = true;
   @State cameraOpen: boolean = false;
   @State orderKeyword: string = '';
+  @State orderStageFilter: string = '';
   @State orders: WorkOrder[] = [];
   @State current?: WorkOrder = undefined;
   @State categories: ResourceCategory[] = [];
@@ -53,6 +54,11 @@ struct WorkbenchPage {
       this.current = WorkOrderStore.current;
       if (this.current) {
         await this.loadResources(this.current.id);
+      } else {
+        this.categories = [];
+        this.selectedCategoryId = '';
+        this.files = [];
+        this.selectedFile = undefined;
       }
     } catch (err) {
       await this.handleError(err, '工作台加载失败');
@@ -91,6 +97,19 @@ struct WorkbenchPage {
   async searchOrders(keyword: string): Promise<void> {
     this.orderKeyword = keyword;
     await this.load();
+  }
+
+  setOrderStageFilter(stage: string): void {
+    this.orderStageFilter = stage;
+  }
+
+  selectedCategoryName(): string {
+    for (let i = 0; i < this.categories.length; i++) {
+      if (this.categories[i].id === this.selectedCategoryId) {
+        return this.categories[i].name;
+      }
+    }
+    return '';
   }
 
   async logout(): Promise<void> {
@@ -219,69 +238,103 @@ struct WorkbenchPage {
           onLogout: () => this.logout()
         })
         Column() {
-          CurrentWorkOrderBar({ order: this.current })
+          CurrentWorkOrderBar({ order: this.current, categories: this.categories })
             .margin({ bottom: 14 })
-          Row() {
-            ResourceCategoryRail({
-              categories: this.categories,
-              selectedId: this.selectedCategoryId,
-              onSelect: (category: ResourceCategory) => this.selectCategory(category)
-            })
-            Column() {
-              ResourcePreviewPanel({
-                file: this.selectedFile,
+          Stack({ alignContent: Alignment.TopEnd }) {
+            if (this.current) {
+              Row() {
+                ResourceCategoryRail({
+                  categories: this.categories,
+                  selectedId: this.selectedCategoryId,
+                  onSelect: (category: ResourceCategory) => this.selectCategory(category)
+                })
+                Stack({ alignContent: Alignment.Bottom }) {
+                  ResourcePreviewPanel({
+                    file: this.selectedFile,
+                    categoryName: this.selectedCategoryName(),
+                    fileCount: this.files.length,
+                    onUploadPdf: () => this.uploadPdf(),
+                    onUploadImage: () => this.uploadImage(),
+                    onCameraUpload: () => this.cameraUpload(),
+                    onDownload: (file: ResourceFile) => this.downloadFile(file),
+                    onOpen: (file: ResourceFile) => this.openFile(file)
+                  })
+                  if (this.files.length > 1) {
+                    Scroll() {
+                      Row() {
+                        ForEach(this.files, (file: ResourceFile) => {
+                          Column() {
+                            Text(file.displayName || file.originalName)
+                              .fontSize(13)
+                              .fontColor(file.id === this.selectedFile?.id ? Colors.primary : Colors.text)
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+                            Text(file === this.files[0] ? `最新 · ${file.version || 'V1.0'}` : `历史 · ${file.version || 'V1.0'}`)
+                              .fontSize(11)
+                              .fontColor(Colors.textMuted)
+                              .margin({ top: 4 })
+                          }
+                          .height(56)
+                          .width(226)
+                          .padding({ left: 12, right: 12, top: 8, bottom: 6 })
+                          .backgroundColor(file.id === this.selectedFile?.id ? Colors.primaryLight : '#FDFDFD')
+                          .border({ width: 1, color: file.id === this.selectedFile?.id ? Colors.primary : Colors.border })
+                          .borderRadius(14)
+                          .margin({ right: 10 })
+                          .onClick(() => this.selectFile(file))
+                        })
+                      }
+                    }
+                    .height(72)
+                    .width('92%')
+                    .padding({ left: 10, right: 10, top: 8 })
+                    .backgroundColor('#EFFFFFFF')
+                    .border({ width: 1, color: Colors.border })
+                    .borderRadius(18)
+                    .margin({ bottom: 16 })
+                    .scrollable(ScrollDirection.Horizontal)
+                  }
+                }
+                .layoutWeight(1)
+                .height('100%')
+                .margin({ left: 12 })
+              }
+              .height('100%')
+            } else {
+              Column() {
+                Text('暂无选中工单')
+                  .fontSize(28)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(Colors.text)
+                Text('登录后会自动选择第一条工单；如果没有显示，请打开左上角工单抽屉。')
+                  .fontSize(15)
+                  .fontColor(Colors.textMuted)
+                  .margin({ top: 12, bottom: 20 })
+                  .textAlign(TextAlign.Center)
+                CommonButton({ label: '打开工单抽屉', onTap: () => this.drawerOpen = true })
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+              .alignItems(HorizontalAlign.Center)
+              .backgroundColor(Colors.card)
+              .borderRadius(18)
+            }
+            if (this.current) {
+              ResourceToolPanel({
+                collapsed: this.toolCollapsed,
+                selectedFile: this.selectedFile,
+                uploadQueue: this.uploadQueue,
+                onToggle: () => this.toolCollapsed = !this.toolCollapsed,
                 onUploadPdf: () => this.uploadPdf(),
                 onUploadImage: () => this.uploadImage(),
                 onCameraUpload: () => this.cameraUpload(),
                 onDownload: (file: ResourceFile) => this.downloadFile(file),
-                onOpen: (file: ResourceFile) => this.openFile(file)
+                onOpen: (file: ResourceFile) => this.openFile(file),
+                onDelete: (file: ResourceFile) => this.deleteFile(file)
               })
-                .layoutWeight(1)
-              if (this.files.length > 0) {
-                Scroll() {
-                  Row() {
-                    ForEach(this.files, (file: ResourceFile) => {
-                      Column() {
-                        Text(file.displayName || file.originalName)
-                          .fontSize(13)
-                          .fontColor(file.id === this.selectedFile?.id ? Colors.primary : Colors.text)
-                          .maxLines(1)
-                          .textOverflow({ overflow: TextOverflow.Ellipsis })
-                        Text(file === this.files[0] ? `最新 · ${file.version || 'V1.0'}` : `历史 · ${file.version || 'V1.0'}`)
-                          .fontSize(11)
-                          .fontColor(Colors.textMuted)
-                          .margin({ top: 4 })
-                      }
-                      .height(52)
-                      .width(230)
-                      .padding({ left: 12, right: 12, top: 8, bottom: 6 })
-                      .backgroundColor(file.id === this.selectedFile?.id ? Colors.primaryLight : Colors.card)
-                      .border({ width: 1, color: file.id === this.selectedFile?.id ? Colors.primary : Colors.border })
-                      .borderRadius(12)
-                      .margin({ right: 10 })
-                      .onClick(() => this.selectFile(file))
-                    })
-                  }
-                }
-                .height(58)
-                .margin({ top: 10 })
-              }
+              .margin({ top: 12, right: 12, bottom: 12 })
             }
-            .layoutWeight(1)
-            .height('100%')
-            .margin({ left: 12, right: 12 })
-            ResourceToolPanel({
-              collapsed: this.toolCollapsed,
-              selectedFile: this.selectedFile,
-              uploadQueue: this.uploadQueue,
-              onToggle: () => this.toolCollapsed = !this.toolCollapsed,
-              onUploadPdf: () => this.uploadPdf(),
-              onUploadImage: () => this.uploadImage(),
-              onCameraUpload: () => this.cameraUpload(),
-              onDownload: (file: ResourceFile) => this.downloadFile(file),
-              onOpen: (file: ResourceFile) => this.openFile(file),
-              onDelete: (file: ResourceFile) => this.deleteFile(file)
-            })
           }
           .layoutWeight(1)
         }
@@ -304,9 +357,11 @@ struct WorkbenchPage {
         orders: this.orders,
         selectedId: this.current?.id || '',
         keyword: this.orderKeyword,
+        stageFilter: this.orderStageFilter,
         onClose: () => this.drawerOpen = false,
         onSelect: (order: WorkOrder) => this.selectOrder(order),
-        onSearch: (keyword: string) => this.searchOrders(keyword)
+        onSearch: (keyword: string) => this.searchOrders(keyword),
+        onStageFilter: (stage: string) => this.setOrderStageFilter(stage)
       })
       if (this.cameraOpen) {
         Column() {

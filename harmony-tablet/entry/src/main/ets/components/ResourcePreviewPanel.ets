@@ -9,6 +9,8 @@ import { CommonButton } from './CommonButton';
 @Component
 export struct ResourcePreviewPanel {
   file?: ResourceFile;
+  categoryName: string = '';
+  fileCount: number = 0;
   onUploadPdf: () => void = () => {};
   onUploadImage: () => void = () => {};
   onCameraUpload: () => void = () => {};
@@ -19,7 +21,10 @@ export struct ResourcePreviewPanel {
     Column() {
       if (!this.file) {
         Column() {
-          EmptyResourceState()
+          EmptyResourceState({
+            title: `${this.categoryName || '当前分类'}暂无资料`,
+            subtitle: '可通过右侧资料工具窗上传 PDF、图片或拍照资料。'
+          })
             .layoutWeight(1)
           Row() {
             CommonButton({ label: '上传 PDF', onTap: this.onUploadPdf })
@@ -35,19 +40,36 @@ export struct ResourcePreviewPanel {
         .height('100%')
       } else if (isImageType(this.file.fileType, this.file.mimeType)) {
         Column() {
-          Text(displayName(this.file.displayName, this.file.originalName))
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(Colors.text)
-            .margin({ bottom: 12 })
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Row() {
+            Column() {
+              Text(displayName(this.file.displayName, this.file.originalName))
+                .fontSize(18)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(Colors.text)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Text(`${this.categoryName || '资料'} · 共 ${this.fileCount} 个 · ${this.file.version || 'V1.0'} · ${fileSizeText(this.file.fileSize)}`)
+                .fontSize(13)
+                .fontColor(Colors.textMuted)
+                .margin({ top: 5 })
+            }
+            .alignItems(HorizontalAlign.Start)
+            .layoutWeight(1)
+            Text('图片预览')
+              .fontSize(13)
+              .fontColor(Colors.primary)
+              .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+              .backgroundColor(Colors.primaryLight)
+              .borderRadius(14)
+          }
+          .margin({ bottom: 12 })
           Image(nativeContentUrl(this.file))
             .objectFit(ImageFit.Contain)
             .width('100%')
             .layoutWeight(1)
-            .backgroundColor('#F9FAFB')
+            .backgroundColor('#F8FAFC')
             .borderRadius(16)
+            .border({ width: 1, color: Colors.border })
           Row() {
             CommonButton({ label: '下载', primary: false, onTap: () => this.onDownload(this.file as ResourceFile) })
               .margin({ right: 12 })
@@ -61,19 +83,26 @@ export struct ResourcePreviewPanel {
         .padding(18)
         .backgroundColor(Colors.card)
         .borderRadius(18)
+        .shadow({ radius: 18, color: '#10000000', offsetY: 6 })
       } else if (isPdfType(this.file.fileType, this.file.mimeType)) {
         Column() {
-          Text('PDF 资料')
-            .fontSize(24)
+          Text('PDF')
+            .fontSize(36)
             .fontWeight(FontWeight.Bold)
-            .fontColor(Colors.primary)
+            .fontColor(Color.White)
+            .textAlign(TextAlign.Center)
+            .width(92)
+            .height(92)
+            .backgroundColor(Colors.primary)
+            .borderRadius(24)
           Text(displayName(this.file.displayName, this.file.originalName))
             .fontSize(18)
+            .fontWeight(FontWeight.Bold)
             .fontColor(Colors.text)
-            .margin({ top: 16 })
+            .margin({ top: 18 })
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-          Text(`${this.file.version || 'V1.0'} · ${fileSizeText(this.file.fileSize)}`)
+          Text(`${this.categoryName || 'PDF资料'} · 共 ${this.fileCount} 个 · ${this.file.version || 'V1.0'} · ${fileSizeText(this.file.fileSize)}`)
             .fontSize(14)
             .fontColor(Colors.textMuted)
             .margin({ top: 10 })
@@ -97,9 +126,11 @@ export struct ResourcePreviewPanel {
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
         .padding(24)
         .backgroundColor(Colors.card)
         .borderRadius(18)
+        .shadow({ radius: 18, color: '#10000000', offsetY: 6 })
       } else {
         EmptyResourceState({ title: '暂不支持该文件类型预览', subtitle: displayName(this.file.displayName, this.file.originalName) })
       }
