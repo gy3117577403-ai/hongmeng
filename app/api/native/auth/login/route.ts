@@ -15,7 +15,10 @@ export async function POST(req: NextRequest) {
     const password = body.password || '';
     if (!username || !password) return nativeError('请输入账号和密码', 400);
 
-    const user = await prisma.user.findUnique({ where: { username } });
+    const user = await prisma.user.findUnique({
+      where: { username },
+      select: { id: true, username: true, displayName: true, isActive: true, passwordHash: true },
+    });
     if (!user?.isActive || !(await bcrypt.compare(password, user.passwordHash))) return nativeError('账号或密码错误', 401);
 
     const token = createToken({ userId: user.id, username: user.username });
