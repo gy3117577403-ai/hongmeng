@@ -20,6 +20,7 @@ import { FilePickerAdapter, PickedFile } from '../platform/FilePickerAdapter';
 import { ToastAdapter } from '../platform/ToastAdapter';
 import { VoiceInputAdapter } from '../platform/VoiceInputAdapter';
 import { nativeDownloadUrl } from '../services/resourceApi';
+import * as searchApi from '../services/searchApi';
 import { downloadAllUrl } from '../services/workOrderApi';
 import { ApiException } from '../services/httpClient';
 import { AuthStore } from '../stores/AuthStore';
@@ -39,6 +40,10 @@ struct WorkbenchPage {
   @State orderStageFilter: string = '';
   @State loadError: string = '';
   @State resourceError: string = '';
+  @State searchOpen: boolean = false;
+  @State searchLoading: boolean = false;
+  @State searchWorkOrders: WorkOrder[] = [];
+  @State searchFiles: ResourceFile[] = [];
   @State orders: WorkOrder[] = [];
   @State current?: WorkOrder = undefined;
   @State categories: ResourceCategory[] = [];
@@ -145,9 +150,43 @@ struct WorkbenchPage {
   }
 
   async searchGlobal(): Promise<void> {
-    this.orderKeyword = this.globalKeyword;
-    this.drawerOpen = true;
-    await this.load();
+    const keyword = this.globalKeyword.trim();
+    if (keyword.length === 0) {
+      ToastAdapter.show('请输入搜索关键词');
+      return;
+    }
+    this.searchOpen = true;
+    this.searchLoading = true;
+    try {
+      const data = await searchApi.searchNative(keyword);
+      this.searchWorkOrders = data.workOrders;
+      this.searchFiles = data.resourceFiles;
+    } catch (err) {
+      await this.handleError(err as Error, '全局搜索失败');
+    } finally {
+      this.searchLoading = false;
+    }
+  }
+
+  async selectSearchOrder(order: WorkOrder): Promise<void> {
+    this.searchOpen = false;
+    await this.selectOrder(order);
+  }
+
+  async selectSearchFile(file: ResourceFile): Promise<void> {
+    this.searchOpen = false;
+    const order = await WorkOrderStore.loadDetail(file.workOrderId);
+    await this.selectOrder(order);
+    ResourceStore.selectCategory(file.categoryId);
+    this.selectedCategoryId = file.categoryId;
+    this.files = ResourceStore.filesForCategory(file.categoryId);
+    for (let i = 0; i < this.files.length; i++) {
+      if (this.files[i].id === file.id) {
+        ResourceStore.selectFile(this.files[i]);
+        this.selectedFile = this.files[i];
+        return;
+      }
+    }
   }
 
   setOrderStageFilter(stage: string): void {
@@ -734,6 +773,103 @@ struct WorkbenchPage {
         onStageFilter: (stage: string) => this.setOrderStageFilter(stage),
         onVoiceSearch: () => this.voiceInputFallback('工单搜索')
       })
+      if (this.searchOpen) {
+        Column() {
+          Row() {
+            Text('全局搜索结果')
+              .fontSize(24)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(Colors.text)
+            Blank()
+            Button('关闭')
+              .height(38)
+              .fontSize(13)
+              .fontColor(Colors.primary)
+              .backgroundColor(Colors.primaryLight)
+              .borderRadius(10)
+              .onClick(() => this.searchOpen = false)
+          }
+          Text(this.searchLoading ? '搜索中' : `工单 ${this.searchWorkOrders.length} · 文件 ${this.searchFiles.length}`)
+            .fontSize(14)
+            .fontColor(Colors.textMuted)
+            .margin({ top: 8, bottom: 12 })
+          Scroll() {
+            Column() {
+              Text('工单')
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(Colors.text)
+              ForEach(this.searchWorkOrders, (order: WorkOrder) => {
+                Row() {
+                  Column() {
+                    Text(order.code)
+                      .fontSize(15)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor(Colors.text)
+                    Text(`${order.customerName || '未填客户'} · ${order.productName || '-'}`)
+                      .fontSize(12)
+                      .fontColor(Colors.textMuted)
+                      .margin({ top: 4 })
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .layoutWeight(1)
+                  Button('进入')
+                    .height(32)
+                    .fontSize(12)
+                    .fontColor(Colors.primary)
+                    .backgroundColor(Colors.primaryLight)
+                    .borderRadius(9)
+                    .onClick(() => this.selectSearchOrder(order))
+                }
+                .padding(10)
+                .margin({ top: 8 })
+                .backgroundColor('#F9FAFB')
+                .borderRadius(12)
+              })
+              Text('文件')
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(Colors.text)
+                .margin({ top: 16 })
+              ForEach(this.searchFiles, (file: ResourceFile) => {
+                Row() {
+                  Column() {
+                    Text(file.displayName || file.originalName)
+                      .fontSize(15)
+                      .fontWeight(FontWeight.Medium)
+                      .fontColor(Colors.text)
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    Text(`${file.categoryName || '-'} · ${file.version || 'V1.0'}`)
+                      .fontSize(12)
+                      .fontColor(Colors.textMuted)
+                      .margin({ top: 4 })
+                  }
+                  .alignItems(HorizontalAlign.Start)
+                  .layoutWeight(1)
+                  Button('定位')
+                    .height(32)
+                    .fontSize(12)
+                    .fontColor(Colors.primary)
+                    .backgroundColor(Colors.primaryLight)
+                    .borderRadius(9)
+                    .onClick(() => this.selectSearchFile(file))
+                }
+                .padding(10)
+                .margin({ top: 8 })
+                .backgroundColor('#F9FAFB')
+                .borderRadius(12)
+              })
+            }
+          }
+          .height(410)
+        }
+        .width(560)
+        .padding(22)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
       if (this.orderEditorOpen) {
         Column() {
           Text(this.editingOrderId.length > 0 ? '编辑工单' : '新建工单')

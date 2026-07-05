@@ -218,6 +218,16 @@ export async function previewConnectorImport(text: string): Promise<ConnectorImp
   return parsed.data;
 }
 
+export async function previewConnectorImportFile(file: PickedFile): Promise<ConnectorImportPreviewData> {
+  const input: MultipartUploadInput = {
+    fileFieldName: 'file',
+    file: file
+  };
+  const response = await httpClient.uploadMultipart('/api/native/connector-parameters/import/preview', input);
+  const parsed = JSON.parse(response.text) as ConnectorImportPreviewResponse;
+  return parsed.data;
+}
+
 export async function commitConnectorImport(rows: ConnectorImportPreviewRow[], importDuplicates: boolean): Promise<ConnectorImportCommitData> {
   const response = await httpClient.post('/api/native/connector-parameters/import/commit', JSON.stringify({
     rows: rows,

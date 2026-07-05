@@ -4,6 +4,7 @@ import { Colors } from '../constants/colors';
 import { ConnectorParameterTable } from '../components/ConnectorParameterTable';
 import { CommonButton } from '../components/CommonButton';
 import type { ConnectorParameter } from '../models/ConnectorParameter';
+import { ClipboardAdapter } from '../platform/ClipboardAdapter';
 import { DownloadAdapter } from '../platform/DownloadAdapter';
 import { FilePickerAdapter, PickedFile } from '../platform/FilePickerAdapter';
 import { ToastAdapter } from '../platform/ToastAdapter';
@@ -114,7 +115,7 @@ struct ConnectorParametersPage {
 
   copyRow(item: ConnectorParameter): void {
     const text = `${item.model || ''} ${item.outerPeelMm || ''} ${item.innerPeelMm || ''} ${item.insertionLengthMm || ''} ${item.remark || ''}`;
-    ToastAdapter.success(`已复制参数：${text}`);
+    ClipboardAdapter.copyText(text, '连接器参数');
   }
 
   async batchAction(action: string): Promise<void> {
@@ -156,6 +157,23 @@ struct ConnectorParametersPage {
       ToastAdapter.success('导入预览已生成');
     } catch (err) {
       await this.handleError(err as Error, '导入预览失败');
+    }
+  }
+
+  async previewImportFile(): Promise<void> {
+    try {
+      const files: PickedFile[] = await FilePickerAdapter.pickAnySupportedFile();
+      if (files.length === 0) {
+        ToastAdapter.show('已取消选择');
+        return;
+      }
+      const data = await connectorApi.previewConnectorImportFile(files[0]);
+      this.previewRows = data.rows;
+      this.previewSummary = data.summary;
+      this.importText = '';
+      ToastAdapter.success('文件导入预览已生成');
+    } catch (err) {
+      await this.handleError(err as Error, '文件导入预览失败');
     }
   }
 
@@ -440,6 +458,8 @@ struct ConnectorParametersPage {
               .margin({ top: 10 })
               Row() {
                 CommonButton({ label: '生成预览', onTap: () => this.previewImport() })
+                  .margin({ right: 10 })
+                CommonButton({ label: '选择文件预览', primary: false, onTap: () => this.previewImportFile() })
                   .margin({ right: 10 })
                 CommonButton({ label: '确认导入', primary: false, onTap: () => this.commitImport() })
               }

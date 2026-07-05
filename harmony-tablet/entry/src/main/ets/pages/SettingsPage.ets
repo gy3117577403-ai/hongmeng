@@ -3,6 +3,7 @@ import type common from '@ohos.app.ability.common';
 import { API_BASE_URL } from '../constants/api';
 import { Colors } from '../constants/colors';
 import { CommonButton } from '../components/CommonButton';
+import { ClipboardAdapter } from '../platform/ClipboardAdapter';
 import { ToastAdapter } from '../platform/ToastAdapter';
 import { ApiException } from '../services/httpClient';
 import * as adminApi from '../services/adminApi';
@@ -33,6 +34,7 @@ struct SettingsPage {
   @State trashFileCount: number = 0;
   @State trashConnectorCount: number = 0;
   @State diagnosticsText: string = '-';
+  @State diagnosticsJsonText: string = '';
   @State newUsername: string = '';
   @State newDisplayName: string = '';
   @State newPassword: string = '';
@@ -222,11 +224,20 @@ struct SettingsPage {
     try {
       const diagnostics: DiagnosticsData = await adminApi.fetchDiagnostics();
       this.diagnosticsText = `${diagnostics.exportedAt} · 数据库 ${diagnostics.health.database} · 最近日志 ${diagnostics.recentLogs.length}`;
+      this.diagnosticsJsonText = JSON.stringify(diagnostics);
     } catch (err) {
       await this.handleError(err as Error, '诊断信息加载失败');
     } finally {
       this.loading = false;
     }
+  }
+
+  copyDiagnostics(): void {
+    if (this.diagnosticsJsonText.length === 0) {
+      ToastAdapter.show('请先刷新诊断信息');
+      return;
+    }
+    ClipboardAdapter.copyText(this.diagnosticsJsonText, '诊断信息');
   }
 
   async logout(): Promise<void> {
@@ -509,7 +520,13 @@ struct SettingsPage {
           if (this.activePanel === 'diagnostics') {
             this.sectionTitle('诊断信息导出', '用于现场排查系统健康和最近操作。')
             Text(this.diagnosticsText).fontSize(14).fontColor(Colors.textMuted).margin({ bottom: 18 })
-            CommonButton({ label: this.loading ? '导出中' : '刷新诊断信息', primary: false, isEnabled: !this.loading, onTap: () => this.loadDiagnostics() }).width(220)
+            Row() {
+              CommonButton({ label: this.loading ? '导出中' : '刷新诊断信息', primary: false, isEnabled: !this.loading, onTap: () => this.loadDiagnostics() })
+                .width(220)
+              CommonButton({ label: '复制诊断 JSON', primary: false, onTap: () => this.copyDiagnostics() })
+                .width(220)
+                .margin({ left: 12 })
+            }
           }
         }
         .layoutWeight(1)
