@@ -222,7 +222,7 @@ struct WorkbenchPage {
       return;
     }
     if (!files.length) {
-      ToastAdapter.show('当前文件选择能力需在 DevEco 真机环境补齐');
+      ToastAdapter.show(FilePickerAdapter.guidanceText());
       return;
     }
     for (const file of files) {
@@ -258,7 +258,7 @@ struct WorkbenchPage {
   async cameraUpload(): Promise<void> {
     this.cameraOpen = true;
     if (!CameraAdapter.isSupported()) {
-      ToastAdapter.show('当前原生相机能力需在 DevEco 真机环境补齐');
+      ToastAdapter.show(CameraAdapter.guidanceText());
       return;
     }
     await CameraAdapter.openCamera();
@@ -410,6 +410,8 @@ struct WorkbenchPage {
                 collapsed: this.toolCollapsed,
                 selectedFile: this.selectedFile,
                 uploadQueue: this.uploadQueue,
+                filePickerStatus: FilePickerAdapter.statusText(),
+                cameraStatus: CameraAdapter.statusText(),
                 onToggle: () => this.toolCollapsed = !this.toolCollapsed,
                 onUploadPdf: () => this.uploadPdf(),
                 onUploadImage: () => this.uploadImage(),
@@ -430,7 +432,7 @@ struct WorkbenchPage {
       .height('100%')
       .backgroundColor(Colors.bg)
       if (this.loading) {
-        Text('加载中...')
+        Text('加载中')
           .fontSize(18)
           .fontColor(Colors.textMuted)
           .padding(20)
@@ -454,7 +456,7 @@ struct WorkbenchPage {
             .fontSize(24)
             .fontWeight(FontWeight.Bold)
             .fontColor(Colors.text)
-          Text('当前原生相机能力需在 DevEco 真机环境补齐。可以先使用上传图片作为兜底入口。')
+          Text(CameraAdapter.guidanceText())
             .fontSize(15)
             .fontColor(Colors.textMuted)
             .textAlign(TextAlign.Center)

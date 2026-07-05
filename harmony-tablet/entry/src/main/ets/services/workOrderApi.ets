@@ -49,7 +49,7 @@ export interface WorkOrderResourcesPayload {
 }
 
 export interface WorkOrderResourcesResponse extends NativeApiBaseResponse {
-  data?: WorkOrderResourcesPayload;
+  data?: WorkOrderResourcesPayload | ResourceFile[];
   categories?: ResourceCategory[];
   files?: ResourceFile[];
 }
@@ -67,7 +67,7 @@ export interface WorkOrderUpdateRequest {
 
 export async function fetchWorkOrders(keyword: string = '', page: number = 1): Promise<WorkOrderListData> {
   const q = encodeURIComponent(keyword);
-  const response = await httpClient.get(`/api/native/work-orders?page=${page}&pageSize=40&keyword=${q}`);
+  const response = await httpClient.get(`/api/native/work-orders?page=${page}&pageSize=50&keyword=${q}`);
   const parsed = JSON.parse(response.text) as WorkOrderListResponse;
   return normalizeWorkOrderList(parsed);
 }
@@ -94,7 +94,7 @@ function normalizeWorkOrderList(response: WorkOrderListResponse): WorkOrderListD
   const payload = response.data;
   let workOrders: WorkOrder[] = [];
   let page = response.page || 1;
-  let pageSize = response.pageSize || 40;
+  let pageSize = response.pageSize || 50;
   let total = response.total || 0;
   let recognized = false;
 
@@ -148,7 +148,10 @@ function normalizeWorkOrderResources(response: WorkOrderResourcesResponse): Work
   let recognized = false;
 
   if (payload) {
-    if (payload.categories) {
+    if (Array.isArray(payload)) {
+      files = payload;
+      recognized = true;
+    } else if (payload.categories) {
       categories = payload.categories;
       recognized = true;
     } else if (payload.resourceCategories) {

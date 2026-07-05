@@ -120,7 +120,7 @@ struct SettingsPage {
           .fontColor(Colors.textMuted)
           .margin({ top: 8, bottom: 24 })
         CommonButton({
-          label: this.loading ? '检查中...' : '刷新系统状态',
+          label: this.loading ? '检查中' : '刷新系统状态',
           primary: false,
           isEnabled: !this.loading,
           onTap: () => this.loadStatus()

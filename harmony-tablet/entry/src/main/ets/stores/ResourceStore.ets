@@ -23,23 +23,75 @@ export class ResourceStore {
 
   static async load(workOrderId: string): Promise<void> {
     const data = await workOrderApi.fetchWorkOrderResources(workOrderId);
-    ResourceStore.categories = data.categories.length > 0 ? data.categories : ResourceStore.defaultCategories();
     ResourceStore.files = data.files;
-    let stillExists = false;
-    for (let i = 0; i < ResourceStore.categories.length; i++) {
-      if (ResourceStore.categories[i].id === ResourceStore.currentCategoryId) {
-        stillExists = true;
-      }
-    }
-    if ((!ResourceStore.currentCategoryId || !stillExists) && ResourceStore.categories.length > 0) {
+    const sourceCategories = data.categories.length > 0 ? data.categories : ResourceStore.defaultCategories();
+    ResourceStore.categories = ResourceStore.applyFileCounts(sourceCategories, data.files);
+    if (ResourceStore.categories.length > 0) {
       ResourceStore.currentCategoryId = ResourceStore.categories[0].id;
+    } else {
+      ResourceStore.currentCategoryId = '';
     }
     const files = ResourceStore.filesForCategory(ResourceStore.currentCategoryId);
     ResourceStore.selectedFile = files.length > 0 ? files[0] : undefined;
   }
 
+  static applyFileCounts(categories: ResourceCategory[], files: ResourceFile[]): ResourceCategory[] {
+    const next: ResourceCategory[] = [];
+    for (let i = 0; i < categories.length; i++) {
+      const item = categories[i];
+      const category: ResourceCategory = {
+        id: item.id,
+        code: item.code,
+        name: item.name,
+        required: item.required,
+        sortOrder: item.sortOrder,
+        fileCount: ResourceStore.countFilesForCategory(item, files)
+      };
+      next.push(category);
+    }
+    return next;
+  }
+
+  static countFilesForCategory(category: ResourceCategory, files: ResourceFile[]): number {
+    let count = 0;
+    for (let i = 0; i < files.length; i++) {
+      if (ResourceStore.fileMatchesCategory(files[i], category)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   static filesForCategory(categoryId: string): ResourceFile[] {
-    return ResourceStore.files.filter(file => file.categoryId === categoryId);
+    const category = ResourceStore.categoryForId(categoryId);
+    const result: ResourceFile[] = [];
+    for (let i = 0; i < ResourceStore.files.length; i++) {
+      const file = ResourceStore.files[i];
+      if (category) {
+        if (ResourceStore.fileMatchesCategory(file, category)) {
+          result.push(file);
+        }
+      } else if (file.categoryId === categoryId) {
+        result.push(file);
+      }
+    }
+    return result;
+  }
+
+  static categoryForId(categoryId: string): ResourceCategory | undefined {
+    for (let i = 0; i < ResourceStore.categories.length; i++) {
+      if (ResourceStore.categories[i].id === categoryId) {
+        return ResourceStore.categories[i];
+      }
+    }
+    return undefined;
+  }
+
+  static fileMatchesCategory(file: ResourceFile, category: ResourceCategory): boolean {
+    if (file.categoryId === category.id) return true;
+    if (file.categoryCode && file.categoryCode === category.code) return true;
+    if (file.categoryName && file.categoryName === category.name) return true;
+    return false;
   }
 
   static selectCategory(categoryId: string): ResourceFile[] {

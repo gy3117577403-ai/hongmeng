@@ -105,7 +105,7 @@ export struct ResourcePreviewPanel {
       Column() {
         if (!this.file) {
           Column() {
-            Text('等待资料预览')
+            Text('当前分类暂无资料')
               .fontSize(26)
               .fontWeight(FontWeight.Bold)
               .fontColor(Colors.text)

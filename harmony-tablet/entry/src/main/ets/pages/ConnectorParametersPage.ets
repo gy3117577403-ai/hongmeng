@@ -181,7 +181,7 @@ struct ConnectorParametersPage {
           .backgroundColor(Colors.card)
           .borderRadius(14)
           .onChange(value => this.keyword = value)
-        CommonButton({ label: this.loading ? '查询中...' : '查询', isEnabled: !this.loading, onTap: () => this.load() })
+        CommonButton({ label: this.loading ? '查询中' : '查询', isEnabled: !this.loading, onTap: () => this.load() })
           .margin({ left: 12 })
       }
       .padding({ left: 20, right: 20, top: 16, bottom: 12 })
@@ -204,7 +204,7 @@ struct ConnectorParametersPage {
       .padding({ left: 20, right: 20, bottom: 10 })
       Column() {
         if (this.loading) {
-          Text('加载中...')
+          Text('加载中')
             .fontSize(16)
             .fontColor(Colors.textMuted)
             .padding(20)
@@ -255,7 +255,7 @@ struct ConnectorParametersPage {
           }
           .margin({ top: 12, bottom: 18 })
           Row() {
-            CommonButton({ label: this.saving ? '保存中...' : '保存', isEnabled: !this.saving, onTap: () => this.save() })
+            CommonButton({ label: this.saving ? '保存中' : '保存', isEnabled: !this.saving, onTap: () => this.save() })
               .margin({ right: 12 })
             CommonButton({ label: '取消', primary: false, onTap: () => this.editorOpen = false })
           }

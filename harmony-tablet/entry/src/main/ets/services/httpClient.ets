@@ -98,7 +98,7 @@ class NativeHttpClient {
   }
 
   async uploadMultipart(path: string, input: MultipartUploadInput): Promise<HttpResponseText> {
-    throw new ApiException('原生上传能力待 DevEco 真机适配', 0);
+    throw new ApiException('原生上传能力待真机适配，请使用 Web 端上传或等待下一版本。', 0);
   }
 
   contentUrl(path: string): string {

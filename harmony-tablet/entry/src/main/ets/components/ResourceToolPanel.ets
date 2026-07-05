@@ -15,6 +15,8 @@ export struct ResourceToolPanel {
   collapsed: boolean = false;
   selectedFile?: ResourceFile;
   uploadQueue: UploadQueueItem[] = [];
+  filePickerStatus: string = '待真机适配';
+  cameraStatus: string = '待真机适配';
   onToggle: () => void = () => {};
   onUploadPdf: () => void = () => {};
   onUploadImage: () => void = () => {};
@@ -124,6 +126,26 @@ export struct ResourceToolPanel {
 
           if (this.activeTab === 'upload') {
             Column() {
+              Row() {
+                Text('文件选择')
+                  .fontSize(12)
+                  .fontColor(Colors.textMuted)
+                Blank()
+                Text(this.filePickerStatus)
+                  .fontSize(12)
+                  .fontColor(this.filePickerStatus === '可用' ? Colors.success : Colors.primary)
+              }
+              .margin({ bottom: 8 })
+              Row() {
+                Text('相机')
+                  .fontSize(12)
+                  .fontColor(Colors.textMuted)
+                Blank()
+                Text(this.cameraStatus)
+                  .fontSize(12)
+                  .fontColor(this.cameraStatus === '可用' ? Colors.success : Colors.primary)
+              }
+              .margin({ bottom: 12 })
               CommonButton({ label: '上传 PDF', onTap: this.onUploadPdf })
                 .width('100%')
               CommonButton({ label: '上传图片', onTap: this.onUploadImage })
@@ -136,6 +158,10 @@ export struct ResourceToolPanel {
                 .fontSize(12)
                 .fontColor(Colors.textMuted)
                 .margin({ top: 12 })
+              Text('待真机适配时，请使用 Web 端上传或等待下一版本原生 picker。')
+                .fontSize(12)
+                .fontColor(Colors.textMuted)
+                .margin({ top: 8 })
             }
             .padding(14)
             .backgroundColor('#F9FAFB')

@@ -119,12 +119,6 @@ export struct ResourceCategoryRail {
         .borderRadius(16)
         .onClick(() => this.onSelect(category))
       })
-      if (this.categories.length === 0) {
-        Text('分类暂未返回，请检查资料接口')
-          .fontSize(13)
-          .fontColor(Colors.danger)
-          .height(80)
-      }
       Row() {
         Text('管')
           .fontSize(15)

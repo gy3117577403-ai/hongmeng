@@ -72,7 +72,7 @@ struct LoginPage {
             .fontColor(Colors.danger)
             .margin({ top: 12 })
         }
-        CommonButton({ label: this.loading ? '登录中...' : '登录', isEnabled: !this.loading, onTap: () => this.doLogin() })
+        CommonButton({ label: this.loading ? '登录中' : '登录', isEnabled: !this.loading, onTap: () => this.doLogin() })
           .width('100%')
           .margin({ top: 24 })
       }
