@@ -8,6 +8,7 @@ import { putObject } from '@/lib/s3';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+const nativeDownloadBasePath = '/api/native/connector-parameter-files';
 
 export async function POST(req: NextRequest) {
   try {
@@ -31,7 +32,7 @@ export async function POST(req: NextRequest) {
       },
     });
     await logOp({ userId: user.id, action: 'upload_connector_parameter_file', targetType: 'connector_parameter_file', targetId: item.id, detail: { fileName: item.originalName, fileSize: item.fileSize, fileType: item.fileType, client: 'harmony_native' } });
-    return nativeOk({ file: serializeConnectorParameterFile(item) });
+    return nativeOk({ file: serializeConnectorParameterFile(item, { downloadBasePath: nativeDownloadBasePath }) });
   } catch (e) {
     if (e instanceof NativeUnauthorizedError) return nativeUnauthorized();
     console.error(e);

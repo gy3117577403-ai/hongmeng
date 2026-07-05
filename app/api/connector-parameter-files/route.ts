@@ -13,7 +13,7 @@ export async function GET(_req: NextRequest) {
       where: { deletedAt: null },
       orderBy: [{ createdAt: 'desc' }],
     });
-    return NextResponse.json({ ok: true, files: files.map(serializeConnectorParameterFile) });
+    return NextResponse.json({ ok: true, files: files.map(file => serializeConnectorParameterFile(file)) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     console.error(e);

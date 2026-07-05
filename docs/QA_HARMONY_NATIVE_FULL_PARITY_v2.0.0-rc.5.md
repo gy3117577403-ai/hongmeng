@@ -89,7 +89,7 @@
 | 导入批次列表 | 是 | 是 | 是 | 工具抽屉显示最近批次。 |
 | 导入批次回滚 | 是 | 是 | 是 | 调用 native rollback API。 |
 | 原始资料附件上传 | 是 | 是 | 需真机验证 | UI 已提供上传按钮，`FilePickerAdapter.pickAnySupportedFile` + native multipart API 上传。 |
-| 原始资料附件下载 | 是 | 是 | 需真机验证 | 下载 URL 已接入，系统保存/打开由 `DownloadAdapter` 承接。 |
+| 原始资料附件下载 | 是 | 是 | 需真机验证 | Native 列表和上传响应返回 `/api/native/connector-parameter-files/[id]/download`，系统保存/打开由 `DownloadAdapter` 承接。 |
 | 原始资料附件删除 | 是 | 是 | 是 | 工具抽屉可删除。 |
 | 空值保持空白 | 是 | 是 | 是 | 后端导入解析保持空字段为空。 |
 | 操作日志 | 是 | 是 | 是 | TopBar 日志入口可直达 Settings 日志面板，读取最近 100 条，不显示敏感信息。 |

@@ -4,12 +4,13 @@ import { serializeConnectorParameterFile } from '@/lib/connector-parameters';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+const nativeDownloadBasePath = '/api/native/connector-parameter-files';
 
 export async function GET(req: Request) {
   try {
     await requireNativeUser(req);
     const files = await prisma.connectorParameterFile.findMany({ where: { deletedAt: null }, orderBy: [{ createdAt: 'desc' }] });
-    return nativeOk({ files: files.map(serializeConnectorParameterFile) });
+    return nativeOk({ files: files.map(file => serializeConnectorParameterFile(file, { downloadBasePath: nativeDownloadBasePath })) });
   } catch (e) {
     if (e instanceof NativeUnauthorizedError) return nativeUnauthorized();
     console.error(e);
