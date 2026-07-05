@@ -168,6 +168,7 @@
   - 动态路由覆盖：`/api/native/work-orders/[id]`、`/api/native/resource-files/[id]`、`/api/native/connector-parameters/[id]`、`/api/native/users/[id]`、`/api/native/connector-parameter-files/[id]`
   - 写入路由覆盖：POST / PATCH / DELETE 的工单、文件、账号、连接器参数、导入批次回滚和附件操作
 - smoke 不包含真实账号密码，不写入业务数据；未登录写入路由仅验证路由存在和统一 `{ ok, error }` 返回格式。
+- smoke 支持临时环境变量 `NATIVE_SMOKE_TOKEN`；提供 Bearer token 时会进一步校验 `/api/native/system/status` 运行时版本为 `v2.0.0-native-rc.5`，并校验 `/api/native/download-ticket` 返回带 `ticket` 的连接器导出短期下载 URL。文档和仓库不保存 token。
 - Harmony 命令行构建：未执行。
 - 未执行原因：本机 PATH 未发现 `ohpm`、`hvigor`、`hvigorw`，且 `harmony-tablet` 内没有 `hvigorw.bat`。
 

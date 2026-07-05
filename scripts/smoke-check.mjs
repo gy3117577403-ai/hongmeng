@@ -1,4 +1,6 @@
 const baseUrl = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
+const nativeSmokeToken = process.env.NATIVE_SMOKE_TOKEN || '';
+const expectedNativeVersion = 'v2.0.0-native-rc.5';
 
 async function validateNativeJsonResponse(response, name) {
   const contentType = response.headers.get('content-type') || '';
@@ -10,6 +12,27 @@ async function validateNativeJsonResponse(response, name) {
   }
   const body = await response.json();
   if (typeof body.ok !== 'boolean') throw new Error(`${name} response is missing boolean ok field`);
+  return body;
+}
+
+async function validateNativeSystemStatus(response) {
+  const body = await validateNativeJsonResponse(response, 'native system status');
+  if (body.ok === true) {
+    const version = body.data && body.data.app ? body.data.app.version : '';
+    if (version !== expectedNativeVersion) {
+      throw new Error(`native system status version is ${version || '(missing)'}, expected ${expectedNativeVersion}`);
+    }
+  }
+}
+
+async function validateNativeDownloadTicket(response) {
+  const body = await validateNativeJsonResponse(response, 'native download ticket');
+  if (body.ok === true) {
+    const url = body.data && body.data.url ? body.data.url : '';
+    if (!url.includes('/api/native/connector-parameters/export.csv') || !url.includes('ticket=')) {
+      throw new Error('native download ticket response is missing export path or ticket');
+    }
+  }
 }
 
 function nativeJsonCheck(name, path, options = {}) {
@@ -56,7 +79,7 @@ const checks = [
     name: 'native system status',
     path: '/api/native/system/status',
     allowHttpError: true,
-    validate: async response => validateNativeJsonResponse(response, 'native system status'),
+    validate: async response => validateNativeSystemStatus(response),
   },
   {
     name: 'native login format',
@@ -71,7 +94,7 @@ const checks = [
     name: 'native download ticket format',
     path: '/api/native/download-ticket?path=/api/native/connector-parameters/export.csv',
     allowHttpError: true,
-    validate: async response => validateNativeJsonResponse(response, 'native download ticket'),
+    validate: async response => validateNativeDownloadTicket(response),
   },
   {
     name: 'native auth me format',
@@ -227,13 +250,21 @@ async function runCheck(check) {
   const url = `${baseUrl}${check.path}`;
   const response = await fetch(url, {
     method: check.method || 'GET',
-    headers: check.headers,
+    headers: requestHeaders(check),
     body: check.body,
     redirect: 'follow',
   });
   if (!response.ok && !check.allowHttpError) throw new Error(`${check.name} returned HTTP ${response.status}`);
   await check.validate(response);
   console.log(`[OK] ${check.name} ${url}`);
+}
+
+function requestHeaders(check) {
+  const headers = check.headers ? { ...check.headers } : {};
+  if (check.path.startsWith('/api/native/') && nativeSmokeToken.length > 0) {
+    headers.authorization = `Bearer ${nativeSmokeToken}`;
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
 console.log(`Smoke target: ${baseUrl}`);
