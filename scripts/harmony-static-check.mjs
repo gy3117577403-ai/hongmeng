@@ -154,6 +154,11 @@ assertTextIncludes('app/api/native/search/route.ts', 'nativeFileDto(file, user.i
 assertTextExcludes('app/api/native/search/route.ts', 'serializeResourceFile', 'native search must not use web file serializer');
 assertTextIncludes('app/api/native/trash/route.ts', 'nativeFileDto(file, user.id)', 'native trash file DTO check');
 assertTextExcludes('app/api/native/trash/route.ts', 'serializeResourceFile', 'native trash must not use web file serializer');
+assertTextIncludes('lib/native-api.ts', '/^\\/api\\/native\\/resource-files\\/[^/]+\\/(content|download)$/.test(path)', 'native resource download ticket allowlist check');
+assertTextIncludes('lib/native-api.ts', '/^\\/api\\/native\\/work-orders\\/[^/]+\\/download-all$/.test(path)', 'native work order package ticket allowlist check');
+assertTextIncludes('lib/native-api.ts', '/^\\/api\\/native\\/connector-parameter-files\\/[^/]+\\/download$/.test(path)', 'native connector attachment ticket allowlist check');
+assertTextIncludes('lib/native-api.ts', "path === '/api/native/connector-parameters/export.csv'", 'native connector export ticket allowlist check');
+assertTextIncludes('lib/native-api.ts', "path === '/api/native/connector-parameters/template.csv'", 'native connector template ticket allowlist check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"type": "entry"', 'entry module check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"mainElement": "EntryAbility"', 'EntryAbility check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"deviceTypes": ["tablet"]', 'tablet device check');
