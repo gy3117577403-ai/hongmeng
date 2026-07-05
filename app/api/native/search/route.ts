@@ -1,7 +1,6 @@
 import { NextRequest } from 'next/server';
-import { NativeUnauthorizedError, nativeOk, nativeUnauthorized, nativeError, requireNativeUser } from '@/lib/native-api';
+import { NativeUnauthorizedError, nativeFileDto, nativeOk, nativeUnauthorized, nativeError, requireNativeUser } from '@/lib/native-api';
 import { prisma } from '@/lib/prisma';
-import { serializeResourceFile } from '@/lib/resource-files';
 import { serializeWorkOrder } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
@@ -9,7 +8,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    await requireNativeUser(req);
+    const user = await requireNativeUser(req);
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim();
     if (!keyword) return nativeOk({ workOrders: [], resourceFiles: [] });
     const [workOrders, resourceFiles] = await Promise.all([
@@ -51,7 +50,7 @@ export async function GET(req: NextRequest) {
         take: 10,
       }),
     ]);
-    return nativeOk({ workOrders: workOrders.map(serializeWorkOrder), resourceFiles: resourceFiles.map(serializeResourceFile) });
+    return nativeOk({ workOrders: workOrders.map(serializeWorkOrder), resourceFiles: resourceFiles.map(file => nativeFileDto(file, user.id)) });
   } catch (e) {
     if (e instanceof NativeUnauthorizedError) return nativeUnauthorized();
     console.error(e);

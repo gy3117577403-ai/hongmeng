@@ -1,7 +1,6 @@
-import { NativeUnauthorizedError, nativeError, nativeOk, nativeUnauthorized, requireNativeUser } from '@/lib/native-api';
+import { NativeUnauthorizedError, nativeError, nativeFileDto, nativeOk, nativeUnauthorized, requireNativeUser } from '@/lib/native-api';
 import { serializeConnectorParameter } from '@/lib/connector-parameters';
 import { prisma } from '@/lib/prisma';
-import { serializeResourceFile } from '@/lib/resource-files';
 import { serializeWorkOrder } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
@@ -9,7 +8,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
   try {
-    await requireNativeUser(req);
+    const user = await requireNativeUser(req);
     const [workOrders, resourceFiles, connectorParameters] = await Promise.all([
       prisma.workOrder.findMany({
         where: { deletedAt: { not: null } },
@@ -33,7 +32,7 @@ export async function GET(req: Request) {
     ]);
     return nativeOk({
       workOrders: workOrders.map(serializeWorkOrder),
-      resourceFiles: resourceFiles.map(serializeResourceFile),
+      resourceFiles: resourceFiles.map(file => nativeFileDto(file, user.id)),
       connectorParameters: connectorParameters.map(serializeConnectorParameter),
     });
   } catch (e) {
