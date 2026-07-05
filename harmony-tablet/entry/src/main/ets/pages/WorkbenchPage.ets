@@ -56,6 +56,7 @@ struct WorkbenchPage {
   @State orderDeleteOpen: boolean = false;
   @State fileDeleteOpen: boolean = false;
   @State filePendingDelete?: ResourceFile = undefined;
+  @State pendingCameraPhoto?: PickedFile = undefined;
   @State editingOrderId: string = '';
   @State formCode: string = '';
   @State formCustomerName: string = '';
@@ -483,34 +484,60 @@ struct WorkbenchPage {
 
   async cameraUpload(): Promise<void> {
     this.cameraOpen = true;
+    this.pendingCameraPhoto = undefined;
     if (!CameraAdapter.isSupported()) {
       ToastAdapter.show(CameraAdapter.guidanceText());
       return;
     }
     try {
-      await CameraAdapter.openCamera();
-      const photo = await CameraAdapter.takePhoto();
-      if (photo) {
-        this.cameraOpen = false;
-        await this.uploadPickedFiles([photo]);
-      } else {
-        this.cameraOpen = false;
-        ToastAdapter.show('已取消选择');
-      }
+      await this.pickCameraPhoto();
     } catch (err) {
       this.cameraOpen = false;
       await this.handleError(err as Error, '拍照上传失败');
     }
   }
 
-  async capturePhoto(): Promise<void> {
+  async pickCameraPhoto(): Promise<void> {
+    await CameraAdapter.openCamera();
     const photo = await CameraAdapter.takePhoto();
     if (photo) {
-      this.cameraOpen = false;
-      await this.uploadPickedFiles([photo]);
+      this.pendingCameraPhoto = photo;
+      this.cameraOpen = true;
     } else {
-      ToastAdapter.show('未获取到照片，可使用上传图片兜底');
+      this.pendingCameraPhoto = undefined;
+      ToastAdapter.show('已取消选择，可使用上传图片继续。');
     }
+  }
+
+  async capturePhoto(): Promise<void> {
+    try {
+      this.pendingCameraPhoto = undefined;
+      await this.pickCameraPhoto();
+    } catch (err) {
+      await this.handleError(err as Error, '拍照失败');
+    }
+  }
+
+  pendingCameraUri(): string {
+    if (this.pendingCameraPhoto === undefined || this.pendingCameraPhoto.uri === undefined) return '';
+    return this.pendingCameraPhoto.uri;
+  }
+
+  pendingCameraName(): string {
+    if (this.pendingCameraPhoto === undefined) return '未选择图片';
+    return this.pendingCameraPhoto.name || '现场照片';
+  }
+
+  async confirmCameraUpload(): Promise<void> {
+    if (this.pendingCameraPhoto === undefined) {
+      ToastAdapter.show('请先拍照或选择图片');
+      return;
+    }
+    const photo = this.pendingCameraPhoto;
+    this.pendingCameraPhoto = undefined;
+    this.cameraOpen = false;
+    await this.uploadPickedFiles([photo]);
+    await CameraAdapter.release();
   }
 
   async downloadFile(file: ResourceFile): Promise<void> {
@@ -1079,17 +1106,54 @@ struct WorkbenchPage {
             .fontSize(24)
             .fontWeight(FontWeight.Bold)
             .fontColor(Colors.text)
-          Text(CameraAdapter.guidanceText())
+          Text(this.pendingCameraPhoto !== undefined ? '请确认现场照片，确认后会上传到当前工单和当前分类。' : CameraAdapter.guidanceText())
             .fontSize(15)
             .fontColor(Colors.textMuted)
             .textAlign(TextAlign.Center)
             .margin({ top: 14, bottom: 20 })
+          if (this.pendingCameraPhoto !== undefined) {
+            Column() {
+              if (this.pendingCameraUri().length > 0) {
+                Image(this.pendingCameraUri())
+                  .objectFit(ImageFit.Contain)
+                  .width('100%')
+                  .height(220)
+                  .backgroundColor('#F8FAFC')
+                  .borderRadius(14)
+              } else {
+                Text('已选择图片，当前设备未返回可预览地址。')
+                  .fontSize(14)
+                  .fontColor(Colors.textMuted)
+                  .height(120)
+                  .textAlign(TextAlign.Center)
+              }
+              Text(this.pendingCameraName())
+                .fontSize(13)
+                .fontColor(Colors.textMuted)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .margin({ top: 10 })
+            }
+            .width('100%')
+            .padding(12)
+            .margin({ bottom: 18 })
+            .backgroundColor('#F9FAFB')
+            .border({ width: 1, color: Colors.border })
+            .borderRadius(16)
+          }
           Row() {
-            CommonButton({ label: '拍照', isEnabled: CameraAdapter.isSupported(), onTap: () => this.capturePhoto() })
-              .margin({ right: 12 })
-            CommonButton({ label: '上传图片', primary: false, onTap: () => { this.cameraOpen = false; this.uploadImage(); } })
-              .margin({ right: 12 })
-            CommonButton({ label: '关闭', primary: false, onTap: () => { this.cameraOpen = false; CameraAdapter.release(); } })
+            if (this.pendingCameraPhoto !== undefined) {
+              CommonButton({ label: '确认上传', onTap: () => this.confirmCameraUpload() })
+                .margin({ right: 12 })
+              CommonButton({ label: '重拍', primary: false, onTap: () => this.capturePhoto() })
+                .margin({ right: 12 })
+            } else {
+              CommonButton({ label: '拍照', isEnabled: CameraAdapter.isSupported(), onTap: () => this.capturePhoto() })
+                .margin({ right: 12 })
+              CommonButton({ label: '上传图片', primary: false, onTap: () => { this.cameraOpen = false; this.uploadImage(); } })
+                .margin({ right: 12 })
+            }
+            CommonButton({ label: '关闭', primary: false, onTap: () => { this.pendingCameraPhoto = undefined; this.cameraOpen = false; CameraAdapter.release(); } })
           }
         }
         .width(460)
