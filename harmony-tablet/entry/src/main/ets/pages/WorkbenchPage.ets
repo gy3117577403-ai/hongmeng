@@ -42,6 +42,7 @@ struct WorkbenchPage {
   @State resourceError: string = '';
   @State searchOpen: boolean = false;
   @State searchLoading: boolean = false;
+  @State qrOpen: boolean = false;
   @State searchWorkOrders: WorkOrder[] = [];
   @State searchFiles: ResourceFile[] = [];
   @State orders: WorkOrder[] = [];
@@ -523,7 +524,20 @@ struct WorkbenchPage {
 
   async copyWorkOrderLink(): Promise<void> {
     if (!this.current) return;
-    await ClipboardAdapter.copyText(`${API_BASE_URL}/dashboard?workOrderId=${this.current.id}`, '工单链接');
+    await ClipboardAdapter.copyText(this.currentWorkOrderLink(), '工单链接');
+  }
+
+  currentWorkOrderLink(): string {
+    if (!this.current) return API_BASE_URL;
+    return `${API_BASE_URL}/dashboard?workOrderId=${this.current.id}`;
+  }
+
+  showWorkOrderQr(): void {
+    if (!this.current) {
+      ToastAdapter.show('请先选择工单');
+      return;
+    }
+    this.qrOpen = true;
   }
 
   async openFile(file: ResourceFile): Promise<void> {
@@ -622,6 +636,7 @@ struct WorkbenchPage {
             onEdit: () => this.openEditOrder(),
             onDelete: () => this.orderDeleteOpen = true,
             onCopyLink: () => this.copyWorkOrderLink(),
+            onShowQr: () => this.showWorkOrderQr(),
             onDownloadAll: () => this.downloadAll(),
             onCycleStage: () => this.cycleCurrentStage(),
             onCyclePriority: () => this.cycleCurrentPriority(),
@@ -994,6 +1009,65 @@ struct WorkbenchPage {
           }
         }
         .width(460)
+        .padding(24)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
+      if (this.qrOpen && this.current) {
+        Column() {
+          Row() {
+            Text('工单直达二维码')
+              .fontSize(24)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(Colors.text)
+            Blank()
+            Button('关闭')
+              .height(36)
+              .fontSize(13)
+              .fontColor(Colors.primary)
+              .backgroundColor(Colors.primaryLight)
+              .borderRadius(10)
+              .onClick(() => this.qrOpen = false)
+          }
+          .width('100%')
+          Column() {
+            QRCode(this.currentWorkOrderLink())
+              .width(190)
+              .height(190)
+              .color(Colors.text)
+              .backgroundColor(Color.White)
+            Text(this.current.code)
+              .fontSize(20)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(Colors.text)
+              .margin({ top: 16 })
+            Text(`${this.current.customerName || '未填客户'} · ${this.current.productName || '-'}`)
+              .fontSize(14)
+              .fontColor(Colors.textMuted)
+              .margin({ top: 6 })
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            Text(this.currentWorkOrderLink())
+              .fontSize(12)
+              .fontColor(Colors.textMuted)
+              .margin({ top: 12 })
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width('100%')
+          .padding(20)
+          .margin({ top: 18, bottom: 18 })
+          .backgroundColor('#F9FAFB')
+          .borderRadius(16)
+          .alignItems(HorizontalAlign.Center)
+          Row() {
+            CommonButton({ label: '复制链接', onTap: () => this.copyWorkOrderLink() })
+              .margin({ right: 12 })
+            CommonButton({ label: '关闭', primary: false, onTap: () => this.qrOpen = false })
+          }
+        }
+        .width(480)
         .padding(24)
         .backgroundColor(Colors.card)
         .borderRadius(18)

@@ -29,6 +29,7 @@ export struct CurrentWorkOrderBar {
   onEdit: () => void = () => {};
   onDelete: () => void = () => {};
   onCopyLink: () => void = () => {};
+  onShowQr: () => void = () => {};
   onDownloadAll: () => void = () => {};
   onCycleStage: () => void = () => {};
   onCyclePriority: () => void = () => {};
@@ -112,6 +113,14 @@ export struct CurrentWorkOrderBar {
             .borderRadius(12)
             .margin({ left: 8 })
             .onClick(() => this.onCopyLink())
+          Button('二维码')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Colors.primary)
+            .backgroundColor(Colors.primaryLight)
+            .borderRadius(12)
+            .margin({ left: 8 })
+            .onClick(() => this.onShowQr())
           Button('删除')
             .height(34)
             .fontSize(13)
