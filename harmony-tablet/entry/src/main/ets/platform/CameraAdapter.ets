@@ -1,8 +1,11 @@
 import type { PickedFile } from './FilePickerAdapter';
+import { FilePickerAdapter } from './FilePickerAdapter';
 
 export class CameraAdapter {
+  static lastPhoto?: PickedFile;
+
   static isSupported(): boolean {
-    return false;
+    return true;
   }
 
   static statusText(): string {
@@ -10,16 +13,22 @@ export class CameraAdapter {
   }
 
   static guidanceText(): string {
-    return '当前设备暂不支持直接拍照，请使用上传图片或 Web 端上传。';
+    return '将打开系统图片选择器；如设备未提供相机入口，请先拍照后选择图片上传。';
   }
 
   static async openCamera(): Promise<void> {
+    CameraAdapter.lastPhoto = undefined;
+    const files = await FilePickerAdapter.pickImages();
+    if (files.length > 0) {
+      CameraAdapter.lastPhoto = files[0];
+    }
   }
 
   static async takePhoto(): Promise<PickedFile | undefined> {
-    return undefined;
+    return CameraAdapter.lastPhoto;
   }
 
   static async release(): Promise<void> {
+    CameraAdapter.lastPhoto = undefined;
   }
 }

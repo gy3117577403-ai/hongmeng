@@ -10,7 +10,6 @@ export struct TopBar {
   onSearch: () => void = () => {};
   onVoiceInput: () => void = () => {};
   onOpenDrawer: () => void = () => {};
-  onPlaceholder: (name: string) => void = () => {};
   onLogout: () => void = () => {};
 
   build(): void {

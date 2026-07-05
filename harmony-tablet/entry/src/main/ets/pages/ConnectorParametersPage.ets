@@ -5,6 +5,7 @@ import { ConnectorParameterTable } from '../components/ConnectorParameterTable';
 import { CommonButton } from '../components/CommonButton';
 import type { ConnectorParameter } from '../models/ConnectorParameter';
 import { DownloadAdapter } from '../platform/DownloadAdapter';
+import { FilePickerAdapter, PickedFile } from '../platform/FilePickerAdapter';
 import { ToastAdapter } from '../platform/ToastAdapter';
 import { ApiException } from '../services/httpClient';
 import * as connectorApi from '../services/connectorApi';
@@ -183,11 +184,30 @@ struct ConnectorParametersPage {
   }
 
   async exportCsv(): Promise<void> {
-    await DownloadAdapter.downloadPackage('connector-parameters.csv', connectorApi.connectorExportUrl());
+    const context = getContext(this) as common.UIAbilityContext;
+    await DownloadAdapter.downloadPackage('connector-parameters.csv', connectorApi.connectorExportUrl(), context);
   }
 
   async downloadTemplate(): Promise<void> {
-    await DownloadAdapter.downloadPackage('connector-parameter-template.csv', connectorApi.connectorTemplateUrl());
+    const context = getContext(this) as common.UIAbilityContext;
+    await DownloadAdapter.downloadPackage('connector-parameter-template.csv', connectorApi.connectorTemplateUrl(), context);
+  }
+
+  async uploadAttachment(): Promise<void> {
+    try {
+      const files: PickedFile[] = await FilePickerAdapter.pickAnySupportedFile();
+      if (files.length === 0) {
+        ToastAdapter.show('已取消选择');
+        return;
+      }
+      for (let i = 0; i < files.length; i++) {
+        await connectorApi.uploadConnectorAttachment(files[i]);
+      }
+      await this.loadAttachments();
+      ToastAdapter.success('原始资料附件已上传');
+    } catch (err) {
+      await this.handleError(err as Error, '原始资料附件上传失败');
+    }
   }
 
   openCreate(): void {
@@ -427,10 +447,20 @@ struct ConnectorParametersPage {
             .borderRadius(14)
 
             Column() {
-              Text('原始资料附件')
-                .fontSize(16)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(Colors.text)
+              Row() {
+                Text('原始资料附件')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(Colors.text)
+                  .layoutWeight(1)
+                Button('上传')
+                  .height(30)
+                  .fontSize(12)
+                  .backgroundColor(Colors.primaryLight)
+                  .fontColor(Colors.primary)
+                  .borderRadius(9)
+                  .onClick(() => this.uploadAttachment())
+              }
               Scroll() {
                 Column() {
                   if (this.attachments.length === 0) {
@@ -453,7 +483,10 @@ struct ConnectorParametersPage {
                         .backgroundColor(Colors.primaryLight)
                         .fontColor(Colors.primary)
                         .borderRadius(9)
-                        .onClick(() => DownloadAdapter.downloadPackage(file.originalName, connectorApi.connectorAttachmentDownloadUrl(file)))
+                        .onClick(() => {
+                          const context = getContext(this) as common.UIAbilityContext;
+                          DownloadAdapter.downloadPackage(file.originalName, connectorApi.connectorAttachmentDownloadUrl(file), context);
+                        })
                       Button('删除')
                         .height(30)
                         .fontSize(12)

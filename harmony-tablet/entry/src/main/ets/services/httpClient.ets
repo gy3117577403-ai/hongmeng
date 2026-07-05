@@ -31,10 +31,16 @@ export interface HttpResponseText {
 }
 
 export interface MultipartUploadInput {
-  workOrderId: string;
-  categoryId: string;
+  workOrderId?: string;
+  categoryId?: string;
   fileFieldName: string;
   file: PickedFile;
+  fields?: MultipartTextField[];
+}
+
+export interface MultipartTextField {
+  name: string;
+  value: string;
 }
 
 export class ApiException extends Error {
@@ -98,7 +104,38 @@ class NativeHttpClient {
   }
 
   async uploadMultipart(path: string, input: MultipartUploadInput): Promise<HttpResponseText> {
-    throw new ApiException('当前设备暂不支持原生上传，请使用 Web 端上传。', 0);
+    if (!input.file.uri || input.file.uri.length === 0) {
+      throw new ApiException('请选择可读取的本地文件后重试', 0, false, path);
+    }
+    const client = http.createHttp();
+    const headers: HttpHeaders = {
+      Accept: 'application/json',
+      contentType: ''
+    };
+    if (this.token.length > 0) {
+      headers.Authorization = `Bearer ${this.token}`;
+    }
+    const formData = this.multipartData(input);
+
+    try {
+      const response = await client.request(`${API_BASE_URL}${path}`, {
+        method: http.RequestMethod.POST,
+        header: headers,
+        multiFormDataList: formData,
+        connectTimeout: API_TIMEOUT_MS,
+        readTimeout: API_TIMEOUT_MS
+      });
+      const result = this.responseText(path, response);
+      this.raiseIfFailed(result);
+      return result;
+    } catch (err) {
+      if (err instanceof ApiException) {
+        throw err;
+      }
+      throw new ApiException('上传失败，请检查文件访问权限和网络连接', 0, false, path);
+    } finally {
+      client.destroy();
+    }
   }
 
   contentUrl(path: string): string {
@@ -126,18 +163,7 @@ class NativeHttpClient {
         connectTimeout: API_TIMEOUT_MS,
         readTimeout: API_TIMEOUT_MS
       });
-      const status = Number(response.responseCode || 0);
-      const text = typeof response.result === 'string' ? response.result : JSON.stringify(response.result || {});
-      const contentType = this.detectContentType(text);
-      const result: HttpResponseText = {
-        statusCode: status,
-        status: status,
-        bodyText: text,
-        text: text,
-        contentType: contentType,
-        error: '',
-        path: path
-      };
+      const result = this.responseText(path, response);
       this.raiseIfFailed(result);
       return result;
     } catch (err) {
@@ -148,6 +174,54 @@ class NativeHttpClient {
     } finally {
       client.destroy();
     }
+  }
+
+  private multipartData(input: MultipartUploadInput): Array<http.MultiFormData> {
+    const formData: Array<http.MultiFormData> = [];
+    if (input.workOrderId && input.workOrderId.length > 0) {
+      this.pushMultipartField(formData, 'workOrderId', input.workOrderId);
+    }
+    if (input.categoryId && input.categoryId.length > 0) {
+      this.pushMultipartField(formData, 'categoryId', input.categoryId);
+    }
+    if (input.fields) {
+      for (let i = 0; i < input.fields.length; i++) {
+        this.pushMultipartField(formData, input.fields[i].name, input.fields[i].value);
+      }
+    }
+    const filePart: http.MultiFormData = {
+      name: input.fileFieldName,
+      contentType: input.file.mimeType || 'application/octet-stream',
+      filePath: input.file.uri || '',
+      remoteFileName: input.file.name
+    };
+    formData.push(filePart);
+    return formData;
+  }
+
+  private pushMultipartField(formData: Array<http.MultiFormData>, name: string, value: string): void {
+    const field: http.MultiFormData = {
+      name: name,
+      contentType: 'text/plain',
+      data: value
+    };
+    formData.push(field);
+  }
+
+  private responseText(path: string, response: http.HttpResponse): HttpResponseText {
+    const status = Number(response.responseCode || 0);
+    const text = typeof response.result === 'string' ? response.result : JSON.stringify(response.result || {});
+    const contentType = this.detectContentType(text);
+    const result: HttpResponseText = {
+      statusCode: status,
+      status: status,
+      bodyText: text,
+      text: text,
+      contentType: contentType,
+      error: '',
+      path: path
+    };
+    return result;
   }
 
   private raiseIfFailed(response: HttpResponseText): void {

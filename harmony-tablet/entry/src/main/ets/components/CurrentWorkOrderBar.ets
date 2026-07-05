@@ -28,6 +28,7 @@ export struct CurrentWorkOrderBar {
   onCreate: () => void = () => {};
   onEdit: () => void = () => {};
   onDelete: () => void = () => {};
+  onCopyLink: () => void = () => {};
   onDownloadAll: () => void = () => {};
   onCycleStage: () => void = () => {};
   onCyclePriority: () => void = () => {};
@@ -103,6 +104,14 @@ export struct CurrentWorkOrderBar {
             .borderRadius(12)
             .margin({ left: 8 })
             .onClick(() => this.onDownloadAll())
+          Button('复制链接')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Colors.primary)
+            .backgroundColor(Colors.primaryLight)
+            .borderRadius(12)
+            .margin({ left: 8 })
+            .onClick(() => this.onCopyLink())
           Button('删除')
             .height(34)
             .fontSize(13)

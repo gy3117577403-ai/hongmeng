@@ -1,6 +1,7 @@
 import router from '@ohos.router';
 import type common from '@ohos.app.ability.common';
 import { Colors } from '../constants/colors';
+import { API_BASE_URL } from '../constants/api';
 import { Routes } from '../constants/routes';
 import { CommonButton } from '../components/CommonButton';
 import { CurrentWorkOrderBar } from '../components/CurrentWorkOrderBar';
@@ -13,9 +14,11 @@ import type { ResourceCategory } from '../models/ResourceCategory';
 import type { ResourceFile } from '../models/ResourceFile';
 import type { WorkOrder } from '../models/WorkOrder';
 import { CameraAdapter } from '../platform/CameraAdapter';
+import { ClipboardAdapter } from '../platform/ClipboardAdapter';
 import { DownloadAdapter } from '../platform/DownloadAdapter';
 import { FilePickerAdapter, PickedFile } from '../platform/FilePickerAdapter';
 import { ToastAdapter } from '../platform/ToastAdapter';
+import { VoiceInputAdapter } from '../platform/VoiceInputAdapter';
 import { nativeDownloadUrl } from '../services/resourceApi';
 import { downloadAllUrl } from '../services/workOrderApi';
 import { ApiException } from '../services/httpClient';
@@ -237,8 +240,8 @@ struct WorkbenchPage {
     }
   }
 
-  voiceInputFallback(): void {
-    ToastAdapter.show('当前设备暂不支持语音输入，请使用手动输入。');
+  async voiceInputFallback(): Promise<void> {
+    await VoiceInputAdapter.startDictation('全局搜索');
   }
 
   async saveOrder(): Promise<void> {
@@ -394,7 +397,7 @@ struct WorkbenchPage {
       return;
     }
     if (!files.length) {
-      ToastAdapter.show(FilePickerAdapter.guidanceText());
+      ToastAdapter.show('已取消选择');
       return;
     }
     for (const file of files) {
@@ -421,11 +424,19 @@ struct WorkbenchPage {
   }
 
   async uploadPdf(): Promise<void> {
-    await this.uploadPickedFiles(await FilePickerAdapter.pickPdf());
+    try {
+      await this.uploadPickedFiles(await FilePickerAdapter.pickPdf());
+    } catch (err) {
+      await this.handleError(err as Error, 'PDF 选择失败');
+    }
   }
 
   async uploadImage(): Promise<void> {
-    await this.uploadPickedFiles(await FilePickerAdapter.pickImages());
+    try {
+      await this.uploadPickedFiles(await FilePickerAdapter.pickImages());
+    } catch (err) {
+      await this.handleError(err as Error, '图片选择失败');
+    }
   }
 
   async cameraUpload(): Promise<void> {
@@ -434,7 +445,20 @@ struct WorkbenchPage {
       ToastAdapter.show(CameraAdapter.guidanceText());
       return;
     }
-    await CameraAdapter.openCamera();
+    try {
+      await CameraAdapter.openCamera();
+      const photo = await CameraAdapter.takePhoto();
+      if (photo) {
+        this.cameraOpen = false;
+        await this.uploadPickedFiles([photo]);
+      } else {
+        this.cameraOpen = false;
+        ToastAdapter.show('已取消选择');
+      }
+    } catch (err) {
+      this.cameraOpen = false;
+      await this.handleError(err as Error, '拍照上传失败');
+    }
   }
 
   async capturePhoto(): Promise<void> {
@@ -448,11 +472,22 @@ struct WorkbenchPage {
   }
 
   async downloadFile(file: ResourceFile): Promise<void> {
-    await DownloadAdapter.downloadFile(file, nativeDownloadUrl(file));
+    const context = getContext(this) as common.UIAbilityContext;
+    await DownloadAdapter.downloadFile(file, nativeDownloadUrl(file), context);
+  }
+
+  async copyFileLink(file: ResourceFile): Promise<void> {
+    await ClipboardAdapter.copyText(`${API_BASE_URL}${file.downloadUrl}`, '文件链接');
+  }
+
+  async copyWorkOrderLink(): Promise<void> {
+    if (!this.current) return;
+    await ClipboardAdapter.copyText(`${API_BASE_URL}/dashboard?workOrderId=${this.current.id}`, '工单链接');
   }
 
   async openFile(file: ResourceFile): Promise<void> {
-    await DownloadAdapter.openFile(file, nativeDownloadUrl(file));
+    const context = getContext(this) as common.UIAbilityContext;
+    await DownloadAdapter.openFile(file, nativeDownloadUrl(file), context);
   }
 
   async deleteFile(file: ResourceFile): Promise<void> {
@@ -485,7 +520,8 @@ struct WorkbenchPage {
 
   async downloadAll(): Promise<void> {
     if (!this.current) return;
-    await DownloadAdapter.downloadPackage(`${this.current.code}-资料包.zip`, downloadAllUrl(this.current.id));
+    const context = getContext(this) as common.UIAbilityContext;
+    await DownloadAdapter.downloadPackage(`${this.current.code}-资料包.zip`, downloadAllUrl(this.current.id), context);
   }
 
   async retryUpload(job: UploadQueueItem): Promise<void> {
@@ -521,7 +557,6 @@ struct WorkbenchPage {
           onSearch: () => this.searchGlobal(),
           onVoiceInput: () => this.voiceInputFallback(),
           onOpenDrawer: () => this.drawerOpen = true,
-          onPlaceholder: (name: string) => ToastAdapter.show(`${name} 原生入口已准备`),
           onLogout: () => this.logout()
         })
         Column() {
@@ -532,6 +567,7 @@ struct WorkbenchPage {
             onCreate: () => this.openCreateOrder(),
             onEdit: () => this.openEditOrder(),
             onDelete: () => this.orderDeleteOpen = true,
+            onCopyLink: () => this.copyWorkOrderLink(),
             onDownloadAll: () => this.downloadAll(),
             onCycleStage: () => this.cycleCurrentStage(),
             onCyclePriority: () => this.cycleCurrentPriority(),
@@ -645,6 +681,7 @@ struct WorkbenchPage {
                 onDownload: (file: ResourceFile) => this.downloadFile(file),
                 onOpen: (file: ResourceFile) => this.openFile(file),
                 onDelete: (file: ResourceFile) => this.deleteFile(file),
+                onCopyFileLink: (file: ResourceFile) => this.copyFileLink(file),
                 onDownloadAll: () => this.downloadAll(),
                 onSaveFile: (displayName: string, remark: string, categoryId: string, workOrderId: string) => this.saveFileInfo(displayName, remark, categoryId, workOrderId),
                 onRetryUpload: (job: UploadQueueItem) => this.retryUpload(job),

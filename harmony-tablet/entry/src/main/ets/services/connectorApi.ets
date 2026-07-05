@@ -1,5 +1,6 @@
-import { httpClient, NativeApiBaseResponse } from './httpClient';
+import { httpClient, NativeApiBaseResponse, MultipartUploadInput } from './httpClient';
 import type { ConnectorParameter } from '../models/ConnectorParameter';
+import type { PickedFile } from '../platform/FilePickerAdapter';
 
 export interface ConnectorListData {
   parameters: ConnectorParameter[];
@@ -101,6 +102,14 @@ export interface ConnectorAttachmentListData {
 
 export interface ConnectorAttachmentListResponse extends NativeApiBaseResponse {
   data: ConnectorAttachmentListData;
+}
+
+export interface ConnectorAttachmentData {
+  file: ConnectorAttachment;
+}
+
+export interface ConnectorAttachmentResponse extends NativeApiBaseResponse {
+  data: ConnectorAttachmentData;
 }
 
 export interface ConnectorImportBatch {
@@ -223,6 +232,16 @@ export async function commitConnectorImport(rows: ConnectorImportPreviewRow[], i
 export async function fetchConnectorAttachments(): Promise<ConnectorAttachmentListData> {
   const response = await httpClient.get('/api/native/connector-parameter-files');
   const parsed = JSON.parse(response.text) as ConnectorAttachmentListResponse;
+  return parsed.data;
+}
+
+export async function uploadConnectorAttachment(file: PickedFile): Promise<ConnectorAttachmentData> {
+  const input: MultipartUploadInput = {
+    fileFieldName: 'file',
+    file: file
+  };
+  const response = await httpClient.uploadMultipart('/api/native/connector-parameter-files/upload', input);
+  const parsed = JSON.parse(response.text) as ConnectorAttachmentResponse;
   return parsed.data;
 }
 

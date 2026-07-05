@@ -29,6 +29,7 @@ export struct ResourceToolPanel {
   onDownload: (file: ResourceFile) => void = () => {};
   onOpen: (file: ResourceFile) => void = () => {};
   onDelete: (file: ResourceFile) => void = () => {};
+  onCopyFileLink: (file: ResourceFile) => void = () => {};
   onDownloadAll: () => void = () => {};
   onSaveFile: (displayName: string, remark: string, categoryId: string, workOrderId: string) => void = () => {};
   onRetryUpload: (job: UploadQueueItem) => void = () => {};
@@ -238,6 +239,9 @@ export struct ResourceToolPanel {
                 CommonButton({ label: '下载', primary: false, onTap: () => this.onDownload(this.selectedFile as ResourceFile) })
                   .width('100%')
                 CommonButton({ label: '打开', primary: false, onTap: () => this.onOpen(this.selectedFile as ResourceFile) })
+                  .width('100%')
+                  .margin({ top: 10 })
+                CommonButton({ label: '复制文件链接', primary: false, onTap: () => this.onCopyFileLink(this.selectedFile as ResourceFile) })
                   .width('100%')
                   .margin({ top: 10 })
                 CommonButton({ label: '下载全部资料包', onTap: this.onDownloadAll })

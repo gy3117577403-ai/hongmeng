@@ -8,6 +8,7 @@
 - 主界面：ArkUI 原生组件，不使用 WebView，不嵌入现有网页
 - 后端：通过 HTTPS 调用 Sealos `/api/native/*`
 - API 地址：`https://qdowqencjyph.sealoshzh.site`
+- 原生能力：文件选择、multipart 上传、下载打开、剪贴板和语音兜底均封装在 `platform/*Adapter.ets`
 
 详细说明见：[harmony-tablet/README_NATIVE.md](harmony-tablet/README_NATIVE.md)。
 
