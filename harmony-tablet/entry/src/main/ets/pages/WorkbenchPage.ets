@@ -434,6 +434,25 @@ struct WorkbenchPage {
     this.uploadQueue = nextQueue;
   }
 
+  async uploadQueueJob(jobId: string, file: PickedFile, message: string): Promise<void> {
+    if (!this.current || !this.selectedCategoryId) {
+      this.updateUploadJob(jobId, '失败', '请先选择工单和资料分类');
+      ToastAdapter.error('请先选择工单和资料分类');
+      return;
+    }
+    this.updateUploadJob(jobId, '上传中', message);
+    try {
+      const uploaded = await ResourceStore.upload(this.current.id, this.selectedCategoryId, file);
+      this.files = ResourceStore.filesForCategory(this.selectedCategoryId);
+      this.selectedFile = uploaded;
+      this.updateUploadJob(jobId, '成功', '上传完成');
+    } catch (err) {
+      const error = err as Error;
+      this.updateUploadJob(jobId, '失败', error.message || '上传失败，可稍后重试');
+      await this.handleError(error, '上传失败');
+    }
+  }
+
   async uploadPickedFiles(files: PickedFile[]): Promise<void> {
     if (!this.current || !this.selectedCategoryId) {
       ToastAdapter.error('请先选择工单和资料分类');
@@ -453,16 +472,7 @@ struct WorkbenchPage {
         file: file
       };
       this.addUploadJob(job);
-      try {
-        const uploaded = await ResourceStore.upload(this.current.id, this.selectedCategoryId, file);
-        this.files = ResourceStore.filesForCategory(this.selectedCategoryId);
-        this.selectedFile = uploaded;
-        this.updateUploadJob(jobId, '成功', '上传完成');
-      } catch (err) {
-        const error = err as Error;
-        this.updateUploadJob(jobId, '失败', error.message || '上传失败，可稍后重试');
-        await this.handleError(error, '上传失败');
-      }
+      await this.uploadQueueJob(jobId, file, '正在上传到对象存储');
     }
   }
 
@@ -621,25 +631,28 @@ struct WorkbenchPage {
 
   async retryUpload(job: UploadQueueItem): Promise<void> {
     if (!job.file) {
+      this.updateUploadJob(job.id, '失败', '缺少可重试文件');
       ToastAdapter.error('缺少可重试文件');
       return;
     }
-    await this.uploadPickedFiles([job.file]);
+    await this.uploadQueueJob(job.id, job.file, '正在重试上传到对象存储');
   }
 
   async retryAllFailedUploads(): Promise<void> {
-    const files: PickedFile[] = [];
+    const jobs: UploadQueueItem[] = [];
     for (let i = 0; i < this.uploadQueue.length; i++) {
       const job = this.uploadQueue[i];
       if (job.status === '失败' && job.file) {
-        files.push(job.file);
+        jobs.push(job);
       }
     }
-    if (files.length === 0) {
+    if (jobs.length === 0) {
       ToastAdapter.show('暂无可重试的失败上传');
       return;
     }
-    await this.uploadPickedFiles(files);
+    for (let i = 0; i < jobs.length; i++) {
+      await this.retryUpload(jobs[i]);
+    }
   }
 
   build(): void {
