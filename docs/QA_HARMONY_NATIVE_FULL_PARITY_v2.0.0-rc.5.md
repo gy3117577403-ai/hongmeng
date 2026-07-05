@@ -145,6 +145,7 @@
 ## 验证结果
 - `npm run build`：通过。
 - `npm run smoke`：通过。
+- `npm run harmony:check`：通过，扫描 45 个 ArkTS 文件。
 - smoke 覆盖：
   - `/api/health`
   - `/manifest.webmanifest`
@@ -171,6 +172,7 @@
 - 未执行原因：本机 PATH 未发现 `ohpm`、`hvigor`、`hvigorw`，且 `harmony-tablet` 内没有 `hvigorw.bat`。
 
 ## ArkTS Strict 静态检查
+- 已新增 `scripts/harmony-static-check.mjs`，并通过 `npm run harmony:check` 执行。
 - 未新增 `any`。
 - 未新增 `unknown`。
 - 未使用 `delete`。
