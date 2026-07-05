@@ -50,6 +50,18 @@ struct SettingsPage {
     await this.switchPanel(NavigationStore.consumeSettingsPanel());
   }
 
+  aboutToDisappear(): void {
+    this.clearPasswordInputs();
+  }
+
+  clearPasswordInputs(): void {
+    this.newPassword = '';
+    this.resetPasswordText = '';
+    this.currentPassword = '';
+    this.changeNewPassword = '';
+    this.changeConfirmPassword = '';
+  }
+
   async handleError(err: Error, fallback: string): Promise<void> {
     if (err instanceof ApiException && err.needLogin) {
       const context = getContext(this) as common.UIAbilityContext;
@@ -107,7 +119,7 @@ struct SettingsPage {
       await adminApi.createUser({ username: this.newUsername, displayName: this.newDisplayName, password: this.newPassword });
       this.newUsername = '';
       this.newDisplayName = '';
-      this.newPassword = '';
+      this.clearPasswordInputs();
       await this.loadUsers();
       ToastAdapter.success('账号已新增');
     } catch (err) {
@@ -146,7 +158,7 @@ struct SettingsPage {
     try {
       await adminApi.resetUserPassword(user.id, { password: this.resetPasswordText, confirmText: 'RESET_PASSWORD' });
       this.pendingResetUser = undefined;
-      this.resetPasswordText = '';
+      this.clearPasswordInputs();
       ToastAdapter.success(`已重置 ${user.username} 的密码`);
     } catch (err) {
       await this.handleError(err as Error, '重置密码失败');
@@ -161,6 +173,7 @@ struct SettingsPage {
         confirmPassword: this.changeConfirmPassword
       });
       ToastAdapter.success('密码修改成功，请重新登录');
+      this.clearPasswordInputs();
       await this.logout();
     } catch (err) {
       await this.handleError(err as Error, '修改密码失败');
@@ -260,6 +273,7 @@ struct SettingsPage {
 
   async logout(): Promise<void> {
     const context = getContext(this) as common.UIAbilityContext;
+    this.clearPasswordInputs();
     await AuthStore.logout(context);
     router.replaceUrl({ url: 'pages/LoginPage' });
   }

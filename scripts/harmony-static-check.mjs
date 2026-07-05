@@ -177,6 +177,8 @@ assertTextIncludes('harmony-tablet/entry/src/main/ets/services/connectorApi.ets'
 assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/ConnectorParametersPage.ets', "IMPORT_CONFIRM", 'Harmony large import confirmation UI check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/SettingsPage.ets', "user.isActive ? 'DISABLE' : 'ENABLE'", 'Harmony account active-state confirmation call check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/SettingsPage.ets', "confirmText: 'RESET_PASSWORD'", 'Harmony reset password confirmation call check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/SettingsPage.ets', 'clearPasswordInputs(): void', 'Harmony settings password input cleanup method check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/SettingsPage.ets', 'aboutToDisappear(): void', 'Harmony settings clears password inputs on page leave check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "lower.indexOf('password') >= 0", 'Harmony login diagnostics password redaction check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "lower.indexOf('secret') >= 0", 'Harmony login diagnostics secret redaction check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "return '[sensitive body hidden]'", 'Harmony login diagnostics sensitive body redaction check');

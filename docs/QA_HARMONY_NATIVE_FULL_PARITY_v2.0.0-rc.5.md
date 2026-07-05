@@ -179,6 +179,7 @@
 - 已检查 Native download-ticket 白名单覆盖资源 content/download、工单 ZIP、连接器附件、连接器 CSV 导出和模板下载路径。
 - 已检查 Native 危险操作确认口令：工单删除、文件删除、连接器删除/批量删除、附件删除、导入确认、导入批次回滚、账号启停、重置密码和最后 active 用户保护。
 - 已检查 Harmony 登录诊断日志会隐藏 token、password、secret、session、数据库和对象存储 key 相关响应体预览。
+- 已检查 Settings 页新增账号、重置密码、修改密码、退出登录和页面离开时会清理密码输入态，不在原生页面状态中长期保留密码文本。
 - 已检查 `API_BASE_URL` 保持为 `https://qdowqencjyph.sealoshzh.site`。
 - 已检查 `main_pages.json`、`Routes` 常量和 `EntryAbility` 入口页覆盖 Login、Workbench、ConnectorParameters、Settings。
 - 已检查页面文件中的 `this.xxx()` 方法调用均有同文件方法定义，避免页面编译期出现缺失方法引用。
