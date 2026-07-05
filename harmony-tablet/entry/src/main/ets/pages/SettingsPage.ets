@@ -43,6 +43,8 @@ struct SettingsPage {
   @State currentPassword: string = '';
   @State changeNewPassword: string = '';
   @State changeConfirmPassword: string = '';
+  @State pendingToggleUser?: NativeUserAccount = undefined;
+  @State pendingResetUser?: NativeUserAccount = undefined;
 
   async aboutToAppear(): Promise<void> {
     await this.switchPanel(NavigationStore.consumeSettingsPanel());
@@ -113,9 +115,16 @@ struct SettingsPage {
     }
   }
 
-  async toggleUser(user: NativeUserAccount): Promise<void> {
+  requestToggleUser(user: NativeUserAccount): void {
+    this.pendingToggleUser = user;
+  }
+
+  async confirmToggleUser(): Promise<void> {
+    const user = this.pendingToggleUser;
+    if (user === undefined) return;
     try {
       await adminApi.updateUser(user.id, { isActive: !user.isActive });
+      this.pendingToggleUser = undefined;
       await this.loadUsers();
       ToastAdapter.success(user.isActive ? '账号已禁用' : '账号已启用');
     } catch (err) {
@@ -123,13 +132,20 @@ struct SettingsPage {
     }
   }
 
-  async resetPassword(user: NativeUserAccount): Promise<void> {
+  requestResetPassword(user: NativeUserAccount): void {
     if (this.resetPasswordText.length < 6) {
       ToastAdapter.error('请先填写至少 6 位的新密码');
       return;
     }
+    this.pendingResetUser = user;
+  }
+
+  async confirmResetPassword(): Promise<void> {
+    const user = this.pendingResetUser;
+    if (user === undefined) return;
     try {
       await adminApi.resetUserPassword(user.id, { password: this.resetPasswordText });
+      this.pendingResetUser = undefined;
       this.resetPasswordText = '';
       ToastAdapter.success(`已重置 ${user.username} 的密码`);
     } catch (err) {
@@ -279,28 +295,29 @@ struct SettingsPage {
   }
 
   build(): void {
-    Column() {
-      Row() {
-        Button('返回')
-          .height(44)
-          .fontSize(15)
-          .backgroundColor(Colors.primaryLight)
-          .fontColor(Colors.primary)
-          .borderRadius(12)
-          .onClick(() => router.back())
-        Text('系统设置')
-          .fontSize(24)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(Colors.text)
-          .margin({ left: 18 })
-        Blank()
-        CommonButton({ label: '退出登录', danger: true, onTap: () => this.logout() })
-      }
-      .height(72)
-      .padding({ left: 24, right: 24 })
-      .backgroundColor(Colors.card)
+    Stack() {
+      Column() {
+        Row() {
+          Button('返回')
+            .height(44)
+            .fontSize(15)
+            .backgroundColor(Colors.primaryLight)
+            .fontColor(Colors.primary)
+            .borderRadius(12)
+            .onClick(() => router.back())
+          Text('系统设置')
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Colors.text)
+            .margin({ left: 18 })
+          Blank()
+          CommonButton({ label: '退出登录', danger: true, onTap: () => this.logout() })
+        }
+        .height(72)
+        .padding({ left: 24, right: 24 })
+        .backgroundColor(Colors.card)
 
-      Row() {
+        Row() {
         Column() {
           this.navButton('生产稳定', 'stability')
           this.navButton('系统状态', 'status')
@@ -440,8 +457,8 @@ struct SettingsPage {
                 }
                 .alignItems(HorizontalAlign.Start)
                 .layoutWeight(1)
-                CommonButton({ label: user.isActive ? '禁用' : '启用', primary: false, onTap: () => this.toggleUser(user) }).margin({ right: 8 })
-                CommonButton({ label: '重置密码', primary: false, onTap: () => this.resetPassword(user) })
+                CommonButton({ label: user.isActive ? '禁用' : '启用', primary: false, onTap: () => this.requestToggleUser(user) }).margin({ right: 8 })
+                CommonButton({ label: '重置密码', primary: false, onTap: () => this.requestResetPassword(user) })
               }
               .padding(12)
               .margin({ bottom: 8 })
@@ -619,9 +636,66 @@ struct SettingsPage {
         .margin({ left: 16 })
         .backgroundColor(Colors.card)
         .borderRadius(18)
+        }
+        .padding(16)
+        .layoutWeight(1)
       }
-      .padding(16)
-      .layoutWeight(1)
+      .width('100%')
+      .height('100%')
+
+      if (this.pendingToggleUser) {
+        Column() {
+          Text(this.pendingToggleUser?.isActive === true ? '确认禁用账号' : '确认启用账号')
+            .fontSize(22)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.pendingToggleUser?.isActive === true ? Colors.danger : Colors.text)
+          Text(this.pendingToggleUser?.isActive === true
+            ? `将禁用账号 ${this.pendingToggleUser?.username || '-'}，该账号将不能继续登录。`
+            : `将启用账号 ${this.pendingToggleUser?.username || '-'}，该账号可重新登录。`)
+            .fontSize(15)
+            .fontColor(Colors.textMuted)
+            .textAlign(TextAlign.Center)
+            .margin({ top: 12, bottom: 18 })
+          Row() {
+            CommonButton({
+              label: this.pendingToggleUser?.isActive === true ? '确认禁用' : '确认启用',
+              danger: this.pendingToggleUser?.isActive === true,
+              onTap: () => this.confirmToggleUser()
+            })
+              .margin({ right: 12 })
+            CommonButton({ label: '取消', primary: false, onTap: () => this.pendingToggleUser = undefined })
+          }
+        }
+        .width(440)
+        .padding(24)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
+
+      if (this.pendingResetUser) {
+        Column() {
+          Text('确认重置密码')
+            .fontSize(22)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Colors.danger)
+          Text(`将重置账号 ${this.pendingResetUser?.username || '-'} 的登录密码，操作日志不会记录明文密码。`)
+            .fontSize(15)
+            .fontColor(Colors.textMuted)
+            .textAlign(TextAlign.Center)
+            .margin({ top: 12, bottom: 18 })
+          Row() {
+            CommonButton({ label: '确认重置', danger: true, onTap: () => this.confirmResetPassword() })
+              .margin({ right: 12 })
+            CommonButton({ label: '取消', primary: false, onTap: () => this.pendingResetUser = undefined })
+          }
+        }
+        .width(460)
+        .padding(24)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
     }
     .width('100%')
     .height('100%')
