@@ -1,6 +1,7 @@
 import { Colors } from '../constants/colors';
 import type { ResourceCategory } from '../models/ResourceCategory';
 import type { ResourceFile } from '../models/ResourceFile';
+import type { WorkOrder } from '../models/WorkOrder';
 import type { PickedFile } from '../platform/FilePickerAdapter';
 import { displayName, fileSizeText } from '../utils/format';
 import { CommonButton } from './CommonButton';
@@ -18,6 +19,7 @@ export struct ResourceToolPanel {
   collapsed: boolean = false;
   selectedFile?: ResourceFile;
   categories: ResourceCategory[] = [];
+  workOrders: WorkOrder[] = [];
   selectedCategoryId: string = '';
   uploadQueue: UploadQueueItem[] = [];
   filePickerStatus: string = '请使用 Web 端';
@@ -312,6 +314,43 @@ export struct ResourceToolPanel {
                   .height(42)
                   .margin({ top: 10 })
                   .onChange(value => this.editWorkOrderId = value)
+                if (this.workOrders.length > 0) {
+                  Text('从工单列表点选目标')
+                    .fontSize(13)
+                    .fontColor(Colors.textMuted)
+                    .margin({ top: 12, bottom: 8 })
+                  Scroll() {
+                    Row() {
+                      ForEach(this.workOrders, (order: WorkOrder) => {
+                        Column() {
+                          Text(order.code)
+                            .fontSize(13)
+                            .fontWeight(FontWeight.Medium)
+                            .fontColor(this.editWorkOrderId === order.id ? Colors.primary : Colors.text)
+                            .maxLines(1)
+                            .textOverflow({ overflow: TextOverflow.Ellipsis })
+                          Text(order.customerName || order.productName || '-')
+                            .fontSize(11)
+                            .fontColor(Colors.textMuted)
+                            .margin({ top: 4 })
+                            .maxLines(1)
+                            .textOverflow({ overflow: TextOverflow.Ellipsis })
+                        }
+                        .width(158)
+                        .height(58)
+                        .padding(8)
+                        .margin({ right: 8 })
+                        .alignItems(HorizontalAlign.Start)
+                        .backgroundColor(this.editWorkOrderId === order.id ? '#FFF7ED' : Colors.card)
+                        .border({ width: 1, color: this.editWorkOrderId === order.id ? Colors.primary : Colors.border })
+                        .borderRadius(12)
+                        .onClick(() => this.editWorkOrderId = order.id)
+                      }, (order: WorkOrder) => order.id)
+                    }
+                  }
+                  .height(66)
+                  .scrollable(ScrollDirection.Horizontal)
+                }
                 CommonButton({ label: '保存文件信息', onTap: () => this.onSaveFile(this.editDisplayName, this.editRemark, this.editCategoryId, this.editWorkOrderId) })
                   .width('100%')
                   .margin({ top: 12 })

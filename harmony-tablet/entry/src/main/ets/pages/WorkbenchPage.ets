@@ -724,6 +724,7 @@ struct WorkbenchPage {
                 collapsed: this.toolCollapsed,
                 selectedFile: this.selectedFile,
                 categories: this.categories,
+                workOrders: this.orders,
                 selectedCategoryId: this.selectedCategoryId,
                 uploadQueue: this.uploadQueue,
                 filePickerStatus: FilePickerAdapter.statusText(),

@@ -18,7 +18,7 @@ import type { WorkOrder } from '../models/WorkOrder';
 @Component
 struct SettingsPage {
   @State loading: boolean = false;
-  @State activePanel: string = 'status';
+  @State activePanel: string = 'stability';
   @State statusText: string = '未检查';
   @State databaseText: string = '-';
   @State storageText: string = '-';
@@ -75,6 +75,7 @@ struct SettingsPage {
 
   async switchPanel(panel: string): Promise<void> {
     this.activePanel = panel;
+    if (panel === 'stability') await this.loadStatus();
     if (panel === 'status') await this.loadStatus();
     if (panel === 'users') await this.loadUsers();
     if (panel === 'logs') await this.loadLogs();
@@ -300,6 +301,7 @@ struct SettingsPage {
 
       Row() {
         Column() {
+          this.navButton('生产稳定', 'stability')
           this.navButton('系统状态', 'status')
           this.navButton('账号管理', 'users')
           this.navButton('修改密码', 'password')
@@ -315,8 +317,89 @@ struct SettingsPage {
         .borderRadius(18)
 
         Column() {
+          if (this.activePanel === 'stability') {
+            this.sectionTitle('生产稳定中心', '聚合健康状态、风险提示和现场排查入口。')
+            Row() {
+              Column() {
+                Text('服务状态')
+                  .fontSize(13)
+                  .fontColor(Colors.textMuted)
+                Text(this.statusText)
+                  .fontSize(24)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(this.statusText === '正常' ? Colors.success : Colors.danger)
+                  .margin({ top: 8 })
+              }
+              .layoutWeight(1)
+              .padding(16)
+              .backgroundColor('#F9FAFB')
+              .borderRadius(16)
+              .margin({ right: 12 })
+              Column() {
+                Text('数据库')
+                  .fontSize(13)
+                  .fontColor(Colors.textMuted)
+                Text(this.databaseText)
+                  .fontSize(15)
+                  .fontColor(Colors.text)
+                  .margin({ top: 8 })
+              }
+              .layoutWeight(1)
+              .padding(16)
+              .backgroundColor('#F9FAFB')
+              .borderRadius(16)
+              .margin({ right: 12 })
+              Column() {
+                Text('对象存储')
+                  .fontSize(13)
+                  .fontColor(Colors.textMuted)
+                Text(this.storageText)
+                  .fontSize(15)
+                  .fontColor(Colors.text)
+                  .margin({ top: 8 })
+              }
+              .layoutWeight(1)
+              .padding(16)
+              .backgroundColor('#F9FAFB')
+              .borderRadius(16)
+            }
+            .margin({ bottom: 14 })
+            Column() {
+              Text(this.countText)
+                .fontSize(15)
+                .fontColor(Colors.text)
+              Text(`风险提示：${this.warningText}`)
+                .fontSize(13)
+                .fontColor(Colors.textMuted)
+                .margin({ top: 8 })
+              Text(`API：${API_BASE_URL}`)
+                .fontSize(12)
+                .fontColor(Colors.textMuted)
+                .margin({ top: 8 })
+            }
+            .width('100%')
+            .padding(16)
+            .backgroundColor('#FFFDFB')
+            .border({ width: 1, color: Colors.border })
+            .borderRadius(16)
+            .margin({ bottom: 16 })
+            Row() {
+              CommonButton({ label: this.loading ? '检查中' : '刷新状态', primary: false, isEnabled: !this.loading, onTap: () => this.loadStatus() })
+                .width(180)
+              CommonButton({ label: '查看操作日志', primary: false, onTap: () => this.switchPanel('logs') })
+                .width(180)
+                .margin({ left: 12 })
+              CommonButton({ label: '查看回收站', primary: false, onTap: () => this.switchPanel('trash') })
+                .width(180)
+                .margin({ left: 12 })
+              CommonButton({ label: '导出诊断', onTap: () => this.switchPanel('diagnostics') })
+                .width(180)
+                .margin({ left: 12 })
+            }
+          }
+
           if (this.activePanel === 'status') {
-            this.sectionTitle('生产稳定中心', '检查服务、数据库、对象存储和业务数据量。')
+            this.sectionTitle('系统状态', '检查服务、数据库、对象存储和业务数据量。')
             Text(`服务器：${API_BASE_URL}`).fontSize(14).fontColor(Colors.textMuted).margin({ bottom: 12 })
             Text(`当前用户：${AuthStore.user?.displayName || AuthStore.user?.username || '-'}`).fontSize(14).fontColor(Colors.textMuted).margin({ bottom: 12 })
             Text(`状态：${this.statusText}`).fontSize(16).fontColor(this.statusText === '正常' ? Colors.success : Colors.danger).margin({ bottom: 10 })
