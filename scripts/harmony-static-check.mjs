@@ -94,6 +94,31 @@ function scanSensitiveFile(filePath) {
   }
 }
 
+function scanUndefinedThisMethods(filePath) {
+  const text = readFileSync(path.resolve(filePath), 'utf8');
+  const definedMethods = new Set();
+  const methodPattern = /^\s*(?:async\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*\([^)]*\)\s*:\s*[^=;]+[{]/gm;
+  let methodMatch = methodPattern.exec(text);
+  while (methodMatch !== null) {
+    definedMethods.add(methodMatch[1]);
+    methodMatch = methodPattern.exec(text);
+  }
+
+  const callPattern = /\bthis\.([A-Za-z_$][A-Za-z0-9_$]*)\s*\(/g;
+  let callMatch = callPattern.exec(text);
+  while (callMatch !== null) {
+    const methodName = callMatch[1];
+    if (!definedMethods.has(methodName)) {
+      fail(`undefined this method call: ${filePath} -> this.${methodName}()`);
+    }
+    callMatch = callPattern.exec(text);
+  }
+}
+
+function isPageFile(filePath) {
+  return filePath.includes('/pages/');
+}
+
 let failed = false;
 
 const requiredFiles = [
@@ -180,6 +205,13 @@ for (const file of sensitiveScanFiles) {
 
 for (const file of files) {
   scanSensitiveFile(relative(file));
+}
+
+for (const file of files) {
+  const rel = relative(file);
+  if (isPageFile(rel)) {
+    scanUndefinedThisMethods(rel);
+  }
 }
 
 for (const file of files) {

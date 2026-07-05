@@ -235,7 +235,7 @@ struct ConnectorParametersPage {
       for (let i = 0; i < files.length; i++) {
         await connectorApi.uploadConnectorAttachment(files[i]);
       }
-      await this.loadAttachments();
+      await this.loadAttachmentsAndBatches();
       ToastAdapter.success('原始资料附件已上传');
     } catch (err) {
       await this.handleError(err as Error, '原始资料附件上传失败');
