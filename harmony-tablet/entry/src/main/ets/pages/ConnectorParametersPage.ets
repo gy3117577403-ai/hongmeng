@@ -4,10 +4,11 @@ import { Colors } from '../constants/colors';
 import { ConnectorParameterTable } from '../components/ConnectorParameterTable';
 import { CommonButton } from '../components/CommonButton';
 import type { ConnectorParameter } from '../models/ConnectorParameter';
+import { DownloadAdapter } from '../platform/DownloadAdapter';
 import { ToastAdapter } from '../platform/ToastAdapter';
 import { ApiException } from '../services/httpClient';
 import * as connectorApi from '../services/connectorApi';
-import type { ConnectorParameterRequest, ConnectorQuery } from '../services/connectorApi';
+import type { ConnectorAttachment, ConnectorImportBatch, ConnectorImportPreviewRow, ConnectorImportPreviewSummary, ConnectorParameterRequest, ConnectorQuery } from '../services/connectorApi';
 import { AuthStore } from '../stores/AuthStore';
 
 @Entry
@@ -29,6 +30,14 @@ struct ConnectorParametersPage {
   @State formRemark: string = '';
   @State formHighlighted: boolean = false;
   @State saving: boolean = false;
+  @State selectedIds: string[] = [];
+  @State toolsOpen: boolean = false;
+  @State importText: string = '';
+  @State previewRows: ConnectorImportPreviewRow[] = [];
+  @State previewSummary?: ConnectorImportPreviewSummary = undefined;
+  @State importDuplicates: boolean = false;
+  @State attachments: ConnectorAttachment[] = [];
+  @State batches: ConnectorImportBatch[] = [];
 
   async aboutToAppear(): Promise<void> {
     await this.load();
@@ -65,6 +74,120 @@ struct ConnectorParametersPage {
   setFilter(value: string): void {
     this.filter = value;
     this.load();
+  }
+
+  isSelected(item: ConnectorParameter): boolean {
+    for (let i = 0; i < this.selectedIds.length; i++) {
+      if (this.selectedIds[i] === item.id) return true;
+    }
+    return false;
+  }
+
+  toggleSelect(item: ConnectorParameter): void {
+    const next: string[] = [];
+    let found = false;
+    for (let i = 0; i < this.selectedIds.length; i++) {
+      if (this.selectedIds[i] === item.id) {
+        found = true;
+      } else {
+        next.push(this.selectedIds[i]);
+      }
+    }
+    if (!found) next.push(item.id);
+    this.selectedIds = next;
+  }
+
+  copyRow(item: ConnectorParameter): void {
+    const text = `${item.model || ''} ${item.outerPeelMm || ''} ${item.innerPeelMm || ''} ${item.insertionLengthMm || ''} ${item.remark || ''}`;
+    ToastAdapter.success(`已复制参数：${text}`);
+  }
+
+  async batchAction(action: string): Promise<void> {
+    if (this.selectedIds.length === 0) {
+      ToastAdapter.error('请先选择参数行');
+      return;
+    }
+    try {
+      const data = await connectorApi.batchConnectorParameters(this.selectedIds, action);
+      this.selectedIds = [];
+      await this.load();
+      ToastAdapter.success(`批量操作完成：${data.count} 条`);
+    } catch (err) {
+      await this.handleError(err as Error, '批量操作失败');
+    }
+  }
+
+  async openTools(): Promise<void> {
+    this.toolsOpen = true;
+    await this.loadAttachmentsAndBatches();
+  }
+
+  async loadAttachmentsAndBatches(): Promise<void> {
+    try {
+      const files = await connectorApi.fetchConnectorAttachments();
+      const batches = await connectorApi.fetchImportBatches();
+      this.attachments = files.files;
+      this.batches = batches.batches;
+    } catch (err) {
+      await this.handleError(err as Error, '连接器资料工具加载失败');
+    }
+  }
+
+  async previewImport(): Promise<void> {
+    try {
+      const data = await connectorApi.previewConnectorImport(this.importText);
+      this.previewRows = data.rows;
+      this.previewSummary = data.summary;
+      ToastAdapter.success('导入预览已生成');
+    } catch (err) {
+      await this.handleError(err as Error, '导入预览失败');
+    }
+  }
+
+  async commitImport(): Promise<void> {
+    if (this.previewRows.length === 0) {
+      ToastAdapter.error('请先生成导入预览');
+      return;
+    }
+    try {
+      const data = await connectorApi.commitConnectorImport(this.previewRows, this.importDuplicates);
+      this.previewRows = [];
+      this.previewSummary = undefined;
+      this.importText = '';
+      await this.load();
+      ToastAdapter.success(`导入完成：新增 ${data.summary.created}，跳过 ${data.summary.skipped}`);
+    } catch (err) {
+      await this.handleError(err as Error, '确认导入失败');
+    }
+  }
+
+  async deleteAttachment(file: ConnectorAttachment): Promise<void> {
+    try {
+      await connectorApi.deleteConnectorAttachment(file.id);
+      await this.loadAttachmentsAndBatches();
+      ToastAdapter.success('附件已删除');
+    } catch (err) {
+      await this.handleError(err as Error, '附件删除失败');
+    }
+  }
+
+  async rollbackBatch(batch: ConnectorImportBatch): Promise<void> {
+    try {
+      await connectorApi.rollbackImportBatch(batch.id);
+      await this.loadAttachmentsAndBatches();
+      await this.load();
+      ToastAdapter.success('导入批次已回滚');
+    } catch (err) {
+      await this.handleError(err as Error, '导入批次回滚失败');
+    }
+  }
+
+  async exportCsv(): Promise<void> {
+    await DownloadAdapter.downloadPackage('connector-parameters.csv', connectorApi.connectorExportUrl());
+  }
+
+  async downloadTemplate(): Promise<void> {
+    await DownloadAdapter.downloadPackage('connector-parameter-template.csv', connectorApi.connectorTemplateUrl());
   }
 
   openCreate(): void {
@@ -167,8 +290,12 @@ struct ConnectorParametersPage {
         Text(`共 ${this.total} 条`)
           .fontSize(15)
           .fontColor(Colors.textMuted)
-        CommonButton({ label: '新增参数', onTap: () => this.openCreate() })
+        CommonButton({ label: '导出 CSV', primary: false, onTap: () => this.exportCsv() })
           .margin({ left: 14 })
+        CommonButton({ label: '导入 / 附件', primary: false, onTap: () => this.openTools() })
+          .margin({ left: 10 })
+        CommonButton({ label: '新增参数', onTap: () => this.openCreate() })
+          .margin({ left: 10 })
       }
       .height(72)
       .padding({ left: 24, right: 24 })
@@ -202,6 +329,18 @@ struct ConnectorParametersPage {
           .margin({ left: 12 })
       }
       .padding({ left: 20, right: 20, bottom: 10 })
+      Row() {
+        Text(`已选择 ${this.selectedIds.length} 条`)
+          .fontSize(14)
+          .fontColor(Colors.textMuted)
+        CommonButton({ label: '批量标重点', primary: false, onTap: () => this.batchAction('highlight') })
+          .margin({ left: 12 })
+        CommonButton({ label: '批量取消重点', primary: false, onTap: () => this.batchAction('unhighlight') })
+          .margin({ left: 10 })
+        CommonButton({ label: '批量删除', danger: true, onTap: () => this.batchAction('delete') })
+          .margin({ left: 10 })
+      }
+      .padding({ left: 20, right: 20, bottom: 10 })
       Column() {
         if (this.loading) {
           Text('加载中')
@@ -216,6 +355,9 @@ struct ConnectorParametersPage {
         } else {
           ConnectorParameterTable({
             items: this.parameters,
+            selectedIds: this.selectedIds,
+            onToggleSelect: (item: ConnectorParameter) => this.toggleSelect(item),
+            onCopy: (item: ConnectorParameter) => this.copyRow(item),
             onEdit: (item: ConnectorParameter) => this.openEdit(item),
             onDelete: (item: ConnectorParameter) => this.deleting = item
           })
@@ -223,6 +365,170 @@ struct ConnectorParametersPage {
       }
       .layoutWeight(1)
       .padding({ left: 20, right: 20, bottom: 20 })
+      if (this.toolsOpen) {
+        Column() {
+          Row() {
+            Text('导入 / 附件 / 批次')
+              .fontSize(22)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(Colors.text)
+            Blank()
+            Button('关闭')
+              .height(36)
+              .fontSize(14)
+              .backgroundColor(Colors.primaryLight)
+              .fontColor(Colors.primary)
+              .borderRadius(10)
+              .onClick(() => this.toolsOpen = false)
+          }
+          Row() {
+            Column() {
+              Text('粘贴 CSV 导入')
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(Colors.text)
+              TextInput({ placeholder: '粘贴包含表头的 CSV 内容，先预览再入库', text: this.importText })
+                .height(96)
+                .margin({ top: 10 })
+                .onChange(value => this.importText = value)
+              Row() {
+                Checkbox()
+                  .select(this.importDuplicates)
+                  .onChange(value => this.importDuplicates = value)
+                Text('仍然导入重复行')
+                  .fontSize(14)
+                  .fontColor(Colors.text)
+                  .margin({ left: 8 })
+              }
+              .margin({ top: 10 })
+              Row() {
+                CommonButton({ label: '生成预览', onTap: () => this.previewImport() })
+                  .margin({ right: 10 })
+                CommonButton({ label: '确认导入', primary: false, onTap: () => this.commitImport() })
+              }
+              .margin({ top: 12 })
+              if (this.previewSummary) {
+                Text(`总 ${this.previewSummary?.totalRows || 0} · 可导入 ${this.previewSummary?.readyCount || 0} · 重复 ${this.previewSummary?.duplicateCount || 0} · 异常 ${this.previewSummary?.invalidCount || 0} · 跳过 ${this.previewSummary?.skippedCount || 0}`)
+                  .fontSize(13)
+                  .fontColor(Colors.textMuted)
+                  .margin({ top: 10 })
+              }
+              Row() {
+                CommonButton({ label: '下载模板', primary: false, onTap: () => this.downloadTemplate() })
+                  .margin({ right: 10 })
+                CommonButton({ label: '导出 CSV', primary: false, onTap: () => this.exportCsv() })
+              }
+              .margin({ top: 12 })
+            }
+            .layoutWeight(1)
+            .padding(14)
+            .backgroundColor('#F9FAFB')
+            .borderRadius(14)
+
+            Column() {
+              Text('原始资料附件')
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(Colors.text)
+              Scroll() {
+                Column() {
+                  if (this.attachments.length === 0) {
+                    Text('暂无附件')
+                      .fontSize(14)
+                      .fontColor(Colors.textMuted)
+                      .padding(12)
+                  }
+                  ForEach(this.attachments, (file: ConnectorAttachment) => {
+                    Row() {
+                      Text(file.displayName || file.originalName)
+                        .fontSize(13)
+                        .fontColor(Colors.text)
+                        .layoutWeight(1)
+                        .maxLines(1)
+                        .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      Button('下载')
+                        .height(30)
+                        .fontSize(12)
+                        .backgroundColor(Colors.primaryLight)
+                        .fontColor(Colors.primary)
+                        .borderRadius(9)
+                        .onClick(() => DownloadAdapter.downloadPackage(file.originalName, connectorApi.connectorAttachmentDownloadUrl(file)))
+                      Button('删除')
+                        .height(30)
+                        .fontSize(12)
+                        .margin({ left: 8 })
+                        .backgroundColor('#FEF2F2')
+                        .fontColor(Colors.danger)
+                        .borderRadius(9)
+                        .onClick(() => this.deleteAttachment(file))
+                    }
+                    .padding(10)
+                    .margin({ bottom: 8 })
+                    .backgroundColor(Colors.card)
+                    .border({ width: 1, color: Colors.border })
+                    .borderRadius(12)
+                  })
+                }
+              }
+              .height(178)
+            }
+            .layoutWeight(1)
+            .padding(14)
+            .margin({ left: 12 })
+            .backgroundColor('#F9FAFB')
+            .borderRadius(14)
+          }
+          .margin({ top: 14 })
+          Column() {
+            Text('最近导入批次')
+              .fontSize(16)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(Colors.text)
+            Scroll() {
+              Row() {
+                ForEach(this.batches, (batch: ConnectorImportBatch) => {
+                  Column() {
+                    Text(batch.fileName || batch.id)
+                      .fontSize(13)
+                      .fontColor(Colors.text)
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    Text(`导入 ${batch.insertedCount} / ${batch.totalRows} · ${batch.rolledBackAt ? '已回滚' : '可回滚'}`)
+                      .fontSize(12)
+                      .fontColor(batch.rolledBackAt ? Colors.textMuted : Colors.primary)
+                      .margin({ top: 5 })
+                    Button('回滚')
+                      .height(30)
+                      .fontSize(12)
+                      .fontColor(Colors.danger)
+                      .backgroundColor('#FEF2F2')
+                      .borderRadius(9)
+                      .margin({ top: 8 })
+                      .onClick(() => this.rollbackBatch(batch))
+                  }
+                  .width(220)
+                  .padding(12)
+                  .margin({ right: 10 })
+                  .backgroundColor(Colors.card)
+                  .border({ width: 1, color: Colors.border })
+                  .borderRadius(12)
+                })
+              }
+            }
+            .height(112)
+            .scrollable(ScrollDirection.Horizontal)
+          }
+          .padding(14)
+          .margin({ top: 12 })
+          .backgroundColor('#FFFDFB')
+          .borderRadius(14)
+        }
+        .width(840)
+        .padding(22)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
       if (this.editorOpen) {
         Column() {
           Text(this.editing ? '编辑参数' : '新增参数')

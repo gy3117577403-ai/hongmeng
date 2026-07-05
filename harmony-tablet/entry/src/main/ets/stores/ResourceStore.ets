@@ -123,4 +123,22 @@ export class ResourceStore {
     await resourceApi.deleteResourceFile(file.id);
     await ResourceStore.load(workOrderId);
   }
+
+  static async updateSelected(workOrderId: string, file: ResourceFile, displayName: string, remark: string, categoryId: string): Promise<ResourceFile> {
+    const data = await resourceApi.updateResourceFile(file.id, {
+      displayName: displayName,
+      remark: remark,
+      categoryId: categoryId
+    });
+    await ResourceStore.load(workOrderId);
+    ResourceStore.selectFile(data.file);
+    return data.file;
+  }
+
+  static async restoreFile(workOrderId: string, fileId: string): Promise<ResourceFile> {
+    const data = await resourceApi.restoreResourceFile(fileId);
+    await ResourceStore.load(workOrderId);
+    ResourceStore.selectFile(data.file);
+    return data.file;
+  }
 }

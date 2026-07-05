@@ -37,13 +37,13 @@ Sealos App Deploy 端口填 `3000`。
 
 ## Harmony Native App
 - 目录：`harmony-tablet`
-- 版本：v2.0.0-native-rc.2
+- 版本：v2.0.0-native-rc.5
 - 技术栈：ArkTS / ArkUI / Stage 模型
 - 设备优先：鸿蒙 Tablet
 - 主界面：原生 ArkUI，不使用 WebView 套壳
 - 后端：通过 HTTPS 调用 Sealos `/api/native/*`
 - 默认服务地址：https://qdowqencjyph.sealoshzh.site
-- 进度：原生 App 已接入后端真实登录、工单数据、资料分类 / 文件列表、连接器参数 CRUD、系统状态和上传 / 相机 adapter 闭环
+- 进度：原生 App 已接入后端真实登录、工单资料库、工单管理、资料管理、连接器参数、系统设置、日志、回收站、快照和诊断信息闭环
 - 文档：[Harmony Native App Plan v2.0.0](docs/HARMONY_NATIVE_APP_PLAN_v2.0.0.md)
 - 工程说明：[Native README](harmony-tablet/README_NATIVE.md)
 
@@ -66,6 +66,25 @@ Sealos App Deploy 端口填 `3000`。
 - v1.12.0：危险操作防误触、数据变更快照、连接器参数导入批次、导入批次回滚、上传失败重试、生产健康检查增强、生产稳定中心、数据库索引优化
 
 ## 开发版本 / Release Candidate
+
+### v2.0.0-native-rc.5
+- 状态：本地 Web build / smoke 通过，Harmony 命令行工具缺失，等待 DevEco Studio 内清理、生成和真机验证
+- 说明：鸿蒙平板原生 App 功能完整对齐候选版，不使用 WebView，不嵌入现有网页
+- 功能：
+  - 原生登录、退出、token 保存和修改密码
+  - 原生工作台：顶部导航、工单抽屉、当前工单条、资料分类栏、预览区、右侧资料工具窗
+  - 工单新建、编辑、软删除、恢复接口和当前工单全部资料 ZIP 下载
+  - 资源文件上传入口、预览、下载、打开、软删除、恢复接口、文件信息编辑和分类移动
+  - 连接器参数查询、筛选、新增、编辑、删除、恢复、批量标记、批量删除、CSV 导入预览、确认导入、导入批次回滚、CSV 导出和原始附件管理
+  - 设置页：生产健康、账号管理、修改密码、操作日志、回收站、数据快照和诊断信息
+- 验证：
+  - `npm run build` 通过
+  - `npm run smoke` 通过
+  - 本机缺少 `ohpm` / `hvigor` / `hvigorw`，Harmony HAP 构建需在 DevEco Studio 内验证
+- 说明：
+  - 当前不部署 Sealos
+  - 当前不修改线上环境变量
+  - 尚未作为生产版本发布
 
 ### v2.0.0-native-rc.2
 - 状态：本地 Web build / smoke 通过，Harmony 命令行构建需进入 DevEco Studio 环境验证

@@ -23,6 +23,13 @@ export interface ConfirmDeleteRequest {
   confirmText: string;
 }
 
+export interface ResourceFileUpdateRequest {
+  displayName?: string;
+  remark?: string;
+  workOrderId?: string;
+  categoryId?: string;
+}
+
 export function nativeContentUrl(file: ResourceFile): string {
   return httpClient.contentUrl(file.contentUrl);
 }
@@ -49,5 +56,17 @@ export async function deleteResourceFile(id: string): Promise<ResourceDeleteData
   };
   const response = await httpClient.delete(`/api/native/resource-files/${id}`, JSON.stringify(body));
   const parsed = JSON.parse(response.text) as ResourceDeleteResponse;
+  return parsed.data;
+}
+
+export async function updateResourceFile(id: string, body: ResourceFileUpdateRequest): Promise<ResourceFileData> {
+  const response = await httpClient.patch(`/api/native/resource-files/${id}`, JSON.stringify(body));
+  const parsed = JSON.parse(response.text) as ResourceFileResponse;
+  return parsed.data;
+}
+
+export async function restoreResourceFile(id: string): Promise<ResourceFileData> {
+  const response = await httpClient.post(`/api/native/resource-files/${id}/restore`);
+  const parsed = JSON.parse(response.text) as ResourceFileResponse;
   return parsed.data;
 }

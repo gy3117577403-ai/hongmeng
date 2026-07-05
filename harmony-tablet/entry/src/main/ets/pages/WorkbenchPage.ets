@@ -17,10 +17,12 @@ import { DownloadAdapter } from '../platform/DownloadAdapter';
 import { FilePickerAdapter, PickedFile } from '../platform/FilePickerAdapter';
 import { ToastAdapter } from '../platform/ToastAdapter';
 import { nativeDownloadUrl } from '../services/resourceApi';
+import { downloadAllUrl } from '../services/workOrderApi';
 import { ApiException } from '../services/httpClient';
 import { AuthStore } from '../stores/AuthStore';
 import { ResourceStore } from '../stores/ResourceStore';
 import { WorkOrderStore } from '../stores/WorkOrderStore';
+import { priorityLabel, stageLabel } from '../utils/format';
 
 @Entry
 @Component
@@ -41,6 +43,17 @@ struct WorkbenchPage {
   @State files: ResourceFile[] = [];
   @State selectedFile?: ResourceFile = undefined;
   @State uploadQueue: UploadQueueItem[] = [];
+  @State orderEditorOpen: boolean = false;
+  @State orderDeleteOpen: boolean = false;
+  @State editingOrderId: string = '';
+  @State formCode: string = '';
+  @State formCustomerName: string = '';
+  @State formProductName: string = '';
+  @State formStage: string = 'not_issued';
+  @State formPriority: string = 'normal';
+  @State formProgress: string = '0';
+  @State formPlannedAt: string = '';
+  @State formRemark: string = '';
 
   async aboutToAppear(): Promise<void> {
     if (!AuthStore.isAuthenticated()) {
@@ -134,6 +147,118 @@ struct WorkbenchPage {
 
   setOrderStageFilter(stage: string): void {
     this.orderStageFilter = stage;
+  }
+
+  openCreateOrder(): void {
+    this.editingOrderId = '';
+    this.formCode = '';
+    this.formCustomerName = '';
+    this.formProductName = '';
+    this.formStage = 'not_issued';
+    this.formPriority = 'normal';
+    this.formProgress = '0';
+    this.formPlannedAt = '';
+    this.formRemark = '';
+    this.orderEditorOpen = true;
+  }
+
+  openEditOrder(): void {
+    if (!this.current) {
+      ToastAdapter.error('请先选择工单');
+      return;
+    }
+    this.editingOrderId = this.current.id;
+    this.formCode = this.current.code;
+    this.formCustomerName = this.current.customerName || '';
+    this.formProductName = this.current.productName || '';
+    this.formStage = this.current.stage || 'not_issued';
+    this.formPriority = this.current.priority || 'normal';
+    this.formProgress = `${this.current.progress || 0}`;
+    this.formPlannedAt = this.current.plannedAt || '';
+    this.formRemark = this.current.remark || '';
+    this.orderEditorOpen = true;
+  }
+
+  setFormStage(stage: string): void {
+    this.formStage = stage;
+  }
+
+  setFormPriority(priority: string): void {
+    this.formPriority = priority;
+  }
+
+  stageOptions(): string[] {
+    return ['not_issued', 'frontend', 'backend', 'completed'];
+  }
+
+  priorityOptions(): string[] {
+    return ['urgent', 'high', 'normal'];
+  }
+
+  async saveOrder(): Promise<void> {
+    if (!this.formCode || !this.formProductName) {
+      ToastAdapter.error('请填写工单号和产品名称');
+      return;
+    }
+    const progress = Number(this.formProgress || 0);
+    if (!Number.isFinite(progress) || progress < 0 || progress > 100) {
+      ToastAdapter.error('进度必须在 0-100 之间');
+      return;
+    }
+    try {
+      if (this.editingOrderId.length > 0) {
+        this.current = await WorkOrderStore.update(this.editingOrderId, {
+          code: this.formCode,
+          customerName: this.formCustomerName,
+          productName: this.formProductName,
+          stage: this.formStage,
+          priority: this.formPriority,
+          progress: progress,
+          plannedAt: this.formPlannedAt,
+          remark: this.formRemark
+        });
+        ToastAdapter.success('工单已更新');
+      } else {
+        this.current = await WorkOrderStore.create({
+          code: this.formCode,
+          customerName: this.formCustomerName,
+          productName: this.formProductName,
+          stage: this.formStage,
+          priority: this.formPriority,
+          progress: progress,
+          plannedAt: this.formPlannedAt,
+          remark: this.formRemark
+        });
+        ToastAdapter.success('工单已创建');
+      }
+      this.orderEditorOpen = false;
+      this.orders = WorkOrderStore.workOrders;
+      if (this.current) {
+        await this.loadResources(this.current.id);
+      }
+    } catch (err) {
+      await this.handleError(err as Error, '工单保存失败');
+    }
+  }
+
+  async deleteCurrentOrder(): Promise<void> {
+    if (!this.current) return;
+    try {
+      await WorkOrderStore.softDelete(this.current);
+      this.orders = WorkOrderStore.workOrders;
+      this.current = WorkOrderStore.current;
+      this.orderDeleteOpen = false;
+      if (this.current) {
+        await this.loadResources(this.current.id);
+      } else {
+        this.categories = [];
+        this.files = [];
+        this.selectedFile = undefined;
+      }
+      ToastAdapter.success('工单已软删除');
+    } catch (err) {
+      await this.handleError(err as Error, '删除工单失败');
+    }
   }
 
   selectedCategoryName(): string {
@@ -294,6 +419,25 @@ struct WorkbenchPage {
     }
   }
 
+  async saveFileInfo(displayName: string, remark: string, categoryId: string): Promise<void> {
+    if (!this.current || !this.selectedFile) return;
+    try {
+      const file = await ResourceStore.updateSelected(this.current.id, this.selectedFile, displayName, remark, categoryId);
+      this.categories = ResourceStore.categories;
+      this.selectedCategoryId = ResourceStore.currentCategoryId;
+      this.files = ResourceStore.filesForCategory(this.selectedCategoryId);
+      this.selectedFile = file;
+      ToastAdapter.success('文件信息已保存');
+    } catch (err) {
+      await this.handleError(err as Error, '文件信息保存失败');
+    }
+  }
+
+  async downloadAll(): Promise<void> {
+    if (!this.current) return;
+    await DownloadAdapter.downloadPackage(`${this.current.code}-资料包.zip`, downloadAllUrl(this.current.id));
+  }
+
   build(): void {
     Stack() {
       Column() {
@@ -303,7 +447,7 @@ struct WorkbenchPage {
           onKeywordChange: (value: string) => this.globalKeyword = value,
           onSearch: () => this.searchGlobal(),
           onOpenDrawer: () => this.drawerOpen = true,
-          onPlaceholder: (name: string) => ToastAdapter.show(`${name} 原生入口待补齐`),
+          onPlaceholder: (name: string) => ToastAdapter.show(`${name} 原生入口已准备`),
           onLogout: () => this.logout()
         })
         Column() {
@@ -311,6 +455,10 @@ struct WorkbenchPage {
             order: this.current,
             categories: this.categories,
             onSwitchOrder: () => this.drawerOpen = true,
+            onCreate: () => this.openCreateOrder(),
+            onEdit: () => this.openEditOrder(),
+            onDelete: () => this.orderDeleteOpen = true,
+            onDownloadAll: () => this.downloadAll(),
             onMore: () => this.toolCollapsed = false
           })
             .margin({ bottom: 14 })
@@ -409,6 +557,8 @@ struct WorkbenchPage {
               ResourceToolPanel({
                 collapsed: this.toolCollapsed,
                 selectedFile: this.selectedFile,
+                categories: this.categories,
+                selectedCategoryId: this.selectedCategoryId,
                 uploadQueue: this.uploadQueue,
                 filePickerStatus: FilePickerAdapter.statusText(),
                 cameraStatus: CameraAdapter.statusText(),
@@ -418,7 +568,9 @@ struct WorkbenchPage {
                 onCameraUpload: () => this.cameraUpload(),
                 onDownload: (file: ResourceFile) => this.downloadFile(file),
                 onOpen: (file: ResourceFile) => this.openFile(file),
-                onDelete: (file: ResourceFile) => this.deleteFile(file)
+                onDelete: (file: ResourceFile) => this.deleteFile(file),
+                onDownloadAll: () => this.downloadAll(),
+                onSaveFile: (displayName: string, remark: string, categoryId: string) => this.saveFileInfo(displayName, remark, categoryId)
               })
               .margin({ top: 12, right: 12, bottom: 12 })
             }
@@ -450,6 +602,103 @@ struct WorkbenchPage {
         onSearch: (keyword: string) => this.searchOrders(keyword),
         onStageFilter: (stage: string) => this.setOrderStageFilter(stage)
       })
+      if (this.orderEditorOpen) {
+        Column() {
+          Text(this.editingOrderId.length > 0 ? '编辑工单' : '新建工单')
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Colors.text)
+          Row() {
+            TextInput({ placeholder: '工单号', text: this.formCode })
+              .height(44)
+              .layoutWeight(1)
+              .onChange(value => this.formCode = value)
+            TextInput({ placeholder: '客户名称', text: this.formCustomerName })
+              .height(44)
+              .layoutWeight(1)
+              .margin({ left: 10 })
+              .onChange(value => this.formCustomerName = value)
+          }
+          .margin({ top: 16 })
+          TextInput({ placeholder: '产品名称', text: this.formProductName })
+            .height(44)
+            .margin({ top: 10 })
+            .onChange(value => this.formProductName = value)
+          Row() {
+            ForEach(this.stageOptions(), (stage: string) => {
+              Button(stageLabel(stage))
+                .height(38)
+                .fontSize(13)
+                .fontColor(this.formStage === stage ? Color.White : Colors.text)
+                .backgroundColor(this.formStage === stage ? Colors.primary : Colors.card)
+                .border({ width: 1, color: this.formStage === stage ? Colors.primary : Colors.border })
+                .borderRadius(12)
+                .margin({ right: 8 })
+                .onClick(() => this.setFormStage(stage))
+            })
+          }
+          .margin({ top: 12 })
+          Row() {
+            ForEach(this.priorityOptions(), (priority: string) => {
+              Button(priorityLabel(priority))
+                .height(38)
+                .fontSize(13)
+                .fontColor(this.formPriority === priority ? Color.White : Colors.text)
+                .backgroundColor(this.formPriority === priority ? Colors.primary : Colors.card)
+                .border({ width: 1, color: this.formPriority === priority ? Colors.primary : Colors.border })
+                .borderRadius(12)
+                .margin({ right: 8 })
+                .onClick(() => this.setFormPriority(priority))
+            })
+            TextInput({ placeholder: '进度 0-100', text: this.formProgress })
+              .height(38)
+              .layoutWeight(1)
+              .onChange(value => this.formProgress = value)
+          }
+          .margin({ top: 12 })
+          TextInput({ placeholder: '计划时间，例如 2026-07-05 09:00', text: this.formPlannedAt })
+            .height(44)
+            .margin({ top: 10 })
+            .onChange(value => this.formPlannedAt = value)
+          TextInput({ placeholder: '备注', text: this.formRemark })
+            .height(70)
+            .margin({ top: 10, bottom: 18 })
+            .onChange(value => this.formRemark = value)
+          Row() {
+            CommonButton({ label: '保存工单', onTap: () => this.saveOrder() })
+              .margin({ right: 12 })
+            CommonButton({ label: '取消', primary: false, onTap: () => this.orderEditorOpen = false })
+          }
+        }
+        .width(620)
+        .padding(24)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
+      if (this.orderDeleteOpen) {
+        Column() {
+          Text('确认删除工单')
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Colors.danger)
+          Text(this.current ? `将软删除工单 ${this.current.code}，不会删除对象存储文件。` : '请先选择工单')
+            .fontSize(15)
+            .fontColor(Colors.textMuted)
+            .textAlign(TextAlign.Center)
+            .margin({ top: 12, bottom: 20 })
+          Row() {
+            CommonButton({ label: '确认删除', danger: true, onTap: () => this.deleteCurrentOrder() })
+              .margin({ right: 12 })
+            CommonButton({ label: '取消', primary: false, onTap: () => this.orderDeleteOpen = false })
+          }
+        }
+        .width(460)
+        .padding(24)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
       if (this.cameraOpen) {
         Column() {
           Text('拍照上传')

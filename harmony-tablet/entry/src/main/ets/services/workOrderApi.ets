@@ -65,6 +65,21 @@ export interface WorkOrderUpdateRequest {
   remark?: string;
 }
 
+export interface WorkOrderCreateRequest {
+  code: string;
+  customerName: string;
+  productName: string;
+  stage: string;
+  priority: string;
+  progress: number;
+  plannedAt: string;
+  remark: string;
+}
+
+export interface ConfirmDeleteRequest {
+  confirmText: string;
+}
+
 export async function fetchWorkOrders(keyword: string = '', page: number = 1): Promise<WorkOrderListData> {
   const q = encodeURIComponent(keyword);
   const response = await httpClient.get(`/api/native/work-orders?page=${page}&pageSize=50&keyword=${q}`);
@@ -82,6 +97,27 @@ export async function updateWorkOrder(id: string, body: WorkOrderUpdateRequest):
   const response = await httpClient.patch(`/api/native/work-orders/${id}`, JSON.stringify(body));
   const parsed = JSON.parse(response.text) as WorkOrderDetailResponse;
   return parsed.data;
+}
+
+export async function createWorkOrder(body: WorkOrderCreateRequest): Promise<WorkOrderDetailData> {
+  const response = await httpClient.post('/api/native/work-orders', JSON.stringify(body));
+  const parsed = JSON.parse(response.text) as WorkOrderDetailResponse;
+  return parsed.data;
+}
+
+export async function deleteWorkOrder(id: string, confirmText: string): Promise<void> {
+  const body: ConfirmDeleteRequest = { confirmText: confirmText };
+  await httpClient.delete(`/api/native/work-orders/${id}`, JSON.stringify(body));
+}
+
+export async function restoreWorkOrder(id: string): Promise<WorkOrderDetailData> {
+  const response = await httpClient.post(`/api/native/work-orders/${id}/restore`);
+  const parsed = JSON.parse(response.text) as WorkOrderDetailResponse;
+  return parsed.data;
+}
+
+export function downloadAllUrl(id: string): string {
+  return httpClient.contentUrl(`/api/native/work-orders/${id}/download-all`);
 }
 
 export async function fetchWorkOrderResources(id: string): Promise<WorkOrderResourcesData> {

@@ -25,6 +25,10 @@ export struct CurrentWorkOrderBar {
   order?: WorkOrder;
   categories: ResourceCategory[] = [];
   onSwitchOrder: () => void = () => {};
+  onCreate: () => void = () => {};
+  onEdit: () => void = () => {};
+  onDelete: () => void = () => {};
+  onDownloadAll: () => void = () => {};
   onMore: () => void = () => {};
 
   build(): void {
@@ -68,7 +72,40 @@ export struct CurrentWorkOrderBar {
             .borderRadius(12)
             .margin({ left: 10 })
             .onClick(() => this.onSwitchOrder())
-          Button('更多')
+          Button('新建')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Color.White)
+            .backgroundColor(Colors.primary)
+            .borderRadius(12)
+            .margin({ left: 8 })
+            .onClick(() => this.onCreate())
+          Button('编辑')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Colors.text)
+            .backgroundColor(Colors.card)
+            .border({ width: 1, color: Colors.border })
+            .borderRadius(12)
+            .margin({ left: 8 })
+            .onClick(() => this.onEdit())
+          Button('下载全部')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Colors.primary)
+            .backgroundColor(Colors.primaryLight)
+            .borderRadius(12)
+            .margin({ left: 8 })
+            .onClick(() => this.onDownloadAll())
+          Button('删除')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Colors.danger)
+            .backgroundColor('#FEF2F2')
+            .borderRadius(12)
+            .margin({ left: 8 })
+            .onClick(() => this.onDelete())
+          Button('资料工具')
             .height(34)
             .fontSize(13)
             .fontColor(Colors.text)
@@ -106,6 +143,14 @@ export struct CurrentWorkOrderBar {
             .fontSize(14)
             .fontColor(Colors.textMuted)
             .margin({ left: 14 })
+          Button('新建工单')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Color.White)
+            .backgroundColor(Colors.primary)
+            .borderRadius(12)
+            .margin({ left: 14 })
+            .onClick(() => this.onCreate())
         }
       }
     }

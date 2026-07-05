@@ -68,7 +68,17 @@ export async function POST(req: NextRequest) {
     if (parsed.errors.length) return nativeError(parsed.errors.join('；'), 400);
     const userName = user.displayName || user.username;
     const item = await prisma.connectorParameter.create({
-      data: { ...parsed.data, createdBy: userName, updatedBy: userName },
+      data: {
+        rowNo: parsed.data.rowNo,
+        model: parsed.data.model,
+        outerPeelMm: parsed.data.outerPeelMm,
+        innerPeelMm: parsed.data.innerPeelMm,
+        insertionLengthMm: parsed.data.insertionLengthMm,
+        remark: parsed.data.remark,
+        isHighlighted: parsed.data.isHighlighted,
+        createdBy: userName,
+        updatedBy: userName,
+      },
     });
     await logOp({ userId: user.id, action: 'create_connector_parameter', targetType: 'connector_parameter', targetId: item.id, detail: { model: item.model, rowNo: item.rowNo, client: 'harmony_native' } });
     await snapshotChange({

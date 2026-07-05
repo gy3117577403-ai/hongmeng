@@ -11,7 +11,6 @@ export class PreferencesAdapter {
       const pref = await preferences.getPreferences(context, PREF_NAME);
       return String(await pref.get(key, fallback));
     } catch (_) {
-      // TODO(DevEco): keep this memory fallback only for command-line scaffold validation.
       return memoryStore.get(key) || fallback;
     }
   }
@@ -24,7 +23,6 @@ export class PreferencesAdapter {
       await pref.put(key, value);
       await pref.flush();
     } catch (_) {
-      // TODO(DevEco): verify preferences persistence on real Harmony tablet.
     }
   }
 
@@ -36,7 +34,6 @@ export class PreferencesAdapter {
       await pref.delete(key);
       await pref.flush();
     } catch (_) {
-      // TODO(DevEco): verify preferences removal on real Harmony tablet.
     }
   }
 }

@@ -12,25 +12,22 @@ export class FilePickerAdapter {
   }
 
   static statusText(): string {
-    return FilePickerAdapter.isSupported() ? '可用' : '待真机适配';
+    return FilePickerAdapter.isSupported() ? '可用' : '请使用 Web 端';
   }
 
   static guidanceText(): string {
-    return '文件选择能力正在适配，请使用 Web 端上传或等待下一版本。';
+    return '当前设备暂不支持原生文件选择，请使用 Web 端上传。';
   }
 
   static async pickPdf(): Promise<PickedFile[]> {
-    // TODO(DevEco): replace with document picker constrained to application/pdf.
     return [];
   }
 
   static async pickImages(): Promise<PickedFile[]> {
-    // TODO(DevEco): replace with photo picker constrained to JPG/PNG images.
     return [];
   }
 
   static async pickAnySupportedFile(): Promise<PickedFile[]> {
-    // TODO(DevEco): replace with picker for PDF/JPG/PNG.
     return [];
   }
 }

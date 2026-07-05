@@ -126,3 +126,31 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return nativeError('工单更新失败', 500);
   }
 }
+
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const user = await requireNativeUser(req);
+    const old = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null } });
+    if (!old) return nativeError('工单不存在', 404);
+    const body = await req.json().catch(() => ({})) as { confirmText?: unknown };
+    const expected = `${old.code} CONFIRM`;
+    const confirmText = String(body.confirmText || '').trim().replace(/\s+/g, ' ');
+    if (confirmText !== expected) return nativeError('删除确认不匹配', 400);
+
+    const workOrder = await prisma.workOrder.update({ where: { id: params.id }, data: { deletedAt: new Date() } });
+    await logOp({ userId: user.id, action: 'delete_work_order', targetType: 'work_order', targetId: workOrder.id, detail: { code: workOrder.code, softDelete: true, client: 'harmony_native' } });
+    await snapshotChange({
+      entityType: 'work_order',
+      entityId: workOrder.id,
+      action: 'delete_work_order',
+      before: workOrderSnapshot(old),
+      after: workOrderSnapshot(workOrder),
+      changedBy: user.displayName || user.username,
+    });
+    return nativeOk({ deleted: true });
+  } catch (e) {
+    if (e instanceof NativeUnauthorizedError) return nativeUnauthorized();
+    console.error(e);
+    return nativeError('删除工单失败', 500);
+  }
+}

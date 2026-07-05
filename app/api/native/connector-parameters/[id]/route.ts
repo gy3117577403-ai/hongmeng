@@ -20,7 +20,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const userName = user.displayName || user.username;
     const item = await prisma.connectorParameter.update({
       where: { id: params.id },
-      data: { ...parsed.data, updatedBy: userName },
+      data: {
+        rowNo: parsed.data.rowNo,
+        model: parsed.data.model,
+        outerPeelMm: parsed.data.outerPeelMm,
+        innerPeelMm: parsed.data.innerPeelMm,
+        insertionLengthMm: parsed.data.insertionLengthMm,
+        remark: parsed.data.remark,
+        isHighlighted: parsed.data.isHighlighted,
+        updatedBy: userName,
+      },
     });
     await logOp({ userId: user.id, action: 'update_connector_parameter', targetType: 'connector_parameter', targetId: item.id, detail: { model: item.model, rowNo: item.rowNo, isHighlighted: item.isHighlighted, client: 'harmony_native' } });
     await snapshotChange({

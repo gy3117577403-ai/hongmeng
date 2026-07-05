@@ -1,5 +1,6 @@
 import type { WorkOrder } from '../models/WorkOrder';
 import * as workOrderApi from '../services/workOrderApi';
+import type { WorkOrderCreateRequest, WorkOrderUpdateRequest } from '../services/workOrderApi';
 
 export class WorkOrderStore {
   static workOrders: WorkOrder[] = [];
@@ -33,6 +34,34 @@ export class WorkOrderStore {
 
   static async loadDetail(id: string): Promise<WorkOrder> {
     const data = await workOrderApi.fetchWorkOrder(id);
+    WorkOrderStore.current = data.workOrder;
+    return data.workOrder;
+  }
+
+  static async create(body: WorkOrderCreateRequest): Promise<WorkOrder> {
+    const data = await workOrderApi.createWorkOrder(body);
+    WorkOrderStore.current = data.workOrder;
+    await WorkOrderStore.load('');
+    WorkOrderStore.current = data.workOrder;
+    return data.workOrder;
+  }
+
+  static async update(id: string, body: WorkOrderUpdateRequest): Promise<WorkOrder> {
+    const data = await workOrderApi.updateWorkOrder(id, body);
+    WorkOrderStore.current = data.workOrder;
+    return data.workOrder;
+  }
+
+  static async softDelete(order: WorkOrder): Promise<void> {
+    await workOrderApi.deleteWorkOrder(order.id, `${order.code} CONFIRM`);
+    WorkOrderStore.current = undefined;
+    await WorkOrderStore.load('');
+  }
+
+  static async restore(id: string): Promise<WorkOrder> {
+    const data = await workOrderApi.restoreWorkOrder(id);
+    WorkOrderStore.current = data.workOrder;
+    await WorkOrderStore.load('');
     WorkOrderStore.current = data.workOrder;
     return data.workOrder;
   }
