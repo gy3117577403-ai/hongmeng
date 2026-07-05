@@ -1,4 +1,5 @@
 import { NativeUnauthorizedError, nativeError, nativeOk, nativeUnauthorized, requireNativeUser } from '@/lib/native-api';
+import { serializeConnectorParameter } from '@/lib/connector-parameters';
 import { prisma } from '@/lib/prisma';
 import { serializeResourceFile } from '@/lib/resource-files';
 import { serializeWorkOrder } from '@/lib/work-orders';
@@ -9,7 +10,7 @@ export const dynamic = 'force-dynamic';
 export async function GET(req: Request) {
   try {
     await requireNativeUser(req);
-    const [workOrders, resourceFiles] = await Promise.all([
+    const [workOrders, resourceFiles, connectorParameters] = await Promise.all([
       prisma.workOrder.findMany({
         where: { deletedAt: { not: null } },
         include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
@@ -24,8 +25,17 @@ export async function GET(req: Request) {
         },
         orderBy: { deletedAt: 'desc' },
       }),
+      prisma.connectorParameter.findMany({
+        where: { deletedAt: { not: null } },
+        orderBy: { deletedAt: 'desc' },
+        take: 100,
+      }),
     ]);
-    return nativeOk({ workOrders: workOrders.map(serializeWorkOrder), resourceFiles: resourceFiles.map(serializeResourceFile) });
+    return nativeOk({
+      workOrders: workOrders.map(serializeWorkOrder),
+      resourceFiles: resourceFiles.map(serializeResourceFile),
+      connectorParameters: connectorParameters.map(serializeConnectorParameter),
+    });
   } catch (e) {
     if (e instanceof NativeUnauthorizedError) return nativeUnauthorized();
     console.error(e);

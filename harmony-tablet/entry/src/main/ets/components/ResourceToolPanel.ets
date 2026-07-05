@@ -1,6 +1,7 @@
 import { Colors } from '../constants/colors';
 import type { ResourceCategory } from '../models/ResourceCategory';
 import type { ResourceFile } from '../models/ResourceFile';
+import type { PickedFile } from '../platform/FilePickerAdapter';
 import { displayName, fileSizeText } from '../utils/format';
 import { CommonButton } from './CommonButton';
 
@@ -9,6 +10,7 @@ export interface UploadQueueItem {
   name: string;
   status: string;
   message: string;
+  file?: PickedFile;
 }
 
 @Component
@@ -28,11 +30,14 @@ export struct ResourceToolPanel {
   onOpen: (file: ResourceFile) => void = () => {};
   onDelete: (file: ResourceFile) => void = () => {};
   onDownloadAll: () => void = () => {};
-  onSaveFile: (displayName: string, remark: string, categoryId: string) => void = () => {};
+  onSaveFile: (displayName: string, remark: string, categoryId: string, workOrderId: string) => void = () => {};
+  onRetryUpload: (job: UploadQueueItem) => void = () => {};
+  onRetryAllFailed: () => void = () => {};
   @State activeTab: string = 'upload';
   @State editDisplayName: string = '';
   @State editRemark: string = '';
   @State editCategoryId: string = '';
+  @State editWorkOrderId: string = '';
 
   openTab(tab: string): void {
     this.activeTab = tab;
@@ -50,6 +55,7 @@ export struct ResourceToolPanel {
     this.editDisplayName = this.selectedFile.displayName || this.selectedFile.originalName;
     this.editRemark = this.selectedFile.remark || '';
     this.editCategoryId = this.selectedFile.categoryId || this.selectedCategoryId;
+    this.editWorkOrderId = this.selectedFile.workOrderId || '';
     this.openTab('edit');
   }
 
@@ -289,7 +295,11 @@ export struct ResourceToolPanel {
                   }
                 }
                 .height(176)
-                CommonButton({ label: '保存文件信息', onTap: () => this.onSaveFile(this.editDisplayName, this.editRemark, this.editCategoryId) })
+                TextInput({ placeholder: '移动到工单 ID，可留空保持当前工单', text: this.editWorkOrderId })
+                  .height(42)
+                  .margin({ top: 10 })
+                  .onChange(value => this.editWorkOrderId = value)
+                CommonButton({ label: '保存文件信息', onTap: () => this.onSaveFile(this.editDisplayName, this.editRemark, this.editCategoryId, this.editWorkOrderId) })
                   .width('100%')
                   .margin({ top: 12 })
               } else {
@@ -305,6 +315,11 @@ export struct ResourceToolPanel {
 
           if (this.activeTab === 'queue') {
             Column() {
+              if (this.uploadQueue.length > 0) {
+                CommonButton({ label: '重试全部失败', primary: false, onTap: this.onRetryAllFailed })
+                  .width('100%')
+                  .margin({ bottom: 10 })
+              }
               if (this.uploadQueue.length === 0) {
                 Text('暂无上传任务')
                   .fontSize(14)
@@ -321,6 +336,16 @@ export struct ResourceToolPanel {
                     .fontSize(12)
                     .fontColor(job.status === '失败' ? Colors.danger : Colors.textMuted)
                     .margin({ top: 4 })
+                  if (job.status === '失败') {
+                    Button('重试')
+                      .height(30)
+                      .fontSize(12)
+                      .fontColor(Colors.primary)
+                      .backgroundColor(Colors.primaryLight)
+                      .borderRadius(9)
+                      .margin({ top: 8 })
+                      .onClick(() => this.onRetryUpload(job))
+                  }
                 }
                 .width('100%')
                 .padding(10)

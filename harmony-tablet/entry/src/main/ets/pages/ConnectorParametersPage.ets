@@ -49,7 +49,7 @@ struct ConnectorParametersPage {
       const query: ConnectorQuery = {
         keyword: this.keyword,
         page: 1,
-        missing: this.filter === 'outer' || this.filter === 'inner' || this.filter === 'insertion' ? this.filter : '',
+        missing: this.filter === 'outer' || this.filter === 'inner' || this.filter === 'insertion' || this.filter === 'any' ? this.filter : '',
         highlighted: this.filter === 'highlighted'
       };
       const data = await connectorApi.fetchConnectorParameters(query);
@@ -317,6 +317,7 @@ struct ConnectorParametersPage {
         this.filterButton('缺外剥皮', 'outer')
         this.filterButton('缺内剥皮', 'inner')
         this.filterButton('缺入长', 'insertion')
+        this.filterButton('任意缺失', 'any')
         this.filterButton('重点', 'highlighted')
         Blank()
         Text(`当前显示 ${this.parameters.length} 条`)

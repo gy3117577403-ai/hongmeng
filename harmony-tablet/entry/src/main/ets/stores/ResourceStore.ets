@@ -124,14 +124,17 @@ export class ResourceStore {
     await ResourceStore.load(workOrderId);
   }
 
-  static async updateSelected(workOrderId: string, file: ResourceFile, displayName: string, remark: string, categoryId: string): Promise<ResourceFile> {
+  static async updateSelected(workOrderId: string, file: ResourceFile, displayName: string, remark: string, categoryId: string, targetWorkOrderId: string): Promise<ResourceFile> {
     const data = await resourceApi.updateResourceFile(file.id, {
       displayName: displayName,
       remark: remark,
-      categoryId: categoryId
+      categoryId: categoryId,
+      workOrderId: targetWorkOrderId
     });
     await ResourceStore.load(workOrderId);
-    ResourceStore.selectFile(data.file);
+    if (targetWorkOrderId === workOrderId) {
+      ResourceStore.selectFile(data.file);
+    }
     return data.file;
   }
 

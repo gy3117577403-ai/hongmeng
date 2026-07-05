@@ -1,4 +1,5 @@
 import { httpClient, NativeApiBaseResponse } from './httpClient';
+import type { ConnectorParameter } from '../models/ConnectorParameter';
 import type { ResourceFile } from '../models/ResourceFile';
 import type { WorkOrder } from '../models/WorkOrder';
 
@@ -34,6 +35,7 @@ export interface ChangeSnapshotItem {
 export interface TrashData {
   workOrders: WorkOrder[];
   resourceFiles: ResourceFile[];
+  connectorParameters?: ConnectorParameter[];
 }
 
 export interface DiagnosticsHealth {
@@ -152,6 +154,10 @@ export async function restoreWorkOrder(id: string): Promise<void> {
 
 export async function restoreResourceFile(id: string): Promise<void> {
   await httpClient.post(`/api/native/resource-files/${id}/restore`);
+}
+
+export async function restoreConnectorParameter(id: string): Promise<void> {
+  await httpClient.post(`/api/native/connector-parameters/${id}/restore`);
 }
 
 export async function fetchSnapshots(): Promise<ChangeSnapshotItem[]> {

@@ -9,6 +9,7 @@ import * as adminApi from '../services/adminApi';
 import type { ChangeSnapshotItem, DiagnosticsData, NativeUserAccount, OperationLogItem, TrashData } from '../services/adminApi';
 import * as systemApi from '../services/systemApi';
 import { AuthStore } from '../stores/AuthStore';
+import type { ConnectorParameter } from '../models/ConnectorParameter';
 import type { ResourceFile } from '../models/ResourceFile';
 import type { WorkOrder } from '../models/WorkOrder';
 
@@ -27,8 +28,10 @@ struct SettingsPage {
   @State snapshots: ChangeSnapshotItem[] = [];
   @State trashWorkOrders: WorkOrder[] = [];
   @State trashResourceFiles: ResourceFile[] = [];
+  @State trashConnectorParameters: ConnectorParameter[] = [];
   @State trashWorkOrderCount: number = 0;
   @State trashFileCount: number = 0;
+  @State trashConnectorCount: number = 0;
   @State diagnosticsText: string = '-';
   @State newUsername: string = '';
   @State newDisplayName: string = '';
@@ -159,10 +162,13 @@ struct SettingsPage {
     this.loading = true;
     try {
       const trash: TrashData = await adminApi.fetchTrash();
+      const connectorParameters: ConnectorParameter[] = trash.connectorParameters || [];
       this.trashWorkOrders = trash.workOrders;
       this.trashResourceFiles = trash.resourceFiles;
+      this.trashConnectorParameters = connectorParameters;
       this.trashWorkOrderCount = trash.workOrders.length;
       this.trashFileCount = trash.resourceFiles.length;
+      this.trashConnectorCount = connectorParameters.length;
     } catch (err) {
       await this.handleError(err as Error, '回收站加载失败');
     } finally {
@@ -198,6 +204,16 @@ struct SettingsPage {
       ToastAdapter.success('文件已恢复');
     } catch (err) {
       await this.handleError(err as Error, '文件恢复失败');
+    }
+  }
+
+  async restoreConnectorParameter(item: ConnectorParameter): Promise<void> {
+    try {
+      await adminApi.restoreConnectorParameter(item.id);
+      await this.loadTrash();
+      ToastAdapter.success('连接器参数已恢复');
+    } catch (err) {
+      await this.handleError(err as Error, '连接器参数恢复失败');
     }
   }
 
@@ -364,6 +380,7 @@ struct SettingsPage {
             this.sectionTitle('回收站', '软删除记录仍保留在 PostgreSQL 和对象存储中。')
             Text(`已删除工单：${this.trashWorkOrderCount}`).fontSize(16).fontColor(Colors.text).margin({ bottom: 10 })
             Text(`已删除文件：${this.trashFileCount}`).fontSize(16).fontColor(Colors.text).margin({ bottom: 18 })
+            Text(`已删除连接器参数：${this.trashConnectorCount}`).fontSize(16).fontColor(Colors.text).margin({ bottom: 18 })
             CommonButton({ label: this.loading ? '刷新中' : '刷新回收站', primary: false, isEnabled: !this.loading, onTap: () => this.loadTrash() }).width(220)
             Row() {
               Column() {
@@ -435,6 +452,43 @@ struct SettingsPage {
                 .height(210)
               }
               .layoutWeight(1)
+            }
+            .margin({ top: 16 })
+            Column() {
+              Text('已删除连接器参数')
+                .fontSize(16)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(Colors.text)
+              Scroll() {
+                Column() {
+                  ForEach(this.trashConnectorParameters, (item: ConnectorParameter) => {
+                    Row() {
+                      Column() {
+                        Text(item.model || '-')
+                          .fontSize(14)
+                          .fontColor(Colors.text)
+                          .fontWeight(FontWeight.Medium)
+                          .maxLines(1)
+                          .textOverflow({ overflow: TextOverflow.Ellipsis })
+                        Text(item.remark || '无备注')
+                          .fontSize(12)
+                          .fontColor(Colors.textMuted)
+                          .margin({ top: 4 })
+                          .maxLines(1)
+                          .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      }
+                      .alignItems(HorizontalAlign.Start)
+                      .layoutWeight(1)
+                      CommonButton({ label: '恢复', primary: false, onTap: () => this.restoreConnectorParameter(item) })
+                    }
+                    .padding(10)
+                    .margin({ top: 8 })
+                    .backgroundColor('#F9FAFB')
+                    .borderRadius(12)
+                  })
+                }
+              }
+              .height(180)
             }
             .margin({ top: 16 })
           }

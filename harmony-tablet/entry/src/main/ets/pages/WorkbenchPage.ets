@@ -377,7 +377,8 @@ struct WorkbenchPage {
           id: job.id,
           name: job.name,
           status: status,
-          message: message
+          message: message,
+          file: job.file
         };
         nextQueue.push(updated);
       } else {
@@ -402,7 +403,8 @@ struct WorkbenchPage {
         id: jobId,
         name: file.name,
         status: '上传中',
-        message: '正在上传到对象存储'
+        message: '正在上传到对象存储',
+        file: file
       };
       this.addUploadJob(job);
       try {
@@ -465,15 +467,17 @@ struct WorkbenchPage {
     }
   }
 
-  async saveFileInfo(displayName: string, remark: string, categoryId: string): Promise<void> {
+  async saveFileInfo(displayName: string, remark: string, categoryId: string, workOrderId: string): Promise<void> {
     if (!this.current || !this.selectedFile) return;
     try {
-      const file = await ResourceStore.updateSelected(this.current.id, this.selectedFile, displayName, remark, categoryId);
+      const workOrderIdText = workOrderId.trim();
+      const targetWorkOrderId = workOrderIdText.length > 0 ? workOrderIdText : this.current.id;
+      const file = await ResourceStore.updateSelected(this.current.id, this.selectedFile, displayName, remark, categoryId, targetWorkOrderId);
       this.categories = ResourceStore.categories;
       this.selectedCategoryId = ResourceStore.currentCategoryId;
       this.files = ResourceStore.filesForCategory(this.selectedCategoryId);
-      this.selectedFile = file;
-      ToastAdapter.success('文件信息已保存');
+      this.selectedFile = targetWorkOrderId === this.current.id ? file : ResourceStore.selectedFile;
+      ToastAdapter.success(targetWorkOrderId === this.current.id ? '文件信息已保存' : '文件已移动到目标工单');
     } catch (err) {
       await this.handleError(err as Error, '文件信息保存失败');
     }
@@ -482,6 +486,29 @@ struct WorkbenchPage {
   async downloadAll(): Promise<void> {
     if (!this.current) return;
     await DownloadAdapter.downloadPackage(`${this.current.code}-资料包.zip`, downloadAllUrl(this.current.id));
+  }
+
+  async retryUpload(job: UploadQueueItem): Promise<void> {
+    if (!job.file) {
+      ToastAdapter.error('缺少可重试文件');
+      return;
+    }
+    await this.uploadPickedFiles([job.file]);
+  }
+
+  async retryAllFailedUploads(): Promise<void> {
+    const files: PickedFile[] = [];
+    for (let i = 0; i < this.uploadQueue.length; i++) {
+      const job = this.uploadQueue[i];
+      if (job.status === '失败' && job.file) {
+        files.push(job.file);
+      }
+    }
+    if (files.length === 0) {
+      ToastAdapter.show('暂无可重试的失败上传');
+      return;
+    }
+    await this.uploadPickedFiles(files);
   }
 
   build(): void {
@@ -619,7 +646,9 @@ struct WorkbenchPage {
                 onOpen: (file: ResourceFile) => this.openFile(file),
                 onDelete: (file: ResourceFile) => this.deleteFile(file),
                 onDownloadAll: () => this.downloadAll(),
-                onSaveFile: (displayName: string, remark: string, categoryId: string) => this.saveFileInfo(displayName, remark, categoryId)
+                onSaveFile: (displayName: string, remark: string, categoryId: string, workOrderId: string) => this.saveFileInfo(displayName, remark, categoryId, workOrderId),
+                onRetryUpload: (job: UploadQueueItem) => this.retryUpload(job),
+                onRetryAllFailed: () => this.retryAllFailedUploads()
               })
               .margin({ top: 12, right: 12, bottom: 12 })
             }
