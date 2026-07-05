@@ -73,6 +73,13 @@ function assertTextIncludes(filePath, expected, label) {
   }
 }
 
+function assertTextExcludes(filePath, unexpected, label) {
+  const text = readFileSync(path.resolve(filePath), 'utf8');
+  if (text.includes(unexpected)) {
+    fail(`${label}: ${filePath} still includes ${unexpected}`);
+  }
+}
+
 function assertGitignoreIncludes(pattern) {
   const text = readFileSync(path.resolve('.gitignore'), 'utf8');
   if (!text.includes(pattern)) {
@@ -142,6 +149,11 @@ for (const file of requiredFiles) {
 assertTextIncludes('harmony-tablet/entry/src/main/ets/constants/api.ets', expectedApiBaseUrl, 'API_BASE_URL check');
 assertTextIncludes('harmony-tablet/AppScope/app.json5', `"versionName": "${expectedNativeVersion}"`, 'Harmony app versionName check');
 assertTextIncludes('harmony-tablet/oh-package.json5', `"version": "${expectedNativeVersion}"`, 'Harmony package version check');
+assertTextIncludes('app/api/native/system/status/route.ts', `version: 'v${expectedNativeVersion}'`, 'native system status version check');
+assertTextIncludes('app/api/native/search/route.ts', 'nativeFileDto(file, user.id)', 'native search file DTO check');
+assertTextExcludes('app/api/native/search/route.ts', 'serializeResourceFile', 'native search must not use web file serializer');
+assertTextIncludes('app/api/native/trash/route.ts', 'nativeFileDto(file, user.id)', 'native trash file DTO check');
+assertTextExcludes('app/api/native/trash/route.ts', 'serializeResourceFile', 'native trash must not use web file serializer');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"type": "entry"', 'entry module check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"mainElement": "EntryAbility"', 'EntryAbility check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"deviceTypes": ["tablet"]', 'tablet device check');
