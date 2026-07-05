@@ -46,12 +46,25 @@ export interface WorkOrderResourcesPayload {
   files?: ResourceFile[];
   resourceCategories?: ResourceCategory[];
   resourceFiles?: ResourceFile[];
+  items?: ResourceFile[];
 }
 
 export interface WorkOrderResourcesResponse extends NativeApiBaseResponse {
-  data?: WorkOrderResourcesPayload | ResourceFile[];
+  data?: WorkOrderResourcesPayload;
   categories?: ResourceCategory[];
   files?: ResourceFile[];
+  resourceCategories?: ResourceCategory[];
+  resourceFiles?: ResourceFile[];
+  items?: ResourceFile[];
+}
+
+export interface WorkOrderResourcesArrayResponse extends NativeApiBaseResponse {
+  data?: ResourceFile[];
+}
+
+export class NativeWorkOrderResourcesResult {
+  categories: ResourceCategory[] = [];
+  files: ResourceFile[] = [];
 }
 
 export interface WorkOrderUpdateRequest {
@@ -122,8 +135,10 @@ export function downloadAllUrl(id: string): string {
 
 export async function fetchWorkOrderResources(id: string): Promise<WorkOrderResourcesData> {
   const response = await httpClient.get(`/api/native/work-orders/${id}/resources`);
-  const parsed = JSON.parse(response.text) as WorkOrderResourcesResponse;
-  return normalizeWorkOrderResources(parsed);
+  const parsedText = response.text;
+  const parsed = JSON.parse(parsedText) as WorkOrderResourcesResponse;
+  const arrayParsed = JSON.parse(parsedText) as WorkOrderResourcesArrayResponse;
+  return normalizeWorkOrderResources(parsed, arrayParsed);
 }
 
 function normalizeWorkOrderList(response: WorkOrderListResponse): WorkOrderListData {
@@ -177,39 +192,70 @@ function normalizeWorkOrderList(response: WorkOrderListResponse): WorkOrderListD
   return data;
 }
 
-function normalizeWorkOrderResources(response: WorkOrderResourcesResponse): WorkOrderResourcesData {
-  const payload = response.data;
-  let categories: ResourceCategory[] = [];
-  let files: ResourceFile[] = [];
-  let recognized = false;
+function normalizeResourcesFromPayload(body: WorkOrderResourcesPayload): NativeWorkOrderResourcesResult {
+  const result: NativeWorkOrderResourcesResult = new NativeWorkOrderResourcesResult();
 
-  if (payload) {
-    if (Array.isArray(payload)) {
-      files = payload;
-      recognized = true;
-    } else if (payload.categories) {
-      categories = payload.categories;
-      recognized = true;
-    } else if (payload.resourceCategories) {
-      categories = payload.resourceCategories;
-      recognized = true;
-    }
-    if (payload.files) {
-      files = payload.files;
-      recognized = true;
-    } else if (payload.resourceFiles) {
-      files = payload.resourceFiles;
-      recognized = true;
-    }
+  if (body.categories !== undefined) {
+    result.categories = body.categories;
+  } else if (body.resourceCategories !== undefined) {
+    result.categories = body.resourceCategories;
+  }
+
+  if (body.files !== undefined) {
+    result.files = body.files;
+  } else if (body.resourceFiles !== undefined) {
+    result.files = body.resourceFiles;
+  } else if (body.items !== undefined) {
+    result.files = body.items;
+  }
+
+  return result;
+}
+
+function hasResourcePayloadFields(body: WorkOrderResourcesPayload): boolean {
+  if (body.categories !== undefined) return true;
+  if (body.resourceCategories !== undefined) return true;
+  if (body.files !== undefined) return true;
+  if (body.resourceFiles !== undefined) return true;
+  if (body.items !== undefined) return true;
+  return false;
+}
+
+function normalizeWorkOrderResources(response: WorkOrderResourcesResponse, arrayResponse: WorkOrderResourcesArrayResponse): WorkOrderResourcesData {
+  const result: NativeWorkOrderResourcesResult = new NativeWorkOrderResourcesResult();
+  let recognized = false;
+  const arrayData = arrayResponse.data;
+
+  if (arrayData !== undefined && Array.isArray(arrayData)) {
+    result.files = arrayData;
+    recognized = true;
   } else {
-    if (response.categories) {
-      categories = response.categories;
+    const objectData = response.data;
+    if (objectData !== undefined && hasResourcePayloadFields(objectData)) {
+      const normalized = normalizeResourcesFromPayload(objectData);
+      result.categories = normalized.categories;
+      result.files = normalized.files;
       recognized = true;
     }
-    if (response.files) {
-      files = response.files;
-      recognized = true;
-    }
+  }
+
+  if (response.categories !== undefined) {
+    result.categories = response.categories;
+    recognized = true;
+  } else if (response.resourceCategories !== undefined) {
+    result.categories = response.resourceCategories;
+    recognized = true;
+  }
+
+  if (response.files !== undefined) {
+    result.files = response.files;
+    recognized = true;
+  } else if (response.resourceFiles !== undefined) {
+    result.files = response.resourceFiles;
+    recognized = true;
+  } else if (response.items !== undefined) {
+    result.files = response.items;
+    recognized = true;
   }
 
   if (!recognized) {
@@ -217,8 +263,8 @@ function normalizeWorkOrderResources(response: WorkOrderResourcesResponse): Work
   }
 
   const data: WorkOrderResourcesData = {
-    categories: categories,
-    files: files
+    categories: result.categories,
+    files: result.files
   };
   return data;
 }
