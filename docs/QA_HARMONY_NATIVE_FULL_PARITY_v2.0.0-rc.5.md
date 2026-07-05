@@ -87,7 +87,7 @@
 | 确认导入 | 是 | 是 | 是 | 支持跳过或导入重复行；超过 100 行时 Harmony UI 和 Native API 均要求 `IMPORT_CONFIRM`。 |
 | 重复行检测 | 是 | 是 | 是 | 后端预览接口识别 duplicate。 |
 | 导入批次列表 | 是 | 是 | 是 | 工具抽屉显示最近批次。 |
-| 导入批次回滚 | 是 | 是 | 是 | 弹出确认后调用 native rollback API。 |
+| 导入批次回滚 | 是 | 是 | 是 | 弹出确认后调用 native rollback API，服务层和后端均校验 `ROLLBACK` 确认口令。 |
 | 原始资料附件上传 | 是 | 是 | 需真机验证 | UI 已提供上传按钮，`FilePickerAdapter.pickAnySupportedFile` + native multipart API 上传。 |
 | 原始资料附件下载 | 是 | 是 | 需真机验证 | Native 列表和上传响应返回短期 ticket 下载 URL，系统保存/打开由 `DownloadAdapter` 承接。 |
 | 原始资料附件删除 | 是 | 是 | 是 | 工具抽屉弹出确认后删除，Native 后端校验 `DELETE` 确认口令。 |

@@ -160,6 +160,10 @@ export interface ConfirmDeleteRequest {
   confirmText: string;
 }
 
+export interface ConfirmRollbackRequest {
+  confirmText: string;
+}
+
 export function emptyConnectorQuery(): ConnectorQuery {
   const query: ConnectorQuery = {
     keyword: '',
@@ -277,7 +281,8 @@ export async function fetchImportBatches(): Promise<ConnectorImportBatchListData
 }
 
 export async function rollbackImportBatch(id: string): Promise<void> {
-  await httpClient.post(`/api/native/connector-parameter-import-batches/${id}/rollback`);
+  const body: ConfirmRollbackRequest = { confirmText: 'ROLLBACK' };
+  await httpClient.post(`/api/native/connector-parameter-import-batches/${id}/rollback`, JSON.stringify(body));
 }
 
 export function connectorExportUrl(): string {

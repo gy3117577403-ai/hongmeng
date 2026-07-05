@@ -10,6 +10,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   try {
     const user = await requireNativeUser(req);
     const userName = user.displayName || user.username;
+    const body = await req.json().catch(() => ({})) as { confirmText?: string };
+    if (String(body.confirmText || '').trim() !== 'ROLLBACK') return nativeError('导入批次回滚确认不匹配', 400);
     const batch = await prisma.connectorParameterImportBatch.findUnique({ where: { id: params.id } });
     if (!batch) return nativeError('导入批次不存在', 404);
     if (batch.rolledBackAt) return nativeError('该批次已回滚，不能重复回滚', 409);
