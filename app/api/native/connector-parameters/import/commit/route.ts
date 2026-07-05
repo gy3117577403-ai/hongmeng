@@ -19,6 +19,7 @@ type CommitBody = {
   duplicateStrategy?: 'skip' | 'import';
   sourceType?: string;
   fileName?: string | null;
+  confirmText?: string;
 };
 
 async function existingDuplicateKeys() {
@@ -37,6 +38,9 @@ export async function POST(req: NextRequest) {
     if (!rows.length) return nativeError('缺少待确认导入的数据', 400);
     const duplicateStrategy = body.duplicateStrategy === 'import' ? 'import' : 'skip';
     const previewSummary = summarizeConnectorPreview(rows);
+    if (previewSummary.totalRows > 100 && String(body.confirmText || '').trim() !== 'IMPORT_CONFIRM') {
+      return nativeError('导入超过 100 行，请输入 IMPORT_CONFIRM 确认', 400);
+    }
     const existingKeys = await existingDuplicateKeys();
     const userName = user.displayName || user.username;
     const results: { row: number; model: string; status: 'created' | 'skipped' | 'failed'; message: string }[] = [];

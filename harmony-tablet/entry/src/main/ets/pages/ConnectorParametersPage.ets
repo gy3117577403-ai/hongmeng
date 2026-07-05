@@ -39,6 +39,7 @@ struct ConnectorParametersPage {
   @State previewRows: ConnectorImportPreviewRow[] = [];
   @State previewSummary?: ConnectorImportPreviewSummary = undefined;
   @State importDuplicates: boolean = false;
+  @State importConfirmText: string = '';
   @State attachments: ConnectorAttachment[] = [];
   @State batches: ConnectorImportBatch[] = [];
   @State batchDeleteOpen: boolean = false;
@@ -175,6 +176,7 @@ struct ConnectorParametersPage {
       const data = await connectorApi.previewConnectorImport(this.importText);
       this.previewRows = data.rows;
       this.previewSummary = data.summary;
+      this.importConfirmText = '';
       ToastAdapter.success('导入预览已生成');
     } catch (err) {
       await this.handleError(err as Error, '导入预览失败');
@@ -192,6 +194,7 @@ struct ConnectorParametersPage {
       this.previewRows = data.rows;
       this.previewSummary = data.summary;
       this.importText = '';
+      this.importConfirmText = '';
       ToastAdapter.success('文件导入预览已生成');
     } catch (err) {
       await this.handleError(err as Error, '文件导入预览失败');
@@ -203,11 +206,16 @@ struct ConnectorParametersPage {
       ToastAdapter.error('请先生成导入预览');
       return;
     }
+    if (this.importNeedsConfirm() && this.importConfirmText.trim() !== 'IMPORT_CONFIRM') {
+      ToastAdapter.error('超过 100 行，请输入 IMPORT_CONFIRM 确认导入');
+      return;
+    }
     try {
-      const data = await connectorApi.commitConnectorImport(this.previewRows, this.importDuplicates);
+      const data = await connectorApi.commitConnectorImport(this.previewRows, this.importDuplicates, this.importConfirmText.trim());
       this.previewRows = [];
       this.previewSummary = undefined;
       this.importText = '';
+      this.importConfirmText = '';
       await this.load();
       ToastAdapter.success(`导入完成：新增 ${data.summary.created}，跳过 ${data.summary.skipped}`);
     } catch (err) {
@@ -275,6 +283,11 @@ struct ConnectorParametersPage {
     } catch (err) {
       await this.handleError(err as Error, '原始资料附件上传失败');
     }
+  }
+
+  importNeedsConfirm(): boolean {
+    if (this.previewSummary === undefined) return false;
+    return this.previewSummary.totalRows > 100;
   }
 
   openCreate(): void {
@@ -504,6 +517,22 @@ struct ConnectorParametersPage {
                   .fontSize(13)
                   .fontColor(Colors.textMuted)
                   .margin({ top: 10 })
+              }
+              if (this.importNeedsConfirm()) {
+                Column() {
+                  Text('超过 100 行，输入 IMPORT_CONFIRM 后才能确认导入')
+                    .fontSize(13)
+                    .fontColor(Colors.danger)
+                  TextInput({ placeholder: 'IMPORT_CONFIRM', text: this.importConfirmText })
+                    .height(42)
+                    .margin({ top: 8 })
+                    .onChange(value => this.importConfirmText = value)
+                }
+                .padding(12)
+                .margin({ top: 10 })
+                .backgroundColor('#FFF7ED')
+                .border({ width: 1, color: '#FED7AA' })
+                .borderRadius(12)
               }
               Row() {
                 CommonButton({ label: '下载模板', primary: false, onTap: () => this.downloadTemplate() })

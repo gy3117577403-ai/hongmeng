@@ -84,7 +84,7 @@
 | CSV 导出 | 是 | 是 | 需真机验证 | 下载 URL 已接入，`DownloadAdapter` 会先换短期 ticket，再由系统保存/打开。 |
 | 模板下载 | 是 | 是 | 需真机验证 | 下载 URL 已接入，`DownloadAdapter` 会先换短期 ticket，再由系统保存/打开。 |
 | 导入预览 | 是 | 是 | 需真机验证 | 支持粘贴 CSV 文本预览，也支持通过 `FilePickerAdapter` 选择 CSV/XLS/XLSX 文件后 multipart 预览。 |
-| 确认导入 | 是 | 是 | 是 | 支持跳过或导入重复行。 |
+| 确认导入 | 是 | 是 | 是 | 支持跳过或导入重复行；超过 100 行时 Harmony UI 和 Native API 均要求 `IMPORT_CONFIRM`。 |
 | 重复行检测 | 是 | 是 | 是 | 后端预览接口识别 duplicate。 |
 | 导入批次列表 | 是 | 是 | 是 | 工具抽屉显示最近批次。 |
 | 导入批次回滚 | 是 | 是 | 是 | 弹出确认后调用 native rollback API。 |

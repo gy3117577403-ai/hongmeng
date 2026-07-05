@@ -84,6 +84,14 @@ export interface ConnectorImportCommitResponse extends NativeApiBaseResponse {
   data: ConnectorImportCommitData;
 }
 
+export interface ConnectorImportCommitRequest {
+  rows: ConnectorImportPreviewRow[];
+  duplicateStrategy: string;
+  sourceType: string;
+  fileName: string;
+  confirmText: string;
+}
+
 export interface ConnectorAttachment {
   id: string;
   originalName: string;
@@ -228,13 +236,15 @@ export async function previewConnectorImportFile(file: PickedFile): Promise<Conn
   return parsed.data;
 }
 
-export async function commitConnectorImport(rows: ConnectorImportPreviewRow[], importDuplicates: boolean): Promise<ConnectorImportCommitData> {
-  const response = await httpClient.post('/api/native/connector-parameters/import/commit', JSON.stringify({
+export async function commitConnectorImport(rows: ConnectorImportPreviewRow[], importDuplicates: boolean, confirmText: string): Promise<ConnectorImportCommitData> {
+  const body: ConnectorImportCommitRequest = {
     rows: rows,
     duplicateStrategy: importDuplicates ? 'import' : 'skip',
     sourceType: 'harmony_native_text',
-    fileName: 'native-paste.csv'
-  }));
+    fileName: 'native-paste.csv',
+    confirmText: confirmText
+  };
+  const response = await httpClient.post('/api/native/connector-parameters/import/commit', JSON.stringify(body));
   const parsed = JSON.parse(response.text) as ConnectorImportCommitResponse;
   return parsed.data;
 }
