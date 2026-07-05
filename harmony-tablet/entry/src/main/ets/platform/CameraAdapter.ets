@@ -8,12 +8,26 @@ export class CameraAdapter {
     return true;
   }
 
+  static supportsDirectCapture(): boolean {
+    return false;
+  }
+
   static statusText(): string {
-    return CameraAdapter.isSupported() ? '可用' : '请使用上传图片';
+    if (CameraAdapter.supportsDirectCapture()) {
+      return '可用';
+    }
+    return CameraAdapter.isSupported() ? '上传图片兜底' : '请使用上传图片';
   }
 
   static guidanceText(): string {
-    return '将打开系统图片选择器；如设备未提供相机入口，请先拍照后选择图片上传。';
+    if (CameraAdapter.supportsDirectCapture()) {
+      return '将打开系统相机，拍照后请确认上传到当前工单和当前分类。';
+    }
+    return '当前设备暂不支持直接拍照，请先用系统相机拍照后选择图片，或使用上传图片。';
+  }
+
+  static actionText(): string {
+    return CameraAdapter.supportsDirectCapture() ? '拍照' : '选择现场照片';
   }
 
   static async openCamera(): Promise<void> {

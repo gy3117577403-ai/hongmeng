@@ -1148,7 +1148,7 @@ struct WorkbenchPage {
               CommonButton({ label: '重拍', primary: false, onTap: () => this.capturePhoto() })
                 .margin({ right: 12 })
             } else {
-              CommonButton({ label: '拍照', isEnabled: CameraAdapter.isSupported(), onTap: () => this.capturePhoto() })
+              CommonButton({ label: CameraAdapter.actionText(), isEnabled: CameraAdapter.isSupported(), onTap: () => this.capturePhoto() })
                 .margin({ right: 12 })
               CommonButton({ label: '上传图片', primary: false, onTap: () => { this.cameraOpen = false; this.uploadImage(); } })
                 .margin({ right: 12 })
