@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
       ok: database.ok && storage.ok,
       app: {
         name: '工单资料库',
-        version: 'v2.0.0-native-rc.5',
+        version: 'v2.0.0-native-rc.6',
         mode: 'Harmony Native / ArkUI',
         uptime: Math.floor(process.uptime()),
       },

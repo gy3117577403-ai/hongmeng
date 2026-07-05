@@ -37,7 +37,7 @@ Sealos App Deploy 端口填 `3000`。
 
 ## Harmony Native App
 - 目录：`harmony-tablet`
-- 版本：v2.0.0-native-rc.5
+- 版本：v2.0.0-native-rc.6
 - 技术栈：ArkTS / ArkUI / Stage 模型
 - 设备优先：鸿蒙 Tablet
 - 主界面：原生 ArkUI，不使用 WebView 套壳
@@ -66,6 +66,24 @@ Sealos App Deploy 端口填 `3000`。
 - v1.12.0：危险操作防误触、数据变更快照、连接器参数导入批次、导入批次回滚、上传失败重试、生产健康检查增强、生产稳定中心、数据库索引优化
 
 ## 开发版本 / Release Candidate
+
+### v2.0.0-native-rc.6
+- 状态：功能对齐收口候选版，本地 Web build / smoke / Harmony 静态检查通过，等待 DevEco Studio 内清理、生成和真机验证
+- 说明：停止继续零散安全小修，固化 Harmony 原生 App 与 Web 版功能对齐范围，不使用 WebView，不嵌入现有网页
+- 功能：
+  - 保留 rc5 后的收口修复：危险操作确认口令静态检查、Native smoke 深度校验、敏感信息隐藏、Settings 密码态清理、上传失败重试复用队列项、下载和复制链接前刷新短期 ticket
+  - 原生工作台、工单管理、资料分类、文件预览/编辑/移动/删除/恢复、上传队列、连接器参数、设置页、操作日志、回收站、数据快照和诊断信息按 rc6 对照表收口
+  - 平台能力通过 adapter 封装：文件选择、现场照片入口、下载打开、剪贴板复制和语音/手动输入兜底
+- 验证：
+  - `npm run harmony:check` 通过
+  - `npm run build` 通过
+  - `npm run smoke` 通过
+  - 本机缺少 `ohpm` / `hvigor` / `hvigorw`，Harmony HAP 构建需在 DevEco Studio 内验证
+- 文档：[Harmony Native Full Parity QA rc6](docs/QA_HARMONY_NATIVE_FULL_PARITY_v2.0.0-rc.6.md)
+- 说明：
+  - 当前不部署 Sealos
+  - 当前不修改线上环境变量
+  - 尚未作为生产版本发布
 
 ### v2.0.0-native-rc.5
 - 状态：本地 Web build / smoke 通过，Harmony 命令行工具缺失，等待 DevEco Studio 内清理、生成和真机验证

@@ -4,7 +4,7 @@ import path from 'node:path';
 
 const rootDir = path.resolve('harmony-tablet/entry/src/main/ets');
 const expectedApiBaseUrl = 'https://qdowqencjyph.sealoshzh.site';
-const expectedNativeVersion = '2.0.0-native-rc.5';
+const expectedNativeVersion = '2.0.0-native-rc.6';
 const requiredPageRoutes = [
   'pages/LoginPage',
   'pages/WorkbenchPage',
@@ -184,6 +184,7 @@ assertTextIncludes('harmony-tablet/entry/src/main/ets/services/httpClient.ets', 
 assertTextIncludes('harmony-tablet/entry/src/main/ets/platform/DownloadAdapter.ets', 'copyDownloadUrl(url: string, label: string): Promise<void>', 'Harmony copied file link refreshes download ticket check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/WorkbenchPage.ets', 'DownloadAdapter.copyDownloadUrl(nativeDownloadUrl(file)', 'Harmony workbench copied file link uses refreshed ticket check');
 assertTextExcludes('harmony-tablet/entry/src/main/ets/pages/WorkbenchPage.ets', '${API_BASE_URL}${file.downloadUrl}', 'Harmony workbench must not copy stale native file ticket');
+assertTextIncludes('docs/QA_HARMONY_NATIVE_FULL_PARITY_v2.0.0-rc.6.md', 'DownloadAdapter.copyDownloadUrl', 'Harmony QA copied file link ticket refresh documentation check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "lower.indexOf('password') >= 0", 'Harmony login diagnostics password redaction check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "lower.indexOf('secret') >= 0", 'Harmony login diagnostics secret redaction check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "return '[sensitive body hidden]'", 'Harmony login diagnostics sensitive body redaction check');

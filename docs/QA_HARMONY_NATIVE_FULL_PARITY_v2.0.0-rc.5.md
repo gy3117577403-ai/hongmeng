@@ -62,7 +62,7 @@
 | 恢复文件 | 是 | 是 | 是 | Settings 回收站调用 `/api/native/resource-files/[id]/restore`。 |
 | 下载当前文件 | 是 | 是 | 需真机验证 | `DownloadAdapter` 先用 Bearer 换短期 ticket URL，再交给系统能力打开；系统无法打开时自动复制短期下载链接，不在 App 本地长期保存文件。 |
 | 下载全部 ZIP | 是 | 是 | 需真机验证 | 调用 native ZIP 下载 URL，`DownloadAdapter` 会先换短期 ticket，再由系统保存/打开；失败时复制短期下载链接。 |
-| 复制文件链接 | 是 | 是 | 需真机验证 | `ClipboardAdapter` 写入系统剪贴板，失败时提示手动记录。 |
+| 复制文件链接 | 是 | 是 | 需真机验证 | `DownloadAdapter.copyDownloadUrl` 会先刷新短期 ticket，再通过 `ClipboardAdapter` 写入系统剪贴板；失败时提示手动记录。 |
 | 底部悬浮缩略图 | 是 | 是 | 是 | 多文件时显示，不显示“文件 0 个”。 |
 | 上传 PDF | 是 | 是 | 需真机验证 | `FilePickerAdapter.pickPdf` 接系统文档选择器，`httpClient.uploadMultipart` 接 native multipart 上传。 |
 | 上传图片 | 是 | 是 | 需真机验证 | `FilePickerAdapter.pickImages` 接系统图片选择器，上传成功后刷新并选中新文件。 |

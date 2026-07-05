@@ -1,6 +1,6 @@
 const baseUrl = (process.env.APP_BASE_URL || 'http://localhost:3000').replace(/\/+$/, '');
 const nativeSmokeToken = process.env.NATIVE_SMOKE_TOKEN || '';
-const expectedNativeVersion = 'v2.0.0-native-rc.5';
+const expectedNativeVersion = 'v2.0.0-native-rc.6';
 
 async function validateNativeJsonResponse(response, name) {
   const contentType = response.headers.get('content-type') || '';
