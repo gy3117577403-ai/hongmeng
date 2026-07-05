@@ -41,6 +41,9 @@ struct ConnectorParametersPage {
   @State importDuplicates: boolean = false;
   @State attachments: ConnectorAttachment[] = [];
   @State batches: ConnectorImportBatch[] = [];
+  @State batchDeleteOpen: boolean = false;
+  @State deletingAttachment?: ConnectorAttachment = undefined;
+  @State rollingBackBatch?: ConnectorImportBatch = undefined;
 
   async aboutToAppear(): Promise<void> {
     await this.load();
@@ -123,14 +126,32 @@ struct ConnectorParametersPage {
       ToastAdapter.error('请先选择参数行');
       return;
     }
+    if (action === 'delete') {
+      this.batchDeleteOpen = true;
+      return;
+    }
+    await this.executeBatchAction(action);
+  }
+
+  async executeBatchAction(action: string): Promise<void> {
     try {
       const data = await connectorApi.batchConnectorParameters(this.selectedIds, action);
       this.selectedIds = [];
+      this.batchDeleteOpen = false;
       await this.load();
       ToastAdapter.success(`批量操作完成：${data.count} 条`);
     } catch (err) {
       await this.handleError(err as Error, '批量操作失败');
     }
+  }
+
+  async confirmBatchDelete(): Promise<void> {
+    if (this.selectedIds.length === 0) {
+      this.batchDeleteOpen = false;
+      ToastAdapter.error('请先选择参数行');
+      return;
+    }
+    await this.executeBatchAction('delete');
   }
 
   async openTools(): Promise<void> {
@@ -195,8 +216,15 @@ struct ConnectorParametersPage {
   }
 
   async deleteAttachment(file: ConnectorAttachment): Promise<void> {
+    this.deletingAttachment = file;
+  }
+
+  async confirmDeleteAttachment(): Promise<void> {
+    if (!this.deletingAttachment) return;
+    const file = this.deletingAttachment;
     try {
       await connectorApi.deleteConnectorAttachment(file.id);
+      this.deletingAttachment = undefined;
       await this.loadAttachmentsAndBatches();
       ToastAdapter.success('附件已删除');
     } catch (err) {
@@ -205,8 +233,15 @@ struct ConnectorParametersPage {
   }
 
   async rollbackBatch(batch: ConnectorImportBatch): Promise<void> {
+    this.rollingBackBatch = batch;
+  }
+
+  async confirmRollbackBatch(): Promise<void> {
+    if (!this.rollingBackBatch) return;
+    const batch = this.rollingBackBatch;
     try {
       await connectorApi.rollbackImportBatch(batch.id);
+      this.rollingBackBatch = undefined;
       await this.loadAttachmentsAndBatches();
       await this.load();
       ToastAdapter.success('导入批次已回滚');
@@ -667,6 +702,75 @@ struct ConnectorParametersPage {
           }
         }
         .width(420)
+        .padding(24)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
+      if (this.batchDeleteOpen) {
+        Column() {
+          Text('确认批量删除')
+            .fontSize(22)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Colors.danger)
+          Text(`将软删除已选 ${this.selectedIds.length} 条连接器参数，删除后可在回收站恢复。`)
+            .fontSize(15)
+            .fontColor(Colors.textMuted)
+            .textAlign(TextAlign.Center)
+            .margin({ top: 12, bottom: 18 })
+          Row() {
+            CommonButton({ label: '确认批量删除', danger: true, onTap: () => this.confirmBatchDelete() })
+              .margin({ right: 12 })
+            CommonButton({ label: '取消', primary: false, onTap: () => this.batchDeleteOpen = false })
+          }
+        }
+        .width(460)
+        .padding(24)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
+      if (this.deletingAttachment) {
+        Column() {
+          Text('确认删除附件')
+            .fontSize(22)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Colors.danger)
+          Text(`将删除原始资料附件：${this.deletingAttachment?.displayName || this.deletingAttachment?.originalName || '-'}`)
+            .fontSize(15)
+            .fontColor(Colors.textMuted)
+            .textAlign(TextAlign.Center)
+            .margin({ top: 12, bottom: 18 })
+          Row() {
+            CommonButton({ label: '确认删除', danger: true, onTap: () => this.confirmDeleteAttachment() })
+              .margin({ right: 12 })
+            CommonButton({ label: '取消', primary: false, onTap: () => this.deletingAttachment = undefined })
+          }
+        }
+        .width(460)
+        .padding(24)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
+      if (this.rollingBackBatch) {
+        Column() {
+          Text('确认回滚导入批次')
+            .fontSize(22)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Colors.danger)
+          Text(`将软删除该批次导入的参数：${this.rollingBackBatch?.fileName || this.rollingBackBatch?.id || '-'}`)
+            .fontSize(15)
+            .fontColor(Colors.textMuted)
+            .textAlign(TextAlign.Center)
+            .margin({ top: 12, bottom: 18 })
+          Row() {
+            CommonButton({ label: '确认回滚', danger: true, onTap: () => this.confirmRollbackBatch() })
+              .margin({ right: 12 })
+            CommonButton({ label: '取消', primary: false, onTap: () => this.rollingBackBatch = undefined })
+          }
+        }
+        .width(480)
         .padding(24)
         .backgroundColor(Colors.card)
         .borderRadius(18)
