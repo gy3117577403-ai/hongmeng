@@ -123,7 +123,7 @@ struct SettingsPage {
     const user = this.pendingToggleUser;
     if (user === undefined) return;
     try {
-      await adminApi.updateUser(user.id, { isActive: !user.isActive });
+      await adminApi.updateUser(user.id, { isActive: !user.isActive, confirmText: user.isActive ? 'DISABLE' : 'ENABLE' });
       this.pendingToggleUser = undefined;
       await this.loadUsers();
       ToastAdapter.success(user.isActive ? '账号已禁用' : '账号已启用');
@@ -144,7 +144,7 @@ struct SettingsPage {
     const user = this.pendingResetUser;
     if (user === undefined) return;
     try {
-      await adminApi.resetUserPassword(user.id, { password: this.resetPasswordText });
+      await adminApi.resetUserPassword(user.id, { password: this.resetPasswordText, confirmText: 'RESET_PASSWORD' });
       this.pendingResetUser = undefined;
       this.resetPasswordText = '';
       ToastAdapter.success(`已重置 ${user.username} 的密码`);

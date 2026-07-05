@@ -98,10 +98,12 @@ export interface CreateUserRequest {
 export interface UpdateUserRequest {
   displayName?: string;
   isActive?: boolean;
+  confirmText?: string;
 }
 
 export interface ResetPasswordRequest {
   password: string;
+  confirmText: string;
 }
 
 export interface ChangePasswordRequest {

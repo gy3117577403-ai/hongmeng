@@ -10,7 +10,8 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const current = await requireNativeUser(req);
-    const body = await req.json().catch(() => ({})) as { password?: string };
+    const body = await req.json().catch(() => ({})) as { password?: string; confirmText?: string };
+    if (String(body.confirmText || '').trim() !== 'RESET_PASSWORD') return nativeError('重置密码确认不匹配', 400);
     const password = String(body.password || '');
     if (password.length < 6) return nativeError('新密码至少 6 位', 400);
     const old = await prisma.user.findUnique({ where: { id: params.id } });

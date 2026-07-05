@@ -22,10 +22,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const current = await requireNativeUser(req);
     const old = await prisma.user.findUnique({ where: { id: params.id } });
     if (!old) return nativeError('账号不存在', 404);
-    const body = await req.json().catch(() => ({})) as { displayName?: string; isActive?: boolean };
+    const body = await req.json().catch(() => ({})) as { displayName?: string; isActive?: boolean; confirmText?: string };
     const data: { displayName?: string; isActive?: boolean } = {};
     if (body.displayName !== undefined) data.displayName = String(body.displayName || '').trim().slice(0, 80) || old.username;
     if (body.isActive !== undefined) data.isActive = !!body.isActive;
+    if (data.isActive !== undefined && data.isActive !== old.isActive) {
+      const expectedConfirm = data.isActive ? 'ENABLE' : 'DISABLE';
+      if (String(body.confirmText || '').trim() !== expectedConfirm) return nativeError('账号状态变更确认不匹配', 400);
+    }
     if (data.isActive === false && old.isActive) {
       const activeCount = await prisma.user.count({ where: { isActive: true } });
       if (activeCount <= 1) return nativeError('不能禁用最后一个可登录账号', 400);
