@@ -161,6 +161,8 @@
   - `/api/native/trash` 返回 JSON 格式检查
   - `/api/native/change-snapshots` 返回 JSON 格式检查
   - `/api/native/system/diagnostics.json` 返回 JSON 格式检查
+  - Native 动态和写入路由无登录探测：账号、工单、资源文件、连接器参数、导入批次、附件上传/下载/删除均返回 JSON 格式错误，不返回 HTML 或 404 页面
+- smoke 不包含真实账号密码，不写入业务数据；未登录写入路由仅验证路由存在和统一 `{ ok, error }` 返回格式。
 - Harmony 命令行构建：未执行。
 - 未执行原因：本机 PATH 未发现 `ohpm`、`hvigor`、`hvigorw`，且 `harmony-tablet` 内没有 `hvigorw.bat`。
 

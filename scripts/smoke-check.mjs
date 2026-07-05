@@ -12,6 +12,21 @@ async function validateNativeJsonResponse(response, name) {
   if (typeof body.ok !== 'boolean') throw new Error(`${name} response is missing boolean ok field`);
 }
 
+function nativeJsonCheck(name, path, options = {}) {
+  const check = {
+    name,
+    path,
+    allowHttpError: true,
+    validate: async response => validateNativeJsonResponse(response, name),
+  };
+  if (options.method) check.method = options.method;
+  if (options.jsonBody) {
+    check.headers = { 'content-type': 'application/json' };
+    check.body = JSON.stringify(options.jsonBody);
+  }
+  return check;
+}
+
 const checks = [
   {
     name: 'health',
@@ -124,6 +139,88 @@ const checks = [
     allowHttpError: true,
     validate: async response => validateNativeJsonResponse(response, 'native diagnostics'),
   },
+  nativeJsonCheck('native auth logout format', '/api/native/auth/logout', { method: 'POST', jsonBody: { smoke: true } }),
+  nativeJsonCheck('native change password format', '/api/native/auth/change-password', {
+    method: 'POST',
+    jsonBody: { currentPassword: '__smoke__', newPassword: '__smoke__', confirmPassword: '__smoke__' },
+  }),
+  nativeJsonCheck('native create user format', '/api/native/users', {
+    method: 'POST',
+    jsonBody: { username: '__smoke__', displayName: 'smoke', password: '__smoke__' },
+  }),
+  nativeJsonCheck('native update user format', '/api/native/users/__smoke__', {
+    method: 'PATCH',
+    jsonBody: { isActive: true },
+  }),
+  nativeJsonCheck('native reset user password format', '/api/native/users/__smoke__/reset-password', {
+    method: 'POST',
+    jsonBody: { password: '__smoke__' },
+  }),
+  nativeJsonCheck('native create work order format', '/api/native/work-orders', {
+    method: 'POST',
+    jsonBody: { code: '__smoke__', productName: 'smoke' },
+  }),
+  nativeJsonCheck('native work order detail format', '/api/native/work-orders/__smoke__'),
+  nativeJsonCheck('native update work order format', '/api/native/work-orders/__smoke__', {
+    method: 'PATCH',
+    jsonBody: { productName: 'smoke' },
+  }),
+  nativeJsonCheck('native delete work order format', '/api/native/work-orders/__smoke__', {
+    method: 'DELETE',
+    jsonBody: { code: '__smoke__', confirmText: 'CONFIRM' },
+  }),
+  nativeJsonCheck('native restore work order format', '/api/native/work-orders/__smoke__/restore', { method: 'POST', jsonBody: { smoke: true } }),
+  nativeJsonCheck('native work order resources format', '/api/native/work-orders/__smoke__/resources'),
+  nativeJsonCheck('native work order package format', '/api/native/work-orders/__smoke__/download-all'),
+  nativeJsonCheck('native resource upload format', '/api/native/resource-files/upload', { method: 'POST' }),
+  nativeJsonCheck('native resource content format', '/api/native/resource-files/__smoke__/content'),
+  nativeJsonCheck('native resource download format', '/api/native/resource-files/__smoke__/download'),
+  nativeJsonCheck('native update resource file format', '/api/native/resource-files/__smoke__', {
+    method: 'PATCH',
+    jsonBody: { displayName: 'smoke' },
+  }),
+  nativeJsonCheck('native delete resource file format', '/api/native/resource-files/__smoke__', {
+    method: 'DELETE',
+    jsonBody: { confirmText: 'DELETE', nameSuffix: 'smoke' },
+  }),
+  nativeJsonCheck('native restore resource file format', '/api/native/resource-files/__smoke__/restore', { method: 'POST', jsonBody: { smoke: true } }),
+  nativeJsonCheck('native create connector parameter format', '/api/native/connector-parameters', {
+    method: 'POST',
+    jsonBody: { model: '__smoke__' },
+  }),
+  nativeJsonCheck('native update connector parameter format', '/api/native/connector-parameters/__smoke__', {
+    method: 'PATCH',
+    jsonBody: { model: '__smoke__' },
+  }),
+  nativeJsonCheck('native delete connector parameter format', '/api/native/connector-parameters/__smoke__', {
+    method: 'DELETE',
+    jsonBody: { confirmText: 'DELETE' },
+  }),
+  nativeJsonCheck('native restore connector parameter format', '/api/native/connector-parameters/__smoke__/restore', { method: 'POST', jsonBody: { smoke: true } }),
+  nativeJsonCheck('native connector batch format', '/api/native/connector-parameters/batch', {
+    method: 'POST',
+    jsonBody: { ids: ['__smoke__'], action: 'highlight' },
+  }),
+  nativeJsonCheck('native connector template format', '/api/native/connector-parameters/template.csv'),
+  nativeJsonCheck('native connector export format', '/api/native/connector-parameters/export.csv'),
+  nativeJsonCheck('native connector import preview format', '/api/native/connector-parameters/import/preview', {
+    method: 'POST',
+    jsonBody: { text: '' },
+  }),
+  nativeJsonCheck('native connector import commit format', '/api/native/connector-parameters/import/commit', {
+    method: 'POST',
+    jsonBody: { rows: [], importDuplicates: false },
+  }),
+  nativeJsonCheck('native connector batch rollback format', '/api/native/connector-parameter-import-batches/__smoke__/rollback', {
+    method: 'POST',
+    jsonBody: { confirmText: 'ROLLBACK' },
+  }),
+  nativeJsonCheck('native connector attachment upload format', '/api/native/connector-parameter-files/upload', { method: 'POST' }),
+  nativeJsonCheck('native connector attachment download format', '/api/native/connector-parameter-files/__smoke__/download'),
+  nativeJsonCheck('native connector attachment delete format', '/api/native/connector-parameter-files/__smoke__', {
+    method: 'DELETE',
+    jsonBody: { confirmText: 'DELETE' },
+  }),
 ];
 
 async function runCheck(check) {
