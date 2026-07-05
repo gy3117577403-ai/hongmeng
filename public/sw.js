@@ -1,6 +1,8 @@
-const CACHE_NAME = 'hongmeng-static-v1';
+const CACHE_NAME = 'hongmeng-static-v2';
 const STATIC_ASSETS = [
   '/manifest.webmanifest',
+  '/icon-192.png',
+  '/icon-512.png',
   '/icon-192.svg',
   '/icon-512.svg'
 ];
@@ -23,6 +25,7 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return;
+  if (url.searchParams.has('X-Amz-Signature') || url.searchParams.has('X-Amz-Credential')) return;
   if (url.pathname.includes('/download') || url.pathname.includes('/view') || url.pathname.includes('/upload')) return;
   if (request.mode === 'navigate') return;
   if (!STATIC_ASSETS.includes(url.pathname)) return;

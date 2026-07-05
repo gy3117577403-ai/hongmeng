@@ -55,6 +55,16 @@ ghcr.io/gy3117577403-ai/hongmeng:latest
 
 Sealos App Deploy 端口填 `3000`。
 
+## 平板交付方式
+
+当前主线交付仍是 Web 网页版 + Sealos。现场平板可按设备能力选择：
+
+- Web 浏览器：直接打开 `https://qdowqencjyph.sealoshzh.site`，适合临时访问和快速验收。
+- PWA 添加到桌面：在平板浏览器菜单中选择“添加到桌面 / 安装应用”，从桌面图标进入，减少地址栏和标签栏干扰。
+- Android APK WebView 壳：使用 `android-webview-app/` 打包 APK，安装后全屏加载 `https://qdowqencjyph.sealoshzh.site/dashboard`。
+
+当前不再维护 DevEco 原生 ArkTS 路线，也不再维护 `harmony-tablet` 或 `/api/native/*`。APK 壳只负责全屏加载现有 Web 系统，不内置账号、密码、token、数据库连接串或对象存储密钥。
+
 ## 历史归档
 
 Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前生产和后续维护继续使用 Web / Sealos 路线，不再维护 `harmony-tablet`、DevEco 工程或 `/api/native/*`。
@@ -79,6 +89,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [拍照与语音输入说明 v1.9.0](docs/CAMERA_VOICE_GUIDE_v1.9.0.md)
 - [连接器参数资料指南 v1.10.0](docs/CONNECTOR_PARAMETERS_GUIDE_v1.10.0.md)
 - [生产稳定性指南 v1.12.0](docs/PRODUCTION_STABILITY_GUIDE_v1.12.0.md)
+- [平板交付方案](docs/TABLET_APP_DELIVERY_PLAN.md)
 - [备份计划 v1.5.0](docs/BACKUP_PLAN_v1.5.0.md)
 - [回滚指南 v1.5.0](docs/ROLLBACK_GUIDE_v1.5.0.md)
 - [部署 Smoke Test v1.5.0](docs/SMOKE_TEST_v1.5.0.md)

@@ -1351,7 +1351,7 @@ export default function DashboardShell({
 
   async function installApp() {
     if (!installPrompt) {
-      setMsg('请在浏览器菜单中选择“添加到桌面 / 安装应用”');
+      setMsg('请在平板浏览器右上角菜单中选择“添加到桌面 / 安装应用”，再从桌面图标打开');
       return;
     }
     await installPrompt.prompt();
@@ -2491,7 +2491,7 @@ function HelpDialog({ close, exportDiagnostics }: { close: () => void; exportDia
     ['如何恢复误删文件', '打开“回收站”，切到文件或工单列表，点击恢复。'],
     ['如何下载全部资料', '选择工单后点击“下载全部”，系统会按分类打包 ZIP。'],
     ['如何导入 CSV', '系统设置中下载模板，填写后上传 CSV，查看逐行结果。'],
-    ['如何添加到桌面', '用平板浏览器打开系统，在浏览器菜单中选择添加到桌面或安装应用。'],
+    ['如何添加到桌面', '用平板浏览器打开系统，在浏览器右上角菜单中选择添加到桌面或安装应用；安装后从桌面图标进入，可减少浏览器地址栏和标签栏干扰。'],
   ];
   return (
     <div className="modal-backdrop" role="presentation">
@@ -2742,7 +2742,8 @@ function SystemSettings({
 
         <section className="system-section wide">
           <h3>添加到桌面</h3>
-          <p>在鸿蒙平板浏览器中打开系统后，点击浏览器菜单，选择“添加到桌面 / 安装应用”。添加后建议横屏使用。</p>
+          <p>在鸿蒙平板浏览器中打开系统后，点击浏览器右上角菜单，选择“添加到桌面 / 安装应用”。安装后从桌面图标打开，可使用 PWA 独立窗口并减少地址栏、标签栏干扰。</p>
+          <p className="tool-note muted">如果当前浏览器没有弹出安装按钮，请使用浏览器菜单手动添加。PWA 只缓存图标和 manifest，不缓存业务 API、上传响应或签名下载链接。</p>
           <div className="system-actions">
             <button type="button" onClick={installApp}>{canInstall ? '安装应用' : '查看添加说明'}</button>
             <button type="button" onClick={refreshStatus}>重新检查状态</button>
