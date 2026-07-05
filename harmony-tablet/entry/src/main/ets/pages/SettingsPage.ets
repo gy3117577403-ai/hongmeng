@@ -10,6 +10,7 @@ import * as adminApi from '../services/adminApi';
 import type { ChangeSnapshotItem, DiagnosticsData, NativeUserAccount, OperationLogItem, TrashData } from '../services/adminApi';
 import * as systemApi from '../services/systemApi';
 import { AuthStore } from '../stores/AuthStore';
+import { NavigationStore } from '../stores/NavigationStore';
 import type { ConnectorParameter } from '../models/ConnectorParameter';
 import type { ResourceFile } from '../models/ResourceFile';
 import type { WorkOrder } from '../models/WorkOrder';
@@ -44,7 +45,7 @@ struct SettingsPage {
   @State changeConfirmPassword: string = '';
 
   async aboutToAppear(): Promise<void> {
-    await this.loadStatus();
+    await this.switchPanel(NavigationStore.consumeSettingsPanel());
   }
 
   async handleError(err: Error, fallback: string): Promise<void> {

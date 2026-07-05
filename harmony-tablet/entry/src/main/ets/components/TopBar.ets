@@ -1,6 +1,7 @@
 import router from '@ohos.router';
 import { Colors } from '../constants/colors';
 import { Routes } from '../constants/routes';
+import { NavigationStore } from '../stores/NavigationStore';
 
 @Component
 export struct TopBar {
@@ -107,7 +108,10 @@ export struct TopBar {
         .fontColor(Colors.text)
         .border({ width: 1, color: Colors.border })
         .borderRadius(12)
-        .onClick(() => router.pushUrl({ url: Routes.settings }))
+        .onClick(() => {
+          NavigationStore.openSettings('stability');
+          router.pushUrl({ url: Routes.settings });
+        })
       Button('日志')
         .height(44)
         .width(58)
@@ -117,7 +121,10 @@ export struct TopBar {
         .fontColor(Colors.text)
         .border({ width: 1, color: Colors.border })
         .borderRadius(12)
-        .onClick(() => router.pushUrl({ url: Routes.settings }))
+        .onClick(() => {
+          NavigationStore.openSettings('logs');
+          router.pushUrl({ url: Routes.settings });
+        })
       Column() {
         Text('管理员')
           .fontSize(11)
