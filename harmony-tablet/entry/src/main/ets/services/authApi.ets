@@ -124,8 +124,15 @@ function logLoginDiagnostics(path: string, statusCode: number, contentType: stri
 
 function safeBodyPreview(bodyText: string): string {
   const lower = bodyText.toLowerCase();
-  if (lower.indexOf('token') >= 0 || lower.indexOf('bearer') >= 0) {
-    return '[token hidden]';
+  if (lower.indexOf('token') >= 0 ||
+    lower.indexOf('bearer') >= 0 ||
+    lower.indexOf('password') >= 0 ||
+    lower.indexOf('secret') >= 0 ||
+    lower.indexOf('session') >= 0 ||
+    lower.indexOf('database_url') >= 0 ||
+    lower.indexOf('access_key') >= 0 ||
+    lower.indexOf('s3_') >= 0) {
+    return '[sensitive body hidden]';
   }
   if (bodyText.length > 200) {
     return bodyText.substring(0, 200);

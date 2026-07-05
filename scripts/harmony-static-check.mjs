@@ -177,6 +177,9 @@ assertTextIncludes('harmony-tablet/entry/src/main/ets/services/connectorApi.ets'
 assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/ConnectorParametersPage.ets', "IMPORT_CONFIRM", 'Harmony large import confirmation UI check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/SettingsPage.ets', "user.isActive ? 'DISABLE' : 'ENABLE'", 'Harmony account active-state confirmation call check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/SettingsPage.ets', "confirmText: 'RESET_PASSWORD'", 'Harmony reset password confirmation call check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "lower.indexOf('password') >= 0", 'Harmony login diagnostics password redaction check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "lower.indexOf('secret') >= 0", 'Harmony login diagnostics secret redaction check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "return '[sensitive body hidden]'", 'Harmony login diagnostics sensitive body redaction check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"type": "entry"', 'entry module check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"mainElement": "EntryAbility"', 'EntryAbility check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"deviceTypes": ["tablet"]', 'tablet device check');
