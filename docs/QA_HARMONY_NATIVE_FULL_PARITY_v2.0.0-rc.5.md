@@ -150,6 +150,17 @@
   - `/api/native/system/status`
   - `/api/native/auth/login` 返回 JSON 格式检查
   - `/api/native/download-ticket` 返回 JSON 格式检查
+  - `/api/native/auth/me` 返回 JSON 格式检查
+  - `/api/native/work-orders` 返回 JSON 格式检查
+  - `/api/native/search` 返回 JSON 格式检查
+  - `/api/native/connector-parameters` 返回 JSON 格式检查
+  - `/api/native/connector-parameter-files` 返回 JSON 格式检查
+  - `/api/native/connector-parameter-import-batches` 返回 JSON 格式检查
+  - `/api/native/users` 返回 JSON 格式检查
+  - `/api/native/operation-logs` 返回 JSON 格式检查
+  - `/api/native/trash` 返回 JSON 格式检查
+  - `/api/native/change-snapshots` 返回 JSON 格式检查
+  - `/api/native/system/diagnostics.json` 返回 JSON 格式检查
 - Harmony 命令行构建：未执行。
 - 未执行原因：本机 PATH 未发现 `ohpm`、`hvigor`、`hvigorw`，且 `harmony-tablet` 内没有 `hvigorw.bat`。
 
