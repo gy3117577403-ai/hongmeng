@@ -8,6 +8,9 @@ export const dynamic = 'force-dynamic';
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   try {
     const user = await requireNativeUser(req);
+    const body = await req.json().catch(() => ({})) as { confirmText?: string };
+    if (String(body.confirmText || '').trim() !== 'DELETE') return nativeError('删除确认不匹配', 400);
+
     const existing = await prisma.connectorParameterFile.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!existing) return nativeError('原始资料文件不存在', 404);
     const file = await prisma.connectorParameterFile.update({ where: { id: params.id }, data: { deletedAt: new Date() } });
