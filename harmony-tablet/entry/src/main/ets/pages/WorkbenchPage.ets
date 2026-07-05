@@ -48,6 +48,8 @@ struct WorkbenchPage {
   @State uploadQueue: UploadQueueItem[] = [];
   @State orderEditorOpen: boolean = false;
   @State orderDeleteOpen: boolean = false;
+  @State fileDeleteOpen: boolean = false;
+  @State filePendingDelete?: ResourceFile = undefined;
   @State editingOrderId: string = '';
   @State formCode: string = '';
   @State formCustomerName: string = '';
@@ -240,8 +242,8 @@ struct WorkbenchPage {
     }
   }
 
-  async voiceInputFallback(): Promise<void> {
-    await VoiceInputAdapter.startDictation('全局搜索');
+  async voiceInputFallback(targetName: string = '全局搜索'): Promise<void> {
+    await VoiceInputAdapter.startDictation(targetName);
   }
 
   async saveOrder(): Promise<void> {
@@ -502,6 +504,19 @@ struct WorkbenchPage {
     }
   }
 
+  prepareDeleteFile(file: ResourceFile): void {
+    this.filePendingDelete = file;
+    this.fileDeleteOpen = true;
+  }
+
+  async confirmDeleteFile(): Promise<void> {
+    if (!this.filePendingDelete) return;
+    const file = this.filePendingDelete;
+    this.filePendingDelete = undefined;
+    this.fileDeleteOpen = false;
+    await this.deleteFile(file);
+  }
+
   async saveFileInfo(displayName: string, remark: string, categoryId: string, workOrderId: string): Promise<void> {
     if (!this.current || !this.selectedFile) return;
     try {
@@ -555,7 +570,7 @@ struct WorkbenchPage {
           keyword: this.globalKeyword,
           onKeywordChange: (value: string) => this.globalKeyword = value,
           onSearch: () => this.searchGlobal(),
-          onVoiceInput: () => this.voiceInputFallback(),
+          onVoiceInput: () => this.voiceInputFallback('全局搜索'),
           onOpenDrawer: () => this.drawerOpen = true,
           onLogout: () => this.logout()
         })
@@ -680,12 +695,13 @@ struct WorkbenchPage {
                 onCameraUpload: () => this.cameraUpload(),
                 onDownload: (file: ResourceFile) => this.downloadFile(file),
                 onOpen: (file: ResourceFile) => this.openFile(file),
-                onDelete: (file: ResourceFile) => this.deleteFile(file),
+                onDelete: (file: ResourceFile) => this.prepareDeleteFile(file),
                 onCopyFileLink: (file: ResourceFile) => this.copyFileLink(file),
                 onDownloadAll: () => this.downloadAll(),
                 onSaveFile: (displayName: string, remark: string, categoryId: string, workOrderId: string) => this.saveFileInfo(displayName, remark, categoryId, workOrderId),
                 onRetryUpload: (job: UploadQueueItem) => this.retryUpload(job),
-                onRetryAllFailed: () => this.retryAllFailedUploads()
+                onRetryAllFailed: () => this.retryAllFailedUploads(),
+                onVoiceInput: (targetName: string) => this.voiceInputFallback(targetName)
               })
               .margin({ top: 12, right: 12, bottom: 12 })
             }
@@ -715,7 +731,8 @@ struct WorkbenchPage {
         onClose: () => this.drawerOpen = false,
         onSelect: (order: WorkOrder) => this.selectOrder(order),
         onSearch: (keyword: string) => this.searchOrders(keyword),
-        onStageFilter: (stage: string) => this.setOrderStageFilter(stage)
+        onStageFilter: (stage: string) => this.setOrderStageFilter(stage),
+        onVoiceSearch: () => this.voiceInputFallback('工单搜索')
       })
       if (this.orderEditorOpen) {
         Column() {
@@ -777,8 +794,16 @@ struct WorkbenchPage {
             .onChange(value => this.formPlannedAt = value)
           TextInput({ placeholder: '备注', text: this.formRemark })
             .height(70)
-            .margin({ top: 10, bottom: 18 })
+            .margin({ top: 10 })
             .onChange(value => this.formRemark = value)
+          Button('语音填写备注')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Colors.primary)
+            .backgroundColor(Colors.primaryLight)
+            .borderRadius(10)
+            .margin({ top: 10, bottom: 18 })
+            .onClick(() => this.voiceInputFallback('工单备注'))
           Row() {
             CommonButton({ label: '保存工单', onTap: () => this.saveOrder() })
               .margin({ right: 12 })
@@ -806,6 +831,29 @@ struct WorkbenchPage {
             CommonButton({ label: '确认删除', danger: true, onTap: () => this.deleteCurrentOrder() })
               .margin({ right: 12 })
             CommonButton({ label: '取消', primary: false, onTap: () => this.orderDeleteOpen = false })
+          }
+        }
+        .width(460)
+        .padding(24)
+        .backgroundColor(Colors.card)
+        .borderRadius(18)
+        .shadow({ radius: 24, color: '#22000000', offsetY: 8 })
+      }
+      if (this.fileDeleteOpen) {
+        Column() {
+          Text('确认删除文件')
+            .fontSize(24)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(Colors.danger)
+          Text(this.filePendingDelete ? `将软删除文件 ${this.filePendingDelete.displayName || this.filePendingDelete.originalName}，不会物理删除对象存储文件。` : '请先选择文件')
+            .fontSize(15)
+            .fontColor(Colors.textMuted)
+            .textAlign(TextAlign.Center)
+            .margin({ top: 12, bottom: 20 })
+          Row() {
+            CommonButton({ label: '确认删除', danger: true, onTap: () => this.confirmDeleteFile() })
+              .margin({ right: 12 })
+            CommonButton({ label: '取消', primary: false, onTap: () => { this.filePendingDelete = undefined; this.fileDeleteOpen = false; } })
           }
         }
         .width(460)

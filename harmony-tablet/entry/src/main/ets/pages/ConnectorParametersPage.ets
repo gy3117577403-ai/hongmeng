@@ -7,6 +7,7 @@ import type { ConnectorParameter } from '../models/ConnectorParameter';
 import { DownloadAdapter } from '../platform/DownloadAdapter';
 import { FilePickerAdapter, PickedFile } from '../platform/FilePickerAdapter';
 import { ToastAdapter } from '../platform/ToastAdapter';
+import { VoiceInputAdapter } from '../platform/VoiceInputAdapter';
 import { ApiException } from '../services/httpClient';
 import * as connectorApi from '../services/connectorApi';
 import type { ConnectorAttachment, ConnectorImportBatch, ConnectorImportPreviewRow, ConnectorImportPreviewSummary, ConnectorParameterRequest, ConnectorQuery } from '../services/connectorApi';
@@ -75,6 +76,19 @@ struct ConnectorParametersPage {
   setFilter(value: string): void {
     this.filter = value;
     this.load();
+  }
+
+  async voiceInputFallback(targetName: string): Promise<void> {
+    const text = await VoiceInputAdapter.startDictation(targetName);
+    if (text.length === 0) return;
+    if (targetName === '连接器搜索') {
+      this.keyword = text;
+      await this.load();
+      return;
+    }
+    if (targetName === '连接器备注') {
+      this.formRemark = text;
+    }
   }
 
   isSelected(item: ConnectorParameter): boolean {
@@ -330,6 +344,8 @@ struct ConnectorParametersPage {
           .onChange(value => this.keyword = value)
         CommonButton({ label: this.loading ? '查询中' : '查询', isEnabled: !this.loading, onTap: () => this.load() })
           .margin({ left: 12 })
+        CommonButton({ label: '语音', primary: false, onTap: () => this.voiceInputFallback('连接器搜索') })
+          .margin({ left: 10 })
       }
       .padding({ left: 20, right: 20, top: 16, bottom: 12 })
       Row() {
@@ -584,6 +600,14 @@ struct ConnectorParametersPage {
             .height(72)
             .margin({ top: 12 })
             .onChange(v => this.formRemark = v)
+          Button('语音填写备注')
+            .height(34)
+            .fontSize(13)
+            .fontColor(Colors.primary)
+            .backgroundColor(Colors.primaryLight)
+            .borderRadius(10)
+            .margin({ top: 10 })
+            .onClick(() => this.voiceInputFallback('连接器备注'))
           Row() {
             Checkbox()
               .select(this.formHighlighted)

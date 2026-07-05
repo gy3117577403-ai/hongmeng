@@ -58,7 +58,7 @@
 | 文件编辑 | 是 | 是 | 是 | 支持显示名、备注保存。 |
 | 文件移动到分类 | 是 | 是 | 是 | 右侧工具窗可移动到其他分类。 |
 | 文件移动到其他工单 | 是 | 是 | 是 | 右侧工具窗可输入目标工单 ID 后保存，当前工单会刷新并移除已移走文件。 |
-| 删除文件 | 是 | 是 | 是 | 调用 `/api/native/resource-files/[id]`，后端软删除。 |
+| 删除文件 | 是 | 是 | 是 | UI 二次确认后调用 `/api/native/resource-files/[id]`，后端仍校验删除确认口令并软删除。 |
 | 恢复文件 | 是 | 是 | 是 | Settings 回收站调用 `/api/native/resource-files/[id]/restore`。 |
 | 下载当前文件 | 是 | 是 | 需真机验证 | `DownloadAdapter` 使用系统能力打开后端下载 URL，不在 App 本地长期保存文件。 |
 | 下载全部 ZIP | 是 | 是 | 需真机验证 | 调用 native ZIP 下载 URL，系统保存/打开由 `DownloadAdapter` 承接。 |
@@ -99,7 +99,7 @@
 | 回收站 | 是 | 是 | 是 | 显示已删工单、文件、连接器参数并可恢复。 |
 | 诊断信息导出 | 是 | 是 | 是 | Settings 诊断页调用 native diagnostics。 |
 | 全局搜索 | 是 | 是 | 是 | 顶部搜索触发工单/资料搜索入口。 |
-| 语音输入 | 是 | Adapter 兜底 | 部分 | `VoiceInputAdapter` 提供统一入口；当前设备能力不可用时提示键盘手动输入，不显示空按钮。 |
+| 语音输入 | 是 | Adapter 兜底 | 部分 | `VoiceInputAdapter` 覆盖全局搜索、工单搜索、工单备注、连接器搜索/备注、文件备注；当前设备能力不可用时提示键盘手动输入，不显示空按钮。 |
 
 ## Native API 检查
 - `/api/native/auth/login`

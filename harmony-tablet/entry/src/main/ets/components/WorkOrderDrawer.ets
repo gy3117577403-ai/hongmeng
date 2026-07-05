@@ -31,6 +31,7 @@ export struct WorkOrderDrawer {
   onSelect: (order: WorkOrder) => void = () => {};
   onSearch: (keyword: string) => void = () => {};
   onStageFilter: (stage: string) => void = () => {};
+  onVoiceSearch: () => void = () => {};
 
   stageOptions(): string[] {
     return ['', 'not_issued', 'frontend', 'backend', 'completed'];
@@ -92,6 +93,14 @@ export struct WorkOrderDrawer {
               .borderRadius(12)
               .margin({ left: 10 })
               .onClick(() => this.onSearch(this.keyword))
+            Button('语音')
+              .height(46)
+              .fontSize(15)
+              .fontColor(Colors.primary)
+              .backgroundColor(Colors.primaryLight)
+              .borderRadius(12)
+              .margin({ left: 10 })
+              .onClick(() => this.onVoiceSearch())
           }
           .padding({ left: 16, right: 16, bottom: 10 })
           Scroll() {

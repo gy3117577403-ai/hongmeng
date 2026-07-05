@@ -51,7 +51,7 @@ https://qdowqencjyph.sealoshzh.site
 - `CameraAdapter`：接入系统图片选择器作为拍照/相册入口；如设备未提供相机入口，提示先拍照后选择图片。
 - `DownloadAdapter`：使用系统能力打开文件、资料包和附件下载 URL，不在 App 本地长期保存文件。
 - `ClipboardAdapter`：用于复制工单链接和文件链接。
-- `VoiceInputAdapter`：统一语音入口；系统语音不可用时提示键盘手动输入。
+- `VoiceInputAdapter`：统一语音入口，覆盖全局搜索、工单搜索、表单备注和文件信息备注；系统语音不可用时提示键盘手动输入。
 - `PreferencesAdapter`：用于 token 和用户信息本地保存。
 
 ## 安全约束

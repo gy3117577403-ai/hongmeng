@@ -34,6 +34,7 @@ export struct ResourceToolPanel {
   onSaveFile: (displayName: string, remark: string, categoryId: string, workOrderId: string) => void = () => {};
   onRetryUpload: (job: UploadQueueItem) => void = () => {};
   onRetryAllFailed: () => void = () => {};
+  onVoiceInput: (targetName: string) => void = () => {};
   @State activeTab: string = 'upload';
   @State editDisplayName: string = '';
   @State editRemark: string = '';
@@ -278,6 +279,14 @@ export struct ResourceToolPanel {
                   .height(64)
                   .margin({ top: 10 })
                   .onChange(value => this.editRemark = value)
+                Button('语音填写备注')
+                  .height(34)
+                  .fontSize(13)
+                  .fontColor(Colors.primary)
+                  .backgroundColor(Colors.primaryLight)
+                  .borderRadius(10)
+                  .margin({ top: 10 })
+                  .onClick(() => this.onVoiceInput('文件备注'))
                 Text('移动到分类')
                   .fontSize(13)
                   .fontColor(Colors.textMuted)
