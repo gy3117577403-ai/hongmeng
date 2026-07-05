@@ -1,6 +1,7 @@
 import router from '@ohos.router';
 import { Colors } from '../constants/colors';
 import { Routes } from '../constants/routes';
+import { VoiceInputAdapter } from '../platform/VoiceInputAdapter';
 import { NavigationStore } from '../stores/NavigationStore';
 
 @Component
@@ -58,9 +59,9 @@ export struct TopBar {
           .borderRadius(12)
           .margin({ left: 8 })
           .onClick(() => this.onSearch())
-        Button('语音')
+        Button(VoiceInputAdapter.buttonText())
           .height(42)
-          .width(62)
+          .width(76)
           .fontSize(13)
           .fontColor(Colors.primary)
           .backgroundColor(Colors.primaryLight)

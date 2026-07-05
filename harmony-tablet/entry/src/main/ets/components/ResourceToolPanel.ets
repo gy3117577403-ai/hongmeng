@@ -3,6 +3,7 @@ import type { ResourceCategory } from '../models/ResourceCategory';
 import type { ResourceFile } from '../models/ResourceFile';
 import type { WorkOrder } from '../models/WorkOrder';
 import type { PickedFile } from '../platform/FilePickerAdapter';
+import { VoiceInputAdapter } from '../platform/VoiceInputAdapter';
 import { displayName, fileSizeText } from '../utils/format';
 import { CommonButton } from './CommonButton';
 
@@ -281,7 +282,7 @@ export struct ResourceToolPanel {
                   .height(64)
                   .margin({ top: 10 })
                   .onChange(value => this.editRemark = value)
-                Button('语音填写备注')
+                Button(VoiceInputAdapter.buttonText('填写备注'))
                   .height(34)
                   .fontSize(13)
                   .fontColor(Colors.primary)

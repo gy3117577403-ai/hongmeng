@@ -190,7 +190,7 @@ export struct ResourcePreviewPanel {
               .fontSize(14)
               .fontColor(Colors.textMuted)
               .margin({ top: 8 })
-            Text('当前原生版本以 PDF 文件卡片承载，支持下载 / 打开入口。')
+            Text('当前原生版本以 PDF 文件卡片承载，支持系统预览 / 下载入口。')
               .fontSize(14)
               .fontColor(Colors.textMuted)
               .margin({ top: 18 })
@@ -198,7 +198,7 @@ export struct ResourcePreviewPanel {
             Row() {
               CommonButton({ label: '下载', onTap: () => this.onDownload(this.file as ResourceFile) })
                 .margin({ right: 12 })
-              CommonButton({ label: '打开', primary: false, onTap: () => this.onOpen(this.file as ResourceFile) })
+              CommonButton({ label: '系统预览', primary: false, onTap: () => this.onOpen(this.file as ResourceFile) })
             }
             .justifyContent(FlexAlign.Center)
             .margin({ top: 22 })

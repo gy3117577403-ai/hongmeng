@@ -1,5 +1,6 @@
 import { Colors } from '../constants/colors';
 import type { WorkOrder } from '../models/WorkOrder';
+import { VoiceInputAdapter } from '../platform/VoiceInputAdapter';
 import { formatDateTime } from '../utils/date';
 import { priorityLabel, stageLabel } from '../utils/format';
 
@@ -93,7 +94,7 @@ export struct WorkOrderDrawer {
               .borderRadius(12)
               .margin({ left: 10 })
               .onClick(() => this.onSearch(this.keyword))
-            Button('语音')
+            Button(VoiceInputAdapter.buttonText())
               .height(46)
               .fontSize(15)
               .fontColor(Colors.primary)

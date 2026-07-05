@@ -975,7 +975,7 @@ struct WorkbenchPage {
             .height(70)
             .margin({ top: 10 })
             .onChange(value => this.formRemark = value)
-          Button('语音填写备注')
+          Button(VoiceInputAdapter.buttonText('填写备注'))
             .height(34)
             .fontSize(13)
             .fontColor(Colors.primary)

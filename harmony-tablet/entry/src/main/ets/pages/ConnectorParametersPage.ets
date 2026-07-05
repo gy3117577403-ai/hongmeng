@@ -362,7 +362,7 @@ struct ConnectorParametersPage {
           .onChange(value => this.keyword = value)
         CommonButton({ label: this.loading ? '查询中' : '查询', isEnabled: !this.loading, onTap: () => this.load() })
           .margin({ left: 12 })
-        CommonButton({ label: '语音', primary: false, onTap: () => this.voiceInputFallback('连接器搜索') })
+        CommonButton({ label: VoiceInputAdapter.buttonText(), primary: false, onTap: () => this.voiceInputFallback('连接器搜索') })
           .margin({ left: 10 })
       }
       .padding({ left: 20, right: 20, top: 16, bottom: 12 })
@@ -620,7 +620,7 @@ struct ConnectorParametersPage {
             .height(72)
             .margin({ top: 12 })
             .onChange(v => this.formRemark = v)
-          Button('语音填写备注')
+          Button(VoiceInputAdapter.buttonText('填写备注'))
             .height(34)
             .fontSize(13)
             .fontColor(Colors.primary)
