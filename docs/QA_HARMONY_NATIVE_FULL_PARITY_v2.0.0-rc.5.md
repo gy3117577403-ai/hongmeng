@@ -181,6 +181,7 @@
 - 已检查 Harmony 登录诊断日志会隐藏 token、password、secret、session、数据库和对象存储 key 相关响应体预览。
 - 已检查 Settings 页新增账号、重置密码、修改密码、退出登录和页面离开时会清理密码输入态，不在原生页面状态中长期保留密码文本。
 - 已检查 Workbench 上传失败重试会复用原上传队列项并更新状态，避免重试时重复堆积失败任务；批量重试失败项也逐条复用原任务。
+- 已检查 Harmony 下载/打开文件、ZIP、连接器导出和附件时会剥离旧 `ticket` 并通过 `/api/native/download-ticket` 刷新短期下载 URL，避免页面长时间停留后使用过期链接。
 - 已检查 `API_BASE_URL` 保持为 `https://qdowqencjyph.sealoshzh.site`。
 - 已检查 `main_pages.json`、`Routes` 常量和 `EntryAbility` 入口页覆盖 Login、Workbench、ConnectorParameters、Settings。
 - 已检查页面文件中的 `this.xxx()` 方法调用均有同文件方法定义，避免页面编译期出现缺失方法引用。

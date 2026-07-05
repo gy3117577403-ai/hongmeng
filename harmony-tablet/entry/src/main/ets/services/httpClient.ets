@@ -150,12 +150,18 @@ class NativeHttpClient {
     return `${API_BASE_URL}${path}`;
   }
 
+  downloadTicketPath(path: string): string {
+    const queryIndex = path.indexOf('?');
+    if (queryIndex < 0) return path;
+    return path.substring(0, queryIndex);
+  }
+
   async resolveDownloadUrl(url: string): Promise<string> {
     if (url.indexOf(API_BASE_URL) !== 0) return url;
     const path = url.substring(API_BASE_URL.length);
     if (path.indexOf('/api/native/') !== 0) return url;
-    if (path.indexOf('ticket=') >= 0) return url;
-    const response = await this.get(`/api/native/download-ticket?path=${encodeURIComponent(path)}`);
+    const ticketPath = this.downloadTicketPath(path);
+    const response = await this.get(`/api/native/download-ticket?path=${encodeURIComponent(ticketPath)}`);
     const parsed = JSON.parse(response.text) as NativeDownloadTicketResponse;
     if (!parsed.data || parsed.data.url.length === 0) return url;
     if (parsed.data.url.indexOf('http://') === 0 || parsed.data.url.indexOf('https://') === 0) {
