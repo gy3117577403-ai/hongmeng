@@ -66,7 +66,7 @@
 | 底部悬浮缩略图 | 是 | 是 | 是 | 多文件时显示，不显示“文件 0 个”。 |
 | 上传 PDF | 是 | 是 | 需真机验证 | `FilePickerAdapter.pickPdf` 接系统文档选择器，`httpClient.uploadMultipart` 接 native multipart 上传。 |
 | 上传图片 | 是 | 是 | 需真机验证 | `FilePickerAdapter.pickImages` 接系统图片选择器，上传成功后刷新并选中新文件。 |
-| 拍照上传 | 是 | 是 | 需真机验证 | `CameraAdapter` 已提供现场照片入口；当前未启用直接相机能力时，提示先用系统相机拍照后选择图片，并保留上传图片兜底。 |
+| 拍照上传 | 是 | 是 | 需真机验证 | `CameraAdapter` 已提供现场照片入口；当前未启用直接相机能力时，右侧工具窗显示“选择现场照片”，提示先用系统相机拍照后选择图片，并保留上传图片兜底。 |
 | 上传队列 | 是 | 是 | 是 | 显示上传中、成功、失败，失败项保留原始选择文件。 |
 | 上传失败重试 | 是 | 是 | 是 | 支持单条失败重试和全部失败重试；文件选择能力仍依赖平台 adapter。 |
 | 连接器参数查询 | 是 | 是 | 是 | 搜索型号、备注、数字参数。 |
@@ -193,6 +193,7 @@
 ## 受限能力说明
 - 原生文件选择、现场照片入口、系统级保存/打开、剪贴板和语音输入继续通过 platform adapter 承接。
 - `FilePickerAdapter` 已接入文档选择器、图片选择器和附件选择器；`httpClient.uploadMultipart` 已接 native multipart 上传。
+- 右侧工具窗展示 `FilePickerAdapter` / `CameraAdapter` 的状态和 guidance；系统选择器或直接相机能力不可用时，给出“请使用上传图片或 Web 端完成”等面向现场使用的替代方案。
 - `DownloadAdapter` 对 native 下载会先用 Bearer 换短期 ticket URL，再使用系统能力打开，不在 App 本地长期保存文件。
 - `ClipboardAdapter` 写入系统剪贴板；`VoiceInputAdapter` 在系统语音不可用时提供手动输入兜底。
 - 如果设备不支持对应原生能力，App 会给出明确用户提示，不会写入本地永久文件。

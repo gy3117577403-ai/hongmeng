@@ -20,11 +20,11 @@ export class FilePickerAdapter {
   }
 
   static statusText(): string {
-    return FilePickerAdapter.isSupported() ? '可用' : '请使用 Web 端';
+    return FilePickerAdapter.isSupported() ? '可用' : '当前设备暂不支持';
   }
 
   static guidanceText(): string {
-    return '请选择 PDF、图片或 CSV/XLSX 文件；如系统选择器不可用，可使用 Web 端上传。';
+    return '请选择 PDF、图片或 CSV/XLSX 文件；如系统选择器不可用，请使用上传图片或 Web 端完成。';
   }
 
   static async pickPdf(): Promise<PickedFile[]> {
@@ -122,6 +122,6 @@ export class FilePickerAdapter {
     if (message.indexOf('permission') >= 0 || message.indexOf('Permission') >= 0 || message.indexOf('权限') >= 0) {
       return '请授予文件访问权限后重试';
     }
-    return '系统文件选择器不可用，请稍后重试或使用 Web 端上传。';
+    return '系统文件选择器不可用，请使用上传图片或 Web 端完成。';
   }
 }

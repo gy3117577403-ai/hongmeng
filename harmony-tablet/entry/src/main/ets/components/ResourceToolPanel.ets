@@ -23,8 +23,11 @@ export struct ResourceToolPanel {
   workOrders: WorkOrder[] = [];
   selectedCategoryId: string = '';
   uploadQueue: UploadQueueItem[] = [];
-  filePickerStatus: string = '请使用 Web 端';
+  filePickerStatus: string = '当前设备暂不支持';
+  filePickerGuidance: string = '请选择 PDF、图片或 CSV/XLSX 文件。';
   cameraStatus: string = '请使用上传图片';
+  cameraGuidance: string = '当前设备暂不支持直接拍照，请使用上传图片。';
+  cameraActionText: string = '选择现场照片';
   onToggle: () => void = () => {};
   onUploadPdf: () => void = () => {};
   onUploadImage: () => void = () => {};
@@ -188,14 +191,18 @@ export struct ResourceToolPanel {
               CommonButton({ label: '上传图片', onTap: this.onUploadImage })
                 .width('100%')
                 .margin({ top: 10 })
-              CommonButton({ label: '拍照上传', primary: false, onTap: this.onCameraUpload })
+              CommonButton({ label: this.cameraActionText, primary: false, onTap: this.onCameraUpload })
                 .width('100%')
                 .margin({ top: 10 })
               Text('文件保存到 S3 兼容对象存储，元数据写入 PostgreSQL。')
                 .fontSize(12)
                 .fontColor(Colors.textMuted)
                 .margin({ top: 12 })
-              Text('当前设备不支持原生选择器时，请使用 Web 端上传。')
+              Text(this.filePickerGuidance)
+                .fontSize(12)
+                .fontColor(Colors.textMuted)
+                .margin({ top: 8 })
+              Text(this.cameraGuidance)
                 .fontSize(12)
                 .fontColor(Colors.textMuted)
                 .margin({ top: 8 })
