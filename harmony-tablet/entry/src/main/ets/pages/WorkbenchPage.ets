@@ -556,7 +556,7 @@ struct WorkbenchPage {
   }
 
   async copyFileLink(file: ResourceFile): Promise<void> {
-    await ClipboardAdapter.copyText(`${API_BASE_URL}${file.downloadUrl}`, '文件链接');
+    await DownloadAdapter.copyDownloadUrl(nativeDownloadUrl(file), '文件链接');
   }
 
   async copyWorkOrderLink(): Promise<void> {

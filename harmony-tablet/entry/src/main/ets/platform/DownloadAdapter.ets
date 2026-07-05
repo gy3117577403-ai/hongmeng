@@ -17,6 +17,17 @@ export class DownloadAdapter {
     await DownloadAdapter.openUrl(url, context, `已打开下载：${name}`);
   }
 
+  static async copyDownloadUrl(url: string, label: string): Promise<void> {
+    let resolvedUrl = url;
+    try {
+      resolvedUrl = await httpClient.resolveDownloadUrl(url);
+    } catch (_) {
+      ToastAdapter.error('下载链接生成失败，请检查登录状态和网络连接。');
+      return;
+    }
+    await ClipboardAdapter.copyText(resolvedUrl, label);
+  }
+
   static async openUrl(url: string, context: common.UIAbilityContext | undefined, successText: string): Promise<void> {
     let resolvedUrl = url;
     try {

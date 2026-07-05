@@ -181,6 +181,9 @@ assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/SettingsPage.ets', '
 assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/SettingsPage.ets', 'aboutToDisappear(): void', 'Harmony settings clears password inputs on page leave check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/WorkbenchPage.ets', 'uploadQueueJob(job.id, job.file', 'Harmony upload retry reuses failed queue item check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/services/httpClient.ets', 'downloadTicketPath(path: string): string', 'Harmony download ticket refresh path cleanup check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/platform/DownloadAdapter.ets', 'copyDownloadUrl(url: string, label: string): Promise<void>', 'Harmony copied file link refreshes download ticket check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/pages/WorkbenchPage.ets', 'DownloadAdapter.copyDownloadUrl(nativeDownloadUrl(file)', 'Harmony workbench copied file link uses refreshed ticket check');
+assertTextExcludes('harmony-tablet/entry/src/main/ets/pages/WorkbenchPage.ets', '${API_BASE_URL}${file.downloadUrl}', 'Harmony workbench must not copy stale native file ticket');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "lower.indexOf('password') >= 0", 'Harmony login diagnostics password redaction check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "lower.indexOf('secret') >= 0", 'Harmony login diagnostics secret redaction check');
 assertTextIncludes('harmony-tablet/entry/src/main/ets/services/authApi.ets', "return '[sensitive body hidden]'", 'Harmony login diagnostics sensitive body redaction check');
