@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Readable } from 'stream';
 import { safeDisplayFilename } from '@/lib/filenames';
-import { NativeUnauthorizedError, nativeError, nativeUnauthorized, requireNativeUser } from '@/lib/native-api';
+import { NativeUnauthorizedError, nativeError, nativeUnauthorized, requireNativeDownloadUser } from '@/lib/native-api';
 import { prisma } from '@/lib/prisma';
 import { getObjectStream } from '@/lib/s3';
 
@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    await requireNativeUser(req);
+    await requireNativeDownloadUser(req);
     const file = await prisma.resourceFile.findFirst({
       where: { id: params.id, deletedAt: null, status: 'uploaded' },
       select: { objectKey: true, originalName: true, displayName: true, mimeType: true, fileSize: true },

@@ -49,7 +49,7 @@ https://qdowqencjyph.sealoshzh.site
 ## 平台 Adapter 说明
 - `FilePickerAdapter`：接入系统文档选择器、图片选择器和附件选择器，返回 URI 后交给 multipart 上传。
 - `CameraAdapter`：接入系统图片选择器作为现场照片入口；当前未启用直接相机能力时，提示先用系统相机拍照后选择图片，或使用上传图片。
-- `DownloadAdapter`：使用系统能力打开文件、资料包和附件下载 URL，不在 App 本地长期保存文件。
+- `DownloadAdapter`：对 native 下载先用 Bearer 换短期 ticket URL，再使用系统能力打开文件、资料包和附件下载 URL，不在 App 本地长期保存文件。
 - `ClipboardAdapter`：用于复制工单链接和文件链接。
 - `VoiceInputAdapter`：统一语音/手动输入入口，覆盖全局搜索、工单搜索、表单备注和文件信息备注；系统语音不可用时按钮显示手动输入并提示键盘录入。
 - `PreferencesAdapter`：用于 token 和用户信息本地保存。

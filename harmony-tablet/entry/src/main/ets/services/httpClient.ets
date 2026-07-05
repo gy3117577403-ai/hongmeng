@@ -43,6 +43,14 @@ export interface MultipartTextField {
   value: string;
 }
 
+export interface NativeDownloadTicketData {
+  url: string;
+}
+
+export interface NativeDownloadTicketResponse extends NativeApiBaseResponse {
+  data: NativeDownloadTicketData;
+}
+
 export class ApiException extends Error {
   status: number;
   statusCode: number;
@@ -140,6 +148,20 @@ class NativeHttpClient {
 
   contentUrl(path: string): string {
     return `${API_BASE_URL}${path}`;
+  }
+
+  async resolveDownloadUrl(url: string): Promise<string> {
+    if (url.indexOf(API_BASE_URL) !== 0) return url;
+    const path = url.substring(API_BASE_URL.length);
+    if (path.indexOf('/api/native/') !== 0) return url;
+    if (path.indexOf('ticket=') >= 0) return url;
+    const response = await this.get(`/api/native/download-ticket?path=${encodeURIComponent(path)}`);
+    const parsed = JSON.parse(response.text) as NativeDownloadTicketResponse;
+    if (!parsed.data || parsed.data.url.length === 0) return url;
+    if (parsed.data.url.indexOf('http://') === 0 || parsed.data.url.indexOf('https://') === 0) {
+      return parsed.data.url;
+    }
+    return `${API_BASE_URL}${parsed.data.url}`;
   }
 
   private async request(method: string, path: string, options?: HttpRequestOptions): Promise<HttpResponseText> {

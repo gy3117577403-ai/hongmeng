@@ -2,7 +2,7 @@ import { Readable } from 'stream';
 import yazl from 'yazl';
 import { safeDisplayFilename } from '@/lib/filenames';
 import { logOp } from '@/lib/logs';
-import { NativeUnauthorizedError, nativeError, nativeUnauthorized, requireNativeUser } from '@/lib/native-api';
+import { NativeUnauthorizedError, nativeError, nativeUnauthorized, requireNativeDownloadUser } from '@/lib/native-api';
 import { prisma } from '@/lib/prisma';
 import { getObjectStream } from '@/lib/s3';
 
@@ -38,7 +38,7 @@ function versionedName(name: string, version: string | null) {
 
 export async function GET(req: Request, { params }: { params: { id: string } }) {
   try {
-    const user = await requireNativeUser(req);
+    const user = await requireNativeDownloadUser(req);
     const workOrder = await prisma.workOrder.findFirst({
       where: { id: params.id, deletedAt: null },
       include: {

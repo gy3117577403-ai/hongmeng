@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
       targetId: file.id,
       detail: { client: 'harmony_native', fileName: up.name, fileSize: up.size, workOrderCode: workOrder.code, categoryCode: category.code, version },
     });
-    return nativeOk({ file: nativeFileDto(file) });
+    return nativeOk({ file: nativeFileDto(file, user.id) });
   } catch (e) {
     if (e instanceof NativeUnauthorizedError) return nativeUnauthorized();
     console.error(e);

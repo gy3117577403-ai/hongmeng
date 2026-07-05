@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { NextRequest } from 'next/server';
 import { connectorFileType, connectorObjectKey, serializeConnectorParameterFile, validateConnectorFile } from '@/lib/connector-parameters';
 import { logOp } from '@/lib/logs';
-import { NativeUnauthorizedError, nativeError, nativeOk, nativeUnauthorized, requireNativeUser } from '@/lib/native-api';
+import { NativeUnauthorizedError, nativeError, nativeOk, nativeUnauthorized, requireNativeUser, ticketedNativeDownloadPath } from '@/lib/native-api';
 import { prisma } from '@/lib/prisma';
 import { putObject } from '@/lib/s3';
 
@@ -32,7 +32,11 @@ export async function POST(req: NextRequest) {
       },
     });
     await logOp({ userId: user.id, action: 'upload_connector_parameter_file', targetType: 'connector_parameter_file', targetId: item.id, detail: { fileName: item.originalName, fileSize: item.fileSize, fileType: item.fileType, client: 'harmony_native' } });
-    return nativeOk({ file: serializeConnectorParameterFile(item, { downloadBasePath: nativeDownloadBasePath }) });
+    return nativeOk({
+      file: serializeConnectorParameterFile(item, {
+        downloadUrl: ticketedNativeDownloadPath(`${nativeDownloadBasePath}/${item.id}/download`, user.id),
+      }),
+    });
   } catch (e) {
     if (e instanceof NativeUnauthorizedError) return nativeUnauthorized();
     console.error(e);

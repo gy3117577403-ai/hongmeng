@@ -1,5 +1,6 @@
 import type common from '@ohos.app.ability.common';
 import type { ResourceFile } from '../models/ResourceFile';
+import { httpClient } from '../services/httpClient';
 import { ToastAdapter } from './ToastAdapter';
 
 export class DownloadAdapter {
@@ -21,9 +22,10 @@ export class DownloadAdapter {
       return;
     }
     try {
+      const resolvedUrl = await httpClient.resolveDownloadUrl(url);
       await context.startAbility({
         action: 'ohos.want.action.viewData',
-        uri: url
+        uri: resolvedUrl
       });
       ToastAdapter.success(successText);
     } catch (_) {

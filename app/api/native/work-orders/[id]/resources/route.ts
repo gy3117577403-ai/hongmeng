@@ -9,7 +9,7 @@ const requiredCategoryCodes = new Set(['drawing', 'sop', 'product']);
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    await requireNativeUser(req);
+    const user = await requireNativeUser(req);
     const workOrder = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null }, select: { id: true } });
     if (!workOrder) return nativeError('工单不存在', 404);
     const [categories, files] = await Promise.all([
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         sortOrder: category.sortOrder,
         fileCount: fileCounts[category.id] || 0,
       })),
-      files: files.map(nativeFileDto),
+      files: files.map(file => nativeFileDto(file, user.id)),
     });
   } catch (e) {
     if (e instanceof NativeUnauthorizedError) return nativeUnauthorized();

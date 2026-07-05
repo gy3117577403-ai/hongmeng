@@ -29,7 +29,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       after: resourceFileSnapshot(file),
       changedBy: user.displayName || user.username,
     });
-    return nativeOk({ file: nativeFileDto(file) });
+    return nativeOk({ file: nativeFileDto(file, user.id) });
   } catch (e) {
     if (e instanceof NativeUnauthorizedError) return nativeUnauthorized();
     console.error(e);

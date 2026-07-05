@@ -148,10 +148,12 @@ export function serializeConnectorParameter(item: ConnectorParameter) {
 
 export interface ConnectorParameterFileSerializeOptions {
   downloadBasePath?: string;
+  downloadUrl?: string;
 }
 
 export function serializeConnectorParameterFile(item: ConnectorParameterFile, options: ConnectorParameterFileSerializeOptions = {}) {
   const downloadBasePath = options.downloadBasePath || '/api/connector-parameter-files';
+  const downloadUrl = options.downloadUrl || `${downloadBasePath}/${item.id}/download`;
   return {
     id: item.id,
     originalName: item.originalName,
@@ -162,7 +164,7 @@ export function serializeConnectorParameterFile(item: ConnectorParameterFile, op
     uploadedBy: item.uploadedBy,
     createdAt: item.createdAt.toISOString(),
     deletedAt: item.deletedAt?.toISOString() || null,
-    downloadUrl: `${downloadBasePath}/${item.id}/download`,
+    downloadUrl,
   };
 }
 
