@@ -1,7 +1,9 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 const rootDir = path.resolve('harmony-tablet/entry/src/main/ets');
+const expectedApiBaseUrl = 'https://qdowqencjyph.sealoshzh.site';
 
 const rules = [
   { name: 'WebView usage', pattern: /\bWebView\b|webview/ },
@@ -37,7 +39,88 @@ function relative(filePath) {
   return path.relative(process.cwd(), filePath).replace(/\\/g, '/');
 }
 
+function fail(message) {
+  failed = true;
+  console.error(`[FAIL] ${message}`);
+}
+
+function assertFileExists(filePath) {
+  if (!existsSync(path.resolve(filePath))) {
+    fail(`missing required file: ${filePath}`);
+  }
+}
+
+function assertTextIncludes(filePath, expected, label) {
+  const text = readFileSync(path.resolve(filePath), 'utf8');
+  if (!text.includes(expected)) {
+    fail(`${label}: ${filePath} does not include ${expected}`);
+  }
+}
+
+function assertGitignoreIncludes(pattern) {
+  const text = readFileSync(path.resolve('.gitignore'), 'utf8');
+  if (!text.includes(pattern)) {
+    fail(`.gitignore is missing ${pattern}`);
+  }
+}
+
 let failed = false;
+
+const requiredFiles = [
+  'harmony-tablet/AppScope/app.json5',
+  'harmony-tablet/entry/src/main/module.json5',
+  'harmony-tablet/entry/src/main/ets/entryability/EntryAbility.ets',
+  'harmony-tablet/entry/src/main/ets/pages/LoginPage.ets',
+  'harmony-tablet/entry/src/main/ets/pages/WorkbenchPage.ets',
+  'harmony-tablet/entry/src/main/ets/pages/ConnectorParametersPage.ets',
+  'harmony-tablet/entry/src/main/ets/pages/SettingsPage.ets',
+  'harmony-tablet/entry/src/main/ets/constants/api.ets',
+  'harmony-tablet/oh-package.json5',
+  'harmony-tablet/build-profile.json5',
+  'harmony-tablet/hvigorfile.ts',
+];
+
+for (const file of requiredFiles) {
+  assertFileExists(file);
+}
+
+assertTextIncludes('harmony-tablet/entry/src/main/ets/constants/api.ets', expectedApiBaseUrl, 'API_BASE_URL check');
+assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"type": "entry"', 'entry module check');
+assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"mainElement": "EntryAbility"', 'EntryAbility check');
+assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"deviceTypes": ["tablet"]', 'tablet device check');
+assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"startWindowIcon": "$media:app_icon"', 'startWindowIcon check');
+assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"startWindowBackground": "$color:start_window_background"', 'startWindowBackground check');
+
+const gitignorePatterns = [
+  'harmony-tablet/oh_modules/',
+  'harmony-tablet/build/',
+  'harmony-tablet/.hvigor/',
+  'harmony-tablet/.idea/',
+  'harmony-tablet/local.properties',
+  'node_modules/',
+  '.next/',
+  '.env',
+  '.env.local',
+];
+
+for (const pattern of gitignorePatterns) {
+  assertGitignoreIncludes(pattern);
+}
+
+const stagedFiles = execFileSync('git', ['diff', '--cached', '--name-only'], { encoding: 'utf8' })
+  .split(/\r?\n/)
+  .filter(Boolean);
+const forbiddenStagedFiles = [
+  'harmony-tablet/build-profile.json5',
+  'harmony-tablet/local.properties',
+];
+
+for (const file of stagedFiles) {
+  if (forbiddenStagedFiles.includes(file) || file.startsWith('harmony-tablet/oh_modules/') || file.startsWith('harmony-tablet/build/') || file.startsWith('harmony-tablet/.hvigor/') || file.startsWith('harmony-tablet/.idea/')) {
+    fail(`forbidden Harmony local/generated file is staged: ${file}`);
+  }
+}
+
 const files = listFiles(rootDir);
 
 for (const file of files) {

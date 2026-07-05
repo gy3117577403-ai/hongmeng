@@ -145,7 +145,7 @@
 ## 验证结果
 - `npm run build`：通过。
 - `npm run smoke`：通过。
-- `npm run harmony:check`：通过，扫描 45 个 ArkTS 文件。
+- `npm run harmony:check`：通过，扫描 45 个 ArkTS 文件，并检查 Harmony 工程关键结构、API 地址、Tablet / Entry 配置、`.gitignore` 和禁暂存本地签名 / 生成目录。
 - smoke 覆盖：
   - `/api/health`
   - `/manifest.webmanifest`
@@ -171,8 +171,12 @@
 - Harmony 命令行构建：未执行。
 - 未执行原因：本机 PATH 未发现 `ohpm`、`hvigor`、`hvigorw`，且 `harmony-tablet` 内没有 `hvigorw.bat`。
 
-## ArkTS Strict 静态检查
+## ArkTS Strict / 工程约束静态检查
 - 已新增 `scripts/harmony-static-check.mjs`，并通过 `npm run harmony:check` 执行。
+- 已检查 `API_BASE_URL` 保持为 `https://qdowqencjyph.sealoshzh.site`。
+- 已检查 `module.json5` 为 entry 模块、包含 EntryAbility、Tablet deviceTypes、startWindowIcon 和 startWindowBackground。
+- 已检查 `.gitignore` 包含 `oh_modules`、`build`、`.hvigor`、`.idea`、`local.properties`、`node_modules`、`.next` 和 `.env` 相关规则。
+- 已检查当前没有暂存 `harmony-tablet/build-profile.json5`、`local.properties` 或 Harmony 生成目录。
 - 未新增 `any`。
 - 未新增 `unknown`。
 - 未使用 `delete`。
