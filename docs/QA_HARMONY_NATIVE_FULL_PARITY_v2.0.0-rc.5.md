@@ -145,7 +145,7 @@
 ## 验证结果
 - `npm run build`：通过。
 - `npm run smoke`：通过。
-- `npm run harmony:check`：通过，扫描 45 个 ArkTS 文件，并检查 Harmony 工程关键结构、API 地址、Tablet / Entry 配置、`.gitignore` 和禁暂存本地签名 / 生成目录。
+- `npm run harmony:check`：通过，扫描 45 个 ArkTS 文件，并检查 Harmony 工程关键结构、rc5 版本标识、API 地址、Tablet / Entry 配置、`.gitignore` 和禁暂存本地签名 / 生成目录。
 - smoke 覆盖：
   - `/api/health`
   - `/manifest.webmanifest`
@@ -173,6 +173,7 @@
 
 ## ArkTS Strict / 工程约束静态检查
 - 已新增 `scripts/harmony-static-check.mjs`，并通过 `npm run harmony:check` 执行。
+- 已检查 `AppScope/app.json5` 的 `versionName` 和 `oh-package.json5` 的 `version` 均为 `2.0.0-native-rc.5`。
 - 已检查 `API_BASE_URL` 保持为 `https://qdowqencjyph.sealoshzh.site`。
 - 已检查 `module.json5` 为 entry 模块、包含 EntryAbility、Tablet deviceTypes、startWindowIcon 和 startWindowBackground。
 - 已检查 `.gitignore` 包含 `oh_modules`、`build`、`.hvigor`、`.idea`、`local.properties`、`node_modules`、`.next` 和 `.env` 相关规则。

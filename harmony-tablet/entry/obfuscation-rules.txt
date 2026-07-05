@@ -1,5 +1,5 @@
 # Obfuscation rules for release build.
-# Keep empty for v2.0.0-native-rc.1 scaffold.
+# Keep empty for v2.0.0-native-rc.5 scaffold.
 
 -enable-property-obfuscation
 -enable-toplevel-obfuscation

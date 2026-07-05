@@ -4,6 +4,7 @@ import path from 'node:path';
 
 const rootDir = path.resolve('harmony-tablet/entry/src/main/ets');
 const expectedApiBaseUrl = 'https://qdowqencjyph.sealoshzh.site';
+const expectedNativeVersion = '2.0.0-native-rc.5';
 
 const rules = [
   { name: 'WebView usage', pattern: /\bWebView\b|webview/ },
@@ -85,6 +86,8 @@ for (const file of requiredFiles) {
 }
 
 assertTextIncludes('harmony-tablet/entry/src/main/ets/constants/api.ets', expectedApiBaseUrl, 'API_BASE_URL check');
+assertTextIncludes('harmony-tablet/AppScope/app.json5', `"versionName": "${expectedNativeVersion}"`, 'Harmony app versionName check');
+assertTextIncludes('harmony-tablet/oh-package.json5', `"version": "${expectedNativeVersion}"`, 'Harmony package version check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"type": "entry"', 'entry module check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"mainElement": "EntryAbility"', 'EntryAbility check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"deviceTypes": ["tablet"]', 'tablet device check');

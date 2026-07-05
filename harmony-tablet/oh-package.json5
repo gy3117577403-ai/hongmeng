@@ -1,7 +1,7 @@
 {
   "modelVersion": "5.0.0",
   "name": "hongmeng-workorder-tablet",
-  "version": "2.0.0-native-rc.1",
+  "version": "2.0.0-native-rc.5",
   "description": "Native HarmonyOS tablet app for the work order resource system.",
   "main": "",
   "author": "factory",
