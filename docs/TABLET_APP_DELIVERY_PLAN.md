@@ -90,11 +90,29 @@ cd android-webview-app
 gradle :app:assembleDebug
 ```
 
+也可以使用 GitHub Actions 自动构建 debug APK：
+
+1. 打开 GitHub 仓库的 `Actions` 页面。
+2. 选择 `Android WebView APK`。
+3. 点击 `Run workflow`，或推送 `android-webview-app/**` 变更到 `main` 自动触发。
+4. 构建完成后下载 artifact：
+
+```text
+hongmeng-workorder-webview-debug-apk
+```
+
 常见 APK 输出路径：
 
 ```text
 android-webview-app/app/build/outputs/apk/debug/app-debug.apk
 ```
+
+debug APK 与正式签名 APK 的区别：
+
+- debug APK：由构建环境生成调试签名，适合内部安装、现场验证和功能确认。
+- 正式签名 APK：使用公司发布证书签名，适合长期分发和版本管理。
+
+当前阶段只构建 debug APK，不提交 keystore、签名证书、签名密码、GitHub Token 或任何生产密钥。正式签名流程后续单独设计，应通过 GitHub Secrets 或本地安全签名完成。
 
 安装方式：
 

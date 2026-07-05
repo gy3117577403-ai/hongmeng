@@ -40,12 +40,38 @@ gradle :app:assembleDebug
 
 本仓库不提交 Android Studio 本地配置、签名文件、`local.properties` 或构建产物。
 
+## 如何从 GitHub Actions 下载 APK
+
+当前仓库提供 GitHub Actions workflow：
+
+```text
+.github/workflows/android-webview-apk.yml
+```
+
+触发方式：
+
+- 手动触发：GitHub 仓库页面进入 `Actions`，选择 `Android WebView APK`，点击 `Run workflow`。
+- 自动触发：push 到 `main` 且 `android-webview-app/**` 或 workflow 文件发生变化。
+
+下载方式：
+
+1. 打开 GitHub 仓库的 `Actions` 页面。
+2. 进入最新一次 `Android WebView APK` 构建。
+3. 在页面底部 `Artifacts` 中下载：
+
+```text
+hongmeng-workorder-webview-debug-apk
+```
+
+当前产物是 debug APK，用于现场安装验证。debug APK 未做正式发布签名，后续如需长期分发，再新增正式签名包流程。签名证书、keystore、密码和 token 不提交到仓库。
+
 ## 如何安装到平板
 
 1. 将 APK 复制到平板。
-2. 打开 APK 并允许安装。
-3. 桌面出现“工单资料库”后启动应用。
-4. 使用线上账号登录。
+2. 如系统提示，先允许安装未知来源应用。
+3. 打开 APK 并允许安装。
+4. 桌面出现“工单资料库”后启动应用。
+5. 使用线上账号登录。
 
 APK 不内置账号、密码、token、数据库连接串、S3 Key 或 SESSION_SECRET。
 
