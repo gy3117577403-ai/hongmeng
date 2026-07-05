@@ -145,7 +145,7 @@
 ## 验证结果
 - `npm run build`：通过。
 - `npm run smoke`：通过。
-- `npm run harmony:check`：通过，扫描 45 个 ArkTS 文件，并检查 Harmony 工程关键结构、rc5 版本标识、API 地址、Tablet / Entry 配置、`.gitignore` 和禁暂存本地签名 / 生成目录。
+- `npm run harmony:check`：通过，扫描 45 个 ArkTS 文件，并检查 Harmony 工程关键结构、rc5 版本标识、API 地址、页面 profile / 路由常量、Tablet / Entry 配置、`.gitignore`、敏感字符串和禁暂存本地签名 / 生成目录。
 - smoke 覆盖：
   - `/api/health`
   - `/manifest.webmanifest`
@@ -175,9 +175,11 @@
 - 已新增 `scripts/harmony-static-check.mjs`，并通过 `npm run harmony:check` 执行。
 - 已检查 `AppScope/app.json5` 的 `versionName` 和 `oh-package.json5` 的 `version` 均为 `2.0.0-native-rc.5`。
 - 已检查 `API_BASE_URL` 保持为 `https://qdowqencjyph.sealoshzh.site`。
+- 已检查 `main_pages.json`、`Routes` 常量和 `EntryAbility` 入口页覆盖 Login、Workbench、ConnectorParameters、Settings。
 - 已检查 `module.json5` 为 entry 模块、包含 EntryAbility、Tablet deviceTypes、startWindowIcon 和 startWindowBackground。
 - 已检查 `.gitignore` 包含 `oh_modules`、`build`、`.hvigor`、`.idea`、`local.properties`、`node_modules`、`.next` 和 `.env` 相关规则。
 - 已检查当前没有暂存 `harmony-tablet/build-profile.json5`、`local.properties` 或 Harmony 生成目录。
+- 已检查 Harmony 工程源码和配置未包含 `DATABASE_URL`、`SESSION_SECRET`、S3 Secret、`passwordHash` 或常见访问密钥格式。
 - 未新增 `any`。
 - 未新增 `unknown`。
 - 未使用 `delete`。

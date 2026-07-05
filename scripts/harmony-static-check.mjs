@@ -5,6 +5,12 @@ import path from 'node:path';
 const rootDir = path.resolve('harmony-tablet/entry/src/main/ets');
 const expectedApiBaseUrl = 'https://qdowqencjyph.sealoshzh.site';
 const expectedNativeVersion = '2.0.0-native-rc.5';
+const requiredPageRoutes = [
+  'pages/LoginPage',
+  'pages/WorkbenchPage',
+  'pages/ConnectorParametersPage',
+  'pages/SettingsPage',
+];
 
 const rules = [
   { name: 'WebView usage', pattern: /\bWebView\b|webview/ },
@@ -20,6 +26,15 @@ const rules = [
   { name: 'Row.minHeight usage', pattern: /Row\s*\(\s*\)\s*\.minHeight|\.minHeight\s*\(/ },
   { name: 'development TODO text', pattern: /TODO|待适配|待补齐|DevEco 真机环境补齐/ },
   { name: 'mock wording', pattern: /\bmock\b/i },
+];
+
+const sensitiveRules = [
+  { name: 'DATABASE_URL secret', pattern: /\bDATABASE_URL\b/ },
+  { name: 'SESSION_SECRET secret', pattern: /\bSESSION_SECRET\b/ },
+  { name: 'S3 secret key', pattern: /\bS3_SECRET\b|\bS3_SECRET_KEY\b|\bAWS_SECRET_ACCESS_KEY\b/ },
+  { name: 'passwordHash exposure', pattern: /\bpasswordHash\b/ },
+  { name: 'OpenAI style secret key', pattern: /\bsk-[A-Za-z0-9]{20,}\b/ },
+  { name: 'AWS access key', pattern: /\bAKIA[0-9A-Z]{16}\b/ },
 ];
 
 function listFiles(dir) {
@@ -65,6 +80,20 @@ function assertGitignoreIncludes(pattern) {
   }
 }
 
+function scanSensitiveFile(filePath) {
+  const text = readFileSync(path.resolve(filePath), 'utf8');
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (const rule of sensitiveRules) {
+      if (rule.pattern.test(line)) {
+        fail(`${rule.name}: ${filePath}:${i + 1}`);
+      }
+      rule.pattern.lastIndex = 0;
+    }
+  }
+}
+
 let failed = false;
 
 const requiredFiles = [
@@ -93,6 +122,16 @@ assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"mainElement":
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"deviceTypes": ["tablet"]', 'tablet device check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"startWindowIcon": "$media:app_icon"', 'startWindowIcon check');
 assertTextIncludes('harmony-tablet/entry/src/main/module.json5', '"startWindowBackground": "$color:start_window_background"', 'startWindowBackground check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/entryability/EntryAbility.ets', "loadContent('pages/LoginPage')", 'EntryAbility initial page check');
+
+for (const page of requiredPageRoutes) {
+  assertTextIncludes('harmony-tablet/entry/src/main/resources/base/profile/main_pages.json', `"${page}"`, `main_pages route check ${page}`);
+}
+
+assertTextIncludes('harmony-tablet/entry/src/main/ets/constants/routes.ets', "login: 'pages/LoginPage'", 'login route constant check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/constants/routes.ets', "workbench: 'pages/WorkbenchPage'", 'workbench route constant check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/constants/routes.ets', "connectorParameters: 'pages/ConnectorParametersPage'", 'connector route constant check');
+assertTextIncludes('harmony-tablet/entry/src/main/ets/constants/routes.ets', "settings: 'pages/SettingsPage'", 'settings route constant check');
 
 const gitignorePatterns = [
   'harmony-tablet/oh_modules/',
@@ -126,6 +165,23 @@ for (const file of stagedFiles) {
 
 const files = listFiles(rootDir);
 
+const sensitiveScanFiles = [
+  'harmony-tablet/AppScope/app.json5',
+  'harmony-tablet/oh-package.json5',
+  'harmony-tablet/entry/oh-package.json5',
+  'harmony-tablet/entry/src/main/module.json5',
+  'harmony-tablet/entry/src/main/resources/base/element/string.json',
+  'harmony-tablet/entry/src/main/resources/base/profile/main_pages.json',
+];
+
+for (const file of sensitiveScanFiles) {
+  scanSensitiveFile(file);
+}
+
+for (const file of files) {
+  scanSensitiveFile(relative(file));
+}
+
 for (const file of files) {
   const text = readFileSync(file, 'utf8');
   const lines = text.split(/\r?\n/);
@@ -147,4 +203,4 @@ if (failed) {
   process.exit(1);
 }
 
-console.log(`Harmony static check passed. Checked ${files.length} ArkTS files.`);
+console.log(`Harmony static check passed. Checked ${files.length} ArkTS files and project constraints.`);
