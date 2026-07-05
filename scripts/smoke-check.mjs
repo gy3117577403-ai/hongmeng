@@ -57,6 +57,22 @@ const checks = [
       if (typeof body.ok !== 'boolean') throw new Error('native login response is missing boolean ok field');
     },
   },
+  {
+    name: 'native download ticket format',
+    path: '/api/native/download-ticket?path=/api/native/connector-parameters/export.csv',
+    allowHttpError: true,
+    validate: async response => {
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        throw new Error(`native download ticket returned HTML with HTTP ${response.status}`);
+      }
+      if (!contentType.includes('application/json')) {
+        throw new Error(`native download ticket returned non-JSON content-type ${contentType || '(empty)'}`);
+      }
+      const body = await response.json();
+      if (typeof body.ok !== 'boolean') throw new Error('native download ticket response is missing boolean ok field');
+    },
+  },
 ];
 
 async function runCheck(check) {
