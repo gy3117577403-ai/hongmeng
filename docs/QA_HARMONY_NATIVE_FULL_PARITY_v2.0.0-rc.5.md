@@ -60,8 +60,8 @@
 | 文件移动到其他工单 | 是 | 是 | 是 | 右侧工具窗可从当前工单列表点选目标工单，也可输入目标工单 ID 后保存，当前工单会刷新并移除已移走文件。 |
 | 删除文件 | 是 | 是 | 是 | UI 二次确认后调用 `/api/native/resource-files/[id]`，后端仍校验删除确认口令并软删除。 |
 | 恢复文件 | 是 | 是 | 是 | Settings 回收站调用 `/api/native/resource-files/[id]/restore`。 |
-| 下载当前文件 | 是 | 是 | 需真机验证 | `DownloadAdapter` 先用 Bearer 换短期 ticket URL，再交给系统能力打开，不在 App 本地长期保存文件。 |
-| 下载全部 ZIP | 是 | 是 | 需真机验证 | 调用 native ZIP 下载 URL，`DownloadAdapter` 会先换短期 ticket，再由系统保存/打开。 |
+| 下载当前文件 | 是 | 是 | 需真机验证 | `DownloadAdapter` 先用 Bearer 换短期 ticket URL，再交给系统能力打开；系统无法打开时自动复制短期下载链接，不在 App 本地长期保存文件。 |
+| 下载全部 ZIP | 是 | 是 | 需真机验证 | 调用 native ZIP 下载 URL，`DownloadAdapter` 会先换短期 ticket，再由系统保存/打开；失败时复制短期下载链接。 |
 | 复制文件链接 | 是 | 是 | 需真机验证 | `ClipboardAdapter` 写入系统剪贴板，失败时提示手动记录。 |
 | 底部悬浮缩略图 | 是 | 是 | 是 | 多文件时显示，不显示“文件 0 个”。 |
 | 上传 PDF | 是 | 是 | 需真机验证 | `FilePickerAdapter.pickPdf` 接系统文档选择器，`httpClient.uploadMultipart` 接 native multipart 上传。 |
@@ -81,15 +81,15 @@
 | 批量取消重点 | 是 | 是 | 是 | 表格多选后批量操作。 |
 | 批量删除 | 是 | 是 | 是 | 表格多选后弹出确认，再批量软删除。 |
 | 复制整行参数 | 是 | 是 | 需真机验证 | `ClipboardAdapter` 写入系统剪贴板，失败时提示手动记录。 |
-| CSV 导出 | 是 | 是 | 需真机验证 | 下载 URL 已接入，`DownloadAdapter` 会先换短期 ticket，再由系统保存/打开。 |
-| 模板下载 | 是 | 是 | 需真机验证 | 下载 URL 已接入，`DownloadAdapter` 会先换短期 ticket，再由系统保存/打开。 |
+| CSV 导出 | 是 | 是 | 需真机验证 | 下载 URL 已接入，`DownloadAdapter` 会先换短期 ticket，再由系统保存/打开；失败时复制短期下载链接。 |
+| 模板下载 | 是 | 是 | 需真机验证 | 下载 URL 已接入，`DownloadAdapter` 会先换短期 ticket，再由系统保存/打开；失败时复制短期下载链接。 |
 | 导入预览 | 是 | 是 | 需真机验证 | 支持粘贴 CSV 文本预览，也支持通过 `FilePickerAdapter` 选择 CSV/XLS/XLSX 文件后 multipart 预览。 |
 | 确认导入 | 是 | 是 | 是 | 支持跳过或导入重复行；超过 100 行时 Harmony UI 和 Native API 均要求 `IMPORT_CONFIRM`。 |
 | 重复行检测 | 是 | 是 | 是 | 后端预览接口识别 duplicate。 |
 | 导入批次列表 | 是 | 是 | 是 | 工具抽屉显示最近批次。 |
 | 导入批次回滚 | 是 | 是 | 是 | 弹出确认后调用 native rollback API，服务层和后端均校验 `ROLLBACK` 确认口令。 |
 | 原始资料附件上传 | 是 | 是 | 需真机验证 | UI 已提供上传按钮，`FilePickerAdapter.pickAnySupportedFile` + native multipart API 上传。 |
-| 原始资料附件下载 | 是 | 是 | 需真机验证 | Native 列表和上传响应返回短期 ticket 下载 URL，系统保存/打开由 `DownloadAdapter` 承接。 |
+| 原始资料附件下载 | 是 | 是 | 需真机验证 | Native 列表和上传响应返回短期 ticket 下载 URL，系统保存/打开由 `DownloadAdapter` 承接；失败时复制短期下载链接。 |
 | 原始资料附件删除 | 是 | 是 | 是 | 工具抽屉弹出确认后删除，Native 后端校验 `DELETE` 确认口令。 |
 | 空值保持空白 | 是 | 是 | 是 | 后端导入解析保持空字段为空。 |
 | 操作日志 | 是 | 是 | 是 | TopBar 日志入口可直达 Settings 日志面板，读取最近 100 条，不显示敏感信息。 |
@@ -194,7 +194,7 @@
 - 原生文件选择、现场照片入口、系统级保存/打开、剪贴板和语音输入继续通过 platform adapter 承接。
 - `FilePickerAdapter` 已接入文档选择器、图片选择器和附件选择器；`httpClient.uploadMultipart` 已接 native multipart 上传。
 - 右侧工具窗展示 `FilePickerAdapter` / `CameraAdapter` 的状态和 guidance；系统选择器或直接相机能力不可用时，给出“请使用上传图片或 Web 端完成”等面向现场使用的替代方案。
-- `DownloadAdapter` 对 native 下载会先用 Bearer 换短期 ticket URL，再使用系统能力打开，不在 App 本地长期保存文件。
+- `DownloadAdapter` 对 native 下载会先用 Bearer 换短期 ticket URL，再使用系统能力打开；没有打开上下文或系统无法打开时，会自动复制短期下载链接，不在 App 本地长期保存文件。
 - `ClipboardAdapter` 写入系统剪贴板；`VoiceInputAdapter` 在系统语音不可用时提供手动输入兜底。
 - 如果设备不支持对应原生能力，App 会给出明确用户提示，不会写入本地永久文件。
 - ZIP、单文件下载和附件下载后端均由 S3 对象流返回，不长期保存在容器本地。

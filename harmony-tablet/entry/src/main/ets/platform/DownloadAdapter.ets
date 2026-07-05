@@ -1,6 +1,7 @@
 import type common from '@ohos.app.ability.common';
 import type { ResourceFile } from '../models/ResourceFile';
 import { httpClient } from '../services/httpClient';
+import { ClipboardAdapter } from './ClipboardAdapter';
 import { ToastAdapter } from './ToastAdapter';
 
 export class DownloadAdapter {
@@ -17,19 +18,28 @@ export class DownloadAdapter {
   }
 
   static async openUrl(url: string, context: common.UIAbilityContext | undefined, successText: string): Promise<void> {
+    let resolvedUrl = url;
+    try {
+      resolvedUrl = await httpClient.resolveDownloadUrl(url);
+    } catch (_) {
+      ToastAdapter.error('下载链接生成失败，请检查登录状态和网络连接。');
+      return;
+    }
     if (!context) {
-      ToastAdapter.show(`${successText}。如未自动打开，请复制链接到浏览器。`);
+      await ClipboardAdapter.copyText(resolvedUrl, '下载链接');
       return;
     }
     try {
-      const resolvedUrl = await httpClient.resolveDownloadUrl(url);
       await context.startAbility({
         action: 'ohos.want.action.viewData',
         uri: resolvedUrl
       });
       ToastAdapter.success(successText);
     } catch (_) {
-      ToastAdapter.error('系统无法打开下载链接，请检查是否有可用浏览器或下载应用。');
+      const copied = await ClipboardAdapter.copyText(resolvedUrl, '下载链接');
+      if (!copied) {
+        ToastAdapter.error('系统无法打开下载链接，请检查是否有可用浏览器或下载应用。');
+      }
     }
   }
 }
