@@ -1,8 +1,0 @@
-{
-  "src": [
-    "pages/LoginPage",
-    "pages/WorkbenchPage",
-    "pages/ConnectorParametersPage",
-    "pages/SettingsPage"
-  ]
-}

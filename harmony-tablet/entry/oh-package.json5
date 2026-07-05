@@ -1,9 +1,0 @@
-{
-  "name": "entry",
-  "version": "1.0.0",
-  "description": "Entry module for HongmengWorkorderTablet.",
-  "main": "",
-  "author": "factory",
-  "license": "UNLICENSED",
-  "dependencies": {}
-}
