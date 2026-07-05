@@ -146,6 +146,14 @@ export async function fetchTrash(): Promise<TrashData> {
   return parsed.data;
 }
 
+export async function restoreWorkOrder(id: string): Promise<void> {
+  await httpClient.post(`/api/native/work-orders/${id}/restore`);
+}
+
+export async function restoreResourceFile(id: string): Promise<void> {
+  await httpClient.post(`/api/native/resource-files/${id}/restore`);
+}
+
 export async function fetchSnapshots(): Promise<ChangeSnapshotItem[]> {
   const response = await httpClient.get('/api/native/change-snapshots?limit=100');
   const parsed = JSON.parse(response.text) as SnapshotsResponse;

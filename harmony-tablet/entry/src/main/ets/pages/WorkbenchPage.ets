@@ -195,6 +195,52 @@ struct WorkbenchPage {
     return ['urgent', 'high', 'normal'];
   }
 
+  nextStageValue(current: string): string {
+    const options = this.stageOptions();
+    for (let i = 0; i < options.length; i++) {
+      if (options[i] === current) {
+        const next = i + 1 >= options.length ? 0 : i + 1;
+        return options[next];
+      }
+    }
+    return 'not_issued';
+  }
+
+  nextPriorityValue(current: string): string {
+    const options = this.priorityOptions();
+    for (let i = 0; i < options.length; i++) {
+      if (options[i] === current) {
+        const next = i + 1 >= options.length ? 0 : i + 1;
+        return options[next];
+      }
+    }
+    return 'normal';
+  }
+
+  async cycleCurrentStage(): Promise<void> {
+    if (!this.current) return;
+    try {
+      this.current = await WorkOrderStore.update(this.current.id, { stage: this.nextStageValue(this.current.stage) });
+      ToastAdapter.success('工单状态已更新');
+    } catch (err) {
+      await this.handleError(err as Error, '工单状态更新失败');
+    }
+  }
+
+  async cycleCurrentPriority(): Promise<void> {
+    if (!this.current) return;
+    try {
+      this.current = await WorkOrderStore.update(this.current.id, { priority: this.nextPriorityValue(this.current.priority) });
+      ToastAdapter.success('工单优先级已更新');
+    } catch (err) {
+      await this.handleError(err as Error, '工单优先级更新失败');
+    }
+  }
+
+  voiceInputFallback(): void {
+    ToastAdapter.show('当前设备暂不支持语音输入，请使用手动输入。');
+  }
+
   async saveOrder(): Promise<void> {
     if (!this.formCode || !this.formProductName) {
       ToastAdapter.error('请填写工单号和产品名称');
@@ -446,6 +492,7 @@ struct WorkbenchPage {
           keyword: this.globalKeyword,
           onKeywordChange: (value: string) => this.globalKeyword = value,
           onSearch: () => this.searchGlobal(),
+          onVoiceInput: () => this.voiceInputFallback(),
           onOpenDrawer: () => this.drawerOpen = true,
           onPlaceholder: (name: string) => ToastAdapter.show(`${name} 原生入口已准备`),
           onLogout: () => this.logout()
@@ -459,6 +506,8 @@ struct WorkbenchPage {
             onEdit: () => this.openEditOrder(),
             onDelete: () => this.orderDeleteOpen = true,
             onDownloadAll: () => this.downloadAll(),
+            onCycleStage: () => this.cycleCurrentStage(),
+            onCyclePriority: () => this.cycleCurrentPriority(),
             onMore: () => this.toolCollapsed = false
           })
             .margin({ bottom: 14 })

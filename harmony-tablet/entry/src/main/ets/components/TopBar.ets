@@ -8,6 +8,7 @@ export struct TopBar {
   keyword: string = '';
   onKeywordChange: (value: string) => void = () => {};
   onSearch: () => void = () => {};
+  onVoiceInput: () => void = () => {};
   onOpenDrawer: () => void = () => {};
   onPlaceholder: (name: string) => void = () => {};
   onLogout: () => void = () => {};
@@ -57,6 +58,15 @@ export struct TopBar {
           .borderRadius(12)
           .margin({ left: 8 })
           .onClick(() => this.onSearch())
+        Button('语音')
+          .height(42)
+          .width(62)
+          .fontSize(13)
+          .fontColor(Colors.primary)
+          .backgroundColor(Colors.primaryLight)
+          .borderRadius(12)
+          .margin({ left: 8 })
+          .onClick(() => this.onVoiceInput())
       }
       .layoutWeight(1)
       .margin({ left: 10, right: 10 })
@@ -93,6 +103,16 @@ export struct TopBar {
         .height(44)
         .width(60)
         .fontSize(14)
+        .margin({ left: 6 })
+        .backgroundColor(Colors.card)
+        .fontColor(Colors.text)
+        .border({ width: 1, color: Colors.border })
+        .borderRadius(12)
+        .onClick(() => router.pushUrl({ url: Routes.settings }))
+      Button('日志')
+        .height(44)
+        .width(58)
+        .fontSize(13)
         .margin({ left: 6 })
         .backgroundColor(Colors.card)
         .fontColor(Colors.text)

@@ -29,6 +29,8 @@ export struct CurrentWorkOrderBar {
   onEdit: () => void = () => {};
   onDelete: () => void = () => {};
   onDownloadAll: () => void = () => {};
+  onCycleStage: () => void = () => {};
+  onCyclePriority: () => void = () => {};
   onMore: () => void = () => {};
 
   build(): void {
@@ -51,19 +53,23 @@ export struct CurrentWorkOrderBar {
           }
           .alignItems(HorizontalAlign.Start)
           .layoutWeight(1)
-          Text(stageLabel(this.order?.stage))
+          Button(stageLabel(this.order?.stage))
+            .height(34)
             .fontSize(14)
             .fontColor(Color.White)
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+            .padding({ left: 12, right: 12 })
             .backgroundColor(Colors.primary)
             .borderRadius(12)
-          Text(priorityLabel(this.order?.priority))
+            .onClick(() => this.onCycleStage())
+          Button(priorityLabel(this.order?.priority))
+            .height(34)
             .fontSize(14)
             .fontColor(Colors.text)
             .margin({ left: 10 })
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+            .padding({ left: 12, right: 12 })
             .backgroundColor('#F3F4F6')
             .borderRadius(12)
+            .onClick(() => this.onCyclePriority())
           Button('切换工单')
             .height(34)
             .fontSize(13)

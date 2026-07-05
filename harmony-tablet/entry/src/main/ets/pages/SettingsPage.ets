@@ -9,6 +9,8 @@ import * as adminApi from '../services/adminApi';
 import type { ChangeSnapshotItem, DiagnosticsData, NativeUserAccount, OperationLogItem, TrashData } from '../services/adminApi';
 import * as systemApi from '../services/systemApi';
 import { AuthStore } from '../stores/AuthStore';
+import type { ResourceFile } from '../models/ResourceFile';
+import type { WorkOrder } from '../models/WorkOrder';
 
 @Entry
 @Component
@@ -23,6 +25,8 @@ struct SettingsPage {
   @State users: NativeUserAccount[] = [];
   @State logs: OperationLogItem[] = [];
   @State snapshots: ChangeSnapshotItem[] = [];
+  @State trashWorkOrders: WorkOrder[] = [];
+  @State trashResourceFiles: ResourceFile[] = [];
   @State trashWorkOrderCount: number = 0;
   @State trashFileCount: number = 0;
   @State diagnosticsText: string = '-';
@@ -155,6 +159,8 @@ struct SettingsPage {
     this.loading = true;
     try {
       const trash: TrashData = await adminApi.fetchTrash();
+      this.trashWorkOrders = trash.workOrders;
+      this.trashResourceFiles = trash.resourceFiles;
       this.trashWorkOrderCount = trash.workOrders.length;
       this.trashFileCount = trash.resourceFiles.length;
     } catch (err) {
@@ -172,6 +178,26 @@ struct SettingsPage {
       await this.handleError(err as Error, '变更快照加载失败');
     } finally {
       this.loading = false;
+    }
+  }
+
+  async restoreWorkOrder(item: WorkOrder): Promise<void> {
+    try {
+      await adminApi.restoreWorkOrder(item.id);
+      await this.loadTrash();
+      ToastAdapter.success('工单已恢复');
+    } catch (err) {
+      await this.handleError(err as Error, '工单恢复失败');
+    }
+  }
+
+  async restoreResourceFile(item: ResourceFile): Promise<void> {
+    try {
+      await adminApi.restoreResourceFile(item.id);
+      await this.loadTrash();
+      ToastAdapter.success('文件已恢复');
+    } catch (err) {
+      await this.handleError(err as Error, '文件恢复失败');
     }
   }
 
@@ -339,6 +365,78 @@ struct SettingsPage {
             Text(`已删除工单：${this.trashWorkOrderCount}`).fontSize(16).fontColor(Colors.text).margin({ bottom: 10 })
             Text(`已删除文件：${this.trashFileCount}`).fontSize(16).fontColor(Colors.text).margin({ bottom: 18 })
             CommonButton({ label: this.loading ? '刷新中' : '刷新回收站', primary: false, isEnabled: !this.loading, onTap: () => this.loadTrash() }).width(220)
+            Row() {
+              Column() {
+                Text('已删除工单')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(Colors.text)
+                Scroll() {
+                  Column() {
+                    ForEach(this.trashWorkOrders, (item: WorkOrder) => {
+                      Row() {
+                        Column() {
+                          Text(item.code)
+                            .fontSize(14)
+                            .fontColor(Colors.text)
+                            .fontWeight(FontWeight.Medium)
+                          Text(item.productName || '-')
+                            .fontSize(12)
+                            .fontColor(Colors.textMuted)
+                            .margin({ top: 4 })
+                        }
+                        .alignItems(HorizontalAlign.Start)
+                        .layoutWeight(1)
+                        CommonButton({ label: '恢复', primary: false, onTap: () => this.restoreWorkOrder(item) })
+                      }
+                      .padding(10)
+                      .margin({ top: 8 })
+                      .backgroundColor('#F9FAFB')
+                      .borderRadius(12)
+                    })
+                  }
+                }
+                .height(210)
+              }
+              .layoutWeight(1)
+              .margin({ right: 12 })
+              Column() {
+                Text('已删除文件')
+                  .fontSize(16)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor(Colors.text)
+                Scroll() {
+                  Column() {
+                    ForEach(this.trashResourceFiles, (item: ResourceFile) => {
+                      Row() {
+                        Column() {
+                          Text(item.displayName || item.originalName)
+                            .fontSize(14)
+                            .fontColor(Colors.text)
+                            .fontWeight(FontWeight.Medium)
+                            .maxLines(1)
+                            .textOverflow({ overflow: TextOverflow.Ellipsis })
+                          Text(item.categoryName || '-')
+                            .fontSize(12)
+                            .fontColor(Colors.textMuted)
+                            .margin({ top: 4 })
+                        }
+                        .alignItems(HorizontalAlign.Start)
+                        .layoutWeight(1)
+                        CommonButton({ label: '恢复', primary: false, onTap: () => this.restoreResourceFile(item) })
+                      }
+                      .padding(10)
+                      .margin({ top: 8 })
+                      .backgroundColor('#F9FAFB')
+                      .borderRadius(12)
+                    })
+                  }
+                }
+                .height(210)
+              }
+              .layoutWeight(1)
+            }
+            .margin({ top: 16 })
           }
 
           if (this.activePanel === 'snapshots') {
