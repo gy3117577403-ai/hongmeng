@@ -10,7 +10,7 @@ export class VoiceInputAdapter {
   }
 
   static async startDictation(targetName: string): Promise<string> {
-    ToastAdapter.show(`${targetName} 暂不支持语音输入，请使用键盘手动输入。`);
+    ToastAdapter.show(`${targetName} 当前设备未开启语音能力，请使用键盘手动输入。`);
     return '';
   }
 }

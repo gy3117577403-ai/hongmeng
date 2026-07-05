@@ -27,11 +27,11 @@ export class PreferencesAdapter {
   }
 
   static async remove(context: common.UIAbilityContext | undefined, key: string): Promise<void> {
-    memoryStore.delete(key);
+    memoryStore.set(key, '');
     if (!context) return;
     try {
       const pref = await preferences.getPreferences(context, PREF_NAME);
-      await pref.delete(key);
+      await pref.put(key, '');
       await pref.flush();
     } catch (_) {
     }

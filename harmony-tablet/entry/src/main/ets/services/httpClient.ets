@@ -95,7 +95,7 @@ class NativeHttpClient {
     return this.request('PATCH', path, options);
   }
 
-  async delete(path: string, bodyText: string = ''): Promise<HttpResponseText> {
+  async requestDelete(path: string, bodyText: string = ''): Promise<HttpResponseText> {
     const options: HttpRequestOptions = {
       contentType: 'application/json',
       bodyText: bodyText

@@ -107,7 +107,7 @@ export async function createWorkOrder(body: WorkOrderCreateRequest): Promise<Wor
 
 export async function deleteWorkOrder(id: string, confirmText: string): Promise<void> {
   const body: ConfirmDeleteRequest = { confirmText: confirmText };
-  await httpClient.delete(`/api/native/work-orders/${id}`, JSON.stringify(body));
+  await httpClient.requestDelete(`/api/native/work-orders/${id}`, JSON.stringify(body));
 }
 
 export async function restoreWorkOrder(id: string): Promise<WorkOrderDetailData> {

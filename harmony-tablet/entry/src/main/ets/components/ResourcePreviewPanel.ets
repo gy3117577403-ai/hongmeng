@@ -209,7 +209,7 @@ export struct ResourcePreviewPanel {
           .alignItems(HorizontalAlign.Center)
         } else {
           Column() {
-            Text('暂不支持该文件类型预览')
+            Text('当前文件类型无法在平板内预览')
               .fontSize(22)
               .fontWeight(FontWeight.Bold)
               .fontColor(Colors.text)
@@ -217,6 +217,10 @@ export struct ResourcePreviewPanel {
               .fontSize(14)
               .fontColor(Colors.textMuted)
               .margin({ top: 10 })
+            Text('请使用右侧工具窗下载或打开查看。')
+              .fontSize(14)
+              .fontColor(Colors.textMuted)
+              .margin({ top: 8 })
           }
           .width('100%')
           .height('100%')

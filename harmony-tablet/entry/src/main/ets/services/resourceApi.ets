@@ -54,7 +54,7 @@ export async function deleteResourceFile(id: string): Promise<ResourceDeleteData
   const body: ConfirmDeleteRequest = {
     confirmText: 'DELETE'
   };
-  const response = await httpClient.delete(`/api/native/resource-files/${id}`, JSON.stringify(body));
+  const response = await httpClient.requestDelete(`/api/native/resource-files/${id}`, JSON.stringify(body));
   const parsed = JSON.parse(response.text) as ResourceDeleteResponse;
   return parsed.data;
 }

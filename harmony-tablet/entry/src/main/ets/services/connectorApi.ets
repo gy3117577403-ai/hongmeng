@@ -191,7 +191,7 @@ export async function deleteConnectorParameter(id: string): Promise<ConnectorDel
   const body: ConfirmDeleteRequest = {
     confirmText: 'DELETE'
   };
-  const response = await httpClient.delete(`/api/native/connector-parameters/${id}`, JSON.stringify(body));
+  const response = await httpClient.requestDelete(`/api/native/connector-parameters/${id}`, JSON.stringify(body));
   const parsed = JSON.parse(response.text) as ConnectorDeleteResponse;
   return parsed.data;
 }
@@ -257,7 +257,7 @@ export async function uploadConnectorAttachment(file: PickedFile): Promise<Conne
 
 export async function deleteConnectorAttachment(id: string): Promise<void> {
   const body: ConfirmDeleteRequest = { confirmText: 'DELETE' };
-  await httpClient.delete(`/api/native/connector-parameter-files/${id}`, JSON.stringify(body));
+  await httpClient.requestDelete(`/api/native/connector-parameter-files/${id}`, JSON.stringify(body));
 }
 
 export async function fetchImportBatches(): Promise<ConnectorImportBatchListData> {
