@@ -40,6 +40,17 @@ gradle :app:assembleDebug
 
 本仓库不提交 Android Studio 本地配置、签名文件、`local.properties` 或构建产物。
 
+## Gradle 配置
+
+工程根目录 `gradle.properties` 已启用 AndroidX：
+
+```properties
+android.useAndroidX=true
+android.enableJetifier=true
+```
+
+这是 `androidx.core:core` 等 AndroidX 依赖构建所需配置。
+
 ## 如何从 GitHub Actions 下载 APK
 
 当前仓库提供 GitHub Actions workflow：
