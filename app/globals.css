@@ -4187,6 +4187,16 @@ body:has(.qr-dialog) .modal-backdrop {
   font-weight: 800;
 }
 
+.order-strip-chip.spec,
+.order-strip-chip.material {
+  max-width: 150px;
+}
+
+.order-strip-chip.qty,
+.order-strip-chip.delivery {
+  max-width: 118px;
+}
+
 .current-order-strip .completion-pill,
 .current-order-strip .planned-chip,
 .current-order-strip .priority-chip,
@@ -4632,6 +4642,133 @@ body:has(.qr-dialog) .modal-backdrop {
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.order-weekly-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.order-weekly-meta span {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #fff7ed;
+  color: #8a4b12;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-mode-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.import-mode-tabs button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: #4b5563;
+  font-weight: 900;
+}
+
+.import-mode-tabs button.active {
+  border-color: rgba(255, 106, 0, .28);
+  background: var(--orange-soft);
+  color: var(--orange);
+}
+
+.import-week-start {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0 10px;
+  color: var(--text);
+  font-weight: 900;
+}
+
+.import-week-start input {
+  max-width: 220px;
+  min-height: 40px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.import-week-start small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.duplicate-strategy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.duplicate-strategy label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.import-preview-table {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.import-preview-table table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.import-preview-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #fff7ed;
+  color: #8a4b12;
+}
+
+.import-preview-table th,
+.import-preview-table td {
+  padding: 8px 9px;
+  border-bottom: 1px solid #eef0f3;
+  text-align: left;
+  vertical-align: top;
+}
+
+.import-preview-row.ready td:last-child {
+  color: #047857;
+}
+
+.import-preview-row.duplicate td:last-child {
+  color: #b45309;
+}
+
+.import-preview-row.invalid td:last-child {
+  color: #be123c;
+}
+
+.import-preview-row.skipped {
+  color: #6b7280;
 }
 
 .strip-more-button {

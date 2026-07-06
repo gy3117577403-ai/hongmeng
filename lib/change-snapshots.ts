@@ -68,6 +68,23 @@ export function workOrderSnapshot(order: {
   progress: number;
   plannedAt?: Date | string | null;
   remark?: string | null;
+  sourceOrderNo?: string | null;
+  salesperson?: string | null;
+  orderDate?: Date | string | null;
+  customerLevel?: string | null;
+  specification?: string | null;
+  processName?: string | null;
+  uncompletedQty?: string | null;
+  unitWorkHours?: string | null;
+  totalWorkHours?: string | null;
+  drawingStatus?: string | null;
+  deliveryDay?: string | null;
+  materialStatus?: string | null;
+  drawingIssuedAt?: Date | string | null;
+  drawingIssueNote?: string | null;
+  importBatchId?: string | null;
+  sourceSheetName?: string | null;
+  sourceRowNo?: number | null;
   deletedAt?: Date | string | null;
 }) {
   return {
@@ -81,6 +98,23 @@ export function workOrderSnapshot(order: {
     progress: order.progress,
     plannedAt: order.plannedAt ?? null,
     remark: order.remark ?? null,
+    sourceOrderNo: order.sourceOrderNo ?? null,
+    salesperson: order.salesperson ?? null,
+    orderDate: order.orderDate ?? null,
+    customerLevel: order.customerLevel ?? null,
+    specification: order.specification ?? null,
+    processName: order.processName ?? null,
+    uncompletedQty: order.uncompletedQty ?? null,
+    unitWorkHours: order.unitWorkHours ?? null,
+    totalWorkHours: order.totalWorkHours ?? null,
+    drawingStatus: order.drawingStatus ?? null,
+    deliveryDay: order.deliveryDay ?? null,
+    materialStatus: order.materialStatus ?? null,
+    drawingIssuedAt: order.drawingIssuedAt ?? null,
+    drawingIssueNote: order.drawingIssueNote ?? null,
+    importBatchId: order.importBatchId ?? null,
+    sourceSheetName: order.sourceSheetName ?? null,
+    sourceRowNo: order.sourceRowNo ?? null,
     deletedAt: order.deletedAt ?? null,
   };
 }

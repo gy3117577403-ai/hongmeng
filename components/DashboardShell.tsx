@@ -37,8 +37,38 @@ type UploadJob = {
   message?: string;
 };
 type FileForm = { displayName: string; remark: string; workOrderId: string; categoryId: string };
-type ImportRow = { row: number; code: string; status: 'created' | 'updated' | 'skipped' | 'failed'; message: string };
-type ImportResult = { summary: { created: number; updated: number; skipped: number; failed: number; total: number }; results: ImportRow[] };
+type ImportMode = 'standard' | 'weekly_plan';
+type ImportPreviewRow = {
+  rowNo: number;
+  status: 'ready' | 'skipped' | 'invalid' | 'duplicate';
+  reason: string;
+  code: string;
+  workOrder: {
+    code: string;
+    customerName?: string | null;
+    productName: string;
+    specification?: string | null;
+    uncompletedQty?: string | null;
+    drawingStatus?: string | null;
+    materialStatus?: string | null;
+    deliveryDay?: string | null;
+    plannedAt?: string | null;
+    remark?: string | null;
+    sourceOrderNo?: string | null;
+    salesperson?: string | null;
+  };
+};
+type ImportPreview = {
+  mode: ImportMode;
+  sourceFileName: string;
+  sourceSheetName?: string | null;
+  weekStartDate?: string | null;
+  warnings?: string[];
+  summary: { totalRows: number; readyCount: number; skippedCount: number; invalidCount: number; duplicateCount: number };
+  rows: ImportPreviewRow[];
+};
+type ImportResultRow = { row: number; code: string; status: 'created' | 'skipped' | 'failed'; message: string };
+type ImportResult = { importBatchId?: string; summary: { created: number; skipped: number; failed: number; duplicateSkipped?: number; total: number }; results: ImportResultRow[] };
 type UserForm = { username: string; displayName: string; password: string };
 type AccountEdit = { id: string; displayName: string; isActive: boolean } | null;
 type PasswordReset = { id: string; username: string; password: string } | null;
@@ -270,6 +300,21 @@ function customerLabel(order?: WorkOrderDTO | null) {
   return order?.customerName?.trim() || '未设置';
 }
 
+function orderSpecLabel(order?: WorkOrderDTO | null) {
+  return order?.specification?.trim() || '-';
+}
+
+function orderDeliveryLabel(order?: WorkOrderDTO | null) {
+  if (!order) return '-';
+  const parts = [order.deliveryDay || '', order.plannedAt ? shortDt(order.plannedAt) : ''].filter(Boolean);
+  return parts.length ? parts.join(' · ') : '-';
+}
+
+function orderDrawingMaterialLabel(order?: WorkOrderDTO | null) {
+  if (!order) return '-';
+  return [order.drawingStatus || '图纸未填', order.materialStatus || '配料未填'].join(' / ');
+}
+
 function toDatetimeLocal(v?: string | null) {
   if (!v) return '';
   const parts = dateParts(v);
@@ -362,7 +407,12 @@ export default function DashboardShell({
   const [snapshotsLoading, setSnapshotsLoading] = useState(false);
   const [exporting, setExporting] = useState('');
   const [importing, setImporting] = useState(false);
+  const [importMode, setImportMode] = useState<ImportMode>('weekly_plan');
+  const [importWeekStart, setImportWeekStart] = useState('');
+  const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importError, setImportError] = useState('');
+  const [duplicateStrategy, setDuplicateStrategy] = useState<'skip' | 'import'>('skip');
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [now, setNow] = useState<Date | null>(null);
   const [globalKw, setGlobalKw] = useState('');
@@ -404,7 +454,15 @@ export default function DashboardShell({
   const list = useMemo(() => {
     const text = kw.trim().toLowerCase();
     return orders.filter(o => {
-      const matchesText = !text || o.code.toLowerCase().includes(text) || o.productName.toLowerCase().includes(text) || (o.customerName || '').toLowerCase().includes(text);
+      const matchesText = !text || [
+        o.code,
+        o.productName,
+        o.customerName,
+        o.specification,
+        o.sourceOrderNo,
+        o.salesperson,
+        o.remark,
+      ].some(value => String(value || '').toLowerCase().includes(text));
       if (!matchesText) return false;
       if (orderFilter === 'today') return sameDay(o.createdAt);
       if (orderFilter === 'week') return inRecentWeek(o.createdAt);
@@ -437,7 +495,15 @@ export default function DashboardShell({
   const managerFiles = managerCategory === 'all' ? allFiles : allFiles.filter(f => f.categoryId === managerCategory);
   const fileOrderOptions = useMemo(() => {
     const text = fileOrderKw.trim().toLowerCase();
-    return orders.filter(o => !text || o.code.toLowerCase().includes(text) || o.productName.toLowerCase().includes(text) || (o.customerName || '').toLowerCase().includes(text)).slice(0, 30);
+    return orders.filter(o => !text || [
+      o.code,
+      o.productName,
+      o.customerName,
+      o.specification,
+      o.sourceOrderNo,
+      o.salesperson,
+      o.remark,
+    ].some(value => String(value || '').toLowerCase().includes(text))).slice(0, 30);
   }, [orders, fileOrderKw]);
 
   useEffect(() => {
@@ -1405,28 +1471,75 @@ export default function DashboardShell({
     }
   }
 
-  async function importWorkOrders(fileList: FileList | null) {
+  async function previewWorkOrderImport(fileList: FileList | null) {
     const file = fileList?.[0];
     if (!file) return;
     setImporting(true);
+    setImportError('');
+    setImportPreview(null);
     setImportResult(null);
+    const inferred = inferWeekStartFromFilename(file.name);
+    const weekStart = importMode === 'weekly_plan' ? (importWeekStart || inferred) : '';
+    if (inferred && importMode === 'weekly_plan' && !importWeekStart) setImportWeekStart(inferred);
     const fd = new FormData();
     fd.append('file', file);
+    fd.append('mode', importMode);
+    if (weekStart) fd.append('weekStartDate', weekStart);
     try {
-      const r = await fetch('/api/import/work-orders', { method: 'POST', body: fd });
+      const r = await fetch('/api/import/work-orders/preview', { method: 'POST', body: fd });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setMsg(d.error || d.message || '导入失败');
+        const error = d.error || d.message || '导入预览失败';
+        setImportError(error);
+        setMsg(error);
         return;
       }
-      setImportResult(d);
-      await refreshOrders(order?.id);
-      setMsg(`导入完成：新增 ${d.summary?.created || 0}，更新 ${d.summary?.updated || 0}，失败 ${d.summary?.failed || 0}`);
+      setImportPreview(d);
+      setMsg(`预览完成：可导入 ${d.summary?.readyCount || 0}，重复 ${d.summary?.duplicateCount || 0}，跳过 ${d.summary?.skippedCount || 0}`);
     } catch {
-      setMsg('导入失败，请检查 CSV 格式');
+      setImportError('Excel / CSV 文件读取失败，请重新选择文件');
+      setMsg('导入预览失败，请检查文件格式');
     } finally {
       setImporting(false);
       if (csvImport.current) csvImport.current.value = '';
+    }
+  }
+
+  async function commitWorkOrderImport() {
+    if (!importPreview) {
+      setImportError('请先上传文件并完成预览');
+      return;
+    }
+    setImporting(true);
+    setImportError('');
+    try {
+      const r = await fetch('/api/import/work-orders/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows: importPreview.rows,
+          duplicateStrategy,
+          mode: importPreview.mode,
+          sourceFileName: importPreview.sourceFileName,
+          sourceSheetName: importPreview.sourceSheetName,
+        }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        const error = d.error || d.message || '确认导入失败';
+        setImportError(error);
+        setMsg(error);
+        return;
+      }
+      setImportResult(d);
+      setImportPreview(null);
+      await refreshOrders(order?.id);
+      setMsg(`导入完成：新增 ${d.summary?.created || 0}，跳过 ${d.summary?.skipped || 0}，失败 ${d.summary?.failed || 0}`);
+    } catch {
+      setImportError('确认导入失败，请检查网络后重试');
+      setMsg('确认导入失败');
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -1609,7 +1722,7 @@ export default function DashboardShell({
             </div>
           </div>
           <div className="panel-search">
-            <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索工单号 / 客户 / 产品名称" />
+            <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索工单号 / 客户 / 品名 / 规格 / SO单号" />
           </div>
           <div className="filter-tabs">
             {[
@@ -1689,6 +1802,10 @@ export default function DashboardShell({
               <span className="order-strip-chip customer">客户：{customerLabel(order)}</span>
               <strong>{order?.code || '暂无工单'}</strong>
               <span className="order-strip-product">{order?.productName || '请选择工单'}</span>
+              {order?.specification && <span className="order-strip-chip spec">规格：{order.specification}</span>}
+              {order?.uncompletedQty && <span className="order-strip-chip qty">未交：{order.uncompletedQty}</span>}
+              {(order?.drawingStatus || order?.materialStatus) && <span className="order-strip-chip material">{orderDrawingMaterialLabel(order)}</span>}
+              {(order?.deliveryDay || order?.plannedAt) && <span className="order-strip-chip delivery">交期：{orderDeliveryLabel(order)}</span>}
               {order && <button className={`flow-chip ${normalizeFlowStage(order.stage)}`} type="button" onClick={e => openQuickMenu('stage', order, e)}>{flowText(order.stage)}</button>}
               {order && <button className={`priority-chip ${order.priority}`} type="button" onClick={e => openQuickMenu('priority', order, e)}>{priorityText[order.priority] || '一般'}</button>}
               <span className={order?.plannedAt ? `planned-chip ${plannedClass(order)}` : 'planned-chip'}>{order?.plannedAt ? shortDt(order.plannedAt) : '计划未设'}</span>
@@ -1827,6 +1944,24 @@ export default function DashboardShell({
                   {toolTab === 'info' && (
                     <div className="tool-pane">
                       <Info label="当前分类" value={currentCategoryName} />
+                      {order && (
+                        <>
+                          <Info label="规格" value={order.specification || '-'} />
+                          <Info label="未交量" value={order.uncompletedQty || '-'} />
+                          <Info label="交期" value={orderDeliveryLabel(order)} />
+                          <Info label="图纸 / 配料" value={orderDrawingMaterialLabel(order)} wrap />
+                          <Info label="订单日期" value={order.orderDate ? dt(order.orderDate, false) : '-'} />
+                          <Info label="业务员" value={order.salesperson || '-'} />
+                          <Info label="客户等级" value={order.customerLevel || '-'} />
+                          <Info label="工序" value={order.processName || '-'} />
+                          <Info label="工时" value={order.unitWorkHours || '-'} />
+                          <Info label="总工时" value={order.totalWorkHours || '-'} />
+                          <Info label="图纸下发" value={order.drawingIssuedAt ? dt(order.drawingIssuedAt, false) : order.drawingIssueNote || '-'} wrap />
+                          <Info label="来源订单" value={order.sourceOrderNo || '-'} />
+                          <Info label="来源行号" value={order.sourceRowNo ? String(order.sourceRowNo) : '-'} />
+                          <Info label="导入批次" value={order.importBatchId || '-'} wrap />
+                        </>
+                      )}
                       <Info label="文件状态" value={file ? fileStatusText[file.status] || file.status : '暂无文件'} ok={!!file} />
                       {!file && <Info label="支持格式" value="PDF、JPG、PNG" />}
                       {file && (
@@ -1962,7 +2097,7 @@ export default function DashboardShell({
         onUpload={uploadCameraFiles}
       />
 
-      <input ref={csvImport} hidden type="file" accept=".csv,text/csv" onChange={e => importWorkOrders(e.target.files)} />
+      <input ref={csvImport} hidden type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onChange={e => previewWorkOrderImport(e.target.files)} />
 
       {systemOpen && (
         <SystemSettings
@@ -1972,7 +2107,12 @@ export default function DashboardShell({
           loading={systemLoading}
           exporting={exporting}
           importing={importing}
+          importMode={importMode}
+          importWeekStart={importWeekStart}
+          importPreview={importPreview}
           importResult={importResult}
+          importError={importError}
+          duplicateStrategy={duplicateStrategy}
           canInstall={!!installPrompt}
           close={() => setSystemOpen(false)}
           refreshStatus={loadSystemStatus}
@@ -1985,6 +2125,11 @@ export default function DashboardShell({
           logout={logout}
           installApp={installApp}
           chooseImport={() => csvImport.current?.click()}
+          setImportMode={setImportMode}
+          setImportWeekStart={setImportWeekStart}
+          setDuplicateStrategy={setDuplicateStrategy}
+          clearImport={() => { setImportPreview(null); setImportResult(null); setImportError(''); }}
+          commitWorkOrderImport={commitWorkOrderImport}
           downloadTemplate={() => downloadExport('/api/import/work-orders/template.csv', '下载导入模板', '工单导入模板.csv')}
           exportWorkOrders={() => downloadExport('/api/export/work-orders.csv', '导出工单 CSV', '工单列表.csv')}
           exportResourceFiles={() => downloadExport('/api/export/resource-files.csv', '导出文件清单 CSV', '文件清单.csv')}
@@ -2299,6 +2444,14 @@ function OrderGroup({
             </div>
             <span className="order-customer">客户：{customerLabel(o)}</span>
             <p>{o.productName}</p>
+            {(o.specification || o.uncompletedQty || o.deliveryDay || o.drawingStatus || o.materialStatus) && (
+              <div className="order-weekly-meta">
+                {o.specification && <span>规格：{o.specification}</span>}
+                {o.uncompletedQty && <span>未交：{o.uncompletedQty}</span>}
+                {(o.deliveryDay || o.plannedAt) && <span>交期：{orderDeliveryLabel(o)}</span>}
+                {(o.drawingStatus || o.materialStatus) && <span>{orderDrawingMaterialLabel(o)}</span>}
+              </div>
+            )}
             <div className="order-compact-meta">
               <span role="button" tabIndex={0} className={`flow-chip ${normalizeFlowStage(o.stage)}`} onClick={e => openQuickMenu('stage', o, e)}>{flowText(o.stage)}</span>
               <strong className={`completion-chip ${completion.key}`} title={missingText}>{completion.text}</strong>
@@ -2321,6 +2474,13 @@ function FileThumb({ file }: { file: ResourceFileDTO }) {
     return <span className="file-thumb pdf">PDF</span>;
   }
   return <span className="file-thumb img"><img src={file.contentUrl || file.viewUrl} alt={displayFileName(file)} loading="lazy" decoding="async" /></span>;
+}
+
+function inferWeekStartFromFilename(name: string) {
+  const match = name.match(/(\d{1,2})[.-](\d{1,2})\s*-\s*(\d{1,2})[.-](\d{1,2})/);
+  if (!match) return '';
+  const year = new Date().getFullYear();
+  return `${year}-${String(Number(match[1])).padStart(2, '0')}-${String(Number(match[2])).padStart(2, '0')}`;
 }
 
 function UploadJobs({
@@ -2665,7 +2825,12 @@ function SystemSettings({
   loading,
   exporting,
   importing,
+  importMode,
+  importWeekStart,
+  importPreview,
   importResult,
+  importError,
+  duplicateStrategy,
   canInstall,
   close,
   refreshStatus,
@@ -2678,6 +2843,11 @@ function SystemSettings({
   logout,
   installApp,
   chooseImport,
+  setImportMode,
+  setImportWeekStart,
+  setDuplicateStrategy,
+  clearImport,
+  commitWorkOrderImport,
   downloadTemplate,
   exportWorkOrders,
   exportResourceFiles,
@@ -2691,7 +2861,12 @@ function SystemSettings({
   loading: boolean;
   exporting: string;
   importing: boolean;
+  importMode: ImportMode;
+  importWeekStart: string;
+  importPreview: ImportPreview | null;
   importResult: ImportResult | null;
+  importError: string;
+  duplicateStrategy: 'skip' | 'import';
   canInstall: boolean;
   close: () => void;
   refreshStatus: () => void;
@@ -2704,6 +2879,11 @@ function SystemSettings({
   logout: () => void;
   installApp: () => void;
   chooseImport: () => void;
+  setImportMode: (mode: ImportMode) => void;
+  setImportWeekStart: (value: string) => void;
+  setDuplicateStrategy: (strategy: 'skip' | 'import') => void;
+  clearImport: () => void;
+  commitWorkOrderImport: () => void;
   downloadTemplate: () => void;
   exportWorkOrders: () => void;
   exportResourceFiles: () => void;
@@ -2818,18 +2998,88 @@ function SystemSettings({
 
         <section className="system-section wide">
           <h3>工单批量导入</h3>
-          <p>支持 UTF-8 CSV，可使用中文或英文表头。工单号已存在时默认更新未删除工单；已软删除记录会跳过。</p>
+          <p>支持标准模板 CSV，也支持周计划 .xls / .xlsx / .csv。上传后先进入预览，确认后才会写入数据库。</p>
+          <div className="import-mode-tabs">
+            <button className={importMode === 'weekly_plan' ? 'active' : ''} type="button" onClick={() => { setImportMode('weekly_plan'); clearImport(); }}>周计划 Excel 导入</button>
+            <button className={importMode === 'standard' ? 'active' : ''} type="button" onClick={() => { setImportMode('standard'); clearImport(); }}>标准模板导入</button>
+          </div>
+          {importMode === 'weekly_plan' && (
+            <label className="import-week-start">
+              <span>计划周开始日期</span>
+              <input type="date" value={importWeekStart} onChange={e => setImportWeekStart(e.target.value)} />
+              <small>用于把“周一 / 周二”换算成计划日期；未设置时只保存交期文本。</small>
+            </label>
+          )}
           <div className="system-actions">
             <button type="button" disabled={!!exporting} onClick={downloadTemplate}>{exporting === '下载导入模板' ? '下载中...' : '下载 CSV 模板'}</button>
-            <button className="primary-button" type="button" disabled={importing} onClick={chooseImport}>{importing ? '导入中...' : '上传 CSV 导入'}</button>
+            <button className="primary-button" type="button" disabled={importing} onClick={chooseImport}>{importing ? '解析中...' : '上传文件预览'}</button>
+            <button type="button" onClick={clearImport}>重新选择文件</button>
           </div>
+          {importError && <div className="form-error">{importError}</div>}
+          {importPreview?.warnings?.map(item => <p className="tool-note muted" key={item}>{item}</p>)}
+          {importPreview && (
+            <div className="import-result weekly-preview">
+              <div className="import-summary">
+                <span>总行 {importPreview.summary.totalRows}</span>
+                <span>可导入 {importPreview.summary.readyCount}</span>
+                <span>重复 {importPreview.summary.duplicateCount}</span>
+                <span>跳过 {importPreview.summary.skippedCount}</span>
+                <span>异常 {importPreview.summary.invalidCount}</span>
+              </div>
+              <div className="duplicate-strategy">
+                <label><input type="radio" checked={duplicateStrategy === 'skip'} onChange={() => setDuplicateStrategy('skip')} /> 默认跳过重复行</label>
+                <label><input type="radio" checked={duplicateStrategy === 'import'} onChange={() => setDuplicateStrategy('import')} /> 仍然导入重复行</label>
+              </div>
+              <div className="import-preview-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>行号</th>
+                      <th>工单号</th>
+                      <th>客户</th>
+                      <th>品名</th>
+                      <th>规格</th>
+                      <th>未交量</th>
+                      <th>图纸</th>
+                      <th>配料</th>
+                      <th>交期</th>
+                      <th>计划日期</th>
+                      <th>结果</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {importPreview.rows.slice(0, 120).map(row => (
+                      <tr key={`${row.rowNo}-${row.code}`} className={`import-preview-row ${row.status}`}>
+                        <td>{row.rowNo}</td>
+                        <td>{row.code || '-'}</td>
+                        <td>{row.workOrder.customerName || '-'}</td>
+                        <td>{row.workOrder.productName || '-'}</td>
+                        <td>{row.workOrder.specification || '-'}</td>
+                        <td>{row.workOrder.uncompletedQty || '-'}</td>
+                        <td>{row.workOrder.drawingStatus || '-'}</td>
+                        <td>{row.workOrder.materialStatus || '-'}</td>
+                        <td>{row.workOrder.deliveryDay || '-'}</td>
+                        <td>{row.workOrder.plannedAt ? shortDt(row.workOrder.plannedAt) : '-'}</td>
+                        <td>{row.status === 'ready' ? '可导入' : row.status === 'duplicate' ? '重复' : row.status === 'skipped' ? '跳过' : '异常'}{row.reason ? ` · ${row.reason}` : ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {importPreview.rows.length > 120 && <p className="tool-note muted">仅显示前 120 行，确认导入会处理完整预览结果。</p>}
+              </div>
+              <div className="dialog-actions">
+                <button type="button" onClick={clearImport}>取消</button>
+                <button className="primary-button" type="button" disabled={importing || (importPreview.summary.readyCount === 0 && !(duplicateStrategy === 'import' && importPreview.summary.duplicateCount > 0))} onClick={commitWorkOrderImport}>{importing ? '导入中...' : '确认导入'}</button>
+              </div>
+            </div>
+          )}
           {importResult && (
             <div className="import-result">
               <div className="import-summary">
                 <span>新增 {importResult.summary.created}</span>
-                <span>更新 {importResult.summary.updated}</span>
                 <span>跳过 {importResult.summary.skipped}</span>
                 <span>失败 {importResult.summary.failed}</span>
+                {importResult.importBatchId && <span>批次 {importResult.importBatchId}</span>}
               </div>
               <details>
                 <summary>查看逐行结果</summary>
@@ -2838,7 +3088,7 @@ function SystemSettings({
                     <div className={`import-row ${row.status}`} key={`${row.row}-${row.code}`}>
                       <span>第 {row.row} 行</span>
                       <b>{row.code}</b>
-                      <em>{row.status === 'created' ? '新增' : row.status === 'updated' ? '更新' : row.status === 'skipped' ? '跳过' : '失败'}</em>
+                      <em>{row.status === 'created' ? '新增' : row.status === 'skipped' ? '跳过' : '失败'}</em>
                       <small>{row.message}</small>
                     </div>
                   ))}

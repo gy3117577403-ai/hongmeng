@@ -88,6 +88,23 @@ type WorkOrderBody = {
   progress?: unknown;
   plannedAt?: unknown;
   remark?: unknown;
+  sourceOrderNo?: unknown;
+  salesperson?: unknown;
+  orderDate?: unknown;
+  customerLevel?: unknown;
+  specification?: unknown;
+  processName?: unknown;
+  uncompletedQty?: unknown;
+  unitWorkHours?: unknown;
+  totalWorkHours?: unknown;
+  drawingStatus?: unknown;
+  deliveryDay?: unknown;
+  materialStatus?: unknown;
+  drawingIssuedAt?: unknown;
+  drawingIssueNote?: unknown;
+  importBatchId?: unknown;
+  sourceSheetName?: unknown;
+  sourceRowNo?: unknown;
 };
 
 function str(v: unknown) {
@@ -153,6 +170,47 @@ export function parseWorkOrderBody(body: WorkOrderBody, options: { partial?: boo
     data.remark = null;
   }
 
+  const optionalTextFields = [
+    ['sourceOrderNo', 120],
+    ['salesperson', 120],
+    ['customerLevel', 80],
+    ['specification', 180],
+    ['processName', 120],
+    ['uncompletedQty', 80],
+    ['unitWorkHours', 80],
+    ['totalWorkHours', 80],
+    ['drawingStatus', 80],
+    ['deliveryDay', 40],
+    ['materialStatus', 200],
+    ['drawingIssueNote', 200],
+    ['importBatchId', 80],
+    ['sourceSheetName', 160],
+  ] as const;
+  for (const [field, max] of optionalTextFields) {
+    if (body[field] !== undefined) {
+      const value = str(body[field]);
+      data[field] = value ? value.slice(0, max) : null;
+    }
+  }
+
+  if (body.orderDate !== undefined) {
+    const parsed = parsePlannedAt(body.orderDate);
+    if (parsed.error) errors.push('订单日期格式不合法');
+    else data.orderDate = parsed.value ?? null;
+  }
+
+  if (body.drawingIssuedAt !== undefined) {
+    const parsed = parsePlannedAt(body.drawingIssuedAt);
+    if (parsed.error) errors.push('图纸下发日期格式不合法');
+    else data.drawingIssuedAt = parsed.value ?? null;
+  }
+
+  if (body.sourceRowNo !== undefined) {
+    const value = Number(body.sourceRowNo);
+    if (!Number.isInteger(value) || value <= 0) errors.push('来源行号必须是正整数');
+    else data.sourceRowNo = value;
+  }
+
   return { data, errors };
 }
 
@@ -175,6 +233,23 @@ export function serializeWorkOrder(order: WorkOrder & { resourceFiles?: { catego
     status: order.status,
     remark: order.remark,
     plannedAt: order.plannedAt?.toISOString() || null,
+    sourceOrderNo: order.sourceOrderNo,
+    salesperson: order.salesperson,
+    orderDate: order.orderDate?.toISOString() || null,
+    customerLevel: order.customerLevel,
+    specification: order.specification,
+    processName: order.processName,
+    uncompletedQty: order.uncompletedQty,
+    unitWorkHours: order.unitWorkHours,
+    totalWorkHours: order.totalWorkHours,
+    drawingStatus: order.drawingStatus,
+    deliveryDay: order.deliveryDay,
+    materialStatus: order.materialStatus,
+    drawingIssuedAt: order.drawingIssuedAt?.toISOString() || null,
+    drawingIssueNote: order.drawingIssueNote,
+    importBatchId: order.importBatchId,
+    sourceSheetName: order.sourceSheetName,
+    sourceRowNo: order.sourceRowNo,
     deletedAt: order.deletedAt?.toISOString() || null,
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),

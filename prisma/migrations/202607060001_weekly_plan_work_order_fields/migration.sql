@@ -1,0 +1,23 @@
+ALTER TABLE "work_orders" ADD COLUMN "source_order_no" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "salesperson" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "order_date" TIMESTAMP(3);
+ALTER TABLE "work_orders" ADD COLUMN "customer_level" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "specification" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "process_name" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "uncompleted_qty" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "unit_work_hours" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "total_work_hours" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "drawing_status" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "delivery_day" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "material_status" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "drawing_issued_at" TIMESTAMP(3);
+ALTER TABLE "work_orders" ADD COLUMN "drawing_issue_note" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "import_batch_id" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "source_sheet_name" TEXT;
+ALTER TABLE "work_orders" ADD COLUMN "source_row_no" INTEGER;
+
+CREATE INDEX "work_orders_source_order_no_idx" ON "work_orders"("source_order_no");
+CREATE INDEX "work_orders_salesperson_idx" ON "work_orders"("salesperson");
+CREATE INDEX "work_orders_specification_idx" ON "work_orders"("specification");
+CREATE INDEX "work_orders_import_batch_id_idx" ON "work_orders"("import_batch_id");
+CREATE INDEX "work_orders_source_row_no_idx" ON "work_orders"("source_row_no");

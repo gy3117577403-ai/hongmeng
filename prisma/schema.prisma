@@ -22,20 +22,37 @@ model User {
 }
 
 model WorkOrder {
-  id            String         @id @default(uuid())
-  code          String         @unique
-  customerName  String?        @map("customer_name")
-  productName   String         @map("product_name")
-  stage         String
-  progress      Int            @default(0)
-  priority      String         @default("normal")
-  status        String         @default("processing")
-  plannedAt     DateTime?      @map("planned_at")
-  remark        String?
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
-  deletedAt     DateTime?      @map("deleted_at")
-  resourceFiles ResourceFile[]
+  id               String         @id @default(uuid())
+  code             String         @unique
+  customerName     String?        @map("customer_name")
+  productName      String         @map("product_name")
+  stage            String
+  progress         Int            @default(0)
+  priority         String         @default("normal")
+  status           String         @default("processing")
+  plannedAt        DateTime?      @map("planned_at")
+  remark           String?
+  sourceOrderNo    String?        @map("source_order_no")
+  salesperson      String?
+  orderDate        DateTime?      @map("order_date")
+  customerLevel    String?        @map("customer_level")
+  specification    String?
+  processName      String?        @map("process_name")
+  uncompletedQty   String?        @map("uncompleted_qty")
+  unitWorkHours    String?        @map("unit_work_hours")
+  totalWorkHours   String?        @map("total_work_hours")
+  drawingStatus    String?        @map("drawing_status")
+  deliveryDay      String?        @map("delivery_day")
+  materialStatus   String?        @map("material_status")
+  drawingIssuedAt  DateTime?      @map("drawing_issued_at")
+  drawingIssueNote String?        @map("drawing_issue_note")
+  importBatchId    String?        @map("import_batch_id")
+  sourceSheetName  String?        @map("source_sheet_name")
+  sourceRowNo      Int?           @map("source_row_no")
+  createdAt        DateTime       @default(now()) @map("created_at")
+  updatedAt        DateTime       @updatedAt @map("updated_at")
+  deletedAt        DateTime?      @map("deleted_at")
+  resourceFiles    ResourceFile[]
 
   @@index([code])
   @@index([productName])
@@ -46,6 +63,11 @@ model WorkOrder {
   @@index([priority])
   @@index([status])
   @@index([deletedAt])
+  @@index([sourceOrderNo])
+  @@index([salesperson])
+  @@index([specification])
+  @@index([importBatchId])
+  @@index([sourceRowNo])
   @@map("work_orders")
 }
 
@@ -62,25 +84,25 @@ model ResourceCategory {
 }
 
 model ResourceFile {
-  id           String    @id @default(uuid())
-  workOrderId  String    @map("work_order_id")
-  categoryId   String    @map("category_id")
-  originalName String    @map("original_name")
-  displayName  String?   @map("display_name")
-  mimeType     String    @map("mime_type")
-  fileType     String    @map("file_type")
-  fileSize     Int       @map("file_size")
-  objectKey    String    @map("object_key")
-  version      String    @default("V1.0")
+  id           String           @id @default(uuid())
+  workOrderId  String           @map("work_order_id")
+  categoryId   String           @map("category_id")
+  originalName String           @map("original_name")
+  displayName  String?          @map("display_name")
+  mimeType     String           @map("mime_type")
+  fileType     String           @map("file_type")
+  fileSize     Int              @map("file_size")
+  objectKey    String           @map("object_key")
+  version      String           @default("V1.0")
   remark       String?
-  status       String    @default("uploaded")
-  uploadedById String?   @map("uploaded_by_id")
-  createdAt    DateTime  @default(now()) @map("created_at")
-  updatedAt    DateTime  @updatedAt @map("updated_at")
-  deletedAt    DateTime? @map("deleted_at")
-  workOrder    WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  status       String           @default("uploaded")
+  uploadedById String?          @map("uploaded_by_id")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+  deletedAt    DateTime?        @map("deleted_at")
+  workOrder    WorkOrder        @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
   category     ResourceCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  uploadedBy   User?     @relation("UploadedFiles", fields: [uploadedById], references: [id], onDelete: SetNull)
+  uploadedBy   User?            @relation("UploadedFiles", fields: [uploadedById], references: [id], onDelete: SetNull)
 
   @@index([workOrderId])
   @@index([categoryId])
@@ -109,20 +131,20 @@ model OperationLog {
 }
 
 model ConnectorParameter {
-  id                String    @id @default(cuid())
-  rowNo             Int?      @map("row_no")
+  id                String                         @id @default(cuid())
+  rowNo             Int?                           @map("row_no")
   model             String?
-  outerPeelMm       String?   @map("outer_peel_mm")
-  innerPeelMm       String?   @map("inner_peel_mm")
-  insertionLengthMm String?   @map("insertion_length_mm")
+  outerPeelMm       String?                        @map("outer_peel_mm")
+  innerPeelMm       String?                        @map("inner_peel_mm")
+  insertionLengthMm String?                        @map("insertion_length_mm")
   remark            String?
-  isHighlighted     Boolean   @default(false) @map("is_highlighted")
-  createdBy         String?   @map("created_by")
-  updatedBy         String?   @map("updated_by")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
-  deletedAt         DateTime? @map("deleted_at")
-  importBatchId     String?   @map("import_batch_id")
+  isHighlighted     Boolean                        @default(false) @map("is_highlighted")
+  createdBy         String?                        @map("created_by")
+  updatedBy         String?                        @map("updated_by")
+  createdAt         DateTime                       @default(now()) @map("created_at")
+  updatedAt         DateTime                       @updatedAt @map("updated_at")
+  deletedAt         DateTime?                      @map("deleted_at")
+  importBatchId     String?                        @map("import_batch_id")
   importBatch       ConnectorParameterImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
 
   @@index([rowNo])
@@ -135,21 +157,21 @@ model ConnectorParameter {
 }
 
 model ConnectorParameterImportBatch {
-  id                String    @id @default(cuid())
-  sourceType        String    @map("source_type")
-  fileName          String?   @map("file_name")
-  totalRows         Int       @map("total_rows")
-  readyCount        Int       @default(0) @map("ready_count")
-  duplicateCount    Int       @default(0) @map("duplicate_count")
-  invalidCount      Int       @default(0) @map("invalid_count")
-  skippedCount      Int       @default(0) @map("skipped_count")
-  insertedCount     Int       @default(0) @map("inserted_count")
-  duplicateStrategy String    @map("duplicate_strategy")
-  createdBy         String?   @map("created_by")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  rolledBackAt      DateTime? @map("rolled_back_at")
-  rolledBackBy      String?   @map("rolled_back_by")
-  summaryJson       Json?     @map("summary_json")
+  id                String               @id @default(cuid())
+  sourceType        String               @map("source_type")
+  fileName          String?              @map("file_name")
+  totalRows         Int                  @map("total_rows")
+  readyCount        Int                  @default(0) @map("ready_count")
+  duplicateCount    Int                  @default(0) @map("duplicate_count")
+  invalidCount      Int                  @default(0) @map("invalid_count")
+  skippedCount      Int                  @default(0) @map("skipped_count")
+  insertedCount     Int                  @default(0) @map("inserted_count")
+  duplicateStrategy String               @map("duplicate_strategy")
+  createdBy         String?              @map("created_by")
+  createdAt         DateTime             @default(now()) @map("created_at")
+  rolledBackAt      DateTime?            @map("rolled_back_at")
+  rolledBackBy      String?              @map("rolled_back_by")
+  summaryJson       Json?                @map("summary_json")
   parameters        ConnectorParameter[]
 
   @@index([createdAt])

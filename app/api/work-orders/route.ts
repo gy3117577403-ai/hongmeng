@@ -41,7 +41,17 @@ export async function GET(req: NextRequest) {
     const createdAt = filterDate(filter);
     const and: Prisma.WorkOrderWhereInput[] = [];
     if (keyword) {
-      and.push({ OR: [{ code: { contains: keyword, mode: 'insensitive' } }, { productName: { contains: keyword, mode: 'insensitive' } }, { customerName: { contains: keyword, mode: 'insensitive' } }] });
+      and.push({
+        OR: [
+          { code: { contains: keyword, mode: 'insensitive' } },
+          { productName: { contains: keyword, mode: 'insensitive' } },
+          { customerName: { contains: keyword, mode: 'insensitive' } },
+          { specification: { contains: keyword, mode: 'insensitive' } },
+          { sourceOrderNo: { contains: keyword, mode: 'insensitive' } },
+          { salesperson: { contains: keyword, mode: 'insensitive' } },
+          { remark: { contains: keyword, mode: 'insensitive' } },
+        ],
+      });
     }
     if (stage) {
       const legacyStages = stage === 'frontend'

@@ -26,6 +26,7 @@
 - 原始资料附件上传 / 下载 / 删除
 - 操作日志、回收站、数据变更快照、生产稳定中心
 - PWA、系统设置、数据导出、打印摘要、错误页
+- 周计划 Excel / CSV 工单导入预览与确认
 
 ## 本地启动
 
@@ -83,6 +84,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.11.0：主页空态资料缺失引导卡、分类栏完整显示、当前工单条资料状态优化
 - v1.12.0：危险操作防误触、数据变更快照、连接器参数导入批次、导入批次回滚、上传失败重试、生产健康检查增强、生产稳定中心、数据库索引优化
 - v1.13.4-tablet-final-pretest：PWA / APK 缓存收口、当前工单同步按钮、旧工单资料安全清理脚本、seed 样例工单开关。该版本用于平板真实数据测试前预检，不是生产发布记录。
+- v1.13.5-weekly-plan-import：支持周计划 `.xls` / `.xlsx` / `.csv` 工单导入，新增预览/确认流程、SO 单号错位行识别、合计行跳过、周几转计划日期、图纸/配料状态映射。该功能用于后续真实工单批量导入。
 
 ## 交付文档索引
 
@@ -94,6 +96,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [生产稳定性指南 v1.12.0](docs/PRODUCTION_STABILITY_GUIDE_v1.12.0.md)
 - [平板交付方案](docs/TABLET_APP_DELIVERY_PLAN.md)
 - [平板真机测试前最终预检计划](docs/PRE_REAL_DATA_TEST_PLAN.md)
+- [周计划 Excel 工单导入说明](docs/WEEKLY_PLAN_IMPORT_GUIDE.md)
 - [备份计划 v1.5.0](docs/BACKUP_PLAN_v1.5.0.md)
 - [回滚指南 v1.5.0](docs/ROLLBACK_GUIDE_v1.5.0.md)
 - [部署 Smoke Test v1.5.0](docs/SMOKE_TEST_v1.5.0.md)
