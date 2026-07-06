@@ -8,6 +8,7 @@ import {
   type WorkOrderImportPreviewRow,
 } from '@/lib/work-order-import';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { ensureDrawingLibraryItemForWorkOrder } from '@/lib/drawing-library';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { serializeWorkOrder } from '@/lib/work-orders';
@@ -73,10 +74,18 @@ export async function POST(req: NextRequest) {
           continue;
         }
         data.code = await nextUniqueCode(data.code, codeExists);
-        const workOrder = await prisma.workOrder.create({
+        const createdWorkOrder = await prisma.workOrder.create({
           data,
           include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
         });
+        const drawingLibraryItem = await ensureDrawingLibraryItemForWorkOrder(createdWorkOrder);
+        const workOrder = drawingLibraryItem
+          ? await prisma.workOrder.update({
+              where: { id: createdWorkOrder.id },
+              data: { drawingLibraryItemId: drawingLibraryItem.id },
+              include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
+            })
+          : createdWorkOrder;
         created += 1;
         createdOrders.push(serializeWorkOrder(workOrder));
         await snapshotChange({

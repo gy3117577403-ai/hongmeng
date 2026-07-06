@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { ensureDrawingLibraryItemForWorkOrder } from '@/lib/drawing-library';
 import { normalizeWorkOrderStage, parseWorkOrderBody, serializeWorkOrder } from '@/lib/work-orders';
 import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
 
@@ -93,7 +94,7 @@ export async function POST(req: NextRequest) {
     const { data, errors } = parseWorkOrderBody(body);
     if (errors.length) return NextResponse.json({ ok: false, error: errors[0], message: errors[0] }, { status: 400 });
 
-    const workOrder = await prisma.workOrder.create({
+    const createdWorkOrder = await prisma.workOrder.create({
       data: {
         code: String(data.code),
         customerName: data.customerName === null ? null : String(data.customerName || ''),
@@ -115,6 +116,14 @@ export async function POST(req: NextRequest) {
         resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } },
       },
     });
+    const drawingLibraryItem = await ensureDrawingLibraryItemForWorkOrder(createdWorkOrder);
+    const workOrder = drawingLibraryItem
+      ? await prisma.workOrder.update({
+          where: { id: createdWorkOrder.id },
+          data: { drawingLibraryItemId: drawingLibraryItem.id },
+          include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
+        })
+      : createdWorkOrder;
 
     await logOp({ userId: user.id, action: 'create_work_order', targetType: 'work_order', targetId: workOrder.id, detail: { code: workOrder.code } });
     await snapshotChange({

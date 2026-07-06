@@ -302,6 +302,7 @@ export function serializeWorkOrder(order: WorkOrder & { resourceFiles?: { catego
     planClearedAt: order.planClearedAt?.toISOString() || null,
     planClearedBy: order.planClearedBy,
     libraryKey: order.libraryKey,
+    drawingLibraryItemId: order.drawingLibraryItemId,
     deletedAt: order.deletedAt?.toISOString() || null,
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),

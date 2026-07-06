@@ -658,7 +658,8 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             <button className="library-button" type="button" onClick={() => setLib(v => !v)}>▱ 资料库</button>
             {lib && (
               <div className="library-menu">
-                <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产资料</button>
+                <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产工单</button>
+                <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
                 <button className="active" type="button">连接器参数资料 ✓</button>
               </div>
             )}

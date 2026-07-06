@@ -224,6 +224,15 @@ const actionText: Record<string, string> = {
   copy_work_order_spec: '复制规格',
   print_work_order_qr: '打印工单二维码',
   export_diagnostics: '导出诊断信息',
+  create_drawing_library_item: '新增图纸资料',
+  update_drawing_library_item: '编辑图纸资料',
+  delete_drawing_library_item: '删除图纸资料',
+  restore_drawing_library_item: '恢复图纸资料',
+  upload_drawing_library_file: '上传图纸资料文件',
+  update_drawing_library_file: '编辑图纸资料文件',
+  delete_drawing_library_file: '删除图纸资料文件',
+  restore_drawing_library_file: '恢复图纸资料文件',
+  download_drawing_library_file: '下载图纸资料文件',
   create_connector_parameter: '新增连接器参数',
   update_connector_parameter: '编辑连接器参数',
   delete_connector_parameter: '删除连接器参数',
@@ -261,6 +270,7 @@ const logFilters = [
   ['export', '导出'],
   ['import', '导入'],
   ['field', '现场'],
+  ['drawing_library', '图纸资料库'],
   ['connector', '连接器参数'],
 ];
 
@@ -1779,8 +1789,9 @@ export default function DashboardShell({
             <button className="library-button" type="button" onClick={() => setLib(!lib)}>▱ 资料库</button>
             {lib && (
               <div className="library-menu">
+                <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
                 <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
-                <button className="active" type="button">▤ 生产资料 ✓</button>
+                <button className="active" type="button">▤ 生产工单 ✓</button>
               </div>
             )}
           </div>
@@ -1906,6 +1917,7 @@ export default function DashboardShell({
                 {moreActionsOpen && (
                   <div className="more-actions-menu">
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && openOrderModal('edit', order); }}>编辑工单</button>
+                    {order?.drawingLibraryItemId && <button type="button" onClick={() => { location.href = `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId || '')}`; }}>查看图纸资料库</button>}
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && setOrderDeleteTarget(order); }}>删除工单</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); copy(); }}>复制链接</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); syncCurrentWorkOrder(); }}>同步当前工单资料</button>
@@ -3138,7 +3150,7 @@ function SystemSettings({
           <div className="system-actions">
             <div className="weekly-clear-preview">
               <h4>本周生产工单清理</h4>
-              <p>仅隐藏本周周计划生产工单，不删除资料库文件、PDF、图片或连接器参数。</p>
+              <p>仅隐藏本周周计划生产工单，不删除图纸资料库、资料文件、PDF、图片或连接器参数。</p>
               <label className="import-week-start">
                 <span>计划周开始日期</span>
                 <input type="date" value={clearWeekStart || importWeekStart} onChange={e => setClearWeekStart(e.target.value)} />
@@ -3155,6 +3167,7 @@ function SystemSettings({
                     <span>生产工单 {clearPreview.workOrderCount}</span>
                     <span>已上传资料工单 {clearPreview.workOrdersWithFiles}</span>
                     <span>不会删除文件 {clearPreview.fileCount}</span>
+                    <span>不会删除图纸资料库</span>
                     <span>不会删除连接器参数 {clearPreview.connectorParameterCount}</span>
                     {clearPreview.clearedCount !== undefined && <span>已清理 {clearPreview.clearedCount}</span>}
                   </div>

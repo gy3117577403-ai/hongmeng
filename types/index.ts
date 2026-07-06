@@ -35,6 +35,7 @@ export type WorkOrderDTO = {
   planClearedAt?: string | null;
   planClearedBy?: string | null;
   libraryKey?: string | null;
+  drawingLibraryItemId?: string | null;
   deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;
@@ -67,6 +68,59 @@ export type ResourceFileDTO = {
   contentUrl?: string;
   viewUrl: string;
   downloadUrl: string;
+};
+
+export type DrawingLibraryFileDTO = {
+  id: string;
+  libraryItemId: string;
+  categoryId: string;
+  categoryName?: string | null;
+  categoryCode?: string | null;
+  originalName: string;
+  displayName?: string | null;
+  remark?: string | null;
+  mimeType: string;
+  fileType: string;
+  fileSize: number;
+  size: number;
+  version: string;
+  uploadedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string | null;
+  contentUrl: string;
+  viewUrl: string;
+  downloadUrl: string;
+};
+
+export type DrawingLibraryItemDTO = {
+  id: string;
+  customerName: string;
+  customerCode?: string | null;
+  productName?: string | null;
+  specification: string;
+  libraryKey: string;
+  remark?: string | null;
+  deletedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastWorkOrderId?: string | null;
+  lastImportedAt?: string | null;
+  categoryFileCounts: Record<string, number>;
+  fileCount: number;
+  filledCategoryCount: number;
+  totalCategoryCount: number;
+  completenessText: string;
+  missingRequiredCategories: string[];
+  isComplete: boolean;
+  files: DrawingLibraryFileDTO[];
+};
+
+export type DrawingLibraryCustomerDTO = {
+  customerName: string;
+  customerCode?: string | null;
+  itemCount: number;
+  missingCount: number;
 };
 
 export type CurrentUserDTO = { id: string; username: string; displayName: string };

@@ -27,6 +27,7 @@
 - 操作日志、回收站、数据变更快照、生产稳定中心
 - PWA、系统设置、数据导出、打印摘要、错误页
 - 周计划 Excel / CSV 工单导入预览与确认
+- 图纸资料库首页：按客户 -> 规格 -> 图纸资料管理长期图纸文件，不保存周计划状态字段
 
 ## 本地启动
 
@@ -87,6 +88,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.13.5-weekly-plan-import：支持周计划 `.xls` / `.xlsx` / `.csv` 工单导入，新增预览/确认流程、SO 单号错位行识别、合计行跳过、周几转计划日期、图纸/配料状态映射。该功能用于后续真实工单批量导入。
 - v1.13.6-weekly-plan-production-cleanup：周计划工单主显示改为规格 / 生产编号，保留内部 `WO-*` 编号；新增本周生产工单清理预览和 `CLEAR_WEEK` 确认机制，仅设置 `planActive=false`，不删除资料文件、S3 对象或连接器参数。
 - v1.13.7-workorder-header-simplify：周计划导入后的工单主显示以规格为准，当前工单条仅展示客户和规格，支持一键复制规格；其他生产信息保留在右侧信息面板。
+- v1.13.8-drawing-library-home：新增长期图纸资料库首页，按客户和规格管理图纸文件；周计划导入自动创建 / 关联图纸资料记录，图纸资料库不显示、不保存图纸已发、配料、未交量、交期、工时等周计划字段。该版本为待部署候选，不代表生产已上线。
 
 ## 交付文档索引
 
@@ -95,6 +97,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [现场使用指南 v1.6.0](docs/FIELD_USE_GUIDE_v1.6.0.md)
 - [拍照与语音输入说明 v1.9.0](docs/CAMERA_VOICE_GUIDE_v1.9.0.md)
 - [连接器参数资料指南 v1.10.0](docs/CONNECTOR_PARAMETERS_GUIDE_v1.10.0.md)
+- [图纸资料库使用说明](docs/DRAWING_LIBRARY_GUIDE.md)
 - [生产稳定性指南 v1.12.0](docs/PRODUCTION_STABILITY_GUIDE_v1.12.0.md)
 - [平板交付方案](docs/TABLET_APP_DELIVERY_PLAN.md)
 - [平板真机测试前最终预检计划](docs/PRE_REAL_DATA_TEST_PLAN.md)

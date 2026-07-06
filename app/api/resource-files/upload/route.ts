@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { ensureDrawingLibraryItemForWorkOrder, nextDrawingLibraryVersion } from '@/lib/drawing-library';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { putObject } from '@/lib/s3';
@@ -136,6 +137,40 @@ export async function POST(req: NextRequest) {
         uploadedById: user.id,
       },
     });
+
+    try {
+      const drawingLibraryItem = wo.drawingLibraryItemId
+        ? await prisma.drawingLibraryItem.findFirst({ where: { id: wo.drawingLibraryItemId, deletedAt: null } })
+        : await ensureDrawingLibraryItemForWorkOrder(wo);
+      if (drawingLibraryItem) {
+        const drawingVersion = await nextDrawingLibraryVersion(drawingLibraryItem.id, cat.id);
+        const drawingFile = await prisma.drawingLibraryFile.create({
+          data: {
+            libraryItemId: drawingLibraryItem.id,
+            categoryId: cat.id,
+            originalName: up.name,
+            mimeType: up.type || 'application/octet-stream',
+            size: up.size,
+            objectKey: key,
+            version: drawingVersion,
+            uploadedById: user.id,
+          },
+        });
+        if (!wo.drawingLibraryItemId) {
+          await prisma.workOrder.update({ where: { id: wo.id }, data: { drawingLibraryItemId: drawingLibraryItem.id } });
+        }
+        await prisma.drawingLibraryItem.update({ where: { id: drawingLibraryItem.id }, data: { updatedAt: new Date() } });
+        await logOp({
+          userId: user.id,
+          action: 'upload_drawing_library_file',
+          targetType: 'drawing_library_file',
+          targetId: drawingFile.id,
+          detail: { libraryKey: drawingLibraryItem.libraryKey, categoryCode: cat.code, fileName: up.name, fileSize: up.size, version: drawingVersion, source: 'work_order_upload' },
+        });
+      }
+    } catch (libraryError) {
+      console.warn('drawing library mirror failed', libraryError);
+    }
 
     await logOp({
       userId: user.id,

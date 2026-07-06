@@ -23,6 +23,17 @@ const actionGroups: Record<string, string[]> = {
   export: ['export_work_orders', 'export_resource_files', 'export_operation_logs', 'export_metadata'],
   import: ['import_work_orders'],
   field: ['copy_work_order_link', 'copy_work_order_spec', 'print_work_order_qr', 'export_diagnostics'],
+  drawing_library: [
+    'create_drawing_library_item',
+    'update_drawing_library_item',
+    'delete_drawing_library_item',
+    'restore_drawing_library_item',
+    'upload_drawing_library_file',
+    'update_drawing_library_file',
+    'delete_drawing_library_file',
+    'restore_drawing_library_file',
+    'download_drawing_library_file',
+  ],
   connector: [
     'create_connector_parameter',
     'update_connector_parameter',

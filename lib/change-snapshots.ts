@@ -92,6 +92,7 @@ export function workOrderSnapshot(order: {
   planClearedAt?: Date | string | null;
   planClearedBy?: string | null;
   libraryKey?: string | null;
+  drawingLibraryItemId?: string | null;
   deletedAt?: Date | string | null;
 }) {
   return {
@@ -129,6 +130,7 @@ export function workOrderSnapshot(order: {
     planClearedAt: order.planClearedAt ?? null,
     planClearedBy: order.planClearedBy ?? null,
     libraryKey: order.libraryKey ?? null,
+    drawingLibraryItemId: order.drawingLibraryItemId ?? null,
     deletedAt: order.deletedAt ?? null,
   };
 }

@@ -154,14 +154,17 @@ displayCode = specification || code
 - `planType = weekly_plan`
 - `planActive = true`
 - `libraryKey = specification`
+- `drawingLibraryItemId = 自动创建或匹配的 DrawingLibraryItem.id`
 - `weekStartDate = 导入时选择的计划周开始日期`
 - `weekEndDate = weekStartDate + 6 天`
+
+同时，系统会按 `customerName + "::" + specification` 自动创建或关联长期图纸资料库记录。如果客户为空，则按 `specification` 匹配。图纸资料库只保存客户、客户编码、规格、品名、备注和资料文件，不保存图纸状态、配料状态、交期、未交量、工时、业务员、订单日期等周计划字段。
 
 如需开始新一周生产，可在系统设置中使用“本周生产工单清理”：
 
 1. 选择计划周开始日期。
 2. 点击“预览清理”。
-3. 确认不会删除资料文件和连接器参数。
+3. 确认不会删除图纸资料库、资料文件和连接器参数。
 4. 输入 `CLEAR_WEEK` 后执行。
 
-清理只会把本周周计划工单设为 `planActive=false`，不会删除 `WorkOrder`、`ResourceFile`、S3 文件、连接器参数或连接器附件。
+清理只会把本周周计划工单设为 `planActive=false`，不会删除 `WorkOrder`、`DrawingLibraryItem`、`DrawingLibraryFile`、`ResourceFile`、S3 文件、连接器参数或连接器附件。

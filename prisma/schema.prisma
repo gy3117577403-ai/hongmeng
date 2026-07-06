@@ -8,58 +8,62 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(uuid())
-  username      String         @unique
-  passwordHash  String         @map("password_hash")
-  displayName   String         @map("display_name")
-  isActive      Boolean        @default(true) @map("is_active")
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
-  uploadedFiles ResourceFile[] @relation("UploadedFiles")
-  operationLogs OperationLog[]
+  id                  String               @id @default(uuid())
+  username            String               @unique
+  passwordHash        String               @map("password_hash")
+  displayName         String               @map("display_name")
+  isActive            Boolean              @default(true) @map("is_active")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  uploadedFiles       ResourceFile[]       @relation("UploadedFiles")
+  drawingLibraryFiles DrawingLibraryFile[] @relation("UploadedDrawingLibraryFiles")
+  operationLogs       OperationLog[]
 
   @@map("users")
 }
 
 model WorkOrder {
-  id               String         @id @default(uuid())
-  code             String         @unique
-  customerName     String?        @map("customer_name")
-  productName      String         @map("product_name")
-  stage            String
-  progress         Int            @default(0)
-  priority         String         @default("normal")
-  status           String         @default("processing")
-  plannedAt        DateTime?      @map("planned_at")
-  remark           String?
-  sourceOrderNo    String?        @map("source_order_no")
-  salesperson      String?
-  orderDate        DateTime?      @map("order_date")
-  customerLevel    String?        @map("customer_level")
-  specification    String?
-  processName      String?        @map("process_name")
-  uncompletedQty   String?        @map("uncompleted_qty")
-  unitWorkHours    String?        @map("unit_work_hours")
-  totalWorkHours   String?        @map("total_work_hours")
-  drawingStatus    String?        @map("drawing_status")
-  deliveryDay      String?        @map("delivery_day")
-  materialStatus   String?        @map("material_status")
-  drawingIssuedAt  DateTime?      @map("drawing_issued_at")
-  drawingIssueNote String?        @map("drawing_issue_note")
-  importBatchId    String?        @map("import_batch_id")
-  sourceSheetName  String?        @map("source_sheet_name")
-  sourceRowNo      Int?           @map("source_row_no")
-  planType         String?        @map("plan_type")
-  weekStartDate    DateTime?      @map("week_start_date")
-  weekEndDate      DateTime?      @map("week_end_date")
-  planActive       Boolean        @default(true) @map("plan_active")
-  planClearedAt    DateTime?      @map("plan_cleared_at")
-  planClearedBy    String?        @map("plan_cleared_by")
-  libraryKey       String?        @map("library_key")
-  createdAt        DateTime       @default(now()) @map("created_at")
-  updatedAt        DateTime       @updatedAt @map("updated_at")
-  deletedAt        DateTime?      @map("deleted_at")
-  resourceFiles    ResourceFile[]
+  id                      String               @id @default(uuid())
+  code                    String               @unique
+  customerName            String?              @map("customer_name")
+  productName             String               @map("product_name")
+  stage                   String
+  progress                Int                  @default(0)
+  priority                String               @default("normal")
+  status                  String               @default("processing")
+  plannedAt               DateTime?            @map("planned_at")
+  remark                  String?
+  sourceOrderNo           String?              @map("source_order_no")
+  salesperson             String?
+  orderDate               DateTime?            @map("order_date")
+  customerLevel           String?              @map("customer_level")
+  specification           String?
+  processName             String?              @map("process_name")
+  uncompletedQty          String?              @map("uncompleted_qty")
+  unitWorkHours           String?              @map("unit_work_hours")
+  totalWorkHours          String?              @map("total_work_hours")
+  drawingStatus           String?              @map("drawing_status")
+  deliveryDay             String?              @map("delivery_day")
+  materialStatus          String?              @map("material_status")
+  drawingIssuedAt         DateTime?            @map("drawing_issued_at")
+  drawingIssueNote        String?              @map("drawing_issue_note")
+  importBatchId           String?              @map("import_batch_id")
+  sourceSheetName         String?              @map("source_sheet_name")
+  sourceRowNo             Int?                 @map("source_row_no")
+  planType                String?              @map("plan_type")
+  weekStartDate           DateTime?            @map("week_start_date")
+  weekEndDate             DateTime?            @map("week_end_date")
+  planActive              Boolean              @default(true) @map("plan_active")
+  planClearedAt           DateTime?            @map("plan_cleared_at")
+  planClearedBy           String?              @map("plan_cleared_by")
+  libraryKey              String?              @map("library_key")
+  drawingLibraryItemId    String?              @map("drawing_library_item_id")
+  createdAt               DateTime             @default(now()) @map("created_at")
+  updatedAt               DateTime             @updatedAt @map("updated_at")
+  deletedAt               DateTime?            @map("deleted_at")
+  resourceFiles           ResourceFile[]
+  drawingLibraryItem      DrawingLibraryItem?  @relation("DrawingLibraryWorkOrders", fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
+  lastDrawingLibraryItems DrawingLibraryItem[] @relation("LastDrawingLibraryWorkOrder")
 
   @@index([code])
   @@index([productName])
@@ -79,17 +83,19 @@ model WorkOrder {
   @@index([weekStartDate])
   @@index([planActive])
   @@index([libraryKey])
+  @@index([drawingLibraryItemId])
   @@map("work_orders")
 }
 
 model ResourceCategory {
-  id            String         @id @default(uuid())
-  name          String
-  code          String         @unique
-  sortOrder     Int            @default(0) @map("sort_order")
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
-  resourceFiles ResourceFile[]
+  id                  String               @id @default(uuid())
+  name                String
+  code                String               @unique
+  sortOrder           Int                  @default(0) @map("sort_order")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  resourceFiles       ResourceFile[]
+  drawingLibraryFiles DrawingLibraryFile[]
 
   @@map("resource_categories")
 }
@@ -123,6 +129,61 @@ model ResourceFile {
   @@index([workOrderId, categoryId, status, deletedAt])
   @@index([objectKey])
   @@map("resource_files")
+}
+
+model DrawingLibraryItem {
+  id              String               @id @default(uuid())
+  customerName    String               @map("customer_name")
+  customerCode    String?              @map("customer_code")
+  productName     String?              @map("product_name")
+  specification   String
+  libraryKey      String               @unique @map("library_key")
+  remark          String?
+  deletedAt       DateTime?            @map("deleted_at")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+  lastWorkOrderId String?              @map("last_work_order_id")
+  lastImportedAt  DateTime?            @map("last_imported_at")
+  files           DrawingLibraryFile[]
+  workOrders      WorkOrder[]          @relation("DrawingLibraryWorkOrders")
+  lastWorkOrder   WorkOrder?           @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
+
+  @@index([customerName])
+  @@index([customerCode])
+  @@index([productName])
+  @@index([specification])
+  @@index([deletedAt])
+  @@index([updatedAt])
+  @@index([lastWorkOrderId])
+  @@map("drawing_library_items")
+}
+
+model DrawingLibraryFile {
+  id            String             @id @default(uuid())
+  libraryItemId String             @map("library_item_id")
+  categoryId    String             @map("category_id")
+  originalName  String             @map("original_name")
+  displayName   String?            @map("display_name")
+  mimeType      String             @map("mime_type")
+  size          Int
+  version       String             @default("V1.0")
+  objectKey     String             @map("object_key")
+  uploadedById  String?            @map("uploaded_by")
+  remark        String?
+  deletedAt     DateTime?          @map("deleted_at")
+  createdAt     DateTime           @default(now()) @map("created_at")
+  updatedAt     DateTime           @updatedAt @map("updated_at")
+  libraryItem   DrawingLibraryItem @relation(fields: [libraryItemId], references: [id], onDelete: Cascade)
+  category      ResourceCategory   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  uploadedBy    User?              @relation("UploadedDrawingLibraryFiles", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([libraryItemId])
+  @@index([categoryId])
+  @@index([deletedAt])
+  @@index([createdAt])
+  @@index([version])
+  @@index([objectKey])
+  @@map("drawing_library_files")
 }
 
 model OperationLog {

@@ -25,8 +25,11 @@ displayCode = specification || code
 - `planClearedAt`：清理时间
 - `planClearedBy`：清理人
 - `libraryKey`：资料库匹配键，周计划导入时使用 `specification`
+- `drawingLibraryItemId`：关联长期图纸资料库记录
 
 这些字段只用于生产计划显示、清理和同规格资料提示，不会删除历史数据。
+
+长期图纸资料库使用独立的 `DrawingLibraryItem` / `DrawingLibraryFile`，只保存客户、客户编码、规格、品名、备注和资料文件，不保存图纸状态、配料状态、交期、未交量、工时、业务员或订单日期。
 
 ## 周计划导入规则
 
@@ -34,6 +37,8 @@ displayCode = specification || code
 
 - `specification` 作为主显示编号。
 - `libraryKey = specification`。
+- 自动创建或关联 `DrawingLibraryItem`。
+- `WorkOrder.drawingLibraryItemId` 指向长期图纸资料记录。
 - `planType = weekly_plan`。
 - `planActive = true`。
 - `weekStartDate` 和 `weekEndDate` 来自导入时选择的计划周。
@@ -43,6 +48,7 @@ displayCode = specification || code
 - `planType = manual`。
 - `planActive = true`。
 - `libraryKey = specification || code`。
+- 如填写了规格，会自动创建或关联图纸资料库记录。
 
 ## 当前工单顶部条
 
@@ -111,6 +117,8 @@ clear_weekly_plan_work_orders
 本功能不会删除：
 
 - `WorkOrder` 记录
+- `DrawingLibraryItem` 图纸资料库记录
+- `DrawingLibraryFile` 图纸资料库文件记录
 - `ResourceFile` 记录
 - S3 / Object Storage 文件对象
 - `ConnectorParameter`
@@ -124,6 +132,8 @@ clear_weekly_plan_work_orders
 `scripts/clear-workorder-data.mjs` 是维护窗口使用的真实清库脚本，必须显式设置确认环境变量后才会执行，并可能清理工单、文件元数据和可选 S3 对象。
 
 v1.13.6 新增的“本周生产工单清理”是业务软清理，只让本周周计划工单退出当前生产列表，不删除资料库里的工单资料。
+
+从 v1.13.8 开始，清理本周生产工单也不会删除图纸资料库。图纸资料库是长期主数据，后续同客户同规格再次导入周计划时会继续复用。
 
 ## 同规格历史资料提示
 
