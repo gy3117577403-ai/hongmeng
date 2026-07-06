@@ -6,8 +6,9 @@ import { CameraCaptureModal } from '@/components/CameraCaptureModal';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
-import { getAndroidCapabilities, isAndroidWebView, writeClipboardText } from '@/lib/client-platform';
+import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platform';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
+import { compressImageForUpload, normalizeCapturedImage } from '@/lib/image-client';
 import type { ChangeSnapshotDTO, CurrentUserDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
 type WorkOrderForm = {
@@ -28,6 +29,7 @@ type UploadJob = {
   name: string;
   fileType: string;
   size: number;
+  originalSize?: number;
   file?: File;
   workOrderId: string;
   categoryId: string;
@@ -390,7 +392,6 @@ export default function DashboardShell({
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
-  const cameraCapture = useRef<HTMLInputElement>(null);
   const csvImport = useRef<HTMLInputElement>(null);
   const drawerTouch = useRef<{ startX: number; startY: number; fromEdge: boolean; fromDrawer: boolean } | null>(null);
   const toolRef = useRef<HTMLElement>(null);
@@ -658,10 +659,6 @@ export default function DashboardShell({
     }
     setToolTab('queue');
     setToolOpen(true);
-    if (isAndroidWebView()) {
-      cameraCapture.current?.click();
-      return;
-    }
     setCameraOpen(true);
   }
 
@@ -966,8 +963,6 @@ export default function DashboardShell({
       }
       const message = d.file?.version ? `上传成功 · ${d.file.version}` : '上传成功';
       setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'success', message } : j)));
-      await loadFiles(job.workOrderId, job.categoryId, d.file?.id);
-      await loadCategoryCounts(job.workOrderId);
       return { ok: true, fileId: d.file?.id || '' };
     } catch {
       const message = '网络异常或对象存储异常';
@@ -976,7 +971,7 @@ export default function DashboardShell({
     }
   }
 
-  async function uploadMany(fileList: File[]) {
+  async function uploadMany(fileList: File[], originalFiles?: File[]) {
     if (!order) {
       setMsg('未选择工单');
       return;
@@ -988,11 +983,17 @@ export default function DashboardShell({
     if (!fileList.length) return;
     if (uploading) return;
 
-    const jobs = fileList.map((f, index) => ({
+    const sourceFiles = originalFiles || fileList;
+    const hasLargeImage = sourceFiles.some(f => (f.type.startsWith('image/') || /\.(png|jpe?g|webp)$/i.test(f.name)) && f.size >= 1024 * 1024);
+    if (!originalFiles && hasLargeImage) setMsg('图片较大，正在优化后上传，请稍候。');
+    const optimizedFiles = originalFiles ? fileList : await Promise.all(fileList.map(f => compressImageForUpload(f)));
+
+    const jobs = optimizedFiles.map((f, index) => ({
       id: `${Date.now()}-${index}`,
       name: f.name,
       fileType: fileKind(f),
       size: f.size,
+      originalSize: sourceFiles[index]?.size !== f.size ? sourceFiles[index]?.size : undefined,
       file: f,
       workOrderId: order.id,
       categoryId: category.id,
@@ -1003,31 +1004,53 @@ export default function DashboardShell({
     setUploading(true);
     let ok = 0;
     let failed = jobs.filter(j => j.status === 'failed').length;
+    let latestUploadedFileId = '';
+    const targetWorkOrderId = jobs[0]?.workOrderId || order.id;
+    const targetCategoryId = jobs[0]?.categoryId || category.id;
 
-    for (const job of jobs) {
-      if (job.status === 'failed') continue;
-      const result = await uploadJobToServer(job);
-      if (result.ok) ok += 1;
-      else failed += 1;
+    try {
+      for (const job of jobs) {
+        if (job.status === 'failed') continue;
+        const result = await uploadJobToServer(job);
+        if (result.ok) {
+          ok += 1;
+          latestUploadedFileId = result.fileId || latestUploadedFileId;
+        } else {
+          failed += 1;
+        }
+      }
+
+      if (latestUploadedFileId) {
+        await loadFiles(targetWorkOrderId, targetCategoryId, latestUploadedFileId);
+        await loadCategoryCounts(targetWorkOrderId);
+      }
+      setMsg(`批量上传完成：成功 ${ok} 个，失败 ${failed} 个`);
+    } catch {
+      setMsg(`批量上传完成：成功 ${ok} 个，失败 ${failed} 个；刷新列表失败，请手动刷新。`);
+    } finally {
+      setUploading(false);
+      if (pdf.current) pdf.current.value = '';
+      if (img.current) img.current.value = '';
     }
-
-    setMsg(`批量上传完成：成功 ${ok} 个，失败 ${failed} 个`);
-    setUploading(false);
-    if (pdf.current) pdf.current.value = '';
-    if (img.current) img.current.value = '';
-    if (cameraCapture.current) cameraCapture.current.value = '';
   }
 
   async function uploadCameraFiles(fileList: File[]) {
     setToolTab('queue');
     setToolOpen(true);
-    await uploadMany(fileList);
+    if (!fileList.length) return;
+    if (fileList.some(file => file.size >= 1024 * 1024)) setMsg('图片较大，正在优化后上传，请稍候。');
+    const optimized = await Promise.all(fileList.map(file => normalizeCapturedImage(file)));
+    await uploadMany(optimized, fileList);
   }
 
   async function retryUploadJob(job: UploadJob) {
     setUploading(true);
     const result = await uploadJobToServer(job, true);
     setUploading(false);
+    if (result.ok) {
+      await loadFiles(job.workOrderId, job.categoryId, result.fileId);
+      await loadCategoryCounts(job.workOrderId);
+    }
     setMsg(result.ok ? `已重试成功：${job.name}` : `重试失败：${result.message}`);
   }
 
@@ -1037,12 +1060,23 @@ export default function DashboardShell({
     setUploading(true);
     let ok = 0;
     let failed = 0;
+    let latestUploadedFileId = '';
+    const targetWorkOrderId = failedJobs[0]?.workOrderId || order?.id || '';
+    const targetCategoryId = failedJobs[0]?.categoryId || category?.id || '';
     for (const job of failedJobs) {
       const result = await uploadJobToServer(job, true);
-      if (result.ok) ok += 1;
-      else failed += 1;
+      if (result.ok) {
+        ok += 1;
+        latestUploadedFileId = result.fileId || latestUploadedFileId;
+      } else {
+        failed += 1;
+      }
     }
     setUploading(false);
+    if (latestUploadedFileId && targetWorkOrderId && targetCategoryId) {
+      await loadFiles(targetWorkOrderId, targetCategoryId, latestUploadedFileId);
+      await loadCategoryCounts(targetWorkOrderId);
+    }
     setMsg(`重试完成：成功 ${ok} 个，失败 ${failed} 个`);
   }
 
@@ -1674,7 +1708,7 @@ export default function DashboardShell({
                   ) : file ? (
                     file.fileType === 'pdf'
                       ? <PdfViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} downloadUrl={file.downloadUrl} viewUrl={file.viewUrl} />
-                      : <ImageViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} />
+                      : <ImageViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} downloadUrl={file.downloadUrl} />
                   ) : (
                     <div className="empty-preview empty-resource-guide">
                       <div className="empty-illustration">＋</div>
@@ -1730,7 +1764,6 @@ export default function DashboardShell({
               >
                 <input ref={pdf} hidden multiple type="file" accept="application/pdf,.pdf" onChange={e => uploadMany(Array.from(e.target.files || []))} />
                 <input ref={img} hidden multiple type="file" accept="image/*" onChange={e => uploadMany(Array.from(e.target.files || []))} />
-                <input ref={cameraCapture} hidden type="file" accept="image/*" capture="environment" onChange={e => uploadCameraFiles(Array.from(e.target.files || []))} />
                 <div ref={toolRailRef} className="resource-tool-rail" aria-label="资料工具栏">
                   {([
                     ['info', '信息'],
@@ -2240,7 +2273,7 @@ function FileThumb({ file }: { file: ResourceFileDTO }) {
   if (file.fileType === 'pdf') {
     return <span className="file-thumb pdf">PDF</span>;
   }
-  return <span className="file-thumb img"><img src={file.contentUrl || file.viewUrl} alt={displayFileName(file)} /></span>;
+  return <span className="file-thumb img"><img src={file.contentUrl || file.viewUrl} alt={displayFileName(file)} loading="lazy" decoding="async" /></span>;
 }
 
 function UploadJobs({
@@ -2263,7 +2296,9 @@ function UploadJobs({
       {jobs.map(job => (
         <div className={`upload-job ${job.status}`} key={job.id}>
           <b>{shortName(job.name)}</b>
-          <span>{job.fileType} · {bytes(job.size)} · {job.status === 'waiting' ? '等待上传' : job.status === 'uploading' ? '上传中' : job.status === 'success' ? '上传成功' : '上传失败'}</span>
+          <span>
+            {job.fileType} · {job.originalSize ? `${bytes(job.originalSize)} → ${bytes(job.size)}` : bytes(job.size)} · {job.status === 'waiting' ? '等待上传' : job.status === 'uploading' ? '上传中' : job.status === 'success' ? '上传成功' : '上传失败'}
+          </span>
           <small>{job.message}</small>
           <div className="upload-job-actions">
             {job.status === 'failed' && <button type="button" disabled={uploading} onClick={() => retry(job)}>重试</button>}

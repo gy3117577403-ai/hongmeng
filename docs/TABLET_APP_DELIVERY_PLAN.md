@@ -98,6 +98,15 @@ v1.13.2-tablet-apk-device-bridge 继续补齐 WebView 设备桥闭环：
 - 系统设置中显示“平板 App 能力”，用于现场确认文件选择、拍照、摄像头授权、下载和剪贴板是否可用。
 - 拒绝相机权限时给出明确提示，并允许改用“上传图片”。
 
+v1.13.3-tablet-apk-performance-camera-fix 面向现场横屏和加载体验继续优化：
+
+- APK 主界面锁定横屏，拍照、文件选择和权限返回后恢复横屏。
+- 拍照上传优先使用网页内 getUserMedia，减少外部系统相机造成的竖屏和图片方向问题。
+- 系统相机 `input capture` 保留为 fallback。
+- 大尺寸图片上传前会尝试压缩到适合现场网络的尺寸，失败时上传原图。
+- 图片预览和缩略图使用懒加载、异步解码和 EXIF 方向 CSS。
+- PDF 加载超过 8 秒时提示可继续等待或下载查看。
+
 ## HarmonyOS NEXT 风险说明
 
 部分鸿蒙平板可以安装 Android APK，部分 HarmonyOS NEXT 设备可能不再支持 APK。需要在目标设备上确认系统版本和 APK 安装能力。

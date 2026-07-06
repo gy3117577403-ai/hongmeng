@@ -1,20 +1,21 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PreviewModal } from '@/components/PdfViewer';
 
 type ImageMode = 'fit' | 'original' | 'zoom';
 
-export function ImageViewer({ fileId, title, contentUrl }: { fileId: string; title: string; contentUrl?: string }) {
+export function ImageViewer({ fileId, title, contentUrl, downloadUrl }: { fileId: string; title: string; contentUrl?: string; downloadUrl?: string }) {
   const [fullscreen, setFullscreen] = useState(false);
   const source = contentUrl || `/api/resource-files/${fileId}/content`;
+  const fallbackDownloadUrl = downloadUrl || `/api/resource-files/${fileId}/download`;
 
   return (
     <>
-      <ImageCanvas source={source} title={title} onFullscreen={() => setFullscreen(true)} />
+      <ImageCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} onFullscreen={() => setFullscreen(true)} />
       {fullscreen && (
         <PreviewModal title={title} onClose={() => setFullscreen(false)}>
-          <ImageCanvas source={source} title={title} fullscreen onClose={() => setFullscreen(false)} />
+          <ImageCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} fullscreen onClose={() => setFullscreen(false)} />
         </PreviewModal>
       )}
     </>
@@ -24,12 +25,14 @@ export function ImageViewer({ fileId, title, contentUrl }: { fileId: string; tit
 function ImageCanvas({
   source,
   title,
+  downloadUrl,
   fullscreen = false,
   onFullscreen,
   onClose,
 }: {
   source: string;
   title: string;
+  downloadUrl: string;
   fullscreen?: boolean;
   onFullscreen?: () => void;
   onClose?: () => void;
@@ -38,6 +41,15 @@ function ImageCanvas({
   const [zoom, setZoom] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const displaySource = reloadKey > 0 ? `${source}${source.includes('?') ? '&' : '?'}reload=${reloadKey}` : source;
+
+  useEffect(() => {
+    setLoading(true);
+    setError(false);
+    setZoom(1);
+    setMode('fit');
+  }, [source, reloadKey]);
 
   function updateZoom(delta: number) {
     setMode('zoom');
@@ -61,11 +73,14 @@ function ImageCanvas({
       </div>
       <div className="viewer-stage image-stage">
         {loading && <ViewerState title="图片加载中" detail="正在读取同源文件流" />}
-        {error && <ViewerState title="图片加载失败" detail="请刷新页面或下载原文件查看" error />}
+        {error && <ViewerState title="图片加载失败" detail="图片加载失败，可重新加载或下载原图" error onReload={() => setReloadKey(v => v + 1)} downloadUrl={downloadUrl} />}
         <img
+          key={`${source}-${reloadKey}`}
           className={`preview-image ${mode}`}
-          src={source}
+          src={displaySource}
           alt={title}
+          loading="lazy"
+          decoding="async"
           style={mode === 'zoom' ? { transform: `scale(${zoom})` } : undefined}
           onLoad={() => {
             setLoading(false);
@@ -81,12 +96,18 @@ function ImageCanvas({
   );
 }
 
-function ViewerState({ title, detail, error = false }: { title: string; detail: string; error?: boolean }) {
+function ViewerState({ title, detail, error = false, onReload, downloadUrl }: { title: string; detail: string; error?: boolean; onReload?: () => void; downloadUrl?: string }) {
   return (
     <div className={error ? 'viewer-state error' : 'viewer-state'}>
       <span />
       <strong>{title}</strong>
       <p>{detail}</p>
+      {error && (
+        <div className="viewer-state-actions">
+          {onReload && <button type="button" onClick={onReload}>重新加载</button>}
+          {downloadUrl && <a href={downloadUrl} target="_blank" rel="noreferrer">下载原图</a>}
+        </div>
+      )}
     </div>
   );
 }

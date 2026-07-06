@@ -1831,6 +1831,7 @@ input:focus-visible {
   height: 100%;
   max-height: min(54vh, 470px);
   object-fit: contain;
+  image-orientation: from-image;
   background: #111827;
 }
 
@@ -2061,6 +2062,7 @@ input:focus-visible {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  image-orientation: from-image;
 }
 
 .version-badge {
@@ -3629,6 +3631,7 @@ input:focus-visible {
 
 .image-stage {
   overflow: auto;
+  min-height: 0;
 }
 
 .preview-image {
@@ -3636,6 +3639,7 @@ input:focus-visible {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
+  image-orientation: from-image;
   transform-origin: center center;
   transition: transform .16s ease;
 }

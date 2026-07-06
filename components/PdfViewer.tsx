@@ -85,6 +85,7 @@ function PdfCanvas({
   const [scale, setScale] = useState(1);
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [loading, setLoading] = useState(true);
+  const [slowLoading, setSlowLoading] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<PdfLoadError | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -105,6 +106,7 @@ function PdfCanvas({
     let loadedDoc: PdfDocument | null = null;
 
     setLoading(true);
+    setSlowLoading(false);
     setRendering(false);
     setError(null);
     setDoc(null);
@@ -140,6 +142,15 @@ function PdfCanvas({
       loadedDoc?.destroy?.();
     };
   }, [source, reloadKey]);
+
+  useEffect(() => {
+    if (!loading) {
+      setSlowLoading(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setSlowLoading(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, [loading, source, reloadKey]);
 
   useEffect(() => {
     if (loading || !doc || !canvasRef.current || box.width <= 0 || box.height <= 0) return undefined;
@@ -214,7 +225,7 @@ function PdfCanvas({
         </div>
       </div>
       <div className="viewer-stage pdf-stage" ref={shellRef}>
-        {loading && <ViewerState title="PDF 加载中" detail="正在读取同源文件流" />}
+        {loading && <ViewerState title={slowLoading ? 'PDF 加载较慢' : 'PDF 加载中'} detail={slowLoading ? 'PDF 加载较慢，可继续等待或下载查看。' : '正在读取同源文件流'} downloadUrl={slowLoading ? downloadUrl : undefined} />}
         {error && (
           <ViewerState
             title={error.title}
@@ -358,7 +369,7 @@ function ViewerState({
       <span />
       <strong>{title}</strong>
       <p>{detail}</p>
-      {error && (
+      {(error || downloadUrl || onReload || onOpenSystem) && (
         <div className="viewer-state-actions">
           {onReload && <button type="button" onClick={onReload}>重新加载</button>}
           {downloadUrl && <a href={downloadUrl} target="_blank" rel="noreferrer">下载 PDF</a>}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { isAndroidWebView } from '@/lib/client-platform';
 
 type CaptureItem = { file: File; url: string };
 type CameraStatus = 'requesting' | 'live' | 'captured' | 'fallback' | 'error' | 'uploading';
@@ -30,7 +31,7 @@ function stamp() {
 }
 
 function photoName(workOrderCode?: string, categoryCode?: string) {
-  return `PHOTO-${safePart(workOrderCode)}-${safePart(categoryCode)}-${stamp()}.jpg`;
+  return `workorder-camera-${safePart(workOrderCode)}-${safePart(categoryCode)}-${stamp()}.jpg`;
 }
 
 function cameraErrorMessage(error: unknown) {
@@ -92,7 +93,7 @@ export function CameraCaptureModal({
   async function startCamera(nextDeviceId = deviceId) {
     if (!canUseCamera) {
       setStatus('fallback');
-      setError('当前浏览器不支持直接调用摄像头，可使用下方拍照文件选择。');
+      setError(isAndroidWebView() ? '当前设备无法直接拍照，请使用上传图片。' : '当前浏览器不支持直接调用摄像头，可使用下方拍照文件选择。');
       return;
     }
     stopStream();
@@ -226,7 +227,7 @@ export function CameraCaptureModal({
 
         <div className={`camera-preview ${status}`}>
           {status === 'captured' && latest ? (
-            <img src={latest.url} alt="拍照结果预览" />
+            <img src={latest.url} alt="拍照结果预览" loading="lazy" decoding="async" />
           ) : (
             <video ref={videoRef} autoPlay playsInline muted />
           )}
@@ -235,7 +236,17 @@ export function CameraCaptureModal({
             <div className="camera-fallback">
               <strong>{status === 'fallback' ? '浏览器不支持直接拍照' : '摄像头不可用'}</strong>
               <p>{error}</p>
-              <input ref={fileInputRef} type="file" accept="image/*" capture="environment" onChange={e => confirmUpload(Array.from(e.target.files || []))} />
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={e => {
+                  const selected = Array.from(e.target.files || []);
+                  e.currentTarget.value = '';
+                  confirmUpload(selected);
+                }}
+              />
             </div>
           )}
           {status === 'uploading' && <div className="camera-overlay">正在加入上传队列...</div>}

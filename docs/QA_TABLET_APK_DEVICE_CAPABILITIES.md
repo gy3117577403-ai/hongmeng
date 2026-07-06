@@ -25,7 +25,9 @@ https://qdowqencjyph.sealoshzh.site/dashboard
 - `onRequestPermissionsResult`：区分 file chooser 拍照权限和 getUserMedia 权限。
 - FileProvider 路径：cache、files、external cache、Pictures、Download。
 - AndroidBridge 能力状态：文件选择、拍照、getUserMedia、下载、剪贴板、语音兜底。
-- Web 端 APK 环境拍照：优先触发 `input accept=image/* capture=environment`。
+- Web 端 APK 环境拍照：优先使用网页内 getUserMedia，相机 input capture 作为 fallback。
+
+v1.13.3 起，APK 环境拍照策略调整为网页内 getUserMedia 优先，系统相机 `input capture` 仅作为 fallback，以减少外部相机导致的竖屏和图片方向问题。
 
 ## 权限与 Manifest 检查
 
@@ -65,7 +67,7 @@ https://qdowqencjyph.sealoshzh.site/dashboard
 ### input capture 拍照
 
 1. 点击“拍照上传”。
-2. APK WebView 环境下优先触发隐藏 input：
+2. 若网页内 getUserMedia 不可用或摄像头启动失败，弹窗中可使用 fallback 输入：
 
 ```html
 <input type="file" accept="image/*" capture="environment">
@@ -80,7 +82,7 @@ https://qdowqencjyph.sealoshzh.site/dashboard
 
 普通浏览器继续使用 Web 端拍照弹窗和 `navigator.mediaDevices.getUserMedia`。
 
-APK 壳已实现 `WebChromeClient.onPermissionRequest`：
+APK WebView 也优先使用 Web 端拍照弹窗和 `navigator.mediaDevices.getUserMedia`。APK 壳已实现 `WebChromeClient.onPermissionRequest`：
 
 - 只允许白名单域名 `qdowqencjyph.sealoshzh.site`。
 - 仅授权 `PermissionRequest.RESOURCE_VIDEO_CAPTURE`。
@@ -165,6 +167,13 @@ AndroidBridge.getCapabilities()
 - `userAgent`
 
 Web 系统设置中会显示“平板 App 能力”，用于现场确认文件选择、拍照、摄像头授权、下载和剪贴板桥接是否可用。
+
+## 横屏与图片优化
+
+- APK 主界面锁定横屏。
+- 拍照返回、文件选择返回和权限返回后会恢复横屏。
+- 拍照图片和大尺寸图片上传前会尝试压缩优化。
+- 图片预览和缩略图使用懒加载与 `image-orientation: from-image`。
 
 ## 语音输入降级
 
