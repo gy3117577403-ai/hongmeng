@@ -90,6 +90,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.13.7-workorder-header-simplify：周计划导入后的工单主显示以规格为准，当前工单条仅展示客户和规格，支持一键复制规格；其他生产信息保留在右侧信息面板。
 - v1.13.8-drawing-library-home：新增长期图纸资料库首页，按客户和规格管理图纸文件；图纸资料库不显示、不保存图纸已发、配料、未交量、交期、工时等周计划字段。该版本为待部署候选，不代表生产已上线。
 - v1.13.9-drawing-library-cleanup-ui：图纸资料库默认隐藏周计划导入产生的空壳记录；周计划导入不再自动创建可见图纸资料记录，只关联已有记录；新增空资料 dry-run / 确认清理脚本和页面入口，只软删除空 DrawingLibraryItem，不影响生产工单、连接器参数、资料文件或 S3 对象。该版本为待部署候选，不代表生产已上线。
+- v1.13.10-layout-layer-preview-polish：统一顶部菜单、管理员菜单、资料库切换菜单、工单更多菜单和连接器行菜单的浮层层级；图纸资料库详情页移除重复信息大卡片，改为紧凑标题区和分类栏 / 预览区 / 文件列表三栏布局，预览区优先。该版本为待部署候选，不代表生产已上线。
 
 ## 交付文档索引
 
@@ -100,6 +101,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [连接器参数资料指南 v1.10.0](docs/CONNECTOR_PARAMETERS_GUIDE_v1.10.0.md)
 - [图纸资料库使用说明](docs/DRAWING_LIBRARY_GUIDE.md)
 - [图纸资料库空数据清理说明](docs/DRAWING_LIBRARY_CLEANUP_GUIDE.md)
+- [布局层级与预览区优化 QA](docs/QA_LAYOUT_LAYER_PREVIEW_POLISH.md)
 - [生产稳定性指南 v1.12.0](docs/PRODUCTION_STABILITY_GUIDE_v1.12.0.md)
 - [平板交付方案](docs/TABLET_APP_DELIVERY_PLAN.md)
 - [平板真机测试前最终预检计划](docs/PRE_REAL_DATA_TEST_PLAN.md)

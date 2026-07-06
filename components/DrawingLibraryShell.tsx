@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import { PortalMenu } from '@/components/PortalMenu';
 import { safeDisplayFilename } from '@/lib/filenames';
 import type { CurrentUserDTO, DrawingLibraryCustomerDTO, DrawingLibraryFileDTO, DrawingLibraryItemDTO, ResourceCategoryDTO } from '@/types';
 
@@ -86,10 +87,6 @@ function hasText(value?: string | null) {
   return !!text && text !== '-';
 }
 
-function shouldShowCustomerCode(item: DrawingLibraryItemDTO) {
-  return !!item.customerCode && !item.customerName.includes(item.customerCode);
-}
-
 export function DrawingLibraryShell({
   user,
   initialItems,
@@ -124,6 +121,8 @@ export function DrawingLibraryShell({
   const [cleanupConfirm, setCleanupConfirm] = useState('');
   const [cleanupError, setCleanupError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const libraryMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const userMenuButtonRef = useRef<HTMLButtonElement>(null);
 
   const accountName = user.displayName || user.username;
   const visibleItems = useMemo(() => (
@@ -330,25 +329,21 @@ export function DrawingLibraryShell({
           <button className="log-button" type="button" onClick={() => openModal('create')}>新增图纸资料</button>
           <button className="log-button" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>清理空资料</button>
           <div className="library-wrap">
-            <button className="library-button" type="button" onClick={() => setLibOpen(value => !value)}>▱ 资料库</button>
-            {libOpen && (
-              <div className="library-menu">
+            <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLibOpen(value => !value)}>▱ 资料库</button>
+            <PortalMenu open={libOpen} anchorRef={libraryMenuButtonRef} className="library-menu" width={220}>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产工单</button>
                 <button className="active" type="button">图纸资料库 ✓</button>
                 <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
-              </div>
-            )}
+            </PortalMenu>
           </div>
           <div className="user-wrap">
-            <button className="user-button" type="button" onClick={() => setUserMenu(value => !value)}>
+            <button ref={userMenuButtonRef} className="user-button" type="button" onClick={() => setUserMenu(value => !value)}>
               <span>♙</span><b title={accountName}>{accountName}</b><em>⌄</em>
             </button>
-            {userMenu && (
-              <div className="user-menu">
+            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176}>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>返回生产工单</button>
                 <button type="button" onClick={logout}>退出登录</button>
-              </div>
-            )}
+            </PortalMenu>
           </div>
         </div>
       </header>
@@ -417,24 +412,21 @@ export function DrawingLibraryShell({
             <>
               <div className="drawing-detail-head">
                 <div>
-                  <span>图纸信息</span>
+                  <span>规格</span>
                   <h1 title={selectedItem.specification}>{selectedItem.specification}</h1>
-                  <p>{selectedItem.customerName} · {selectedItem.productName || '未设置品名'}</p>
+                  <p>
+                    <b>{selectedItem.customerName}</b>
+                    {hasText(selectedItem.productName) && <em>{selectedItem.productName}</em>}
+                    <small>资料 {selectedItem.completenessText}</small>
+                    <small>{missingLabel(selectedItem, categories)}</small>
+                    <small>更新 {dt(selectedItem.updatedAt)}</small>
+                  </p>
                 </div>
                 <div className="drawing-head-actions">
+                  <button type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传文件'}</button>
                   <button type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>
                   <button className="danger-button subtle" type="button" onClick={deleteItem}>删除</button>
                 </div>
-              </div>
-
-              <div className="drawing-summary-grid">
-                <Info label="客户" value={selectedItem.customerName} />
-                {shouldShowCustomerCode(selectedItem) && <Info label="客户编码" value={selectedItem.customerCode || ''} />}
-                <Info label="产品规格" value={selectedItem.specification} wide />
-                {hasText(selectedItem.productName) && <Info label="品名" value={selectedItem.productName || ''} />}
-                <Info label="完整度" value={`${selectedItem.completenessText} · ${missingLabel(selectedItem, categories)}`} />
-                <Info label="最近更新" value={dt(selectedItem.updatedAt)} />
-                {hasText(selectedItem.remark) && <Info label="备注" value={selectedItem.remark || ''} wide />}
               </div>
 
               <div className={activeFiles.length ? 'drawing-library-main' : 'drawing-library-main no-file-panel'}>
@@ -455,7 +447,7 @@ export function DrawingLibraryShell({
                 <div className="drawing-preview">
                   <div className="drawing-preview-head">
                     <strong>{activeCategory?.name || '资料预览'}</strong>
-                    <button type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传文件'}</button>
+                    <span>{selectedFile ? safeDisplayFilename(selectedFile) : '当前分类暂无文件'}</span>
                     <input ref={fileInputRef} hidden multiple type="file" accept="application/pdf,.pdf,image/*" onChange={event => uploadFiles(event.target.files)} />
                   </div>
 
@@ -583,14 +575,5 @@ export function DrawingLibraryShell({
 
       {msg && <div className="status-toast">{msg}</div>}
     </main>
-  );
-}
-
-function Info({ label, value, wide = false }: { label: string; value: string; wide?: boolean }) {
-  return (
-    <div className={wide ? 'drawing-info wide' : 'drawing-info'}>
-      <span>{label}</span>
-      <strong title={value}>{value}</strong>
-    </div>
   );
 }

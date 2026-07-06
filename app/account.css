@@ -15,6 +15,7 @@
   background: #fff;
   color: #424956;
   box-shadow: var(--shadow-soft);
+  white-space: nowrap;
 }
 
 .user-button span {
@@ -45,7 +46,7 @@
   position: absolute;
   top: 56px;
   right: 0;
-  z-index: 9;
+  z-index: var(--z-dropdown);
   width: 152px;
   padding: 10px;
   border: 1px solid var(--line);
@@ -73,7 +74,7 @@
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  z-index: var(--z-modal);
   display: grid;
   place-items: center;
   padding: 24px;

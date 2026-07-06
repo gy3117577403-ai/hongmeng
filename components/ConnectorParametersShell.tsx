@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { PortalMenu } from '@/components/PortalMenu';
 import { writeClipboardText } from '@/lib/client-platform';
 import type {
   ConnectorParameterDTO,
@@ -155,6 +156,9 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const [rowMenuId, setRowMenuId] = useState<string | null>(null);
   const fileImportRef = useRef<HTMLInputElement>(null);
   const sourceFileRef = useRef<HTMLInputElement>(null);
+  const libraryMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const userMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const rowMenuButtonRef = useRef<HTMLButtonElement | null>(null);
 
   const pageSize = 80;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -655,26 +659,22 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
         <div className="top-actions">
           <button className="log-button" type="button" onClick={loadLogs}>操作日志</button>
           <div className="library-wrap">
-            <button className="library-button" type="button" onClick={() => setLib(v => !v)}>▱ 资料库</button>
-            {lib && (
-              <div className="library-menu">
+            <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLib(v => !v)}>▱ 资料库</button>
+            <PortalMenu open={lib} anchorRef={libraryMenuButtonRef} className="library-menu" width={220}>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产工单</button>
                 <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
                 <button className="active" type="button">连接器参数资料 ✓</button>
-              </div>
-            )}
+            </PortalMenu>
           </div>
           <div className="user-wrap">
-            <button className="user-button" type="button" onClick={() => setUserMenu(v => !v)}>
+            <button ref={userMenuButtonRef} className="user-button" type="button" onClick={() => setUserMenu(v => !v)}>
               <span>♙</span><b title={accountName}>{accountName}</b><em>⌄</em>
             </button>
-            {userMenu && (
-              <div className="user-menu">
+            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176}>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>返回生产资料</button>
                 <button type="button" onClick={loadLogs}>操作日志</button>
                 <button type="button" onClick={logout}>退出登录</button>
-              </div>
-            )}
+            </PortalMenu>
           </div>
         </div>
       </header>
@@ -783,14 +783,21 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                         <div className="connector-row-actions">
                           <button type="button" onClick={() => openModal('edit', item)}>编辑</button>
                           <div className="connector-more-wrap">
-                            <button type="button" aria-expanded={rowMenuId === item.id} onClick={() => setRowMenuId(rowMenuId === item.id ? null : item.id)}>更多</button>
-                            {rowMenuId === item.id && (
-                              <div className="connector-row-menu">
+                            <button
+                              type="button"
+                              aria-expanded={rowMenuId === item.id}
+                              onClick={event => {
+                                rowMenuButtonRef.current = event.currentTarget;
+                                setRowMenuId(rowMenuId === item.id ? null : item.id);
+                              }}
+                            >
+                              更多
+                            </button>
+                            <PortalMenu open={rowMenuId === item.id} anchorRef={rowMenuButtonRef} className="connector-row-menu" width={168}>
                                 <button type="button" onClick={() => toggleHighlight(item)}>{item.isHighlighted ? '取消重点' : '标记重点'}</button>
                                 <button type="button" onClick={() => copyParameter(item)}>复制整行参数</button>
                                 <button className="danger-text" type="button" onClick={() => { setRowMenuId(null); setDeleteTarget(item); }}>删除</button>
-                              </div>
-                            )}
+                            </PortalMenu>
                           </div>
                         </div>
                       </td>

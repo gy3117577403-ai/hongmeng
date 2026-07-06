@@ -5,6 +5,7 @@ import QRCode from 'qrcode';
 import { CameraCaptureModal } from '@/components/CameraCaptureModal';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platform';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
@@ -480,6 +481,9 @@ export default function DashboardShell({
   const toolRef = useRef<HTMLElement>(null);
   const toolRailRef = useRef<HTMLDivElement>(null);
   const toolResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const libraryMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const userMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const moreActionsButtonRef = useRef<HTMLButtonElement>(null);
 
   const list = useMemo(() => {
     const text = kw.trim().toLowerCase();
@@ -1787,31 +1791,27 @@ export default function DashboardShell({
           <button className="language-button" type="button">CN</button>
           <button className="log-button" type="button" onClick={() => loadLogs('all')}>操作日志</button>
           <div className="library-wrap">
-            <button className="library-button" type="button" onClick={() => setLib(!lib)}>▱ 资料库</button>
-            {lib && (
-              <div className="library-menu">
+            <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLib(!lib)}>▱ 资料库</button>
+            <PortalMenu open={lib} anchorRef={libraryMenuButtonRef} className="library-menu" width={220}>
                 <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
                 <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
                 <button className="active" type="button">▤ 生产工单 ✓</button>
-              </div>
-            )}
+            </PortalMenu>
           </div>
           <div className="user-wrap">
-            <button className="user-button" type="button" onClick={() => setUserMenu(!userMenu)}>
+            <button ref={userMenuButtonRef} className="user-button" type="button" onClick={() => setUserMenu(!userMenu)}>
               <span>♙</span>
               <b title={accountName}>{accountName}</b>
               <em>⌄</em>
             </button>
-            {userMenu && (
-              <div className="user-menu">
+            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176}>
                 <button type="button" onClick={openSystemSettings}>系统设置</button>
                 <button type="button" onClick={openAccounts}>账号管理</button>
                 <button type="button" onClick={openTrash}>回收站</button>
                 <button type="button" onClick={() => { setUserMenu(false); setHelpOpen(true); }}>使用帮助</button>
                 <button type="button" onClick={openPasswordDialog}>修改密码</button>
                 <button type="button" onClick={logout}>退出登录</button>
-              </div>
-            )}
+            </PortalMenu>
           </div>
         </div>
       </header>
@@ -1914,9 +1914,8 @@ export default function DashboardShell({
             <div className="order-strip-actions">
               <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
               <div className="more-actions-wrap">
-                <button className="strip-more-button" type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多</button>
-                {moreActionsOpen && (
-                  <div className="more-actions-menu">
+                <button ref={moreActionsButtonRef} className="strip-more-button" type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多</button>
+                <PortalMenu open={moreActionsOpen} anchorRef={moreActionsButtonRef} className="more-actions-menu" width={190}>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && openOrderModal('edit', order); }}>编辑工单</button>
                     {order?.drawingLibraryItemId && <button type="button" onClick={() => { location.href = `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId || '')}`; }}>查看图纸资料库</button>}
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && setOrderDeleteTarget(order); }}>删除工单</button>
@@ -1925,8 +1924,7 @@ export default function DashboardShell({
                     <button type="button" onClick={() => { setMoreActionsOpen(false); openQrDialog(); }}>打印二维码</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); printSummary(); }}>打印摘要</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); refresh(); }}>刷新</button>
-                  </div>
-                )}
+                </PortalMenu>
               </div>
             </div>
           </div>
