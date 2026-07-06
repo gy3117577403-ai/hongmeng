@@ -22,7 +22,7 @@ const actionGroups: Record<string, string[]> = {
   user: ['create_user', 'update_user', 'disable_user', 'reset_user_password'],
   export: ['export_work_orders', 'export_resource_files', 'export_operation_logs', 'export_metadata'],
   import: ['import_work_orders'],
-  field: ['copy_work_order_link', 'print_work_order_qr', 'export_diagnostics'],
+  field: ['copy_work_order_link', 'copy_work_order_spec', 'print_work_order_qr', 'export_diagnostics'],
   connector: [
     'create_connector_parameter',
     'update_connector_parameter',
@@ -42,7 +42,7 @@ const actionGroups: Record<string, string[]> = {
   ],
 };
 
-const writableActions = new Set(['copy_work_order_link', 'print_work_order_qr', 'copy_connector_parameter']);
+const writableActions = new Set(['copy_work_order_link', 'copy_work_order_spec', 'print_work_order_qr', 'copy_connector_parameter']);
 
 function sanitize(value: unknown): Prisma.InputJsonValue | null {
   if (value === null || value === undefined) return null;

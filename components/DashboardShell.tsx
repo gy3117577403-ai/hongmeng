@@ -221,6 +221,7 @@ const actionText: Record<string, string> = {
   restore_resource_file: '恢复文件',
   move_resource_file: '移动文件',
   copy_work_order_link: '复制工单链接',
+  copy_work_order_spec: '复制规格',
   print_work_order_qr: '打印工单二维码',
   export_diagnostics: '导出诊断信息',
   create_connector_parameter: '新增连接器参数',
@@ -388,8 +389,6 @@ export default function DashboardShell({
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [msg, setMsg] = useState('');
   const [syncing, setSyncing] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
-  const [lastSyncedAt, setLastSyncedAt] = useState('');
   const [lib, setLib] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -1121,8 +1120,6 @@ export default function DashboardShell({
       if (latestUploadedFileId) {
         await loadFiles(targetWorkOrderId, targetCategoryId, latestUploadedFileId);
         await loadCategoryCounts(targetWorkOrderId);
-        setLastSyncedAt(new Date().toISOString());
-        setSyncStatus('success');
       }
       setMsg(`批量上传完成：成功 ${ok} 个，失败 ${failed} 个`);
     } catch {
@@ -1150,8 +1147,6 @@ export default function DashboardShell({
     if (result.ok) {
       await loadFiles(job.workOrderId, job.categoryId, result.fileId);
       await loadCategoryCounts(job.workOrderId);
-      setLastSyncedAt(new Date().toISOString());
-      setSyncStatus('success');
     }
     setMsg(result.ok ? `已重试成功：${job.name}` : `重试失败：${result.message}`);
   }
@@ -1178,8 +1173,6 @@ export default function DashboardShell({
     if (latestUploadedFileId && targetWorkOrderId && targetCategoryId) {
       await loadFiles(targetWorkOrderId, targetCategoryId, latestUploadedFileId);
       await loadCategoryCounts(targetWorkOrderId);
-      setLastSyncedAt(new Date().toISOString());
-      setSyncStatus('success');
     }
     setMsg(`重试完成：成功 ${ok} 个，失败 ${failed} 个`);
   }
@@ -1193,11 +1186,9 @@ export default function DashboardShell({
     const targetCategoryId = category?.id || cat;
     const targetFileId = file?.id || sel;
     setSyncing(true);
-    setSyncStatus('idle');
     try {
       const nextOrders = await refreshOrders(targetOrderId, true);
       if (!nextOrders.some(item => item.id === targetOrderId)) {
-        setSyncStatus('error');
         setMsg('当前工单不存在或已删除');
         return;
       }
@@ -1206,11 +1197,8 @@ export default function DashboardShell({
       await loadCategoryCounts(targetOrderId, true);
       setWo(targetOrderId);
       setSel(targetFileId && nextFiles.some(item => item.id === targetFileId) ? targetFileId : nextFiles[0]?.id || '');
-      setLastSyncedAt(new Date().toISOString());
-      setSyncStatus('success');
       setMsg('已同步当前工单资料');
     } catch {
-      setSyncStatus('error');
       setMsg('同步失败，请检查网络后重试');
     } finally {
       setSyncing(false);
@@ -1681,6 +1669,26 @@ export default function DashboardShell({
     await writeClientLog('copy_work_order_link', 'work_order', order.id, { code: order.code });
   }
 
+  async function copySpecification() {
+    if (!order) {
+      setMsg('暂无可复制内容');
+      return;
+    }
+    const specification = order.specification?.trim();
+    const text = specification || order.code?.trim() || '';
+    if (!text) {
+      setMsg('暂无可复制内容');
+      return;
+    }
+    try {
+      await writeClipboardText(text);
+      setMsg(specification ? '已复制规格' : '规格未设置，已复制内部编号');
+      await writeClientLog('copy_work_order_spec', 'work_order', order.id, { code: order.code, hasSpecification: !!specification });
+    } catch {
+      setMsg('复制失败，请手动选择规格复制');
+    }
+  }
+
   async function openQrDialog() {
     if (!order) return;
     const link = workOrderLink(order);
@@ -1887,24 +1895,12 @@ export default function DashboardShell({
         <section className="main-card">
           <div className="current-order-strip">
             <div className="order-strip-info">
-              <span className="order-strip-chip customer">客户：{customerLabel(order)}</span>
-              <strong>{order ? workOrderDisplayCode(order) : '暂无工单'}</strong>
-              <span className="order-strip-product">{order?.productName || '请选择工单'}</span>
-              {order?.specification && <span className="order-strip-chip spec">规格：{order.specification}</span>}
-              {order?.uncompletedQty && <span className="order-strip-chip qty">未交：{order.uncompletedQty}</span>}
-              {(order?.drawingStatus || order?.materialStatus) && <span className="order-strip-chip material">{orderDrawingMaterialLabel(order)}</span>}
-              {(order?.deliveryDay || order?.plannedAt) && <span className="order-strip-chip delivery">交期：{orderDeliveryLabel(order)}</span>}
-              {order && <button className={`flow-chip ${normalizeFlowStage(order.stage)}`} type="button" onClick={e => openQuickMenu('stage', order, e)}>{flowText(order.stage)}</button>}
-              {order && <button className={`priority-chip ${order.priority}`} type="button" onClick={e => openQuickMenu('priority', order, e)}>{priorityText[order.priority] || '一般'}</button>}
-              <span className={order?.plannedAt ? `planned-chip ${plannedClass(order)}` : 'planned-chip'}>{order?.plannedAt ? shortDt(order.plannedAt) : '计划未设'}</span>
-              <span className={`completion-pill ${completion.key}`} title={missingCategoryText}>{completion.text}</span>
+              <span className="order-strip-chip customer" title={customerLabel(order)}>客户：{customerLabel(order)}</span>
+              <span className="order-strip-chip spec simplified" title={order?.specification || order?.code || '未设置'}>规格：{order?.specification?.trim() || '未设置'}</span>
+              <button className="copy-spec-button" type="button" disabled={!order?.specification && !order?.code} onClick={copySpecification} title="复制规格">复制规格</button>
             </div>
             <div className="order-strip-actions">
               <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
-              <button className={`sync-button ${syncStatus}`} type="button" disabled={syncing || !order} onClick={syncCurrentWorkOrder}>
-                {syncing ? '同步中' : syncStatus === 'success' ? '已同步' : '同步'}
-              </button>
-              {lastSyncedAt && <span className="sync-time">同步 {dt(lastSyncedAt)}</span>}
               <div className="more-actions-wrap">
                 <button className="strip-more-button" type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多</button>
                 {moreActionsOpen && (
@@ -1912,6 +1908,7 @@ export default function DashboardShell({
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && openOrderModal('edit', order); }}>编辑工单</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && setOrderDeleteTarget(order); }}>删除工单</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); copy(); }}>复制链接</button>
+                    <button type="button" onClick={() => { setMoreActionsOpen(false); syncCurrentWorkOrder(); }}>同步当前工单资料</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); openQrDialog(); }}>打印二维码</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); printSummary(); }}>打印摘要</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); refresh(); }}>刷新</button>
@@ -2040,10 +2037,17 @@ export default function DashboardShell({
                       <Info label="当前分类" value={currentCategoryName} />
                       {order && (
                         <>
+                          <Info label="客户" value={customerLabel(order)} />
                           <Info label="规格" value={order.specification || '-'} />
+                          <Info label="品名" value={order.productName || '-'} wrap />
+                          <Info label="内部编号" value={order.code || '-'} />
+                          <Info label="状态" value={flowText(order.stage)} />
+                          <Info label="优先级" value={priorityText[order.priority] || order.priority || '-'} />
                           <Info label="未交量" value={order.uncompletedQty || '-'} />
                           <Info label="交期" value={orderDeliveryLabel(order)} />
-                          <Info label="图纸 / 配料" value={orderDrawingMaterialLabel(order)} wrap />
+                          <Info label="计划时间" value={order.plannedAt ? dt(order.plannedAt) : '-'} />
+                          <Info label="图纸状态" value={order.drawingStatus || '-'} />
+                          <Info label="配料状态" value={order.materialStatus || '-'} />
                           <Info label="订单日期" value={order.orderDate ? dt(order.orderDate, false) : '-'} />
                           <Info label="业务员" value={order.salesperson || '-'} />
                           <Info label="客户等级" value={order.customerLevel || '-'} />

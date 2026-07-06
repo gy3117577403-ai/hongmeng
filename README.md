@@ -86,6 +86,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.13.4-tablet-final-pretest：PWA / APK 缓存收口、当前工单同步按钮、旧工单资料安全清理脚本、seed 样例工单开关。该版本用于平板真实数据测试前预检，不是生产发布记录。
 - v1.13.5-weekly-plan-import：支持周计划 `.xls` / `.xlsx` / `.csv` 工单导入，新增预览/确认流程、SO 单号错位行识别、合计行跳过、周几转计划日期、图纸/配料状态映射。该功能用于后续真实工单批量导入。
 - v1.13.6-weekly-plan-production-cleanup：周计划工单主显示改为规格 / 生产编号，保留内部 `WO-*` 编号；新增本周生产工单清理预览和 `CLEAR_WEEK` 确认机制，仅设置 `planActive=false`，不删除资料文件、S3 对象或连接器参数。
+- v1.13.7-workorder-header-simplify：周计划导入后的工单主显示以规格为准，当前工单条仅展示客户和规格，支持一键复制规格；其他生产信息保留在右侧信息面板。
 
 ## 交付文档索引
 
