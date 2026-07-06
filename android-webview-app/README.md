@@ -94,6 +94,19 @@ APK 不内置账号、密码、token、数据库连接串、S3 Key 或 SESSION_S
 - `READ_EXTERNAL_STORAGE`：兼容低版本文件选择。
 - `WRITE_EXTERNAL_STORAGE`：兼容低版本下载保存。
 
+不申请麦克风权限。当前 APK 内语音输入如果 WebView 不支持 Web Speech API，会提示使用键盘输入。
+
+## APK 支持的设备能力
+
+- 文件选择：支持 PDF、图片和普通文件选择。
+- 多选：Web 页面 input 支持 multiple 时，壳层允许多选。
+- 拍照上传：`accept=image/*` 且 Web 页面请求 capture 时，会优先调起系统相机。
+- 下载：使用系统 `DownloadManager`，下载完成后显示系统通知。
+- PDF 系统打开：PDF 预览失败时可下载或调起系统处理。
+- 剪贴板：提供 `AndroidBridge.copyText`，Web 端复制链接优先走壳层剪贴板。
+- 返回键：WebView 可后退时返回上一页；不能后退时双击退出。
+- 诊断能力：提供 `AndroidBridge.getCapabilities()`，用于排查文件选择、相机、下载、剪贴板和语音能力。
+
 ## 文件上传 / 拍照 / 下载说明
 
 - WebView 开启 JavaScript 和 DOM Storage。
@@ -101,6 +114,22 @@ APK 不内置账号、密码、token、数据库连接串、S3 Key 或 SESSION_S
 - `accept=image/*` 时提供图片选择和拍照入口。
 - `accept=application/pdf` 时提供文件选择入口。
 - 下载使用系统 `DownloadManager`，不会静默失败；如系统下载服务不可用，会尝试调起系统浏览器。
+
+拍照上传测试方法：
+
+1. 打开 APK 并登录。
+2. 选择一个工单和图片分类。
+3. 点击“拍照上传”。
+4. 首次使用时允许相机权限。
+5. 拍照确认后等待上传完成。
+6. 回到资料库确认图片能预览。
+
+下载测试方法：
+
+1. 打开一个 PDF 或图片资料。
+2. 点击“下载当前”。
+3. 确认系统下载通知出现。
+4. 打开系统下载目录验证文件存在。
 
 ## PDF 预览兼容说明
 
@@ -150,9 +179,16 @@ qdowqencjyph.sealoshzh.site
 1. 检查相机权限。
 2. 重新打开文件选择。
 3. 确认 Web 页面上传入口接受图片类型。
+4. 如权限被拒绝，在系统设置中重新允许相机权限，或改用“上传图片”。
 
 如果下载失败：
 
 1. 检查系统下载管理器是否可用。
 2. 检查存储权限。
 3. 用浏览器打开同一文件下载链接验证。
+
+如果语音输入不可用：
+
+1. 当前 APK 仅做 Web Speech API 降级提示。
+2. 使用键盘输入。
+3. 后续如需原生语音识别，再单独增加 Android SpeechRecognizer。

@@ -4,10 +4,13 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
@@ -20,6 +23,7 @@ import android.view.View;
 import android.view.Window;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
+import android.webkit.JavascriptInterface;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -40,16 +44,21 @@ import androidx.core.content.FileProvider;
 import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 
 public class MainActivity extends Activity {
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int CAMERA_PERMISSION_REQUEST = 1002;
+    private static final long EXIT_INTERVAL_MS = 2000L;
 
     private WebView webView;
     private View loadingOverlay;
     private View errorOverlay;
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraImageUri;
+    private String[] pendingAcceptTypes;
+    private boolean pendingAllowMultiple;
+    private long lastBackPressedAt;
 
     private String startUrl;
     private String allowedHost;
@@ -174,6 +183,7 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
+        settings.setLoadsImagesAutomatically(true);
         String baseUserAgent = settings.getUserAgentString();
         if (baseUserAgent == null) {
             baseUserAgent = "";
@@ -194,11 +204,12 @@ public class MainActivity extends Activity {
         webView.setWebViewClient(new SafeWebViewClient());
         webView.setWebChromeClient(new UploadChromeClient());
         webView.setDownloadListener(createDownloadListener());
+        webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
     }
 
     private DownloadListener createDownloadListener() {
         return (url, userAgent, contentDisposition, mimeType, contentLength) -> {
-            Uri uri = Uri.parse(url);
+            Uri uri = resolveDownloadUri(url);
             if (!isAllowedUri(uri)) {
                 confirmExternalOpen(uri);
                 return;
@@ -206,12 +217,14 @@ public class MainActivity extends Activity {
 
             try {
                 DownloadManager.Request request = new DownloadManager.Request(uri);
-                String fileName = URLUtil.guessFileName(url, contentDisposition, mimeType);
-                String cookies = CookieManager.getInstance().getCookie(url);
+                String fileName = URLUtil.guessFileName(uri.toString(), contentDisposition, mimeType);
+                String cookies = CookieManager.getInstance().getCookie(uri.toString());
                 request.setTitle(fileName);
                 request.setDescription("工单资料库文件下载");
-                request.setMimeType(mimeType);
-                request.addRequestHeader("User-Agent", userAgent);
+                if (mimeType != null && mimeType.length() > 0) {
+                    request.setMimeType(mimeType);
+                }
+                request.addRequestHeader("User-Agent", userAgent != null && userAgent.length() > 0 ? userAgent : webView.getSettings().getUserAgentString());
                 if (cookies != null) {
                     request.addRequestHeader("Cookie", cookies);
                 }
@@ -232,6 +245,20 @@ public class MainActivity extends Activity {
         };
     }
 
+    private Uri resolveDownloadUri(String url) {
+        Uri uri = Uri.parse(url);
+        if (uri.getScheme() != null) {
+            return uri;
+        }
+        Uri base = Uri.parse(startUrl);
+        Uri relative = Uri.parse(url.startsWith("/") ? url : "/" + url);
+        return base.buildUpon()
+            .encodedPath(relative.getEncodedPath())
+            .encodedQuery(relative.getEncodedQuery())
+            .encodedFragment(relative.getEncodedFragment())
+            .build();
+    }
+
     private boolean isAllowedUri(Uri uri) {
         String scheme = uri.getScheme();
         String host = uri.getHost();
@@ -240,7 +267,8 @@ public class MainActivity extends Activity {
     }
 
     private void injectWebViewFlag(WebView view) {
-        String script = "window.__HONGMENG_WEBVIEW__=true;";
+        String script = "window.__HONGMENG_WEBVIEW__=true;"
+            + "window.__HONGMENG_APK_CAPABILITIES__=window.AndroidBridge&&window.AndroidBridge.getCapabilities?window.AndroidBridge.getCapabilities():'';";
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             view.evaluateJavascript(script, null);
         } else {
@@ -261,7 +289,9 @@ public class MainActivity extends Activity {
         try {
             startActivity(new Intent(Intent.ACTION_VIEW, uri));
         } catch (ActivityNotFoundException exception) {
-            Toast.makeText(this, "未找到可打开链接的应用", Toast.LENGTH_SHORT).show();
+            String target = uri.toString().toLowerCase();
+            String message = target.contains("pdf") ? "未找到可打开 PDF 的应用，请先下载文件。" : "未找到可打开链接的应用";
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -271,6 +301,48 @@ public class MainActivity extends Activity {
 
     private void showError(boolean visible) {
         errorOverlay.setVisibility(visible ? View.VISIBLE : View.GONE);
+    }
+
+    private boolean hasCamera() {
+        return getPackageManager().hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY);
+    }
+
+    private String safeJson(String value) {
+        if (value == null) {
+            return "";
+        }
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    private final class AndroidBridge {
+        @JavascriptInterface
+        public void copyText(String text) {
+            if (text == null) {
+                return;
+            }
+            runOnUiThread(() -> {
+                ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                if (clipboard != null) {
+                    clipboard.setPrimaryClip(ClipData.newPlainText("工单资料库", text));
+                    Toast.makeText(MainActivity.this, "已复制", Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(MainActivity.this, "剪贴板不可用，请手动复制", Toast.LENGTH_SHORT).show();
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public String getCapabilities() {
+            String userAgent = webView != null ? webView.getSettings().getUserAgentString() : "";
+            return "{"
+                + "\"fileChooser\":true,"
+                + "\"cameraCapture\":" + (hasCamera() ? "true" : "false") + ","
+                + "\"downloadManager\":true,"
+                + "\"clipboard\":true,"
+                + "\"speech\":false,"
+                + "\"userAgent\":\"" + safeJson(userAgent) + "\""
+                + "}";
+        }
     }
 
     private final class SafeWebViewClient extends WebViewClient {
@@ -323,35 +395,80 @@ public class MainActivity extends Activity {
                 fileCallback.onReceiveValue(null);
             }
             fileCallback = filePathCallback;
+            pendingAcceptTypes = fileChooserParams.getAcceptTypes();
+            pendingAllowMultiple = fileChooserParams.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE;
 
-            Intent contentIntent = new Intent(Intent.ACTION_GET_CONTENT);
-            contentIntent.addCategory(Intent.CATEGORY_OPENABLE);
-            contentIntent.setType(resolveMimeType(fileChooserParams.getAcceptTypes()));
-
-            Intent chooser = new Intent(Intent.ACTION_CHOOSER);
-            chooser.putExtra(Intent.EXTRA_INTENT, contentIntent);
-            chooser.putExtra(Intent.EXTRA_TITLE, "选择工单资料");
-
-            ArrayList<Intent> initialIntents = new ArrayList<>();
-            if (acceptsImage(fileChooserParams.getAcceptTypes())) {
-                Intent cameraIntent = createCameraIntent();
-                if (cameraIntent != null) {
-                    initialIntents.add(cameraIntent);
-                }
+            boolean wantsImage = acceptsImage(pendingAcceptTypes);
+            boolean captureOnly = fileChooserParams.isCaptureEnabled() && wantsImage;
+            if (captureOnly && launchCameraOrRequestPermission()) {
+                return true;
             }
 
-            if (!initialIntents.isEmpty()) {
-                chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, initialIntents.toArray(new Intent[0]));
-            }
+            return launchFileChooser(pendingAcceptTypes, pendingAllowMultiple, wantsImage);
+        }
+    }
 
-            try {
-                startActivityForResult(chooser, FILE_CHOOSER_REQUEST);
-            } catch (ActivityNotFoundException exception) {
-                fileCallback = null;
-                Toast.makeText(MainActivity.this, "未找到文件选择器", Toast.LENGTH_SHORT).show();
-                return false;
+    private boolean launchCameraOrRequestPermission() {
+        if (!hasCamera()) {
+            Toast.makeText(this, "未检测到可用相机，请选择本地图片", Toast.LENGTH_SHORT).show();
+            return false;
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
+                return true;
             }
+        }
+        Intent cameraIntent = createCameraIntent();
+        if (cameraIntent == null) {
+            Toast.makeText(this, "相机不可用，请选择本地图片", Toast.LENGTH_SHORT).show();
+            return false;
+        }
+        try {
+            startActivityForResult(cameraIntent, FILE_CHOOSER_REQUEST);
             return true;
+        } catch (ActivityNotFoundException exception) {
+            Toast.makeText(this, "相机不可用，请选择本地图片", Toast.LENGTH_SHORT).show();
+            return false;
+        }
+    }
+
+    private boolean launchFileChooser(String[] acceptTypes, boolean allowMultiple, boolean includeCamera) {
+        Intent contentIntent = Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT
+            ? new Intent(Intent.ACTION_OPEN_DOCUMENT)
+            : new Intent(Intent.ACTION_GET_CONTENT);
+        contentIntent.addCategory(Intent.CATEGORY_OPENABLE);
+        contentIntent.setType(resolveMimeType(acceptTypes));
+        String[] mimeTypes = mimeTypesFor(acceptTypes);
+        if (mimeTypes.length > 0) {
+            contentIntent.putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes);
+        }
+        contentIntent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, allowMultiple);
+        contentIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+
+        Intent chooser = new Intent(Intent.ACTION_CHOOSER);
+        chooser.putExtra(Intent.EXTRA_INTENT, contentIntent);
+        chooser.putExtra(Intent.EXTRA_TITLE, "选择工单资料");
+
+        ArrayList<Intent> initialIntents = new ArrayList<>();
+        if (includeCamera) {
+            Intent cameraIntent = createCameraIntent();
+            if (cameraIntent != null) {
+                initialIntents.add(cameraIntent);
+            }
+        }
+
+        if (!initialIntents.isEmpty()) {
+            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, initialIntents.toArray(new Intent[0]));
+        }
+
+        try {
+            startActivityForResult(chooser, FILE_CHOOSER_REQUEST);
+            return true;
+        } catch (ActivityNotFoundException exception) {
+            releaseFileCallback(null);
+            Toast.makeText(this, "未找到文件选择器", Toast.LENGTH_SHORT).show();
+            return false;
         }
     }
 
@@ -382,6 +499,22 @@ public class MainActivity extends Activity {
         return "*/*";
     }
 
+    private String[] mimeTypesFor(String[] acceptTypes) {
+        if (acceptTypes == null || acceptTypes.length == 0) {
+            return new String[0];
+        }
+        ArrayList<String> types = new ArrayList<>();
+        for (String type : acceptTypes) {
+            if (type == null || type.length() == 0 || "*/*".equals(type)) {
+                return new String[0];
+            }
+            if ("image/*".equals(type) || "application/pdf".equals(type)) {
+                types.add(type);
+            }
+        }
+        return types.toArray(new String[0]);
+    }
+
     private boolean acceptsImage(String[] acceptTypes) {
         if (acceptTypes == null || acceptTypes.length == 0) {
             return true;
@@ -396,9 +529,6 @@ public class MainActivity extends Activity {
 
     private Intent createCameraIntent() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                requestPermissions(new String[]{Manifest.permission.CAMERA}, CAMERA_PERMISSION_REQUEST);
-            }
             return null;
         }
 
@@ -412,6 +542,10 @@ public class MainActivity extends Activity {
             cameraImageUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", imageFile);
             cameraIntent.putExtra(MediaStore.EXTRA_OUTPUT, cameraImageUri);
             cameraIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            List<ResolveInfo> activities = getPackageManager().queryIntentActivities(cameraIntent, PackageManager.MATCH_DEFAULT_ONLY);
+            for (ResolveInfo activity : activities) {
+                grantUriPermission(activity.activityInfo.packageName, cameraImageUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            }
             return cameraIntent;
         } catch (IOException exception) {
             Toast.makeText(this, "相机临时文件创建失败", Toast.LENGTH_SHORT).show();
@@ -425,6 +559,16 @@ public class MainActivity extends Activity {
             directory = getCacheDir();
         }
         return File.createTempFile("workorder-camera-", ".jpg", directory);
+    }
+
+    private void releaseFileCallback(Uri[] results) {
+        if (fileCallback != null) {
+            fileCallback.onReceiveValue(results);
+        }
+        fileCallback = null;
+        cameraImageUri = null;
+        pendingAcceptTypes = null;
+        pendingAllowMultiple = false;
     }
 
     @Override
@@ -451,9 +595,7 @@ public class MainActivity extends Activity {
             }
         }
 
-        fileCallback.onReceiveValue(results);
-        fileCallback = null;
-        cameraImageUri = null;
+        releaseFileCallback(results);
     }
 
     @Override
@@ -461,7 +603,14 @@ public class MainActivity extends Activity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == CAMERA_PERMISSION_REQUEST) {
             boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-            Toast.makeText(this, granted ? "相机权限已允许，请重新选择拍照上传" : "未授予相机权限，可继续选择本地文件", Toast.LENGTH_SHORT).show();
+            if (granted) {
+                if (!launchCameraOrRequestPermission()) {
+                    launchFileChooser(pendingAcceptTypes, pendingAllowMultiple, true);
+                }
+            } else {
+                releaseFileCallback(null);
+                Toast.makeText(this, "摄像头权限被拒绝，请在系统设置中开启权限或使用上传图片。", Toast.LENGTH_LONG).show();
+            }
         }
     }
 
@@ -469,6 +618,12 @@ public class MainActivity extends Activity {
     public void onBackPressed() {
         if (webView != null && webView.canGoBack()) {
             webView.goBack();
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastBackPressedAt > EXIT_INTERVAL_MS) {
+            lastBackPressedAt = now;
+            Toast.makeText(this, "再按一次退出工单资料库", Toast.LENGTH_SHORT).show();
             return;
         }
         super.onBackPressed();

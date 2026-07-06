@@ -73,6 +73,20 @@ Android WebView 中 PDF.js 可能遇到 worker 加载、Cookie、同源内容流
 
 如果 WebView 仍无法直接渲染某个 PDF，可先下载 PDF，或通过“用系统打开”让系统 PDF 应用处理。
 
+## Android APK 设备能力补齐
+
+v1.13.1-tablet-apk-device-fix 对 APK WebView 壳补齐了从浏览器切换到 App 后容易缺失的设备能力：
+
+- 文件选择：支持 PDF、图片、普通文件和 multiple 回调。
+- 拍照上传：`capture=image/*` 场景优先调起系统相机，使用 FileProvider `content://` 临时图片 URI。
+- 下载：使用系统 DownloadManager，携带 Cookie 和 User-Agent，支持当前文件、ZIP 包和 PDF 兜底下载。
+- PDF 系统打开：无法预览时可下载或交给系统 PDF 应用处理。
+- 剪贴板：Web 端复制链接优先调用 `AndroidBridge.copyText`。
+- 返回键：WebView 可后退时返回上一页，否则 2 秒内双击退出。
+- 壳能力诊断：`AndroidBridge.getCapabilities()` 可返回文件选择、相机、下载、剪贴板、语音等能力。
+
+语音输入仍优先依赖浏览器 Web Speech API。若 Android WebView 不支持，页面会明确提示“当前 APK 暂不支持语音输入，请使用键盘输入”，不影响手动输入。
+
 ## HarmonyOS NEXT 风险说明
 
 部分鸿蒙平板可以安装 Android APK，部分 HarmonyOS NEXT 设备可能不再支持 APK。需要在目标设备上确认系统版本和 APK 安装能力。

@@ -6,6 +6,7 @@ import { CameraCaptureModal } from '@/components/CameraCaptureModal';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
+import { writeClipboardText } from '@/lib/client-platform';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import type { ChangeSnapshotDTO, CurrentUserDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
@@ -1391,7 +1392,7 @@ export default function DashboardShell({
     if (!order) return;
     const u = workOrderLink(order);
     try {
-      await navigator.clipboard.writeText(u);
+      await writeClipboardText(u);
       setMsg('当前工单链接已复制');
     } catch {
       setMsg(u);

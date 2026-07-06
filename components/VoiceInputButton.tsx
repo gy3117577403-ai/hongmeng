@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { hasAndroidBridge, isAndroidWebView } from '@/lib/client-platform';
 
 type SpeechAlternativeLike = { transcript: string };
 type SpeechResultLike = {
@@ -98,9 +99,11 @@ export function VoiceInputButton({
   const [interim, setInterim] = useState('');
   const [finalText, setFinalText] = useState('');
   const [error, setError] = useState('');
+  const [apkWebView, setApkWebView] = useState(false);
 
   useEffect(() => {
     setSupported(typeof window !== 'undefined' && !!(window.SpeechRecognition || window.webkitSpeechRecognition));
+    setApkWebView(isAndroidWebView() || hasAndroidBridge());
     return () => {
       if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
       recognitionRef.current?.abort();
@@ -169,7 +172,7 @@ export function VoiceInputButton({
     window.dispatchEvent(new CustomEvent('hongmeng:voice-open', { detail: instanceIdRef.current }));
     if (!supported) {
       setPanelOpen(true);
-      setError('当前浏览器不支持语音输入。');
+      setError(apkWebView ? '当前 APK 暂不支持语音输入，请使用键盘输入。' : '当前浏览器不支持语音输入，请使用键盘输入。');
       setStatus('error');
       return;
     }
@@ -250,17 +253,18 @@ export function VoiceInputButton({
   const disabled = supported === false;
   const active = status === 'listening' || status === 'processing';
   const panelText = [finalText, interim].filter(Boolean).join(interim ? ' ' : '');
+  const unsupportedTitle = apkWebView ? '当前 APK 暂不支持语音输入，请使用键盘输入' : '当前浏览器不支持语音输入，请使用键盘输入';
 
   return (
     <>
       <button
         className={`voice-button ${active ? 'active' : ''} ${disabled ? 'disabled' : ''} ${className}`}
         type="button"
-        title={disabled ? '当前浏览器不支持语音输入' : label}
+        title={disabled ? unsupportedTitle : label}
         aria-label={label}
         onClick={active ? stop : start}
       >
-        <span>{active ? '●' : '🎙'}</span>
+        <span>{disabled ? '⌨' : active ? '●' : '🎙'}</span>
       </button>
       {panelOpen && (
         <section className="voice-input-panel" role="status" aria-live="polite">
