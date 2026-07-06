@@ -6,7 +6,7 @@ import { CameraCaptureModal } from '@/components/CameraCaptureModal';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
-import { writeClipboardText } from '@/lib/client-platform';
+import { getAndroidCapabilities, isAndroidWebView, writeClipboardText } from '@/lib/client-platform';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import type { ChangeSnapshotDTO, CurrentUserDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
@@ -390,6 +390,7 @@ export default function DashboardShell({
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
+  const cameraCapture = useRef<HTMLInputElement>(null);
   const csvImport = useRef<HTMLInputElement>(null);
   const drawerTouch = useRef<{ startX: number; startY: number; fromEdge: boolean; fromDrawer: boolean } | null>(null);
   const toolRef = useRef<HTMLElement>(null);
@@ -657,6 +658,10 @@ export default function DashboardShell({
     }
     setToolTab('queue');
     setToolOpen(true);
+    if (isAndroidWebView()) {
+      cameraCapture.current?.click();
+      return;
+    }
     setCameraOpen(true);
   }
 
@@ -1010,6 +1015,7 @@ export default function DashboardShell({
     setUploading(false);
     if (pdf.current) pdf.current.value = '';
     if (img.current) img.current.value = '';
+    if (cameraCapture.current) cameraCapture.current.value = '';
   }
 
   async function uploadCameraFiles(fileList: File[]) {
@@ -1723,7 +1729,8 @@ export default function DashboardShell({
                 style={{ '--tool-width': `${toolWidth}px` } as React.CSSProperties}
               >
                 <input ref={pdf} hidden multiple type="file" accept="application/pdf,.pdf" onChange={e => uploadMany(Array.from(e.target.files || []))} />
-                <input ref={img} hidden multiple type="file" accept="image/png,image/jpeg,.png,.jpg,.jpeg" onChange={e => uploadMany(Array.from(e.target.files || []))} />
+                <input ref={img} hidden multiple type="file" accept="image/*" onChange={e => uploadMany(Array.from(e.target.files || []))} />
+                <input ref={cameraCapture} hidden type="file" accept="image/*" capture="environment" onChange={e => uploadCameraFiles(Array.from(e.target.files || []))} />
                 <div ref={toolRailRef} className="resource-tool-rail" aria-label="资料工具栏">
                   {([
                     ['info', '信息'],
@@ -2623,6 +2630,8 @@ function SystemSettings({
   exportDiagnostics: () => void;
 }) {
   const okText = (value?: boolean) => (value ? '正常' : '异常');
+  const apkCapabilities = getAndroidCapabilities();
+  const supportText = (value?: boolean) => (value ? '支持' : '不支持');
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="system-dialog" role="dialog" aria-modal="true" aria-label="系统设置">
@@ -2697,6 +2706,22 @@ function SystemSettings({
             <button type="button" onClick={openLogs}>查看操作日志</button>
           </div>
         </section>
+
+        {apkCapabilities && (
+          <section className="system-section wide">
+            <h3>平板 App 能力</h3>
+            <div className="stability-grid">
+              <Info label="App 壳环境" value={apkCapabilities.webView ? 'WebView' : '普通浏览器'} ok={apkCapabilities.webView} />
+              <Info label="文件选择" value={supportText(apkCapabilities.fileChooser)} ok={apkCapabilities.fileChooser} />
+              <Info label="拍照上传" value={supportText(apkCapabilities.cameraCapture)} ok={apkCapabilities.cameraCapture} />
+              <Info label="摄像头授权" value={supportText(apkCapabilities.getUserMediaPermission)} ok={apkCapabilities.getUserMediaPermission} />
+              <Info label="下载管理" value={supportText(apkCapabilities.downloadManager)} ok={apkCapabilities.downloadManager} />
+              <Info label="剪贴板复制" value={supportText(apkCapabilities.clipboard)} ok={apkCapabilities.clipboard} />
+              <Info label="语音输入" value={apkCapabilities.speech ? '支持' : '键盘兜底'} ok={apkCapabilities.speech} />
+            </div>
+            <p className="tool-note">如果拍照或下载无反应，请先卸载旧 APK，安装 GitHub Actions 最新 debug APK，并检查系统相机权限。</p>
+          </section>
+        )}
 
         <section className="system-section wide">
           <h3>数据导出</h3>

@@ -18,6 +18,9 @@
         <intent>
             <action android:name="android.intent.action.GET_CONTENT" />
         </intent>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT" />
+        </intent>
     </queries>
 
     <application
@@ -28,6 +31,7 @@
         android:roundIcon="@drawable/ic_launcher_foreground"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
+        android:hardwareAccelerated="true"
         android:usesCleartextTraffic="false">
         <provider
             android:name="androidx.core.content.FileProvider"

@@ -24,6 +24,7 @@ import android.view.Window;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
 import android.webkit.URLUtil;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -49,12 +50,14 @@ import java.util.List;
 public class MainActivity extends Activity {
     private static final int FILE_CHOOSER_REQUEST = 1001;
     private static final int CAMERA_PERMISSION_REQUEST = 1002;
+    private static final int MEDIA_PERMISSION_REQUEST = 1003;
     private static final long EXIT_INTERVAL_MS = 2000L;
 
     private WebView webView;
     private View loadingOverlay;
     private View errorOverlay;
     private ValueCallback<Uri[]> fileCallback;
+    private PermissionRequest pendingPermissionRequest;
     private Uri cameraImageUri;
     private String[] pendingAcceptTypes;
     private boolean pendingAllowMultiple;
@@ -336,7 +339,9 @@ public class MainActivity extends Activity {
             String userAgent = webView != null ? webView.getSettings().getUserAgentString() : "";
             return "{"
                 + "\"fileChooser\":true,"
+                + "\"webView\":true,"
                 + "\"cameraCapture\":" + (hasCamera() ? "true" : "false") + ","
+                + "\"getUserMediaPermission\":true,"
                 + "\"downloadManager\":true,"
                 + "\"clipboard\":true,"
                 + "\"speech\":false,"
@@ -406,6 +411,71 @@ public class MainActivity extends Activity {
 
             return launchFileChooser(pendingAcceptTypes, pendingAllowMultiple, wantsImage);
         }
+
+        @Override
+        public void onPermissionRequest(PermissionRequest request) {
+            runOnUiThread(() -> handleWebPermissionRequest(request));
+        }
+
+        @Override
+        public void onPermissionRequestCanceled(PermissionRequest request) {
+            if (pendingPermissionRequest == request) {
+                pendingPermissionRequest = null;
+            }
+        }
+    }
+
+    private void handleWebPermissionRequest(PermissionRequest request) {
+        if (!isAllowedUri(request.getOrigin())) {
+            request.deny();
+            return;
+        }
+
+        String[] resources = request.getResources();
+        if (resources == null || resources.length == 0) {
+            request.deny();
+            return;
+        }
+        boolean needsVideo = false;
+        boolean needsAudio = false;
+        boolean unsupported = false;
+        for (String resource : resources) {
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
+                needsVideo = true;
+            } else if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {
+                needsAudio = true;
+            } else {
+                unsupported = true;
+            }
+        }
+
+        if (unsupported) {
+            request.deny();
+            return;
+        }
+
+        if (needsAudio) {
+            request.deny();
+            Toast.makeText(this, "当前 App 壳暂不支持语音输入，请使用键盘输入。", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        if (needsVideo && !hasCamera()) {
+            request.deny();
+            Toast.makeText(this, "未检测到可用相机，请使用上传图片。", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        if (needsVideo && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            if (pendingPermissionRequest != null) {
+                pendingPermissionRequest.deny();
+            }
+            pendingPermissionRequest = request;
+            requestPermissions(new String[]{Manifest.permission.CAMERA}, MEDIA_PERMISSION_REQUEST);
+            return;
+        }
+
+        request.grant(resources);
     }
 
     private boolean launchCameraOrRequestPermission() {
@@ -610,6 +680,22 @@ public class MainActivity extends Activity {
             } else {
                 releaseFileCallback(null);
                 Toast.makeText(this, "摄像头权限被拒绝，请在系统设置中开启权限或使用上传图片。", Toast.LENGTH_LONG).show();
+            }
+            return;
+        }
+
+        if (requestCode == MEDIA_PERMISSION_REQUEST) {
+            PermissionRequest request = pendingPermissionRequest;
+            pendingPermissionRequest = null;
+            boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            if (request == null) {
+                return;
+            }
+            if (granted) {
+                request.grant(request.getResources());
+            } else {
+                request.deny();
+                Toast.makeText(this, "摄像头权限被拒绝，请在系统设置中开启或使用上传图片。", Toast.LENGTH_LONG).show();
             }
         }
     }

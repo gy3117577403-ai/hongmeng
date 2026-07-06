@@ -1,8 +1,10 @@
 'use client';
 
 export type AndroidBridgeCapabilities = {
+  webView?: boolean;
   fileChooser?: boolean;
   cameraCapture?: boolean;
+  getUserMediaPermission?: boolean;
   downloadManager?: boolean;
   clipboard?: boolean;
   speech?: boolean;

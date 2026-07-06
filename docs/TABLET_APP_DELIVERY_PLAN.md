@@ -90,6 +90,14 @@ v1.13.1-tablet-apk-device-fix 对 APK WebView 壳补齐了从浏览器切换到 
 
 语音输入仍优先依赖浏览器 Web Speech API。若 Android WebView 不支持，页面会明确提示“当前 APK 暂不支持语音输入，请使用键盘输入”，不影响手动输入。
 
+v1.13.2-tablet-apk-device-bridge 继续补齐 WebView 设备桥闭环：
+
+- WebView `onPermissionRequest` 转接 getUserMedia 摄像头授权。
+- 只对白名单域名 `qdowqencjyph.sealoshzh.site` 授予摄像头资源。
+- APK 环境下“拍照上传”优先触发 `input accept=image/* capture=environment`，直接调起系统相机。
+- 系统设置中显示“平板 App 能力”，用于现场确认文件选择、拍照、摄像头授权、下载和剪贴板是否可用。
+- 拒绝相机权限时给出明确提示，并允许改用“上传图片”。
+
 ## HarmonyOS NEXT 风险说明
 
 部分鸿蒙平板可以安装 Android APK，部分 HarmonyOS NEXT 设备可能不再支持 APK。需要在目标设备上确认系统版本和 APK 安装能力。
