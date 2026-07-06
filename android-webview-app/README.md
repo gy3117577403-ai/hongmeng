@@ -147,6 +147,8 @@ window.__HONGMENG_WEBVIEW__ = true
 
 Web 端 PDF 组件检测到该标识后，会优先使用同源 content API 拉取 PDF `ArrayBuffer`，再交给 PDF.js 渲染，减少 worker、Cookie、签名链接或 WebView 内核差异造成的加载失败。
 
+针对部分 Android WebView 缺少 `Promise.withResolvers` 的情况，Web 端会在加载 PDF.js 之前注入兼容 polyfill，并优先使用 `pdfjs-dist/legacy` 构建和同源 legacy worker。这样可以避免新版 PDF.js 在老 WebView 中初始化失败。
+
 如果当前平板 WebView 仍无法预览某个 PDF，页面会提供：
 
 - 重新加载

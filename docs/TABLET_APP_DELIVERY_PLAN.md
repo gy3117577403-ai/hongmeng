@@ -67,6 +67,9 @@ Android WebView 中 PDF.js 可能遇到 worker 加载、Cookie、同源内容流
 
 - APK 壳 User-Agent 追加 `HongmengWorkorderWebView/1.0`。
 - APK 壳注入 `window.__HONGMENG_WEBVIEW__ = true`。
+- Web PDF 组件在加载 PDF.js 前补齐 `Promise.withResolvers` polyfill，兼容较旧 Android WebView。
+- PDF.js 优先使用 `pdfjs-dist/legacy` 构建。
+- `/api/pdf-worker` 优先返回本地 `pdfjs-dist/legacy` worker，不依赖 CDN。
 - Web PDF 组件检测到 WebView 后，优先通过同源 `/api/resource-files/{id}/content` 拉取 PDF `ArrayBuffer`，再交给 PDF.js 渲染。
 - PDF content API 明确返回 `Content-Type: application/pdf`、`Content-Disposition: inline`、`Cache-Control: no-store` 和 `X-Content-Type-Options: nosniff`。
 - 如果仍无法预览，页面会提供“重新加载”“下载 PDF”“用系统打开”兜底。

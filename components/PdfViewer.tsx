@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import type { PDFDocumentLoadingTask, PDFDocumentProxy } from 'pdfjs-dist';
 
 declare global {
   interface Window {
@@ -9,18 +10,18 @@ declare global {
   }
 }
 
-type PdfDocument = {
-  numPages: number;
-  getPage: (pageNumber: number) => Promise<PdfPage>;
-  destroy?: () => Promise<void> | void;
+type PdfDocument = PDFDocumentProxy;
+type PdfLoadingTask = PDFDocumentLoadingTask;
+type PdfJsModule = typeof import('pdfjs-dist/legacy/build/pdf.mjs');
+
+type PromiseWithResolversResult<T> = {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: Error | string) => void;
 };
 
-type PdfPage = {
-  getViewport: (input: { scale: number }) => { width: number; height: number };
-  render: (input: { canvasContext: CanvasRenderingContext2D; viewport: { width: number; height: number } }) => {
-    promise: Promise<void>;
-    cancel: () => void;
-  };
+type PromiseConstructorWithResolvers = PromiseConstructor & {
+  withResolvers?: <T>() => PromiseWithResolversResult<T>;
 };
 
 type FitMode = 'width' | 'page' | 'custom';
@@ -100,7 +101,7 @@ function PdfCanvas({
 
   useEffect(() => {
     let alive = true;
-    let loadingTask: { promise: Promise<PdfDocument>; destroy?: () => void } | null = null;
+    let loadingTask: PdfLoadingTask | null = null;
     let loadedDoc: PdfDocument | null = null;
 
     setLoading(true);
@@ -112,13 +113,14 @@ function PdfCanvas({
 
     (async () => {
       try {
-        const pdfjs = await import('pdfjs-dist');
+        ensurePromiseWithResolvers();
+        const pdfjs = await loadPdfJs();
         pdfjs.GlobalWorkerOptions.workerSrc = '/api/pdf-worker';
         if (isTabletWebView()) {
           const data = await loadPdfArrayBuffer(source);
-          loadingTask = pdfjs.getDocument({ data, useWorkerFetch: false, isEvalSupported: false }) as unknown as { promise: Promise<PdfDocument>; destroy?: () => void };
+          loadingTask = pdfjs.getDocument({ data, useWorkerFetch: false, isEvalSupported: false });
         } else {
-          loadingTask = pdfjs.getDocument({ url: source, withCredentials: true }) as unknown as { promise: Promise<PdfDocument>; destroy?: () => void };
+          loadingTask = pdfjs.getDocument({ url: source, withCredentials: true });
         }
         loadedDoc = await loadingTask.promise;
         if (!alive) return;
@@ -234,7 +236,34 @@ function PdfCanvas({
   );
 }
 
-async function loadPdfArrayBuffer(source: string) {
+function ensurePromiseWithResolvers(): void {
+  const promiseConstructor = Promise as PromiseConstructorWithResolvers;
+  if (typeof promiseConstructor.withResolvers === 'function') {
+    return;
+  }
+
+  promiseConstructor.withResolvers = function withResolvers<T>(): PromiseWithResolversResult<T> {
+    let resolveFn: (value: T | PromiseLike<T>) => void = () => {};
+    let rejectFn: (reason?: Error | string) => void = () => {};
+    const promise = new Promise<T>((resolve, reject) => {
+      resolveFn = resolve;
+      rejectFn = reject;
+    });
+
+    return {
+      promise,
+      resolve: resolveFn,
+      reject: rejectFn,
+    };
+  };
+}
+
+async function loadPdfJs(): Promise<PdfJsModule> {
+  ensurePromiseWithResolvers();
+  return import('pdfjs-dist/legacy/build/pdf.mjs');
+}
+
+async function loadPdfArrayBuffer(source: string): Promise<ArrayBuffer> {
   const response = await fetch(source, { credentials: 'include', cache: 'no-store' });
   const contentType = response.headers.get('content-type') || '';
   if (!response.ok) throw await responseError(response, contentType);
@@ -242,23 +271,46 @@ async function loadPdfArrayBuffer(source: string) {
   return response.arrayBuffer();
 }
 
-async function responseError(response: Response, contentType: string) {
+class PdfResponseError extends Error {
+  readonly status: number;
+  readonly contentType: string;
+
+  constructor(name: string, status: number, contentType: string, message: string) {
+    super(message);
+    this.name = name;
+    this.status = status;
+    this.contentType = contentType;
+  }
+}
+
+async function responseError(response: Response, contentType: string): Promise<PdfResponseError> {
   let summary = '';
   try {
-    summary = sanitizeSnippet(await response.text());
+    const text = await response.text();
+    summary = contentType.toLowerCase().includes('application/json')
+      ? sanitizeSnippet(extractJsonMessage(text) || text)
+      : sanitizeSnippet(text);
   } catch {
     summary = '';
   }
-  const detail = summary ? `服务响应：${summary}` : `HTTP ${response.status} · ${contentType || '未知类型'}`;
-  const error = new Error(detail);
-  error.name = response.status === 401 ? 'PdfUnauthorized'
+  const diagnostic = `HTTP ${response.status} · ${contentType || '未知类型'}`;
+  const detail = summary ? `${diagnostic} · 服务响应：${summary}` : diagnostic;
+  const name = response.status === 401 ? 'PdfUnauthorized'
     : response.status === 404 ? 'PdfNotFound'
       : contentType.toLowerCase().includes('text/html') ? 'PdfHtmlResponse'
         : 'PdfBadResponse';
-  return error;
+  return new PdfResponseError(name, response.status, contentType, detail);
 }
 
-function sanitizeSnippet(value: string) {
+function extractJsonMessage(value: string): string {
+  const errorMatch = value.match(/"error"\s*:\s*"([^"]+)"/);
+  if (errorMatch?.[1]) return errorMatch[1];
+  const messageMatch = value.match(/"message"\s*:\s*"([^"]+)"/);
+  if (messageMatch?.[1]) return messageMatch[1];
+  return '';
+}
+
+function sanitizeSnippet(value: string): string {
   return value
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, '[token hidden]')
     .replace(/"token"\s*:\s*"[^"]+"/gi, '"token":"[token hidden]"')
@@ -267,18 +319,19 @@ function sanitizeSnippet(value: string) {
     .slice(0, 200);
 }
 
-function isTabletWebView() {
+function isTabletWebView(): boolean {
   if (typeof window === 'undefined') return false;
   const ua = navigator.userAgent || '';
   return !!window.__HONGMENG_WEBVIEW__ || ua.includes('HongmengWorkorderWebView') || ua.includes('; wv') || /\bwv\b/i.test(ua);
 }
 
-function pdfError(error: unknown, fallback = '当前平板内置 WebView 暂不支持直接预览此 PDF，可下载或用系统打开'): PdfLoadError {
+function pdfError(error: unknown, fallback = 'PDF 预览组件初始化失败，可下载或用系统打开'): PdfLoadError {
   if (error instanceof Error) {
     if (error.name === 'PdfUnauthorized') return { title: '登录已过期，请重新登录', detail: '请退出后重新登录，再打开当前 PDF。' };
     if (error.name === 'PdfNotFound') return { title: 'PDF 文件不存在或已被删除', detail: '请刷新资料列表，确认文件仍在当前工单中。' };
     if (error.name === 'PdfHtmlResponse') return { title: '服务返回了页面而不是 PDF，请检查登录状态或重新打开文件', detail: error.message || '当前响应不是 PDF 文件流。' };
-    if (/worker|fake worker|pdf-worker/i.test(error.message)) return { title: '当前平板内置 WebView 暂不支持直接预览此 PDF，可下载或用系统打开', detail: 'PDF worker 加载失败，请使用下方按钮处理。' };
+    if (/withResolvers/i.test(error.message)) return { title: 'PDF 预览组件初始化失败，可下载或用系统打开', detail: '检测到 Promise.withResolvers 兼容问题，请重新加载；若仍失败，请更新 APK 或系统 WebView。' };
+    if (/worker|fake worker|pdf-worker/i.test(error.message)) return { title: 'PDF 预览组件初始化失败，可下载或用系统打开', detail: 'PDF worker 加载失败，请使用下方按钮处理。' };
     if (error.name === 'PdfBadResponse') return { title: 'PDF 文件流响应异常', detail: error.message || '服务没有返回 application/pdf。' };
     return { title: fallback, detail: error.message || '请重新加载，或下载原文件查看。' };
   }

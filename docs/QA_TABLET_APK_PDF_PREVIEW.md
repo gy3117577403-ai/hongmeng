@@ -1,82 +1,62 @@
-# Android WebView APK PDF 预览兼容 QA
+# APK WebView PDF 预览兼容验收
+
+## 版本
+
+v1.13.2-tablet-apk-pdf-webview-fix
 
 ## 问题现象
 
-Android WebView APK 壳可以正常打开工单资料库 Web 页面，登录、工单、分类和文件列表均可显示，但在 APK WebView 内预览 PDF 时出现：
+Android WebView APK 壳内打开 PDF 资料时，页面进入 PDF 预览逻辑后失败，提示：
 
 ```text
-PDF 加载失败，请检查文件是否完整或稍后重试
+当前平板内置 WebView 暂不支持直接预览此 PDF，可下载或用系统打开
+Promise.withResolvers is not a function
 ```
 
-同一文件在普通浏览器中可能正常，说明问题集中在 Android WebView 与 PDF.js worker、Cookie、同源内容流或文件响应头兼容性。
+## 根因
 
-## 修复内容
+目标平板内置 Android WebView 的 JavaScript 引擎不支持 `Promise.withResolvers`。新版 PDF.js 在初始化时会使用该能力，如果 polyfill 没有在 PDF.js 模块加载前执行，就会导致 PDF.js 初始化失败。
 
-- 增强 `/api/resource-files/[id]/content` 响应头：
-  - `Content-Type: application/pdf`
-  - `Content-Disposition: inline`
-  - `Cache-Control: no-store`
-  - `X-Content-Type-Options: nosniff`
-- 未登录、文件不存在和服务器错误均返回明确 JSON，不返回 HTML 页面伪装成 PDF。
-- PDF Viewer 检测 Android WebView 后，优先 fetch 同源 content API，并以 `ArrayBuffer` 方式交给 PDF.js。
-- PDF Viewer 增加可操作失败提示：
-  - 登录已过期
-  - 文件不存在或已删除
-  - 服务返回页面而不是 PDF
-  - PDF worker / WebView 不兼容
-- PDF Viewer 增加兜底按钮：
-  - 重新加载
-  - 下载 PDF
-  - 用系统打开
-- Android WebView APK 壳追加 User-Agent：
+## 修复方式
 
-```text
-HongmengWorkorderWebView/1.0
-```
+- 在 `components/PdfViewer.tsx` 中新增 `Promise.withResolvers` 安全 polyfill。
+- 确保 polyfill 在动态导入 PDF.js 之前执行。
+- PDF.js 改为动态导入 `pdfjs-dist/legacy/build/pdf.mjs`，优先兼容 Android WebView。
+- `/api/pdf-worker` 优先返回 `pdfjs-dist/legacy/build/pdf.worker.min.mjs`。
+- Android WebView 环境下通过同源 content API 拉取 PDF `ArrayBuffer`，再交给 PDF.js 渲染。
+- 保留“重新加载”“下载 PDF”“用系统打开”兜底按钮。
 
-- Android WebView APK 壳注入：
+## 验收步骤
 
-```js
-window.__HONGMENG_WEBVIEW__ = true
-```
+1. 部署包含本修复的 Web 镜像到 Sealos。
+2. 等待 GitHub Actions 重新构建 Android WebView debug APK。
+3. 卸载平板上的旧 APK。
+4. 安装新的 APK。
+5. 登录工单资料库。
+6. 选择包含 PDF 的工单和分类。
+7. 打开 PDF 预览。
+8. 确认不再出现 `Promise.withResolvers is not a function`。
+9. 验证翻页、缩放、适宽、整页和全屏仍可用。
+10. 验证“下载 PDF”和“用系统打开”仍可用。
 
-- Android WebView APK 壳允许 Cookie 和 Android L+ third-party Cookie，避免 WebView 文件流请求丢登录态。
+## 如果仍失败
 
-## 浏览器 PDF 预览验收
+记录页面显示的安全错误详情：
 
-待部署后在浏览器验证：
+- 是否为 APK WebView。
+- HTTP status。
+- Content-Type。
+- 错误摘要。
 
-1. 登录系统。
-2. 打开含 PDF 的工单。
-3. PDF 默认适应宽度显示。
-4. 翻页、缩放、适宽、整页、全屏正常。
-5. 下载当前 PDF 正常。
-6. 图片预览、上传、下载全部 ZIP、连接器参数页不受影响。
+禁止记录账号密码、token、Cookie、数据库连接串、S3 Key、SESSION_SECRET 或签名下载链接。
 
-## APK WebView PDF 预览验收
+## 已知说明
 
-待 GitHub Actions 构建新 debug APK 并安装后验证：
+- 本修复不修改数据库、Prisma schema、S3 或 Sealos 环境变量。
+- 本修复不恢复 DevEco / Harmony ArkTS 工程。
+- 本修复不恢复 `/api/native`。
+- APK 加载地址仍为 `https://qdowqencjyph.sealoshzh.site/dashboard`。
 
-1. 打开 APK。
-2. 登录系统。
-3. 打开含 PDF 的工单资料。
-4. PDF 能在 WebView 中渲染。
-5. 如 WebView 内核不支持，页面显示明确原因。
-6. 失败提示中出现“重新加载”“下载 PDF”“用系统打开”按钮。
-7. 不出现笼统“PDF 加载失败，请检查文件是否完整或稍后重试”。
+## 建议结论
 
-## 下载兜底验收
-
-1. 在 PDF 失败提示中点击“下载 PDF”。
-2. 系统 DownloadManager 开始下载，或调起外部浏览器。
-3. 下载不静默失败。
-4. 在 PDF 失败提示中点击“用系统打开”。
-5. 如设备有 PDF 查看器，应可通过系统处理该 PDF。
-
-## 已知问题
-
-- 本机缺少 Android SDK / Gradle 环境，APK 构建需要 GitHub Actions 重新运行验证。
-- 部分 HarmonyOS NEXT 设备可能不支持 Android APK，需要使用 PWA 或另行评估 HAP 路线。
-- “用系统打开”依赖系统是否存在可处理 PDF 的应用。
-
-本文档不包含数据库密码、对象存储密钥、SESSION_SECRET、admin 密码或任何真实生产密码。
+完成 Web 部署并安装新 APK 后，可以进行现场 PDF 预览实机验收。
