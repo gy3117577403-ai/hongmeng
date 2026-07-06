@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation';
 import { DrawingLibraryShell } from '@/components/DrawingLibraryShell';
 import { currentUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { serializeDrawingLibraryItem } from '@/lib/drawing-library';
+import { isVisibleDrawingLibraryItem, serializeDrawingLibraryItem } from '@/lib/drawing-library';
 
 const includeFiles = {
   files: {
@@ -28,7 +28,9 @@ export default async function DrawingLibraryPage() {
     }),
     prisma.resourceCategory.findMany({ orderBy: { sortOrder: 'asc' } }),
   ]);
-  const serialized = items.map(item => serializeDrawingLibraryItem(item, categories));
+  const serialized = items
+    .filter(isVisibleDrawingLibraryItem)
+    .map(item => serializeDrawingLibraryItem(item, categories));
   const customerMap = new Map<string, { customerName: string; customerCode: string | null; itemCount: number; missingCount: number }>();
   for (const item of serialized) {
     const current = customerMap.get(item.customerName) || { customerName: item.customerName, customerCode: item.customerCode || null, itemCount: 0, missingCount: 0 };

@@ -1534,6 +1534,10 @@ input:focus-visible {
   padding: 12px;
 }
 
+.drawing-library-main.no-file-panel {
+  grid-template-columns: 148px minmax(0, 1fr);
+}
+
 .drawing-category-rail,
 .drawing-file-panel {
   min-height: 0;
@@ -1584,9 +1588,9 @@ input:focus-visible {
 }
 
 .drawing-category-rail strong {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  overflow: visible;
+  line-height: 1.25;
+  white-space: normal;
 }
 
 .drawing-category-rail em {
@@ -1792,6 +1796,50 @@ input:focus-visible {
   resize: vertical;
 }
 
+.cleanup-dialog {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.cleanup-note {
+  margin: 0;
+  color: #475569;
+  line-height: 1.6;
+}
+
+.cleanup-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cleanup-summary span,
+.cleanup-samples span {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #edf0f5;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cleanup-samples {
+  max-height: 160px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  overflow: auto;
+}
+
+.cleanup-samples span {
+  overflow: hidden;
+  background: #fff;
+  color: #475569;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 @media (max-width: 1160px) {
   .drawing-library-page {
     padding: 10px;
@@ -1812,7 +1860,15 @@ input:focus-visible {
     padding: 8px;
   }
 
+  .drawing-library-main.no-file-panel {
+    grid-template-columns: 122px minmax(0, 1fr);
+  }
+
   .drawing-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cleanup-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

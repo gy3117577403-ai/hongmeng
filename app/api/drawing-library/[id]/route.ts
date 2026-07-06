@@ -40,7 +40,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const old = await prisma.drawingLibraryItem.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!old) return NextResponse.json({ ok: false, error: '图纸资料记录不存在' }, { status: 404 });
     const body = await req.json().catch(() => ({}));
-    const customerName = body.customerName !== undefined ? (cleanDrawingText(body.customerName, 160) || '未设置') : old.customerName;
+    const customerName = body.customerName !== undefined ? cleanDrawingText(body.customerName, 160) : old.customerName;
+    if (!customerName) return NextResponse.json({ ok: false, error: '客户不能为空' }, { status: 400 });
     const specification = body.specification !== undefined ? cleanDrawingText(body.specification, 180) : old.specification;
     if (!specification) return NextResponse.json({ ok: false, error: '规格不能为空' }, { status: 400 });
     const data = {

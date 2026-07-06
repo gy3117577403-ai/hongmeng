@@ -233,6 +233,7 @@ const actionText: Record<string, string> = {
   delete_drawing_library_file: '删除图纸资料文件',
   restore_drawing_library_file: '恢复图纸资料文件',
   download_drawing_library_file: '下载图纸资料文件',
+  cleanup_empty_drawing_library: '清理空图纸资料',
   create_connector_parameter: '新增连接器参数',
   update_connector_parameter: '编辑连接器参数',
   delete_connector_parameter: '删除连接器参数',

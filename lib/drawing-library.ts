@@ -22,6 +22,32 @@ export function drawingLibraryKey(customerName: string | null | undefined, speci
   return customer ? `${customer}::${spec}` : spec;
 }
 
+export function hasMeaningfulDrawingRemark(remark?: string | null) {
+  const text = remark?.trim() || '';
+  return !!text && text !== '-';
+}
+
+export function isAutoImportedEmptyDrawingLibraryItem(item: {
+  remark?: string | null;
+  lastImportedAt?: Date | string | null;
+  lastWorkOrderId?: string | null;
+  files?: Array<{ id: string }>;
+}) {
+  return !!item.lastImportedAt
+    && !!item.lastWorkOrderId
+    && !hasMeaningfulDrawingRemark(item.remark)
+    && (item.files?.length || 0) === 0;
+}
+
+export function isVisibleDrawingLibraryItem(item: {
+  remark?: string | null;
+  lastImportedAt?: Date | string | null;
+  lastWorkOrderId?: string | null;
+  files?: Array<{ id: string }>;
+}) {
+  return !isAutoImportedEmptyDrawingLibraryItem(item);
+}
+
 function versionMinor(version?: string | null) {
   const match = String(version || '').match(/^V1\.(\d+)$/i);
   return match ? Number(match[1]) : -1;
@@ -34,6 +60,17 @@ export async function nextDrawingLibraryVersion(libraryItemId: string, categoryI
   });
   const max = files.reduce((n, file) => Math.max(n, versionMinor(file.version)), -1);
   return `V1.${max + 1}`;
+}
+
+export async function findDrawingLibraryItemForWorkOrder(workOrder: {
+  customerName?: string | null;
+  specification?: string | null;
+}) {
+  const specification = workOrder.specification?.trim();
+  if (!specification) return null;
+  const customerName = workOrder.customerName?.trim() || '未设置';
+  const key = drawingLibraryKey(customerName === '未设置' ? '' : customerName, specification);
+  return prisma.drawingLibraryItem.findFirst({ where: { libraryKey: key, deletedAt: null } });
 }
 
 export async function ensureDrawingLibraryItemForWorkOrder(workOrder: {

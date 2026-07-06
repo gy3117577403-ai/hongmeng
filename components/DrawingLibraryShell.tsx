@@ -16,6 +16,20 @@ type DrawingLibraryForm = {
 
 type DrawingFilter = 'all' | 'missing_drawing' | 'missing_sop' | 'missing_product' | 'complete' | 'recent';
 type DrawingModal = { mode: 'create' | 'edit'; item?: DrawingLibraryItemDTO } | null;
+type CleanupSummary = {
+  totalActive: number;
+  candidateCount: number;
+  customerCount: number;
+  specificationCount: number;
+  retainedCount: number;
+  withFileCount: number;
+  withRemarkCount: number;
+  connectorParameterCount: number;
+  connectorParameterFileCount: number;
+  workOrderCount: number;
+  cleanedCount?: number;
+  samples: Array<{ id: string; customerName: string; specification: string; productName?: string | null }>;
+};
 
 const emptyForm: DrawingLibraryForm = { customerName: '', productName: '', specification: '', remark: '' };
 const filterOptions: Array<[DrawingFilter, string]> = [
@@ -67,6 +81,15 @@ function formFrom(item?: DrawingLibraryItemDTO): DrawingLibraryForm {
   };
 }
 
+function hasText(value?: string | null) {
+  const text = value?.trim() || '';
+  return !!text && text !== '-';
+}
+
+function shouldShowCustomerCode(item: DrawingLibraryItemDTO) {
+  return !!item.customerCode && !item.customerName.includes(item.customerCode);
+}
+
 export function DrawingLibraryShell({
   user,
   initialItems,
@@ -95,6 +118,11 @@ export function DrawingLibraryShell({
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [cleanupOpen, setCleanupOpen] = useState(false);
+  const [cleanupPreview, setCleanupPreview] = useState<CleanupSummary | null>(null);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
+  const [cleanupConfirm, setCleanupConfirm] = useState('');
+  const [cleanupError, setCleanupError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const accountName = user.displayName || user.username;
@@ -162,6 +190,7 @@ export function DrawingLibraryShell({
 
   async function saveItem(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!form.customerName.trim()) return setFormError('客户不能为空');
     if (!form.specification.trim()) return setFormError('产品规格不能为空');
     setSaving(true);
     try {
@@ -190,12 +219,15 @@ export function DrawingLibraryShell({
 
   async function deleteItem() {
     if (!selectedItem) return;
-    if (!window.confirm(`确认软删除图纸资料：${selectedItem.specification}？`)) return;
+    if (!window.confirm(`确认删除图纸资料：${selectedItem.specification}？`)) return;
+    const deletingId = selectedItem.id;
     const res = await fetch(`/api/drawing-library/${selectedItem.id}`, { method: 'DELETE' });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return setMsg(data.error || '删除失败');
-    setMsg('图纸资料已软删除');
+    setSelectedId('');
+    setMsg('图纸资料已删除，可在回收站恢复');
     await loadData();
+    setItems(current => current.filter(item => item.id !== deletingId));
   }
 
   async function uploadFiles(fileList: FileList | null) {
@@ -237,6 +269,50 @@ export function DrawingLibraryShell({
     setSelectedFileId('');
   }
 
+  async function previewCleanup() {
+    setCleanupLoading(true);
+    setCleanupError('');
+    try {
+      const res = await fetch('/api/drawing-library/cleanup-empty/preview', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCleanupError(data.error || '预览清理失败');
+        return;
+      }
+      setCleanupPreview(data.summary || null);
+    } catch {
+      setCleanupError('预览清理失败，请检查网络');
+    } finally {
+      setCleanupLoading(false);
+    }
+  }
+
+  async function commitCleanup() {
+    if (cleanupConfirm.trim() !== 'CLEAN_EMPTY') return setCleanupError('请输入 CLEAN_EMPTY 确认清理');
+    setCleanupLoading(true);
+    setCleanupError('');
+    try {
+      const res = await fetch('/api/drawing-library/cleanup-empty/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmText: cleanupConfirm.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setCleanupError(data.error || '清理失败');
+        return;
+      }
+      setCleanupPreview(data.summary || null);
+      setCleanupConfirm('');
+      setMsg(`已清理 ${data.summary?.cleanedCount ?? 0} 条空图纸资料记录`);
+      await loadData();
+    } catch {
+      setCleanupError('清理失败，请检查网络');
+    } finally {
+      setCleanupLoading(false);
+    }
+  }
+
   return (
     <main className="drawing-library-page">
       <header className="topbar drawing-topbar">
@@ -252,6 +328,7 @@ export function DrawingLibraryShell({
         </div>
         <div className="top-actions">
           <button className="log-button" type="button" onClick={() => openModal('create')}>新增图纸资料</button>
+          <button className="log-button" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>清理空资料</button>
           <div className="library-wrap">
             <button className="library-button" type="button" onClick={() => setLibOpen(value => !value)}>▱ 资料库</button>
             {libOpen && (
@@ -333,7 +410,7 @@ export function DrawingLibraryShell({
           {!selectedItem ? (
             <div className="drawing-empty-state">
               <strong>暂无图纸资料</strong>
-              <p>可从周计划导入自动创建，也可以手动新增客户和产品规格。</p>
+              <p>请手动新增客户和产品规格，或在生产工单上传图纸资料后自动建立长期资料记录。</p>
               <button type="button" onClick={() => openModal('create')}>新增图纸资料</button>
             </div>
           ) : (
@@ -352,15 +429,15 @@ export function DrawingLibraryShell({
 
               <div className="drawing-summary-grid">
                 <Info label="客户" value={selectedItem.customerName} />
-                <Info label="客户编码" value={selectedItem.customerCode || '-'} />
+                {shouldShowCustomerCode(selectedItem) && <Info label="客户编码" value={selectedItem.customerCode || ''} />}
                 <Info label="产品规格" value={selectedItem.specification} wide />
-                <Info label="品名" value={selectedItem.productName || '-'} />
+                {hasText(selectedItem.productName) && <Info label="品名" value={selectedItem.productName || ''} />}
                 <Info label="完整度" value={`${selectedItem.completenessText} · ${missingLabel(selectedItem, categories)}`} />
                 <Info label="最近更新" value={dt(selectedItem.updatedAt)} />
-                <Info label="备注" value={selectedItem.remark || '-'} wide />
+                {hasText(selectedItem.remark) && <Info label="备注" value={selectedItem.remark || ''} wide />}
               </div>
 
-              <div className="drawing-library-main">
+              <div className={activeFiles.length ? 'drawing-library-main' : 'drawing-library-main no-file-panel'}>
                 <nav className="drawing-category-rail">
                   {categories.map(category => {
                     const count = selectedItem.categoryFileCounts[category.id] || 0;
@@ -385,7 +462,7 @@ export function DrawingLibraryShell({
                   {!selectedFile ? (
                     <div className="drawing-missing-card">
                       <span />
-                      <strong>{activeCategory?.name || '当前分类'}暂无文件</strong>
+                      <strong>当前分类暂无图纸资料</strong>
                       <p>这里仅管理长期图纸资料。周计划字段仍保留在生产工单里，不进入图纸资料库。</p>
                       <button type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>上传 PDF / 图片</button>
                     </div>
@@ -402,7 +479,7 @@ export function DrawingLibraryShell({
                   )}
                 </div>
 
-                <aside className="drawing-file-panel">
+                {activeFiles.length > 0 && <aside className="drawing-file-panel">
                   <strong>分类文件</strong>
                   <div className="drawing-files">
                     {activeFiles.map(file => (
@@ -412,7 +489,6 @@ export function DrawingLibraryShell({
                         <em>{file.version || 'V1.0'} · {bytes(file.fileSize)}</em>
                       </button>
                     ))}
-                    {!activeFiles.length && <div className="drawing-empty-mini">当前分类暂无文件</div>}
                   </div>
                   {selectedFile && (
                     <div className="drawing-file-actions">
@@ -420,7 +496,7 @@ export function DrawingLibraryShell({
                       <button type="button" onClick={() => deleteFile(selectedFile)}>删除</button>
                     </div>
                   )}
-                </aside>
+                </aside>}
               </div>
             </>
           )}
@@ -438,11 +514,11 @@ export function DrawingLibraryShell({
               <button type="button" onClick={() => setModal(null)}>×</button>
             </div>
             <label>
-              <span>客户</span>
+              <span>客户 *</span>
               <input value={form.customerName} onChange={event => setForm(value => ({ ...value, customerName: event.target.value }))} placeholder="例如：杭州昆泰(10033)" />
             </label>
             <label>
-              <span>产品规格</span>
+              <span>产品规格 *</span>
               <input value={form.specification} onChange={event => setForm(value => ({ ...value, specification: event.target.value }))} placeholder="例如：D019999-9087-V03" />
             </label>
             <label>
@@ -459,6 +535,49 @@ export function DrawingLibraryShell({
               <button className="primary-button" type="submit" disabled={saving}>{saving ? '保存中...' : '保存'}</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {cleanupOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="drawing-dialog cleanup-dialog" role="dialog" aria-modal="true">
+            <div className="dialog-title">
+              <div>
+                <span>空资料记录清理</span>
+                <h3>清理周计划导入产生的空图纸资料</h3>
+              </div>
+              <button type="button" onClick={() => setCleanupOpen(false)}>×</button>
+            </div>
+            <p className="cleanup-note">只清理无文件、无备注、由历史导入自动生成的空图纸资料记录。不会删除生产工单、连接器参数、资料文件或 S3 对象。</p>
+            <div className="cleanup-summary">
+              <span>候选 {cleanupPreview?.candidateCount ?? 0}</span>
+              <span>涉及客户 {cleanupPreview?.customerCount ?? 0}</span>
+              <span>涉及规格 {cleanupPreview?.specificationCount ?? 0}</span>
+              <span>保留记录 {cleanupPreview?.retainedCount ?? 0}</span>
+              <span>有文件记录 {cleanupPreview?.withFileCount ?? 0}</span>
+              <span>有备注记录 {cleanupPreview?.withRemarkCount ?? 0}</span>
+              <span>生产工单保留 {cleanupPreview?.workOrderCount ?? 0}</span>
+              <span>连接器参数保留 {cleanupPreview?.connectorParameterCount ?? 0}</span>
+            </div>
+            {!!cleanupPreview?.samples?.length && (
+              <div className="cleanup-samples">
+                {cleanupPreview.samples.slice(0, 8).map(sample => (
+                  <span key={sample.id}>{sample.customerName} · {sample.specification}</span>
+                ))}
+              </div>
+            )}
+            {cleanupError && <div className="form-error">{cleanupError}</div>}
+            <label>
+              <span>正式清理请输入 CLEAN_EMPTY</span>
+              <input value={cleanupConfirm} onChange={event => setCleanupConfirm(event.target.value)} placeholder="CLEAN_EMPTY" />
+            </label>
+            <div className="dialog-actions">
+              <button type="button" disabled={cleanupLoading} onClick={previewCleanup}>{cleanupLoading ? '检查中...' : '重新预览'}</button>
+              <button className="danger-button" type="button" disabled={cleanupLoading || cleanupConfirm.trim() !== 'CLEAN_EMPTY'} onClick={commitCleanup}>
+                {cleanupLoading ? '清理中...' : '确认清理'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

@@ -80,10 +80,29 @@ specification
 2. 系统读取 `customerName` 和 `specification`。
 3. 按图纸资料库匹配键查找 `DrawingLibraryItem`。
 4. 如果存在则关联。
-5. 如果不存在则自动创建长期图纸资料记录。
-6. `WorkOrder.drawingLibraryItemId` 指向该长期记录。
+5. 如果不存在，不再自动创建可见图纸资料记录。
+6. `WorkOrder.drawingLibraryItemId` 保持为空，生产工单仍保留 `specification` 和 `libraryKey`。
+7. 只有用户手动新增图纸资料，或在生产工单上传图纸资料文件时，才创建长期图纸资料记录。
 
 导入不会把图纸状态、配料状态、交期、未交量、工时等周计划字段写入图纸资料库。
+
+这样可以避免图纸资料库首页被周计划中的所有规格填满，默认只展示真正有长期维护价值的资料记录。
+
+## 默认显示规则
+
+图纸资料库首页默认显示：
+
+- 有图纸资料文件的记录。
+- 用户手动新增的记录。
+- 有备注的记录。
+- 已经被维护过且能确认有长期资料价值的记录。
+
+默认不显示：
+
+- 周计划导入自动产生的空壳记录。
+- `0/5`、`0 个文件` 且无备注的空资料记录。
+
+已删除记录不在默认列表显示。
 
 ## 首页布局
 
@@ -188,6 +207,49 @@ planClearedBy=current user
 - `ConnectorParameter`
 - `ConnectorParameterFile`
 - 用户账号
+
+## 空资料清理
+
+历史版本可能已经因为周计划导入产生空图纸资料记录。可使用“清理空资料”入口或命令行脚本进行安全清理。
+
+清理候选必须同时满足：
+
+- 未删除。
+- 没有关联任何图纸资料文件。
+- 备注为空或 `-`。
+- 存在 `lastImportedAt`。
+- 存在 `lastWorkOrderId`。
+
+不会清理：
+
+- 有文件的记录。
+- 有备注的记录。
+- 手动新增的记录。
+- 生产工单。
+- 连接器参数和连接器附件。
+- S3 / Object Storage 文件对象。
+
+页面入口：图纸资料库 -> 清理空资料。
+
+命令行 dry-run：
+
+```bash
+npm run drawing-library:cleanup-empty:dry
+```
+
+正式执行必须显式确认：
+
+```bash
+CONFIRM_CLEAN_EMPTY_DRAWING_LIBRARY=YES npm run drawing-library:cleanup-empty
+```
+
+Windows PowerShell 示例：
+
+```powershell
+$env:CONFIRM_CLEAN_EMPTY_DRAWING_LIBRARY="YES"
+npm run drawing-library:cleanup-empty
+Remove-Item Env:\CONFIRM_CLEAN_EMPTY_DRAWING_LIBRARY
+```
 
 ## 连接器参数库
 

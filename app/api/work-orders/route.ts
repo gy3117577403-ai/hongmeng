@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { ensureDrawingLibraryItemForWorkOrder } from '@/lib/drawing-library';
+import { findDrawingLibraryItemForWorkOrder } from '@/lib/drawing-library';
 import { normalizeWorkOrderStage, parseWorkOrderBody, serializeWorkOrder } from '@/lib/work-orders';
 import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
 
@@ -116,7 +116,7 @@ export async function POST(req: NextRequest) {
         resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } },
       },
     });
-    const drawingLibraryItem = await ensureDrawingLibraryItemForWorkOrder(createdWorkOrder);
+    const drawingLibraryItem = await findDrawingLibraryItemForWorkOrder(createdWorkOrder);
     const workOrder = drawingLibraryItem
       ? await prisma.workOrder.update({
           where: { id: createdWorkOrder.id },

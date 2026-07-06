@@ -37,8 +37,9 @@ displayCode = specification || code
 
 - `specification` 作为主显示编号。
 - `libraryKey = specification`。
-- 自动创建或关联 `DrawingLibraryItem`。
-- `WorkOrder.drawingLibraryItemId` 指向长期图纸资料记录。
+- 如果已有匹配的 `DrawingLibraryItem`，则自动关联。
+- 如果没有匹配记录，不再自动创建空图纸资料记录。
+- 找到匹配时，`WorkOrder.drawingLibraryItemId` 指向长期图纸资料记录；找不到时保持为空。
 - `planType = weekly_plan`。
 - `planActive = true`。
 - `weekStartDate` 和 `weekEndDate` 来自导入时选择的计划周。
@@ -48,7 +49,7 @@ displayCode = specification || code
 - `planType = manual`。
 - `planActive = true`。
 - `libraryKey = specification || code`。
-- 如填写了规格，会自动创建或关联图纸资料库记录。
+- 如填写了规格，会尝试关联已有图纸资料库记录；不存在时不自动创建空记录。
 
 ## 当前工单顶部条
 
@@ -133,7 +134,7 @@ clear_weekly_plan_work_orders
 
 v1.13.6 新增的“本周生产工单清理”是业务软清理，只让本周周计划工单退出当前生产列表，不删除资料库里的工单资料。
 
-从 v1.13.8 开始，清理本周生产工单也不会删除图纸资料库。图纸资料库是长期主数据，后续同客户同规格再次导入周计划时会继续复用。
+从 v1.13.9 开始，清理本周生产工单不会删除图纸资料库；周计划导入也不会再自动创建空图纸资料记录。图纸资料库是长期主数据，后续同客户同规格再次导入周计划时会继续复用已有资料记录。
 
 ## 同规格历史资料提示
 

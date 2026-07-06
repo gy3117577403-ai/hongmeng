@@ -33,6 +33,7 @@ const actionGroups: Record<string, string[]> = {
     'delete_drawing_library_file',
     'restore_drawing_library_file',
     'download_drawing_library_file',
+    'cleanup_empty_drawing_library',
   ],
   connector: [
     'create_connector_parameter',

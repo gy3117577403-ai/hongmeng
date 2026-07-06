@@ -154,11 +154,11 @@ displayCode = specification || code
 - `planType = weekly_plan`
 - `planActive = true`
 - `libraryKey = specification`
-- `drawingLibraryItemId = 自动创建或匹配的 DrawingLibraryItem.id`
+- `drawingLibraryItemId = 已存在且匹配的 DrawingLibraryItem.id`，如果没有匹配记录则为空
 - `weekStartDate = 导入时选择的计划周开始日期`
 - `weekEndDate = weekStartDate + 6 天`
 
-同时，系统会按 `customerName + "::" + specification` 自动创建或关联长期图纸资料库记录。如果客户为空，则按 `specification` 匹配。图纸资料库只保存客户、客户编码、规格、品名、备注和资料文件，不保存图纸状态、配料状态、交期、未交量、工时、业务员、订单日期等周计划字段。
+同时，系统会按 `customerName + "::" + specification` 查找已有长期图纸资料库记录。如果客户为空，则按 `specification` 匹配。找到则关联；找不到不再自动创建空图纸资料记录。图纸资料库只保存客户、客户编码、规格、品名、备注和资料文件，不保存图纸状态、配料状态、交期、未交量、工时、业务员、订单日期等周计划字段。
 
 如需开始新一周生产，可在系统设置中使用“本周生产工单清理”：
 

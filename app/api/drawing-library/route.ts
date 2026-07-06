@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   cleanDrawingText,
   drawingLibraryKey,
+  isVisibleDrawingLibraryItem,
   parseCustomerCode,
   serializeDrawingLibraryItem,
 } from '@/lib/drawing-library';
@@ -38,7 +39,6 @@ export async function GET(req: NextRequest) {
           ? {
               OR: [
                 { customerName: { contains: keyword, mode: 'insensitive' } },
-                { customerCode: { contains: keyword, mode: 'insensitive' } },
                 { productName: { contains: keyword, mode: 'insensitive' } },
                 { specification: { contains: keyword, mode: 'insensitive' } },
                 { remark: { contains: keyword, mode: 'insensitive' } },
@@ -51,7 +51,9 @@ export async function GET(req: NextRequest) {
       take: 600,
     });
 
-    const serialized = items.map(item => serializeDrawingLibraryItem(item, categories));
+    const serialized = items
+      .filter(isVisibleDrawingLibraryItem)
+      .map(item => serializeDrawingLibraryItem(item, categories));
     const filtered = serialized.filter(item => {
       if (filter === 'missing_drawing') return item.missingRequiredCategories.includes('drawing');
       if (filter === 'missing_sop') return item.missingRequiredCategories.includes('sop');
@@ -90,7 +92,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const specification = cleanDrawingText(body.specification, 180);
     if (!specification) return NextResponse.json({ ok: false, error: '规格不能为空' }, { status: 400 });
-    const customerName = cleanDrawingText(body.customerName, 160) || '未设置';
+    const customerName = cleanDrawingText(body.customerName, 160);
+    if (!customerName) return NextResponse.json({ ok: false, error: '客户不能为空' }, { status: 400 });
     const productName = cleanDrawingText(body.productName, 180);
     const remark = cleanDrawingText(body.remark, 500);
     const libraryKey = drawingLibraryKey(customerName === '未设置' ? '' : customerName, specification);
