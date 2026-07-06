@@ -102,6 +102,30 @@ APK 不内置账号、密码、token、数据库连接串、S3 Key 或 SESSION_S
 - `accept=application/pdf` 时提供文件选择入口。
 - 下载使用系统 `DownloadManager`，不会静默失败；如系统下载服务不可用，会尝试调起系统浏览器。
 
+## PDF 预览兼容说明
+
+APK WebView 会在默认 User-Agent 后追加：
+
+```text
+HongmengWorkorderWebView/1.0
+```
+
+页面加载时也会注入：
+
+```js
+window.__HONGMENG_WEBVIEW__ = true
+```
+
+Web 端 PDF 组件检测到该标识后，会优先使用同源 content API 拉取 PDF `ArrayBuffer`，再交给 PDF.js 渲染，减少 worker、Cookie、签名链接或 WebView 内核差异造成的加载失败。
+
+如果当前平板 WebView 仍无法预览某个 PDF，页面会提供：
+
+- 重新加载
+- 下载 PDF
+- 用系统打开
+
+下载走系统 `DownloadManager`。用系统打开会先访问同源预览接口，由 Web 端带登录态生成临时文件链接，再交给系统处理。
+
 ## 白名单域名说明
 
 APK 只允许在 WebView 内加载：

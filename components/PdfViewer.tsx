@@ -3,6 +3,12 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
+declare global {
+  interface Window {
+    __HONGMENG_WEBVIEW__?: boolean;
+  }
+}
+
 type PdfDocument = {
   numPages: number;
   getPage: (pageNumber: number) => Promise<PdfPage>;
@@ -18,17 +24,32 @@ type PdfPage = {
 };
 
 type FitMode = 'width' | 'page' | 'custom';
+type PdfLoadError = { title: string; detail: string };
 
-export function PdfViewer({ fileId, title, contentUrl }: { fileId: string; title: string; contentUrl?: string }) {
+export function PdfViewer({
+  fileId,
+  title,
+  contentUrl,
+  downloadUrl,
+  viewUrl,
+}: {
+  fileId: string;
+  title: string;
+  contentUrl?: string;
+  downloadUrl?: string;
+  viewUrl?: string;
+}) {
   const [fullscreen, setFullscreen] = useState(false);
   const source = contentUrl || `/api/resource-files/${fileId}/content`;
+  const fallbackDownloadUrl = downloadUrl || `/api/resource-files/${fileId}/download`;
+  const fallbackViewUrl = viewUrl || `/api/resource-files/${fileId}/view`;
 
   return (
     <>
-      <PdfCanvas source={source} title={title} onFullscreen={() => setFullscreen(true)} />
+      <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} onFullscreen={() => setFullscreen(true)} />
       {fullscreen && (
         <PreviewModal title={title} onClose={() => setFullscreen(false)}>
-          <PdfCanvas source={source} title={title} fullscreen onClose={() => setFullscreen(false)} />
+          <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} fullscreen onClose={() => setFullscreen(false)} />
         </PreviewModal>
       )}
     </>
@@ -38,12 +59,16 @@ export function PdfViewer({ fileId, title, contentUrl }: { fileId: string; title
 function PdfCanvas({
   source,
   title,
+  downloadUrl,
+  viewUrl,
   fullscreen = false,
   onFullscreen,
   onClose,
 }: {
   source: string;
   title: string;
+  downloadUrl: string;
+  viewUrl: string;
   fullscreen?: boolean;
   onFullscreen?: () => void;
   onClose?: () => void;
@@ -60,7 +85,8 @@ function PdfCanvas({
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [loading, setLoading] = useState(true);
   const [rendering, setRendering] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<PdfLoadError | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     const node = shellRef.current;
@@ -79,7 +105,7 @@ function PdfCanvas({
 
     setLoading(true);
     setRendering(false);
-    setError('');
+    setError(null);
     setDoc(null);
     setPageNo(1);
     setPageCount(0);
@@ -88,13 +114,18 @@ function PdfCanvas({
       try {
         const pdfjs = await import('pdfjs-dist');
         pdfjs.GlobalWorkerOptions.workerSrc = '/api/pdf-worker';
-        loadingTask = pdfjs.getDocument({ url: source }) as unknown as { promise: Promise<PdfDocument>; destroy?: () => void };
+        if (isTabletWebView()) {
+          const data = await loadPdfArrayBuffer(source);
+          loadingTask = pdfjs.getDocument({ data, useWorkerFetch: false, isEvalSupported: false }) as unknown as { promise: Promise<PdfDocument>; destroy?: () => void };
+        } else {
+          loadingTask = pdfjs.getDocument({ url: source, withCredentials: true }) as unknown as { promise: Promise<PdfDocument>; destroy?: () => void };
+        }
         loadedDoc = await loadingTask.promise;
         if (!alive) return;
         setDoc(loadedDoc);
         setPageCount(loadedDoc.numPages);
-      } catch {
-        if (alive) setError('PDF 加载失败，请检查文件是否完整或稍后重试');
+      } catch (e) {
+        if (alive) setError(pdfError(e));
       } finally {
         if (alive) setLoading(false);
       }
@@ -106,7 +137,7 @@ function PdfCanvas({
       loadingTask?.destroy?.();
       loadedDoc?.destroy?.();
     };
-  }, [source]);
+  }, [source, reloadKey]);
 
   useEffect(() => {
     if (loading || !doc || !canvasRef.current || box.width <= 0 || box.height <= 0) return undefined;
@@ -115,7 +146,7 @@ function PdfCanvas({
 
     (async () => {
       setRendering(true);
-      setError('');
+      setError(null);
       try {
         renderTaskRef.current?.cancel();
         const page = await doc.getPage(pageNo);
@@ -140,7 +171,7 @@ function PdfCanvas({
         await task.promise;
       } catch (e) {
         if (alive && !(e instanceof Error && e.name === 'RenderingCancelledException')) {
-          setError('PDF 渲染失败，请刷新或下载原文件查看');
+          setError(pdfError(e, 'PDF 渲染失败，请重新加载，或下载原文件查看'));
         }
       } finally {
         if (alive) setRendering(false);
@@ -156,6 +187,10 @@ function PdfCanvas({
   function zoom(delta: number) {
     setFitMode('custom');
     setScale(Math.max(0.35, Math.min(3, effectiveScaleRef.current + delta)));
+  }
+
+  function openSystem() {
+    window.location.assign(viewUrl || downloadUrl || source);
   }
 
   return (
@@ -178,7 +213,16 @@ function PdfCanvas({
       </div>
       <div className="viewer-stage pdf-stage" ref={shellRef}>
         {loading && <ViewerState title="PDF 加载中" detail="正在读取同源文件流" />}
-        {error && <ViewerState title={error} detail="可尝试刷新页面或下载原文件" error />}
+        {error && (
+          <ViewerState
+            title={error.title}
+            detail={error.detail}
+            error
+            onReload={() => setReloadKey(v => v + 1)}
+            downloadUrl={downloadUrl}
+            onOpenSystem={openSystem}
+          />
+        )}
         {!loading && !error && (
           <>
             {rendering && <div className="render-badge">渲染中...</div>}
@@ -190,12 +234,84 @@ function PdfCanvas({
   );
 }
 
-function ViewerState({ title, detail, error = false }: { title: string; detail: string; error?: boolean }) {
+async function loadPdfArrayBuffer(source: string) {
+  const response = await fetch(source, { credentials: 'include', cache: 'no-store' });
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok) throw await responseError(response, contentType);
+  if (!contentType.toLowerCase().includes('application/pdf')) throw await responseError(response, contentType);
+  return response.arrayBuffer();
+}
+
+async function responseError(response: Response, contentType: string) {
+  let summary = '';
+  try {
+    summary = sanitizeSnippet(await response.text());
+  } catch {
+    summary = '';
+  }
+  const detail = summary ? `服务响应：${summary}` : `HTTP ${response.status} · ${contentType || '未知类型'}`;
+  const error = new Error(detail);
+  error.name = response.status === 401 ? 'PdfUnauthorized'
+    : response.status === 404 ? 'PdfNotFound'
+      : contentType.toLowerCase().includes('text/html') ? 'PdfHtmlResponse'
+        : 'PdfBadResponse';
+  return error;
+}
+
+function sanitizeSnippet(value: string) {
+  return value
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, '[token hidden]')
+    .replace(/"token"\s*:\s*"[^"]+"/gi, '"token":"[token hidden]"')
+    .replace(/"signedUrl"\s*:\s*"[^"]+"/gi, '"signedUrl":"[hidden]"')
+    .replace(/\s+/g, ' ')
+    .slice(0, 200);
+}
+
+function isTabletWebView() {
+  if (typeof window === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return !!window.__HONGMENG_WEBVIEW__ || ua.includes('HongmengWorkorderWebView') || ua.includes('; wv') || /\bwv\b/i.test(ua);
+}
+
+function pdfError(error: unknown, fallback = '当前平板内置 WebView 暂不支持直接预览此 PDF，可下载或用系统打开'): PdfLoadError {
+  if (error instanceof Error) {
+    if (error.name === 'PdfUnauthorized') return { title: '登录已过期，请重新登录', detail: '请退出后重新登录，再打开当前 PDF。' };
+    if (error.name === 'PdfNotFound') return { title: 'PDF 文件不存在或已被删除', detail: '请刷新资料列表，确认文件仍在当前工单中。' };
+    if (error.name === 'PdfHtmlResponse') return { title: '服务返回了页面而不是 PDF，请检查登录状态或重新打开文件', detail: error.message || '当前响应不是 PDF 文件流。' };
+    if (/worker|fake worker|pdf-worker/i.test(error.message)) return { title: '当前平板内置 WebView 暂不支持直接预览此 PDF，可下载或用系统打开', detail: 'PDF worker 加载失败，请使用下方按钮处理。' };
+    if (error.name === 'PdfBadResponse') return { title: 'PDF 文件流响应异常', detail: error.message || '服务没有返回 application/pdf。' };
+    return { title: fallback, detail: error.message || '请重新加载，或下载原文件查看。' };
+  }
+  return { title: fallback, detail: '请重新加载，或下载原文件查看。' };
+}
+
+function ViewerState({
+  title,
+  detail,
+  error = false,
+  onReload,
+  downloadUrl,
+  onOpenSystem,
+}: {
+  title: string;
+  detail: string;
+  error?: boolean;
+  onReload?: () => void;
+  downloadUrl?: string;
+  onOpenSystem?: () => void;
+}) {
   return (
     <div className={error ? 'viewer-state error' : 'viewer-state'}>
       <span />
       <strong>{title}</strong>
       <p>{detail}</p>
+      {error && (
+        <div className="viewer-state-actions">
+          {onReload && <button type="button" onClick={onReload}>重新加载</button>}
+          {downloadUrl && <a href={downloadUrl} target="_blank" rel="noreferrer">下载 PDF</a>}
+          {onOpenSystem && <button type="button" onClick={onOpenSystem}>用系统打开</button>}
+        </div>
+      )}
     </div>
   );
 }

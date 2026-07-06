@@ -8,6 +8,7 @@ import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
@@ -173,6 +174,13 @@ public class MainActivity extends Activity {
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
+        String baseUserAgent = settings.getUserAgentString();
+        if (baseUserAgent == null) {
+            baseUserAgent = "";
+        }
+        if (!baseUserAgent.contains("HongmengWorkorderWebView")) {
+            settings.setUserAgentString(baseUserAgent + " HongmengWorkorderWebView/1.0");
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         }
@@ -180,7 +188,7 @@ public class MainActivity extends Activity {
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            cookieManager.setAcceptThirdPartyCookies(webView, false);
+            cookieManager.setAcceptThirdPartyCookies(webView, true);
         }
 
         webView.setWebViewClient(new SafeWebViewClient());
@@ -231,6 +239,15 @@ public class MainActivity extends Activity {
             && allowedHost.equalsIgnoreCase(host);
     }
 
+    private void injectWebViewFlag(WebView view) {
+        String script = "window.__HONGMENG_WEBVIEW__=true;";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            view.evaluateJavascript(script, null);
+        } else {
+            view.loadUrl("javascript:" + script);
+        }
+    }
+
     private void confirmExternalOpen(Uri uri) {
         new AlertDialog.Builder(this)
             .setTitle("打开外部链接")
@@ -278,7 +295,14 @@ public class MainActivity extends Activity {
         }
 
         @Override
+        public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            showError(false);
+            injectWebViewFlag(view);
+        }
+
+        @Override
         public void onPageFinished(WebView view, String url) {
+            injectWebViewFlag(view);
             showLoading(false);
             hideSystemBars();
         }

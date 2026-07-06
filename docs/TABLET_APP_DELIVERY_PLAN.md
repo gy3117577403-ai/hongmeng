@@ -61,6 +61,18 @@ https://qdowqencjyph.sealoshzh.site/dashboard
 - 只允许加载 `qdowqencjyph.sealoshzh.site`
 - 非白名单域名需要用户确认后用系统浏览器打开
 
+## Android WebView PDF 预览兼容
+
+Android WebView 中 PDF.js 可能遇到 worker 加载、Cookie、同源内容流或 WebView 内核差异导致的 PDF 预览失败。当前已增加 WebView 专用兼容处理：
+
+- APK 壳 User-Agent 追加 `HongmengWorkorderWebView/1.0`。
+- APK 壳注入 `window.__HONGMENG_WEBVIEW__ = true`。
+- Web PDF 组件检测到 WebView 后，优先通过同源 `/api/resource-files/{id}/content` 拉取 PDF `ArrayBuffer`，再交给 PDF.js 渲染。
+- PDF content API 明确返回 `Content-Type: application/pdf`、`Content-Disposition: inline`、`Cache-Control: no-store` 和 `X-Content-Type-Options: nosniff`。
+- 如果仍无法预览，页面会提供“重新加载”“下载 PDF”“用系统打开”兜底。
+
+如果 WebView 仍无法直接渲染某个 PDF，可先下载 PDF，或通过“用系统打开”让系统 PDF 应用处理。
+
 ## HarmonyOS NEXT 风险说明
 
 部分鸿蒙平板可以安装 Android APK，部分 HarmonyOS NEXT 设备可能不再支持 APK。需要在目标设备上确认系统版本和 APK 安装能力。

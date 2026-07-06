@@ -8,6 +8,16 @@ import { getObjectStream } from '@/lib/s3';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+function contentTypeFor(file: { mimeType: string; originalName: string; displayName: string | null }) {
+  const filename = safeDisplayFilename(file).toLowerCase();
+  if (file.mimeType === 'application/pdf' || filename.endsWith('.pdf')) return 'application/pdf';
+  return file.mimeType || 'application/octet-stream';
+}
+
+function asciiFilename(filename: string) {
+  return filename.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_') || 'file.pdf';
+}
+
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
   try {
     await requireUser();
@@ -21,21 +31,24 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
         fileSize: true,
       },
     });
-    if (!file) return NextResponse.json({ message: '文件不存在' }, { status: 404 });
+    if (!file) return NextResponse.json({ ok: false, error: '文件不存在或已被删除' }, { status: 404 });
 
+    const filename = safeDisplayFilename(file);
     const stream = await getObjectStream(file.objectKey);
     const body = Readable.toWeb(stream as unknown as Readable) as unknown as BodyInit;
+
     return new Response(body, {
       headers: {
-        'Content-Type': file.mimeType || 'application/octet-stream',
+        'Content-Type': contentTypeFor(file),
         'Content-Length': String(file.fileSize),
-        'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(safeDisplayFilename(file))}`,
-        'Cache-Control': 'private, no-store',
+        'Content-Disposition': `inline; filename="${asciiFilename(filename)}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
       },
     });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     console.error(e);
-    return NextResponse.json({ message: '文件读取失败' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: '文件读取失败，请稍后重试' }, { status: 500 });
   }
 }

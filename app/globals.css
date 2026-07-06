@@ -3694,6 +3694,36 @@ input:focus-visible {
   line-height: 1.55;
 }
 
+.viewer-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.viewer-state-actions button,
+.viewer-state-actions a {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 106, 0, .22);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--orange);
+  font-size: 12px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.viewer-state-actions button:first-child {
+  border: none;
+  background: var(--orange);
+  color: #fff;
+}
+
 .render-badge {
   position: absolute;
   top: 14px;

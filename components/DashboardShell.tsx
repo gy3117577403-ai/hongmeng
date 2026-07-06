@@ -1666,7 +1666,7 @@ export default function DashboardShell({
                     </div>
                   ) : file ? (
                     file.fileType === 'pdf'
-                      ? <PdfViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} />
+                      ? <PdfViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} downloadUrl={file.downloadUrl} viewUrl={file.viewUrl} />
                       : <ImageViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} />
                   ) : (
                     <div className="empty-preview empty-resource-guide">
