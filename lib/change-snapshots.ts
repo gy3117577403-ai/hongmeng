@@ -85,6 +85,13 @@ export function workOrderSnapshot(order: {
   importBatchId?: string | null;
   sourceSheetName?: string | null;
   sourceRowNo?: number | null;
+  planType?: string | null;
+  weekStartDate?: Date | string | null;
+  weekEndDate?: Date | string | null;
+  planActive?: boolean;
+  planClearedAt?: Date | string | null;
+  planClearedBy?: string | null;
+  libraryKey?: string | null;
   deletedAt?: Date | string | null;
 }) {
   return {
@@ -115,6 +122,13 @@ export function workOrderSnapshot(order: {
     importBatchId: order.importBatchId ?? null,
     sourceSheetName: order.sourceSheetName ?? null,
     sourceRowNo: order.sourceRowNo ?? null,
+    planType: order.planType ?? null,
+    weekStartDate: order.weekStartDate ?? null,
+    weekEndDate: order.weekEndDate ?? null,
+    planActive: order.planActive ?? true,
+    planClearedAt: order.planClearedAt ?? null,
+    planClearedBy: order.planClearedBy ?? null,
+    libraryKey: order.libraryKey ?? null,
     deletedAt: order.deletedAt ?? null,
   };
 }

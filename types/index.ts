@@ -1,6 +1,7 @@
 export type WorkOrderDTO = {
   id: string;
   code: string;
+  displayCode?: string;
   customerName?: string | null;
   productName: string;
   stage: string;
@@ -27,6 +28,13 @@ export type WorkOrderDTO = {
   importBatchId?: string | null;
   sourceSheetName?: string | null;
   sourceRowNo?: number | null;
+  planType?: string | null;
+  weekStartDate?: string | null;
+  weekEndDate?: string | null;
+  planActive?: boolean;
+  planClearedAt?: string | null;
+  planClearedBy?: string | null;
+  libraryKey?: string | null;
   deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;

@@ -6,6 +6,7 @@ import { safeDisplayFilename } from '@/lib/filenames';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { getObjectStream } from '@/lib/s3';
+import { displayWorkOrderCode } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -70,10 +71,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       action: 'download_work_order_package',
       targetType: 'work_order',
       targetId: workOrder.id,
-      detail: { code: workOrder.code, fileCount: workOrder.resourceFiles.length },
+      detail: { code: workOrder.code, displayCode: displayWorkOrderCode(workOrder), fileCount: workOrder.resourceFiles.length },
     });
 
-    const filename = `${workOrder.code}-资料包.zip`;
+    const filename = `${displayWorkOrderCode(workOrder)}-资料包.zip`;
     const body = Readable.toWeb(zip.outputStream as unknown as Readable) as unknown as BodyInit;
     return new Response(body, {
       headers: {

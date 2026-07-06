@@ -4771,6 +4771,41 @@ body:has(.qr-dialog) .modal-backdrop {
   color: #6b7280;
 }
 
+.weekly-clear-preview {
+  flex: 1 1 100%;
+  width: 100%;
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid #fed7aa;
+  border-radius: 14px;
+  background: #fff7ed;
+}
+
+.danger-confirm-inline {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 800;
+  color: #9f1239;
+}
+
+.danger-confirm-inline input {
+  min-height: 42px;
+  border: 1px solid #fecdd3;
+  border-radius: 10px;
+  padding: 0 12px;
+  background: #fff;
+  color: #111827;
+  font-weight: 800;
+}
+
+.related-history {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
 .strip-more-button {
   min-height: 40px;
   padding: 0 12px;

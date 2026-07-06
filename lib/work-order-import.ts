@@ -33,6 +33,13 @@ export type WorkOrderImportData = {
   importBatchId?: string | null;
   sourceSheetName: string | null;
   sourceRowNo: number | null;
+  planType: string | null;
+  weekStartDate: string | null;
+  weekEndDate: string | null;
+  planActive: boolean;
+  planClearedAt: string | null;
+  planClearedBy: string | null;
+  libraryKey: string | null;
 };
 
 export type WorkOrderImportPreviewRow = {
@@ -163,6 +170,13 @@ function dateOnlyIso(date: Date | null) {
   return date && !Number.isNaN(date.getTime()) ? date.toISOString() : null;
 }
 
+function addDays(date: Date | null, days: number) {
+  if (!date) return null;
+  const next = new Date(date.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
 export function inferWeekStartDateFromFilename(filename = '', now = new Date()) {
   const match = filename.match(/(\d{1,2})[.-](\d{1,2})\s*-\s*(\d{1,2})[.-](\d{1,2})/);
   if (!match) return '';
@@ -285,6 +299,13 @@ function makeBaseData(): WorkOrderImportData {
     drawingIssueNote: null,
     sourceSheetName: null,
     sourceRowNo: null,
+    planType: 'manual',
+    weekStartDate: null,
+    weekEndDate: null,
+    planActive: true,
+    planClearedAt: null,
+    planClearedBy: null,
+    libraryKey: null,
   };
 }
 
@@ -373,6 +394,7 @@ export function buildStandardWorkOrderPreview(options: {
     data.customerName = nullableText(raw.customerName, 120);
     data.productName = productName;
     data.specification = nullableText(raw.specification, 180);
+    data.libraryKey = data.specification || code || null;
     data.salesperson = nullableText(raw.salesperson, 120);
     data.sourceOrderNo = nullableText(raw.sourceOrderNo, 120);
     data.stage = stage || 'not_issued';
@@ -403,6 +425,8 @@ export function buildWeeklyPlanPreview(options: {
   sourceSheetName?: string | null;
   existingCodes: Set<string>;
 }) {
+  const weekStart = parseWeekStartDate(options.weekStartDate);
+  const weekEnd = addDays(weekStart, 6);
   const previewRows = options.rows.map((row, index): WorkOrderImportPreviewRow => {
     const rowNo = options.startRowNo + index;
     const skipReason = isTotalOrEmptyRow(row);
@@ -465,6 +489,11 @@ export function buildWeeklyPlanPreview(options: {
     data.orderDate = dateOnlyIso(orderDate.value);
     data.customerLevel = customerLevel;
     data.specification = specification;
+    data.planType = 'weekly_plan';
+    data.weekStartDate = dateOnlyIso(weekStart);
+    data.weekEndDate = dateOnlyIso(weekEnd);
+    data.planActive = true;
+    data.libraryKey = specification;
     data.processName = nullableText(raw.processName, 120);
     data.uncompletedQty = nullableText(raw.uncompletedQty, 80);
     data.unitWorkHours = nullableText(raw.unitWorkHours, 80);
@@ -517,6 +546,13 @@ export function toWorkOrderCreateData(row: WorkOrderImportPreviewRow, importBatc
     importBatchId,
     sourceSheetName: nullableText(item.sourceSheetName, 160),
     sourceRowNo: item.sourceRowNo ? Number(item.sourceRowNo) : null,
+    planType: nullableText(item.planType, 40) || 'manual',
+    weekStartDate: item.weekStartDate ? new Date(item.weekStartDate) : null,
+    weekEndDate: item.weekEndDate ? new Date(item.weekEndDate) : null,
+    planActive: item.planActive !== false,
+    planClearedAt: item.planClearedAt ? new Date(item.planClearedAt) : null,
+    planClearedBy: nullableText(item.planClearedBy, 120),
+    libraryKey: nullableText(item.libraryKey, 180) || nullableText(item.specification, 180) || cleanText(item.code, 80),
   };
 }
 
@@ -549,5 +585,12 @@ export function serializeImportedWorkOrderFields(order: WorkOrder) {
     importBatchId: order.importBatchId,
     sourceSheetName: order.sourceSheetName,
     sourceRowNo: order.sourceRowNo,
+    planType: order.planType,
+    weekStartDate: order.weekStartDate?.toISOString() || null,
+    weekEndDate: order.weekEndDate?.toISOString() || null,
+    planActive: order.planActive,
+    planClearedAt: order.planClearedAt?.toISOString() || null,
+    planClearedBy: order.planClearedBy,
+    libraryKey: order.libraryKey,
   };
 }

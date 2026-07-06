@@ -49,6 +49,14 @@ export function legacyStatusForStage(stage: WorkOrderStage) {
   return 'processing';
 }
 
+export function displayWorkOrderCode(order: Pick<WorkOrder, 'code' | 'specification'> | { code?: string | null; specification?: string | null }) {
+  return order.specification?.trim() || order.code?.trim() || '-';
+}
+
+export function workOrderLibraryKey(order: { code?: string | null; specification?: string | null; libraryKey?: string | null }) {
+  return order.libraryKey?.trim() || order.specification?.trim() || order.code?.trim() || null;
+}
+
 export function normalizePriority(value: unknown) {
   const text = typeof value === 'string' ? value.trim() : '';
   if (text === '紧急') return 'urgent';
@@ -105,6 +113,13 @@ type WorkOrderBody = {
   importBatchId?: unknown;
   sourceSheetName?: unknown;
   sourceRowNo?: unknown;
+  planType?: unknown;
+  weekStartDate?: unknown;
+  weekEndDate?: unknown;
+  planActive?: unknown;
+  planClearedAt?: unknown;
+  planClearedBy?: unknown;
+  libraryKey?: unknown;
 };
 
 function str(v: unknown) {
@@ -112,7 +127,7 @@ function str(v: unknown) {
 }
 
 export function parseWorkOrderBody(body: WorkOrderBody, options: { partial?: boolean } = {}) {
-  const data: Record<string, string | number | Date | null> = {};
+  const data: Record<string, string | number | boolean | Date | null> = {};
   const errors: string[] = [];
   const partial = !!options.partial;
 
@@ -185,12 +200,19 @@ export function parseWorkOrderBody(body: WorkOrderBody, options: { partial?: boo
     ['drawingIssueNote', 200],
     ['importBatchId', 80],
     ['sourceSheetName', 160],
+    ['planType', 40],
+    ['planClearedBy', 120],
+    ['libraryKey', 180],
   ] as const;
   for (const [field, max] of optionalTextFields) {
     if (body[field] !== undefined) {
       const value = str(body[field]);
       data[field] = value ? value.slice(0, max) : null;
     }
+  }
+  if (body.libraryKey === undefined && body.specification !== undefined) {
+    const specification = data.specification;
+    data.libraryKey = typeof specification === 'string' && specification.trim() ? specification.trim() : null;
   }
 
   if (body.orderDate !== undefined) {
@@ -203,6 +225,28 @@ export function parseWorkOrderBody(body: WorkOrderBody, options: { partial?: boo
     const parsed = parsePlannedAt(body.drawingIssuedAt);
     if (parsed.error) errors.push('图纸下发日期格式不合法');
     else data.drawingIssuedAt = parsed.value ?? null;
+  }
+
+  if (body.weekStartDate !== undefined) {
+    const parsed = parsePlannedAt(body.weekStartDate);
+    if (parsed.error) errors.push('weekStartDate invalid');
+    else data.weekStartDate = parsed.value ?? null;
+  }
+
+  if (body.weekEndDate !== undefined) {
+    const parsed = parsePlannedAt(body.weekEndDate);
+    if (parsed.error) errors.push('weekEndDate invalid');
+    else data.weekEndDate = parsed.value ?? null;
+  }
+
+  if (body.planClearedAt !== undefined) {
+    const parsed = parsePlannedAt(body.planClearedAt);
+    if (parsed.error) errors.push('planClearedAt invalid');
+    else data.planClearedAt = parsed.value ?? null;
+  }
+
+  if (body.planActive !== undefined) {
+    data.planActive = body.planActive === true || String(body.planActive).trim() === 'true';
   }
 
   if (body.sourceRowNo !== undefined) {
@@ -224,6 +268,7 @@ export function serializeWorkOrder(order: WorkOrder & { resourceFiles?: { catego
   return {
     id: order.id,
     code: order.code,
+    displayCode: displayWorkOrderCode(order),
     customerName: order.customerName,
     productName: order.productName,
     stage,
@@ -250,6 +295,13 @@ export function serializeWorkOrder(order: WorkOrder & { resourceFiles?: { catego
     importBatchId: order.importBatchId,
     sourceSheetName: order.sourceSheetName,
     sourceRowNo: order.sourceRowNo,
+    planType: order.planType,
+    weekStartDate: order.weekStartDate?.toISOString() || null,
+    weekEndDate: order.weekEndDate?.toISOString() || null,
+    planActive: order.planActive,
+    planClearedAt: order.planClearedAt?.toISOString() || null,
+    planClearedBy: order.planClearedBy,
+    libraryKey: order.libraryKey,
     deletedAt: order.deletedAt?.toISOString() || null,
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),

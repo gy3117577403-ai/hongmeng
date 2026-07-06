@@ -20,7 +20,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const old = await prisma.resourceFile.findFirst({
       where: { id: params.id, deletedAt: null, status: 'uploaded' },
       include: {
-        workOrder: { select: { code: true, productName: true } },
+        workOrder: { select: { code: true, specification: true, productName: true } },
         category: { select: { name: true, code: true } },
       },
     });
@@ -46,7 +46,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       where: { id: old.id },
       data,
       include: {
-        workOrder: { select: { code: true, productName: true } },
+        workOrder: { select: { code: true, specification: true, productName: true } },
         category: { select: { name: true, code: true } },
         uploadedBy: { select: { displayName: true, username: true } },
       },

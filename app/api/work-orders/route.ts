@@ -37,6 +37,7 @@ export async function GET(req: NextRequest) {
     await requireUser();
     const keyword = req.nextUrl.searchParams.get('keyword')?.trim();
     const filter = req.nextUrl.searchParams.get('filter');
+    const includeCleared = req.nextUrl.searchParams.get('includeCleared') === 'true';
     const stage = normalizeWorkOrderStage(filter);
     const createdAt = filterDate(filter);
     const and: Prisma.WorkOrderWhereInput[] = [];
@@ -68,6 +69,7 @@ export async function GET(req: NextRequest) {
     const workOrders = await prisma.workOrder.findMany({
       where: {
         deletedAt: null,
+        ...(includeCleared ? {} : { planActive: true }),
         ...(and.length ? { AND: and } : {}),
       },
       include: {
@@ -102,6 +104,12 @@ export async function POST(req: NextRequest) {
         progress: Number(data.progress),
         plannedAt: data.plannedAt instanceof Date ? data.plannedAt : null,
         remark: data.remark === null ? null : String(data.remark || ''),
+        specification: typeof data.specification === 'string' ? data.specification : null,
+        sourceOrderNo: typeof data.sourceOrderNo === 'string' ? data.sourceOrderNo : null,
+        salesperson: typeof data.salesperson === 'string' ? data.salesperson : null,
+        planType: typeof data.planType === 'string' ? data.planType : 'manual',
+        planActive: typeof data.planActive === 'boolean' ? data.planActive : true,
+        libraryKey: typeof data.libraryKey === 'string' && data.libraryKey ? data.libraryKey : (typeof data.specification === 'string' && data.specification ? data.specification : String(data.code)),
       },
       include: {
         resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } },

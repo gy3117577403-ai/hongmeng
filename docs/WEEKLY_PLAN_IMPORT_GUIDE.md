@@ -138,3 +138,30 @@
 - 登录账号和密码
 
 本文档不包含任何数据库密码、S3 Key、SESSION_SECRET、admin 密码或真实生产密码。
+
+## v1.13.6 显示和清理补充
+
+从 v1.13.6 开始，周计划导入工单的主显示编号使用“规格”：
+
+```text
+displayCode = specification || code
+```
+
+系统内部仍会生成并保留唯一 `code`，用于数据库关联、导入去重和安全确认。现场页面、工单卡片、当前工单信息条、ZIP 下载文件名和打印摘要优先显示规格 / 生产编号。
+
+周计划导入写入：
+
+- `planType = weekly_plan`
+- `planActive = true`
+- `libraryKey = specification`
+- `weekStartDate = 导入时选择的计划周开始日期`
+- `weekEndDate = weekStartDate + 6 天`
+
+如需开始新一周生产，可在系统设置中使用“本周生产工单清理”：
+
+1. 选择计划周开始日期。
+2. 点击“预览清理”。
+3. 确认不会删除资料文件和连接器参数。
+4. 输入 `CLEAR_WEEK` 后执行。
+
+清理只会把本周周计划工单设为 `planActive=false`，不会删除 `WorkOrder`、`ResourceFile`、S3 文件、连接器参数或连接器附件。

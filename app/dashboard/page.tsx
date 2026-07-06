@@ -10,7 +10,7 @@ export default async function Dashboard() {
 
   const [orders, categories] = await Promise.all([
     prisma.workOrder.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, planActive: true },
       include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
       orderBy: [{ createdAt: 'desc' }, { code: 'asc' }],
     }),

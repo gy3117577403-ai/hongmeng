@@ -1,3 +1,5 @@
+import { displayWorkOrderCode } from '@/lib/work-orders';
+
 export function serializeResourceFile(f: {
   id: string;
   workOrderId: string;
@@ -15,12 +17,12 @@ export function serializeResourceFile(f: {
   deletedAt?: Date | null;
   uploadedBy?: { displayName: string | null; username?: string } | null;
   category?: { name: string; code: string } | null;
-  workOrder?: { code: string; productName?: string } | null;
+  workOrder?: { code: string; specification?: string | null; productName?: string } | null;
 }) {
   return {
     id: f.id,
     workOrderId: f.workOrderId,
-    workOrderCode: f.workOrder?.code || null,
+    workOrderCode: f.workOrder ? displayWorkOrderCode(f.workOrder) : null,
     workOrderProductName: f.workOrder?.productName || null,
     categoryId: f.categoryId,
     categoryName: f.category?.name || null,

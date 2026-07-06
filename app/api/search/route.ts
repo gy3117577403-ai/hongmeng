@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
       prisma.workOrder.findMany({
         where: {
           deletedAt: null,
+          planActive: true,
           OR: [
             { code: { contains: keyword, mode: 'insensitive' } },
             { customerName: { contains: keyword, mode: 'insensitive' } },
@@ -48,9 +49,10 @@ export async function GET(req: NextRequest) {
             { workOrder: { salesperson: { contains: keyword, mode: 'insensitive' } } },
             { category: { name: { contains: keyword, mode: 'insensitive' } } },
           ],
+          workOrder: { deletedAt: null, planActive: true },
         },
         include: {
-          workOrder: { select: { code: true, productName: true } },
+          workOrder: { select: { code: true, specification: true, productName: true } },
           category: { select: { name: true, code: true } },
           uploadedBy: { select: { displayName: true, username: true } },
         },

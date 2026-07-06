@@ -69,6 +69,16 @@ type ImportPreview = {
 };
 type ImportResultRow = { row: number; code: string; status: 'created' | 'skipped' | 'failed'; message: string };
 type ImportResult = { importBatchId?: string; summary: { created: number; skipped: number; failed: number; duplicateSkipped?: number; total: number }; results: ImportResultRow[] };
+type WeeklyPlanClearSummary = {
+  weekStartDate: string;
+  weekEndDate: string;
+  workOrderCount: number;
+  workOrdersWithFiles: number;
+  fileCount: number;
+  connectorParameterCount: number;
+  clearedCount?: number;
+};
+type RelatedHistory = { fileCount: number; workOrderCount: number } | null;
 type UserForm = { username: string; displayName: string; password: string };
 type AccountEdit = { id: string; displayName: string; isActive: boolean } | null;
 type PasswordReset = { id: string; username: string; password: string } | null;
@@ -300,8 +310,12 @@ function customerLabel(order?: WorkOrderDTO | null) {
   return order?.customerName?.trim() || '未设置';
 }
 
+function workOrderDisplayCode(order?: WorkOrderDTO | null) {
+  return order?.displayCode?.trim() || order?.specification?.trim() || order?.code?.trim() || '-';
+}
+
 function orderSpecLabel(order?: WorkOrderDTO | null) {
-  return order?.specification?.trim() || '-';
+  return workOrderDisplayCode(order);
 }
 
 function orderDeliveryLabel(order?: WorkOrderDTO | null) {
@@ -363,6 +377,7 @@ export default function DashboardShell({
   const [cat, setCat] = useState(categories[0]?.id || '');
   const [files, setFiles] = useState<ResourceFileDTO[]>([]);
   const [allFiles, setAllFiles] = useState<ResourceFileDTO[]>([]);
+  const [relatedHistory, setRelatedHistory] = useState<RelatedHistory>(null);
   const [managerOpen, setManagerOpen] = useState(false);
   const [managerCategory, setManagerCategory] = useState('all');
   const [sel, setSel] = useState('');
@@ -412,6 +427,11 @@ export default function DashboardShell({
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importError, setImportError] = useState('');
+  const [clearWeekStart, setClearWeekStart] = useState('');
+  const [clearPreview, setClearPreview] = useState<WeeklyPlanClearSummary | null>(null);
+  const [clearConfirmText, setClearConfirmText] = useState('');
+  const [clearError, setClearError] = useState('');
+  const [clearingWeeklyPlan, setClearingWeeklyPlan] = useState(false);
   const [duplicateStrategy, setDuplicateStrategy] = useState<'skip' | 'import'>('skip');
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [now, setNow] = useState<Date | null>(null);
@@ -455,6 +475,7 @@ export default function DashboardShell({
     const text = kw.trim().toLowerCase();
     return orders.filter(o => {
       const matchesText = !text || [
+        o.displayCode,
         o.code,
         o.productName,
         o.customerName,
@@ -496,6 +517,7 @@ export default function DashboardShell({
   const fileOrderOptions = useMemo(() => {
     const text = fileOrderKw.trim().toLowerCase();
     return orders.filter(o => !text || [
+      o.displayCode,
       o.code,
       o.productName,
       o.customerName,
@@ -630,6 +652,7 @@ export default function DashboardShell({
     if (!w || !c) {
       setFiles([]);
       setSel('');
+      setRelatedHistory(null);
       return [];
     }
     setLoading(true);
@@ -639,6 +662,7 @@ export default function DashboardShell({
       const d = await r.json();
       const nextFiles: ResourceFileDTO[] = Array.isArray(d.files) ? d.files : [];
       setFiles(nextFiles);
+      setRelatedHistory(d.relatedHistory || null);
       setSel(preferredFileId && nextFiles.some(f => f.id === preferredFileId) ? preferredFileId : nextFiles[0]?.id || '');
       setCategoryCounts(v => ({ ...v, [c]: nextFiles.length }));
       return nextFiles;
@@ -1355,7 +1379,7 @@ export default function DashboardShell({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${order.code}-资料包.zip`;
+      a.download = `${workOrderDisplayCode(order)}-资料包.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -1543,6 +1567,70 @@ export default function DashboardShell({
     }
   }
 
+  async function previewClearWeeklyPlan() {
+    setClearError('');
+    setClearPreview(null);
+    const targetWeekStart = clearWeekStart || importWeekStart;
+    if (!targetWeekStart) {
+      setClearError('请选择计划周开始日期');
+      return;
+    }
+    setClearingWeeklyPlan(true);
+    try {
+      const r = await fetch('/api/work-orders/clear-weekly-plan/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weekStartDate: targetWeekStart }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setClearError(d.error || d.message || '清除预览失败');
+        return;
+      }
+      setClearPreview(d.summary || null);
+      setClearConfirmText('');
+    } catch {
+      setClearError('清除预览失败，请检查网络后重试');
+    } finally {
+      setClearingWeeklyPlan(false);
+    }
+  }
+
+  async function commitClearWeeklyPlan() {
+    setClearError('');
+    const targetWeekStart = clearWeekStart || importWeekStart;
+    if (!targetWeekStart) {
+      setClearError('请选择计划周开始日期');
+      return;
+    }
+    if (clearConfirmText.trim() !== 'CLEAR_WEEK') {
+      setClearError('请输入 CLEAR_WEEK 确认清除本周生产工单');
+      return;
+    }
+    setClearingWeeklyPlan(true);
+    try {
+      const r = await fetch('/api/work-orders/clear-weekly-plan/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weekStartDate: targetWeekStart, confirmText: clearConfirmText.trim() }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setClearError(d.error || d.message || '清除本周生产工单失败');
+        return;
+      }
+      setClearPreview(d.summary || null);
+      setClearConfirmText('');
+      await refreshOrders(undefined, true);
+      await loadFieldSummary();
+      setMsg(`已清除 ${d.summary?.clearedCount ?? 0} 张本周生产工单，资料文件未删除`);
+    } catch {
+      setClearError('清除本周生产工单失败，请检查网络后重试');
+    } finally {
+      setClearingWeeklyPlan(false);
+    }
+  }
+
   async function installApp() {
     if (!installPrompt) {
       setMsg('请在平板浏览器右上角菜单中选择“添加到桌面 / 安装应用”，再从桌面图标打开');
@@ -1659,7 +1747,7 @@ export default function DashboardShell({
               <div className="search-group-title">工单</div>
               {globalSearch.workOrders.map(item => (
                 <button key={item.id} type="button" onClick={() => openWorkOrder(item.id)}>
-                  <strong>{item.code}</strong>
+                  <strong>{workOrderDisplayCode(item)}</strong>
                   <span>{customerLabel(item)} · {item.productName}</span>
                 </button>
               ))}
@@ -1722,7 +1810,7 @@ export default function DashboardShell({
             </div>
           </div>
           <div className="panel-search">
-            <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索工单号 / 客户 / 品名 / 规格 / SO单号" />
+            <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索规格 / 客户 / 品名 / SO单号 / 内部编号" />
           </div>
           <div className="filter-tabs">
             {[
@@ -1756,7 +1844,7 @@ export default function DashboardShell({
                 <div className="field-summary-list">
                   {fieldSummary.missingWorkOrders.map(item => (
                     <button key={item.id} type="button" onClick={() => openWorkOrder(item.id)}>
-                      <strong>{item.code}</strong><span>{customerLabel(item)} · {item.productName}</span>
+                      <strong>{workOrderDisplayCode(item)}</strong><span>{customerLabel(item)} · {item.productName}</span>
                     </button>
                   ))}
                   {fieldSummary.recentFiles.map(item => (
@@ -1800,7 +1888,7 @@ export default function DashboardShell({
           <div className="current-order-strip">
             <div className="order-strip-info">
               <span className="order-strip-chip customer">客户：{customerLabel(order)}</span>
-              <strong>{order?.code || '暂无工单'}</strong>
+              <strong>{order ? workOrderDisplayCode(order) : '暂无工单'}</strong>
               <span className="order-strip-product">{order?.productName || '请选择工单'}</span>
               {order?.specification && <span className="order-strip-chip spec">规格：{order.specification}</span>}
               {order?.uncompletedQty && <span className="order-strip-chip qty">未交：{order.uncompletedQty}</span>}
@@ -1886,6 +1974,12 @@ export default function DashboardShell({
                         <div className="empty-missing">
                           <b>当前工单缺失：</b>
                           <span>{missingCategoryNames.join('、')}</span>
+                        </div>
+                      )}
+                      {relatedHistory && relatedHistory.fileCount > 0 && (
+                        <div className="empty-missing related-history">
+                          <b>发现同规格历史资料</b>
+                          <span>{relatedHistory.workOrderCount} 张历史工单，{relatedHistory.fileCount} 个文件，可查看后手动引用。</span>
                         </div>
                       )}
                       <div className="empty-actions empty-guide-actions">
@@ -2037,7 +2131,7 @@ export default function DashboardShell({
           <h1>工单资料摘要</h1>
             <div className="print-meta">
             <span>客户：{customerLabel(order)}</span>
-            <span>工单号：{order.code}</span>
+            <span>规格：{workOrderDisplayCode(order)}</span>
             <span>产品名称：{order.productName}</span>
             <span>状态：{flowText(order.stage)}</span>
             <span>优先级：{priorityText[order.priority] || order.priority}</span>
@@ -2090,7 +2184,7 @@ export default function DashboardShell({
 
       <CameraCaptureModal
         open={cameraOpen}
-        workOrderCode={order?.code}
+        workOrderCode={order ? workOrderDisplayCode(order) : undefined}
         categoryCode={category?.code}
         categoryName={category?.name}
         onClose={() => setCameraOpen(false)}
@@ -2112,6 +2206,11 @@ export default function DashboardShell({
           importPreview={importPreview}
           importResult={importResult}
           importError={importError}
+          clearWeekStart={clearWeekStart}
+          clearPreview={clearPreview}
+          clearConfirmText={clearConfirmText}
+          clearError={clearError}
+          clearingWeeklyPlan={clearingWeeklyPlan}
           duplicateStrategy={duplicateStrategy}
           canInstall={!!installPrompt}
           close={() => setSystemOpen(false)}
@@ -2127,9 +2226,13 @@ export default function DashboardShell({
           chooseImport={() => csvImport.current?.click()}
           setImportMode={setImportMode}
           setImportWeekStart={setImportWeekStart}
+          setClearWeekStart={setClearWeekStart}
+          setClearConfirmText={setClearConfirmText}
           setDuplicateStrategy={setDuplicateStrategy}
           clearImport={() => { setImportPreview(null); setImportResult(null); setImportError(''); }}
           commitWorkOrderImport={commitWorkOrderImport}
+          previewClearWeeklyPlan={previewClearWeeklyPlan}
+          commitClearWeeklyPlan={commitClearWeeklyPlan}
           downloadTemplate={() => downloadExport('/api/import/work-orders/template.csv', '下载导入模板', '工单导入模板.csv')}
           exportWorkOrders={() => downloadExport('/api/export/work-orders.csv', '导出工单 CSV', '工单列表.csv')}
           exportResourceFiles={() => downloadExport('/api/export/resource-files.csv', '导出文件清单 CSV', '文件清单.csv')}
@@ -2253,9 +2356,9 @@ export default function DashboardShell({
                 <VoiceInputButton value={fileForm.remark} onChange={value => setFileForm(v => ({ ...v, remark: value }))} label="文件备注语音输入" />
               </div>
             </label>
-            <label>搜索目标工单<input value={fileOrderKw} onChange={e => setFileOrderKw(e.target.value)} placeholder="输入工单号 / 客户 / 产品名称筛选" /></label>
+            <label>搜索目标工单<input value={fileOrderKw} onChange={e => setFileOrderKw(e.target.value)} placeholder="输入规格 / 客户 / 产品名称筛选" /></label>
             <label>所属工单<select value={fileForm.workOrderId} onChange={e => setFileForm(v => ({ ...v, workOrderId: e.target.value }))}>
-              {fileOrderOptions.map(item => <option key={item.id} value={item.id}>{item.code} · {customerLabel(item)} · {item.productName}</option>)}
+              {fileOrderOptions.map(item => <option key={item.id} value={item.id}>{workOrderDisplayCode(item)} · {customerLabel(item)} · {item.productName}</option>)}
             </select></label>
             <label>所属分类<select value={fileForm.categoryId} onChange={e => setFileForm(v => ({ ...v, categoryId: e.target.value }))}>
               {categories.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -2350,7 +2453,7 @@ export default function DashboardShell({
             <div className="delete-file-name">{displayFileName(deleteTarget)}</div>
             <div className="danger-confirm-detail">
               <span>版本：{deleteTarget.version || 'V1.0'}</span>
-              <span>所属工单：{deleteTarget.workOrderCode || order?.code || '-'}</span>
+              <span>所属工单：{deleteTarget.workOrderCode || workOrderDisplayCode(order)}</span>
               <span>分类：{deleteTarget.categoryName || category?.name || '-'}</span>
             </div>
             <label className="confirm-input-label">
@@ -2374,14 +2477,14 @@ export default function DashboardShell({
               <button type="button" onClick={() => setOrderDeleteTarget(null)}>×</button>
             </div>
             <p>仅软删除工单记录，S3 对象存储中的文件不会被删除。</p>
-            <div className="delete-file-name">{orderDeleteTarget.code} · {orderDeleteTarget.productName}</div>
+            <div className="delete-file-name">{workOrderDisplayCode(orderDeleteTarget)} · {orderDeleteTarget.productName}</div>
             <div className="danger-confirm-detail">
               <span>客户：{orderDeleteTarget.customerName || '未填写'}</span>
               <span>产品：{orderDeleteTarget.productName}</span>
-              <span>工单号：{orderDeleteTarget.code}</span>
+              <span>生产编号：{workOrderDisplayCode(orderDeleteTarget)}</span>
             </div>
             <label className="confirm-input-label">
-              输入 <b>{orderDeleteTarget.code} CONFIRM</b> 确认删除
+              输入内部编号 <b>{orderDeleteTarget.code} CONFIRM</b> 确认删除
               <input value={orderDeleteConfirmText} onChange={e => setOrderDeleteConfirmText(e.target.value)} placeholder={`${orderDeleteTarget.code} CONFIRM`} />
             </label>
             <p className="tool-note muted">删除后可在回收站恢复，不会删除 S3 文件。</p>
@@ -2439,7 +2542,7 @@ function OrderGroup({
         return (
           <button key={o.id} className={o.id === selected ? 'order-card active' : 'order-card'} type="button" onClick={() => choose(o.id)}>
             <div className="order-topline">
-              <strong>{o.code}</strong>
+              <strong>{workOrderDisplayCode(o)}</strong>
               <span role="button" tabIndex={0} className={`tag priority-chip ${o.priority}`} onClick={e => openQuickMenu('priority', o, e)}>{priorityText[o.priority] || '一般'}</span>
             </div>
             <span className="order-customer">客户：{customerLabel(o)}</span>
@@ -2699,10 +2802,10 @@ function TrashDialog({
         </div>
         {tab === 'workOrders' ? (
           <div className="compact-table trash-table">
-            <div className="compact-head"><span>工单号</span><span>产品名称</span><span>删除时间</span><span>操作</span></div>
+            <div className="compact-head"><span>生产编号</span><span>产品名称</span><span>删除时间</span><span>操作</span></div>
             {trash.workOrders.map(item => (
               <div className="compact-row" key={item.id}>
-                <span>{item.code}</span>
+                <span>{workOrderDisplayCode(item)}</span>
                 <span>{item.productName}</span>
                 <span>{item.deletedAt ? dt(item.deletedAt) : '-'}</span>
                 <span><button type="button" onClick={() => restoreWorkOrder(item.id)}>恢复</button></span>
@@ -2799,7 +2902,7 @@ function QrDialog({
           <button type="button" onClick={close}>×</button>
         </div>
         <div className="qr-print-area">
-          <h1>{order.code}</h1>
+          <h1>{workOrderDisplayCode(order)}</h1>
           <p>客户：{customerLabel(order)}</p>
           <p>{order.productName}</p>
           {qrDataUrl && <img src={qrDataUrl} alt="工单直达二维码" />}
@@ -2830,6 +2933,11 @@ function SystemSettings({
   importPreview,
   importResult,
   importError,
+  clearWeekStart,
+  clearPreview,
+  clearConfirmText,
+  clearError,
+  clearingWeeklyPlan,
   duplicateStrategy,
   canInstall,
   close,
@@ -2845,9 +2953,13 @@ function SystemSettings({
   chooseImport,
   setImportMode,
   setImportWeekStart,
+  setClearWeekStart,
+  setClearConfirmText,
   setDuplicateStrategy,
   clearImport,
   commitWorkOrderImport,
+  previewClearWeeklyPlan,
+  commitClearWeeklyPlan,
   downloadTemplate,
   exportWorkOrders,
   exportResourceFiles,
@@ -2866,6 +2978,11 @@ function SystemSettings({
   importPreview: ImportPreview | null;
   importResult: ImportResult | null;
   importError: string;
+  clearWeekStart: string;
+  clearPreview: WeeklyPlanClearSummary | null;
+  clearConfirmText: string;
+  clearError: string;
+  clearingWeeklyPlan: boolean;
   duplicateStrategy: 'skip' | 'import';
   canInstall: boolean;
   close: () => void;
@@ -2881,9 +2998,13 @@ function SystemSettings({
   chooseImport: () => void;
   setImportMode: (mode: ImportMode) => void;
   setImportWeekStart: (value: string) => void;
+  setClearWeekStart: (value: string) => void;
+  setClearConfirmText: (value: string) => void;
   setDuplicateStrategy: (strategy: 'skip' | 'import') => void;
   clearImport: () => void;
   commitWorkOrderImport: () => void;
+  previewClearWeeklyPlan: () => void;
+  commitClearWeeklyPlan: () => void;
   downloadTemplate: () => void;
   exportWorkOrders: () => void;
   exportResourceFiles: () => void;
@@ -3011,6 +3132,38 @@ function SystemSettings({
             </label>
           )}
           <div className="system-actions">
+            <div className="weekly-clear-preview">
+              <h4>本周生产工单清理</h4>
+              <p>仅隐藏本周周计划生产工单，不删除资料库文件、PDF、图片或连接器参数。</p>
+              <label className="import-week-start">
+                <span>计划周开始日期</span>
+                <input type="date" value={clearWeekStart || importWeekStart} onChange={e => setClearWeekStart(e.target.value)} />
+                <small>清理后本周 Excel 工单会退出 active 列表。</small>
+              </label>
+              <button type="button" disabled={clearingWeeklyPlan || !(clearWeekStart || importWeekStart)} onClick={() => { if (!clearWeekStart && importWeekStart) setClearWeekStart(importWeekStart); previewClearWeeklyPlan(); }}>
+                {clearingWeeklyPlan ? '检查中...' : '预览清理'}
+              </button>
+              {clearError && <div className="form-error">{clearError}</div>}
+              {clearPreview && (
+                <>
+                  <div className="import-summary">
+                    <span>周期 {clearPreview.weekStartDate} 至 {clearPreview.weekEndDate}</span>
+                    <span>生产工单 {clearPreview.workOrderCount}</span>
+                    <span>已上传资料工单 {clearPreview.workOrdersWithFiles}</span>
+                    <span>不会删除文件 {clearPreview.fileCount}</span>
+                    <span>不会删除连接器参数 {clearPreview.connectorParameterCount}</span>
+                    {clearPreview.clearedCount !== undefined && <span>已清理 {clearPreview.clearedCount}</span>}
+                  </div>
+                  <label className="danger-confirm-inline">
+                    <span>确认请输入 CLEAR_WEEK</span>
+                    <input value={clearConfirmText} onChange={e => setClearConfirmText(e.target.value)} placeholder="CLEAR_WEEK" />
+                  </label>
+                  <button className="danger-button" type="button" disabled={clearingWeeklyPlan || clearConfirmText.trim() !== 'CLEAR_WEEK'} onClick={commitClearWeeklyPlan}>
+                    {clearingWeeklyPlan ? '清理中...' : '确认清理本周工单'}
+                  </button>
+                </>
+              )}
+            </div>
             <button type="button" disabled={!!exporting} onClick={downloadTemplate}>{exporting === '下载导入模板' ? '下载中...' : '下载 CSV 模板'}</button>
             <button className="primary-button" type="button" disabled={importing} onClick={chooseImport}>{importing ? '解析中...' : '上传文件预览'}</button>
             <button type="button" onClick={clearImport}>重新选择文件</button>
@@ -3035,7 +3188,8 @@ function SystemSettings({
                   <thead>
                     <tr>
                       <th>行号</th>
-                      <th>工单号</th>
+                      <th>规格 / 生产编号</th>
+                      <th>内部编号</th>
                       <th>客户</th>
                       <th>品名</th>
                       <th>规格</th>
@@ -3051,6 +3205,7 @@ function SystemSettings({
                     {importPreview.rows.slice(0, 120).map(row => (
                       <tr key={`${row.rowNo}-${row.code}`} className={`import-preview-row ${row.status}`}>
                         <td>{row.rowNo}</td>
+                        <td>{row.workOrder.specification || row.code || '-'}</td>
                         <td>{row.code || '-'}</td>
                         <td>{row.workOrder.customerName || '-'}</td>
                         <td>{row.workOrder.productName || '-'}</td>

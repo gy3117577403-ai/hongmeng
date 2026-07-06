@@ -2,7 +2,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { detailSummary, iso, jsonDownloadResponse, sanitizeDetail } from '@/lib/data-tools';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { workOrderStageText } from '@/lib/work-orders';
+import { displayWorkOrderCode, workOrderStageText } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,7 +15,7 @@ export async function GET() {
       prisma.resourceCategory.findMany({ orderBy: { sortOrder: 'asc' } }),
       prisma.resourceFile.findMany({
         include: {
-          workOrder: { select: { code: true } },
+          workOrder: { select: { code: true, specification: true } },
           category: { select: { name: true, code: true } },
           uploadedBy: { select: { username: true, displayName: true } },
         },
@@ -41,8 +41,17 @@ export async function GET() {
       workOrders: workOrders.map(o => ({
         id: o.id,
         code: o.code,
+        displayCode: displayWorkOrderCode(o),
         customerName: o.customerName,
         productName: o.productName,
+        specification: o.specification,
+        planType: o.planType,
+        weekStartDate: iso(o.weekStartDate),
+        weekEndDate: iso(o.weekEndDate),
+        planActive: o.planActive,
+        planClearedAt: iso(o.planClearedAt),
+        planClearedBy: o.planClearedBy,
+        libraryKey: o.libraryKey,
         stage: o.stage,
         stageText: workOrderStageText(o.stage || o.status),
         priority: o.priority,
@@ -63,7 +72,7 @@ export async function GET() {
       resourceFiles: resourceFiles.map(f => ({
         id: f.id,
         workOrderId: f.workOrderId,
-        workOrderCode: f.workOrder.code,
+        workOrderCode: displayWorkOrderCode(f.workOrder),
         categoryId: f.categoryId,
         categoryName: f.category.name,
         categoryCode: f.category.code,

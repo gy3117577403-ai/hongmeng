@@ -17,7 +17,7 @@ export async function GET() {
     const categories = await prisma.resourceCategory.findMany({ orderBy: { sortOrder: 'asc' } });
     const requiredIds = categories.filter(c => requiredCategoryCodes.has(c.code)).map(c => c.id);
     const workOrders = await prisma.workOrder.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, planActive: true },
       include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
       orderBy: [{ updatedAt: 'desc' }],
     });
@@ -34,7 +34,7 @@ export async function GET() {
     const recentFiles = await prisma.resourceFile.findMany({
       where: { deletedAt: null, status: 'uploaded' },
       include: {
-        workOrder: { select: { code: true, productName: true } },
+        workOrder: { select: { code: true, specification: true, productName: true } },
         category: { select: { name: true, code: true } },
         uploadedBy: { select: { displayName: true, username: true } },
       },

@@ -17,7 +17,7 @@ export async function POST(_req: Request, { params }: { params: { id: string } }
       where: { id: params.id },
       data: { deletedAt: null, status: 'uploaded' },
       include: {
-        workOrder: { select: { code: true, productName: true } },
+        workOrder: { select: { code: true, specification: true, productName: true } },
         category: { select: { name: true, code: true } },
         uploadedBy: { select: { displayName: true, username: true } },
       },

@@ -19,7 +19,7 @@ export async function GET() {
       prisma.resourceFile.findMany({
         where: { OR: [{ deletedAt: { not: null } }, { status: 'deleted' }] },
         include: {
-          workOrder: { select: { code: true, productName: true } },
+          workOrder: { select: { code: true, specification: true, productName: true } },
           category: { select: { name: true, code: true } },
           uploadedBy: { select: { displayName: true, username: true } },
         },
