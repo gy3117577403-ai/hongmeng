@@ -63,6 +63,8 @@ Sealos App Deploy 端口填 `3000`。
 - PWA 添加到桌面：在平板浏览器菜单中选择“添加到桌面 / 安装应用”，从桌面图标进入，减少地址栏和标签栏干扰。
 - Android APK WebView 壳：使用 `android-webview-app/` 打包 APK，或通过 GitHub Actions 的 `Android WebView APK` workflow 下载 debug APK；安装后全屏加载 `https://qdowqencjyph.sealoshzh.site/dashboard`。
 
+v1.13.4-tablet-final-pretest 增加了平板端“同步”入口。现场如果用 Web 浏览器上传资料，APK / PWA 端可在当前工单点击“同步”刷新工单列表、分类数量和当前资料文件，不需要反复退出或刷新整个页面。PWA Service Worker 只缓存 manifest 和图标，不缓存业务 API、页面、上传响应、签名链接或文件内容流。
+
 当前不再维护 DevEco 原生 ArkTS 路线，也不再维护 `harmony-tablet` 或 `/api/native/*`。APK 壳只负责全屏加载现有 Web 系统，不内置账号、密码、token、数据库连接串或对象存储密钥。
 
 ## 历史归档
@@ -80,6 +82,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.10.0：连接器参数资料、导入预览、重复识别、批量操作、原始资料附件
 - v1.11.0：主页空态资料缺失引导卡、分类栏完整显示、当前工单条资料状态优化
 - v1.12.0：危险操作防误触、数据变更快照、连接器参数导入批次、导入批次回滚、上传失败重试、生产健康检查增强、生产稳定中心、数据库索引优化
+- v1.13.4-tablet-final-pretest：PWA / APK 缓存收口、当前工单同步按钮、旧工单资料安全清理脚本、seed 样例工单开关。该版本用于平板真实数据测试前预检，不是生产发布记录。
 
 ## 交付文档索引
 
@@ -90,6 +93,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [连接器参数资料指南 v1.10.0](docs/CONNECTOR_PARAMETERS_GUIDE_v1.10.0.md)
 - [生产稳定性指南 v1.12.0](docs/PRODUCTION_STABILITY_GUIDE_v1.12.0.md)
 - [平板交付方案](docs/TABLET_APP_DELIVERY_PLAN.md)
+- [平板真机测试前最终预检计划](docs/PRE_REAL_DATA_TEST_PLAN.md)
 - [备份计划 v1.5.0](docs/BACKUP_PLAN_v1.5.0.md)
 - [回滚指南 v1.5.0](docs/ROLLBACK_GUIDE_v1.5.0.md)
 - [部署 Smoke Test v1.5.0](docs/SMOKE_TEST_v1.5.0.md)

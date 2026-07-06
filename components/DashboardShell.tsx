@@ -327,6 +327,9 @@ export default function DashboardShell({
   const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [msg, setMsg] = useState('');
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [lastSyncedAt, setLastSyncedAt] = useState('');
   const [lib, setLib] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -541,8 +544,13 @@ export default function DashboardShell({
     setAllFiles(v => v.map(f => (f.id === next.id ? next : f)));
   }
 
-  async function refreshOrders(preferredId?: string) {
-    const r = await fetch('/api/work-orders', { cache: 'no-store' });
+  function syncUrl(path: string, forceSync = false) {
+    if (!forceSync) return path;
+    return `${path}${path.includes('?') ? '&' : '?'}_sync=${Date.now()}`;
+  }
+
+  async function refreshOrders(preferredId?: string, forceSync = false) {
+    const r = await fetch(syncUrl('/api/work-orders', forceSync), { cache: 'no-store' });
     if (!r.ok) throw new Error('refresh work orders failed');
     const d = await r.json();
     const nextOrders: WorkOrderDTO[] = Array.isArray(d.workOrders) ? d.workOrders : [];
@@ -552,7 +560,7 @@ export default function DashboardShell({
     return nextOrders;
   }
 
-  async function loadFiles(w = order?.id, c = category?.id, preferredFileId?: string) {
+  async function loadFiles(w = order?.id, c = category?.id, preferredFileId?: string, forceSync = false) {
     if (!w || !c) {
       setFiles([]);
       setSel('');
@@ -560,7 +568,7 @@ export default function DashboardShell({
     }
     setLoading(true);
     try {
-      const r = await fetch(`/api/resource-files?workOrderId=${w}&categoryId=${c}`, { cache: 'no-store' });
+      const r = await fetch(syncUrl(`/api/resource-files?workOrderId=${w}&categoryId=${c}`, forceSync), { cache: 'no-store' });
       if (!r.ok) throw new Error('load files failed');
       const d = await r.json();
       const nextFiles: ResourceFileDTO[] = Array.isArray(d.files) ? d.files : [];
@@ -576,13 +584,13 @@ export default function DashboardShell({
     }
   }
 
-  async function loadAllFiles(w = order?.id) {
+  async function loadAllFiles(w = order?.id, forceSync = false) {
     if (!w) {
       setAllFiles([]);
       return [];
     }
     try {
-      const r = await fetch(`/api/resource-files?workOrderId=${w}`, { cache: 'no-store' });
+      const r = await fetch(syncUrl(`/api/resource-files?workOrderId=${w}`, forceSync), { cache: 'no-store' });
       if (!r.ok) throw new Error('load all files failed');
       const d = await r.json();
       const nextFiles: ResourceFileDTO[] = Array.isArray(d.files) ? d.files : [];
@@ -594,13 +602,13 @@ export default function DashboardShell({
     }
   }
 
-  async function loadCategoryCounts(w = order?.id) {
+  async function loadCategoryCounts(w = order?.id, forceSync = false) {
     if (!w) {
       setCategoryCounts({});
       return {};
     }
     try {
-      const all = await loadAllFiles(w);
+      const all = await loadAllFiles(w, forceSync);
       const counts: Record<string, number> = {};
       for (const item of all) counts[item.categoryId] = (counts[item.categoryId] || 0) + 1;
       setCategoryCounts(counts);
@@ -1023,6 +1031,8 @@ export default function DashboardShell({
       if (latestUploadedFileId) {
         await loadFiles(targetWorkOrderId, targetCategoryId, latestUploadedFileId);
         await loadCategoryCounts(targetWorkOrderId);
+        setLastSyncedAt(new Date().toISOString());
+        setSyncStatus('success');
       }
       setMsg(`批量上传完成：成功 ${ok} 个，失败 ${failed} 个`);
     } catch {
@@ -1050,6 +1060,8 @@ export default function DashboardShell({
     if (result.ok) {
       await loadFiles(job.workOrderId, job.categoryId, result.fileId);
       await loadCategoryCounts(job.workOrderId);
+      setLastSyncedAt(new Date().toISOString());
+      setSyncStatus('success');
     }
     setMsg(result.ok ? `已重试成功：${job.name}` : `重试失败：${result.message}`);
   }
@@ -1076,19 +1088,47 @@ export default function DashboardShell({
     if (latestUploadedFileId && targetWorkOrderId && targetCategoryId) {
       await loadFiles(targetWorkOrderId, targetCategoryId, latestUploadedFileId);
       await loadCategoryCounts(targetWorkOrderId);
+      setLastSyncedAt(new Date().toISOString());
+      setSyncStatus('success');
     }
     setMsg(`重试完成：成功 ${ok} 个，失败 ${failed} 个`);
   }
 
-  async function refresh() {
-    try {
-      await refreshOrders(order?.id);
-      await loadFiles();
-      await loadCategoryCounts();
-      setMsg('已刷新');
-    } catch {
-      setMsg('刷新失败，请稍后重试');
+  async function syncCurrentWorkOrder() {
+    if (!order) {
+      setMsg('请先选择工单');
+      return;
     }
+    const targetOrderId = order.id;
+    const targetCategoryId = category?.id || cat;
+    const targetFileId = file?.id || sel;
+    setSyncing(true);
+    setSyncStatus('idle');
+    try {
+      const nextOrders = await refreshOrders(targetOrderId, true);
+      if (!nextOrders.some(item => item.id === targetOrderId)) {
+        setSyncStatus('error');
+        setMsg('当前工单不存在或已删除');
+        return;
+      }
+      if (targetCategoryId) setCat(targetCategoryId);
+      const nextFiles = await loadFiles(targetOrderId, targetCategoryId, targetFileId, true);
+      await loadCategoryCounts(targetOrderId, true);
+      setWo(targetOrderId);
+      setSel(targetFileId && nextFiles.some(item => item.id === targetFileId) ? targetFileId : nextFiles[0]?.id || '');
+      setLastSyncedAt(new Date().toISOString());
+      setSyncStatus('success');
+      setMsg('已同步当前工单资料');
+    } catch {
+      setSyncStatus('error');
+      setMsg('同步失败，请检查网络后重试');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  async function refresh() {
+    await syncCurrentWorkOrder();
   }
 
   function openOrderModal(mode: 'create' | 'edit', target?: WorkOrderDTO) {
@@ -1656,6 +1696,10 @@ export default function DashboardShell({
             </div>
             <div className="order-strip-actions">
               <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
+              <button className={`sync-button ${syncStatus}`} type="button" disabled={syncing || !order} onClick={syncCurrentWorkOrder}>
+                {syncing ? '同步中' : syncStatus === 'success' ? '已同步' : '同步'}
+              </button>
+              {lastSyncedAt && <span className="sync-time">同步 {dt(lastSyncedAt)}</span>}
               <div className="more-actions-wrap">
                 <button className="strip-more-button" type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多</button>
                 {moreActionsOpen && (
@@ -1812,6 +1856,9 @@ export default function DashboardShell({
                       <button className="upload-action" type="button" disabled={uploading || !order} onClick={openCameraCapture}>
                         <span>◎</span><b>拍照上传</b>
                       </button>
+                      <button className="upload-action sync-inline" type="button" disabled={syncing || !order} onClick={syncCurrentWorkOrder}>
+                        <span>↻</span><b>{syncing ? '同步中' : '同步当前工单资料'}</b>
+                      </button>
                       <p className="tool-note">上传文件会保存到对象存储，元数据保存到 PostgreSQL。队列完成后会自动刷新当前分类。</p>
                     </div>
                   )}
@@ -1822,7 +1869,7 @@ export default function DashboardShell({
                         <button type="button" disabled={!file} onClick={() => file && openFileEdit(file)}>编辑文件</button>
                         <button type="button" disabled={!file} onClick={() => file && setDeleteTarget(file)}>删除文件</button>
                         <button type="button" disabled={!canDownloadAll || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
-                        <button type="button" onClick={refresh}>刷新资料</button>
+                        <button type="button" disabled={syncing || !order} onClick={syncCurrentWorkOrder}>{syncing ? '同步中...' : '同步资料'}</button>
                         <button type="button" disabled={!order} onClick={copy}>复制链接</button>
                       </div>
                       {currentCategoryIsEmpty && <p className="tool-note">当前分类暂无文件，请先上传 PDF、图片或拍照上传。</p>}

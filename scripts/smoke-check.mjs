@@ -14,7 +14,7 @@ const checks = [
     path: '/manifest.webmanifest',
     validate: async response => {
       const body = await response.json();
-      if (!body.name || body.display !== 'standalone') throw new Error('manifest is missing PWA fields');
+      if (!body.name || !['standalone', 'fullscreen'].includes(body.display)) throw new Error('manifest is missing PWA fields');
     },
   },
   {

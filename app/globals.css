@@ -1159,6 +1159,12 @@ input:focus-visible {
   color: #fff;
 }
 
+.upload-action.sync-inline {
+  border-style: dashed;
+  background: #fff7ed;
+  color: #9a4a00;
+}
+
 .upload-action span {
   font-size: 22px;
 }
@@ -4585,6 +4591,47 @@ body:has(.qr-dialog) .modal-backdrop {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+}
+
+.sync-button {
+  min-height: 40px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 106, 0, .24);
+  border-radius: 12px;
+  background: linear-gradient(135deg, #ff7a1a, #ff9b3f);
+  color: #fff;
+  font-weight: 900;
+  box-shadow: 0 8px 18px rgba(255, 106, 0, .22);
+}
+
+.sync-button.success {
+  background: #ecfdf5;
+  border-color: rgba(16, 185, 129, .28);
+  color: #047857;
+  box-shadow: none;
+}
+
+.sync-button.error {
+  background: #fff1f2;
+  border-color: rgba(244, 63, 94, .3);
+  color: #be123c;
+  box-shadow: none;
+}
+
+.sync-button:disabled {
+  opacity: .58;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.sync-time {
+  max-width: 136px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .strip-more-button {
