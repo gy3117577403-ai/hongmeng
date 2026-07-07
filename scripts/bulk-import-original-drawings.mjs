@@ -131,6 +131,8 @@ function cleanProductName(value) {
     const before = text;
     text = text
       .replace(/^[-_\s:：,，.。]+/, '')
+      .replace(/^dwg\d+\s*/i, '')
+      .replace(/[（(]\d+[）)]$/, '')
       .replace(/^[（(【\[]\s*[A-Z0-9]{1,4}\s*[）)】\]]\s*/i, '')
       .replace(/^[A-Z0-9]{1,4}[）)]\s*/i, '')
       .replace(/^[A-Z0-9]{0,4}版本\s*/i, '')
@@ -174,11 +176,13 @@ function extractSpecAndProduct(fileName, existingSpecs) {
 
   const patterns = [
     /D\d+(?:-\d+)+-V\d+/i,
-    /BOA\d+/i,
-    /P\d+/i,
+    /BOA[A-Z0-9]+/i,
+    /P\d[A-Z0-9]*/i,
     /(?:GRQ|XL|TY|HBTZ)[A-Z0-9-]+/i,
+    /^\d+(?:\.\d+)+(?:-[A-Z0-9]+)+(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
     /^1CA\d+-[A-Z0-9]+(?:-[A-Z0-9]+)*(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
-    /^[A-Z0-9]+(?:-[A-Z0-9]+)+(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
+    /^[A-Z0-9]+(?:\.[A-Z0-9]+)?(?:-[A-Z0-9]+)+(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
+    /^[A-Z]+[A-Z0-9]*\d[A-Z0-9]*(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
   ];
   for (const pattern of patterns) {
     const match = base.match(pattern);
