@@ -97,6 +97,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.14.1-bulk-original-drawing-import：新增本地图纸原图批量导入工具，默认扫描 `C:\Users\31175\Desktop\图纸`，支持客户别名、规格提取、重复识别、dry-run 报告和正式上传确认；只导入图纸资料库“原图”分类，不影响生产工单、连接器参数或 S3 删除。该版本为待部署候选，不代表生产已上线。
 - v1.14.1-bulk-original-drawing-import-fix1：增强批量原图导入的 1CA 系列、通用前缀规格和括号 / 下划线品名解析；离线 dry-run 会输出 `locallyParsedFiles`、`readyForOnlineCheckFiles`、`onlineIndexAvailable` 和 `duplicateCheckSkipped`，便于未登录时先做本地预检。该版本为待部署候选，不代表生产已上线。
 - v1.14.1-bulk-original-drawing-import-fix2：继续增强未匹配文件解析，支持字母数字紧凑规格、点号分段规格、BOA 后缀规格和 `JW2.5-*` 类规格；真实目录 dry-run 可解析文件提升到 430/482，剩余主要等待客户别名确认和人工判定。该版本为待部署候选，不代表生产已上线。
+- v1.14.1-bulk-original-drawing-import-fix3：收紧批量原图导入的疑似非原图过滤规则，避免把“成品线 / 成品线束”误判为成品图；继续保持 dry-run 默认安全策略。该版本为待部署候选，不代表生产已上线。
 
 ## 交付文档索引
 

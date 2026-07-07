@@ -6,7 +6,7 @@ import path from 'node:path';
 
 const supportedExts = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.webp']);
 const ignoredExts = new Set(['.tmp', '.part', '.crdownload']);
-const suspectedNonOriginalPattern = /SOP|成品|辅料|说明|注意|指导书/i;
+const suspectedNonOriginalPattern = /SOP|成品图|成品图片|成品照片|实物图|实物照片|作业指导书|指导书|注意事项|辅料规格/i;
 const defaultSource = 'C:\\Users\\31175\\Desktop\\图纸';
 const defaultBaseUrl = 'https://qdowqencjyph.sealoshzh.site';
 const defaultReportDir = 'reports/bulk-original-drawings';
