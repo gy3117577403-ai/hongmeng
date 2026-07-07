@@ -34,6 +34,8 @@ const actionGroups: Record<string, string[]> = {
     'restore_drawing_library_file',
     'download_drawing_library_file',
     'cleanup_empty_drawing_library',
+    'sync_resource_file_to_drawing_library',
+    'sync_work_order_to_drawing_library',
   ],
   connector: [
     'create_connector_parameter',

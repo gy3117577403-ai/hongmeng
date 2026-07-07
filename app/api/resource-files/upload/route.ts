@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { ensureDrawingLibraryItemForWorkOrder, nextDrawingLibraryVersion } from '@/lib/drawing-library';
+import { syncResourceFileToDrawingLibrary } from '@/lib/drawing-library-sync';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { putObject } from '@/lib/s3';
@@ -138,39 +138,10 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    try {
-      const drawingLibraryItem = wo.drawingLibraryItemId
-        ? await prisma.drawingLibraryItem.findFirst({ where: { id: wo.drawingLibraryItemId, deletedAt: null } })
-        : await ensureDrawingLibraryItemForWorkOrder(wo);
-      if (drawingLibraryItem) {
-        const drawingVersion = await nextDrawingLibraryVersion(drawingLibraryItem.id, cat.id);
-        const drawingFile = await prisma.drawingLibraryFile.create({
-          data: {
-            libraryItemId: drawingLibraryItem.id,
-            categoryId: cat.id,
-            originalName: up.name,
-            mimeType: up.type || 'application/octet-stream',
-            size: up.size,
-            objectKey: key,
-            version: drawingVersion,
-            uploadedById: user.id,
-          },
-        });
-        if (!wo.drawingLibraryItemId) {
-          await prisma.workOrder.update({ where: { id: wo.id }, data: { drawingLibraryItemId: drawingLibraryItem.id } });
-        }
-        await prisma.drawingLibraryItem.update({ where: { id: drawingLibraryItem.id }, data: { updatedAt: new Date() } });
-        await logOp({
-          userId: user.id,
-          action: 'upload_drawing_library_file',
-          targetType: 'drawing_library_file',
-          targetId: drawingFile.id,
-          detail: { libraryKey: drawingLibraryItem.libraryKey, categoryCode: cat.code, fileName: up.name, fileSize: up.size, version: drawingVersion, source: 'work_order_upload' },
-        });
-      }
-    } catch (libraryError) {
-      console.warn('drawing library mirror failed', libraryError);
-    }
+    const drawingLibrarySync = await syncResourceFileToDrawingLibrary(f.id, user.id).catch(error => ({
+      linked: false,
+      error: error instanceof Error ? error.message : '图纸资料库同步失败',
+    }));
 
     await logOp({
       userId: user.id,
@@ -179,7 +150,7 @@ export async function POST(req: NextRequest) {
       targetId: f.id,
       detail: { fileName: up.name, fileSize: up.size, workOrderCode: wo.code, categoryCode: cat.code, version, retry },
     });
-    return NextResponse.json({ file: serializeFile(f) });
+    return NextResponse.json({ file: serializeFile(f), drawingLibrarySync });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     if (userId) {

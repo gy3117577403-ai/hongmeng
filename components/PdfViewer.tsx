@@ -24,7 +24,7 @@ type PromiseConstructorWithResolvers = PromiseConstructor & {
   withResolvers?: <T>() => PromiseWithResolversResult<T>;
 };
 
-type FitMode = 'width' | 'page' | 'custom';
+type FitMode = 'width' | 'page' | 'original' | 'custom';
 type PdfLoadError = { title: string; detail: string };
 
 export function PdfViewer({
@@ -81,8 +81,9 @@ function PdfCanvas({
   const [doc, setDoc] = useState<PdfDocument | null>(null);
   const [pageNo, setPageNo] = useState(1);
   const [pageCount, setPageCount] = useState(0);
-  const [fitMode, setFitMode] = useState<FitMode>('width');
+  const [fitMode, setFitMode] = useState<FitMode>('page');
   const [scale, setScale] = useState(1);
+  const [rotation, setRotation] = useState(0);
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [loading, setLoading] = useState(true);
   const [slowLoading, setSlowLoading] = useState(false);
@@ -112,6 +113,9 @@ function PdfCanvas({
     setDoc(null);
     setPageNo(1);
     setPageCount(0);
+    setFitMode('page');
+    setScale(1);
+    setRotation(0);
 
     (async () => {
       try {
@@ -164,14 +168,14 @@ function PdfCanvas({
         renderTaskRef.current?.cancel();
         const page = await doc.getPage(pageNo);
         if (!alive) return;
-        const base = page.getViewport({ scale: 1 });
+        const base = page.getViewport({ scale: 1, rotation });
         const widthScale = Math.max(0.25, (box.width - 36) / base.width);
         const heightScale = Math.max(0.25, (box.height - 36) / base.height);
-        const nextScale = fitMode === 'width' ? widthScale : fitMode === 'page' ? Math.min(widthScale, heightScale) : scale;
+        const nextScale = fitMode === 'width' ? widthScale : fitMode === 'page' ? Math.min(widthScale, heightScale) : fitMode === 'original' ? 1 : scale;
         effectiveScaleRef.current = Math.max(0.25, Math.min(4, nextScale));
 
         const dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 2));
-        const viewport = page.getViewport({ scale: effectiveScaleRef.current * dpr });
+        const viewport = page.getViewport({ scale: effectiveScaleRef.current * dpr, rotation });
         const context = canvas.getContext('2d');
         if (!context) throw new Error('Canvas unavailable');
 
@@ -195,11 +199,15 @@ function PdfCanvas({
       alive = false;
       renderTaskRef.current?.cancel();
     };
-  }, [doc, pageNo, box, fitMode, scale, loading]);
+  }, [doc, pageNo, box, fitMode, scale, rotation, loading]);
 
   function zoom(delta: number) {
     setFitMode('custom');
     setScale(Math.max(0.35, Math.min(3, effectiveScaleRef.current + delta)));
+  }
+
+  function rotate(delta: number) {
+    setRotation(value => (value + delta + 360) % 360);
   }
 
   function openSystem() {
@@ -219,8 +227,13 @@ function PdfCanvas({
           <button type="button" disabled={!pageCount || pageNo >= pageCount || loading} onClick={() => setPageNo(v => Math.min(pageCount, v + 1))}>下一页</button>
           <button type="button" disabled={loading} onClick={() => zoom(-0.15)}>-</button>
           <button type="button" disabled={loading} onClick={() => zoom(0.15)}>+</button>
+          <button type="button" disabled={loading} onClick={() => rotate(-90)}>左旋</button>
+          <button type="button" disabled={loading} onClick={() => rotate(90)}>右旋</button>
+          <button type="button" disabled={loading || rotation === 0} onClick={() => setRotation(0)}>重置</button>
+          <button type="button" disabled={loading} onClick={() => setFitMode('page')}>适应窗口</button>
           <button type="button" disabled={loading} onClick={() => setFitMode('width')}>适宽</button>
           <button type="button" disabled={loading} onClick={() => setFitMode('page')}>整页</button>
+          <button type="button" disabled={loading} onClick={() => { setFitMode('original'); setScale(1); }}>原始大小</button>
           {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>}
         </div>
       </div>

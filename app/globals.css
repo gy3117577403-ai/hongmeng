@@ -5699,11 +5699,19 @@ body:has(.qr-dialog) .modal-backdrop {
 
 .viewer-controls {
   gap: 4px;
-  overflow: visible;
+  max-width: min(760px, calc(100vw - 36px));
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.viewer-controls::-webkit-scrollbar {
+  display: none;
 }
 
 .viewer-controls button,
 .page-indicator {
+  flex: 0 0 auto;
   min-height: 30px;
   border-radius: 999px;
 }
@@ -5719,6 +5727,14 @@ body:has(.qr-dialog) .modal-backdrop {
   inset: 18px;
   width: calc(100% - 36px);
   height: calc(100% - 36px);
+}
+
+.image-stage .preview-image.fit.rotated {
+  position: static;
+  width: auto;
+  height: auto;
+  max-width: calc(100% - 36px);
+  max-height: calc(100% - 36px);
 }
 
 .fullscreen-viewer .viewer-toolbar {

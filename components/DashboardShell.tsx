@@ -37,6 +37,20 @@ type UploadJob = {
   status: 'waiting' | 'uploading' | 'success' | 'failed';
   message?: string;
 };
+type DrawingLibraryUploadSync = {
+  linked?: boolean;
+  skipped?: boolean;
+  itemId?: string;
+  fileId?: string;
+  error?: string;
+  reason?: string;
+};
+type UploadResult = {
+  ok: boolean;
+  fileId?: string;
+  message?: string;
+  drawingLibrarySync?: DrawingLibraryUploadSync;
+};
 type FileForm = { displayName: string; remark: string; workOrderId: string; categoryId: string };
 type ImportMode = 'standard' | 'weekly_plan';
 type ImportPreviewRow = {
@@ -235,6 +249,8 @@ const actionText: Record<string, string> = {
   restore_drawing_library_file: '恢复图纸资料文件',
   download_drawing_library_file: '下载图纸资料文件',
   cleanup_empty_drawing_library: '清理空图纸资料',
+  sync_resource_file_to_drawing_library: '同步生产资料到图纸资料库',
+  sync_work_order_to_drawing_library: '同步工单资料到图纸资料库',
   create_connector_parameter: '新增连接器参数',
   update_connector_parameter: '编辑连接器参数',
   delete_connector_parameter: '删除连接器参数',
@@ -401,6 +417,7 @@ export default function DashboardShell({
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [msg, setMsg] = useState('');
   const [syncing, setSyncing] = useState(false);
+  const [drawingSyncing, setDrawingSyncing] = useState(false);
   const [lib, setLib] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -1053,7 +1070,7 @@ export default function DashboardShell({
     return text || '网络异常';
   }
 
-  async function uploadJobToServer(job: UploadJob, retry = false) {
+  async function uploadJobToServer(job: UploadJob, retry = false): Promise<UploadResult> {
     if (!job.file) return { ok: false, message: '页面会话中未保留文件，请重新选择' };
     if (!job.workOrderId) return { ok: false, message: '未选择工单' };
     if (!job.categoryId) return { ok: false, message: '未选择分类' };
@@ -1073,9 +1090,15 @@ export default function DashboardShell({
         setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'failed', message } : j)));
         return { ok: false, message };
       }
-      const message = d.file?.version ? `上传成功 · ${d.file.version}` : '上传成功';
+      const drawingLibrarySync = d.drawingLibrarySync as DrawingLibraryUploadSync | undefined;
+      const syncMessage = drawingLibrarySync?.linked
+        ? ' · 已归档图纸资料库'
+        : drawingLibrarySync?.error
+          ? ` · ${drawingLibrarySync.error}`
+          : '';
+      const message = `${d.file?.version ? `上传成功 · ${d.file.version}` : '上传成功'}${syncMessage}`;
       setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'success', message } : j)));
-      return { ok: true, fileId: d.file?.id || '' };
+      return { ok: true, fileId: d.file?.id || '', drawingLibrarySync };
     } catch {
       const message = '网络异常或对象存储异常';
       setUploadJobs(v => v.map(j => (j.id === job.id ? { ...j, status: 'failed', message } : j)));
@@ -1116,6 +1139,8 @@ export default function DashboardShell({
     setUploading(true);
     let ok = 0;
     let failed = jobs.filter(j => j.status === 'failed').length;
+    let archived = 0;
+    let archiveSkipped = 0;
     let latestUploadedFileId = '';
     const targetWorkOrderId = jobs[0]?.workOrderId || order.id;
     const targetCategoryId = jobs[0]?.categoryId || category.id;
@@ -1127,6 +1152,11 @@ export default function DashboardShell({
         if (result.ok) {
           ok += 1;
           latestUploadedFileId = result.fileId || latestUploadedFileId;
+          if (result.drawingLibrarySync?.linked && !result.drawingLibrarySync.skipped) {
+            archived += 1;
+          } else if (result.drawingLibrarySync?.skipped || result.drawingLibrarySync?.error) {
+            archiveSkipped += 1;
+          }
         } else {
           failed += 1;
         }
@@ -1136,7 +1166,7 @@ export default function DashboardShell({
         await loadFiles(targetWorkOrderId, targetCategoryId, latestUploadedFileId);
         await loadCategoryCounts(targetWorkOrderId);
       }
-      setMsg(`批量上传完成：成功 ${ok} 个，失败 ${failed} 个`);
+      setMsg(`批量上传完成：成功 ${ok} 个，失败 ${failed} 个；归档图纸资料库 ${archived} 个，跳过 ${archiveSkipped} 个`);
     } catch {
       setMsg(`批量上传完成：成功 ${ok} 个，失败 ${failed} 个；刷新列表失败，请手动刷新。`);
     } finally {
@@ -1217,6 +1247,29 @@ export default function DashboardShell({
       setMsg('同步失败，请检查网络后重试');
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function syncCurrentWorkOrderToDrawingLibrary() {
+    if (!order) {
+      setMsg('请先选择工单');
+      return;
+    }
+    setDrawingSyncing(true);
+    try {
+      const r = await fetch(`/api/work-orders/${order.id}/sync-drawing-library`, { method: 'POST' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || d.ok === false) {
+        setMsg(d.error || '同步到图纸资料库失败');
+        return;
+      }
+      await refreshOrders(order.id, true);
+      await loadCategoryCounts(order.id, true);
+      setMsg(`已同步到图纸资料库：新增 ${d.syncedCount || 0} 个，跳过 ${d.skippedCount || 0} 个`);
+    } catch {
+      setMsg('同步到图纸资料库失败，请检查网络后重试');
+    } finally {
+      setDrawingSyncing(false);
     }
   }
 
@@ -1921,6 +1974,7 @@ export default function DashboardShell({
                     <button type="button" onClick={() => { setMoreActionsOpen(false); order && setOrderDeleteTarget(order); }}>删除工单</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); copy(); }}>复制链接</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); syncCurrentWorkOrder(); }}>同步当前工单资料</button>
+                    <button type="button" disabled={drawingSyncing} onClick={() => { setMoreActionsOpen(false); syncCurrentWorkOrderToDrawingLibrary(); }}>{drawingSyncing ? '同步图纸库中...' : '同步到图纸资料库'}</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); openQrDialog(); }}>打印二维码</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); printSummary(); }}>打印摘要</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); refresh(); }}>刷新</button>
@@ -2103,6 +2157,9 @@ export default function DashboardShell({
                       <button className="upload-action sync-inline" type="button" disabled={syncing || !order} onClick={syncCurrentWorkOrder}>
                         <span>↻</span><b>{syncing ? '同步中' : '同步当前工单资料'}</b>
                       </button>
+                      <button className="upload-action sync-inline" type="button" disabled={drawingSyncing || !order} onClick={syncCurrentWorkOrderToDrawingLibrary}>
+                        <span>⇄</span><b>{drawingSyncing ? '归档中' : '同步到图纸资料库'}</b>
+                      </button>
                       <p className="tool-note">上传文件会保存到对象存储，元数据保存到 PostgreSQL。队列完成后会自动刷新当前分类。</p>
                     </div>
                   )}
@@ -2114,6 +2171,7 @@ export default function DashboardShell({
                         <button type="button" disabled={!file} onClick={() => file && setDeleteTarget(file)}>删除文件</button>
                         <button type="button" disabled={!canDownloadAll || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
                         <button type="button" disabled={syncing || !order} onClick={syncCurrentWorkOrder}>{syncing ? '同步中...' : '同步资料'}</button>
+                        <button type="button" disabled={drawingSyncing || !order} onClick={syncCurrentWorkOrderToDrawingLibrary}>{drawingSyncing ? '归档中...' : '同步到图纸资料库'}</button>
                         <button type="button" disabled={!order} onClick={copy}>复制链接</button>
                       </div>
                       {currentCategoryIsEmpty && <p className="tool-note">当前分类暂无文件，请先上传 PDF、图片或拍照上传。</p>}

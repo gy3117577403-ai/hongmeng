@@ -39,6 +39,7 @@ function ImageCanvas({
 }) {
   const [mode, setMode] = useState<ImageMode>('fit');
   const [zoom, setZoom] = useState(1);
+  const [rotation, setRotation] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -49,12 +50,21 @@ function ImageCanvas({
     setError(false);
     setZoom(1);
     setMode('fit');
+    setRotation(0);
   }, [source, reloadKey]);
 
   function updateZoom(delta: number) {
     setMode('zoom');
     setZoom(v => Math.max(0.35, Math.min(3, v + delta)));
   }
+
+  function rotate(delta: number) {
+    setRotation(value => (value + delta + 360) % 360);
+  }
+
+  const transformParts = [`rotate(${rotation}deg)`];
+  if (mode === 'zoom') transformParts.push(`scale(${zoom})`);
+  const imageTransform = transformParts.join(' ');
 
   return (
     <div className={fullscreen ? 'image-viewer fullscreen-viewer' : 'image-viewer'}>
@@ -66,6 +76,9 @@ function ImageCanvas({
         <div className="viewer-controls">
           <button type="button" onClick={() => updateZoom(-0.15)}>-</button>
           <button type="button" onClick={() => updateZoom(0.15)}>+</button>
+          <button type="button" onClick={() => rotate(-90)}>左旋</button>
+          <button type="button" onClick={() => rotate(90)}>右旋</button>
+          <button type="button" disabled={rotation === 0} onClick={() => setRotation(0)}>重置</button>
           <button type="button" onClick={() => setMode('fit')}>适应窗口</button>
           <button type="button" onClick={() => { setMode('original'); setZoom(1); }}>原始大小</button>
           {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" onClick={onFullscreen}>全屏</button>}
@@ -76,12 +89,12 @@ function ImageCanvas({
         {error && <ViewerState title="图片加载失败" detail="图片加载失败，可重新加载或下载原图" error onReload={() => setReloadKey(v => v + 1)} downloadUrl={downloadUrl} />}
         <img
           key={`${source}-${reloadKey}`}
-          className={`preview-image ${mode}`}
+          className={`preview-image ${mode} ${rotation % 180 === 0 ? '' : 'rotated'}`}
           src={displaySource}
           alt={title}
           loading="lazy"
           decoding="async"
-          style={mode === 'zoom' ? { transform: `scale(${zoom})` } : undefined}
+          style={{ transform: imageTransform }}
           onLoad={() => {
             setLoading(false);
             setError(false);
