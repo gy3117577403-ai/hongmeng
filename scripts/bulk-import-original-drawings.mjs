@@ -3,10 +3,13 @@ import { stdin as input, stdout as output } from 'node:process';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import {
+  ignoredOriginalDrawingExtensions,
+  extractOriginalDrawingSpecWithExisting,
+  parseOriginalDrawingFile,
+  supportedOriginalDrawingExtensions,
+} from '../lib/bulk-original-drawing-parser-core.mjs';
 
-const supportedExts = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.webp']);
-const ignoredExts = new Set(['.tmp', '.part', '.crdownload']);
-const suspectedNonOriginalPattern = /SOP|成品图|成品图片|成品照片|实物图|实物照片|作业指导书|指导书|注意事项|辅料规格/i;
 const defaultSource = 'C:\\Users\\31175\\Desktop\\图纸';
 const defaultBaseUrl = 'https://qdowqencjyph.sealoshzh.site';
 const defaultReportDir = 'reports/bulk-original-drawings';
@@ -109,6 +112,7 @@ function toCandidate(root, fullPath, size) {
   const folderName = parts.length > 1 ? parts[0] : '';
   const fileName = path.basename(fullPath);
   const ext = path.extname(fileName).toLowerCase();
+  const parsed = parseOriginalDrawingFile({ relativePath: relative, fileName, folderName, size });
   return {
     localPath: fullPath,
     relativePath: relative,
@@ -116,81 +120,17 @@ function toCandidate(root, fullPath, size) {
     fileName,
     ext,
     size,
-    supported: supportedExts.has(ext),
-    ignored: ignoredExts.has(ext) || size <= 0 || isIgnoredName(fileName),
+    supported: supportedOriginalDrawingExtensions.has(ext),
+    ignored: ignoredOriginalDrawingExtensions.has(ext) || size <= 0 || isIgnoredName(fileName),
+    specification: parsed.specification,
+    productName: parsed.productName,
+    suspectedNonOriginal: parsed.suspectedNonOriginal,
+    parseReason: parsed.reason,
   };
 }
 
 function normalizeText(value) {
   return String(value || '').trim();
-}
-
-function cleanProductName(value) {
-  let text = normalizeText(value);
-  for (let index = 0; index < 4; index += 1) {
-    const before = text;
-    text = text
-      .replace(/^[-_\s:：,，.。]+/, '')
-      .replace(/^dwg\d+\s*/i, '')
-      .replace(/[（(]\d+[）)]$/, '')
-      .replace(/^[（(【\[]\s*[A-Z0-9]{1,4}\s*[）)】\]]\s*/i, '')
-      .replace(/^[A-Z0-9]{1,4}[）)]\s*/i, '')
-      .replace(/^[A-Z0-9]{0,4}版本\s*/i, '')
-      .replace(/^[（(【\[]\s*/, '')
-      .replace(/\s*[）)】\]]$/, '')
-      .replace(/[（(]\s*[）)]/g, '')
-      .trim();
-    if (text === before) break;
-  }
-  return text;
-}
-
-function baseFileName(fileName) {
-  const ext = path.extname(fileName);
-  return fileName.slice(0, fileName.length - ext.length);
-}
-
-function extractSpecAndProduct(fileName, existingSpecs) {
-  const base = baseFileName(fileName);
-  const normalizedBase = base.toUpperCase();
-  const existing = existingSpecs.find(spec => spec && normalizedBase.includes(spec.toUpperCase()));
-  if (existing) {
-    const at = normalizedBase.indexOf(existing.toUpperCase());
-    return {
-      specification: existing,
-      productName: cleanProductName(`${base.slice(0, at)}${base.slice(at + existing.length)}`),
-      source: 'existing_specification',
-    };
-  }
-
-  function resultFromMatch(match, source) {
-    const rawSpec = match[0];
-    const at = typeof match.index === 'number' ? match.index : base.toUpperCase().indexOf(rawSpec.toUpperCase());
-    const productText = at >= 0 ? `${base.slice(0, at)}${base.slice(at + rawSpec.length)}` : base.replace(rawSpec, '');
-    return {
-      specification: rawSpec.toUpperCase(),
-      productName: cleanProductName(productText),
-      source,
-    };
-  }
-
-  const patterns = [
-    /D\d+(?:-\d+)+-V\d+/i,
-    /BOA[A-Z0-9]+/i,
-    /P\d[A-Z0-9]*/i,
-    /(?:GRQ|XL|TY|HBTZ)[A-Z0-9-]+/i,
-    /^\d+(?:\.\d+)+(?:-[A-Z0-9]+)+(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
-    /^1CA\d+-[A-Z0-9]+(?:-[A-Z0-9]+)*(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
-    /^[A-Z0-9]+(?:\.[A-Z0-9]+)?(?:-[A-Z0-9]+)+(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
-    /^[A-Z]+[A-Z0-9]*\d[A-Z0-9]*(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
-  ];
-  for (const pattern of patterns) {
-    const match = base.match(pattern);
-    if (match?.[0]) {
-      return resultFromMatch(match, 'filename');
-    }
-  }
-  return { specification: '', productName: cleanProductName(base), source: 'unmatched' };
 }
 
 function libraryKey(customerName, specification) {
@@ -382,7 +322,7 @@ async function main() {
   let readyForOnlineCheckFiles = 0;
 
   for (const file of supportedFiles) {
-    const warning = suspectedNonOriginalPattern.test(file.fileName) ? '疑似非原图，本轮默认跳过' : '';
+    const warning = file.suspectedNonOriginal ? '疑似非原图，本轮默认跳过' : '';
     if (warning) suspectedNonOriginalFiles += 1;
     if (warning && !allowSuspectedNonOriginal) {
       skippedFiles += 1;
@@ -391,7 +331,7 @@ async function main() {
     }
 
     const customer = resolveCustomer(file.folderName, aliases, index);
-    const extracted = extractSpecAndProduct(file.fileName, index.specs);
+    const extracted = extractOriginalDrawingSpecWithExisting(file.fileName, index.specs);
     if (!customer.ok) {
       unmatched.push({ localPath: file.localPath, folderName: file.folderName, fileName: file.fileName, reason: customer.reason, suggestedCustomer: customer.suggestions || '', suggestedSpecification: extracted.specification });
       continue;

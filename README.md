@@ -21,7 +21,7 @@
 - PDF / JPG / PNG 上传到 S3 兼容对象存储
 - PDF.js 预览、图片完整预览、文件下载、当前工单 ZIP 下载
 - 生产工单上传资料自动沉淀到图纸资料库，PDF / 图片预览支持适应窗口和旋转
-- 本地图纸原图批量导入工具，支持 dry-run 报告、客户别名匹配和只导入“原图”分类
+- 网页端 / 命令行图纸原图批量导入，支持预览、客户映射、重复识别、确认码上传和只导入“原图”分类
 - 文件版本显示、文件信息编辑、跨分类 / 跨工单移动
 - 网页版拍照上传、浏览器语音输入
 - 连接器参数资料、Excel / CSV 导入预览、导入批次回滚
@@ -98,6 +98,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.14.1-bulk-original-drawing-import-fix1：增强批量原图导入的 1CA 系列、通用前缀规格和括号 / 下划线品名解析；离线 dry-run 会输出 `locallyParsedFiles`、`readyForOnlineCheckFiles`、`onlineIndexAvailable` 和 `duplicateCheckSkipped`，便于未登录时先做本地预检。该版本为待部署候选，不代表生产已上线。
 - v1.14.1-bulk-original-drawing-import-fix2：继续增强未匹配文件解析，支持字母数字紧凑规格、点号分段规格、BOA 后缀规格和 `JW2.5-*` 类规格；真实目录 dry-run 可解析文件提升到 430/482，剩余主要等待客户别名确认和人工判定。该版本为待部署候选，不代表生产已上线。
 - v1.14.1-bulk-original-drawing-import-fix3：收紧批量原图导入的疑似非原图过滤规则，避免把“成品线 / 成品线束”误判为成品图；继续保持 dry-run 默认安全策略。该版本为待部署候选，不代表生产已上线。
+- v1.14.2-web-bulk-original-drawing-import-ui：图纸资料库新增网页端“批量导入原图”入口，支持文件夹选择、客户映射、只读预览、重复识别、`IMPORT_ORIGINALS` 确认上传、失败 / 未匹配 CSV 导出；命令行工具保留为高级兜底。该版本为待部署候选，不代表生产已上线。
 
 ## 交付文档索引
 

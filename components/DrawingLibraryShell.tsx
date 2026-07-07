@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
@@ -121,6 +122,7 @@ export function DrawingLibraryShell({
   const [cleanupConfirm, setCleanupConfirm] = useState('');
   const [cleanupError, setCleanupError] = useState('');
   const [bulkHelpOpen, setBulkHelpOpen] = useState(false);
+  const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const libraryMenuButtonRef = useRef<HTMLButtonElement>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -328,6 +330,7 @@ export function DrawingLibraryShell({
         </div>
         <div className="top-actions">
           <button className="log-button" type="button" onClick={() => openModal('create')}>新增图纸资料</button>
+          <button className="log-button" type="button" onClick={() => setBulkImportOpen(true)}>批量导入原图</button>
           <button className="log-button" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>清理空资料</button>
           <button className="log-button" type="button" title="批量导入原图说明" onClick={() => setBulkHelpOpen(true)}>导入说明</button>
           <div className="library-wrap">
@@ -585,18 +588,18 @@ export function DrawingLibraryShell({
               </div>
               <button type="button" onClick={() => setBulkHelpOpen(false)}>×</button>
             </div>
-            <p className="cleanup-note">浏览器页面不能直接扫描本地任意文件夹。请在服务器或开发电脑命令行运行 dry-run 脚本，确认匹配报告后再执行正式上传。</p>
+            <p className="cleanup-note">推荐使用页面上的“批量导入原图”：选择本地图纸文件夹后先预览匹配、重复和未确认客户，输入确认码才会上传。命令行脚本仍保留为高级兜底工具。</p>
             <div className="cleanup-summary">
-              <span>默认目录 C:\Users\31175\Desktop\图纸</span>
+              <span>网页端先预览</span>
               <span>只导入原图</span>
-              <span>默认 dry-run</span>
+              <span>确认码 IMPORT_ORIGINALS</span>
               <span>不删除 S3 文件</span>
             </div>
             <div className="cleanup-samples">
               <span>建议结构：图纸\客户简称\规格-品名.pdf</span>
-              <span>先运行：npm run drawings:bulk-originals:dry -- --source “C:\Users\31175\Desktop\图纸”</span>
-              <span>查看 reports/bulk-original-drawings 下的 matched / unmatched / duplicates 报告。</span>
-              <span>正式执行必须设置 CONFIRM_BULK_ORIGINAL_UPLOAD=YES，并使用登录账号，不要把密码写入脚本或文档。</span>
+              <span>未确认客户会停留在“请选择客户”，不会上传。</span>
+              <span>重复文件按同一资料记录、原图分类、原文件名和大小识别。</span>
+              <span>命令行兜底：npm run drawings:bulk-originals:dry -- --source “C:\Users\31175\Desktop\图纸”。</span>
             </div>
             <div className="dialog-actions">
               <button className="primary-button" type="button" onClick={() => setBulkHelpOpen(false)}>知道了</button>
@@ -604,6 +607,13 @@ export function DrawingLibraryShell({
           </div>
         </div>
       )}
+
+      <BulkOriginalDrawingImportModal
+        open={bulkImportOpen}
+        customers={customers}
+        onClose={() => setBulkImportOpen(false)}
+        onCompleted={loadData}
+      />
 
       {msg && <div className="status-toast">{msg}</div>}
     </main>

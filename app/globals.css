@@ -1914,6 +1914,218 @@ input:focus-visible {
   text-overflow: ellipsis;
 }
 
+.bulk-original-dialog {
+  width: min(1120px, calc(100vw - 28px));
+  max-height: calc(100vh - 28px);
+  overflow: hidden;
+}
+
+.bulk-original-dialog .dialog-title {
+  flex-shrink: 0;
+}
+
+.bulk-import-steps {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.bulk-check {
+  min-height: 46px;
+  flex-direction: row !important;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid #edf0f5;
+  border-radius: 12px;
+  background: #fffaf5;
+}
+
+.bulk-check input {
+  width: 18px;
+  min-height: 18px;
+  accent-color: var(--orange);
+}
+
+.bulk-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.bulk-summary-grid span,
+.bulk-info {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid #ffdfbf;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.bulk-section-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.bulk-section-title strong {
+  color: #111827;
+}
+
+.bulk-section-title span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.bulk-folder-grid {
+  max-height: 124px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.bulk-folder-grid label {
+  min-width: 0;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid #edf0f5;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.bulk-folder-grid span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bulk-folder-grid select {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid #dfe3ea;
+  border-radius: 10px;
+  background: #fff;
+  color: #111827;
+  font: inherit;
+}
+
+.bulk-actions {
+  display: grid;
+  grid-template-columns: minmax(136px, auto) minmax(220px, 1fr) minmax(150px, auto) minmax(128px, auto);
+  gap: 8px;
+}
+
+.bulk-actions button,
+.bulk-actions input {
+  min-height: 42px;
+  border-radius: 12px;
+}
+
+.bulk-actions button {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: #424956;
+  font-weight: 800;
+}
+
+.bulk-actions .primary-button {
+  border: none;
+  color: #fff;
+}
+
+.bulk-actions input {
+  padding: 0 12px;
+  border: 1px solid #dfe3ea;
+  outline: none;
+}
+
+.bulk-table-wrap {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid #edf0f5;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.bulk-import-table {
+  width: 100%;
+  min-width: 880px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.bulk-import-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px;
+  background: #fff7ed;
+  color: #9a3412;
+  text-align: left;
+}
+
+.bulk-import-table td {
+  max-width: 280px;
+  padding: 9px 10px;
+  border-top: 1px solid #f1f5f9;
+  color: #475569;
+  vertical-align: top;
+}
+
+.bulk-import-table strong,
+.bulk-import-table small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bulk-import-table strong {
+  color: #111827;
+  font-size: 13px;
+}
+
+.bulk-import-table small {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.bulk-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #475569;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.bulk-status.ready {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.bulk-status.duplicate {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.bulk-status.blocked {
+  background: #fff1f2;
+  color: #be123c;
+}
+
 @media (max-width: 1160px) {
   .drawing-library-page {
     padding: 10px;
@@ -1944,6 +2156,19 @@ input:focus-visible {
 
   .cleanup-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .bulk-import-steps,
+  .bulk-actions {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .bulk-summary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .bulk-folder-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
