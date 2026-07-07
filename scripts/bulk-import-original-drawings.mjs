@@ -126,10 +126,21 @@ function normalizeText(value) {
 }
 
 function cleanProductName(value) {
-  return normalizeText(value)
-    .replace(/^[-_\s]+/, '')
-    .replace(/[（(]\s*[）)]/g, '')
-    .trim();
+  let text = normalizeText(value);
+  for (let index = 0; index < 4; index += 1) {
+    const before = text;
+    text = text
+      .replace(/^[-_\s:：,，.。]+/, '')
+      .replace(/^[（(【\[]\s*[A-Z0-9]{1,4}\s*[）)】\]]\s*/i, '')
+      .replace(/^[A-Z0-9]{1,4}[）)]\s*/i, '')
+      .replace(/^[A-Z0-9]{0,4}版本\s*/i, '')
+      .replace(/^[（(【\[]\s*/, '')
+      .replace(/\s*[）)】\]]$/, '')
+      .replace(/[（(]\s*[）)]/g, '')
+      .trim();
+    if (text === before) break;
+  }
+  return text;
 }
 
 function baseFileName(fileName) {
@@ -150,20 +161,29 @@ function extractSpecAndProduct(fileName, existingSpecs) {
     };
   }
 
+  function resultFromMatch(match, source) {
+    const rawSpec = match[0];
+    const at = typeof match.index === 'number' ? match.index : base.toUpperCase().indexOf(rawSpec.toUpperCase());
+    const productText = at >= 0 ? `${base.slice(0, at)}${base.slice(at + rawSpec.length)}` : base.replace(rawSpec, '');
+    return {
+      specification: rawSpec.toUpperCase(),
+      productName: cleanProductName(productText),
+      source,
+    };
+  }
+
   const patterns = [
     /D\d+(?:-\d+)+-V\d+/i,
     /BOA\d+/i,
     /P\d+/i,
     /(?:GRQ|XL|TY|HBTZ)[A-Z0-9-]+/i,
+    /^1CA\d+-[A-Z0-9]+(?:-[A-Z0-9]+)*(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
+    /^[A-Z0-9]+(?:-[A-Z0-9]+)+(?=$|[-_\s（(]|[\u4e00-\u9fff])/i,
   ];
   for (const pattern of patterns) {
     const match = base.match(pattern);
     if (match?.[0]) {
-      return {
-        specification: match[0].toUpperCase(),
-        productName: cleanProductName(base.replace(match[0], '')),
-        source: 'filename',
-      };
+      return resultFromMatch(match, 'filename');
     }
   }
   return { specification: '', productName: cleanProductName(base), source: 'unmatched' };
@@ -290,9 +310,9 @@ async function apiJson(pathname, cookie, init = {}) {
 }
 
 async function loadRemoteIndex(cookie) {
-  if (!cookie) return makeIndex({ items: [], files: [], categories: [] });
+  if (!cookie) return { ...makeIndex({ items: [], files: [], categories: [] }), onlineIndexAvailable: false };
   const data = await apiJson('/api/drawing-library/bulk-index', cookie, { method: 'GET' });
-  return makeIndex(data.data || {});
+  return { ...makeIndex(data.data || {}), onlineIndexAvailable: true };
 }
 
 async function createItem(item, cookie) {
@@ -354,6 +374,8 @@ async function main() {
   let suspectedNonOriginalFiles = 0;
   let skippedFiles = files.length - supportedFiles.length;
   let willCreateItems = 0;
+  let locallyParsedFiles = 0;
+  let readyForOnlineCheckFiles = 0;
 
   for (const file of supportedFiles) {
     const warning = suspectedNonOriginalPattern.test(file.fileName) ? '疑似非原图，本轮默认跳过' : '';
@@ -375,21 +397,29 @@ async function main() {
       continue;
     }
 
+    locallyParsedFiles += 1;
+    if (!index.onlineIndexAvailable) readyForOnlineCheckFiles += 1;
+
     const key = libraryKey(customer.customerName, extracted.specification);
     let item = index.itemByKey.get(key) || null;
     let action = 'would_upload';
     if (!item) {
-      if (!createMissing) {
-        unmatched.push({ localPath: file.localPath, folderName: file.folderName, fileName: file.fileName, reason: auth.authenticated ? '图纸资料库不存在且未使用 --create-missing' : '未登录，无法确认图纸资料库记录', suggestedCustomer: customer.customerName, suggestedSpecification: extracted.specification });
-        continue;
+      if (!index.onlineIndexAvailable && dryRun) {
+        action = createMissing ? 'readyForOnlineCheck' : 'localParsed';
+        item = { id: '', customerName: customer.customerName, specification: extracted.specification, productName: extracted.productName, libraryKey: key };
+      } else {
+        if (!createMissing) {
+          unmatched.push({ localPath: file.localPath, folderName: file.folderName, fileName: file.fileName, reason: auth.authenticated ? '图纸资料库不存在且未使用 --create-missing' : '未登录，无法确认图纸资料库记录', suggestedCustomer: customer.customerName, suggestedSpecification: extracted.specification });
+          continue;
+        }
+        if (strict && customer.source !== 'alias' && customer.source !== 'exact') {
+          unmatched.push({ localPath: file.localPath, folderName: file.folderName, fileName: file.fileName, reason: 'strict 模式下客户未被明确确认', suggestedCustomer: customer.customerName, suggestedSpecification: extracted.specification });
+          continue;
+        }
+        action = 'would_create_and_upload';
+        willCreateItems += 1;
+        item = { id: '', customerName: customer.customerName, specification: extracted.specification, productName: extracted.productName, libraryKey: key };
       }
-      if (strict && customer.source !== 'alias' && customer.source !== 'exact') {
-        unmatched.push({ localPath: file.localPath, folderName: file.folderName, fileName: file.fileName, reason: 'strict 模式下客户未被明确确认', suggestedCustomer: customer.customerName, suggestedSpecification: extracted.specification });
-        continue;
-      }
-      action = 'would_create_and_upload';
-      willCreateItems += 1;
-      item = { id: '', customerName: customer.customerName, specification: extracted.specification, productName: extracted.productName, libraryKey: key };
     }
 
     const categoryForDuplicate = drawingCategory || { id: 'dry-run-drawing', name: '原图' };
@@ -426,8 +456,12 @@ async function main() {
     scannedFiles: files.length,
     supportedFiles: supportedFiles.length,
     matchedFiles: matched.length,
+    locallyParsedFiles,
+    readyForOnlineCheckFiles,
     unmatchedFiles: unmatched.length,
     duplicateFiles: duplicates.length,
+    duplicateCheckSkipped: !index.onlineIndexAvailable,
+    onlineIndexAvailable: index.onlineIndexAvailable,
     suspectedNonOriginalFiles,
     willCreateItems: dryRun ? willCreateItems : 0,
     uploadedFiles: uploaded.length,
@@ -446,8 +480,12 @@ async function main() {
   console.log(`Scanned files: ${summary.scannedFiles}`);
   console.log(`Supported files: ${summary.supportedFiles}`);
   console.log(`Matched files: ${summary.matchedFiles}`);
+  console.log(`Locally parsed files: ${summary.locallyParsedFiles}`);
+  console.log(`Ready for online check files: ${summary.readyForOnlineCheckFiles}`);
   console.log(`Unmatched files: ${summary.unmatchedFiles}`);
   console.log(`Duplicate files: ${summary.duplicateFiles}`);
+  console.log(`Duplicate check skipped: ${summary.duplicateCheckSkipped}`);
+  console.log(`Online index available: ${summary.onlineIndexAvailable}`);
   console.log(`Suspected non-original files: ${summary.suspectedNonOriginalFiles}`);
   console.log(`Will create DrawingLibraryItems: ${summary.willCreateItems}`);
   console.log(`Uploaded files: ${summary.uploadedFiles}`);

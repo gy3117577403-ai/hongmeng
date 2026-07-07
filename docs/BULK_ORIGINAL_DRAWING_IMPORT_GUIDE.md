@@ -90,12 +90,20 @@ config/customer-aliases.local.json
 脚本会从文件名中尝试提取规格，规则包括：
 
 - 已存在图纸资料库规格全文匹配
+- `1CA1-C011`、`1CA4-X01`、`1CA5-X100` 这类 1CA 系列规格
 - `D010304-8222-V03` 这类 D 开头规格
 - `BOA12345`
 - `P12345`
 - `GRQ` / `XL` / `TY` / `HBTZ` 开头的字母数字连字符规格
+- 以字母/数字开头、包含连字符、后面接中文说明的通用前缀规格，例如 `ABC123-X01(说明)`、`1T21-X10B-陀螺仪线`
 
 如果无法识别规格，会进入 `unmatched.csv`，需要人工改文件名或补别名后重新 dry-run。
+
+品名提取会优先使用文件名去掉规格后的剩余文本，并清理开头的下划线、空格、中英文括号外壳和 `版本` 标记。例如：
+
+- `1CA1-C011_串口调试线.pdf` -> 规格 `1CA1-C011`，品名 `串口调试线`
+- `1CA4-X01(髋电机线束）.pdf` -> 规格 `1CA4-X01`，品名 `髋电机线束`
+- `P251325003（微动开关连接线-1配3套）.pdf` -> 规格 `P251325003`，品名 `微动开关连接线-1配3套`
 
 ## dry-run
 
@@ -106,6 +114,14 @@ npm run drawings:bulk-originals:dry -- --source "C:\Users\31175\Desktop\图纸"
 ```
 
 dry-run 只扫描、匹配并生成报告，不上传文件。
+
+如果没有提供登录环境变量，dry-run 仍会输出本地解析结果：
+
+- `onlineIndexAvailable=false` 表示没有读取线上图纸资料库索引。
+- `duplicateCheckSkipped=true` 表示未做线上重复文件校验。
+- `locallyParsedFiles` 表示本地已识别客户和规格的文件数。
+- `readyForOnlineCheckFiles` 表示需要登录后再做线上存在性和重复性检查的文件数。
+- `matched.csv` 中这类记录的 `action` 会显示为 `readyForOnlineCheck`。
 
 常用参数：
 
