@@ -120,6 +120,7 @@ export function DrawingLibraryShell({
   const [cleanupLoading, setCleanupLoading] = useState(false);
   const [cleanupConfirm, setCleanupConfirm] = useState('');
   const [cleanupError, setCleanupError] = useState('');
+  const [bulkHelpOpen, setBulkHelpOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const libraryMenuButtonRef = useRef<HTMLButtonElement>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -328,6 +329,7 @@ export function DrawingLibraryShell({
         <div className="top-actions">
           <button className="log-button" type="button" onClick={() => openModal('create')}>新增图纸资料</button>
           <button className="log-button" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>清理空资料</button>
+          <button className="log-button" type="button" title="批量导入原图说明" onClick={() => setBulkHelpOpen(true)}>导入说明</button>
           <div className="library-wrap">
             <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLibOpen(value => !value)}>▱ 资料库</button>
             <PortalMenu open={libOpen} anchorRef={libraryMenuButtonRef} className="library-menu" width={220}>
@@ -568,6 +570,36 @@ export function DrawingLibraryShell({
               <button className="danger-button" type="button" disabled={cleanupLoading || cleanupConfirm.trim() !== 'CLEAN_EMPTY'} onClick={commitCleanup}>
                 {cleanupLoading ? '清理中...' : '确认清理'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {bulkHelpOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="drawing-dialog cleanup-dialog" role="dialog" aria-modal="true">
+            <div className="dialog-title">
+              <div>
+                <span>批量导入原图说明</span>
+                <h3>从本地图纸文件夹导入到图纸资料库“原图”分类</h3>
+              </div>
+              <button type="button" onClick={() => setBulkHelpOpen(false)}>×</button>
+            </div>
+            <p className="cleanup-note">浏览器页面不能直接扫描本地任意文件夹。请在服务器或开发电脑命令行运行 dry-run 脚本，确认匹配报告后再执行正式上传。</p>
+            <div className="cleanup-summary">
+              <span>默认目录 C:\Users\31175\Desktop\图纸</span>
+              <span>只导入原图</span>
+              <span>默认 dry-run</span>
+              <span>不删除 S3 文件</span>
+            </div>
+            <div className="cleanup-samples">
+              <span>建议结构：图纸\客户简称\规格-品名.pdf</span>
+              <span>先运行：npm run drawings:bulk-originals:dry -- --source “C:\Users\31175\Desktop\图纸”</span>
+              <span>查看 reports/bulk-original-drawings 下的 matched / unmatched / duplicates 报告。</span>
+              <span>正式执行必须设置 CONFIRM_BULK_ORIGINAL_UPLOAD=YES，并使用登录账号，不要把密码写入脚本或文档。</span>
+            </div>
+            <div className="dialog-actions">
+              <button className="primary-button" type="button" onClick={() => setBulkHelpOpen(false)}>知道了</button>
             </div>
           </div>
         </div>

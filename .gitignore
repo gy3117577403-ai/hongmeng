@@ -13,6 +13,9 @@ coverage
 .vercel
 uploads/
 hongmeng-production.zip
+config/customer-aliases.local.json
+reports/bulk-original-drawings/
+tmp/bulk-original-test/
 
 # Docker/local build artifacts
 .docker/

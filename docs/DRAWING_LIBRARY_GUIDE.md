@@ -275,6 +275,43 @@ npm run drawing-library:cleanup-empty
 Remove-Item Env:\CONFIRM_CLEAN_EMPTY_DRAWING_LIBRARY
 ```
 
+## 本地图纸原图批量导入
+
+v1.14.1 新增本地命令行批量导入工具，用于把企业微信微盘下载到本地的图纸原图导入到图纸资料库“原图”分类。
+
+默认目录：
+
+```text
+C:\Users\31175\Desktop\图纸
+```
+
+建议结构：
+
+```text
+图纸\客户简称\规格-品名.pdf
+```
+
+核心规则：
+
+- 默认只做 dry-run，不写库、不上传文件。
+- 正式执行必须设置 `CONFIRM_BULK_ORIGINAL_UPLOAD=YES`。
+- 只导入“原图”分类，不导入 SOP、成品图、辅料规格或注意事项。
+- 会生成 `matched.csv`、`unmatched.csv`、`duplicates.csv`、`uploaded.csv`、`failed.csv` 等报告。
+- 客户简称映射使用 `config/customer-aliases.local.json`，该文件不提交 Git。
+- 浏览器页面不能扫描本地任意文件夹，因此批量导入通过命令行执行。
+
+dry-run 示例：
+
+```bash
+npm run drawings:bulk-originals:dry -- --source "C:\Users\31175\Desktop\图纸"
+```
+
+完整说明见：
+
+```text
+docs/BULK_ORIGINAL_DRAWING_IMPORT_GUIDE.md
+```
+
 ## 连接器参数库
 
 连接器参数库是独立资料库，不受图纸资料库新增、导入关联、本周工单清理影响。

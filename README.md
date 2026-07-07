@@ -21,6 +21,7 @@
 - PDF / JPG / PNG 上传到 S3 兼容对象存储
 - PDF.js 预览、图片完整预览、文件下载、当前工单 ZIP 下载
 - 生产工单上传资料自动沉淀到图纸资料库，PDF / 图片预览支持适应窗口和旋转
+- 本地图纸原图批量导入工具，支持 dry-run 报告、客户别名匹配和只导入“原图”分类
 - 文件版本显示、文件信息编辑、跨分类 / 跨工单移动
 - 网页版拍照上传、浏览器语音输入
 - 连接器参数资料、Excel / CSV 导入预览、导入批次回滚
@@ -93,6 +94,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.13.9-drawing-library-cleanup-ui：图纸资料库默认隐藏周计划导入产生的空壳记录；周计划导入不再自动创建可见图纸资料记录，只关联已有记录；新增空资料 dry-run / 确认清理脚本和页面入口，只软删除空 DrawingLibraryItem，不影响生产工单、连接器参数、资料文件或 S3 对象。该版本为待部署候选，不代表生产已上线。
 - v1.13.10-layout-layer-preview-polish：统一顶部菜单、管理员菜单、资料库切换菜单、工单更多菜单和连接器行菜单的浮层层级；图纸资料库详情页移除重复信息大卡片，改为紧凑标题区和分类栏 / 预览区 / 文件列表三栏布局，预览区优先。该版本为待部署候选，不代表生产已上线。
 - v1.14.0-drawing-library-auto-sync-preview：生产工单上传 PDF / 图片后自动沉淀到图纸资料库，复用同一 S3 objectKey，不重复上传；新增当前工单手动同步和历史资料 dry-run 补同步脚本；PDF / 图片预览默认适应窗口并支持左旋、右旋和重置。该版本为待部署候选，不代表生产已上线。
+- v1.14.1-bulk-original-drawing-import：新增本地图纸原图批量导入工具，默认扫描 `C:\Users\31175\Desktop\图纸`，支持客户别名、规格提取、重复识别、dry-run 报告和正式上传确认；只导入图纸资料库“原图”分类，不影响生产工单、连接器参数或 S3 删除。该版本为待部署候选，不代表生产已上线。
 
 ## 交付文档索引
 
@@ -103,6 +105,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [连接器参数资料指南 v1.10.0](docs/CONNECTOR_PARAMETERS_GUIDE_v1.10.0.md)
 - [图纸资料库使用说明](docs/DRAWING_LIBRARY_GUIDE.md)
 - [图纸资料库同步说明](docs/DRAWING_LIBRARY_SYNC_GUIDE.md)
+- [本地图纸原图批量导入指南](docs/BULK_ORIGINAL_DRAWING_IMPORT_GUIDE.md)
 - [图纸资料库空数据清理说明](docs/DRAWING_LIBRARY_CLEANUP_GUIDE.md)
 - [布局层级与预览区优化 QA](docs/QA_LAYOUT_LAYER_PREVIEW_POLISH.md)
 - [预览适屏与旋转 QA](docs/QA_PREVIEW_ROTATE_AND_FIT.md)

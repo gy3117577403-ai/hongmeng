@@ -14,6 +14,12 @@ function ymd(d: Date) {
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function cleanText(value: FormDataEntryValue | null, max = 200) {
+  if (typeof value !== 'string') return null;
+  const text = value.trim();
+  return text ? text.slice(0, max) : null;
+}
+
 function versionMinor(version?: string | null) {
   const m = String(version || '').match(/^V1\.(\d+)$/i);
   return m ? Number(m[1]) : -1;
@@ -32,16 +38,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const user = await requireUser();
     const form = await req.formData();
-    const categoryId = String(form.get('categoryId') || '');
+    const categoryId = String(form.get('categoryId') || '').trim();
+    const categoryName = String(form.get('categoryName') || '').trim();
+    const displayName = cleanText(form.get('displayName'), 160);
+    const remark = cleanText(form.get('remark'), 500);
     const up = form.get('file');
-    if (!categoryId) return NextResponse.json({ ok: false, error: '请选择资料分类' }, { status: 400 });
+    if (!categoryId && !categoryName) return NextResponse.json({ ok: false, error: '请选择资料分类' }, { status: 400 });
     if (!(up instanceof File)) return NextResponse.json({ ok: false, error: '请选择文件' }, { status: 400 });
     const err = validateFile(up.name, up.type, up.size);
     if (err) return NextResponse.json({ ok: false, error: err }, { status: 400 });
 
     const [item, category] = await Promise.all([
       prisma.drawingLibraryItem.findFirst({ where: { id: params.id, deletedAt: null } }),
-      prisma.resourceCategory.findUnique({ where: { id: categoryId } }),
+      categoryId
+        ? prisma.resourceCategory.findUnique({ where: { id: categoryId } })
+        : prisma.resourceCategory.findFirst({ where: { OR: [{ name: categoryName }, { code: categoryName }] } }),
     ]);
     if (!item || !category) return NextResponse.json({ ok: false, error: '图纸资料记录或分类不存在' }, { status: 404 });
 
@@ -54,11 +65,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         libraryItemId: item.id,
         categoryId: category.id,
         originalName: up.name,
+        displayName,
         mimeType: up.type || 'application/octet-stream',
         size: up.size,
         objectKey: key,
         version,
         uploadedById: user.id,
+        remark,
       },
       include: {
         category: { select: { id: true, name: true, code: true, sortOrder: true } },
