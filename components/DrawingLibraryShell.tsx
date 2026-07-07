@@ -126,6 +126,8 @@ export function DrawingLibraryShell({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const libraryMenuButtonRef = useRef<HTMLButtonElement>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const initialUrlAppliedRef = useRef(false);
+  const urlMissingWarnedRef = useRef(false);
 
   const accountName = user.displayName || user.username;
   const visibleItems = useMemo(() => (
@@ -141,9 +143,42 @@ export function DrawingLibraryShell({
   }, [selectedItem, selectedId]);
 
   useEffect(() => {
-    const target = new URLSearchParams(window.location.search).get('itemId') || '';
-    if (target && items.some(item => item.id === target)) setSelectedId(target);
-  }, [items]);
+    const params = new URLSearchParams(window.location.search);
+    const targetItemId = params.get('itemId') || '';
+    const targetFileId = params.get('fileId') || '';
+    const targetKeyword = params.get('keyword') || '';
+
+    if (!initialUrlAppliedRef.current) {
+      initialUrlAppliedRef.current = true;
+      if (targetKeyword && keyword !== targetKeyword) {
+        setKeyword(targetKeyword);
+        return;
+      }
+    }
+
+    if (!targetItemId) return;
+    const targetItem = items.find(item => item.id === targetItemId) || null;
+    if (!targetItem) {
+      if (!urlMissingWarnedRef.current && items.length) {
+        urlMissingWarnedRef.current = true;
+        setMsg('图纸资料不存在或已删除。');
+      }
+      return;
+    }
+
+    setCustomer('全部客户');
+    setSelectedId(targetItem.id);
+    if (targetFileId) {
+      const targetFile = targetItem.files.find(file => file.id === targetFileId) || null;
+      if (targetFile) {
+        setActiveCategoryId(targetFile.categoryId);
+        setSelectedFileId(targetFile.id);
+      } else if (!urlMissingWarnedRef.current) {
+        urlMissingWarnedRef.current = true;
+        setMsg('图纸文件不存在或已删除。');
+      }
+    }
+  }, [items, keyword]);
 
   useEffect(() => {
     if (selectedFile && selectedFile.id !== selectedFileId) setSelectedFileId(selectedFile.id);

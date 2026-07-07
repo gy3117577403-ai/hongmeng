@@ -22,6 +22,7 @@
 - PDF.js 预览、图片完整预览、文件下载、当前工单 ZIP 下载
 - 生产工单上传资料自动沉淀到图纸资料库，PDF / 图片预览支持适应窗口和旋转
 - 网页端 / 命令行图纸原图批量导入，支持预览、客户映射、重复识别、确认码上传和只导入“原图”分类
+- 全局搜索覆盖生产工单、生产文件、图纸资料库、图纸文件和连接器参数
 - 文件版本显示、文件信息编辑、跨分类 / 跨工单移动
 - 网页版拍照上传、浏览器语音输入
 - 连接器参数资料、Excel / CSV 导入预览、导入批次回滚
@@ -99,6 +100,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.14.1-bulk-original-drawing-import-fix2：继续增强未匹配文件解析，支持字母数字紧凑规格、点号分段规格、BOA 后缀规格和 `JW2.5-*` 类规格；真实目录 dry-run 可解析文件提升到 430/482，剩余主要等待客户别名确认和人工判定。该版本为待部署候选，不代表生产已上线。
 - v1.14.1-bulk-original-drawing-import-fix3：收紧批量原图导入的疑似非原图过滤规则，避免把“成品线 / 成品线束”误判为成品图；继续保持 dry-run 默认安全策略。该版本为待部署候选，不代表生产已上线。
 - v1.14.2-web-bulk-original-drawing-import-ui：图纸资料库新增网页端“批量导入原图”入口，支持文件夹选择、客户映射、只读预览、重复识别、`IMPORT_ORIGINALS` 确认上传、失败 / 未匹配 CSV 导出；命令行工具保留为高级兜底。该版本为待部署候选，不代表生产已上线。
+- v1.14.3-unified-search-drawing-library：生产工单页顶部全局搜索扩展到图纸资料库和连接器参数；结果按生产工单、生产文件、图纸资料、图纸文件、连接器参数分组展示，点击图纸资料可跳转并定位到对应规格或文件。该版本为待部署候选，不代表生产已上线。
 
 ## 交付文档索引
 
@@ -110,6 +112,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [图纸资料库使用说明](docs/DRAWING_LIBRARY_GUIDE.md)
 - [图纸资料库同步说明](docs/DRAWING_LIBRARY_SYNC_GUIDE.md)
 - [本地图纸原图批量导入指南](docs/BULK_ORIGINAL_DRAWING_IMPORT_GUIDE.md)
+- [图纸资料库全局搜索 QA](docs/QA_UNIFIED_SEARCH_DRAWING_LIBRARY.md)
 - [图纸资料库空数据清理说明](docs/DRAWING_LIBRARY_CLEANUP_GUIDE.md)
 - [布局层级与预览区优化 QA](docs/QA_LAYOUT_LAYER_PREVIEW_POLISH.md)
 - [预览适屏与旋转 QA](docs/QA_PREVIEW_ROTATE_AND_FIT.md)

@@ -42,6 +42,18 @@ export async function GET(req: NextRequest) {
                 { productName: { contains: keyword, mode: 'insensitive' } },
                 { specification: { contains: keyword, mode: 'insensitive' } },
                 { remark: { contains: keyword, mode: 'insensitive' } },
+                {
+                  files: {
+                    some: {
+                      deletedAt: null,
+                      OR: [
+                        { originalName: { contains: keyword, mode: 'insensitive' } },
+                        { displayName: { contains: keyword, mode: 'insensitive' } },
+                        { remark: { contains: keyword, mode: 'insensitive' } },
+                      ],
+                    },
+                  },
+                },
               ],
             }
           : {}),

@@ -10,7 +10,7 @@ import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platform';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import { compressImageForUpload, normalizeCapturedImage } from '@/lib/image-client';
-import type { ChangeSnapshotDTO, CurrentUserDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
+import type { ChangeSnapshotDTO, ConnectorParameterDTO, CurrentUserDTO, DrawingLibraryItemDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
 type WorkOrderForm = {
   code: string;
@@ -97,7 +97,32 @@ type RelatedHistory = { fileCount: number; workOrderCount: number } | null;
 type UserForm = { username: string; displayName: string; password: string };
 type AccountEdit = { id: string; displayName: string; isActive: boolean } | null;
 type PasswordReset = { id: string; username: string; password: string } | null;
-type SearchResult = { workOrders: WorkOrderDTO[]; resourceFiles: ResourceFileDTO[] };
+type SearchDrawingLibraryFile = {
+  id: string;
+  libraryItemId: string;
+  categoryId: string;
+  categoryName?: string | null;
+  categoryCode?: string | null;
+  originalName: string;
+  displayName?: string | null;
+  remark?: string | null;
+  fileSize: number;
+  version: string;
+  item: {
+    id: string;
+    customerName: string;
+    customerCode?: string | null;
+    specification: string;
+    productName?: string | null;
+  };
+};
+type SearchResult = {
+  workOrders: WorkOrderDTO[];
+  resourceFiles: ResourceFileDTO[];
+  drawingLibraryItems: DrawingLibraryItemDTO[];
+  drawingLibraryFiles: SearchDrawingLibraryFile[];
+  connectorParameters: ConnectorParameterDTO[];
+};
 type QuickMenu = { type: 'stage' | 'priority'; orderId: string; x: number; y: number } | null;
 type ToolTab = 'info' | 'upload' | 'actions' | 'queue';
 type SystemStatus = {
@@ -115,6 +140,13 @@ type SystemStatus = {
 type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice?: Promise<{ outcome: string }> };
 
 const appTimeZone = 'Asia/Shanghai';
+const emptySearchResult: SearchResult = {
+  workOrders: [],
+  resourceFiles: [],
+  drawingLibraryItems: [],
+  drawingLibraryFiles: [],
+  connectorParameters: [],
+};
 
 function dateParts(v: string | Date) {
   const d = typeof v === 'string' ? new Date(v) : v;
@@ -170,6 +202,18 @@ function inRecentWeek(value: string) {
 
 function displayFileName(file?: ResourceFileDTO | null) {
   return safeDisplayFilename(file);
+}
+
+function drawingSearchFileName(file: SearchDrawingLibraryFile) {
+  return safeDecodeFilename(file.displayName || file.originalName || '未命名图纸文件');
+}
+
+function hasSearchResults(result: SearchResult) {
+  return result.workOrders.length
+    || result.resourceFiles.length
+    || result.drawingLibraryItems.length
+    || result.drawingLibraryFiles.length
+    || result.connectorParameters.length;
 }
 
 function fileExtOk(file: File) {
@@ -464,7 +508,7 @@ export default function DashboardShell({
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [now, setNow] = useState<Date | null>(null);
   const [globalKw, setGlobalKw] = useState('');
-  const [globalSearch, setGlobalSearch] = useState<SearchResult>({ workOrders: [], resourceFiles: [] });
+  const [globalSearch, setGlobalSearch] = useState<SearchResult>(emptySearchResult);
   const [searchOpen, setSearchOpen] = useState(false);
   const [fieldSummary, setFieldSummary] = useState<FieldSummaryDTO | null>(null);
   const [accountsOpen, setAccountsOpen] = useState(false);
@@ -632,7 +676,7 @@ export default function DashboardShell({
   useEffect(() => {
     const text = globalKw.trim();
     if (!text) {
-      setGlobalSearch({ workOrders: [], resourceFiles: [] });
+      setGlobalSearch(emptySearchResult);
       setSearchOpen(false);
       return;
     }
@@ -641,13 +685,20 @@ export default function DashboardShell({
         const r = await fetch(`/api/search?keyword=${encodeURIComponent(text)}`, { cache: 'no-store' });
         const d = await r.json().catch(() => ({}));
         if (r.ok) {
-          setGlobalSearch({ workOrders: d.workOrders || [], resourceFiles: d.resourceFiles || [] });
+          const data = d.data || d;
+          setGlobalSearch({
+            workOrders: Array.isArray(data.workOrders) ? data.workOrders : [],
+            resourceFiles: Array.isArray(data.resourceFiles) ? data.resourceFiles : [],
+            drawingLibraryItems: Array.isArray(data.drawingLibraryItems) ? data.drawingLibraryItems : [],
+            drawingLibraryFiles: Array.isArray(data.drawingLibraryFiles) ? data.drawingLibraryFiles : [],
+            connectorParameters: Array.isArray(data.connectorParameters) ? data.connectorParameters : [],
+          });
           setSearchOpen(true);
         }
       } catch {
         setMsg('全局搜索失败');
       }
-    }, 220);
+    }, 300);
     return () => window.clearTimeout(timer);
   }, [globalKw]);
 
@@ -764,6 +815,27 @@ export default function DashboardShell({
 
   async function openFileResult(target: ResourceFileDTO) {
     await openWorkOrder(target.workOrderId, target.categoryId, target.id);
+  }
+
+  function openDrawingLibraryItemResult(itemId: string) {
+    const params = new URLSearchParams();
+    params.set('itemId', itemId);
+    if (globalKw.trim()) params.set('keyword', globalKw.trim());
+    location.href = `/drawing-library?${params.toString()}`;
+  }
+
+  function openDrawingLibraryFileResult(target: SearchDrawingLibraryFile) {
+    const params = new URLSearchParams();
+    params.set('itemId', target.libraryItemId);
+    params.set('fileId', target.id);
+    if (globalKw.trim()) params.set('keyword', globalKw.trim());
+    location.href = `/drawing-library?${params.toString()}`;
+  }
+
+  function openConnectorParameterResult() {
+    const params = new URLSearchParams();
+    if (globalKw.trim()) params.set('keyword', globalKw.trim());
+    location.href = `/connector-parameters?${params.toString()}`;
   }
 
   function openQuickMenu(type: 'stage' | 'priority', target: WorkOrderDTO, event: React.MouseEvent<HTMLElement>) {
@@ -1820,22 +1892,52 @@ export default function DashboardShell({
           <b>⌕</b>
           {searchOpen && globalKw.trim() && (
             <div className="global-search-panel">
-              <div className="search-group-title">工单</div>
-              {globalSearch.workOrders.map(item => (
-                <button key={item.id} type="button" onClick={() => openWorkOrder(item.id)}>
-                  <strong>{workOrderDisplayCode(item)}</strong>
-                  <span>{customerLabel(item)} · {item.productName}</span>
-                </button>
-              ))}
-              {!globalSearch.workOrders.length && <div className="search-empty">未找到工单</div>}
-              <div className="search-group-title">文件</div>
-              {globalSearch.resourceFiles.map(item => (
-                <button key={item.id} type="button" onClick={() => openFileResult(item)}>
-                  <strong>{displayFileName(item)}</strong>
-                  <span>{item.workOrderCode || '-'} · {item.categoryName || '-'} · {item.version || 'V1.0'}</span>
-                </button>
-              ))}
-              {!globalSearch.resourceFiles.length && <div className="search-empty">未找到文件</div>}
+              {globalSearch.workOrders.length > 0 && <>
+                <div className="search-group-title">生产工单</div>
+                {globalSearch.workOrders.map(item => (
+                  <button key={item.id} type="button" onClick={() => openWorkOrder(item.id)}>
+                    <strong>{workOrderDisplayCode(item)}</strong>
+                    <span>{customerLabel(item)} · {item.productName || '未设置品名'}</span>
+                  </button>
+                ))}
+              </>}
+              {globalSearch.resourceFiles.length > 0 && <>
+                <div className="search-group-title">生产文件</div>
+                {globalSearch.resourceFiles.map(item => (
+                  <button key={item.id} type="button" onClick={() => openFileResult(item)}>
+                    <strong>{displayFileName(item)}</strong>
+                    <span>{item.workOrderCode || '-'} · {item.categoryName || '-'} · {item.version || 'V1.0'}</span>
+                  </button>
+                ))}
+              </>}
+              {globalSearch.drawingLibraryItems.length > 0 && <>
+                <div className="search-group-title">图纸资料</div>
+                {globalSearch.drawingLibraryItems.map(item => (
+                  <button key={item.id} type="button" onClick={() => openDrawingLibraryItemResult(item.id)}>
+                    <strong>{item.specification}</strong>
+                    <span>{item.customerName} · {item.productName || '未设置品名'} · {item.completenessText}</span>
+                  </button>
+                ))}
+              </>}
+              {globalSearch.drawingLibraryFiles.length > 0 && <>
+                <div className="search-group-title">图纸文件</div>
+                {globalSearch.drawingLibraryFiles.map(item => (
+                  <button key={item.id} type="button" onClick={() => openDrawingLibraryFileResult(item)}>
+                    <strong>{drawingSearchFileName(item)}</strong>
+                    <span>{item.item.specification} · {item.item.customerName} · {item.categoryName || '未分类'}</span>
+                  </button>
+                ))}
+              </>}
+              {globalSearch.connectorParameters.length > 0 && <>
+                <div className="search-group-title">连接器参数</div>
+                {globalSearch.connectorParameters.map(item => (
+                  <button key={item.id} type="button" onClick={openConnectorParameterResult}>
+                    <strong>{item.model || '未设置型号'}</strong>
+                    <span>外剥 {item.outerPeelMm || '-'} · 内剥 {item.innerPeelMm || '-'} · 入长 {item.insertionLengthMm || '-'}</span>
+                  </button>
+                ))}
+              </>}
+              {!hasSearchResults(globalSearch) && <div className="search-empty">未找到匹配结果，请调整关键词</div>}
             </div>
           )}
         </div>

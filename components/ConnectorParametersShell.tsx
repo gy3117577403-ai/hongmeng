@@ -235,6 +235,11 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   }
 
   useEffect(() => {
+    const targetKeyword = new URLSearchParams(window.location.search).get('keyword') || '';
+    if (targetKeyword) setKeyword(targetKeyword);
+  }, []);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => loadData(), 300);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
