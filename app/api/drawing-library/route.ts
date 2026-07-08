@@ -67,6 +67,7 @@ export async function GET(req: NextRequest) {
       .filter(isVisibleDrawingLibraryItem)
       .map(item => serializeDrawingLibraryItem(item, categories));
     const filtered = serialized.filter(item => {
+      if (filter === 'incomplete') return !item.isComplete;
       if (filter === 'missing_drawing') return item.missingRequiredCategories.includes('drawing');
       if (filter === 'missing_sop') return item.missingRequiredCategories.includes('sop');
       if (filter === 'missing_product') return item.missingRequiredCategories.includes('product');

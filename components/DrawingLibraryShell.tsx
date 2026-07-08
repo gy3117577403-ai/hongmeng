@@ -16,7 +16,7 @@ type DrawingLibraryForm = {
   remark: string;
 };
 
-type DrawingFilter = 'all' | 'missing_drawing' | 'missing_sop' | 'missing_product' | 'complete' | 'recent';
+type DrawingFilter = 'all' | 'incomplete' | 'complete' | 'recent';
 type DrawingModal = { mode: 'create' | 'edit'; item?: DrawingLibraryItemDTO } | null;
 type CleanupSummary = {
   totalActive: number;
@@ -36,9 +36,7 @@ type CleanupSummary = {
 const emptyForm: DrawingLibraryForm = { customerName: '', productName: '', specification: '', remark: '' };
 const filterOptions: Array<[DrawingFilter, string]> = [
   ['all', '全部'],
-  ['missing_drawing', '缺原图'],
-  ['missing_sop', '缺 SOP'],
-  ['missing_product', '缺成品图'],
+  ['incomplete', '资料不完整'],
   ['complete', '资料完整'],
   ['recent', '最近更新'],
 ];
@@ -62,15 +60,6 @@ function bytes(value: number) {
   const kb = value / 1024;
   if (kb < 1024) return `${kb.toFixed(1)} KB`;
   return `${(kb / 1024).toFixed(2)} MB`;
-}
-
-function missingLabel(item: DrawingLibraryItemDTO, categories: ResourceCategoryDTO[]) {
-  if (item.fileCount === 0) return '空资料';
-  if (item.isComplete) return '完整';
-  const names = item.missingRequiredCategories
-    .map(code => categories.find(category => category.code === code)?.name || code)
-    .join('、');
-  return names ? `缺 ${names}` : '缺资料';
 }
 
 function formFrom(item?: DrawingLibraryItemDTO): DrawingLibraryForm {
@@ -411,7 +400,7 @@ export function DrawingLibraryShell({
               >
                 <strong>{item.customerName}</strong>
                 {item.customerCode && <em>{item.customerCode}</em>}
-                <span>{item.itemCount} 个规格 · 缺资料 {item.missingCount}</span>
+                <span>{item.itemCount} 个规格</span>
               </button>
             ))}
             {!customers.length && <div className="drawing-empty-mini">暂无图纸资料客户</div>}
@@ -431,8 +420,8 @@ export function DrawingLibraryShell({
                   <span>{item.customerName} · {item.productName || '未设置品名'}</span>
                 </div>
                 <footer>
-                  <em className={item.isComplete ? 'complete' : 'missing'}>{missingLabel(item, categories)}</em>
-                  <span>{item.completenessText} · {item.fileCount} 个文件</span>
+                  <em className={item.isComplete ? 'complete' : 'missing'}>资料 {item.completenessText}</em>
+                  <span>{item.fileCount} 个文件</span>
                   <span>{dt(item.updatedAt)}</span>
                 </footer>
               </button>
@@ -458,7 +447,6 @@ export function DrawingLibraryShell({
                     <b>{selectedItem.customerName}</b>
                     {hasText(selectedItem.productName) && <em>{selectedItem.productName}</em>}
                     <small>资料 {selectedItem.completenessText}</small>
-                    <small>{missingLabel(selectedItem, categories)}</small>
                     <small>更新 {dt(selectedItem.updatedAt)}</small>
                   </p>
                 </div>
