@@ -113,6 +113,8 @@ export type DrawingLibraryItemDTO = {
   completenessText: string;
   missingRequiredCategories: string[];
   isComplete: boolean;
+  isAnomaly: boolean;
+  anomalyReason: string;
   files: DrawingLibraryFileDTO[];
 };
 

@@ -337,7 +337,7 @@ async function main() {
       continue;
     }
     if (!extracted.specification) {
-      unmatched.push({ localPath: file.localPath, folderName: file.folderName, fileName: file.fileName, reason: '无法识别规格', suggestedCustomer: customer.customerName, suggestedSpecification: '' });
+      unmatched.push({ localPath: file.localPath, folderName: file.folderName, fileName: file.fileName, reason: extracted.invalidReason || file.parseReason || '无法识别规格', suggestedCustomer: customer.customerName, suggestedSpecification: '' });
       continue;
     }
 

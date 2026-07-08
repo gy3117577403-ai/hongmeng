@@ -22,6 +22,7 @@ export interface BulkOriginalDrawingParseResult {
   specification: string;
   productName: string;
   source: string;
+  invalidSpecificationReason: string;
   suspectedNonOriginal: boolean;
   reason: string;
   warnings: string[];
@@ -30,16 +31,21 @@ export interface BulkOriginalDrawingParseResult {
 type CoreModule = {
   supportedOriginalDrawingExtensions: Set<string>;
   ignoredOriginalDrawingExtensions: Set<string>;
+  dateLikeSpecificationReason(value: string): string;
+  invalidSpecificationReason(value: string): string;
+  isInvalidSpecification(value: string): boolean;
   cleanOriginalDrawingProductName(value: string): string;
   extractOriginalDrawingSpec(fileName: string): {
     specification: string;
     productName: string;
     source: string;
+    invalidReason: string;
   };
   extractOriginalDrawingSpecWithExisting(fileName: string, existingSpecs: string[]): {
     specification: string;
     productName: string;
     source: string;
+    invalidReason: string;
   };
   parseOriginalDrawingFile(input: BulkOriginalDrawingParseInput): BulkOriginalDrawingParseResult;
 };
@@ -48,6 +54,9 @@ const core = parserCore as CoreModule;
 
 export const supportedOriginalDrawingExtensions = core.supportedOriginalDrawingExtensions;
 export const ignoredOriginalDrawingExtensions = core.ignoredOriginalDrawingExtensions;
+export const dateLikeSpecificationReason = core.dateLikeSpecificationReason;
+export const invalidSpecificationReason = core.invalidSpecificationReason;
+export const isInvalidSpecification = core.isInvalidSpecification;
 export const cleanOriginalDrawingProductName = core.cleanOriginalDrawingProductName;
 export const extractOriginalDrawingSpec = core.extractOriginalDrawingSpec;
 export const extractOriginalDrawingSpecWithExisting = core.extractOriginalDrawingSpecWithExisting;

@@ -1,8 +1,10 @@
 import type { DrawingLibraryFile, DrawingLibraryItem, ResourceCategory, User } from '@prisma/client';
+import { invalidSpecificationReason, isInvalidSpecification } from '@/lib/bulk-original-drawing-parser';
 import { safeDisplayFilename } from '@/lib/filenames';
 import { prisma } from '@/lib/prisma';
 
 export const drawingLibraryRequiredCodes = new Set(['drawing', 'sop', 'product']);
+export { invalidSpecificationReason, isInvalidSpecification };
 
 export function cleanDrawingText(value: unknown, max = 200) {
   if (typeof value !== 'string') return null;
@@ -40,12 +42,33 @@ export function isAutoImportedEmptyDrawingLibraryItem(item: {
 }
 
 export function isVisibleDrawingLibraryItem(item: {
+  specification?: string | null;
   remark?: string | null;
   lastImportedAt?: Date | string | null;
   lastWorkOrderId?: string | null;
   files?: Array<{ id: string }>;
 }) {
-  return !isAutoImportedEmptyDrawingLibraryItem(item);
+  return !isAutoImportedEmptyDrawingLibraryItem(item) && !isInvalidSpecification(item.specification || '');
+}
+
+export function drawingLibraryItemAnomalyReason(item: {
+  specification?: string | null;
+  libraryKey?: string | null;
+  remark?: string | null;
+  lastImportedAt?: Date | string | null;
+  lastWorkOrderId?: string | null;
+  files?: Array<{ id: string }>;
+}) {
+  const specReason = invalidSpecificationReason(item.specification || '');
+  if (specReason) return specReason;
+  const fileCount = item.files?.length || 0;
+  if (fileCount === 0 && !hasMeaningfulDrawingRemark(item.remark)) return '无文件空记录';
+  if (!item.libraryKey?.trim()) return '未归档记录';
+  return '';
+}
+
+export function isDrawingLibraryItemAnomaly(item: Parameters<typeof drawingLibraryItemAnomalyReason>[0]) {
+  return !!drawingLibraryItemAnomalyReason(item);
 }
 
 function versionMinor(version?: string | null) {
@@ -67,7 +90,7 @@ export async function findDrawingLibraryItemForWorkOrder(workOrder: {
   specification?: string | null;
 }) {
   const specification = workOrder.specification?.trim();
-  if (!specification) return null;
+  if (!specification || isInvalidSpecification(specification)) return null;
   const customerName = workOrder.customerName?.trim() || '未设置';
   const key = drawingLibraryKey(customerName === '未设置' ? '' : customerName, specification);
   return prisma.drawingLibraryItem.findFirst({ where: { libraryKey: key, deletedAt: null } });
@@ -80,7 +103,7 @@ export async function ensureDrawingLibraryItemForWorkOrder(workOrder: {
   specification?: string | null;
 }) {
   const specification = workOrder.specification?.trim();
-  if (!specification) return null;
+  if (!specification || isInvalidSpecification(specification)) return null;
 
   const customerName = workOrder.customerName?.trim() || '未设置';
   const key = drawingLibraryKey(customerName === '未设置' ? '' : customerName, specification);
@@ -164,6 +187,7 @@ export function drawingLibraryCompleteness(files: DrawingLibraryFileWithMeta[] =
 export function serializeDrawingLibraryItem(item: DrawingLibraryItemWithFiles, categories: Pick<ResourceCategory, 'id' | 'name' | 'code' | 'sortOrder'>[] = []) {
   const files = (item.files || []).filter(file => !file.deletedAt);
   const completeness = drawingLibraryCompleteness(files, categories);
+  const anomalyReason = drawingLibraryItemAnomalyReason({ ...item, files });
   return {
     id: item.id,
     customerName: item.customerName,
@@ -184,6 +208,8 @@ export function serializeDrawingLibraryItem(item: DrawingLibraryItemWithFiles, c
     completenessText: completeness.completenessText,
     missingRequiredCategories: completeness.missingRequired,
     isComplete: completeness.isComplete,
+    isAnomaly: !!anomalyReason,
+    anomalyReason,
     files: files.map(serializeDrawingLibraryFile),
   };
 }

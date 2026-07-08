@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { cleanDrawingText, drawingLibraryKey, parseCustomerCode, serializeDrawingLibraryItem } from '@/lib/drawing-library';
+import { cleanDrawingText, drawingLibraryKey, invalidSpecificationReason, parseCustomerCode, serializeDrawingLibraryItem } from '@/lib/drawing-library';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 
@@ -44,6 +44,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (!customerName) return NextResponse.json({ ok: false, error: '客户不能为空' }, { status: 400 });
     const specification = body.specification !== undefined ? cleanDrawingText(body.specification, 180) : old.specification;
     if (!specification) return NextResponse.json({ ok: false, error: '规格不能为空' }, { status: 400 });
+    const specError = invalidSpecificationReason(specification);
+    if (specError) return NextResponse.json({ ok: false, error: `规格格式异常：${specError}` }, { status: 400 });
     const data = {
       customerName,
       customerCode: parseCustomerCode(customerName),

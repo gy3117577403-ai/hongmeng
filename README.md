@@ -102,6 +102,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.14.2-web-bulk-original-drawing-import-ui：图纸资料库新增网页端“批量导入原图”入口，支持文件夹选择、客户映射、只读预览、重复识别、`IMPORT_ORIGINALS` 确认上传、失败 / 未匹配 CSV 导出；命令行工具保留为高级兜底。该版本为待部署候选，不代表生产已上线。
 - v1.14.3-unified-search-drawing-library：生产工单页顶部全局搜索扩展到图纸资料库和连接器参数；结果按生产工单、生产文件、图纸资料、图纸文件、连接器参数分组展示，点击图纸资料可跳转并定位到对应规格或文件。该版本为待部署候选，不代表生产已上线。
 - v1.14.4-drawing-library-remove-missing-labels：图纸资料库界面已精简，客户列表不再显示缺资料数量，规格卡片和详情标题仅展示资料完整度，不再显示缺失分类明细。该版本为待部署候选，不代表生产已上线。
+- v1.14.5-drawing-library-workspace-redesign：图纸资料库重排为客户 / 规格 / 预览优先工作台，左侧规格列表压缩、详情标题压缩、右侧文件列表独立；新增异常数据筛选和异常审计脚本，批量原图导入不再把日期型文件名识别为规格。该版本为待部署候选，不代表生产已上线。
 
 ## 交付文档索引
 
@@ -114,6 +115,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [图纸资料库同步说明](docs/DRAWING_LIBRARY_SYNC_GUIDE.md)
 - [本地图纸原图批量导入指南](docs/BULK_ORIGINAL_DRAWING_IMPORT_GUIDE.md)
 - [图纸资料库全局搜索 QA](docs/QA_UNIFIED_SEARCH_DRAWING_LIBRARY.md)
+- [图纸资料库工作台重排 QA](docs/QA_DRAWING_LIBRARY_WORKSPACE_REDESIGN.md)
 - [图纸资料库空数据清理说明](docs/DRAWING_LIBRARY_CLEANUP_GUIDE.md)
 - [布局层级与预览区优化 QA](docs/QA_LAYOUT_LAYER_PREVIEW_POLISH.md)
 - [预览适屏与旋转 QA](docs/QA_PREVIEW_ROTATE_AND_FIT.md)

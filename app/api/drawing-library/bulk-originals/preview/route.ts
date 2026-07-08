@@ -185,7 +185,7 @@ export async function POST(req: NextRequest) {
           ...rowBase,
           status: 'missing-spec' as const,
           action: 'skip' as const,
-          reason: '规格无法识别',
+          reason: extracted.invalidReason || parsed.invalidSpecificationReason || '规格无法识别',
         };
       }
 

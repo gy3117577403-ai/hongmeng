@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   cleanDrawingText,
+  drawingLibraryItemAnomalyReason,
   drawingLibraryKey,
+  invalidSpecificationReason,
   isVisibleDrawingLibraryItem,
   parseCustomerCode,
   serializeDrawingLibraryItem,
@@ -63,10 +65,11 @@ export async function GET(req: NextRequest) {
       take: 600,
     });
 
-    const serialized = items
-      .filter(isVisibleDrawingLibraryItem)
-      .map(item => serializeDrawingLibraryItem(item, categories));
-    const filtered = serialized.filter(item => {
+    const serialized = items.map(item => serializeDrawingLibraryItem(item, categories));
+    const filtered = serialized.filter((item, index) => {
+      const rawItem = items[index];
+      if (filter === 'anomaly') return !!drawingLibraryItemAnomalyReason(rawItem);
+      if (!isVisibleDrawingLibraryItem(rawItem)) return false;
       if (filter === 'incomplete') return !item.isComplete;
       if (filter === 'missing_drawing') return item.missingRequiredCategories.includes('drawing');
       if (filter === 'missing_sop') return item.missingRequiredCategories.includes('sop');
@@ -105,6 +108,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const specification = cleanDrawingText(body.specification, 180);
     if (!specification) return NextResponse.json({ ok: false, error: '规格不能为空' }, { status: 400 });
+    const specError = invalidSpecificationReason(specification);
+    if (specError) return NextResponse.json({ ok: false, error: `规格格式异常：${specError}` }, { status: 400 });
     const customerName = cleanDrawingText(body.customerName, 160);
     if (!customerName) return NextResponse.json({ ok: false, error: '客户不能为空' }, { status: 400 });
     const productName = cleanDrawingText(body.productName, 180);

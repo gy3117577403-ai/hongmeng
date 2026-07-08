@@ -16,7 +16,7 @@ type DrawingLibraryForm = {
   remark: string;
 };
 
-type DrawingFilter = 'all' | 'incomplete' | 'complete' | 'recent';
+type DrawingFilter = 'all' | 'complete' | 'recent' | 'anomaly';
 type DrawingModal = { mode: 'create' | 'edit'; item?: DrawingLibraryItemDTO } | null;
 type CleanupSummary = {
   totalActive: number;
@@ -36,9 +36,9 @@ type CleanupSummary = {
 const emptyForm: DrawingLibraryForm = { customerName: '', productName: '', specification: '', remark: '' };
 const filterOptions: Array<[DrawingFilter, string]> = [
   ['all', '全部'],
-  ['incomplete', '资料不完整'],
-  ['complete', '资料完整'],
   ['recent', '最近更新'],
+  ['complete', '资料完整'],
+  ['anomaly', '异常数据'],
 ];
 
 function dt(value?: string | null) {
@@ -75,6 +75,13 @@ function formFrom(item?: DrawingLibraryItemDTO): DrawingLibraryForm {
 function hasText(value?: string | null) {
   const text = value?.trim() || '';
   return !!text && text !== '-';
+}
+
+function categoryShortName(value?: string | null) {
+  if (value === 'SOP指导书') return 'SOP';
+  if (value === '成品图') return '成品';
+  if (value === '注意事项') return '注意';
+  return value || '分类';
 }
 
 export function DrawingLibraryShell({
@@ -381,73 +388,77 @@ export function DrawingLibraryShell({
         {filterOptions.map(([key, label]) => (
           <button key={key} className={filter === key ? 'active' : ''} type="button" onClick={() => setFilter(key)}>{label}</button>
         ))}
-        <span>{loading ? '加载中...' : `共 ${items.length} 条规格`}</span>
+        <span>{loading ? '加载中...' : filter === 'anomaly' ? `异常数据 ${items.length} 条` : `共 ${items.length} 条规格`}</span>
       </section>
 
       <section className="drawing-workspace">
-        <aside className="drawing-customers">
-          <div className="drawing-panel-head">
-            <strong>客户</strong>
-            <span>{customers.length ? `${customers.length - 1} 个客户` : '暂无客户'}</span>
+        <aside className="drawing-browser">
+          <div className="drawing-browser-customers">
+            <div className="drawing-panel-head">
+              <strong>客户</strong>
+              <span>{customers.length ? `${Math.max(0, customers.length - 1)} 个客户` : '暂无客户'}</span>
+            </div>
+            <div className="drawing-customer-list">
+              {customers.map(item => (
+                <button
+                  key={`${item.customerName}-${item.customerCode || ''}`}
+                  className={customer === item.customerName ? 'drawing-customer active' : 'drawing-customer'}
+                  type="button"
+                  onClick={() => setCustomer(item.customerName)}
+                >
+                  <strong title={item.customerName}>{item.customerName}</strong>
+                  <span>{item.itemCount}</span>
+                </button>
+              ))}
+              {!customers.length && <div className="drawing-empty-mini">暂无客户</div>}
+            </div>
           </div>
-          <div className="drawing-list">
-            {customers.map(item => (
-              <button
-                key={`${item.customerName}-${item.customerCode || ''}`}
-                className={customer === item.customerName ? 'drawing-customer active' : 'drawing-customer'}
-                type="button"
-                onClick={() => setCustomer(item.customerName)}
-              >
-                <strong>{item.customerName}</strong>
-                {item.customerCode && <em>{item.customerCode}</em>}
-                <span>{item.itemCount} 个规格</span>
-              </button>
-            ))}
-            {!customers.length && <div className="drawing-empty-mini">暂无图纸资料客户</div>}
-          </div>
-        </aside>
 
-        <aside className="drawing-specs">
-          <div className="drawing-panel-head">
-            <strong>产品规格</strong>
-            <button type="button" onClick={() => openModal('create')}>新增</button>
-          </div>
-          <div className="drawing-list">
-            {visibleItems.map(item => (
-              <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" onClick={() => chooseItem(item)}>
-                <div>
-                  <strong title={item.specification}>{item.specification}</strong>
-                  <span>{item.customerName} · {item.productName || '未设置品名'}</span>
-                </div>
-                <footer>
-                  <em className={item.isComplete ? 'complete' : 'missing'}>资料 {item.completenessText}</em>
-                  <span>{item.fileCount} 个文件</span>
-                  <span>{dt(item.updatedAt)}</span>
-                </footer>
-              </button>
-            ))}
-            {!visibleItems.length && <div className="drawing-empty-mini">没有匹配的图纸资料</div>}
+          <div className="drawing-browser-specs">
+            <div className="drawing-panel-head">
+              <strong>规格</strong>
+              <button type="button" onClick={() => openModal('create')}>新增</button>
+            </div>
+            <div className="drawing-list">
+              {visibleItems.map(item => (
+                <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" onClick={() => chooseItem(item)}>
+                  <div className="drawing-spec-title-line">
+                    <strong title={item.specification}>{item.specification}</strong>
+                    {item.isAnomaly && <span title={item.anomalyReason || '异常数据'}>异常</span>}
+                  </div>
+                  <p title={`${item.customerName} · ${item.productName || '未设置品名'}`}>{item.customerName} · {item.productName || '未设置品名'}</p>
+                  <footer>
+                    <em>资料 {item.completenessText}</em>
+                    <span>{item.fileCount} 文件</span>
+                    <span>{dt(item.updatedAt)}</span>
+                  </footer>
+                </button>
+              ))}
+              {!visibleItems.length && <div className="drawing-empty-mini">{keyword.trim() ? '未找到匹配资料' : filter === 'anomaly' ? '暂无异常数据' : '暂无图纸资料'}</div>}
+            </div>
           </div>
         </aside>
 
         <section className="drawing-detail">
           {!selectedItem ? (
             <div className="drawing-empty-state">
-              <strong>暂无图纸资料</strong>
-              <p>请手动新增客户和产品规格，或在生产工单上传图纸资料后自动建立长期资料记录。</p>
+              <span />
+              <strong>{keyword.trim() ? '未找到匹配资料' : '请选择一个规格或新增图纸资料'}</strong>
+              <p>图纸资料库按客户和规格管理长期原图、SOP、成品图、辅料规格和注意事项。</p>
               <button type="button" onClick={() => openModal('create')}>新增图纸资料</button>
             </div>
           ) : (
             <>
               <div className="drawing-detail-head">
                 <div>
-                  <span>规格</span>
                   <h1 title={selectedItem.specification}>{selectedItem.specification}</h1>
                   <p>
                     <b>{selectedItem.customerName}</b>
                     {hasText(selectedItem.productName) && <em>{selectedItem.productName}</em>}
                     <small>资料 {selectedItem.completenessText}</small>
+                    <small>{selectedItem.fileCount} 文件</small>
                     <small>更新 {dt(selectedItem.updatedAt)}</small>
+                    {selectedItem.isAnomaly && <small className="anomaly">{selectedItem.anomalyReason}</small>}
                   </p>
                 </div>
                 <div className="drawing-head-actions">
@@ -457,16 +468,15 @@ export function DrawingLibraryShell({
                 </div>
               </div>
 
-              <div className={activeFiles.length ? 'drawing-library-main' : 'drawing-library-main no-file-panel'}>
+              <div className="drawing-library-main">
                 <nav className="drawing-category-rail">
                   {categories.map(category => {
                     const count = selectedItem.categoryFileCounts[category.id] || 0;
-                    const required = ['drawing', 'sop', 'product'].includes(category.code);
                     return (
                       <button key={category.id} className={activeCategoryId === category.id ? 'active' : ''} type="button" onClick={() => { setActiveCategoryId(category.id); setSelectedFileId(''); }}>
-                        <span className={count ? 'dot filled' : required ? 'dot missing' : 'dot'} />
-                        <strong>{category.name}</strong>
-                        <em>{count} 个</em>
+                        <span className={count ? 'dot filled' : 'dot'} />
+                        <strong title={category.name}>{categoryShortName(category.name)}</strong>
+                        <em>{count}</em>
                       </button>
                     );
                   })}
@@ -475,16 +485,13 @@ export function DrawingLibraryShell({
                 <div className="drawing-preview">
                   <div className="drawing-preview-head">
                     <strong>{activeCategory?.name || '资料预览'}</strong>
-                    <span>{selectedFile ? safeDisplayFilename(selectedFile) : '当前分类暂无文件'}</span>
+                    <span>{selectedFile ? safeDisplayFilename(selectedFile) : '等待上传后预览'}</span>
                     <input ref={fileInputRef} hidden multiple type="file" accept="application/pdf,.pdf,image/*" onChange={event => uploadFiles(event.target.files)} />
                   </div>
 
                   {!selectedFile ? (
-                    <div className="drawing-missing-card">
+                    <div className="drawing-preview-placeholder" aria-label="当前分类暂无可预览文件">
                       <span />
-                      <strong>当前分类暂无图纸资料</strong>
-                      <p>这里仅管理长期图纸资料。周计划字段仍保留在生产工单里，不进入图纸资料库。</p>
-                      <button type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>上传 PDF / 图片</button>
                     </div>
                   ) : selectedFile.fileType === 'pdf' ? (
                     <PdfViewer fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} viewUrl={selectedFile.viewUrl} downloadUrl={selectedFile.downloadUrl} />
@@ -498,29 +505,42 @@ export function DrawingLibraryShell({
                     </div>
                   )}
                 </div>
-
-                {activeFiles.length > 0 && <aside className="drawing-file-panel">
-                  <strong>分类文件</strong>
-                  <div className="drawing-files">
-                    {activeFiles.map(file => (
-                      <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => setSelectedFileId(file.id)}>
-                        <b>{file.fileType === 'pdf' ? 'PDF' : file.fileType === 'image' ? 'IMG' : 'FILE'}</b>
-                        <span title={safeDisplayFilename(file)}>{safeDisplayFilename(file)}</span>
-                        <em>{file.version || 'V1.0'} · {bytes(file.fileSize)}</em>
-                      </button>
-                    ))}
-                  </div>
-                  {selectedFile && (
-                    <div className="drawing-file-actions">
-                      <a href={selectedFile.downloadUrl} target="_blank" rel="noreferrer">下载</a>
-                      <button type="button" onClick={() => deleteFile(selectedFile)}>删除</button>
-                    </div>
-                  )}
-                </aside>}
               </div>
             </>
           )}
         </section>
+
+        <aside className="drawing-file-panel">
+          <div className="drawing-file-panel-head">
+            <strong>{activeCategory?.name || '分类文件'}</strong>
+            <span>{activeFiles.length} 个</span>
+          </div>
+          {selectedItem && activeFiles.length > 0 ? (
+            <>
+              <div className="drawing-files">
+                {activeFiles.map(file => (
+                  <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => setSelectedFileId(file.id)}>
+                    <b>{file.fileType === 'pdf' ? 'PDF' : file.fileType === 'image' ? 'IMG' : 'FILE'}</b>
+                    <span title={safeDisplayFilename(file)}>{safeDisplayFilename(file)}</span>
+                    <em>{file.version || 'V1.0'} · {bytes(file.fileSize)}</em>
+                  </button>
+                ))}
+              </div>
+              {selectedFile && (
+                <div className="drawing-file-actions">
+                  <a href={selectedFile.downloadUrl} target="_blank" rel="noreferrer">下载</a>
+                  <button type="button" onClick={() => deleteFile(selectedFile)}>删除</button>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="drawing-file-empty">
+              <strong>{selectedItem ? '当前分类暂无文件' : '请选择规格'}</strong>
+              <p>{selectedItem ? '上传 PDF 或图片后会在中间预览区查看。' : '选择左侧规格后查看当前分类文件。'}</p>
+              {selectedItem && <button type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传 PDF / 图片'}</button>}
+            </div>
+          )}
+        </aside>
       </section>
 
       {modal && (

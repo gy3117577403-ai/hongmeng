@@ -1828,6 +1828,361 @@ input:focus-visible {
   text-align: center;
 }
 
+/* v1.14.5 drawing library workspace redesign */
+.drawing-workspace {
+  grid-template-columns: minmax(360px, 420px) minmax(0, 1fr) minmax(252px, 288px);
+  gap: 10px;
+}
+
+.drawing-browser {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(148px, 28%) minmax(0, 1fr);
+  border: 1px solid rgba(226, 232, 240, .9);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, .06);
+  overflow: hidden;
+}
+
+.drawing-browser-customers,
+.drawing-browser-specs {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.drawing-browser-customers {
+  border-bottom: 1px solid #edf0f5;
+}
+
+.drawing-customer-list {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 8px;
+  overflow: auto;
+}
+
+.drawing-customer {
+  min-height: 36px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: 10px;
+  box-shadow: none;
+}
+
+.drawing-customer strong {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.drawing-customer span {
+  grid-column: auto;
+  min-width: 30px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+  text-align: right;
+}
+
+.drawing-customer.active {
+  background: #fff7ed;
+  box-shadow: inset 3px 0 0 rgba(255, 106, 0, .78);
+}
+
+.drawing-panel-head {
+  min-height: 42px;
+  padding: 9px 12px;
+}
+
+.drawing-panel-head strong {
+  font-size: 15px;
+}
+
+.drawing-panel-head button {
+  min-height: 32px;
+  border-radius: 9px;
+}
+
+.drawing-list {
+  gap: 6px;
+  padding: 8px;
+}
+
+.drawing-spec-card {
+  min-height: 70px;
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 4px;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.drawing-spec-card.active {
+  background: #fffaf5;
+  box-shadow: inset 3px 0 0 rgba(255, 106, 0, .82);
+}
+
+.drawing-spec-title-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.drawing-spec-title-line strong {
+  flex: 1;
+  font-size: 14px;
+}
+
+.drawing-spec-title-line span,
+.drawing-detail-head small.anomaly {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fff1f2;
+  color: #be123c;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.drawing-spec-card p {
+  margin: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.drawing-spec-card footer {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.drawing-spec-card em {
+  padding: 0;
+  background: transparent;
+  color: #7c4a13;
+  font-size: 11px;
+}
+
+.drawing-spec-card footer span {
+  font-size: 11px;
+}
+
+.drawing-detail {
+  box-shadow: 0 10px 26px rgba(15, 23, 42, .06);
+}
+
+.drawing-detail-head {
+  min-height: 70px;
+  padding: 10px 12px;
+}
+
+.drawing-detail-head h1 {
+  margin: 0 0 4px;
+  font-size: 19px;
+}
+
+.drawing-detail-head p {
+  gap: 7px;
+  font-size: 12px;
+}
+
+.drawing-detail-head p b {
+  max-width: 220px;
+}
+
+.drawing-detail-head p em {
+  max-width: 260px;
+}
+
+.drawing-head-actions {
+  gap: 6px;
+}
+
+.drawing-head-actions button {
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 10px;
+}
+
+.drawing-library-main {
+  grid-template-columns: 124px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px;
+}
+
+.drawing-library-main.no-file-panel {
+  grid-template-columns: 124px minmax(0, 1fr);
+}
+
+.drawing-category-rail {
+  gap: 6px;
+  padding: 8px;
+}
+
+.drawing-category-rail button {
+  min-height: 50px;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 4px 7px;
+  padding: 8px;
+  border-radius: 10px;
+}
+
+.drawing-category-rail strong {
+  overflow: hidden;
+  font-size: 13px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.drawing-category-rail em {
+  grid-column: auto;
+  color: #475569;
+  font-weight: 900;
+}
+
+.drawing-category-rail .dot.missing {
+  background: #cbd5e1;
+}
+
+.drawing-preview {
+  border-radius: 12px;
+}
+
+.drawing-preview-head {
+  min-height: 42px;
+  padding: 7px 10px;
+}
+
+.drawing-preview-placeholder {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(135deg, rgba(255, 247, 237, .42), rgba(248, 250, 252, .88)),
+    repeating-linear-gradient(135deg, rgba(148, 163, 184, .11), rgba(148, 163, 184, .11) 1px, transparent 1px, transparent 14px);
+}
+
+.drawing-preview-placeholder span {
+  width: 74px;
+  height: 74px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, .72);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 106, 0, .14),
+    0 18px 36px rgba(15, 23, 42, .08);
+}
+
+.drawing-file-panel {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  border: 1px solid rgba(226, 232, 240, .9);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, .06);
+  overflow: hidden;
+}
+
+.drawing-file-panel-head {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.drawing-file-panel-head strong {
+  overflow: hidden;
+  color: #111827;
+  font-size: 15px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.drawing-file-panel-head span {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.drawing-files {
+  gap: 7px;
+}
+
+.drawing-files button {
+  min-height: 68px;
+  grid-template-columns: 36px minmax(0, 1fr);
+  padding: 8px;
+  border-radius: 10px;
+}
+
+.drawing-files b {
+  width: 34px;
+  height: 34px;
+}
+
+.drawing-files span {
+  font-size: 12px;
+  -webkit-line-clamp: 2;
+}
+
+.drawing-file-actions {
+  padding-top: 9px;
+}
+
+.drawing-file-empty {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  place-content: center;
+  gap: 9px;
+  padding: 12px;
+  color: #64748b;
+  text-align: center;
+}
+
+.drawing-file-empty strong {
+  color: #111827;
+  font-size: 15px;
+}
+
+.drawing-file-empty p {
+  max-width: 210px;
+  margin: 0 auto;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.drawing-file-empty button {
+  min-height: 40px;
+  padding: 0 13px;
+  border: none;
+  border-radius: 12px;
+  background: var(--orange);
+  color: #fff;
+  font-weight: 900;
+}
+
 .drawing-dialog {
   width: min(560px, calc(100vw - 32px));
   display: flex;
@@ -2136,18 +2491,18 @@ input:focus-visible {
   }
 
   .drawing-workspace {
-    grid-template-columns: 190px 252px minmax(0, 1fr);
+    grid-template-columns: minmax(300px, 334px) minmax(0, 1fr) minmax(216px, 244px);
     gap: 8px;
   }
 
   .drawing-library-main {
-    grid-template-columns: 126px minmax(0, 1fr) 196px;
+    grid-template-columns: 108px minmax(0, 1fr);
     gap: 8px;
     padding: 8px;
   }
 
   .drawing-library-main.no-file-panel {
-    grid-template-columns: 126px minmax(0, 1fr);
+    grid-template-columns: 108px minmax(0, 1fr);
   }
 
   .drawing-summary-grid {
