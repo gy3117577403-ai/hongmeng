@@ -39,6 +39,7 @@ export async function GET(req: NextRequest) {
     const keyword = req.nextUrl.searchParams.get('keyword')?.trim();
     const filter = req.nextUrl.searchParams.get('filter');
     const includeCleared = req.nextUrl.searchParams.get('includeCleared') === 'true';
+    const planView = req.nextUrl.searchParams.get('planView') || 'current';
     const stage = normalizeWorkOrderStage(filter);
     const createdAt = filterDate(filter);
     const and: Prisma.WorkOrderWhereInput[] = [];
@@ -66,17 +67,27 @@ export async function GET(req: NextRequest) {
       and.push({ OR: [{ stage }, { stage: { in: legacyStages } }] });
     }
     if (createdAt) and.push({ createdAt });
+    if (!includeCleared) {
+      if (planView === 'draft_next') {
+        and.push({ planType: 'weekly_plan', planActive: false, planClearedAt: null });
+      } else if (planView === 'history') {
+        and.push({ planType: 'weekly_plan', planActive: false, planClearedAt: { not: null } });
+      } else {
+        and.push({ planActive: true });
+      }
+    }
 
     const workOrders = await prisma.workOrder.findMany({
       where: {
         deletedAt: null,
-        ...(includeCleared ? {} : { planActive: true }),
         ...(and.length ? { AND: and } : {}),
       },
       include: {
         resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } },
       },
-      orderBy: [{ createdAt: 'desc' }, { code: 'asc' }],
+      orderBy: planView === 'history'
+        ? [{ weekStartDate: 'desc' }, { createdAt: 'desc' }, { code: 'asc' }]
+        : [{ createdAt: 'desc' }, { code: 'asc' }],
     });
 
     return NextResponse.json({ workOrders: workOrders.map(serializeWorkOrder) });

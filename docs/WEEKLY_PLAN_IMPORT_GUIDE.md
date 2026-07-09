@@ -160,11 +160,12 @@ displayCode = specification || code
 
 同时，系统会按 `customerName + "::" + specification` 查找已有长期图纸资料库记录。如果客户为空，则按 `specification` 匹配。找到则关联；找不到不再自动创建空图纸资料记录。图纸资料库只保存客户、客户编码、规格、品名、备注和资料文件，不保存图纸状态、配料状态、交期、未交量、工时、业务员、订单日期等周计划字段。
 
-如需开始新一周生产，可在系统设置中使用“本周生产工单清理”：
+从 v1.14.6 开始，建议使用“周计划工单中心”流程开始新一周生产：
 
-1. 选择计划周开始日期。
-2. 点击“预览清理”。
-3. 确认不会删除图纸资料库、资料文件和连接器参数。
-4. 输入 `CLEAR_WEEK` 后执行。
+1. 在工单抽屉点击“导入下周”，上传下周计划 Excel。
+2. 默认选择“保存为下周草稿”，预览确认后写入数据库，但不进入当前周列表。
+3. 在工单抽屉切换到“下周草稿”检查数量、规格、客户和资料状态。
+4. 点击“启用下周”，输入 `START_NEXT_WEEK` 后启用。
+5. 系统会同时归档当前 active 周计划工单。
 
-清理只会把本周周计划工单设为 `planActive=false`，不会删除 `WorkOrder`、`DrawingLibraryItem`、`DrawingLibraryFile`、`ResourceFile`、S3 文件、连接器参数或连接器附件。
+如只需要结束当前周，可点击“结束本周”，预览后输入 `CLOSE_WEEK`。归档只会把本周周计划工单设为 `planActive=false` 并写入 `planClearedAt / planClearedBy`，不会删除 `WorkOrder`、`DrawingLibraryItem`、`DrawingLibraryFile`、`ResourceFile`、S3 文件、连接器参数或连接器附件。

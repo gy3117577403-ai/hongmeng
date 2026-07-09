@@ -84,6 +84,9 @@ type ImportPreview = {
 };
 type ImportResultRow = { row: number; code: string; status: 'created' | 'skipped' | 'failed'; message: string };
 type ImportResult = { importBatchId?: string; summary: { created: number; skipped: number; failed: number; duplicateSkipped?: number; total: number }; results: ImportResultRow[] };
+type ImportTarget = 'current' | 'draft_next';
+type PlanView = 'current' | 'draft_next' | 'history';
+type OrderQuickFilter = 'all' | 'today' | 'missing' | 'anomaly';
 type WeeklyPlanClearSummary = {
   weekStartDate: string;
   weekEndDate: string;
@@ -91,8 +94,27 @@ type WeeklyPlanClearSummary = {
   workOrdersWithFiles: number;
   fileCount: number;
   connectorParameterCount: number;
+  missingWorkOrders?: number;
+  archiveCount?: number;
+  drawingLibraryItemCount?: number;
+  drawingLibraryFileCount?: number;
+  willDeleteResourceFiles?: number;
+  willDeleteDrawingLibraryItems?: number;
+  willDeleteConnectorParameters?: number;
   clearedCount?: number;
 };
+type WeeklyPlanActivateSummary = {
+  weekStartDate: string;
+  weekEndDate: string;
+  currentArchiveCount: number;
+  nextActivateCount: number;
+  missingWorkOrders: number;
+  anomalyCount: number;
+  fileCount: number;
+  activatedCount?: number;
+  archivedCount?: number;
+};
+type WeekAction = 'close' | 'activate_next' | null;
 type RelatedHistory = { fileCount: number; workOrderCount: number } | null;
 type UserForm = { username: string; displayName: string; password: string };
 type AccountEdit = { id: string; displayName: string; isActive: boolean } | null;
@@ -200,6 +222,27 @@ function inRecentWeek(value: string) {
   return Number.isFinite(d) && d >= Date.now() - 6 * 24 * 60 * 60 * 1000;
 }
 
+function ymdLocal(value: string | Date) {
+  const parts = dateParts(value);
+  if (!parts) return '';
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function addDaysYmd(value: string, days: number) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  date.setUTCDate(date.getUTCDate() + days);
+  return ymdLocal(date);
+}
+
+function nextMondayYmd() {
+  const date = new Date();
+  const day = date.getDay() || 7;
+  date.setDate(date.getDate() + (8 - day));
+  date.setHours(0, 0, 0, 0);
+  return ymdLocal(date);
+}
+
 function displayFileName(file?: ResourceFileDTO | null) {
   return safeDisplayFilename(file);
 }
@@ -272,6 +315,8 @@ const actionText: Record<string, string> = {
   export_operation_logs: '导出操作日志',
   export_metadata: '导出元数据',
   import_work_orders: '导入工单',
+  close_weekly_work_orders: '归档当前周工单',
+  activate_next_weekly_work_orders: '启用下周工单',
   create_user: '新增账号',
   update_user: '编辑账号',
   disable_user: '禁用账号',
@@ -445,7 +490,9 @@ export default function DashboardShell({
 }) {
   const [orders, setOrders] = useState(initialWorkOrders);
   const [kw, setKw] = useState('');
-  const [orderFilter, setOrderFilter] = useState('all');
+  const [orderFilter, setOrderFilter] = useState<OrderQuickFilter>('all');
+  const [stageFilter, setStageFilter] = useState('all');
+  const [planView, setPlanView] = useState<PlanView>('current');
   const [wo, setWo] = useState(initialWorkOrders[0]?.id || '');
   const [cat, setCat] = useState(categories[0]?.id || '');
   const [files, setFiles] = useState<ResourceFileDTO[]>([]);
@@ -495,6 +542,7 @@ export default function DashboardShell({
   const [exporting, setExporting] = useState('');
   const [importing, setImporting] = useState(false);
   const [importMode, setImportMode] = useState<ImportMode>('weekly_plan');
+  const [importTarget, setImportTarget] = useState<ImportTarget>('draft_next');
   const [importWeekStart, setImportWeekStart] = useState('');
   const [importPreview, setImportPreview] = useState<ImportPreview | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
@@ -504,6 +552,12 @@ export default function DashboardShell({
   const [clearConfirmText, setClearConfirmText] = useState('');
   const [clearError, setClearError] = useState('');
   const [clearingWeeklyPlan, setClearingWeeklyPlan] = useState(false);
+  const [weekAction, setWeekAction] = useState<WeekAction>(null);
+  const [weekActionDate, setWeekActionDate] = useState('');
+  const [weekActionSummary, setWeekActionSummary] = useState<WeeklyPlanClearSummary | WeeklyPlanActivateSummary | null>(null);
+  const [weekActionConfirmText, setWeekActionConfirmText] = useState('');
+  const [weekActionError, setWeekActionError] = useState('');
+  const [weekActionLoading, setWeekActionLoading] = useState(false);
   const [duplicateStrategy, setDuplicateStrategy] = useState<'skip' | 'import'>('skip');
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [now, setNow] = useState<Date | null>(null);
@@ -560,12 +614,16 @@ export default function DashboardShell({
         o.remark,
       ].some(value => String(value || '').toLowerCase().includes(text));
       if (!matchesText) return false;
-      if (orderFilter === 'today') return sameDay(o.createdAt);
-      if (orderFilter === 'week') return inRecentWeek(o.createdAt);
-      if (['not_issued', 'frontend', 'backend', 'completed'].includes(orderFilter)) return normalizeFlowStage(o.stage) === orderFilter;
+      if (stageFilter !== 'all' && normalizeFlowStage(o.stage) !== stageFilter) return false;
+      if (orderFilter === 'today') return !!o.plannedAt && sameDay(o.plannedAt);
+      if (orderFilter === 'missing') return requiredMissing(categories, o.categoryFileCounts || {}) > 0;
+      if (orderFilter === 'anomaly') {
+        const hasCore = !!(customerLabel(o) !== '未设置' && workOrderDisplayCode(o) !== '-' && o.productName?.trim());
+        return !hasCore || requiredMissing(categories, o.categoryFileCounts || {}) > 0 || plannedClass(o) === 'overdue';
+      }
       return true;
     });
-  }, [orders, kw, orderFilter]);
+  }, [orders, kw, orderFilter, stageFilter, categories]);
 
   const order = orders.find(o => o.id === wo) || orders[0];
   const category = categories.find(c => c.id === cat) || categories[0];
@@ -586,8 +644,18 @@ export default function DashboardShell({
   const currentCategoryName = category?.name || '-';
   const currentCategoryIsEmpty = !loading && !file;
   const canDownloadAll = !!order && currentOrderFileCount > 0;
-  const visibleToday = list.filter(o => sameDay(o.createdAt));
-  const visibleWeek = list.filter(o => inRecentWeek(o.createdAt));
+  const orderReadOnly = !!order && order.planType === 'weekly_plan' && order.planActive === false && !!order.planClearedAt;
+  const visibleToday = list.filter(o => !!o.plannedAt && sameDay(o.plannedAt));
+  const visibleWeek = list;
+  const drawerWeekStart = list.find(o => o.weekStartDate)?.weekStartDate || order?.weekStartDate || '';
+  const drawerWeekEnd = list.find(o => o.weekEndDate)?.weekEndDate || order?.weekEndDate || '';
+  const drawerWeekLabel = drawerWeekStart
+    ? `${ymdLocal(drawerWeekStart)} 至 ${drawerWeekEnd ? ymdLocal(drawerWeekEnd) : addDaysYmd(drawerWeekStart, 6)}`
+    : planView === 'draft_next'
+      ? '下周草稿'
+      : planView === 'history'
+        ? '历史周'
+        : '当前周';
   const managerFiles = managerCategory === 'all' ? allFiles : allFiles.filter(f => f.categoryId === managerCategory);
   const fileOrderOptions = useMemo(() => {
     const text = fileOrderKw.trim().toLowerCase();
@@ -720,7 +788,10 @@ export default function DashboardShell({
   }
 
   async function refreshOrders(preferredId?: string, forceSync = false) {
-    const r = await fetch(syncUrl('/api/work-orders', forceSync), { cache: 'no-store' });
+    const params = new URLSearchParams();
+    if (planView !== 'current') params.set('planView', planView);
+    const path = `/api/work-orders${params.toString() ? `?${params.toString()}` : ''}`;
+    const r = await fetch(syncUrl(path, forceSync), { cache: 'no-store' });
     if (!r.ok) throw new Error('refresh work orders failed');
     const d = await r.json();
     const nextOrders: WorkOrderDTO[] = Array.isArray(d.workOrders) ? d.workOrders : [];
@@ -729,6 +800,11 @@ export default function DashboardShell({
     setWo(v => (v && nextOrders.some(o => o.id === v) ? v : nextId));
     return nextOrders;
   }
+
+  useEffect(() => {
+    refreshOrders(undefined, true).catch(() => setMsg('工单列表刷新失败'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planView]);
 
   async function loadFiles(w = order?.id, c = category?.id, preferredFileId?: string, forceSync = false) {
     if (!w || !c) {
@@ -1591,6 +1667,104 @@ export default function DashboardShell({
     await loadSystemStatus();
   }
 
+  async function openNextWeekImport() {
+    const base = drawerWeekStart || order?.weekStartDate || '';
+    setImportMode('weekly_plan');
+    setImportTarget('draft_next');
+    setImportWeekStart(base ? addDaysYmd(base, 7) : nextMondayYmd());
+    setImportPreview(null);
+    setImportResult(null);
+    setImportError('');
+    setDrawerOpen(false);
+    await openSystemSettings();
+  }
+
+  function currentWeekStartValue() {
+    return drawerWeekStart ? ymdLocal(drawerWeekStart) : order?.weekStartDate ? ymdLocal(order.weekStartDate) : '';
+  }
+
+  function nextWeekStartValue() {
+    const base = drawerWeekStart || order?.weekStartDate || importWeekStart;
+    return base ? addDaysYmd(base, 7) : nextMondayYmd();
+  }
+
+  function openWeekAction(kind: Exclude<WeekAction, null>) {
+    const date = kind === 'close' ? currentWeekStartValue() : nextWeekStartValue();
+    setWeekAction(kind);
+    setWeekActionDate(date);
+    setWeekActionSummary(null);
+    setWeekActionConfirmText('');
+    setWeekActionError('');
+  }
+
+  async function previewWeekAction(kind = weekAction, dateValue = weekActionDate) {
+    if (!kind) return;
+    if (!dateValue) {
+      setWeekActionError(kind === 'close' ? '请选择当前周开始日期' : '请选择下周开始日期');
+      return;
+    }
+    setWeekActionLoading(true);
+    setWeekActionError('');
+    setWeekActionSummary(null);
+    try {
+      const path = kind === 'close' ? '/api/work-orders/week/close/preview' : '/api/work-orders/week/activate-next/preview';
+      const r = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weekStartDate: dateValue }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setWeekActionError(d.error || d.message || '预览失败');
+        return;
+      }
+      setWeekActionSummary(d.summary || null);
+      setWeekActionConfirmText('');
+    } catch {
+      setWeekActionError('预览失败，请检查网络后重试');
+    } finally {
+      setWeekActionLoading(false);
+    }
+  }
+
+  async function commitWeekAction() {
+    if (!weekAction) return;
+    const confirmText = weekActionConfirmText.trim();
+    const required = weekAction === 'close' ? 'CLOSE_WEEK' : 'START_NEXT_WEEK';
+    if (confirmText !== required) {
+      setWeekActionError(`请输入 ${required} 确认操作`);
+      return;
+    }
+    setWeekActionLoading(true);
+    setWeekActionError('');
+    try {
+      const path = weekAction === 'close' ? '/api/work-orders/week/close/commit' : '/api/work-orders/week/activate-next/commit';
+      const r = await fetch(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weekStartDate: weekActionDate, confirmText }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setWeekActionError(d.error || d.message || '操作失败');
+        return;
+      }
+      setWeekActionSummary(d.summary || null);
+      setWeekActionConfirmText('');
+      setWeekAction(null);
+      setPlanView('current');
+      await refreshOrders(undefined, true);
+      await loadFieldSummary();
+      setMsg(weekAction === 'close'
+        ? `已归档 ${d.summary?.clearedCount ?? 0} 张当前周工单，资料未删除`
+        : `已启用 ${d.summary?.activatedCount ?? 0} 张下周工单`);
+    } catch {
+      setWeekActionError('操作失败，请检查网络后重试');
+    } finally {
+      setWeekActionLoading(false);
+    }
+  }
+
   function downloadName(headers: Headers, fallback: string) {
     const value = headers.get('Content-Disposition') || '';
     const m = value.match(/filename\*=UTF-8''([^;]+)/);
@@ -1672,6 +1846,7 @@ export default function DashboardShell({
           rows: importPreview.rows,
           duplicateStrategy,
           mode: importPreview.mode,
+          weeklyPlanTarget: importPreview.mode === 'weekly_plan' ? importTarget : undefined,
           sourceFileName: importPreview.sourceFileName,
           sourceSheetName: importPreview.sourceSheetName,
         }),
@@ -1685,8 +1860,9 @@ export default function DashboardShell({
       }
       setImportResult(d);
       setImportPreview(null);
+      if (importPreview.mode === 'weekly_plan' && importTarget === 'draft_next') setPlanView('draft_next');
       await refreshOrders(order?.id);
-      setMsg(`导入完成：新增 ${d.summary?.created || 0}，跳过 ${d.summary?.skipped || 0}，失败 ${d.summary?.failed || 0}`);
+      setMsg(`${importTarget === 'draft_next' && importPreview.mode === 'weekly_plan' ? '下周草稿已保存' : '导入完成'}：新增 ${d.summary?.created || 0}，跳过 ${d.summary?.skipped || 0}，失败 ${d.summary?.failed || 0}`);
     } catch {
       setImportError('确认导入失败，请检查网络后重试');
       setMsg('确认导入失败');
@@ -1705,20 +1881,20 @@ export default function DashboardShell({
     }
     setClearingWeeklyPlan(true);
     try {
-      const r = await fetch('/api/work-orders/clear-weekly-plan/preview', {
+      const r = await fetch('/api/work-orders/week/close/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ weekStartDate: targetWeekStart }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setClearError(d.error || d.message || '清除预览失败');
+        setClearError(d.error || d.message || '归档预览失败');
         return;
       }
       setClearPreview(d.summary || null);
       setClearConfirmText('');
     } catch {
-      setClearError('清除预览失败，请检查网络后重试');
+      setClearError('归档预览失败，请检查网络后重试');
     } finally {
       setClearingWeeklyPlan(false);
     }
@@ -1731,29 +1907,29 @@ export default function DashboardShell({
       setClearError('请选择计划周开始日期');
       return;
     }
-    if (clearConfirmText.trim() !== 'CLEAR_WEEK') {
-      setClearError('请输入 CLEAR_WEEK 确认清除本周生产工单');
+    if (clearConfirmText.trim() !== 'CLOSE_WEEK') {
+      setClearError('请输入 CLOSE_WEEK 确认归档当前周生产工单');
       return;
     }
     setClearingWeeklyPlan(true);
     try {
-      const r = await fetch('/api/work-orders/clear-weekly-plan/commit', {
+      const r = await fetch('/api/work-orders/week/close/commit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ weekStartDate: targetWeekStart, confirmText: clearConfirmText.trim() }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
-        setClearError(d.error || d.message || '清除本周生产工单失败');
+        setClearError(d.error || d.message || '归档当前周工单失败');
         return;
       }
       setClearPreview(d.summary || null);
       setClearConfirmText('');
       await refreshOrders(undefined, true);
       await loadFieldSummary();
-      setMsg(`已清除 ${d.summary?.clearedCount ?? 0} 张本周生产工单，资料文件未删除`);
+      setMsg(`已归档 ${d.summary?.clearedCount ?? 0} 张当前周生产工单，资料文件未删除`);
     } catch {
-      setClearError('清除本周生产工单失败，请检查网络后重试');
+      setClearError('归档当前周工单失败，请检查网络后重试');
     } finally {
       setClearingWeeklyPlan(false);
     }
@@ -1976,39 +2152,52 @@ export default function DashboardShell({
           <div className="panel-head">
             <div>
               <span>生产工单</span>
-              <strong>{list.length} 单</strong>
+              <strong>{drawerWeekLabel} · {list.length} 单</strong>
             </div>
             <div className="panel-head-actions">
-              <button className="import-order-button" type="button" onClick={openSystemSettings}>批量导入</button>
+              <button className="import-order-button" type="button" onClick={openNextWeekImport}>导入下周</button>
+              <button className="archive-week-button" type="button" disabled={!currentWeekStartValue()} onClick={() => openWeekAction('close')}>结束本周</button>
+              <button className="activate-week-button" type="button" onClick={() => openWeekAction('activate_next')}>启用下周</button>
               <button className="new-order-button" type="button" onClick={() => openOrderModal('create')}>新建工单</button>
               <button className="drawer-close" type="button" aria-label="关闭工单抽屉" onClick={() => setDrawerOpen(false)}>×</button>
             </div>
           </div>
+          <div className="plan-view-tabs" aria-label="周计划视图">
+            {([
+              ['current', '当前周'],
+              ['draft_next', '下周草稿'],
+              ['history', '历史周'],
+            ] as const).map(([key, label]) => (
+              <button key={key} className={planView === key ? 'active' : ''} type="button" onClick={() => setPlanView(key)}>{label}</button>
+            ))}
+          </div>
           <div className="panel-search">
             <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索规格 / 客户 / 品名 / SO单号 / 内部编号" />
           </div>
-          <div className="filter-tabs">
+          <div className="filter-tabs weekly-filter-tabs">
             {[
               ['all', '全部'],
-              ['today', '今日'],
-              ['week', '本周'],
-              ['not_issued', '未发图'],
-              ['frontend', '在前端'],
-              ['backend', '在后端'],
-              ['completed', '已完成'],
+              ['today', '今日交期'],
+              ['missing', '缺资料'],
+              ['anomaly', '异常'],
             ].map(([key, label]) => (
-              <button key={key} className={orderFilter === key ? 'active' : ''} type="button" onClick={() => setOrderFilter(key)}>{label}</button>
+              <button key={key} className={orderFilter === key ? 'active' : ''} type="button" onClick={() => setOrderFilter(key as OrderQuickFilter)}>{label}</button>
             ))}
+            <label className="stage-filter-select">
+              <span>状态</span>
+              <select value={stageFilter} onChange={e => setStageFilter(e.target.value)}>
+                <option value="all">全部状态</option>
+                {flowStages.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+              </select>
+            </label>
           </div>
           <div className="order-stats compact">
-            <span>今日 {visibleToday.length}</span>
-            <span>本周 {visibleWeek.length}</span>
+            <span>今日交期 {visibleToday.length}</span>
+            <span>当前列表 {visibleWeek.length}</span>
             {fieldSummary && (
               <>
                 <span>缺资料 {fieldSummary.counts.missingWorkOrders}</span>
                 <span>完整 {fieldSummary.counts.completeWorkOrders}</span>
-                <span>最近文件 {fieldSummary.counts.recentFiles}</span>
-                <span>今日新增 {fieldSummary.counts.todayWorkOrders}</span>
               </>
             )}
           </div>
@@ -2031,7 +2220,7 @@ export default function DashboardShell({
               )}
             </section>
           )}
-          <OrderGroup title="工单列表" orders={list} selected={order?.id} choose={id => openWorkOrder(id)} categories={categories} openQuickMenu={openQuickMenu} />
+          <OrderGroup title={planView === 'draft_next' ? '下周草稿' : planView === 'history' ? '历史周工单' : '当前周工单'} orders={list} selected={order?.id} choose={id => openWorkOrder(id)} categories={categories} openQuickMenu={openQuickMenu} readOnly={planView === 'history'} />
           {!list.length && <div className="empty-orders large">未找到匹配工单</div>}
         </aside>
         {drawerOpen && <button className="drawer-mask" type="button" aria-label="关闭工单抽屉" onClick={() => setDrawerOpen(false)} />}
@@ -2071,12 +2260,12 @@ export default function DashboardShell({
               <div className="more-actions-wrap">
                 <button ref={moreActionsButtonRef} className="strip-more-button" type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多</button>
                 <PortalMenu open={moreActionsOpen} anchorRef={moreActionsButtonRef} className="more-actions-menu" width={190}>
-                    <button type="button" onClick={() => { setMoreActionsOpen(false); order && openOrderModal('edit', order); }}>编辑工单</button>
+                    <button type="button" disabled={orderReadOnly} onClick={() => { setMoreActionsOpen(false); order && openOrderModal('edit', order); }}>编辑工单</button>
                     {order?.drawingLibraryItemId && <button type="button" onClick={() => { location.href = `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId || '')}`; }}>查看图纸资料库</button>}
-                    <button type="button" onClick={() => { setMoreActionsOpen(false); order && setOrderDeleteTarget(order); }}>删除工单</button>
+                    <button type="button" disabled={orderReadOnly} onClick={() => { setMoreActionsOpen(false); order && setOrderDeleteTarget(order); }}>删除工单</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); copy(); }}>复制链接</button>
-                    <button type="button" onClick={() => { setMoreActionsOpen(false); syncCurrentWorkOrder(); }}>同步当前工单资料</button>
-                    <button type="button" disabled={drawingSyncing} onClick={() => { setMoreActionsOpen(false); syncCurrentWorkOrderToDrawingLibrary(); }}>{drawingSyncing ? '同步图纸库中...' : '同步到图纸资料库'}</button>
+                    <button type="button" disabled={orderReadOnly} onClick={() => { setMoreActionsOpen(false); syncCurrentWorkOrder(); }}>同步当前工单资料</button>
+                    <button type="button" disabled={drawingSyncing || orderReadOnly} onClick={() => { setMoreActionsOpen(false); syncCurrentWorkOrderToDrawingLibrary(); }}>{drawingSyncing ? '同步图纸库中...' : '同步到图纸资料库'}</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); openQrDialog(); }}>打印二维码</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); printSummary(); }}>打印摘要</button>
                     <button type="button" onClick={() => { setMoreActionsOpen(false); refresh(); }}>刷新</button>
@@ -2202,6 +2391,7 @@ export default function DashboardShell({
                   {toolTab === 'info' && (
                     <div className="tool-pane">
                       <Info label="当前分类" value={currentCategoryName} />
+                      {orderReadOnly && <Info label="周计划状态" value="历史周只读" />}
                       {order && (
                         <>
                           <Info label="客户" value={customerLabel(order)} />
@@ -2247,19 +2437,19 @@ export default function DashboardShell({
                         <strong>{category?.name || '-'}</strong>
                         <span>支持 PDF / JPG / PNG 批量上传</span>
                       </div>
-                      <button className="upload-action primary" type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>
+                      <button className="upload-action primary" type="button" disabled={uploading || !order || orderReadOnly} onClick={() => pdf.current?.click()}>
                         <span>⇧</span><b>{uploading ? '上传中，请稍候' : '上传 PDF'}</b>
                       </button>
-                      <button className="upload-action" type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>
+                      <button className="upload-action" type="button" disabled={uploading || !order || orderReadOnly} onClick={() => img.current?.click()}>
                         <span>▣</span><b>上传图片</b>
                       </button>
-                      <button className="upload-action" type="button" disabled={uploading || !order} onClick={openCameraCapture}>
+                      <button className="upload-action" type="button" disabled={uploading || !order || orderReadOnly} onClick={openCameraCapture}>
                         <span>◎</span><b>拍照上传</b>
                       </button>
-                      <button className="upload-action sync-inline" type="button" disabled={syncing || !order} onClick={syncCurrentWorkOrder}>
+                      <button className="upload-action sync-inline" type="button" disabled={syncing || !order || orderReadOnly} onClick={syncCurrentWorkOrder}>
                         <span>↻</span><b>{syncing ? '同步中' : '同步当前工单资料'}</b>
                       </button>
-                      <button className="upload-action sync-inline" type="button" disabled={drawingSyncing || !order} onClick={syncCurrentWorkOrderToDrawingLibrary}>
+                      <button className="upload-action sync-inline" type="button" disabled={drawingSyncing || !order || orderReadOnly} onClick={syncCurrentWorkOrderToDrawingLibrary}>
                         <span>⇄</span><b>{drawingSyncing ? '归档中' : '同步到图纸资料库'}</b>
                       </button>
                       <p className="tool-note">上传文件会保存到对象存储，元数据保存到 PostgreSQL。队列完成后会自动刷新当前分类。</p>
@@ -2269,11 +2459,11 @@ export default function DashboardShell({
                     <div className="tool-pane">
                       <div className="secondary-actions file-actions">
                         <a className={!file ? 'disabled' : ''} href={file?.downloadUrl || '#'} target="_blank">下载当前</a>
-                        <button type="button" disabled={!file} onClick={() => file && openFileEdit(file)}>编辑文件</button>
-                        <button type="button" disabled={!file} onClick={() => file && setDeleteTarget(file)}>删除文件</button>
+                        <button type="button" disabled={!file || orderReadOnly} onClick={() => file && openFileEdit(file)}>编辑文件</button>
+                        <button type="button" disabled={!file || orderReadOnly} onClick={() => file && setDeleteTarget(file)}>删除文件</button>
                         <button type="button" disabled={!canDownloadAll || downloadingAll} onClick={downloadAll}>{downloadingAll ? '打包中...' : '下载全部'}</button>
-                        <button type="button" disabled={syncing || !order} onClick={syncCurrentWorkOrder}>{syncing ? '同步中...' : '同步资料'}</button>
-                        <button type="button" disabled={drawingSyncing || !order} onClick={syncCurrentWorkOrderToDrawingLibrary}>{drawingSyncing ? '归档中...' : '同步到图纸资料库'}</button>
+                        <button type="button" disabled={syncing || !order || orderReadOnly} onClick={syncCurrentWorkOrder}>{syncing ? '同步中...' : '同步资料'}</button>
+                        <button type="button" disabled={drawingSyncing || !order || orderReadOnly} onClick={syncCurrentWorkOrderToDrawingLibrary}>{drawingSyncing ? '归档中...' : '同步到图纸资料库'}</button>
                         <button type="button" disabled={!order} onClick={copy}>复制链接</button>
                       </div>
                       {currentCategoryIsEmpty && <p className="tool-note">当前分类暂无文件，请先上传 PDF、图片或拍照上传。</p>}
@@ -2357,6 +2547,22 @@ export default function DashboardShell({
         </div>
       )}
 
+      {weekAction && (
+        <WeekActionDialog
+          action={weekAction}
+          dateValue={weekActionDate}
+          summary={weekActionSummary}
+          error={weekActionError}
+          loading={weekActionLoading}
+          confirmText={weekActionConfirmText}
+          close={() => setWeekAction(null)}
+          setDate={setWeekActionDate}
+          setConfirmText={setWeekActionConfirmText}
+          preview={() => previewWeekAction()}
+          commit={commitWeekAction}
+        />
+      )}
+
       <CameraCaptureModal
         open={cameraOpen}
         workOrderCode={order ? workOrderDisplayCode(order) : undefined}
@@ -2377,6 +2583,7 @@ export default function DashboardShell({
           exporting={exporting}
           importing={importing}
           importMode={importMode}
+          importTarget={importTarget}
           importWeekStart={importWeekStart}
           importPreview={importPreview}
           importResult={importResult}
@@ -2400,6 +2607,7 @@ export default function DashboardShell({
           installApp={installApp}
           chooseImport={() => csvImport.current?.click()}
           setImportMode={setImportMode}
+          setImportTarget={setImportTarget}
           setImportWeekStart={setImportWeekStart}
           setClearWeekStart={setClearWeekStart}
           setClearConfirmText={setClearConfirmText}
@@ -2693,6 +2901,99 @@ export default function DashboardShell({
   );
 }
 
+function WeekActionDialog({
+  action,
+  dateValue,
+  summary,
+  error,
+  loading,
+  confirmText,
+  close,
+  setDate,
+  setConfirmText,
+  preview,
+  commit,
+}: {
+  action: Exclude<WeekAction, null>;
+  dateValue: string;
+  summary: WeeklyPlanClearSummary | WeeklyPlanActivateSummary | null;
+  error: string;
+  loading: boolean;
+  confirmText: string;
+  close: () => void;
+  setDate: (value: string) => void;
+  setConfirmText: (value: string) => void;
+  preview: () => void;
+  commit: () => void;
+}) {
+  const isClose = action === 'close';
+  const required = isClose ? 'CLOSE_WEEK' : 'START_NEXT_WEEK';
+  const title = isClose ? '结束本周 / 归档当前周' : '启用下周草稿';
+  let summaryItems: string[][] = [];
+  if (summary && isClose) {
+    const item = summary as WeeklyPlanClearSummary;
+    summaryItems = [
+      ['周期', `${item.weekStartDate} 至 ${item.weekEndDate}`],
+      ['归档工单', String(item.archiveCount ?? item.workOrderCount)],
+      ['已上传资料工单', String(item.workOrdersWithFiles)],
+      ['缺资料工单', String(item.missingWorkOrders ?? 0)],
+      ['保留文件', String(item.fileCount)],
+      ['保留图纸资料库', String(item.drawingLibraryItemCount ?? 0)],
+      ['保留连接器参数', String(item.connectorParameterCount)],
+    ];
+  } else if (summary) {
+    const item = summary as WeeklyPlanActivateSummary;
+    summaryItems = [
+      ['周期', `${item.weekStartDate} 至 ${item.weekEndDate}`],
+      ['将归档当前周', String(item.currentArchiveCount)],
+      ['将启用下周', String(item.nextActivateCount)],
+      ['缺资料工单', String(item.missingWorkOrders)],
+      ['异常工单', String(item.anomalyCount)],
+      ['保留文件', String(item.fileCount)],
+    ];
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="week-action-dialog" role="dialog" aria-modal="true" aria-label={title}>
+        <div className="dialog-title">
+          <div>
+            <strong>{title}</strong>
+            <small>{isClose ? '只归档周计划工单，不删除任何资料' : '先归档当前周，再启用指定下周草稿'}</small>
+          </div>
+          <button type="button" onClick={close}>×</button>
+        </div>
+        <label className="import-week-start">
+          <span>{isClose ? '当前周开始日期' : '下周开始日期'}</span>
+          <input type="date" value={dateValue} onChange={e => setDate(e.target.value)} />
+        </label>
+        <button type="button" disabled={loading || !dateValue} onClick={preview}>{loading ? '预览中...' : '预览影响范围'}</button>
+        {error && <div className="form-error">{error}</div>}
+        {summary && (
+          <>
+            <div className="week-action-summary">
+              {summaryItems.map(([label, value]) => (
+                <span key={label}><b>{label}</b><em>{value}</em></span>
+              ))}
+            </div>
+            <p className="tool-note muted">图纸资料库、连接器参数、S3 文件和历史上传记录都会保留。</p>
+            <label className="danger-confirm-inline">
+              <span>确认请输入 {required}</span>
+              <input value={confirmText} onChange={e => setConfirmText(e.target.value)} placeholder={required} />
+            </label>
+            <div className="dialog-actions">
+              <button type="button" onClick={close}>取消</button>
+              <button className={isClose ? 'danger-button' : 'primary-button'} type="button" disabled={loading || confirmText.trim() !== required} onClick={commit}>
+                {loading ? '处理中...' : isClose ? '确认归档当前周' : '确认启用下周'}
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function OrderGroup({
   title,
   orders,
@@ -2700,6 +3001,7 @@ function OrderGroup({
   choose,
   categories,
   openQuickMenu,
+  readOnly = false,
 }: {
   title: string;
   orders: WorkOrderDTO[];
@@ -2707,6 +3009,7 @@ function OrderGroup({
   choose: (id: string) => void;
   categories: ResourceCategoryDTO[];
   openQuickMenu: (type: 'stage' | 'priority', target: WorkOrderDTO, event: React.MouseEvent<HTMLElement>) => void;
+  readOnly?: boolean;
 }) {
   return (
     <section className="order-group">
@@ -2714,30 +3017,26 @@ function OrderGroup({
       {orders.map(o => {
         const completion = completionOf(categories, o.categoryFileCounts || {});
         const missingText = completion.missingNames.length ? `缺失：${completion.missingNames.join('、')}` : '必填资料已齐全';
+        const delivery = orderDeliveryLabel(o);
+        const drawingText = o.drawingStatus?.trim() || '图纸未填';
+        const materialText = o.materialStatus?.trim() || '配料未填';
         return (
           <button key={o.id} className={o.id === selected ? 'order-card active' : 'order-card'} type="button" onClick={() => choose(o.id)}>
             <div className="order-topline">
-              <strong>{workOrderDisplayCode(o)}</strong>
-              <span role="button" tabIndex={0} className={`tag priority-chip ${o.priority}`} onClick={e => openQuickMenu('priority', o, e)}>{priorityText[o.priority] || '一般'}</span>
+              <strong title={workOrderDisplayCode(o)}>{workOrderDisplayCode(o)}</strong>
+              <span role="button" tabIndex={readOnly ? -1 : 0} className={`tag priority-chip ${o.priority}`} onClick={e => { e.stopPropagation(); if (!readOnly) openQuickMenu('priority', o, e); }}>{priorityText[o.priority] || '一般'}</span>
             </div>
-            <span className="order-customer">客户：{customerLabel(o)}</span>
-            <p>{o.productName}</p>
-            {(o.specification || o.uncompletedQty || o.deliveryDay || o.drawingStatus || o.materialStatus) && (
-              <div className="order-weekly-meta">
-                {o.specification && <span>规格：{o.specification}</span>}
-                {o.uncompletedQty && <span>未交：{o.uncompletedQty}</span>}
-                {(o.deliveryDay || o.plannedAt) && <span>交期：{orderDeliveryLabel(o)}</span>}
-                {(o.drawingStatus || o.materialStatus) && <span>{orderDrawingMaterialLabel(o)}</span>}
-              </div>
-            )}
+            <span className="order-customer" title={`${customerLabel(o)} · ${o.productName || '-'}`}>{customerLabel(o)} · {o.productName || '-'}</span>
+            <div className="order-weekly-meta">
+              <span title={o.uncompletedQty || '-'}>未交：{o.uncompletedQty || '-'}</span>
+              <span title={delivery}>交期：{delivery}</span>
+              <span title={drawingText}>图纸：{drawingText}</span>
+              <span title={materialText}>配料：{materialText}</span>
+            </div>
             <div className="order-compact-meta">
-              <span role="button" tabIndex={0} className={`flow-chip ${normalizeFlowStage(o.stage)}`} onClick={e => openQuickMenu('stage', o, e)}>{flowText(o.stage)}</span>
+              <span role="button" tabIndex={readOnly ? -1 : 0} className={`flow-chip ${normalizeFlowStage(o.stage)}`} onClick={e => { e.stopPropagation(); if (!readOnly) openQuickMenu('stage', o, e); }}>{flowText(o.stage)}</span>
               <strong className={`completion-chip ${completion.key}`} title={missingText}>{completion.text}</strong>
-              {o.plannedAt && <em className={`planned-text ${plannedClass(o)}`}>{shortDt(o.plannedAt)}</em>}
-            </div>
-            <div className="order-progress compact">
-              <i><em style={{ width: `${Math.min(Math.max(o.progress, 0), 100)}%` }} /></i>
-              <b>{o.progress ? `${o.progress}%` : '0%'}</b>
+              {o.weekStartDate && <em className="planned-text">{ymdLocal(o.weekStartDate)}</em>}
             </div>
           </button>
         );
@@ -3104,6 +3403,7 @@ function SystemSettings({
   exporting,
   importing,
   importMode,
+  importTarget,
   importWeekStart,
   importPreview,
   importResult,
@@ -3127,6 +3427,7 @@ function SystemSettings({
   installApp,
   chooseImport,
   setImportMode,
+  setImportTarget,
   setImportWeekStart,
   setClearWeekStart,
   setClearConfirmText,
@@ -3149,6 +3450,7 @@ function SystemSettings({
   exporting: string;
   importing: boolean;
   importMode: ImportMode;
+  importTarget: ImportTarget;
   importWeekStart: string;
   importPreview: ImportPreview | null;
   importResult: ImportResult | null;
@@ -3172,6 +3474,7 @@ function SystemSettings({
   installApp: () => void;
   chooseImport: () => void;
   setImportMode: (mode: ImportMode) => void;
+  setImportTarget: (target: ImportTarget) => void;
   setImportWeekStart: (value: string) => void;
   setClearWeekStart: (value: string) => void;
   setClearConfirmText: (value: string) => void;
@@ -3300,23 +3603,29 @@ function SystemSettings({
             <button className={importMode === 'standard' ? 'active' : ''} type="button" onClick={() => { setImportMode('standard'); clearImport(); }}>标准模板导入</button>
           </div>
           {importMode === 'weekly_plan' && (
-            <label className="import-week-start">
-              <span>计划周开始日期</span>
-              <input type="date" value={importWeekStart} onChange={e => setImportWeekStart(e.target.value)} />
-              <small>用于把“周一 / 周二”换算成计划日期；未设置时只保存交期文本。</small>
-            </label>
+            <>
+              <div className="import-target-tabs">
+                <button className={importTarget === 'draft_next' ? 'active' : ''} type="button" onClick={() => setImportTarget('draft_next')}>保存为下周草稿</button>
+                <button className={importTarget === 'current' ? 'active' : ''} type="button" onClick={() => setImportTarget('current')}>立即进入当前周</button>
+              </div>
+              <label className="import-week-start">
+                <span>计划周开始日期</span>
+                <input type="date" value={importWeekStart} onChange={e => setImportWeekStart(e.target.value)} />
+                <small>建议先保存为下周草稿，确认无误后再从工单抽屉点击“启用下周”。</small>
+              </label>
+            </>
           )}
           <div className="system-actions">
             <div className="weekly-clear-preview">
-              <h4>本周生产工单清理</h4>
-              <p>仅隐藏本周周计划生产工单，不删除图纸资料库、资料文件、PDF、图片或连接器参数。</p>
+              <h4>归档当前周生产工单</h4>
+              <p>仅把当前周周计划生产工单移入历史周，不删除图纸资料库、资料文件、PDF、图片或连接器参数。</p>
               <label className="import-week-start">
                 <span>计划周开始日期</span>
                 <input type="date" value={clearWeekStart || importWeekStart} onChange={e => setClearWeekStart(e.target.value)} />
-                <small>清理后本周 Excel 工单会退出 active 列表。</small>
+                <small>归档后当前周 Excel 工单会退出默认生产列表，可在历史周查看。</small>
               </label>
               <button type="button" disabled={clearingWeeklyPlan || !(clearWeekStart || importWeekStart)} onClick={() => { if (!clearWeekStart && importWeekStart) setClearWeekStart(importWeekStart); previewClearWeeklyPlan(); }}>
-                {clearingWeeklyPlan ? '检查中...' : '预览清理'}
+                {clearingWeeklyPlan ? '检查中...' : '预览归档'}
               </button>
               {clearError && <div className="form-error">{clearError}</div>}
               {clearPreview && (
@@ -3328,14 +3637,14 @@ function SystemSettings({
                     <span>不会删除文件 {clearPreview.fileCount}</span>
                     <span>不会删除图纸资料库</span>
                     <span>不会删除连接器参数 {clearPreview.connectorParameterCount}</span>
-                    {clearPreview.clearedCount !== undefined && <span>已清理 {clearPreview.clearedCount}</span>}
+                    {clearPreview.clearedCount !== undefined && <span>已归档 {clearPreview.clearedCount}</span>}
                   </div>
                   <label className="danger-confirm-inline">
-                    <span>确认请输入 CLEAR_WEEK</span>
-                    <input value={clearConfirmText} onChange={e => setClearConfirmText(e.target.value)} placeholder="CLEAR_WEEK" />
+                    <span>确认请输入 CLOSE_WEEK</span>
+                    <input value={clearConfirmText} onChange={e => setClearConfirmText(e.target.value)} placeholder="CLOSE_WEEK" />
                   </label>
-                  <button className="danger-button" type="button" disabled={clearingWeeklyPlan || clearConfirmText.trim() !== 'CLEAR_WEEK'} onClick={commitClearWeeklyPlan}>
-                    {clearingWeeklyPlan ? '清理中...' : '确认清理本周工单'}
+                  <button className="danger-button" type="button" disabled={clearingWeeklyPlan || clearConfirmText.trim() !== 'CLOSE_WEEK'} onClick={commitClearWeeklyPlan}>
+                    {clearingWeeklyPlan ? '归档中...' : '确认归档当前周'}
                   </button>
                 </>
               )}

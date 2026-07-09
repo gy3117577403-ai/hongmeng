@@ -23,6 +23,7 @@ type CommitBody = {
   sourceFileName?: string | null;
   sourceSheetName?: string | null;
   mode?: string;
+  weeklyPlanTarget?: 'current' | 'draft_next';
 };
 
 async function codeExists(code: string) {
@@ -68,6 +69,11 @@ export async function POST(req: NextRequest) {
 
       try {
         const data = toWorkOrderCreateData(row, importBatchId);
+        if (body.mode === 'weekly_plan' && body.weeklyPlanTarget === 'draft_next') {
+          data.planActive = false;
+          data.planClearedAt = null;
+          data.planClearedBy = null;
+        }
         if (!data.code || !data.productName) {
           failed += 1;
           results.push({ row: rowNo, code: data.code || '-', status: 'failed', message: '工单号或产品名称缺失' });
@@ -109,6 +115,7 @@ export async function POST(req: NextRequest) {
       detail: {
         importBatchId,
         mode: body.mode || 'unknown',
+        weeklyPlanTarget: body.weeklyPlanTarget || null,
         sourceFileName: body.sourceFileName || null,
         sourceSheetName: body.sourceSheetName || null,
         created,
@@ -125,6 +132,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       importBatchId,
       summary: { created, skipped, failed, duplicateSkipped, total: rows.length },
+      weeklyPlanTarget: body.weeklyPlanTarget || null,
       results,
       workOrders: createdOrders,
     });

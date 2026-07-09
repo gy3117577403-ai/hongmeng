@@ -267,9 +267,9 @@ npm run drawing-library:audit-anomalies
 
 该脚本只读取数据库并输出数量和样例，不修改数据库、不删除 S3 文件。
 
-## 本周生产工单清理
+## 当前周生产工单归档
 
-清理本周生产工单只影响 `WorkOrder`：
+归档当前周生产工单只影响 `WorkOrder`：
 
 ```text
 planActive=false
