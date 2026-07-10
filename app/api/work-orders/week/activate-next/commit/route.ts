@@ -23,6 +23,13 @@ export async function POST(req: NextRequest) {
     if (before.nextActivateCount <= 0) {
       return NextResponse.json({ ok: false, error: '未找到该周的下周草稿工单，请先导入下周工单' }, { status: 400 });
     }
+    if (before.blockingAnomalyCount > 0) {
+      return NextResponse.json({
+        ok: false,
+        error: `存在 ${before.blockingAnomalyCount} 项阻断异常，请先到周计划差异中心处理`,
+        summary: before,
+      }, { status: 409 });
+    }
 
     const now = new Date();
     const userName = user.displayName || user.username;
@@ -43,12 +50,13 @@ export async function POST(req: NextRequest) {
           planClearedBy: null,
         },
       });
+      if (activated.count <= 0) throw new Error('NEXT_WEEK_ALREADY_ACTIVATED');
       return { archived: archived.count, activated: activated.count };
     });
 
     await logOp({
       userId: user.id,
-      action: 'activate_next_weekly_work_orders',
+      action: 'activate_next_week',
       targetType: 'work_order',
       detail: {
         weekStartDate: before.weekStartDate,
@@ -57,6 +65,11 @@ export async function POST(req: NextRequest) {
         activatedWorkOrders: result.activated,
         missingWorkOrders: before.missingWorkOrders,
         anomalyCount: before.anomalyCount,
+        warningCount: before.warningCount,
+        newCount: before.newCount,
+        continuedCount: before.continuedCount,
+        changedCount: before.changedCount,
+        removedCount: before.removedCount,
       },
     });
 
@@ -66,6 +79,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof Error && e.message === 'NEXT_WEEK_ALREADY_ACTIVATED') {
+      return NextResponse.json({ ok: false, error: '下周计划已被启用，请刷新页面确认当前周' }, { status: 409 });
+    }
     console.error(e);
     return NextResponse.json({ ok: false, error: '启用下周失败' }, { status: 500 });
   }

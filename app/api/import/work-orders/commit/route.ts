@@ -36,6 +36,12 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({})) as CommitBody;
     const rows = Array.isArray(body.rows) ? body.rows : [];
     if (!rows.length) return NextResponse.json({ ok: false, error: '缺少待确认导入的数据' }, { status: 400 });
+    if (body.mode === 'weekly_plan' && body.weeklyPlanTarget !== 'draft_next') {
+      return NextResponse.json({ ok: false, error: '周计划只能先保存为下周草稿，请完成差异审核后再启用' }, { status: 400 });
+    }
+    if (body.mode === 'weekly_plan' && rows.some(row => row.status !== 'skipped' && !row.workOrder?.weekStartDate)) {
+      return NextResponse.json({ ok: false, error: '周计划存在缺少计划周开始日期的行，请重新预览导入' }, { status: 400 });
+    }
 
     const duplicateStrategy: DuplicateStrategy = body.duplicateStrategy === 'import' ? 'import' : 'skip';
     const importBatchId = `wo-${new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`;

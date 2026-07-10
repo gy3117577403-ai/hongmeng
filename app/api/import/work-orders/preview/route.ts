@@ -5,6 +5,7 @@ import {
   findHeaderRow,
   inferWeekStartDateFromFilename,
   parseDelimitedWorkOrderText,
+  parseWeekStartDate,
   standardWorkOrderHeaderNames,
   summarizeWorkOrderImport,
   weeklyPlanHeaderNames,
@@ -92,6 +93,9 @@ export async function POST(req: NextRequest) {
     const dataRows = parsed.rows.slice(headerIndex + 1);
     const codes = await existingCodes();
     const weekStartDate = String(form.get('weekStartDate') || inferWeekStartDateFromFilename(file.name)).trim();
+    if (mode === 'weekly_plan' && !parseWeekStartDate(weekStartDate)) {
+      return NextResponse.json({ ok: false, error: '请选择有效的计划周开始日期' }, { status: 400 });
+    }
     const rows = mode === 'weekly_plan'
       ? buildWeeklyPlanPreview({
         headers,
@@ -109,7 +113,6 @@ export async function POST(req: NextRequest) {
       });
 
     const warnings: string[] = [];
-    if (mode === 'weekly_plan' && !weekStartDate) warnings.push('未设置计划周开始日期，plannedAt 将为空。');
 
     return NextResponse.json({
       ok: true,

@@ -110,6 +110,16 @@ type WeeklyPlanActivateSummary = {
   nextActivateCount: number;
   missingWorkOrders: number;
   anomalyCount: number;
+  newCount: number;
+  continuedCount: number;
+  changedCount: number;
+  removedCount: number;
+  duplicateCount: number;
+  invalidCount: number;
+  blockingAnomalyCount: number;
+  warningCount: number;
+  drawingWithFilesCount: number;
+  drawingWithoutFilesCount: number;
   fileCount: number;
   activatedCount?: number;
   archivedCount?: number;
@@ -317,6 +327,7 @@ const actionText: Record<string, string> = {
   import_work_orders: '导入工单',
   close_weekly_work_orders: '归档当前周工单',
   activate_next_weekly_work_orders: '启用下周工单',
+  activate_next_week: '启用下周工单',
   create_user: '新增账号',
   update_user: '编辑账号',
   disable_user: '禁用账号',
@@ -558,6 +569,7 @@ export default function DashboardShell({
   const [weekActionConfirmText, setWeekActionConfirmText] = useState('');
   const [weekActionError, setWeekActionError] = useState('');
   const [weekActionLoading, setWeekActionLoading] = useState(false);
+  const [draftDiffTypes, setDraftDiffTypes] = useState<Record<string, string>>({});
   const [duplicateStrategy, setDuplicateStrategy] = useState<'skip' | 'import'>('skip');
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [now, setNow] = useState<Date | null>(null);
@@ -732,6 +744,10 @@ export default function DashboardShell({
     if (target) setWo(target.id);
     else if (workOrderId || workOrderCode) setMsg('未找到直达链接对应的工单');
     if (storedCategoryId && categories.some(c => c.id === storedCategoryId)) setCat(storedCategoryId);
+    const requestedPlanView = params.get('planView');
+    if (requestedPlanView === 'current' || requestedPlanView === 'draft_next' || requestedPlanView === 'history') setPlanView(requestedPlanView);
+    if (params.get('openOrders') === '1') setDrawerOpen(true);
+    if (params.get('openWeeklyImport') === '1') void openNextWeekImport();
     loadFieldSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -804,6 +820,26 @@ export default function DashboardShell({
   useEffect(() => {
     refreshOrders(undefined, true).catch(() => setMsg('工单列表刷新失败'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planView]);
+
+  useEffect(() => {
+    if (planView !== 'draft_next') {
+      setDraftDiffTypes({});
+      return undefined;
+    }
+    const controller = new AbortController();
+    fetch('/api/work-orders/week/diff?pageSize=500', { cache: 'no-store', signal: controller.signal })
+      .then(async response => response.ok ? response.json() : null)
+      .then(body => {
+        const items = Array.isArray(body?.data?.items) ? body.data.items as Array<{ type: string; nextOrderIds?: string[] }> : [];
+        const labels: Record<string, string> = {};
+        for (const item of items) for (const id of item.nextOrderIds || []) labels[id] = item.type;
+        setDraftDiffTypes(labels);
+      })
+      .catch(reason => {
+        if (!(reason instanceof DOMException && reason.name === 'AbortError')) setDraftDiffTypes({});
+      });
+    return () => controller.abort();
   }, [planView]);
 
   async function loadFiles(w = order?.id, c = category?.id, preferredFileId?: string, forceSync = false) {
@@ -1846,7 +1882,7 @@ export default function DashboardShell({
           rows: importPreview.rows,
           duplicateStrategy,
           mode: importPreview.mode,
-          weeklyPlanTarget: importPreview.mode === 'weekly_plan' ? importTarget : undefined,
+          weeklyPlanTarget: importPreview.mode === 'weekly_plan' ? 'draft_next' : undefined,
           sourceFileName: importPreview.sourceFileName,
           sourceSheetName: importPreview.sourceSheetName,
         }),
@@ -1860,9 +1896,16 @@ export default function DashboardShell({
       }
       setImportResult(d);
       setImportPreview(null);
-      if (importPreview.mode === 'weekly_plan' && importTarget === 'draft_next') setPlanView('draft_next');
+      if (importPreview.mode === 'weekly_plan') setPlanView('draft_next');
       await refreshOrders(order?.id);
-      setMsg(`${importTarget === 'draft_next' && importPreview.mode === 'weekly_plan' ? '下周草稿已保存' : '导入完成'}：新增 ${d.summary?.created || 0}，跳过 ${d.summary?.skipped || 0}，失败 ${d.summary?.failed || 0}`);
+      if (importPreview.mode === 'weekly_plan') {
+        setMsg(`下周草稿已生成，请先检查差异和异常，再启用下周。新增 ${d.summary?.created || 0}，跳过 ${d.summary?.skipped || 0}，失败 ${d.summary?.failed || 0}`);
+        const params = new URLSearchParams({ imported: '1' });
+        if (d.importBatchId) params.set('nextBatchId', d.importBatchId);
+        location.href = `/weekly-plan-center?${params.toString()}`;
+      } else {
+        setMsg(`导入完成：新增 ${d.summary?.created || 0}，跳过 ${d.summary?.skipped || 0}，失败 ${d.summary?.failed || 0}`);
+      }
     } catch {
       setImportError('确认导入失败，请检查网络后重试');
       setMsg('确认导入失败');
@@ -2170,6 +2213,7 @@ export default function DashboardShell({
             ] as const).map(([key, label]) => (
               <button key={key} className={planView === key ? 'active' : ''} type="button" onClick={() => setPlanView(key)}>{label}</button>
             ))}
+            <button type="button" onClick={() => { location.href = '/weekly-plan-center'; }}>差异审核</button>
           </div>
           <div className="panel-search">
             <input value={kw} onChange={e => setKw(e.target.value)} placeholder="搜索规格 / 客户 / 品名 / SO单号 / 内部编号" />
@@ -2220,7 +2264,7 @@ export default function DashboardShell({
               )}
             </section>
           )}
-          <OrderGroup title={planView === 'draft_next' ? '下周草稿' : planView === 'history' ? '历史周工单' : '当前周工单'} orders={list} selected={order?.id} choose={id => openWorkOrder(id)} categories={categories} openQuickMenu={openQuickMenu} readOnly={planView === 'history'} />
+          <OrderGroup title={planView === 'draft_next' ? '下周草稿' : planView === 'history' ? '历史周工单' : '当前周工单'} orders={list} selected={order?.id} choose={id => openWorkOrder(id)} categories={categories} openQuickMenu={openQuickMenu} readOnly={planView === 'history'} diffTypes={planView === 'draft_next' ? draftDiffTypes : {}} />
           {!list.length && <div className="empty-orders large">未找到匹配工单</div>}
         </aside>
         {drawerOpen && <button className="drawer-mask" type="button" aria-label="关闭工单抽屉" onClick={() => setDrawerOpen(false)} />}
@@ -2929,6 +2973,8 @@ function WeekActionDialog({
   const isClose = action === 'close';
   const required = isClose ? 'CLOSE_WEEK' : 'START_NEXT_WEEK';
   const title = isClose ? '结束本周 / 归档当前周' : '启用下周草稿';
+  const activateSummary = summary && !isClose ? summary as WeeklyPlanActivateSummary : null;
+  const activationBlocked = (activateSummary?.blockingAnomalyCount || 0) > 0;
   let summaryItems: string[][] = [];
   if (summary && isClose) {
     const item = summary as WeeklyPlanClearSummary;
@@ -2947,8 +2993,14 @@ function WeekActionDialog({
       ['周期', `${item.weekStartDate} 至 ${item.weekEndDate}`],
       ['将归档当前周', String(item.currentArchiveCount)],
       ['将启用下周', String(item.nextActivateCount)],
-      ['缺资料工单', String(item.missingWorkOrders)],
-      ['异常工单', String(item.anomalyCount)],
+      ['新增', String(item.newCount)],
+      ['延续', String(item.continuedCount)],
+      ['变更', String(item.changedCount)],
+      ['下周取消', String(item.removedCount)],
+      ['阻断异常', String(item.blockingAnomalyCount)],
+      ['警告', String(item.warningCount)],
+      ['有图纸资料', String(item.drawingWithFilesCount)],
+      ['无图纸资料', String(item.drawingWithoutFilesCount)],
       ['保留文件', String(item.fileCount)],
     ];
   }
@@ -2976,14 +3028,18 @@ function WeekActionDialog({
                 <span key={label}><b>{label}</b><em>{value}</em></span>
               ))}
             </div>
+            {activationBlocked && <div className="weekly-block-message">存在 {activateSummary?.blockingAnomalyCount} 项阻断异常，请先到周计划差异中心处理，当前不会启用下周。</div>}
+            {!isClose && !activationBlocked && (activateSummary?.warningCount || 0) > 0 && <div className="weekly-warning-message">仍有 {activateSummary?.warningCount} 项警告，可以继续启用，但请先确认已知悉。</div>}
             <p className="tool-note muted">图纸资料库、连接器参数、S3 文件和历史上传记录都会保留。</p>
-            <label className="danger-confirm-inline">
-              <span>确认请输入 {required}</span>
-              <input value={confirmText} onChange={e => setConfirmText(e.target.value)} placeholder={required} />
-            </label>
+            {!activationBlocked && (
+              <label className="danger-confirm-inline">
+                <span>确认请输入 {required}</span>
+                <input value={confirmText} onChange={e => setConfirmText(e.target.value)} placeholder={required} />
+              </label>
+            )}
             <div className="dialog-actions">
               <button type="button" onClick={close}>取消</button>
-              <button className={isClose ? 'danger-button' : 'primary-button'} type="button" disabled={loading || confirmText.trim() !== required} onClick={commit}>
+              <button className={isClose ? 'danger-button' : 'primary-button'} type="button" disabled={loading || activationBlocked || confirmText.trim() !== required} onClick={commit}>
                 {loading ? '处理中...' : isClose ? '确认归档当前周' : '确认启用下周'}
               </button>
             </div>
@@ -3002,6 +3058,7 @@ function OrderGroup({
   categories,
   openQuickMenu,
   readOnly = false,
+  diffTypes = {},
 }: {
   title: string;
   orders: WorkOrderDTO[];
@@ -3010,6 +3067,7 @@ function OrderGroup({
   categories: ResourceCategoryDTO[];
   openQuickMenu: (type: 'stage' | 'priority', target: WorkOrderDTO, event: React.MouseEvent<HTMLElement>) => void;
   readOnly?: boolean;
+  diffTypes?: Record<string, string>;
 }) {
   return (
     <section className="order-group">
@@ -3020,11 +3078,16 @@ function OrderGroup({
         const delivery = orderDeliveryLabel(o);
         const drawingText = o.drawingStatus?.trim() || '图纸未填';
         const materialText = o.materialStatus?.trim() || '配料未填';
+        const diffType = diffTypes[o.id];
+        const diffLabel = diffType === 'new' ? '新增' : diffType === 'continued' ? '延续' : diffType === 'changed' ? '有变更' : diffType === 'duplicate' ? '重复' : diffType === 'invalid' ? '异常' : '';
         return (
           <button key={o.id} className={o.id === selected ? 'order-card active' : 'order-card'} type="button" onClick={() => choose(o.id)}>
             <div className="order-topline">
               <strong title={workOrderDisplayCode(o)}>{workOrderDisplayCode(o)}</strong>
-              <span role="button" tabIndex={readOnly ? -1 : 0} className={`tag priority-chip ${o.priority}`} onClick={e => { e.stopPropagation(); if (!readOnly) openQuickMenu('priority', o, e); }}>{priorityText[o.priority] || '一般'}</span>
+              <span className="order-card-tags">
+                {diffLabel && <em className={`draft-diff-chip ${diffType}`}>{diffLabel}</em>}
+                <span role="button" tabIndex={readOnly ? -1 : 0} className={`tag priority-chip ${o.priority}`} onClick={e => { e.stopPropagation(); if (!readOnly) openQuickMenu('priority', o, e); }}>{priorityText[o.priority] || '一般'}</span>
+              </span>
             </div>
             <span className="order-customer" title={`${customerLabel(o)} · ${o.productName || '-'}`}>{customerLabel(o)} · {o.productName || '-'}</span>
             <div className="order-weekly-meta">
@@ -3604,14 +3667,13 @@ function SystemSettings({
           </div>
           {importMode === 'weekly_plan' && (
             <>
-              <div className="import-target-tabs">
-                <button className={importTarget === 'draft_next' ? 'active' : ''} type="button" onClick={() => setImportTarget('draft_next')}>保存为下周草稿</button>
-                <button className={importTarget === 'current' ? 'active' : ''} type="button" onClick={() => setImportTarget('current')}>立即进入当前周</button>
+              <div className="import-target-tabs single">
+                <button className="active" type="button" onClick={() => setImportTarget('draft_next')}>保存为下周草稿</button>
               </div>
               <label className="import-week-start">
                 <span>计划周开始日期</span>
                 <input type="date" value={importWeekStart} onChange={e => setImportWeekStart(e.target.value)} />
-                <small>建议先保存为下周草稿，确认无误后再从工单抽屉点击“启用下周”。</small>
+                <small>导入只生成下周草稿；完成后进入差异中心，处理阻断异常并确认后再启用。</small>
               </label>
             </>
           )}

@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { parseWeekStartDate } from '@/lib/work-order-import';
 import { prisma } from '@/lib/prisma';
+import { loadWeeklyPlanDiff } from '@/lib/weekly-plan-diff';
 
 const REQUIRED_CATEGORY_CODES = new Set(['drawing', 'sop', 'product']);
 
@@ -28,6 +29,16 @@ export type WeeklyActivateSummary = {
   nextActivateCount: number;
   missingWorkOrders: number;
   anomalyCount: number;
+  newCount: number;
+  continuedCount: number;
+  changedCount: number;
+  removedCount: number;
+  duplicateCount: number;
+  invalidCount: number;
+  blockingAnomalyCount: number;
+  warningCount: number;
+  drawingWithFilesCount: number;
+  drawingWithoutFilesCount: number;
   fileCount: number;
   activatedCount?: number;
   archivedCount?: number;
@@ -83,12 +94,6 @@ function countMissingWorkOrders(
   return orders.filter(order => requiredIds.some(id => !order.resourceFiles.some(file => file.categoryId === id))).length;
 }
 
-function countAnomalies(
-  orders: Array<{ customerName: string | null; productName: string | null; specification: string | null; code: string | null }>,
-) {
-  return orders.filter(order => !order.customerName?.trim() || !order.productName?.trim() || !(order.specification?.trim() || order.code?.trim())).length;
-}
-
 export async function summarizeWeeklyClose(weekStartDate: Date): Promise<WeeklyCloseSummary> {
   const [categories, workOrders, drawingLibraryItemCount, drawingLibraryFileCount, connectorParameterCount] = await Promise.all([
     prisma.resourceCategory.findMany({ select: { id: true, code: true } }),
@@ -126,7 +131,7 @@ export async function summarizeWeeklyClose(weekStartDate: Date): Promise<WeeklyC
 }
 
 export async function summarizeWeeklyActivateNext(weekStartDate: Date): Promise<WeeklyActivateSummary> {
-  const [categories, currentOrders, nextOrders] = await Promise.all([
+  const [categories, currentOrders, nextOrders, diff] = await Promise.all([
     prisma.resourceCategory.findMany({ select: { id: true, code: true } }),
     prisma.workOrder.findMany({
       where: activeWeeklyWhere(),
@@ -139,13 +144,10 @@ export async function summarizeWeeklyActivateNext(weekStartDate: Date): Promise<
       where: draftWeeklyWhere(weekStartDate),
       select: {
         id: true,
-        code: true,
-        customerName: true,
-        productName: true,
-        specification: true,
         resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { id: true, categoryId: true } },
       },
     }),
+    loadWeeklyPlanDiff({ nextWeekStart: weekStartDate }),
   ]);
 
   const fileCount = nextOrders.reduce((sum, order) => sum + order.resourceFiles.length, 0);
@@ -155,7 +157,17 @@ export async function summarizeWeeklyActivateNext(weekStartDate: Date): Promise<
     currentArchiveCount: currentOrders.length,
     nextActivateCount: nextOrders.length,
     missingWorkOrders: countMissingWorkOrders(categories, nextOrders),
-    anomalyCount: countAnomalies(nextOrders),
+    anomalyCount: diff.summary.blockingAnomalyCount,
+    newCount: diff.summary.newCount,
+    continuedCount: diff.summary.continuedCount,
+    changedCount: diff.summary.changedCount,
+    removedCount: diff.summary.removedCount,
+    duplicateCount: diff.summary.duplicateCount,
+    invalidCount: diff.summary.invalidCount,
+    blockingAnomalyCount: diff.summary.blockingAnomalyCount,
+    warningCount: diff.summary.warningCount,
+    drawingWithFilesCount: diff.summary.drawingWithFilesCount,
+    drawingWithoutFilesCount: diff.summary.drawingWithoutFilesCount,
     fileCount,
   };
 }

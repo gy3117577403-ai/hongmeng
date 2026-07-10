@@ -108,6 +108,8 @@
 5. 确认可导入、重复、跳过、异常行。
 6. 点击“确认导入”。
 
+计划周开始日期为必填项。前端预览和后端 commit 都会校验；日期缺失或无效时不会生成下周草稿。
+
 预览会返回：
 
 - 总行数
@@ -167,5 +169,7 @@ displayCode = specification || code
 3. 在工单抽屉切换到“下周草稿”检查数量、规格、客户和资料状态。
 4. 点击“启用下周”，输入 `START_NEXT_WEEK` 后启用。
 5. 系统会同时归档当前 active 周计划工单。
+
+从 v1.14.7 开始，周计划导入固定保存为下周草稿，不再提供“立即进入当前周”。导入完成后会进入周计划差异中心，按稳定比较键显示新增、延续、变更、下周取消、重复和异常。只有阻断异常为 0 时，才能输入 `START_NEXT_WEEK` 启用；警告会提示但不阻断。
 
 如只需要结束当前周，可点击“结束本周”，预览后输入 `CLOSE_WEEK`。归档只会把本周周计划工单设为 `planActive=false` 并写入 `planClearedAt / planClearedBy`，不会删除 `WorkOrder`、`DrawingLibraryItem`、`DrawingLibraryFile`、`ResourceFile`、S3 文件、连接器参数或连接器附件。

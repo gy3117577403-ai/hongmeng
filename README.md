@@ -30,6 +30,7 @@
 - 操作日志、回收站、数据变更快照、生产稳定中心
 - PWA、系统设置、数据导出、打印摘要、错误页
 - 周计划 Excel / CSV 工单导入预览与确认
+- 周计划差异中心：新增 / 延续 / 变更 / 下周取消对比、重复与异常审核、启用前安全门禁、历史周和差异 CSV
 - 图纸资料库首页：按客户 -> 规格 -> 图纸资料管理长期图纸文件，不保存周计划状态字段
 
 ## 本地启动
@@ -104,6 +105,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.14.4-drawing-library-remove-missing-labels：图纸资料库界面已精简，客户列表不再显示缺资料数量，规格卡片和详情标题仅展示资料完整度，不再显示缺失分类明细。该版本为待部署候选，不代表生产已上线。
 - v1.14.5-drawing-library-workspace-redesign：图纸资料库重排为客户 / 规格 / 预览优先工作台，左侧规格列表压缩、详情标题压缩、右侧文件列表独立；新增异常数据筛选和异常审计脚本，批量原图导入不再把日期型文件名识别为规格。该版本为待部署候选，不代表生产已上线。
 - v1.14.6-weekly-workorder-center：生产工单抽屉重排为周计划工单中心，新增当前周 / 下周草稿 / 历史周视图；“导入下周”默认保存草稿，“结束本周”改为归档当前周并使用 `CLOSE_WEEK` 确认，“启用下周”使用 `START_NEXT_WEEK` 确认；工单卡片移除进度条，只保留规格、客户、品名、未交、交期、图纸、配料和资料完整性。该版本为待部署候选，不代表生产已上线。
+- v1.14.7-weekly-plan-diff-center：新增周计划差异中心，服务端按稳定键对比当前周与下周草稿，支持新增 / 延续 / 变更 / 下周取消、重复和异常审核、字段级前后值、图纸资料联动、启用前阻断门禁、历史周只读查看和差异 CSV；周计划导入固定先保存草稿，不直接覆盖当前周。该版本为待部署候选，不代表生产已上线。
 
 ## 交付文档索引
 
@@ -126,6 +128,8 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [周计划 Excel 工单导入说明](docs/WEEKLY_PLAN_IMPORT_GUIDE.md)
 - [周计划生产工单显示与清理机制](docs/WEEKLY_PLAN_WORKORDER_DISPLAY_AND_CLEANUP.md)
 - [周计划工单中心与工单抽屉说明](docs/WEEKLY_WORKORDER_CENTER_GUIDE.md)
+- [周计划差异中心使用说明](docs/WEEKLY_PLAN_DIFF_CENTER_GUIDE.md)
+- [周计划差异中心 QA](docs/QA_WEEKLY_PLAN_DIFF_CENTER.md)
 - [备份计划 v1.5.0](docs/BACKUP_PLAN_v1.5.0.md)
 - [回滚指南 v1.5.0](docs/ROLLBACK_GUIDE_v1.5.0.md)
 - [部署 Smoke Test v1.5.0](docs/SMOKE_TEST_v1.5.0.md)

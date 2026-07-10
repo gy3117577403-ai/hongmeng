@@ -143,12 +143,26 @@ export function DrawingLibraryShell({
     const targetItemId = params.get('itemId') || '';
     const targetFileId = params.get('fileId') || '';
     const targetKeyword = params.get('keyword') || '';
+    const shouldCreate = params.get('create') === '1';
+    const createCustomerName = params.get('customerName') || '';
+    const createSpecification = params.get('specification') || '';
+    const createProductName = params.get('productName') || '';
 
     if (!initialUrlAppliedRef.current) {
       initialUrlAppliedRef.current = true;
       if (targetKeyword && keyword !== targetKeyword) {
         setKeyword(targetKeyword);
         return;
+      }
+      if (shouldCreate) {
+        setModal({ mode: 'create' });
+        setForm({
+          customerName: createCustomerName,
+          specification: createSpecification,
+          productName: createProductName,
+          remark: '',
+        });
+        setFormError('');
       }
     }
 
