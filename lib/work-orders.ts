@@ -120,6 +120,10 @@ type WorkOrderBody = {
   planClearedAt?: unknown;
   planClearedBy?: unknown;
   libraryKey?: unknown;
+  productionOwner?: unknown;
+  workstation?: unknown;
+  completedQty?: unknown;
+  latestProgressRemark?: unknown;
 };
 
 function str(v: unknown) {
@@ -203,6 +207,10 @@ export function parseWorkOrderBody(body: WorkOrderBody, options: { partial?: boo
     ['planType', 40],
     ['planClearedBy', 120],
     ['libraryKey', 180],
+    ['productionOwner', 120],
+    ['workstation', 120],
+    ['completedQty', 80],
+    ['latestProgressRemark', 500],
   ] as const;
   for (const [field, max] of optionalTextFields) {
     if (body[field] !== undefined) {
@@ -303,6 +311,13 @@ export function serializeWorkOrder(order: WorkOrder & { resourceFiles?: { catego
     planClearedBy: order.planClearedBy,
     libraryKey: order.libraryKey,
     drawingLibraryItemId: order.drawingLibraryItemId,
+    productionOwner: order.productionOwner,
+    workstation: order.workstation,
+    completedQty: order.completedQty,
+    startedAt: order.startedAt?.toISOString() || null,
+    completedAt: order.completedAt?.toISOString() || null,
+    lastProgressAt: order.lastProgressAt?.toISOString() || null,
+    latestProgressRemark: order.latestProgressRemark,
     deletedAt: order.deletedAt?.toISOString() || null,
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),

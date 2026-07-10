@@ -23,7 +23,7 @@ export default function LoginForm() {
         setError(d.message || '登录失败');
         return;
       }
-      location.href = '/dashboard';
+      location.href = '/production';
     } catch {
       setError('网络异常，请稍后重试');
     } finally {

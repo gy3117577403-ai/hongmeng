@@ -748,6 +748,7 @@ export default function DashboardShell({
     if (requestedPlanView === 'current' || requestedPlanView === 'draft_next' || requestedPlanView === 'history') setPlanView(requestedPlanView);
     if (params.get('openOrders') === '1') setDrawerOpen(true);
     if (params.get('openWeeklyImport') === '1') void openNextWeekImport();
+    if (params.get('openSettings') === '1') void openSystemSettings();
     loadFieldSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -2100,7 +2101,7 @@ export default function DashboardShell({
   return (
     <main className="tablet-shell" onTouchStart={onShellTouchStart} onTouchEnd={onShellTouchEnd}>
       <header className="topbar">
-        <button className="home-button" type="button" aria-label="首页">⌂</button>
+        <button className="home-button" type="button" aria-label="生产执行首页" onClick={() => { location.href = '/production'; }}>⌂</button>
         <div className="brand-block">
           <strong>工单资料库</strong>
           <span>鸿蒙平板生产资料管理系统</span>
@@ -2167,6 +2168,7 @@ export default function DashboardShell({
           <div className="library-wrap">
             <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLib(!lib)}>▱ 资料库</button>
             <PortalMenu open={lib} anchorRef={libraryMenuButtonRef} className="library-menu" width={220}>
+                <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
                 <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
                 <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
                 <button className="active" type="button">▤ 生产工单 ✓</button>

@@ -36,6 +36,13 @@ export type WorkOrderDTO = {
   planClearedBy?: string | null;
   libraryKey?: string | null;
   drawingLibraryItemId?: string | null;
+  productionOwner?: string | null;
+  workstation?: string | null;
+  completedQty?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  lastProgressAt?: string | null;
+  latestProgressRemark?: string | null;
   deletedAt?: string | null;
   createdAt: string;
   updatedAt: string;

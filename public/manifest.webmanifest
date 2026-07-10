@@ -2,7 +2,7 @@
   "name": "工单资料库",
   "short_name": "工单资料库",
   "description": "鸿蒙平板工单资料管理系统",
-  "start_url": "/dashboard",
+  "start_url": "/production",
   "scope": "/",
   "display": "fullscreen",
   "display_override": ["fullscreen", "standalone"],
@@ -39,7 +39,7 @@
     {
       "name": "打开工作台",
       "short_name": "工作台",
-      "url": "/dashboard"
+      "url": "/production"
     },
     {
       "name": "连接器参数",

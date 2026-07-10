@@ -274,6 +274,7 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
           <span>下周计划对比、异常审核与安全切换</span>
         </div>
         <nav className="weekly-center-nav" aria-label="主要导航">
+          <a href="/production">生产执行</a>
           <a href="/dashboard">生产工单</a>
           <a href="/drawing-library">图纸资料库</a>
           <a href="/connector-parameters">连接器参数</a>

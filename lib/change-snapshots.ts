@@ -93,6 +93,13 @@ export function workOrderSnapshot(order: {
   planClearedBy?: string | null;
   libraryKey?: string | null;
   drawingLibraryItemId?: string | null;
+  productionOwner?: string | null;
+  workstation?: string | null;
+  completedQty?: string | null;
+  startedAt?: Date | string | null;
+  completedAt?: Date | string | null;
+  lastProgressAt?: Date | string | null;
+  latestProgressRemark?: string | null;
   deletedAt?: Date | string | null;
 }) {
   return {
@@ -131,6 +138,13 @@ export function workOrderSnapshot(order: {
     planClearedBy: order.planClearedBy ?? null,
     libraryKey: order.libraryKey ?? null,
     drawingLibraryItemId: order.drawingLibraryItemId ?? null,
+    productionOwner: order.productionOwner ?? null,
+    workstation: order.workstation ?? null,
+    completedQty: order.completedQty ?? null,
+    startedAt: order.startedAt ?? null,
+    completedAt: order.completedAt ?? null,
+    lastProgressAt: order.lastProgressAt ?? null,
+    latestProgressRemark: order.latestProgressRemark ?? null,
     deletedAt: order.deletedAt ?? null,
   };
 }

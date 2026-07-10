@@ -58,12 +58,20 @@ model WorkOrder {
   planClearedBy           String?              @map("plan_cleared_by")
   libraryKey              String?              @map("library_key")
   drawingLibraryItemId    String?              @map("drawing_library_item_id")
+  productionOwner         String?              @map("production_owner")
+  workstation             String?
+  completedQty            String?              @map("completed_qty")
+  startedAt               DateTime?            @map("started_at")
+  completedAt             DateTime?            @map("completed_at")
+  lastProgressAt          DateTime?            @map("last_progress_at")
+  latestProgressRemark    String?              @map("latest_progress_remark")
   createdAt               DateTime             @default(now()) @map("created_at")
   updatedAt               DateTime             @updatedAt @map("updated_at")
   deletedAt               DateTime?            @map("deleted_at")
   resourceFiles           ResourceFile[]
   drawingLibraryItem      DrawingLibraryItem?  @relation("DrawingLibraryWorkOrders", fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
   lastDrawingLibraryItems DrawingLibraryItem[] @relation("LastDrawingLibraryWorkOrder")
+  progressLogs            WorkOrderProgressLog[]
 
   @@index([code])
   @@index([productName])
@@ -84,7 +92,28 @@ model WorkOrder {
   @@index([planActive])
   @@index([libraryKey])
   @@index([drawingLibraryItemId])
+  @@index([productionOwner])
+  @@index([workstation])
+  @@index([lastProgressAt])
   @@map("work_orders")
+}
+
+model WorkOrderProgressLog {
+  id              String    @id @default(uuid())
+  workOrderId     String    @map("work_order_id")
+  previousStage   String?   @map("previous_stage")
+  stage           String
+  completedQty    String?   @map("completed_qty")
+  productionOwner String?   @map("production_owner")
+  workstation     String?
+  remark          String?
+  createdBy       String?   @map("created_by")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  workOrder       WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@index([workOrderId, createdAt])
+  @@index([createdAt])
+  @@map("work_order_progress_logs")
 }
 
 model ResourceCategory {

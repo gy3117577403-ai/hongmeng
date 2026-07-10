@@ -9,7 +9,7 @@
 ## 默认 Web 地址
 
 ```text
-https://qdowqencjyph.sealoshzh.site/dashboard
+https://qdowqencjyph.sealoshzh.site/production
 ```
 
 白名单域名：

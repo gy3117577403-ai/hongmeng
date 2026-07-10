@@ -8,7 +8,7 @@ export default function NotFound() {
         <p className="account-kicker">页面不存在</p>
         <h1>未找到对应资料页</h1>
         <p>请返回工单资料库继续查看生产资料。</p>
-        <Link className="account-submit" href="/dashboard">返回资料库</Link>
+        <Link className="account-submit" href="/production">返回生产执行中心</Link>
       </section>
     </main>
   );

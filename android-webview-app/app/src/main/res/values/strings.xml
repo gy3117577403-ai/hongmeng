@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">工单资料库</string>
-    <string name="web_url">https://qdowqencjyph.sealoshzh.site/dashboard</string>
+    <string name="web_url">https://qdowqencjyph.sealoshzh.site/production</string>
     <string name="allowed_host">qdowqencjyph.sealoshzh.site</string>
 </resources>

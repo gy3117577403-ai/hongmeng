@@ -7,7 +7,7 @@ const STATIC_ASSETS = [
   '/icon-512.svg'
 ];
 const SIGNED_PARAMS = ['X-Amz-Signature', 'X-Amz-Credential', 'Signature', 'Expires'];
-const DYNAMIC_PATH_PARTS = ['/download', '/view', '/upload', '/content', '/dashboard', '/connector-parameters'];
+const DYNAMIC_PATH_PARTS = ['/download', '/view', '/upload', '/content', '/dashboard', '/production', '/connector-parameters'];
 
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(STATIC_ASSETS)));

@@ -10,6 +10,9 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 coverage
+*.tsbuildinfo
+.playwright-cli/
+output/playwright/
 .vercel
 uploads/
 hongmeng-production.zip

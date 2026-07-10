@@ -363,7 +363,7 @@ export function DrawingLibraryShell({
   return (
     <main className="drawing-library-page">
       <header className="topbar drawing-topbar">
-        <button className="home-button" type="button" aria-label="首页" onClick={() => { location.href = '/dashboard'; }}>⌂</button>
+        <button className="home-button" type="button" aria-label="生产执行首页" onClick={() => { location.href = '/production'; }}>⌂</button>
         <div className="brand-block">
           <strong>图纸资料库</strong>
           <span>客户 · 规格 · 长期资料文件</span>
@@ -381,6 +381,7 @@ export function DrawingLibraryShell({
           <div className="library-wrap">
             <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLibOpen(value => !value)}>▱ 资料库</button>
             <PortalMenu open={libOpen} anchorRef={libraryMenuButtonRef} className="library-menu" width={220}>
+                <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产工单</button>
                 <button className="active" type="button">图纸资料库 ✓</button>
                 <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>

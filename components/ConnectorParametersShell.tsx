@@ -646,7 +646,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   return (
     <main className="connector-page">
       <header className="topbar connector-topbar">
-        <button className="home-button" type="button" aria-label="首页" onClick={() => { location.href = '/dashboard'; }}>⌂</button>
+        <button className="home-button" type="button" aria-label="生产执行首页" onClick={() => { location.href = '/production'; }}>⌂</button>
         <div className="brand-block">
           <strong>连接器参数资料</strong>
           <span>线束连接器剥皮与入长参数管理</span>
@@ -666,6 +666,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
           <div className="library-wrap">
             <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLib(v => !v)}>▱ 资料库</button>
             <PortalMenu open={lib} anchorRef={libraryMenuButtonRef} className="library-menu" width={220}>
+                <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产工单</button>
                 <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
                 <button className="active" type="button">连接器参数资料 ✓</button>

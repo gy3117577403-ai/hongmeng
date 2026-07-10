@@ -67,7 +67,7 @@ Sealos App Deploy 端口填 `3000`。
 
 - Web 浏览器：直接打开 `https://qdowqencjyph.sealoshzh.site`，适合临时访问和快速验收。
 - PWA 添加到桌面：在平板浏览器菜单中选择“添加到桌面 / 安装应用”，从桌面图标进入，减少地址栏和标签栏干扰。
-- Android APK WebView 壳：使用 `android-webview-app/` 打包 APK，或通过 GitHub Actions 的 `Android WebView APK` workflow 下载 debug APK；安装后全屏加载 `https://qdowqencjyph.sealoshzh.site/dashboard`。
+- Android APK WebView 壳：使用 `android-webview-app/` 打包 APK，或通过 GitHub Actions 的 `Android WebView APK` workflow 下载 debug APK；安装后全屏加载 `https://qdowqencjyph.sealoshzh.site/production`。
 
 v1.13.4-tablet-final-pretest 增加了平板端“同步”入口。现场如果用 Web 浏览器上传资料，APK / PWA 端可在当前工单点击“同步”刷新工单列表、分类数量和当前资料文件，不需要反复退出或刷新整个页面。PWA Service Worker 只缓存 manifest 和图标，不缓存业务 API、页面、上传响应、签名链接或文件内容流。
 
@@ -143,3 +143,15 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 5. `resource_files` 有元数据记录。
 6. 对象存储 Bucket 有实际文件。
 7. 删除后前端隐藏，数据库记录仍保留软删除状态。
+# v1.15.0 生产执行中心
+
+- 新增 `/production` 当前周生产执行首页，登录后默认进入。
+- 提供生产摘要、今日任务、异常任务和四状态看板。
+- 支持负责人、工位、完成数量、进度备注、快捷状态与完整进度历史。
+- 支持批量分派和状态更新，批量完成使用 `COMPLETE_BATCH` 强确认。
+- 与周计划和图纸资料库联动，历史周保持只读。
+- 支持当前筛选条件的生产执行 CSV 导出。
+- 当前为本地验证候选，尚未作为生产版本部署到 Sealos。
+
+- [生产执行中心使用指南](docs/PRODUCTION_EXECUTION_CENTER_GUIDE.md)
+- [生产执行中心 QA](docs/QA_PRODUCTION_EXECUTION_CENTER.md)
