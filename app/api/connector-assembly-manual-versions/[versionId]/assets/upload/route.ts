@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createHash } from 'node:crypto';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   inspectPdf,
@@ -67,6 +68,8 @@ export async function POST(req: NextRequest, { params }: { params: { versionId: 
           mimeType,
           size: file.size,
           objectKey,
+          relativePath: file.name,
+          fileHash: createHash('sha256').update(body).digest('hex'),
           pageNo: version.fileMode === 'PDF' ? null : version.assets.length + index + 1,
           sortOrder: version.assets.length + index,
           isPrimary: version.assets.length === 0 && index === 0,
@@ -77,7 +80,7 @@ export async function POST(req: NextRequest, { params }: { params: { versionId: 
     }
 
     if (pdfInfo) {
-      await prisma.connectorAssemblyManualVersion.update({ where: { id: version.id }, data: { pageCount: pdfInfo.pageCount, searchText: pdfInfo.searchText || null } });
+      await prisma.connectorAssemblyManualVersion.update({ where: { id: version.id }, data: { pageCount: pdfInfo.pageCount, searchText: pdfInfo.searchText || null, parseStatus: pdfInfo.searchText ? 'parsed' : 'partial' } });
     } else {
       await prisma.connectorAssemblyManualVersion.update({ where: { id: version.id }, data: { pageCount: version.assets.length + created.length } });
     }

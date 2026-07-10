@@ -31,16 +31,34 @@ export async function GET(req: NextRequest) {
     const manufacturer = String(sp.get('manufacturer') || '').trim();
     const family = String(sp.get('family') || '').trim();
     const model = String(sp.get('model') || '').trim();
-    const includeDeleted = sp.get('includeDeleted') === 'true';
+    const statusFilter = String(sp.get('status') || 'all').trim();
+    const includeDeleted = sp.get('includeDeleted') === 'true' || statusFilter === 'deleted';
     const latestOnly = sp.get('latestOnly') === 'true';
     const page = Math.max(1, Number(sp.get('page') || 1) || 1);
     const pageSize = Math.max(10, Math.min(50, Number(sp.get('pageSize') || 20) || 20));
     const AND: Prisma.ConnectorAssemblyManualWhereInput[] = [];
-    if (!includeDeleted) AND.push({ deletedAt: null });
+    if (statusFilter === 'deleted') AND.push({ deletedAt: { not: null } });
+    else if (!includeDeleted) AND.push({ deletedAt: null });
     if (manufacturer) AND.push({ manufacturer: { contains: manufacturer, mode: 'insensitive' } });
     if (family) AND.push({ family: { contains: family, mode: 'insensitive' } });
     if (model) AND.push({ bindings: { some: { connectorParameter: { model: { contains: model, mode: 'insensitive' }, deletedAt: null } } } });
     if (latestOnly) AND.push({ versions: { some: { isLatest: true, deletedAt: null } } });
+    if (statusFilter === 'latest') AND.push({ versions: { some: { isLatest: true, deletedAt: null } } });
+    if (statusFilter === 'parse_failed') AND.push({ versions: { some: { deletedAt: null, parseStatus: { in: ['failed', 'partial'] } } } });
+    if (statusFilter === 'unbound') AND.push({ bindings: { none: { connectorParameter: { deletedAt: null } } } });
+    if (statusFilter === 'incomplete') {
+      AND.push({
+        OR: [
+          { manufacturer: null },
+          { manufacturer: '' },
+          { keywords: null },
+          { keywords: '' },
+          { bindings: { none: { connectorParameter: { deletedAt: null } } } },
+          { versions: { none: { deletedAt: null } } },
+          { versions: { some: { deletedAt: null, parseStatus: { in: ['failed', 'partial'] } } } },
+        ],
+      });
+    }
     if (keyword) {
       AND.push({
         OR: [
@@ -50,8 +68,8 @@ export async function GET(req: NextRequest) {
           { documentNo: { contains: keyword, mode: 'insensitive' } },
           { summary: { contains: keyword, mode: 'insensitive' } },
           { keywords: { contains: keyword, mode: 'insensitive' } },
-          { versions: { some: { deletedAt: null, OR: [{ revision: { contains: keyword, mode: 'insensitive' } }, { searchText: { contains: keyword, mode: 'insensitive' } }] } } },
-          { versions: { some: { deletedAt: null, assets: { some: { deletedAt: null, originalName: { contains: keyword, mode: 'insensitive' } } } } } },
+          { versions: { some: { deletedAt: null, OR: [{ revision: { contains: keyword, mode: 'insensitive' } }, { detectedTitle: { contains: keyword, mode: 'insensitive' } }, { searchText: { contains: keyword, mode: 'insensitive' } }] } } },
+          { versions: { some: { deletedAt: null, assets: { some: { deletedAt: null, OR: [{ originalName: { contains: keyword, mode: 'insensitive' } }, { displayName: { contains: keyword, mode: 'insensitive' } }, { relativePath: { contains: keyword, mode: 'insensitive' } }] } } } } },
           { bindings: { some: { connectorParameter: { deletedAt: null, model: { contains: keyword, mode: 'insensitive' } } } } },
         ],
       });
@@ -75,6 +93,7 @@ export async function GET(req: NextRequest) {
       total,
       page,
       pageSize,
+      statusFilter,
       filters: {
         manufacturers: manufacturers.map(item => item.manufacturer).filter(Boolean),
         families: families.map(item => item.family).filter(Boolean),

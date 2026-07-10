@@ -206,6 +206,8 @@ export type ConnectorAssemblyManualAssetDTO = {
   displayName?: string | null;
   mimeType: string;
   size: number;
+  relativePath?: string | null;
+  fileHash?: string | null;
   pageNo?: number | null;
   sortOrder: number;
   isPrimary: boolean;
@@ -227,6 +229,9 @@ export type ConnectorAssemblyManualVersionDTO = {
   isLatest: boolean;
   status?: string | null;
   tocJson: ConnectorAssemblyManualTocDTO[];
+  detectedTitle?: string | null;
+  parseStatus?: string | null;
+  parseWarnings: string[];
   remark?: string | null;
   createdBy?: string | null;
   deletedAt?: string | null;
@@ -282,6 +287,103 @@ export type ConnectorAssemblyManualTrashVersionDTO = ConnectorAssemblyManualVers
 export type ConnectorAssemblyManualTrashAssetDTO = ConnectorAssemblyManualAssetDTO & {
   manualTitle: string;
   revision: string;
+};
+
+export type ConnectorManualBulkAction = 'create_manual' | 'create_version' | 'duplicate' | 'conflict' | 'invalid' | 'manual_review' | 'skip';
+
+export type ConnectorManualBulkAssetInputDTO = {
+  fileName: string;
+  relativePath: string;
+  size: number;
+  mimeType: string;
+  hash: string;
+};
+
+export type ConnectorManualBulkCandidateDTO = {
+  clientId: string;
+  relativePath: string;
+  fileName: string;
+  size: number;
+  mimeType: string;
+  fileMode: 'PDF' | 'IMAGE_SET';
+  defaultTitle: string;
+  detectedTitle: string;
+  manufacturerCandidate: string;
+  familyCandidate: string;
+  revisionCandidate: string;
+  issuedAtCandidate: string;
+  modelCandidates: string[];
+  keywordCandidates: string[];
+  chapterCandidates: ConnectorAssemblyManualTocDTO[];
+  pageCount: number;
+  hash: string;
+  parseFailed: boolean;
+  warnings: string[];
+  assets: ConnectorManualBulkAssetInputDTO[];
+};
+
+export type ConnectorManualBulkPreviewRowDTO = ConnectorManualBulkCandidateDTO & {
+  action: ConnectorManualBulkAction;
+  matchedManualId: string;
+  matchedManualTitle: string;
+  suggestedVersionAction: string;
+  duplicateReason: string;
+  conflictReason: string;
+  suggestedRevision: string;
+  parameterMatches: Array<{ id: string; model: string; matchType: 'unique_match' | 'multiple_matches' }>;
+  uniqueParameterIds: string[];
+};
+
+export type ConnectorManualBulkPreviewSummaryDTO = {
+  totalFiles: number;
+  readyCount: number;
+  createManualCount: number;
+  versionCandidateCount: number;
+  duplicateCount: number;
+  conflictCount: number;
+  invalidCount: number;
+  manualReviewCount: number;
+};
+
+export type ConnectorManualImportItemDTO = {
+  id: string;
+  batchId: string;
+  clientId: string;
+  fileName: string;
+  relativePath?: string | null;
+  fileMode: 'PDF' | 'IMAGE_SET';
+  fileHash?: string | null;
+  action: string;
+  status: string;
+  title: string;
+  revision?: string | null;
+  manualId?: string | null;
+  versionId?: string | null;
+  pageCount?: number | null;
+  detectedTitle?: string | null;
+  errorMessage?: string | null;
+  warnings: string[];
+  attemptCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ConnectorManualImportBatchDTO = {
+  id: string;
+  sourceName?: string | null;
+  totalCount: number;
+  readyCount: number;
+  successCount: number;
+  duplicateCount: number;
+  failedCount: number;
+  skippedCount: number;
+  status: string;
+  createdBy?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  items: ConnectorManualImportItemDTO[];
 };
 
 export type ConnectorParameterFileDTO = {

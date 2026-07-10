@@ -5,6 +5,9 @@ import type { FormEvent } from 'react';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
+import { BulkConnectorManualImportModal } from '@/components/BulkConnectorManualImportModal';
+import { inspectConnectorManualFile } from '@/lib/client-connector-manual-inspector';
+import type { ClientManualInspection } from '@/lib/client-connector-manual-inspector';
 import type {
   ConnectorAssemblyManualAssetDTO,
   ConnectorAssemblyManualDTO,
@@ -127,6 +130,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const [manufacturer, setManufacturer] = useState('');
   const [family, setFamily] = useState('');
   const [model, setModel] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [manufacturers, setManufacturers] = useState<string[]>([]);
   const [families, setFamilies] = useState<string[]>([]);
   const [page, setPage] = useState(1);
@@ -136,6 +140,9 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const [rightTab, setRightTab] = useState<RightTab>('info');
   const [manualModal, setManualModal] = useState<'create' | 'edit' | null>(null);
   const [manualForm, setManualForm] = useState<ManualForm>(emptyManualForm);
+  const [singleFiles, setSingleFiles] = useState<File[]>([]);
+  const [singleSuggestion, setSingleSuggestion] = useState<ClientManualInspection | null>(null);
+  const [singleParsing, setSingleParsing] = useState(false);
   const [versionModal, setVersionModal] = useState<'create' | 'edit' | null>(null);
   const [versionForm, setVersionForm] = useState<VersionForm>(emptyVersionForm);
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -150,6 +157,8 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const [trash, setTrash] = useState<TrashPayload>({});
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState('');
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [libraryMenu, setLibraryMenu] = useState(false);
   const [userMenu, setUserMenu] = useState(false);
   const libraryButtonRef = useRef<HTMLButtonElement>(null);
@@ -157,7 +166,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const urlAppliedRef = useRef(false);
 
   const accountName = user.displayName || user.username;
-  const selectedManual = manuals.find(item => item.id === selectedId) || manuals[0] || null;
+  const selectedManual = manuals.find(item => item.id === selectedId) || (statusFilter === 'deleted' ? null : manuals[0]) || null;
   const selectedVersion = selectedManual?.versions.find(item => item.id === selectedVersionId)
     || selectedManual?.latestVersion
     || selectedManual?.versions[0]
@@ -181,6 +190,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
       if (manufacturer) params.set('manufacturer', manufacturer);
       if (family) params.set('family', family);
       if (model.trim()) params.set('model', model.trim());
+      if (statusFilter !== 'all') params.set('status', statusFilter);
       try {
         const response = await fetch(`/api/connector-assembly-manuals?${params.toString()}`, { cache: 'no-store', signal: controller.signal });
         const data = await jsonResponse(response);
@@ -191,7 +201,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
         const filters = data.filters as { manufacturers?: string[]; families?: string[] } | undefined;
         setManufacturers(filters?.manufacturers || []);
         setFamilies(filters?.families || []);
-        setSelectedId(current => nextManuals.some(item => item.id === current) ? current : (nextManuals[0]?.id || ''));
+        setSelectedId(current => nextManuals.some(item => item.id === current) ? current : (statusFilter === 'deleted' ? '' : nextManuals[0]?.id || ''));
       } catch (error) {
         if (!(error instanceof DOMException && error.name === 'AbortError')) setToast(error instanceof Error ? error.message : '说明书加载失败');
       } finally {
@@ -202,7 +212,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [family, keyword, manufacturer, model, page]);
+  }, [family, keyword, manufacturer, model, page, refreshKey, statusFilter]);
 
   useEffect(() => {
     if (urlAppliedRef.current) return;
@@ -247,6 +257,10 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   }
 
   function selectManual(manual: ConnectorAssemblyManualDTO): void {
+    if (manual.deletedAt) {
+      setToast('该说明书已删除，请在回收站中恢复后查看');
+      return;
+    }
     setSelectedId(manual.id);
     setSelectedVersionId(manual.latestVersion?.id || manual.versions[0]?.id || '');
     setRightTab('info');
@@ -255,6 +269,8 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
 
   function openCreateManual(): void {
     setManualForm(emptyManualForm);
+    setSingleFiles([]);
+    setSingleSuggestion(null);
     setManualModal('create');
   }
 
@@ -278,14 +294,57 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
       const data = await jsonResponse(response);
       if (!response.ok) throw new Error(String(data.error || '保存说明书失败'));
       const manual = data.manual as ConnectorAssemblyManualDTO;
+      const creating = manualModal === 'create';
+      let uploadMessage = '';
+      if (creating && singleFiles.length && manual.latestVersion?.id) {
+        const form = new FormData();
+        singleFiles.forEach(file => form.append('files', file));
+        const uploadResponse = await fetch(`/api/connector-assembly-manual-versions/${manual.latestVersion.id}/assets/upload`, { method: 'POST', body: form });
+        const uploadData = await jsonResponse(uploadResponse);
+        uploadMessage = uploadResponse.ok ? `并上传 ${singleFiles.length} 个文件` : `，但文件上传失败：${String(uploadData.error || '请稍后重试')}`;
+      }
       setManualModal(null);
-      setToast(manualModal === 'edit' ? '说明书信息已更新' : '说明书已创建，可继续上传文件');
+      setSingleFiles([]);
+      setSingleSuggestion(null);
+      setToast(manualModal === 'edit' ? '说明书信息已更新' : `说明书已创建${uploadMessage || '，可继续上传文件'}`);
       await loadManual(manual.id, manual.latestVersion?.id || '');
     } catch (error) {
       setToast(error instanceof Error ? error.message : '保存说明书失败');
     } finally {
       setSaving(false);
     }
+  }
+
+  async function inspectSingleFiles(files: File[]): Promise<void> {
+    setSingleFiles(files);
+    setSingleSuggestion(null);
+    if (!files.length) return;
+    const pdf = files[0].type === 'application/pdf' || files[0].name.toLowerCase().endsWith('.pdf');
+    setManualForm(current => ({
+      ...current,
+      title: current.title.trim() ? current.title : files[0].name.replace(/\.(?:pdf|jpe?g|png|webp)$/i, ''),
+      fileMode: pdf ? 'PDF' : 'IMAGE_SET',
+    }));
+    setSingleParsing(true);
+    try {
+      const suggestion = await inspectConnectorManualFile(files[0], files[0].webkitRelativePath || files[0].name);
+      setSingleSuggestion(suggestion);
+    } finally {
+      setSingleParsing(false);
+    }
+  }
+
+  function applySingleSuggestion(): void {
+    if (!singleSuggestion) return;
+    setManualForm(current => ({
+      ...current,
+      manufacturer: singleSuggestion.manufacturerCandidate || current.manufacturer,
+      family: singleSuggestion.familyCandidate || current.family,
+      keywords: singleSuggestion.keywordCandidates.join('、') || current.keywords,
+      revision: singleSuggestion.revisionCandidate || current.revision,
+      issuedAt: singleSuggestion.issuedAtCandidate || current.issuedAt,
+    }));
+    setToast('已填入识别建议；说明书名称仍保留文件名');
   }
 
   function openCreateVersion(): void {
@@ -481,7 +540,8 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
           {keyword && <button type="button" onClick={() => setKeyword('')}>清空</button>}
         </div>
         <div className="top-actions">
-          <button className="primary-button" type="button" onClick={openCreateManual}>新增说明书</button>
+          <button className="primary-button manual-bulk-primary" type="button" onClick={() => setBulkOpen(true)}>批量导入说明书</button>
+          <button className="manual-single-create" type="button" onClick={openCreateManual}>单份新增</button>
           <div className="library-wrap">
             <button ref={libraryButtonRef} className="library-button" type="button" onClick={() => setLibraryMenu(value => !value)}>▱ 资料库</button>
             <PortalMenu open={libraryMenu} anchorRef={libraryButtonRef} className="library-menu" width={230}>
@@ -513,9 +573,11 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
       <section className="manual-workspace">
         <aside className="manual-list-panel">
           <div className="manual-list-filters">
+            <p className="manual-list-import-note">可直接选择包含 PDF / 图片说明书的本地文件夹，文件名将作为默认说明书名称。</p>
             <select aria-label="制造商筛选" value={manufacturer} onChange={event => { setManufacturer(event.target.value); setPage(1); }}><option value="">全部制造商</option>{manufacturers.map(item => <option key={item} value={item}>{item}</option>)}</select>
             <select aria-label="系列筛选" value={family} onChange={event => { setFamily(event.target.value); setPage(1); }}><option value="">全部系列</option>{families.map(item => <option key={item} value={item}>{item}</option>)}</select>
             <input value={model} onChange={event => { setModel(event.target.value); setPage(1); }} placeholder="适用型号" />
+            <select aria-label="完善状态筛选" value={statusFilter} onChange={event => { setStatusFilter(event.target.value); setPage(1); }}><option value="all">全部</option><option value="latest">最新版</option><option value="incomplete">待完善</option><option value="parse_failed">解析失败</option><option value="unbound">未关联型号</option><option value="deleted">已删除</option></select>
           </div>
           <div className="manual-list-heading"><strong>{loading ? '加载中...' : `${total} 份说明书`}</strong><span>{page}/{totalPages}</span></div>
           <div className="manual-list-scroll">
@@ -527,7 +589,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
                 <small><b>{manual.latestVersion?.revision || '暂无版本'}</b><i>{manual.latestVersion?.pageCount ? `${manual.latestVersion.pageCount}页` : '待上传'}</i><i>{dateText(manual.latestVersion?.issuedAt)}</i></small>
               </button>
             ))}
-            {!loading && !manuals.length && <div className="manual-list-empty"><strong>暂无组装说明书</strong><p>可新增说明书，再上传 PDF 或图片集。</p><button type="button" onClick={openCreateManual}>新增说明书</button></div>}
+            {!loading && !manuals.length && <div className="manual-list-empty"><strong>暂无组装说明书</strong><p>可直接批量选择 PDF / 图片文件夹，或使用单份新增。</p><button type="button" onClick={() => setBulkOpen(true)}>批量导入说明书</button></div>}
           </div>
           <div className="manual-pagination"><button type="button" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button><button type="button" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></div>
         </aside>
@@ -543,7 +605,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
           </div>
           <div className="manual-preview-stage">
             {(loading || detailLoading) && <div className="manual-empty-preview"><span className="manual-loader" /><strong>说明书加载中</strong><p>正在读取版本和文件信息</p></div>}
-            {!loading && !detailLoading && !selectedManual && <div className="manual-empty-preview"><span>MANUAL</span><strong>建立连接器组装说明书资料库</strong><p>集中管理 PDF、多图说明书、版本、目录和适用型号。</p><button type="button" onClick={openCreateManual}>新增第一份说明书</button></div>}
+            {!loading && !detailLoading && !selectedManual && <div className="manual-empty-preview"><span>MANUAL</span><strong>{statusFilter === 'deleted' ? '已删除说明书只在回收站恢复' : '建立连接器组装说明书资料库'}</strong><p>{statusFilter === 'deleted' ? '选择用户菜单中的回收站执行恢复，S3 原文件仍然保留。' : '集中管理 PDF、多图说明书、版本、目录和适用型号。'}</p><button type="button" onClick={statusFilter === 'deleted' ? loadTrash : () => setBulkOpen(true)}>{statusFilter === 'deleted' ? '打开回收站' : '批量导入第一批说明书'}</button></div>}
             {!loading && !detailLoading && selectedManual && !selectedVersion && <div className="manual-empty-preview missing"><span>01</span><strong>这份说明书还没有版本</strong><p>先创建版本，再上传 PDF 或多张图片。</p><button type="button" onClick={openCreateVersion}>创建首个版本</button></div>}
             {!loading && !detailLoading && selectedVersion && !selectedAsset && <div className="manual-empty-preview missing"><span>{selectedVersion.fileMode === 'PDF' ? 'PDF' : 'IMG'}</span><strong>当前版本尚未上传文件</strong><p>{selectedVersion.fileMode === 'PDF' ? '上传一个 PDF，系统会识别页数并提取可搜索文字。' : '可一次选择多张图片，并在版本面板调整顺序。'}</p><button type="button" onClick={() => setUploadOpen(true)}>上传文件</button></div>}
             {!loading && !detailLoading && selectedVersion?.fileMode === 'PDF' && selectedAsset && (
@@ -599,12 +661,13 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
         </aside>
       </section>
 
-      {manualModal && <ManualDialog mode={manualModal} form={manualForm} setForm={setManualForm} saving={saving} close={() => setManualModal(null)} submit={saveManual} />}
+      {manualModal && <ManualDialog mode={manualModal} form={manualForm} setForm={setManualForm} files={singleFiles} suggestion={singleSuggestion} parsing={singleParsing} setFiles={inspectSingleFiles} useSuggestion={applySingleSuggestion} saving={saving} close={() => setManualModal(null)} submit={saveManual} />}
       {versionModal && <VersionDialog mode={versionModal} form={versionForm} setForm={setVersionForm} saving={saving} close={() => setVersionModal(null)} submit={saveVersion} />}
       {uploadOpen && selectedVersion && <UploadDialog version={selectedVersion} files={uploadFiles} setFiles={setUploadFiles} saving={saving} close={() => { setUploadOpen(false); setUploadFiles([]); }} submit={uploadAssets} />}
       {bindingOpen && <BindingDialog keyword={bindingKeyword} setKeyword={setBindingKeyword} options={bindingOptions} selected={bindingSelection} setSelected={setBindingSelection} boundIds={new Set(selectedManual?.bindings.map(item => item.id) || [])} close={() => setBindingOpen(false)} save={saveBindings} />}
       {deleteTarget && <DeleteDialog target={deleteTarget} value={deleteText} setValue={setDeleteText} saving={saving} close={() => { setDeleteTarget(null); setDeleteText(''); }} confirm={confirmDelete} />}
       {trashOpen && <ManualTrashDialog trash={trash} close={() => setTrashOpen(false)} restore={restoreTrash} />}
+      <BulkConnectorManualImportModal open={bulkOpen} close={() => setBulkOpen(false)} completed={async () => { setRefreshKey(value => value + 1); }} />
       {toast && <div className="manual-toast" role="status">{toast}</div>}
     </main>
   );
@@ -619,8 +682,8 @@ function ManualInfo({ manual, version }: { manual: ConnectorAssemblyManualDTO | 
   return <div className="manual-info-list">{rows.map(([label, value]) => <div key={label}><span>{label}</span><strong title={value}>{value}</strong></div>)}<section><span>关键词</span><p>{manual.keywords || '未设置'}</p></section><section><span>摘要</span><p>{manual.summary || '未设置'}</p></section><section><span>版本备注</span><p>{version?.remark || '未设置'}</p></section></div>;
 }
 
-function ManualDialog({ mode, form, setForm, saving, close, submit }: { mode: 'create' | 'edit'; form: ManualForm; setForm: (value: ManualForm) => void; saving: boolean; close: () => void; submit: (event: FormEvent) => void }) {
-  return <div className="modal-backdrop"><form className="manual-dialog" onSubmit={submit}><DialogTitle title={mode === 'create' ? '新增组装说明书' : '编辑说明书信息'} close={close} /><div className="manual-form-grid"><label className="wide"><span>说明书名称 *</span><input value={form.title} onChange={event => setForm({ ...form, title: event.target.value })} placeholder="例如 ECTA24(32)芯插座组装说明书" /></label><label><span>制造商</span><input value={form.manufacturer} onChange={event => setForm({ ...form, manufacturer: event.target.value })} /></label><label><span>连接器系列</span><input value={form.family} onChange={event => setForm({ ...form, family: event.target.value })} /></label><label><span>文档编号</span><input value={form.documentNo} onChange={event => setForm({ ...form, documentNo: event.target.value })} /></label><label><span>关键词</span><input value={form.keywords} onChange={event => setForm({ ...form, keywords: event.target.value })} placeholder="型号、工序、材料等" /></label><label className="wide"><span>摘要</span><textarea value={form.summary} onChange={event => setForm({ ...form, summary: event.target.value })} /></label>{mode === 'create' && <><label><span>首版版本 *</span><input value={form.revision} onChange={event => setForm({ ...form, revision: event.target.value })} /></label><label><span>发布日期</span><input type="date" value={form.issuedAt} onChange={event => setForm({ ...form, issuedAt: event.target.value })} /></label><label><span>文件类型</span><select value={form.fileMode} onChange={event => setForm({ ...form, fileMode: event.target.value as 'PDF' | 'IMAGE_SET' })}><option value="PDF">PDF</option><option value="IMAGE_SET">图片集</option></select></label></>}</div><DialogActions saving={saving} close={close} label="保存" /></form></div>;
+function ManualDialog({ mode, form, setForm, files, suggestion, parsing, setFiles, useSuggestion, saving, close, submit }: { mode: 'create' | 'edit'; form: ManualForm; setForm: (value: ManualForm) => void; files: File[]; suggestion: ClientManualInspection | null; parsing: boolean; setFiles: (files: File[]) => Promise<void>; useSuggestion: () => void; saving: boolean; close: () => void; submit: (event: FormEvent) => void }) {
+  return <div className="modal-backdrop"><form className="manual-dialog" onSubmit={submit}><DialogTitle title={mode === 'create' ? '单份新增组装说明书' : '编辑说明书信息'} close={close} /><div className="manual-form-grid"><label className="wide"><span>说明书名称 *</span><input value={form.title} onChange={event => setForm({ ...form, title: event.target.value })} placeholder="默认使用文件名，可手工修改" /></label><label><span>制造商</span><input value={form.manufacturer} onChange={event => setForm({ ...form, manufacturer: event.target.value })} /></label><label><span>连接器系列</span><input value={form.family} onChange={event => setForm({ ...form, family: event.target.value })} /></label><label><span>文档编号</span><input value={form.documentNo} onChange={event => setForm({ ...form, documentNo: event.target.value })} /></label><label><span>关键词</span><input value={form.keywords} onChange={event => setForm({ ...form, keywords: event.target.value })} placeholder="型号、工序、材料等" /></label><label className="wide"><span>摘要</span><textarea value={form.summary} onChange={event => setForm({ ...form, summary: event.target.value })} /></label>{mode === 'create' && <><label><span>首版版本 *</span><input value={form.revision} onChange={event => setForm({ ...form, revision: event.target.value })} /></label><label><span>发布日期</span><input type="date" value={form.issuedAt} onChange={event => setForm({ ...form, issuedAt: event.target.value })} /></label><label><span>文件类型</span><select value={form.fileMode} onChange={event => setForm({ ...form, fileMode: event.target.value as 'PDF' | 'IMAGE_SET' })}><option value="PDF">PDF</option><option value="IMAGE_SET">图片集</option></select></label><label className="wide manual-single-upload"><span>直接上传文件</span><input type="file" multiple={form.fileMode === 'IMAGE_SET'} accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" onChange={event => void setFiles(Array.from(event.target.files || []))} /><small>{files.length ? `已选择 ${files.length} 个文件` : '选择后只读取 PDF 前两页生成建议，不会立即上传'}</small></label>{(parsing || suggestion) && <div className="wide manual-single-suggestion"><div><strong>{parsing ? '正在识别...' : `识别标题：${suggestion?.detectedTitle || '未识别'}`}</strong>{suggestion && <span>页数 {suggestion.pageCount || '-'} · 型号 {suggestion.modelCandidates.join(' / ') || '未识别'} · 版本 {suggestion.revisionCandidate || '未识别'}</span>}</div><button type="button" disabled={parsing || !suggestion} onClick={useSuggestion}>使用识别结果</button></div>}</>}</div><DialogActions saving={saving} close={close} label={mode === 'create' && files.length ? '保存并上传' : '保存'} /></form></div>;
 }
 
 function VersionDialog({ mode, form, setForm, saving, close, submit }: { mode: 'create' | 'edit'; form: VersionForm; setForm: (value: VersionForm) => void; saving: boolean; close: () => void; submit: (event: FormEvent) => void }) {

@@ -1,6 +1,6 @@
 # 连接器组装说明书资料库使用指南
 
-版本：v1.16.0-connector-assembly-manual-library
+版本：v1.16.1-connector-manual-bulk-import
 
 状态：本地开发与自动化验证候选，尚未部署 Sealos。
 
@@ -38,7 +38,13 @@
 
 ## 新增说明书
 
-点击“新增说明书”，填写：
+页面默认优先显示“批量导入说明书”，用于文件夹或多文件零表单导入；“单份新增”保留为次级入口。批量流程包含本地轻量解析、只读预览、SHA-256 去重、版本建议、强确认、并发队列、失败重试和批次结果，详见 [连接器组装说明书批量导入指南](CONNECTOR_ASSEMBLY_MANUAL_BULK_IMPORT_GUIDE.md)。
+
+批量导入不会要求第一次就补齐所有字段。文件名去掉扩展名始终作为默认说明书名称，自动检测标题单独保存，不强制覆盖默认名称。
+
+### 单份新增
+
+点击“单份新增”，填写：
 
 - 说明书名称，必填。
 - 制造商。
@@ -50,7 +56,7 @@
 - 发布日期。
 - 文件类型：PDF 或图片集。
 
-创建基本信息后再上传文件。说明书本身可以先创建、后补文件。
+单份表单支持直接选择 PDF 或图片。PDF 会先读取前两页生成建议，点击“使用识别结果”后才应用建议字段；保存时可创建说明书并立即上传，也可以只创建基本信息、后补文件。
 
 ## 上传 PDF
 
@@ -189,6 +195,8 @@ PDF 只渲染当前页，并预取相邻页元数据。切换版本时回到第 
 - `ConnectorAssemblyManualVersion`
 - `ConnectorAssemblyManualAsset`
 - `ConnectorAssemblyManualBinding`
+- `ConnectorAssemblyManualImportBatch`
+- `ConnectorAssemblyManualImportItem`
 
 对象路径：
 

@@ -132,7 +132,7 @@ export async function GET(req: NextRequest) {
             { documentNo: { contains: keyword, mode: 'insensitive' } },
             { summary: { contains: keyword, mode: 'insensitive' } },
             { keywords: { contains: keyword, mode: 'insensitive' } },
-            { versions: { some: { deletedAt: null, OR: [{ revision: { contains: keyword, mode: 'insensitive' } }, { searchText: { contains: keyword, mode: 'insensitive' } }] } } },
+            { versions: { some: { deletedAt: null, OR: [{ revision: { contains: keyword, mode: 'insensitive' } }, { detectedTitle: { contains: keyword, mode: 'insensitive' } }, { searchText: { contains: keyword, mode: 'insensitive' } }] } } },
             { bindings: { some: { connectorParameter: { deletedAt: null, model: { contains: keyword, mode: 'insensitive' } } } } },
           ],
         },
@@ -146,7 +146,7 @@ export async function GET(req: NextRequest) {
       prisma.connectorAssemblyManualAsset.findMany({
         where: {
           deletedAt: null,
-          OR: [{ originalName: { contains: keyword, mode: 'insensitive' } }, { displayName: { contains: keyword, mode: 'insensitive' } }],
+          OR: [{ originalName: { contains: keyword, mode: 'insensitive' } }, { displayName: { contains: keyword, mode: 'insensitive' } }, { relativePath: { contains: keyword, mode: 'insensitive' } }],
           version: { deletedAt: null, manual: { deletedAt: null } },
         },
         include: {

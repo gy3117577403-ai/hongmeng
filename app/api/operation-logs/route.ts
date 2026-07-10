@@ -66,6 +66,8 @@ const actionGroups: Record<string, string[]> = {
     'bind_connector_assembly_manual',
     'unbind_connector_assembly_manual',
     'download_connector_assembly_manual',
+    'create_connector_assembly_manual_import_batch',
+    'bulk_import_connector_assembly_manual',
   ],
 };
 
