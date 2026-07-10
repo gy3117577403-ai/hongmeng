@@ -23,54 +23,54 @@ model User {
 }
 
 model WorkOrder {
-  id                      String               @id @default(uuid())
-  code                    String               @unique
-  customerName            String?              @map("customer_name")
-  productName             String               @map("product_name")
+  id                      String                 @id @default(uuid())
+  code                    String                 @unique
+  customerName            String?                @map("customer_name")
+  productName             String                 @map("product_name")
   stage                   String
-  progress                Int                  @default(0)
-  priority                String               @default("normal")
-  status                  String               @default("processing")
-  plannedAt               DateTime?            @map("planned_at")
+  progress                Int                    @default(0)
+  priority                String                 @default("normal")
+  status                  String                 @default("processing")
+  plannedAt               DateTime?              @map("planned_at")
   remark                  String?
-  sourceOrderNo           String?              @map("source_order_no")
+  sourceOrderNo           String?                @map("source_order_no")
   salesperson             String?
-  orderDate               DateTime?            @map("order_date")
-  customerLevel           String?              @map("customer_level")
+  orderDate               DateTime?              @map("order_date")
+  customerLevel           String?                @map("customer_level")
   specification           String?
-  processName             String?              @map("process_name")
-  uncompletedQty          String?              @map("uncompleted_qty")
-  unitWorkHours           String?              @map("unit_work_hours")
-  totalWorkHours          String?              @map("total_work_hours")
-  drawingStatus           String?              @map("drawing_status")
-  deliveryDay             String?              @map("delivery_day")
-  materialStatus          String?              @map("material_status")
-  drawingIssuedAt         DateTime?            @map("drawing_issued_at")
-  drawingIssueNote        String?              @map("drawing_issue_note")
-  importBatchId           String?              @map("import_batch_id")
-  sourceSheetName         String?              @map("source_sheet_name")
-  sourceRowNo             Int?                 @map("source_row_no")
-  planType                String?              @map("plan_type")
-  weekStartDate           DateTime?            @map("week_start_date")
-  weekEndDate             DateTime?            @map("week_end_date")
-  planActive              Boolean              @default(true) @map("plan_active")
-  planClearedAt           DateTime?            @map("plan_cleared_at")
-  planClearedBy           String?              @map("plan_cleared_by")
-  libraryKey              String?              @map("library_key")
-  drawingLibraryItemId    String?              @map("drawing_library_item_id")
-  productionOwner         String?              @map("production_owner")
+  processName             String?                @map("process_name")
+  uncompletedQty          String?                @map("uncompleted_qty")
+  unitWorkHours           String?                @map("unit_work_hours")
+  totalWorkHours          String?                @map("total_work_hours")
+  drawingStatus           String?                @map("drawing_status")
+  deliveryDay             String?                @map("delivery_day")
+  materialStatus          String?                @map("material_status")
+  drawingIssuedAt         DateTime?              @map("drawing_issued_at")
+  drawingIssueNote        String?                @map("drawing_issue_note")
+  importBatchId           String?                @map("import_batch_id")
+  sourceSheetName         String?                @map("source_sheet_name")
+  sourceRowNo             Int?                   @map("source_row_no")
+  planType                String?                @map("plan_type")
+  weekStartDate           DateTime?              @map("week_start_date")
+  weekEndDate             DateTime?              @map("week_end_date")
+  planActive              Boolean                @default(true) @map("plan_active")
+  planClearedAt           DateTime?              @map("plan_cleared_at")
+  planClearedBy           String?                @map("plan_cleared_by")
+  libraryKey              String?                @map("library_key")
+  drawingLibraryItemId    String?                @map("drawing_library_item_id")
+  productionOwner         String?                @map("production_owner")
   workstation             String?
-  completedQty            String?              @map("completed_qty")
-  startedAt               DateTime?            @map("started_at")
-  completedAt             DateTime?            @map("completed_at")
-  lastProgressAt          DateTime?            @map("last_progress_at")
-  latestProgressRemark    String?              @map("latest_progress_remark")
-  createdAt               DateTime             @default(now()) @map("created_at")
-  updatedAt               DateTime             @updatedAt @map("updated_at")
-  deletedAt               DateTime?            @map("deleted_at")
+  completedQty            String?                @map("completed_qty")
+  startedAt               DateTime?              @map("started_at")
+  completedAt             DateTime?              @map("completed_at")
+  lastProgressAt          DateTime?              @map("last_progress_at")
+  latestProgressRemark    String?                @map("latest_progress_remark")
+  createdAt               DateTime               @default(now()) @map("created_at")
+  updatedAt               DateTime               @updatedAt @map("updated_at")
+  deletedAt               DateTime?              @map("deleted_at")
   resourceFiles           ResourceFile[]
-  drawingLibraryItem      DrawingLibraryItem?  @relation("DrawingLibraryWorkOrders", fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
-  lastDrawingLibraryItems DrawingLibraryItem[] @relation("LastDrawingLibraryWorkOrder")
+  drawingLibraryItem      DrawingLibraryItem?    @relation("DrawingLibraryWorkOrders", fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
+  lastDrawingLibraryItems DrawingLibraryItem[]   @relation("LastDrawingLibraryWorkOrder")
   progressLogs            WorkOrderProgressLog[]
 
   @@index([code])
@@ -235,21 +235,22 @@ model OperationLog {
 }
 
 model ConnectorParameter {
-  id                String                         @id @default(cuid())
-  rowNo             Int?                           @map("row_no")
-  model             String?
-  outerPeelMm       String?                        @map("outer_peel_mm")
-  innerPeelMm       String?                        @map("inner_peel_mm")
-  insertionLengthMm String?                        @map("insertion_length_mm")
-  remark            String?
-  isHighlighted     Boolean                        @default(false) @map("is_highlighted")
-  createdBy         String?                        @map("created_by")
-  updatedBy         String?                        @map("updated_by")
-  createdAt         DateTime                       @default(now()) @map("created_at")
-  updatedAt         DateTime                       @updatedAt @map("updated_at")
-  deletedAt         DateTime?                      @map("deleted_at")
-  importBatchId     String?                        @map("import_batch_id")
-  importBatch       ConnectorParameterImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  id                     String                           @id @default(cuid())
+  rowNo                  Int?                             @map("row_no")
+  model                  String?
+  outerPeelMm            String?                          @map("outer_peel_mm")
+  innerPeelMm            String?                          @map("inner_peel_mm")
+  insertionLengthMm      String?                          @map("insertion_length_mm")
+  remark                 String?
+  isHighlighted          Boolean                          @default(false) @map("is_highlighted")
+  createdBy              String?                          @map("created_by")
+  updatedBy              String?                          @map("updated_by")
+  createdAt              DateTime                         @default(now()) @map("created_at")
+  updatedAt              DateTime                         @updatedAt @map("updated_at")
+  deletedAt              DateTime?                        @map("deleted_at")
+  importBatchId          String?                          @map("import_batch_id")
+  importBatch            ConnectorParameterImportBatch?   @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  assemblyManualBindings ConnectorAssemblyManualBinding[]
 
   @@index([rowNo])
   @@index([model])
@@ -258,6 +259,96 @@ model ConnectorParameter {
   @@index([createdAt])
   @@index([importBatchId])
   @@map("connector_parameters")
+}
+
+model ConnectorAssemblyManual {
+  id           String                           @id @default(cuid())
+  title        String
+  manufacturer String?
+  family       String?
+  documentNo   String?                          @map("document_no")
+  summary      String?
+  keywords     String?
+  createdBy    String?                          @map("created_by")
+  deletedAt    DateTime?                        @map("deleted_at")
+  createdAt    DateTime                         @default(now()) @map("created_at")
+  updatedAt    DateTime                         @updatedAt @map("updated_at")
+  versions     ConnectorAssemblyManualVersion[]
+  bindings     ConnectorAssemblyManualBinding[]
+
+  @@index([title])
+  @@index([manufacturer])
+  @@index([family])
+  @@index([documentNo])
+  @@index([deletedAt])
+  @@index([updatedAt])
+  @@map("connector_assembly_manuals")
+}
+
+model ConnectorAssemblyManualVersion {
+  id         String                         @id @default(cuid())
+  manualId   String                         @map("manual_id")
+  revision   String
+  issuedAt   DateTime?                      @map("issued_at")
+  pageCount  Int?                           @map("page_count")
+  fileMode   String                         @map("file_mode")
+  isLatest   Boolean                        @default(false) @map("is_latest")
+  status     String?
+  tocJson    Json?                          @map("toc_json")
+  searchText String?                        @map("search_text") @db.Text
+  remark     String?
+  createdBy  String?                        @map("created_by")
+  deletedAt  DateTime?                      @map("deleted_at")
+  createdAt  DateTime                       @default(now()) @map("created_at")
+  updatedAt  DateTime                       @updatedAt @map("updated_at")
+  manual     ConnectorAssemblyManual        @relation(fields: [manualId], references: [id], onDelete: Cascade)
+  assets     ConnectorAssemblyManualAsset[]
+
+  @@unique([manualId, revision])
+  @@index([manualId, deletedAt])
+  @@index([isLatest])
+  @@index([issuedAt])
+  @@index([deletedAt])
+  @@map("connector_assembly_manual_versions")
+}
+
+model ConnectorAssemblyManualAsset {
+  id           String                         @id @default(cuid())
+  versionId    String                         @map("version_id")
+  assetType    String                         @map("asset_type")
+  originalName String                         @map("original_name")
+  displayName  String?                        @map("display_name")
+  mimeType     String                         @map("mime_type")
+  size         Int
+  objectKey    String                         @map("object_key")
+  pageNo       Int?                           @map("page_no")
+  sortOrder    Int                            @default(0) @map("sort_order")
+  isPrimary    Boolean                        @default(false) @map("is_primary")
+  uploadedBy   String?                        @map("uploaded_by")
+  deletedAt    DateTime?                      @map("deleted_at")
+  createdAt    DateTime                       @default(now()) @map("created_at")
+  updatedAt    DateTime                       @updatedAt @map("updated_at")
+  version      ConnectorAssemblyManualVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+
+  @@index([versionId, deletedAt])
+  @@index([sortOrder])
+  @@index([objectKey])
+  @@index([deletedAt])
+  @@map("connector_assembly_manual_assets")
+}
+
+model ConnectorAssemblyManualBinding {
+  id                   String                  @id @default(cuid())
+  manualId             String                  @map("manual_id")
+  connectorParameterId String                  @map("connector_parameter_id")
+  createdAt            DateTime                @default(now()) @map("created_at")
+  manual               ConnectorAssemblyManual @relation(fields: [manualId], references: [id], onDelete: Cascade)
+  connectorParameter   ConnectorParameter      @relation(fields: [connectorParameterId], references: [id], onDelete: Cascade)
+
+  @@unique([manualId, connectorParameterId])
+  @@index([manualId])
+  @@index([connectorParameterId])
+  @@map("connector_assembly_manual_bindings")
 }
 
 model ConnectorParameterImportBatch {

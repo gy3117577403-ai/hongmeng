@@ -278,6 +278,7 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
           <a href="/dashboard">生产工单</a>
           <a href="/drawing-library">图纸资料库</a>
           <a href="/connector-parameters">连接器参数</a>
+          <a href="/connector-assembly-manuals">组装说明书</a>
         </nav>
         <div className="user-wrap">
           <button ref={userButtonRef} className="user-button" type="button" onClick={() => setUserMenu(value => !value)}>

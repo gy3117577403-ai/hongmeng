@@ -10,7 +10,7 @@ import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platform';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import { compressImageForUpload, normalizeCapturedImage } from '@/lib/image-client';
-import type { ChangeSnapshotDTO, ConnectorParameterDTO, CurrentUserDTO, DrawingLibraryItemDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
+import type { ChangeSnapshotDTO, ConnectorAssemblyManualDTO, ConnectorAssemblyManualSearchAssetDTO, ConnectorParameterDTO, CurrentUserDTO, DrawingLibraryItemDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
 type WorkOrderForm = {
   code: string;
@@ -154,6 +154,8 @@ type SearchResult = {
   drawingLibraryItems: DrawingLibraryItemDTO[];
   drawingLibraryFiles: SearchDrawingLibraryFile[];
   connectorParameters: ConnectorParameterDTO[];
+  connectorAssemblyManuals: ConnectorAssemblyManualDTO[];
+  connectorAssemblyManualAssets: ConnectorAssemblyManualSearchAssetDTO[];
 };
 type QuickMenu = { type: 'stage' | 'priority'; orderId: string; x: number; y: number } | null;
 type ToolTab = 'info' | 'upload' | 'actions' | 'queue';
@@ -178,6 +180,8 @@ const emptySearchResult: SearchResult = {
   drawingLibraryItems: [],
   drawingLibraryFiles: [],
   connectorParameters: [],
+  connectorAssemblyManuals: [],
+  connectorAssemblyManualAssets: [],
 };
 
 function dateParts(v: string | Date) {
@@ -266,7 +270,9 @@ function hasSearchResults(result: SearchResult) {
     || result.resourceFiles.length
     || result.drawingLibraryItems.length
     || result.drawingLibraryFiles.length
-    || result.connectorParameters.length;
+    || result.connectorParameters.length
+    || result.connectorAssemblyManuals.length
+    || result.connectorAssemblyManualAssets.length;
 }
 
 function fileExtOk(file: File) {
@@ -586,7 +592,7 @@ export default function DashboardShell({
   const [accountSaving, setAccountSaving] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [trash, setTrash] = useState<TrashDTO>({ workOrders: [], resourceFiles: [] });
-  const [trashTab, setTrashTab] = useState<'workOrders' | 'files'>('workOrders');
+  const [trashTab, setTrashTab] = useState<'workOrders' | 'files' | 'manuals' | 'manualVersions' | 'manualAssets'>('workOrders');
   const [helpOpen, setHelpOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState('');
@@ -749,6 +755,8 @@ export default function DashboardShell({
     if (params.get('openOrders') === '1') setDrawerOpen(true);
     if (params.get('openWeeklyImport') === '1') void openNextWeekImport();
     if (params.get('openSettings') === '1') void openSystemSettings();
+    if (params.get('openLogs') === '1') void loadLogs('all');
+    if (params.get('openTrash') === '1') void openTrash();
     loadFieldSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -765,9 +773,10 @@ export default function DashboardShell({
       setSearchOpen(false);
       return;
     }
+    const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       try {
-        const r = await fetch(`/api/search?keyword=${encodeURIComponent(text)}`, { cache: 'no-store' });
+        const r = await fetch(`/api/search?keyword=${encodeURIComponent(text)}`, { cache: 'no-store', signal: controller.signal });
         const d = await r.json().catch(() => ({}));
         if (r.ok) {
           const data = d.data || d;
@@ -777,14 +786,16 @@ export default function DashboardShell({
             drawingLibraryItems: Array.isArray(data.drawingLibraryItems) ? data.drawingLibraryItems : [],
             drawingLibraryFiles: Array.isArray(data.drawingLibraryFiles) ? data.drawingLibraryFiles : [],
             connectorParameters: Array.isArray(data.connectorParameters) ? data.connectorParameters : [],
+            connectorAssemblyManuals: Array.isArray(data.connectorAssemblyManuals) ? data.connectorAssemblyManuals : [],
+            connectorAssemblyManualAssets: Array.isArray(data.connectorAssemblyManualAssets) ? data.connectorAssemblyManualAssets : [],
           });
           setSearchOpen(true);
         }
-      } catch {
-        setMsg('全局搜索失败');
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'AbortError')) setMsg('全局搜索失败');
       }
     }, 300);
-    return () => window.clearTimeout(timer);
+    return () => { window.clearTimeout(timer); controller.abort(); };
   }, [globalKw]);
 
   function mergeOrder(next: WorkOrderDTO) {
@@ -949,6 +960,13 @@ export default function DashboardShell({
     const params = new URLSearchParams();
     if (globalKw.trim()) params.set('keyword', globalKw.trim());
     location.href = `/connector-parameters?${params.toString()}`;
+  }
+
+  function openConnectorAssemblyManualResult(manualId: string, versionId?: string, pageNo?: number | null) {
+    const params = new URLSearchParams({ manualId });
+    if (versionId) params.set('versionId', versionId);
+    if (pageNo) params.set('page', String(pageNo));
+    location.href = `/connector-assembly-manuals?${params.toString()}`;
   }
 
   function openQuickMenu(type: 'stage' | 'priority', target: WorkOrderDTO, event: React.MouseEvent<HTMLElement>) {
@@ -1126,7 +1144,13 @@ export default function DashboardShell({
         setMsg(d.error || d.message || '回收站加载失败');
         return;
       }
-      setTrash({ workOrders: d.workOrders || [], resourceFiles: d.resourceFiles || [] });
+      setTrash({
+        workOrders: d.workOrders || [],
+        resourceFiles: d.resourceFiles || [],
+        connectorAssemblyManuals: d.connectorAssemblyManuals || [],
+        connectorAssemblyManualVersions: d.connectorAssemblyManualVersions || [],
+        connectorAssemblyManualAssets: d.connectorAssemblyManualAssets || [],
+      });
     } catch {
       setMsg('回收站加载失败');
     }
@@ -1433,6 +1457,20 @@ export default function DashboardShell({
     } finally {
       setSyncing(false);
     }
+  }
+
+  async function restoreManualTrash(type: 'manual' | 'version' | 'asset', id: string) {
+    const url = type === 'manual' ? `/api/connector-assembly-manuals/${id}/restore`
+      : type === 'version' ? `/api/connector-assembly-manual-versions/${id}/restore`
+        : `/api/connector-assembly-manual-assets/${id}/restore`;
+    const r = await fetch(url, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      setMsg(d.error || '恢复说明书资料失败');
+      return;
+    }
+    await loadTrash();
+    setMsg('说明书资料已恢复');
   }
 
   async function syncCurrentWorkOrderToDrawingLibrary() {
@@ -2157,6 +2195,24 @@ export default function DashboardShell({
                   </button>
                 ))}
               </>}
+              {globalSearch.connectorAssemblyManuals.length > 0 && <>
+                <div className="search-group-title">连接器组装说明书</div>
+                {globalSearch.connectorAssemblyManuals.map(item => (
+                  <button key={item.id} type="button" onClick={() => openConnectorAssemblyManualResult(item.id, item.latestVersion?.id)}>
+                    <strong>{item.title}</strong>
+                    <span>{item.models.join(' / ') || '未关联型号'} · {item.manufacturer || '未设置制造商'} · {item.latestVersion?.revision || '暂无版本'}</span>
+                  </button>
+                ))}
+              </>}
+              {globalSearch.connectorAssemblyManualAssets.length > 0 && <>
+                <div className="search-group-title">说明书文件</div>
+                {globalSearch.connectorAssemblyManualAssets.map(item => (
+                  <button key={item.id} type="button" onClick={() => openConnectorAssemblyManualResult(item.manualId, item.versionId, item.pageNo)}>
+                    <strong>{safeDecodeFilename(item.displayName || item.originalName)}</strong>
+                    <span>{item.manualTitle} · {item.revision} · {item.models.join(' / ') || '未关联型号'}</span>
+                  </button>
+                ))}
+              </>}
               {!hasSearchResults(globalSearch) && <div className="search-empty">未找到匹配结果，请调整关键词</div>}
             </div>
           )}
@@ -2171,6 +2227,7 @@ export default function DashboardShell({
                 <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
                 <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
                 <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
+                <button type="button" onClick={() => { location.href = '/connector-assembly-manuals'; }}>连接器组装说明书</button>
                 <button className="active" type="button">▤ 生产工单 ✓</button>
             </PortalMenu>
           </div>
@@ -2697,6 +2754,7 @@ export default function DashboardShell({
           setTab={setTrashTab}
           restoreWorkOrder={restoreWorkOrder}
           restoreFile={restoreFile}
+          restoreManualTrash={restoreManualTrash}
         />
       )}
 
@@ -3320,13 +3378,15 @@ function TrashDialog({
   setTab,
   restoreWorkOrder,
   restoreFile,
+  restoreManualTrash,
 }: {
   trash: TrashDTO;
-  tab: 'workOrders' | 'files';
+  tab: 'workOrders' | 'files' | 'manuals' | 'manualVersions' | 'manualAssets';
   close: () => void;
-  setTab: (tab: 'workOrders' | 'files') => void;
+  setTab: (tab: 'workOrders' | 'files' | 'manuals' | 'manualVersions' | 'manualAssets') => void;
   restoreWorkOrder: (id: string) => void;
   restoreFile: (id: string) => void;
+  restoreManualTrash: (type: 'manual' | 'version' | 'asset', id: string) => void;
 }) {
   return (
     <div className="modal-backdrop" role="presentation">
@@ -3338,6 +3398,9 @@ function TrashDialog({
         <div className="trash-tabs">
           <button className={tab === 'workOrders' ? 'active' : ''} type="button" onClick={() => setTab('workOrders')}>工单</button>
           <button className={tab === 'files' ? 'active' : ''} type="button" onClick={() => setTab('files')}>文件</button>
+          <button className={tab === 'manuals' ? 'active' : ''} type="button" onClick={() => setTab('manuals')}>说明书</button>
+          <button className={tab === 'manualVersions' ? 'active' : ''} type="button" onClick={() => setTab('manualVersions')}>说明书版本</button>
+          <button className={tab === 'manualAssets' ? 'active' : ''} type="button" onClick={() => setTab('manualAssets')}>说明书文件</button>
         </div>
         {tab === 'workOrders' ? (
           <div className="compact-table trash-table">
@@ -3352,7 +3415,7 @@ function TrashDialog({
             ))}
             {!trash.workOrders.length && <div className="empty-list">暂无已删除工单</div>}
           </div>
-        ) : (
+        ) : tab === 'files' ? (
           <div className="compact-table trash-table files">
             <div className="compact-head"><span>文件名</span><span>所属工单</span><span>分类</span><span>版本</span><span>删除时间</span><span>操作</span></div>
             {trash.resourceFiles.map(item => (
@@ -3366,6 +3429,24 @@ function TrashDialog({
               </div>
             ))}
             {!trash.resourceFiles.length && <div className="empty-list">暂无已删除文件</div>}
+          </div>
+        ) : tab === 'manuals' ? (
+          <div className="compact-table trash-table">
+            <div className="compact-head"><span>说明书名称</span><span>制造商</span><span>删除时间</span><span>操作</span></div>
+            {(trash.connectorAssemblyManuals || []).map(item => <div className="compact-row" key={item.id}><span>{item.title}</span><span>{item.manufacturer || '-'}</span><span>{item.deletedAt ? dt(item.deletedAt) : '-'}</span><span><button type="button" onClick={() => restoreManualTrash('manual', item.id)}>恢复</button></span></div>)}
+            {!(trash.connectorAssemblyManuals || []).length && <div className="empty-list">暂无已删除说明书</div>}
+          </div>
+        ) : tab === 'manualVersions' ? (
+          <div className="compact-table trash-table">
+            <div className="compact-head"><span>说明书名称</span><span>版本</span><span>删除时间</span><span>操作</span></div>
+            {(trash.connectorAssemblyManualVersions || []).map(item => <div className="compact-row" key={item.id}><span>{item.manualTitle}</span><span>{item.revision}</span><span>{item.deletedAt ? dt(item.deletedAt) : '-'}</span><span><button type="button" onClick={() => restoreManualTrash('version', item.id)}>恢复</button></span></div>)}
+            {!(trash.connectorAssemblyManualVersions || []).length && <div className="empty-list">暂无已删除说明书版本</div>}
+          </div>
+        ) : (
+          <div className="compact-table trash-table">
+            <div className="compact-head"><span>说明书名称</span><span>文件名</span><span>删除时间</span><span>操作</span></div>
+            {(trash.connectorAssemblyManualAssets || []).map(item => <div className="compact-row" key={item.id}><span>{item.manualTitle}</span><span>{item.displayName || item.originalName}</span><span>{item.deletedAt ? dt(item.deletedAt) : '-'}</span><span><button type="button" onClick={() => restoreManualTrash('asset', item.id)}>恢复</button></span></div>)}
+            {!(trash.connectorAssemblyManualAssets || []).length && <div className="empty-list">暂无已删除说明书文件</div>}
           </div>
         )}
       </section>

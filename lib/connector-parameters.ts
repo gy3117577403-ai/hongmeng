@@ -127,7 +127,7 @@ export function parseConnectorParameterInput(input: ConnectorParameterInput, opt
   return { data, errors, empty: !rowHasValue };
 }
 
-export function serializeConnectorParameter(item: ConnectorParameter) {
+export function serializeConnectorParameter(item: ConnectorParameter & { _count?: { assemblyManualBindings?: number } }) {
   return {
     id: item.id,
     rowNo: item.rowNo,
@@ -143,6 +143,7 @@ export function serializeConnectorParameter(item: ConnectorParameter) {
     updatedAt: item.updatedAt.toISOString(),
     deletedAt: item.deletedAt?.toISOString() || null,
     importBatchId: item.importBatchId || null,
+    manualCount: item._count?.assemblyManualBindings || 0,
   };
 }
 

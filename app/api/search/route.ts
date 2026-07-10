@@ -5,6 +5,7 @@ import { serializeDrawingLibraryItem } from '@/lib/drawing-library';
 import { serializeResourceFile } from '@/lib/resource-files';
 import { prisma } from '@/lib/prisma';
 import { serializeWorkOrder } from '@/lib/work-orders';
+import { serializeManual } from '@/lib/connector-assembly-manuals';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,11 +15,11 @@ export async function GET(req: NextRequest) {
     await requireUser();
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim();
     if (!keyword) {
-      const empty = { keyword, workOrders: [], resourceFiles: [], drawingLibraryItems: [], drawingLibraryFiles: [], connectorParameters: [] };
+      const empty = { keyword, workOrders: [], resourceFiles: [], drawingLibraryItems: [], drawingLibraryFiles: [], connectorParameters: [], connectorAssemblyManuals: [], connectorAssemblyManualAssets: [] };
       return NextResponse.json({ ok: true, data: empty, ...empty });
     }
 
-    const [workOrders, resourceFiles, drawingCategories, drawingLibraryItems, drawingLibraryFiles, connectorParameters] = await Promise.all([
+    const [workOrders, resourceFiles, drawingCategories, drawingLibraryItems, drawingLibraryFiles, connectorParameters, connectorAssemblyManuals, connectorAssemblyManualAssets] = await Promise.all([
       prisma.workOrder.findMany({
         where: {
           deletedAt: null,
@@ -117,8 +118,46 @@ export async function GET(req: NextRequest) {
             { remark: { contains: keyword, mode: 'insensitive' } },
           ],
         },
+        include: { _count: { select: { assemblyManualBindings: { where: { manual: { deletedAt: null } } } } } },
         orderBy: [{ updatedAt: 'desc' }],
         take: 12,
+      }),
+      prisma.connectorAssemblyManual.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { title: { contains: keyword, mode: 'insensitive' } },
+            { manufacturer: { contains: keyword, mode: 'insensitive' } },
+            { family: { contains: keyword, mode: 'insensitive' } },
+            { documentNo: { contains: keyword, mode: 'insensitive' } },
+            { summary: { contains: keyword, mode: 'insensitive' } },
+            { keywords: { contains: keyword, mode: 'insensitive' } },
+            { versions: { some: { deletedAt: null, OR: [{ revision: { contains: keyword, mode: 'insensitive' } }, { searchText: { contains: keyword, mode: 'insensitive' } }] } } },
+            { bindings: { some: { connectorParameter: { deletedAt: null, model: { contains: keyword, mode: 'insensitive' } } } } },
+          ],
+        },
+        include: {
+          versions: { where: { deletedAt: null }, include: { assets: { where: { deletedAt: null }, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] } }, orderBy: [{ isLatest: 'desc' }, { issuedAt: 'desc' }, { createdAt: 'desc' }] },
+          bindings: { where: { connectorParameter: { deletedAt: null } }, include: { connectorParameter: true }, orderBy: { createdAt: 'asc' } },
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 10,
+      }),
+      prisma.connectorAssemblyManualAsset.findMany({
+        where: {
+          deletedAt: null,
+          OR: [{ originalName: { contains: keyword, mode: 'insensitive' } }, { displayName: { contains: keyword, mode: 'insensitive' } }],
+          version: { deletedAt: null, manual: { deletedAt: null } },
+        },
+        include: {
+          version: {
+            include: {
+              manual: { include: { bindings: { where: { connectorParameter: { deletedAt: null } }, include: { connectorParameter: { select: { model: true } } } } } },
+            },
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 10,
       }),
     ]);
 
@@ -150,6 +189,19 @@ export async function GET(req: NextRequest) {
         },
       })),
       connectorParameters: connectorParameters.map(serializeConnectorParameter),
+      connectorAssemblyManuals: connectorAssemblyManuals.map(serializeManual),
+      connectorAssemblyManualAssets: connectorAssemblyManualAssets.map(asset => ({
+        id: asset.id,
+        manualId: asset.version.manual.id,
+        versionId: asset.version.id,
+        manualTitle: asset.version.manual.title,
+        revision: asset.version.revision,
+        originalName: asset.originalName,
+        displayName: asset.displayName,
+        assetType: asset.assetType,
+        pageNo: asset.pageNo,
+        models: asset.version.manual.bindings.map(binding => binding.connectorParameter.model || '').filter(Boolean),
+      })),
     };
 
     return NextResponse.json({

@@ -385,6 +385,7 @@ export function DrawingLibraryShell({
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产工单</button>
                 <button className="active" type="button">图纸资料库 ✓</button>
                 <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
+                <button type="button" onClick={() => { location.href = '/connector-assembly-manuals'; }}>连接器组装说明书</button>
             </PortalMenu>
           </div>
           <div className="user-wrap">

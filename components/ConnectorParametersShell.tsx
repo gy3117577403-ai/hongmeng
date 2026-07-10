@@ -235,8 +235,14 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   }
 
   useEffect(() => {
-    const targetKeyword = new URLSearchParams(window.location.search).get('keyword') || '';
+    const params = new URLSearchParams(window.location.search);
+    const targetKeyword = params.get('keyword') || '';
     if (targetKeyword) setKeyword(targetKeyword);
+    if (params.get('openFiles') === '1') setFileDrawerOpen(true);
+    if (params.get('openBatches') === '1') {
+      setBatchDrawerOpen(true);
+      void loadImportBatches();
+    }
   }, []);
 
   useEffect(() => {
@@ -582,6 +588,11 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     await writeClipboardText(text);
   }
 
+  function openManuals(item: ConnectorParameterDTO) {
+    if (!item.manualCount || !item.model) return;
+    location.href = `/connector-assembly-manuals?model=${encodeURIComponent(item.model)}`;
+  }
+
   async function copyParameter(item: ConnectorParameterDTO) {
     const text = [
       `型号：${blank(item.model)}`,
@@ -669,6 +680,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                 <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产工单</button>
                 <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
+                <button type="button" onClick={() => { location.href = '/connector-assembly-manuals'; }}>连接器组装说明书</button>
                 <button className="active" type="button">连接器参数资料 ✓</button>
             </PortalMenu>
           </div>
@@ -686,6 +698,12 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
       </header>
 
       <section className="connector-shell">
+        <nav className="manual-module-tabs connector-library-tabs" aria-label="连接器资料库模块">
+          <a className="active" href="/connector-parameters">连接器参数</a>
+          <a href="/connector-assembly-manuals">组装说明书</a>
+          <a href="/connector-parameters?openFiles=1">原始资料附件</a>
+          <a href="/connector-parameters?openBatches=1">导入批次</a>
+        </nav>
         <div className="connector-hero">
           <div>
             <span>参数资料</span>
@@ -770,6 +788,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                     <th>备注</th>
                     <th>重点</th>
                     <th>更新时间</th>
+                    <th>说明书</th>
                     <th>操作</th>
                   </tr>
                 </thead>
@@ -785,6 +804,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                       <td className="remark-cell">{highlightText(item.remark)}</td>
                       <td>{item.isHighlighted ? <span className="connector-highlight-tag">重点</span> : ''}</td>
                       <td>{dt(item.updatedAt)}</td>
+                      <td><button className="connector-manual-count" type="button" disabled={!item.manualCount} onClick={() => openManuals(item)}>{item.manualCount ? `说明书 ${item.manualCount}` : '暂无说明书'}</button></td>
                       <td>
                         <div className="connector-row-actions">
                           <button type="button" onClick={() => openModal('edit', item)}>编辑</button>
@@ -811,7 +831,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                   ))}
                   {!items.length && (
                     <tr>
-                      <td colSpan={10}>
+                      <td colSpan={11}>
                         <div className="connector-empty-state">
                           <strong>未找到连接器参数</strong>
                           <p>可以清空搜索条件，或通过新增参数、导入 Excel / CSV、粘贴导入来补充资料。</p>

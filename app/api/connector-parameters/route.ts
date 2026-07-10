@@ -79,6 +79,7 @@ export async function GET(req: NextRequest) {
       prisma.connectorParameter.count({ where }),
       prisma.connectorParameter.findMany({
         where,
+        include: { _count: { select: { assemblyManualBindings: { where: { manual: { deletedAt: null } } } } } },
         orderBy: orderBy(req.nextUrl.searchParams.get('sort') || ''),
         skip: (page - 1) * pageSize,
         take: pageSize,

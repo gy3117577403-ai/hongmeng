@@ -422,6 +422,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           <a href="/weekly-plan-center">周计划</a>
           <a href="/drawing-library">图纸资料库</a>
           <a href="/connector-parameters">连接器参数</a>
+          <a href="/connector-assembly-manuals">组装说明书</a>
           <a href="/dashboard?openSettings=1">系统设置</a>
         </nav>
         <div className="user-wrap">

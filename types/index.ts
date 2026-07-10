@@ -169,6 +169,9 @@ export type FieldSummaryDTO = {
 export type TrashDTO = {
   workOrders: WorkOrderDTO[];
   resourceFiles: ResourceFileDTO[];
+  connectorAssemblyManuals?: ConnectorAssemblyManualDTO[];
+  connectorAssemblyManualVersions?: ConnectorAssemblyManualTrashVersionDTO[];
+  connectorAssemblyManualAssets?: ConnectorAssemblyManualTrashAssetDTO[];
 };
 
 export type ConnectorParameterDTO = {
@@ -186,6 +189,99 @@ export type ConnectorParameterDTO = {
   updatedAt: string;
   deletedAt?: string | null;
   importBatchId?: string | null;
+  manualCount?: number;
+};
+
+export type ConnectorAssemblyManualTocDTO = {
+  title: string;
+  pageStart: number;
+  pageEnd: number;
+};
+
+export type ConnectorAssemblyManualAssetDTO = {
+  id: string;
+  versionId: string;
+  assetType: 'PDF' | 'IMAGE';
+  originalName: string;
+  displayName?: string | null;
+  mimeType: string;
+  size: number;
+  pageNo?: number | null;
+  sortOrder: number;
+  isPrimary: boolean;
+  uploadedBy?: string | null;
+  deletedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  contentUrl: string;
+  downloadUrl: string;
+};
+
+export type ConnectorAssemblyManualVersionDTO = {
+  id: string;
+  manualId: string;
+  revision: string;
+  issuedAt?: string | null;
+  pageCount?: number | null;
+  fileMode: 'PDF' | 'IMAGE_SET';
+  isLatest: boolean;
+  status?: string | null;
+  tocJson: ConnectorAssemblyManualTocDTO[];
+  remark?: string | null;
+  createdBy?: string | null;
+  deletedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  assets: ConnectorAssemblyManualAssetDTO[];
+};
+
+export type ConnectorAssemblyManualBindingDTO = {
+  id: string;
+  model?: string | null;
+  rowNo?: number | null;
+  remark?: string | null;
+};
+
+export type ConnectorAssemblyManualDTO = {
+  id: string;
+  title: string;
+  manufacturer?: string | null;
+  family?: string | null;
+  documentNo?: string | null;
+  summary?: string | null;
+  keywords?: string | null;
+  createdBy?: string | null;
+  deletedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  versions: ConnectorAssemblyManualVersionDTO[];
+  latestVersion?: ConnectorAssemblyManualVersionDTO | null;
+  models: string[];
+  versionCount: number;
+  bindingCount: number;
+  bindings: ConnectorAssemblyManualBindingDTO[];
+};
+
+export type ConnectorAssemblyManualSearchAssetDTO = {
+  id: string;
+  manualId: string;
+  versionId: string;
+  manualTitle: string;
+  revision: string;
+  originalName: string;
+  displayName?: string | null;
+  assetType: 'PDF' | 'IMAGE';
+  pageNo?: number | null;
+  models: string[];
+};
+
+export type ConnectorAssemblyManualTrashVersionDTO = ConnectorAssemblyManualVersionDTO & {
+  manualTitle: string;
+};
+
+export type ConnectorAssemblyManualTrashAssetDTO = ConnectorAssemblyManualAssetDTO & {
+  manualTitle: string;
+  revision: string;
 };
 
 export type ConnectorParameterFileDTO = {

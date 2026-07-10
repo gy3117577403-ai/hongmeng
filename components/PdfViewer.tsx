@@ -33,12 +33,16 @@ export function PdfViewer({
   contentUrl,
   downloadUrl,
   viewUrl,
+  page,
+  onPageChange,
 }: {
   fileId: string;
   title: string;
   contentUrl?: string;
   downloadUrl?: string;
   viewUrl?: string;
+  page?: number;
+  onPageChange?: (page: number) => void;
 }) {
   const [fullscreen, setFullscreen] = useState(false);
   const source = contentUrl || `/api/resource-files/${fileId}/content`;
@@ -47,10 +51,10 @@ export function PdfViewer({
 
   return (
     <>
-      <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} onFullscreen={() => setFullscreen(true)} />
+      <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page} onPageChange={onPageChange} onFullscreen={() => setFullscreen(true)} />
       {fullscreen && (
         <PreviewModal title={title} onClose={() => setFullscreen(false)}>
-          <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} fullscreen onClose={() => setFullscreen(false)} />
+          <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page} onPageChange={onPageChange} fullscreen onClose={() => setFullscreen(false)} />
         </PreviewModal>
       )}
     </>
@@ -65,6 +69,8 @@ function PdfCanvas({
   fullscreen = false,
   onFullscreen,
   onClose,
+  requestedPage,
+  onPageChange,
 }: {
   source: string;
   title: string;
@@ -73,6 +79,8 @@ function PdfCanvas({
   fullscreen?: boolean;
   onFullscreen?: () => void;
   onClose?: () => void;
+  requestedPage?: number;
+  onPageChange?: (page: number) => void;
 }) {
   const shellRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -148,6 +156,12 @@ function PdfCanvas({
   }, [source, reloadKey]);
 
   useEffect(() => {
+    if (!pageCount || requestedPage === undefined) return;
+    const nextPage = Math.max(1, Math.min(pageCount, Math.floor(requestedPage)));
+    setPageNo(nextPage);
+  }, [pageCount, requestedPage]);
+
+  useEffect(() => {
     if (!loading) {
       setSlowLoading(false);
       return undefined;
@@ -186,6 +200,8 @@ function PdfCanvas({
         const task = page.render({ canvasContext: context, viewport });
         renderTaskRef.current = task;
         await task.promise;
+        const nearby = [pageNo - 1, pageNo + 1].filter(value => value >= 1 && value <= doc.numPages);
+        await Promise.all(nearby.map(value => doc.getPage(value).catch(() => null)));
       } catch (e) {
         if (alive && !(e instanceof Error && e.name === 'RenderingCancelledException')) {
           setError(pdfError(e, 'PDF 渲染失败，请重新加载，或下载原文件查看'));
@@ -210,6 +226,13 @@ function PdfCanvas({
     setRotation(value => (value + delta + 360) % 360);
   }
 
+  function goToPage(value: number) {
+    if (!pageCount) return;
+    const nextPage = Math.max(1, Math.min(pageCount, Math.floor(value)));
+    setPageNo(nextPage);
+    onPageChange?.(nextPage);
+  }
+
   function openSystem() {
     window.location.assign(viewUrl || downloadUrl || source);
   }
@@ -222,9 +245,12 @@ function PdfCanvas({
           <strong>{title}</strong>
         </div>
         <div className="viewer-controls">
-          <button type="button" disabled={pageNo <= 1 || loading} onClick={() => setPageNo(v => Math.max(1, v - 1))}>上一页</button>
-          <span className="page-indicator">{pageCount ? `${pageNo}/${pageCount}` : '-'}</span>
-          <button type="button" disabled={!pageCount || pageNo >= pageCount || loading} onClick={() => setPageNo(v => Math.min(pageCount, v + 1))}>下一页</button>
+          <button type="button" disabled={pageNo <= 1 || loading} onClick={() => goToPage(pageNo - 1)}>上一页</button>
+          <label className="page-jump" title="输入页码跳转">
+            <input aria-label="PDF 页码" type="number" min={1} max={pageCount || 1} value={pageNo} disabled={!pageCount || loading} onChange={event => goToPage(Number(event.target.value || 1))} />
+            <span>/ {pageCount || '-'}</span>
+          </label>
+          <button type="button" disabled={!pageCount || pageNo >= pageCount || loading} onClick={() => goToPage(pageNo + 1)}>下一页</button>
           <button type="button" disabled={loading} onClick={() => zoom(-0.15)}>-</button>
           <button type="button" disabled={loading} onClick={() => zoom(0.15)}>+</button>
           <button type="button" disabled={loading} onClick={() => rotate(-90)}>左旋</button>

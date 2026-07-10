@@ -26,6 +26,7 @@
 - 文件版本显示、文件信息编辑、跨分类 / 跨工单移动
 - 网页版拍照上传、浏览器语音输入
 - 连接器参数资料、Excel / CSV 导入预览、导入批次回滚
+- 连接器组装说明书资料库：PDF / 多图、版本历史、章节跳页、全文搜索和适用型号关联
 - 原始资料附件上传 / 下载 / 删除
 - 操作日志、回收站、数据变更快照、生产稳定中心
 - PWA、系统设置、数据导出、打印摘要、错误页
@@ -106,6 +107,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.14.5-drawing-library-workspace-redesign：图纸资料库重排为客户 / 规格 / 预览优先工作台，左侧规格列表压缩、详情标题压缩、右侧文件列表独立；新增异常数据筛选和异常审计脚本，批量原图导入不再把日期型文件名识别为规格。该版本为待部署候选，不代表生产已上线。
 - v1.14.6-weekly-workorder-center：生产工单抽屉重排为周计划工单中心，新增当前周 / 下周草稿 / 历史周视图；“导入下周”默认保存草稿，“结束本周”改为归档当前周并使用 `CLOSE_WEEK` 确认，“启用下周”使用 `START_NEXT_WEEK` 确认；工单卡片移除进度条，只保留规格、客户、品名、未交、交期、图纸、配料和资料完整性。该版本为待部署候选，不代表生产已上线。
 - v1.14.7-weekly-plan-diff-center：新增周计划差异中心，服务端按稳定键对比当前周与下周草稿，支持新增 / 延续 / 变更 / 下周取消、重复和异常审核、字段级前后值、图纸资料联动、启用前阻断门禁、历史周只读查看和差异 CSV；周计划导入固定先保存草稿，不直接覆盖当前周。该版本为待部署候选，不代表生产已上线。
+- v1.16.0-connector-assembly-manual-library：连接器资料库新增组装说明书分支，支持 PDF / 多图说明书、版本历史、章节目录跳页、PDF 正文搜索、适用型号多对多关联、三级软删除恢复和操作日志。该版本为本地验证候选，尚未部署 Sealos。
 
 ## 交付文档索引
 
@@ -114,6 +116,8 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [现场使用指南 v1.6.0](docs/FIELD_USE_GUIDE_v1.6.0.md)
 - [拍照与语音输入说明 v1.9.0](docs/CAMERA_VOICE_GUIDE_v1.9.0.md)
 - [连接器参数资料指南 v1.10.0](docs/CONNECTOR_PARAMETERS_GUIDE_v1.10.0.md)
+- [连接器组装说明书资料库指南](docs/CONNECTOR_ASSEMBLY_MANUAL_GUIDE.md)
+- [连接器组装说明书资料库 QA](docs/QA_CONNECTOR_ASSEMBLY_MANUAL_LIBRARY.md)
 - [图纸资料库使用说明](docs/DRAWING_LIBRARY_GUIDE.md)
 - [图纸资料库同步说明](docs/DRAWING_LIBRARY_SYNC_GUIDE.md)
 - [本地图纸原图批量导入指南](docs/BULK_ORIGINAL_DRAWING_IMPORT_GUIDE.md)
