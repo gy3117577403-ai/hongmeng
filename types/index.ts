@@ -291,6 +291,19 @@ export type ConnectorAssemblyManualTrashAssetDTO = ConnectorAssemblyManualAssetD
 
 export type ConnectorManualBulkAction = 'create_manual' | 'create_version' | 'duplicate' | 'conflict' | 'invalid' | 'manual_review' | 'skip';
 
+export type ConnectorManualMetadataConfidence = 'confirmed' | 'detected' | 'needs_review';
+
+export type ConnectorManualMetadataConfidenceDTO = {
+  defaultTitle: ConnectorManualMetadataConfidence;
+  detectedTitle: ConnectorManualMetadataConfidence;
+  manufacturer: ConnectorManualMetadataConfidence;
+  family: ConnectorManualMetadataConfidence;
+  revision: ConnectorManualMetadataConfidence;
+  issuedAt: ConnectorManualMetadataConfidence;
+  models: ConnectorManualMetadataConfidence;
+  chapters: ConnectorManualMetadataConfidence;
+};
+
 export type ConnectorManualBulkAssetInputDTO = {
   fileName: string;
   relativePath: string;
@@ -315,6 +328,7 @@ export type ConnectorManualBulkCandidateDTO = {
   modelCandidates: string[];
   keywordCandidates: string[];
   chapterCandidates: ConnectorAssemblyManualTocDTO[];
+  metadataConfidence: ConnectorManualMetadataConfidenceDTO;
   pageCount: number;
   hash: string;
   parseFailed: boolean;

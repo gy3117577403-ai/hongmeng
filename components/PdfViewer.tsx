@@ -35,6 +35,7 @@ export function PdfViewer({
   viewUrl,
   page,
   onPageChange,
+  readingMode = false,
 }: {
   fileId: string;
   title: string;
@@ -43,6 +44,7 @@ export function PdfViewer({
   viewUrl?: string;
   page?: number;
   onPageChange?: (page: number) => void;
+  readingMode?: boolean;
 }) {
   const [fullscreen, setFullscreen] = useState(false);
   const source = contentUrl || `/api/resource-files/${fileId}/content`;
@@ -51,10 +53,10 @@ export function PdfViewer({
 
   return (
     <>
-      <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page} onPageChange={onPageChange} onFullscreen={() => setFullscreen(true)} />
+      <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page} onPageChange={onPageChange} readingMode={readingMode} onFullscreen={() => setFullscreen(true)} />
       {fullscreen && (
         <PreviewModal title={title} onClose={() => setFullscreen(false)}>
-          <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page} onPageChange={onPageChange} fullscreen onClose={() => setFullscreen(false)} />
+          <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page} onPageChange={onPageChange} readingMode={readingMode} fullscreen onClose={() => setFullscreen(false)} />
         </PreviewModal>
       )}
     </>
@@ -71,6 +73,7 @@ function PdfCanvas({
   onClose,
   requestedPage,
   onPageChange,
+  readingMode = false,
 }: {
   source: string;
   title: string;
@@ -81,6 +84,7 @@ function PdfCanvas({
   onClose?: () => void;
   requestedPage?: number;
   onPageChange?: (page: number) => void;
+  readingMode?: boolean;
 }) {
   const shellRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -238,7 +242,7 @@ function PdfCanvas({
   }
 
   return (
-    <div className={fullscreen ? 'pdf-viewer fullscreen-viewer' : 'pdf-viewer'}>
+    <div className={`${fullscreen ? 'pdf-viewer fullscreen-viewer' : 'pdf-viewer'}${readingMode ? ' reading-viewer' : ''}`}>
       <div className="viewer-toolbar pdf-toolbar">
         <div className="viewer-title" title={title}>
           <span>PDF</span>
@@ -246,21 +250,17 @@ function PdfCanvas({
         </div>
         <div className="viewer-controls">
           <button type="button" disabled={pageNo <= 1 || loading} onClick={() => goToPage(pageNo - 1)}>上一页</button>
-          <label className="page-jump" title="输入页码跳转">
-            <input aria-label="PDF 页码" type="number" min={1} max={pageCount || 1} value={pageNo} disabled={!pageCount || loading} onChange={event => goToPage(Number(event.target.value || 1))} />
-            <span>/ {pageCount || '-'}</span>
-          </label>
+          <label className="page-jump" title="输入页码跳转"><input aria-label="PDF 页码" type="number" min={1} max={pageCount || 1} value={pageNo} disabled={!pageCount || loading} onChange={event => goToPage(Number(event.target.value || 1))} /><span>/ {pageCount || '-'}</span></label>
           <button type="button" disabled={!pageCount || pageNo >= pageCount || loading} onClick={() => goToPage(pageNo + 1)}>下一页</button>
-          <button type="button" disabled={loading} onClick={() => zoom(-0.15)}>-</button>
-          <button type="button" disabled={loading} onClick={() => zoom(0.15)}>+</button>
+          <button type="button" disabled={loading} onClick={() => zoom(-0.15)} title="缩小">−</button>
+          <button type="button" disabled={loading} onClick={() => zoom(0.15)} title="放大">＋</button>
+          <button type="button" disabled={loading} onClick={() => setFitMode('page')}>适应窗口</button>
           <button type="button" disabled={loading} onClick={() => rotate(-90)}>左旋</button>
           <button type="button" disabled={loading} onClick={() => rotate(90)}>右旋</button>
-          <button type="button" disabled={loading || rotation === 0} onClick={() => setRotation(0)}>重置</button>
-          <button type="button" disabled={loading} onClick={() => setFitMode('page')}>适应窗口</button>
-          <button type="button" disabled={loading} onClick={() => setFitMode('width')}>适宽</button>
-          <button type="button" disabled={loading} onClick={() => setFitMode('page')}>整页</button>
-          <button type="button" disabled={loading} onClick={() => { setFitMode('original'); setScale(1); }}>原始大小</button>
           {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>}
+          {readingMode ? (
+            <details className="viewer-more"><summary>更多</summary><div><button type="button" disabled={loading} onClick={() => setFitMode('width')}>适宽</button><button type="button" disabled={loading} onClick={() => setFitMode('page')}>整页</button><button type="button" disabled={loading} onClick={() => { setFitMode('original'); setScale(1); }}>原始大小</button><button type="button" disabled={loading || rotation === 0} onClick={() => setRotation(0)}>重置旋转</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载</a><button type="button" onClick={openSystem}>系统打开</button></div></details>
+          ) : <><button type="button" disabled={loading || rotation === 0} onClick={() => setRotation(0)}>重置</button><button type="button" disabled={loading} onClick={() => setFitMode('width')}>适宽</button><button type="button" disabled={loading} onClick={() => setFitMode('page')}>整页</button><button type="button" disabled={loading} onClick={() => { setFitMode('original'); setScale(1); }}>原始大小</button></>}
         </div>
       </div>
       <div className="viewer-stage pdf-stage" ref={shellRef}>

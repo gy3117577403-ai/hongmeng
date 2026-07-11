@@ -7,6 +7,7 @@ import type {
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { sanitizeConnectorManualManufacturer } from '@/lib/connector-manual-parser';
 import { safeFilename } from '@/lib/validation';
 
 export const MANUAL_FILE_MODES = ['PDF', 'IMAGE_SET'] as const;
@@ -82,7 +83,7 @@ export function parseManualInput(input: ManualInput, options: { partial?: boolea
   } = {};
 
   if (!partial || input.title !== undefined) data.title = requiredText(input.title, '说明书名称', 240, errors);
-  if (!partial || input.manufacturer !== undefined) data.manufacturer = optionalText(input.manufacturer, 160);
+  if (!partial || input.manufacturer !== undefined) data.manufacturer = optionalText(sanitizeConnectorManualManufacturer(String(input.manufacturer ?? '')), 160);
   if (!partial || input.family !== undefined) data.family = optionalText(input.family, 160);
   if (!partial || input.documentNo !== undefined) data.documentNo = optionalText(input.documentNo, 160);
   if (!partial || input.summary !== undefined) data.summary = optionalText(input.summary, 2000);

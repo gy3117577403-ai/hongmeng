@@ -5,17 +5,17 @@ import { PreviewModal } from '@/components/PdfViewer';
 
 type ImageMode = 'fit' | 'original' | 'zoom';
 
-export function ImageViewer({ fileId, title, contentUrl, downloadUrl }: { fileId: string; title: string; contentUrl?: string; downloadUrl?: string }) {
+export function ImageViewer({ fileId, title, contentUrl, downloadUrl, readingMode = false }: { fileId: string; title: string; contentUrl?: string; downloadUrl?: string; readingMode?: boolean }) {
   const [fullscreen, setFullscreen] = useState(false);
   const source = contentUrl || `/api/resource-files/${fileId}/content`;
   const fallbackDownloadUrl = downloadUrl || `/api/resource-files/${fileId}/download`;
 
   return (
     <>
-      <ImageCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} onFullscreen={() => setFullscreen(true)} />
+      <ImageCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} readingMode={readingMode} onFullscreen={() => setFullscreen(true)} />
       {fullscreen && (
         <PreviewModal title={title} onClose={() => setFullscreen(false)}>
-          <ImageCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} fullscreen onClose={() => setFullscreen(false)} />
+          <ImageCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} readingMode={readingMode} fullscreen onClose={() => setFullscreen(false)} />
         </PreviewModal>
       )}
     </>
@@ -29,6 +29,7 @@ function ImageCanvas({
   fullscreen = false,
   onFullscreen,
   onClose,
+  readingMode = false,
 }: {
   source: string;
   title: string;
@@ -36,6 +37,7 @@ function ImageCanvas({
   fullscreen?: boolean;
   onFullscreen?: () => void;
   onClose?: () => void;
+  readingMode?: boolean;
 }) {
   const [mode, setMode] = useState<ImageMode>('fit');
   const [zoom, setZoom] = useState(1);
@@ -67,21 +69,20 @@ function ImageCanvas({
   const imageTransform = transformParts.join(' ');
 
   return (
-    <div className={fullscreen ? 'image-viewer fullscreen-viewer' : 'image-viewer'}>
+    <div className={`${fullscreen ? 'image-viewer fullscreen-viewer' : 'image-viewer'}${readingMode ? ' reading-viewer' : ''}`}>
       <div className="viewer-toolbar image-toolbar">
         <div className="viewer-title" title={title}>
           <span>IMG</span>
           <strong>{title}</strong>
         </div>
         <div className="viewer-controls">
-          <button type="button" onClick={() => updateZoom(-0.15)}>-</button>
-          <button type="button" onClick={() => updateZoom(0.15)}>+</button>
+          <button type="button" onClick={() => updateZoom(-0.15)} title="缩小">−</button>
+          <button type="button" onClick={() => updateZoom(0.15)} title="放大">＋</button>
+          <button type="button" onClick={() => setMode('fit')}>适应窗口</button>
           <button type="button" onClick={() => rotate(-90)}>左旋</button>
           <button type="button" onClick={() => rotate(90)}>右旋</button>
-          <button type="button" disabled={rotation === 0} onClick={() => setRotation(0)}>重置</button>
-          <button type="button" onClick={() => setMode('fit')}>适应窗口</button>
-          <button type="button" onClick={() => { setMode('original'); setZoom(1); }}>原始大小</button>
           {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" onClick={onFullscreen}>全屏</button>}
+          {readingMode ? <details className="viewer-more"><summary>更多</summary><div><button type="button" onClick={() => setMode('fit')}>适宽</button><button type="button" onClick={() => setMode('fit')}>整页</button><button type="button" onClick={() => { setMode('original'); setZoom(1); }}>原始大小</button><button type="button" disabled={rotation === 0} onClick={() => setRotation(0)}>重置旋转</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载</a><button type="button" onClick={() => window.location.assign(source)}>系统打开</button></div></details> : <><button type="button" disabled={rotation === 0} onClick={() => setRotation(0)}>重置</button><button type="button" onClick={() => { setMode('original'); setZoom(1); }}>原始大小</button></>}
         </div>
       </div>
       <div className="viewer-stage image-stage">

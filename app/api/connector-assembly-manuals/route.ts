@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { parseManualInput, parseVersionInput, serializeManual } from '@/lib/connector-assembly-manuals';
+import { GENERIC_CONNECTOR_MANUAL_MANUFACTURERS } from '@/lib/connector-manual-parser';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 
@@ -31,6 +32,8 @@ export async function GET(req: NextRequest) {
     const manufacturer = String(sp.get('manufacturer') || '').trim();
     const family = String(sp.get('family') || '').trim();
     const model = String(sp.get('model') || '').trim();
+    const issuedFrom = String(sp.get('issuedFrom') || '').trim();
+    const issuedTo = String(sp.get('issuedTo') || '').trim();
     const statusFilter = String(sp.get('status') || 'all').trim();
     const includeDeleted = sp.get('includeDeleted') === 'true' || statusFilter === 'deleted';
     const latestOnly = sp.get('latestOnly') === 'true';
@@ -42,19 +45,27 @@ export async function GET(req: NextRequest) {
     if (manufacturer) AND.push({ manufacturer: { contains: manufacturer, mode: 'insensitive' } });
     if (family) AND.push({ family: { contains: family, mode: 'insensitive' } });
     if (model) AND.push({ bindings: { some: { connectorParameter: { model: { contains: model, mode: 'insensitive' }, deletedAt: null } } } });
+    if (issuedFrom || issuedTo) {
+      const from = issuedFrom ? new Date(`${issuedFrom}T00:00:00.000Z`) : null;
+      const to = issuedTo ? new Date(`${issuedTo}T23:59:59.999Z`) : null;
+      const gte = from && !Number.isNaN(from.getTime()) ? from : undefined;
+      const lte = to && !Number.isNaN(to.getTime()) ? to : undefined;
+      if (gte || lte) AND.push({ versions: { some: { deletedAt: null, issuedAt: { gte, lte } } } });
+    }
     if (latestOnly) AND.push({ versions: { some: { isLatest: true, deletedAt: null } } });
     if (statusFilter === 'latest') AND.push({ versions: { some: { isLatest: true, deletedAt: null } } });
-    if (statusFilter === 'parse_failed') AND.push({ versions: { some: { deletedAt: null, parseStatus: { in: ['failed', 'partial'] } } } });
+    if (statusFilter === 'parse_failed') AND.push({ versions: { some: { deletedAt: null, parseStatus: 'failed' } } });
     if (statusFilter === 'unbound') AND.push({ bindings: { none: { connectorParameter: { deletedAt: null } } } });
     if (statusFilter === 'incomplete') {
       AND.push({
         OR: [
           { manufacturer: null },
           { manufacturer: '' },
-          { keywords: null },
-          { keywords: '' },
+          ...GENERIC_CONNECTOR_MANUAL_MANUFACTURERS.map(value => ({ manufacturer: { equals: value, mode: 'insensitive' as const } })),
           { bindings: { none: { connectorParameter: { deletedAt: null } } } },
           { versions: { none: { deletedAt: null } } },
+          { versions: { some: { deletedAt: null, issuedAt: null } } },
+          { versions: { some: { deletedAt: null, revision: { in: ['', '待识别', '未识别'] } } } },
           { versions: { some: { deletedAt: null, parseStatus: { in: ['failed', 'partial'] } } } },
         ],
       });

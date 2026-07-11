@@ -4,6 +4,19 @@ export type ConnectorManualChapterCandidate = {
   pageEnd: number;
 };
 
+export type ConnectorManualMetadataConfidence = 'confirmed' | 'detected' | 'needs_review';
+
+export type ConnectorManualMetadataConfidenceMap = {
+  defaultTitle: ConnectorManualMetadataConfidence;
+  detectedTitle: ConnectorManualMetadataConfidence;
+  manufacturer: ConnectorManualMetadataConfidence;
+  family: ConnectorManualMetadataConfidence;
+  revision: ConnectorManualMetadataConfidence;
+  issuedAt: ConnectorManualMetadataConfidence;
+  models: ConnectorManualMetadataConfidence;
+  chapters: ConnectorManualMetadataConfidence;
+};
+
 export type ConnectorManualParserInput = {
   fileName: string;
   relativePath?: string;
@@ -25,10 +38,15 @@ export type ConnectorManualParserResult = {
   modelCandidates: string[];
   keywordCandidates: string[];
   chapterCandidates: ConnectorManualChapterCandidate[];
+  metadataConfidence: ConnectorManualMetadataConfidenceMap;
   warnings: string[];
 };
 
 const genericTitles = new Set(['说明书', '组装说明书', 'assembly manual', 'manual', 'untitled']);
+export const GENERIC_CONNECTOR_MANUAL_MANUFACTURERS = [
+  '组装说明', '组装说明书', '操作说明', '产品说明', '目录', '说明书', '装配说明',
+] as const;
+const genericManufacturerKeys = new Set(GENERIC_CONNECTOR_MANUAL_MANUFACTURERS.map(value => value.toLocaleLowerCase('zh-CN').replace(/\s+/g, '')));
 const ignoredModelTokens = new Set([
   'A4', 'PDF', 'ISO9001', 'PAGE1', 'PAGE2', 'REV01', 'REV02', 'VERSION1', 'VERSION2',
 ]);
@@ -39,6 +57,16 @@ const chapterKeywords = [
 
 function cleanText(value: string | null | undefined): string {
   return String(value || '').replace(/\u0000/g, '').replace(/[\t ]+/g, ' ').replace(/\r/g, '').trim();
+}
+
+export function isGenericConnectorManualManufacturer(value: string | null | undefined): boolean {
+  const normalized = cleanText(value).toLocaleLowerCase('zh-CN').replace(/\s+/g, '');
+  return !!normalized && genericManufacturerKeys.has(normalized);
+}
+
+export function sanitizeConnectorManualManufacturer(value: string | null | undefined): string {
+  const cleaned = cleanText(value);
+  return isGenericConnectorManualManufacturer(cleaned) ? '' : cleaned;
 }
 
 export function connectorManualDefaultTitle(fileName: string): string {
@@ -118,9 +146,9 @@ function modelCandidates(fileName: string, text: string): string[] {
 
 function manufacturerFromText(text: string): string {
   const amphenol = text.match(/\bAmphenol(?:\s+[A-Za-z0-9&.-]+){0,3}/i)?.[0];
-  if (amphenol) return amphenol.trim();
+  if (amphenol) return sanitizeConnectorManualManufacturer(amphenol);
   const labeled = text.match(/(?:制造商|生产商|manufacturer|company)\s*[:：]\s*([^\n]{2,80})/i)?.[1];
-  return cleanText(labeled).slice(0, 160);
+  return sanitizeConnectorManualManufacturer(labeled).slice(0, 160);
 }
 
 function chaptersFromText(text: string): ConnectorManualChapterCandidate[] {
@@ -147,7 +175,8 @@ export function parseConnectorManual(input: ConnectorManualParserInput): Connect
   const fullText = cleanText(input.fullText);
   const searchableText = `${defaultTitle}\n${firstPageText}\n${secondPageText}\n${fullText}`;
   const detectedTitle = firstUsefulTitle(input);
-  const manufacturerCandidate = cleanText(directories[0]) || manufacturerFromText(firstPageText);
+  const directoryManufacturer = cleanText(directories[0]);
+  const manufacturerCandidate = sanitizeConnectorManualManufacturer(directoryManufacturer) || manufacturerFromText(firstPageText);
   const familyCandidate = cleanText(directories[1]);
   const revisionCandidate = revisionFromText(searchableText);
   const issuedAtCandidate = dateFromText(searchableText);
@@ -158,6 +187,7 @@ export function parseConnectorManual(input: ConnectorManualParserInput): Connect
     ...chapterKeywords.filter(keyword => searchableText.includes(keyword)),
   ])).slice(0, 40);
   const warnings: string[] = [];
+  if (isGenericConnectorManualManufacturer(directoryManufacturer)) warnings.push(`父目录“${directoryManufacturer}”是通用说明词，未作为制造商写入`);
   if (!detectedTitle) warnings.push('未识别封面标题，保留文件名作为说明书名称');
   if (!revisionCandidate) warnings.push('未识别版本，可导入后在待完善中补充');
   if (!issuedAtCandidate) warnings.push('未识别发布日期');
@@ -173,6 +203,16 @@ export function parseConnectorManual(input: ConnectorManualParserInput): Connect
     modelCandidates: models,
     keywordCandidates,
     chapterCandidates: chapters,
+    metadataConfidence: {
+      defaultTitle: 'confirmed',
+      detectedTitle: detectedTitle ? 'detected' : 'needs_review',
+      manufacturer: manufacturerCandidate ? 'detected' : 'needs_review',
+      family: familyCandidate ? 'detected' : 'needs_review',
+      revision: revisionCandidate ? 'detected' : 'needs_review',
+      issuedAt: issuedAtCandidate ? 'detected' : 'needs_review',
+      models: models.length ? 'detected' : 'needs_review',
+      chapters: chapters.length ? 'detected' : 'needs_review',
+    },
     warnings,
   };
 }

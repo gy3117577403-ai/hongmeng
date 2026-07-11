@@ -109,6 +109,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.14.7-weekly-plan-diff-center：新增周计划差异中心，服务端按稳定键对比当前周与下周草稿，支持新增 / 延续 / 变更 / 下周取消、重复和异常审核、字段级前后值、图纸资料联动、启用前阻断门禁、历史周只读查看和差异 CSV；周计划导入固定先保存草稿，不直接覆盖当前周。该版本为待部署候选，不代表生产已上线。
 - v1.16.0-connector-assembly-manual-library：连接器资料库新增组装说明书分支，支持 PDF / 多图说明书、版本历史、章节目录跳页、PDF 正文搜索、适用型号多对多关联、三级软删除恢复和操作日志。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.1-connector-manual-bulk-import：组装说明书新增文件夹 / 多文件零表单导入，文件名作为默认名称，支持 PDF 轻量解析、图片集分组、SHA-256 去重、版本与冲突建议、强确认、并发队列、暂停 / 重试、批次历史和待完善筛选。该版本为本地验证候选，尚未部署 Sealos。
+- v1.16.2-connector-manual-workspace-polish：组装说明书重排为阅读优先三栏工作台，精简列表与空字段，目录默认打开且 1024px 使用覆盖式抽屉；单份新增改为三步快速入库，新增元数据可信度治理和只读异常审计。该版本为本地验证候选，尚未部署 Sealos。
 
 ## 交付文档索引
 
@@ -121,6 +122,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [连接器组装说明书资料库 QA](docs/QA_CONNECTOR_ASSEMBLY_MANUAL_LIBRARY.md)
 - [连接器组装说明书批量导入指南](docs/CONNECTOR_ASSEMBLY_MANUAL_BULK_IMPORT_GUIDE.md)
 - [连接器组装说明书批量导入 QA](docs/QA_CONNECTOR_ASSEMBLY_MANUAL_BULK_IMPORT.md)
+- [连接器组装说明书工作台优化 QA](docs/QA_CONNECTOR_MANUAL_WORKSPACE_POLISH.md)
 - [图纸资料库使用说明](docs/DRAWING_LIBRARY_GUIDE.md)
 - [图纸资料库同步说明](docs/DRAWING_LIBRARY_SYNC_GUIDE.md)
 - [本地图纸原图批量导入指南](docs/BULK_ORIGINAL_DRAWING_IMPORT_GUIDE.md)

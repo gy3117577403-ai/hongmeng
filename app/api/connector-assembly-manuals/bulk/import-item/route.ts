@@ -9,6 +9,7 @@ import {
   serializeManualImportItem,
 } from '@/lib/connector-manual-bulk-import';
 import { inspectPdf, manualObjectKey, validateManualAsset } from '@/lib/connector-assembly-manuals';
+import { isGenericConnectorManualManufacturer, sanitizeConnectorManualManufacturer } from '@/lib/connector-manual-parser';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { putObject } from '@/lib/s3';
@@ -127,12 +128,14 @@ export async function POST(req: NextRequest) {
     }
     const title = text(metadata.defaultTitle, 240) || candidate.defaultTitle;
     const revision = text(metadata.suggestedRevision, 80) || item.revision || candidate.revisionCandidate || '待识别';
-    const manufacturer = text(metadata.manufacturerCandidate, 160) || null;
+    const rawManufacturer = text(metadata.manufacturerCandidate, 160);
+    const manufacturer = sanitizeConnectorManualManufacturer(rawManufacturer) || null;
     const family = text(metadata.familyCandidate, 160) || null;
     const detectedTitle = text(metadata.detectedTitle, 240) || null;
     const keywords = textList(metadata.keywordCandidates, 40);
     const modelCandidates = textList(metadata.modelCandidates, 24);
     const warnings = textList(metadata.warnings, 100);
+    if (isGenericConnectorManualManufacturer(rawManufacturer)) warnings.unshift(`制造商候选“${rawManufacturer}”可信度不足，已保持为空`);
     const chapters = Array.isArray(metadata.chapterCandidates) ? metadata.chapterCandidates as Array<{ title?: unknown; pageStart?: unknown; pageEnd?: unknown }> : [];
     const targetManualId = text(metadata.matchedManualId, 100);
     const autoBindUnique = metadata.autoBindUnique !== false;
@@ -181,7 +184,7 @@ export async function POST(req: NextRequest) {
       pageStart: Number(item.pageStart || 0),
       pageEnd: Number(item.pageEnd || item.pageStart || 0),
     })).filter(item => item.title && Number.isInteger(item.pageStart) && Number.isInteger(item.pageEnd) && item.pageStart >= 1 && item.pageEnd >= item.pageStart && (!pageCount || item.pageEnd <= pageCount));
-    if (!manufacturer || !candidate.revisionCandidate || !bindingIds.length || !keywords.length) parseStatus = parseStatus === 'failed' ? 'failed' : 'partial';
+    if (!manufacturer || !candidate.revisionCandidate || !candidate.issuedAtCandidate || !bindingIds.length || !keywords.length) parseStatus = parseStatus === 'failed' ? 'failed' : 'partial';
     const searchText = bulkSearchText({
       fileNames: uploadedAssets.map(asset => asset.file.name),
       title,

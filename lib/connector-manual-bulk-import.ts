@@ -6,12 +6,14 @@ import type {
 import type {
   ConnectorManualBulkAssetInputDTO,
   ConnectorManualBulkCandidateDTO,
+  ConnectorManualMetadataConfidence,
   ConnectorManualImportBatchDTO,
   ConnectorManualImportItemDTO,
 } from '@/types';
 import { prisma } from '@/lib/prisma';
 
 const supportedMimeTypes = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/webp']);
+const confidenceValues = new Set<ConnectorManualMetadataConfidence>(['confirmed', 'detected', 'needs_review']);
 
 function text(value: unknown, max: number): string {
   return String(value ?? '').trim().slice(0, max);
@@ -34,6 +36,24 @@ function assets(value: unknown): ConnectorManualBulkAssetInputDTO[] {
       hash: text(row.hash, 128).toLowerCase(),
     };
   });
+}
+
+function metadataConfidence(value: unknown): ConnectorManualBulkCandidateDTO['metadataConfidence'] {
+  const row = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const confidence = (key: string, fallback: ConnectorManualMetadataConfidence): ConnectorManualMetadataConfidence => {
+    const current = String(row[key] || '') as ConnectorManualMetadataConfidence;
+    return confidenceValues.has(current) ? current : fallback;
+  };
+  return {
+    defaultTitle: confidence('defaultTitle', 'confirmed'),
+    detectedTitle: confidence('detectedTitle', 'needs_review'),
+    manufacturer: confidence('manufacturer', 'needs_review'),
+    family: confidence('family', 'needs_review'),
+    revision: confidence('revision', 'needs_review'),
+    issuedAt: confidence('issuedAt', 'needs_review'),
+    models: confidence('models', 'needs_review'),
+    chapters: confidence('chapters', 'needs_review'),
+  };
 }
 
 export function parseBulkManualCandidate(value: unknown): { candidate: ConnectorManualBulkCandidateDTO; errors: string[] } {
@@ -61,6 +81,7 @@ export function parseBulkManualCandidate(value: unknown): { candidate: Connector
         return { title: text(row.title, 160), pageStart: Number(row.pageStart || 0), pageEnd: Number(row.pageEnd || row.pageStart || 0) };
       }).filter(item => item.title && Number.isInteger(item.pageStart) && Number.isInteger(item.pageEnd) && item.pageStart > 0 && item.pageEnd >= item.pageStart)
       : [],
+    metadataConfidence: metadataConfidence(input.metadataConfidence),
     pageCount: Math.max(0, Number(input.pageCount || 0) || 0),
     hash: text(input.hash, 128).toLowerCase(),
     parseFailed: input.parseFailed === true,
