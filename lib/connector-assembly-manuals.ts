@@ -8,6 +8,8 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { sanitizeConnectorManualManufacturer } from '@/lib/connector-manual-parser';
+import { normalizeManualToc } from '@/lib/connector-manual-toc';
+import type { ConnectorManualTocItem } from '@/lib/connector-manual-toc';
 import { safeFilename } from '@/lib/validation';
 
 export const MANUAL_FILE_MODES = ['PDF', 'IMAGE_SET'] as const;
@@ -18,11 +20,7 @@ export const MANUAL_IMAGE_MAX_COUNT = 50;
 export const MANUAL_PDF_MIME = 'application/pdf';
 export const MANUAL_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
-export type ManualTocItem = {
-  title: string;
-  pageStart: number;
-  pageEnd: number;
-};
+export type ManualTocItem = ConnectorManualTocItem;
 
 type ManualInput = {
   title?: unknown;
@@ -92,32 +90,7 @@ export function parseManualInput(input: ManualInput, options: { partial?: boolea
 }
 
 export function parseManualToc(value: unknown, pageCount?: number | null): { items: ManualTocItem[]; error?: string } {
-  if (value === null || value === undefined || value === '') return { items: [] };
-  let raw = value;
-  if (typeof value === 'string') {
-    try {
-      raw = JSON.parse(value);
-    } catch {
-      return { items: [], error: '章节目录不是有效 JSON' };
-    }
-  }
-  if (!Array.isArray(raw)) return { items: [], error: '章节目录必须是数组' };
-  if (raw.length > 100) return { items: [], error: '章节目录不能超过 100 条' };
-  const items: ManualTocItem[] = [];
-  for (let index = 0; index < raw.length; index += 1) {
-    const row = raw[index];
-    if (!row || typeof row !== 'object') return { items: [], error: `第 ${index + 1} 条章节格式不正确` };
-    const record = row as Record<string, unknown>;
-    const title = String(record.title ?? '').trim().slice(0, 160);
-    const pageStart = Number(record.pageStart);
-    const pageEnd = Number(record.pageEnd ?? record.pageStart);
-    if (!title || !Number.isInteger(pageStart) || !Number.isInteger(pageEnd) || pageStart < 1 || pageEnd < pageStart) {
-      return { items: [], error: `第 ${index + 1} 条章节的标题或页码不正确` };
-    }
-    if (pageCount && pageEnd > pageCount) return { items: [], error: `第 ${index + 1} 条章节页码超过文件总页数` };
-    items.push({ title, pageStart, pageEnd });
-  }
-  return { items };
+  return normalizeManualToc(value, pageCount);
 }
 
 export function parseVersionInput(input: VersionInput, options: { partial?: boolean; pageCount?: number | null } = {}) {

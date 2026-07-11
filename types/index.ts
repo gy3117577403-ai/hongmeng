@@ -193,9 +193,13 @@ export type ConnectorParameterDTO = {
 };
 
 export type ConnectorAssemblyManualTocDTO = {
+  id?: string;
   title: string;
   pageStart: number;
   pageEnd: number;
+  sortOrder?: number;
+  createdBy?: string;
+  createdAt?: string;
 };
 
 export type ConnectorAssemblyManualAssetDTO = {

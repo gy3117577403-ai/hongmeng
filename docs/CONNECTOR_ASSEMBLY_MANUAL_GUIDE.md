@@ -1,6 +1,6 @@
 # 连接器组装说明书资料库使用指南
 
-版本：v1.16.2-connector-manual-workspace-polish
+版本：v1.16.3-connector-manual-gesture-toc
 
 状态：本地构建、接口、Docker 与平板视觉验证通过，尚未部署 Sealos。
 
@@ -113,7 +113,7 @@ PDF 版本每个版本保存一个有效 PDF。默认限制为 100MB。上传后
 灌胶|8|8
 ```
 
-在右侧“目录”中点击章节即可跳到 PDF 对应页。目录页码不能小于 1，也不能超过已识别的 PDF 页数。
+在右侧“目录”中点击章节即可跳到 PDF 对应页。目录页码不能小于 1，也不能超过已识别的 PDF 页数。预览工具栏的“添加至目录”可把当前页快速加入目录；右侧支持单条编辑、删除、上移 / 下移和从 PDF 生成待确认建议。目录继续保存在版本 `tocJson`，没有新增数据库表。
 
 ## PDF 预览
 
@@ -129,6 +129,8 @@ PDF 版本每个版本保存一个有效 PDF。默认限制为 100MB。上传后
 - Android WebView Promise / ArrayBuffer / PDF worker 兼容。
 
 PDF 只渲染当前页，并预取相邻页元数据。切换版本时回到第 1 页。
+
+PDF 与图片预览均支持鼠标滚轮焦点缩放、鼠标双击、平板双指捏合、放大后拖动和单指双点恢复。手势过程使用 CSS transform，停止后 PDF 才按最终比例清晰重绘，缩放范围为 40%-500%。详细操作见 [连接器说明书手势预览与快捷目录指南](CONNECTOR_MANUAL_GESTURE_AND_TOC_GUIDE.md)。
 
 ## 元数据可信度与待完善
 
@@ -204,7 +206,7 @@ npm run connector-manuals:audit-metadata
 
 ## 操作日志
 
-说明书新增、编辑、删除、恢复、版本上传、版本删除 / 恢复、设最新版、型号绑定 / 解除和下载都会写入 `operation_logs`。日志不记录密码、Token、数据库连接串或对象存储密钥。
+说明书新增、编辑、删除、恢复、版本上传、版本删除 / 恢复、设最新版、型号绑定 / 解除、目录新增 / 编辑 / 删除 / 排序和下载都会写入 `operation_logs`。日志不记录密码、Token、数据库连接串或对象存储密钥。
 
 ## 数据和对象存储
 
@@ -237,4 +239,4 @@ connector-assembly-manuals/{manualId}/{versionId}/{filename}
 - 章节：产品零件清单 3-4、剥线 5、压接端子 6、装配线缆 7、灌胶 8
 - 关键词：ECTA24、ECTA32、CodeA、CodeB、CodeC、剥线、压接、装配、灌胶、VW60330、LV215、AXSON RE12602
 
-该真实 PDF 未随当前任务作为可访问文件提供，因此仓库不包含样本，也没有伪造 8 页真实上传结论。部署前应按 QA 报告中的真实样本清单再验收一次。
+本轮已使用该真实 8 页 PDF 在本地 Docker / MinIO 环境完成临时上传、预览、手势、目录和直达链接验收。样本未加入仓库；验收数据完成后已软删除，未物理删除 S3 对象。详见 [连接器说明书手势与快捷目录 QA 报告](QA_CONNECTOR_MANUAL_GESTURE_AND_TOC.md)。

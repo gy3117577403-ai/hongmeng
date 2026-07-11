@@ -110,6 +110,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.16.0-connector-assembly-manual-library：连接器资料库新增组装说明书分支，支持 PDF / 多图说明书、版本历史、章节目录跳页、PDF 正文搜索、适用型号多对多关联、三级软删除恢复和操作日志。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.1-connector-manual-bulk-import：组装说明书新增文件夹 / 多文件零表单导入，文件名作为默认名称，支持 PDF 轻量解析、图片集分组、SHA-256 去重、版本与冲突建议、强确认、并发队列、暂停 / 重试、批次历史和待完善筛选。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.2-connector-manual-workspace-polish：组装说明书重排为阅读优先三栏工作台，精简列表与空字段，目录默认打开且 1024px 使用覆盖式抽屉；单份新增改为三步快速入库，新增元数据可信度治理和只读异常审计。该版本为本地验证候选，尚未部署 Sealos。
+- v1.16.3-connector-manual-gesture-toc：组装说明书 PDF / 图片预览新增滚轮焦点缩放、双击 / 双点、双指捏合和放大拖动；支持当前页快捷目录、目录 CRUD / 排序、PDF 目录建议、当前页直达链接和阅读页恢复。继续复用 `tocJson`，未新增 Prisma migration。该版本为本地验证候选，尚未部署 Sealos。
 
 ## 交付文档索引
 
@@ -123,6 +124,8 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [连接器组装说明书批量导入指南](docs/CONNECTOR_ASSEMBLY_MANUAL_BULK_IMPORT_GUIDE.md)
 - [连接器组装说明书批量导入 QA](docs/QA_CONNECTOR_ASSEMBLY_MANUAL_BULK_IMPORT.md)
 - [连接器组装说明书工作台优化 QA](docs/QA_CONNECTOR_MANUAL_WORKSPACE_POLISH.md)
+- [连接器说明书手势预览与快捷目录指南](docs/CONNECTOR_MANUAL_GESTURE_AND_TOC_GUIDE.md)
+- [连接器说明书手势与快捷目录 QA](docs/QA_CONNECTOR_MANUAL_GESTURE_AND_TOC.md)
 - [图纸资料库使用说明](docs/DRAWING_LIBRARY_GUIDE.md)
 - [图纸资料库同步说明](docs/DRAWING_LIBRARY_SYNC_GUIDE.md)
 - [本地图纸原图批量导入指南](docs/BULK_ORIGINAL_DRAWING_IMPORT_GUIDE.md)

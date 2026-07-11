@@ -4,10 +4,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import type { PdfTocSuggestion } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
 import { BulkConnectorManualImportModal } from '@/components/BulkConnectorManualImportModal';
+import { writeClipboardText } from '@/lib/client-platform';
 import { inspectConnectorManualFile } from '@/lib/client-connector-manual-inspector';
 import type { ClientManualInspection } from '@/lib/client-connector-manual-inspector';
+import { stableManualTocId } from '@/lib/connector-manual-toc';
 import { isGenericConnectorManualManufacturer } from '@/lib/connector-manual-parser';
 import type {
   ConnectorAssemblyManualAssetDTO,
@@ -41,6 +44,7 @@ type VersionForm = {
   tocText: string;
 };
 type DeleteTarget = { type: 'manual'; item: ConnectorAssemblyManualDTO } | { type: 'version'; item: ConnectorAssemblyManualVersionDTO } | null;
+type TocEditState = { id: string; title: string; pageStart: number; pageEnd: number } | null;
 type TrashPayload = {
   connectorAssemblyManuals?: ConnectorAssemblyManualDTO[];
   connectorAssemblyManualVersions?: Array<ConnectorAssemblyManualVersionDTO & { manualTitle: string }>;
@@ -90,6 +94,14 @@ function parseTocText(value: string): { items: ConnectorAssemblyManualTocDTO[]; 
     items.push({ title: parts[0], pageStart, pageEnd });
   }
   return { items };
+}
+
+function tocItemId(item: ConnectorAssemblyManualTocDTO, index: number): string {
+  return item.id || stableManualTocId(item.title, item.pageStart, item.pageEnd, index);
+}
+
+function tocSuggestionKey(item: Pick<PdfTocSuggestion, 'title' | 'pageStart' | 'pageEnd'>): string {
+  return `${item.title.trim().toLocaleLowerCase('zh-CN')}|${item.pageStart}|${item.pageEnd}`;
 }
 
 function versionFormFrom(version?: ConnectorAssemblyManualVersionDTO): VersionForm {
@@ -166,6 +178,11 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [rightTab, setRightTab] = useState<RightTab>('toc');
+  const [tocSuggestions, setTocSuggestions] = useState<PdfTocSuggestion[]>([]);
+  const [tocSuggestionOpen, setTocSuggestionOpen] = useState(false);
+  const [selectedTocSuggestions, setSelectedTocSuggestions] = useState<string[]>([]);
+  const [tocEdit, setTocEdit] = useState<TocEditState>(null);
+  const [highlightedTocId, setHighlightedTocId] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [filterOpen, setFilterOpen] = useState(false);
   const [manualActionsOpen, setManualActionsOpen] = useState(false);
@@ -198,6 +215,8 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const manualActionsButtonRef = useRef<HTMLButtonElement>(null);
   const urlAppliedRef = useRef(false);
+  const pendingNavigationRef = useRef<{ versionId: string; page: number } | null>(null);
+  const pendingNavigationTimerRef = useRef<number | null>(null);
 
   const accountName = user.displayName || user.username;
   const selectedManual = manuals.find(item => item.id === selectedId) || (statusFilter === 'deleted' ? null : manuals[0]) || null;
@@ -209,6 +228,8 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const selectedAsset = activeAssets[Math.max(0, Math.min(imageIndex, activeAssets.length - 1))] || null;
   const totalPages = Math.max(1, Math.ceil(total / 20));
   const advancedFilterActive = !!(manufacturer || family || model.trim() || issuedFrom || issuedTo);
+  const currentPreviewPage = selectedVersion?.fileMode === 'IMAGE_SET' ? imageIndex + 1 : pdfPage;
+  const availableTocSuggestions = useMemo(() => tocSuggestions.filter(suggestion => !selectedVersion?.tocJson.some(item => item.pageStart === suggestion.pageStart && item.title.trim().toLocaleLowerCase('zh-CN') === suggestion.title.trim().toLocaleLowerCase('zh-CN'))), [selectedVersion, tocSuggestions]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -261,11 +282,12 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
     const params = new URLSearchParams(window.location.search);
     const targetManualId = params.get('manualId') || '';
     const targetVersionId = params.get('versionId') || '';
-    const targetPage = Number(params.get('page') || 1);
+    const targetPageValue = params.get('page');
+    const targetPage = targetPageValue ? Number(targetPageValue) : 0;
     const targetModel = params.get('model') || '';
     if (targetModel) setModel(targetModel);
     if (targetManualId) {
-      void loadManual(targetManualId, targetVersionId, Number.isInteger(targetPage) ? targetPage : 1);
+      void loadManual(targetManualId, targetVersionId, Number.isInteger(targetPage) && targetPage >= 1 ? targetPage : 0);
     }
   }, []);
 
@@ -275,21 +297,58 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   }, [selectedManual, selectedVersion]);
 
   useEffect(() => {
-    setPdfPage(1);
-    setImageIndex(0);
-  }, [selectedVersionId]);
+    if (!selectedVersionId || !selectedVersion || selectedVersion.id !== selectedVersionId) return;
+    const pending = pendingNavigationRef.current?.versionId === selectedVersionId ? pendingNavigationRef.current : null;
+    let targetPage = pending?.page || 1;
+    if (!pending) {
+      const stored = Number(window.localStorage.getItem(`connector-manual-reading:${user.id}:${selectedVersionId}`) || 1);
+      if (Number.isInteger(stored) && stored >= 1) targetPage = stored;
+    }
+    const pageLimit = selectedVersion.pageCount || Math.max(1, selectedVersion.assets.length);
+    targetPage = Math.max(1, Math.min(pageLimit, targetPage));
+    setPdfPage(targetPage);
+    setImageIndex(Math.max(0, targetPage - 1));
+    setTocSuggestions([]);
+    setTocSuggestionOpen(false);
+  }, [selectedVersionId, selectedVersion, user.id]);
 
-  async function loadManual(id: string, versionId = '', targetPage = 1): Promise<void> {
+  useEffect(() => () => {
+    if (pendingNavigationTimerRef.current !== null) window.clearTimeout(pendingNavigationTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedVersionId || !selectedVersion || selectedVersion.id !== selectedVersionId) return undefined;
+    const timer = window.setTimeout(() => {
+      window.localStorage.setItem(`connector-manual-reading:${user.id}:${selectedVersionId}`, String(currentPreviewPage));
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [currentPreviewPage, selectedVersion, selectedVersionId, user.id]);
+
+  useEffect(() => {
+    if (!highlightedTocId) return undefined;
+    const timer = window.setTimeout(() => setHighlightedTocId(''), 2400);
+    return () => window.clearTimeout(timer);
+  }, [highlightedTocId]);
+
+  async function loadManual(id: string, versionId = '', targetPage = 0): Promise<void> {
     setDetailLoading(true);
     try {
       const response = await fetch(`/api/connector-assembly-manuals/${id}`, { cache: 'no-store' });
       const data = await jsonResponse(response);
       if (!response.ok) throw new Error(String(data.error || '说明书详情加载失败'));
       const manual = data.manual as ConnectorAssemblyManualDTO;
+      const nextVersionId = versionId || manual.latestVersion?.id || manual.versions[0]?.id || '';
+      const hasExplicitPage = Number.isInteger(targetPage) && targetPage >= 1;
+      pendingNavigationRef.current = nextVersionId && hasExplicitPage ? { versionId: nextVersionId, page: targetPage } : null;
+      if (pendingNavigationTimerRef.current !== null) window.clearTimeout(pendingNavigationTimerRef.current);
+      if (pendingNavigationRef.current) pendingNavigationTimerRef.current = window.setTimeout(() => { pendingNavigationRef.current = null; pendingNavigationTimerRef.current = null; }, 2000);
       setManuals(current => [manual, ...current.filter(item => item.id !== manual.id)]);
       setSelectedId(manual.id);
-      setSelectedVersionId(versionId || manual.latestVersion?.id || manual.versions[0]?.id || '');
-      setPdfPage(Math.max(1, targetPage));
+      setSelectedVersionId(nextVersionId);
+      if (hasExplicitPage) {
+        setPdfPage(targetPage);
+        setImageIndex(Math.max(0, targetPage - 1));
+      }
     } catch (error) {
       setToast(error instanceof Error ? error.message : '说明书详情加载失败');
     } finally {
@@ -303,6 +362,8 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
       return;
     }
     setSelectedId(manual.id);
+    pendingNavigationRef.current = null;
+    if (pendingNavigationTimerRef.current !== null) window.clearTimeout(pendingNavigationTimerRef.current);
     setSelectedVersionId(manual.latestVersion?.id || manual.versions[0]?.id || '');
     setRightTab('toc');
     window.history.replaceState(null, '', `/connector-assembly-manuals?manualId=${encodeURIComponent(manual.id)}`);
@@ -444,6 +505,150 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
     } finally {
       setSaving(false);
     }
+  }
+
+  function updateSelectedVersionToc(tocJson: ConnectorAssemblyManualTocDTO[], updatedAt: string): void {
+    if (!selectedManual || !selectedVersion) return;
+    const versionId = selectedVersion.id;
+    setManuals(current => current.map(manual => {
+      if (manual.id !== selectedManual.id) return manual;
+      const updateVersion = (version: ConnectorAssemblyManualVersionDTO): ConnectorAssemblyManualVersionDTO => version.id === versionId ? { ...version, tocJson, updatedAt } : version;
+      return {
+        ...manual,
+        versions: manual.versions.map(updateVersion),
+        latestVersion: manual.latestVersion ? updateVersion(manual.latestVersion) : manual.latestVersion,
+      };
+    }));
+  }
+
+  async function addCurrentPageToToc(title: string, targetPage: number): Promise<boolean> {
+    if (!selectedVersion || !selectedManual) return false;
+    const response = await fetch(`/api/connector-assembly-manual-versions/${selectedVersion.id}/toc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, page: targetPage, expectedUpdatedAt: selectedVersion.updatedAt }),
+    });
+    const data = await jsonResponse(response);
+    if (!response.ok) {
+      setToast(String(data.error || '添加目录失败'));
+      return false;
+    }
+    const tocJson = Array.isArray(data.tocJson) ? data.tocJson as ConnectorAssemblyManualTocDTO[] : [];
+    updateSelectedVersionToc(tocJson, String(data.updatedAt || selectedVersion.updatedAt));
+    const addedIds = Array.isArray(data.addedIds) ? data.addedIds.map(value => String(value)) : [];
+    setHighlightedTocId(addedIds[0] || '');
+    setRightTab('toc');
+    setDetailsOpen(true);
+    setToast(`已添加目录“${title.trim()}” · 第 ${targetPage} 页`);
+    return true;
+  }
+
+  async function copyCurrentPageLink(targetPage: number): Promise<void> {
+    if (!selectedManual || !selectedVersion) return;
+    const url = new URL('/connector-assembly-manuals', window.location.origin);
+    url.searchParams.set('manualId', selectedManual.id);
+    url.searchParams.set('versionId', selectedVersion.id);
+    url.searchParams.set('page', String(targetPage));
+    try {
+      await writeClipboardText(url.toString());
+      setToast(`已复制第 ${targetPage} 页链接`);
+    } catch {
+      setToast('复制失败，请手动复制当前页面地址');
+    }
+  }
+
+  function openTocSuggestionDialog(): void {
+    if (!selectedVersion) return;
+    if (!availableTocSuggestions.length) {
+      setToast('未检测到可用目录，可手动添加。');
+      return;
+    }
+    setSelectedTocSuggestions(availableTocSuggestions.map(tocSuggestionKey));
+    setTocSuggestionOpen(true);
+  }
+
+  async function saveTocSuggestions(): Promise<void> {
+    if (!selectedVersion || !selectedManual) return;
+    const items = availableTocSuggestions.filter(item => selectedTocSuggestions.includes(tocSuggestionKey(item)));
+    if (!items.length) return setToast('请至少选择一条目录建议');
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/connector-assembly-manual-versions/${selectedVersion.id}/toc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items, expectedUpdatedAt: selectedVersion.updatedAt }),
+      });
+      const data = await jsonResponse(response);
+      if (!response.ok) throw new Error(String(data.error || '保存目录建议失败'));
+      const tocJson = Array.isArray(data.tocJson) ? data.tocJson as ConnectorAssemblyManualTocDTO[] : [];
+      updateSelectedVersionToc(tocJson, String(data.updatedAt || selectedVersion.updatedAt));
+      const addedIds = Array.isArray(data.addedIds) ? data.addedIds.map(value => String(value)) : [];
+      setHighlightedTocId(addedIds[0] || '');
+      setTocSuggestionOpen(false);
+      setToast(`已保存 ${items.length} 条目录建议`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : '保存目录建议失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveTocEdit(event: FormEvent): Promise<void> {
+    event.preventDefault();
+    if (!selectedVersion || !tocEdit) return;
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/connector-assembly-manual-versions/${selectedVersion.id}/toc/${encodeURIComponent(tocEdit.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: tocEdit.title, pageStart: tocEdit.pageStart, pageEnd: tocEdit.pageEnd, expectedUpdatedAt: selectedVersion.updatedAt }),
+      });
+      const data = await jsonResponse(response);
+      if (!response.ok) throw new Error(String(data.error || '更新目录失败'));
+      updateSelectedVersionToc(Array.isArray(data.tocJson) ? data.tocJson as ConnectorAssemblyManualTocDTO[] : [], String(data.updatedAt || selectedVersion.updatedAt));
+      setHighlightedTocId(tocEdit.id);
+      setTocEdit(null);
+      setToast('目录已更新');
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : '更新目录失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteTocItem(item: ConnectorAssemblyManualTocDTO, index: number): Promise<void> {
+    if (!selectedVersion || !window.confirm(`确认删除目录“${item.title}”？说明书文件不会删除。`)) return;
+    const id = tocItemId(item, index);
+    const response = await fetch(`/api/connector-assembly-manual-versions/${selectedVersion.id}/toc/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expectedUpdatedAt: selectedVersion.updatedAt }),
+    });
+    const data = await jsonResponse(response);
+    if (!response.ok) return setToast(String(data.error || '删除目录失败'));
+    updateSelectedVersionToc(Array.isArray(data.tocJson) ? data.tocJson as ConnectorAssemblyManualTocDTO[] : [], String(data.updatedAt || selectedVersion.updatedAt));
+    setToast('目录已删除，说明书文件未受影响');
+  }
+
+  async function moveTocItem(index: number, direction: -1 | 1): Promise<void> {
+    if (!selectedVersion) return;
+    const nextIndex = index + direction;
+    if (nextIndex < 0 || nextIndex >= selectedVersion.tocJson.length) return;
+    const ids = selectedVersion.tocJson.map(tocItemId);
+    [ids[index], ids[nextIndex]] = [ids[nextIndex], ids[index]];
+    const response = await fetch(`/api/connector-assembly-manual-versions/${selectedVersion.id}/toc/reorder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids, expectedUpdatedAt: selectedVersion.updatedAt }),
+    });
+    const data = await jsonResponse(response);
+    if (!response.ok) return setToast(String(data.error || '调整目录顺序失败'));
+    updateSelectedVersionToc(Array.isArray(data.tocJson) ? data.tocJson as ConnectorAssemblyManualTocDTO[] : [], String(data.updatedAt || selectedVersion.updatedAt));
+  }
+
+  function goToTocItem(item: ConnectorAssemblyManualTocDTO): void {
+    if (selectedVersion?.fileMode === 'IMAGE_SET') setImageIndex(Math.max(0, item.pageStart - 1));
+    else setPdfPage(item.pageStart);
   }
 
   async function uploadAssets(event: FormEvent): Promise<void> {
@@ -695,12 +900,11 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
             {!loading && !detailLoading && selectedManual && !selectedVersion && <div className="manual-empty-preview missing"><span>01</span><strong>这份说明书还没有版本</strong><p>先创建版本，再上传 PDF 或多张图片。</p><button type="button" onClick={openCreateVersion}>创建首个版本</button></div>}
             {!loading && !detailLoading && selectedVersion && !selectedAsset && <div className="manual-empty-preview missing"><span>{selectedVersion.fileMode === 'PDF' ? 'PDF' : 'IMG'}</span><strong>当前版本尚未上传文件</strong><p>{selectedVersion.fileMode === 'PDF' ? '上传一个 PDF，系统会识别页数并提取可搜索文字。' : '可一次选择多张图片，并在版本面板调整顺序。'}</p><button type="button" onClick={() => setUploadOpen(true)}>上传文件</button></div>}
             {!loading && !detailLoading && selectedVersion?.fileMode === 'PDF' && selectedAsset && (
-              <PdfViewer key={selectedVersion.id} fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} viewUrl={selectedAsset.contentUrl} page={pdfPage} onPageChange={setPdfPage} readingMode />
+              <PdfViewer key={selectedVersion.id} fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} viewUrl={selectedAsset.contentUrl} page={pdfPage} onPageChange={setPdfPage} onAddToToc={addCurrentPageToToc} onTocSuggestions={setTocSuggestions} onCopyPageLink={copyCurrentPageLink} readingMode />
             )}
             {!loading && !detailLoading && selectedVersion?.fileMode === 'IMAGE_SET' && selectedAsset && (
               <div className="manual-image-preview">
-                <div className="manual-image-pager"><button type="button" disabled={imageIndex <= 0} onClick={() => setImageIndex(value => Math.max(0, value - 1))}>上一页</button><span>{imageIndex + 1} / {activeAssets.length}</span><button type="button" disabled={imageIndex >= activeAssets.length - 1} onClick={() => setImageIndex(value => Math.min(activeAssets.length - 1, value + 1))}>下一页</button></div>
-                <ImageViewer key={selectedAsset.id} fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} readingMode />
+                <ImageViewer key={selectedVersion.id} fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} page={imageIndex + 1} pageCount={activeAssets.length} onPageChange={value => setImageIndex(Math.max(0, value - 1))} onAddToToc={addCurrentPageToToc} onCopyPageLink={copyCurrentPageLink} gestureResetKey={selectedVersion.id} readingMode />
               </div>
             )}
           </div>
@@ -720,8 +924,12 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
           <div className="manual-detail-scroll">
             {rightTab === 'toc' && (
               <div className="manual-toc-list">
-                <div className="manual-section-head"><strong>章节目录</strong><button type="button" disabled={!selectedVersion} onClick={openEditVersion}>编辑</button></div>
-                {selectedVersion?.tocJson.map((item, index) => <button type="button" key={`${item.title}-${index}`} onClick={() => setPdfPage(item.pageStart)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{item.title}</strong><small>{item.pageStart === item.pageEnd ? `第 ${item.pageStart} 页` : `${item.pageStart}-${item.pageEnd} 页`}</small></button>)}
+                <div className="manual-section-head"><strong>章节目录</strong><div><button type="button" disabled={!selectedVersion || selectedVersion.fileMode !== 'PDF'} onClick={openTocSuggestionDialog}>生成目录建议</button><button type="button" disabled={!selectedVersion} onClick={openEditVersion}>编辑全部</button></div></div>
+                {selectedVersion?.tocJson.map((item, index) => {
+                  const id = tocItemId(item, index);
+                  const active = currentPreviewPage >= item.pageStart && currentPreviewPage <= item.pageEnd;
+                  return <article className={`${active ? 'active' : ''}${highlightedTocId === id ? ' highlighted' : ''}`} key={id}><button className="manual-toc-select" type="button" onClick={() => goToTocItem(item)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{item.title}</strong><small>{item.pageStart === item.pageEnd ? `第 ${item.pageStart} 页` : `${item.pageStart}-${item.pageEnd} 页`}</small></button><div className="manual-toc-actions"><button type="button" disabled={index === 0} onClick={() => void moveTocItem(index, -1)} title="上移">↑</button><button type="button" disabled={index === selectedVersion.tocJson.length - 1} onClick={() => void moveTocItem(index, 1)} title="下移">↓</button><button type="button" onClick={() => setTocEdit({ id, title: item.title, pageStart: item.pageStart, pageEnd: item.pageEnd })}>编辑</button><button className="danger-text" type="button" onClick={() => void deleteTocItem(item, index)}>删除</button></div></article>;
+                })}
                 {!selectedVersion?.tocJson.length && <div className="manual-side-empty">暂未识别目录，可手动添加</div>}
               </div>
             )}
@@ -755,6 +963,8 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
       {deleteTarget && <DeleteDialog target={deleteTarget} value={deleteText} setValue={setDeleteText} saving={saving} close={() => { setDeleteTarget(null); setDeleteText(''); }} confirm={confirmDelete} />}
       {trashOpen && <ManualTrashDialog trash={trash} close={() => setTrashOpen(false)} restore={restoreTrash} />}
       {moreInfoOpen && selectedManual && <ManualMoreInfoDialog manual={selectedManual} version={selectedVersion} close={() => setMoreInfoOpen(false)} />}
+      {tocEdit && selectedVersion && <TocEditDialog value={tocEdit} setValue={setTocEdit} currentPage={currentPreviewPage} pageCount={selectedVersion.pageCount || Math.max(1, activeAssets.length)} saving={saving} close={() => setTocEdit(null)} submit={saveTocEdit} />}
+      {tocSuggestionOpen && <TocSuggestionDialog suggestions={availableTocSuggestions} selected={selectedTocSuggestions} setSelected={setSelectedTocSuggestions} saving={saving} close={() => setTocSuggestionOpen(false)} save={saveTocSuggestions} />}
       <BulkConnectorManualImportModal open={bulkOpen} close={() => setBulkOpen(false)} completed={async () => { setRefreshKey(value => value + 1); }} />
       {toast && <div className="manual-toast" role="status">{toast}</div>}
     </main>
@@ -852,6 +1062,41 @@ function VersionDialog({ mode, form, setForm, saving, close, submit }: { mode: '
 function UploadDialog({ version, files, setFiles, saving, close, submit }: { version: ConnectorAssemblyManualVersionDTO; files: File[]; setFiles: (files: File[]) => void; saving: boolean; close: () => void; submit: (event: FormEvent) => void }) {
   const isPdf = version.fileMode === 'PDF';
   return <div className="modal-backdrop"><form className="manual-dialog upload" onSubmit={submit}><DialogTitle title={`上传 ${version.revision} 文件`} close={close} /><label className="manual-upload-drop"><input type="file" multiple={!isPdf} accept={isPdf ? '.pdf,application/pdf' : '.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp'} onChange={event => setFiles(Array.from(event.target.files || []))} /><strong>{isPdf ? '选择一个 PDF' : '选择多张图片'}</strong><span>{isPdf ? '最大 100MB，上传后自动识别页数并提取可搜索文字' : '支持 JPG / PNG / WEBP，单张 20MB，最多 50 张'}</span></label><div className="manual-upload-files">{files.map(file => <span key={`${file.name}-${file.size}`}><strong>{file.name}</strong><small>{bytes(file.size)}</small></span>)}</div><DialogActions saving={saving} close={close} label="开始上传" /></form></div>;
+}
+
+function TocEditDialog({ value, setValue, currentPage, pageCount, saving, close, submit }: { value: NonNullable<TocEditState>; setValue: (value: TocEditState) => void; currentPage: number; pageCount: number; saving: boolean; close: () => void; submit: (event: FormEvent) => void }) {
+  return (
+    <div className="modal-backdrop">
+      <form className="manual-dialog toc-edit-dialog" onSubmit={submit}>
+        <DialogTitle title="编辑目录条目" close={close} />
+        <div className="manual-form-grid">
+          <label className="wide"><span>目录标题 *</span><input autoFocus value={value.title} maxLength={160} onChange={event => setValue({ ...value, title: event.target.value })} /></label>
+          <label><span>起始页</span><input type="number" min={1} max={pageCount} value={value.pageStart} onChange={event => setValue({ ...value, pageStart: Number(event.target.value || 1) })} /><button className="toc-current-page-button" type="button" onClick={() => setValue({ ...value, pageStart: currentPage })}>设当前页为起始页</button></label>
+          <label><span>结束页</span><input type="number" min={1} max={pageCount} value={value.pageEnd} onChange={event => setValue({ ...value, pageEnd: Number(event.target.value || 1) })} /><button className="toc-current-page-button" type="button" onClick={() => setValue({ ...value, pageEnd: currentPage })}>设当前页为结束页</button></label>
+        </div>
+        <DialogActions saving={saving} close={close} label="保存目录" />
+      </form>
+    </div>
+  );
+}
+
+function TocSuggestionDialog({ suggestions, selected, setSelected, saving, close, save }: { suggestions: PdfTocSuggestion[]; selected: string[]; setSelected: (items: string[]) => void; saving: boolean; close: () => void; save: () => void }) {
+  return (
+    <div className="modal-backdrop">
+      <section className="manual-dialog toc-suggestion-dialog">
+        <DialogTitle title="目录建议" close={close} />
+        <p className="toc-suggestion-note">建议来自 PDF 书签或前 3 页可提取文本，可能存在误差，请确认后保存。扫描型 PDF 不使用 OCR。</p>
+        <div className="toc-suggestion-list">
+          {suggestions.map(item => {
+            const key = tocSuggestionKey(item);
+            const checked = selected.includes(key);
+            return <label key={key}><input type="checkbox" checked={checked} onChange={() => setSelected(checked ? selected.filter(value => value !== key) : [...selected, key])} /><strong>{item.title}</strong><span>{item.pageStart === item.pageEnd ? `第 ${item.pageStart} 页` : `${item.pageStart}-${item.pageEnd} 页`}</span><small>{item.source === 'outline' ? 'PDF 书签' : '目录文本'}</small></label>;
+          })}
+        </div>
+        <div className="dialog-actions"><button type="button" onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving || !selected.length} onClick={save}>{saving ? '保存中...' : `保存已选 ${selected.length} 条`}</button></div>
+      </section>
+    </div>
+  );
 }
 
 function BindingDialog({ keyword, setKeyword, options, selected, setSelected, boundIds, close, save }: { keyword: string; setKeyword: (value: string) => void; options: ConnectorParameterDTO[]; selected: string[]; setSelected: (ids: string[]) => void; boundIds: Set<string>; close: () => void; save: () => void }) {
