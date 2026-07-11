@@ -809,7 +809,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
           <button className="manual-single-create" type="button" onClick={openCreateManual}>单份新增</button>
           <div className="library-wrap">
             <button ref={libraryButtonRef} className="library-button" type="button" onClick={() => setLibraryMenu(value => !value)}>▱ 资料库</button>
-            <PortalMenu open={libraryMenu} anchorRef={libraryButtonRef} className="library-menu" width={230}>
+            <PortalMenu open={libraryMenu} anchorRef={libraryButtonRef} className="library-menu" width={230} onClose={() => setLibraryMenu(false)}>
               <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
               <button type="button" onClick={() => { location.href = '/dashboard'; }}>生产工单</button>
               <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
@@ -819,7 +819,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
           </div>
           <div className="user-wrap">
             <button ref={userButtonRef} className="user-button" type="button" onClick={() => setUserMenu(value => !value)}><span>♙</span><b title={accountName}>{accountName}</b><em>⌄</em></button>
-            <PortalMenu open={userMenu} anchorRef={userButtonRef} className="user-menu app-user-menu" width={176}>
+            <PortalMenu open={userMenu} anchorRef={userButtonRef} className="user-menu app-user-menu" width={176} onClose={() => setUserMenu(false)}>
               <button type="button" onClick={loadTrash}>回收站</button>
               <button type="button" onClick={() => { location.href = '/dashboard?openLogs=1'; }}>操作日志</button>
               <button type="button" onClick={logout}>退出登录</button>
@@ -842,7 +842,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
               <button className={statusFilter === value ? 'active' : ''} type="button" key={value} onClick={() => { setStatusFilter(value); setPage(1); }}>{label}</button>
             ))}
             <button ref={filterButtonRef} className={filterOpen || advancedFilterActive ? 'active' : ''} type="button" onClick={() => setFilterOpen(value => !value)}>筛选{advancedFilterActive ? ' ·' : ''}</button>
-            <PortalMenu open={filterOpen} anchorRef={filterButtonRef} align="left" className="manual-filter-menu" width={310}>
+            <PortalMenu open={filterOpen} anchorRef={filterButtonRef} align="left" className="manual-filter-menu" width={310} onClose={() => setFilterOpen(false)} closeOnSelect={false}>
               <div className="manual-advanced-filters">
                 <label><span>制造商</span><select aria-label="制造商筛选" value={manufacturer} onChange={event => { setManufacturer(event.target.value); setPage(1); }}><option value="">全部制造商</option>{manufacturers.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
                 <label><span>连接器系列</span><select aria-label="系列筛选" value={family} onChange={event => { setFamily(event.target.value); setPage(1); }}><option value="">全部系列</option>{families.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
@@ -887,7 +887,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
               <button type="button" disabled={!selectedManual} onClick={openEditManual}>编辑</button>
               <button className="manual-detail-toggle" type="button" disabled={!selectedManual} onClick={() => setDetailsOpen(value => !value)} title={detailsOpen ? '收起目录侧栏' : '展开目录侧栏'}>{detailsOpen ? '收起侧栏' : '目录'}</button>
               <button ref={manualActionsButtonRef} type="button" disabled={!selectedManual} onClick={() => setManualActionsOpen(value => !value)}>更多</button>
-              <PortalMenu open={manualActionsOpen} anchorRef={manualActionsButtonRef} className="manual-actions-menu" width={190}>
+              <PortalMenu open={manualActionsOpen} anchorRef={manualActionsButtonRef} className="manual-actions-menu" width={190} onClose={() => setManualActionsOpen(false)}>
                 <button type="button" onClick={() => { setMoreInfoOpen(true); setManualActionsOpen(false); }}>更多信息</button>
                 <button type="button" disabled={!selectedVersion} onClick={() => { openEditVersion(); setManualActionsOpen(false); }}>编辑当前版本与目录</button>
                 <button className="danger" type="button" disabled={!selectedManual} onClick={() => { if (selectedManual) setDeleteTarget({ type: 'manual', item: selectedManual }); setManualActionsOpen(false); }}>删除说明书</button>

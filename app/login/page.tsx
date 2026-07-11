@@ -1,4 +1,14 @@
 import {redirect} from 'next/navigation';
 import {currentUser} from '@/lib/auth';
 import LoginForm from '@/components/LoginForm';
-export default async function Login(){if(await currentUser())redirect('/production'); return <LoginForm/>}
+
+function safeNext(value?: string | string[]): string {
+  const next = Array.isArray(value) ? value[0] : value;
+  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/production';
+}
+
+export default async function Login({ searchParams }: { searchParams?: { next?: string | string[] } }) {
+  const next = safeNext(searchParams?.next);
+  if (await currentUser()) redirect(next);
+  return <LoginForm nextPath={next} />;
+}

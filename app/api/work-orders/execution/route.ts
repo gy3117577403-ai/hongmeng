@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { loadProductionExecution, resolveProductionWeek, type ProductionExecutionFilters } from '@/lib/production-execution';
+import {
+  loadProductionExecution,
+  parseProductionExecutionView,
+  productionFiltersFromSearchParams,
+  resolveProductionWeek,
+} from '@/lib/production-execution';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,32 +17,15 @@ function positiveInt(value: string | null, fallback: number) {
 
 export async function GET(req: NextRequest) {
   try {
-    const user = await requireUser();
+    await requireUser();
     const params = req.nextUrl.searchParams;
     const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'));
-    const viewParam = params.get('view');
-    const view = viewParam === 'today' || viewParam === 'exceptions' ? viewParam : 'board';
-    const filters: ProductionExecutionFilters = {
-      keyword: params.get('keyword') || '',
-      quick: (params.get('quick') || '').split(',').map(item => item.trim()).filter(Boolean),
-      customer: params.get('customer') || '',
-      specification: params.get('specification') || '',
-      productName: params.get('productName') || '',
-      productionOwner: params.get('productionOwner') || '',
-      workstation: params.get('workstation') || '',
-      stage: params.get('stage') || '',
-      priority: params.get('priority') || '',
-      deliveryFrom: params.get('deliveryFrom') || '',
-      deliveryTo: params.get('deliveryTo') || '',
-      completeness: params.get('completeness') || '',
-      currentUserName: user.displayName || user.username,
-    };
     const data = await loadProductionExecution({
       week,
-      filters,
-      view,
+      filters: productionFiltersFromSearchParams(params),
+      view: parseProductionExecutionView(params.get('view')),
       page: positiveInt(params.get('page'), 1),
-      pageSize: positiveInt(params.get('pageSize'), 120),
+      pageSize: Math.min(500, positiveInt(params.get('pageSize'), 500)),
     });
     return NextResponse.json({ ok: true, data });
   } catch (error) {

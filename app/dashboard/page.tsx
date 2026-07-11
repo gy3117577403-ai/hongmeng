@@ -4,9 +4,21 @@ import { currentUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { serializeWorkOrder } from '@/lib/work-orders';
 
-export default async function Dashboard() {
+type DashboardPageProps = {
+  searchParams?: Record<string, string | string[] | undefined>;
+};
+
+export default async function Dashboard({ searchParams = {} }: DashboardPageProps) {
   const user = await currentUser();
-  if (!user) redirect('/login');
+  if (!user) {
+    const params = new URLSearchParams();
+    Object.entries(searchParams).forEach(([key, value]) => {
+      if (typeof value === 'string') params.set(key, value);
+      else value?.forEach(item => params.append(key, item));
+    });
+    const next = `/dashboard${params.size ? `?${params.toString()}` : ''}`;
+    redirect(`/login?next=${encodeURIComponent(next)}`);
+  }
 
   const [orders, categories] = await Promise.all([
     prisma.workOrder.findMany({

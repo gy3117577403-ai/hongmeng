@@ -284,7 +284,7 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
           <button ref={userButtonRef} className="user-button" type="button" onClick={() => setUserMenu(value => !value)}>
             <span>♙</span><b>{user.displayName || user.username}</b><em>⌄</em>
           </button>
-          <PortalMenu open={userMenu} anchorRef={userButtonRef} className="user-menu app-user-menu" width={176}>
+          <PortalMenu open={userMenu} anchorRef={userButtonRef} className="user-menu app-user-menu" width={176} onClose={() => setUserMenu(false)}>
             <button type="button" onClick={() => { location.href = '/dashboard?openWeeklyImport=1'; }}>导入下周计划</button>
             <button type="button" onClick={logout}>退出登录</button>
           </PortalMenu>

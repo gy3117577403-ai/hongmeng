@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
-import { loadProductionExecution, resolveProductionWeek, type ProductionExecutionFilters } from '@/lib/production-execution';
+import {
+  loadProductionExecution,
+  parseProductionExecutionView,
+  productionFiltersFromSearchParams,
+  resolveProductionWeek,
+} from '@/lib/production-execution';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,31 +30,20 @@ export async function GET(req: NextRequest) {
     const user = await requireUser();
     const params = req.nextUrl.searchParams;
     const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'));
-    const filters: ProductionExecutionFilters = {
-      keyword: params.get('keyword') || '',
-      quick: (params.get('quick') || '').split(',').map(item => item.trim()).filter(Boolean),
-      customer: params.get('customer') || '',
-      specification: params.get('specification') || '',
-      productName: params.get('productName') || '',
-      productionOwner: params.get('productionOwner') || '',
-      workstation: params.get('workstation') || '',
-      stage: params.get('stage') || '',
-      priority: params.get('priority') || '',
-      deliveryFrom: params.get('deliveryFrom') || '',
-      deliveryTo: params.get('deliveryTo') || '',
-      completeness: params.get('completeness') || '',
-      currentUserName: user.displayName || user.username,
-    };
-    const data = await loadProductionExecution({ week, filters, view: 'board', page: 1, pageSize: 5000 });
-    const headers = ['规格', '客户', '品名', '状态', '优先级', '负责人', '工位', '交期', '未交量', '完成数量', '图纸状态', '配料状态', '资料完整度', '最近进度', '最近更新时间'];
+    const data = await loadProductionExecution({
+      week,
+      filters: productionFiltersFromSearchParams(params),
+      view: parseProductionExecutionView(params.get('view')),
+      page: 1,
+      pageSize: 5000,
+    });
+    const headers = ['规格', '客户', '品名', '状态', '优先级', '交期', '未交量', '完成数量', '图纸状态', '配料状态', '资料完整度', '最近进度', '最近更新时间'];
     const rows = data.items.map(item => [
       item.specification || item.code,
       item.customerName || '',
       item.productName || '',
       item.stageText,
       item.priority === 'urgent' ? '紧急' : item.priority === 'high' ? '高' : '一般',
-      item.productionOwner || '',
-      item.workstation || '',
       item.deliveryDay || item.plannedAt || '',
       item.uncompletedQty || '',
       item.completedQty || '',

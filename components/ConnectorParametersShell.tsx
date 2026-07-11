@@ -676,7 +676,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
           <button className="log-button" type="button" onClick={loadLogs}>操作日志</button>
           <div className="library-wrap">
             <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLib(v => !v)}>▱ 资料库</button>
-            <PortalMenu open={lib} anchorRef={libraryMenuButtonRef} className="library-menu" width={220}>
+            <PortalMenu open={lib} anchorRef={libraryMenuButtonRef} className="library-menu" width={220} onClose={() => setLib(false)}>
                 <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产工单</button>
                 <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
@@ -688,7 +688,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             <button ref={userMenuButtonRef} className="user-button" type="button" onClick={() => setUserMenu(v => !v)}>
               <span>♙</span><b title={accountName}>{accountName}</b><em>⌄</em>
             </button>
-            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176}>
+            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176} onClose={() => setUserMenu(false)}>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>返回生产资料</button>
                 <button type="button" onClick={loadLogs}>操作日志</button>
                 <button type="button" onClick={logout}>退出登录</button>
@@ -819,7 +819,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                             >
                               更多
                             </button>
-                            <PortalMenu open={rowMenuId === item.id} anchorRef={rowMenuButtonRef} className="connector-row-menu" width={168}>
+                            <PortalMenu open={rowMenuId === item.id} anchorRef={rowMenuButtonRef} className="connector-row-menu" width={168} onClose={() => setRowMenuId(null)}>
                                 <button type="button" onClick={() => toggleHighlight(item)}>{item.isHighlighted ? '取消重点' : '标记重点'}</button>
                                 <button type="button" onClick={() => copyParameter(item)}>复制整行参数</button>
                                 <button className="danger-text" type="button" onClick={() => { setRowMenuId(null); setDeleteTarget(item); }}>删除</button>

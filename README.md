@@ -111,6 +111,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.16.1-connector-manual-bulk-import：组装说明书新增文件夹 / 多文件零表单导入，文件名作为默认名称，支持 PDF 轻量解析、图片集分组、SHA-256 去重、版本与冲突建议、强确认、并发队列、暂停 / 重试、批次历史和待完善筛选。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.2-connector-manual-workspace-polish：组装说明书重排为阅读优先三栏工作台，精简列表与空字段，目录默认打开且 1024px 使用覆盖式抽屉；单份新增改为三步快速入库，新增元数据可信度治理和只读异常审计。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.3-connector-manual-gesture-toc：组装说明书 PDF / 图片预览新增滚轮焦点缩放、双击 / 双点、双指捏合和放大拖动；支持当前页快捷目录、目录 CRUD / 排序、PDF 目录建议、当前页直达链接和阅读页恢复。继续复用 `tocJson`，未新增 Prisma migration。该版本为本地验证候选，尚未部署 Sealos。
+- v1.16.4-production-execution-glass-ux：生产执行中心改为四列独立滚动的暖色玻璃工作台，新增客户、交期、状态、优先级、图纸、配料与资料完整度筛选；停用负责人 / 工位 UI，统一下拉菜单关闭逻辑，并支持工单资料直达与返回筛选、横向及列滚动位置恢复。该版本为本地验证候选，尚未部署 Sealos。
 
 ## 交付文档索引
 
@@ -155,15 +156,19 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 5. `resource_files` 有元数据记录。
 6. 对象存储 Bucket 有实际文件。
 7. 删除后前端隐藏，数据库记录仍保留软删除状态。
-# v1.15.0 生产执行中心
+# v1.16.4 生产执行中心
 
 - 新增 `/production` 当前周生产执行首页，登录后默认进入。
 - 提供生产摘要、今日任务、异常任务和四状态看板。
-- 支持负责人、工位、完成数量、进度备注、快捷状态与完整进度历史。
-- 支持批量分派和状态更新，批量完成使用 `COMPLETE_BATCH` 强确认。
-- 与周计划和图纸资料库联动，历史周保持只读。
+- 支持四状态列独立滚动、暖色玻璃工作台、可点击摘要和组合筛选。
+- 负责人和工位已从执行中心 UI 停用；数据库兼容字段和历史日志继续保留。
+- 支持状态、完成数量、进度备注及完整进度历史，批量模式仅保留优先级、状态和备注。
+- 工单卡片可直达现有 Dashboard 资料预览，返回后恢复视图、筛选和看板滚动位置。
+- 统一普通下拉菜单的外部点击、Escape、失焦关闭和单菜单互斥行为。
 - 支持当前筛选条件的生产执行 CSV 导出。
 - 当前为本地验证候选，尚未作为生产版本部署到 Sealos。
 
 - [生产执行中心使用指南](docs/PRODUCTION_EXECUTION_CENTER_GUIDE.md)
 - [生产执行中心 QA](docs/QA_PRODUCTION_EXECUTION_CENTER.md)
+- [玻璃工作台实现说明](docs/PRODUCTION_EXECUTION_GLASS_UX_GUIDE.md)
+- [玻璃工作台 QA](docs/QA_PRODUCTION_EXECUTION_GLASS_UX.md)

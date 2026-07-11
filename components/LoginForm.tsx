@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-export default function LoginForm() {
+export default function LoginForm({ nextPath = '/production' }: { nextPath?: string }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,7 +23,7 @@ export default function LoginForm() {
         setError(d.message || '登录失败');
         return;
       }
-      location.href = '/production';
+      location.href = nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/production';
     } catch {
       setError('网络异常，请稍后重试');
     } finally {

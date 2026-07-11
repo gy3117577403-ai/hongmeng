@@ -32,25 +32,24 @@ export type ProductionExceptionCode =
   | 'drawing_not_issued'
   | 'material_not_ready'
   | 'documents_incomplete'
-  | 'owner_missing'
   | 'delivery_missing'
   | 'specification_invalid'
   | 'customer_missing';
 
+export type ProductionExecutionView = 'board' | 'today' | 'exceptions';
+
 export type ProductionExecutionFilters = {
   keyword?: string;
   quick?: string[];
-  customer?: string;
-  specification?: string;
-  productName?: string;
-  productionOwner?: string;
-  workstation?: string;
+  customers?: string[];
+  duePreset?: string;
+  dueFrom?: string;
+  dueTo?: string;
   stage?: string;
   priority?: string;
-  deliveryFrom?: string;
-  deliveryTo?: string;
-  completeness?: string;
-  currentUserName?: string;
+  drawingStatus?: string;
+  materialStatus?: string;
+  documentCompleteness?: string;
 };
 
 export type ProductionWeek = {
@@ -63,11 +62,62 @@ const exceptionLabels: Record<ProductionExceptionCode, string> = {
   drawing_not_issued: '未发图',
   material_not_ready: '配料未齐',
   documents_incomplete: '资料不完整',
-  owner_missing: '无负责人',
   delivery_missing: '交期缺失',
   specification_invalid: '规格异常',
   customer_missing: '客户缺失',
 };
+
+const validQuickFilters = new Set([
+  'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed',
+  'due_today', 'updated_today', 'completed_today', 'delivery_missing',
+  'specification_invalid', 'customer_missing',
+]);
+const validStages = new Set(['not_issued', 'frontend', 'backend', 'completed']);
+const validPriorities = new Set(['urgent', 'high', 'normal']);
+const validDuePresets = new Set(['today', 'tomorrow', 'overdue', 'week', 'custom']);
+const validDrawingStatuses = new Set(['issued', 'not_issued', 'unset']);
+const validMaterialStatuses = new Set(['allocated', 'ready', 'not_ready', 'unset']);
+const validDocumentCompleteness = new Set(['empty', 'partial', 'complete', 'incomplete']);
+
+function validatedValue(value: string | null, allowed: Set<string>) {
+  const normalized = text(value);
+  return allowed.has(normalized) ? normalized : '';
+}
+
+function validatedDate(value: string | null) {
+  const normalized = text(value);
+  if (!normalized) return '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || !parseWeek(normalized)) throw new Error('交期日期格式不正确');
+  return normalized;
+}
+
+export function parseProductionExecutionView(value: string | null): ProductionExecutionView {
+  return value === 'today' || value === 'exceptions' ? value : 'board';
+}
+
+export function productionFiltersFromSearchParams(params: URLSearchParams): ProductionExecutionFilters {
+  const customers = params.getAll('customer')
+    .flatMap(value => value.split(','))
+    .map(value => value.trim().slice(0, 120))
+    .filter(Boolean)
+    .slice(0, 30);
+  const dueFrom = validatedDate(params.get('dueFrom') || params.get('deliveryFrom'));
+  const dueTo = validatedDate(params.get('dueTo') || params.get('deliveryTo'));
+  if (dueFrom && dueTo && dueFrom > dueTo) throw new Error('交期开始日期不能晚于结束日期');
+  return {
+    keyword: text(params.get('keyword')).slice(0, 160),
+    quick: (params.get('quick') || '').split(',').map(item => item.trim()).filter(item => validQuickFilters.has(item)),
+    customers: [...new Set(customers)],
+    duePreset: validatedValue(params.get('duePreset'), validDuePresets),
+    dueFrom,
+    dueTo,
+    stage: validatedValue(params.get('stage'), validStages),
+    priority: validatedValue(params.get('priority'), validPriorities),
+    drawingStatus: validatedValue(params.get('drawing') || params.get('drawingStatus'), validDrawingStatuses),
+    materialStatus: validatedValue(params.get('material') || params.get('materialStatus'), validMaterialStatuses),
+    documentCompleteness: validatedValue(params.get('documents') || params.get('documentCompleteness') || params.get('completeness'), validDocumentCompleteness),
+  };
+}
 
 function text(value?: string | null) {
   return value?.trim() || '';
@@ -162,7 +212,6 @@ export function productionExceptionCodes(order: ProductionExecutionOrderRecord, 
   if (!text(order.drawingStatus) || stage === 'not_issued') exceptions.push('drawing_not_issued');
   if (stage !== 'completed' && !isMaterialReady(order.materialStatus)) exceptions.push('material_not_ready');
   if (!executionCompleteness(order).complete) exceptions.push('documents_incomplete');
-  if (!text(order.productionOwner)) exceptions.push('owner_missing');
   if (!order.plannedAt && !text(order.deliveryDay)) exceptions.push('delivery_missing');
   if (!text(order.specification) || isInvalidSpecification(order.specification || '')) exceptions.push('specification_invalid');
   if (!text(order.customerName)) exceptions.push('customer_missing');
@@ -252,41 +301,73 @@ function dateInput(value?: string) {
   return parseWeek(value);
 }
 
-function matchesFilters(order: ProductionExecutionOrderRecord, filters: ProductionExecutionFilters, now = new Date()) {
+function drawingStatusValue(order: ProductionExecutionOrderRecord) {
+  const value = text(order.drawingStatus);
+  if (!value || value === '-' || value.includes('未设置')) return 'unset';
+  if (value.includes('未发') || value.includes('未下发')) return 'not_issued';
+  if (value.includes('已发') || value.includes('已下发')) return 'issued';
+  return 'issued';
+}
+
+function materialStatusValue(order: ProductionExecutionOrderRecord) {
+  const value = text(order.materialStatus);
+  if (!value || value === '-' || value.includes('未设置')) return 'unset';
+  if (value.includes('已配料')) return 'allocated';
+  if (value.includes('料齐') && !value.includes('未齐')) return 'ready';
+  return 'not_ready';
+}
+
+function matchesDuePreset(order: ProductionExecutionOrderRecord, preset: string | undefined, week: ProductionWeek, now: Date) {
+  if (!preset) return true;
+  const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+  const { start, end } = chinaDayBounds(now);
+  if (preset === 'overdue') return stage !== 'completed' && !!order.plannedAt && order.plannedAt < start;
+  if (!order.plannedAt) return false;
+  if (preset === 'today') return order.plannedAt >= start && order.plannedAt < end;
+  if (preset === 'tomorrow') return order.plannedAt >= end && order.plannedAt < addDays(end, 1);
+  if (preset === 'week') return !!week.weekStart && order.plannedAt >= week.weekStart && order.plannedAt < addDays(week.weekEnd || addDays(week.weekStart, 6), 1);
+  return true;
+}
+
+function matchesFilters(order: ProductionExecutionOrderRecord, filters: ProductionExecutionFilters, week: ProductionWeek, now = new Date()) {
   const keyword = lower(filters.keyword);
   if (keyword) {
-    const haystack = [order.specification, order.customerName, order.productName, order.code, order.sourceOrderNo, order.productionOwner, order.workstation, order.latestProgressRemark]
+    const haystack = [order.specification, order.customerName, order.productName, order.code, order.sourceOrderNo, order.latestProgressRemark]
       .map(lower)
       .join('\n');
     if (!haystack.includes(keyword)) return false;
   }
-  const contains = (value: string | null | undefined, expected?: string) => !text(expected) || lower(value).includes(lower(expected));
-  if (!contains(order.customerName, filters.customer)) return false;
-  if (!contains(order.specification, filters.specification)) return false;
-  if (!contains(order.productName, filters.productName)) return false;
-  if (!contains(order.productionOwner, filters.productionOwner)) return false;
-  if (!contains(order.workstation, filters.workstation)) return false;
+  if (filters.customers?.length && !filters.customers.some(customer => lower(customer) === lower(order.customerName))) return false;
   const normalizedStage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   if (filters.stage && normalizedStage !== normalizeWorkOrderStage(filters.stage)) return false;
   if (filters.priority && order.priority !== filters.priority) return false;
-  const from = dateInput(filters.deliveryFrom);
-  const to = dateInput(filters.deliveryTo);
+  if (!matchesDuePreset(order, filters.duePreset, week, now)) return false;
+  const from = dateInput(filters.dueFrom);
+  const to = dateInput(filters.dueTo);
   if (from && (!order.plannedAt || order.plannedAt < from)) return false;
   if (to && (!order.plannedAt || order.plannedAt >= addDays(to, 1))) return false;
   const completeness = executionCompleteness(order);
-  if (filters.completeness === 'complete' && !completeness.complete) return false;
-  if (filters.completeness === 'incomplete' && completeness.complete) return false;
+  if (filters.documentCompleteness === 'empty' && completeness.filled !== 0) return false;
+  if (filters.documentCompleteness === 'partial' && (completeness.filled <= 0 || completeness.complete)) return false;
+  if (filters.documentCompleteness === 'complete' && !completeness.complete) return false;
+  if (filters.documentCompleteness === 'incomplete' && completeness.complete) return false;
+  if (filters.drawingStatus && drawingStatusValue(order) !== filters.drawingStatus) return false;
+  if (filters.materialStatus && materialStatusValue(order) !== filters.materialStatus) return false;
 
   const quick = (filters.quick || []).filter(item => item && item !== 'all');
   for (const item of quick) {
-    if (item === 'today' && !isTodayTask(order, now)) return false;
+    if (item === 'due_today' && !isDueToday(order, now)) return false;
     if (item === 'overdue' && !isOverdue(order, now)) return false;
     if (item === 'urgent' && order.priority !== 'urgent') return false;
-    if (item === 'drawing' && text(order.drawingStatus) && normalizedStage !== 'not_issued') return false;
-    if (item === 'material' && (normalizedStage === 'completed' || isMaterialReady(order.materialStatus))) return false;
+    if (item === 'drawing' && normalizedStage !== 'not_issued' && !['not_issued', 'unset'].includes(drawingStatusValue(order))) return false;
+    if (item === 'material' && (normalizedStage === 'completed' || !['not_ready', 'unset'].includes(materialStatusValue(order)))) return false;
     if (item === 'documents' && completeness.complete) return false;
-    if (item === 'mine' && lower(order.productionOwner) !== lower(filters.currentUserName)) return false;
     if (item === 'completed' && normalizedStage !== 'completed') return false;
+    if (item === 'updated_today' && !inChinaDay(order.lastProgressAt, now)) return false;
+    if (item === 'completed_today' && !inChinaDay(order.completedAt, now)) return false;
+    if (item === 'delivery_missing' && (order.plannedAt || text(order.deliveryDay))) return false;
+    if (item === 'specification_invalid' && text(order.specification) && !isInvalidSpecification(order.specification || '')) return false;
+    if (item === 'customer_missing' && text(order.customerName)) return false;
   }
   return true;
 }
@@ -309,14 +390,14 @@ export async function loadProductionOrders(week: ProductionWeek) {
 export async function loadProductionExecution(input: {
   week: ProductionWeek;
   filters?: ProductionExecutionFilters;
-  view?: 'board' | 'today' | 'exceptions';
+  view?: ProductionExecutionView;
   page?: number;
   pageSize?: number;
 }) {
   const now = new Date();
   const all = await loadProductionOrders(input.week);
   const filters = input.filters || {};
-  let filtered = all.filter(order => matchesFilters(order, filters, now));
+  let filtered = all.filter(order => matchesFilters(order, filters, input.week, now));
   if (input.view === 'today') filtered = filtered.filter(order => isTodayTask(order, now));
   if (input.view === 'exceptions') filtered = filtered.filter(order => productionExceptionCodes(order, now).length > 0);
   filtered.sort((a, b) => taskRank(a, now) - taskRank(b, now) || (a.plannedAt?.getTime() || Number.MAX_SAFE_INTEGER) - (b.plannedAt?.getTime() || Number.MAX_SAFE_INTEGER));
@@ -333,6 +414,9 @@ export async function loadProductionExecution(input: {
     weekEndDate: input.week.weekEnd ? chinaYmd(input.week.weekEnd) : null,
     stageCounts,
     items,
+    filterOptions: {
+      customers: [...new Set(all.map(order => text(order.customerName)).filter(Boolean))].sort((first, second) => first.localeCompare(second, 'zh-CN')),
+    },
     pagination: { page, pageSize, total, totalPages },
   };
 }

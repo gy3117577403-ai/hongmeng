@@ -380,7 +380,7 @@ export function DrawingLibraryShell({
           <button className="log-button" type="button" title="批量导入原图说明" onClick={() => setBulkHelpOpen(true)}>导入说明</button>
           <div className="library-wrap">
             <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLibOpen(value => !value)}>▱ 资料库</button>
-            <PortalMenu open={libOpen} anchorRef={libraryMenuButtonRef} className="library-menu" width={220}>
+            <PortalMenu open={libOpen} anchorRef={libraryMenuButtonRef} className="library-menu" width={220} onClose={() => setLibOpen(false)}>
                 <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产工单</button>
                 <button className="active" type="button">图纸资料库 ✓</button>
@@ -392,7 +392,7 @@ export function DrawingLibraryShell({
             <button ref={userMenuButtonRef} className="user-button" type="button" onClick={() => setUserMenu(value => !value)}>
               <span>♙</span><b title={accountName}>{accountName}</b><em>⌄</em>
             </button>
-            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176}>
+            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176} onClose={() => setUserMenu(false)}>
                 <button type="button" onClick={() => { location.href = '/dashboard'; }}>返回生产工单</button>
                 <button type="button" onClick={logout}>退出登录</button>
             </PortalMenu>

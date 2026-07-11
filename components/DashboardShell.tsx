@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { CameraCaptureModal } from '@/components/CameraCaptureModal';
@@ -496,6 +497,45 @@ function toForm(order?: WorkOrderDTO): WorkOrderForm {
   };
 }
 
+const productionRestoreStages = ['not_issued', 'frontend', 'backend', 'completed'];
+
+function scheduleProductionViewportRestore(returnKey: string, attempt = 0): void {
+  if (!returnKey || attempt > 10) return;
+  window.setTimeout(() => {
+    if (window.location.pathname !== '/production') {
+      scheduleProductionViewportRestore(returnKey, attempt + 1);
+      return;
+    }
+    try {
+      const raw = sessionStorage.getItem(`production-execution:return:${returnKey}`);
+      const saved = raw ? JSON.parse(raw) as { boardScrollLeft?: number; columnScrollTops?: Record<string, number> } : null;
+      const shell = document.querySelector<HTMLElement>('.production-board-shell');
+      const columns = Array.from(document.querySelectorAll<HTMLElement>('.production-column-list'));
+      if (!saved || !shell || columns.length !== 4) {
+        scheduleProductionViewportRestore(returnKey, attempt + 1);
+        return;
+      }
+      shell.scrollLeft = saved.boardScrollLeft || 0;
+      productionRestoreStages.forEach((stage, index) => { columns[index].scrollTop = saved.columnScrollTops?.[stage] || 0; });
+      window.requestAnimationFrame(() => {
+        const expectedLeft = Math.min(saved.boardScrollLeft || 0, Math.max(0, shell.scrollWidth - shell.clientWidth));
+        const columnsMatch = productionRestoreStages.every((stage, index) => {
+          const expected = Math.min(saved.columnScrollTops?.[stage] || 0, Math.max(0, columns[index].scrollHeight - columns[index].clientHeight));
+          return Math.abs(columns[index].scrollTop - expected) <= 1;
+        });
+        if (Math.abs(shell.scrollLeft - expectedLeft) <= 1 && columnsMatch) {
+          sessionStorage.removeItem(`production-execution:return:${returnKey}`);
+          if (sessionStorage.getItem('production-execution:pending-return') === returnKey) sessionStorage.removeItem('production-execution:pending-return');
+        } else {
+          scheduleProductionViewportRestore(returnKey, attempt + 1);
+        }
+      });
+    } catch {
+      scheduleProductionViewportRestore(returnKey, attempt + 1);
+    }
+  }, attempt === 0 ? 180 : 100);
+}
+
 export default function DashboardShell({
   user,
   initialWorkOrders,
@@ -505,6 +545,7 @@ export default function DashboardShell({
   initialWorkOrders: WorkOrderDTO[];
   categories: ResourceCategoryDTO[];
 }) {
+  const router = useRouter();
   const [orders, setOrders] = useState(initialWorkOrders);
   const [kw, setKw] = useState('');
   const [orderFilter, setOrderFilter] = useState<OrderQuickFilter>('all');
@@ -606,6 +647,7 @@ export default function DashboardShell({
   const [toolWidth, setToolWidth] = useState(320);
   const [thumbsOpen, setThumbsOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [productionReturnKey, setProductionReturnKey] = useState('');
 
   const pdf = useRef<HTMLInputElement>(null);
   const img = useRef<HTMLInputElement>(null);
@@ -617,6 +659,7 @@ export default function DashboardShell({
   const libraryMenuButtonRef = useRef<HTMLButtonElement>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement>(null);
   const moreActionsButtonRef = useRef<HTMLButtonElement>(null);
+  const directTargetRef = useRef<{ workOrderId: string; categoryId: string; fileId: string } | null>(null);
 
   const list = useMemo(() => {
     const text = kw.trim().toLowerCase();
@@ -723,6 +766,13 @@ export default function DashboardShell({
   }, [toolOpen, toolTab, toolWidth]);
 
   useEffect(() => {
+    if (!productionReturnKey) return undefined;
+    const handleHistoryReturn = (): void => scheduleProductionViewportRestore(productionReturnKey);
+    window.addEventListener('popstate', handleHistoryReturn);
+    return () => window.removeEventListener('popstate', handleHistoryReturn);
+  }, [productionReturnKey]);
+
+  useEffect(() => {
     if (!loading && !file && !toolOpen && toolTab !== 'upload') setToolTab('upload');
   }, [file, loading, toolOpen, toolTab]);
 
@@ -738,6 +788,9 @@ export default function DashboardShell({
     const params = new URLSearchParams(window.location.search);
     const workOrderId = params.get('workOrderId');
     const workOrderCode = params.get('workOrderCode') || params.get('workOrder');
+    const requestedCategoryId = params.get('categoryId');
+    const requestedCategoryCode = params.get('categoryCode');
+    const requestedFileId = params.get('fileId') || '';
     const storedWorkOrderId = window.localStorage.getItem('hongmeng:lastWorkOrderId');
     const storedCategoryId = window.localStorage.getItem('hongmeng:lastCategoryId');
     const target = workOrderId
@@ -749,7 +802,17 @@ export default function DashboardShell({
           : null;
     if (target) setWo(target.id);
     else if (workOrderId || workOrderCode) setMsg('未找到直达链接对应的工单');
-    if (storedCategoryId && categories.some(c => c.id === storedCategoryId)) setCat(storedCategoryId);
+    const requestedCategory = requestedCategoryId
+      ? categories.find(categoryItem => categoryItem.id === requestedCategoryId)
+      : requestedCategoryCode
+        ? categories.find(categoryItem => categoryItem.code === requestedCategoryCode)
+        : null;
+    const targetCategoryId = requestedCategory?.id || (storedCategoryId && categories.some(categoryItem => categoryItem.id === storedCategoryId) ? storedCategoryId : categories[0]?.id || '');
+    if (targetCategoryId) setCat(targetCategoryId);
+    if (target && targetCategoryId && (workOrderId || workOrderCode)) {
+      directTargetRef.current = { workOrderId: target.id, categoryId: targetCategoryId, fileId: requestedFileId };
+    }
+    if (params.get('from') === 'production' && params.get('returnKey')) setProductionReturnKey(params.get('returnKey') || '');
     const requestedPlanView = params.get('planView');
     if (requestedPlanView === 'current' || requestedPlanView === 'draft_next' || requestedPlanView === 'history') setPlanView(requestedPlanView);
     if (params.get('openOrders') === '1') setDrawerOpen(true);
@@ -930,7 +993,15 @@ export default function DashboardShell({
     setManagerOpen(false);
     setWo(targetId);
     if (targetCategoryId) setCat(targetCategoryId);
-    window.history.replaceState(null, '', `/dashboard?workOrderId=${encodeURIComponent(targetId)}`);
+    const currentParams = new URLSearchParams(window.location.search);
+    const nextParams = new URLSearchParams({ workOrderId: targetId });
+    if (targetCategoryId) nextParams.set('categoryId', targetCategoryId);
+    if (targetFileId) nextParams.set('fileId', targetFileId);
+    if (currentParams.get('from') === 'production' && currentParams.get('returnKey')) {
+      nextParams.set('from', 'production');
+      nextParams.set('returnKey', currentParams.get('returnKey') || '');
+    }
+    window.history.replaceState(window.history.state, '', `/dashboard?${nextParams.toString()}`);
     await loadFiles(targetId, targetCategoryId || cat, targetFileId);
     await loadAllFiles(targetId);
     setSearchOpen(false);
@@ -939,6 +1010,26 @@ export default function DashboardShell({
 
   async function openFileResult(target: ResourceFileDTO) {
     await openWorkOrder(target.workOrderId, target.categoryId, target.id);
+  }
+
+  function returnToProduction(): void {
+    let fallbackUrl = '/production';
+    try {
+      const raw = sessionStorage.getItem(`production-execution:return:${productionReturnKey}`);
+      const saved = raw ? JSON.parse(raw) as { returnUrl?: string } : null;
+      if (saved?.returnUrl?.startsWith('/production')) fallbackUrl = saved.returnUrl;
+    } catch {
+      sessionStorage.removeItem(`production-execution:return:${productionReturnKey}`);
+    }
+    if (window.history.length > 1) {
+      scheduleProductionViewportRestore(productionReturnKey);
+      router.back();
+      window.setTimeout(() => {
+        if (window.location.pathname !== '/production') router.push(fallbackUrl, { scroll: false });
+      }, 1500);
+      return;
+    }
+    router.push(fallbackUrl, { scroll: false });
   }
 
   function openDrawingLibraryItemResult(itemId: string) {
@@ -1191,7 +1282,10 @@ export default function DashboardShell({
 
   useEffect(() => {
     setCategoryCounts(order?.categoryFileCounts || {});
-    loadFiles(order?.id, category?.id);
+    const directTarget = directTargetRef.current;
+    const preferredFileId = directTarget && directTarget.workOrderId === order?.id && directTarget.categoryId === category?.id ? directTarget.fileId : undefined;
+    if (directTarget && directTarget.workOrderId === order?.id && directTarget.categoryId === category?.id) directTargetRef.current = null;
+    loadFiles(order?.id, category?.id, preferredFileId);
     loadAllFiles(order?.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wo, cat]);
@@ -2218,12 +2312,13 @@ export default function DashboardShell({
           )}
         </div>
         <div className="top-actions">
+          {productionReturnKey && <button className="return-production-button" type="button" onClick={returnToProduction}>← 返回生产执行</button>}
           <button className="notice-button" type="button" aria-label="通知">◇<span /></button>
           <button className="language-button" type="button">CN</button>
           <button className="log-button" type="button" onClick={() => loadLogs('all')}>操作日志</button>
           <div className="library-wrap">
             <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLib(!lib)}>▱ 资料库</button>
-            <PortalMenu open={lib} anchorRef={libraryMenuButtonRef} className="library-menu" width={220}>
+            <PortalMenu open={lib} anchorRef={libraryMenuButtonRef} className="library-menu" width={220} onClose={() => setLib(false)}>
                 <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
                 <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
                 <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
@@ -2237,7 +2332,7 @@ export default function DashboardShell({
               <b title={accountName}>{accountName}</b>
               <em>⌄</em>
             </button>
-            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176}>
+            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176} onClose={() => setUserMenu(false)}>
                 <button type="button" onClick={openSystemSettings}>系统设置</button>
                 <button type="button" onClick={openAccounts}>账号管理</button>
                 <button type="button" onClick={openTrash}>回收站</button>
@@ -2362,7 +2457,7 @@ export default function DashboardShell({
               <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
               <div className="more-actions-wrap">
                 <button ref={moreActionsButtonRef} className="strip-more-button" type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多</button>
-                <PortalMenu open={moreActionsOpen} anchorRef={moreActionsButtonRef} className="more-actions-menu" width={190}>
+                <PortalMenu open={moreActionsOpen} anchorRef={moreActionsButtonRef} className="more-actions-menu" width={190} onClose={() => setMoreActionsOpen(false)}>
                     <button type="button" disabled={orderReadOnly} onClick={() => { setMoreActionsOpen(false); order && openOrderModal('edit', order); }}>编辑工单</button>
                     {order?.drawingLibraryItemId && <button type="button" onClick={() => { location.href = `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId || '')}`; }}>查看图纸资料库</button>}
                     <button type="button" disabled={orderReadOnly} onClick={() => { setMoreActionsOpen(false); order && setOrderDeleteTarget(order); }}>删除工单</button>
