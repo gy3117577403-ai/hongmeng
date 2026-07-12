@@ -659,6 +659,7 @@ export default function DashboardShell({
   const [localImportTask, setLocalImportTask] = useState<LocalImportTaskSession | null>(null);
   const [localImportConnection, setLocalImportConnection] = useState<LocalImportConnectionState>('creating');
   const [localImportError, setLocalImportError] = useState('');
+  const [localImportRetryCooling, setLocalImportRetryCooling] = useState(false);
   const [productionReturnKey, setProductionReturnKey] = useState('');
 
   const pdf = useRef<HTMLInputElement>(null);
@@ -675,6 +676,7 @@ export default function DashboardShell({
   const localImportLatestFileRef = useRef('');
   const localImportCompletionRef = useRef('');
   const localImportLaunchAttemptRef = useRef(0);
+  const localImportRetryBlockedUntilRef = useRef(0);
 
   const list = useMemo(() => {
     const text = kw.trim().toLowerCase();
@@ -1071,6 +1073,9 @@ export default function DashboardShell({
           if (attempt !== localImportLaunchAttemptRef.current) return;
           setLocalImportConnection('connected');
           setLocalImportError('');
+          setLocalImportTask(current => current && current.taskId === task.taskId
+            ? { ...current, pairingAvailable: false, pairingCode: undefined }
+            : current);
           return;
         }
       } catch {
@@ -1124,6 +1129,13 @@ export default function DashboardShell({
   }
 
   async function retryLocalImportHandoff() {
+    const now = Date.now();
+    if (now < localImportRetryBlockedUntilRef.current) return;
+    localImportRetryBlockedUntilRef.current = now + 3000;
+    setLocalImportRetryCooling(true);
+    window.setTimeout(() => {
+      if (Date.now() >= localImportRetryBlockedUntilRef.current) setLocalImportRetryCooling(false);
+    }, 3050);
     if (!localImportTask) {
       await openLocalImport();
       return;
@@ -1133,6 +1145,8 @@ export default function DashboardShell({
 
   async function recreateLocalImportTask() {
     localImportLaunchAttemptRef.current += 1;
+    localImportRetryBlockedUntilRef.current = 0;
+    setLocalImportRetryCooling(false);
     setLocalImportTask(null);
     await openLocalImport(true);
   }
@@ -1150,7 +1164,13 @@ export default function DashboardShell({
         if (!response.ok || !body?.data) throw new Error(body.error || '导入任务状态读取失败');
         if (!active) return;
         const data = body.data as LocalImportTaskView & { summary: LocalImportTaskView['summary'] & { latestFileId?: string | null } };
-        setLocalImportTask(current => current && current.taskId === localImportTaskId ? { ...current, ...data } : current);
+        setLocalImportTask(current => current && current.taskId === localImportTaskId
+          ? {
+              ...current,
+              ...data,
+              pairingCode: data.pairingAvailable === false ? undefined : current.pairingCode,
+            }
+          : current);
         if (['connected', 'uploading', 'paused', 'completed'].includes(data.summary.state)) {
           setLocalImportConnection('connected');
           setLocalImportError('');
@@ -1167,12 +1187,16 @@ export default function DashboardShell({
             localImportCompletionRef.current = localImportTaskId;
             setMsg(`从微盘导入完成：成功 ${data.summary.successCount}，重复 ${data.summary.duplicateCount}，失败 ${data.summary.failedCount}`);
           }
-          setLocalImportTask(current => current && current.taskId === localImportTaskId ? { ...current, handoffTicket: '' } : current);
+          setLocalImportTask(current => current && current.taskId === localImportTaskId
+            ? { ...current, handoffTicket: '', pairingCode: undefined, pairingAvailable: false }
+            : current);
         } else if (data.summary.state === 'expired') {
           terminal = true;
           setLocalImportConnection('unavailable');
           setLocalImportError('任务已过期，请重新创建任务。');
-          setLocalImportTask(current => current && current.taskId === localImportTaskId ? { ...current, handoffTicket: '' } : current);
+          setLocalImportTask(current => current && current.taskId === localImportTaskId
+            ? { ...current, handoffTicket: '', pairingCode: undefined, pairingAvailable: false }
+            : current);
         }
       } catch (error) {
         if (active) setLocalImportError(error instanceof Error ? error.message : '导入任务状态读取失败');
@@ -2982,6 +3006,7 @@ export default function DashboardShell({
         error={localImportError}
         retry={() => void retryLocalImportHandoff()}
         recreate={() => void recreateLocalImportTask()}
+        retryDisabled={localImportRetryCooling}
         close={() => setLocalImportOpen(false)}
       />
 

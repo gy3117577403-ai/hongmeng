@@ -8,6 +8,7 @@ export type LocalImportTaskView = {
   taskId: string;
   expiresAt: string;
   pairingCode?: string;
+  pairingAvailable?: boolean;
   workOrder: {
     id: string;
     displayCode: string;
@@ -52,6 +53,7 @@ export function LocalImportDialog({
   error,
   retry,
   recreate,
+  retryDisabled,
   close,
 }: {
   open: boolean;
@@ -60,13 +62,16 @@ export function LocalImportDialog({
   error: string;
   retry: () => void;
   recreate: () => void;
+  retryDisabled: boolean;
   close: () => void;
 }) {
   const [copyMessage, setCopyMessage] = useState('');
   if (!open) return null;
   const expiresLabel = task ? new Date(task.expiresAt).toLocaleString('zh-CN', { hour12: false }) : '-';
   const summary = task?.summary;
-  const expired = summary?.state === 'expired';
+  const expired = summary?.state === 'expired' || (task ? new Date(task.expiresAt).getTime() <= Date.now() : false);
+  const pairingAvailable = Boolean(task?.pairingCode) && task?.pairingAvailable !== false && !expired;
+  const canCreateNewCode = Boolean(task) && (expired || task?.pairingAvailable === false || connection === 'unavailable' || connection === 'error');
 
   async function copyPairingCode() {
     const value = task?.pairingCode || '';
@@ -133,13 +138,13 @@ export function LocalImportDialog({
           <p>助手不会读取企业微信 Cookie，也不会保存系统密码或对象存储密钥。</p>
         </div>
 
-        {task?.pairingCode && !expired && (
+        {pairingAvailable && (
           <div className="local-import-pairing">
             <div>
               <strong>浏览器协议未打开时，使用手动连接码</strong>
-              <p>普通双击打开助手，在“手动任务码”中输入；任务码限时且只能使用一次。</p>
+              <p>普通双击打开助手，在“手动任务码”中输入；任务码限时且只允许一个助手连接，同一助手可安全重试。</p>
             </div>
-            <code>{task.pairingCode}</code>
+            <code>{task?.pairingCode}</code>
             <button type="button" onClick={() => void copyPairingCode()}>复制任务码</button>
             {copyMessage && <small>{copyMessage}</small>}
           </div>
@@ -155,9 +160,9 @@ export function LocalImportDialog({
             <button type="button" disabled>正在唤起...</button>
           )}
           {(connection === 'unavailable' || connection === 'error') && !expired && (
-            <button type="button" onClick={retry}>重新唤起助手</button>
+            <button type="button" disabled={retryDisabled} onClick={retry}>{retryDisabled ? '请稍候...' : '重新唤起助手'}</button>
           )}
-          {expired && <button type="button" onClick={recreate}>重新创建任务</button>}
+          {canCreateNewCode && <button type="button" onClick={recreate}>一键生成新任务码</button>}
           {(connection === 'unavailable' || connection === 'error') && (
             <a className="primary-button" href="https://github.com/gy3117577403-ai/hongmeng/actions/workflows/windows-import-helper.yml" target="_blank" rel="noreferrer">下载导入助手</a>
           )}

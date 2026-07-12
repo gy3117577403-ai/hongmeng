@@ -25,12 +25,15 @@ public sealed class TaskApiClient : IDisposable
     };
 
     private readonly HttpClient _client;
+    private readonly string _helperInstanceId;
     private Uri? _baseUrl;
     private string _taskId = "";
     private string _ticket = "";
 
-    public TaskApiClient(HttpMessageHandler? handler = null)
+    public TaskApiClient(string helperInstanceId, HttpMessageHandler? handler = null)
     {
+        if (string.IsNullOrWhiteSpace(helperInstanceId)) throw new ArgumentException("助手实例标识不能为空", nameof(helperInstanceId));
+        _helperInstanceId = helperInstanceId;
         _client = handler is null ? new HttpClient() : new HttpClient(handler);
         _client.Timeout = TimeSpan.FromMinutes(10);
     }
@@ -59,15 +62,34 @@ public sealed class TaskApiClient : IDisposable
     public Task<TaskDetails> GetTaskAsync(CancellationToken cancellationToken) =>
         SendAsync<TaskDetails>(HttpMethod.Get, TaskPath(), null, cancellationToken);
 
-    public Task<TaskDetails> ConnectAsync(CancellationToken cancellationToken) =>
-        SendAsync<TaskDetails>(HttpMethod.Post, $"{TaskPath()}/connect", new object(), cancellationToken);
+    public Task<ConnectTaskResult> ConnectAsync(CancellationToken cancellationToken)
+    {
+        EnsureConfigured();
+        return ConnectAsync(_baseUrl!, _taskId, _ticket, cancellationToken);
+    }
+
+    public async Task<ConnectTaskResult> ConnectAsync(
+        Uri baseUrl,
+        string taskId,
+        string ticket,
+        CancellationToken cancellationToken)
+    {
+        var origin = ValidateOrigin(baseUrl);
+        var path = $"/api/local-import/tasks/{Uri.EscapeDataString(taskId)}/connect";
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, path));
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ticket);
+        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5.2");
+        request.Content = JsonContent.Create(new ConnectTaskRequest { HelperInstanceId = _helperInstanceId }, options: JsonOptions);
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
+        return await ReadEnvelopeAsync<ConnectTaskResult>(response, cancellationToken);
+    }
 
     public async Task<PairTaskResult> PairAsync(Uri baseUrl, string code, CancellationToken cancellationToken)
     {
         var origin = ValidateOrigin(baseUrl);
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, "/api/local-import/tasks/pair"));
-        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5.1");
-        request.Content = JsonContent.Create(new PairTaskRequest { Code = code }, options: JsonOptions);
+        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5.2");
+        request.Content = JsonContent.Create(new PairTaskRequest { Code = code, HelperInstanceId = _helperInstanceId }, options: JsonOptions);
         using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         return await ReadEnvelopeAsync<PairTaskResult>(response, cancellationToken);
     }
@@ -132,7 +154,7 @@ public sealed class TaskApiClient : IDisposable
     private void ApplyAuthorization(HttpRequestMessage request)
     {
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _ticket);
-        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5.1");
+        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5.2");
     }
 
     private string TaskPath() => $"/api/local-import/tasks/{Uri.EscapeDataString(_taskId)}";

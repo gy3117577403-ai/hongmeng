@@ -17,13 +17,15 @@ public partial class MainWindow : Window
     private readonly ProtocolRegistrationStatus _startupRegistrationStatus;
     private readonly string? _initialArgument;
     private readonly LoopbackHandoffServer _handoffServer = new();
-    private readonly TaskApiClient _api = new();
+    private readonly TaskApiClient _api;
+    private readonly string _helperInstanceId;
     private readonly FileValidator _validator = new();
     private readonly DownloadFolderMonitor _monitor = new();
     private readonly UserSettingsStore _settingsStore = new();
     private readonly CancellationTokenSource _lifetime = new();
     private readonly AsyncPauseGate _pauseGate = new();
     private readonly SemaphoreSlim _uploadRunLock = new(1, 1);
+    private readonly SemaphoreSlim _taskConnectionLock = new(1, 1);
     private readonly DispatcherTimer _expiryTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private CancellationTokenSource? _uploadCancellation;
     private TaskDetails? _task;
@@ -41,6 +43,8 @@ public partial class MainWindow : Window
         ProtocolRegistrationStatus startupRegistrationStatus,
         string? initialArgument)
     {
+        _helperInstanceId = new HelperInstanceIdentity().GetOrCreate();
+        _api = new TaskApiClient(_helperInstanceId);
         InitializeComponent();
         DataContext = this;
         _coordinator = coordinator;
@@ -125,24 +129,30 @@ public partial class MainWindow : Window
 
     private async Task AcceptHandoffAsync(HandoffPayload payload)
     {
+        await _taskConnectionLock.WaitAsync(_lifetime.Token);
         try
         {
             if (!Uri.TryCreate(payload.BaseUrl, UriKind.Absolute, out var baseUrl)) throw new InvalidOperationException("任务服务地址无效");
-            _api.Configure(baseUrl, payload.TaskId, payload.Ticket);
-            await ConnectConfiguredTaskAsync(baseUrl, payload.TaskId);
+            var connected = await _api.ConnectAsync(baseUrl, payload.TaskId, payload.Ticket, _lifetime.Token);
+            ApplyConnectedTask(baseUrl, payload.TaskId, connected);
         }
         catch (Exception error)
         {
-            _api.Clear();
             SetError($"任务连接失败：{FriendlyError(error)}");
+        }
+        finally
+        {
+            _taskConnectionLock.Release();
         }
     }
 
-    private async Task ConnectConfiguredTaskAsync(Uri baseUrl, string expectedTaskId)
+    private void ApplyConnectedTask(Uri baseUrl, string expectedTaskId, ConnectTaskResult connected)
     {
-        var task = await _api.ConnectAsync(_lifetime.Token);
+        var task = connected.Task;
         if (!task.TaskId.Equals(expectedTaskId, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("任务编号不匹配");
+        if (string.IsNullOrWhiteSpace(connected.Ticket)) throw new InvalidOperationException("服务器未返回绑定后的任务票据");
 
+        _api.Configure(baseUrl, task.TaskId, connected.Ticket);
         _task = task;
         _activeBaseUrl = baseUrl;
         _taskExpired = task.ExpiresAt <= DateTimeOffset.Now;
@@ -155,7 +165,18 @@ public partial class MainWindow : Window
         UpdateTaskHeader();
         UpdateQueueSummary();
         _expiryTimer.Start();
+        PairingCodeText.Clear();
         SetStatus(_taskExpired ? "任务已过期，请在网页重新创建。" : "助手已连接。可拖入、粘贴文件，或启动下载目录监控。");
+    }
+
+    private void ApplyPairedTask(Uri baseUrl, PairTaskResult paired)
+    {
+        ApplyConnectedTask(baseUrl, paired.TaskId, new ConnectTaskResult
+        {
+            Ticket = paired.Ticket,
+            AlreadyConnected = paired.AlreadyConnected,
+            Task = paired.Task,
+        });
     }
 
     private void UpdateTaskHeader()
@@ -542,16 +563,21 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (!await _taskConnectionLock.WaitAsync(0))
+        {
+            SetStatus("正在连接任务，请稍候...");
+            return;
+        }
+
         PairButton.IsEnabled = false;
+        PairButton.Content = "连接中...";
         _connectionState = "正在使用任务码连接";
         SetStatus("正在验证手动任务码...");
         try
         {
             var paired = await _api.PairAsync(new Uri(AppConstants.DefaultBaseUrl), code, _lifetime.Token);
             if (!Uri.TryCreate(paired.BaseUrl, UriKind.Absolute, out var baseUrl)) throw new InvalidOperationException("任务服务地址无效");
-            _api.Configure(baseUrl, paired.TaskId, paired.Ticket);
-            PairingCodeText.Clear();
-            await ConnectConfiguredTaskAsync(baseUrl, paired.TaskId);
+            ApplyPairedTask(baseUrl, paired);
         }
         catch (Exception error)
         {
@@ -560,6 +586,8 @@ public partial class MainWindow : Window
         finally
         {
             PairButton.IsEnabled = true;
+            PairButton.Content = "连接";
+            _taskConnectionLock.Release();
         }
     }
 
@@ -593,15 +621,25 @@ public partial class MainWindow : Window
             SetError("当前没有可重连任务，请使用网页协议或手动任务码连接");
             return;
         }
+        if (!await _taskConnectionLock.WaitAsync(0))
+        {
+            SetStatus("正在连接任务，请稍候...");
+            return;
+        }
         try
         {
             _connectionState = "正在重新连接";
             SetStatus("正在重新连接当前任务...");
-            await ConnectConfiguredTaskAsync(_activeBaseUrl, _task.TaskId);
+            var connected = await _api.ConnectAsync(_lifetime.Token);
+            ApplyConnectedTask(_activeBaseUrl, _task.TaskId, connected);
         }
         catch (Exception error)
         {
             SetError(FriendlyError(error));
+        }
+        finally
+        {
+            _taskConnectionLock.Release();
         }
     }
 
@@ -703,11 +741,11 @@ public partial class MainWindow : Window
         var assembly = Assembly.GetExecutingAssembly();
         var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? assembly.GetName().Version?.ToString()
-            ?? "1.16.5.1";
+            ?? "1.16.5.2";
         var parts = informational.Split('+', 2);
         var commit = parts.Length > 1 ? parts[1] : "local";
         VersionText.Text = $"{parts[0]} / {ShortCommit(commit)}";
-        CurrentUserText.Text = $"{Environment.UserDomainName}\\{Environment.UserName} / 当前用户单实例";
+        CurrentUserText.Text = $"{Environment.UserDomainName}\\{Environment.UserName} / 当前用户单实例 / {ShortCommit(_helperInstanceId)}";
         ConnectionDiagnosticText.Text = $"{AppConstants.DefaultBaseUrl} / {_connectionState} / {(_task is null ? "无任务" : _taskExpired ? "已过期" : _task.Summary.State)}";
         LastErrorText.Text = string.IsNullOrWhiteSpace(_lastError) ? "无" : _lastError;
     }
@@ -721,6 +759,7 @@ public partial class MainWindow : Window
         report.AppendLine($"协议状态: {status.State}");
         report.AppendLine($"协议命令路径: {status.Command}");
         report.AppendLine("单实例状态: 当前用户单实例已启用");
+        report.AppendLine($"助手实例: {ShortCommit(_helperInstanceId)}");
         report.AppendLine($"服务地址: {AppConstants.DefaultBaseUrl}");
         report.AppendLine($"服务连接状态: {_connectionState}");
         report.AppendLine($"当前任务状态: {(_task is null ? "无任务" : _taskExpired ? "已过期" : _task.Summary.State)}");

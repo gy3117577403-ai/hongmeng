@@ -89,6 +89,7 @@ export async function POST(req: NextRequest) {
         launchUrl: `hongmeng-workorder-import://launch?${launchParams.toString()}`,
         loopbackUrl: LOCAL_IMPORT_LOOPBACK_URL,
         pairingCode: pairing.code,
+        pairingAvailable: true,
         expiresAt: expiresAt.toISOString(),
         limits,
         workOrder: {

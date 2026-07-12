@@ -35,6 +35,7 @@ public sealed class ApiEnvelope<T>
 public sealed class PairTaskRequest
 {
     public string Code { get; set; } = "";
+    public string HelperInstanceId { get; set; } = "";
 }
 
 public sealed class PairTaskResult
@@ -43,6 +44,20 @@ public sealed class PairTaskResult
     public string Ticket { get; set; } = "";
     public string BaseUrl { get; set; } = "";
     public DateTimeOffset ExpiresAt { get; set; }
+    public bool AlreadyConnected { get; set; }
+    public TaskDetails Task { get; set; } = new();
+}
+
+public sealed class ConnectTaskRequest
+{
+    public string HelperInstanceId { get; set; } = "";
+}
+
+public sealed class ConnectTaskResult
+{
+    public string Ticket { get; set; } = "";
+    public bool AlreadyConnected { get; set; }
+    public TaskDetails Task { get; set; } = new();
 }
 
 public sealed class TaskDetails

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { consumeLocalImportPairingCode, localImportErrorResponse } from '@/lib/local-import';
-import { logOp } from '@/lib/logs';
+import { localImportErrorResponse, localImportTaskData, pairLocalImportTask } from '@/lib/local-import';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,16 +39,10 @@ function appBaseUrl(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     assertPairingRate(req);
-    const body = await req.json().catch(() => ({})) as { code?: unknown };
+    const body = await req.json().catch(() => ({})) as { code?: unknown; helperInstanceId?: unknown };
     const code = typeof body.code === 'string' ? body.code.trim() : '';
-    const { task, ticket } = await consumeLocalImportPairingCode(code);
-    await logOp({
-      userId: task.userId,
-      action: 'local_import_task_paired',
-      targetType: 'local_import_task',
-      targetId: task.id,
-      detail: { method: 'one_time_code' },
-    });
+    const helperInstanceId = typeof body.helperInstanceId === 'string' ? body.helperInstanceId : '';
+    const { task, ticket, alreadyConnected } = await pairLocalImportTask(code, helperInstanceId);
     return NextResponse.json({
       ok: true,
       data: {
@@ -57,6 +50,8 @@ export async function POST(req: NextRequest) {
         ticket,
         baseUrl: appBaseUrl(req),
         expiresAt: task.detail.expiresAt,
+        alreadyConnected,
+        task: await localImportTaskData(task),
       },
     });
   } catch (error) {
