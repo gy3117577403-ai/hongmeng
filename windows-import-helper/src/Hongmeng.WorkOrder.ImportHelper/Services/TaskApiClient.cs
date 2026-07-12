@@ -24,10 +24,16 @@ public sealed class TaskApiClient : IDisposable
         PropertyNameCaseInsensitive = true
     };
 
-    private readonly HttpClient _client = new() { Timeout = TimeSpan.FromMinutes(10) };
+    private readonly HttpClient _client;
     private Uri? _baseUrl;
     private string _taskId = "";
     private string _ticket = "";
+
+    public TaskApiClient(HttpMessageHandler? handler = null)
+    {
+        _client = handler is null ? new HttpClient() : new HttpClient(handler);
+        _client.Timeout = TimeSpan.FromMinutes(10);
+    }
 
     public bool IsConfigured => _baseUrl is not null && _taskId.Length > 0 && _ticket.Length > 0;
 
@@ -52,6 +58,19 @@ public sealed class TaskApiClient : IDisposable
 
     public Task<TaskDetails> GetTaskAsync(CancellationToken cancellationToken) =>
         SendAsync<TaskDetails>(HttpMethod.Get, TaskPath(), null, cancellationToken);
+
+    public Task<TaskDetails> ConnectAsync(CancellationToken cancellationToken) =>
+        SendAsync<TaskDetails>(HttpMethod.Post, $"{TaskPath()}/connect", new object(), cancellationToken);
+
+    public async Task<PairTaskResult> PairAsync(Uri baseUrl, string code, CancellationToken cancellationToken)
+    {
+        var origin = ValidateOrigin(baseUrl);
+        using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, "/api/local-import/tasks/pair"));
+        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5.1");
+        request.Content = JsonContent.Create(new PairTaskRequest { Code = code }, options: JsonOptions);
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
+        return await ReadEnvelopeAsync<PairTaskResult>(response, cancellationToken);
+    }
 
     public Task<DuplicateCheckResult> CheckAsync(DuplicateCheckRequest request, CancellationToken cancellationToken) =>
         SendAsync<DuplicateCheckResult>(HttpMethod.Post, $"{TaskPath()}/check", request, cancellationToken);
@@ -113,7 +132,7 @@ public sealed class TaskApiClient : IDisposable
     private void ApplyAuthorization(HttpRequestMessage request)
     {
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _ticket);
-        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5");
+        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5.1");
     }
 
     private string TaskPath() => $"/api/local-import/tasks/{Uri.EscapeDataString(_taskId)}";
@@ -127,6 +146,16 @@ public sealed class TaskApiClient : IDisposable
     private void EnsureConfigured()
     {
         if (!IsConfigured) throw new InvalidOperationException("请先从工单资料库网页创建导入任务");
+    }
+
+    private static Uri ValidateOrigin(Uri baseUrl)
+    {
+        var origin = baseUrl.GetLeftPart(UriPartial.Authority);
+        if (!origin.Equals(AppConstants.AllowedWebOrigin, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("任务服务地址不在允许列表中");
+        }
+        return new Uri(origin);
     }
 
     public void Dispose()

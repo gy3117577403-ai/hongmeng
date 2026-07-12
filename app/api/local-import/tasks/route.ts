@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   createLocalImportTicket,
+  createLocalImportPairingCode,
   LOCAL_IMPORT_LOOPBACK_URL,
   LOCAL_IMPORT_TASK_TTL_SECONDS,
   localImportErrorResponse,
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
     const handshakeId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + LOCAL_IMPORT_TASK_TTL_SECONDS * 1000);
     const limits = localImportLimits();
+    const pairing = createLocalImportPairingCode();
     const detail = {
       workOrderId: workOrder.id,
       categoryId: category.id,
@@ -53,6 +55,7 @@ export async function POST(req: NextRequest) {
       expiresAt: expiresAt.toISOString(),
       ...limits,
       state: 'waiting',
+      pairingCodeHash: pairing.hash,
     };
     await prisma.operationLog.create({
       data: {
@@ -83,8 +86,9 @@ export async function POST(req: NextRequest) {
         taskId,
         handshakeId,
         handoffTicket,
-        launchUrl: `hongmeng-workorder-import://open?${launchParams.toString()}`,
+        launchUrl: `hongmeng-workorder-import://launch?${launchParams.toString()}`,
         loopbackUrl: LOCAL_IMPORT_LOOPBACK_URL,
+        pairingCode: pairing.code,
         expiresAt: expiresAt.toISOString(),
         limits,
         workOrder: {

@@ -32,7 +32,7 @@
 - PWA、系统设置、数据导出、打印摘要、错误页
 - 周计划 Excel / CSV 工单导入预览与确认
 - 周计划差异中心：新增 / 延续 / 变更 / 下周取消对比、重复与异常审核、启用前安全门禁、历史周和差异 CSV
-- Windows 微盘导入助手：网页创建 10 分钟短期任务，支持真实文件拖拽、文件粘贴、下载目录监控、SHA-256 防重、新版本与失败重试
+- Windows 微盘导入助手：网页创建 10 分钟短期任务，支持普通用户 HKCU 协议自注册 / 自修复、一次性手动任务码、脱敏诊断、真实文件拖拽、文件粘贴、下载目录监控、SHA-256 防重、新版本与失败重试
 - 图纸资料库首页：按客户 -> 规格 -> 图纸资料管理长期图纸文件，不保存周计划状态字段
 
 ## 本地启动
@@ -114,6 +114,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.16.3-connector-manual-gesture-toc：组装说明书 PDF / 图片预览新增滚轮焦点缩放、双击 / 双点、双指捏合和放大拖动；支持当前页快捷目录、目录 CRUD / 排序、PDF 目录建议、当前页直达链接和阅读页恢复。继续复用 `tocJson`，未新增 Prisma migration。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.4-production-execution-glass-ux：生产执行中心改为四列独立滚动的暖色玻璃工作台，新增客户、交期、状态、优先级、图纸、配料与资料完整度筛选；停用负责人 / 工位 UI，统一下拉菜单关闭逻辑，并支持工单资料直达与返回筛选、横向及列滚动位置恢复。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.5-wecom-local-import-helper：工单资料页新增“从微盘导入”，通过 Windows WPF 助手接收拖拽、粘贴或下载目录中的真实文件；使用短期受限票据上传到当前工单和分类，自动同步图纸资料库，支持 SHA-256 防重、新版本、进度、暂停和重试。该版本为本地验证候选，尚未部署 Sealos。
+- v1.16.5.1-wecom-helper-protocol-fix：Windows 助手显式使用 `asInvoker`，在当前用户 HKCU 自动注册并修复浏览器协议；补充协议 ping、单实例安全转发、服务端连接握手、一次性手动任务码和脱敏连接诊断。该版本为本地验证候选，尚未部署 Sealos。
 
 ## 交付文档索引
 
@@ -141,6 +142,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [平板交付方案](docs/TABLET_APP_DELIVERY_PLAN.md)
 - [企业微信微盘本地导入助手指南](docs/WECOM_LOCAL_IMPORT_HELPER_GUIDE.md)
 - [企业微信微盘本地导入助手 QA](docs/QA_WECOM_LOCAL_IMPORT_HELPER.md)
+- [Windows 微盘导入助手协议排查](docs/WECOM_HELPER_PROTOCOL_TROUBLESHOOTING.md)
 - [平板真机测试前最终预检计划](docs/PRE_REAL_DATA_TEST_PLAN.md)
 - [周计划 Excel 工单导入说明](docs/WEEKLY_PLAN_IMPORT_GUIDE.md)
 - [周计划生产工单显示与清理机制](docs/WEEKLY_PLAN_WORKORDER_DISPLAY_AND_CLEANUP.md)

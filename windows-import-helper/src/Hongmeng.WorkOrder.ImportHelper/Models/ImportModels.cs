@@ -6,6 +6,15 @@ namespace Hongmeng.WorkOrder.ImportHelper.Models;
 
 public sealed record LaunchRequest(string HandshakeId, string TaskId, Uri BaseUrl);
 
+public enum ProtocolActivationKind
+{
+    Activate,
+    Ping,
+    Launch
+}
+
+public sealed record ProtocolActivation(ProtocolActivationKind Kind, LaunchRequest? LaunchRequest = null);
+
 public sealed class HandoffPayload
 {
     public string HandshakeId { get; set; } = "";
@@ -21,6 +30,19 @@ public sealed class ApiEnvelope<T>
     public string? Error { get; set; }
     public string? Message { get; set; }
     public string? Code { get; set; }
+}
+
+public sealed class PairTaskRequest
+{
+    public string Code { get; set; } = "";
+}
+
+public sealed class PairTaskResult
+{
+    public string TaskId { get; set; } = "";
+    public string Ticket { get; set; } = "";
+    public string BaseUrl { get; set; } = "";
+    public DateTimeOffset ExpiresAt { get; set; }
 }
 
 public sealed class TaskDetails

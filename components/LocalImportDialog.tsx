@@ -1,10 +1,13 @@
 'use client';
 
+import { useState } from 'react';
+
 export type LocalImportConnectionState = 'creating' | 'launching' | 'connected' | 'unavailable' | 'error';
 
 export type LocalImportTaskView = {
   taskId: string;
   expiresAt: string;
+  pairingCode?: string;
   workOrder: {
     id: string;
     displayCode: string;
@@ -48,6 +51,7 @@ export function LocalImportDialog({
   connection,
   error,
   retry,
+  recreate,
   close,
 }: {
   open: boolean;
@@ -55,12 +59,35 @@ export function LocalImportDialog({
   connection: LocalImportConnectionState;
   error: string;
   retry: () => void;
+  recreate: () => void;
   close: () => void;
 }) {
+  const [copyMessage, setCopyMessage] = useState('');
   if (!open) return null;
   const expiresLabel = task ? new Date(task.expiresAt).toLocaleString('zh-CN', { hour12: false }) : '-';
   const summary = task?.summary;
   const expired = summary?.state === 'expired';
+
+  async function copyPairingCode() {
+    const value = task?.pairingCode || '';
+    if (!value) return;
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+      else {
+        const area = document.createElement('textarea');
+        area.value = value;
+        area.style.position = 'fixed';
+        area.style.opacity = '0';
+        document.body.appendChild(area);
+        area.select();
+        if (!document.execCommand('copy')) throw new Error('copy_failed');
+        area.remove();
+      }
+      setCopyMessage('已复制');
+    } catch {
+      setCopyMessage('复制失败，请手动输入');
+    }
+  }
 
   return (
     <div className="modal-backdrop local-import-backdrop" role="presentation">
@@ -106,13 +133,31 @@ export function LocalImportDialog({
           <p>助手不会读取企业微信 Cookie，也不会保存系统密码或对象存储密钥。</p>
         </div>
 
+        {task?.pairingCode && !expired && (
+          <div className="local-import-pairing">
+            <div>
+              <strong>浏览器协议未打开时，使用手动连接码</strong>
+              <p>普通双击打开助手，在“手动任务码”中输入；任务码限时且只能使用一次。</p>
+            </div>
+            <code>{task.pairingCode}</code>
+            <button type="button" onClick={() => void copyPairingCode()}>复制任务码</button>
+            {copyMessage && <small>{copyMessage}</small>}
+          </div>
+        )}
+
+        <p className="local-import-browser-tip">浏览器弹出“打开工单资料库微盘导入助手”时，请点击允许。不需要管理员权限。</p>
+
         {error && <div className="form-error">{error}</div>}
 
         <div className="local-import-actions">
           <button type="button" onClick={close}>关闭</button>
+          {connection === 'launching' && !expired && (
+            <button type="button" disabled>正在唤起...</button>
+          )}
           {(connection === 'unavailable' || connection === 'error') && !expired && (
             <button type="button" onClick={retry}>重新唤起助手</button>
           )}
+          {expired && <button type="button" onClick={recreate}>重新创建任务</button>}
           {(connection === 'unavailable' || connection === 'error') && (
             <a className="primary-button" href="https://github.com/gy3117577403-ai/hongmeng/actions/workflows/windows-import-helper.yml" target="_blank" rel="noreferrer">下载导入助手</a>
           )}

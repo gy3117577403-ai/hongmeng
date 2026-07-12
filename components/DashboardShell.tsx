@@ -674,6 +674,7 @@ export default function DashboardShell({
   const directTargetRef = useRef<{ workOrderId: string; categoryId: string; fileId: string } | null>(null);
   const localImportLatestFileRef = useRef('');
   const localImportCompletionRef = useRef('');
+  const localImportLaunchAttemptRef = useRef(0);
 
   const list = useMemo(() => {
     const text = kw.trim().toLowerCase();
@@ -995,9 +996,9 @@ export default function DashboardShell({
 
   function openHelperProtocol(launchUrl: string) {
     const frame = document.createElement('iframe');
+    frame.src = launchUrl;
     frame.hidden = true;
     frame.setAttribute('aria-hidden', 'true');
-    frame.src = launchUrl;
     document.body.appendChild(frame);
     window.setTimeout(() => frame.remove(), 4000);
   }
@@ -1008,12 +1009,16 @@ export default function DashboardShell({
       setLocalImportError('任务票据已清除，请重新创建导入任务');
       return;
     }
+    const attempt = ++localImportLaunchAttemptRef.current;
+    const startedAt = Date.now();
     setLocalImportConnection('launching');
     setLocalImportError('');
     openHelperProtocol(task.launchUrl);
 
-    const deadline = Date.now() + 10_000;
+    let handedOff = false;
+    const deadline = Date.now() + 12_000;
     while (Date.now() < deadline) {
+      if (attempt !== localImportLaunchAttemptRef.current) return;
       await new Promise(resolve => window.setTimeout(resolve, 650));
       const controller = new AbortController();
       const timeout = window.setTimeout(() => controller.abort(), 1800);
@@ -1033,28 +1038,59 @@ export default function DashboardShell({
           }),
         });
         if (response.ok) {
-          setLocalImportConnection('connected');
-          setLocalImportError('');
-          return;
+          handedOff = true;
+          break;
         }
       } catch {
         // The helper may still be starting or may not be installed.
       } finally {
         window.clearTimeout(timeout);
       }
+      if (Date.now() - startedAt >= 2800 && attempt === localImportLaunchAttemptRef.current) {
+        setLocalImportConnection('unavailable');
+        setLocalImportError('助手尚未响应。请允许浏览器打开外部应用，或双击助手并输入手动任务码。');
+      }
     }
-    setLocalImportConnection('unavailable');
-    setLocalImportError('未连接到 Windows 导入助手。请确认助手已安装并允许浏览器打开自定义协议。');
+
+    if (!handedOff) {
+      if (attempt === localImportLaunchAttemptRef.current) {
+        setLocalImportConnection('unavailable');
+        setLocalImportError('未连接到 Windows 导入助手。请允许浏览器打开外部应用，或使用手动任务码连接。');
+      }
+      return;
+    }
+
+    while (Date.now() < deadline && attempt === localImportLaunchAttemptRef.current) {
+      await new Promise(resolve => window.setTimeout(resolve, 600));
+      try {
+        const response = await fetch(`/api/local-import/tasks/${encodeURIComponent(task.taskId)}`, { cache: 'no-store' });
+        const body = await response.json().catch(() => ({}));
+        if (response.ok && ['connected', 'uploading', 'paused', 'completed'].includes(body?.data?.summary?.state)) {
+          const minimumLoading = 2000 - (Date.now() - startedAt);
+          if (minimumLoading > 0) await new Promise(resolve => window.setTimeout(resolve, minimumLoading));
+          if (attempt !== localImportLaunchAttemptRef.current) return;
+          setLocalImportConnection('connected');
+          setLocalImportError('');
+          return;
+        }
+      } catch {
+        // The normal task poll remains active while this short launch check runs.
+      }
+      if (Date.now() - startedAt >= 2800) {
+        setLocalImportConnection('unavailable');
+        setLocalImportError('助手已收到唤起但尚未完成握手，可重新唤起或使用手动任务码。');
+      }
+    }
   }
 
-  async function openLocalImport() {
+  async function openLocalImport(forceNew = false) {
     if (!order) return setMsg('请先选择工单');
     if (!category) return setMsg('请先选择资料分类');
     if (orderReadOnly) return setMsg('历史周工单为只读状态，不能继续导入文件');
 
     setLocalImportOpen(true);
     setLocalImportError('');
-    const reusable = localImportTask
+    const reusable = !forceNew && localImportTask
       && localImportTask.workOrder.id === order.id
       && localImportTask.category.id === category.id
       && new Date(localImportTask.expiresAt).getTime() > Date.now()
@@ -1095,6 +1131,12 @@ export default function DashboardShell({
     await handoffLocalImportTask(localImportTask);
   }
 
+  async function recreateLocalImportTask() {
+    localImportLaunchAttemptRef.current += 1;
+    setLocalImportTask(null);
+    await openLocalImport(true);
+  }
+
   const localImportTaskId = localImportTask?.taskId || '';
   useEffect(() => {
     if (!localImportTaskId) return undefined;
@@ -1109,7 +1151,10 @@ export default function DashboardShell({
         if (!active) return;
         const data = body.data as LocalImportTaskView & { summary: LocalImportTaskView['summary'] & { latestFileId?: string | null } };
         setLocalImportTask(current => current && current.taskId === localImportTaskId ? { ...current, ...data } : current);
-        if (['connected', 'uploading', 'paused', 'completed'].includes(data.summary.state)) setLocalImportConnection('connected');
+        if (['connected', 'uploading', 'paused', 'completed'].includes(data.summary.state)) {
+          setLocalImportConnection('connected');
+          setLocalImportError('');
+        }
         const latestFileId = data.summary.latestFileId || '';
         if (latestFileId && latestFileId !== localImportLatestFileRef.current) {
           localImportLatestFileRef.current = latestFileId;
@@ -1125,6 +1170,8 @@ export default function DashboardShell({
           setLocalImportTask(current => current && current.taskId === localImportTaskId ? { ...current, handoffTicket: '' } : current);
         } else if (data.summary.state === 'expired') {
           terminal = true;
+          setLocalImportConnection('unavailable');
+          setLocalImportError('任务已过期，请重新创建任务。');
           setLocalImportTask(current => current && current.taskId === localImportTaskId ? { ...current, handoffTicket: '' } : current);
         }
       } catch (error) {
@@ -2934,6 +2981,7 @@ export default function DashboardShell({
         connection={localImportConnection}
         error={localImportError}
         retry={() => void retryLocalImportHandoff()}
+        recreate={() => void recreateLocalImportTask()}
         close={() => setLocalImportOpen(false)}
       />
 

@@ -4,6 +4,7 @@ import type { NextRequest } from 'next/server';
 import { currentUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { maxBytes } from '@/lib/validation';
+import { displayWorkOrderCode } from '@/lib/work-orders';
 
 export const LOCAL_IMPORT_TASK_TTL_SECONDS = 10 * 60;
 export const LOCAL_IMPORT_MAX_FILES = 20;
@@ -36,6 +37,8 @@ export type LocalImportTaskDetail = {
   state: string;
   helperConnectedAt?: string;
   completedAt?: string;
+  pairingCodeHash?: string;
+  pairingUsedAt?: string;
 };
 
 export type LocalImportTaskRecord = {
@@ -69,6 +72,15 @@ function signingSecret() {
 
 function sign(payload: string) {
   return crypto.createHmac('sha256', signingSecret()).update(payload).digest('base64url');
+}
+
+export function createLocalImportPairingCode() {
+  const code = crypto.randomInt(100_000, 1_000_000).toString();
+  return { code, hash: hashLocalImportPairingCode(code) };
+}
+
+export function hashLocalImportPairingCode(code: string) {
+  return crypto.createHmac('sha256', signingSecret()).update(`pairing-code:${code}`).digest('hex');
 }
 
 export function localImportLimits() {
@@ -164,6 +176,8 @@ function parseTaskDetail(value: Prisma.JsonValue | null): LocalImportTaskDetail 
     state: typeof item.state === 'string' ? item.state : 'waiting',
     helperConnectedAt: typeof item.helperConnectedAt === 'string' ? item.helperConnectedAt : undefined,
     completedAt: typeof item.completedAt === 'string' ? item.completedAt : undefined,
+    pairingCodeHash: typeof item.pairingCodeHash === 'string' ? item.pairingCodeHash : undefined,
+    pairingUsedAt: typeof item.pairingUsedAt === 'string' ? item.pairingUsedAt : undefined,
   };
 }
 
@@ -214,6 +228,60 @@ export async function requireTaskViewer(req: NextRequest, taskId: string) {
   const task = await getLocalImportTask(taskId);
   if (task.userId !== user.id) throw new LocalImportError('无权查看此导入任务', 403, 'TASK_FORBIDDEN');
   return { payload: null, task };
+}
+
+export async function consumeLocalImportPairingCode(code: string) {
+  if (!/^\d{6,8}$/.test(code)) throw new LocalImportError('任务码无效或已过期', 401, 'PAIRING_CODE_INVALID');
+  const pairingCodeHash = hashLocalImportPairingCode(code);
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw<Array<{ lockResult: string }>>`
+      SELECT pg_advisory_xact_lock(hashtext(${pairingCodeHash}))::text AS "lockResult"
+    `;
+    const row = await tx.operationLog.findFirst({
+      where: {
+        action: 'local_import_task_created',
+        targetType: 'local_import_task',
+        createdAt: { gte: new Date(Date.now() - (LOCAL_IMPORT_TASK_TTL_SECONDS + 60) * 1000) },
+        detail: { path: ['pairingCodeHash'], equals: pairingCodeHash },
+      },
+      select: { id: true, userId: true, createdAt: true, detail: true },
+    });
+    if (!row?.userId) throw new LocalImportError('任务码无效或已过期', 401, 'PAIRING_CODE_INVALID');
+    const task: LocalImportTaskRecord = {
+      id: row.id,
+      userId: row.userId,
+      createdAt: row.createdAt,
+      detail: parseTaskDetail(row.detail),
+    };
+    const expiresAt = new Date(task.detail.expiresAt);
+    if (!Number.isFinite(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
+      throw new LocalImportError('任务已过期，请在网页重新创建', 410, 'TASK_EXPIRED');
+    }
+    if (task.detail.pairingUsedAt) {
+      throw new LocalImportError('任务码已使用，请在网页重新创建', 409, 'PAIRING_CODE_USED');
+    }
+    const activeUser = await tx.user.findFirst({ where: { id: task.userId, isActive: true }, select: { id: true } });
+    if (!activeUser) throw new LocalImportError('任务创建账号已停用，请重新创建任务', 403, 'TASK_USER_INACTIVE');
+
+    const usedAt = new Date().toISOString();
+    const detail: LocalImportTaskDetail = { ...task.detail, pairingUsedAt: usedAt };
+    await tx.operationLog.update({
+      where: { id: task.id },
+      data: { detail: detail as unknown as Prisma.InputJsonValue },
+    });
+    const ticket = createLocalImportTicket({
+      taskId: task.id,
+      workOrderId: task.detail.workOrderId,
+      categoryId: task.detail.categoryId,
+      userId: task.userId,
+      handshakeId: task.detail.handshakeId,
+      expiresAt,
+      maxFiles: task.detail.maxFiles,
+      maxFileBytes: task.detail.maxFileBytes,
+      maxTotalBytes: task.detail.maxTotalBytes,
+    });
+    return { task: { ...task, detail }, ticket };
+  });
 }
 
 export async function updateLocalImportTaskState(task: LocalImportTaskRecord, state: string) {
@@ -283,6 +351,39 @@ export async function localImportTaskSummary(task: LocalImportTaskRecord): Promi
     processedCount: successCount + duplicateCount + failedCount,
     uploadedBytes,
     latestFileId,
+  };
+}
+
+export async function localImportTaskData(task: LocalImportTaskRecord) {
+  const [workOrder, category, summary] = await Promise.all([
+    prisma.workOrder.findFirst({
+      where: { id: task.detail.workOrderId, deletedAt: null },
+      select: { id: true, code: true, specification: true, customerName: true, productName: true },
+    }),
+    prisma.resourceCategory.findUnique({
+      where: { id: task.detail.categoryId },
+      select: { id: true, code: true, name: true },
+    }),
+    localImportTaskSummary(task),
+  ]);
+  if (!workOrder || !category) throw new LocalImportError('任务目标工单或分类不存在', 404, 'TASK_TARGET_NOT_FOUND');
+  return {
+    taskId: task.id,
+    createdAt: task.createdAt.toISOString(),
+    expiresAt: task.detail.expiresAt,
+    limits: {
+      maxFiles: task.detail.maxFiles,
+      maxFileBytes: task.detail.maxFileBytes,
+      maxTotalBytes: task.detail.maxTotalBytes,
+    },
+    workOrder: {
+      id: workOrder.id,
+      displayCode: displayWorkOrderCode(workOrder),
+      customerName: workOrder.customerName || '未设置',
+      productName: workOrder.productName,
+    },
+    category,
+    summary,
   };
 }
 

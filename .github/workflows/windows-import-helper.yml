@@ -19,6 +19,8 @@ jobs:
     defaults:
       run:
         working-directory: windows-import-helper
+    env:
+      HELPER_VERSION: "1.16.5.1"
 
     steps:
       - name: Checkout
@@ -33,25 +35,46 @@ jobs:
         run: dotnet restore Hongmeng.WorkOrder.ImportHelper.sln
 
       - name: Build
-        run: dotnet build Hongmeng.WorkOrder.ImportHelper.sln -c Release --no-restore
+        shell: pwsh
+        run: >-
+          dotnet build Hongmeng.WorkOrder.ImportHelper.sln
+          -c Release
+          --no-restore
+          -p:Version=$env:HELPER_VERSION
+          -p:SourceRevisionId=$env:GITHUB_SHA
 
       - name: Test
         run: dotnet test Hongmeng.WorkOrder.ImportHelper.sln -c Release --no-build
 
       - name: Publish self-contained helper
+        shell: pwsh
         run: >-
           dotnet publish src/Hongmeng.WorkOrder.ImportHelper/Hongmeng.WorkOrder.ImportHelper.csproj
           -c Release
           -r win-x64
           --self-contained true
           --no-build
-          -p:PublishSingleFile=true
-          -p:IncludeNativeLibrariesForSelfExtract=true
+          -p:Version=$env:HELPER_VERSION
+          -p:SourceRevisionId=$env:GITHUB_SHA
+          -p:PublishSingleFile=false
           -o artifacts/publish
 
       - name: Package portable ZIP
         shell: pwsh
-        run: Compress-Archive -Path artifacts/publish/* -DestinationPath artifacts/hongmeng-workorder-wecom-import-helper-win-x64.zip -Force
+        run: |
+          $exe = "artifacts/publish/Hongmeng.WorkOrder.ImportHelper.exe"
+          if (-not (Test-Path -LiteralPath $exe)) { throw "Published helper EXE was not found." }
+          Compress-Archive -Path artifacts/publish/* -DestinationPath artifacts/hongmeng-workorder-wecom-import-helper-win-x64.zip -Force
+
+      - name: Record artifact metadata
+        shell: pwsh
+        run: |
+          $exe = Get-Item -LiteralPath "artifacts/publish/Hongmeng.WorkOrder.ImportHelper.exe"
+          "### Windows 微盘导入助手" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          "- Version: $env:HELPER_VERSION" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          "- Commit: $env:GITHUB_SHA" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          "- EXE bytes: $($exe.Length)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+          "- Package: self-contained extracted folder (no runtime self-extraction or administrator rights)" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
 
       - name: Upload helper artifact
         uses: actions/upload-artifact@v4

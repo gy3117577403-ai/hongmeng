@@ -14017,6 +14017,67 @@ body:has(.qr-dialog) .modal-backdrop {
   line-height: 1.6;
 }
 
+.local-import-pairing {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  margin: 0 20px 12px;
+  padding: 13px 14px;
+  border: 1px solid #fdba74;
+  border-radius: 10px;
+  background: #fffaf5;
+}
+
+.local-import-pairing div {
+  min-width: 0;
+}
+
+.local-import-pairing strong {
+  color: #7c2d12;
+  font-size: 13px;
+}
+
+.local-import-pairing p {
+  margin: 4px 0 0;
+  color: #78716c;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.local-import-pairing code {
+  min-width: 92px;
+  color: #9a3412;
+  font-family: Consolas, monospace;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.local-import-pairing button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  background: #fff;
+  color: #9a3412;
+  font-weight: 700;
+}
+
+.local-import-pairing small {
+  grid-column: 2 / 4;
+  color: #78716c;
+  text-align: right;
+}
+
+.local-import-browser-tip {
+  margin: 0 20px 14px;
+  color: #57534e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .local-import-dialog > .form-error {
   margin: 0 20px 16px;
 }
@@ -14068,5 +14129,17 @@ body:has(.qr-dialog) .modal-backdrop {
 
   .local-import-actions {
     flex-wrap: wrap;
+  }
+
+  .local-import-pairing {
+    grid-template-columns: 1fr auto;
+  }
+
+  .local-import-pairing div {
+    grid-column: 1 / -1;
+  }
+
+  .local-import-pairing small {
+    grid-column: 1 / -1;
   }
 }

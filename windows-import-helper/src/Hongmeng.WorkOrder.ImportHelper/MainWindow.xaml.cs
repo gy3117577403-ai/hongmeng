@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Reflection;
+using System.Text;
 using System.Windows.Input;
 using System.Windows.Threading;
 using Hongmeng.WorkOrder.ImportHelper.Models;
@@ -11,6 +13,8 @@ namespace Hongmeng.WorkOrder.ImportHelper;
 public partial class MainWindow : Window
 {
     private readonly SingleInstanceCoordinator _coordinator;
+    private readonly ProtocolRegistrationService _protocolRegistration;
+    private readonly ProtocolRegistrationStatus _startupRegistrationStatus;
     private readonly string? _initialArgument;
     private readonly LoopbackHandoffServer _handoffServer = new();
     private readonly TaskApiClient _api = new();
@@ -26,14 +30,22 @@ public partial class MainWindow : Window
     private Uri _activeBaseUrl = new(AppConstants.DefaultBaseUrl);
     private bool _taskExpired;
     private bool _uploadRerunRequested;
+    private string _lastError = "";
+    private string _connectionState = "未连接";
 
     public ObservableCollection<FileQueueItem> QueueItems { get; } = [];
 
-    public MainWindow(SingleInstanceCoordinator coordinator, string? initialArgument)
+    public MainWindow(
+        SingleInstanceCoordinator coordinator,
+        ProtocolRegistrationService protocolRegistration,
+        ProtocolRegistrationStatus startupRegistrationStatus,
+        string? initialArgument)
     {
         InitializeComponent();
         DataContext = this;
         _coordinator = coordinator;
+        _protocolRegistration = protocolRegistration;
+        _startupRegistrationStatus = startupRegistrationStatus;
         _initialArgument = initialArgument;
         _coordinator.LaunchArgumentReceived += OnLaunchArgumentReceived;
         _handoffServer.HandoffReceived += OnHandoffReceived;
@@ -46,6 +58,8 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs eventArgs)
     {
+        ApplyProtocolStatus(_startupRegistrationStatus);
+        UpdateDiagnostics();
         try
         {
             await _handoffServer.StartAsync(_lifetime.Token);
@@ -53,7 +67,7 @@ public partial class MainWindow : Window
         }
         catch (Exception error)
         {
-            SetStatus($"本地安全交接服务启动失败：{error.Message}");
+            SetError($"本地安全交接服务启动失败：{error.Message}");
         }
     }
 
@@ -64,15 +78,40 @@ public partial class MainWindow : Window
 
     private void ProcessLaunchArgument(string? argument)
     {
-        if (!LaunchRequestParser.TryParse(argument, out var request) || request is null)
+        if (!LaunchRequestParser.TryParseActivation(argument, out var activation) || activation is null)
         {
-            SetStatus("网页唤起参数无效，请回到正式站点重新创建导入任务。");
+            SetError("无效或过期的导入任务");
+            return;
+        }
+        BringWindowToFront();
+        if (activation.Kind == ProtocolActivationKind.Activate)
+        {
+            SetStatus("助手已激活。");
+            return;
+        }
+        if (activation.Kind == ProtocolActivationKind.Ping)
+        {
+            SetStatus("浏览器协议测试成功");
+            return;
+        }
+
+        var request = activation.LaunchRequest;
+        if (request is null)
+        {
+            SetError("无效或过期的导入任务");
             return;
         }
         _activeBaseUrl = request.BaseUrl;
         _handoffServer.Expect(request);
         SetStatus("已收到网页任务，正在等待浏览器完成安全票据交接...");
+        _connectionState = "等待安全交接";
+        UpdateDiagnostics();
+    }
+
+    private void BringWindowToFront()
+    {
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Show();
         Activate();
         Topmost = true;
         Topmost = false;
@@ -90,27 +129,33 @@ public partial class MainWindow : Window
         {
             if (!Uri.TryCreate(payload.BaseUrl, UriKind.Absolute, out var baseUrl)) throw new InvalidOperationException("任务服务地址无效");
             _api.Configure(baseUrl, payload.TaskId, payload.Ticket);
-            var task = await _api.GetTaskAsync(_lifetime.Token);
-            if (!task.TaskId.Equals(payload.TaskId, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("任务编号不匹配");
-
-            _task = task;
-            _activeBaseUrl = baseUrl;
-            _taskExpired = task.ExpiresAt <= DateTimeOffset.Now;
-            QueueItems.Clear();
-            _monitor.Stop();
-            MonitorButton.Content = "开始监控";
-            MonitorStatusText.Text = "未启动";
-            UpdateTaskHeader();
-            UpdateQueueSummary();
-            _expiryTimer.Start();
-            await TrySetTaskStatusAsync("connected");
-            SetStatus("助手已连接。可拖入、粘贴文件，或启动下载目录监控。");
+            await ConnectConfiguredTaskAsync(baseUrl, payload.TaskId);
         }
         catch (Exception error)
         {
             _api.Clear();
-            SetStatus($"任务连接失败：{FriendlyError(error)}");
+            SetError($"任务连接失败：{FriendlyError(error)}");
         }
+    }
+
+    private async Task ConnectConfiguredTaskAsync(Uri baseUrl, string expectedTaskId)
+    {
+        var task = await _api.ConnectAsync(_lifetime.Token);
+        if (!task.TaskId.Equals(expectedTaskId, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("任务编号不匹配");
+
+        _task = task;
+        _activeBaseUrl = baseUrl;
+        _taskExpired = task.ExpiresAt <= DateTimeOffset.Now;
+        _lastError = "";
+        _connectionState = _taskExpired ? "任务已过期" : "助手已连接";
+        QueueItems.Clear();
+        _monitor.Stop();
+        MonitorButton.Content = "开始监控";
+        MonitorStatusText.Text = "未启动";
+        UpdateTaskHeader();
+        UpdateQueueSummary();
+        _expiryTimer.Start();
+        SetStatus(_taskExpired ? "任务已过期，请在网页重新创建。" : "助手已连接。可拖入、粘贴文件，或启动下载目录监控。");
     }
 
     private void UpdateTaskHeader()
@@ -134,6 +179,7 @@ public partial class MainWindow : Window
         MonitorStatusText.Text = "任务已过期，监控已停止";
         _uploadCancellation?.Cancel();
         _api.Clear();
+        _connectionState = "任务已过期";
         SetStatus("任务已过期，请回到网页为当前工单重新创建导入任务。");
     }
 
@@ -487,6 +533,96 @@ public partial class MainWindow : Window
         Process.Start(new ProcessStartInfo(new Uri(_activeBaseUrl, "/dashboard").ToString()) { UseShellExecute = true });
     }
 
+    private async void OnPairTask(object sender, RoutedEventArgs eventArgs)
+    {
+        var code = PairingCodeText.Text.Trim();
+        if (code.Length is < 6 or > 8 || !code.All(char.IsDigit))
+        {
+            SetError("请输入网页显示的 6～8 位手动任务码");
+            return;
+        }
+
+        PairButton.IsEnabled = false;
+        _connectionState = "正在使用任务码连接";
+        SetStatus("正在验证手动任务码...");
+        try
+        {
+            var paired = await _api.PairAsync(new Uri(AppConstants.DefaultBaseUrl), code, _lifetime.Token);
+            if (!Uri.TryCreate(paired.BaseUrl, UriKind.Absolute, out var baseUrl)) throw new InvalidOperationException("任务服务地址无效");
+            _api.Configure(baseUrl, paired.TaskId, paired.Ticket);
+            PairingCodeText.Clear();
+            await ConnectConfiguredTaskAsync(baseUrl, paired.TaskId);
+        }
+        catch (Exception error)
+        {
+            SetError(FriendlyError(error));
+        }
+        finally
+        {
+            PairButton.IsEnabled = true;
+        }
+    }
+
+    private void OnRepairProtocol(object sender, RoutedEventArgs eventArgs)
+    {
+        var status = _protocolRegistration.RegisterOrRepair();
+        ApplyProtocolStatus(status);
+        if (status.State == ProtocolRegistrationState.Registered)
+        {
+            _lastError = "";
+            SetStatus("浏览器协议已注册，无需管理员权限");
+        }
+        else
+        {
+            SetError(status.Message);
+        }
+    }
+
+    private void OnTestProtocol(object sender, RoutedEventArgs eventArgs)
+    {
+        var status = _protocolRegistration.LaunchProtocolTest();
+        ApplyProtocolStatus(status);
+        if (status.State == ProtocolRegistrationState.Registered) SetStatus(status.Message);
+        else SetError(status.Message);
+    }
+
+    private async void OnReconnectTask(object sender, RoutedEventArgs eventArgs)
+    {
+        if (_task is null || !_api.IsConfigured)
+        {
+            SetError("当前没有可重连任务，请使用网页协议或手动任务码连接");
+            return;
+        }
+        try
+        {
+            _connectionState = "正在重新连接";
+            SetStatus("正在重新连接当前任务...");
+            await ConnectConfiguredTaskAsync(_activeBaseUrl, _task.TaskId);
+        }
+        catch (Exception error)
+        {
+            SetError(FriendlyError(error));
+        }
+    }
+
+    private void OnCopyDiagnostics(object sender, RoutedEventArgs eventArgs)
+    {
+        try
+        {
+            Clipboard.SetText(BuildDiagnosticReport());
+            SetStatus("已复制脱敏诊断信息");
+        }
+        catch (Exception error)
+        {
+            SetError($"复制诊断信息失败：{error.Message}");
+        }
+    }
+
+    private void OnCheckUpdates(object sender, RoutedEventArgs eventArgs)
+    {
+        Process.Start(new ProcessStartInfo(AppConstants.UpdateUrl) { UseShellExecute = true });
+    }
+
     private void OnRemoveTask(object sender, RoutedEventArgs eventArgs)
     {
         if (_task is not null && MessageBox.Show(this, "仅从助手移除当前临时任务？本地文件和已上传资料都不会删除。", "移除任务", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
@@ -495,6 +631,7 @@ public partial class MainWindow : Window
         _api.Clear();
         _task = null;
         _taskExpired = false;
+        _connectionState = "未连接";
         QueueItems.Clear();
         _expiryTimer.Stop();
         MonitorButton.Content = "开始监控";
@@ -533,15 +670,80 @@ public partial class MainWindow : Window
         QueueSummaryText.Text = $"队列 {QueueItems.Count} · 成功 {success} · 重复 {duplicate} · 失败 {failed}";
     }
 
-    private void SetStatus(string message) => StatusText.Text = message;
+    private void SetStatus(string message)
+    {
+        StatusText.Text = message;
+        UpdateDiagnostics();
+    }
+
+    private void SetError(string message)
+    {
+        _lastError = message;
+        if (_connectionState is "正在使用任务码连接" or "正在重新连接" or "等待安全交接") _connectionState = "连接失败";
+        StatusText.Text = message;
+        UpdateDiagnostics();
+    }
+
+    private void ApplyProtocolStatus(ProtocolRegistrationStatus status)
+    {
+        ProtocolStatusText.Text = status.State switch
+        {
+            ProtocolRegistrationState.Registered => "已注册",
+            ProtocolRegistrationState.NotRegistered => "未注册",
+            ProtocolRegistrationState.NeedsRepair => "需要修复",
+            _ => "注册失败",
+        };
+        ProtocolStatusText.ToolTip = status.Message;
+        ProtocolCommandText.Text = string.IsNullOrWhiteSpace(status.Command) ? "无法确定" : status.Command;
+        if (status.State == ProtocolRegistrationState.Error) _lastError = status.Message;
+    }
+
+    private void UpdateDiagnostics()
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString()
+            ?? "1.16.5.1";
+        var parts = informational.Split('+', 2);
+        var commit = parts.Length > 1 ? parts[1] : "local";
+        VersionText.Text = $"{parts[0]} / {ShortCommit(commit)}";
+        CurrentUserText.Text = $"{Environment.UserDomainName}\\{Environment.UserName} / 当前用户单实例";
+        ConnectionDiagnosticText.Text = $"{AppConstants.DefaultBaseUrl} / {_connectionState} / {(_task is null ? "无任务" : _taskExpired ? "已过期" : _task.Summary.State)}";
+        LastErrorText.Text = string.IsNullOrWhiteSpace(_lastError) ? "无" : _lastError;
+    }
+
+    private string BuildDiagnosticReport()
+    {
+        var status = _protocolRegistration.Inspect();
+        var report = new StringBuilder();
+        report.AppendLine($"助手版本/构建: {VersionText.Text}");
+        report.AppendLine($"当前用户: {Environment.UserDomainName}\\{Environment.UserName}");
+        report.AppendLine($"协议状态: {status.State}");
+        report.AppendLine($"协议命令路径: {status.Command}");
+        report.AppendLine("单实例状态: 当前用户单实例已启用");
+        report.AppendLine($"服务地址: {AppConstants.DefaultBaseUrl}");
+        report.AppendLine($"服务连接状态: {_connectionState}");
+        report.AppendLine($"当前任务状态: {(_task is null ? "无任务" : _taskExpired ? "已过期" : _task.Summary.State)}");
+        report.AppendLine($"最后一次错误: {(string.IsNullOrWhiteSpace(_lastError) ? "无" : _lastError)}");
+        report.Append("敏感信息: ticket、Cookie、对象存储和密码均未包含");
+        return report.ToString();
+    }
+
+    private static string ShortCommit(string value)
+    {
+        if (value.Equals("local", StringComparison.OrdinalIgnoreCase)) return value;
+        return value.Length > 12 ? value[..12] : value;
+    }
 
     private static string FriendlyError(Exception error)
     {
         if (error is ImportApiException apiError)
         {
             if (apiError.StatusCode == 410) return "任务已过期，请从网页重新创建";
-            if (apiError.StatusCode == 401 || apiError.StatusCode == 403) return "任务授权已失效，请从网页重新创建";
+            if (apiError.StatusCode == 401) return apiError.Code.StartsWith("PAIRING_", StringComparison.Ordinal) ? apiError.Message : "任务凭据无效";
+            if (apiError.StatusCode == 403) return "任务授权已失效，请从网页重新创建";
         }
+        if (error is HttpRequestException) return "无法连接工单资料库，请检查网络";
         return error.Message;
     }
 

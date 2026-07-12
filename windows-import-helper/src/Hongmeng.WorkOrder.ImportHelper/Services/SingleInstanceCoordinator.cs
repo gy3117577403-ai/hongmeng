@@ -5,7 +5,13 @@ namespace Hongmeng.WorkOrder.ImportHelper.Services;
 public sealed class SingleInstanceCoordinator : IDisposable
 {
     private readonly CancellationTokenSource _cancellation = new();
+    private readonly string _pipeName;
     private Task? _serverTask;
+
+    public SingleInstanceCoordinator(string? pipeName = null)
+    {
+        _pipeName = string.IsNullOrWhiteSpace(pipeName) ? AppConstants.LaunchPipeName : pipeName;
+    }
 
     public event Action<string?>? LaunchArgumentReceived;
 
@@ -14,24 +20,40 @@ public sealed class SingleInstanceCoordinator : IDisposable
         _serverTask ??= Task.Run(() => RunServerAsync(_cancellation.Token));
     }
 
-    public static async Task ForwardLaunchArgumentAsync(string? argument)
+    public static async Task<bool> ForwardLaunchArgumentAsync(
+        string? argument,
+        string? pipeName = null,
+        TimeSpan? timeout = null)
     {
-        try
+        if (!LaunchRequestParser.TryParseActivation(argument, out _)) return false;
+        using var deadline = new CancellationTokenSource(timeout ?? TimeSpan.FromSeconds(3));
+        while (!deadline.IsCancellationRequested)
         {
-            await using var client = new NamedPipeClientStream(
-                ".",
-                AppConstants.LaunchPipeName,
-                PipeDirection.Out,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-            await client.ConnectAsync(timeout.Token);
-            await using var writer = new StreamWriter(client) { AutoFlush = true };
-            await writer.WriteLineAsync(argument ?? string.Empty);
+            try
+            {
+                await using var client = new NamedPipeClientStream(
+                    ".",
+                    string.IsNullOrWhiteSpace(pipeName) ? AppConstants.LaunchPipeName : pipeName,
+                    PipeDirection.Out,
+                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                await client.ConnectAsync(400, deadline.Token).ConfigureAwait(false);
+                await ActivationMessageCodec.WriteAsync(client, argument ?? string.Empty, deadline.Token).ConfigureAwait(false);
+                return true;
+            }
+            catch (OperationCanceledException) when (!deadline.IsCancellationRequested)
+            {
+                await Task.Delay(100, deadline.Token).ConfigureAwait(false);
+            }
+            catch (IOException) when (!deadline.IsCancellationRequested)
+            {
+                await Task.Delay(100, deadline.Token).ConfigureAwait(false);
+            }
+            catch
+            {
+                return false;
+            }
         }
-        catch
-        {
-            // The first process may still be starting. The browser can retry the protocol launch.
-        }
+        return false;
     }
 
     private async Task RunServerAsync(CancellationToken cancellationToken)
@@ -41,15 +63,14 @@ public sealed class SingleInstanceCoordinator : IDisposable
             try
             {
                 await using var server = new NamedPipeServerStream(
-                    AppConstants.LaunchPipeName,
+                    _pipeName,
                     PipeDirection.In,
                     1,
                     PipeTransmissionMode.Byte,
                     PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
                 await server.WaitForConnectionAsync(cancellationToken);
-                using var reader = new StreamReader(server);
-                var argument = await reader.ReadLineAsync(cancellationToken);
-                LaunchArgumentReceived?.Invoke(argument);
+                var argument = await ActivationMessageCodec.ReadAsync(server, cancellationToken);
+                if (LaunchRequestParser.TryParseActivation(argument, out _)) LaunchArgumentReceived?.Invoke(argument);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
