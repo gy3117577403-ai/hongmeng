@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { CameraCaptureModal } from '@/components/CameraCaptureModal';
 import { ImageViewer } from '@/components/ImageViewer';
+import { LocalImportDialog, type LocalImportConnectionState, type LocalImportTaskView } from '@/components/LocalImportDialog';
 import { PdfViewer } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
@@ -173,6 +174,13 @@ type SystemStatus = {
   serverTime: string;
 };
 type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoice?: Promise<{ outcome: string }> };
+type LocalImportTaskSession = LocalImportTaskView & {
+  handshakeId: string;
+  handoffTicket: string;
+  launchUrl: string;
+  loopbackUrl: string;
+  limits: { maxFiles: number; maxFileBytes: number; maxTotalBytes: number };
+};
 
 const appTimeZone = 'Asia/Shanghai';
 const emptySearchResult: SearchResult = {
@@ -278,7 +286,7 @@ function hasSearchResults(result: SearchResult) {
 
 function fileExtOk(file: File) {
   const ext = file.name.split('.').pop()?.toLowerCase();
-  return !!ext && ['pdf', 'jpg', 'jpeg', 'png'].includes(ext);
+  return !!ext && ['pdf', 'jpg', 'jpeg', 'png', 'webp'].includes(ext);
 }
 
 const priorityText: Record<string, string> = { urgent: '紧急', high: '高', normal: '一般' };
@@ -375,7 +383,7 @@ const actionText: Record<string, string> = {
   rollback_import_batch: '回滚导入批次',
 };
 const categoryIcons: Record<string, string> = { drawing: '原', sop: 'SOP', product: '成', material: '辅', notice: '注' };
-const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG', jpeg: 'JPG' };
+const fileTypeText: Record<string, string> = { pdf: 'PDF', jpg: 'JPG', png: 'PNG', jpeg: 'JPG', webp: 'WEBP' };
 const requiredCategoryCodes = new Set(['drawing', 'sop', 'product']);
 const emptyForm: WorkOrderForm = { code: '', customerName: '', productName: '', stage: 'not_issued', priority: 'normal', status: 'pending', progress: 0, plannedAt: '', remark: '' };
 const logFilters = [
@@ -647,6 +655,10 @@ export default function DashboardShell({
   const [toolWidth, setToolWidth] = useState(320);
   const [thumbsOpen, setThumbsOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
+  const [localImportOpen, setLocalImportOpen] = useState(false);
+  const [localImportTask, setLocalImportTask] = useState<LocalImportTaskSession | null>(null);
+  const [localImportConnection, setLocalImportConnection] = useState<LocalImportConnectionState>('creating');
+  const [localImportError, setLocalImportError] = useState('');
   const [productionReturnKey, setProductionReturnKey] = useState('');
 
   const pdf = useRef<HTMLInputElement>(null);
@@ -660,6 +672,8 @@ export default function DashboardShell({
   const userMenuButtonRef = useRef<HTMLButtonElement>(null);
   const moreActionsButtonRef = useRef<HTMLButtonElement>(null);
   const directTargetRef = useRef<{ workOrderId: string; categoryId: string; fileId: string } | null>(null);
+  const localImportLatestFileRef = useRef('');
+  const localImportCompletionRef = useRef('');
 
   const list = useMemo(() => {
     const text = kw.trim().toLowerCase();
@@ -978,6 +992,154 @@ export default function DashboardShell({
       return {};
     }
   }
+
+  function openHelperProtocol(launchUrl: string) {
+    const frame = document.createElement('iframe');
+    frame.hidden = true;
+    frame.setAttribute('aria-hidden', 'true');
+    frame.src = launchUrl;
+    document.body.appendChild(frame);
+    window.setTimeout(() => frame.remove(), 4000);
+  }
+
+  async function handoffLocalImportTask(task: LocalImportTaskSession) {
+    if (!task.handoffTicket) {
+      setLocalImportConnection('error');
+      setLocalImportError('任务票据已清除，请重新创建导入任务');
+      return;
+    }
+    setLocalImportConnection('launching');
+    setLocalImportError('');
+    openHelperProtocol(task.launchUrl);
+
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      await new Promise(resolve => window.setTimeout(resolve, 650));
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 1800);
+      try {
+        const response = await fetch(`${task.loopbackUrl}/handoff`, {
+          method: 'POST',
+          mode: 'cors',
+          credentials: 'omit',
+          cache: 'no-store',
+          signal: controller.signal,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            handshakeId: task.handshakeId,
+            taskId: task.taskId,
+            ticket: task.handoffTicket,
+            baseUrl: window.location.origin,
+          }),
+        });
+        if (response.ok) {
+          setLocalImportConnection('connected');
+          setLocalImportError('');
+          return;
+        }
+      } catch {
+        // The helper may still be starting or may not be installed.
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }
+    setLocalImportConnection('unavailable');
+    setLocalImportError('未连接到 Windows 导入助手。请确认助手已安装并允许浏览器打开自定义协议。');
+  }
+
+  async function openLocalImport() {
+    if (!order) return setMsg('请先选择工单');
+    if (!category) return setMsg('请先选择资料分类');
+    if (orderReadOnly) return setMsg('历史周工单为只读状态，不能继续导入文件');
+
+    setLocalImportOpen(true);
+    setLocalImportError('');
+    const reusable = localImportTask
+      && localImportTask.workOrder.id === order.id
+      && localImportTask.category.id === category.id
+      && new Date(localImportTask.expiresAt).getTime() > Date.now()
+      && !['completed', 'expired'].includes(localImportTask.summary.state);
+    if (reusable) {
+      await handoffLocalImportTask(localImportTask);
+      return;
+    }
+
+    setLocalImportConnection('creating');
+    try {
+      const response = await fetch('/api/local-import/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workOrderId: order.id, categoryId: category.id }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body?.data) throw new Error(body.error || body.message || '创建导入任务失败');
+      const task: LocalImportTaskSession = {
+        ...body.data,
+        summary: { state: 'waiting', successCount: 0, duplicateCount: 0, failedCount: 0, processedCount: 0 },
+      };
+      localImportLatestFileRef.current = '';
+      localImportCompletionRef.current = '';
+      setLocalImportTask(task);
+      await handoffLocalImportTask(task);
+    } catch (error) {
+      setLocalImportConnection('error');
+      setLocalImportError(error instanceof Error ? error.message : '创建导入任务失败');
+    }
+  }
+
+  async function retryLocalImportHandoff() {
+    if (!localImportTask) {
+      await openLocalImport();
+      return;
+    }
+    await handoffLocalImportTask(localImportTask);
+  }
+
+  const localImportTaskId = localImportTask?.taskId || '';
+  useEffect(() => {
+    if (!localImportTaskId) return undefined;
+    let active = true;
+    let timer = 0;
+    const poll = async () => {
+      let terminal = false;
+      try {
+        const response = await fetch(`/api/local-import/tasks/${encodeURIComponent(localImportTaskId)}`, { cache: 'no-store' });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body?.data) throw new Error(body.error || '导入任务状态读取失败');
+        if (!active) return;
+        const data = body.data as LocalImportTaskView & { summary: LocalImportTaskView['summary'] & { latestFileId?: string | null } };
+        setLocalImportTask(current => current && current.taskId === localImportTaskId ? { ...current, ...data } : current);
+        if (['connected', 'uploading', 'paused', 'completed'].includes(data.summary.state)) setLocalImportConnection('connected');
+        const latestFileId = data.summary.latestFileId || '';
+        if (latestFileId && latestFileId !== localImportLatestFileRef.current) {
+          localImportLatestFileRef.current = latestFileId;
+          await loadFiles(data.workOrder.id, data.category.id, latestFileId, true);
+          await loadCategoryCounts(data.workOrder.id, true);
+        }
+        if (data.summary.state === 'completed') {
+          terminal = true;
+          if (localImportCompletionRef.current !== localImportTaskId) {
+            localImportCompletionRef.current = localImportTaskId;
+            setMsg(`从微盘导入完成：成功 ${data.summary.successCount}，重复 ${data.summary.duplicateCount}，失败 ${data.summary.failedCount}`);
+          }
+          setLocalImportTask(current => current && current.taskId === localImportTaskId ? { ...current, handoffTicket: '' } : current);
+        } else if (data.summary.state === 'expired') {
+          terminal = true;
+          setLocalImportTask(current => current && current.taskId === localImportTaskId ? { ...current, handoffTicket: '' } : current);
+        }
+      } catch (error) {
+        if (active) setLocalImportError(error instanceof Error ? error.message : '导入任务状态读取失败');
+      }
+      if (active && !terminal) timer = window.setTimeout(poll, 2000);
+    };
+    void poll();
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+    // The polling lifecycle is intentionally scoped to the immutable task id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localImportTaskId]);
 
   async function loadFieldSummary() {
     try {
@@ -1358,7 +1520,7 @@ export default function DashboardShell({
   function fileKind(file: File) {
     const ext = file.name.split('.').pop()?.toLowerCase() || '';
     if (ext === 'pdf') return 'PDF';
-    if (['jpg', 'jpeg', 'png'].includes(ext)) return '图片';
+    if (['jpg', 'jpeg', 'png', 'webp'].includes(ext)) return '图片';
     return '未知类型';
   }
 
@@ -2518,7 +2680,7 @@ export default function DashboardShell({
                       </div>
                       <div className="empty-guide-grid">
                         <span><b>当前分类</b><em>{currentCategoryName}</em></span>
-                        <span><b>支持格式</b><em>PDF、JPG、PNG</em></span>
+                        <span><b>支持格式</b><em>PDF、JPG、PNG、WEBP</em></span>
                         <span><b>建议</b><em>原图、SOP指导书、成品图为主要生产资料</em></span>
                       </div>
                       {missingCategoryNames.length > 0 && (
@@ -2537,6 +2699,7 @@ export default function DashboardShell({
                         <button type="button" disabled={uploading || !order} onClick={() => pdf.current?.click()}>上传 PDF</button>
                         <button type="button" disabled={uploading || !order} onClick={() => img.current?.click()}>上传图片</button>
                         <button type="button" disabled={uploading || !order} onClick={openCameraCapture}>拍照上传</button>
+                        <button type="button" disabled={uploading || !order || orderReadOnly} onClick={() => void openLocalImport()}>从微盘导入</button>
                       </div>
                     </div>
                   )}
@@ -2616,7 +2779,7 @@ export default function DashboardShell({
                         </>
                       )}
                       <Info label="文件状态" value={file ? fileStatusText[file.status] || file.status : '暂无文件'} ok={!!file} />
-                      {!file && <Info label="支持格式" value="PDF、JPG、PNG" />}
+                      {!file && <Info label="支持格式" value="PDF、JPG、PNG、WEBP" />}
                       {file && (
                         <>
                           <Info label="文件类型" value={fileTypeText[file.fileType] || file.fileType.toUpperCase()} />
@@ -2633,7 +2796,7 @@ export default function DashboardShell({
                     <div className="tool-pane">
                       <div className="side-section-title">
                         <strong>{category?.name || '-'}</strong>
-                        <span>支持 PDF / JPG / PNG 批量上传</span>
+                        <span>支持 PDF / JPG / PNG / WEBP 批量上传</span>
                       </div>
                       <button className="upload-action primary" type="button" disabled={uploading || !order || orderReadOnly} onClick={() => pdf.current?.click()}>
                         <span>⇧</span><b>{uploading ? '上传中，请稍候' : '上传 PDF'}</b>
@@ -2644,6 +2807,10 @@ export default function DashboardShell({
                       <button className="upload-action" type="button" disabled={uploading || !order || orderReadOnly} onClick={openCameraCapture}>
                         <span>◎</span><b>拍照上传</b>
                       </button>
+                      <button className="upload-action local-import-action" type="button" disabled={uploading || !order || orderReadOnly} onClick={() => void openLocalImport()}>
+                        <span>↧</span><b>从微盘导入</b>
+                      </button>
+                      <p className="tool-note local-import-note">无需手动寻找本地文件。可从企业微信微盘拖入、粘贴，或点击下载后由 Windows 助手自动接收。</p>
                       <button className="upload-action sync-inline" type="button" disabled={syncing || !order || orderReadOnly} onClick={syncCurrentWorkOrder}>
                         <span>↻</span><b>{syncing ? '同步中' : '同步当前工单资料'}</b>
                       </button>
@@ -2760,6 +2927,15 @@ export default function DashboardShell({
           commit={commitWeekAction}
         />
       )}
+
+      <LocalImportDialog
+        open={localImportOpen}
+        task={localImportTask}
+        connection={localImportConnection}
+        error={localImportError}
+        retry={() => void retryLocalImportHandoff()}
+        close={() => setLocalImportOpen(false)}
+      />
 
       <CameraCaptureModal
         open={cameraOpen}

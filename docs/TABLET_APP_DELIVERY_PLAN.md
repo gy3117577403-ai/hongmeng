@@ -132,6 +132,12 @@ v1.13.4-tablet-final-pretest 面向平板真实数据测试前做最后收口：
 
 如果设备不支持 APK，推荐使用 PWA 添加到桌面；若必须要系统级原生包，则需要重新评估 DevEco HAP 路线。
 
+## Windows 微盘导入助手
+
+生产资料仍可从 Web / PWA / APK 查看。需要从企业微信微盘批量接收资料时，可在 Windows 电脑的工单资料页点击“从微盘导入”，使用 `.NET 8 WPF` 便携助手完成真实文件拖拽、粘贴或下载目录监控。助手不需要企业微信管理员 API 配置，不读取企业微信 Cookie，不保存系统密码或 S3 Key。
+
+Windows artifact 名称为 `hongmeng-workorder-wecom-import-helper-win-x64`。助手上传完成后，平板端点击“同步”即可看到当前工单的新资料；Web 弹窗本身也会轮询任务并局部刷新，不需要整页刷新。
+
 ## APK 构建和安装
 
 构建入口：

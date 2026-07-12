@@ -32,3 +32,10 @@ android-webview-app/.idea/
 android-webview-app/local.properties
 android-webview-app/**/build/
 android-webview-app/**/*.iml
+
+# Windows WeCom import helper local artifacts
+windows-import-helper/**/bin/
+windows-import-helper/**/obj/
+windows-import-helper/artifacts/
+windows-import-helper/**/*.user
+windows-import-helper/.vs/

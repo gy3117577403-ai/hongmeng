@@ -18,7 +18,7 @@
 - 账号登录、修改密码、账号管理
 - 工单资料库、工单新增 / 编辑 / 软删除 / 恢复
 - 工单搜索、状态筛选、资料完整性状态
-- PDF / JPG / PNG 上传到 S3 兼容对象存储
+- PDF / JPG / JPEG / PNG / WEBP 上传到 S3 兼容对象存储
 - PDF.js 预览、图片完整预览、文件下载、当前工单 ZIP 下载
 - 生产工单上传资料自动沉淀到图纸资料库，PDF / 图片预览支持适应窗口和旋转
 - 网页端 / 命令行图纸原图批量导入，支持预览、客户映射、重复识别、确认码上传和只导入“原图”分类
@@ -32,6 +32,7 @@
 - PWA、系统设置、数据导出、打印摘要、错误页
 - 周计划 Excel / CSV 工单导入预览与确认
 - 周计划差异中心：新增 / 延续 / 变更 / 下周取消对比、重复与异常审核、启用前安全门禁、历史周和差异 CSV
+- Windows 微盘导入助手：网页创建 10 分钟短期任务，支持真实文件拖拽、文件粘贴、下载目录监控、SHA-256 防重、新版本与失败重试
 - 图纸资料库首页：按客户 -> 规格 -> 图纸资料管理长期图纸文件，不保存周计划状态字段
 
 ## 本地启动
@@ -112,6 +113,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.16.2-connector-manual-workspace-polish：组装说明书重排为阅读优先三栏工作台，精简列表与空字段，目录默认打开且 1024px 使用覆盖式抽屉；单份新增改为三步快速入库，新增元数据可信度治理和只读异常审计。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.3-connector-manual-gesture-toc：组装说明书 PDF / 图片预览新增滚轮焦点缩放、双击 / 双点、双指捏合和放大拖动；支持当前页快捷目录、目录 CRUD / 排序、PDF 目录建议、当前页直达链接和阅读页恢复。继续复用 `tocJson`，未新增 Prisma migration。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.4-production-execution-glass-ux：生产执行中心改为四列独立滚动的暖色玻璃工作台，新增客户、交期、状态、优先级、图纸、配料与资料完整度筛选；停用负责人 / 工位 UI，统一下拉菜单关闭逻辑，并支持工单资料直达与返回筛选、横向及列滚动位置恢复。该版本为本地验证候选，尚未部署 Sealos。
+- v1.16.5-wecom-local-import-helper：工单资料页新增“从微盘导入”，通过 Windows WPF 助手接收拖拽、粘贴或下载目录中的真实文件；使用短期受限票据上传到当前工单和分类，自动同步图纸资料库，支持 SHA-256 防重、新版本、进度、暂停和重试。该版本为本地验证候选，尚未部署 Sealos。
 
 ## 交付文档索引
 
@@ -137,6 +139,8 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [预览适屏与旋转 QA](docs/QA_PREVIEW_ROTATE_AND_FIT.md)
 - [生产稳定性指南 v1.12.0](docs/PRODUCTION_STABILITY_GUIDE_v1.12.0.md)
 - [平板交付方案](docs/TABLET_APP_DELIVERY_PLAN.md)
+- [企业微信微盘本地导入助手指南](docs/WECOM_LOCAL_IMPORT_HELPER_GUIDE.md)
+- [企业微信微盘本地导入助手 QA](docs/QA_WECOM_LOCAL_IMPORT_HELPER.md)
 - [平板真机测试前最终预检计划](docs/PRE_REAL_DATA_TEST_PLAN.md)
 - [周计划 Excel 工单导入说明](docs/WEEKLY_PLAN_IMPORT_GUIDE.md)
 - [周计划生产工单显示与清理机制](docs/WEEKLY_PLAN_WORKORDER_DISPLAY_AND_CLEANUP.md)

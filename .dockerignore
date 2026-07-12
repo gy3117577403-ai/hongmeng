@@ -5,3 +5,10 @@ node_modules
 *.log
 coverage
 .DS_Store
+windows-import-helper
+android-webview-app
+reports
+tmp
+config/*.local.json
+*.zip
+*.bundle

@@ -1,0 +1,18 @@
+<Application x:Class="Hongmeng.WorkOrder.ImportHelper.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Application.Resources>
+    <SolidColorBrush x:Key="OrangeBrush" Color="#EA580C" />
+    <SolidColorBrush x:Key="OrangeSoftBrush" Color="#FFF7ED" />
+    <SolidColorBrush x:Key="BorderBrush" Color="#FED7AA" />
+    <Style TargetType="Button">
+      <Setter Property="MinHeight" Value="38" />
+      <Setter Property="Padding" Value="14,6" />
+      <Setter Property="Margin" Value="0,0,8,0" />
+      <Setter Property="Background" Value="White" />
+      <Setter Property="BorderBrush" Value="#FDBA74" />
+      <Setter Property="Foreground" Value="#9A3412" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+  </Application.Resources>
+</Application>

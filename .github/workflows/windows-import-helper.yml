@@ -1,0 +1,62 @@
+name: Windows WeCom Import Helper
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "windows-import-helper/**"
+      - ".github/workflows/windows-import-helper.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build portable Windows helper
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows-import-helper
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore Hongmeng.WorkOrder.ImportHelper.sln
+
+      - name: Build
+        run: dotnet build Hongmeng.WorkOrder.ImportHelper.sln -c Release --no-restore
+
+      - name: Test
+        run: dotnet test Hongmeng.WorkOrder.ImportHelper.sln -c Release --no-build
+
+      - name: Publish self-contained helper
+        run: >-
+          dotnet publish src/Hongmeng.WorkOrder.ImportHelper/Hongmeng.WorkOrder.ImportHelper.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          --no-build
+          -p:PublishSingleFile=true
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          -o artifacts/publish
+
+      - name: Package portable ZIP
+        shell: pwsh
+        run: Compress-Archive -Path artifacts/publish/* -DestinationPath artifacts/hongmeng-workorder-wecom-import-helper-win-x64.zip -Force
+
+      - name: Upload helper artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hongmeng-workorder-wecom-import-helper-win-x64
+          path: windows-import-helper/artifacts/hongmeng-workorder-wecom-import-helper-win-x64.zip
+          if-no-files-found: error
+          retention-days: 30
