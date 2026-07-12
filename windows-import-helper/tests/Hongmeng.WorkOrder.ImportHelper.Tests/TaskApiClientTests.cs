@@ -6,6 +6,10 @@ namespace Hongmeng.WorkOrder.ImportHelper.Tests;
 
 public sealed class TaskApiClientTests
 {
+    private const string PairSuccessJson = """
+        {"ok":true,"data":{"taskId":"task-1","ticket":"bound-ticket","baseUrl":"https://qdowqencjyph.sealoshzh.site","expiresAt":"2026-07-13T04:10:00Z","alreadyConnected":true,"task":{"taskId":"task-1","createdAt":"2026-07-13T04:00:00Z","expiresAt":"2026-07-13T04:10:00Z","limits":{"maxFiles":20,"maxFileBytes":1048576,"maxTotalBytes":20971520},"workOrder":{"id":"wo","displayCode":"SPEC-1","customerName":"客户","productName":"产品"},"category":{"id":"cat","name":"原图","code":"original"},"summary":{"state":"connected","successCount":0,"duplicateCount":0,"failedCount":0,"processedCount":0,"uploadedBytes":0}}}}
+        """;
+
     [Fact]
     public async Task ConnectUsesBoundTaskTicketAndReturnsTaskSummary()
     {
@@ -68,6 +72,56 @@ public sealed class TaskApiClientTests
         Assert.Equal("task-1", retried.Task.TaskId);
         Assert.Equal(2, requestBodies.Count);
         Assert.All(requestBodies, body => Assert.Contains(helperInstanceId, body));
+    }
+
+    [Fact]
+    public async Task ManualPairingUsesNormalizedOfficialOrigin()
+    {
+        Uri? requestUri = null;
+        var handler = new StubHandler(request =>
+        {
+            requestUri = request.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(PairSuccessJson, Encoding.UTF8, "application/json")
+            };
+        });
+        using var client = new TaskApiClient("helper-instance-test-000000000003", handler);
+
+        await client.PairAsync(
+            new Uri("https://QDOWQENCJYPH.SEALOSHZH.SITE:443/ignored/path"),
+            "123456",
+            CancellationToken.None);
+
+        Assert.NotNull(requestUri);
+        Assert.Equal(AppConstants.OfficialServiceHost, requestUri.Host);
+        Assert.Equal(443, requestUri.Port);
+        Assert.Equal("/api/local-import/tasks/pair", requestUri.AbsolutePath);
+    }
+
+    [Fact]
+    public async Task ManualAndProtocolFlowsUseSameApiBase()
+    {
+        Uri? pairRequestUri = null;
+        var handler = new StubHandler(request =>
+        {
+            pairRequestUri = request.RequestUri;
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(PairSuccessJson, Encoding.UTF8, "application/json")
+            };
+        });
+        using var client = new TaskApiClient("helper-instance-test-000000000004", handler);
+        var protocolUrl = $"{AppConstants.ProtocolScheme}://launch?handshakeId={Guid.NewGuid()}&taskId={Guid.NewGuid()}&baseUrl={Uri.EscapeDataString("https://qdowqencjyph.sealoshzh.site/api/local-import/tasks")}";
+
+        Assert.True(LaunchRequestParser.TryParse(protocolUrl, out var launch));
+        await client.PairAsync(new Uri("https://qdowqencjyph.sealoshzh.site/"), "123456", CancellationToken.None);
+
+        Assert.NotNull(launch);
+        Assert.NotNull(pairRequestUri);
+        Assert.Equal(
+            launch.BaseUrl.GetLeftPart(UriPartial.Authority),
+            pairRequestUri.GetLeftPart(UriPartial.Authority));
     }
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler

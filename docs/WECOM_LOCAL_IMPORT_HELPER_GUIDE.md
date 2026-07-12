@@ -1,6 +1,6 @@
 # 企业微信微盘本地导入助手使用指南
 
-版本：v1.16.5.2-wecom-helper-pairing-state-fix
+版本：v1.16.5.3-wecom-helper-service-origin-fix
 
 ## 用途与边界
 

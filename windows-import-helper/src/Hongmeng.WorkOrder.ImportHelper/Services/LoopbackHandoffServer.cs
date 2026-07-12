@@ -29,9 +29,10 @@ public sealed class LoopbackHandoffServer : IAsyncDisposable
         app.Use(async (context, next) =>
         {
             var origin = context.Request.Headers.Origin.ToString();
-            if (origin.Equals(AppConstants.AllowedWebOrigin, StringComparison.OrdinalIgnoreCase))
+            var originAllowed = ServiceOriginPolicy.TryNormalizeAllowedOrigin(origin, out _);
+            if (originAllowed)
             {
-                context.Response.Headers["Access-Control-Allow-Origin"] = AppConstants.AllowedWebOrigin;
+                context.Response.Headers["Access-Control-Allow-Origin"] = AppConstants.OfficialServiceOrigin;
                 context.Response.Headers["Access-Control-Allow-Methods"] = "POST, OPTIONS";
                 context.Response.Headers["Access-Control-Allow-Headers"] = "Content-Type";
                 context.Response.Headers["Access-Control-Allow-Private-Network"] = "true";
@@ -40,7 +41,7 @@ public sealed class LoopbackHandoffServer : IAsyncDisposable
 
             if (HttpMethods.IsOptions(context.Request.Method))
             {
-                context.Response.StatusCode = origin.Equals(AppConstants.AllowedWebOrigin, StringComparison.OrdinalIgnoreCase)
+                context.Response.StatusCode = originAllowed
                     ? StatusCodes.Status204NoContent
                     : StatusCodes.Status403Forbidden;
                 return;
@@ -67,7 +68,7 @@ public sealed class LoopbackHandoffServer : IAsyncDisposable
     private async Task<IResult> HandleHandoffAsync(HttpContext context)
     {
         var origin = context.Request.Headers.Origin.ToString();
-        if (!origin.Equals(AppConstants.AllowedWebOrigin, StringComparison.OrdinalIgnoreCase))
+        if (!ServiceOriginPolicy.TryNormalizeAllowedOrigin(origin, out _))
         {
             return Results.Json(new { ok = false, error = "origin_not_allowed" }, statusCode: StatusCodes.Status403Forbidden);
         }
@@ -100,11 +101,18 @@ public sealed class LoopbackHandoffServer : IAsyncDisposable
         {
             RemoveExpiredLocked();
             _pending.TryGetValue(payload.HandshakeId, out expected);
+            var payloadOrigin = string.IsNullOrWhiteSpace(payload.BaseUrl)
+                ? ServiceOriginPolicy.GetOfficialServiceOrigin()
+                : ServiceOriginPolicy.TryNormalizeAllowedOrigin(payload.BaseUrl, out var normalizedPayloadOrigin)
+                    ? normalizedPayloadOrigin
+                    : null;
             if (expected is not null
+                && payloadOrigin is not null
                 && expected.Request.TaskId.Equals(payload.TaskId, StringComparison.OrdinalIgnoreCase)
-                && expected.Request.BaseUrl.GetLeftPart(UriPartial.Authority).Equals(payload.BaseUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
+                && expected.Request.BaseUrl.Equals(payloadOrigin))
             {
                 _pending.Remove(payload.HandshakeId);
+                payload.BaseUrl = AppConstants.OfficialServiceOrigin;
             }
             else
             {

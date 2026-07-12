@@ -1,6 +1,6 @@
 # Windows 微盘导入助手协议排查
 
-适用版本：v1.16.5.2-wecom-helper-pairing-state-fix
+适用版本：v1.16.5.3-wecom-helper-service-origin-fix
 
 ## 为什么不需要管理员权限
 

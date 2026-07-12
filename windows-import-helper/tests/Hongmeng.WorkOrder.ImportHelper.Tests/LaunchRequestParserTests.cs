@@ -20,6 +20,28 @@ public sealed class LaunchRequestParserTests
         Assert.DoesNotContain("ticket", url, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("https://qdowqencjyph.sealoshzh.site/")]
+    [InlineData("https://QDOWQENCJYPH.SEALOSHZH.SITE:443/api/local-import/tasks/pair")]
+    public void ProtocolActivationUsesNormalizedOfficialOrigin(string serviceUrl)
+    {
+        var url = $"hongmeng-workorder-import://launch?handshakeId={Guid.NewGuid()}&taskId={Guid.NewGuid()}&baseUrl={Uri.EscapeDataString(serviceUrl)}";
+
+        var parsed = LaunchRequestParser.TryParse(url, out var request);
+
+        Assert.True(parsed);
+        Assert.Equal(AppConstants.OfficialServiceOrigin, request?.BaseUrl.AbsoluteUri.TrimEnd('/'));
+    }
+
+    [Fact]
+    public void ProtocolActivationWithoutServiceUrlUsesOfficialOrigin()
+    {
+        var url = $"hongmeng-workorder-import://launch?handshakeId={Guid.NewGuid()}&taskId={Guid.NewGuid()}";
+
+        Assert.True(LaunchRequestParser.TryParse(url, out var request));
+        Assert.Equal(AppConstants.OfficialServiceOrigin, request?.BaseUrl.AbsoluteUri.TrimEnd('/'));
+    }
+
     [Fact]
     public void AcceptsPingWithoutCreatingTask()
     {
@@ -40,6 +62,9 @@ public sealed class LaunchRequestParserTests
     [Theory]
     [InlineData("http://127.0.0.1:3000")]
     [InlineData("https://example.com")]
+    [InlineData("https://qdowqencjyph.sealoshzh.site.evil.com")]
+    [InlineData("https://user@qdowqencjyph.sealoshzh.site")]
+    [InlineData("https://qdowqencjyph.sealoshzh.site:8443")]
     public void RejectsUnlistedOrigins(string origin)
     {
         var url = $"hongmeng-workorder-import://launch?handshakeId={Guid.NewGuid()}&taskId={Guid.NewGuid()}&baseUrl={Uri.EscapeDataString(origin)}";

@@ -12,6 +12,7 @@ import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platform';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import { compressImageForUpload, normalizeCapturedImage } from '@/lib/image-client';
+import { normalizeLocalImportServiceOrigin } from '@/lib/local-import-service-origin';
 import type { ChangeSnapshotDTO, ConnectorAssemblyManualDTO, ConnectorAssemblyManualSearchAssetDTO, ConnectorParameterDTO, CurrentUserDTO, DrawingLibraryItemDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
 type WorkOrderForm = {
@@ -177,6 +178,7 @@ type BeforeInstallPromptEvent = Event & { prompt: () => Promise<void>; userChoic
 type LocalImportTaskSession = LocalImportTaskView & {
   handshakeId: string;
   handoffTicket: string;
+  baseUrl: string;
   launchUrl: string;
   loopbackUrl: string;
   limits: { maxFiles: number; maxFileBytes: number; maxTotalBytes: number };
@@ -1036,7 +1038,7 @@ export default function DashboardShell({
             handshakeId: task.handshakeId,
             taskId: task.taskId,
             ticket: task.handoffTicket,
-            baseUrl: window.location.origin,
+            baseUrl: normalizeLocalImportServiceOrigin(task.baseUrl),
           }),
         });
         if (response.ok) {

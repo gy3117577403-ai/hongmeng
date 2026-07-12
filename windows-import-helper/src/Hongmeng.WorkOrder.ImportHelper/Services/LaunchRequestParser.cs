@@ -43,11 +43,13 @@ public static class LaunchRequestParser
         if (query.ContainsKey("ticket")) return false;
         if (!query.TryGetValue("handshakeId", out var handshakeId) || !Guid.TryParse(handshakeId, out _)) return false;
         if (!query.TryGetValue("taskId", out var taskId) || !Guid.TryParse(taskId, out _)) return false;
-        if (!query.TryGetValue("baseUrl", out var baseUrl) || !Uri.TryCreate(baseUrl, UriKind.Absolute, out var baseUri)) return false;
-        if (!baseUri.GetLeftPart(UriPartial.Authority).Equals(AppConstants.AllowedWebOrigin, StringComparison.OrdinalIgnoreCase)) return false;
+        var baseUri = ServiceOriginPolicy.GetOfficialServiceOrigin();
+        if (query.TryGetValue("baseUrl", out var baseUrl)
+            && !string.IsNullOrWhiteSpace(baseUrl)
+            && (!ServiceOriginPolicy.TryNormalizeAllowedOrigin(baseUrl, out baseUri) || baseUri is null)) return false;
         activation = new ProtocolActivation(
             ProtocolActivationKind.Launch,
-            new LaunchRequest(handshakeId, taskId, new Uri(baseUri.GetLeftPart(UriPartial.Authority))));
+            new LaunchRequest(handshakeId, taskId, baseUri));
         return true;
     }
 

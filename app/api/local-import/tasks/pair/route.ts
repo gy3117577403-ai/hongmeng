@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { localImportErrorResponse, localImportTaskData, pairLocalImportTask } from '@/lib/local-import';
+import { LOCAL_IMPORT_OFFICIAL_ORIGIN } from '@/lib/local-import-service-origin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,11 +32,6 @@ function assertPairingRate(req: NextRequest) {
   current.count += 1;
 }
 
-function appBaseUrl(req: NextRequest) {
-  const configured = process.env.APP_BASE_URL?.trim();
-  return configured ? new URL(configured).origin : req.nextUrl.origin;
-}
-
 export async function POST(req: NextRequest) {
   try {
     assertPairingRate(req);
@@ -48,7 +44,7 @@ export async function POST(req: NextRequest) {
       data: {
         taskId: task.id,
         ticket,
-        baseUrl: appBaseUrl(req),
+        baseUrl: LOCAL_IMPORT_OFFICIAL_ORIGIN,
         expiresAt: task.detail.expiresAt,
         alreadyConnected,
         task: await localImportTaskData(task),

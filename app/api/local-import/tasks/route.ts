@@ -10,21 +10,13 @@ import {
   localImportErrorResponse,
   localImportLimits,
 } from '@/lib/local-import';
+import { LOCAL_IMPORT_OFFICIAL_ORIGIN } from '@/lib/local-import-service-origin';
 import { prisma } from '@/lib/prisma';
 import { displayWorkOrderCode } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function appBaseUrl(req: NextRequest) {
-  const configured = process.env.APP_BASE_URL?.trim();
-  if (configured) {
-    const parsed = new URL(configured);
-    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('APP_BASE_URL protocol invalid');
-    return parsed.origin;
-  }
-  return req.nextUrl.origin;
-}
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
@@ -77,7 +69,7 @@ export async function POST(req: NextRequest) {
       expiresAt,
       ...limits,
     });
-    const baseUrl = appBaseUrl(req);
+    const baseUrl = LOCAL_IMPORT_OFFICIAL_ORIGIN;
     const launchParams = new URLSearchParams({ handshakeId, taskId, baseUrl });
 
     return NextResponse.json({
@@ -85,6 +77,7 @@ export async function POST(req: NextRequest) {
       data: {
         taskId,
         handshakeId,
+        baseUrl,
         handoffTicket,
         launchUrl: `hongmeng-workorder-import://launch?${launchParams.toString()}`,
         loopbackUrl: LOCAL_IMPORT_LOOPBACK_URL,

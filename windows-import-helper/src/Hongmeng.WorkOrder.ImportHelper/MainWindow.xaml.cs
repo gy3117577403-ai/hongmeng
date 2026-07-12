@@ -132,7 +132,7 @@ public partial class MainWindow : Window
         await _taskConnectionLock.WaitAsync(_lifetime.Token);
         try
         {
-            if (!Uri.TryCreate(payload.BaseUrl, UriKind.Absolute, out var baseUrl)) throw new InvalidOperationException("任务服务地址无效");
+            var baseUrl = ServiceOriginPolicy.NormalizeOrigin(payload.BaseUrl);
             var connected = await _api.ConnectAsync(baseUrl, payload.TaskId, payload.Ticket, _lifetime.Token);
             ApplyConnectedTask(baseUrl, payload.TaskId, connected);
         }
@@ -148,13 +148,14 @@ public partial class MainWindow : Window
 
     private void ApplyConnectedTask(Uri baseUrl, string expectedTaskId, ConnectTaskResult connected)
     {
+        var normalizedBaseUrl = ServiceOriginPolicy.NormalizeOrigin(baseUrl);
         var task = connected.Task;
         if (!task.TaskId.Equals(expectedTaskId, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("任务编号不匹配");
         if (string.IsNullOrWhiteSpace(connected.Ticket)) throw new InvalidOperationException("服务器未返回绑定后的任务票据");
 
-        _api.Configure(baseUrl, task.TaskId, connected.Ticket);
+        _api.Configure(normalizedBaseUrl, task.TaskId, connected.Ticket);
         _task = task;
-        _activeBaseUrl = baseUrl;
+        _activeBaseUrl = normalizedBaseUrl;
         _taskExpired = task.ExpiresAt <= DateTimeOffset.Now;
         _lastError = "";
         _connectionState = _taskExpired ? "任务已过期" : "助手已连接";
@@ -575,8 +576,11 @@ public partial class MainWindow : Window
         SetStatus("正在验证手动任务码...");
         try
         {
-            var paired = await _api.PairAsync(new Uri(AppConstants.DefaultBaseUrl), code, _lifetime.Token);
-            if (!Uri.TryCreate(paired.BaseUrl, UriKind.Absolute, out var baseUrl)) throw new InvalidOperationException("任务服务地址无效");
+            var officialOrigin = ServiceOriginPolicy.GetOfficialServiceOrigin();
+            var paired = await _api.PairAsync(officialOrigin, code, _lifetime.Token);
+            var baseUrl = string.IsNullOrWhiteSpace(paired.BaseUrl)
+                ? officialOrigin
+                : ServiceOriginPolicy.NormalizeOrigin(paired.BaseUrl);
             ApplyPairedTask(baseUrl, paired);
         }
         catch (Exception error)
@@ -741,12 +745,12 @@ public partial class MainWindow : Window
         var assembly = Assembly.GetExecutingAssembly();
         var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? assembly.GetName().Version?.ToString()
-            ?? "1.16.5.2";
+            ?? AppConstants.HelperVersion;
         var parts = informational.Split('+', 2);
         var commit = parts.Length > 1 ? parts[1] : "local";
         VersionText.Text = $"{parts[0]} / {ShortCommit(commit)}";
         CurrentUserText.Text = $"{Environment.UserDomainName}\\{Environment.UserName} / 当前用户单实例 / {ShortCommit(_helperInstanceId)}";
-        ConnectionDiagnosticText.Text = $"{AppConstants.DefaultBaseUrl} / {_connectionState} / {(_task is null ? "无任务" : _taskExpired ? "已过期" : _task.Summary.State)}";
+        ConnectionDiagnosticText.Text = $"{ServiceOriginPolicy.GetOfficialServiceOrigin().GetLeftPart(UriPartial.Authority)} / {_connectionState} / {(_task is null ? "无任务" : _taskExpired ? "已过期" : _task.Summary.State)}";
         LastErrorText.Text = string.IsNullOrWhiteSpace(_lastError) ? "无" : _lastError;
     }
 
@@ -760,7 +764,7 @@ public partial class MainWindow : Window
         report.AppendLine($"协议命令路径: {status.Command}");
         report.AppendLine("单实例状态: 当前用户单实例已启用");
         report.AppendLine($"助手实例: {ShortCommit(_helperInstanceId)}");
-        report.AppendLine($"服务地址: {AppConstants.DefaultBaseUrl}");
+        report.AppendLine($"服务地址: {ServiceOriginPolicy.GetOfficialServiceOrigin().GetLeftPart(UriPartial.Authority)}");
         report.AppendLine($"服务连接状态: {_connectionState}");
         report.AppendLine($"当前任务状态: {(_task is null ? "无任务" : _taskExpired ? "已过期" : _task.Summary.State)}");
         report.AppendLine($"最后一次错误: {(string.IsNullOrWhiteSpace(_lastError) ? "无" : _lastError)}");
@@ -776,11 +780,19 @@ public partial class MainWindow : Window
 
     private static string FriendlyError(Exception error)
     {
+        if (error is ServiceOriginNotAllowedException) return "任务服务地址不在允许列表中";
         if (error is ImportApiException apiError)
         {
             if (apiError.StatusCode == 410) return "任务已过期，请从网页重新创建";
             if (apiError.StatusCode == 401) return apiError.Code.StartsWith("PAIRING_", StringComparison.Ordinal) ? apiError.Message : "任务凭据无效";
             if (apiError.StatusCode == 403) return "任务授权已失效，请从网页重新创建";
+        }
+        if (error is HttpRequestException httpError
+            && (httpError.InnerException is System.Security.Authentication.AuthenticationException
+                || httpError.Message.Contains("SSL", StringComparison.OrdinalIgnoreCase)
+                || httpError.Message.Contains("TLS", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "TLS 安全连接失败，请检查系统时间和网络证书";
         }
         if (error is HttpRequestException) return "无法连接工单资料库，请检查网络";
         return error.Message;

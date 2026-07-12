@@ -42,12 +42,7 @@ public sealed class TaskApiClient : IDisposable
 
     public void Configure(Uri baseUrl, string taskId, string ticket)
     {
-        var origin = baseUrl.GetLeftPart(UriPartial.Authority);
-        if (!origin.Equals(AppConstants.AllowedWebOrigin, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("任务服务地址不在允许列表中");
-        }
-        _baseUrl = new Uri(origin);
+        _baseUrl = ServiceOriginPolicy.NormalizeOrigin(baseUrl);
         _taskId = taskId;
         _ticket = ticket;
     }
@@ -78,7 +73,7 @@ public sealed class TaskApiClient : IDisposable
         var path = $"/api/local-import/tasks/{Uri.EscapeDataString(taskId)}/connect";
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, path));
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", ticket);
-        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5.2");
+        request.Headers.UserAgent.ParseAdd(AppConstants.UserAgent);
         request.Content = JsonContent.Create(new ConnectTaskRequest { HelperInstanceId = _helperInstanceId }, options: JsonOptions);
         using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         return await ReadEnvelopeAsync<ConnectTaskResult>(response, cancellationToken);
@@ -88,7 +83,7 @@ public sealed class TaskApiClient : IDisposable
     {
         var origin = ValidateOrigin(baseUrl);
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(origin, "/api/local-import/tasks/pair"));
-        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5.2");
+        request.Headers.UserAgent.ParseAdd(AppConstants.UserAgent);
         request.Content = JsonContent.Create(new PairTaskRequest { Code = code, HelperInstanceId = _helperInstanceId }, options: JsonOptions);
         using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);
         return await ReadEnvelopeAsync<PairTaskResult>(response, cancellationToken);
@@ -154,7 +149,7 @@ public sealed class TaskApiClient : IDisposable
     private void ApplyAuthorization(HttpRequestMessage request)
     {
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _ticket);
-        request.Headers.UserAgent.ParseAdd("Hongmeng-WorkOrder-ImportHelper/1.16.5.2");
+        request.Headers.UserAgent.ParseAdd(AppConstants.UserAgent);
     }
 
     private string TaskPath() => $"/api/local-import/tasks/{Uri.EscapeDataString(_taskId)}";
@@ -172,12 +167,7 @@ public sealed class TaskApiClient : IDisposable
 
     private static Uri ValidateOrigin(Uri baseUrl)
     {
-        var origin = baseUrl.GetLeftPart(UriPartial.Authority);
-        if (!origin.Equals(AppConstants.AllowedWebOrigin, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException("任务服务地址不在允许列表中");
-        }
-        return new Uri(origin);
+        return ServiceOriginPolicy.NormalizeOrigin(baseUrl);
     }
 
     public void Dispose()
