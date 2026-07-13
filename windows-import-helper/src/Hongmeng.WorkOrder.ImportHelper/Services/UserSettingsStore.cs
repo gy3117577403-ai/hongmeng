@@ -5,6 +5,7 @@ namespace Hongmeng.WorkOrder.ImportHelper.Services;
 public sealed class HelperSettings
 {
     public string DownloadFolder { get; set; } = "";
+    public bool AutoUpload { get; set; } = true;
 }
 public sealed class UserSettingsStore
 {

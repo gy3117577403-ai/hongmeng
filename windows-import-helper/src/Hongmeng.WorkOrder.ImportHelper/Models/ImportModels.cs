@@ -175,6 +175,7 @@ public sealed class FileQueueItem : INotifyPropertyChanged
 
     public string Path { get; init; } = "";
     public string FileName { get; init; } = "";
+    [JsonIgnore] public bool IsTemporary { get; init; }
     public string MimeType { get => _mimeType; set => SetField(ref _mimeType, value); }
     public string Sha256 { get => _sha256; set => SetField(ref _sha256, value); }
     public long Size { get => _size; set => SetField(ref _size, value); }

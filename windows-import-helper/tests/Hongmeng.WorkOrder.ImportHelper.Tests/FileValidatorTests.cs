@@ -38,6 +38,7 @@ public sealed class FileValidatorTests : IDisposable
     [InlineData("download.tmp")]
     [InlineData("download.part")]
     [InlineData("download.crdownload")]
+    [InlineData("download.download")]
     public void IdentifiesTemporaryDownloads(string fileName)
     {
         Assert.True(FileValidator.IsTemporaryFile(Path.Combine(_directory, fileName)));

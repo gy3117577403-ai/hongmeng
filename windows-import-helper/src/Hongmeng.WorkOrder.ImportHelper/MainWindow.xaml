@@ -6,9 +6,6 @@
         WindowStartupLocation="CenterScreen"
         Background="#FFF7ED"
         AllowDrop="True"
-        Drop="OnFilesDropped"
-        DragEnter="OnFilesDragged"
-        DragOver="OnFilesDragged"
         PreviewKeyDown="OnPreviewKeyDown">
   <Grid Margin="18">
     <Grid.RowDefinitions>
@@ -52,20 +49,29 @@
         <ColumnDefinition Width="1.35*" />
         <ColumnDefinition Width="*" />
       </Grid.ColumnDefinitions>
-      <Border Grid.Column="0" Background="White" BorderBrush="#FB923C" BorderThickness="2" CornerRadius="12" Padding="20"
-              Drop="OnFilesDropped" DragEnter="OnFilesDragged" DragOver="OnFilesDragged">
+      <Border x:Name="DropZoneBorder" Grid.Column="0" AllowDrop="True" Background="White" BorderBrush="#FB923C" BorderThickness="2" CornerRadius="12" Padding="20"
+              PreviewDragEnter="OnFileDragEnter" PreviewDragOver="OnFileDragOver" PreviewDragLeave="OnFileDragLeave" PreviewDrop="OnFileDrop">
         <StackPanel HorizontalAlignment="Center">
-          <TextBlock Text="把微盘文件拖到这里" FontSize="20" FontWeight="Bold" Foreground="#9A3412" HorizontalAlignment="Center" />
-          <TextBlock Text="或复制文件后按 Ctrl+V" Margin="0,7,0,0" FontSize="15" Foreground="#7C2D12" HorizontalAlignment="Center" />
-          <TextBlock Text="仅接收真实 PDF / JPG / JPEG / PNG / WEBP；校验通过后自动上传，不会抓取链接或 Cookie" Margin="0,9,0,0" Foreground="#78716C" TextAlignment="Center" />
-          <Button Content="选择本地文件" Margin="0,14,0,0" Click="OnChooseFiles" />
+          <TextBlock x:Name="DropTitleText" Text="把微盘文件拖到这里" FontSize="20" FontWeight="Bold" Foreground="#9A3412" HorizontalAlignment="Center" />
+          <TextBlock x:Name="DropSubtitleText" Text="或复制文件后按 Ctrl+V" Margin="0,7,0,0" FontSize="15" Foreground="#7C2D12" HorizontalAlignment="Center" />
+          <TextBlock x:Name="DropHintText" Text="接收 PDF / JPG / JPEG / PNG / WEBP；不抓取链接、Cookie 或微盘私有数据" Margin="0,9,0,0" Foreground="#78716C" TextAlignment="Center" />
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,14,0,0">
+            <Button Content="选择本地文件" Click="OnChooseFiles" />
+            <Button x:Name="DropDiagnosticButton" Content="拖放诊断" Click="OnToggleDropDiagnostics" Margin="0" />
+          </StackPanel>
+          <Border x:Name="DropDiagnosticPanel" Visibility="Collapsed" Margin="0,12,0,0" Padding="10" Background="#FFF7ED" BorderBrush="#FDBA74" BorderThickness="1" CornerRadius="8">
+            <StackPanel>
+              <TextBlock x:Name="DropDiagnosticText" Text="启用后，把文件拖过此区域即可查看脱敏格式信息。" Foreground="#57534E" TextWrapping="Wrap" />
+              <Button Content="复制脱敏诊断" Click="OnCopyDropDiagnostics" HorizontalAlignment="Left" Margin="0,8,0,0" />
+            </StackPanel>
+          </Border>
         </StackPanel>
       </Border>
 
       <Border Grid.Column="1" Margin="14,0,0,0" Background="White" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="12" Padding="16">
         <StackPanel>
-          <TextBlock Text="企业微信下载目录监控" FontSize="16" FontWeight="Bold" Foreground="#9A3412" />
-          <TextBlock Text="只处理本任务启动后新产生、连续 3 秒大小稳定且不再被写入的文件。" Margin="0,5,0,10" Foreground="#78716C" TextWrapping="Wrap" />
+          <TextBlock Text="企业微信下载目录监控 · 推荐方式" FontSize="16" FontWeight="Bold" Foreground="#9A3412" />
+          <TextBlock Text="在企业微信点击下载，助手会自动接收，无需再拖文件；仅处理任务创建后稳定完成的文件。" Margin="0,5,0,10" Foreground="#78716C" TextWrapping="Wrap" />
           <DockPanel LastChildFill="True">
             <Button Content="选择目录" Click="OnChooseDownloadFolder" DockPanel.Dock="Right" Margin="8,0,0,0" />
             <TextBox x:Name="DownloadFolderText" IsReadOnly="True" MinHeight="38" VerticalContentAlignment="Center" Padding="8" />
@@ -74,6 +80,7 @@
             <Button x:Name="MonitorButton" Content="开始监控" Click="OnToggleMonitor" />
             <TextBlock x:Name="MonitorStatusText" Text="未启动" VerticalAlignment="Center" Foreground="#78716C" />
           </StackPanel>
+          <CheckBox x:Name="AutoUploadCheckBox" Content="接收后自动上传" IsChecked="True" Margin="0,10,0,0" Checked="OnAutoUploadChanged" Unchecked="OnAutoUploadChanged" />
         </StackPanel>
       </Border>
     </Grid>
@@ -127,6 +134,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
           </Grid.RowDefinitions>
           <Grid.ColumnDefinitions>
             <ColumnDefinition Width="1.05*" />
@@ -157,10 +165,14 @@
             <TextBlock x:Name="ProtocolCommandText" Text="-" Foreground="#57534E" TextWrapping="Wrap" />
           </StackPanel>
           <StackPanel Grid.Row="2" Grid.ColumnSpan="4" Margin="0,8,0,0">
+            <TextBlock Text="进程完整性级别" Foreground="#9A3412" FontSize="12" />
+            <TextBlock x:Name="IntegrityDiagnosticText" Text="正在检查" Foreground="#57534E" TextWrapping="Wrap" />
+          </StackPanel>
+          <StackPanel Grid.Row="3" Grid.ColumnSpan="4" Margin="0,8,0,0">
             <TextBlock Text="最后一次错误" Foreground="#9A3412" FontSize="12" />
             <TextBlock x:Name="LastErrorText" Text="无" Foreground="#57534E" TextWrapping="Wrap" />
           </StackPanel>
-          <StackPanel Grid.Row="3" Grid.ColumnSpan="4" Orientation="Horizontal" Margin="0,12,0,0">
+          <StackPanel Grid.Row="4" Grid.ColumnSpan="4" Orientation="Horizontal" Margin="0,12,0,0">
             <Button Content="注册 / 修复浏览器协议" Click="OnRepairProtocol" />
             <Button Content="测试浏览器协议" Click="OnTestProtocol" />
             <Button Content="重新连接任务" Click="OnReconnectTask" />

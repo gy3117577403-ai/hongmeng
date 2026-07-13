@@ -117,6 +117,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.16.5.1-wecom-helper-protocol-fix：Windows 助手显式使用 `asInvoker`，在当前用户 HKCU 自动注册并修复浏览器协议；补充协议 ping、单实例安全转发、服务端连接握手、一次性手动任务码和脱敏连接诊断。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.5.2-wecom-helper-pairing-state-fix：配对码校验、助手绑定、connected 状态和代码消费合并为单个数据库事务；同助手重试幂等，协议与手动连接并发不再误报代码已使用。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.5.3-wecom-helper-service-origin-fix：统一 Windows 助手与网页短期任务的正式服务 Origin，兼容尾斜杠、显式 443、主机名大小写和 API 路径，同时继续严格拒绝 HTTP、非标准端口、userinfo 与相似恶意域名。该版本为本地验证候选，尚未部署 Sealos。
+- v1.16.5.4-wecom-helper-dragdrop-intake-fix：修复 WPF 实际拖放区域命中和持续 DragOver 反馈，统一支持 Explorer FileDrop、Shell 虚拟文件流、文件剪贴板与稳定下载目录接收；加入任务级临时文件清理、脱敏格式诊断和普通用户完整性提示。仅修改 Windows 助手，无需更新 Sealos。
 
 ## 交付文档索引
 
@@ -146,6 +147,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [企业微信微盘本地导入助手 QA](docs/QA_WECOM_LOCAL_IMPORT_HELPER.md)
 - [Windows 微盘导入助手协议排查](docs/WECOM_HELPER_PROTOCOL_TROUBLESHOOTING.md)
 - [Windows 微盘导入助手 1.16.5.3 服务来源修复 QA](docs/QA_WECOM_HELPER_SERVICE_ORIGIN_v1.16.5.3.md)
+- [Windows 微盘导入助手 1.16.5.4 拖放接收 QA](docs/QA_WECOM_HELPER_DRAGDROP_v1.16.5.4.md)
 - [平板真机测试前最终预检计划](docs/PRE_REAL_DATA_TEST_PLAN.md)
 - [周计划 Excel 工单导入说明](docs/WEEKLY_PLAN_IMPORT_GUIDE.md)
 - [周计划生产工单显示与清理机制](docs/WEEKLY_PLAN_WORKORDER_DISPLAY_AND_CLEANUP.md)

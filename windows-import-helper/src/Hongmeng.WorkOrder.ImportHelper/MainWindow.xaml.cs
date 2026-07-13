@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Reflection;
 using System.Text;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Hongmeng.WorkOrder.ImportHelper.Models;
 using Hongmeng.WorkOrder.ImportHelper.Services;
@@ -22,6 +23,8 @@ public partial class MainWindow : Window
     private readonly FileValidator _validator = new();
     private readonly DownloadFolderMonitor _monitor = new();
     private readonly UserSettingsStore _settingsStore = new();
+    private readonly VirtualFileTempStore _tempStore;
+    private readonly FileIntakeService _fileIntake;
     private readonly CancellationTokenSource _lifetime = new();
     private readonly AsyncPauseGate _pauseGate = new();
     private readonly SemaphoreSlim _uploadRunLock = new(1, 1);
@@ -32,8 +35,12 @@ public partial class MainWindow : Window
     private Uri _activeBaseUrl = new(AppConstants.DefaultBaseUrl);
     private bool _taskExpired;
     private bool _uploadRerunRequested;
+    private bool _dropDiagnosticsEnabled;
+    private bool _settingsLoaded;
     private string _lastError = "";
+    private string _lastDropDiagnostic = "尚未收到拖放数据。";
     private string _connectionState = "未连接";
+    private ProcessIntegritySnapshot _integrity = new();
 
     public ObservableCollection<FileQueueItem> QueueItems { get; } = [];
 
@@ -43,6 +50,8 @@ public partial class MainWindow : Window
         ProtocolRegistrationStatus startupRegistrationStatus,
         string? initialArgument)
     {
+        _tempStore = new VirtualFileTempStore();
+        _fileIntake = new FileIntakeService(new ShellVirtualFileExtractor(_tempStore));
         _helperInstanceId = new HelperInstanceIdentity().GetOrCreate();
         _api = new TaskApiClient(_helperInstanceId);
         InitializeComponent();
@@ -57,13 +66,21 @@ public partial class MainWindow : Window
         _expiryTimer.Tick += OnExpiryTick;
         var settings = _settingsStore.Load();
         DownloadFolderText.Text = settings.DownloadFolder;
+        AutoUploadCheckBox.IsChecked = settings.AutoUpload;
+        _settingsLoaded = true;
         Loaded += OnLoaded;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs eventArgs)
     {
+        _tempStore.CleanupAll();
+        _integrity = ProcessIntegrityInspector.Capture();
         ApplyProtocolStatus(_startupRegistrationStatus);
         UpdateDiagnostics();
+        if (_integrity.CurrentIsElevated)
+        {
+            SetError("请关闭当前助手并使用普通方式启动。管理员模式会阻止普通程序拖入文件。");
+        }
         try
         {
             await _handoffServer.StartAsync(_lifetime.Token);
@@ -153,6 +170,7 @@ public partial class MainWindow : Window
         if (!task.TaskId.Equals(expectedTaskId, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("任务编号不匹配");
         if (string.IsNullOrWhiteSpace(connected.Ticket)) throw new InvalidOperationException("服务器未返回绑定后的任务票据");
 
+        if (_task is not null) _tempStore.CleanupTask(_task.TaskId);
         _api.Configure(normalizedBaseUrl, task.TaskId, connected.Ticket);
         _task = task;
         _activeBaseUrl = normalizedBaseUrl;
@@ -167,7 +185,8 @@ public partial class MainWindow : Window
         UpdateQueueSummary();
         _expiryTimer.Start();
         PairingCodeText.Clear();
-        SetStatus(_taskExpired ? "任务已过期，请在网页重新创建。" : "助手已连接。可拖入、粘贴文件，或启动下载目录监控。");
+        TryStartConfiguredMonitor();
+        SetStatus(_taskExpired ? "任务已过期，请在网页重新创建。" : "助手已连接。可拖入、粘贴文件；已配置下载目录时会自动监控。");
     }
 
     private void ApplyPairedTask(Uri baseUrl, PairTaskResult paired)
@@ -197,6 +216,7 @@ public partial class MainWindow : Window
         if (remaining > TimeSpan.Zero || _taskExpired) return;
         _taskExpired = true;
         _monitor.Stop();
+        _tempStore.CleanupTask(_task.TaskId);
         MonitorButton.Content = "开始监控";
         MonitorStatusText.Text = "任务已过期，监控已停止";
         _uploadCancellation?.Cancel();
@@ -218,24 +238,86 @@ public partial class MainWindow : Window
             Multiselect = true,
             Filter = "生产资料|*.pdf;*.jpg;*.jpeg;*.png;*.webp|PDF|*.pdf|图片|*.jpg;*.jpeg;*.png;*.webp"
         };
-        if (dialog.ShowDialog(this) == true) await AddFilesAsync(dialog.FileNames, true);
+        if (dialog.ShowDialog(this) == true) await AddFilesAsync(dialog.FileNames, AutoUploadCheckBox.IsChecked == true);
     }
 
-    private void OnFilesDragged(object sender, DragEventArgs eventArgs)
+    private void OnFileDragEnter(object sender, DragEventArgs eventArgs) => UpdateDragFeedback(eventArgs);
+
+    private void OnFileDragOver(object sender, DragEventArgs eventArgs) => UpdateDragFeedback(eventArgs);
+
+    private void OnFileDragLeave(object sender, DragEventArgs eventArgs)
     {
-        eventArgs.Effects = eventArgs.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
         eventArgs.Handled = true;
+        ResetDropZoneVisual();
     }
 
-    private async void OnFilesDropped(object sender, DragEventArgs eventArgs)
+    private async void OnFileDrop(object sender, DragEventArgs eventArgs)
     {
+        eventArgs.Effects = _fileIntake.DetermineDragEffect(eventArgs.Data);
         eventArgs.Handled = true;
-        if (eventArgs.Data.GetData(DataFormats.FileDrop) is string[] paths && paths.Length > 0)
+        ResetDropZoneVisual();
+        await IntakeDataAsync(eventArgs.Data);
+    }
+
+    private void UpdateDragFeedback(DragEventArgs eventArgs)
+    {
+        var inspection = DropDataInspector.Inspect(eventArgs.Data);
+        eventArgs.Effects = inspection.CanAccept ? DragDropEffects.Copy : DragDropEffects.None;
+        eventArgs.Handled = true;
+        UpdateDropDiagnostics(inspection);
+
+        DropZoneBorder.BorderBrush = inspection.CanAccept ? Brushes.DarkOrange : Brushes.IndianRed;
+        DropZoneBorder.Background = inspection.CanAccept
+            ? new SolidColorBrush(Color.FromRgb(255, 237, 213))
+            : new SolidColorBrush(Color.FromRgb(254, 242, 242));
+        if (_task is null || _taskExpired)
         {
-            await AddFilesAsync(paths.Where(File.Exists), true);
+            DropTitleText.Text = "请先连接网页任务";
+            DropSubtitleText.Text = inspection.CanAccept ? "已识别支持文件，连接后即可加入队列" : DragFeedbackLabel(inspection);
             return;
         }
-        SetStatus("未收到真实文件，请改用微盘下载目录监控；助手不会抓取文本或私有链接。");
+        DropTitleText.Text = inspection.Kind == FileIntakeKind.VirtualFile ? "正在读取微盘文件流" : inspection.CanAccept ? "松开即可加入队列" : "未收到支持文件";
+        DropSubtitleText.Text = DragFeedbackLabel(inspection);
+    }
+
+    private static string DragFeedbackLabel(DropDataInspection inspection) => inspection.Kind switch
+    {
+        FileIntakeKind.LocalFile when inspection.CanAccept => "已识别本地 PDF / 图片",
+        FileIntakeKind.VirtualFile when inspection.CanAccept => "已识别 Windows Shell 虚拟文件流",
+        FileIntakeKind.LinkOnly => "未收到真实文件，请使用下载目录监控",
+        FileIntakeKind.LocalFile => "文件类型不支持，仅接收 PDF / 图片",
+        _ => "拖放数据格式不受支持",
+    };
+
+    private void ResetDropZoneVisual()
+    {
+        DropZoneBorder.BorderBrush = new SolidColorBrush(Color.FromRgb(251, 146, 60));
+        DropZoneBorder.Background = Brushes.White;
+        DropTitleText.Text = "把微盘文件拖到这里";
+        DropSubtitleText.Text = "或复制文件后按 Ctrl+V";
+    }
+
+    private async Task IntakeDataAsync(IDataObject data)
+    {
+        var inspection = DropDataInspector.Inspect(data);
+        UpdateDropDiagnostics(inspection);
+        if (!EnsureActiveTask() || _task is null) return;
+        try
+        {
+            if (inspection.Kind == FileIntakeKind.VirtualFile) SetStatus("正在安全读取微盘虚拟文件流...");
+            var result = await _fileIntake.ExtractAsync(data, _task.TaskId, _task.Limits, _lifetime.Token);
+            if (result.Files.Count == 0)
+            {
+                SetStatus(result.Message);
+                return;
+            }
+            SetStatus(result.Message);
+            await AddFilesAsync(result.Files, AutoUploadCheckBox.IsChecked == true);
+        }
+        catch (Exception error)
+        {
+            SetStatus(error is InvalidDataException ? error.Message : $"读取拖放文件失败：{FriendlyError(error)}");
+        }
     }
 
     private async void OnPreviewKeyDown(object sender, KeyEventArgs eventArgs)
@@ -244,13 +326,9 @@ public partial class MainWindow : Window
         eventArgs.Handled = true;
         try
         {
-            if (Clipboard.ContainsFileDropList())
-            {
-                var files = Clipboard.GetFileDropList().Cast<string>().Where(File.Exists).ToArray();
-                await AddFilesAsync(files, true);
-                return;
-            }
-            SetStatus("剪贴板中没有真实文件。文本、链接和纯位图不会被自动下载或上传。");
+            var data = Clipboard.GetDataObject();
+            if (data is null) SetStatus("剪贴板中没有可读取的数据。");
+            else await IntakeDataAsync(data);
         }
         catch (Exception error)
         {
@@ -258,36 +336,104 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task AddFilesAsync(IEnumerable<string> paths, bool autoUpload)
+    private void OnToggleDropDiagnostics(object sender, RoutedEventArgs eventArgs)
     {
-        if (!EnsureActiveTask()) return;
-        var distinct = paths.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        if (distinct.Length == 0)
+        _dropDiagnosticsEnabled = !_dropDiagnosticsEnabled;
+        DropDiagnosticPanel.Visibility = _dropDiagnosticsEnabled ? Visibility.Visible : Visibility.Collapsed;
+        DropDiagnosticButton.Content = _dropDiagnosticsEnabled ? "关闭诊断" : "拖放诊断";
+        DropDiagnosticText.Text = _lastDropDiagnostic;
+    }
+
+    private void UpdateDropDiagnostics(DropDataInspection inspection)
+    {
+        _lastDropDiagnostic = DropDataInspector.BuildSanitizedDiagnostic(inspection);
+        if (_dropDiagnosticsEnabled) DropDiagnosticText.Text = _lastDropDiagnostic;
+    }
+
+    private void OnCopyDropDiagnostics(object sender, RoutedEventArgs eventArgs)
+    {
+        try
+        {
+            Clipboard.SetText(_lastDropDiagnostic);
+            SetStatus("已复制脱敏拖放诊断");
+        }
+        catch (Exception error)
+        {
+            SetStatus($"复制拖放诊断失败：{error.Message}");
+        }
+    }
+
+    private async Task AddFilesAsync(IEnumerable<string> paths, bool autoUpload)
+        => await AddFilesAsync(paths.Select(path => new IntakeFile { Path = path }), autoUpload);
+
+    private async Task AddFilesAsync(IEnumerable<IntakeFile> files, bool autoUpload)
+    {
+        var inputFiles = files.ToArray();
+        if (!EnsureActiveTask())
+        {
+            foreach (var file in inputFiles.Where(file => file.IsTemporary)) _tempStore.DeleteFile(file.Path);
+            return;
+        }
+        var distinct = new Dictionary<string, IntakeFile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in inputFiles)
+        {
+            try
+            {
+                var fullPath = Path.GetFullPath(file.Path);
+                distinct.TryAdd(fullPath, new IntakeFile
+                    {
+                        Path = fullPath,
+                        IsTemporary = file.IsTemporary,
+                        IsPreStabilized = file.IsPreStabilized,
+                    });
+            }
+            catch
+            {
+                if (file.IsTemporary) _tempStore.DeleteFile(file.Path);
+            }
+        }
+        if (distinct.Count == 0)
         {
             SetStatus("没有收到可读取的真实文件。");
             return;
         }
 
-        foreach (var path in distinct)
+        foreach (var source in distinct.Values)
         {
-            if (_task is null || _taskExpired) break;
-            if (QueueItems.Any(item => item.Path.Equals(path, StringComparison.OrdinalIgnoreCase))) continue;
+            if (_task is null || _taskExpired)
+            {
+                if (source.IsTemporary) _tempStore.DeleteFile(source.Path);
+                continue;
+            }
+            var path = source.Path;
+            if (QueueItems.Any(item => item.Path.Equals(path, StringComparison.OrdinalIgnoreCase)))
+            {
+                continue;
+            }
             if (QueueItems.Count >= _task.Limits.MaxFiles)
             {
                 SetStatus($"当前任务最多接收 {_task.Limits.MaxFiles} 个文件。");
-                break;
+                if (source.IsTemporary) _tempStore.DeleteFile(path);
+                continue;
             }
 
-            var item = new FileQueueItem { Path = path, FileName = Path.GetFileName(path), Status = "正在校验" };
+            var item = new FileQueueItem
+            {
+                Path = path,
+                FileName = Path.GetFileName(path),
+                IsTemporary = source.IsTemporary,
+                Status = "正在校验",
+            };
             QueueItems.Add(item);
             UpdateQueueSummary();
             try
             {
-                var validation = await _validator.ValidateAsync(path, _task.Limits.MaxFileBytes, _lifetime.Token);
+                var validation = await _validator.ValidateAsync(path, _task.Limits.MaxFileBytes, !source.IsPreStabilized, _lifetime.Token);
                 if (!validation.IsValid)
                 {
                     item.Status = "校验失败";
                     item.Message = validation.Error;
+                    CleanupTemporaryFile(item);
                     continue;
                 }
                 item.Size = validation.Size;
@@ -300,6 +446,7 @@ public partial class MainWindow : Window
                 {
                     item.Status = "校验失败";
                     item.Message = "当前任务文件总大小超过限制";
+                    CleanupTemporaryFile(item);
                     continue;
                 }
                 var duplicate = await _api.CheckAsync(new DuplicateCheckRequest
@@ -310,11 +457,13 @@ public partial class MainWindow : Window
                     Sha256 = item.Sha256
                 }, _lifetime.Token);
                 ApplyDuplicateResult(item, duplicate);
+                if (item.Status == "重复跳过") CleanupTemporaryFile(item);
             }
             catch (Exception error)
             {
                 item.Status = "校验失败";
                 item.Message = FriendlyError(error);
+                CleanupTemporaryFile(item);
             }
             finally
             {
@@ -323,6 +472,11 @@ public partial class MainWindow : Window
         }
 
         if (autoUpload) await UploadPendingAsync();
+    }
+
+    private void CleanupTemporaryFile(FileQueueItem item)
+    {
+        if (item.IsTemporary) _tempStore.DeleteFile(item.Path);
     }
 
     private static void ApplyDuplicateResult(FileQueueItem item, DuplicateCheckResult result)
@@ -362,13 +516,39 @@ public partial class MainWindow : Window
         };
         if (dialog.ShowDialog(this) != true) return;
         DownloadFolderText.Text = dialog.FolderName;
-        _settingsStore.Save(new HelperSettings { DownloadFolder = dialog.FolderName });
-        if (_monitor.IsRunning)
-        {
-            _monitor.Start(dialog.FolderName);
-            MonitorStatusText.Text = "正在监控新下载文件";
-        }
+        SaveSettings();
+        TryStartConfiguredMonitor();
         await Task.CompletedTask;
+    }
+
+    private void OnAutoUploadChanged(object sender, RoutedEventArgs eventArgs)
+    {
+        if (_settingsLoaded) SaveSettings();
+    }
+
+    private void SaveSettings()
+    {
+        _settingsStore.Save(new HelperSettings
+        {
+            DownloadFolder = DownloadFolderText.Text,
+            AutoUpload = AutoUploadCheckBox.IsChecked == true,
+        });
+    }
+
+    private void TryStartConfiguredMonitor()
+    {
+        if (_task is null || _taskExpired || !Directory.Exists(DownloadFolderText.Text)) return;
+        try
+        {
+            _monitor.Start(DownloadFolderText.Text, _task.CreatedAt);
+            MonitorButton.Content = "暂停监控";
+            MonitorStatusText.Text = "推荐方式 · 正在自动接收新下载文件";
+        }
+        catch (Exception error)
+        {
+            MonitorButton.Content = "开始监控";
+            MonitorStatusText.Text = $"自动监控失败：{error.Message}";
+        }
     }
 
     private void OnToggleMonitor(object sender, RoutedEventArgs eventArgs)
@@ -383,10 +563,10 @@ public partial class MainWindow : Window
             }
             try
             {
-                _monitor.Start(DownloadFolderText.Text);
+                _monitor.Start(DownloadFolderText.Text, _task?.CreatedAt);
                 MonitorButton.Content = "暂停监控";
-                MonitorStatusText.Text = "正在监控新下载文件";
-                SetStatus("下载目录监控已启动；不会处理启动前的旧文件。");
+                MonitorStatusText.Text = "推荐方式 · 正在自动接收新下载文件";
+                SetStatus("下载目录监控已启动；只处理当前任务创建后新增或修改的文件。");
             }
             catch (Exception error)
             {
@@ -399,7 +579,7 @@ public partial class MainWindow : Window
         {
             _monitor.Resume();
             MonitorButton.Content = "暂停监控";
-            MonitorStatusText.Text = "正在监控新下载文件";
+            MonitorStatusText.Text = "推荐方式 · 正在自动接收新下载文件";
         }
         else
         {
@@ -411,7 +591,9 @@ public partial class MainWindow : Window
 
     private void OnMonitorFileDetected(string path)
     {
-        _ = Dispatcher.InvokeAsync(async () => await AddFilesAsync([path], true));
+        _ = Dispatcher.InvokeAsync(async () => await AddFilesAsync(
+            [new IntakeFile { Path = path, IsPreStabilized = true }],
+            AutoUploadCheckBox.IsChecked == true));
     }
 
     private async void OnUploadAll(object sender, RoutedEventArgs eventArgs) => await UploadPendingAsync();
@@ -487,6 +669,7 @@ public partial class MainWindow : Window
                     ? "相同内容已存在，服务器已跳过"
                     : result.DrawingLibrarySync?.Linked == true ? "已写入工单并同步图纸资料库" : "已写入工单；图纸资料库未建立关联";
             });
+            CleanupTemporaryFile(item);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -546,7 +729,11 @@ public partial class MainWindow : Window
 
     private void OnClearCompleted(object sender, RoutedEventArgs eventArgs)
     {
-        foreach (var item in QueueItems.Where(item => item.Status is "上传成功" or "重复跳过").ToArray()) QueueItems.Remove(item);
+        foreach (var item in QueueItems.Where(item => item.Status is "上传成功" or "重复跳过").ToArray())
+        {
+            CleanupTemporaryFile(item);
+            QueueItems.Remove(item);
+        }
         UpdateQueueSummary();
     }
 
@@ -668,6 +855,7 @@ public partial class MainWindow : Window
     private void OnRemoveTask(object sender, RoutedEventArgs eventArgs)
     {
         if (_task is not null && MessageBox.Show(this, "仅从助手移除当前临时任务？本地文件和已上传资料都不会删除。", "移除任务", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        if (_task is not null) _tempStore.CleanupTask(_task.TaskId);
         _monitor.Stop();
         _uploadCancellation?.Cancel();
         _api.Clear();
@@ -750,6 +938,7 @@ public partial class MainWindow : Window
         var commit = parts.Length > 1 ? parts[1] : "local";
         VersionText.Text = $"{parts[0]} / {ShortCommit(commit)}";
         CurrentUserText.Text = $"{Environment.UserDomainName}\\{Environment.UserName} / 当前用户单实例 / {ShortCommit(_helperInstanceId)}";
+        IntegrityDiagnosticText.Text = _integrity.DisplayText;
         ConnectionDiagnosticText.Text = $"{ServiceOriginPolicy.GetOfficialServiceOrigin().GetLeftPart(UriPartial.Authority)} / {_connectionState} / {(_task is null ? "无任务" : _taskExpired ? "已过期" : _task.Summary.State)}";
         LastErrorText.Text = string.IsNullOrWhiteSpace(_lastError) ? "无" : _lastError;
     }
@@ -760,6 +949,7 @@ public partial class MainWindow : Window
         var report = new StringBuilder();
         report.AppendLine($"助手版本/构建: {VersionText.Text}");
         report.AppendLine($"当前用户: {Environment.UserDomainName}\\{Environment.UserName}");
+        report.AppendLine($"进程完整性: {_integrity.DisplayText}");
         report.AppendLine($"协议状态: {status.State}");
         report.AppendLine($"协议命令路径: {status.Command}");
         report.AppendLine("单实例状态: 当前用户单实例已启用");
@@ -768,6 +958,7 @@ public partial class MainWindow : Window
         report.AppendLine($"服务连接状态: {_connectionState}");
         report.AppendLine($"当前任务状态: {(_task is null ? "无任务" : _taskExpired ? "已过期" : _task.Summary.State)}");
         report.AppendLine($"最后一次错误: {(string.IsNullOrWhiteSpace(_lastError) ? "无" : _lastError)}");
+        if (_dropDiagnosticsEnabled) report.AppendLine($"拖放格式诊断: {Environment.NewLine}{_lastDropDiagnostic}");
         report.Append("敏感信息: ticket、Cookie、对象存储和密码均未包含");
         return report.ToString();
     }
@@ -805,6 +996,8 @@ public partial class MainWindow : Window
         _handoffServer.HandoffReceived -= OnHandoffReceived;
         _monitor.FileDetected -= OnMonitorFileDetected;
         _monitor.Dispose();
+        if (_task is not null) _tempStore.CleanupTask(_task.TaskId);
+        _tempStore.CleanupAll();
         _uploadCancellation?.Cancel();
         _uploadCancellation?.Dispose();
         _lifetime.Cancel();

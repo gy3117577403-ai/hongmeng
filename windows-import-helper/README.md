@@ -1,6 +1,6 @@
 # 工单资料库微盘导入助手
 
-这是 `v1.16.5.3-wecom-helper-service-origin-fix` 的 Windows 10 / 11 便携式导入助手，使用 .NET 8 WPF 构建。它不会读取企业微信私有缓存、Cookie 或内部协议，而是接收用户主动拖出、复制或下载到本地的真实 PDF / 图片，再上传到网页中当前选定的工单和资料分类。
+这是 `v1.16.5.4-wecom-helper-dragdrop-intake-fix` 的 Windows 10 / 11 便携式导入助手，使用 .NET 8 WPF 构建。它不会读取企业微信私有缓存、Cookie 或内部协议，而是接收用户主动拖出、复制或下载到本地的真实 PDF / 图片，再上传到网页中当前选定的工单和资料分类。
 
 ## 安全边界
 
@@ -55,3 +55,7 @@ hongmeng-workorder-wecom-import-helper-win-x64
 - 选择企业微信下载目录并开始监控；助手只接收任务启动后新增、连续 3 秒大小稳定的文件。
 
 支持 PDF、JPG、JPEG、PNG、WEBP。PDF 保留原文件、原文件名和全部页面，不拆页、不转图、不重编码。
+
+`1.16.5.4` 起，橙色拖放区显式注册为 WPF Drop Target，并在每次 `DragOver` 中持续返回 Copy/None。接收顺序为 Explorer `FileDrop`、Shell `FileGroupDescriptorW/FileContents` 虚拟文件流、`FileNameW` 兼容路径；只收到文本或 URL 时不会抓取链接，而是提示使用下载目录监控。虚拟文件只会流式写入当前用户 `%LOCALAPPDATA%\Hongmeng.WorkOrder.ImportHelper\Temp\<taskId>`，并在失败、重复、上传成功、任务过期/移除和退出时清理。
+
+下载目录监控是企业微信场景的推荐方式。首次选择目录后后续任务自动复用；任务连接后自动监控任务创建时间之后新增或修改、连续 3 秒稳定的文件。`.tmp`、`.part`、`.crdownload`、`.download` 和 0 字节文件会被忽略，成功后不会删除用户下载的原文件。

@@ -19,25 +19,38 @@ public sealed class FileValidator
             || name.StartsWith('~')
             || extension.Equals(".tmp", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".part", StringComparison.OrdinalIgnoreCase)
-            || extension.Equals(".crdownload", StringComparison.OrdinalIgnoreCase);
+            || extension.Equals(".crdownload", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".download", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsSupportedFileName(string path) => SupportedExtensions.Contains(Path.GetExtension(path));
+
     public async Task<FileValidationResult> ValidateAsync(string path, long maxFileBytes, CancellationToken cancellationToken)
+        => await ValidateAsync(path, maxFileBytes, true, cancellationToken);
+
+    public async Task<FileValidationResult> ValidateAsync(
+        string path,
+        long maxFileBytes,
+        bool waitForStability,
+        CancellationToken cancellationToken)
     {
         try
         {
             var fullPath = Path.GetFullPath(path);
             if (!File.Exists(fullPath)) return Invalid("文件不存在");
             if (IsTemporaryFile(fullPath)) return Invalid("临时下载文件暂不接收");
-            if (!SupportedExtensions.Contains(Path.GetExtension(fullPath))) return Invalid("仅支持 PDF、JPG、JPEG、PNG、WEBP");
+            if (!IsSupportedFileName(fullPath)) return Invalid("仅支持 PDF、JPG、JPEG、PNG、WEBP");
 
             var info = new FileInfo(fullPath);
             if ((info.Attributes & FileAttributes.Hidden) != 0) return Invalid("隐藏文件暂不接收");
             if (info.Length <= 0) return Invalid("文件大小为 0");
             if (info.Length > maxFileBytes) return Invalid("文件超过任务单文件大小限制");
 
-            var stable = await WaitUntilStableAsync(fullPath, cancellationToken);
-            if (!stable) return Invalid("文件仍在下载或被其他程序占用");
+            if (waitForStability)
+            {
+                var stable = await WaitUntilStableAsync(fullPath, cancellationToken);
+                if (!stable) return Invalid("文件仍在下载或被其他程序占用");
+            }
 
             info.Refresh();
             var extension = info.Extension.ToLowerInvariant();
