@@ -9,6 +9,7 @@ export type ExecutionUpdateInput = {
   completedQty?: unknown;
   remark?: unknown;
   priority?: unknown;
+  drawingStatus?: unknown;
 };
 
 export type PreparedExecutionUpdate = {
@@ -19,6 +20,7 @@ export type PreparedExecutionUpdate = {
   completedQty: string | null;
   productionOwner: string | null;
   workstation: string | null;
+  drawingStatus: string | null;
   remark: string | null;
 };
 
@@ -82,6 +84,21 @@ export function prepareExecutionUpdate(order: WorkOrder, input: ExecutionUpdateI
     }
   }
 
+  let drawingStatus = order.drawingStatus;
+  let drawingStatusChanged = false;
+  if (input.drawingStatus !== undefined) {
+    const nextDrawingStatus = optionalText(input.drawingStatus, 80);
+    const allowed = new Set(['未发', '已发', '待样品确认', '待客户确认', '图纸需变更', '已确认']);
+    if (!nextDrawingStatus || !allowed.has(nextDrawingStatus)) return { error: '图纸状态不正确' };
+    drawingStatus = nextDrawingStatus;
+    if (drawingStatus !== order.drawingStatus) {
+      data.drawingStatus = drawingStatus;
+      if (!order.drawingIssuedAt && (drawingStatus === '已发' || drawingStatus === '已确认')) data.drawingIssuedAt = now;
+      changedFields.push('drawingStatus');
+      drawingStatusChanged = true;
+    }
+  }
+
   let remark: string | null = null;
   if (input.remark !== undefined) {
     remark = optionalText(input.remark, 500);
@@ -90,6 +107,7 @@ export function prepareExecutionUpdate(order: WorkOrder, input: ExecutionUpdateI
       changedFields.push('remark');
     }
   }
+  if (!remark && drawingStatusChanged) remark = `图纸状态更新：${drawingStatus}`;
 
   if (!changedFields.length) return { error: '至少需要修改一个执行字段或填写进度备注' };
 
@@ -107,6 +125,7 @@ export function prepareExecutionUpdate(order: WorkOrder, input: ExecutionUpdateI
       completedQty: completedQty ?? null,
       productionOwner: productionOwner ?? null,
       workstation: workstation ?? null,
+      drawingStatus: drawingStatus ?? null,
       remark,
     },
   };

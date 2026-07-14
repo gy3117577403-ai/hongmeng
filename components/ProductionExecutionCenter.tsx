@@ -4,11 +4,13 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
+import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
+import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
 import type { CurrentUserDTO } from '@/types';
 
 type StageKey = 'not_issued' | 'frontend' | 'backend' | 'completed';
 type ViewKey = 'board' | 'today' | 'exceptions';
-type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'material' | 'documents' | 'completed' | 'due_today' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing';
+type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing';
 type DetailTab = 'production' | 'drawing' | 'progress' | 'source';
 type BatchOperation = 'set_priority' | 'set_stage' | 'add_remark';
 type DuePreset = '' | 'today' | 'tomorrow' | 'overdue' | 'week' | 'custom';
@@ -43,6 +45,8 @@ type ProductionOrder = {
   documentCategoryCodes: string[];
   exceptionCodes: string[];
   exceptionLabels: string[];
+  quantitySummary: ProductionQuantitySummary;
+  productionAlerts: ProductionAlert[];
   processName?: string | null;
   orderDate?: string | null;
   salesperson?: string | null;
@@ -70,6 +74,8 @@ type ProductionSummary = {
   notIssuedDrawing: number;
   materialNotReady: number;
   incompleteDocuments: number;
+  drawingConfirmation: number;
+  tailRemaining: number;
   urgent: number;
   completed: number;
   stageCounts: Record<StageKey, number>;
@@ -111,9 +117,18 @@ type AdvancedFilters = {
 };
 
 type UpdateForm = {
-  stage: StageKey;
   completedQty: string;
   remark: string;
+};
+
+type ExecutionPatchPayload = Partial<UpdateForm> & {
+  stage?: StageKey;
+  drawingStatus?: string;
+};
+
+type StageChangeRequest = {
+  order: ProductionOrder;
+  stage: StageKey;
 };
 
 type ProductionExecutionViewState = {
@@ -144,17 +159,34 @@ const stages: Array<{ key: StageKey; label: string }> = [
   { key: 'completed', label: '已完成' },
 ];
 
+const drawingStatuses = ['未发', '已发', '待样品确认', '待客户确认', '图纸需变更', '已确认'] as const;
+
+function stageMenuItems(order: ProductionOrder): Array<{ key: StageKey; label: string }> {
+  const nextStage: Record<StageKey, StageKey> = {
+    not_issued: 'frontend', frontend: 'backend', backend: 'completed', completed: 'backend',
+  };
+  const next = nextStage[order.stage];
+  const ordered = [next, ...stages.map(item => item.key)].filter((key, index, values) => key !== order.stage && values.indexOf(key) === index);
+  return ordered.map((key, index) => {
+    const label = stages.find(item => item.key === key)?.label || key;
+    if (index !== 0) return { key, label };
+    return { key, label: order.stage === 'completed' ? `撤回到${label}` : `推进到${label}` };
+  });
+}
+
 const quickByView: Record<ViewKey, Array<{ key: QuickFilter; label: string }>> = {
   board: [
-    { key: 'overdue', label: '已逾期' }, { key: 'urgent', label: '紧急' }, { key: 'drawing', label: '缺图纸' },
-    { key: 'material', label: '配料未齐' }, { key: 'documents', label: '资料不完整' }, { key: 'completed', label: '已完成' },
+    { key: 'due_today', label: '今日交期' }, { key: 'overdue', label: '已逾期' },
+    { key: 'drawing_confirmation', label: '图纸待确认' }, { key: 'material', label: '配料异常' },
+    { key: 'tail_remaining', label: '尾数未清' }, { key: 'completed', label: '已完成' },
   ],
   today: [
     { key: 'due_today', label: '今日交期' }, { key: 'overdue', label: '已逾期' },
     { key: 'updated_today', label: '今日更新' }, { key: 'completed_today', label: '今日完成' },
   ],
   exceptions: [
-    { key: 'drawing', label: '缺图纸' }, { key: 'material', label: '配料未齐' }, { key: 'documents', label: '资料不完整' },
+    { key: 'drawing_confirmation', label: '图纸待确认' }, { key: 'material', label: '配料异常' }, { key: 'tail_remaining', label: '尾数未清' },
+    { key: 'documents', label: '资料不完整' },
     { key: 'delivery_missing', label: '交期缺失' }, { key: 'specification_invalid', label: '规格异常' }, { key: 'customer_missing', label: '客户缺失' },
   ],
 };
@@ -171,7 +203,7 @@ const emptyAdvanced: AdvancedFilters = {
 const productionBoardCache = new Map<string, BoardPayload>();
 const validQuickFilters = new Set<QuickFilter>([
   'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed', 'due_today', 'updated_today', 'completed_today',
-  'delivery_missing', 'specification_invalid', 'customer_missing',
+  'delivery_missing', 'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining',
 ]);
 
 function cloneAdvanced(value: AdvancedFilters): AdvancedFilters {
@@ -208,8 +240,8 @@ function specText(order: ProductionOrder): string {
   return order.specification?.trim() || '规格待补充';
 }
 
-function updateFormFor(order: ProductionOrder, stage = order.stage): UpdateForm {
-  return { stage, completedQty: order.completedQty || '', remark: '' };
+function updateFormFor(order: ProductionOrder): UpdateForm {
+  return { completedQty: order.completedQty || '', remark: '' };
 }
 
 function advancedFromParams(params: URLSearchParams): AdvancedFilters {
@@ -267,16 +299,22 @@ function replaceOrder(payload: BoardPayload | null, order: ProductionOrder): Boa
   return { ...payload, items, stageCounts };
 }
 
-function optimisticOrder(order: ProductionOrder, value: UpdateForm): ProductionOrder {
-  const stageText = stages.find(item => item.key === value.stage)?.label || order.stageText;
-  return {
+function withProductionDerived(order: ProductionOrder): ProductionOrder {
+  const quantitySummary = getProductionQuantitySummary(order);
+  const productionAlerts = getProductionAlerts({
     ...order,
-    stage: value.stage,
-    stageText,
+    specificationInvalid: order.exceptionCodes.includes('specification_invalid'),
+  });
+  return { ...order, quantitySummary, productionAlerts };
+}
+
+function optimisticOrder(order: ProductionOrder, value: UpdateForm): ProductionOrder {
+  return withProductionDerived({
+    ...order,
     completedQty: value.completedQty.trim() || order.completedQty,
     latestProgressRemark: value.remark.trim() || order.latestProgressRemark,
     lastProgressAt: new Date().toISOString(),
-  };
+  });
 }
 
 export default function ProductionExecutionCenter({ user }: { user: CurrentUserDTO }) {
@@ -294,6 +332,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
@@ -314,9 +353,14 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [batchConfirm, setBatchConfirm] = useState('');
   const [userMenu, setUserMenu] = useState(false);
   const [statusMenuOrder, setStatusMenuOrder] = useState<ProductionOrder | null>(null);
+  const [drawingMenuOrder, setDrawingMenuOrder] = useState<ProductionOrder | null>(null);
+  const [stageChangeRequest, setStageChangeRequest] = useState<StageChangeRequest | null>(null);
+  const [completionSuggestion, setCompletionSuggestion] = useState<ProductionOrder | null>(null);
+  const [completedCollapsed, setCompletedCollapsed] = useState(false);
   const userButtonRef = useRef<HTMLButtonElement | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
   const statusButtonRef = useRef<HTMLButtonElement | null>(null);
+  const drawingButtonRef = useRef<HTMLButtonElement | null>(null);
   const boardShellRef = useRef<HTMLDivElement | null>(null);
   const columnRefs = useRef<Record<StageKey, HTMLDivElement | null>>({ not_issued: null, frontend: null, backend: null, completed: null });
   const pendingRestoreRef = useRef<ProductionExecutionViewState | null>(null);
@@ -413,7 +457,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       })
       .catch(reason => { if (active) setError(reason instanceof Error ? reason.message : '生产摘要加载失败'); });
     return () => { active = false; };
-  }, [refreshToken, stateReady, weekStart]);
+  }, [refreshToken, stateReady, summaryRefreshToken, weekStart]);
 
   useEffect(() => {
     if (!stateReady) return undefined;
@@ -500,6 +544,11 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }, []);
 
   useEffect(() => {
+    const saved = sessionStorage.getItem('production-execution:completed-collapsed');
+    setCompletedCollapsed(saved === null ? window.innerWidth <= 1024 : saved === '1');
+  }, []);
+
+  useEffect(() => {
     if (!toast) return undefined;
     const timer = window.setTimeout(() => setToast(''), 2600);
     return () => window.clearTimeout(timer);
@@ -526,7 +575,10 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     add('dueFrom', '交期起'); add('dueTo', '交期止');
     add('stage', '状态', { not_issued: '未发图', frontend: '在前端', backend: '在后端', completed: '已完成' });
     add('priority', '优先级', { urgent: '紧急', high: '高', normal: '一般' });
-    add('drawing', '图纸', { issued: '已发', not_issued: '未发', unset: '未设置' });
+    add('drawing', '图纸', {
+      issued: '已发', not_issued: '未发', sample_confirmation: '待样品确认', customer_confirmation: '待客户确认',
+      change_required: '图纸需变更', confirmed: '已确认', unset: '未设置',
+    });
     add('material', '配料', { allocated: '已配料', ready: '料齐', not_ready: '未齐', unset: '未设置' });
     add('documents', '资料', { empty: '0/5', partial: '1-4/5', complete: '5/5' });
     return chips;
@@ -546,7 +598,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setPage(1);
   }
 
-  function toggleSummary(key: 'all' | 'due_today' | 'overdue' | 'drawing' | 'material' | 'documents' | 'urgent' | 'completed'): void {
+  function toggleSummary(key: 'all' | 'due_today' | 'overdue' | 'drawing_confirmation' | 'material' | 'tail_remaining' | 'urgent' | 'completed'): void {
     if (key === 'all') {
       setKeyword(''); setQuick([]); setAdvanced(emptyAdvanced); setView('board'); setPage(1);
       return;
@@ -576,11 +628,26 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     });
   }
 
-  function openUpdate(order: ProductionOrder, stage = order.stage): void {
+  function openUpdate(order: ProductionOrder): void {
     setStatusMenuOrder(null);
+    setDrawingMenuOrder(null);
     setUpdateOrder(order);
-    setUpdateForm(updateFormFor(order, stage));
+    setUpdateForm(updateFormFor(order));
     setFormError('');
+  }
+
+  function applyLocalOrder(order: ProductionOrder): void {
+    setBoard(current => replaceOrder(current, order));
+    setDetailOrder(current => current?.id === order.id ? order : current);
+  }
+
+  async function requestExecutionPatch(orderId: string, payload: ExecutionPatchPayload, fallbackError: string): Promise<ProductionOrder> {
+    const response = await fetch(`/api/work-orders/${orderId}/execution`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || !body.data) throw new Error(body.error || fallbackError);
+    return withProductionDerived(body.data as ProductionOrder);
   }
 
   async function saveUpdate(): Promise<void> {
@@ -593,21 +660,16 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setSaving(true);
     setFormError('');
     try {
-      const response = await fetch(`/api/work-orders/${updateOrder.id}/execution`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updateForm),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || '进度更新失败');
-      if (body.data) {
-        const updated = body.data as ProductionOrder;
-        setBoard(current => replaceOrder(current, updated));
-        if (detailOrder?.id === updated.id) setDetailOrder(updated);
-      }
+      const updated = await requestExecutionPatch(updateOrder.id, updateForm, '进度更新失败');
+      applyLocalOrder(updated);
       setUpdateOrder(null);
       setUpdateForm(null);
       setToast('生产进度已更新');
       productionBoardCache.clear();
-      setRefreshToken(value => value + 1);
+      setSummaryRefreshToken(value => value + 1);
+      if (updated.stage !== 'completed' && (updated.quantitySummary.status === 'complete' || updated.quantitySummary.status === 'overrun')) {
+        setCompletionSuggestion(updated);
+      }
     } catch (reason) {
       setBoard(previousBoard);
       setDetailOrder(previousDetail);
@@ -615,6 +677,68 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveQuickUpdate(order: ProductionOrder, payload: ExecutionPatchPayload, optimistic: ProductionOrder, successMessage: string): Promise<ProductionOrder | null> {
+    const previousBoard = boardRef.current;
+    const previousDetail = detailOrder;
+    applyLocalOrder(optimistic);
+    setSaving(true);
+    try {
+      const updated = await requestExecutionPatch(order.id, payload, successMessage);
+      applyLocalOrder(updated);
+      productionBoardCache.clear();
+      setSummaryRefreshToken(value => value + 1);
+      setToast(successMessage);
+      return updated;
+    } catch (reason) {
+      setBoard(previousBoard);
+      setDetailOrder(previousDetail);
+      setToast(reason instanceof Error ? reason.message : `${successMessage}失败`);
+      return null;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveStageChange(order: ProductionOrder, stage: StageKey): Promise<void> {
+    setStatusMenuOrder(null);
+    setStageChangeRequest(null);
+    setCompletionSuggestion(null);
+    if (order.stage === stage) return;
+    const optimistic = withProductionDerived({
+      ...order,
+      stage,
+      stageText: stages.find(item => item.key === stage)?.label || order.stageText,
+      completedAt: stage === 'completed' ? new Date().toISOString() : null,
+    });
+    await saveQuickUpdate(order, { stage }, optimistic, stage === 'completed' ? '工单已标记完成' : '生产状态已更新');
+  }
+
+  function requestStageChange(order: ProductionOrder, stage: StageKey): void {
+    setStatusMenuOrder(null);
+    setDrawingMenuOrder(null);
+    if (stage === order.stage) return;
+    if (stage === 'completed') {
+      setStageChangeRequest({ order, stage });
+      return;
+    }
+    void saveStageChange(order, stage);
+  }
+
+  async function saveDrawingStatus(order: ProductionOrder, drawingStatus: string): Promise<void> {
+    setDrawingMenuOrder(null);
+    if (order.drawingStatus === drawingStatus) return;
+    const optimistic = withProductionDerived({ ...order, drawingStatus });
+    await saveQuickUpdate(order, { drawingStatus }, optimistic, `图纸状态已更新为${drawingStatus}`);
+  }
+
+  function toggleCompletedColumn(): void {
+    setCompletedCollapsed(current => {
+      const next = !current;
+      sessionStorage.setItem('production-execution:completed-collapsed', next ? '1' : '0');
+      return next;
+    });
   }
 
   async function loadProgress(orderId: string): Promise<void> {
@@ -733,7 +857,13 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     batchMode, selected, toggleSelected, openDetail, openUpdate, openResources: openWorkOrderResources,
     openStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, item: ProductionOrder): void => {
       statusButtonRef.current = event.currentTarget;
+      setDrawingMenuOrder(null);
       setStatusMenuOrder(item);
+    },
+    openDrawingStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, item: ProductionOrder): void => {
+      drawingButtonRef.current = event.currentTarget;
+      setStatusMenuOrder(null);
+      setDrawingMenuOrder(item);
     },
   };
 
@@ -761,8 +891,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           </button>
           {[
             ['今日交期', summary?.dueToday ?? 0, 'blue', 'due_today'], ['已逾期', summary?.overdue ?? 0, 'red', 'overdue'],
-            ['未发图', summary?.notIssuedDrawing ?? 0, 'gray', 'drawing'], ['配料未齐', summary?.materialNotReady ?? 0, 'orange', 'material'],
-            ['资料不完整', summary?.incompleteDocuments ?? 0, 'amber', 'documents'], ['紧急', summary?.urgent ?? 0, 'red', 'urgent'], ['已完成', summary?.completed ?? 0, 'green', 'completed'],
+            ['图纸待确认', summary?.drawingConfirmation ?? 0, 'amber', 'drawing_confirmation'], ['配料异常', summary?.materialNotReady ?? 0, 'orange', 'material'],
+            ['尾数未清', summary?.tailRemaining ?? 0, 'orange', 'tail_remaining'], ['紧急', summary?.urgent ?? 0, 'red', 'urgent'], ['已完成', summary?.completed ?? 0, 'green', 'completed'],
           ].map(([label, value, tone, key]) => <button className={`${String(tone)} ${summaryActive(String(key)) ? 'active' : ''}`} type="button" key={String(key)} onClick={() => toggleSummary(key as Parameters<typeof toggleSummary>[0])}><span>{label}</span><strong>{value}</strong></button>)}
         </section>
 
@@ -794,15 +924,19 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
         {view === 'board' ? (
           <div ref={boardShellRef} className="production-board-shell" aria-label="四状态生产看板">
-            <div className="production-board">
+            <div className={`production-board ${completedCollapsed ? 'completed-collapsed' : ''}`}>
               {stages.map(column => (
-                <section className={`production-column ${column.key}`} key={column.key}>
-                  <header className="production-stage-header"><strong>{column.label}</strong><span>{board?.stageCounts[column.key] || 0}</span></header>
-                  <div ref={element => { columnRefs.current[column.key] = element; }} className="production-column-list">
+                <section className={`production-column ${column.key} ${column.key === 'completed' && completedCollapsed ? 'collapsed' : ''}`} key={column.key}>
+                  <header className="production-stage-header">
+                    {column.key === 'completed'
+                      ? <button type="button" aria-expanded={!completedCollapsed} onClick={toggleCompletedColumn}><strong>{column.label}</strong><span>{board?.stageCounts[column.key] || 0}</span><em>{completedCollapsed ? '展开' : '收起'}</em></button>
+                      : <><strong>{column.label}</strong><span>{board?.stageCounts[column.key] || 0}</span></>}
+                  </header>
+                  {!completedCollapsed || column.key !== 'completed' ? <div ref={element => { columnRefs.current[column.key] = element; }} className="production-column-list">
                     {grouped[column.key].map(order => <ProductionCard key={order.id} order={order} {...cardProps} />)}
                     {loading && !grouped[column.key].length && <CardSkeleton count={3} />}
                     {!loading && !grouped[column.key].length && <div className="production-column-empty">当前状态暂无工单</div>}
-                  </div>
+                  </div> : <div ref={element => { columnRefs.current[column.key] = element; }} className="production-completed-collapsed-hint"><span>{board?.stageCounts.completed || 0}</span><small>已完成</small></div>}
                 </section>
               ))}
             </div>
@@ -823,13 +957,19 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
       {batchMode && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong><button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button><button type="button" disabled={!selected.length} onClick={() => openBatch('set_stage')}>修改状态</button><button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button><button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
 
-      <PortalMenu open={!!statusMenuOrder} anchorRef={statusButtonRef} className="production-status-menu" width={164} onClose={() => setStatusMenuOrder(null)}>
-        {statusMenuOrder && stages.map(stage => <button className={statusMenuOrder.stage === stage.key ? 'active' : ''} type="button" key={stage.key} onClick={() => openUpdate(statusMenuOrder, stage.key)}>{stage.label}</button>)}
+      <PortalMenu open={!!statusMenuOrder} anchorRef={statusButtonRef} className="production-status-menu" width={164} onClose={() => setStatusMenuOrder(null)} closeOnSelect={false}>
+        {statusMenuOrder && stageMenuItems(statusMenuOrder).map(stage => <button type="button" disabled={saving} key={stage.key} onClick={() => requestStageChange(statusMenuOrder, stage.key)}>{stage.label}</button>)}
       </PortalMenu>
 
-      {updateOrder && updateForm && <UpdateDialog order={updateOrder} value={updateForm} setValue={setUpdateForm} saving={saving} error={formError} close={() => { if (!saving) { setUpdateOrder(null); setUpdateForm(null); } }} save={saveUpdate} />}
+      <PortalMenu open={!!drawingMenuOrder} anchorRef={drawingButtonRef} className="production-status-menu" width={184} onClose={() => setDrawingMenuOrder(null)} closeOnSelect={false}>
+        {drawingMenuOrder && drawingStatuses.map(status => <button className={drawingMenuOrder.drawingStatus === status ? 'active' : ''} type="button" disabled={saving} key={status} onClick={() => void saveDrawingStatus(drawingMenuOrder, status)}>{status}</button>)}
+      </PortalMenu>
+
+      {updateOrder && updateForm && <UpdateDrawer order={updateOrder} value={updateForm} setValue={setUpdateForm} saving={saving} error={formError} close={() => { if (!saving) { setUpdateOrder(null); setUpdateForm(null); } }} save={saveUpdate} />}
       {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} update={() => openUpdate(detailOrder)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder)} />}
       {batchOpen && <BatchDialog count={selected.length} operation={batchOperation} value={batchValue} remark={batchRemark} confirm={batchConfirm} saving={saving} error={formError} setValue={setBatchValue} setRemark={setBatchRemark} setConfirm={setBatchConfirm} close={() => { if (!saving) setBatchOpen(false); }} save={saveBatch} />}
+      {stageChangeRequest && <StageChangeDialog request={stageChangeRequest} saving={saving} close={() => { if (!saving) setStageChangeRequest(null); }} confirm={() => void saveStageChange(stageChangeRequest.order, stageChangeRequest.stage)} />}
+      {completionSuggestion && <CompletionSuggestionDialog order={completionSuggestion} saving={saving} close={() => setCompletionSuggestion(null)} confirm={() => void saveStageChange(completionSuggestion, 'completed')} />}
       {toast && <div className="production-toast" role="status">{toast}</div>}
     </main>
   );
@@ -839,7 +979,7 @@ function CardSkeleton({ count }: { count: number }) {
   return <>{Array.from({ length: count }, (_, index) => <div className="production-card skeleton" aria-hidden="true" key={index}><i /><i /><i /><i /></div>)}</>;
 }
 
-function ProductionCard({ order, batchMode, selected, toggleSelected, openDetail, openUpdate, openResources, openStatusMenu, showExceptions = false }: {
+type ProductionCardProps = {
   order: ProductionOrder;
   batchMode: boolean;
   selected: string[];
@@ -848,43 +988,134 @@ function ProductionCard({ order, batchMode, selected, toggleSelected, openDetail
   openUpdate: (order: ProductionOrder) => void;
   openResources: (order: ProductionOrder) => void;
   openStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, order: ProductionOrder) => void;
+  openDrawingStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, order: ProductionOrder) => void;
   showExceptions?: boolean;
-}) {
-  const isSelected = selected.includes(order.id);
-  const delivery = deliveryText(order);
-  return (
-    <article className={`production-card ${order.stage} ${isSelected ? 'selected' : ''}`}>
-      <div className="production-card-title">
-        {batchMode && <input aria-label={`选择${specText(order)}`} type="checkbox" checked={isSelected} onChange={() => toggleSelected(order.id)} />}
-        <button className="production-card-spec" type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order)}>{specText(order)}</button>
-        <em className={order.priority}>{priorityText(order.priority)}</em>
-        <button className="production-card-info" type="button" title="查看工单详情" aria-label="查看工单详情" onClick={() => openDetail(order)}>i</button>
-      </div>
-      <div className="production-card-customer"><strong>{order.customerName || '客户待补充'}</strong>{order.productName && <span>· {order.productName}</span>}</div>
-      {(delivery || order.uncompletedQty || order.completedQty) && <dl className="production-card-metrics">{delivery && <div><dt>交期</dt><dd>{delivery}</dd></div>}{order.uncompletedQty && <div><dt>未交</dt><dd>{order.uncompletedQty}</dd></div>}{order.completedQty && <div><dt>完成</dt><dd>{order.completedQty}</dd></div>}</dl>}
-      <div className="production-card-health"><button type="button" onClick={() => openResources(order)}>图纸 {order.drawingStatus || '未设置'}</button><span>配料 {order.materialStatus || '未设置'}</span><span>资料 {order.documentFilledCount}/{order.documentTotalCount || 5}</span></div>
-      {showExceptions && order.exceptionLabels.length > 0 && <div className="production-card-exceptions">{order.exceptionLabels.map(label => <span key={label}>{label}</span>)}</div>}
-      {order.latestProgressRemark && <p title={order.latestProgressRemark}>{order.latestProgressRemark}</p>}
-      <footer><button type="button" onClick={() => openResources(order)}>打开资料</button><button className="primary" type="button" onClick={() => openUpdate(order)}>更新进度</button><button type="button" onClick={event => openStatusMenu(event, order)}>状态⌄</button></footer>
-    </article>
-  );
+};
+
+function ProductionCard(props: ProductionCardProps) {
+  if (props.order.stage === 'not_issued') return <NotIssuedWorkOrderCard {...props} />;
+  if (props.order.stage === 'completed') return <CompletedWorkOrderCard {...props} />;
+  return <ActiveWorkOrderCard {...props} />;
 }
 
-function UpdateDialog({ order, value, setValue, saving, error, close, save }: { order: ProductionOrder; value: UpdateForm; setValue: (value: UpdateForm) => void; saving: boolean; error: string; close: () => void; save: () => void }) {
+function CardSelection({ order, batchMode, selected, toggleSelected }: Pick<ProductionCardProps, 'order' | 'batchMode' | 'selected' | 'toggleSelected'>) {
+  if (!batchMode) return null;
+  return <input aria-label={`选择${specText(order)}`} type="checkbox" checked={selected.includes(order.id)} onChange={() => toggleSelected(order.id)} />;
+}
+
+function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu }: Pick<ProductionCardProps, 'order' | 'showExceptions' | 'openDrawingStatusMenu'>) {
+  const fallback = showExceptions
+    ? order.exceptionLabels.filter(label => !order.productionAlerts.some(alert => alert.label === label)).map((label, index) => ({ code: `legacy-${index}`, label, tone: 'amber' as const }))
+    : [];
+  const all = [...order.productionAlerts, ...fallback];
+  if (!all.length) return null;
+  const drawingCodes = new Set(['DRAWING_NOT_ISSUED', 'SAMPLE_CONFIRMATION_REQUIRED', 'CUSTOMER_CONFIRMATION_REQUIRED', 'DRAWING_CHANGE_REQUIRED']);
+  return <div className="production-alerts" aria-label="工单异常">
+    {all.slice(0, 2).map(alert => drawingCodes.has(alert.code)
+      ? <button className={alert.tone} type="button" key={`${alert.code}-${alert.label}`} onClick={event => openDrawingStatusMenu(event, order)}>{alert.label}</button>
+      : <span className={alert.tone} key={`${alert.code}-${alert.label}`}>{alert.label}</span>)}
+    {all.length > 2 && <span className="more" title={all.slice(2).map(alert => alert.label).join('、')}>+{all.length - 2} 更多异常</span>}
+  </div>;
+}
+
+function WorkOrderCardTitle({ order, batchMode, selected, toggleSelected, openDetail, openResources }: Pick<ProductionCardProps, 'order' | 'batchMode' | 'selected' | 'toggleSelected' | 'openDetail' | 'openResources'>) {
+  return <div className="production-card-title">
+    <CardSelection order={order} batchMode={batchMode} selected={selected} toggleSelected={toggleSelected} />
+    <button className="production-card-spec" type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order)}>{specText(order)}</button>
+    <em className={order.priority}>{priorityText(order.priority)}</em>
+    <button className="production-card-info" type="button" title="查看工单详情" aria-label="查看工单详情" onClick={() => openDetail(order)}>i</button>
+  </div>;
+}
+
+function NotIssuedWorkOrderCard(props: ProductionCardProps) {
+  const { order, openUpdate, openDrawingStatusMenu } = props;
+  const quantity = order.quantitySummary;
+  const reminder = /样品|确认|变更|异常|返工|待处理/.test(order.latestProgressRemark || '') ? order.latestProgressRemark : '';
+  return <article className={`production-card production-card-not-issued not_issued ${props.selected.includes(order.id) ? 'selected' : ''}`}>
+    <WorkOrderCardTitle {...props} />
+    <div className="production-card-customer"><strong>{order.customerName || '客户待补充'}</strong>{order.productName && <span>· {order.productName}</span>}</div>
+    <dl className="production-leader-metrics"><div><dt>目标数量</dt><dd>{quantity.targetQty === null ? '待补充' : `${formatProductionQuantity(quantity.targetQty)} 套`}</dd></div><div><dt>交期</dt><dd>{deliveryText(order) || '待设置'}</dd></div></dl>
+    <ProductionAlertList order={order} showExceptions={props.showExceptions} openDrawingStatusMenu={openDrawingStatusMenu} />
+    {reminder && <p className="production-focus-reminder" title={reminder}>{reminder}</p>}
+    <footer><button type="button" onClick={event => openDrawingStatusMenu(event, order)}>更新图纸状态</button><button className="primary" type="button" onClick={() => openUpdate(order)}>更新进度</button></footer>
+  </article>;
+}
+
+function ActiveWorkOrderCard(props: ProductionCardProps) {
+  const { order, openUpdate, openStatusMenu } = props;
+  const quantity = order.quantitySummary;
+  const percentageWidth = Math.max(0, Math.min(quantity.percentage || 0, 100));
+  return <article className={`production-card production-card-active ${order.stage} ${props.selected.includes(order.id) ? 'selected' : ''}`}>
+    <WorkOrderCardTitle {...props} />
+    <div className="production-card-customer"><strong>{order.customerName || '客户待补充'}</strong>{order.productName && <span>· {order.productName}</span>}</div>
+    <button className="production-progress-hit" type="button" onClick={() => openUpdate(order)} title="快速更新累计完成数量">
+      <span><strong>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</strong> / {quantity.targetQty === null ? '目标待补充' : `${formatProductionQuantity(quantity.targetQty)} 套`}<em>{formatProductionPercentage(quantity.percentage)}</em></span>
+      <i><b style={{ width: `${percentageWidth}%` }} /></i>
+      {quantity.remainingQty !== null && quantity.remainingQty > 0 && <small>剩余 {formatProductionQuantity(quantity.remainingQty)} 套</small>}
+      {quantity.overrunQty !== null && quantity.overrunQty > 0 && <small className="overrun">超产 {formatProductionQuantity(quantity.overrunQty)} 套</small>}
+    </button>
+    <ProductionAlertList order={order} showExceptions={props.showExceptions} openDrawingStatusMenu={props.openDrawingStatusMenu} />
+    <footer><button className="primary" type="button" onClick={() => openUpdate(order)}>更新进度</button><button type="button" onClick={event => openStatusMenu(event, order)}>更新状态</button></footer>
+  </article>;
+}
+
+function CompletedWorkOrderCard(props: ProductionCardProps) {
+  const { order, openResources, openStatusMenu } = props;
+  const isSelected = props.selected.includes(order.id);
+  const quantity = order.quantitySummary;
+  const quantityText = quantity.targetQty === null
+    ? `已完成 ${formatProductionQuantity(quantity.completedQty)} 套 · 目标待补充`
+    : `${formatProductionQuantity(quantity.completedQty)} / ${formatProductionQuantity(quantity.targetQty)} 套 · ${formatProductionPercentage(quantity.percentage)}`;
+  return <article className={`production-card production-card-completed completed ${quantity.status} ${isSelected ? 'selected' : ''}`}>
+    <div className="production-completed-title">
+      <CardSelection order={order} batchMode={props.batchMode} selected={props.selected} toggleSelected={props.toggleSelected} />
+      <button type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order)}>{specText(order)}</button>
+      <button className="production-completed-more" type="button" title="更多" aria-label="更多状态操作" onClick={event => openStatusMenu(event, order)}>•••</button>
+    </div>
+    <div className="production-completed-quantity">{quantityText}</div>
+    {quantity.status === 'tail_remaining' && <div className="production-completed-result tail">剩余 {formatProductionQuantity(quantity.remainingQty)} 套 · 尾数未清</div>}
+    {quantity.status === 'overrun' && <div className="production-completed-result overrun">超产 {formatProductionQuantity(quantity.overrunQty)} 套</div>}
+  </article>;
+}
+
+function UpdateDrawer({ order, value, setValue, saving, error, close, save }: { order: ProductionOrder; value: UpdateForm; setValue: (value: UpdateForm) => void; saving: boolean; error: string; close: () => void; save: () => void }) {
+  const draft = getProductionQuantitySummary({ ...order, completedQty: value.completedQty });
   return (
-    <div className="modal-backdrop"><section className="production-dialog update" role="dialog" aria-modal="true" aria-label="更新工单进度">
+    <div className="production-update-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}><aside className="production-update-drawer" role="dialog" aria-modal="true" aria-label="快速更新工单进度">
       <div className="dialog-title"><div><strong>更新生产进度</strong><small>{specText(order)} · {order.customerName || '客户待补充'}</small></div><button type="button" aria-label="关闭" onClick={close}>×</button></div>
-      <div className="production-reference">{order.productName && <span>品名 <b>{order.productName}</b></span>}{deliveryText(order) && <span>交期 <b>{deliveryText(order)}</b></span>}{order.uncompletedQty && <span>未交 <b>{order.uncompletedQty}</b></span>}<span>资料 <b>{order.documentFilledCount}/{order.documentTotalCount || 5}</b></span></div>
-      <div className="production-form-grid">
-        <label><span>当前状态</span><input value={order.stageText} readOnly /></label>
-        <label><span>新状态</span><select value={value.stage} onChange={event => setValue({ ...value, stage: event.target.value as StageKey })}>{stages.map(stage => <option value={stage.key} key={stage.key}>{stage.label}</option>)}</select></label>
-        <label className="wide"><span>完成数量</span><input value={value.completedQty} onChange={event => setValue({ ...value, completedQty: event.target.value })} placeholder="累计完成数量，不允许负数" /></label>
-        <label className="wide"><span>进度备注</span><div className="production-voice-field"><textarea value={value.remark} onChange={event => setValue({ ...value, remark: event.target.value })} rows={3} placeholder="记录首件、批量生产、异常处理等现场进度" /><VoiceInputButton value={value.remark} onChange={remark => setValue({ ...value, remark })} label="进度备注语音输入" /></div></label>
+      <div className="production-update-product"><strong>{order.productName || '品名待补充'}</strong><span>{order.stageText}</span></div>
+      <div className="production-update-quantity">
+        <div><span>目标数量</span><strong>{formatProductionQuantity(draft.targetQty)}</strong></div>
+        <div><span>当前已完成</span><strong>{formatProductionQuantity(draft.completedQty)}</strong></div>
+        <div><span>当前剩余</span><strong>{formatProductionQuantity(draft.remainingQty)}</strong></div>
+      </div>
+      <div className="production-update-form">
+        <label><span>累计完成数量</span><input inputMode="decimal" value={value.completedQty} onChange={event => setValue({ ...value, completedQty: event.target.value })} placeholder="请输入累计完成数量" /></label>
+        <label><span>进度备注</span><div className="production-voice-field"><textarea value={value.remark} onChange={event => setValue({ ...value, remark: event.target.value })} rows={4} placeholder="记录首件、批量生产或异常处理进度" /><VoiceInputButton value={value.remark} onChange={remark => setValue({ ...value, remark })} label="进度备注语音输入" /></div></label>
       </div>
       {error && <div className="form-error">{error}</div>}
       <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={save}>{saving ? '保存中...' : '保存进度'}</button></div>
-    </section></div>
+    </aside></div>
   );
+}
+
+function StageChangeDialog({ request, saving, close, confirm }: { request: StageChangeRequest; saving: boolean; close: () => void; confirm: () => void }) {
+  const quantity = request.order.quantitySummary;
+  const hasTail = quantity.remainingQty !== null && quantity.remainingQty > 0;
+  return <div className="modal-backdrop"><section className="production-dialog production-stage-confirm" role="dialog" aria-modal="true" aria-label="确认完成工单">
+    <div className="dialog-title"><div><strong>确认更新为已完成</strong><small>{specText(request.order)} · {request.order.customerName || '客户待补充'}</small></div><button type="button" onClick={close} aria-label="关闭">×</button></div>
+    <div className="production-confirm-quantity"><span>目标 <b>{formatProductionQuantity(quantity.targetQty)}</b></span><span>已完成 <b>{formatProductionQuantity(quantity.completedQty)}</b></span><span>剩余 <b>{formatProductionQuantity(quantity.remainingQty)}</b></span></div>
+    {hasTail ? <p className="production-tail-warning">当前仍剩余 {formatProductionQuantity(quantity.remainingQty)} 套，完成后将标记为“尾数未清”。</p> : <p className="production-complete-note">数量已完成，可以同步更新工单状态。</p>}
+    <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={confirm}>{saving ? '更新中...' : '确认完成'}</button></div>
+  </section></div>;
+}
+
+function CompletionSuggestionDialog({ order, saving, close, confirm }: { order: ProductionOrder; saving: boolean; close: () => void; confirm: () => void }) {
+  return <div className="modal-backdrop"><section className="production-dialog production-stage-confirm" role="dialog" aria-modal="true" aria-label="数量完成提示">
+    <div className="dialog-title"><div><strong>数量已经完成</strong><small>{specText(order)} · {formatProductionPercentage(order.quantitySummary.percentage)}</small></div><button type="button" onClick={close} aria-label="关闭">×</button></div>
+    <p className="production-complete-note">累计完成数量已达到目标。是否同步把工单状态更新为“已完成”？</p>
+    <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>暂不修改状态</button><button className="primary-button" type="button" disabled={saving} onClick={confirm}>{saving ? '更新中...' : '同步标记已完成'}</button></div>
+  </section></div>;
 }
 
 function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close, update, resources, drawingLibrary }: { order: ProductionOrder; tab: DetailTab; setTab: (tab: DetailTab) => void; progressLogs: ProgressLog[]; progressLoading: boolean; close: () => void; update: () => void; resources: () => void; drawingLibrary: () => void }) {
@@ -929,7 +1160,7 @@ function AdvancedFilterPanel({ customers, value, setValue, clear, apply }: { cus
       {value.duePreset === 'custom' && <><label><span>开始日期</span><input type="date" value={value.dueFrom} onChange={event => setValue({ ...value, dueFrom: event.target.value })} /></label><label><span>结束日期</span><input type="date" value={value.dueTo} onChange={event => setValue({ ...value, dueTo: event.target.value })} /></label></>}
       <label><span>状态</span><select value={value.stage} onChange={event => setValue({ ...value, stage: event.target.value })}><option value="">全部状态</option>{stages.map(stage => <option value={stage.key} key={stage.key}>{stage.label}</option>)}</select></label>
       <label><span>优先级</span><select value={value.priority} onChange={event => setValue({ ...value, priority: event.target.value })}><option value="">全部优先级</option><option value="urgent">紧急</option><option value="high">高</option><option value="normal">一般</option></select></label>
-      <label><span>图纸状态</span><select value={value.drawing} onChange={event => setValue({ ...value, drawing: event.target.value })}><option value="">全部图纸状态</option><option value="issued">已发</option><option value="not_issued">未发</option><option value="unset">未设置</option></select></label>
+      <label><span>图纸状态</span><select value={value.drawing} onChange={event => setValue({ ...value, drawing: event.target.value })}><option value="">全部图纸状态</option><option value="issued">已发</option><option value="not_issued">未发</option><option value="sample_confirmation">待样品确认</option><option value="customer_confirmation">待客户确认</option><option value="change_required">图纸需变更</option><option value="confirmed">已确认</option><option value="unset">未设置</option></select></label>
       <label><span>配料状态</span><select value={value.material} onChange={event => setValue({ ...value, material: event.target.value })}><option value="">全部配料状态</option><option value="allocated">已配料</option><option value="ready">料齐</option><option value="not_ready">未齐</option><option value="unset">未设置</option></select></label>
       <label><span>资料完整度</span><select value={value.documents} onChange={event => setValue({ ...value, documents: event.target.value })}><option value="">全部完整度</option><option value="empty">0/5</option><option value="partial">1-4/5</option><option value="complete">5/5</option></select></label>
     </div>

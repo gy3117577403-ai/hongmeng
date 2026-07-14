@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
+import { getProductionAlerts, isDrawingConfirmationAlert } from '@/lib/production-alerts';
+import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
 
@@ -70,12 +72,12 @@ const exceptionLabels: Record<ProductionExceptionCode, string> = {
 const validQuickFilters = new Set([
   'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed',
   'due_today', 'updated_today', 'completed_today', 'delivery_missing',
-  'specification_invalid', 'customer_missing',
+  'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining',
 ]);
 const validStages = new Set(['not_issued', 'frontend', 'backend', 'completed']);
 const validPriorities = new Set(['urgent', 'high', 'normal']);
 const validDuePresets = new Set(['today', 'tomorrow', 'overdue', 'week', 'custom']);
-const validDrawingStatuses = new Set(['issued', 'not_issued', 'unset']);
+const validDrawingStatuses = new Set(['issued', 'not_issued', 'sample_confirmation', 'customer_confirmation', 'change_required', 'confirmed', 'unset']);
 const validMaterialStatuses = new Set(['allocated', 'ready', 'not_ready', 'unset']);
 const validDocumentCompleteness = new Set(['empty', 'partial', 'complete', 'incomplete']);
 
@@ -208,9 +210,20 @@ export function productionExceptionCodes(order: ProductionExecutionOrderRecord, 
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   const { start } = chinaDayBounds(now);
   const exceptions: ProductionExceptionCode[] = [];
+  const alerts = getProductionAlerts({
+    uncompletedQty: order.uncompletedQty,
+    completedQty: order.completedQty,
+    stage,
+    specification: order.specification,
+    specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
+    drawingStatus: order.drawingStatus,
+    materialStatus: order.materialStatus,
+    latestProgressRemark: order.latestProgressRemark,
+    plannedAt: order.plannedAt,
+  }, now);
   if (stage !== 'completed' && order.plannedAt && order.plannedAt < start) exceptions.push('overdue');
-  if (!text(order.drawingStatus) || stage === 'not_issued') exceptions.push('drawing_not_issued');
-  if (stage !== 'completed' && !isMaterialReady(order.materialStatus)) exceptions.push('material_not_ready');
+  if (alerts.some(alert => alert.code === 'DRAWING_NOT_ISSUED')) exceptions.push('drawing_not_issued');
+  if (alerts.some(alert => alert.code === 'MATERIAL_NOT_READY')) exceptions.push('material_not_ready');
   if (!executionCompleteness(order).complete) exceptions.push('documents_incomplete');
   if (!order.plannedAt && !text(order.deliveryDay)) exceptions.push('delivery_missing');
   if (!text(order.specification) || isInvalidSpecification(order.specification || '')) exceptions.push('specification_invalid');
@@ -222,6 +235,22 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   const completeness = executionCompleteness(order);
   const exceptionCodes = productionExceptionCodes(order, now);
+  const quantitySummary = getProductionQuantitySummary({
+    uncompletedQty: order.uncompletedQty,
+    completedQty: order.completedQty,
+    stage,
+  });
+  const productionAlerts = getProductionAlerts({
+    uncompletedQty: order.uncompletedQty,
+    completedQty: order.completedQty,
+    stage,
+    specification: order.specification,
+    specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
+    drawingStatus: order.drawingStatus,
+    materialStatus: order.materialStatus,
+    latestProgressRemark: order.latestProgressRemark,
+    plannedAt: order.plannedAt,
+  }, now);
   return {
     id: order.id,
     code: order.code,
@@ -252,6 +281,8 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     documentsComplete: completeness.complete,
     exceptionCodes,
     exceptionLabels: exceptionCodes.map(code => exceptionLabels[code]),
+    quantitySummary,
+    productionAlerts,
     processName: order.processName,
     orderDate: order.orderDate?.toISOString() || null,
     salesperson: order.salesperson,
@@ -304,6 +335,10 @@ function dateInput(value?: string) {
 function drawingStatusValue(order: ProductionExecutionOrderRecord) {
   const value = text(order.drawingStatus);
   if (!value || value === '-' || value.includes('未设置')) return 'unset';
+  if (value.includes('样品') && value.includes('确认')) return 'sample_confirmation';
+  if (value.includes('客户') && value.includes('确认')) return 'customer_confirmation';
+  if (value.includes('变更')) return 'change_required';
+  if (value.includes('已确认')) return 'confirmed';
   if (value.includes('未发') || value.includes('未下发')) return 'not_issued';
   if (value.includes('已发') || value.includes('已下发')) return 'issued';
   return 'issued';
@@ -355,12 +390,25 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
   if (filters.materialStatus && materialStatusValue(order) !== filters.materialStatus) return false;
 
   const quick = (filters.quick || []).filter(item => item && item !== 'all');
+  const productionAlerts = quick.some(item => item === 'drawing' || item === 'drawing_confirmation' || item === 'material' || item === 'tail_remaining')
+    ? getProductionAlerts({
+      uncompletedQty: order.uncompletedQty,
+      completedQty: order.completedQty,
+      stage: normalizedStage,
+      specification: order.specification,
+      specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
+      drawingStatus: order.drawingStatus,
+      materialStatus: order.materialStatus,
+      latestProgressRemark: order.latestProgressRemark,
+      plannedAt: order.plannedAt,
+    }, now)
+    : [];
   for (const item of quick) {
     if (item === 'due_today' && !isDueToday(order, now)) return false;
     if (item === 'overdue' && !isOverdue(order, now)) return false;
     if (item === 'urgent' && order.priority !== 'urgent') return false;
-    if (item === 'drawing' && normalizedStage !== 'not_issued' && !['not_issued', 'unset'].includes(drawingStatusValue(order))) return false;
-    if (item === 'material' && (normalizedStage === 'completed' || !['not_ready', 'unset'].includes(materialStatusValue(order)))) return false;
+    if (item === 'drawing' && !productionAlerts.some(alert => alert.code === 'DRAWING_NOT_ISSUED')) return false;
+    if (item === 'material' && !productionAlerts.some(alert => alert.code === 'MATERIAL_NOT_READY')) return false;
     if (item === 'documents' && completeness.complete) return false;
     if (item === 'completed' && normalizedStage !== 'completed') return false;
     if (item === 'updated_today' && !inChinaDay(order.lastProgressAt, now)) return false;
@@ -368,15 +416,52 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
     if (item === 'delivery_missing' && (order.plannedAt || text(order.deliveryDay))) return false;
     if (item === 'specification_invalid' && text(order.specification) && !isInvalidSpecification(order.specification || '')) return false;
     if (item === 'customer_missing' && text(order.customerName)) return false;
+    if (item === 'drawing_confirmation' && !productionAlerts.some(alert => isDrawingConfirmationAlert(alert.code))) return false;
+    if (item === 'tail_remaining' && !productionAlerts.some(alert => alert.code === 'TAIL_REMAINING')) return false;
   }
   return true;
 }
 
-function taskRank(order: ProductionExecutionOrderRecord, now = new Date()) {
-  if (order.priority === 'urgent') return 0;
-  if (isOverdue(order, now)) return 1;
-  if (isDueToday(order, now)) return 2;
-  return 3;
+function drawingConfirmationRequired(order: ProductionExecutionOrderRecord, now: Date): boolean {
+  const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+  return getProductionAlerts({
+    uncompletedQty: order.uncompletedQty,
+    completedQty: order.completedQty,
+    stage,
+    specification: order.specification,
+    drawingStatus: order.drawingStatus,
+    materialStatus: order.materialStatus,
+    latestProgressRemark: order.latestProgressRemark,
+    plannedAt: order.plannedAt,
+  }, now).some(alert => isDrawingConfirmationAlert(alert.code));
+}
+
+function booleanRank(value: boolean): number {
+  return value ? 0 : 1;
+}
+
+export function compareProductionOrders(first: ProductionExecutionOrderRecord, second: ProductionExecutionOrderRecord, now = new Date()): number {
+  const firstStage = normalizeWorkOrderStage(first.stage || first.status) || 'not_issued';
+  const secondStage = normalizeWorkOrderStage(second.stage || second.status) || 'not_issued';
+  if (firstStage === 'completed' && secondStage === 'completed') {
+    return (second.completedAt?.getTime() || 0) - (first.completedAt?.getTime() || 0)
+      || text(first.specification).localeCompare(text(second.specification), 'zh-CN');
+  }
+  if (firstStage === 'completed' || secondStage === 'completed') return firstStage === 'completed' ? 1 : -1;
+
+  const firstRemaining = getProductionQuantitySummary({
+    uncompletedQty: first.uncompletedQty, completedQty: first.completedQty, stage: firstStage,
+  }).remainingQty;
+  const secondRemaining = getProductionQuantitySummary({
+    uncompletedQty: second.uncompletedQty, completedQty: second.completedQty, stage: secondStage,
+  }).remainingQty;
+  return booleanRank(first.priority === 'urgent') - booleanRank(second.priority === 'urgent')
+    || booleanRank(isOverdue(first, now)) - booleanRank(isOverdue(second, now))
+    || booleanRank(isDueToday(first, now)) - booleanRank(isDueToday(second, now))
+    || booleanRank(drawingConfirmationRequired(first, now)) - booleanRank(drawingConfirmationRequired(second, now))
+    || (first.plannedAt?.getTime() || Number.MAX_SAFE_INTEGER) - (second.plannedAt?.getTime() || Number.MAX_SAFE_INTEGER)
+    || (secondRemaining ?? -1) - (firstRemaining ?? -1)
+    || text(first.specification).localeCompare(text(second.specification), 'zh-CN');
 }
 
 export async function loadProductionOrders(week: ProductionWeek) {
@@ -400,7 +485,7 @@ export async function loadProductionExecution(input: {
   let filtered = all.filter(order => matchesFilters(order, filters, input.week, now));
   if (input.view === 'today') filtered = filtered.filter(order => isTodayTask(order, now));
   if (input.view === 'exceptions') filtered = filtered.filter(order => productionExceptionCodes(order, now).length > 0);
-  filtered.sort((a, b) => taskRank(a, now) - taskRank(b, now) || (a.plannedAt?.getTime() || Number.MAX_SAFE_INTEGER) - (b.plannedAt?.getTime() || Number.MAX_SAFE_INTEGER));
+  filtered.sort((first, second) => compareProductionOrders(first, second, now));
 
   const stageCounts: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
   for (const order of filtered) stageCounts[normalizeWorkOrderStage(order.stage || order.status) || 'not_issued'] += 1;
@@ -430,6 +515,8 @@ export async function summarizeProduction(week: ProductionWeek) {
   let notIssuedDrawing = 0;
   let materialNotReady = 0;
   let incompleteDocuments = 0;
+  let drawingConfirmation = 0;
+  let tailRemaining = 0;
   let urgent = 0;
   let completed = 0;
   for (const order of orders) {
@@ -437,9 +524,22 @@ export async function summarizeProduction(week: ProductionWeek) {
     stageCounts[stage] += 1;
     if (isDueToday(order, now)) dueToday += 1;
     if (isOverdue(order, now)) overdue += 1;
-    if (!text(order.drawingStatus) || stage === 'not_issued') notIssuedDrawing += 1;
-    if (stage !== 'completed' && !isMaterialReady(order.materialStatus)) materialNotReady += 1;
     if (!executionCompleteness(order).complete) incompleteDocuments += 1;
+    const alerts = getProductionAlerts({
+      uncompletedQty: order.uncompletedQty,
+      completedQty: order.completedQty,
+      stage,
+      specification: order.specification,
+      specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
+      drawingStatus: order.drawingStatus,
+      materialStatus: order.materialStatus,
+      latestProgressRemark: order.latestProgressRemark,
+      plannedAt: order.plannedAt,
+    }, now);
+    if (alerts.some(alert => alert.code === 'DRAWING_NOT_ISSUED')) notIssuedDrawing += 1;
+    if (alerts.some(alert => isDrawingConfirmationAlert(alert.code))) drawingConfirmation += 1;
+    if (alerts.some(alert => alert.code === 'MATERIAL_NOT_READY')) materialNotReady += 1;
+    if (alerts.some(alert => alert.code === 'TAIL_REMAINING')) tailRemaining += 1;
     if (order.priority === 'urgent') urgent += 1;
     if (stage === 'completed') completed += 1;
   }
@@ -452,6 +552,8 @@ export async function summarizeProduction(week: ProductionWeek) {
     notIssuedDrawing,
     materialNotReady,
     incompleteDocuments,
+    drawingConfirmation,
+    tailRemaining,
     urgent,
     completed,
     stageCounts,
