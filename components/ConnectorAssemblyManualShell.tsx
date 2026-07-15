@@ -941,7 +941,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
         <section className={`manual-workspace hm-manual-workspace ${detailsOpen ? 'detail-open' : 'detail-collapsed'}`}>
         <aside className="manual-list-panel hm-manual-list-panel" aria-label="说明书查询结果">
           <div className="manual-list-heading"><div><strong>说明书结果</strong><small>{loading ? '正在加载' : `${total} 份 · 第 ${page}/${totalPages} 页`}</small></div><span aria-hidden="true">LIST</span></div>
-          <div className="manual-list-scroll" aria-busy={loading}>
+          <div className="manual-list-scroll hm-scroll-region" aria-busy={loading} tabIndex={0} aria-label={`说明书结果，共 ${total} 份`}>
             {manuals.map(manual => {
               const identity = [manual.manufacturer, manual.family].filter(Boolean).join(' · ');
               const metadata = manualCardMeta(manual);
@@ -999,7 +999,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
             )}
           </div>
           {activeAssets.length > 1 && (
-            <div className="manual-thumbnails" aria-label="说明书文件缩略条">
+            <div className="manual-thumbnails hm-scroll-region" aria-label="说明书文件缩略条" tabIndex={0}>
               {activeAssets.map((asset, index) => <button className={selectedAsset?.id === asset.id ? 'active' : ''} type="button" key={asset.id} onClick={() => setImageIndex(index)}><span>{asset.assetType === 'PDF' ? 'PDF' : String(index + 1)}</span><strong title={asset.displayName || asset.originalName}>{asset.displayName || asset.originalName}</strong></button>)}
             </div>
           )}
@@ -1011,7 +1011,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
           <div className="manual-detail-tabs">
             {([['summary', '摘要'], ['toc', '章节目录'], ['versions', '版本与文件'], ['bindings', '关联型号']] as Array<[RightTab, string]>).map(([key, label]) => <button className={rightTab === key ? 'active' : ''} type="button" key={key} aria-pressed={rightTab === key} onClick={() => setRightTab(key)}>{label}{key === 'versions' && selectedManual ? ` ${selectedManual.versionCount}` : ''}{key === 'bindings' && selectedManual ? ` ${selectedManual.bindingCount}` : ''}</button>)}
           </div>
-          <div className="manual-detail-scroll">
+          <div className="manual-detail-scroll hm-scroll-region" tabIndex={0} aria-label="说明书目录、版本和附件信息">
             {rightTab === 'summary' && <ManualSideSummary manual={selectedManual} version={selectedVersion} />}
             {rightTab === 'toc' && (
               <div className="manual-toc-list">
@@ -1154,7 +1154,7 @@ function VersionDialog({ mode, form, setForm, saving, close, submit }: { mode: '
 
 function UploadDialog({ version, files, setFiles, saving, close, submit }: { version: ConnectorAssemblyManualVersionDTO; files: File[]; setFiles: (files: File[]) => void; saving: boolean; close: () => void; submit: (event: FormEvent) => void }) {
   const isPdf = version.fileMode === 'PDF';
-  return <div className="modal-backdrop"><form className="manual-dialog upload" onSubmit={submit}><DialogTitle title={`上传 ${version.revision} 文件`} close={close} /><label className="manual-upload-drop"><input type="file" multiple={!isPdf} accept={isPdf ? '.pdf,application/pdf' : '.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp'} onChange={event => setFiles(Array.from(event.target.files || []))} /><strong>{isPdf ? '选择一个 PDF' : '选择多张图片'}</strong><span>{isPdf ? '最大 100MB，上传后自动识别页数并提取可搜索文字' : '支持 JPG / PNG / WEBP，单张 20MB，最多 50 张'}</span></label><div className="manual-upload-files">{files.map(file => <span key={`${file.name}-${file.size}`}><strong>{file.name}</strong><small>{bytes(file.size)}</small></span>)}</div><DialogActions saving={saving} close={close} label="开始上传" /></form></div>;
+  return <div className="modal-backdrop"><form className="manual-dialog upload" onSubmit={submit}><DialogTitle title={`上传 ${version.revision} 文件`} close={close} /><label className="manual-upload-drop"><input type="file" multiple={!isPdf} accept={isPdf ? '.pdf,application/pdf' : '.jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp'} onChange={event => setFiles(Array.from(event.target.files || []))} /><strong>{isPdf ? '选择一个 PDF' : '选择多张图片'}</strong><span>{isPdf ? '最大 100MB，上传后自动识别页数并提取可搜索文字' : '支持 JPG / PNG / WEBP，单张 20MB，最多 50 张'}</span></label><div className="manual-upload-files hm-scroll-region" tabIndex={0} aria-label={`待上传文件，共 ${files.length} 个`}>{files.map(file => <span key={`${file.name}-${file.size}`}><strong>{file.name}</strong><small>{bytes(file.size)}</small></span>)}</div><DialogActions saving={saving} close={close} label="开始上传" /></form></div>;
 }
 
 function TocEditDialog({ value, setValue, currentPage, pageCount, saving, close, submit }: { value: NonNullable<TocEditState>; setValue: (value: TocEditState) => void; currentPage: number; pageCount: number; saving: boolean; close: () => void; submit: (event: FormEvent) => void }) {

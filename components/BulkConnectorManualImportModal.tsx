@@ -527,7 +527,7 @@ export function BulkConnectorManualImportModal({ open, close, completed }: { ope
               <button type="button" onClick={splitSelectedImages}>拆分所选图片集</button>
             </div>
             <p>同一子文件夹中的图片自动组成一份说明书；根目录图片按单页说明书处理。临时、隐藏、空文件和不支持格式自动忽略。</p>
-            <div className="manual-bulk-file-list">
+            <div className="manual-bulk-file-list hm-scroll-region" tabIndex={0} aria-label={`已选择资料，共 ${rows.length} 组`}>
               {rows.map(row => <label key={row.clientId}><input type="checkbox" checked={row.selected} onChange={event => updateRow(row.clientId, { selected: event.target.checked })} /><span>{row.fileMode === 'PDF' ? 'PDF' : `${row.localAssets.length} 图`}</span><strong title={row.relativePath}>{row.defaultTitle}</strong><small>{row.relativePath}</small></label>)}
               {!rows.length && <div>选择一个文件夹或一批 PDF / 图片开始；不会在预览阶段上传文件。</div>}
             </div>
@@ -544,7 +544,7 @@ export function BulkConnectorManualImportModal({ open, close, completed }: { ope
               <label className="check"><input type="checkbox" checked={autoBindUnique} onChange={event => setAutoBindUnique(event.target.checked)} />自动关联唯一精确型号</label>
               <button type="button" onClick={applyBulkValues}>应用批量设置</button>
             </section>
-            <div className="manual-bulk-table-wrap">
+            <div className="manual-bulk-table-wrap hm-scroll-region" tabIndex={0} aria-label="说明书批量导入预览结果">
               <table className="manual-bulk-table">
                 <thead><tr><th>文件</th><th>默认名称</th><th>页数</th><th>检测型号</th><th>版本</th><th>建议动作</th><th>关联参数</th><th>警告</th></tr></thead>
                 <tbody>{rows.map(row => <tr className={`action-${row.action}`} key={row.clientId}><td><strong>{row.fileName}</strong><small title={row.relativePath}>{row.relativePath}</small></td><td><input value={row.defaultTitle} onChange={event => updateRow(row.clientId, { defaultTitle: event.target.value })} /><small title={row.detectedTitle}>{row.detectedTitle ? `识别：${row.detectedTitle}` : '未识别封面标题'}</small></td><td>{row.pageCount || '-'}</td><td><span>{row.modelCandidates.join(' / ') || '未识别'}</span></td><td><input value={row.suggestedRevision} onChange={event => updateRow(row.clientId, { suggestedRevision: event.target.value })} /></td><td><select value={row.action} onChange={event => updateRow(row.clientId, { action: event.target.value as ConnectorManualBulkAction })}><option value="create_manual">新建说明书</option><option value="create_version">新增版本</option><option value="skip">跳过</option>{['duplicate', 'conflict', 'invalid', 'manual_review'].includes(row.action) && <option value={row.action}>{actionLabel(row.action)}</option>}</select><small>{row.suggestedVersionAction}</small></td><td><b>{row.uniqueParameterIds.length} 唯一</b><small>{row.parameterMatches.filter(item => item.matchType === 'multiple_matches').length} 待确认</small></td><td><span title={row.warnings.join('；')}>{row.conflictReason || row.duplicateReason || row.warnings[0] || '无'}</span></td></tr>)}</tbody>
@@ -559,7 +559,7 @@ export function BulkConnectorManualImportModal({ open, close, completed }: { ope
           <section className="manual-queue-panel">
             <div className="manual-queue-progress"><span style={{ width: `${queueRows.length ? (queueStats.completed / queueRows.length) * 100 : 100}%` }} /><b>{queueStats.completed}/{queueRows.length}</b></div>
             <div className="manual-queue-stats"><span>成功 {queueStats.success}</span><span>重复 {queueStats.duplicate}</span><span>失败 {queueStats.failed}</span><span>{paused ? '队列已暂停' : step === 5 ? '并发上传 2' : batch?.status || '已完成'}</span></div>
-            <div className="manual-queue-list">{rows.filter(row => ['create_manual', 'create_version'].includes(row.action)).map(row => <article className={row.queueState} key={row.clientId}><strong>{row.defaultTitle}</strong><span>{queueLabel(row.queueState)}</span><small>{row.queueError || row.fileName}</small></article>)}</div>
+            <div className="manual-queue-list hm-scroll-region" tabIndex={0} aria-label="说明书上传队列">{rows.filter(row => ['create_manual', 'create_version'].includes(row.action)).map(row => <article className={row.queueState} key={row.clientId}><strong>{row.defaultTitle}</strong><span>{queueLabel(row.queueState)}</span><small>{row.queueError || row.fileName}</small></article>)}</div>
           </section>
         )}
 

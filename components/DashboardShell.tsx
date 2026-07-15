@@ -2712,7 +2712,7 @@ export default function DashboardShell({
             <section className="field-summary">
               <button className="field-summary-toggle" type="button" onClick={() => setSummaryOpen(v => !v)}>现场概览</button>
               {summaryOpen && (
-                <div className="field-summary-list">
+                <div className="field-summary-list hm-scroll-region" tabIndex={0} aria-label="现场概览列表">
                   {fieldSummary.missingWorkOrders.map(item => (
                     <button key={item.id} type="button" onClick={() => openWorkOrder(item.id)}>
                       <strong>{workOrderDisplayCode(item)}</strong><span>{customerLabel(item)} · {item.productName}</span>
@@ -3571,7 +3571,7 @@ function OrderGroup({
   diffTypes?: Record<string, string>;
 }) {
   return (
-    <section className="order-group">
+    <section className="order-group hm-scroll-region" tabIndex={0} aria-label={`${title}，共 ${orders.length} 张工单`}>
       <h2><span>▣</span>{title}<em>{orders.length}</em></h2>
       {orders.map(o => {
         const completion = completionOf(categories, o.categoryFileCounts || {});
@@ -3637,7 +3637,7 @@ function UploadJobs({
   const ok = jobs.filter(j => j.status === 'success').length;
   const failed = jobs.filter(j => j.status === 'failed').length;
   return (
-    <div className="upload-jobs">
+    <div className="upload-jobs hm-scroll-region" tabIndex={0} aria-label={`上传队列，共 ${jobs.length} 项`}>
       <div className="upload-jobs-head"><strong>上传队列</strong><span>成功 {ok} · 失败 {failed}</span></div>
       {jobs.map(job => (
         <div className={`upload-job ${job.status}`} key={job.id}>
@@ -3699,7 +3699,7 @@ function UploadManager({
           ))}
         </div>
       </div>
-      <div className="manager-list">
+      <div className="manager-list hm-scroll-region" tabIndex={0} aria-label={`当前工单文件列表，共 ${files.length} 个文件`}>
         {files.map(file => (
           <article className="manager-file-card" key={file.id}>
             <FileThumb file={file} />

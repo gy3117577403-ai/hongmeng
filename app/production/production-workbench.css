@@ -1,9 +1,9 @@
 .hm-production-workbench {
   width: 100%;
-  min-height: 100dvh;
+  min-height: 640px;
   min-width: 0;
-  height: auto;
-  overflow: visible;
+  height: 100dvh;
+  overflow: hidden;
   background: var(--hm-color-bg);
   color: var(--hm-color-text);
 }
@@ -16,7 +16,7 @@
   flex-direction: column;
   gap: var(--hm-space-2);
   padding: 10px 12px 12px;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .hm-production-workbench .production-page-actions {
@@ -447,23 +447,24 @@
 }
 
 .hm-production-workbench .production-board-shell {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   width: 100%;
-  overflow: visible;
-  overscroll-behavior: auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
 }
 
 .hm-production-workbench .production-board {
   width: 100%;
   min-width: 0;
-  height: auto;
+  height: 100%;
   min-height: 0;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .hm-production-workbench .production-board.completed-collapsed {
@@ -474,10 +475,10 @@
 .hm-production-workbench .production-column {
   min-width: 0;
   min-height: 0;
-  height: auto;
+  height: 100%;
   display: flex;
   flex-direction: column;
-  overflow: visible;
+  overflow: hidden;
   border: 1px solid var(--hm-color-border);
   border-radius: var(--hm-radius-md);
   background: var(--hm-color-surface-muted);
@@ -598,17 +599,18 @@
 }
 
 .hm-production-workbench .production-column-list {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 8px;
-  overflow: visible;
-  overscroll-behavior: auto;
-  scrollbar-gutter: auto;
-  touch-action: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  touch-action: pan-y;
 }
 
 .hm-production-workbench .production-column-empty,
@@ -1089,12 +1091,12 @@
 }
 
 .hm-production-workbench .production-task-view {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
   margin: 0;
-  overflow: visible;
+  overflow: hidden;
   border: 1px solid var(--hm-color-border);
   border-radius: var(--hm-radius-md);
   background: var(--hm-color-surface-muted);
@@ -1114,14 +1116,17 @@
 .hm-production-workbench .production-task-heading em { color: var(--hm-color-text-muted); font-size: 11px; }
 
 .hm-production-workbench .production-task-grid {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   min-height: 0;
+  display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   align-content: start;
   gap: 8px;
   padding: 8px;
-  overflow: visible;
-  scrollbar-gutter: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 
 .hm-production-workbench .production-pagination {
@@ -1397,7 +1402,7 @@
   }
 }
 
-/* Tablet landscape: keep every control reachable and let the document own vertical scrolling. */
+/* Tablet landscape: keep controls fixed and give the two-column board its own vertical scroll. */
 @media (min-width: 1024px) and (max-width: 1279px) {
   .hm-production-workbench .production-execution-main {
     gap: 6px;
@@ -1444,6 +1449,12 @@
     display: none;
   }
 
+  .hm-production-workbench .production-board-shell {
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+  }
+
   .hm-production-workbench .production-board,
   .hm-production-workbench .production-board.completed-collapsed {
     min-width: 0;
@@ -1462,6 +1473,9 @@
 
   .hm-production-workbench .production-stage-header,
   .hm-production-workbench .production-column > header {
+    position: sticky;
+    top: 0;
+    z-index: 4;
     min-height: 54px;
     flex-basis: 54px;
   }
@@ -1658,9 +1672,16 @@
 
 /* Below the primary tablet target, stack the board instead of introducing page overflow. */
 @media (max-width: 1023px) {
+  .hm-production-workbench {
+    min-height: 100dvh;
+    height: auto;
+    overflow: visible;
+  }
+
   .hm-production-workbench .production-execution-main {
     padding-right: 8px;
     padding-left: 8px;
+    overflow: visible;
   }
 
   .hm-production-workbench .production-summary {

@@ -905,7 +905,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
               <div><strong>参数结果</strong><span>{loading ? '正在刷新数据…' : hasActiveFilters ? '当前筛选范围' : '全部有效参数'}</span></div>
               <span>第 {page} / {totalPages} 页 · 共 {total} 条</span>
             </div>
-            <div className="connector-table-wrap" tabIndex={0} aria-label="连接器参数结果表，可横向滚动查看更多字段">
+            <div className="connector-table-wrap hm-scroll-region" tabIndex={0} aria-label="连接器参数结果表，可滚动查看更多记录和字段">
               <table className="connector-table">
                 <thead>
                   <tr>
@@ -992,7 +992,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                 <button ref={fileDrawerCloseButtonRef} type="button" aria-label="关闭原始资料抽屉" title="关闭" onClick={closeFileDrawer}>×</button>
               </div>
             </div>
-            <div className="connector-file-list">
+            <div className="connector-file-list hm-scroll-region" tabIndex={0} aria-label={`原始资料附件，共 ${files.length} 个文件`}>
               {files.map(file => (
                 <article key={file.id} className="connector-file-card">
                   <div className="connector-file-meta">
@@ -1023,7 +1023,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
               <button ref={batchDrawerCloseButtonRef} type="button" aria-label="关闭导入批次抽屉" title="关闭" onClick={closeBatchDrawer}>×</button>
             </div>
           </div>
-          <div className="connector-file-list">
+          <div className="connector-file-list hm-scroll-region" tabIndex={0} aria-label={`参数导入批次，共 ${importBatches.length} 项`}>
             {batchLoading && <div className="empty-list">导入批次加载中...</div>}
             {importBatches.map(batch => (
               <article key={batch.id} className="connector-file-card import-batch-card">
@@ -1177,7 +1177,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
                 </div>
                 <details>
                   <summary>查看明细</summary>
-                  <div className="import-result-list">
+                  <div className="import-result-list hm-scroll-region" tabIndex={0} aria-label="参数导入预览结果">
                     {importResult.results.map(row => (
                       <div className={`import-row ${row.status}`} key={`${row.row}-${row.model}-${row.message}`}>
                         <span>第 {row.row} 行</span>

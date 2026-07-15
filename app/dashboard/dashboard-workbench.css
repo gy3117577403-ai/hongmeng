@@ -577,6 +577,12 @@
   overscroll-behavior: contain;
 }
 
+.hm-dashboard-workbench .orders-drawer .field-summary-list {
+  max-height: min(220px, 28dvh);
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .hm-dashboard-workbench .orders-drawer .order-group > h2 {
   position: sticky;
   z-index: 2;

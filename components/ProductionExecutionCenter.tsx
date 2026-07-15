@@ -1094,7 +1094,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         {!summary?.weekStartDate && !loading && <div className="production-empty-week"><strong>当前暂无启用生产周</strong><span>请前往周计划中心审核并启用生产计划。</span><a href={weeklyPlanHref}>进入周计划中心</a></div>}
 
         {view === 'board' ? (
-          <div ref={boardShellRef} className="production-board-shell" aria-label="四状态生产看板">
+          <div ref={boardShellRef} className="production-board-shell hm-scroll-region" tabIndex={0} aria-label="四状态生产看板">
             <div className={`production-board ${completedCollapsed ? 'completed-collapsed' : ''}`}>
               {stages.map(column => (
                 <section className={`production-column ${column.key} ${column.key === 'completed' && completedCollapsed ? 'collapsed' : ''}`} key={column.key}>
@@ -1103,7 +1103,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
                       ? <button type="button" aria-expanded={!completedCollapsed} onClick={toggleCompletedColumn}><span className="production-stage-step">{column.step}</span><span className="production-stage-copy"><strong>{column.label}</strong><small>{column.hint}</small></span><span className="production-stage-count">{board?.stageCounts[column.key] || 0}</span><em>{completedCollapsed ? '展开' : '收起'}</em></button>
                       : <><span className="production-stage-step">{column.step}</span><span className="production-stage-copy"><strong>{column.label}</strong><small>{column.hint}</small></span><span className="production-stage-count">{board?.stageCounts[column.key] || 0}</span></>}
                   </header>
-                  {!completedCollapsed || column.key !== 'completed' ? <div ref={element => { columnRefs.current[column.key] = element; }} className="production-column-list">
+                  {!completedCollapsed || column.key !== 'completed' ? <div ref={element => { columnRefs.current[column.key] = element; }} className="production-column-list hm-scroll-region" tabIndex={0} aria-label={`${column.label}工单列表，共 ${grouped[column.key].length} 项`}>
                     {grouped[column.key].map(item => <ProductionCard key={`${item.order.id}:${item.displayStage}`} order={item.order} displayStage={item.displayStage} stageQuantity={item.stageQuantity} {...cardProps} />)}
                     {loading && !grouped[column.key].length && <CardSkeleton count={3} />}
                     {!loading && !grouped[column.key].length && <div className="production-column-empty">当前状态暂无工单</div>}
@@ -1115,7 +1115,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         ) : (
           <section className="production-task-view">
             <div className="production-task-heading"><div><strong>{view === 'today' ? '今日任务' : '异常任务'}</strong><span>{view === 'today' ? '今日交期、逾期与今日进展' : '聚合资料与基础字段异常，不自动修改数据'}</span></div><em>{board?.pagination.total || 0} 项</em></div>
-            <div className="production-task-grid">
+            <div className="production-task-grid hm-scroll-region" tabIndex={0} aria-label={`${view === 'today' ? '今日任务' : '异常任务'}列表`}>
               {board?.items.map(order => {
                 const item = primaryCardView(order);
                 return <ProductionCard key={order.id} order={order} displayStage={item.displayStage} stageQuantity={item.stageQuantity} {...cardProps} showExceptions={view === 'exceptions'} />;

@@ -504,7 +504,7 @@ export function DrawingLibraryShell({
               <div><strong>规格结果</strong><span>{customer === '全部客户' ? '全部客户' : customer}</span></div>
               <b>{visibleItems.length}</b>
             </div>
-            <div className="drawing-list">
+            <div className="drawing-list hm-scroll-region" tabIndex={0} aria-label={`图纸规格结果，共 ${visibleItems.length} 项`}>
               {visibleItems.map(item => (
                 <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" aria-pressed={selectedItem?.id === item.id} onClick={() => chooseItem(item)}>
                   <div className="drawing-spec-title-line">
@@ -614,7 +614,7 @@ export function DrawingLibraryShell({
           </div>
           {selectedItem && activeFiles.length > 0 ? (
             <>
-              <div className="drawing-files">
+              <div className="drawing-files hm-scroll-region" tabIndex={0} aria-label={`当前分类文件，共 ${activeFiles.length} 个`}>
                 {activeFiles.map(file => (
                   <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => setSelectedFileId(file.id)}>
                     <b>{file.fileType === 'pdf' ? 'PDF' : file.fileType === 'image' ? 'IMG' : 'FILE'}</b>
