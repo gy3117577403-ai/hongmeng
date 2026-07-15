@@ -742,6 +742,118 @@ main.hm-workbench-root.hm-workbench-root {
   }
 }
 
+/* Full navigation is the default desktop experience; tablet widths keep the overlay rail. */
+@media (min-width: 1200px) {
+  main.hm-workbench-root.hm-workbench-root {
+    --hm-shell-rail: 224px;
+  }
+
+  .hm-platform-sidebar,
+  .hm-platform-sidebar.expanded {
+    width: 224px;
+    box-shadow: 5px 0 18px rgba(13, 32, 54, .12);
+  }
+
+  .hm-platform-sidebar-scrim.open {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .hm-platform-sidebar .hm-platform-sidebar-close,
+  .hm-workbench-sidebar-button {
+    display: none;
+  }
+
+  .hm-platform-brand,
+  .hm-platform-sidebar.expanded .hm-platform-brand {
+    justify-content: flex-start;
+    padding: 0 14px;
+  }
+
+  .hm-platform-brand div,
+  .hm-platform-sidebar.expanded .hm-platform-brand div {
+    display: flex;
+  }
+
+  .hm-platform-home,
+  .hm-platform-sidebar.expanded .hm-platform-home {
+    justify-content: flex-start;
+    gap: 10px;
+    margin-right: 10px;
+    margin-left: 10px;
+    padding: 0 12px;
+  }
+
+  .hm-platform-home b,
+  .hm-platform-sidebar.expanded .hm-platform-home b,
+  .hm-platform-side-nav h2,
+  .hm-platform-sidebar.expanded .hm-platform-side-nav h2 {
+    display: block;
+  }
+
+  .hm-platform-side-nav,
+  .hm-platform-sidebar.expanded .hm-platform-side-nav {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .hm-platform-side-nav a,
+  .hm-platform-sidebar-footer a,
+  .hm-platform-sidebar.expanded .hm-platform-side-nav a,
+  .hm-platform-sidebar.expanded .hm-platform-sidebar-footer a {
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 0 10px;
+  }
+
+  .hm-platform-side-nav a span,
+  .hm-platform-sidebar-footer a span,
+  .hm-platform-sidebar.expanded .hm-platform-side-nav a span,
+  .hm-platform-sidebar.expanded .hm-platform-sidebar-footer a span {
+    display: block;
+    flex: 1;
+  }
+
+  .hm-platform-side-nav a em,
+  .hm-platform-sidebar-footer a em,
+  .hm-platform-sidebar.expanded .hm-platform-side-nav a em,
+  .hm-platform-sidebar.expanded .hm-platform-sidebar-footer a em {
+    display: inline-flex;
+  }
+
+  .hm-workbench-header {
+    grid-template-columns: minmax(190px, 250px) minmax(260px, 1fr) auto auto;
+    gap: 12px;
+    padding-right: 14px;
+    padding-left: 16px;
+  }
+
+  .hm-workbench-context {
+    grid-column: 1;
+  }
+
+  .hm-workbench-context > span,
+  .hm-workbench-context > svg {
+    display: none;
+  }
+
+  .hm-workbench-context strong {
+    font-size: 15px;
+  }
+
+  .hm-workbench-search-slot {
+    grid-column: 2;
+  }
+
+  .hm-workbench-utility-actions {
+    grid-column: 3;
+  }
+
+  .hm-workbench-user-wrap {
+    grid-column: 4;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .hm-workbench-root *,
   .hm-workbench-root *::before,

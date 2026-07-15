@@ -79,6 +79,9 @@ const quickLinks: Array<{ href: string; label: string; icon: LucideIcon; tone: H
   { href: '/workspace/more', label: '更多功能', icon: Wrench, tone: 'slate', planned: true },
 ];
 
+const activeQuickLinks = quickLinks.filter(link => !link.planned);
+const plannedQuickLinks = quickLinks.filter(link => link.planned);
+
 const kpiIcons: Record<string, LucideIcon> = {
   weekly: CalendarDays,
   due: Clock3,
@@ -139,6 +142,12 @@ function updatedTime(value: string): string {
 
 function priorityLabel(value: HomeActionItem['priority']): string {
   return value === 'urgent' ? '紧急' : value === 'high' ? '重要' : '常规';
+}
+
+function kpiUnit(id: string): string {
+  if (id === 'weekly') return '个';
+  if (id === 'overdue' || id === 'tail') return '件';
+  return '项';
 }
 
 function EmptyState({ children }: { children: string }) {
@@ -281,9 +290,17 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   }
 
   const donutStyle = { '--hm-home-rate': `${data.planChart.executionRate || 0}%` } as CSSProperties;
+  const hasOperationalData = data.planChart.total > 0
+    || data.actionItems.length > 0
+    || data.todayNodes.length > 0
+    || data.issues.length > 0
+    || data.kpis.some(kpi => typeof kpi.value === 'number' && kpi.value > 0);
+  const visibleKpis = hasOperationalData
+    ? data.kpis
+    : data.kpis.filter(kpi => ['weekly', 'due', 'drawing', 'overdue'].includes(kpi.id));
 
   return (
-    <main className="hm-home-shell hm-workbench-root">
+    <main className={`hm-home-shell hm-workbench-root ${hasOperationalData ? 'has-live-data' : 'is-plan-empty'}`}>
       <AppWorkbenchHeader
         user={user}
         activeHref="/home"
@@ -330,7 +347,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
         <div className="hm-home-content">
           {data.error && <div className="hm-home-error" role="alert"><span>首页数据加载失败</span><p>{data.error}</p><button type="button" onClick={refresh} disabled={refreshing}>重新加载</button></div>}
           <section className="hm-home-welcome">
-            <div className="hm-home-welcome-copy"><h1>{data.greeting}，{displayName} <span aria-hidden="true">👋</span></h1><p>今天是 {data.dateLabel}</p><small>{data.periodLabel}</small></div>
+            <div className="hm-home-welcome-copy"><h1>{data.greeting}，{displayName}</h1><p>今天是 {data.dateLabel}</p><small>{data.periodLabel}</small></div>
             <div className="hm-home-welcome-art" aria-hidden="true">
               <span className="tile tile-one"><CalendarDays size={22} /></span>
               <span className="tile tile-two"><Image src="/icon-192.png" width={56} height={56} alt="" /></span>
@@ -340,34 +357,56 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
             <div className="hm-home-updated"><span>数据更新</span><strong>{updatedTime(data.generatedAt)}</strong><small>{refreshing ? '正在刷新' : '读取当前业务数据'}</small></div>
           </section>
 
-          <section className="hm-home-kpis" aria-label="生产关键指标">
-            {data.kpis.map((kpi, index) => {
+          {!hasOperationalData && !data.error && (
+            <section className="hm-home-start-banner" aria-labelledby="hm-home-start-title">
+              <div>
+                <span>本周计划尚未启用</span>
+                <h2 id="hm-home-start-title">从计划导入开始今天的生产协同</h2>
+                <p>现有图纸、工单和连接器资料仍可正常使用；启用周计划后，待办、异常和执行进度会自动汇总到首页。</p>
+              </div>
+              <nav aria-label="开始本周工作">
+                <a className="primary" href="/weekly-plan-center">导入或审核周计划</a>
+                <a href="/dashboard">打开生产工单</a>
+                <a href="/drawing-library">查看图纸资料</a>
+              </nav>
+            </section>
+          )}
+
+          <section className={`hm-home-kpis ${hasOperationalData ? '' : 'is-condensed'}`.trim()} aria-label="生产关键指标">
+            {visibleKpis.map(kpi => {
               const Icon = kpiIcons[kpi.id] || BarChart3;
               const deltaLabel = kpi.id === 'weekly' ? '当前计划' : kpi.value && kpi.value > 0 ? '需要关注' : '状态正常';
               return (
                 <a className={`hm-home-kpi tone-${kpi.tone}`} href={kpi.route} key={kpi.id}>
                   <span className="hm-home-kpi-icon" aria-hidden="true"><Icon size={23} /></span>
-                  <div><small>{kpi.label}</small><strong>{kpi.value === null ? '--' : kpi.value}<em>{index === 2 || index === 5 ? ' 件' : index === 0 ? ' 个' : ' 项'}</em></strong><p>{deltaLabel}</p></div>
+                  <div><small>{kpi.label}</small><strong>{kpi.value === null ? '--' : kpi.value}<em> {kpiUnit(kpi.id)}</em></strong><p>{deltaLabel}</p></div>
                   <ChevronRight size={15} aria-hidden="true" />
                 </a>
               );
             })}
           </section>
 
-          <section className="hm-home-primary-grid">
+          <section className={`hm-home-primary-grid ${hasOperationalData ? '' : 'is-empty-state'}`.trim()}>
             <article className="hm-home-panel hm-home-actions-panel">
-              <SectionHeading title="我的待办事项" meta={`全部 ${data.actionItems.length}`} href="/production?view=exceptions" />
-              <ActionList items={data.actionItems} />
+              <SectionHeading title={hasOperationalData ? '我的待办事项' : '开始本周工作'} meta={hasOperationalData ? `全部 ${data.actionItems.length}` : '三步进入生产执行'} href={hasOperationalData ? '/production?view=exceptions' : undefined} />
+              {hasOperationalData ? <ActionList items={data.actionItems} /> : (
+                <div className="hm-home-start-steps">
+                  <a href="/weekly-plan-center"><span>01</span><CalendarDays size={19} aria-hidden="true" /><div><strong>导入并审核周计划</strong><p>导入 Excel，确认差异后启用当前生产周。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
+                  <a href="/production"><span>02</span><LayoutDashboard size={19} aria-hidden="true" /><div><strong>进入生产执行中心</strong><p>按未发图、前端、后端和完成阶段推进工单。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
+                  <a href="/dashboard"><span>03</span><FileCheck2 size={19} aria-hidden="true" /><div><strong>补齐工单生产资料</strong><p>上传原图、SOP、成品图并确认资料完整性。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
+                </div>
+              )}
             </article>
 
             <article className="hm-home-panel hm-home-quick-panel">
-              <SectionHeading title="快捷入口" />
+              <SectionHeading title="业务入口" meta={`已接入 ${activeQuickLinks.length} 个模块`} />
               <div className="hm-home-quick-grid">
-                {quickLinks.map(link => {
+                {activeQuickLinks.map(link => {
                   const Icon = link.icon;
-                  return <a className={link.planned ? 'is-planned' : ''} href={link.href} key={link.href} title={link.planned ? `${link.label}（规划中）` : link.label}><span className={`tone-${link.tone}`} aria-hidden="true"><Icon size={21} /></span><strong>{link.label}</strong>{link.planned && <small>规划中</small>}</a>;
+                  return <a href={link.href} key={link.href} title={link.label}><span className={`tone-${link.tone}`} aria-hidden="true"><Icon size={21} /></span><strong>{link.label}</strong></a>;
                 })}
               </div>
+              <div className="hm-home-planned-shortcuts"><span>规划能力</span>{plannedQuickLinks.map(link => <a href={link.href} key={link.href} title={`${link.label}（规划中）`}>{link.label}<small>规划中</small></a>)}</div>
             </article>
 
             <div className="hm-home-right-stack">
@@ -382,22 +421,26 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
             </div>
           </section>
 
-          <section className="hm-home-charts" aria-label="协同数据图表">
-            <article className="hm-home-panel hm-home-plan-chart">
-              <SectionHeading title="计划执行情况" meta="本周" />
-              <div className="hm-home-plan-chart-body">
-                <div className="hm-home-donut" style={donutStyle}><div><strong>{data.planChart.executionRate === null ? '--' : `${data.planChart.executionRate}%`}</strong><span>执行率</span></div></div>
-                <dl><div><dt>已完成</dt><dd>{data.planChart.completed}</dd></div><div><dt>执行中</dt><dd>{data.planChart.inProgress}</dd></div><div><dt>未开始</dt><dd>{data.planChart.notStarted}</dd></div><div><dt>逾期</dt><dd>{data.planChart.overdue}</dd></div></dl>
-              </div>
-            </article>
-            <article className="hm-home-panel"><SectionHeading title="工单状态分布" meta={`${data.planChart.total} 个工单`} /><DistributionChart items={data.stageDistribution} /></article>
-            <article className="hm-home-panel"><SectionHeading title="技术资料状态" meta="当前周计划" /><DistributionChart items={data.technicalDistribution} /></article>
-          </section>
+          {hasOperationalData && (
+            <>
+              <section className="hm-home-charts" aria-label="协同数据图表">
+                <article className="hm-home-panel hm-home-plan-chart">
+                  <SectionHeading title="计划执行情况" meta="本周" />
+                  <div className="hm-home-plan-chart-body">
+                    <div className="hm-home-donut" style={donutStyle}><div><strong>{data.planChart.executionRate === null ? '--' : `${data.planChart.executionRate}%`}</strong><span>执行率</span></div></div>
+                    <dl><div><dt>已完成</dt><dd>{data.planChart.completed}</dd></div><div><dt>执行中</dt><dd>{data.planChart.inProgress}</dd></div><div><dt>未开始</dt><dd>{data.planChart.notStarted}</dd></div><div><dt>逾期</dt><dd>{data.planChart.overdue}</dd></div></dl>
+                  </div>
+                </article>
+                <article className="hm-home-panel"><SectionHeading title="工单状态分布" meta={`${data.planChart.total} 个工单`} /><DistributionChart items={data.stageDistribution} /></article>
+                <article className="hm-home-panel"><SectionHeading title="技术资料状态" meta="当前周计划" /><DistributionChart items={data.technicalDistribution} /></article>
+              </section>
 
-          <section className="hm-home-collaboration" aria-label="计划到完成协作链路">
-            <SectionHeading title="协同流程状态" meta="计划、技术与生产共享同一套数据" />
-            <div>{data.collaboration.map((node, index) => <span className="hm-home-flow-part" key={node.id}>{index > 0 && <ChevronRight aria-hidden="true" />}<a className={`tone-${node.tone}`} href={node.route}><small>0{index + 1}</small><p><strong>{node.label}</strong><span>{node.description}</span></p><b>{node.value}</b></a></span>)}</div>
-          </section>
+              <section className="hm-home-collaboration" aria-label="计划到完成协作链路">
+                <SectionHeading title="协同流程状态" meta="计划、技术与生产共享同一套数据" />
+                <div>{data.collaboration.map((node, index) => <span className="hm-home-flow-part" key={node.id}>{index > 0 && <ChevronRight aria-hidden="true" />}<a className={`tone-${node.tone}`} href={node.route}><small>0{index + 1}</small><p><strong>{node.label}</strong><span>{node.description}</span></p><b>{node.value}</b></a></span>)}</div>
+              </section>
+            </>
+          )}
 
           <footer className="hm-home-footer"><span>© 2026 杭连协同平台 · 企业内部使用</span><small>计划 · 技术 · 生产高效闭环</small></footer>
         </div>
