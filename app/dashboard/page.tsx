@@ -3,6 +3,7 @@ import DashboardShell from '@/components/DashboardShell';
 import { currentUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { serializeWorkOrder } from '@/lib/work-orders';
+import './dashboard-workbench.css';
 
 type DashboardPageProps = {
   searchParams?: Record<string, string | string[] | undefined>;

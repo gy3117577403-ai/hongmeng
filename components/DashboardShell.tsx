@@ -9,6 +9,8 @@ import { LocalImportDialog, type LocalImportConnectionState, type LocalImportTas
 import { PdfViewer } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
+import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platform';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import { compressImageForUpload, normalizeCapturedImage } from '@/lib/image-client';
@@ -571,14 +573,15 @@ export default function DashboardShell({
   const [sel, setSel] = useState('');
   const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>(initialWorkOrders[0]?.categoryFileCounts || {});
   const [loading, setLoading] = useState(false);
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [orderLoadError, setOrderLoadError] = useState('');
+  const [fileLoadError, setFileLoadError] = useState('');
   const [uploading, setUploading] = useState(false);
   const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [msg, setMsg] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [drawingSyncing, setDrawingSyncing] = useState(false);
-  const [lib, setLib] = useState(false);
-  const [userMenu, setUserMenu] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [passwordError, setPasswordError] = useState('');
@@ -671,8 +674,9 @@ export default function DashboardShell({
   const toolRef = useRef<HTMLElement>(null);
   const toolRailRef = useRef<HTMLDivElement>(null);
   const toolResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
-  const libraryMenuButtonRef = useRef<HTMLButtonElement>(null);
-  const userMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const orderDrawerRef = useRef<HTMLElement>(null);
+  const orderDrawerCloseRef = useRef<HTMLButtonElement>(null);
+  const orderDrawerReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const moreActionsButtonRef = useRef<HTMLButtonElement>(null);
   const directTargetRef = useRef<{ workOrderId: string; categoryId: string; fileId: string } | null>(null);
   const localImportLatestFileRef = useRef('');
@@ -898,17 +902,26 @@ export default function DashboardShell({
   }
 
   async function refreshOrders(preferredId?: string, forceSync = false) {
-    const params = new URLSearchParams();
-    if (planView !== 'current') params.set('planView', planView);
-    const path = `/api/work-orders${params.toString() ? `?${params.toString()}` : ''}`;
-    const r = await fetch(syncUrl(path, forceSync), { cache: 'no-store' });
-    if (!r.ok) throw new Error('refresh work orders failed');
-    const d = await r.json();
-    const nextOrders: WorkOrderDTO[] = Array.isArray(d.workOrders) ? d.workOrders : [];
-    setOrders(nextOrders);
-    const nextId = preferredId && nextOrders.some(o => o.id === preferredId) ? preferredId : nextOrders[0]?.id || '';
-    setWo(v => (v && nextOrders.some(o => o.id === v) ? v : nextId));
-    return nextOrders;
+    setOrdersLoading(true);
+    setOrderLoadError('');
+    try {
+      const params = new URLSearchParams();
+      if (planView !== 'current') params.set('planView', planView);
+      const path = `/api/work-orders${params.toString() ? `?${params.toString()}` : ''}`;
+      const r = await fetch(syncUrl(path, forceSync), { cache: 'no-store' });
+      if (!r.ok) throw new Error('refresh work orders failed');
+      const d = await r.json();
+      const nextOrders: WorkOrderDTO[] = Array.isArray(d.workOrders) ? d.workOrders : [];
+      setOrders(nextOrders);
+      const nextId = preferredId && nextOrders.some(o => o.id === preferredId) ? preferredId : nextOrders[0]?.id || '';
+      setWo(v => (v && nextOrders.some(o => o.id === v) ? v : nextId));
+      return nextOrders;
+    } catch (error) {
+      setOrderLoadError('工单列表加载失败，请检查网络后重试');
+      throw error;
+    } finally {
+      setOrdersLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -941,9 +954,11 @@ export default function DashboardShell({
       setFiles([]);
       setSel('');
       setRelatedHistory(null);
+      setFileLoadError('');
       return [];
     }
     setLoading(true);
+    setFileLoadError('');
     try {
       const r = await fetch(syncUrl(`/api/resource-files?workOrderId=${w}&categoryId=${c}`, forceSync), { cache: 'no-store' });
       if (!r.ok) throw new Error('load files failed');
@@ -955,6 +970,7 @@ export default function DashboardShell({
       setCategoryCounts(v => ({ ...v, [c]: nextFiles.length }));
       return nextFiles;
     } catch {
+      setFileLoadError('当前分类资料加载失败，请检查网络后重试');
       setMsg('文件加载失败，请检查网络后重试');
       return [];
     } finally {
@@ -1240,7 +1256,7 @@ export default function DashboardShell({
     await loadFiles(targetId, targetCategoryId || cat, targetFileId);
     await loadAllFiles(targetId);
     setSearchOpen(false);
-    setDrawerOpen(false);
+    closeOrderDrawer();
   }
 
   async function openFileResult(target: ResourceFileDTO) {
@@ -1293,6 +1309,16 @@ export default function DashboardShell({
     if (versionId) params.set('versionId', versionId);
     if (pageNo) params.set('page', String(pageNo));
     location.href = `/connector-assembly-manuals?${params.toString()}`;
+  }
+
+  function openOrderDrawer(event: React.MouseEvent<HTMLButtonElement>) {
+    orderDrawerReturnFocusRef.current = event.currentTarget;
+    setDrawerOpen(true);
+  }
+
+  function closeOrderDrawer() {
+    setDrawerOpen(false);
+    window.requestAnimationFrame(() => orderDrawerReturnFocusRef.current?.focus());
   }
 
   function openQuickMenu(type: 'stage' | 'priority', target: WorkOrderDTO, event: React.MouseEvent<HTMLElement>) {
@@ -1377,7 +1403,6 @@ export default function DashboardShell({
   }
 
   async function openAccounts() {
-    setUserMenu(false);
     setAccountsOpen(true);
     setAccountError('');
     await loadUsers();
@@ -1483,7 +1508,6 @@ export default function DashboardShell({
   }
 
   async function openTrash() {
-    setUserMenu(false);
     setTrashOpen(true);
     await loadTrash();
   }
@@ -1529,6 +1553,38 @@ export default function DashboardShell({
     loadCategoryCounts(order?.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wo]);
+
+  useEffect(() => {
+    if (!drawerOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.requestAnimationFrame(() => orderDrawerCloseRef.current?.focus());
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setDrawerOpen(false);
+        window.requestAnimationFrame(() => orderDrawerReturnFocusRef.current?.focus());
+        return;
+      }
+      if (event.key !== 'Tab' || !orderDrawerRef.current) return;
+      const focusable = Array.from(orderDrawerRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [drawerOpen]);
 
   useEffect(() => {
     if (!quickMenu) return undefined;
@@ -2066,7 +2122,6 @@ export default function DashboardShell({
   }
 
   async function openSystemSettings() {
-    setUserMenu(false);
     setSystemOpen(true);
     await loadSystemStatus();
   }
@@ -2431,7 +2486,6 @@ export default function DashboardShell({
   }
 
   function openPasswordDialog() {
-    setUserMenu(false);
     setPasswordError('');
     setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
     setPasswordOpen(true);
@@ -2466,17 +2520,41 @@ export default function DashboardShell({
   }
 
   return (
-    <main className="tablet-shell" onTouchStart={onShellTouchStart} onTouchEnd={onShellTouchEnd}>
-      <header className="topbar">
-        <button className="home-button" type="button" aria-label="生产执行首页" onClick={() => { location.href = '/production'; }}>⌂</button>
-        <div className="brand-block">
-          <strong>工单资料库</strong>
-          <span>鸿蒙平板生产资料管理系统</span>
-        </div>
-        <div className="top-search">
+    <main className="tablet-shell hm-workbench-root hm-dashboard-workbench" onTouchStart={onShellTouchStart} onTouchEnd={onShellTouchEnd}>
+      <AppWorkbenchHeader
+        user={user}
+        activeHref="/dashboard"
+        subtitle="生产资料管理工作台"
+        menuItems={[
+          { label: '操作日志', onSelect: () => { void loadLogs('all'); } },
+          { label: '系统设置', onSelect: () => { void openSystemSettings(); } },
+          { label: '账号管理', onSelect: () => { void openAccounts(); } },
+          { label: '回收站', onSelect: () => { void openTrash(); } },
+          { label: '使用帮助', onSelect: () => setHelpOpen(true) },
+          { label: '修改密码', onSelect: openPasswordDialog },
+          { label: '退出登录', onSelect: () => { void logout(); } },
+        ]}
+      />
+
+      <div className="hm-dashboard-page">
+        <WorkbenchPageHeader
+          kicker="资料工作台"
+          title="工单资料库"
+          description="按工单集中查看图纸、SOP、成品图与现场资料"
+          titleId="hm-dashboard-title"
+          actions={(
+            <>
+              {productionReturnKey && <button className="hm-workbench-button" type="button" onClick={returnToProduction}>返回生产执行</button>}
+              <button className="hm-workbench-button primary" type="button" onClick={() => openOrderModal('create')}>新建工单</button>
+            </>
+          )}
+        />
+
+        <section className="hm-dashboard-commandbar" aria-label="资料库查找与快捷操作">
+          <div className="top-search hm-dashboard-global-search">
           <input value={globalKw} onFocus={() => globalKw.trim() && setSearchOpen(true)} onChange={e => setGlobalKw(e.target.value)} placeholder="全局搜索工单 / 文件" />
           <VoiceInputButton value={globalKw} onChange={setGlobalKw} mode="replace" onApplied={() => setSearchOpen(true)} label="搜索语音输入" />
-          <b>⌕</b>
+          <b aria-hidden="true">⌕</b>
           {searchOpen && globalKw.trim() && (
             <div className="global-search-panel">
               {globalSearch.workOrders.length > 0 && <>
@@ -2545,45 +2623,26 @@ export default function DashboardShell({
               {!hasSearchResults(globalSearch) && <div className="search-empty">未找到匹配结果，请调整关键词</div>}
             </div>
           )}
-        </div>
-        <div className="top-actions">
-          {productionReturnKey && <button className="return-production-button" type="button" onClick={returnToProduction}>← 返回生产执行</button>}
-          <button className="notice-button" type="button" aria-label="通知">◇<span /></button>
-          <button className="language-button" type="button">CN</button>
-          <button className="log-button" type="button" onClick={() => loadLogs('all')}>操作日志</button>
-          <div className="library-wrap">
-            <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLib(!lib)}>▱ 资料库</button>
-            <PortalMenu open={lib} anchorRef={libraryMenuButtonRef} className="library-menu" width={220} onClose={() => setLib(false)}>
-                <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
-                <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
-                <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
-                <button type="button" onClick={() => { location.href = '/connector-assembly-manuals'; }}>连接器组装说明书</button>
-                <button className="active" type="button">▤ 生产工单 ✓</button>
-            </PortalMenu>
           </div>
-          <div className="user-wrap">
-            <button ref={userMenuButtonRef} className="user-button" type="button" onClick={() => setUserMenu(!userMenu)}>
-              <span>♙</span>
-              <b title={accountName}>{accountName}</b>
-              <em>⌄</em>
+          <div className="hm-dashboard-command-actions">
+            <button className="hm-workbench-button" type="button" onClick={() => { void loadLogs('all'); }}>操作日志</button>
+            <button className="hm-workbench-button hm-dashboard-order-trigger" type="button" aria-haspopup="dialog" aria-expanded={drawerOpen} onClick={openOrderDrawer}>
+              查找工单 <span>{orders.length}</span>
             </button>
-            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176} onClose={() => setUserMenu(false)}>
-                <button type="button" onClick={openSystemSettings}>系统设置</button>
-                <button type="button" onClick={openAccounts}>账号管理</button>
-                <button type="button" onClick={openTrash}>回收站</button>
-                <button type="button" onClick={() => { setUserMenu(false); setHelpOpen(true); }}>使用帮助</button>
-                <button type="button" onClick={openPasswordDialog}>修改密码</button>
-                <button type="button" onClick={logout}>退出登录</button>
-            </PortalMenu>
           </div>
-        </div>
-      </header>
+        </section>
 
-      <section className="workspace">
-        <aside className={drawerOpen ? 'orders-panel orders-drawer open' : 'orders-panel orders-drawer'} aria-hidden={!drawerOpen}>
+      <section className="workspace hm-dashboard-workspace">
+        {drawerOpen && <aside
+          ref={orderDrawerRef}
+          className="orders-panel orders-drawer open"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="hm-dashboard-order-drawer-title"
+        >
           <div className="panel-head">
             <div>
-              <span>生产工单</span>
+              <span id="hm-dashboard-order-drawer-title">生产工单</span>
               <strong>{drawerWeekLabel} · {list.length} 单</strong>
             </div>
             <div className="panel-head-actions">
@@ -2591,7 +2650,7 @@ export default function DashboardShell({
               <button className="archive-week-button" type="button" disabled={!currentWeekStartValue()} onClick={() => openWeekAction('close')}>结束本周</button>
               <button className="activate-week-button" type="button" onClick={() => openWeekAction('activate_next')}>启用下周</button>
               <button className="new-order-button" type="button" onClick={() => openOrderModal('create')}>新建工单</button>
-              <button className="drawer-close" type="button" aria-label="关闭工单抽屉" onClick={() => setDrawerOpen(false)}>×</button>
+              <button ref={orderDrawerCloseRef} className="drawer-close" type="button" aria-label="关闭工单抽屉" title="关闭工单抽屉" onClick={closeOrderDrawer}>×</button>
             </div>
           </div>
           <div className="plan-view-tabs" aria-label="周计划视图">
@@ -2624,6 +2683,17 @@ export default function DashboardShell({
               </select>
             </label>
           </div>
+          <div className="hm-dashboard-filter-summary" aria-live="polite">
+            <span>找到 <b>{list.length}</b> 张工单</span>
+            <div className="hm-dashboard-active-filters">
+              {kw.trim() && <em>关键词：{kw.trim()}</em>}
+              {orderFilter !== 'all' && <em>{orderFilter === 'today' ? '今日交期' : orderFilter === 'missing' ? '缺资料' : '异常'}</em>}
+              {stageFilter !== 'all' && <em>{flowText(stageFilter)}</em>}
+            </div>
+            {(kw.trim() || orderFilter !== 'all' || stageFilter !== 'all') && (
+              <button type="button" onClick={() => { setKw(''); setOrderFilter('all'); setStageFilter('all'); }}>清除筛选</button>
+            )}
+          </div>
           <div className="order-stats compact">
             <span>今日交期 {visibleToday.length}</span>
             <span>当前列表 {visibleWeek.length}</span>
@@ -2653,10 +2723,18 @@ export default function DashboardShell({
               )}
             </section>
           )}
+          {ordersLoading && <div className="hm-dashboard-inline-state loading" role="status">正在刷新工单列表，现有结果仍可查看</div>}
+          {orderLoadError && (
+            <div className="hm-dashboard-inline-state error" role="alert">
+              <span>{orderLoadError}</span>
+              <button type="button" onClick={() => { void refreshOrders(order?.id, true).catch(() => undefined); }}>重试</button>
+            </div>
+          )}
           <OrderGroup title={planView === 'draft_next' ? '下周草稿' : planView === 'history' ? '历史周工单' : '当前周工单'} orders={list} selected={order?.id} choose={id => openWorkOrder(id)} categories={categories} openQuickMenu={openQuickMenu} readOnly={planView === 'history'} diffTypes={planView === 'draft_next' ? draftDiffTypes : {}} />
-          {!list.length && <div className="empty-orders large">未找到匹配工单</div>}
-        </aside>
-        {drawerOpen && <button className="drawer-mask" type="button" aria-label="关闭工单抽屉" onClick={() => setDrawerOpen(false)} />}
+          {!ordersLoading && !orderLoadError && !orders.length && <div className="empty-orders large">当前视图暂无工单，可新建工单或导入周计划。</div>}
+          {!ordersLoading && !orderLoadError && orders.length > 0 && !list.length && <div className="empty-orders large">没有符合当前条件的工单，请清除筛选后重试。</div>}
+        </aside>}
+        {drawerOpen && <button className="drawer-mask" type="button" aria-label="关闭工单抽屉" onClick={closeOrderDrawer} />}
 
         <nav className="resource-menu">
           <div className="resource-head">
@@ -2667,7 +2745,7 @@ export default function DashboardShell({
             const count = currentCounts[c.id] || 0;
             const required = requiredCategoryCodes.has(c.code);
             return (
-              <button key={c.id} className={!managerOpen && c.id === category?.id ? 'active' : ''} type="button" onClick={() => { setManagerOpen(false); setCat(c.id); }}>
+              <button key={c.id} className={!managerOpen && c.id === category?.id ? 'active' : ''} type="button" aria-pressed={!managerOpen && c.id === category?.id} title={`${c.name}，${count} 个文件`} onClick={() => { setManagerOpen(false); setCat(c.id); }}>
                 <span className="category-mark">{categoryIcons[c.code] || c.name.slice(0, 1)}</span>
                 <b className="category-name">{categoryNameLines(c).map(line => <span key={line}>{line}</span>)}</b>
                 <i className={count ? 'state-dot ok' : required ? 'state-dot warn' : 'state-dot'} />
@@ -2683,13 +2761,22 @@ export default function DashboardShell({
 
         <section className="main-card">
           <div className="current-order-strip">
-            <div className="order-strip-info">
-              <span className="order-strip-chip customer" title={customerLabel(order)}>客户：{customerLabel(order)}</span>
-              <span className="order-strip-chip spec simplified" title={order?.specification || order?.code || '未设置'}>规格：{order?.specification?.trim() || '未设置'}</span>
-              <button className="copy-spec-button" type="button" disabled={!order?.specification && !order?.code} onClick={copySpecification} title="复制规格">复制规格</button>
-            </div>
+            {order ? (
+              <div className="order-strip-info">
+                <span className="hm-dashboard-current-label">当前工单</span>
+                <span className="order-strip-chip customer" title={customerLabel(order)}>客户：{customerLabel(order)}</span>
+                <span className="order-strip-chip spec simplified" title={order.specification || order.code || '未设置'}>规格：{order.specification?.trim() || '未设置'}</span>
+                <button className="copy-spec-button" type="button" disabled={!order.specification && !order.code} onClick={copySpecification} title="复制完整规格">复制规格</button>
+              </div>
+            ) : (
+              <div className="order-strip-info hm-dashboard-no-order">
+                <span className="hm-dashboard-current-label">当前工单</span>
+                <strong>尚未选择工单</strong>
+                <span>请先从工单抽屉选择一张工单</span>
+              </div>
+            )}
             <div className="order-strip-actions">
-              <button className="switch-order-button" type="button" onClick={() => setDrawerOpen(true)}>切换工单</button>
+              <button className="switch-order-button" type="button" aria-haspopup="dialog" aria-expanded={drawerOpen} onClick={openOrderDrawer}>{order ? '切换工单' : '选择工单'}</button>
               <div className="more-actions-wrap">
                 <button ref={moreActionsButtonRef} className="strip-more-button" type="button" disabled={!order} onClick={() => setMoreActionsOpen(v => !v)}>更多</button>
                 <PortalMenu open={moreActionsOpen} anchorRef={moreActionsButtonRef} className="more-actions-menu" width={190} onClose={() => setMoreActionsOpen(false)}>
@@ -2734,7 +2821,14 @@ export default function DashboardShell({
                 )}
 
                 <div className="preview-stage">
-                  {loading ? (
+                  {fileLoadError ? (
+                    <div className="preview-loading hm-dashboard-preview-error" role="alert">
+                      <span aria-hidden="true">!</span>
+                      <strong>资料暂时无法加载</strong>
+                      <p>{fileLoadError}</p>
+                      <button type="button" onClick={() => { void loadFiles(order?.id, category?.id, undefined, true); }}>重新加载</button>
+                    </div>
+                  ) : loading ? (
                     <div className="preview-loading">
                       <span />
                       <strong>资料加载中</strong>
@@ -2788,8 +2882,8 @@ export default function DashboardShell({
                         {files.map(f => (
                           <button key={f.id} className={f.id === file?.id ? 'strip-file thumb active' : 'strip-file thumb'} type="button" onClick={() => setSel(f.id)}>
                             <FileThumb file={f} />
-                            <b>{shortName(displayFileName(f))}</b>
-                            <small>{f.version || 'V1.0'} · {dt(f.createdAt, false)}</small>
+                            <b title={displayFileName(f)}>{shortName(displayFileName(f))}</b>
+                            <small>{f.version || 'V1.0'} · {bytes(f.fileSize)} · {dt(f.createdAt, false)}</small>
                             <em className={f.id === latestFileId ? 'version-badge latest' : 'version-badge'}>{f.id === latestFileId ? '最新' : '历史'}</em>
                           </button>
                         ))}
@@ -2820,7 +2914,7 @@ export default function DashboardShell({
                   <button className="tool-resize-handle" type="button" aria-label="调整工具窗宽度" onPointerDown={startToolResize} />
                   <div className="tool-window-head">
                     <strong>{toolTab === 'info' ? '文件信息' : toolTab === 'upload' ? '上传资料' : toolTab === 'actions' ? '文件操作' : '上传队列'}</strong>
-                    <button type="button" onClick={() => setToolOpen(false)}>×</button>
+                    <button type="button" aria-label="关闭资料工具窗" title="关闭资料工具窗" onClick={() => setToolOpen(false)}>×</button>
                   </div>
                   {toolTab === 'info' && (
                     <div className="tool-pane">
@@ -2928,6 +3022,7 @@ export default function DashboardShell({
           )}
         </section>
       </section>
+      </div>
 
       {order && (
         <section className="print-summary" aria-hidden="true">
@@ -3481,36 +3576,34 @@ function OrderGroup({
       {orders.map(o => {
         const completion = completionOf(categories, o.categoryFileCounts || {});
         const missingText = completion.missingNames.length ? `缺失：${completion.missingNames.join('、')}` : '必填资料已齐全';
-        const delivery = orderDeliveryLabel(o);
-        const drawingText = o.drawingStatus?.trim() || '图纸未填';
-        const materialText = o.materialStatus?.trim() || '配料未填';
         const diffType = diffTypes[o.id];
         const diffLabel = diffType === 'new' ? '新增' : diffType === 'continued' ? '延续' : diffType === 'changed' ? '有变更' : diffType === 'duplicate' ? '重复' : diffType === 'invalid' ? '异常' : '';
         return (
-          <button key={o.id} className={o.id === selected ? 'order-card active' : 'order-card'} type="button" onClick={() => choose(o.id)}>
-            <div className="order-topline">
-              <strong title={workOrderDisplayCode(o)}>{workOrderDisplayCode(o)}</strong>
-              <span className="order-card-tags">
-                {diffLabel && <em className={`draft-diff-chip ${diffType}`}>{diffLabel}</em>}
-                <span role="button" tabIndex={readOnly ? -1 : 0} className={`tag priority-chip ${o.priority}`} onClick={e => { e.stopPropagation(); if (!readOnly) openQuickMenu('priority', o, e); }}>{priorityText[o.priority] || '一般'}</span>
+          <article key={o.id} className={o.id === selected ? 'order-card active' : 'order-card'}>
+            <button className="order-card-select" type="button" aria-pressed={o.id === selected} onClick={() => choose(o.id)}>
+              <span className="order-topline">
+                <strong title={customerLabel(o)}>{customerLabel(o)}</strong>
+                <span className="order-card-tags">
+                  {o.id === selected && <em className="hm-dashboard-selected-tag">当前</em>}
+                  {diffLabel && <em className={`draft-diff-chip ${diffType}`}>{diffLabel}</em>}
+                </span>
               </span>
+              <span className="hm-dashboard-order-spec" title={workOrderDisplayCode(o)}>{workOrderDisplayCode(o)}</span>
+              <span className="order-customer" title={o.productName || '未设置品名'}>{o.productName || '未设置品名'}</span>
+              <span className="hm-dashboard-order-meta">
+                <em className={`completion-chip ${completion.key}`} title={missingText}>{completion.text}</em>
+                <em>{o.totalFileCount || 0} 个文件</em>
+                <em>更新 {shortDt(o.updatedAt)}</em>
+              </span>
+            </button>
+            <div className="order-card-actions" aria-label={`${workOrderDisplayCode(o)} 快捷操作`}>
+              <button type="button" disabled={readOnly} className={`flow-chip ${normalizeFlowStage(o.stage)}`} aria-label={`状态：${flowText(o.stage)}`} title={readOnly ? '历史周工单只读' : '调整状态'} onClick={e => openQuickMenu('stage', o, e)}>{flowText(o.stage)}</button>
+              <button type="button" disabled={readOnly} className={`tag priority-chip ${o.priority}`} aria-label={`优先级：${priorityText[o.priority] || '一般'}`} title={readOnly ? '历史周工单只读' : '调整优先级'} onClick={e => openQuickMenu('priority', o, e)}>{priorityText[o.priority] || '一般'}</button>
+              {o.weekStartDate && <span className="planned-text">{ymdLocal(o.weekStartDate)}</span>}
             </div>
-            <span className="order-customer" title={`${customerLabel(o)} · ${o.productName || '-'}`}>{customerLabel(o)} · {o.productName || '-'}</span>
-            <div className="order-weekly-meta">
-              <span title={o.uncompletedQty || '-'}>未交：{o.uncompletedQty || '-'}</span>
-              <span title={delivery}>交期：{delivery}</span>
-              <span title={drawingText}>图纸：{drawingText}</span>
-              <span title={materialText}>配料：{materialText}</span>
-            </div>
-            <div className="order-compact-meta">
-              <span role="button" tabIndex={readOnly ? -1 : 0} className={`flow-chip ${normalizeFlowStage(o.stage)}`} onClick={e => { e.stopPropagation(); if (!readOnly) openQuickMenu('stage', o, e); }}>{flowText(o.stage)}</span>
-              <strong className={`completion-chip ${completion.key}`} title={missingText}>{completion.text}</strong>
-              {o.weekStartDate && <em className="planned-text">{ymdLocal(o.weekStartDate)}</em>}
-            </div>
-          </button>
+          </article>
         );
       })}
-      {!orders.length && <div className="empty-orders">暂无工单</div>}
     </section>
   );
 }
