@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
+import { writeClipboardText } from '@/lib/client-platform';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
 import type { CurrentUserDTO } from '@/types';
@@ -152,11 +153,11 @@ type FilterChip = {
   remove: () => void;
 };
 
-const stages: Array<{ key: StageKey; label: string }> = [
-  { key: 'not_issued', label: '未发图' },
-  { key: 'frontend', label: '在前端' },
-  { key: 'backend', label: '在后端' },
-  { key: 'completed', label: '已完成' },
+const stages: Array<{ key: StageKey; label: string; step: string; hint: string }> = [
+  { key: 'not_issued', label: '未发图', step: '01', hint: '等待图纸下发' },
+  { key: 'frontend', label: '在前端', step: '02', hint: '前端工序进行中' },
+  { key: 'backend', label: '在后端', step: '03', hint: '后端工序进行中' },
+  { key: 'completed', label: '已完成', step: '04', hint: '生产完成归档' },
 ];
 
 const drawingStatuses = ['未发', '已发', '待样品确认', '待客户确认', '图纸需变更', '已确认'] as const;
@@ -368,6 +369,10 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const requestRef = useRef(0);
   const boardRef = useRef<BoardPayload | null>(null);
   const keywordReadyRef = useRef(false);
+  const userDisplayName = user.displayName || user.username;
+  const todayLabel = useMemo(() => new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: 'long', day: 'numeric', weekday: 'short',
+  }).format(new Date()), []);
 
   useEffect(() => { boardRef.current = board; }, [board]);
 
@@ -545,7 +550,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   useEffect(() => {
     const saved = sessionStorage.getItem('production-execution:completed-collapsed');
-    setCompletedCollapsed(saved === null ? window.innerWidth <= 1024 : saved === '1');
+    setCompletedCollapsed(window.innerWidth >= 1280 && saved === '1');
   }, []);
 
   useEffect(() => {
@@ -848,13 +853,27 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     location.href = `/api/export/production-execution.csv?${params.toString()}`;
   }
 
+  async function copySpecification(order: ProductionOrder): Promise<void> {
+    const specification = order.specification?.trim() || order.code.trim();
+    if (!specification) {
+      setToast('暂无可复制的规格');
+      return;
+    }
+    try {
+      await writeClipboardText(specification);
+      setToast(order.specification?.trim() ? '已复制完整规格' : '规格未设置，已复制内部编号');
+    } catch {
+      setToast('复制失败，请手动选择规格复制');
+    }
+  }
+
   async function logout(): Promise<void> {
     await fetch('/api/auth/logout', { method: 'POST' });
     location.href = '/login';
   }
 
   const cardProps = {
-    batchMode, selected, toggleSelected, openDetail, openUpdate, openResources: openWorkOrderResources,
+    batchMode, selected, toggleSelected, openDetail, openUpdate, openResources: openWorkOrderResources, copySpecification,
     openStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, item: ProductionOrder): void => {
       statusButtonRef.current = event.currentTarget;
       setDrawingMenuOrder(null);
@@ -868,23 +887,37 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   };
 
   return (
-    <main className="production-page">
+    <main className="production-page hm-production-workbench">
       <header className="production-topbar">
-        <div className="production-brand"><strong>生产执行中心</strong><span>本周任务、异常与进度闭环</span></div>
+        <div className="production-brand">
+          <span className="production-brand-mark" aria-hidden="true">制</span>
+          <span className="production-brand-copy"><strong>工单资料库</strong><small>现场生产工作台</small></span>
+        </div>
         <nav className="production-main-nav" aria-label="主要导航">
           <a className="active" href="/production">生产执行</a><a href="/dashboard">生产工单</a><a href="/weekly-plan-center">周计划</a>
           <a href="/drawing-library">图纸资料库</a><a href="/connector-parameters">连接器参数</a><a href="/connector-assembly-manuals">组装说明书</a>
           <a href="/dashboard?openSettings=1">系统设置</a>
         </nav>
         <div className="user-wrap">
-          <button ref={userButtonRef} className="user-button" type="button" onClick={() => setUserMenu(value => !value)}><span>♙</span><b>{user.displayName || user.username}</b><em>⌄</em></button>
-          <PortalMenu open={userMenu} anchorRef={userButtonRef} className="user-menu app-user-menu" width={176} onClose={() => setUserMenu(false)}>
+          <button ref={userButtonRef} className="user-button" type="button" aria-label={`${userDisplayName}，打开用户菜单`} title={userDisplayName} aria-expanded={userMenu} onClick={() => setUserMenu(value => !value)}><span aria-hidden="true">{userDisplayName.slice(0, 1)}</span><b>{userDisplayName}</b><em>⌄</em></button>
+          <PortalMenu open={userMenu} anchorRef={userButtonRef} className="user-menu app-user-menu hm-production-menu" width={176} onClose={() => setUserMenu(false)}>
             <button type="button" onClick={() => { location.href = '/dashboard?openSettings=1'; }}>系统设置</button><button type="button" onClick={logout}>退出登录</button>
           </PortalMenu>
         </div>
       </header>
 
       <div className="production-execution-main">
+        <section className="production-workspace-heading" aria-labelledby="production-page-title">
+          <div className="production-workspace-title">
+            <span className="production-page-kicker">生产执行</span>
+            <div><h1 id="production-page-title">生产执行中心</h1><p>{todayLabel} · 本周任务、异常与进度闭环</p></div>
+          </div>
+          <div className="production-page-actions" aria-label="页面操作">
+            <button className={batchMode ? 'active' : ''} type="button" onClick={toggleBatchMode}>{batchMode ? '退出批量' : '批量操作'}</button>
+            <button type="button" onClick={exportCsv}>导出 CSV</button>
+          </div>
+        </section>
+
         <section className="production-summary" aria-label="当前周生产摘要">
           <button className={`production-week-label ${summaryActive('all') ? 'active' : ''}`} type="button" onClick={() => toggleSummary('all')}>
             <span>当前启用周 · 全周统计</span><strong>{summary?.weekStartDate ? `${dateText(summary.weekStartDate)} - ${dateText(summary.weekEndDate)}` : '尚未启用周计划'}</strong><em>{summary?.total ?? 0} 工单</em>
@@ -896,28 +929,27 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           ].map(([label, value, tone, key]) => <button className={`${String(tone)} ${summaryActive(String(key)) ? 'active' : ''}`} type="button" key={String(key)} onClick={() => toggleSummary(key as Parameters<typeof toggleSummary>[0])}><span>{label}</span><strong>{value}</strong></button>)}
         </section>
 
-        <section className="production-toolbar">
-          <div className="production-view-tabs">
-            <button className={view === 'board' ? 'active' : ''} type="button" onClick={() => changeView('board')}>生产看板</button>
-            <button className={view === 'today' ? 'active' : ''} type="button" onClick={() => changeView('today')}>今日任务</button>
-            <button className={view === 'exceptions' ? 'active' : ''} type="button" onClick={() => changeView('exceptions')}>异常任务</button>
+        <section className="production-controls" aria-label="生产任务筛选">
+          <div className="production-toolbar">
+            <div className="production-view-tabs" aria-label="任务视图">
+              <button className={view === 'board' ? 'active' : ''} type="button" aria-pressed={view === 'board'} onClick={() => changeView('board')}>生产看板</button>
+              <button className={view === 'today' ? 'active' : ''} type="button" aria-pressed={view === 'today'} onClick={() => changeView('today')}>今日任务</button>
+              <button className={view === 'exceptions' ? 'active' : ''} type="button" aria-pressed={view === 'exceptions'} onClick={() => changeView('exceptions')}>异常任务</button>
+            </div>
+            <label className="production-search"><span aria-hidden="true">⌕</span><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索规格 / 客户 / 品名 / 订单号" /></label>
+            <button ref={filterButtonRef} className={filtersOpen || activeFilterCount ? 'active' : ''} type="button" aria-expanded={filtersOpen} onClick={() => { setDraftAdvanced(cloneAdvanced(advanced)); setFiltersOpen(value => !value); }}>高级筛选{activeFilterCount ? ` ${activeFilterCount}` : ''}</button>
+            <PortalMenu open={filtersOpen} anchorRef={filterButtonRef} align="right" className="production-filter-menu hm-production-menu hm-production-filter-menu" width={420} onClose={() => setFiltersOpen(false)} closeOnSelect={false}>
+              <AdvancedFilterPanel customers={board?.filterOptions.customers || []} value={draftAdvanced} setValue={setDraftAdvanced} clear={() => setDraftAdvanced(emptyAdvanced)} apply={() => { setAdvanced(cloneAdvanced(draftAdvanced)); setFiltersOpen(false); setPage(1); }} />
+            </PortalMenu>
+            <span className="production-result-count">筛选结果 <b>{board?.pagination.total || 0}</b> / 全周 {summary?.total || 0}</span>
           </div>
-          <label className="production-search"><span aria-hidden="true">⌕</span><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索规格 / 客户 / 品名 / 订单号" /></label>
-          <button ref={filterButtonRef} className={filtersOpen || activeFilterCount ? 'active' : ''} type="button" onClick={() => { setDraftAdvanced(cloneAdvanced(advanced)); setFiltersOpen(value => !value); }}>高级筛选{activeFilterCount ? ` ${activeFilterCount}` : ''}</button>
-          <PortalMenu open={filtersOpen} anchorRef={filterButtonRef} align="right" className="production-filter-menu" width={420} onClose={() => setFiltersOpen(false)} closeOnSelect={false}>
-            <AdvancedFilterPanel customers={board?.filterOptions.customers || []} value={draftAdvanced} setValue={setDraftAdvanced} clear={() => setDraftAdvanced(emptyAdvanced)} apply={() => { setAdvanced(cloneAdvanced(draftAdvanced)); setFiltersOpen(false); setPage(1); }} />
-          </PortalMenu>
-          <button type="button" onClick={toggleBatchMode}>{batchMode ? '退出批量' : '批量操作'}</button>
-          <button type="button" onClick={exportCsv}>导出 CSV</button>
-          <span className="production-result-count">筛选结果 <b>{board?.pagination.total || 0}</b> / 全周 {summary?.total || 0}</span>
+          <div className="production-quick-filters" aria-label="快捷筛选">
+            <span className="production-quick-filter-label">快捷筛选</span>
+            <button className={!quick.length ? 'active' : ''} type="button" aria-pressed={!quick.length} onClick={() => { setQuick([]); setPage(1); }}>全部</button>
+            {quickByView[view].map(item => <button className={quick.includes(item.key) ? 'active' : ''} key={item.key} type="button" aria-pressed={quick.includes(item.key)} onClick={() => toggleQuick(item.key)}>{item.label}</button>)}
+          </div>
+          {!!filterChips.length && <div className="production-filter-chips" aria-label="已应用筛选">{filterChips.map(chip => <button key={chip.key} type="button" onClick={() => { chip.remove(); setPage(1); }} title={`移除${chip.label}`}>{chip.label}<span>×</span></button>)}<button className="clear" type="button" onClick={() => { setAdvanced(emptyAdvanced); setQuick([]); setKeyword(''); setPage(1); }}>清空全部</button></div>}
         </section>
-
-        <section className="production-quick-filters" aria-label="快捷筛选">
-          <button className={!quick.length ? 'active' : ''} type="button" onClick={() => { setQuick([]); setPage(1); }}>全部</button>
-          {quickByView[view].map(item => <button className={quick.includes(item.key) ? 'active' : ''} key={item.key} type="button" onClick={() => toggleQuick(item.key)}>{item.label}</button>)}
-        </section>
-
-        {!!filterChips.length && <div className="production-filter-chips" aria-label="已应用筛选">{filterChips.map(chip => <button key={chip.key} type="button" onClick={() => { chip.remove(); setPage(1); }} title={`移除${chip.label}`}>{chip.label}<span>×</span></button>)}<button className="clear" type="button" onClick={() => { setAdvanced(emptyAdvanced); setQuick([]); setKeyword(''); setPage(1); }}>清空全部</button></div>}
 
         {error && <div className="production-error"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
         {!summary?.weekStartDate && !loading && <div className="production-empty-week"><strong>当前暂无启用生产周</strong><span>请前往周计划中心审核并启用生产计划。</span><a href="/weekly-plan-center">进入周计划中心</a></div>}
@@ -929,8 +961,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
                 <section className={`production-column ${column.key} ${column.key === 'completed' && completedCollapsed ? 'collapsed' : ''}`} key={column.key}>
                   <header className="production-stage-header">
                     {column.key === 'completed'
-                      ? <button type="button" aria-expanded={!completedCollapsed} onClick={toggleCompletedColumn}><strong>{column.label}</strong><span>{board?.stageCounts[column.key] || 0}</span><em>{completedCollapsed ? '展开' : '收起'}</em></button>
-                      : <><strong>{column.label}</strong><span>{board?.stageCounts[column.key] || 0}</span></>}
+                      ? <button type="button" aria-expanded={!completedCollapsed} onClick={toggleCompletedColumn}><span className="production-stage-step">{column.step}</span><span className="production-stage-copy"><strong>{column.label}</strong><small>{column.hint}</small></span><span className="production-stage-count">{board?.stageCounts[column.key] || 0}</span><em>{completedCollapsed ? '展开' : '收起'}</em></button>
+                      : <><span className="production-stage-step">{column.step}</span><span className="production-stage-copy"><strong>{column.label}</strong><small>{column.hint}</small></span><span className="production-stage-count">{board?.stageCounts[column.key] || 0}</span></>}
                   </header>
                   {!completedCollapsed || column.key !== 'completed' ? <div ref={element => { columnRefs.current[column.key] = element; }} className="production-column-list">
                     {grouped[column.key].map(order => <ProductionCard key={order.id} order={order} {...cardProps} />)}
@@ -957,11 +989,11 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
       {batchMode && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong><button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button><button type="button" disabled={!selected.length} onClick={() => openBatch('set_stage')}>修改状态</button><button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button><button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
 
-      <PortalMenu open={!!statusMenuOrder} anchorRef={statusButtonRef} className="production-status-menu" width={164} onClose={() => setStatusMenuOrder(null)} closeOnSelect={false}>
+      <PortalMenu open={!!statusMenuOrder} anchorRef={statusButtonRef} className="production-status-menu hm-production-menu hm-production-status-menu" width={164} onClose={() => setStatusMenuOrder(null)} closeOnSelect={false}>
         {statusMenuOrder && stageMenuItems(statusMenuOrder).map(stage => <button type="button" disabled={saving} key={stage.key} onClick={() => requestStageChange(statusMenuOrder, stage.key)}>{stage.label}</button>)}
       </PortalMenu>
 
-      <PortalMenu open={!!drawingMenuOrder} anchorRef={drawingButtonRef} className="production-status-menu" width={184} onClose={() => setDrawingMenuOrder(null)} closeOnSelect={false}>
+      <PortalMenu open={!!drawingMenuOrder} anchorRef={drawingButtonRef} className="production-status-menu hm-production-menu hm-production-status-menu" width={184} onClose={() => setDrawingMenuOrder(null)} closeOnSelect={false}>
         {drawingMenuOrder && drawingStatuses.map(status => <button className={drawingMenuOrder.drawingStatus === status ? 'active' : ''} type="button" disabled={saving} key={status} onClick={() => void saveDrawingStatus(drawingMenuOrder, status)}>{status}</button>)}
       </PortalMenu>
 
@@ -987,6 +1019,7 @@ type ProductionCardProps = {
   openDetail: (order: ProductionOrder) => void;
   openUpdate: (order: ProductionOrder) => void;
   openResources: (order: ProductionOrder) => void;
+  copySpecification: (order: ProductionOrder) => Promise<void>;
   openStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, order: ProductionOrder) => void;
   openDrawingStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, order: ProductionOrder) => void;
   showExceptions?: boolean;
@@ -1000,7 +1033,7 @@ function ProductionCard(props: ProductionCardProps) {
 
 function CardSelection({ order, batchMode, selected, toggleSelected }: Pick<ProductionCardProps, 'order' | 'batchMode' | 'selected' | 'toggleSelected'>) {
   if (!batchMode) return null;
-  return <input aria-label={`选择${specText(order)}`} type="checkbox" checked={selected.includes(order.id)} onChange={() => toggleSelected(order.id)} />;
+  return <label className="production-card-selection" title={`选择${specText(order)}`}><input aria-label={`选择${specText(order)}`} type="checkbox" checked={selected.includes(order.id)} onChange={() => toggleSelected(order.id)} /></label>;
 }
 
 function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu }: Pick<ProductionCardProps, 'order' | 'showExceptions' | 'openDrawingStatusMenu'>) {
@@ -1018,13 +1051,21 @@ function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu }: P
   </div>;
 }
 
-function WorkOrderCardTitle({ order, batchMode, selected, toggleSelected, openDetail, openResources }: Pick<ProductionCardProps, 'order' | 'batchMode' | 'selected' | 'toggleSelected' | 'openDetail' | 'openResources'>) {
-  return <div className="production-card-title">
-    <CardSelection order={order} batchMode={batchMode} selected={selected} toggleSelected={toggleSelected} />
-    <button className="production-card-spec" type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order)}>{specText(order)}</button>
-    <em className={order.priority}>{priorityText(order.priority)}</em>
-    <button className="production-card-info" type="button" title="查看工单详情" aria-label="查看工单详情" onClick={() => openDetail(order)}>i</button>
-  </div>;
+function WorkOrderCardTitle({ order, batchMode, selected, toggleSelected, openDetail, openResources, copySpecification }: Pick<ProductionCardProps, 'order' | 'batchMode' | 'selected' | 'toggleSelected' | 'openDetail' | 'openResources' | 'copySpecification'>) {
+  return <>
+    <div className="production-card-title">
+      <CardSelection order={order} batchMode={batchMode} selected={selected} toggleSelected={toggleSelected} />
+      <div className="production-card-identity">
+        <strong title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</strong>
+        <button className="production-card-spec" type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order)}>{specText(order)}</button>
+      </div>
+      <div className="production-card-title-actions">
+        <button className="production-card-copy" type="button" title="复制完整规格" aria-label="复制完整规格" onClick={() => void copySpecification(order)}>⧉</button>
+        <button className="production-card-info" type="button" title="查看工单详情" aria-label="查看工单详情" onClick={() => openDetail(order)}>i</button>
+      </div>
+    </div>
+    <div className="production-card-context"><span title={order.productName || '品名待补充'}>{order.productName || '品名待补充'}</span><em className={order.priority}>{priorityText(order.priority)}</em></div>
+  </>;
 }
 
 function NotIssuedWorkOrderCard(props: ProductionCardProps) {
@@ -1033,8 +1074,8 @@ function NotIssuedWorkOrderCard(props: ProductionCardProps) {
   const reminder = /样品|确认|变更|异常|返工|待处理/.test(order.latestProgressRemark || '') ? order.latestProgressRemark : '';
   return <article className={`production-card production-card-not-issued not_issued ${props.selected.includes(order.id) ? 'selected' : ''}`}>
     <WorkOrderCardTitle {...props} />
-    <div className="production-card-customer"><strong>{order.customerName || '客户待补充'}</strong>{order.productName && <span>· {order.productName}</span>}</div>
-    <dl className="production-leader-metrics"><div><dt>目标数量</dt><dd>{quantity.targetQty === null ? '待补充' : `${formatProductionQuantity(quantity.targetQty)} 套`}</dd></div><div><dt>交期</dt><dd>{deliveryText(order) || '待设置'}</dd></div></dl>
+    <dl className="production-leader-metrics production-quantity-grid"><div><dt>目标数量</dt><dd>{quantity.targetQty === null ? '待补充' : formatProductionQuantity(quantity.targetQty)}</dd></div><div><dt>已完成</dt><dd>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</dd></div><div><dt>未完成</dt><dd>{quantity.remainingQty === null ? '-' : formatProductionQuantity(quantity.remainingQty)}</dd></div></dl>
+    <div className="production-card-meta"><span>计划交期</span><strong>{deliveryText(order) || '待设置'}</strong></div>
     <ProductionAlertList order={order} showExceptions={props.showExceptions} openDrawingStatusMenu={openDrawingStatusMenu} />
     {reminder && <p className="production-focus-reminder" title={reminder}>{reminder}</p>}
     <footer><button type="button" onClick={event => openDrawingStatusMenu(event, order)}>更新图纸状态</button><button className="primary" type="button" onClick={() => openUpdate(order)}>更新进度</button></footer>
@@ -1047,11 +1088,9 @@ function ActiveWorkOrderCard(props: ProductionCardProps) {
   const percentageWidth = Math.max(0, Math.min(quantity.percentage || 0, 100));
   return <article className={`production-card production-card-active ${order.stage} ${props.selected.includes(order.id) ? 'selected' : ''}`}>
     <WorkOrderCardTitle {...props} />
-    <div className="production-card-customer"><strong>{order.customerName || '客户待补充'}</strong>{order.productName && <span>· {order.productName}</span>}</div>
     <button className="production-progress-hit" type="button" onClick={() => openUpdate(order)} title="快速更新累计完成数量">
-      <span><strong>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</strong> / {quantity.targetQty === null ? '目标待补充' : `${formatProductionQuantity(quantity.targetQty)} 套`}<em>{formatProductionPercentage(quantity.percentage)}</em></span>
-      <i><b style={{ width: `${percentageWidth}%` }} /></i>
-      {quantity.remainingQty !== null && quantity.remainingQty > 0 && <small>剩余 {formatProductionQuantity(quantity.remainingQty)} 套</small>}
+      <span className="production-quantity-grid"><span><small>目标数量</small><strong>{quantity.targetQty === null ? '-' : formatProductionQuantity(quantity.targetQty)}</strong></span><span><small>已完成</small><strong>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</strong></span><span><small>未完成</small><strong>{quantity.remainingQty === null ? '-' : formatProductionQuantity(quantity.remainingQty)}</strong></span></span>
+      <span className="production-progress-track"><i><b style={{ width: `${percentageWidth}%` }} /></i><strong>{formatProductionPercentage(quantity.percentage)}</strong></span>
       {quantity.overrunQty !== null && quantity.overrunQty > 0 && <small className="overrun">超产 {formatProductionQuantity(quantity.overrunQty)} 套</small>}
     </button>
     <ProductionAlertList order={order} showExceptions={props.showExceptions} openDrawingStatusMenu={props.openDrawingStatusMenu} />
@@ -1060,21 +1099,18 @@ function ActiveWorkOrderCard(props: ProductionCardProps) {
 }
 
 function CompletedWorkOrderCard(props: ProductionCardProps) {
-  const { order, openResources, openStatusMenu } = props;
+  const { order, openStatusMenu } = props;
   const isSelected = props.selected.includes(order.id);
   const quantity = order.quantitySummary;
   const quantityText = quantity.targetQty === null
     ? `已完成 ${formatProductionQuantity(quantity.completedQty)} 套 · 目标待补充`
     : `${formatProductionQuantity(quantity.completedQty)} / ${formatProductionQuantity(quantity.targetQty)} 套 · ${formatProductionPercentage(quantity.percentage)}`;
   return <article className={`production-card production-card-completed completed ${quantity.status} ${isSelected ? 'selected' : ''}`}>
-    <div className="production-completed-title">
-      <CardSelection order={order} batchMode={props.batchMode} selected={props.selected} toggleSelected={props.toggleSelected} />
-      <button type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order)}>{specText(order)}</button>
-      <button className="production-completed-more" type="button" title="更多" aria-label="更多状态操作" onClick={event => openStatusMenu(event, order)}>•••</button>
-    </div>
+    <WorkOrderCardTitle {...props} />
     <div className="production-completed-quantity">{quantityText}</div>
     {quantity.status === 'tail_remaining' && <div className="production-completed-result tail">剩余 {formatProductionQuantity(quantity.remainingQty)} 套 · 尾数未清</div>}
     {quantity.status === 'overrun' && <div className="production-completed-result overrun">超产 {formatProductionQuantity(quantity.overrunQty)} 套</div>}
+    <button className="production-completed-more" type="button" onClick={event => openStatusMenu(event, order)}>调整状态</button>
   </article>;
 }
 
