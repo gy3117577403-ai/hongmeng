@@ -1,0 +1,35 @@
+:root {
+  --hm-color-bg: #f1f3f5;
+  --hm-color-surface: #ffffff;
+  --hm-color-surface-soft: #f7f8fa;
+  --hm-color-surface-muted: #eef1f4;
+  --hm-color-text: #1f2933;
+  --hm-color-text-muted: #66717e;
+  --hm-color-text-weak: #89929d;
+  --hm-color-border: #d9dee5;
+  --hm-color-border-strong: #c7ced7;
+  --hm-color-accent: #d95600;
+  --hm-color-accent-hover: #b94700;
+  --hm-color-accent-soft: #fff1e8;
+  --hm-color-danger: #b42318;
+  --hm-color-danger-soft: #fff1f0;
+  --hm-color-warning: #9a5b08;
+  --hm-color-warning-soft: #fff7e6;
+  --hm-color-success: #287a45;
+  --hm-color-success-soft: #edf8f0;
+  --hm-color-info: #3569a8;
+  --hm-color-info-soft: #eef5ff;
+  --hm-space-1: 4px;
+  --hm-space-2: 8px;
+  --hm-space-3: 12px;
+  --hm-space-4: 16px;
+  --hm-space-5: 20px;
+  --hm-radius-sm: 6px;
+  --hm-radius-md: 8px;
+  --hm-radius-lg: 10px;
+  --hm-shadow-sm: 0 1px 2px rgba(31, 41, 51, .05);
+  --hm-shadow-md: 0 5px 16px rgba(31, 41, 51, .07);
+  --hm-focus-ring: 0 0 0 3px rgba(217, 86, 0, .18);
+  --hm-control-height: 44px;
+  --hm-motion-fast: 140ms ease;
+}

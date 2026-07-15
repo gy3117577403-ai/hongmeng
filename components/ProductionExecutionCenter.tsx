@@ -2,6 +2,8 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { writeClipboardText } from '@/lib/client-platform';
@@ -352,13 +354,11 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [batchValue, setBatchValue] = useState('');
   const [batchRemark, setBatchRemark] = useState('');
   const [batchConfirm, setBatchConfirm] = useState('');
-  const [userMenu, setUserMenu] = useState(false);
   const [statusMenuOrder, setStatusMenuOrder] = useState<ProductionOrder | null>(null);
   const [drawingMenuOrder, setDrawingMenuOrder] = useState<ProductionOrder | null>(null);
   const [stageChangeRequest, setStageChangeRequest] = useState<StageChangeRequest | null>(null);
   const [completionSuggestion, setCompletionSuggestion] = useState<ProductionOrder | null>(null);
   const [completedCollapsed, setCompletedCollapsed] = useState(false);
-  const userButtonRef = useRef<HTMLButtonElement | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
   const statusButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawingButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -369,7 +369,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const requestRef = useRef(0);
   const boardRef = useRef<BoardPayload | null>(null);
   const keywordReadyRef = useRef(false);
-  const userDisplayName = user.displayName || user.username;
   const todayLabel = useMemo(() => new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: 'long', day: 'numeric', weekday: 'short',
   }).format(new Date()), []);
@@ -887,36 +886,26 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   };
 
   return (
-    <main className="production-page hm-production-workbench">
-      <header className="production-topbar">
-        <div className="production-brand">
-          <span className="production-brand-mark" aria-hidden="true">制</span>
-          <span className="production-brand-copy"><strong>工单资料库</strong><small>现场生产工作台</small></span>
-        </div>
-        <nav className="production-main-nav" aria-label="主要导航">
-          <a className="active" href="/production">生产执行</a><a href="/dashboard">生产工单</a><a href="/weekly-plan-center">周计划</a>
-          <a href="/drawing-library">图纸资料库</a><a href="/connector-parameters">连接器参数</a><a href="/connector-assembly-manuals">组装说明书</a>
-          <a href="/dashboard?openSettings=1">系统设置</a>
-        </nav>
-        <div className="user-wrap">
-          <button ref={userButtonRef} className="user-button" type="button" aria-label={`${userDisplayName}，打开用户菜单`} title={userDisplayName} aria-expanded={userMenu} onClick={() => setUserMenu(value => !value)}><span aria-hidden="true">{userDisplayName.slice(0, 1)}</span><b>{userDisplayName}</b><em>⌄</em></button>
-          <PortalMenu open={userMenu} anchorRef={userButtonRef} className="user-menu app-user-menu hm-production-menu" width={176} onClose={() => setUserMenu(false)}>
-            <button type="button" onClick={() => { location.href = '/dashboard?openSettings=1'; }}>系统设置</button><button type="button" onClick={logout}>退出登录</button>
-          </PortalMenu>
-        </div>
-      </header>
+    <main className="production-page hm-production-workbench hm-workbench-root">
+      <AppWorkbenchHeader
+        user={user}
+        activeHref="/production"
+        subtitle="现场生产工作台"
+        menuItems={[
+          { label: '系统设置', href: '/dashboard?openSettings=1' },
+          { label: '退出登录', onSelect: () => { void logout(); } },
+        ]}
+      />
 
       <div className="production-execution-main">
-        <section className="production-workspace-heading" aria-labelledby="production-page-title">
-          <div className="production-workspace-title">
-            <span className="production-page-kicker">生产执行</span>
-            <div><h1 id="production-page-title">生产执行中心</h1><p>{todayLabel} · 本周任务、异常与进度闭环</p></div>
-          </div>
-          <div className="production-page-actions" aria-label="页面操作">
-            <button className={batchMode ? 'active' : ''} type="button" onClick={toggleBatchMode}>{batchMode ? '退出批量' : '批量操作'}</button>
-            <button type="button" onClick={exportCsv}>导出 CSV</button>
-          </div>
-        </section>
+        <WorkbenchPageHeader
+          kicker="生产执行"
+          title="生产执行中心"
+          description={`${todayLabel} · 本周任务、异常与进度闭环`}
+          titleId="production-page-title"
+          actionsClassName="production-page-actions"
+          actions={<><button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" onClick={toggleBatchMode}>{batchMode ? '退出批量' : '批量操作'}</button><button className="hm-workbench-button" type="button" onClick={exportCsv}>导出 CSV</button></>}
+        />
 
         <section className="production-summary" aria-label="当前周生产摘要">
           <button className={`production-week-label ${summaryActive('all') ? 'active' : ''}`} type="button" onClick={() => toggleSummary('all')}>

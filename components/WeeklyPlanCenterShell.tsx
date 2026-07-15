@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { PortalMenu } from '@/components/PortalMenu';
+import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import type { CurrentUserDTO, WorkOrderDTO } from '@/types';
 import type {
   WeeklyPlanDiffItem,
@@ -115,13 +116,11 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
   const [currentBatchId, setCurrentBatchId] = useState('');
   const [nextBatchId, setNextBatchId] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
-  const [userMenu, setUserMenu] = useState(false);
   const [activateOpen, setActivateOpen] = useState(false);
   const [activateLoading, setActivateLoading] = useState(false);
   const [activateError, setActivateError] = useState('');
   const [activateSummary, setActivateSummary] = useState<ActivateSummary | null>(null);
   const [confirmText, setConfirmText] = useState('');
-  const userButtonRef = useRef<HTMLButtonElement>(null);
   const initialDatesApplied = useRef(false);
   const diffRequestId = useRef(0);
 
@@ -177,11 +176,9 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
     return () => controller.abort();
   }, [mode, filter, page, debouncedKeyword, currentWeekStart, nextWeekStart, currentBatchId, nextBatchId, refreshToken]);
 
-  const summaryCards = useMemo(() => {
+  const changeSummaryCards = useMemo(() => {
     const summary = data?.summary;
     return [
-      ['当前周', summary?.currentCount ?? 0, 'neutral'],
-      ['下周', summary?.nextCount ?? 0, 'neutral'],
       ['新增', summary?.newCount ?? 0, 'new'],
       ['延续', summary?.continuedCount ?? 0, 'continued'],
       ['变更', summary?.changedCount ?? 0, 'changed'],
@@ -265,48 +262,48 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
     }
   }
 
+  const pageDescription = data
+    ? `${rangeText(data.currentWeek)} 对比 ${rangeText(data.nextWeek)} · ${(data.summary.blockingAnomalyCount || 0) > 0 ? '存在待处理异常' : '切换门禁检查通过'}`
+    : '下周计划对比、异常审核与安全切换';
+
   return (
-    <main className="weekly-plan-center-shell">
-      <header className="weekly-center-topbar">
-        <a className="home-button" href="/dashboard" aria-label="返回工单资料库">⌂</a>
-        <div className="brand-block">
-          <strong>周计划差异中心</strong>
-          <span>下周计划对比、异常审核与安全切换</span>
-        </div>
-        <nav className="weekly-center-nav" aria-label="主要导航">
-          <a href="/production">生产执行</a>
-          <a href="/dashboard">生产工单</a>
-          <a href="/drawing-library">图纸资料库</a>
-          <a href="/connector-parameters">连接器参数</a>
-          <a href="/connector-assembly-manuals">组装说明书</a>
-        </nav>
-        <div className="user-wrap">
-          <button ref={userButtonRef} className="user-button" type="button" onClick={() => setUserMenu(value => !value)}>
-            <span>♙</span><b>{user.displayName || user.username}</b><em>⌄</em>
-          </button>
-          <PortalMenu open={userMenu} anchorRef={userButtonRef} className="user-menu app-user-menu" width={176} onClose={() => setUserMenu(false)}>
-            <button type="button" onClick={() => { location.href = '/dashboard?openWeeklyImport=1'; }}>导入下周计划</button>
-            <button type="button" onClick={logout}>退出登录</button>
-          </PortalMenu>
-        </div>
-      </header>
+    <main className="weekly-plan-center-shell hm-workbench-root">
+      <AppWorkbenchHeader
+        user={user}
+        activeHref="/weekly-plan-center"
+        subtitle="计划审核与安全切换"
+        menuItems={[
+          { label: '导入下周计划', href: '/dashboard?openWeeklyImport=1' },
+          { label: '退出登录', onSelect: () => { void logout(); } },
+        ]}
+      />
 
-      <section className="weekly-center-toolbar">
-        <div className="weekly-center-mode-tabs">
-          <button className={mode === 'diff' ? 'active' : ''} type="button" onClick={() => setMode('diff')}>差异审核</button>
-          <button className={mode === 'history' ? 'active' : ''} type="button" onClick={() => setMode('history')}>历史周</button>
-        </div>
-        {mode === 'diff' && (
-          <div className="weekly-center-actions">
-            <button type="button" onClick={() => { location.href = '/dashboard?openWeeklyImport=1'; }}>导入下周</button>
-            <button type="button" onClick={exportDiff} disabled={!data?.summary.nextCount}>导出下周差异</button>
-            <button className="primary-button" type="button" onClick={previewActivate} disabled={!data?.summary.nextCount}>预检并启用下周</button>
+      <div className="weekly-plan-main">
+        <WorkbenchPageHeader
+          kicker="周计划"
+          title="周计划差异中心"
+          description={pageDescription}
+          titleId="weekly-plan-page-title"
+          actions={mode === 'diff' ? <>
+            <button className="hm-workbench-button primary" type="button" onClick={() => { location.href = '/dashboard?openWeeklyImport=1'; }}>导入下周计划</button>
+            <button className="hm-workbench-button" type="button" onClick={exportDiff} disabled={!data?.summary.nextCount}>导出差异</button>
+            <button className="hm-workbench-button danger" type="button" onClick={previewActivate} disabled={!data?.summary.nextCount}>预检并启用下周</button>
+          </> : undefined}
+        />
+
+        <section className="weekly-center-toolbar">
+          <div className="weekly-center-mode-tabs" aria-label="周计划视图">
+            <button className={mode === 'diff' ? 'active' : ''} type="button" onClick={() => setMode('diff')}>差异审核</button>
+            <button className={mode === 'history' ? 'active' : ''} type="button" onClick={() => setMode('history')}>历史周</button>
           </div>
-        )}
-      </section>
+          <div className="weekly-center-context">
+            <span>{mode === 'diff' ? '当前审核对象' : '归档记录'}</span>
+            <strong>{mode === 'diff' ? (data?.nextWeek.weekStartDate ? `下周草稿 ${rangeText(data.nextWeek)}` : '尚未识别下周草稿') : '历史生产周只读查询'}</strong>
+          </div>
+        </section>
 
-      {mode === 'history' ? <HistoryWeekPanel /> : (
-        <>
+        {mode === 'history' ? <HistoryWeekPanel /> : (
+          <>
           <section className="weekly-period-bar">
             <label><span>当前周</span><input type="date" value={currentWeekStart} onChange={event => { setCurrentWeekStart(event.target.value); setCurrentBatchId(''); setPage(1); }} /></label>
             <strong>{data ? rangeText(data.currentWeek) : '-'}</strong>
@@ -316,9 +313,22 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
             <button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新检查</button>
           </section>
 
-          <section className="weekly-diff-summary" aria-label="差异摘要">
-            {summaryCards.map(([label, value, tone]) => <article className={tone} key={label}><span>{label}</span><strong>{value}</strong></article>)}
-          </section>
+            <section className="weekly-plan-overview" aria-label="当前计划摘要">
+              <article className="weekly-plan-snapshot">
+                <div className="weekly-plan-cycle">
+                  <span>生产计划周期</span>
+                  <strong>{data?.currentWeek.weekStartDate ? rangeText(data.currentWeek) : '尚未启用当前周'}</strong>
+                  <small>{data?.nextWeek.weekStartDate ? `下周草稿 ${rangeText(data.nextWeek)}` : '尚未识别下周草稿'}</small>
+                </div>
+                <dl>
+                  <div><dt>当前工单</dt><dd>{data?.summary.currentCount ?? 0}</dd></div>
+                  <div><dt>下周工单</dt><dd>{data?.summary.nextCount ?? 0}</dd></div>
+                </dl>
+              </article>
+              <div className="weekly-change-summary" aria-label="计划变化统计">
+                {changeSummaryCards.map(([label, value, tone]) => <article className={tone} key={label}><span>{label}</span><strong>{value}</strong></article>)}
+              </div>
+            </section>
 
           <section className={`weekly-safety-banner ${(data?.summary.blockingAnomalyCount || 0) > 0 ? 'blocked' : 'ready'}`}>
             <div>
@@ -340,7 +350,12 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
               <input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索规格 / 客户 / 品名 / 异常" />
             </div>
 
-            {error && <div className="weekly-center-error">{error}</div>}
+            {error && (
+              <div className="weekly-center-error" role="alert">
+                <span><strong>差异加载失败</strong>{error}，请检查连接后重试。</span>
+                <button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button>
+              </div>
+            )}
             <div className="weekly-diff-table-wrap">
               <table className="weekly-diff-table">
                 <thead>
@@ -390,8 +405,9 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
               </div>
             )}
           </section>
-        </>
-      )}
+          </>
+        )}
+      </div>
 
       {activateOpen && (
         <div className="modal-backdrop" role="presentation">
@@ -443,6 +459,7 @@ function HistoryWeekPanel() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [refreshToken, setRefreshToken] = useState(0);
   const requestIdRef = useRef(0);
 
   useEffect(() => {
@@ -479,7 +496,7 @@ function HistoryWeekPanel() {
         if (requestId === requestIdRef.current) setLoading(false);
       });
     return () => controller.abort();
-  }, [selectedWeek, debouncedKeyword, page]);
+  }, [selectedWeek, debouncedKeyword, page, refreshToken]);
 
   return (
     <section className="weekly-history-layout">
@@ -499,7 +516,12 @@ function HistoryWeekPanel() {
           <div><strong>历史周工单</strong><span>只读查看，不混入当前生产列表</span></div>
           <input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索规格 / 客户 / 品名" />
         </div>
-        {error && <div className="weekly-center-error">{error}</div>}
+        {error && (
+          <div className="weekly-center-error" role="alert">
+            <span><strong>历史加载失败</strong>{error}，请检查连接后重试。</span>
+            <button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button>
+          </div>
+        )}
         <div className="weekly-history-table-wrap">
           <table>
             <thead><tr><th>规格</th><th>客户</th><th>品名</th><th>未交量</th><th>交期</th><th>图纸</th><th>配料</th><th>资料</th><th>状态</th></tr></thead>

@@ -1,5 +1,7 @@
 import type {Metadata, Viewport} from 'next';
 import PwaRegister from '@/components/PwaRegister';
+import './styles/hm-design-tokens.css';
+import './styles/hm-workbench-foundation.css';
 import './globals.css';
 import './account.css';
 export const metadata:Metadata={
