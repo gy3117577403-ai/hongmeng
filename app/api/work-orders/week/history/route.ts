@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { chinaDateKey } from '@/lib/china-date';
 import { prisma } from '@/lib/prisma';
 import { normalizeWorkOrderStage, serializeWorkOrder } from '@/lib/work-orders';
 import { parseWeek } from '@/lib/weekly-work-orders';
@@ -8,7 +9,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 function ymd(value?: Date | null) {
-  return value && !Number.isNaN(value.getTime()) ? value.toISOString().slice(0, 10) : '';
+  return chinaDateKey(value);
 }
 
 export async function GET(req: NextRequest) {

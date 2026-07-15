@@ -275,6 +275,12 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const displayName = user.displayName || user.username;
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('focusSearch') !== '1') return;
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  }, []);
+
+  useEffect(() => {
     const query = keyword.trim();
     if (!query) {
       setResults([]);

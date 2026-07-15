@@ -1,5 +1,6 @@
 'use client';
 
+import { CalendarDays, Copy, Download, Info, ListChecks } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -1051,12 +1052,12 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           description={`${todayLabel} · 本周任务、异常与进度闭环`}
           titleId="production-page-title"
           actionsClassName="production-page-actions"
-          actions={<><button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" onClick={toggleBatchMode}>{batchMode ? '退出批量' : '批量操作'}</button><button className="hm-workbench-button" type="button" onClick={exportCsv}>导出 CSV</button></>}
+          actions={<><a className="hm-workbench-button" href="/weekly-plan-center"><CalendarDays size={15} aria-hidden="true" />周计划</a><button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量操作'}</button><button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button></>}
         />
 
         <section className="production-summary" aria-label="当前周生产摘要">
           <button className={`production-week-label ${summaryActive('all') ? 'active' : ''}`} type="button" onClick={() => toggleSummary('all')}>
-            <span>当前启用周 · 全周统计</span><strong>{summary?.weekStartDate ? `${dateText(summary.weekStartDate)} - ${dateText(summary.weekEndDate)}` : '尚未启用周计划'}</strong><em>{summary?.total ?? 0} 工单</em>
+            <span>{summary?.weekStartDate ? '周计划已同步 · 当前执行周' : '周计划尚未启用'}</span><strong>{summary?.weekStartDate ? `${dateText(summary.weekStartDate)} - ${dateText(summary.weekEndDate)}` : '前往周计划中心启用'}</strong><em>{summary?.total ?? 0} 工单</em>
           </button>
           {[
             ['今日交期', summary?.dueToday ?? 0, 'blue', 'due_today'], ['已逾期', summary?.overdue ?? 0, 'red', 'overdue'],
@@ -1204,8 +1205,8 @@ function WorkOrderCardTitle({ order, batchMode, selected, toggleSelected, openDe
         <button className="production-card-spec" type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order)}>{specText(order)}</button>
       </div>
       <div className="production-card-title-actions">
-        <button className="production-card-copy" type="button" title="复制完整规格" aria-label="复制完整规格" onClick={() => void copySpecification(order)}>⧉</button>
-        <button className="production-card-info" type="button" title="查看工单详情" aria-label="查看工单详情" onClick={() => openDetail(order)}>i</button>
+        <button className="production-card-copy" type="button" title="复制完整规格" aria-label="复制完整规格" onClick={() => void copySpecification(order)}><Copy size={15} aria-hidden="true" /></button>
+        <button className="production-card-info" type="button" title="查看工单详情" aria-label="查看工单详情" onClick={() => openDetail(order)}><Info size={15} aria-hidden="true" /></button>
       </div>
     </div>
     <div className="production-card-context"><span title={order.productName || '品名待补充'}>{order.productName || '品名待补充'}</span><em className={order.priority}>{priorityText(order.priority)}</em></div>

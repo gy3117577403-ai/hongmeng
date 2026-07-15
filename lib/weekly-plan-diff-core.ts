@@ -1,3 +1,5 @@
+import { chinaDateKey } from '@/lib/china-date';
+
 export type WeeklyPlanDiffType = 'new' | 'continued' | 'changed' | 'removed' | 'duplicate' | 'invalid';
 export type WeeklyPlanBaseDiffType = 'new' | 'continued' | 'changed' | 'removed';
 export type WeeklyPlanIssueLevel = 'blocking' | 'warning';
@@ -159,7 +161,7 @@ export function buildWorkOrderCompareKey(order: Pick<WeeklyPlanDiffSourceOrder, 
 }
 
 function dateValue(value: Date | null) {
-  return value && !Number.isNaN(value.getTime()) ? value.toISOString().slice(0, 10) : '';
+  return chinaDateKey(value);
 }
 
 function displayValue(value: string | Date | null) {

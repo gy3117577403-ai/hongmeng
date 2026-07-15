@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { chinaDateKey } from '@/lib/china-date';
 import { parseWeekStartDate } from '@/lib/work-order-import';
 import { prisma } from '@/lib/prisma';
 
@@ -18,7 +19,7 @@ export function addDays(date: Date, days: number) {
 }
 
 export function ymd(date: Date) {
-  return date.toISOString().slice(0, 10);
+  return chinaDateKey(date);
 }
 
 export function parseClearWeek(value: unknown) {

@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { chinaDateKey } from '@/lib/china-date';
 import { prisma } from '@/lib/prisma';
 import {
   compareWeeklyPlans,
@@ -75,7 +76,7 @@ function dayRange(date: Date) {
 }
 
 function ymd(value?: Date | null) {
-  return value && !Number.isNaN(value.getTime()) ? value.toISOString().slice(0, 10) : null;
+  return chinaDateKey(value) || null;
 }
 
 async function resolveCurrentWeekStart(query: WeeklyPlanDiffQuery) {

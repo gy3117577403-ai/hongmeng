@@ -1,10 +1,11 @@
 .weekly-plan-center-shell {
   width: 100%;
   min-width: 0;
+  height: 100dvh;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  overflow-x: hidden;
+  overflow: hidden;
   background: var(--hm-color-bg);
 }
 
@@ -14,13 +15,15 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   gap: var(--hm-space-2);
   padding: 10px 12px 12px;
 }
 
-.weekly-plan-center-shell .weekly-center-toolbar,
+.weekly-plan-center-shell .weekly-commandbar,
 .weekly-plan-center-shell .weekly-period-bar,
 .weekly-plan-center-shell .weekly-plan-snapshot,
+.weekly-plan-center-shell .weekly-plan-total,
 .weekly-plan-center-shell .weekly-change-summary article,
 .weekly-plan-center-shell .weekly-safety-banner,
 .weekly-plan-center-shell .weekly-diff-workspace,
@@ -32,13 +35,17 @@
   box-shadow: var(--hm-shadow-sm);
 }
 
-.weekly-plan-center-shell .weekly-center-toolbar {
-  min-height: 50px;
-  display: flex;
+.weekly-plan-center-shell .weekly-commandbar {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: auto minmax(340px, 1fr) minmax(230px, 310px) 44px;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--hm-space-3);
-  padding: 4px 6px;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-md);
+  background: var(--hm-color-surface);
+  box-shadow: var(--hm-shadow-sm);
 }
 
 .weekly-plan-center-shell .weekly-center-mode-tabs,
@@ -50,6 +57,142 @@
   padding: 3px;
   border-radius: var(--hm-radius-sm);
   background: var(--hm-color-surface-muted);
+}
+
+.weekly-plan-center-shell .weekly-period-selector {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto minmax(150px, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border-right: 1px solid var(--hm-color-border);
+  border-left: 1px solid var(--hm-color-border);
+}
+
+.weekly-plan-center-shell .weekly-period-selector > svg {
+  color: var(--hm-color-text-weak);
+}
+
+.weekly-plan-center-shell .weekly-period-selector label {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.weekly-plan-center-shell .weekly-period-selector input {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--hm-color-border-strong);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-soft);
+  color: var(--hm-color-text);
+  font-size: 11px;
+}
+
+.weekly-plan-center-shell .weekly-period-selector input:focus-visible {
+  border-color: var(--hm-color-accent);
+  outline: 0;
+  box-shadow: var(--hm-focus-ring);
+}
+
+.weekly-plan-center-shell .weekly-production-sync {
+  min-width: 0;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 9px;
+  border: 1px solid #b9d9c2;
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-success-soft);
+  color: var(--hm-color-success);
+  text-decoration: none;
+}
+
+.weekly-plan-center-shell .weekly-production-sync.empty {
+  border-color: #ead1a9;
+  background: var(--hm-color-warning-soft);
+  color: var(--hm-color-warning);
+}
+
+.weekly-plan-center-shell .weekly-production-sync > svg {
+  flex: 0 0 auto;
+}
+
+.weekly-plan-center-shell .weekly-production-sync > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.weekly-plan-center-shell .weekly-production-sync strong,
+.weekly-plan-center-shell .weekly-production-sync small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weekly-plan-center-shell .weekly-production-sync strong {
+  font-size: 11px;
+}
+
+.weekly-plan-center-shell .weekly-production-sync small {
+  color: var(--hm-color-text-muted);
+  font-size: 9px;
+}
+
+.weekly-plan-center-shell .weekly-refresh-button {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--hm-color-border-strong);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface);
+  color: var(--hm-color-text-muted);
+}
+
+.weekly-plan-center-shell .weekly-refresh-button:hover {
+  border-color: #d99a70;
+  color: var(--hm-color-accent);
+}
+
+.weekly-plan-center-shell .weekly-history-context {
+  grid-column: 2 / -1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+}
+
+.weekly-plan-center-shell .weekly-history-context strong {
+  font-size: 12px;
+}
+
+.weekly-plan-center-shell .weekly-history-context span {
+  overflow: hidden;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weekly-plan-center-shell .hm-workbench-page-actions .hm-workbench-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .weekly-plan-center-shell .weekly-center-mode-tabs button,
@@ -184,8 +327,41 @@
 .weekly-plan-center-shell .weekly-plan-overview {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(280px, .9fr) minmax(0, 2.3fr);
+  grid-template-columns: minmax(132px, .55fr) minmax(132px, .55fr) minmax(0, 2.9fr);
   gap: 7px;
+}
+
+.weekly-plan-center-shell .weekly-plan-total {
+  min-width: 0;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: 3px 8px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--hm-color-info);
+}
+
+.weekly-plan-center-shell .weekly-plan-total.next {
+  border-left-color: var(--hm-color-accent);
+  background: #fffaf6;
+}
+
+.weekly-plan-center-shell .weekly-plan-total span,
+.weekly-plan-center-shell .weekly-plan-total small {
+  overflow: hidden;
+  color: var(--hm-color-text-muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weekly-plan-center-shell .weekly-plan-total strong {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  font-size: 22px;
 }
 
 .weekly-plan-center-shell .weekly-plan-snapshot {
@@ -260,7 +436,7 @@
 
 .weekly-plan-center-shell .weekly-change-summary article {
   min-width: 0;
-  min-height: 66px;
+  min-height: 64px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -776,12 +952,21 @@
 }
 
 @media (max-width: 1160px) {
+  .weekly-plan-center-shell .weekly-commandbar {
+    grid-template-columns: auto minmax(310px, 1fr) minmax(210px, 250px) 44px;
+  }
+
+  .weekly-plan-center-shell .weekly-period-selector {
+    padding-right: 7px;
+    padding-left: 7px;
+  }
+
   .weekly-plan-center-shell .weekly-plan-overview {
-    grid-template-columns: 270px minmax(0, 1fr);
+    grid-template-columns: minmax(120px, .5fr) minmax(120px, .5fr) minmax(0, 3fr);
   }
 
   .weekly-plan-center-shell .weekly-change-summary {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .weekly-plan-center-shell .weekly-change-summary article {
@@ -809,7 +994,17 @@
     font-size: 11px;
   }
 
-  .weekly-plan-center-shell .weekly-center-context span {
+  .weekly-plan-center-shell .weekly-commandbar {
+    grid-template-columns: auto minmax(270px, 1fr) minmax(180px, 220px) 42px;
+    gap: 6px;
+  }
+
+  .weekly-plan-center-shell .weekly-period-selector {
+    grid-template-columns: minmax(112px, 1fr) auto minmax(112px, 1fr);
+  }
+
+  .weekly-plan-center-shell .weekly-period-selector label span,
+  .weekly-plan-center-shell .weekly-production-sync small {
     display: none;
   }
 
@@ -830,7 +1025,7 @@
   }
 
   .weekly-plan-center-shell .weekly-plan-overview {
-    grid-template-columns: 250px minmax(0, 1fr);
+    grid-template-columns: 118px 118px minmax(0, 1fr);
   }
 
   .weekly-plan-center-shell .weekly-plan-snapshot {
@@ -867,8 +1062,20 @@
 }
 
 @media (max-width: 900px) {
+  .weekly-plan-center-shell .weekly-commandbar {
+    grid-template-columns: auto minmax(0, 1fr) 42px;
+  }
+
+  .weekly-plan-center-shell .weekly-production-sync {
+    display: none;
+  }
+
   .weekly-plan-center-shell .weekly-plan-overview {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .weekly-plan-center-shell .weekly-change-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .weekly-plan-center-shell .weekly-history-layout {

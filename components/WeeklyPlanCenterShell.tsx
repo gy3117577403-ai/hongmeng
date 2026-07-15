@@ -1,5 +1,6 @@
 'use client';
 
+import { ArrowRight, CheckCircle2, Download, RefreshCw, ShieldCheck, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
@@ -285,46 +286,39 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
           description={pageDescription}
           titleId="weekly-plan-page-title"
           actions={mode === 'diff' ? <>
-            <button className="hm-workbench-button primary" type="button" onClick={() => { location.href = '/dashboard?openWeeklyImport=1'; }}>导入下周计划</button>
-            <button className="hm-workbench-button" type="button" onClick={exportDiff} disabled={!data?.summary.nextCount}>导出差异</button>
-            <button className="hm-workbench-button danger" type="button" onClick={previewActivate} disabled={!data?.summary.nextCount}>预检并启用下周</button>
+            <button className="hm-workbench-button primary" type="button" onClick={() => { location.href = '/dashboard?openWeeklyImport=1'; }}><Upload size={15} aria-hidden="true" />导入下周计划</button>
+            <button className="hm-workbench-button" type="button" onClick={exportDiff} disabled={!data?.summary.nextCount}><Download size={15} aria-hidden="true" />导出差异</button>
+            <button className="hm-workbench-button danger" type="button" onClick={previewActivate} disabled={!data?.summary.nextCount}><ShieldCheck size={15} aria-hidden="true" />预检并启用</button>
           </> : undefined}
         />
 
-        <section className="weekly-center-toolbar">
+        <section className="weekly-commandbar">
           <div className="weekly-center-mode-tabs" aria-label="周计划视图">
             <button className={mode === 'diff' ? 'active' : ''} type="button" onClick={() => setMode('diff')}>差异审核</button>
             <button className={mode === 'history' ? 'active' : ''} type="button" onClick={() => setMode('history')}>历史周</button>
           </div>
-          <div className="weekly-center-context">
-            <span>{mode === 'diff' ? '当前审核对象' : '归档记录'}</span>
-            <strong>{mode === 'diff' ? (data?.nextWeek.weekStartDate ? `下周草稿 ${rangeText(data.nextWeek)}` : '尚未识别下周草稿') : '历史生产周只读查询'}</strong>
-          </div>
+          {mode === 'diff' ? (
+            <>
+              <div className="weekly-period-selector">
+                <label><span>当前执行周</span><input type="date" value={currentWeekStart} onChange={event => { setCurrentWeekStart(event.target.value); setCurrentBatchId(''); setPage(1); }} /></label>
+                <ArrowRight size={16} aria-hidden="true" />
+                <label><span>待启用草稿</span><input type="date" value={nextWeekStart} onChange={event => { setNextWeekStart(event.target.value); setNextBatchId(''); setPage(1); }} /></label>
+              </div>
+              <a className={`weekly-production-sync ${data?.currentWeek.weekStartDate ? 'ready' : 'empty'}`} href="/production" title="打开生产执行中心核对当前周工单">
+                <CheckCircle2 size={17} aria-hidden="true" />
+                <span><strong>{data?.currentWeek.weekStartDate ? '已同步到生产执行' : '尚未启用生产周'}</strong><small>{data?.currentWeek.weekStartDate ? `${rangeText(data.currentWeek)} · ${data.summary.currentCount} 单` : '导入并启用计划后自动同步'}</small></span>
+              </a>
+              <button className="weekly-refresh-button" type="button" title="重新检查计划数据" aria-label="重新检查计划数据" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={17} aria-hidden="true" /></button>
+            </>
+          ) : <div className="weekly-history-context"><strong>历史生产周</strong><span>只读查询已归档计划，不影响当前生产清单</span></div>}
         </section>
 
         {mode === 'history' ? <HistoryWeekPanel /> : (
           <>
-          <section className="weekly-period-bar">
-            <label><span>当前周</span><input type="date" value={currentWeekStart} onChange={event => { setCurrentWeekStart(event.target.value); setCurrentBatchId(''); setPage(1); }} /></label>
-            <strong>{data ? rangeText(data.currentWeek) : '-'}</strong>
-            <i>对比</i>
-            <label><span>下周草稿</span><input type="date" value={nextWeekStart} onChange={event => { setNextWeekStart(event.target.value); setNextBatchId(''); setPage(1); }} /></label>
-            <strong>{data ? rangeText(data.nextWeek) : '-'}</strong>
-            <button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新检查</button>
-          </section>
 
             <section className="weekly-plan-overview" aria-label="当前计划摘要">
-              <article className="weekly-plan-snapshot">
-                <div className="weekly-plan-cycle">
-                  <span>生产计划周期</span>
-                  <strong>{data?.currentWeek.weekStartDate ? rangeText(data.currentWeek) : '尚未启用当前周'}</strong>
-                  <small>{data?.nextWeek.weekStartDate ? `下周草稿 ${rangeText(data.nextWeek)}` : '尚未识别下周草稿'}</small>
-                </div>
-                <dl>
-                  <div><dt>当前工单</dt><dd>{data?.summary.currentCount ?? 0}</dd></div>
-                  <div><dt>下周工单</dt><dd>{data?.summary.nextCount ?? 0}</dd></div>
-                </dl>
-              </article>
+              <article className="weekly-plan-total current"><span>当前执行</span><strong>{data?.summary.currentCount ?? 0}</strong><small>{data?.currentWeek.weekStartDate ? rangeText(data.currentWeek) : '尚未启用'}</small></article>
+              <article className="weekly-plan-total next"><span>下周草稿</span><strong>{data?.summary.nextCount ?? 0}</strong><small>{data?.nextWeek.weekStartDate ? rangeText(data.nextWeek) : '等待导入'}</small></article>
               <div className="weekly-change-summary" aria-label="计划变化统计">
                 {changeSummaryCards.map(([label, value, tone]) => <article className={tone} key={label}><span>{label}</span><strong>{value}</strong></article>)}
               </div>
