@@ -63,6 +63,10 @@ export async function POST(req: NextRequest) {
         failed.push({ id, ok: false, error: '历史周和下周草稿为只读' });
         continue;
       }
+      if (operation === 'set_stage' && order.frontendTransferredQty !== null) {
+        failed.push({ id, ok: false, error: '该工单已启用分批数量流转，请使用“下一步”更新生产数量' });
+        continue;
+      }
       const result = prepareExecutionUpdate(order, input);
       if (!result.update) {
         failed.push({ id, ok: false, error: result.error || '执行信息不正确' });

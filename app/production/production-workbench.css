@@ -1524,6 +1524,129 @@
   }
 }
 
+.hm-production-workbench .production-flow-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 22px;
+  margin-top: 4px;
+  padding: 2px 7px;
+  border: 1px solid rgba(249, 115, 22, 0.24);
+  border-radius: 6px;
+  background: rgba(255, 247, 237, 0.92);
+  color: #c2410c;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .production-card footer button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.hm-production-workbench .production-flow-edit-note {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid rgba(249, 115, 22, 0.24);
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a3412;
+}
+
+.hm-production-workbench .production-flow-edit-note strong {
+  font-size: 13px;
+}
+
+.hm-production-workbench .production-flow-edit-note span {
+  color: #7c2d12;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hm-production-workbench .production-next-step-dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.hm-production-workbench .production-flow-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hm-production-workbench .production-flow-summary > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fffaf5;
+}
+
+.hm-production-workbench .production-flow-summary span {
+  overflow: hidden;
+  color: #78716c;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-flow-summary strong {
+  color: #292524;
+  font-size: 18px;
+}
+
+.hm-production-workbench .production-flow-confirm-copy {
+  margin: 14px 0 0;
+  padding: 11px 12px;
+  border-left: 3px solid #f97316;
+  background: #fff7ed;
+  color: #7c2d12;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.hm-production-workbench .production-flow-quantity-input {
+  display: grid;
+  gap: 6px;
+  margin-top: 14px;
+}
+
+.hm-production-workbench .production-flow-quantity-input > span {
+  color: #44403c;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .production-flow-quantity-input input {
+  width: 100%;
+  height: 46px;
+  padding: 0 12px;
+  border: 1px solid #d6d3d1;
+  border-radius: 8px;
+  background: #fff;
+  color: #1c1917;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .production-flow-quantity-input input:focus {
+  border-color: #f97316;
+  outline: 3px solid rgba(249, 115, 22, 0.14);
+}
+
+.hm-production-workbench .production-flow-quantity-input small {
+  color: #78716c;
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .hm-production-workbench .production-flow-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 /* Below the primary tablet target, stack the board instead of introducing page overflow. */
 @media (max-width: 1023px) {
   .hm-production-workbench .production-execution-main {
@@ -1591,5 +1714,111 @@
   .hm-production-workbench .production-summary button,
   .hm-production-workbench .production-summary .production-week-label {
     min-height: 44px;
+  }
+}
+
+/* Directed refine: align stage headers and reduce card density without changing workflow. */
+.hm-production-workbench .production-stage-header,
+.hm-production-workbench .production-column > header {
+  flex-basis: 50px;
+  min-height: 50px;
+  gap: 7px;
+  padding: 5px 8px;
+}
+
+.hm-production-workbench .production-stage-step {
+  width: 26px;
+  height: 26px;
+  flex-basis: 26px;
+}
+
+.hm-production-workbench .production-stage-count {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 6px;
+}
+
+.hm-production-workbench .production-column-list {
+  gap: 6px;
+  padding: 6px;
+}
+
+.hm-production-workbench .production-card,
+.hm-production-workbench .production-card-not-issued,
+.hm-production-workbench .production-card-active {
+  min-height: 0;
+  padding: 8px;
+  contain-intrinsic-size: 190px;
+}
+
+.hm-production-workbench .production-card-title {
+  gap: 5px;
+}
+
+.hm-production-workbench .production-card-identity {
+  gap: 2px;
+}
+
+.hm-production-workbench .production-card-identity > strong {
+  -webkit-line-clamp: 1;
+}
+
+.hm-production-workbench .production-card-spec {
+  min-height: 34px;
+}
+
+.hm-production-workbench .production-card-copy,
+.hm-production-workbench .production-card-info {
+  width: 38px;
+  height: 38px;
+  min-height: 38px;
+  flex-basis: 38px;
+}
+
+.hm-production-workbench .production-card-context {
+  min-height: 24px;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+.hm-production-workbench .production-leader-metrics,
+.hm-production-workbench .production-quantity-grid {
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.hm-production-workbench .production-leader-metrics > div,
+.hm-production-workbench .production-quantity-grid > div,
+.hm-production-workbench .production-progress-hit > .production-quantity-grid > span {
+  padding: 4px 5px;
+}
+
+.hm-production-workbench .production-progress-hit {
+  min-height: 68px;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.hm-production-workbench .production-alerts {
+  min-height: 26px;
+  margin-top: 4px;
+}
+
+.hm-production-workbench .production-card footer {
+  gap: 5px;
+  padding-top: 5px;
+}
+
+.hm-production-workbench .production-card footer button,
+.hm-production-workbench .production-card-not-issued footer button,
+.hm-production-workbench .production-card-active footer button {
+  min-height: 40px;
+}
+
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .hm-production-workbench .production-stage-header,
+  .hm-production-workbench .production-column > header {
+    flex-basis: 50px;
+    min-height: 50px;
   }
 }

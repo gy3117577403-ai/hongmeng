@@ -96,6 +96,8 @@ export function workOrderSnapshot(order: {
   productionOwner?: string | null;
   workstation?: string | null;
   completedQty?: string | null;
+  frontendTransferredQty?: number | null;
+  executionVersion?: number;
   startedAt?: Date | string | null;
   completedAt?: Date | string | null;
   lastProgressAt?: Date | string | null;
@@ -141,6 +143,8 @@ export function workOrderSnapshot(order: {
     productionOwner: order.productionOwner ?? null,
     workstation: order.workstation ?? null,
     completedQty: order.completedQty ?? null,
+    frontendTransferredQty: order.frontendTransferredQty ?? null,
+    executionVersion: order.executionVersion ?? 0,
     startedAt: order.startedAt ?? null,
     completedAt: order.completedAt ?? null,
     lastProgressAt: order.lastProgressAt ?? null,

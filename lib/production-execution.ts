@@ -3,6 +3,7 @@ import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
 import { getProductionAlerts, isDrawingConfirmationAlert } from '@/lib/production-alerts';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
+import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
 
@@ -251,6 +252,38 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     latestProgressRemark: order.latestProgressRemark,
     plannedAt: order.plannedAt,
   }, now);
+  const flowResolution = resolveEffectiveFrontendTransferredQty(order);
+  const quantityFlow = flowResolution.ok
+    ? {
+      valid: true as const,
+      targetQty: flowResolution.state.targetQty,
+      frontendTransferredQty: flowResolution.state.frontendTransferredQty,
+      completedQty: flowResolution.state.completedQty,
+      frontendRemainingQty: flowResolution.state.frontendRemainingQty,
+      backendRemainingQty: flowResolution.state.backendRemainingQty,
+      executionVersion: flowResolution.state.executionVersion,
+      legacy: flowResolution.state.legacy,
+      materialized: flowResolution.state.materialized,
+      segments: flowResolution.state.segments,
+      error: null,
+    }
+    : {
+      valid: false as const,
+      targetQty: quantitySummary.targetQty,
+      frontendTransferredQty: order.frontendTransferredQty,
+      completedQty: quantitySummary.completedQty,
+      frontendRemainingQty: null,
+      backendRemainingQty: null,
+      executionVersion: order.executionVersion,
+      legacy: order.frontendTransferredQty === null,
+      materialized: order.frontendTransferredQty !== null,
+      segments: [{ stage, quantity: null }],
+      error: {
+        code: flowResolution.error.code,
+        field: flowResolution.error.field,
+        message: flowResolution.error.message,
+      },
+    };
   return {
     id: order.id,
     code: order.code,
@@ -266,6 +299,9 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     productionOwner: order.productionOwner,
     workstation: order.workstation,
     completedQty: order.completedQty,
+    frontendTransferredQty: order.frontendTransferredQty,
+    executionVersion: order.executionVersion,
+    quantityFlow,
     startedAt: order.startedAt?.toISOString() || null,
     completedAt: order.completedAt?.toISOString() || null,
     lastProgressAt: order.lastProgressAt?.toISOString() || null,
@@ -374,7 +410,9 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
   }
   if (filters.customers?.length && !filters.customers.some(customer => lower(customer) === lower(order.customerName))) return false;
   const normalizedStage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
-  if (filters.stage && normalizedStage !== normalizeWorkOrderStage(filters.stage)) return false;
+  const flowResolution = resolveEffectiveFrontendTransferredQty(order);
+  const flowStages = flowResolution.ok ? flowResolution.state.segments.map(segment => segment.stage) : [normalizedStage];
+  if (filters.stage && !flowStages.includes(normalizeWorkOrderStage(filters.stage) || normalizedStage)) return false;
   if (filters.priority && order.priority !== filters.priority) return false;
   if (!matchesDuePreset(order, filters.duePreset, week, now)) return false;
   const from = dateInput(filters.dueFrom);
@@ -410,7 +448,7 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
     if (item === 'drawing' && !productionAlerts.some(alert => alert.code === 'DRAWING_NOT_ISSUED')) return false;
     if (item === 'material' && !productionAlerts.some(alert => alert.code === 'MATERIAL_NOT_READY')) return false;
     if (item === 'documents' && completeness.complete) return false;
-    if (item === 'completed' && normalizedStage !== 'completed') return false;
+    if (item === 'completed' && !flowStages.includes('completed')) return false;
     if (item === 'updated_today' && !inChinaDay(order.lastProgressAt, now)) return false;
     if (item === 'completed_today' && !inChinaDay(order.completedAt, now)) return false;
     if (item === 'delivery_missing' && (order.plannedAt || text(order.deliveryDay))) return false;
@@ -488,7 +526,12 @@ export async function loadProductionExecution(input: {
   filtered.sort((first, second) => compareProductionOrders(first, second, now));
 
   const stageCounts: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
-  for (const order of filtered) stageCounts[normalizeWorkOrderStage(order.stage || order.status) || 'not_issued'] += 1;
+  for (const order of filtered) {
+    const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+    const resolution = resolveEffectiveFrontendTransferredQty(order);
+    const segments = resolution.ok ? resolution.state.segments : [{ stage, quantity: 0 }];
+    for (const segment of segments) stageCounts[segment.stage] += 1;
+  }
   const pageSize = Math.min(Math.max(input.pageSize || 120, 1), 5000);
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -521,7 +564,9 @@ export async function summarizeProduction(week: ProductionWeek) {
   let completed = 0;
   for (const order of orders) {
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
-    stageCounts[stage] += 1;
+    const flowResolution = resolveEffectiveFrontendTransferredQty(order);
+    const segments = flowResolution.ok ? flowResolution.state.segments : [{ stage, quantity: 0 }];
+    for (const segment of segments) stageCounts[segment.stage] += 1;
     if (isDueToday(order, now)) dueToday += 1;
     if (isOverdue(order, now)) overdue += 1;
     if (!executionCompleteness(order).complete) incompleteDocuments += 1;
@@ -541,7 +586,7 @@ export async function summarizeProduction(week: ProductionWeek) {
     if (alerts.some(alert => alert.code === 'MATERIAL_NOT_READY')) materialNotReady += 1;
     if (alerts.some(alert => alert.code === 'TAIL_REMAINING')) tailRemaining += 1;
     if (order.priority === 'urgent') urgent += 1;
-    if (stage === 'completed') completed += 1;
+    if (segments.some(segment => segment.stage === 'completed')) completed += 1;
   }
   return {
     weekStartDate: week.weekStart ? chinaYmd(week.weekStart) : null,

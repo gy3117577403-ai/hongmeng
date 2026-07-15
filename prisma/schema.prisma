@@ -61,6 +61,8 @@ model WorkOrder {
   productionOwner         String?                @map("production_owner")
   workstation             String?
   completedQty            String?                @map("completed_qty")
+  frontendTransferredQty  Int?                   @map("frontend_transferred_qty")
+  executionVersion        Int                    @default(0) @map("execution_version")
   startedAt               DateTime?              @map("started_at")
   completedAt             DateTime?              @map("completed_at")
   lastProgressAt          DateTime?              @map("last_progress_at")

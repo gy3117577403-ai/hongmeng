@@ -14,7 +14,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const old = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!old) return NextResponse.json({ ok: false, error: '工单不存在', message: '工单不存在' }, { status: 404 });
 
-    const body = await req.json().catch(() => ({}));
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    if (old.frontendTransferredQty !== null && (
+      body.stage !== undefined
+      || body.status !== undefined
+      || body.completedQty !== undefined
+      || body.uncompletedQty !== undefined
+    )) {
+      return NextResponse.json({
+        ok: false,
+        error: '该工单已启用分批数量流转，目标、阶段和完成数量不能在普通编辑中修改',
+        message: '该工单已启用分批数量流转，目标、阶段和完成数量不能在普通编辑中修改',
+      }, { status: 409 });
+    }
     const { data, errors } = parseWorkOrderBody(body, { partial: true });
     if (errors.length) return NextResponse.json({ ok: false, error: errors[0], message: errors[0] }, { status: 400 });
     if (Object.keys(data).length === 0) return NextResponse.json({ ok: false, error: '没有可更新字段', message: '没有可更新字段' }, { status: 400 });
