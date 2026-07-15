@@ -127,6 +127,11 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const requestedCurrentWeek = params.get('currentWeekStart') || '';
+    const requestedNextWeek = params.get('nextWeekStart') || '';
+    if (requestedCurrentWeek || requestedNextWeek) initialDatesApplied.current = true;
+    setCurrentWeekStart(requestedCurrentWeek);
+    setNextWeekStart(requestedNextWeek);
     setCurrentBatchId(params.get('currentBatchId') || '');
     setNextBatchId(params.get('nextBatchId') || '');
   }, []);
@@ -266,6 +271,8 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
   const pageDescription = data
     ? `${rangeText(data.currentWeek)} 对比 ${rangeText(data.nextWeek)} · ${(data.summary.blockingAnomalyCount || 0) > 0 ? '存在待处理异常' : '切换门禁检查通过'}`
     : '下周计划对比、异常审核与安全切换';
+  const productionWeekStart = data?.currentWeek.weekStartDate || currentWeekStart;
+  const productionHref = productionWeekStart ? `/production?weekStart=${encodeURIComponent(productionWeekStart)}` : '/production';
 
   return (
     <main className="weekly-plan-center-shell hm-workbench-root">
@@ -304,7 +311,7 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
                 <ArrowRight size={16} aria-hidden="true" />
                 <label><span>待启用草稿</span><input type="date" value={nextWeekStart} onChange={event => { setNextWeekStart(event.target.value); setNextBatchId(''); setPage(1); }} /></label>
               </div>
-              <a className={`weekly-production-sync ${data?.currentWeek.weekStartDate ? 'ready' : 'empty'}`} href="/production" title="打开生产执行中心核对当前周工单">
+              <a className={`weekly-production-sync ${data?.currentWeek.weekStartDate ? 'ready' : 'empty'}`} href={productionHref} title="打开生产执行中心核对当前周工单">
                 <CheckCircle2 size={17} aria-hidden="true" />
                 <span><strong>{data?.currentWeek.weekStartDate ? '已同步到生产执行' : '尚未启用生产周'}</strong><small>{data?.currentWeek.weekStartDate ? `${rangeText(data.currentWeek)} · ${data.summary.currentCount} 单` : '导入并启用计划后自动同步'}</small></span>
               </a>

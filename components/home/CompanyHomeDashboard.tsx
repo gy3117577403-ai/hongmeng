@@ -6,43 +6,31 @@ import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
-  Archive,
   BarChart3,
   Bell,
   BookOpen,
   Boxes,
   CalendarDays,
   CheckCircle2,
-  ChevronDown,
   ChevronRight,
   CircleHelp,
-  ClipboardCheck,
   Clock3,
   FileCheck2,
   FileStack,
   FileText,
   FolderKanban,
   GitPullRequestArrow,
-  Home,
-  Inbox,
   LayoutDashboard,
   ListChecks,
   MessageSquareText,
   PackageCheck,
-  PanelLeftOpen,
-  PlusCircle,
   RefreshCw,
   Search,
-  Send,
-  Settings,
-  ShieldCheck,
-  Star,
-  Users,
-  Workflow,
   Wrench,
   X,
   type LucideIcon,
 } from 'lucide-react';
+import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { PortalMenu } from '@/components/PortalMenu';
 import type { CurrentUserDTO } from '@/types';
 import type { HomeActionItem, HomeDashboardData, HomeDistributionItem, HomeTone } from '@/types/home-dashboard';
@@ -78,75 +66,17 @@ type SearchPayload = {
 };
 type SearchResponse = SearchPayload & { ok?: boolean; error?: string; data?: SearchPayload };
 
-type NavigationItem = {
-  href: string;
-  label: string;
-  icon: LucideIcon;
-  badge?: 'actions';
-};
-
 type UtilityPanel = 'notifications' | 'messages' | 'help' | null;
-
-const topNavigation = [
-  { href: '/home', label: '首页' },
-  { href: '/weekly-plan-center', label: '计划' },
-  { href: '/workspace/reviews', label: '评审' },
-  { href: '/workspace/issues', label: '问题' },
-  { href: '/workspace/knowledge', label: '知识' },
-  { href: '/workspace/reports', label: '报表' },
-];
-
-const sidebarGroups: Array<{ label: string; items: NavigationItem[] }> = [
-  {
-    label: '我的工作',
-    items: [
-      { href: '/production?view=exceptions', label: '待办事项', icon: ClipboardCheck, badge: 'actions' },
-      { href: '/workspace/initiated', label: '我发起的', icon: Send },
-      { href: '/workspace/involved', label: '我参与的', icon: Inbox },
-      { href: '/workspace/copied', label: '抄送我的', icon: Archive },
-      { href: '/workspace/following', label: '我关注的', icon: Star },
-    ],
-  },
-  {
-    label: '业务中心',
-    items: [
-      { href: '/production', label: '生产执行', icon: LayoutDashboard },
-      { href: '/dashboard', label: '生产工单', icon: FileCheck2 },
-      { href: '/weekly-plan-center', label: '周计划', icon: CalendarDays },
-      { href: '/drawing-library', label: '图纸资料库', icon: FolderKanban },
-      { href: '/connector-assembly-manuals', label: '组装说明书', icon: BookOpen },
-      { href: '/connector-parameters', label: '连接器参数', icon: Boxes },
-    ],
-  },
-  {
-    label: '协同中心',
-    items: [
-      { href: '/workspace/issues', label: '问题管理', icon: ShieldCheck },
-      { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
-      { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
-      { href: '/workspace/knowledge', label: '知识库', icon: BookOpen },
-    ],
-  },
-  {
-    label: '基础管理',
-    items: [
-      { href: '/workspace/organization', label: '组织架构', icon: Users },
-      { href: '/workspace/permissions', label: '权限管理', icon: ShieldCheck },
-      { href: '/dashboard?openSettings=1', label: '系统设置', icon: Settings },
-    ],
-  },
-];
-
-const quickLinks: Array<{ href: string; label: string; icon: LucideIcon; tone: HomeTone }> = [
-  { href: '/workspace/issues?action=new', label: '新建问题', icon: AlertTriangle, tone: 'orange' },
+const quickLinks: Array<{ href: string; label: string; icon: LucideIcon; tone: HomeTone; planned?: boolean }> = [
+  { href: '/workspace/issues?action=new', label: '新建问题', icon: AlertTriangle, tone: 'orange', planned: true },
   { href: '/production', label: '生产执行', icon: LayoutDashboard, tone: 'blue' },
   { href: '/weekly-plan-center', label: '查看计划', icon: CalendarDays, tone: 'green' },
   { href: '/drawing-library', label: '图纸资料', icon: FolderKanban, tone: 'yellow' },
   { href: '/connector-assembly-manuals', label: '工艺文件', icon: BookOpen, tone: 'slate' },
-  { href: '/workspace/changes', label: '技术变更', icon: GitPullRequestArrow, tone: 'orange' },
+  { href: '/workspace/changes', label: '技术变更', icon: GitPullRequestArrow, tone: 'orange', planned: true },
   { href: '/dashboard', label: '生产工单', icon: FileStack, tone: 'green' },
   { href: '/connector-parameters', label: '连接器参数', icon: Boxes, tone: 'blue' },
-  { href: '/workspace/more', label: '更多功能', icon: Wrench, tone: 'slate' },
+  { href: '/workspace/more', label: '更多功能', icon: Wrench, tone: 'slate', planned: true },
 ];
 
 const kpiIcons: Record<string, LucideIcon> = {
@@ -258,8 +188,6 @@ function DistributionChart({ items }: { items: HomeDistributionItem[] }) {
 
 export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboardProps) {
   const router = useRouter();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [accountOpen, setAccountOpen] = useState(false);
   const [utilityPanel, setUtilityPanel] = useState<UtilityPanel>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -267,8 +195,6 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const [keyword, setKeyword] = useState('');
   const [results, setResults] = useState<HomeSearchItem[]>([]);
   const [refreshing, startRefresh] = useTransition();
-  const sidebarButtonRef = useRef<HTMLButtonElement>(null);
-  const accountButtonRef = useRef<HTMLButtonElement>(null);
   const utilityButtonRef = useRef<HTMLButtonElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchWrapRef = useRef<HTMLDivElement>(null);
@@ -321,10 +247,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
         return;
       }
       if (event.key !== 'Escape') return;
-      if (sidebarOpen) {
-        setSidebarOpen(false);
-        window.requestAnimationFrame(() => sidebarButtonRef.current?.focus());
-      } else if (searchOpen) {
+      if (searchOpen) {
         setSearchOpen(false);
         window.requestAnimationFrame(() => searchInputRef.current?.focus());
       }
@@ -335,7 +258,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       document.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [searchOpen, sidebarOpen]);
+  }, [searchOpen]);
 
   const searchGroups = useMemo(() => {
     const groups = new Map<string, HomeSearchItem[]>();
@@ -360,35 +283,16 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const donutStyle = { '--hm-home-rate': `${data.planChart.executionRate || 0}%` } as CSSProperties;
 
   return (
-    <main className={`hm-home-shell ${sidebarOpen ? 'sidebar-open' : ''}`}>
-      <button className="hm-home-sidebar-scrim" type="button" aria-label="关闭导航" onClick={() => { setSidebarOpen(false); sidebarButtonRef.current?.focus(); }} />
-      <aside className="hm-home-sidebar" id="hm-home-sidebar" aria-label="杭连协同平台主导航">
-        <a className="hm-home-brand" href="/home" aria-label="杭连协同平台首页">
-          <Image src="/icon-192.png" width={40} height={40} alt="" priority />
-          <div><strong>杭连协同平台</strong><small>计划 · 技术 · 生产高效闭环</small></div>
-        </a>
-        <nav>
-          <a className="hm-home-nav-item active" href="/home" aria-current="page" title="首页"><Home size={17} aria-hidden="true" /><b>首页</b></a>
-          {sidebarGroups.map(group => (
-            <section className="hm-home-nav-group" key={group.label}>
-              <h2>{group.label}</h2>
-              {group.items.map(item => {
-                const Icon = item.icon;
-                const badge = item.badge === 'actions' ? data.actionItems.length : 0;
-                return <a className="hm-home-nav-item" href={item.href} key={item.href} title={item.label}><Icon size={17} aria-hidden="true" /><b>{item.label}</b>{badge > 0 && <em>{badge > 99 ? '99+' : badge}</em>}</a>;
-              })}
-            </section>
-          ))}
-        </nav>
-        <a className="hm-home-new-issue" href="/workspace/issues?action=new"><PlusCircle size={17} aria-hidden="true" /><span>新建问题</span></a>
-      </aside>
-
-      <div className="hm-home-frame">
-        <header className="hm-home-toolbar">
-          <button ref={sidebarButtonRef} className="hm-home-menu-button" type="button" aria-label="打开主导航" aria-controls="hm-home-sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><PanelLeftOpen size={20} aria-hidden="true" /></button>
-          <nav className="hm-home-top-nav" aria-label="一级导航">
-            {topNavigation.map(item => <a className={item.href === '/home' ? 'active' : ''} href={item.href} key={item.href}>{item.label}</a>)}
-          </nav>
+    <main className="hm-home-shell hm-workbench-root">
+      <AppWorkbenchHeader
+        user={user}
+        activeHref="/home"
+        subtitle="计划、技术、生产统一入口"
+        menuItems={[
+          { label: '系统设置', href: '/dashboard?openSettings=1' },
+          { label: '退出登录', onSelect: () => { void logout(); } },
+        ]}
+        searchSlot={(
           <div className="hm-home-search" ref={searchWrapRef}>
             <label className="sr-only" htmlFor="hm-home-global-search">全局搜索</label>
             <Search size={18} aria-hidden="true" />
@@ -405,27 +309,23 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
               </div>
             )}
           </div>
+        )}
+        utilityActions={(
           <div className="hm-home-toolbar-actions">
             <button type="button" aria-label="通知" title="通知" onClick={event => openUtility(event, 'notifications')}><Bell size={19} />{data.actionItems.length > 0 && <span>{Math.min(data.actionItems.length, 9)}</span>}</button>
             <button type="button" aria-label="消息" title="消息" onClick={event => openUtility(event, 'messages')}><MessageSquareText size={19} /></button>
             <button type="button" aria-label="帮助" title="帮助" onClick={event => openUtility(event, 'help')}><CircleHelp size={19} /></button>
             <button className="hm-home-refresh" type="button" aria-label="刷新首页数据" title="刷新首页数据" disabled={refreshing} onClick={refresh}><RefreshCw className={refreshing ? 'is-spinning' : ''} size={18} /></button>
           </div>
-          <div className="hm-home-account-wrap">
-            <button ref={accountButtonRef} className="hm-home-account" type="button" aria-label={`${displayName}，打开账号菜单`} aria-expanded={accountOpen} onClick={() => setAccountOpen(value => !value)}>
-              <span aria-hidden="true">{displayName.slice(0, 1)}</span><p><b>{displayName}</b><small>生产协同账号</small></p><ChevronDown size={15} aria-hidden="true" />
-            </button>
-            <PortalMenu open={accountOpen} anchorRef={accountButtonRef} className="hm-home-user-menu" width={184} onClose={() => setAccountOpen(false)}>
-              <button type="button" onClick={() => { setAccountOpen(false); location.href = '/dashboard?openSettings=1'; }}><Settings size={16} />系统设置</button>
-              <button type="button" onClick={() => { setAccountOpen(false); void logout(); }}><Send size={16} />退出登录</button>
-            </PortalMenu>
-          </div>
-          <PortalMenu open={utilityPanel !== null} anchorRef={utilityButtonRef} className="hm-home-utility-menu" width={300} closeOnSelect={false} onClose={() => setUtilityPanel(null)}>
-            {utilityPanel === 'notifications' && <div><header><Bell size={17} /><strong>待办通知</strong></header>{data.actionItems.length ? data.actionItems.slice(0, 3).map(item => <a href={item.targetRoute} key={item.id}><b>{item.title}</b><span>{item.subtitle}</span></a>) : <p>当前没有新的待办通知</p>}<a className="hm-home-utility-all" href="/production?view=exceptions">查看全部待办</a></div>}
-            {utilityPanel === 'messages' && <div><header><MessageSquareText size={17} /><strong>消息中心</strong></header><p>消息模块框架已就绪，后续可接入部门通知和协同消息。</p><a className="hm-home-utility-all" href="/workspace/messages">进入消息中心</a></div>}
-            {utilityPanel === 'help' && <div><header><CircleHelp size={17} /><strong>帮助与支持</strong></header><a href="/workspace/help"><b>使用帮助</b><span>查看平台模块和使用入口</span></a><a href="/dashboard?openSettings=1"><b>系统设置</b><span>安装、诊断和账号设置</span></a></div>}
-          </PortalMenu>
-        </header>
+        )}
+      />
+      <PortalMenu open={utilityPanel !== null} anchorRef={utilityButtonRef} className="hm-home-utility-menu" width={300} closeOnSelect={false} onClose={() => setUtilityPanel(null)}>
+        {utilityPanel === 'notifications' && <div><header><Bell size={17} /><strong>待办通知</strong></header>{data.actionItems.length ? data.actionItems.slice(0, 3).map(item => <a href={item.targetRoute} key={item.id}><b>{item.title}</b><span>{item.subtitle}</span></a>) : <p>当前没有新的待办通知</p>}<a className="hm-home-utility-all" href="/production?view=exceptions">查看全部待办</a></div>}
+        {utilityPanel === 'messages' && <div><header><MessageSquareText size={17} /><strong>消息中心</strong></header><p>消息能力正在规划，当前入口不影响生产业务。</p><a className="hm-home-utility-all" href="/workspace/messages">查看规划说明</a></div>}
+        {utilityPanel === 'help' && <div><header><CircleHelp size={17} /><strong>帮助与支持</strong></header><a href="/workspace/help"><b>使用帮助</b><span>查看平台模块和规划入口</span></a><a href="/dashboard?openSettings=1"><b>系统设置</b><span>安装、诊断和账号设置</span></a></div>}
+      </PortalMenu>
+
+      <div className="hm-home-frame">
 
         <div className="hm-home-content">
           {data.error && <div className="hm-home-error" role="alert"><span>首页数据加载失败</span><p>{data.error}</p><button type="button" onClick={refresh} disabled={refreshing}>重新加载</button></div>}
@@ -465,7 +365,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
               <div className="hm-home-quick-grid">
                 {quickLinks.map(link => {
                   const Icon = link.icon;
-                  return <a href={link.href} key={link.href}><span className={`tone-${link.tone}`} aria-hidden="true"><Icon size={21} /></span><strong>{link.label}</strong></a>;
+                  return <a className={link.planned ? 'is-planned' : ''} href={link.href} key={link.href} title={link.planned ? `${link.label}（规划中）` : link.label}><span className={`tone-${link.tone}`} aria-hidden="true"><Icon size={21} /></span><strong>{link.label}</strong>{link.planned && <small>规划中</small>}</a>;
                 })}
               </div>
             </article>

@@ -1032,6 +1032,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       setDrawingMenuOrder(item);
     },
   };
+  const weeklyPlanWeekStart = weekStart || summary?.weekStartDate || '';
+  const weeklyPlanHref = weeklyPlanWeekStart ? `/weekly-plan-center?currentWeekStart=${encodeURIComponent(weeklyPlanWeekStart)}` : '/weekly-plan-center';
 
   return (
     <main className="production-page hm-production-workbench hm-workbench-root">
@@ -1052,7 +1054,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           description={`${todayLabel} · 本周任务、异常与进度闭环`}
           titleId="production-page-title"
           actionsClassName="production-page-actions"
-          actions={<><a className="hm-workbench-button" href="/weekly-plan-center"><CalendarDays size={15} aria-hidden="true" />周计划</a><button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量操作'}</button><button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button></>}
+          actions={<><a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a><button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量操作'}</button><button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button></>}
         />
 
         <section className="production-summary" aria-label="当前周生产摘要">
@@ -1089,7 +1091,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         </section>
 
         {error && <div className="production-error"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
-        {!summary?.weekStartDate && !loading && <div className="production-empty-week"><strong>当前暂无启用生产周</strong><span>请前往周计划中心审核并启用生产计划。</span><a href="/weekly-plan-center">进入周计划中心</a></div>}
+        {!summary?.weekStartDate && !loading && <div className="production-empty-week"><strong>当前暂无启用生产周</strong><span>请前往周计划中心审核并启用生产计划。</span><a href={weeklyPlanHref}>进入周计划中心</a></div>}
 
         {view === 'board' ? (
           <div ref={boardShellRef} className="production-board-shell" aria-label="四状态生产看板">
