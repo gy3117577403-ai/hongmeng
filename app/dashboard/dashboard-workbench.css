@@ -890,7 +890,7 @@
 
 /* Dashboard refine 1: preview-first vertical resource workspace. */
 .hm-dashboard-workbench {
-  --dashboard-category-width: 82px;
+  --dashboard-category-width: 176px;
 }
 
 .hm-dashboard-workbench .hm-dashboard-page {
@@ -959,18 +959,18 @@
   position: relative;
   width: 100%;
   min-width: 0;
-  min-height: 66px;
-  flex: 0 0 66px;
+  min-height: 56px;
+  flex: 0 0 56px;
   display: grid;
-  grid-template-columns: 1fr auto;
-  grid-template-rows: 28px minmax(22px, auto);
-  place-items: center;
-  gap: 2px 3px;
-  padding: 6px 4px 5px 7px;
+  grid-template-columns: 30px minmax(0, 1fr) 22px;
+  grid-template-rows: 1fr;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 7px;
   border: 1px solid transparent;
   border-radius: var(--hm-radius-sm);
   background: var(--hm-color-surface-soft);
-  text-align: center;
+  text-align: left;
 }
 
 .hm-dashboard-workbench .resource-menu > button::before {
@@ -996,25 +996,26 @@
 
 .hm-dashboard-workbench .resource-menu .category-mark {
   grid-row: 1;
-  grid-column: 1 / -1;
+  grid-column: 1;
   width: 28px;
   height: 28px;
   font-size: 10px;
 }
 
 .hm-dashboard-workbench .resource-menu .category-name {
-  grid-row: 2;
-  grid-column: 1 / -1;
+  grid-row: 1;
+  grid-column: 2;
   width: 100%;
   display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 0 2px;
-  overflow: visible;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  gap: 0 3px;
+  overflow: hidden;
   color: inherit;
   font-size: 10px;
   line-height: 1.15;
-  white-space: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hm-dashboard-workbench .resource-menu .category-name > span {
@@ -1022,9 +1023,9 @@
 }
 
 .hm-dashboard-workbench .resource-menu > button > em {
-  position: absolute;
-  top: 5px;
-  right: 5px;
+  position: static;
+  grid-row: 1;
+  grid-column: 3;
   width: 18px;
   min-width: 18px;
   height: 18px;
@@ -1422,12 +1423,12 @@
 
 @media (max-width: 1180px) {
   .hm-dashboard-workbench {
-    --dashboard-category-width: 70px;
+    --dashboard-category-width: 150px;
   }
 
   .hm-dashboard-workbench .resource-menu > button {
-    min-height: 62px;
-    flex-basis: 62px;
+    min-height: 54px;
+    flex-basis: 54px;
   }
 
   .hm-dashboard-workbench .preview-file-switcher {
@@ -1438,7 +1439,7 @@
 
 @media (max-width: 1024px) {
   .hm-dashboard-workbench {
-    --dashboard-category-width: 54px;
+    --dashboard-category-width: 148px;
   }
 
   .hm-dashboard-workbench .hm-dashboard-page {
@@ -1483,10 +1484,10 @@
   }
 
   .hm-dashboard-workbench .resource-menu > button {
-    min-height: 58px;
-    flex-basis: 58px;
-    padding-right: 2px;
-    padding-left: 4px;
+    min-height: 52px;
+    flex-basis: 52px;
+    padding-right: 6px;
+    padding-left: 6px;
   }
 
   .hm-dashboard-workbench .resource-menu .category-mark {
@@ -1495,12 +1496,10 @@
   }
 
   .hm-dashboard-workbench .resource-menu .category-name {
-    font-size: 9px;
+    font-size: 10px;
   }
 
   .hm-dashboard-workbench .resource-menu > button > em {
-    top: 3px;
-    right: 3px;
     width: 16px;
     min-width: 16px;
     height: 16px;

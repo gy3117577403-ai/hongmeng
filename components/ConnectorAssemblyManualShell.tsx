@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent, RefObject } from 'react';
+import type { FormEvent } from 'react';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import type { PdfTocSuggestion } from '@/components/PdfViewer';
@@ -23,7 +23,7 @@ import type {
   CurrentUserDTO,
 } from '@/types';
 
-type RightTab = 'toc' | 'versions' | 'bindings';
+type RightTab = 'summary' | 'toc' | 'versions' | 'bindings';
 type ManualForm = {
   title: string;
   manufacturer: string;
@@ -179,13 +179,13 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [rightTab, setRightTab] = useState<RightTab>('toc');
+  const [rightTab, setRightTab] = useState<RightTab>('summary');
   const [tocSuggestions, setTocSuggestions] = useState<PdfTocSuggestion[]>([]);
   const [tocSuggestionOpen, setTocSuggestionOpen] = useState(false);
   const [selectedTocSuggestions, setSelectedTocSuggestions] = useState<string[]>([]);
   const [tocEdit, setTocEdit] = useState<TocEditState>(null);
   const [highlightedTocId, setHighlightedTocId] = useState('');
-  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [manualActionsOpen, setManualActionsOpen] = useState(false);
   const [moreInfoOpen, setMoreInfoOpen] = useState(false);
@@ -210,7 +210,6 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const [toast, setToast] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [compactLayout, setCompactLayout] = useState(false);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const manualActionsButtonRef = useRef<HTMLButtonElement>(null);
   const detailButtonRef = useRef<HTMLButtonElement>(null);
@@ -252,18 +251,9 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   }, [toast]);
 
   useEffect(() => {
-    function syncLayout(): void {
-      const nextCompact = window.innerWidth <= 1180;
-      setCompactLayout(nextCompact);
-      if (nextCompact) setDetailsOpen(false);
-    }
-    syncLayout();
-    window.addEventListener('resize', syncLayout);
-    return () => window.removeEventListener('resize', syncLayout);
-  }, []);
-
-  useEffect(() => {
-    if (!compactLayout || !detailsOpen) return undefined;
+    if (!detailsOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     window.requestAnimationFrame(() => detailCloseButtonRef.current?.focus());
 
     function keepDetailPanelActive(event: KeyboardEvent): void {
@@ -297,8 +287,11 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
     }
 
     window.addEventListener('keydown', keepDetailPanelActive);
-    return () => window.removeEventListener('keydown', keepDetailPanelActive);
-  }, [bindingOpen, bulkOpen, compactLayout, deleteTarget, detailsOpen, manualModal, moreInfoOpen, tocEdit, tocSuggestionOpen, trashOpen, uploadOpen, versionModal]);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', keepDetailPanelActive);
+    };
+  }, [bindingOpen, bulkOpen, deleteTarget, detailsOpen, manualModal, moreInfoOpen, tocEdit, tocSuggestionOpen, trashOpen, uploadOpen, versionModal]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -921,12 +914,13 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
             <small>搜索范围：全部说明书记录及后端已有正文索引</small>
           </div>
           <div className="manual-quick-filters hm-manual-quick-filters" aria-label="说明书快捷筛选">
-            {([['all', '全部'], ['latest', '最新版'], ['incomplete', '待完善'], ['unbound', '未关联'], ['parse_failed', '解析失败']] as Array<[string, string]>).map(([value, label]) => (
+            {([['all', '全部'], ['latest', '最新版'], ['incomplete', '待完善']] as Array<[string, string]>).map(([value, label]) => (
               <button className={statusFilter === value ? 'active' : ''} type="button" key={value} aria-pressed={statusFilter === value} onClick={() => { setStatusFilter(value); setPage(1); }}>{label}</button>
             ))}
             <button ref={filterButtonRef} className={filterOpen || advancedFilterActive ? 'active' : ''} type="button" aria-expanded={filterOpen} onClick={() => setFilterOpen(value => !value)}>更多筛选{advancedFilterActive ? ` ${activeFilterLabels.length}` : ''}</button>
             <PortalMenu open={filterOpen} anchorRef={filterButtonRef} align="left" className="manual-filter-menu" width={310} onClose={() => setFilterOpen(false)} closeOnSelect={false}>
               <div className="manual-advanced-filters">
+                <label><span>资料状态</span><select aria-label="资料状态筛选" value={statusFilter} onChange={event => { setStatusFilter(event.target.value); setPage(1); }}><option value="all">全部状态</option><option value="latest">最新版</option><option value="incomplete">待完善</option><option value="unbound">待关联</option><option value="parse_failed">解析失败</option></select></label>
                 <label><span>制造商</span><select aria-label="制造商筛选" value={manufacturer} onChange={event => { setManufacturer(event.target.value); setPage(1); }}><option value="">全部制造商</option>{manufacturers.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
                 <label><span>连接器系列</span><select aria-label="系列筛选" value={family} onChange={event => { setFamily(event.target.value); setPage(1); }}><option value="">全部系列</option>{families.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
                 <label className="wide"><span>适用型号</span><input aria-label="适用型号筛选" value={model} onChange={event => { setModel(event.target.value); setPage(1); }} placeholder="输入型号关键词" /></label>
@@ -996,11 +990,11 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
             {!loading && !detailLoading && selectedManual && !selectedVersion && <div className="manual-empty-preview missing"><span>01</span><strong>这份说明书还没有版本</strong><p>先创建版本，再上传 PDF 或多张图片。</p><button type="button" onClick={openCreateVersion}>创建首个版本</button></div>}
             {!loading && !detailLoading && selectedVersion && !selectedAsset && <div className="manual-empty-preview missing"><span>{selectedVersion.fileMode === 'PDF' ? 'PDF' : 'IMG'}</span><strong>当前版本尚未上传文件</strong><p>{selectedVersion.fileMode === 'PDF' ? '上传一个 PDF，系统会识别页数并提取可搜索文字。' : '可一次选择多张图片，并在版本面板调整顺序。'}</p><button type="button" onClick={() => setUploadOpen(true)}>上传文件</button></div>}
             {!loading && !detailLoading && selectedVersion?.fileMode === 'PDF' && selectedAsset && (
-              <PdfViewer key={selectedVersion.id} fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} viewUrl={selectedAsset.contentUrl} page={pdfPage} onPageChange={setPdfPage} onAddToToc={addCurrentPageToToc} onTocSuggestions={setTocSuggestions} onCopyPageLink={copyCurrentPageLink} readingMode />
+              <PdfViewer key={selectedVersion.id} dashboardMode fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} viewUrl={selectedAsset.contentUrl} page={pdfPage} onPageChange={setPdfPage} onAddToToc={addCurrentPageToToc} onTocSuggestions={setTocSuggestions} onCopyPageLink={copyCurrentPageLink} readingMode />
             )}
             {!loading && !detailLoading && selectedVersion?.fileMode === 'IMAGE_SET' && selectedAsset && (
               <div className="manual-image-preview">
-                <ImageViewer key={selectedVersion.id} fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} page={imageIndex + 1} pageCount={activeAssets.length} onPageChange={value => setImageIndex(Math.max(0, value - 1))} onAddToToc={addCurrentPageToToc} onCopyPageLink={copyCurrentPageLink} gestureResetKey={selectedVersion.id} readingMode />
+                <ImageViewer key={selectedVersion.id} dashboardMode fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} page={imageIndex + 1} pageCount={activeAssets.length} onPageChange={value => setImageIndex(Math.max(0, value - 1))} onAddToToc={addCurrentPageToToc} onCopyPageLink={copyCurrentPageLink} gestureResetKey={selectedVersion.id} readingMode />
               </div>
             )}
           </div>
@@ -1012,12 +1006,13 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
         </section>
 
         {detailsOpen && <button className="manual-detail-scrim" type="button" aria-label="关闭说明书资料面板" onClick={closeDetailPanel} />}
-        {detailsOpen && <aside ref={detailPanelRef} id="manual-resource-panel" className="manual-detail-panel open" aria-label="说明书目录、版本与型号" role={compactLayout ? 'dialog' : undefined} aria-modal={compactLayout ? true : undefined} tabIndex={-1}>
-          <ManualSideSummary manual={selectedManual} version={selectedVersion} close={closeDetailPanel} closeButtonRef={detailCloseButtonRef} />
+        {detailsOpen && <aside ref={detailPanelRef} id="manual-resource-panel" className="manual-detail-panel open" aria-label="说明书摘要、目录、版本与型号" role="dialog" aria-modal="true" tabIndex={-1}>
+          <div className="manual-detail-heading"><strong>说明书资料</strong><button ref={detailCloseButtonRef} type="button" onClick={closeDetailPanel} aria-label="关闭说明书资料面板" title="关闭资料面板">×</button></div>
           <div className="manual-detail-tabs">
-            {([['toc', '章节目录'], ['versions', '版本与文件'], ['bindings', '关联型号']] as Array<[RightTab, string]>).map(([key, label]) => <button className={rightTab === key ? 'active' : ''} type="button" key={key} aria-pressed={rightTab === key} onClick={() => setRightTab(key)}>{label}{key === 'versions' && selectedManual ? ` ${selectedManual.versionCount}` : ''}{key === 'bindings' && selectedManual ? ` ${selectedManual.bindingCount}` : ''}</button>)}
+            {([['summary', '摘要'], ['toc', '章节目录'], ['versions', '版本与文件'], ['bindings', '关联型号']] as Array<[RightTab, string]>).map(([key, label]) => <button className={rightTab === key ? 'active' : ''} type="button" key={key} aria-pressed={rightTab === key} onClick={() => setRightTab(key)}>{label}{key === 'versions' && selectedManual ? ` ${selectedManual.versionCount}` : ''}{key === 'bindings' && selectedManual ? ` ${selectedManual.bindingCount}` : ''}</button>)}
           </div>
           <div className="manual-detail-scroll">
+            {rightTab === 'summary' && <ManualSideSummary manual={selectedManual} version={selectedVersion} />}
             {rightTab === 'toc' && (
               <div className="manual-toc-list">
                 <div className="manual-section-head"><strong>章节目录</strong><div><button type="button" disabled={!selectedVersion || selectedVersion.fileMode !== 'PDF'} onClick={openTocSuggestionDialog}>生成目录建议</button><button type="button" disabled={!selectedVersion} onClick={openEditVersion}>编辑全部</button></div></div>
@@ -1069,7 +1064,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   );
 }
 
-function ManualSideSummary({ manual, version, close, closeButtonRef }: { manual: ConnectorAssemblyManualDTO | null; version: ConnectorAssemblyManualVersionDTO | null; close: () => void; closeButtonRef: RefObject<HTMLButtonElement> }) {
+function ManualSideSummary({ manual, version }: { manual: ConnectorAssemblyManualDTO | null; version: ConnectorAssemblyManualVersionDTO | null }) {
   const metadata = manual ? [
     manual.manufacturer ? ['制造商', manual.manufacturer] : null,
     meaningfulRevision(version?.revision) ? ['版本', meaningfulRevision(version?.revision)] : null,
@@ -1078,7 +1073,7 @@ function ManualSideSummary({ manual, version, close, closeButtonRef }: { manual:
   ].filter((row): row is string[] => row !== null) : [];
   return (
     <div className="manual-side-summary">
-      <div className="manual-side-summary-head"><strong>说明书摘要</strong><button ref={closeButtonRef} type="button" onClick={close} aria-label="关闭说明书资料面板" title="关闭资料面板">×</button></div>
+      <div className="manual-side-summary-head"><strong>说明书摘要</strong></div>
       {!manual && <p>选择说明书后查看目录、版本和关联型号。</p>}
       {metadata.length > 0 && <div>{metadata.map(([label, value]) => <span key={label}><small>{label}</small><b title={value}>{value}</b></span>)}</div>}
       {!!manual?.models.length && <section><small>适用型号</small><div>{manual.models.map(model => <i key={model}>{model}</i>)}</div></section>}

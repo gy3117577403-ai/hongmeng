@@ -121,6 +121,8 @@ export function DrawingLibraryShell({
   const [filePanelOpen, setFilePanelOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const filePanelTriggerRef = useRef<HTMLButtonElement>(null);
+  const filePanelRef = useRef<HTMLElement>(null);
+  const filePanelCloseRef = useRef<HTMLButtonElement>(null);
   const initialUrlAppliedRef = useRef(false);
   const urlMissingWarnedRef = useRef(false);
 
@@ -202,13 +204,51 @@ export function DrawingLibraryShell({
       else if (cleanupOpen) setCleanupOpen(false);
       else if (bulkHelpOpen) setBulkHelpOpen(false);
       else if (modal) setModal(null);
-      else if (filePanelOpen) {
-        setFilePanelOpen(false);
-        window.requestAnimationFrame(() => filePanelTriggerRef.current?.focus());
-      }
     }
     window.addEventListener('keydown', closeTransientLayer);
     return () => window.removeEventListener('keydown', closeTransientLayer);
+  }, [bulkHelpOpen, bulkImportOpen, cleanupOpen, modal]);
+
+  useEffect(() => {
+    if (!filePanelOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.requestAnimationFrame(() => filePanelCloseRef.current?.focus());
+
+    function keepFilePanelActive(event: KeyboardEvent) {
+      const panel = filePanelRef.current;
+      if (!panel) return;
+      const blockingLayerOpen = !!(bulkImportOpen || cleanupOpen || bulkHelpOpen || modal);
+      if (blockingLayerOpen) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeFilePanel();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+      if (!focusable.length) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const outside = !panel.contains(document.activeElement);
+      if (event.shiftKey && (document.activeElement === first || outside)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || outside)) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    window.addEventListener('keydown', keepFilePanelActive);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', keepFilePanelActive);
+    };
   }, [bulkHelpOpen, bulkImportOpen, cleanupOpen, filePanelOpen, modal]);
 
   useEffect(() => {
@@ -410,7 +450,10 @@ export function DrawingLibraryShell({
             <button className="hm-workbench-button" type="button" onClick={() => openModal('create')}>新增资料</button>
             <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)}>批量导入原图</button>
             <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}>导入说明</button>
-            <button className="hm-workbench-button danger" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>资料治理</button>
+            <details className="hm-drawing-more-actions">
+              <summary className="hm-workbench-button">更多</summary>
+              <div><button className="danger" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>资料治理</button></div>
+            </details>
           </>}
         />
 
@@ -432,31 +475,26 @@ export function DrawingLibraryShell({
             </select>
           </label>
 
-          <div className="hm-drawing-filter-group" role="group" aria-label="资料状态筛选">
+          <label className="hm-drawing-status-filter">
             <span>状态</span>
-            <div>
-              {filterOptions.map(([key, label]) => (
-                <button key={key} className={filter === key ? 'active' : ''} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>
-              ))}
-            </div>
-          </div>
+            <select className="hm-workbench-input" value={filter} onChange={event => setFilter(event.target.value as DrawingFilter)}>
+              {filterOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+          </label>
 
           <div className="hm-drawing-result-count" aria-live="polite">
-            <span>{loading ? '正在检索' : '当前结果'}</span>
-            <strong>{loading ? '…' : visibleItems.length}</strong>
-            <small>条规格</small>
+            <span>{loading ? '正在检索' : '当前结果'}</span><strong>{loading ? '…' : visibleItems.length}</strong><small>条</small>
           </div>
+          <span className="hm-drawing-filter-summary" title={[keyword.trim() ? `关键词：${keyword.trim()}` : '', customer !== '全部客户' ? `客户：${customer}` : '', filter !== 'all' ? `状态：${activeFilterLabel}` : ''].filter(Boolean).join(' · ') || '全部资料'}>{hasActiveFilters ? '已启用筛选' : '全部资料'}</span>
+          <details className="hm-drawing-more-filters">
+            <summary className="hm-workbench-button">更多筛选</summary>
+            <div role="group" aria-label="快捷资料状态筛选">
+              <span>资料状态</span>
+              {filterOptions.map(([key, label]) => <button key={key} className={filter === key ? 'active' : ''} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>)}
+            </div>
+          </details>
+          <button className="hm-drawing-clear-filters" type="button" disabled={!hasActiveFilters} onClick={clearFilters}>清除筛选</button>
         </section>
-
-        {hasActiveFilters && (
-          <section className="hm-drawing-active-filters" aria-label="已应用筛选条件">
-            <span>已应用</span>
-            {keyword.trim() && <b title={keyword}>关键词：{keyword}</b>}
-            {customer !== '全部客户' && <b title={customer}>客户：{customer}</b>}
-            {filter !== 'all' && <b>状态：{activeFilterLabel}</b>}
-            <button type="button" onClick={clearFilters}>清除全部</button>
-          </section>
-        )}
 
         {msg && <div className="hm-drawing-message" role="status"><span>{msg}</span><button type="button" onClick={loadData}>重新加载</button></div>}
 
@@ -552,9 +590,9 @@ export function DrawingLibraryShell({
                       <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : `上传到${activeCategory?.name || '当前分类'}`}</button>
                     </div>
                   ) : selectedFile.fileType === 'pdf' ? (
-                    <PdfViewer fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} viewUrl={selectedFile.viewUrl} downloadUrl={selectedFile.downloadUrl} />
+                    <PdfViewer dashboardMode fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} viewUrl={selectedFile.viewUrl} downloadUrl={selectedFile.downloadUrl} />
                   ) : selectedFile.fileType === 'image' ? (
-                    <ImageViewer fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} downloadUrl={selectedFile.downloadUrl} />
+                    <ImageViewer dashboardMode fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} downloadUrl={selectedFile.downloadUrl} />
                   ) : (
                     <div className="drawing-file-fallback">
                       <strong title={safeDisplayFilename(selectedFile)}>{safeDisplayFilename(selectedFile)}</strong>
@@ -569,10 +607,10 @@ export function DrawingLibraryShell({
           </section>
 
           {filePanelOpen && <button className="drawing-file-panel-scrim" type="button" aria-label="关闭文件工具窗" onClick={closeFilePanel} />}
-          <aside id="drawing-library-file-panel" className={filePanelOpen ? 'drawing-file-panel open' : 'drawing-file-panel'} aria-label="分类文件工具窗">
+          {filePanelOpen && <aside ref={filePanelRef} id="drawing-library-file-panel" className="drawing-file-panel open" aria-label="分类文件工具窗" role="dialog" aria-modal="true" tabIndex={-1}>
           <div className="drawing-file-panel-head">
             <div><strong>{activeCategory?.name || '分类文件'}</strong><span>{activeFiles.length} 个文件</span></div>
-            <button className="drawing-file-panel-close" type="button" aria-label="关闭文件工具窗" title="关闭" onClick={closeFilePanel}>×</button>
+            <button ref={filePanelCloseRef} className="drawing-file-panel-close" type="button" aria-label="关闭文件工具窗" title="关闭" onClick={closeFilePanel}>×</button>
           </div>
           {selectedItem && activeFiles.length > 0 ? (
             <>
@@ -599,7 +637,7 @@ export function DrawingLibraryShell({
               {selectedItem && <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传 PDF / 图片'}</button>}
             </div>
           )}
-          </aside>
+          </aside>}
         </section>
       </div>
 

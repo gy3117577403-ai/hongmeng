@@ -1041,3 +1041,300 @@
     transition: none;
   }
 }
+
+/* Directed refine: compact controls, preview-first workspace and overlay file tools. */
+.hm-drawing-workbench .hm-workbench-page-header {
+  flex-basis: 50px;
+  min-height: 50px;
+}
+
+.hm-drawing-workbench .hm-workbench-page-copy p {
+  display: none;
+}
+
+.hm-drawing-more-actions,
+.hm-drawing-more-filters {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.hm-drawing-more-actions > summary,
+.hm-drawing-more-filters > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.hm-drawing-more-actions > summary::-webkit-details-marker,
+.hm-drawing-more-filters > summary::-webkit-details-marker {
+  display: none;
+}
+
+.hm-drawing-more-actions > div,
+.hm-drawing-more-filters > div {
+  position: absolute;
+  z-index: calc(var(--z-side-tool) + 20);
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-md);
+  background: var(--hm-color-surface);
+  box-shadow: var(--hm-shadow-md);
+}
+
+.hm-drawing-more-actions > div > button {
+  width: 100%;
+  min-height: 40px;
+  border: 0;
+  border-radius: var(--hm-radius-sm);
+  background: transparent;
+  color: var(--hm-color-danger);
+  font-size: 11px;
+  font-weight: 750;
+  text-align: left;
+}
+
+.hm-drawing-query {
+  flex: 0 0 52px;
+  min-height: 52px;
+  grid-template-columns: minmax(240px, 1fr) minmax(150px, .65fr) 126px 86px minmax(108px, .42fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  box-shadow: none;
+}
+
+.hm-drawing-search-field,
+.hm-drawing-customer-filter,
+.hm-drawing-status-filter {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.hm-drawing-search-field > span:first-child,
+.hm-drawing-customer-filter > span,
+.hm-drawing-status-filter > span {
+  white-space: nowrap;
+}
+
+.hm-drawing-search-control .hm-workbench-input,
+.hm-drawing-customer-filter select,
+.hm-drawing-status-filter select {
+  min-height: 40px;
+}
+
+.hm-drawing-result-count {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-left: 1px solid var(--hm-color-border);
+  white-space: nowrap;
+}
+
+.hm-drawing-result-count span,
+.hm-drawing-result-count strong,
+.hm-drawing-result-count small {
+  align-self: auto;
+  font-size: 10px;
+}
+
+.hm-drawing-result-count strong {
+  color: var(--hm-color-text);
+  font-size: 14px;
+}
+
+.hm-drawing-filter-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-more-filters > summary,
+.hm-drawing-clear-filters {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid var(--hm-color-border-strong);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface);
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hm-drawing-clear-filters:disabled {
+  cursor: not-allowed;
+  opacity: .45;
+}
+
+.hm-drawing-more-filters > div {
+  width: 210px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.hm-drawing-more-filters > div > span {
+  grid-column: 1 / -1;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-drawing-more-filters > div > button {
+  min-height: 38px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-soft);
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.hm-drawing-more-filters > div > button.active {
+  border-color: #e5a77e;
+  background: var(--hm-color-accent-soft);
+  color: var(--hm-color-accent);
+}
+
+.hm-drawing-workbench .drawing-workspace {
+  grid-template-columns: minmax(270px, 292px) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.hm-drawing-file-toggle {
+  display: inline-flex;
+}
+
+.hm-drawing-workbench .drawing-file-panel,
+.hm-drawing-workbench .drawing-file-panel.open {
+  position: absolute;
+  z-index: calc(var(--z-side-tool) + 10);
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(360px, 88vw);
+  display: flex;
+  padding: 10px;
+  overflow: hidden;
+  box-shadow: -16px 0 36px rgba(31, 41, 51, .18);
+}
+
+.drawing-file-panel-close {
+  display: grid;
+}
+
+.drawing-file-panel-scrim {
+  position: absolute;
+  z-index: calc(var(--z-side-tool) + 5);
+  inset: 0;
+  display: block;
+  border: 0;
+  background: rgba(31, 41, 51, .16);
+}
+
+.hm-drawing-workbench .drawing-library-main {
+  grid-template-columns: 108px minmax(0, 1fr);
+}
+
+.hm-drawing-workbench .drawing-preview .dashboard-preview-viewer {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #eef1f4;
+}
+
+.hm-drawing-workbench .drawing-preview .dashboard-preview-viewer .viewer-toolbar {
+  position: relative;
+  top: auto;
+  right: auto;
+  left: auto;
+  width: 100%;
+  min-height: 46px;
+  flex: 0 0 46px;
+  justify-content: center;
+  padding: 4px 6px;
+  border: 0;
+  border-bottom: 1px solid var(--hm-color-border);
+  border-radius: 0;
+  background: var(--hm-color-surface);
+  box-shadow: none;
+}
+
+.hm-drawing-workbench .drawing-preview .dashboard-preview-viewer .viewer-title {
+  display: none;
+}
+
+.hm-drawing-workbench .drawing-preview .dashboard-preview-viewer .viewer-controls {
+  max-width: 100%;
+  flex-wrap: nowrap;
+  justify-content: center;
+  gap: 4px;
+}
+
+.hm-drawing-workbench .drawing-preview .dashboard-preview-viewer .viewer-controls > button,
+.hm-drawing-workbench .drawing-preview .dashboard-preview-viewer .viewer-more > summary {
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0 8px;
+}
+
+.hm-drawing-workbench .drawing-preview .dashboard-preview-viewer .viewer-zoom-value {
+  width: 56px;
+  flex: 0 0 56px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.hm-drawing-workbench .drawing-preview .dashboard-preview-viewer .viewer-stage {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+  touch-action: none;
+}
+
+@media (max-width: 1060px) {
+  .hm-drawing-query {
+    grid-template-columns: minmax(232px, 1fr) minmax(160px, .68fr) 120px 74px auto auto;
+  }
+
+  .hm-drawing-filter-summary {
+    display: none;
+  }
+
+  .hm-drawing-workbench .drawing-workspace {
+    grid-template-columns: 258px minmax(0, 1fr);
+  }
+
+  .hm-drawing-workbench .drawing-library-main {
+    grid-template-columns: 102px minmax(0, 1fr);
+  }
+}
+
+@media (max-height: 820px) {
+  .hm-drawing-query {
+    flex-basis: 50px;
+    min-height: 50px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+}
