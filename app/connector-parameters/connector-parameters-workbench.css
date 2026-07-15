@@ -41,8 +41,16 @@
 }
 
 .hm-parameters-workbench .hm-parameters-page-actions .hm-workbench-button {
+  gap: 6px;
   padding-right: 11px;
   padding-left: 11px;
+}
+
+.hm-parameters-workbench .hm-parameters-page-actions svg,
+.hm-parameters-workbench .hm-parameters-restore-button svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
 }
 
 .hm-parameters-workbench .hm-parameters-library-tabs {
@@ -120,11 +128,12 @@
   align-items: center;
 }
 
-.hm-parameters-search-control > b {
+.hm-parameters-search-control > svg {
   position: absolute;
   left: 11px;
+  width: 15px;
+  height: 15px;
   color: var(--hm-color-text-weak);
-  font-size: 15px;
   pointer-events: none;
 }
 
@@ -224,6 +233,7 @@
 
 .hm-parameters-workbench .hm-parameters-restore-button {
   min-width: 88px;
+  gap: 6px;
 }
 
 .hm-parameters-active-filters {

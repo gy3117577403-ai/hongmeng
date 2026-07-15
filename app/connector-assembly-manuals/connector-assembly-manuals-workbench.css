@@ -28,6 +28,16 @@
   gap: var(--hm-space-2);
 }
 
+.hm-manual-workbench .hm-manual-page-actions .hm-workbench-button {
+  gap: 6px;
+}
+
+.hm-manual-workbench .hm-manual-page-actions svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
 .hm-manual-workbench .hm-manual-module-tabs {
   flex: 0 0 40px;
   min-width: 0;
@@ -105,11 +115,13 @@
   min-width: 0;
 }
 
-.hm-manual-search-field > div > span {
+.hm-manual-search-field > div > svg {
   position: absolute;
   z-index: 1;
   top: 50%;
   left: 12px;
+  width: 15px;
+  height: 15px;
   color: var(--hm-color-text-weak);
   transform: translateY(-50%);
   pointer-events: none;
@@ -318,13 +330,13 @@
   font-size: 9px;
 }
 
-.hm-manual-workbench .manual-list-heading > span {
-  padding: 3px 6px;
+.hm-manual-workbench .manual-list-heading > svg {
+  width: 24px;
+  height: 24px;
+  padding: 5px;
   border-radius: var(--hm-radius-sm);
   background: var(--hm-color-surface-muted);
   color: var(--hm-color-text-weak);
-  font-size: 8px;
-  font-weight: 800;
 }
 
 .hm-manual-workbench .manual-list-scroll {
@@ -685,6 +697,15 @@
   color: var(--hm-color-accent);
   font-size: 11px;
   font-weight: 800;
+}
+
+.hm-manual-workbench .manual-empty-preview > svg {
+  width: 42px;
+  height: 42px;
+  padding: 10px;
+  border-radius: var(--hm-radius-md);
+  background: var(--hm-color-accent-soft);
+  color: var(--hm-color-accent);
 }
 
 .hm-manual-workbench .manual-empty-preview strong {

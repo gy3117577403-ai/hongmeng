@@ -24,7 +24,7 @@
 .weekly-plan-center-shell .weekly-period-bar,
 .weekly-plan-center-shell .weekly-plan-snapshot,
 .weekly-plan-center-shell .weekly-plan-total,
-.weekly-plan-center-shell .weekly-change-summary article,
+.weekly-plan-center-shell .weekly-change-summary button,
 .weekly-plan-center-shell .weekly-safety-banner,
 .weekly-plan-center-shell .weekly-diff-workspace,
 .weekly-plan-center-shell .weekly-history-layout {
@@ -434,7 +434,7 @@
   gap: 7px;
 }
 
-.weekly-plan-center-shell .weekly-change-summary article {
+.weekly-plan-center-shell .weekly-change-summary button {
   min-width: 0;
   min-height: 64px;
   display: flex;
@@ -442,10 +442,27 @@
   justify-content: space-between;
   gap: 6px;
   padding: 8px 10px;
+  color: inherit;
+  text-align: left;
   border-left: 3px solid var(--hm-color-border-strong);
 }
 
-.weekly-plan-center-shell .weekly-change-summary article span {
+.weekly-plan-center-shell .weekly-change-summary button:hover {
+  border-color: #dfb18f;
+  box-shadow: var(--hm-shadow-md);
+}
+
+.weekly-plan-center-shell .weekly-change-summary button.active {
+  border-color: #df9867;
+  box-shadow: inset 0 0 0 1px rgba(217, 86, 0, .1), var(--hm-shadow-sm);
+}
+
+.weekly-plan-center-shell .weekly-change-summary button:focus-visible {
+  outline: 2px solid var(--hm-color-accent);
+  outline-offset: 2px;
+}
+
+.weekly-plan-center-shell .weekly-change-summary button span {
   overflow: hidden;
   color: var(--hm-color-text-muted);
   font-size: 11px;
@@ -454,31 +471,31 @@
   white-space: nowrap;
 }
 
-.weekly-plan-center-shell .weekly-change-summary article strong {
+.weekly-plan-center-shell .weekly-change-summary button strong {
   color: var(--hm-color-text);
   font-size: 19px;
 }
 
-.weekly-plan-center-shell .weekly-change-summary article.new {
+.weekly-plan-center-shell .weekly-change-summary button.new {
   border-left-color: var(--hm-color-success);
   background: var(--hm-color-success-soft);
 }
 
-.weekly-plan-center-shell .weekly-change-summary article.continued {
+.weekly-plan-center-shell .weekly-change-summary button.continued {
   border-left-color: var(--hm-color-info);
   background: var(--hm-color-info-soft);
 }
 
-.weekly-plan-center-shell .weekly-change-summary article.changed {
+.weekly-plan-center-shell .weekly-change-summary button.changed {
   border-left-color: var(--hm-color-warning);
   background: var(--hm-color-warning-soft);
 }
 
-.weekly-plan-center-shell .weekly-change-summary article.removed {
+.weekly-plan-center-shell .weekly-change-summary button.removed {
   background: var(--hm-color-surface-soft);
 }
 
-.weekly-plan-center-shell .weekly-change-summary article.danger {
+.weekly-plan-center-shell .weekly-change-summary button.danger {
   border-left-color: var(--hm-color-danger);
   background: var(--hm-color-danger-soft);
 }
@@ -969,7 +986,7 @@
     grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
-  .weekly-plan-center-shell .weekly-change-summary article {
+  .weekly-plan-center-shell .weekly-change-summary button {
     min-height: 50px;
   }
 

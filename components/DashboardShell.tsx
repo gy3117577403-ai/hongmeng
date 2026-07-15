@@ -1,5 +1,6 @@
 'use client';
 
+import { ArrowLeft, ClipboardList, ListFilter, Plus, Search } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
@@ -2556,7 +2557,7 @@ export default function DashboardShell({
           <div className="top-search hm-dashboard-global-search">
           <input value={globalKw} onFocus={() => globalKw.trim() && setSearchOpen(true)} onChange={e => setGlobalKw(e.target.value)} placeholder="全局搜索工单 / 文件" />
           <VoiceInputButton value={globalKw} onChange={setGlobalKw} mode="replace" onApplied={() => setSearchOpen(true)} label="搜索语音输入" />
-          <b aria-hidden="true">⌕</b>
+          <Search size={17} aria-hidden="true" />
           {searchOpen && globalKw.trim() && (
             <div className="global-search-panel">
               {globalSearch.workOrders.length > 0 && <>
@@ -2627,12 +2628,12 @@ export default function DashboardShell({
           )}
           </div>
           <div className="hm-dashboard-command-actions">
-            {productionReturnKey && <button className="hm-workbench-button" type="button" onClick={returnToProduction}>返回生产执行</button>}
-            <button className="hm-workbench-button" type="button" onClick={() => { void loadLogs('all'); }}>操作日志</button>
+            {productionReturnKey && <button className="hm-workbench-button" type="button" onClick={returnToProduction}><ArrowLeft size={15} aria-hidden="true" />返回生产执行</button>}
+            <button className="hm-workbench-button" type="button" onClick={() => { void loadLogs('all'); }}><ClipboardList size={15} aria-hidden="true" />操作日志</button>
             <button className="hm-workbench-button hm-dashboard-order-trigger" type="button" aria-haspopup="dialog" aria-expanded={drawerOpen} onClick={openOrderDrawer}>
-              查找工单 <span>{orders.length}</span>
+              <ListFilter size={15} aria-hidden="true" />查找工单 <span>{orders.length}</span>
             </button>
-            <button className="hm-workbench-button primary" type="button" onClick={() => openOrderModal('create')}>新建工单</button>
+            <button className="hm-workbench-button primary" type="button" onClick={() => openOrderModal('create')}><Plus size={15} aria-hidden="true" />新建工单</button>
           </div>
         </section>
 

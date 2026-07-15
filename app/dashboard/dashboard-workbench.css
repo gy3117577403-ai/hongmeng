@@ -67,7 +67,9 @@
   font-size: 13px;
 }
 
-.hm-dashboard-workbench .hm-dashboard-global-search > b {
+.hm-dashboard-workbench .hm-dashboard-global-search > b,
+.hm-dashboard-workbench .hm-dashboard-global-search > svg {
+  flex: 0 0 auto;
   color: var(--hm-color-text-muted);
   font-size: 18px;
 }
@@ -93,6 +95,13 @@
   display: flex;
   align-items: center;
   gap: var(--hm-space-2);
+}
+
+.hm-dashboard-workbench .hm-dashboard-command-actions .hm-workbench-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 .hm-dashboard-workbench .hm-dashboard-order-trigger {

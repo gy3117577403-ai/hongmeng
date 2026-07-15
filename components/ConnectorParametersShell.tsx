@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Download, FileUp, History, Paperclip, Plus, RotateCcw, Search } from 'lucide-react';
 import { PortalMenu } from '@/components/PortalMenu';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
@@ -807,11 +808,11 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
           titleId="connector-parameters-page-title"
           actionsClassName="hm-parameters-page-actions"
           actions={<>
-            <button ref={createButtonRef} className="hm-workbench-button primary" type="button" onClick={event => openModal('create', undefined, event.currentTarget)}>新增参数</button>
-            <button ref={importButtonRef} className="hm-workbench-button" type="button" onClick={() => setImportOpen(true)}>批量导入</button>
-            <button ref={fileDrawerButtonRef} className="hm-workbench-button" type="button" aria-controls="connector-parameter-files" aria-expanded={fileDrawerOpen} onClick={() => setFileDrawerOpen(true)}>附件 {stats.fileCount}</button>
-            <button ref={batchDrawerButtonRef} className="hm-workbench-button" type="button" aria-controls="connector-import-batches" aria-expanded={batchDrawerOpen} onClick={() => { setBatchDrawerOpen(true); loadImportBatches(); }}>导入批次</button>
-            <button className="hm-workbench-button" type="button" disabled={!!exporting} onClick={() => downloadFile('/api/connector-parameters/export.csv', '导出 CSV', '连接器参数资料.csv')}>{exporting === '导出 CSV' ? '导出中…' : '导出 CSV'}</button>
+            <button ref={createButtonRef} className="hm-workbench-button primary" type="button" onClick={event => openModal('create', undefined, event.currentTarget)}><Plus aria-hidden="true" />新增参数</button>
+            <button ref={importButtonRef} className="hm-workbench-button" type="button" onClick={() => setImportOpen(true)}><FileUp aria-hidden="true" />批量导入</button>
+            <button ref={fileDrawerButtonRef} className="hm-workbench-button" type="button" aria-controls="connector-parameter-files" aria-expanded={fileDrawerOpen} onClick={() => setFileDrawerOpen(true)}><Paperclip aria-hidden="true" />附件 {stats.fileCount}</button>
+            <button ref={batchDrawerButtonRef} className="hm-workbench-button" type="button" aria-controls="connector-import-batches" aria-expanded={batchDrawerOpen} onClick={() => { setBatchDrawerOpen(true); loadImportBatches(); }}><History aria-hidden="true" />导入批次</button>
+            <button className="hm-workbench-button" type="button" disabled={!!exporting} onClick={() => downloadFile('/api/connector-parameters/export.csv', '导出 CSV', '连接器参数资料.csv')}><Download aria-hidden="true" />{exporting === '导出 CSV' ? '导出中…' : '导出 CSV'}</button>
           </>}
         />
 
@@ -829,7 +830,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
           <label className="hm-parameters-search" htmlFor="connector-parameter-search">
             <span>搜索参数</span>
             <span className="hm-parameters-search-control">
-              <b aria-hidden="true">⌕</b>
+              <Search aria-hidden="true" />
               <input
                 id="connector-parameter-search"
                 className="hm-workbench-input"
@@ -857,7 +858,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             <small>条参数</small>
           </div>
 
-          <button className="hm-workbench-button hm-parameters-restore-button" type="button" aria-expanded={deletedOpen} onClick={() => { setDeletedOpen(v => !v); loadDeleted(); }}>恢复删除</button>
+          <button className="hm-workbench-button hm-parameters-restore-button" type="button" aria-expanded={deletedOpen} onClick={() => { setDeletedOpen(v => !v); loadDeleted(); }}><RotateCcw aria-hidden="true" />恢复删除</button>
         </section>
 
         {hasActiveFilters && (

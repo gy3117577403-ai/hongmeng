@@ -1,5 +1,6 @@
 'use client';
 
+import { BookOpenText, FileImage, MoreHorizontal, Plus, Search, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
@@ -135,6 +136,7 @@ export function DrawingLibraryShell({
   const selectedFile = activeFiles.find(file => file.id === selectedFileId) || activeFiles[0] || null;
   const hasActiveFilters = !!keyword.trim() || filter !== 'all' || customer !== '全部客户';
   const activeFilterLabel = filterOptions.find(([key]) => key === filter)?.[1] || '全部';
+  const visibleFileCount = useMemo(() => visibleItems.reduce((total, item) => total + item.fileCount, 0), [visibleItems]);
 
   useEffect(() => {
     if (selectedItem && selectedItem.id !== selectedId) setSelectedId(selectedItem.id);
@@ -447,11 +449,11 @@ export function DrawingLibraryShell({
           titleId="drawing-library-page-title"
           actionsClassName="hm-drawing-page-actions"
           actions={<>
-            <button className="hm-workbench-button" type="button" onClick={() => openModal('create')}>新增资料</button>
-            <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)}>批量导入原图</button>
-            <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}>导入说明</button>
+            <button className="hm-workbench-button" type="button" onClick={() => openModal('create')}><Plus size={15} aria-hidden="true" />新增资料</button>
+            <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)}><Upload size={15} aria-hidden="true" />批量导入原图</button>
+            <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}><BookOpenText size={15} aria-hidden="true" />导入说明</button>
             <details className="hm-drawing-more-actions">
-              <summary className="hm-workbench-button">更多</summary>
+              <summary className="hm-workbench-button"><MoreHorizontal size={15} aria-hidden="true" />更多</summary>
               <div><button className="danger" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>资料治理</button></div>
             </details>
           </>}
@@ -461,7 +463,7 @@ export function DrawingLibraryShell({
           <label className="hm-drawing-search-field" htmlFor="drawing-library-search">
             <span>搜索资料</span>
             <span className="hm-drawing-search-control">
-              <b aria-hidden="true">⌕</b>
+              <Search size={16} aria-hidden="true" />
               <input id="drawing-library-search" className="hm-workbench-input" value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="客户、规格、品名或备注" />
               {keyword && <button type="button" aria-label="清空搜索关键词" onClick={() => setKeyword('')}>清空</button>}
             </span>
@@ -483,7 +485,7 @@ export function DrawingLibraryShell({
           </label>
 
           <div className="hm-drawing-result-count" aria-live="polite">
-            <span>{loading ? '正在检索' : '当前结果'}</span><strong>{loading ? '…' : visibleItems.length}</strong><small>条</small>
+            <span>{loading ? '正在检索' : '当前结果'}</span><strong>{loading ? '…' : visibleItems.length}</strong><small>规格 · {visibleFileCount} 文件</small>
           </div>
           <span className="hm-drawing-filter-summary" title={[keyword.trim() ? `关键词：${keyword.trim()}` : '', customer !== '全部客户' ? `客户：${customer}` : '', filter !== 'all' ? `状态：${activeFilterLabel}` : ''].filter(Boolean).join(' · ') || '全部资料'}>{hasActiveFilters ? '已启用筛选' : '全部资料'}</span>
           <details className="hm-drawing-more-filters">
@@ -521,7 +523,7 @@ export function DrawingLibraryShell({
               ))}
               {!visibleItems.length && (
                 <div className="drawing-result-empty">
-                  <span aria-hidden="true">⌕</span>
+                  <Search aria-hidden="true" />
                   <strong>{hasActiveFilters ? '没有符合条件的资料' : '资料库中还没有图纸资料'}</strong>
                   <p>{hasActiveFilters ? '尝试清除关键词、客户或状态筛选。' : '新增资料或使用批量导入建立长期图纸档案。'}</p>
                   <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增资料'}</button>
@@ -533,7 +535,7 @@ export function DrawingLibraryShell({
           <section className="drawing-detail" aria-label="资料预览工作区">
           {!selectedItem ? (
             <div className="drawing-empty-state">
-              <span aria-hidden="true">图</span>
+              <FileImage aria-hidden="true" />
               <strong>{hasActiveFilters ? '当前筛选下没有可预览资料' : '选择一个规格开始查看'}</strong>
               <p>{hasActiveFilters ? '左侧结果会随搜索条件更新，清除筛选可返回全部资料。' : '预览区会保持图纸原始比例，并提供版本、下载和资料维护入口。'}</p>
               <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增图纸资料'}</button>

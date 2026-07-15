@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
+import { BookOpenText, FilePlus2, Files, List, Search } from 'lucide-react';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import type { PdfTocSuggestion } from '@/components/PdfViewer';
@@ -890,8 +891,8 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
           actionsClassName="hm-manual-page-actions"
           actions={
             <>
-              <button className="hm-workbench-button" type="button" onClick={openCreateManual}>单份新增</button>
-              <button className="hm-workbench-button primary" type="button" onClick={() => setBulkOpen(true)}>批量导入说明书</button>
+              <button className="hm-workbench-button" type="button" onClick={openCreateManual}><FilePlus2 aria-hidden="true" />单份新增</button>
+              <button className="hm-workbench-button primary" type="button" onClick={() => setBulkOpen(true)}><Files aria-hidden="true" />批量导入说明书</button>
             </>
           }
         />
@@ -907,7 +908,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
           <div className="hm-manual-search-field">
             <label htmlFor="manual-library-search">说明书库搜索</label>
             <div>
-              <span aria-hidden="true">⌕</span>
+              <Search aria-hidden="true" />
               <input id="manual-library-search" className="hm-workbench-input" value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="标题 / 型号 / 制造商 / 版本 / 关键词 / 已解析正文" />
               {keyword && <button type="button" aria-label="清空说明书库搜索" onClick={() => setKeyword('')}>清空</button>}
             </div>
@@ -940,7 +941,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
 
         <section className={`manual-workspace hm-manual-workspace ${detailsOpen ? 'detail-open' : 'detail-collapsed'}`}>
         <aside className="manual-list-panel hm-manual-list-panel" aria-label="说明书查询结果">
-          <div className="manual-list-heading"><div><strong>说明书结果</strong><small>{loading ? '正在加载' : `${total} 份 · 第 ${page}/${totalPages} 页`}</small></div><span aria-hidden="true">LIST</span></div>
+          <div className="manual-list-heading"><div><strong>说明书结果</strong><small>{loading ? '正在加载' : `${total} 份 · 第 ${page}/${totalPages} 页`}</small></div><List aria-hidden="true" /></div>
           <div className="manual-list-scroll hm-scroll-region" aria-busy={loading} tabIndex={0} aria-label={`说明书结果，共 ${total} 份`}>
             {manuals.map(manual => {
               const identity = [manual.manufacturer, manual.family].filter(Boolean).join(' · ');
@@ -986,7 +987,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
           </div>
           <div className="manual-preview-stage">
             {(loading || detailLoading) && <div className="manual-empty-preview"><span className="manual-loader" /><strong>说明书加载中</strong><p>正在读取版本和文件信息</p></div>}
-            {!loading && !detailLoading && !selectedManual && <div className="manual-empty-preview"><span>MANUAL</span><strong>{statusFilter === 'deleted' ? '已删除说明书只在回收站恢复' : '建立连接器组装说明书资料库'}</strong><p>{statusFilter === 'deleted' ? '选择用户菜单中的回收站执行恢复，S3 原文件仍然保留。' : '集中管理 PDF、多图说明书、版本、目录和适用型号。'}</p><button type="button" onClick={statusFilter === 'deleted' ? loadTrash : () => setBulkOpen(true)}>{statusFilter === 'deleted' ? '打开回收站' : '批量导入第一批说明书'}</button></div>}
+            {!loading && !detailLoading && !selectedManual && <div className="manual-empty-preview"><BookOpenText aria-hidden="true" /><strong>{statusFilter === 'deleted' ? '已删除说明书只在回收站恢复' : '建立连接器组装说明书资料库'}</strong><p>{statusFilter === 'deleted' ? '选择用户菜单中的回收站执行恢复，S3 原文件仍然保留。' : '集中管理 PDF、多图说明书、版本、目录和适用型号。'}</p><button type="button" onClick={statusFilter === 'deleted' ? loadTrash : () => setBulkOpen(true)}>{statusFilter === 'deleted' ? '打开回收站' : '批量导入第一批说明书'}</button></div>}
             {!loading && !detailLoading && selectedManual && !selectedVersion && <div className="manual-empty-preview missing"><span>01</span><strong>这份说明书还没有版本</strong><p>先创建版本，再上传 PDF 或多张图片。</p><button type="button" onClick={openCreateVersion}>创建首个版本</button></div>}
             {!loading && !detailLoading && selectedVersion && !selectedAsset && <div className="manual-empty-preview missing"><span>{selectedVersion.fileMode === 'PDF' ? 'PDF' : 'IMG'}</span><strong>当前版本尚未上传文件</strong><p>{selectedVersion.fileMode === 'PDF' ? '上传一个 PDF，系统会识别页数并提取可搜索文字。' : '可一次选择多张图片，并在版本面板调整顺序。'}</p><button type="button" onClick={() => setUploadOpen(true)}>上传文件</button></div>}
             {!loading && !detailLoading && selectedVersion?.fileMode === 'PDF' && selectedAsset && (

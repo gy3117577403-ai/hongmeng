@@ -271,9 +271,11 @@
   box-shadow: var(--hm-focus-ring);
 }
 
-.hm-production-workbench .production-search span {
+.hm-production-workbench .production-search > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
   color: var(--hm-color-text-weak);
-  font-size: 18px;
 }
 
 .hm-production-workbench .production-search input {
@@ -1850,5 +1852,501 @@
   .hm-production-workbench .production-column > header {
     flex-basis: 50px;
     min-height: 50px;
+  }
+}
+
+/* White production command workspace: compact stage overview with an optional context rail. */
+.hm-production-workbench .production-command-strip {
+  flex: 0 0 72px;
+  min-height: 72px;
+  grid-template-columns: minmax(220px, 1.35fr) repeat(5, minmax(112px, 1fr));
+  gap: 7px;
+}
+
+.hm-production-workbench .production-command-strip button,
+.hm-production-workbench .production-command-strip .production-week-label {
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-content: center;
+  gap: 3px 8px;
+  padding: 8px 11px;
+  border: 1px solid var(--hm-color-border);
+  border-left: 3px solid #7f8995;
+  border-radius: var(--hm-radius-md);
+  background: var(--hm-color-surface);
+  box-shadow: var(--hm-shadow-sm);
+}
+
+.hm-production-workbench .production-command-strip button:hover {
+  border-color: #dfb18f;
+  background: #fffaf7;
+}
+
+.hm-production-workbench .production-command-strip button.active {
+  border-color: #df9b6d;
+  border-left-color: var(--hm-color-accent);
+  background: var(--hm-color-accent-soft);
+}
+
+.hm-production-workbench .production-command-strip button > span,
+.hm-production-workbench .production-command-strip .production-week-label > span {
+  grid-column: 1;
+  grid-row: 1;
+  color: var(--hm-color-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .production-command-strip button > strong {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  color: var(--hm-color-text);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.hm-production-workbench .production-command-strip button > small {
+  grid-column: 1;
+  grid-row: 2;
+  overflow: hidden;
+  color: var(--hm-color-text-weak);
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-command-total {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  border-left-color: var(--hm-color-accent);
+}
+
+.hm-production-workbench .production-command-total > strong {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.hm-production-workbench .production-command-total > em {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  color: var(--hm-color-accent);
+  font-size: 25px;
+  font-style: normal;
+  font-weight: 820;
+}
+
+.hm-production-workbench .production-command-total > em small {
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .production-command-stage.not_issued { border-left-color: #71808e; }
+.hm-production-workbench .production-command-stage.frontend { border-left-color: var(--hm-color-info); }
+.hm-production-workbench .production-command-stage.backend { border-left-color: #b66b26; }
+.hm-production-workbench .production-command-stage.completed { border-left-color: var(--hm-color-success); }
+.hm-production-workbench .production-command-alert { border-left-color: var(--hm-color-danger); }
+
+.hm-production-workbench .production-workspace {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.hm-production-workbench .production-workspace-primary {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.hm-production-workbench .production-insight-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  border: 0;
+  background: rgba(22, 30, 38, .26);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--hm-motion-normal);
+}
+
+.hm-production-workbench .production-insight-scrim.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.hm-production-workbench .production-insight-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 31;
+  width: min(330px, calc(100% - 28px));
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-md) 0 0 var(--hm-radius-md);
+  background: var(--hm-color-surface);
+  box-shadow: var(--hm-shadow-lg);
+  transform: translateX(calc(100% + 18px));
+  visibility: hidden;
+  transition: transform var(--hm-motion-normal), visibility 0s linear var(--hm-motion-normal);
+}
+
+.hm-production-workbench .production-insight-panel.open {
+  transform: translateX(0);
+  visibility: visible;
+  transition: transform var(--hm-motion-normal), visibility 0s;
+}
+
+.hm-production-workbench .production-insight-panel > header {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hm-color-border);
+  background: #fffaf7;
+}
+
+.hm-production-workbench .production-insight-panel > header div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-production-workbench .production-insight-panel > header span {
+  color: var(--hm-color-accent);
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.hm-production-workbench .production-insight-panel > header strong {
+  color: var(--hm-color-text);
+  font-size: 15px;
+}
+
+.hm-production-workbench .production-insight-panel > header button {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface);
+  color: var(--hm-color-text-muted);
+}
+
+.hm-production-workbench .production-insight-panel > header button:hover {
+  border-color: #df9b6d;
+  color: var(--hm-color-accent);
+}
+
+.hm-production-workbench .production-insight-section {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border-bottom: 1px solid var(--hm-color-border);
+}
+
+.hm-production-workbench .production-insight-section-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hm-production-workbench .production-insight-section-title strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--hm-color-text);
+  font-size: 12px;
+}
+
+.hm-production-workbench .production-insight-section-title > span,
+.hm-production-workbench .production-insight-section-title > button {
+  border: 0;
+  background: transparent;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+}
+
+.hm-production-workbench .production-insight-section-title > button {
+  min-height: 32px;
+  padding: 0 4px;
+  color: var(--hm-color-accent);
+  font-weight: 700;
+}
+
+.hm-production-workbench .production-insight-stages {
+  display: grid;
+  gap: 8px;
+}
+
+.hm-production-workbench .production-insight-stages > button {
+  min-height: 40px;
+  display: grid;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.hm-production-workbench .production-insight-stages > button > span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hm-production-workbench .production-insight-stages b {
+  color: var(--hm-color-text);
+  font-size: 11px;
+}
+
+.hm-production-workbench .production-insight-stages em {
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.hm-production-workbench .production-insight-stages i {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--hm-color-surface-muted);
+}
+
+.hm-production-workbench .production-insight-stages i span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #71808e;
+}
+
+.hm-production-workbench .production-insight-stages .frontend i span { background: var(--hm-color-info); }
+.hm-production-workbench .production-insight-stages .backend i span { background: #b66b26; }
+.hm-production-workbench .production-insight-stages .completed i span { background: var(--hm-color-success); }
+
+.hm-production-workbench .production-insight-exceptions {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.hm-production-workbench .production-insight-order-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.hm-production-workbench .production-insight-order-list > button {
+  min-width: 0;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface);
+  text-align: left;
+}
+
+.hm-production-workbench .production-insight-order-list > button:hover {
+  border-color: #dfb18f;
+  background: #fffaf7;
+}
+
+.hm-production-workbench .production-insight-order-list > button > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-production-workbench .production-insight-order-list strong,
+.hm-production-workbench .production-insight-order-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-insight-order-list strong {
+  color: var(--hm-color-text);
+  font-size: 11px;
+}
+
+.hm-production-workbench .production-insight-order-list small {
+  color: var(--hm-color-text-muted);
+  font-size: 9px;
+}
+
+.hm-production-workbench .production-insight-order-list em {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: var(--hm-color-danger-soft);
+  color: var(--hm-color-danger);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.hm-production-workbench .production-insight-order-list p {
+  margin: 0;
+  padding: 18px 8px;
+  color: var(--hm-color-text-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.hm-production-workbench .production-insight-quick {
+  flex: 0 0 auto;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.hm-production-workbench .production-insight-quick .production-insight-section-title {
+  grid-column: 1 / -1;
+}
+
+.hm-production-workbench .production-insight-quick > a,
+.hm-production-workbench .production-insight-quick > button {
+  min-width: 0;
+  min-height: 54px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  padding: 7px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-soft);
+  color: var(--hm-color-text);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: left;
+  text-decoration: none;
+}
+
+.hm-production-workbench .production-insight-quick > a:hover,
+.hm-production-workbench .production-insight-quick > button:hover {
+  border-color: #dfb18f;
+  background: #fffaf7;
+}
+
+.hm-production-workbench .production-insight-quick > a svg,
+.hm-production-workbench .production-insight-quick > button svg {
+  width: 15px;
+  height: 15px;
+  color: var(--hm-color-accent);
+}
+
+@media (min-width: 1600px) {
+  .hm-production-workbench .production-insight-trigger {
+    display: none;
+  }
+
+  .hm-production-workbench .production-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 292px;
+    gap: 8px;
+  }
+
+  .hm-production-workbench .production-insight-panel {
+    position: static;
+    width: 292px;
+    transform: none;
+    visibility: visible;
+    border-radius: var(--hm-radius-md);
+    box-shadow: none;
+  }
+
+  .hm-production-workbench .production-insight-panel > header button,
+  .hm-production-workbench .production-insight-scrim {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .hm-production-workbench .production-command-strip {
+    flex-basis: 108px;
+    min-height: 108px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-auto-rows: 51px;
+    gap: 6px;
+  }
+
+  .hm-production-workbench .production-command-strip button,
+  .hm-production-workbench .production-command-strip .production-week-label {
+    min-height: 51px;
+    padding: 5px 8px;
+  }
+
+  .hm-production-workbench .production-command-strip button > strong {
+    font-size: 19px;
+  }
+
+  .hm-production-workbench .production-command-total > em {
+    font-size: 21px;
+  }
+}
+
+@media (max-width: 1023px) {
+  .hm-production-workbench .production-command-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(62px, auto);
+  }
+
+  .hm-production-workbench .production-command-strip button,
+  .hm-production-workbench .production-command-strip .production-week-label {
+    min-height: 62px;
+  }
+
+  .hm-production-workbench .production-workspace {
+    overflow: visible;
+  }
+
+  .hm-production-workbench .production-workspace-primary {
+    overflow: visible;
+  }
+
+  .hm-production-workbench .production-insight-panel {
+    position: fixed;
+    top: 72px;
+    bottom: 0;
+    z-index: 70;
+  }
+
+  .hm-production-workbench .production-insight-scrim {
+    position: fixed;
+    inset: 72px 0 0;
+    z-index: 69;
   }
 }

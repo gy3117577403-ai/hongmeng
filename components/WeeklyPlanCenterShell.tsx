@@ -327,7 +327,10 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
               <article className="weekly-plan-total current"><span>当前执行</span><strong>{data?.summary.currentCount ?? 0}</strong><small>{data?.currentWeek.weekStartDate ? rangeText(data.currentWeek) : '尚未启用'}</small></article>
               <article className="weekly-plan-total next"><span>下周草稿</span><strong>{data?.summary.nextCount ?? 0}</strong><small>{data?.nextWeek.weekStartDate ? rangeText(data.nextWeek) : '等待导入'}</small></article>
               <div className="weekly-change-summary" aria-label="计划变化统计">
-                {changeSummaryCards.map(([label, value, tone]) => <article className={tone} key={label}><span>{label}</span><strong>{value}</strong></article>)}
+                {changeSummaryCards.map(([label, value, tone]) => {
+                  const filterKey = tone === 'danger' ? (label === '重复' ? 'duplicate' : 'invalid') : tone;
+                  return <button className={`${tone} ${filter === filterKey ? 'active' : ''}`.trim()} type="button" aria-pressed={filter === filterKey} title={`查看${label}差异`} key={label} onClick={() => { setFilter(filterKey as DiffFilter); setPage(1); }}><span>{label}</span><strong>{value}</strong></button>;
+                })}
               </div>
             </section>
 

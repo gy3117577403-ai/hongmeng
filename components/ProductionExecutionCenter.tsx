@@ -1,6 +1,6 @@
 'use client';
 
-import { CalendarDays, Copy, Download, Info, ListChecks } from 'lucide-react';
+import { AlertTriangle, BarChart3, CalendarDays, ChevronRight, Copy, Download, Info, ListChecks, Search, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -409,7 +409,11 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [nextStepQuantity, setNextStepQuantity] = useState('');
   const [nextStepError, setNextStepError] = useState('');
   const [completedCollapsed, setCompletedCollapsed] = useState(false);
+  const [insightsOpen, setInsightsOpen] = useState(false);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
+  const insightsButtonRef = useRef<HTMLButtonElement | null>(null);
+  const insightsCloseRef = useRef<HTMLButtonElement | null>(null);
+  const insightsPanelRef = useRef<HTMLElement | null>(null);
   const statusButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawingButtonRef = useRef<HTMLButtonElement | null>(null);
   const boardShellRef = useRef<HTMLDivElement | null>(null);
@@ -608,6 +612,46 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     return () => window.clearTimeout(timer);
   }, [toast]);
 
+  useEffect(() => {
+    if (!insightsOpen) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    const overlayMode = !window.matchMedia('(min-width: 1600px)').matches;
+    if (overlayMode) document.body.style.overflow = 'hidden';
+    const focusTimer = window.setTimeout(() => insightsCloseRef.current?.focus(), 60);
+    const handleInsightKeys = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setInsightsOpen(false);
+        window.requestAnimationFrame(() => insightsButtonRef.current?.focus());
+        return;
+      }
+      if (event.key !== 'Tab' || !overlayMode) return;
+      const panel = insightsPanelRef.current;
+      if (!panel) return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+      if (!focusable.length) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const outside = !panel.contains(document.activeElement);
+      if (event.shiftKey && (document.activeElement === first || outside)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || outside)) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleInsightKeys);
+    return () => {
+      window.clearTimeout(focusTimer);
+      if (overlayMode) document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleInsightKeys);
+    };
+  }, [insightsOpen]);
+
   const grouped = useMemo(() => {
     const result: Record<StageKey, ProductionCardView[]> = { not_issued: [], frontend: [], backend: [], completed: [] };
     for (const item of board?.items || []) {
@@ -646,6 +690,17 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   const activeFilterCount = filterChips.length;
 
+  const insightOrders = useMemo(() => (board?.items || [])
+    .filter(item => item.stage !== 'completed' && item.productionAlerts.length > 0)
+    .sort((left, right) => {
+      const leftCritical = left.productionAlerts.some(alert => alert.tone === 'red') ? 1 : 0;
+      const rightCritical = right.productionAlerts.some(alert => alert.tone === 'red') ? 1 : 0;
+      return rightCritical - leftCritical || right.productionAlerts.length - left.productionAlerts.length;
+    })
+    .slice(0, 5), [board]);
+
+  const stageTotal = useMemo(() => stages.reduce((total, stage) => total + (summary?.stageCounts[stage.key] || 0), 0), [summary]);
+
   function changeView(next: ViewKey): void {
     setView(next);
     setQuick([]);
@@ -656,6 +711,17 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   function toggleQuick(key: QuickFilter): void {
     setQuick(current => current.includes(key) ? current.filter(item => item !== key) : [...current, key]);
     setPage(1);
+  }
+
+  function selectStage(stage: StageKey): void {
+    setView('board');
+    setAdvanced(current => ({ ...current, stage: current.stage === stage ? '' : stage }));
+    setPage(1);
+  }
+
+  function closeInsights(): void {
+    setInsightsOpen(false);
+    window.requestAnimationFrame(() => insightsButtonRef.current?.focus());
   }
 
   function toggleSummary(key: 'all' | 'due_today' | 'overdue' | 'drawing_confirmation' | 'material' | 'tail_remaining' | 'urgent' | 'completed'): void {
@@ -1054,18 +1120,15 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           description={`${todayLabel} · 本周任务、异常与进度闭环`}
           titleId="production-page-title"
           actionsClassName="production-page-actions"
-          actions={<><a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a><button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量操作'}</button><button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button></>}
+          actions={<><button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}><BarChart3 size={15} aria-hidden="true" />生产概览</button><a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a><button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量操作'}</button><button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button></>}
         />
 
-        <section className="production-summary" aria-label="当前周生产摘要">
-          <button className={`production-week-label ${summaryActive('all') ? 'active' : ''}`} type="button" onClick={() => toggleSummary('all')}>
-            <span>{summary?.weekStartDate ? '周计划已同步 · 当前执行周' : '周计划尚未启用'}</span><strong>{summary?.weekStartDate ? `${dateText(summary.weekStartDate)} - ${dateText(summary.weekEndDate)}` : '前往周计划中心启用'}</strong><em>{summary?.total ?? 0} 工单</em>
+        <section className="production-summary production-command-strip" aria-label="当前周生产摘要">
+          <button className={`production-week-label production-command-total ${summaryActive('all') ? 'active' : ''}`} type="button" onClick={() => toggleSummary('all')}>
+            <span>{summary?.weekStartDate ? '当前执行周' : '周计划尚未启用'}</span><strong>{summary?.weekStartDate ? `${dateText(summary.weekStartDate)} - ${dateText(summary.weekEndDate)}` : '前往周计划中心启用'}</strong><em>{summary?.total ?? 0}<small>工单</small></em>
           </button>
-          {[
-            ['今日交期', summary?.dueToday ?? 0, 'blue', 'due_today'], ['已逾期', summary?.overdue ?? 0, 'red', 'overdue'],
-            ['图纸待确认', summary?.drawingConfirmation ?? 0, 'amber', 'drawing_confirmation'], ['配料异常', summary?.materialNotReady ?? 0, 'orange', 'material'],
-            ['尾数未清', summary?.tailRemaining ?? 0, 'orange', 'tail_remaining'], ['紧急', summary?.urgent ?? 0, 'red', 'urgent'], ['已完成', summary?.completed ?? 0, 'green', 'completed'],
-          ].map(([label, value, tone, key]) => <button className={`${String(tone)} ${summaryActive(String(key)) ? 'active' : ''}`} type="button" key={String(key)} onClick={() => toggleSummary(key as Parameters<typeof toggleSummary>[0])}><span>{label}</span><strong>{value}</strong></button>)}
+          {stages.map(stage => <button className={`production-command-stage ${stage.key} ${advanced.stage === stage.key ? 'active' : ''}`} type="button" key={stage.key} aria-pressed={advanced.stage === stage.key} onClick={() => selectStage(stage.key)}><span>{stage.label}</span><strong>{summary?.stageCounts[stage.key] ?? 0}</strong><small>{stage.hint}</small></button>)}
+          <button className={`production-command-alert ${summaryActive('urgent') || summaryActive('overdue') ? 'active' : ''}`} type="button" onClick={() => { setView('exceptions'); setQuick([]); setPage(1); }}><span>异常 / 紧急</span><strong>{summary?.urgent ?? 0}</strong><small>逾期 {summary?.overdue ?? 0} · 待快速处理</small></button>
         </section>
 
         <section className="production-controls" aria-label="生产任务筛选">
@@ -1075,7 +1138,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
               <button className={view === 'today' ? 'active' : ''} type="button" aria-pressed={view === 'today'} onClick={() => changeView('today')}>今日任务</button>
               <button className={view === 'exceptions' ? 'active' : ''} type="button" aria-pressed={view === 'exceptions'} onClick={() => changeView('exceptions')}>异常任务</button>
             </div>
-            <label className="production-search"><span aria-hidden="true">⌕</span><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索规格 / 客户 / 品名 / 订单号" /></label>
+            <label className="production-search"><Search aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索规格 / 客户 / 品名 / 订单号" /></label>
             <button ref={filterButtonRef} className={filtersOpen || activeFilterCount ? 'active' : ''} type="button" aria-expanded={filtersOpen} onClick={() => { setDraftAdvanced(cloneAdvanced(advanced)); setFiltersOpen(value => !value); }}>高级筛选{activeFilterCount ? ` ${activeFilterCount}` : ''}</button>
             <PortalMenu open={filtersOpen} anchorRef={filterButtonRef} align="right" className="production-filter-menu hm-production-menu hm-production-filter-menu" width={420} onClose={() => setFiltersOpen(false)} closeOnSelect={false}>
               <AdvancedFilterPanel customers={board?.filterOptions.customers || []} value={draftAdvanced} setValue={setDraftAdvanced} clear={() => setDraftAdvanced(emptyAdvanced)} apply={() => { setAdvanced(cloneAdvanced(draftAdvanced)); setFiltersOpen(false); setPage(1); }} />
@@ -1093,40 +1156,67 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         {error && <div className="production-error"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
         {!summary?.weekStartDate && !loading && <div className="production-empty-week"><strong>当前暂无启用生产周</strong><span>请前往周计划中心审核并启用生产计划。</span><a href={weeklyPlanHref}>进入周计划中心</a></div>}
 
-        {view === 'board' ? (
-          <div ref={boardShellRef} className="production-board-shell hm-scroll-region" tabIndex={0} aria-label="四状态生产看板">
-            <div className={`production-board ${completedCollapsed ? 'completed-collapsed' : ''}`}>
-              {stages.map(column => (
-                <section className={`production-column ${column.key} ${column.key === 'completed' && completedCollapsed ? 'collapsed' : ''}`} key={column.key}>
-                  <header className="production-stage-header">
-                    {column.key === 'completed'
-                      ? <button type="button" aria-expanded={!completedCollapsed} onClick={toggleCompletedColumn}><span className="production-stage-step">{column.step}</span><span className="production-stage-copy"><strong>{column.label}</strong><small>{column.hint}</small></span><span className="production-stage-count">{board?.stageCounts[column.key] || 0}</span><em>{completedCollapsed ? '展开' : '收起'}</em></button>
-                      : <><span className="production-stage-step">{column.step}</span><span className="production-stage-copy"><strong>{column.label}</strong><small>{column.hint}</small></span><span className="production-stage-count">{board?.stageCounts[column.key] || 0}</span></>}
-                  </header>
-                  {!completedCollapsed || column.key !== 'completed' ? <div ref={element => { columnRefs.current[column.key] = element; }} className="production-column-list hm-scroll-region" tabIndex={0} aria-label={`${column.label}工单列表，共 ${grouped[column.key].length} 项`}>
-                    {grouped[column.key].map(item => <ProductionCard key={`${item.order.id}:${item.displayStage}`} order={item.order} displayStage={item.displayStage} stageQuantity={item.stageQuantity} {...cardProps} />)}
-                    {loading && !grouped[column.key].length && <CardSkeleton count={3} />}
-                    {!loading && !grouped[column.key].length && <div className="production-column-empty">当前状态暂无工单</div>}
-                  </div> : <div ref={element => { columnRefs.current[column.key] = element; }} className="production-completed-collapsed-hint"><span>{board?.stageCounts.completed || 0}</span><small>已完成</small></div>}
-                </section>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <section className="production-task-view">
-            <div className="production-task-heading"><div><strong>{view === 'today' ? '今日任务' : '异常任务'}</strong><span>{view === 'today' ? '今日交期、逾期与今日进展' : '聚合资料与基础字段异常，不自动修改数据'}</span></div><em>{board?.pagination.total || 0} 项</em></div>
-            <div className="production-task-grid hm-scroll-region" tabIndex={0} aria-label={`${view === 'today' ? '今日任务' : '异常任务'}列表`}>
-              {board?.items.map(order => {
-                const item = primaryCardView(order);
-                return <ProductionCard key={order.id} order={order} displayStage={item.displayStage} stageQuantity={item.stageQuantity} {...cardProps} showExceptions={view === 'exceptions'} />;
-              })}
-              {loading && <CardSkeleton count={8} />}
-              {!loading && !board?.items.length && <div className="production-task-empty">当前没有匹配任务</div>}
-            </div>
-          </section>
-        )}
+        <div className="production-workspace">
+          <div className="production-workspace-primary">
+            {view === 'board' ? (
+              <div ref={boardShellRef} className="production-board-shell hm-scroll-region" tabIndex={0} aria-label="四状态生产看板">
+                <div className={`production-board ${completedCollapsed ? 'completed-collapsed' : ''}`}>
+                  {stages.map(column => (
+                    <section className={`production-column ${column.key} ${column.key === 'completed' && completedCollapsed ? 'collapsed' : ''}`} key={column.key}>
+                      <header className="production-stage-header">
+                        {column.key === 'completed'
+                          ? <button type="button" aria-expanded={!completedCollapsed} onClick={toggleCompletedColumn}><span className="production-stage-step">{column.step}</span><span className="production-stage-copy"><strong>{column.label}</strong><small>{column.hint}</small></span><span className="production-stage-count">{board?.stageCounts[column.key] || 0}</span><em>{completedCollapsed ? '展开' : '收起'}</em></button>
+                          : <><span className="production-stage-step">{column.step}</span><span className="production-stage-copy"><strong>{column.label}</strong><small>{column.hint}</small></span><span className="production-stage-count">{board?.stageCounts[column.key] || 0}</span></>}
+                      </header>
+                      {!completedCollapsed || column.key !== 'completed' ? <div ref={element => { columnRefs.current[column.key] = element; }} className="production-column-list hm-scroll-region" tabIndex={0} aria-label={`${column.label}工单列表，共 ${grouped[column.key].length} 项`}>
+                        {grouped[column.key].map(item => <ProductionCard key={`${item.order.id}:${item.displayStage}`} order={item.order} displayStage={item.displayStage} stageQuantity={item.stageQuantity} {...cardProps} />)}
+                        {loading && !grouped[column.key].length && <CardSkeleton count={3} />}
+                        {!loading && !grouped[column.key].length && <div className="production-column-empty">当前状态暂无工单</div>}
+                      </div> : <div ref={element => { columnRefs.current[column.key] = element; }} className="production-completed-collapsed-hint"><span>{board?.stageCounts.completed || 0}</span><small>已完成</small></div>}
+                    </section>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <section className="production-task-view">
+                <div className="production-task-heading"><div><strong>{view === 'today' ? '今日任务' : '异常任务'}</strong><span>{view === 'today' ? '今日交期、逾期与今日进展' : '聚合资料与基础字段异常，不自动修改数据'}</span></div><em>{board?.pagination.total || 0} 项</em></div>
+                <div className="production-task-grid hm-scroll-region" tabIndex={0} aria-label={`${view === 'today' ? '今日任务' : '异常任务'}列表`}>
+                  {board?.items.map(order => {
+                    const item = primaryCardView(order);
+                    return <ProductionCard key={order.id} order={order} displayStage={item.displayStage} stageQuantity={item.stageQuantity} {...cardProps} showExceptions={view === 'exceptions'} />;
+                  })}
+                  {loading && <CardSkeleton count={8} />}
+                  {!loading && !board?.items.length && <div className="production-task-empty">当前没有匹配任务</div>}
+                </div>
+              </section>
+            )}
 
-        {board && board.pagination.totalPages > 1 && <div className="production-pagination"><span>共 {board.pagination.total} 单</span><button type="button" disabled={board.pagination.page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</button><b>{board.pagination.page} / {board.pagination.totalPages}</b><button type="button" disabled={board.pagination.page >= board.pagination.totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></div>}
+            {board && board.pagination.totalPages > 1 && <div className="production-pagination"><span>共 {board.pagination.total} 单</span><button type="button" disabled={board.pagination.page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</button><b>{board.pagination.page} / {board.pagination.totalPages}</b><button type="button" disabled={board.pagination.page >= board.pagination.totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></div>}
+          </div>
+
+          {insightsOpen && <button className="production-insight-scrim open" type="button" aria-label="关闭生产概览" onClick={closeInsights} />}
+          {insightsOpen && <aside ref={insightsPanelRef} id="production-insight-panel" className="production-insight-panel open" aria-label="生产概览" role="dialog" aria-modal="true" tabIndex={-1}>
+            <header><div><span>本周概览</span><strong>生产执行分布</strong></div><button ref={insightsCloseRef} type="button" aria-label="关闭生产概览" title="关闭生产概览" onClick={closeInsights}><X size={18} aria-hidden="true" /></button></header>
+            <section className="production-insight-section" aria-label="阶段分布">
+              <div className="production-insight-section-title"><strong>阶段分布</strong><span>{stageTotal} 单</span></div>
+              <div className="production-insight-stages">{stages.map(stage => {
+                const count = summary?.stageCounts[stage.key] || 0;
+                const percentage = stageTotal ? Math.round((count / stageTotal) * 100) : 0;
+                return <button type="button" key={stage.key} className={stage.key} onClick={() => { selectStage(stage.key); closeInsights(); }}><span><b>{stage.label}</b><em>{count} 单 · {percentage}%</em></span><i><span style={{ width: `${percentage}%` }} /></i></button>;
+              })}</div>
+            </section>
+            <section className="production-insight-section production-insight-exceptions" aria-label="异常关注">
+              <div className="production-insight-section-title"><strong><AlertTriangle size={15} aria-hidden="true" />异常关注</strong><button type="button" onClick={() => { changeView('exceptions'); closeInsights(); }}>查看全部</button></div>
+              <div className="production-insight-order-list">{insightOrders.map(order => <button type="button" key={order.id} onClick={() => { closeInsights(); openDetail(order); }}><span><strong title={order.specification || order.code}>{order.specification || order.code}</strong><small>{order.customerName || '客户未设置'}</small></span><em>{order.productionAlerts[0]?.label || '待处理'}</em></button>)}{!insightOrders.length && <p>当前筛选范围内暂无异常工单</p>}</div>
+            </section>
+            <section className="production-insight-section production-insight-quick" aria-label="快捷入口">
+              <div className="production-insight-section-title"><strong>快捷入口</strong></div>
+              <a href={weeklyPlanHref}>查看周计划<ChevronRight aria-hidden="true" /></a>
+              <a href="/dashboard">进入工单资料库<ChevronRight aria-hidden="true" /></a>
+              <button type="button" onClick={() => { closeInsights(); toggleBatchMode(); }}>{batchMode ? '退出批量操作' : '开始批量操作'}<ChevronRight aria-hidden="true" /></button>
+            </section>
+          </aside>}
+        </div>
       </div>
 
       {batchMode && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong><button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button><button type="button" disabled={!selected.length} onClick={() => openBatch('set_stage')}>修改状态</button><button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button><button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
