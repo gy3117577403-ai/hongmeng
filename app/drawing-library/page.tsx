@@ -3,6 +3,7 @@ import { DrawingLibraryShell } from '@/components/DrawingLibraryShell';
 import { currentUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { isVisibleDrawingLibraryItem, serializeDrawingLibraryItem } from '@/lib/drawing-library';
+import './drawing-library-workbench.css';
 
 const includeFiles = {
   files: {

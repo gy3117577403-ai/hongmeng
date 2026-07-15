@@ -1,0 +1,1043 @@
+.hm-drawing-workbench.drawing-library-page {
+  width: 100%;
+  height: 100dvh;
+  min-height: 620px;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+  background: var(--hm-color-bg);
+}
+
+.hm-drawing-workbench button,
+.hm-drawing-workbench a,
+.hm-drawing-workbench input,
+.hm-drawing-workbench select,
+.hm-drawing-workbench textarea {
+  font-family: inherit;
+}
+
+.hm-drawing-workbench button:focus-visible,
+.hm-drawing-workbench a:focus-visible,
+.hm-drawing-workbench input:focus-visible,
+.hm-drawing-workbench select:focus-visible,
+.hm-drawing-workbench textarea:focus-visible {
+  outline: 2px solid var(--hm-color-accent);
+  outline-offset: 2px;
+}
+
+.hm-drawing-main {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hm-space-2);
+  padding: 0 var(--hm-space-4) var(--hm-space-3);
+  overflow: hidden;
+}
+
+.hm-drawing-page-actions {
+  gap: 6px;
+}
+
+.hm-drawing-query {
+  flex: 0 0 64px;
+  min-width: 0;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: minmax(270px, 1.3fr) minmax(190px, .72fr) minmax(300px, 1fr) 86px;
+  align-items: end;
+  gap: var(--hm-space-3);
+  padding: 9px 12px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-md);
+  background: var(--hm-color-surface);
+  box-shadow: var(--hm-shadow-sm);
+}
+
+.hm-drawing-search-field,
+.hm-drawing-customer-filter,
+.hm-drawing-filter-group {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.hm-drawing-search-control {
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.hm-drawing-search-control > b {
+  position: absolute;
+  left: 12px;
+  z-index: 1;
+  color: var(--hm-color-accent);
+  font-size: 17px;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.hm-drawing-search-control .hm-workbench-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0 62px 0 38px;
+  outline: none;
+}
+
+.hm-drawing-search-control > button {
+  position: absolute;
+  right: 7px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-muted);
+  color: var(--hm-color-text-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hm-drawing-customer-filter select {
+  width: 100%;
+  min-width: 0;
+  padding: 0 32px 0 10px;
+  outline: none;
+  text-overflow: ellipsis;
+}
+
+.hm-drawing-filter-group > div {
+  min-width: 0;
+  height: var(--hm-control-height);
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 3px;
+  border: 1px solid var(--hm-color-border-strong);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-soft);
+}
+
+.hm-drawing-filter-group button {
+  min-width: 0;
+  min-height: 36px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--hm-color-text-muted);
+  font-size: 11px;
+  font-weight: 680;
+  white-space: nowrap;
+}
+
+.hm-drawing-filter-group button:hover {
+  color: var(--hm-color-text);
+}
+
+.hm-drawing-filter-group button.active {
+  background: var(--hm-color-surface);
+  color: var(--hm-color-accent);
+  box-shadow: var(--hm-shadow-sm);
+}
+
+.hm-drawing-result-count {
+  height: var(--hm-control-height);
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: 1fr 1fr;
+  align-items: center;
+  justify-content: center;
+  column-gap: 4px;
+  border-left: 1px solid var(--hm-color-border);
+  color: var(--hm-color-text-muted);
+}
+
+.hm-drawing-result-count span {
+  grid-column: 1 / -1;
+  align-self: end;
+  font-size: 10px;
+  text-align: center;
+}
+
+.hm-drawing-result-count strong {
+  align-self: start;
+  color: var(--hm-color-text);
+  font-size: 18px;
+  line-height: 1.1;
+}
+
+.hm-drawing-result-count small {
+  align-self: start;
+  font-size: 10px;
+}
+
+.hm-drawing-active-filters,
+.hm-drawing-message {
+  flex: 0 0 34px;
+  min-width: 0;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 10px;
+  border: 1px solid #e8d3c4;
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-accent-soft);
+  color: var(--hm-color-text-muted);
+  font-size: 11px;
+}
+
+.hm-drawing-active-filters > b {
+  max-width: 260px;
+  overflow: hidden;
+  padding: 4px 7px;
+  border: 1px solid #e9c8b1;
+  border-radius: 4px;
+  background: var(--hm-color-surface);
+  color: var(--hm-color-accent-hover);
+  font-weight: 680;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-active-filters > button,
+.hm-drawing-message > button {
+  min-height: 28px;
+  margin-left: auto;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--hm-color-accent);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.hm-drawing-message {
+  border-color: var(--hm-color-border);
+  background: var(--hm-color-surface);
+}
+
+.hm-drawing-message > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-workspace {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(280px, 312px) minmax(0, 1fr) minmax(238px, 268px);
+  gap: var(--hm-space-3);
+}
+
+.hm-drawing-workbench .drawing-browser,
+.hm-drawing-workbench .drawing-detail,
+.hm-drawing-workbench .drawing-file-panel {
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-md);
+  background: var(--hm-color-surface);
+  box-shadow: var(--hm-shadow-sm);
+}
+
+.hm-drawing-workbench .drawing-browser {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.hm-drawing-workbench .drawing-panel-head {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hm-color-border);
+}
+
+.hm-drawing-workbench .drawing-panel-head > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.hm-drawing-workbench .drawing-panel-head strong {
+  color: var(--hm-color-text);
+  font-size: 14px;
+}
+
+.hm-drawing-workbench .drawing-panel-head span {
+  overflow: hidden;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-panel-head > b {
+  min-width: 30px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-muted);
+  color: var(--hm-color-text-muted);
+  font-size: 11px;
+}
+
+.hm-drawing-workbench .drawing-list {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.hm-drawing-workbench .drawing-spec-card {
+  width: 100%;
+  min-height: 82px;
+  display: grid;
+  grid-template-rows: auto auto auto;
+  gap: 5px;
+  padding: 9px 10px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface);
+  color: var(--hm-color-text);
+  text-align: left;
+  box-shadow: none;
+  transition: border-color var(--hm-motion-fast), background-color var(--hm-motion-fast), box-shadow var(--hm-motion-fast);
+}
+
+.hm-drawing-workbench .drawing-spec-card:hover {
+  border-color: #d8aa8c;
+  background: #fffaf7;
+}
+
+.hm-drawing-workbench .drawing-spec-card.active {
+  border-color: #dda079;
+  background: var(--hm-color-accent-soft);
+  box-shadow: inset 3px 0 0 var(--hm-color-accent);
+}
+
+.hm-drawing-workbench .drawing-spec-title-line {
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.hm-drawing-workbench .drawing-spec-title-line strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-spec-title-line span,
+.hm-drawing-workbench .drawing-detail-head small.anomaly {
+  flex: 0 0 auto;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--hm-color-danger-soft);
+  color: var(--hm-color-danger);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-drawing-workbench .drawing-spec-card > p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--hm-color-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-spec-card footer {
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--hm-color-text-weak);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-spec-card footer em {
+  overflow: hidden;
+  color: var(--hm-color-warning);
+  font-style: normal;
+  font-weight: 750;
+  text-overflow: ellipsis;
+}
+
+.hm-drawing-workbench .drawing-spec-card footer time {
+  margin-left: auto;
+}
+
+.drawing-result-empty {
+  min-height: 220px;
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 18px;
+  color: var(--hm-color-text-muted);
+  text-align: center;
+}
+
+.drawing-result-empty > span {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--hm-radius-md);
+  background: var(--hm-color-surface-muted);
+  color: var(--hm-color-text-weak);
+  font-size: 20px;
+}
+
+.drawing-result-empty > strong {
+  color: var(--hm-color-text);
+  font-size: 14px;
+}
+
+.drawing-result-empty > p {
+  max-width: 230px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.hm-drawing-workbench .drawing-detail {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.hm-drawing-workbench .drawing-detail-head {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--hm-color-border);
+}
+
+.hm-drawing-workbench .drawing-detail-head > div:first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.hm-drawing-workbench .drawing-detail-head > div:first-child > span {
+  color: var(--hm-color-accent);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-drawing-workbench .drawing-detail-head h1 {
+  margin: 1px 0 4px;
+  overflow: hidden;
+  color: var(--hm-color-text);
+  font-size: 18px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-detail-head p {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  overflow: hidden;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-detail-head p b,
+.hm-drawing-workbench .drawing-detail-head p em,
+.hm-drawing-workbench .drawing-detail-head p small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hm-drawing-workbench .drawing-detail-head p b {
+  max-width: 170px;
+  color: var(--hm-color-text);
+}
+
+.hm-drawing-workbench .drawing-detail-head p em {
+  max-width: 180px;
+  font-style: normal;
+}
+
+.hm-drawing-workbench .drawing-detail-head p small {
+  flex: 0 0 auto;
+}
+
+.hm-drawing-workbench .drawing-head-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hm-drawing-workbench .drawing-head-actions .hm-workbench-button {
+  min-height: 38px;
+  padding: 0 10px;
+}
+
+.hm-drawing-file-toggle {
+  display: none;
+}
+
+.hm-drawing-workbench .drawing-library-main {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px;
+}
+
+.hm-drawing-workbench .drawing-category-rail {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-soft);
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.hm-drawing-workbench .drawing-category-rail button {
+  width: 100%;
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px;
+  padding: 7px;
+  border: 1px solid transparent;
+  border-radius: var(--hm-radius-sm);
+  background: transparent;
+  color: var(--hm-color-text-muted);
+  text-align: left;
+}
+
+.hm-drawing-workbench .drawing-category-rail button:hover {
+  background: var(--hm-color-surface);
+}
+
+.hm-drawing-workbench .drawing-category-rail button.active {
+  border-color: #e2b99d;
+  background: var(--hm-color-surface);
+  color: var(--hm-color-accent);
+  box-shadow: var(--hm-shadow-sm);
+}
+
+.hm-drawing-workbench .drawing-category-rail .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--hm-color-border-strong);
+}
+
+.hm-drawing-workbench .drawing-category-rail .dot.filled {
+  background: var(--hm-color-success);
+}
+
+.hm-drawing-workbench .drawing-category-rail strong {
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-category-rail em {
+  color: inherit;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.hm-drawing-workbench .drawing-preview {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: #eceff2;
+  overflow: hidden;
+}
+
+.hm-drawing-workbench .drawing-preview-head {
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--hm-color-border);
+  background: var(--hm-color-surface);
+}
+
+.hm-drawing-workbench .drawing-preview-head > span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.hm-drawing-workbench .drawing-preview-head > span b {
+  color: var(--hm-color-text);
+  font-size: 12px;
+}
+
+.hm-drawing-workbench .drawing-preview-head > span small {
+  color: var(--hm-color-text-weak);
+  font-size: 9px;
+}
+
+.hm-drawing-workbench .drawing-preview-head > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--hm-color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-preview > .pdf-viewer,
+.hm-drawing-workbench .drawing-preview > .image-viewer {
+  min-height: 0;
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+}
+
+.hm-drawing-workbench .drawing-preview .viewer-toolbar {
+  right: 8px;
+  left: 8px;
+  width: auto;
+  max-width: none;
+  justify-content: flex-end;
+  border-radius: var(--hm-radius-md);
+}
+
+.hm-drawing-workbench .drawing-preview .viewer-controls {
+  max-width: 100%;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  overflow: visible;
+}
+
+.hm-drawing-workbench .drawing-preview .viewer-controls button,
+.hm-drawing-workbench .drawing-preview .page-indicator {
+  min-height: 34px;
+  padding-right: 8px;
+  padding-left: 8px;
+  border-radius: var(--hm-radius-sm);
+  font-size: 10px;
+}
+
+.hm-drawing-workbench .drawing-preview-placeholder,
+.hm-drawing-workbench .drawing-empty-state,
+.hm-drawing-workbench .drawing-file-fallback {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 9px;
+  padding: 22px;
+  background: var(--hm-color-surface-soft);
+  color: var(--hm-color-text-muted);
+  text-align: center;
+}
+
+.hm-drawing-workbench .drawing-preview-placeholder > span,
+.hm-drawing-workbench .drawing-empty-state > span {
+  width: 54px;
+  height: 54px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e7c4ad;
+  border-radius: var(--hm-radius-lg);
+  background: var(--hm-color-accent-soft);
+  color: var(--hm-color-accent);
+  font-size: 22px;
+  font-weight: 750;
+}
+
+.hm-drawing-workbench .drawing-preview-placeholder > strong,
+.hm-drawing-workbench .drawing-empty-state > strong,
+.hm-drawing-workbench .drawing-file-fallback > strong {
+  color: var(--hm-color-text);
+  font-size: 16px;
+}
+
+.hm-drawing-workbench .drawing-preview-placeholder > p,
+.hm-drawing-workbench .drawing-empty-state > p,
+.hm-drawing-workbench .drawing-file-fallback > p {
+  max-width: 360px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.hm-drawing-workbench .drawing-file-fallback > a {
+  min-height: var(--hm-control-height);
+  display: inline-flex;
+  align-items: center;
+  padding: 0 13px;
+  border: 1px solid var(--hm-color-border-strong);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface);
+  color: var(--hm-color-accent);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.hm-drawing-workbench .drawing-file-panel {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.hm-drawing-workbench .drawing-file-panel-head {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+  padding: 0 2px;
+}
+
+.hm-drawing-workbench .drawing-file-panel-head > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.hm-drawing-workbench .drawing-file-panel-head strong {
+  overflow: hidden;
+  color: var(--hm-color-text);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-file-panel-head span {
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+}
+
+.drawing-file-panel-close {
+  width: 40px;
+  height: 40px;
+  display: none;
+  place-items: center;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface);
+  color: var(--hm-color-text-muted);
+  font-size: 20px;
+}
+
+.hm-drawing-workbench .drawing-files {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.hm-drawing-workbench .drawing-files button {
+  width: 100%;
+  min-height: 68px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 7px;
+  padding: 7px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface);
+  color: var(--hm-color-text);
+  text-align: left;
+}
+
+.hm-drawing-workbench .drawing-files button.active {
+  border-color: #dda079;
+  background: var(--hm-color-accent-soft);
+}
+
+.hm-drawing-workbench .drawing-files b {
+  grid-row: span 2;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-muted);
+  color: var(--hm-color-accent);
+  font-size: 9px;
+}
+
+.hm-drawing-workbench .drawing-files span {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 680;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-drawing-workbench .drawing-files em {
+  color: var(--hm-color-text-weak);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.hm-drawing-workbench .drawing-file-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  padding-top: 8px;
+}
+
+.hm-drawing-workbench .drawing-file-actions .hm-workbench-button {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+  text-decoration: none;
+}
+
+.hm-drawing-workbench .drawing-file-empty {
+  min-height: 0;
+  flex: 1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 12px;
+  color: var(--hm-color-text-muted);
+  text-align: center;
+}
+
+.hm-drawing-workbench .drawing-file-empty strong {
+  color: var(--hm-color-text);
+  font-size: 13px;
+}
+
+.hm-drawing-workbench .drawing-file-empty p {
+  max-width: 210px;
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.drawing-file-panel-scrim {
+  display: none;
+}
+
+.hm-drawing-workbench .drawing-dialog,
+.hm-drawing-workbench .bulk-original-dialog {
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-lg);
+  background: var(--hm-color-surface);
+  box-shadow: var(--hm-shadow-md);
+}
+
+@media (max-width: 1180px) {
+  .hm-drawing-main {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .hm-drawing-workbench .hm-workbench-page-copy p {
+    display: none;
+  }
+
+  .hm-drawing-page-actions .hm-workbench-button {
+    padding-right: 9px;
+    padding-left: 9px;
+  }
+
+  .hm-drawing-query {
+    grid-template-columns: minmax(250px, 1.2fr) minmax(180px, .7fr) minmax(280px, 1fr) 78px;
+    gap: 8px;
+  }
+
+  .hm-drawing-workbench .drawing-workspace {
+    grid-template-columns: minmax(260px, 292px) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .hm-drawing-file-toggle {
+    display: inline-flex;
+  }
+
+  .hm-drawing-workbench .drawing-file-panel {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4;
+    width: min(310px, calc(100% - 48px));
+    display: none;
+    box-shadow: -8px 0 24px rgba(31, 41, 51, .14);
+  }
+
+  .hm-drawing-workbench .drawing-file-panel.open {
+    display: flex;
+  }
+
+  .drawing-file-panel-close {
+    display: grid;
+  }
+
+  .drawing-file-panel-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: block;
+    border: 0;
+    background: rgba(31, 41, 51, .16);
+  }
+}
+
+@media (max-width: 1060px) {
+  .hm-drawing-workbench .hm-workbench-page-kicker,
+  .hm-drawing-page-actions .hm-workbench-button:nth-child(3) {
+    display: none;
+  }
+
+  .hm-drawing-query {
+    grid-template-columns: minmax(235px, 1.1fr) minmax(174px, .75fr) minmax(270px, 1fr) 72px;
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .hm-drawing-filter-group button {
+    padding-right: 4px;
+    padding-left: 4px;
+    font-size: 10px;
+  }
+
+  .hm-drawing-workbench .drawing-workspace {
+    grid-template-columns: 270px minmax(0, 1fr);
+  }
+
+  .hm-drawing-workbench .drawing-detail-head p em,
+  .hm-drawing-workbench .drawing-detail-head p small:nth-of-type(3) {
+    display: none;
+  }
+
+  .hm-drawing-workbench .drawing-head-actions .hm-workbench-button {
+    padding-right: 8px;
+    padding-left: 8px;
+    font-size: 11px;
+  }
+
+  .hm-drawing-workbench .drawing-library-main {
+    grid-template-columns: 106px minmax(0, 1fr);
+  }
+}
+
+@media (max-height: 820px) {
+  .hm-drawing-main {
+    gap: 6px;
+    padding-bottom: 8px;
+  }
+
+  .hm-drawing-query {
+    flex-basis: 60px;
+    min-height: 60px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .hm-drawing-workbench .drawing-panel-head {
+    min-height: 46px;
+  }
+
+  .hm-drawing-workbench .drawing-detail-head {
+    min-height: 64px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+
+  .hm-drawing-workbench .drawing-category-rail button {
+    min-height: 46px;
+  }
+
+  .hm-drawing-workbench .drawing-preview .viewer-toolbar {
+    top: 7px;
+    padding: 4px;
+  }
+
+  .hm-drawing-workbench .drawing-preview .viewer-controls {
+    gap: 3px;
+  }
+
+  .hm-drawing-workbench .drawing-preview .viewer-controls button,
+  .hm-drawing-workbench .drawing-preview .page-indicator {
+    min-height: 32px;
+    padding-right: 7px;
+    padding-left: 7px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hm-drawing-workbench .drawing-spec-card {
+    transition: none;
+  }
+}

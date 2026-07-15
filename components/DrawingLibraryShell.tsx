@@ -5,7 +5,8 @@ import type { FormEvent } from 'react';
 import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
-import { PortalMenu } from '@/components/PortalMenu';
+import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { safeDisplayFilename } from '@/lib/filenames';
 import type { CurrentUserDTO, DrawingLibraryCustomerDTO, DrawingLibraryFileDTO, DrawingLibraryItemDTO, ResourceCategoryDTO } from '@/types';
 
@@ -105,8 +106,6 @@ export function DrawingLibraryShell({
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id || '');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
-  const [libOpen, setLibOpen] = useState(false);
-  const [userMenu, setUserMenu] = useState(false);
   const [modal, setModal] = useState<DrawingModal>(null);
   const [form, setForm] = useState<DrawingLibraryForm>(emptyForm);
   const [formError, setFormError] = useState('');
@@ -119,13 +118,12 @@ export function DrawingLibraryShell({
   const [cleanupError, setCleanupError] = useState('');
   const [bulkHelpOpen, setBulkHelpOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
+  const [filePanelOpen, setFilePanelOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const libraryMenuButtonRef = useRef<HTMLButtonElement>(null);
-  const userMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const filePanelTriggerRef = useRef<HTMLButtonElement>(null);
   const initialUrlAppliedRef = useRef(false);
   const urlMissingWarnedRef = useRef(false);
 
-  const accountName = user.displayName || user.username;
   const visibleItems = useMemo(() => (
     customer === '全部客户' ? items : items.filter(item => item.customerName === customer)
   ), [customer, items]);
@@ -133,6 +131,8 @@ export function DrawingLibraryShell({
   const activeCategory = categories.find(category => category.id === activeCategoryId) || categories[0] || null;
   const activeFiles = selectedItem?.files.filter(file => file.categoryId === activeCategory?.id) || [];
   const selectedFile = activeFiles.find(file => file.id === selectedFileId) || activeFiles[0] || null;
+  const hasActiveFilters = !!keyword.trim() || filter !== 'all' || customer !== '全部客户';
+  const activeFilterLabel = filterOptions.find(([key]) => key === filter)?.[1] || '全部';
 
   useEffect(() => {
     if (selectedItem && selectedItem.id !== selectedId) setSelectedId(selectedItem.id);
@@ -196,6 +196,22 @@ export function DrawingLibraryShell({
   }, [selectedFile, selectedFileId]);
 
   useEffect(() => {
+    function closeTransientLayer(event: KeyboardEvent) {
+      if (event.key !== 'Escape') return;
+      if (bulkImportOpen) setBulkImportOpen(false);
+      else if (cleanupOpen) setCleanupOpen(false);
+      else if (bulkHelpOpen) setBulkHelpOpen(false);
+      else if (modal) setModal(null);
+      else if (filePanelOpen) {
+        setFilePanelOpen(false);
+        window.requestAnimationFrame(() => filePanelTriggerRef.current?.focus());
+      }
+    }
+    window.addEventListener('keydown', closeTransientLayer);
+    return () => window.removeEventListener('keydown', closeTransientLayer);
+  }, [bulkHelpOpen, bulkImportOpen, cleanupOpen, filePanelOpen, modal]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => loadData(), 260);
     return () => window.clearTimeout(timer);
   }, [keyword, filter]);
@@ -227,6 +243,17 @@ export function DrawingLibraryShell({
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
     location.href = '/login';
+  }
+
+  function clearFilters() {
+    setKeyword('');
+    setFilter('all');
+    setCustomer('全部客户');
+  }
+
+  function closeFilePanel() {
+    setFilePanelOpen(false);
+    window.requestAnimationFrame(() => filePanelTriggerRef.current?.focus());
   }
 
   function openModal(mode: 'create' | 'edit', item?: DrawingLibraryItemDTO) {
@@ -361,126 +388,138 @@ export function DrawingLibraryShell({
   }
 
   return (
-    <main className="drawing-library-page">
-      <header className="topbar drawing-topbar">
-        <button className="home-button" type="button" aria-label="生产执行首页" onClick={() => { location.href = '/production'; }}>⌂</button>
-        <div className="brand-block">
-          <strong>图纸资料库</strong>
-          <span>客户 · 规格 · 长期资料文件</span>
-        </div>
-        <div className="drawing-search">
-          <input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户 / 规格 / 品名 / 备注" />
-          {keyword && <button type="button" onClick={() => setKeyword('')}>清空</button>}
-          <b>⌕</b>
-        </div>
-        <div className="top-actions">
-          <button className="log-button" type="button" onClick={() => openModal('create')}>新增图纸资料</button>
-          <button className="log-button" type="button" onClick={() => setBulkImportOpen(true)}>批量导入原图</button>
-          <button className="log-button" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>清理空资料</button>
-          <button className="log-button" type="button" title="批量导入原图说明" onClick={() => setBulkHelpOpen(true)}>导入说明</button>
-          <div className="library-wrap">
-            <button ref={libraryMenuButtonRef} className="library-button" type="button" onClick={() => setLibOpen(value => !value)}>▱ 资料库</button>
-            <PortalMenu open={libOpen} anchorRef={libraryMenuButtonRef} className="library-menu" width={220} onClose={() => setLibOpen(false)}>
-                <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
-                <button type="button" onClick={() => { location.href = '/dashboard'; }}>▤ 生产工单</button>
-                <button className="active" type="button">图纸资料库 ✓</button>
-                <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
-                <button type="button" onClick={() => { location.href = '/connector-assembly-manuals'; }}>连接器组装说明书</button>
-            </PortalMenu>
-          </div>
-          <div className="user-wrap">
-            <button ref={userMenuButtonRef} className="user-button" type="button" onClick={() => setUserMenu(value => !value)}>
-              <span>♙</span><b title={accountName}>{accountName}</b><em>⌄</em>
-            </button>
-            <PortalMenu open={userMenu} anchorRef={userMenuButtonRef} className="user-menu app-user-menu" width={176} onClose={() => setUserMenu(false)}>
-                <button type="button" onClick={() => { location.href = '/dashboard'; }}>返回生产工单</button>
-                <button type="button" onClick={logout}>退出登录</button>
-            </PortalMenu>
-          </div>
-        </div>
-      </header>
+    <main className="drawing-library-page hm-drawing-workbench hm-workbench-root">
+      <AppWorkbenchHeader
+        user={user}
+        activeHref="/drawing-library"
+        subtitle="长期图纸与工艺资料"
+        menuItems={[
+          { label: '返回生产工单', href: '/dashboard' },
+          { label: '退出登录', onSelect: logout },
+        ]}
+      />
 
-      <section className="drawing-filterbar">
-        {filterOptions.map(([key, label]) => (
-          <button key={key} className={filter === key ? 'active' : ''} type="button" onClick={() => setFilter(key)}>{label}</button>
-        ))}
-        <span>{loading ? '加载中...' : filter === 'anomaly' ? `异常数据 ${items.length} 条` : `共 ${items.length} 条规格`}</span>
-      </section>
+      <div className="hm-drawing-main">
+        <WorkbenchPageHeader
+          kicker="长期资料"
+          title="图纸资料库"
+          description="按客户与规格集中查询、预览和维护长期图纸资料"
+          titleId="drawing-library-page-title"
+          actionsClassName="hm-drawing-page-actions"
+          actions={<>
+            <button className="hm-workbench-button" type="button" onClick={() => openModal('create')}>新增资料</button>
+            <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)}>批量导入原图</button>
+            <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}>导入说明</button>
+            <button className="hm-workbench-button danger" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>资料治理</button>
+          </>}
+        />
 
-      <section className="drawing-workspace">
-        <aside className="drawing-browser">
-          <div className="drawing-browser-customers">
-            <div className="drawing-panel-head">
-              <strong>客户</strong>
-              <span>{customers.length ? `${Math.max(0, customers.length - 1)} 个客户` : '暂无客户'}</span>
-            </div>
-            <div className="drawing-customer-list">
-              {customers.map(item => (
-                <button
-                  key={`${item.customerName}-${item.customerCode || ''}`}
-                  className={customer === item.customerName ? 'drawing-customer active' : 'drawing-customer'}
-                  type="button"
-                  onClick={() => setCustomer(item.customerName)}
-                >
-                  <strong title={item.customerName}>{item.customerName}</strong>
-                  <span>{item.itemCount}</span>
-                </button>
+        <section className="hm-drawing-query" aria-label="图纸资料搜索和筛选">
+          <label className="hm-drawing-search-field" htmlFor="drawing-library-search">
+            <span>搜索资料</span>
+            <span className="hm-drawing-search-control">
+              <b aria-hidden="true">⌕</b>
+              <input id="drawing-library-search" className="hm-workbench-input" value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="客户、规格、品名或备注" />
+              {keyword && <button type="button" aria-label="清空搜索关键词" onClick={() => setKeyword('')}>清空</button>}
+            </span>
+          </label>
+
+          <label className="hm-drawing-customer-filter">
+            <span>客户</span>
+            <select className="hm-workbench-input" value={customer} onChange={event => setCustomer(event.target.value)}>
+              {customers.map(item => <option key={`${item.customerName}-${item.customerCode || ''}`} value={item.customerName}>{item.customerName}（{item.itemCount}）</option>)}
+              {!customers.length && <option value="全部客户">全部客户（0）</option>}
+            </select>
+          </label>
+
+          <div className="hm-drawing-filter-group" role="group" aria-label="资料状态筛选">
+            <span>状态</span>
+            <div>
+              {filterOptions.map(([key, label]) => (
+                <button key={key} className={filter === key ? 'active' : ''} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>
               ))}
-              {!customers.length && <div className="drawing-empty-mini">暂无客户</div>}
             </div>
           </div>
 
-          <div className="drawing-browser-specs">
+          <div className="hm-drawing-result-count" aria-live="polite">
+            <span>{loading ? '正在检索' : '当前结果'}</span>
+            <strong>{loading ? '…' : visibleItems.length}</strong>
+            <small>条规格</small>
+          </div>
+        </section>
+
+        {hasActiveFilters && (
+          <section className="hm-drawing-active-filters" aria-label="已应用筛选条件">
+            <span>已应用</span>
+            {keyword.trim() && <b title={keyword}>关键词：{keyword}</b>}
+            {customer !== '全部客户' && <b title={customer}>客户：{customer}</b>}
+            {filter !== 'all' && <b>状态：{activeFilterLabel}</b>}
+            <button type="button" onClick={clearFilters}>清除全部</button>
+          </section>
+        )}
+
+        {msg && <div className="hm-drawing-message" role="status"><span>{msg}</span><button type="button" onClick={loadData}>重新加载</button></div>}
+
+        <section className="drawing-workspace">
+          <aside className="drawing-browser" aria-label="图纸规格结果">
             <div className="drawing-panel-head">
-              <strong>规格</strong>
-              <button type="button" onClick={() => openModal('create')}>新增</button>
+              <div><strong>规格结果</strong><span>{customer === '全部客户' ? '全部客户' : customer}</span></div>
+              <b>{visibleItems.length}</b>
             </div>
             <div className="drawing-list">
               {visibleItems.map(item => (
-                <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" onClick={() => chooseItem(item)}>
+                <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" aria-pressed={selectedItem?.id === item.id} onClick={() => chooseItem(item)}>
                   <div className="drawing-spec-title-line">
                     <strong title={item.specification}>{item.specification}</strong>
                     {item.isAnomaly && <span title={item.anomalyReason || '异常数据'}>异常</span>}
                   </div>
                   <p title={`${item.customerName} · ${item.productName || '未设置品名'}`}>{item.customerName} · {item.productName || '未设置品名'}</p>
                   <footer>
-                    <em>资料 {item.completenessText}</em>
-                    <span>{item.fileCount} 文件</span>
-                    <span>{dt(item.updatedAt)}</span>
+                    <em>{item.completenessText}</em>
+                    <span>{item.fileCount} 个文件</span>
+                    <time dateTime={item.updatedAt || undefined}>{dt(item.updatedAt)}</time>
                   </footer>
                 </button>
               ))}
-              {!visibleItems.length && <div className="drawing-empty-mini">{keyword.trim() ? '未找到匹配资料' : filter === 'anomaly' ? '暂无异常数据' : '暂无图纸资料'}</div>}
+              {!visibleItems.length && (
+                <div className="drawing-result-empty">
+                  <span aria-hidden="true">⌕</span>
+                  <strong>{hasActiveFilters ? '没有符合条件的资料' : '资料库中还没有图纸资料'}</strong>
+                  <p>{hasActiveFilters ? '尝试清除关键词、客户或状态筛选。' : '新增资料或使用批量导入建立长期图纸档案。'}</p>
+                  <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增资料'}</button>
+                </div>
+              )}
             </div>
-          </div>
-        </aside>
+          </aside>
 
-        <section className="drawing-detail">
+          <section className="drawing-detail" aria-label="资料预览工作区">
           {!selectedItem ? (
             <div className="drawing-empty-state">
-              <span />
-              <strong>{keyword.trim() ? '未找到匹配资料' : '请选择一个规格或新增图纸资料'}</strong>
-              <p>图纸资料库按客户和规格管理长期原图、SOP、成品图、辅料规格和注意事项。</p>
-              <button type="button" onClick={() => openModal('create')}>新增图纸资料</button>
+              <span aria-hidden="true">图</span>
+              <strong>{hasActiveFilters ? '当前筛选下没有可预览资料' : '选择一个规格开始查看'}</strong>
+              <p>{hasActiveFilters ? '左侧结果会随搜索条件更新，清除筛选可返回全部资料。' : '预览区会保持图纸原始比例，并提供版本、下载和资料维护入口。'}</p>
+              <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增图纸资料'}</button>
             </div>
           ) : (
             <>
               <div className="drawing-detail-head">
                 <div>
+                  <span>当前资料</span>
                   <h1 title={selectedItem.specification}>{selectedItem.specification}</h1>
                   <p>
-                    <b>{selectedItem.customerName}</b>
-                    {hasText(selectedItem.productName) && <em>{selectedItem.productName}</em>}
-                    <small>资料 {selectedItem.completenessText}</small>
-                    <small>{selectedItem.fileCount} 文件</small>
-                    <small>更新 {dt(selectedItem.updatedAt)}</small>
+                    <b title={selectedItem.customerName}>{selectedItem.customerName}</b>
+                    {hasText(selectedItem.productName) && <em title={selectedItem.productName || ''}>{selectedItem.productName}</em>}
+                    <small>{selectedItem.completenessText}</small>
+                    <small>{selectedItem.fileCount} 个文件</small>
+                    <small>更新于 {dt(selectedItem.updatedAt)}</small>
                     {selectedItem.isAnomaly && <small className="anomaly">{selectedItem.anomalyReason}</small>}
                   </p>
                 </div>
                 <div className="drawing-head-actions">
-                  <button type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传文件'}</button>
-                  <button type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>
-                  <button className="danger-button subtle" type="button" onClick={deleteItem}>删除</button>
+                  <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}>文件 {activeFiles.length}</button>
+                  <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>
+                  <button className="hm-workbench-button" type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>
+                  <button className="hm-workbench-button danger" type="button" onClick={deleteItem}>删除</button>
                 </div>
               </div>
 
@@ -500,14 +539,17 @@ export function DrawingLibraryShell({
 
                 <div className="drawing-preview">
                   <div className="drawing-preview-head">
-                    <strong>{activeCategory?.name || '资料预览'}</strong>
-                    <span>{selectedFile ? safeDisplayFilename(selectedFile) : '等待上传后预览'}</span>
+                    <span><b>{activeCategory?.name || '资料预览'}</b><small>{selectedFile ? `${selectedFile.version || 'V1.0'} · ${bytes(selectedFile.fileSize)}` : '当前分类'}</small></span>
+                    <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>
                     <input ref={fileInputRef} hidden multiple type="file" accept="application/pdf,.pdf,image/*" onChange={event => uploadFiles(event.target.files)} />
                   </div>
 
                   {!selectedFile ? (
                     <div className="drawing-preview-placeholder" aria-label="当前分类暂无可预览文件">
-                      <span />
+                      <span aria-hidden="true">＋</span>
+                      <strong>{activeCategory?.name || '当前分类'}暂无文件</strong>
+                      <p>支持 PDF、JPG、PNG 等现有资料类型，上传后可在这里直接预览。</p>
+                      <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : `上传到${activeCategory?.name || '当前分类'}`}</button>
                     </div>
                   ) : selectedFile.fileType === 'pdf' ? (
                     <PdfViewer fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} viewUrl={selectedFile.viewUrl} downloadUrl={selectedFile.downloadUrl} />
@@ -515,7 +557,7 @@ export function DrawingLibraryShell({
                     <ImageViewer fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} downloadUrl={selectedFile.downloadUrl} />
                   ) : (
                     <div className="drawing-file-fallback">
-                      <strong>{safeDisplayFilename(selectedFile)}</strong>
+                      <strong title={safeDisplayFilename(selectedFile)}>{safeDisplayFilename(selectedFile)}</strong>
                       <p>此文件类型暂不支持内嵌预览，可直接下载查看。</p>
                       <a href={selectedFile.downloadUrl} target="_blank" rel="noreferrer">下载文件</a>
                     </div>
@@ -524,12 +566,13 @@ export function DrawingLibraryShell({
               </div>
             </>
           )}
-        </section>
+          </section>
 
-        <aside className="drawing-file-panel">
+          {filePanelOpen && <button className="drawing-file-panel-scrim" type="button" aria-label="关闭文件工具窗" onClick={closeFilePanel} />}
+          <aside id="drawing-library-file-panel" className={filePanelOpen ? 'drawing-file-panel open' : 'drawing-file-panel'} aria-label="分类文件工具窗">
           <div className="drawing-file-panel-head">
-            <strong>{activeCategory?.name || '分类文件'}</strong>
-            <span>{activeFiles.length} 个</span>
+            <div><strong>{activeCategory?.name || '分类文件'}</strong><span>{activeFiles.length} 个文件</span></div>
+            <button className="drawing-file-panel-close" type="button" aria-label="关闭文件工具窗" title="关闭" onClick={closeFilePanel}>×</button>
           </div>
           {selectedItem && activeFiles.length > 0 ? (
             <>
@@ -544,8 +587,8 @@ export function DrawingLibraryShell({
               </div>
               {selectedFile && (
                 <div className="drawing-file-actions">
-                  <a href={selectedFile.downloadUrl} target="_blank" rel="noreferrer">下载</a>
-                  <button type="button" onClick={() => deleteFile(selectedFile)}>删除</button>
+                  <a className="hm-workbench-button" href={selectedFile.downloadUrl} target="_blank" rel="noreferrer">下载文件</a>
+                  <button className="hm-workbench-button danger" type="button" onClick={() => deleteFile(selectedFile)}>删除文件</button>
                 </div>
               )}
             </>
@@ -553,11 +596,12 @@ export function DrawingLibraryShell({
             <div className="drawing-file-empty">
               <strong>{selectedItem ? '当前分类暂无文件' : '请选择规格'}</strong>
               <p>{selectedItem ? '上传 PDF 或图片后会在中间预览区查看。' : '选择左侧规格后查看当前分类文件。'}</p>
-              {selectedItem && <button type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传 PDF / 图片'}</button>}
+              {selectedItem && <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传 PDF / 图片'}</button>}
             </div>
           )}
-        </aside>
-      </section>
+          </aside>
+        </section>
+      </div>
 
       {modal && (
         <div className="modal-backdrop" role="presentation">
@@ -567,7 +611,7 @@ export function DrawingLibraryShell({
                 <span>{modal.mode === 'edit' ? '编辑长期图纸资料' : '新增长期图纸资料'}</span>
                 <h3>{modal.mode === 'edit' ? modal.item?.specification : '客户 · 规格 · 品名'}</h3>
               </div>
-              <button type="button" onClick={() => setModal(null)}>×</button>
+              <button type="button" aria-label="关闭资料编辑窗口" title="关闭" onClick={() => setModal(null)}>×</button>
             </div>
             <label>
               <span>客户 *</span>
@@ -602,7 +646,7 @@ export function DrawingLibraryShell({
                 <span>空资料记录清理</span>
                 <h3>清理周计划导入产生的空图纸资料</h3>
               </div>
-              <button type="button" onClick={() => setCleanupOpen(false)}>×</button>
+              <button type="button" aria-label="关闭资料治理窗口" title="关闭" onClick={() => setCleanupOpen(false)}>×</button>
             </div>
             <p className="cleanup-note">只清理无文件、无备注、由历史导入自动生成的空图纸资料记录。不会删除生产工单、连接器参数、资料文件或 S3 对象。</p>
             <div className="cleanup-summary">
@@ -645,7 +689,7 @@ export function DrawingLibraryShell({
                 <span>批量导入原图说明</span>
                 <h3>从本地图纸文件夹导入到图纸资料库“原图”分类</h3>
               </div>
-              <button type="button" onClick={() => setBulkHelpOpen(false)}>×</button>
+              <button type="button" aria-label="关闭批量导入说明" title="关闭" onClick={() => setBulkHelpOpen(false)}>×</button>
             </div>
             <p className="cleanup-note">推荐使用页面上的“批量导入原图”：选择本地图纸文件夹后先预览匹配、重复和未确认客户，输入确认码才会上传。命令行脚本仍保留为高级兜底工具。</p>
             <div className="cleanup-summary">
