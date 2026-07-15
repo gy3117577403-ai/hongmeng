@@ -18,6 +18,7 @@ type AppWorkbenchHeaderProps = {
 };
 
 const navigationItems = [
+  { href: '/home', label: '首页' },
   { href: '/production', label: '生产执行' },
   { href: '/dashboard', label: '生产工单' },
   { href: '/weekly-plan-center', label: '周计划' },
