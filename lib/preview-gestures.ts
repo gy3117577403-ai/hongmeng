@@ -2,7 +2,7 @@ export const MIN_PREVIEW_ZOOM = 0.4;
 export const MAX_PREVIEW_ZOOM = 5;
 export const PREVIEW_EDGE_MARGIN = 48;
 
-export type PreviewFitMode = 'fit-window' | 'fit-width' | 'actual-size' | 'manual';
+export type PreviewFitMode = 'fit-height' | 'fit-window' | 'fit-width' | 'actual-size' | 'manual';
 
 export type PreviewPoint = {
   x: number;
@@ -47,7 +47,12 @@ export function previewFitZoom(
   if (contentSize.width <= 0 || contentSize.height <= 0 || viewportSize.width <= 0 || viewportSize.height <= 0) return 1;
   const widthScale = Math.max(0.01, (viewportSize.width - padding) / contentSize.width);
   const heightScale = Math.max(0.01, (viewportSize.height - padding) / contentSize.height);
-  return Math.max(0.02, Math.min(MAX_PREVIEW_ZOOM, mode === 'fit-width' ? widthScale : Math.min(widthScale, heightScale)));
+  const scale = mode === 'fit-width'
+    ? widthScale
+    : mode === 'fit-height'
+      ? contentSize.width * heightScale <= viewportSize.width - padding ? heightScale : Math.min(widthScale, heightScale)
+      : Math.min(widthScale, heightScale);
+  return Math.max(0.02, Math.min(MAX_PREVIEW_ZOOM, scale));
 }
 
 export function previewPanForFocalZoom(

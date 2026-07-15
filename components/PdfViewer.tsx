@@ -34,6 +34,7 @@ export type PdfTocSuggestion = ConnectorManualTocSuggestion;
 type PdfViewerProps = {
   fileId: string;
   title: string;
+  dashboardMode?: boolean;
   contentUrl?: string;
   downloadUrl?: string;
   viewUrl?: string;
@@ -48,6 +49,7 @@ type PdfViewerProps = {
 export function PdfViewer({
   fileId,
   title,
+  dashboardMode = false,
   contentUrl,
   downloadUrl,
   viewUrl,
@@ -65,10 +67,10 @@ export function PdfViewer({
 
   return (
     <>
-      <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page} onPageChange={onPageChange} readingMode={readingMode} onAddToToc={onAddToToc} onTocSuggestions={onTocSuggestions} onCopyPageLink={onCopyPageLink} onFullscreen={() => setFullscreen(true)} />
+      <PdfCanvas source={source} title={title} dashboardMode={dashboardMode} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page} onPageChange={onPageChange} readingMode={readingMode} onAddToToc={onAddToToc} onTocSuggestions={onTocSuggestions} onCopyPageLink={onCopyPageLink} onFullscreen={() => setFullscreen(true)} />
       {fullscreen && (
         <PreviewModal title={title} onClose={() => setFullscreen(false)}>
-          <PdfCanvas source={source} title={title} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page} onPageChange={onPageChange} readingMode={readingMode} onAddToToc={onAddToToc} onTocSuggestions={onTocSuggestions} onCopyPageLink={onCopyPageLink} fullscreen onClose={() => setFullscreen(false)} />
+          <PdfCanvas source={source} title={title} dashboardMode={dashboardMode} downloadUrl={fallbackDownloadUrl} viewUrl={fallbackViewUrl} requestedPage={page} onPageChange={onPageChange} readingMode={readingMode} onAddToToc={onAddToToc} onTocSuggestions={onTocSuggestions} onCopyPageLink={onCopyPageLink} fullscreen onClose={() => setFullscreen(false)} />
         </PreviewModal>
       )}
     </>
@@ -78,6 +80,7 @@ export function PdfViewer({
 function PdfCanvas({
   source,
   title,
+  dashboardMode = false,
   downloadUrl,
   viewUrl,
   fullscreen = false,
@@ -92,6 +95,7 @@ function PdfCanvas({
 }: {
   source: string;
   title: string;
+  dashboardMode?: boolean;
   downloadUrl: string;
   viewUrl: string;
   fullscreen?: boolean;
@@ -128,6 +132,8 @@ function PdfCanvas({
     contentSize: baseSize,
     viewportSize: box,
     resetKey: `${source}|${fullscreen ? 'fullscreen' : 'inline'}|${reloadKey}`,
+    initialFitMode: dashboardMode ? 'fit-height' : 'fit-window',
+    scrollWheel: dashboardMode,
   });
   const recenterPreview = gestures.recenter;
 
@@ -138,11 +144,22 @@ function PdfCanvas({
   useEffect(() => {
     const node = shellRef.current;
     if (!node) return undefined;
-    const resize = () => setBox({ width: node.clientWidth, height: node.clientHeight });
+    let frame = 0;
+    const resize = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const width = node.clientWidth;
+        const height = node.clientHeight;
+        setBox(current => current.width === width && current.height === height ? current : { width, height });
+      });
+    };
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(node);
-    return () => observer.disconnect();
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, []);
 
   useEffect(() => {
@@ -231,8 +248,10 @@ function PdfCanvas({
     return () => window.clearTimeout(timer);
   }, [loading, source, reloadKey]);
 
+  const boxReady = box.width > 0 && box.height > 0;
+
   useEffect(() => {
-    if (loading || !doc || !canvasRef.current || box.width <= 0 || box.height <= 0) return undefined;
+    if (loading || !doc || !canvasRef.current || !boxReady) return undefined;
     let alive = true;
     const canvas = canvasRef.current;
 
@@ -277,7 +296,7 @@ function PdfCanvas({
       alive = false;
       renderTaskRef.current?.cancel();
     };
-  }, [doc, pageNo, box.width, box.height, gestures.committedZoom, gestures.rotation, loading]);
+  }, [boxReady, doc, pageNo, gestures.committedZoom, gestures.rotation, loading]);
 
   function goToPage(value: number) {
     if (!pageCount) return;
@@ -317,15 +336,31 @@ function PdfCanvas({
   }
 
   const displayScale = gestures.zoom / Math.max(0.001, renderedZoom);
+  const scrollSurfaceStyle = dashboardMode ? {
+    width: `${Math.max(box.width, gestures.rotatedSize.width * gestures.zoom + 40)}px`,
+    height: `${Math.max(box.height, gestures.rotatedSize.height * gestures.zoom + 40)}px`,
+  } : undefined;
 
   return (
-    <div className={`${fullscreen ? 'pdf-viewer fullscreen-viewer' : 'pdf-viewer'}${readingMode ? ' reading-viewer' : ''}`}>
+    <div className={`${fullscreen ? 'pdf-viewer fullscreen-viewer' : 'pdf-viewer'}${readingMode ? ' reading-viewer' : ''}${dashboardMode ? ' dashboard-preview-viewer' : ''}`}>
       <div className="viewer-toolbar pdf-toolbar">
         <div className="viewer-title" title={title}>
           <span>PDF</span>
           <strong>{title}</strong>
         </div>
         <div className="viewer-controls">
+          {dashboardMode ? <>
+            <button type="button" aria-label="上一页" title="上一页" disabled={pageNo <= 1 || loading} onClick={() => goToPage(pageNo - 1)}>‹</button>
+            <label className="page-jump dashboard-page-jump" title="输入页码跳转"><input aria-label="PDF 页码" type="number" min={1} max={pageCount || 1} value={pageNo} disabled={!pageCount || loading} onChange={event => goToPage(Number(event.target.value || 1))} /><span>/ {pageCount || '-'}</span></label>
+            <button type="button" aria-label="下一页" title="下一页" disabled={!pageCount || pageNo >= pageCount || loading} onClick={() => goToPage(pageNo + 1)}>›</button>
+            <button type="button" aria-label="缩小" title="缩小" disabled={loading} onClick={() => gestures.zoomBy(1 / 1.15)}>−</button>
+            <span className="viewer-zoom-value" aria-live="polite">{Math.round(gestures.zoom * 100)}%</span>
+            <button type="button" aria-label="放大" title="放大" disabled={loading} onClick={() => gestures.zoomBy(1.15)}>＋</button>
+            <button className={gestures.fitMode === 'fit-height' ? 'active' : ''} type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-height')}>适高</button>
+            <button type="button" aria-label="向左旋转" title="向左旋转" disabled={loading} onClick={() => gestures.rotateBy(-90)}>↺</button>
+            {fullscreen ? <button className="viewer-close-button" type="button" onClick={onClose}>关闭</button> : <button type="button" disabled={loading} onClick={onFullscreen}>全屏</button>}
+            <details className="viewer-more"><summary aria-label="更多预览操作" title="更多预览操作">更多</summary><div><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-width')}>适应宽度</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>适应整页</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" disabled={loading} onClick={gestures.reset}>重置视图</button><button type="button" disabled={loading} onClick={() => gestures.rotateBy(90)}>向右旋转</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载</a><button type="button" onClick={openSystem}>系统打开</button></div></details>
+          </> : <>
           <button type="button" disabled={pageNo <= 1 || loading} onClick={() => goToPage(pageNo - 1)}>上一页</button>
           <label className="page-jump" title="输入页码跳转"><input aria-label="PDF 页码" type="number" min={1} max={pageCount || 1} value={pageNo} disabled={!pageCount || loading} onChange={event => goToPage(Number(event.target.value || 1))} /><span>/ {pageCount || '-'}</span></label>
           <button type="button" disabled={!pageCount || pageNo >= pageCount || loading} onClick={() => goToPage(pageNo + 1)}>下一页</button>
@@ -337,6 +372,7 @@ function PdfCanvas({
           {readingMode ? (
             <details className="viewer-more"><summary>更多</summary><div><button type="button" disabled={loading} onClick={() => gestures.zoomBy(1 / 1.15)}>缩小</button><button type="button" disabled={loading} onClick={() => gestures.zoomBy(1.15)}>放大</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-width')}>适宽</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-window')}>整页</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('actual-size')}>原始大小</button><button type="button" disabled={loading || gestures.rotation === 0} onClick={() => gestures.rotateBy(-gestures.rotation)}>重置旋转</button><button type="button" disabled={loading} onClick={gestures.reset}>重置视图</button><button type="button" disabled={loading} onClick={restartReading}>从头阅读</button><a href={downloadUrl} target="_blank" rel="noreferrer">下载</a><button type="button" onClick={openSystem}>系统打开</button>{onCopyPageLink && <button type="button" onClick={() => void onCopyPageLink(pageNo)}>复制当前页链接</button>}</div></details>
           ) : <><button type="button" disabled={loading} onClick={() => gestures.zoomBy(1 / 1.15)} title="缩小">−</button><button type="button" disabled={loading} onClick={() => gestures.zoomBy(1.15)} title="放大">＋</button><button type="button" disabled={loading} onClick={gestures.reset}>重置</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('fit-width')}>适宽</button><button type="button" disabled={loading} onClick={() => gestures.setFitMode('actual-size')}>原始大小</button></>}
+          </>}
         </div>
         {tocOpen && (
           <form className="viewer-toc-popover" onSubmit={submitQuickToc} role="dialog" aria-label="添加当前页至目录">
@@ -369,12 +405,17 @@ function PdfCanvas({
         {!loading && !error && (
           <>
             {rendering && <div className="render-badge">渲染中...</div>}
-            <div
-              className={`viewer-gesture-content${gestures.isGestureActive ? ' active' : ''}`}
-              style={{ transform: `translate3d(${gestures.panX}px, ${gestures.panY}px, 0) scale(${displayScale})` }}
-            >
-              <canvas ref={canvasRef} aria-label={title} />
-            </div>
+            {dashboardMode ? (
+              <div className="viewer-scroll-surface" style={scrollSurfaceStyle}>
+                <div className={`viewer-gesture-content${gestures.isGestureActive ? ' active' : ''}`} style={{ transform: `translate3d(${gestures.panX}px, ${gestures.panY}px, 0) scale(${displayScale})` }}>
+                  <canvas ref={canvasRef} aria-label={title} />
+                </div>
+              </div>
+            ) : (
+              <div className={`viewer-gesture-content${gestures.isGestureActive ? ' active' : ''}`} style={{ transform: `translate3d(${gestures.panX}px, ${gestures.panY}px, 0) scale(${displayScale})` }}>
+                <canvas ref={canvasRef} aria-label={title} />
+              </div>
+            )}
           </>
         )}
         {gestures.zoomHint && <div className="viewer-zoom-hint" aria-live="polite">{gestures.zoomHint}</div>}

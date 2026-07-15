@@ -57,6 +57,8 @@ type PreviewGestureOptions = {
   viewportSize: PreviewSize;
   resetKey: string;
   settleDelay?: number;
+  initialFitMode?: Exclude<PreviewFitMode, 'manual'>;
+  scrollWheel?: boolean;
 };
 
 export type PreviewGestureController = {
@@ -89,10 +91,12 @@ export function usePreviewGestures({
   viewportSize,
   resetKey,
   settleDelay = 160,
+  initialFitMode = 'fit-window',
+  scrollWheel = false,
 }: PreviewGestureOptions): PreviewGestureController {
   const [zoom, setZoom] = useState(1);
   const [committedZoom, setCommittedZoom] = useState(1);
-  const [fitMode, setFitModeState] = useState<PreviewFitMode>('fit-window');
+  const [fitMode, setFitModeState] = useState<PreviewFitMode>(initialFitMode);
   const [rotation, setRotation] = useState(0);
   const [pan, setPan] = useState<PreviewPan>({ panX: 0, panY: 0 });
   const [isGestureActive, setGestureActive] = useState(false);
@@ -112,6 +116,9 @@ export function usePreviewGestures({
   const lastTwoFingerTapRef = useRef<LastTap | null>(null);
   const pinchOccurredRef = useRef(false);
   const resetRef = useRef<() => void>(() => undefined);
+  const wheelDeltaRef = useRef(0);
+  const wheelPointRef = useRef<PreviewPoint>({ x: 0, y: 0 });
+  const wheelFrameRef = useRef<number | null>(null);
 
   const rotatedSize = useMemo(() => rotatedPreviewSize(contentSize, rotation), [contentSize, rotation]);
   const fitWindowZoom = useMemo(() => previewFitZoom('fit-window', rotatedSize, viewportSize), [rotatedSize, viewportSize]);
@@ -154,6 +161,32 @@ export function usePreviewGestures({
     commitLater(nextZoom, immediate ? 0 : settleDelay);
   }, [commitLater, settleDelay, showHint, updatePan]);
 
+  const applyScrollZoom = useCallback((nextValue: number, clientPoint: PreviewPoint): void => {
+    const node = stageRef.current;
+    if (!node) return;
+    const oldZoom = zoomRef.current;
+    const nextZoom = clampPreviewZoom(nextValue);
+    const rect = node.getBoundingClientRect();
+    const focalX = Math.max(0, Math.min(rect.width, clientPoint.x - rect.left));
+    const focalY = Math.max(0, Math.min(rect.height, clientPoint.y - rect.top));
+    const oldScrollLeft = node.scrollLeft;
+    const oldScrollTop = node.scrollTop;
+    const ratio = nextZoom / Math.max(0.001, oldZoom);
+
+    zoomRef.current = nextZoom;
+    fitModeRef.current = 'manual';
+    setFitModeState('manual');
+    setZoom(nextZoom);
+    setGestureActive(true);
+    showHint(nextZoom === MIN_PREVIEW_ZOOM || nextZoom === MAX_PREVIEW_ZOOM ? `${Math.round(nextZoom * 100)}% · 已到缩放边界` : `${Math.round(nextZoom * 100)}%`);
+    commitLater(nextZoom);
+
+    window.requestAnimationFrame(() => {
+      node.scrollLeft = Math.max(0, (oldScrollLeft + focalX) * ratio - focalX);
+      node.scrollTop = Math.max(0, (oldScrollTop + focalY) * ratio - focalY);
+    });
+  }, [commitLater, showHint, stageRef]);
+
   const pointFromClient = useCallback((clientX: number, clientY: number): PreviewPoint => {
     const rect = stageRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
@@ -170,32 +203,41 @@ export function usePreviewGestures({
     setCommittedZoom(nextZoom);
     setPan({ panX: 0, panY: 0 });
     setGestureActive(false);
-    showHint(mode === 'fit-window' ? '适应窗口' : mode === 'fit-width' ? '适应宽度' : '原始大小');
-  }, [contentSize, showHint, viewportSize]);
+    stageRef.current?.scrollTo({ left: 0, top: 0 });
+    showHint(mode === 'fit-height' ? '适应高度' : mode === 'fit-window' ? '适应整页' : mode === 'fit-width' ? '适应宽度' : '原始大小');
+  }, [contentSize, showHint, stageRef, viewportSize]);
 
   const reset = useCallback((): void => {
     rotationRef.current = 0;
     setRotation(0);
-    const nextZoom = previewFitZoom('fit-window', contentSize, viewportSize);
-    fitModeRef.current = 'fit-window';
+    const nextZoom = previewFitZoom(initialFitMode, contentSize, viewportSize);
+    fitModeRef.current = initialFitMode;
     zoomRef.current = nextZoom;
     panRef.current = { panX: 0, panY: 0 };
-    setFitModeState('fit-window');
+    setFitModeState(initialFitMode);
     setZoom(nextZoom);
     setCommittedZoom(nextZoom);
     setPan({ panX: 0, panY: 0 });
     setGestureActive(false);
-    showHint('适应窗口');
-  }, [contentSize, showHint, viewportSize]);
+    stageRef.current?.scrollTo({ left: 0, top: 0 });
+    showHint(initialFitMode === 'fit-height' ? '适应高度' : '适应整页');
+  }, [contentSize, initialFitMode, showHint, stageRef, viewportSize]);
 
   const recenter = useCallback((): void => {
     panRef.current = { panX: 0, panY: 0 };
     setPan({ panX: 0, panY: 0 });
-  }, []);
+    stageRef.current?.scrollTo({ left: 0, top: 0 });
+  }, [stageRef]);
 
   const zoomBy = useCallback((factor: number): void => {
+    const node = stageRef.current;
+    if (scrollWheel && node) {
+      const rect = node.getBoundingClientRect();
+      applyScrollZoom(zoomRef.current * factor, { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+      return;
+    }
     applyManualZoom(zoomRef.current * factor, { x: 0, y: 0 });
-  }, [applyManualZoom]);
+  }, [applyManualZoom, applyScrollZoom, scrollWheel, stageRef]);
 
   const rotateBy = useCallback((delta: number): void => {
     const nextRotation = (rotationRef.current + delta + 360) % 360;
@@ -205,7 +247,7 @@ export function usePreviewGestures({
   }, [recenter]);
 
   const toggleZoomAt = useCallback((clientX: number, clientY: number): void => {
-    if (fitModeRef.current === 'fit-window' || zoomRef.current <= fitWindowZoom * 1.2) {
+    if (fitModeRef.current === 'fit-window' || fitModeRef.current === 'fit-height' || zoomRef.current <= fitWindowZoom * 1.2) {
       applyManualZoom(Math.max(MIN_PREVIEW_ZOOM, fitWindowZoom * 2), pointFromClient(clientX, clientY));
     } else {
       applyFitMode('fit-window');
@@ -217,12 +259,26 @@ export function usePreviewGestures({
     if (!node) return undefined;
     const wheel = (event: WheelEvent): void => {
       event.preventDefault();
-      const factor = Math.max(0.88, Math.min(1.12, Math.exp(-event.deltaY * 0.0015)));
-      applyManualZoom(zoomRef.current * factor, pointFromClient(event.clientX, event.clientY));
+      wheelDeltaRef.current += event.deltaY;
+      wheelPointRef.current = { x: event.clientX, y: event.clientY };
+      if (wheelFrameRef.current !== null) return;
+      wheelFrameRef.current = window.requestAnimationFrame(() => {
+        wheelFrameRef.current = null;
+        const delta = wheelDeltaRef.current;
+        wheelDeltaRef.current = 0;
+        const factor = Math.max(0.72, Math.min(1.38, Math.exp(-delta * 0.0015)));
+        if (scrollWheel) applyScrollZoom(zoomRef.current * factor, wheelPointRef.current);
+        else applyManualZoom(zoomRef.current * factor, pointFromClient(wheelPointRef.current.x, wheelPointRef.current.y));
+      });
     };
     node.addEventListener('wheel', wheel, { passive: false });
-    return () => node.removeEventListener('wheel', wheel);
-  }, [applyManualZoom, pointFromClient, stageRef]);
+    return () => {
+      node.removeEventListener('wheel', wheel);
+      if (wheelFrameRef.current !== null) window.cancelAnimationFrame(wheelFrameRef.current);
+      wheelFrameRef.current = null;
+      wheelDeltaRef.current = 0;
+    };
+  }, [applyManualZoom, applyScrollZoom, pointFromClient, scrollWheel, stageRef]);
 
   useEffect(() => {
     if (contentSize.width <= 0 || contentSize.height <= 0 || viewportSize.width <= 0 || viewportSize.height <= 0) return;

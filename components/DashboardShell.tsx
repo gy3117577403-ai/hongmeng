@@ -10,7 +10,6 @@ import { PdfViewer } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platform';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import { compressImageForUpload, normalizeCapturedImage } from '@/lib/image-client';
@@ -658,7 +657,6 @@ export default function DashboardShell({
   const [toolOpen, setToolOpen] = useState(false);
   const [toolTab, setToolTab] = useState<ToolTab>('info');
   const [toolWidth, setToolWidth] = useState(320);
-  const [thumbsOpen, setThumbsOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
   const [localImportOpen, setLocalImportOpen] = useState(false);
   const [localImportTask, setLocalImportTask] = useState<LocalImportTaskSession | null>(null);
@@ -672,8 +670,9 @@ export default function DashboardShell({
   const csvImport = useRef<HTMLInputElement>(null);
   const drawerTouch = useRef<{ startX: number; startY: number; fromEdge: boolean; fromDrawer: boolean } | null>(null);
   const toolRef = useRef<HTMLElement>(null);
-  const toolRailRef = useRef<HTMLDivElement>(null);
   const toolResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const toolTriggerRef = useRef<HTMLButtonElement>(null);
+  const toolCloseRef = useRef<HTMLButtonElement>(null);
   const orderDrawerRef = useRef<HTMLElement>(null);
   const orderDrawerCloseRef = useRef<HTMLButtonElement>(null);
   const orderDrawerReturnFocusRef = useRef<HTMLButtonElement | null>(null);
@@ -712,7 +711,6 @@ export default function DashboardShell({
   const order = orders.find(o => o.id === wo) || orders[0];
   const category = categories.find(c => c.id === cat) || categories[0];
   const file = files.find(f => f.id === sel) || files[0];
-  const latestFileId = files[0]?.id || '';
   const accountName = user.displayName || user.username;
   const currentCounts = order?.id === wo ? categoryCounts : order?.categoryFileCounts || {};
   const completedCategories = categories.filter(c => (currentCounts[c.id] || 0) > 0).length;
@@ -781,7 +779,6 @@ export default function DashboardShell({
         window.localStorage.removeItem('hongmeng:resourceTool');
       }
     }
-    if (window.innerWidth <= 1024) setThumbsOpen(false);
   }, []);
 
   useEffect(() => {
@@ -1332,6 +1329,11 @@ export default function DashboardShell({
     setToolOpen(true);
   }
 
+  function closeTool() {
+    setToolOpen(false);
+    window.requestAnimationFrame(() => toolTriggerRef.current?.focus());
+  }
+
   function openCameraCapture() {
     if (!order) {
       setMsg('未选择工单');
@@ -1606,18 +1608,31 @@ export default function DashboardShell({
 
   useEffect(() => {
     if (!toolOpen) return undefined;
-    const close = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      if (target.closest('.resource-tools, .resource-tool-rail, .modal-backdrop')) return;
-      setToolOpen(false);
-    };
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    window.requestAnimationFrame(() => toolCloseRef.current?.focus());
     const closeByKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setToolOpen(false);
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeTool();
+        return;
+      }
+      if (event.key !== 'Tab' || !toolRef.current) return;
+      const focusable = Array.from(toolRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    window.addEventListener('mousedown', close);
     window.addEventListener('keydown', closeByKey);
     return () => {
-      window.removeEventListener('mousedown', close);
+      document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', closeByKey);
     };
   }, [toolOpen]);
@@ -2537,19 +2552,6 @@ export default function DashboardShell({
       />
 
       <div className="hm-dashboard-page">
-        <WorkbenchPageHeader
-          kicker="资料工作台"
-          title="工单资料库"
-          description="按工单集中查看图纸、SOP、成品图与现场资料"
-          titleId="hm-dashboard-title"
-          actions={(
-            <>
-              {productionReturnKey && <button className="hm-workbench-button" type="button" onClick={returnToProduction}>返回生产执行</button>}
-              <button className="hm-workbench-button primary" type="button" onClick={() => openOrderModal('create')}>新建工单</button>
-            </>
-          )}
-        />
-
         <section className="hm-dashboard-commandbar" aria-label="资料库查找与快捷操作">
           <div className="top-search hm-dashboard-global-search">
           <input value={globalKw} onFocus={() => globalKw.trim() && setSearchOpen(true)} onChange={e => setGlobalKw(e.target.value)} placeholder="全局搜索工单 / 文件" />
@@ -2625,10 +2627,12 @@ export default function DashboardShell({
           )}
           </div>
           <div className="hm-dashboard-command-actions">
+            {productionReturnKey && <button className="hm-workbench-button" type="button" onClick={returnToProduction}>返回生产执行</button>}
             <button className="hm-workbench-button" type="button" onClick={() => { void loadLogs('all'); }}>操作日志</button>
             <button className="hm-workbench-button hm-dashboard-order-trigger" type="button" aria-haspopup="dialog" aria-expanded={drawerOpen} onClick={openOrderDrawer}>
               查找工单 <span>{orders.length}</span>
             </button>
+            <button className="hm-workbench-button primary" type="button" onClick={() => openOrderModal('create')}>新建工单</button>
           </div>
         </section>
 
@@ -2809,16 +2813,27 @@ export default function DashboardShell({
               setDeleteTarget={setDeleteTarget}
             />
           ) : (
-            <div className={toolOpen ? 'content-grid tool-open' : 'content-grid'}>
+            <div className="dashboard-content-grid">
               <section className="preview-card">
-                {file && (
-                  <button className="preview-file-capsule" type="button" onClick={() => openTool('info')} title={displayFileName(file)}>
-                    <span className={file.fileType === 'pdf' ? 'file-type mini pdf' : 'file-type mini img'}>{fileTypeText[file.fileType] || file.fileType.toUpperCase()}</span>
-                    <strong>{displayFileName(file)}</strong>
-                    <em>{file.version || 'V1.0'}</em>
-                    <i>{fileStatusText[file.status] || file.status}</i>
-                  </button>
-                )}
+                <div className="preview-file-bar">
+                  {file ? (
+                    <button className="preview-file-capsule" type="button" onClick={() => openTool('info')} title={displayFileName(file)}>
+                      <span className={file.fileType === 'pdf' ? 'file-type mini pdf' : 'file-type mini img'}>{fileTypeText[file.fileType] || file.fileType.toUpperCase()}</span>
+                      <strong>{displayFileName(file)}</strong>
+                      <em>{file.version || 'V1.0'}</em>
+                      <i>{fileStatusText[file.status] || file.status}</i>
+                    </button>
+                  ) : <span className="preview-file-empty">当前分类暂无文件</span>}
+                  {files.length > 1 ? (
+                    <label className="preview-file-switcher">
+                      <span>{files.length} 个文件</span>
+                      <select aria-label="切换当前分类文件" value={file?.id || ''} onChange={event => setSel(event.target.value)}>
+                        {files.map(item => <option value={item.id} key={item.id}>{displayFileName(item)} · {item.version || 'V1.0'}</option>)}
+                      </select>
+                    </label>
+                  ) : files.length === 1 ? <span className="preview-file-count">1 个文件</span> : null}
+                  <button ref={toolTriggerRef} className="resource-tool-trigger" type="button" aria-haspopup="dialog" aria-expanded={toolOpen} onClick={() => openTool(file ? 'info' : 'upload')}>资料工具</button>
+                </div>
 
                 <div className="preview-stage">
                   {fileLoadError ? (
@@ -2836,8 +2851,8 @@ export default function DashboardShell({
                     </div>
                   ) : file ? (
                     file.fileType === 'pdf'
-                      ? <PdfViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} downloadUrl={file.downloadUrl} viewUrl={file.viewUrl} />
-                      : <ImageViewer fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} downloadUrl={file.downloadUrl} />
+                      ? <PdfViewer dashboardMode fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} downloadUrl={file.downloadUrl} viewUrl={file.viewUrl} />
+                      : <ImageViewer dashboardMode fileId={file.id} title={displayFileName(file)} contentUrl={file.contentUrl} downloadUrl={file.downloadUrl} />
                   ) : (
                     <div className="empty-preview empty-resource-guide">
                       <div className="empty-illustration">＋</div>
@@ -2872,49 +2887,34 @@ export default function DashboardShell({
                   )}
                 </div>
 
-                {files.length > 0 && (
-                  <div className={thumbsOpen ? 'file-strip floating open' : 'file-strip floating collapsed'} aria-label="当前分类文件列表">
-                    <button className="strip-toggle" type="button" onClick={() => setThumbsOpen(v => !v)}>
-                      {thumbsOpen ? '收起缩略图' : `文件 ${files.length} 个 ︿`}
-                    </button>
-                    {thumbsOpen && (
-                      <div className="strip-scroll">
-                        {files.map(f => (
-                          <button key={f.id} className={f.id === file?.id ? 'strip-file thumb active' : 'strip-file thumb'} type="button" onClick={() => setSel(f.id)}>
-                            <FileThumb file={f} />
-                            <b title={displayFileName(f)}>{shortName(displayFileName(f))}</b>
-                            <small>{f.version || 'V1.0'} · {bytes(f.fileSize)} · {dt(f.createdAt, false)}</small>
-                            <em className={f.id === latestFileId ? 'version-badge latest' : 'version-badge'}>{f.id === latestFileId ? '最新' : '历史'}</em>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
               </section>
 
               <aside
                 ref={toolRef}
                 className={toolOpen ? 'resource-tools open' : 'resource-tools'}
                 style={{ '--tool-width': `${toolWidth}px` } as React.CSSProperties}
+                role="dialog"
+                aria-modal={toolOpen ? 'true' : undefined}
+                aria-label="资料工具"
+                aria-hidden={!toolOpen}
               >
                 <input ref={pdf} hidden multiple type="file" accept="application/pdf,.pdf" onChange={e => uploadMany(Array.from(e.target.files || []))} />
                 <input ref={img} hidden multiple type="file" accept="image/*" onChange={e => uploadMany(Array.from(e.target.files || []))} />
-                <div ref={toolRailRef} className="resource-tool-rail" aria-label="资料工具栏">
-                  {([
-                    ['info', '信息'],
-                    ['upload', '上传'],
-                    ['actions', '操作'],
-                    ['queue', '队列'],
-                  ] as const).map(([key, label]) => (
-                    <button key={key} className={(toolOpen ? toolTab === key : currentCategoryIsEmpty && key === 'upload') ? 'active' : ''} type="button" onClick={() => openTool(key)}>{label}</button>
-                  ))}
-                </div>
-                <section className="resource-tool-window" aria-hidden={!toolOpen}>
+                <section className="resource-tool-window">
                   <button className="tool-resize-handle" type="button" aria-label="调整工具窗宽度" onPointerDown={startToolResize} />
                   <div className="tool-window-head">
                     <strong>{toolTab === 'info' ? '文件信息' : toolTab === 'upload' ? '上传资料' : toolTab === 'actions' ? '文件操作' : '上传队列'}</strong>
-                    <button type="button" aria-label="关闭资料工具窗" title="关闭资料工具窗" onClick={() => setToolOpen(false)}>×</button>
+                    <button ref={toolCloseRef} type="button" aria-label="关闭资料工具窗" title="关闭资料工具窗" onClick={closeTool}>×</button>
+                  </div>
+                  <div className="resource-tool-tabs" aria-label="资料工具视图">
+                    {([
+                      ['info', '信息'],
+                      ['upload', '上传'],
+                      ['actions', '操作'],
+                      ['queue', '队列'],
+                    ] as const).map(([key, label]) => (
+                      <button key={key} className={toolTab === key ? 'active' : ''} type="button" aria-pressed={toolTab === key} onClick={() => setToolTab(key)}>{label}</button>
+                    ))}
                   </div>
                   {toolTab === 'info' && (
                     <div className="tool-pane">
@@ -3017,7 +3017,7 @@ export default function DashboardShell({
                   )}
                 </section>
               </aside>
-              {toolOpen && <button className="tool-window-scrim" type="button" aria-label="关闭资料工具窗" onClick={() => setToolOpen(false)} />}
+              {toolOpen && <button className="tool-window-scrim" type="button" aria-label="关闭资料工具窗" onClick={closeTool} />}
             </div>
           )}
         </section>
