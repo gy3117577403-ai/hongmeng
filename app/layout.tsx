@@ -5,16 +5,16 @@ import './styles/hm-workbench-foundation.css';
 import './globals.css';
 import './account.css';
 export const metadata:Metadata={
-  title:'工单资料库',
-  description:'鸿蒙平板工单资料管理系统',
-  applicationName:'工单资料库',
+  title:'杭连协同平台',
+  description:'计划、技术、生产高效闭环协同平台',
+  applicationName:'杭连协同平台',
   manifest:'/manifest.webmanifest',
-  appleWebApp:{capable:true,title:'工单资料库',statusBarStyle:'default'},
+  appleWebApp:{capable:true,title:'杭连协同平台',statusBarStyle:'default'},
   icons:{icon:'/icon-192.png',apple:'/icon-192.png'},
   other:{
     'mobile-web-app-capable':'yes',
     'apple-mobile-web-app-capable':'yes',
-    'apple-mobile-web-app-title':'工单资料库',
+    'apple-mobile-web-app-title':'杭连协同平台',
   },
 };
 export const viewport:Viewport={themeColor:'#ff6a00',width:'device-width',initialScale:1,maximumScale:1};

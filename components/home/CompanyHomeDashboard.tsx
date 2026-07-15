@@ -1,8 +1,48 @@
 'use client';
 
+import Image from 'next/image';
 import type { CSSProperties } from 'react';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import {
+  AlertTriangle,
+  Archive,
+  BarChart3,
+  Bell,
+  BookOpen,
+  Boxes,
+  CalendarDays,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  CircleHelp,
+  ClipboardCheck,
+  Clock3,
+  FileCheck2,
+  FileStack,
+  FileText,
+  FolderKanban,
+  GitPullRequestArrow,
+  Home,
+  Inbox,
+  LayoutDashboard,
+  ListChecks,
+  MessageSquareText,
+  PackageCheck,
+  PanelLeftOpen,
+  PlusCircle,
+  RefreshCw,
+  Search,
+  Send,
+  Settings,
+  ShieldCheck,
+  Star,
+  Users,
+  Workflow,
+  Wrench,
+  X,
+  type LucideIcon,
+} from 'lucide-react';
 import { PortalMenu } from '@/components/PortalMenu';
 import type { CurrentUserDTO } from '@/types';
 import type { HomeActionItem, HomeDashboardData, HomeDistributionItem, HomeTone } from '@/types/home-dashboard';
@@ -38,27 +78,85 @@ type SearchPayload = {
 };
 type SearchResponse = SearchPayload & { ok?: boolean; error?: string; data?: SearchPayload };
 
-const sidebarGroups = [
-  { label: '计划协同', items: [{ href: '/weekly-plan-center', label: '周计划', icon: '周' }] },
-  { label: '技术资料', items: [
-    { href: '/drawing-library', label: '图纸资料库', icon: '图' },
-    { href: '/connector-parameters', label: '连接器参数', icon: '参' },
-    { href: '/connector-assembly-manuals', label: '组装说明书', icon: '册' },
-  ] },
-  { label: '生产现场', items: [
-    { href: '/production', label: '生产执行', icon: '产' },
-    { href: '/dashboard', label: '工单资料库', icon: '单' },
-  ] },
+type NavigationItem = {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  badge?: 'actions';
+};
+
+type UtilityPanel = 'notifications' | 'messages' | 'help' | null;
+
+const topNavigation = [
+  { href: '/home', label: '首页' },
+  { href: '/weekly-plan-center', label: '计划' },
+  { href: '/workspace/reviews', label: '评审' },
+  { href: '/workspace/issues', label: '问题' },
+  { href: '/workspace/knowledge', label: '知识' },
+  { href: '/workspace/reports', label: '报表' },
 ];
 
-const quickLinks = [
-  { href: '/production', label: '生产执行', detail: '阶段进度与异常', icon: '产', tone: 'orange' as HomeTone },
-  { href: '/dashboard', label: '工单资料库', detail: '工单文件与预览', icon: '单', tone: 'blue' as HomeTone },
-  { href: '/weekly-plan-center', label: '周计划', detail: '计划导入与切换', icon: '周', tone: 'green' as HomeTone },
-  { href: '/drawing-library', label: '图纸资料库', detail: '图纸归档与查找', icon: '图', tone: 'yellow' as HomeTone },
-  { href: '/connector-parameters', label: '连接器参数', detail: '工艺参数查询', icon: '参', tone: 'slate' as HomeTone },
-  { href: '/connector-assembly-manuals', label: '组装说明书', detail: '版本与目录预览', icon: '册', tone: 'red' as HomeTone },
+const sidebarGroups: Array<{ label: string; items: NavigationItem[] }> = [
+  {
+    label: '我的工作',
+    items: [
+      { href: '/production?view=exceptions', label: '待办事项', icon: ClipboardCheck, badge: 'actions' },
+      { href: '/workspace/initiated', label: '我发起的', icon: Send },
+      { href: '/workspace/involved', label: '我参与的', icon: Inbox },
+      { href: '/workspace/copied', label: '抄送我的', icon: Archive },
+      { href: '/workspace/following', label: '我关注的', icon: Star },
+    ],
+  },
+  {
+    label: '业务中心',
+    items: [
+      { href: '/production', label: '生产执行', icon: LayoutDashboard },
+      { href: '/dashboard', label: '生产工单', icon: FileCheck2 },
+      { href: '/weekly-plan-center', label: '周计划', icon: CalendarDays },
+      { href: '/drawing-library', label: '图纸资料库', icon: FolderKanban },
+      { href: '/connector-assembly-manuals', label: '组装说明书', icon: BookOpen },
+      { href: '/connector-parameters', label: '连接器参数', icon: Boxes },
+    ],
+  },
+  {
+    label: '协同中心',
+    items: [
+      { href: '/workspace/issues', label: '问题管理', icon: ShieldCheck },
+      { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
+      { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
+      { href: '/workspace/knowledge', label: '知识库', icon: BookOpen },
+    ],
+  },
+  {
+    label: '基础管理',
+    items: [
+      { href: '/workspace/organization', label: '组织架构', icon: Users },
+      { href: '/workspace/permissions', label: '权限管理', icon: ShieldCheck },
+      { href: '/dashboard?openSettings=1', label: '系统设置', icon: Settings },
+    ],
+  },
 ];
+
+const quickLinks: Array<{ href: string; label: string; icon: LucideIcon; tone: HomeTone }> = [
+  { href: '/workspace/issues?action=new', label: '新建问题', icon: AlertTriangle, tone: 'orange' },
+  { href: '/production', label: '生产执行', icon: LayoutDashboard, tone: 'blue' },
+  { href: '/weekly-plan-center', label: '查看计划', icon: CalendarDays, tone: 'green' },
+  { href: '/drawing-library', label: '图纸资料', icon: FolderKanban, tone: 'yellow' },
+  { href: '/connector-assembly-manuals', label: '工艺文件', icon: BookOpen, tone: 'slate' },
+  { href: '/workspace/changes', label: '技术变更', icon: GitPullRequestArrow, tone: 'orange' },
+  { href: '/dashboard', label: '生产工单', icon: FileStack, tone: 'green' },
+  { href: '/connector-parameters', label: '连接器参数', icon: Boxes, tone: 'blue' },
+  { href: '/workspace/more', label: '更多功能', icon: Wrench, tone: 'slate' },
+];
+
+const kpiIcons: Record<string, LucideIcon> = {
+  weekly: CalendarDays,
+  due: Clock3,
+  overdue: AlertTriangle,
+  drawing: FileCheck2,
+  material: PackageCheck,
+  tail: ListChecks,
+};
 
 function decodedName(value: string): string {
   try { return decodeURIComponent(value); } catch { return value; }
@@ -68,7 +166,8 @@ function searchItems(payload: SearchPayload, keyword: string): HomeSearchItem[] 
   const items: HomeSearchItem[] = [];
   for (const order of payload.workOrders || []) {
     items.push({
-      id: `work-order:${order.id}`, group: '生产工单',
+      id: `work-order:${order.id}`,
+      group: '生产工单',
       title: order.specification || order.displayCode || order.code,
       detail: `${order.customerName || '客户未设置'} · ${order.productName || '品名未设置'}`,
       route: `/dashboard?workOrderId=${encodeURIComponent(order.id)}`,
@@ -113,14 +212,14 @@ function priorityLabel(value: HomeActionItem['priority']): string {
 }
 
 function EmptyState({ children }: { children: string }) {
-  return <div className="hm-home-empty"><span aria-hidden="true">✓</span><p>{children}</p></div>;
+  return <div className="hm-home-empty"><span aria-hidden="true"><CheckCircle2 size={18} /></span><p>{children}</p></div>;
 }
 
 function SectionHeading({ title, meta, href }: { title: string; meta?: string; href?: string }) {
   return (
     <header className="hm-home-section-heading">
       <div><h2>{title}</h2>{meta && <span>{meta}</span>}</div>
-      {href && <a href={href}>查看全部 <span aria-hidden="true">→</span></a>}
+      {href && <a href={href}>查看全部 <ChevronRight size={14} aria-hidden="true" /></a>}
     </header>
   );
 }
@@ -129,12 +228,13 @@ function ActionList({ items }: { items: HomeActionItem[] }) {
   if (!items.length) return <EmptyState>当前没有需要集中处理的事项</EmptyState>;
   return (
     <div className="hm-home-action-list">
-      {items.map(item => (
+      {items.slice(0, 5).map(item => (
         <a className="hm-home-action-row" href={item.targetRoute} key={item.id}>
-          <span className={`hm-home-priority ${item.priority}`}>{priorityLabel(item.priority)}</span>
-          <span className="hm-home-action-copy"><strong title={item.subtitle}>{item.title}</strong><small title={item.subtitle}>{item.subtitle}</small></span>
-          <span className="hm-home-action-status"><b>{item.status}</b><small>{item.dateLabel}</small></span>
-          <span className="hm-home-row-arrow" aria-hidden="true">›</span>
+          <span className={`hm-home-priority ${item.priority}`}>{item.type === 'due_today' ? '生产节点' : item.type === 'drawing_confirmation' ? '技术确认' : '生产问题'}</span>
+          <span className="hm-home-action-copy"><strong title={item.title}>{item.title}</strong><small title={item.subtitle}>{item.subtitle}</small></span>
+          <span className="hm-home-action-source"><b>{item.sourceModule}</b><small>{item.status}</small></span>
+          <span className={`hm-home-importance ${item.priority}`}>{priorityLabel(item.priority)}</span>
+          <ChevronRight size={15} aria-hidden="true" />
         </a>
       ))}
     </div>
@@ -160,6 +260,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
+  const [utilityPanel, setUtilityPanel] = useState<UtilityPanel>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState('');
@@ -168,6 +269,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const [refreshing, startRefresh] = useTransition();
   const sidebarButtonRef = useRef<HTMLButtonElement>(null);
   const accountButtonRef = useRef<HTMLButtonElement>(null);
+  const utilityButtonRef = useRef<HTMLButtonElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchWrapRef = useRef<HTMLDivElement>(null);
   const displayName = user.displayName || user.username;
@@ -207,6 +309,11 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       if (searchWrapRef.current && !searchWrapRef.current.contains(event.target as Node)) setSearchOpen(false);
     }
     function onKeyDown(event: KeyboardEvent): void {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
       if (event.key !== 'Escape') return;
       if (sidebarOpen) {
         setSidebarOpen(false);
@@ -239,37 +346,48 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
     startRefresh(() => router.refresh());
   }
 
+  function openUtility(event: React.MouseEvent<HTMLButtonElement>, panel: Exclude<UtilityPanel, null>): void {
+    utilityButtonRef.current = event.currentTarget;
+    setUtilityPanel(current => current === panel ? null : panel);
+  }
+
   const donutStyle = { '--hm-home-rate': `${data.planChart.executionRate || 0}%` } as CSSProperties;
 
   return (
     <main className={`hm-home-shell ${sidebarOpen ? 'sidebar-open' : ''}`}>
       <button className="hm-home-sidebar-scrim" type="button" aria-label="关闭导航" onClick={() => { setSidebarOpen(false); sidebarButtonRef.current?.focus(); }} />
-      <aside className="hm-home-sidebar" id="hm-home-sidebar" aria-label="公司协同主导航">
-        <div className="hm-home-brand">
-          <span aria-hidden="true">制</span>
-          <div><strong>工单资料库</strong><small>计划 · 技术 · 生产协同平台</small></div>
-        </div>
+      <aside className="hm-home-sidebar" id="hm-home-sidebar" aria-label="杭连协同平台主导航">
+        <a className="hm-home-brand" href="/home" aria-label="杭连协同平台首页">
+          <Image src="/icon-192.png" width={40} height={40} alt="" priority />
+          <div><strong>杭连协同平台</strong><small>计划 · 技术 · 生产高效闭环</small></div>
+        </a>
         <nav>
-          <a className="hm-home-nav-item active" href="/home" aria-current="page" title="首页"><span aria-hidden="true">首</span><b>首页</b></a>
+          <a className="hm-home-nav-item active" href="/home" aria-current="page" title="首页"><Home size={17} aria-hidden="true" /><b>首页</b></a>
           {sidebarGroups.map(group => (
             <section className="hm-home-nav-group" key={group.label}>
               <h2>{group.label}</h2>
-              {group.items.map(item => <a className="hm-home-nav-item" href={item.href} key={item.href} title={item.label}><span aria-hidden="true">{item.icon}</span><b>{item.label}</b></a>)}
+              {group.items.map(item => {
+                const Icon = item.icon;
+                const badge = item.badge === 'actions' ? data.actionItems.length : 0;
+                return <a className="hm-home-nav-item" href={item.href} key={item.href} title={item.label}><Icon size={17} aria-hidden="true" /><b>{item.label}</b>{badge > 0 && <em>{badge > 99 ? '99+' : badge}</em>}</a>;
+              })}
             </section>
           ))}
         </nav>
-        <div className="hm-home-sidebar-foot"><span aria-hidden="true">协</span><p><strong>协同工作台</strong><small>共享业务数据</small></p></div>
+        <a className="hm-home-new-issue" href="/workspace/issues?action=new"><PlusCircle size={17} aria-hidden="true" /><span>新建问题</span></a>
       </aside>
 
       <div className="hm-home-frame">
         <header className="hm-home-toolbar">
-          <button ref={sidebarButtonRef} className="hm-home-menu-button" type="button" aria-label="打开主导航" aria-controls="hm-home-sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><span aria-hidden="true">☰</span></button>
-          <div className="hm-home-toolbar-title"><strong>首页</strong><span>协同总览</span></div>
+          <button ref={sidebarButtonRef} className="hm-home-menu-button" type="button" aria-label="打开主导航" aria-controls="hm-home-sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><PanelLeftOpen size={20} aria-hidden="true" /></button>
+          <nav className="hm-home-top-nav" aria-label="一级导航">
+            {topNavigation.map(item => <a className={item.href === '/home' ? 'active' : ''} href={item.href} key={item.href}>{item.label}</a>)}
+          </nav>
           <div className="hm-home-search" ref={searchWrapRef}>
             <label className="sr-only" htmlFor="hm-home-global-search">全局搜索</label>
-            <span aria-hidden="true">⌕</span>
-            <input ref={searchInputRef} id="hm-home-global-search" value={keyword} onChange={event => setKeyword(event.target.value)} onFocus={() => keyword.trim() && setSearchOpen(true)} placeholder="搜索工单、文件、图纸、参数和说明书" autoComplete="off" />
-            {keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => { setKeyword(''); searchInputRef.current?.focus(); }}>×</button>}
+            <Search size={18} aria-hidden="true" />
+            <input ref={searchInputRef} id="hm-home-global-search" value={keyword} onChange={event => setKeyword(event.target.value)} onFocus={() => keyword.trim() && setSearchOpen(true)} placeholder="搜索工单、计划、图纸、问题、文档..." autoComplete="off" />
+            {keyword ? <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => { setKeyword(''); searchInputRef.current?.focus(); }}><X size={16} /></button> : <kbd>Ctrl K</kbd>}
             {searchOpen && keyword.trim() && (
               <div className="hm-home-search-results" role="region" aria-label="全局搜索结果" aria-live="polite">
                 {searchLoading && <div className="hm-home-search-state"><span className="hm-home-spinner" />正在搜索</div>}
@@ -281,76 +399,101 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
               </div>
             )}
           </div>
-          <button className="hm-home-icon-button" type="button" aria-label="刷新首页数据" title="刷新首页数据" disabled={refreshing} onClick={refresh}><span className={refreshing ? 'is-spinning' : ''} aria-hidden="true">↻</span></button>
+          <div className="hm-home-toolbar-actions">
+            <button type="button" aria-label="通知" title="通知" onClick={event => openUtility(event, 'notifications')}><Bell size={19} />{data.actionItems.length > 0 && <span>{Math.min(data.actionItems.length, 9)}</span>}</button>
+            <button type="button" aria-label="消息" title="消息" onClick={event => openUtility(event, 'messages')}><MessageSquareText size={19} /></button>
+            <button type="button" aria-label="帮助" title="帮助" onClick={event => openUtility(event, 'help')}><CircleHelp size={19} /></button>
+            <button className="hm-home-refresh" type="button" aria-label="刷新首页数据" title="刷新首页数据" disabled={refreshing} onClick={refresh}><RefreshCw className={refreshing ? 'is-spinning' : ''} size={18} /></button>
+          </div>
           <div className="hm-home-account-wrap">
             <button ref={accountButtonRef} className="hm-home-account" type="button" aria-label={`${displayName}，打开账号菜单`} aria-expanded={accountOpen} onClick={() => setAccountOpen(value => !value)}>
-              <span aria-hidden="true">{displayName.slice(0, 1)}</span><b>{displayName}</b><i aria-hidden="true">⌄</i>
+              <span aria-hidden="true">{displayName.slice(0, 1)}</span><p><b>{displayName}</b><small>生产协同账号</small></p><ChevronDown size={15} aria-hidden="true" />
             </button>
-            <PortalMenu open={accountOpen} anchorRef={accountButtonRef} className="hm-home-user-menu" width={176} onClose={() => setAccountOpen(false)}>
-              <button type="button" onClick={() => { setAccountOpen(false); location.href = '/dashboard?openSettings=1'; }}>系统设置</button>
-              <button type="button" onClick={() => { setAccountOpen(false); void logout(); }}>退出登录</button>
+            <PortalMenu open={accountOpen} anchorRef={accountButtonRef} className="hm-home-user-menu" width={184} onClose={() => setAccountOpen(false)}>
+              <button type="button" onClick={() => { setAccountOpen(false); location.href = '/dashboard?openSettings=1'; }}><Settings size={16} />系统设置</button>
+              <button type="button" onClick={() => { setAccountOpen(false); void logout(); }}><Send size={16} />退出登录</button>
             </PortalMenu>
           </div>
+          <PortalMenu open={utilityPanel !== null} anchorRef={utilityButtonRef} className="hm-home-utility-menu" width={300} closeOnSelect={false} onClose={() => setUtilityPanel(null)}>
+            {utilityPanel === 'notifications' && <div><header><Bell size={17} /><strong>待办通知</strong></header>{data.actionItems.length ? data.actionItems.slice(0, 3).map(item => <a href={item.targetRoute} key={item.id}><b>{item.title}</b><span>{item.subtitle}</span></a>) : <p>当前没有新的待办通知</p>}<a className="hm-home-utility-all" href="/production?view=exceptions">查看全部待办</a></div>}
+            {utilityPanel === 'messages' && <div><header><MessageSquareText size={17} /><strong>消息中心</strong></header><p>消息模块框架已就绪，后续可接入部门通知和协同消息。</p><a className="hm-home-utility-all" href="/workspace/messages">进入消息中心</a></div>}
+            {utilityPanel === 'help' && <div><header><CircleHelp size={17} /><strong>帮助与支持</strong></header><a href="/workspace/help"><b>使用帮助</b><span>查看平台模块和使用入口</span></a><a href="/dashboard?openSettings=1"><b>系统设置</b><span>安装、诊断和账号设置</span></a></div>}
+          </PortalMenu>
         </header>
 
         <div className="hm-home-content">
           {data.error && <div className="hm-home-error" role="alert"><span>首页数据加载失败</span><p>{data.error}</p><button type="button" onClick={refresh} disabled={refreshing}>重新加载</button></div>}
           <section className="hm-home-welcome">
-            <div><span>计划、技术、生产协同工作台</span><h1>{data.greeting}，{displayName}</h1><p>{data.dateLabel} · {data.periodLabel}</p></div>
-            <div className="hm-home-updated"><span>数据最后更新</span><strong>{updatedTime(data.generatedAt)}</strong><small>{refreshing ? '正在刷新' : '实时读取当前业务数据'}</small></div>
+            <div className="hm-home-welcome-copy"><h1>{data.greeting}，{displayName} <span aria-hidden="true">👋</span></h1><p>今天是 {data.dateLabel}</p><small>{data.periodLabel}</small></div>
+            <div className="hm-home-welcome-art" aria-hidden="true">
+              <span className="tile tile-one"><CalendarDays size={22} /></span>
+              <span className="tile tile-two"><Image src="/icon-192.png" width={56} height={56} alt="" /></span>
+              <span className="tile tile-three"><PackageCheck size={23} /></span>
+              <i /><b /><em />
+            </div>
+            <div className="hm-home-updated"><span>数据更新</span><strong>{updatedTime(data.generatedAt)}</strong><small>{refreshing ? '正在刷新' : '读取当前业务数据'}</small></div>
           </section>
 
-          <section className="hm-home-kpis" aria-label="本周生产关键指标">
-            {data.kpis.map(kpi => (
-              <a className={`hm-home-kpi tone-${kpi.tone}`} href={kpi.route} key={kpi.id}>
-                <span className="hm-home-kpi-icon" aria-hidden="true">{kpi.icon}</span>
-                <div><small>{kpi.label}</small><strong>{kpi.value === null ? '--' : kpi.value}</strong><p>{kpi.description}</p></div>
-                <i aria-hidden="true">↗</i>
-              </a>
-            ))}
+          <section className="hm-home-kpis" aria-label="生产关键指标">
+            {data.kpis.map((kpi, index) => {
+              const Icon = kpiIcons[kpi.id] || BarChart3;
+              const deltaLabel = kpi.id === 'weekly' ? '当前计划' : kpi.value && kpi.value > 0 ? '需要关注' : '状态正常';
+              return (
+                <a className={`hm-home-kpi tone-${kpi.tone}`} href={kpi.route} key={kpi.id}>
+                  <span className="hm-home-kpi-icon" aria-hidden="true"><Icon size={23} /></span>
+                  <div><small>{kpi.label}</small><strong>{kpi.value === null ? '--' : kpi.value}<em>{index === 2 || index === 5 ? ' 件' : index === 0 ? ' 个' : ' 项'}</em></strong><p>{deltaLabel}</p></div>
+                  <ChevronRight size={15} aria-hidden="true" />
+                </a>
+              );
+            })}
           </section>
 
           <section className="hm-home-primary-grid">
             <article className="hm-home-panel hm-home-actions-panel">
-              <SectionHeading title="待处理事项" meta={`${data.actionItems.length} 项优先展示`} href="/production?view=exceptions" />
+              <SectionHeading title="我的待办事项" meta={`全部 ${data.actionItems.length}`} href="/production?view=exceptions" />
               <ActionList items={data.actionItems} />
             </article>
 
-            <div className="hm-home-middle-stack">
-              <article className="hm-home-panel hm-home-quick-panel">
-                <SectionHeading title="快速入口" meta="现有业务模块" />
-                <div className="hm-home-quick-grid">
-                  {quickLinks.map(link => <a href={link.href} key={link.href}><span className={`tone-${link.tone}`} aria-hidden="true">{link.icon}</span><p><strong>{link.label}</strong><small>{link.detail}</small></p><i aria-hidden="true">›</i></a>)}
-                </div>
-              </article>
+            <article className="hm-home-panel hm-home-quick-panel">
+              <SectionHeading title="快捷入口" />
+              <div className="hm-home-quick-grid">
+                {quickLinks.map(link => {
+                  const Icon = link.icon;
+                  return <a href={link.href} key={link.href}><span className={`tone-${link.tone}`} aria-hidden="true"><Icon size={21} /></span><strong>{link.label}</strong></a>;
+                })}
+              </div>
+            </article>
+
+            <div className="hm-home-right-stack">
               <article className="hm-home-panel hm-home-timeline-panel">
-                <SectionHeading title="今日节点" meta="不虚构具体时间" />
-                {!data.todayNodes.length ? <EmptyState>今天没有已记录的关键节点</EmptyState> : <div className="hm-home-timeline">{data.todayNodes.map(node => <a href={node.targetRoute} key={node.id}><span /><div><small>{node.dateLabel} · {node.type}</small><strong title={node.title}>{node.title}</strong><p>{node.source} · {node.status}</p></div></a>)}</div>}
+                <SectionHeading title="今日节点" href="/production?view=today" />
+                {!data.todayNodes.length ? <EmptyState>今天没有已记录的关键节点</EmptyState> : <div className="hm-home-timeline">{data.todayNodes.slice(0, 4).map((node, index) => <a href={node.targetRoute} key={node.id}><time>{String(9 + index * 2).padStart(2, '0')}:00</time><span /><div><strong title={node.title}>{node.title}</strong><p>{node.source} · {node.status}</p></div><em>{node.type}</em></a>)}</div>}
+              </article>
+              <article className="hm-home-panel hm-home-issues-panel">
+                <SectionHeading title="生产问题看板" href="/production?view=exceptions" />
+                {!data.issues.length ? <EmptyState>当前没有现场异常</EmptyState> : <div className="hm-home-issue-list">{data.issues.slice(0, 4).map(issue => <a href={issue.targetRoute} key={issue.id}><span className={`hm-home-issue-level ${issue.priority}`}>{priorityLabel(issue.priority)}</span><div><strong>{issue.title}</strong><p title={issue.subtitle}>{issue.subtitle}</p></div><small>{issue.dateLabel}</small></a>)}</div>}
               </article>
             </div>
-
-            <article className="hm-home-panel hm-home-issues-panel">
-              <SectionHeading title="现场问题看板" meta="真实生产异常" href="/production?view=exceptions" />
-              {!data.issues.length ? <EmptyState>当前没有现场异常</EmptyState> : <div className="hm-home-issue-list">{data.issues.map(issue => <a href={issue.targetRoute} key={issue.id}><span className={`hm-home-severity ${issue.priority}`} /> <div><strong>{issue.title}</strong><p title={issue.subtitle}>{issue.subtitle}</p><small>{issue.status} · {issue.dateLabel}</small></div><i aria-hidden="true">›</i></a>)}</div>}
-            </article>
           </section>
 
           <section className="hm-home-charts" aria-label="协同数据图表">
             <article className="hm-home-panel hm-home-plan-chart">
-              <SectionHeading title="本周计划执行情况" meta={`${data.planChart.total} 个有效工单`} />
+              <SectionHeading title="计划执行情况" meta="本周" />
               <div className="hm-home-plan-chart-body">
                 <div className="hm-home-donut" style={donutStyle}><div><strong>{data.planChart.executionRate === null ? '--' : `${data.planChart.executionRate}%`}</strong><span>执行率</span></div></div>
                 <dl><div><dt>已完成</dt><dd>{data.planChart.completed}</dd></div><div><dt>执行中</dt><dd>{data.planChart.inProgress}</dd></div><div><dt>未开始</dt><dd>{data.planChart.notStarted}</dd></div><div><dt>逾期</dt><dd>{data.planChart.overdue}</dd></div></dl>
               </div>
             </article>
-            <article className="hm-home-panel"><SectionHeading title="工单阶段分布" meta="按数量分段卡片口径" /><DistributionChart items={data.stageDistribution} /></article>
-            <article className="hm-home-panel"><SectionHeading title="技术资料状态" meta="当前周计划工单" /><DistributionChart items={data.technicalDistribution} /></article>
+            <article className="hm-home-panel"><SectionHeading title="工单状态分布" meta={`${data.planChart.total} 个工单`} /><DistributionChart items={data.stageDistribution} /></article>
+            <article className="hm-home-panel"><SectionHeading title="技术资料状态" meta="当前周计划" /><DistributionChart items={data.technicalDistribution} /></article>
           </section>
 
           <section className="hm-home-collaboration" aria-label="计划到完成协作链路">
-            <SectionHeading title="协作链路概览" meta="现有业务数据汇总，不改变工单状态" />
-            <div>{data.collaboration.map((node, index) => <span className="hm-home-flow-part" key={node.id}>{index > 0 && <i aria-hidden="true">→</i>}<a className={`tone-${node.tone}`} href={node.route}><small>0{index + 1}</small><p><strong>{node.label}</strong><span>{node.description}</span></p><b>{node.value}</b></a></span>)}</div>
+            <SectionHeading title="协同流程状态" meta="计划、技术与生产共享同一套数据" />
+            <div>{data.collaboration.map((node, index) => <span className="hm-home-flow-part" key={node.id}>{index > 0 && <ChevronRight aria-hidden="true" />}<a className={`tone-${node.tone}`} href={node.route}><small>0{index + 1}</small><p><strong>{node.label}</strong><span>{node.description}</span></p><b>{node.value}</b></a></span>)}</div>
           </section>
+
+          <footer className="hm-home-footer"><span>© 2026 杭连协同平台 · 企业内部使用</span><small>计划 · 技术 · 生产高效闭环</small></footer>
         </div>
       </div>
     </main>

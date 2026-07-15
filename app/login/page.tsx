@@ -4,7 +4,7 @@ import LoginForm from '@/components/LoginForm';
 
 function safeNext(value?: string | string[]): string {
   const next = Array.isArray(value) ? value[0] : value;
-  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/production';
+  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/home';
 }
 
 export default async function Login({ searchParams }: { searchParams?: { next?: string | string[] } }) {

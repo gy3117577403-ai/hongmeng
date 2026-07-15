@@ -70,7 +70,7 @@ export async function GET() {
     return NextResponse.json({
       ok: database.ok && storage.ok,
       app: {
-        name: '工单资料库',
+        name: '杭连协同平台',
         version: 'v1.13.0-rc.1',
         mode: 'Web / PWA',
         uptime: Math.floor(process.uptime()),

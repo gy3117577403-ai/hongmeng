@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 
-export default function LoginForm({ nextPath = '/production' }: { nextPath?: string }) {
+export default function LoginForm({ nextPath = '/home' }: { nextPath?: string }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -23,7 +23,7 @@ export default function LoginForm({ nextPath = '/production' }: { nextPath?: str
         setError(d.message || '登录失败');
         return;
       }
-      location.href = nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/production';
+      location.href = nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/home';
     } catch {
       setError('网络异常，请稍后重试');
     } finally {
@@ -35,10 +35,10 @@ export default function LoginForm({ nextPath = '/production' }: { nextPath?: str
     <main className="login-page">
       <section className="login-hero" aria-label="系统介绍">
         <div className="login-logo">▤</div>
-        <span className="login-kicker">生产资料统一入口</span>
-        <h1>工单资料库</h1>
-        <p>鸿蒙平板生产资料管理系统</p>
-        <strong>集中管理图纸、SOP、成品图、辅料规格与注意事项。</strong>
+        <span className="login-kicker">计划 · 技术 · 生产统一入口</span>
+        <h1>杭连协同平台</h1>
+        <p>企业生产协同与资料管理系统</p>
+        <strong>连接周计划、技术资料、生产执行与工单现场。</strong>
         <div className="login-feature-grid" aria-hidden="true">
           <div><b>PDF</b><span>图纸预览</span></div>
           <div><b>SOP</b><span>指导书</span></div>

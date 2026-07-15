@@ -1,0 +1,226 @@
+.hm-platform-placeholder {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: #f4f6f9;
+}
+
+.hm-platform-placeholder-body {
+  width: min(1120px, calc(100% - 32px));
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0 auto;
+  padding: 24px 0 40px;
+}
+
+.hm-platform-back {
+  width: fit-content;
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #667486;
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.hm-platform-back:hover {
+  color: #c44b0f;
+}
+
+.hm-platform-placeholder-hero {
+  min-width: 0;
+  min-height: 190px;
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 28px;
+  border: 1px solid #eadfd8;
+  border-radius: 8px;
+  background: #fff7f2;
+  box-shadow: 0 5px 18px rgba(44, 54, 67, .05);
+}
+
+.hm-platform-placeholder-mark {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #f35b12;
+  color: #fff;
+  box-shadow: 0 12px 24px rgba(243, 91, 18, .2);
+}
+
+.hm-platform-placeholder-hero > div:nth-child(2) {
+  min-width: 0;
+}
+
+.hm-platform-placeholder-hero span {
+  color: #bd4a12;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.hm-platform-placeholder-hero h1 {
+  margin: 7px 0 0;
+  color: #172235;
+  font-size: 27px;
+}
+
+.hm-platform-placeholder-hero p {
+  max-width: 720px;
+  margin: 10px 0 0;
+  color: #667486;
+  font-size: 13px;
+  line-height: 1.8;
+}
+
+.hm-platform-placeholder-hero > em {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid #efc6ad;
+  border-radius: 6px;
+  background: #fff;
+  color: #b84a13;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hm-platform-placeholder-grid {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.hm-platform-placeholder-panel {
+  min-width: 0;
+  min-height: 260px;
+  overflow: hidden;
+  border: 1px solid #e1e6ec;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(44, 54, 67, .045);
+}
+
+.hm-platform-placeholder-panel > header {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 18px;
+  border-bottom: 1px solid #edf0f3;
+  color: #e15a18;
+}
+
+.hm-platform-placeholder-panel > header div {
+  min-width: 0;
+}
+
+.hm-platform-placeholder-panel h2 {
+  margin: 0;
+  color: #26354a;
+  font-size: 15px;
+}
+
+.hm-platform-placeholder-panel header p {
+  margin: 4px 0 0;
+  color: #8a95a3;
+  font-size: 10px;
+}
+
+.hm-platform-placeholder-panel ul {
+  margin: 0;
+  padding: 8px 18px 16px;
+  list-style: none;
+}
+
+.hm-platform-placeholder-panel li {
+  min-height: 52px;
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #edf0f3;
+  color: #435166;
+  font-size: 12px;
+}
+
+.hm-platform-placeholder-panel li > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f08b55;
+}
+
+.hm-platform-placeholder-panel li small {
+  padding: 4px 7px;
+  border-radius: 4px;
+  background: #f2f4f7;
+  color: #8792a0;
+  font-size: 9px;
+}
+
+.hm-platform-link-list {
+  padding: 8px 12px 14px;
+}
+
+.hm-platform-link-list a {
+  min-width: 0;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #edf0f3;
+  border-radius: 6px;
+  color: #435166;
+  text-decoration: none;
+}
+
+.hm-platform-link-list a:hover {
+  background: #fff7f2;
+  color: #b94811;
+}
+
+.hm-platform-link-list a > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hm-platform-link-list strong,
+.hm-platform-link-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-platform-link-list strong {
+  font-size: 12px;
+}
+
+.hm-platform-link-list span {
+  color: #8893a0;
+  font-size: 10px;
+}
+
+@media (max-width: 760px) {
+  .hm-platform-placeholder-body { width: min(100% - 20px, 1120px); padding-top: 14px; }
+  .hm-platform-placeholder-hero { grid-template-columns: 54px minmax(0, 1fr); min-height: 160px; gap: 14px; padding: 18px; }
+  .hm-platform-placeholder-mark { width: 54px; height: 54px; }
+  .hm-platform-placeholder-hero > em { grid-column: 1 / -1; width: fit-content; }
+  .hm-platform-placeholder-grid { grid-template-columns: minmax(0, 1fr); }
+}

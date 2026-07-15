@@ -37,7 +37,7 @@ export async function GET() {
 
     return jsonDownloadResponse('系统元数据.json', {
       exportedAt: new Date().toISOString(),
-      app: { name: '工单资料库', version: 'v1.7.0-rc.1' },
+      app: { name: '杭连协同平台', version: 'v1.7.0-rc.1' },
       workOrders: workOrders.map(o => ({
         id: o.id,
         code: o.code,

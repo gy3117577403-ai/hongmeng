@@ -37,7 +37,7 @@ export function AppWorkbenchHeader({ user, activeHref, subtitle, menuItems }: Ap
     <header className="hm-workbench-header">
       <div className="hm-workbench-brand">
         <span className="hm-workbench-brand-mark" aria-hidden="true">制</span>
-        <span className="hm-workbench-brand-copy"><strong>工单资料库</strong><small>{subtitle}</small></span>
+        <span className="hm-workbench-brand-copy"><strong>杭连协同平台</strong><small>{subtitle}</small></span>
       </div>
       <nav className="hm-workbench-nav" aria-label="主要导航">
         {navigationItems.map(item => <a className={item.href === activeHref ? 'active' : ''} href={item.href} key={item.href}>{item.label}</a>)}

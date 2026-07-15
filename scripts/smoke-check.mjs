@@ -22,7 +22,7 @@ const checks = [
     path: '/login',
     validate: async response => {
       const body = await response.text();
-      if (!body.includes('工单资料库')) throw new Error('login page content check failed');
+      if (!body.includes('杭连协同平台')) throw new Error('login page content check failed');
     },
   },
 ];

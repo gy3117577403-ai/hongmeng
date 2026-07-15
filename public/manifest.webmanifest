@@ -1,8 +1,8 @@
 {
-  "name": "工单资料库",
-  "short_name": "工单资料库",
-  "description": "鸿蒙平板工单资料管理系统",
-  "start_url": "/production",
+  "name": "杭连协同平台",
+  "short_name": "杭连协同",
+  "description": "计划、技术、生产高效闭环协同平台",
+  "start_url": "/home",
   "scope": "/",
   "display": "fullscreen",
   "display_override": ["fullscreen", "standalone"],
@@ -37,9 +37,9 @@
   ],
   "shortcuts": [
     {
-      "name": "打开工作台",
-      "short_name": "工作台",
-      "url": "/production"
+      "name": "打开协同首页",
+      "short_name": "协同首页",
+      "url": "/home"
     },
     {
       "name": "连接器参数",
