@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { FormEvent } from 'react';
+import type { FormEvent, RefObject } from 'react';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import type { PdfTocSuggestion } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
 import { BulkConnectorManualImportModal } from '@/components/BulkConnectorManualImportModal';
+import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { writeClipboardText } from '@/lib/client-platform';
 import { inspectConnectorManualFile } from '@/lib/client-connector-manual-inspector';
 import type { ClientManualInspection } from '@/lib/client-connector-manual-inspector';
@@ -208,17 +210,16 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const [toast, setToast] = useState('');
   const [bulkOpen, setBulkOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [libraryMenu, setLibraryMenu] = useState(false);
-  const [userMenu, setUserMenu] = useState(false);
-  const libraryButtonRef = useRef<HTMLButtonElement>(null);
-  const userButtonRef = useRef<HTMLButtonElement>(null);
+  const [compactLayout, setCompactLayout] = useState(false);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
   const manualActionsButtonRef = useRef<HTMLButtonElement>(null);
+  const detailButtonRef = useRef<HTMLButtonElement>(null);
+  const detailPanelRef = useRef<HTMLElement>(null);
+  const detailCloseButtonRef = useRef<HTMLButtonElement>(null);
   const urlAppliedRef = useRef(false);
   const pendingNavigationRef = useRef<{ versionId: string; page: number } | null>(null);
   const pendingNavigationTimerRef = useRef<number | null>(null);
 
-  const accountName = user.displayName || user.username;
   const selectedManual = manuals.find(item => item.id === selectedId) || (statusFilter === 'deleted' ? null : manuals[0]) || null;
   const selectedVersion = selectedManual?.versions.find(item => item.id === selectedVersionId)
     || selectedManual?.latestVersion
@@ -228,8 +229,21 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const selectedAsset = activeAssets[Math.max(0, Math.min(imageIndex, activeAssets.length - 1))] || null;
   const totalPages = Math.max(1, Math.ceil(total / 20));
   const advancedFilterActive = !!(manufacturer || family || model.trim() || issuedFrom || issuedTo);
+  const listFiltersActive = !!keyword.trim() || statusFilter !== 'all' || advancedFilterActive;
   const currentPreviewPage = selectedVersion?.fileMode === 'IMAGE_SET' ? imageIndex + 1 : pdfPage;
   const availableTocSuggestions = useMemo(() => tocSuggestions.filter(suggestion => !selectedVersion?.tocJson.some(item => item.pageStart === suggestion.pageStart && item.title.trim().toLocaleLowerCase('zh-CN') === suggestion.title.trim().toLocaleLowerCase('zh-CN'))), [selectedVersion, tocSuggestions]);
+  const activeFilterLabels = useMemo(() => {
+    const labels: string[] = [];
+    const statusLabels: Record<string, string> = { latest: '最新版', incomplete: '待完善', unbound: '未关联', parse_failed: '解析失败', deleted: '已删除' };
+    if (keyword.trim()) labels.push(`关键词：${keyword.trim()}`);
+    if (statusFilter !== 'all') labels.push(statusLabels[statusFilter] || statusFilter);
+    if (manufacturer) labels.push(`制造商：${manufacturer}`);
+    if (family) labels.push(`系列：${family}`);
+    if (model.trim()) labels.push(`型号：${model.trim()}`);
+    if (issuedFrom) labels.push(`从 ${issuedFrom}`);
+    if (issuedTo) labels.push(`至 ${issuedTo}`);
+    return labels;
+  }, [family, issuedFrom, issuedTo, keyword, manufacturer, model, statusFilter]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -238,8 +252,53 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   }, [toast]);
 
   useEffect(() => {
-    if (window.innerWidth <= 1100) setDetailsOpen(false);
+    function syncLayout(): void {
+      const nextCompact = window.innerWidth <= 1180;
+      setCompactLayout(nextCompact);
+      if (nextCompact) setDetailsOpen(false);
+    }
+    syncLayout();
+    window.addEventListener('resize', syncLayout);
+    return () => window.removeEventListener('resize', syncLayout);
   }, []);
+
+  useEffect(() => {
+    if (!compactLayout || !detailsOpen) return undefined;
+    window.requestAnimationFrame(() => detailCloseButtonRef.current?.focus());
+
+    function keepDetailPanelActive(event: KeyboardEvent): void {
+      const panel = detailPanelRef.current;
+      if (!panel) return;
+      const blockingLayerOpen = !!(manualModal || versionModal || uploadOpen || bindingOpen || deleteTarget || trashOpen || moreInfoOpen || tocEdit || tocSuggestionOpen || bulkOpen);
+      if (blockingLayerOpen) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setDetailsOpen(false);
+        window.requestAnimationFrame(() => detailButtonRef.current?.focus());
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
+      if (!focusable.length) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const outside = !panel.contains(document.activeElement);
+      if (event.shiftKey && (document.activeElement === first || outside)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || outside)) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+
+    window.addEventListener('keydown', keepDetailPanelActive);
+    return () => window.removeEventListener('keydown', keepDetailPanelActive);
+  }, [bindingOpen, bulkOpen, compactLayout, deleteTarget, detailsOpen, manualModal, moreInfoOpen, tocEdit, tocSuggestionOpen, trashOpen, uploadOpen, versionModal]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -789,80 +848,115 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
     await loadTrash();
   }
 
+  function clearListFilters(): void {
+    setKeyword('');
+    setManufacturer('');
+    setFamily('');
+    setModel('');
+    setIssuedFrom('');
+    setIssuedTo('');
+    setStatusFilter('all');
+    setPage(1);
+  }
+
+  function openDetailPanel(tab?: RightTab): void {
+    if (tab) setRightTab(tab);
+    setDetailsOpen(true);
+  }
+
+  function closeDetailPanel(): void {
+    setDetailsOpen(false);
+    window.requestAnimationFrame(() => detailButtonRef.current?.focus());
+  }
+
   async function logout(): Promise<void> {
     await fetch('/api/auth/logout', { method: 'POST' });
     location.href = '/login';
   }
 
   return (
-    <main className="manual-page">
-      <header className="topbar manual-topbar">
-        <button className="home-button" type="button" aria-label="生产执行首页" onClick={() => { location.href = '/production'; }}>⌂</button>
-        <div className="brand-block"><strong>连接器组装说明书</strong><span>PDF / 图片 · 版本 · 型号关联</span></div>
-        <div className="manual-global-search">
-          <b>⌕</b>
-          <input value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索标题 / 型号 / 制造商 / 版本 / 关键词 / 正文" />
-          {keyword && <button type="button" onClick={() => setKeyword('')}>清空</button>}
-        </div>
-        <div className="top-actions">
-          <button className="primary-button manual-bulk-primary" type="button" onClick={() => setBulkOpen(true)}>批量导入说明书</button>
-          <button className="manual-single-create" type="button" onClick={openCreateManual}>单份新增</button>
-          <div className="library-wrap">
-            <button ref={libraryButtonRef} className="library-button" type="button" onClick={() => setLibraryMenu(value => !value)}>▱ 资料库</button>
-            <PortalMenu open={libraryMenu} anchorRef={libraryButtonRef} className="library-menu" width={230} onClose={() => setLibraryMenu(false)}>
-              <button type="button" onClick={() => { location.href = '/production'; }}>生产执行中心</button>
-              <button type="button" onClick={() => { location.href = '/dashboard'; }}>生产工单</button>
-              <button type="button" onClick={() => { location.href = '/drawing-library'; }}>图纸资料库</button>
-              <button type="button" onClick={() => { location.href = '/connector-parameters'; }}>连接器参数资料</button>
-              <button className="active" type="button">连接器组装说明书 ✓</button>
-            </PortalMenu>
-          </div>
-          <div className="user-wrap">
-            <button ref={userButtonRef} className="user-button" type="button" onClick={() => setUserMenu(value => !value)}><span>♙</span><b title={accountName}>{accountName}</b><em>⌄</em></button>
-            <PortalMenu open={userMenu} anchorRef={userButtonRef} className="user-menu app-user-menu" width={176} onClose={() => setUserMenu(false)}>
-              <button type="button" onClick={loadTrash}>回收站</button>
-              <button type="button" onClick={() => { location.href = '/dashboard?openLogs=1'; }}>操作日志</button>
-              <button type="button" onClick={logout}>退出登录</button>
-            </PortalMenu>
-          </div>
-        </div>
-      </header>
+    <main className="manual-page hm-manual-workbench hm-workbench-root">
+      <AppWorkbenchHeader
+        user={user}
+        activeHref="/connector-assembly-manuals"
+        subtitle="连接器工艺说明书阅读"
+        menuItems={[
+          { label: '回收站', onSelect: loadTrash },
+          { label: '操作日志', href: '/dashboard?openLogs=1' },
+          { label: '退出登录', onSelect: logout },
+        ]}
+      />
 
-      <nav className="manual-module-tabs" aria-label="连接器资料库模块">
-        <a href="/connector-parameters">连接器参数</a>
-        <a className="active" href="/connector-assembly-manuals">组装说明书</a>
-        <a href="/connector-parameters?openFiles=1">原始资料附件</a>
-        <a href="/connector-parameters?openBatches=1">导入批次</a>
-      </nav>
+      <div className="hm-manual-main">
+        <WorkbenchPageHeader
+          kicker="工艺资料"
+          title="连接器组装说明书"
+          description="按制造商、系列与型号查找正确版本，在主阅读区定位章节和文件"
+          titleId="connector-assembly-manuals-title"
+          className="hm-manual-page-header"
+          actionsClassName="hm-manual-page-actions"
+          actions={
+            <>
+              <button className="hm-workbench-button" type="button" onClick={openCreateManual}>单份新增</button>
+              <button className="hm-workbench-button primary" type="button" onClick={() => setBulkOpen(true)}>批量导入说明书</button>
+            </>
+          }
+        />
 
-      <section className={`manual-workspace ${detailsOpen ? 'detail-open' : 'detail-collapsed'}`}>
-        <aside className="manual-list-panel">
-          <div className="manual-quick-filters" aria-label="说明书快捷筛选">
+        <nav className="manual-module-tabs hm-manual-module-tabs" aria-label="连接器资料库模块">
+          <a href="/connector-parameters">连接器参数</a>
+          <a className="active" href="/connector-assembly-manuals" aria-current="page">组装说明书</a>
+          <a href="/connector-parameters?openFiles=1">原始资料附件</a>
+          <a href="/connector-parameters?openBatches=1">导入批次</a>
+        </nav>
+
+        <section className="hm-manual-query" aria-label="说明书库搜索与筛选">
+          <div className="hm-manual-search-field">
+            <label htmlFor="manual-library-search">说明书库搜索</label>
+            <div>
+              <span aria-hidden="true">⌕</span>
+              <input id="manual-library-search" className="hm-workbench-input" value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="标题 / 型号 / 制造商 / 版本 / 关键词 / 已解析正文" />
+              {keyword && <button type="button" aria-label="清空说明书库搜索" onClick={() => setKeyword('')}>清空</button>}
+            </div>
+            <small>搜索范围：全部说明书记录及后端已有正文索引</small>
+          </div>
+          <div className="manual-quick-filters hm-manual-quick-filters" aria-label="说明书快捷筛选">
             {([['all', '全部'], ['latest', '最新版'], ['incomplete', '待完善'], ['unbound', '未关联'], ['parse_failed', '解析失败']] as Array<[string, string]>).map(([value, label]) => (
-              <button className={statusFilter === value ? 'active' : ''} type="button" key={value} onClick={() => { setStatusFilter(value); setPage(1); }}>{label}</button>
+              <button className={statusFilter === value ? 'active' : ''} type="button" key={value} aria-pressed={statusFilter === value} onClick={() => { setStatusFilter(value); setPage(1); }}>{label}</button>
             ))}
-            <button ref={filterButtonRef} className={filterOpen || advancedFilterActive ? 'active' : ''} type="button" onClick={() => setFilterOpen(value => !value)}>筛选{advancedFilterActive ? ' ·' : ''}</button>
+            <button ref={filterButtonRef} className={filterOpen || advancedFilterActive ? 'active' : ''} type="button" aria-expanded={filterOpen} onClick={() => setFilterOpen(value => !value)}>更多筛选{advancedFilterActive ? ` ${activeFilterLabels.length}` : ''}</button>
             <PortalMenu open={filterOpen} anchorRef={filterButtonRef} align="left" className="manual-filter-menu" width={310} onClose={() => setFilterOpen(false)} closeOnSelect={false}>
               <div className="manual-advanced-filters">
                 <label><span>制造商</span><select aria-label="制造商筛选" value={manufacturer} onChange={event => { setManufacturer(event.target.value); setPage(1); }}><option value="">全部制造商</option>{manufacturers.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
                 <label><span>连接器系列</span><select aria-label="系列筛选" value={family} onChange={event => { setFamily(event.target.value); setPage(1); }}><option value="">全部系列</option>{families.map(item => <option key={item} value={item}>{item}</option>)}</select></label>
-                <label className="wide"><span>适用型号</span><input value={model} onChange={event => { setModel(event.target.value); setPage(1); }} placeholder="输入型号关键词" /></label>
-                <label><span>发布起始日</span><input type="date" value={issuedFrom} onChange={event => { setIssuedFrom(event.target.value); setPage(1); }} /></label>
-                <label><span>发布结束日</span><input type="date" value={issuedTo} onChange={event => { setIssuedTo(event.target.value); setPage(1); }} /></label>
-                <div className="wide manual-filter-actions"><button type="button" onClick={() => { setManufacturer(''); setFamily(''); setModel(''); setIssuedFrom(''); setIssuedTo(''); setPage(1); }}>清空条件</button><button className="primary-button" type="button" onClick={() => setFilterOpen(false)}>完成</button></div>
+                <label className="wide"><span>适用型号</span><input aria-label="适用型号筛选" value={model} onChange={event => { setModel(event.target.value); setPage(1); }} placeholder="输入型号关键词" /></label>
+                <label><span>发布起始日</span><input aria-label="发布起始日" type="date" value={issuedFrom} onChange={event => { setIssuedFrom(event.target.value); setPage(1); }} /></label>
+                <label><span>发布结束日</span><input aria-label="发布结束日" type="date" value={issuedTo} onChange={event => { setIssuedTo(event.target.value); setPage(1); }} /></label>
+                <div className="wide manual-filter-actions"><button type="button" onClick={clearListFilters}>清空条件</button><button className="primary-button" type="button" onClick={() => setFilterOpen(false)}>完成</button></div>
               </div>
             </PortalMenu>
           </div>
-          <div className="manual-list-heading"><strong>{loading ? '加载中...' : `${total} 份说明书`}</strong><span>{page}/{totalPages}</span></div>
-          <div className="manual-list-scroll">
+          <div className="hm-manual-query-summary" aria-live="polite">
+            <strong>{loading ? '正在查询说明书' : `找到 ${total} 份说明书`}</strong>
+            <span>{activeFilterLabels.length ? `已启用 ${activeFilterLabels.length} 个条件` : '当前显示全部说明书'}</span>
+            {activeFilterLabels.length > 0 && <div>{activeFilterLabels.slice(0, 3).map(label => <i title={label} key={label}>{label}</i>)}{activeFilterLabels.length > 3 && <i>+{activeFilterLabels.length - 3}</i>}</div>}
+            {listFiltersActive && <button type="button" onClick={clearListFilters}>清除全部</button>}
+          </div>
+        </section>
+
+        <section className={`manual-workspace hm-manual-workspace ${detailsOpen ? 'detail-open' : 'detail-collapsed'}`}>
+        <aside className="manual-list-panel hm-manual-list-panel" aria-label="说明书查询结果">
+          <div className="manual-list-heading"><div><strong>说明书结果</strong><small>{loading ? '正在加载' : `${total} 份 · 第 ${page}/${totalPages} 页`}</small></div><span aria-hidden="true">LIST</span></div>
+          <div className="manual-list-scroll" aria-busy={loading}>
             {manuals.map(manual => {
               const identity = [manual.manufacturer, manual.family].filter(Boolean).join(' · ');
               const metadata = manualCardMeta(manual);
               const statuses = manualCardStatuses(manual);
               return (
                 <button className={`manual-card ${selectedManual?.id === manual.id ? 'active' : ''}`} type="button" key={manual.id} onClick={() => selectManual(manual)}>
+                  <span className="hm-manual-card-eyebrow" title={identity || '制造商待完善'}>{identity || '制造商待完善'}</span>
                   <strong title={manual.title}>{manual.title}</strong>
-                  {identity && <span title={identity}>{identity}</span>}
+                  {!!manual.models.length && <span className="hm-manual-card-models" title={manual.models.join(' / ')}>{manual.models.slice(0, 2).join(' / ')}{manual.models.length > 2 ? ` +${manual.models.length - 2}` : ''}</span>}
                   <div className="manual-card-foot">
                     {metadata.length > 0 && <small>{metadata.join(' · ')}</small>}
                     {statuses.length > 0 && <span className="manual-card-status">{statuses.map(status => <i className={status === '解析失败' ? 'danger' : ''} key={status}>{status}</i>)}</span>}
@@ -870,24 +964,26 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
                 </button>
               );
             })}
-            {!loading && !manuals.length && <div className="manual-list-empty"><strong>暂无组装说明书</strong><p>可直接批量选择 PDF / 图片文件夹，或使用单份新增。</p><button type="button" onClick={() => setBulkOpen(true)}>批量导入说明书</button></div>}
+            {loading && !manuals.length && <div className="manual-list-empty loading"><span className="manual-loader" /><strong>正在加载说明书</strong><p>正在读取列表和筛选条件。</p></div>}
+            {!loading && !manuals.length && <div className="manual-list-empty"><strong>{listFiltersActive ? '没有匹配的说明书' : '暂无组装说明书'}</strong><p>{listFiltersActive ? '当前条件没有结果，可清除筛选后重新查询。' : '可直接批量选择 PDF / 图片文件夹，或使用单份新增。'}</p><button type="button" onClick={listFiltersActive ? clearListFilters : () => setBulkOpen(true)}>{listFiltersActive ? '清除筛选' : '批量导入说明书'}</button></div>}
           </div>
           <div className="manual-pagination"><button type="button" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button><button type="button" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></div>
         </aside>
 
-        <section className="manual-preview-panel">
+        <section className="manual-preview-panel hm-manual-preview-panel" aria-label="说明书主阅读区">
           <div className="manual-current-bar">
             <div className="manual-current-copy">
+              <span className="hm-manual-current-kicker">当前说明书</span>
               <strong title={selectedManual?.title}>{selectedManual?.title || '请选择说明书'}</strong>
               {selectedManual && <span>{[selectedManual.manufacturer, meaningfulRevision(selectedVersion?.revision), selectedVersion?.pageCount ? `${selectedVersion.pageCount}页` : '', dateText(selectedVersion?.issuedAt)].filter(Boolean).join(' · ')}</span>}
               {!!selectedManual?.models.length && <div className="manual-current-models">{selectedManual.models.map(item => <i key={item}>{item}</i>)}</div>}
             </div>
             <div className="manual-current-actions">
               <button className="primary-button" type="button" disabled={!selectedManual} onClick={openCreateVersion}>上传新版本</button>
-              <button type="button" disabled={!selectedManual} onClick={openEditManual}>编辑</button>
-              <button className="manual-detail-toggle" type="button" disabled={!selectedManual} onClick={() => setDetailsOpen(value => !value)} title={detailsOpen ? '收起目录侧栏' : '展开目录侧栏'}>{detailsOpen ? '收起侧栏' : '目录'}</button>
-              <button ref={manualActionsButtonRef} type="button" disabled={!selectedManual} onClick={() => setManualActionsOpen(value => !value)}>更多</button>
+              <button ref={detailButtonRef} className="manual-detail-toggle" type="button" disabled={!selectedManual} aria-controls="manual-resource-panel" aria-expanded={detailsOpen} onClick={() => detailsOpen ? closeDetailPanel() : openDetailPanel()} title={detailsOpen ? '收起目录、版本与型号面板' : '打开目录、版本与型号面板'}>{detailsOpen ? '收起资料面板' : '目录 / 版本'}</button>
+              <button ref={manualActionsButtonRef} type="button" disabled={!selectedManual} aria-expanded={manualActionsOpen} onClick={() => setManualActionsOpen(value => !value)}>更多</button>
               <PortalMenu open={manualActionsOpen} anchorRef={manualActionsButtonRef} className="manual-actions-menu" width={190} onClose={() => setManualActionsOpen(false)}>
+                <button type="button" onClick={() => { openEditManual(); setManualActionsOpen(false); }}>编辑说明书信息</button>
                 <button type="button" onClick={() => { setMoreInfoOpen(true); setManualActionsOpen(false); }}>更多信息</button>
                 <button type="button" disabled={!selectedVersion} onClick={() => { openEditVersion(); setManualActionsOpen(false); }}>编辑当前版本与目录</button>
                 <button className="danger" type="button" disabled={!selectedManual} onClick={() => { if (selectedManual) setDeleteTarget({ type: 'manual', item: selectedManual }); setManualActionsOpen(false); }}>删除说明书</button>
@@ -915,11 +1011,11 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
           )}
         </section>
 
-        {detailsOpen && <button className="manual-detail-scrim" type="button" aria-label="关闭目录侧栏" onClick={() => setDetailsOpen(false)} />}
-        <aside className={`manual-detail-panel ${detailsOpen ? 'open' : ''}`} aria-hidden={!detailsOpen}>
-          <ManualSideSummary manual={selectedManual} version={selectedVersion} close={() => setDetailsOpen(false)} />
+        {detailsOpen && <button className="manual-detail-scrim" type="button" aria-label="关闭说明书资料面板" onClick={closeDetailPanel} />}
+        {detailsOpen && <aside ref={detailPanelRef} id="manual-resource-panel" className="manual-detail-panel open" aria-label="说明书目录、版本与型号" role={compactLayout ? 'dialog' : undefined} aria-modal={compactLayout ? true : undefined} tabIndex={-1}>
+          <ManualSideSummary manual={selectedManual} version={selectedVersion} close={closeDetailPanel} closeButtonRef={detailCloseButtonRef} />
           <div className="manual-detail-tabs">
-            {([['toc', '目录'], ['versions', '版本'], ['bindings', '关联型号']] as Array<[RightTab, string]>).map(([key, label]) => <button className={rightTab === key ? 'active' : ''} type="button" key={key} onClick={() => setRightTab(key)}>{label}{key === 'versions' && selectedManual ? ` ${selectedManual.versionCount}` : ''}{key === 'bindings' && selectedManual ? ` ${selectedManual.bindingCount}` : ''}</button>)}
+            {([['toc', '章节目录'], ['versions', '版本与文件'], ['bindings', '关联型号']] as Array<[RightTab, string]>).map(([key, label]) => <button className={rightTab === key ? 'active' : ''} type="button" key={key} aria-pressed={rightTab === key} onClick={() => setRightTab(key)}>{label}{key === 'versions' && selectedManual ? ` ${selectedManual.versionCount}` : ''}{key === 'bindings' && selectedManual ? ` ${selectedManual.bindingCount}` : ''}</button>)}
           </div>
           <div className="manual-detail-scroll">
             {rightTab === 'toc' && (
@@ -942,7 +1038,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
                     <div><button type="button" onClick={() => { setSelectedVersionId(version.id); setVersionForm(versionFormFrom(version)); setVersionModal('edit'); }}>编辑</button>{!version.isLatest && <button type="button" onClick={() => markLatest(version)}>设最新</button>}<button className="danger-text" type="button" onClick={() => setDeleteTarget({ type: 'version', item: version })}>删除</button></div>
                   </article>
                 ))}
-                {selectedVersion && <div className="manual-assets-manage"><div className="manual-section-head"><strong>当前版本文件</strong><button type="button" onClick={() => setUploadOpen(true)}>上传</button></div>{activeAssets.map((asset, index) => <div key={asset.id}><span>{index + 1}</span><strong title={asset.displayName || asset.originalName}>{asset.displayName || asset.originalName}</strong>{selectedVersion.fileMode === 'IMAGE_SET' && <><button type="button" disabled={index === 0} onClick={() => reorderAsset(asset, -1)}>↑</button><button type="button" disabled={index === activeAssets.length - 1} onClick={() => reorderAsset(asset, 1)}>↓</button></>}<a href={asset.downloadUrl}>下载</a><button className="danger-text" type="button" onClick={() => deleteAsset(asset)}>移除</button></div>)}</div>}
+                {selectedVersion && <div className="manual-assets-manage"><div className="manual-section-head"><strong>当前版本文件</strong><button type="button" onClick={() => setUploadOpen(true)}>上传</button></div>{activeAssets.map((asset, index) => <div key={asset.id}><span>{index + 1}</span><strong title={asset.displayName || asset.originalName}>{asset.displayName || asset.originalName}</strong>{selectedVersion.fileMode === 'IMAGE_SET' && <><button type="button" title="上移文件" disabled={index === 0} onClick={() => reorderAsset(asset, -1)}>↑</button><button type="button" title="下移文件" disabled={index === activeAssets.length - 1} onClick={() => reorderAsset(asset, 1)}>↓</button></>}<a href={asset.downloadUrl}>下载</a><button className="danger-text" type="button" onClick={() => deleteAsset(asset)}>移除</button></div>)}</div>}
               </div>
             )}
             {rightTab === 'bindings' && (
@@ -953,8 +1049,10 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
               </div>
             )}
           </div>
-        </aside>
+        </aside>}
       </section>
+
+      </div>
 
       {manualModal && <ManualDialog mode={manualModal} form={manualForm} setForm={setManualForm} files={singleFiles} suggestion={singleSuggestion} parsing={singleParsing} setFiles={inspectSingleFiles} applySuggestion={applySingleSuggestion} bindingKeyword={bindingKeyword} setBindingKeyword={setBindingKeyword} bindingOptions={bindingOptions} saving={saving} close={() => setManualModal(null)} submit={saveManual} />}
       {versionModal && <VersionDialog mode={versionModal} form={versionForm} setForm={setVersionForm} saving={saving} close={() => setVersionModal(null)} submit={saveVersion} />}
@@ -971,7 +1069,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   );
 }
 
-function ManualSideSummary({ manual, version, close }: { manual: ConnectorAssemblyManualDTO | null; version: ConnectorAssemblyManualVersionDTO | null; close: () => void }) {
+function ManualSideSummary({ manual, version, close, closeButtonRef }: { manual: ConnectorAssemblyManualDTO | null; version: ConnectorAssemblyManualVersionDTO | null; close: () => void; closeButtonRef: RefObject<HTMLButtonElement> }) {
   const metadata = manual ? [
     manual.manufacturer ? ['制造商', manual.manufacturer] : null,
     meaningfulRevision(version?.revision) ? ['版本', meaningfulRevision(version?.revision)] : null,
@@ -980,7 +1078,7 @@ function ManualSideSummary({ manual, version, close }: { manual: ConnectorAssemb
   ].filter((row): row is string[] => row !== null) : [];
   return (
     <div className="manual-side-summary">
-      <div className="manual-side-summary-head"><strong>说明书摘要</strong><button type="button" onClick={close} title="收起侧栏">×</button></div>
+      <div className="manual-side-summary-head"><strong>说明书摘要</strong><button ref={closeButtonRef} type="button" onClick={close} aria-label="关闭说明书资料面板" title="关闭资料面板">×</button></div>
       {!manual && <p>选择说明书后查看目录、版本和关联型号。</p>}
       {metadata.length > 0 && <div>{metadata.map(([label, value]) => <span key={label}><small>{label}</small><b title={value}>{value}</b></span>)}</div>}
       {!!manual?.models.length && <section><small>适用型号</small><div>{manual.models.map(model => <i key={model}>{model}</i>)}</div></section>}
@@ -1116,7 +1214,7 @@ function ManualTrashDialog({ trash, close, restore }: { trash: TrashPayload; clo
 }
 
 function DialogTitle({ title, close }: { title: string; close: () => void }) {
-  return <div className="dialog-title"><strong>{title}</strong><button type="button" onClick={close}>×</button></div>;
+  return <div className="dialog-title"><strong>{title}</strong><button type="button" aria-label={`关闭${title}`} title="关闭" onClick={close}>×</button></div>;
 }
 
 function DialogActions({ saving, close, label }: { saving: boolean; close: () => void; label: string }) {
