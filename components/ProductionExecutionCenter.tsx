@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, BarChart3, CalendarDays, ChevronRight, Copy, Download, Info, ListChecks, Search, X } from 'lucide-react';
+import { AlertTriangle, BarChart3, CalendarDays, ChevronRight, Copy, Download, Info, ListChecks, Pencil, Search, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -9,6 +9,7 @@ import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { writeClipboardText } from '@/lib/client-platform';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
+import { prepareProductionQuantityAdjustment } from '@/lib/production-quantity-adjustment';
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
 import type { CurrentUserDTO } from '@/types';
 
@@ -51,6 +52,9 @@ type ProductionOrder = {
   plannedAt?: string | null;
   deliveryDay?: string | null;
   uncompletedQty?: string | null;
+  importedTargetQty: number | null;
+  productionTargetQty: number | null;
+  quantityTargetSource: 'manual_override' | 'weekly_plan' | 'missing';
   productionOwner?: string | null;
   workstation?: string | null;
   completedQty?: string | null;
@@ -106,6 +110,14 @@ type ProductionSummary = {
   urgent: number;
   completed: number;
   stageCounts: Record<StageKey, number>;
+  stageQuantityTotals: Record<StageKey, number>;
+  quantityTotals: {
+    targetQty: number;
+    completedQty: number;
+    percentage: number | null;
+    knownOrders: number;
+    missingOrders: number;
+  };
 };
 
 type BoardPayload = {
@@ -146,6 +158,14 @@ type AdvancedFilters = {
 type UpdateForm = {
   completedQty: string;
   remark: string;
+};
+
+type QuantityAdjustmentForm = {
+  targetQty: string;
+  frontendTransferredQty: string;
+  completedQty: string;
+  reason: string;
+  confirmReopen: boolean;
 };
 
 type ExecutionPatchPayload = Partial<UpdateForm> & {
@@ -303,6 +323,29 @@ function updateFormFor(order: ProductionOrder): UpdateForm {
   return { completedQty: order.completedQty || '', remark: '' };
 }
 
+function quantityAdjustmentFormFor(order: ProductionOrder): QuantityAdjustmentForm {
+  const targetQty = order.quantityFlow.targetQty ?? order.productionTargetQty ?? order.importedTargetQty;
+  let frontendTransferredQty = order.quantityFlow.frontendTransferredQty ?? order.frontendTransferredQty;
+  if (frontendTransferredQty === null || frontendTransferredQty === undefined) {
+    frontendTransferredQty = (order.stage === 'backend' || order.stage === 'completed') && targetQty !== null && targetQty !== undefined
+      ? targetQty
+      : 0;
+  }
+  return {
+    targetQty: targetQty === null || targetQty === undefined ? '' : String(targetQty),
+    frontendTransferredQty: String(frontendTransferredQty),
+    completedQty: String(order.quantitySummary.completedQty ?? 0),
+    reason: '',
+    confirmReopen: false,
+  };
+}
+
+function quantitySourceText(order: ProductionOrder): string {
+  if (order.quantityTargetSource === 'manual_override') return '生产校正值';
+  if (order.quantityTargetSource === 'weekly_plan') return '周计划数量';
+  return '数量待补充';
+}
+
 function advancedFromParams(params: URLSearchParams): AdvancedFilters {
   const customers = params.getAll('customer').flatMap(value => value.split(',')).map(value => value.trim()).filter(Boolean);
   const duePreset = params.get('duePreset');
@@ -418,6 +461,10 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [progressLoading, setProgressLoading] = useState(false);
   const [updateOrder, setUpdateOrder] = useState<ProductionOrder | null>(null);
   const [updateForm, setUpdateForm] = useState<UpdateForm | null>(null);
+  const [quantityOrder, setQuantityOrder] = useState<ProductionOrder | null>(null);
+  const [quantityForm, setQuantityForm] = useState<QuantityAdjustmentForm | null>(null);
+  const [quantitySaving, setQuantitySaving] = useState(false);
+  const [quantityError, setQuantityError] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [batchOpen, setBatchOpen] = useState(false);
@@ -440,6 +487,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const insightsPanelRef = useRef<HTMLElement | null>(null);
   const statusButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawingButtonRef = useRef<HTMLButtonElement | null>(null);
+  const quantityTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const quantityTargetInputRef = useRef<HTMLInputElement | null>(null);
   const boardShellRef = useRef<HTMLDivElement | null>(null);
   const taskGridRef = useRef<HTMLDivElement | null>(null);
   const columnRefs = useRef<Record<StageKey, HTMLDivElement | null>>({ not_issued: null, frontend: null, backend: null, completed: null });
@@ -453,6 +502,31 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }).format(new Date()), []);
 
   useEffect(() => { boardRef.current = board; }, [board]);
+
+  useEffect(() => {
+    if (!quantityOrder) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const frame = window.requestAnimationFrame(() => quantityTargetInputRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || quantitySaving) return;
+      event.preventDefault();
+      setQuantityOrder(null);
+      setQuantityForm(null);
+      setQuantityError('');
+      window.requestAnimationFrame(() => {
+        const trigger = quantityTriggerRef.current;
+        if (trigger?.isConnected) trigger.focus();
+        else findProductionOrderCard(quantityOrder.id)?.querySelector<HTMLButtonElement>('.production-card-quantity-edit')?.focus();
+      });
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [quantityOrder, quantitySaving]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -867,6 +941,29 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setFormError('');
   }
 
+  function openQuantityAdjustment(order: ProductionOrder, trigger?: HTMLButtonElement): void {
+    setStatusMenuOrder(null);
+    setDrawingMenuOrder(null);
+    quantityTriggerRef.current = trigger || (document.activeElement instanceof HTMLButtonElement ? document.activeElement : null);
+    setDetailOrder(null);
+    setQuantityOrder(order);
+    setQuantityForm(quantityAdjustmentFormFor(order));
+    setQuantityError('');
+  }
+
+  function closeQuantityAdjustment(): void {
+    if (quantitySaving) return;
+    const orderId = quantityOrder?.id;
+    setQuantityOrder(null);
+    setQuantityForm(null);
+    setQuantityError('');
+    window.requestAnimationFrame(() => {
+      const trigger = quantityTriggerRef.current;
+      if (trigger?.isConnected) trigger.focus();
+      else findProductionOrderCard(orderId)?.querySelector<HTMLButtonElement>('.production-card-quantity-edit')?.focus();
+    });
+  }
+
   function applyLocalOrder(order: ProductionOrder): void {
     setBoard(current => replaceOrder(current, order));
     setDetailOrder(current => current?.id === order.id ? order : current);
@@ -912,6 +1009,73 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       setFormError(reason instanceof Error ? reason.message : '进度更新失败');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveQuantityAdjustment(): Promise<void> {
+    if (!quantityOrder || !quantityForm) return;
+    const prepared = prepareProductionQuantityAdjustment({
+      targetQty: quantityForm.targetQty,
+      frontendTransferredQty: quantityForm.frontendTransferredQty,
+      completedQty: quantityForm.completedQty,
+      currentStage: quantityOrder.stage,
+    });
+    if (!prepared.ok) {
+      setQuantityError(prepared.message);
+      return;
+    }
+    const hasExistingQuantity = quantityOrder.quantityTargetSource !== 'missing'
+      || (quantityOrder.frontendTransferredQty !== null && quantityOrder.frontendTransferredQty !== undefined)
+      || (quantityOrder.quantitySummary.completedQty ?? 0) > 0;
+    if (hasExistingQuantity && quantityForm.reason.trim().length < 2) {
+      setQuantityError('校正已有数量时请填写调整原因');
+      return;
+    }
+    if (prepared.value.reopensCompletedOrder && !quantityForm.confirmReopen) {
+      setQuantityError('数量变化会重新打开已完成工单，请先勾选确认');
+      return;
+    }
+
+    setQuantitySaving(true);
+    setQuantityError('');
+    try {
+      const response = await fetch(`/api/work-orders/${quantityOrder.id}/production-quantities`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          targetQty: quantityForm.targetQty,
+          frontendTransferredQty: quantityForm.frontendTransferredQty,
+          completedQty: quantityForm.completedQty,
+          expectedVersion: quantityOrder.quantityFlow.executionVersion,
+          reason: quantityForm.reason,
+          confirmReopen: quantityForm.confirmReopen,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.data) throw new Error(body.error || '生产数量保存失败');
+      const updated = withProductionDerived(body.data as ProductionOrder);
+      const adjustedOrderId = quantityOrder.id;
+      applyLocalOrder(updated);
+      setQuantityOrder(null);
+      setQuantityForm(null);
+      productionBoardCache.clear();
+      setSummaryRefreshToken(value => value + 1);
+      setToast(quantityOrder.quantityTargetSource === 'missing' ? '生产数量已补充，无需重新上传计划' : '生产数量已校正');
+      window.requestAnimationFrame(() => {
+        const trigger = quantityTriggerRef.current;
+        if (trigger?.isConnected) trigger.focus();
+        else findProductionOrderCard(adjustedOrderId)?.querySelector<HTMLButtonElement>('.production-card-quantity-edit')?.focus();
+      });
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : '生产数量保存失败';
+      setQuantityError(message);
+      if (message === '工单进度已被其他操作更新，请刷新后重试') {
+        productionBoardCache.clear();
+        setRefreshToken(value => value + 1);
+        setSummaryRefreshToken(value => value + 1);
+      }
+    } finally {
+      setQuantitySaving(false);
     }
   }
 
@@ -1230,7 +1394,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }
 
   const cardProps = {
-    batchMode, selected, toggleSelected, openDetail, openUpdate, openNextStep, saving,
+    batchMode, selected, toggleSelected, openDetail, openUpdate, openQuantityAdjustment, openNextStep, saving,
     openResources: openWorkOrderResources, copySpecification, openIssue: openProductionIssue,
     openStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, item: ProductionOrder): void => {
       if (item.quantityFlow.materialized) {
@@ -1274,10 +1438,10 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
         <section className="production-summary production-command-strip" aria-label="当前周生产摘要">
           <button className={`production-week-label production-command-total ${summaryActive('all') ? 'active' : ''}`} type="button" onClick={() => toggleSummary('all')}>
-            <span>{summary?.weekStartDate ? '当前执行周' : '周计划尚未启用'}</span><strong>{summary?.weekStartDate ? `${dateText(summary.weekStartDate)} - ${dateText(summary.weekEndDate)}` : '前往周计划中心启用'}</strong><em>{summary?.total ?? 0}<small>工单</small></em>
+            <span>{summary?.weekStartDate ? `当前执行周 · 数量完成 ${formatProductionPercentage(summary?.quantityTotals?.percentage ?? null)}` : '周计划尚未启用'}</span><strong>{summary?.weekStartDate ? `${dateText(summary.weekStartDate)} - ${dateText(summary.weekEndDate)}` : '前往周计划中心启用'}</strong><em>{summary?.total ?? 0}<small>工单</small></em>
           </button>
-          {stages.map(stage => <button className={`production-command-stage ${stage.key} ${advanced.stage === stage.key ? 'active' : ''}`} type="button" key={stage.key} aria-pressed={advanced.stage === stage.key} onClick={() => selectStage(stage.key)}><span>{stage.label}</span><strong>{summary?.stageCounts[stage.key] ?? 0}</strong><small>{stage.hint}</small></button>)}
-          <button className={`production-command-alert ${summaryActive('urgent') || summaryActive('overdue') ? 'active' : ''}`} type="button" onClick={() => { setView('exceptions'); setQuick([]); setPage(1); }}><span>异常 / 紧急</span><strong>{summary?.urgent ?? 0}</strong><small>逾期 {summary?.overdue ?? 0} · 待快速处理</small></button>
+          {stages.map(stage => <button className={`production-command-stage ${stage.key} ${advanced.stage === stage.key ? 'active' : ''}`} type="button" key={stage.key} aria-pressed={advanced.stage === stage.key} onClick={() => selectStage(stage.key)}><span>{stage.label}</span><strong>{summary?.stageCounts[stage.key] ?? 0}</strong><small>{stage.hint} · {formatProductionQuantity(summary?.stageQuantityTotals?.[stage.key] ?? 0)} 套</small></button>)}
+          <button className={`production-command-alert ${summaryActive('urgent') || summaryActive('overdue') ? 'active' : ''}`} type="button" onClick={() => { setView('exceptions'); setQuick([]); setPage(1); }}><span>异常 / 紧急</span><strong>{summary?.urgent ?? 0}</strong><small>逾期 {summary?.overdue ?? 0} · 缺数量 {summary?.quantityTotals?.missingOrders ?? 0}</small></button>
         </section>
 
         <section className="production-controls" aria-label="生产任务筛选">
@@ -1379,7 +1543,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       </PortalMenu>
 
       {updateOrder && updateForm && <UpdateDrawer order={updateOrder} value={updateForm} setValue={setUpdateForm} saving={saving} error={formError} close={() => { if (!saving) { setUpdateOrder(null); setUpdateForm(null); } }} save={saveUpdate} />}
-      {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} update={() => openUpdate(detailOrder)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder)} />}
+      {quantityOrder && quantityForm && <QuantityAdjustmentDrawer order={quantityOrder} value={quantityForm} setValue={setQuantityForm} targetInputRef={quantityTargetInputRef} saving={quantitySaving} error={quantityError} close={closeQuantityAdjustment} save={() => void saveQuantityAdjustment()} />}
+      {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} update={() => openUpdate(detailOrder)} adjustQuantity={() => openQuantityAdjustment(detailOrder)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder)} />}
       {batchOpen && <BatchDialog count={selected.length} operation={batchOperation} value={batchValue} remark={batchRemark} confirm={batchConfirm} saving={saving} error={formError} setValue={setBatchValue} setRemark={setBatchRemark} setConfirm={setBatchConfirm} close={() => { if (!saving) setBatchOpen(false); }} save={saveBatch} />}
       {stageChangeRequest && <StageChangeDialog request={stageChangeRequest} saving={saving} close={() => { if (!saving) setStageChangeRequest(null); }} confirm={() => void saveStageChange(stageChangeRequest.order, stageChangeRequest.stage)} />}
       {completionSuggestion && <CompletionSuggestionDialog order={completionSuggestion} saving={saving} close={() => setCompletionSuggestion(null)} confirm={() => void saveStageChange(completionSuggestion, 'completed')} />}
@@ -1402,6 +1567,7 @@ type ProductionCardProps = {
   toggleSelected: (id: string) => void;
   openDetail: (order: ProductionOrder) => void;
   openUpdate: (order: ProductionOrder) => void;
+  openQuantityAdjustment: (order: ProductionOrder, trigger?: HTMLButtonElement) => void;
   openNextStep: (order: ProductionOrder, displayStage: StageKey) => void;
   saving: boolean;
   openResources: (order: ProductionOrder, focusedStage?: StageKey) => void;
@@ -1439,7 +1605,7 @@ function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu, ope
   </div>;
 }
 
-function WorkOrderCardTitle({ order, displayStage, batchMode, selected, toggleSelected, openDetail, openResources, copySpecification }: Pick<ProductionCardProps, 'order' | 'displayStage' | 'batchMode' | 'selected' | 'toggleSelected' | 'openDetail' | 'openResources' | 'copySpecification'>) {
+function WorkOrderCardTitle({ order, displayStage, batchMode, selected, toggleSelected, openDetail, openQuantityAdjustment, openResources, copySpecification }: Pick<ProductionCardProps, 'order' | 'displayStage' | 'batchMode' | 'selected' | 'toggleSelected' | 'openDetail' | 'openQuantityAdjustment' | 'openResources' | 'copySpecification'>) {
   return <>
     <div className="production-card-title">
       <CardSelection order={order} batchMode={batchMode} selected={selected} toggleSelected={toggleSelected} />
@@ -1448,6 +1614,7 @@ function WorkOrderCardTitle({ order, displayStage, batchMode, selected, toggleSe
         <button className="production-card-spec" type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order, displayStage)}>{specText(order)}</button>
       </div>
       <div className="production-card-title-actions">
+        <button className="production-card-quantity-edit" type="button" title={order.quantityTargetSource === 'missing' ? '补充生产数量' : '校正生产数量'} aria-label={order.quantityTargetSource === 'missing' ? '补充生产数量' : '校正生产数量'} onClick={event => openQuantityAdjustment(order, event.currentTarget)}><Pencil size={14} aria-hidden="true" /></button>
         <button className="production-card-copy" type="button" title="复制完整规格" aria-label="复制完整规格" onClick={() => void copySpecification(order)}><Copy size={15} aria-hidden="true" /></button>
         <button className="production-card-info" type="button" title="查看工单详情" aria-label="查看工单详情" onClick={() => openDetail(order)}><Info size={15} aria-hidden="true" /></button>
       </div>
@@ -1457,22 +1624,27 @@ function WorkOrderCardTitle({ order, displayStage, batchMode, selected, toggleSe
 }
 
 function NotIssuedWorkOrderCard(props: ProductionCardProps) {
-  const { order, openNextStep, openDrawingStatusMenu, saving, stageQuantity } = props;
+  const { order, openNextStep, openQuantityAdjustment, openDrawingStatusMenu, saving, stageQuantity } = props;
   const quantity = order.quantitySummary;
+  const quantityUnavailable = quantity.targetQty === null || !order.quantityFlow.valid;
+  const quantityActionText = order.quantityTargetSource === 'missing' ? '补充数量' : '校正数量';
+  const percentageWidth = Math.max(0, Math.min(quantity.percentage || 0, 100));
   const reminder = /样品|确认|变更|异常|返工|待处理/.test(order.latestProgressRemark || '') ? order.latestProgressRemark : '';
   return <article className={`production-card production-card-not-issued not_issued ${props.selected.includes(order.id) ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage="not_issued">
     <WorkOrderCardTitle {...props} />
     <dl className="production-leader-metrics production-quantity-grid"><div><dt>本阶段数量</dt><dd>{stageQuantity === null ? '待补充' : formatProductionQuantity(stageQuantity)}</dd></div><div><dt>总目标</dt><dd>{quantity.targetQty === null ? '待补充' : formatProductionQuantity(quantity.targetQty)}</dd></div><div><dt>已完成</dt><dd>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</dd></div></dl>
+    <div className={`production-card-quantity-status ${quantityUnavailable ? 'missing' : ''}`}><span>{quantitySourceText(order)}</span><div className="production-progress-track"><i><b style={{ width: `${percentageWidth}%` }} /></i><strong>{quantityUnavailable ? quantityActionText : formatProductionPercentage(quantity.percentage)}</strong></div></div>
     <div className="production-card-meta"><span>计划交期</span><strong>{deliveryText(order) || '待设置'}</strong></div>
     <ProductionAlertList order={order} displayStage="not_issued" showExceptions={props.showExceptions} openDrawingStatusMenu={openDrawingStatusMenu} openIssue={props.openIssue} />
     {reminder && <p className="production-focus-reminder" title={reminder}>{reminder}</p>}
-    <footer><button type="button" onClick={event => openDrawingStatusMenu(event, order)}>更新图纸状态</button><button className="primary" type="button" disabled={saving || !order.quantityFlow.valid} onClick={() => openNextStep(order, 'not_issued')}>下一步</button></footer>
+    <footer><button type="button" onClick={event => openDrawingStatusMenu(event, order)}>更新图纸状态</button>{quantityUnavailable ? <button className="primary" type="button" disabled={saving} onClick={event => openQuantityAdjustment(order, event.currentTarget)}>{quantityActionText}</button> : <button className="primary" type="button" disabled={saving} onClick={() => openNextStep(order, 'not_issued')}>下一步</button>}</footer>
   </article>;
 }
 
 function ActiveWorkOrderCard(props: ProductionCardProps) {
-  const { order, openUpdate, openNextStep, displayStage, stageQuantity, saving } = props;
+  const { order, openUpdate, openQuantityAdjustment, openNextStep, displayStage, stageQuantity, saving } = props;
   const quantity = order.quantitySummary;
+  const quantityUnavailable = quantity.targetQty === null || !order.quantityFlow.valid;
   const percentageWidth = Math.max(0, Math.min(quantity.percentage || 0, 100));
   const splitFlow = cardSegments(order).length > 1;
   return <article className={`production-card production-card-active ${displayStage} ${props.selected.includes(order.id) ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage={displayStage}>
@@ -1482,9 +1654,10 @@ function ActiveWorkOrderCard(props: ProductionCardProps) {
       <span className="production-progress-track"><i><b style={{ width: `${percentageWidth}%` }} /></i><strong>{formatProductionPercentage(quantity.percentage)}</strong></span>
       {quantity.overrunQty !== null && quantity.overrunQty > 0 && <small className="overrun">超产 {formatProductionQuantity(quantity.overrunQty)} 套</small>}
     </button>
+    <span className={`production-quantity-source ${order.quantityTargetSource}`}>{quantitySourceText(order)}</span>
     {splitFlow && <span className="production-flow-badge">分批流转 · 同一工单</span>}
     <ProductionAlertList order={order} displayStage={displayStage} showExceptions={props.showExceptions} openDrawingStatusMenu={props.openDrawingStatusMenu} openIssue={props.openIssue} />
-    <footer><button type="button" onClick={() => openUpdate(order)}>记录进度</button><button className="primary" type="button" disabled={saving || !order.quantityFlow.valid || !stageQuantity} onClick={() => openNextStep(order, displayStage)}>下一步</button></footer>
+    <footer><button type="button" onClick={() => openUpdate(order)}>记录进度</button>{quantityUnavailable ? <button className="primary" type="button" disabled={saving} onClick={event => openQuantityAdjustment(order, event.currentTarget)}>补充 / 校正数量</button> : <button className="primary" type="button" disabled={saving || !stageQuantity} onClick={() => openNextStep(order, displayStage)}>下一步</button>}</footer>
   </article>;
 }
 
@@ -1495,13 +1668,84 @@ function CompletedWorkOrderCard(props: ProductionCardProps) {
   const quantityText = props.stageQuantity === null
     ? '完成数量待核对'
     : `本阶段完成 ${formatProductionQuantity(props.stageQuantity)} 套 · 累计 ${formatProductionQuantity(quantity.completedQty)} / ${formatProductionQuantity(quantity.targetQty)} 套`;
+  const percentageWidth = Math.max(0, Math.min(quantity.percentage || 0, 100));
   return <article className={`production-card production-card-completed completed ${quantity.status} ${isSelected ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage="completed">
     <WorkOrderCardTitle {...props} />
     <div className="production-completed-quantity">{quantityText}</div>
+    <div className="production-completed-progress"><div className="production-progress-track"><i><b style={{ width: `${percentageWidth}%` }} /></i><strong>{formatProductionPercentage(quantity.percentage)}</strong></div><span className={`production-quantity-source ${order.quantityTargetSource}`}>{quantitySourceText(order)}</span></div>
     {quantity.status === 'tail_remaining' && <div className="production-completed-result tail">剩余 {formatProductionQuantity(quantity.remainingQty)} 套 · 尾数未清</div>}
     {quantity.status === 'overrun' && <div className="production-completed-result overrun">超产 {formatProductionQuantity(quantity.overrunQty)} 套</div>}
     <button className="production-completed-more" type="button" onClick={event => openStatusMenu(event, order)}>调整状态</button>
   </article>;
+}
+
+function QuantityAdjustmentDrawer({ order, value, setValue, targetInputRef, saving, error, close, save }: {
+  order: ProductionOrder;
+  value: QuantityAdjustmentForm;
+  setValue: (value: QuantityAdjustmentForm) => void;
+  targetInputRef: { current: HTMLInputElement | null };
+  saving: boolean;
+  error: string;
+  close: () => void;
+  save: () => void;
+}) {
+  const prepared = prepareProductionQuantityAdjustment({
+    targetQty: value.targetQty,
+    frontendTransferredQty: value.frontendTransferredQty,
+    completedQty: value.completedQty,
+    currentStage: order.stage,
+  });
+  const preview = prepared.ok ? prepared.value : null;
+  const nextStageText = preview ? stages.find(stage => stage.key === preview.nextStage)?.label || preview.nextStage : '-';
+  const importedText = order.importedTargetQty !== null && order.importedTargetQty !== undefined
+    ? `${formatProductionQuantity(order.importedTargetQty)} 套`
+    : order.uncompletedQty?.trim()
+      ? `原值“${order.uncompletedQty.trim()}”无法识别`
+      : '周计划未提供';
+  const requiresReason = order.quantityTargetSource !== 'missing'
+    || (order.frontendTransferredQty !== null && order.frontendTransferredQty !== undefined)
+    || (order.quantitySummary.completedQty ?? 0) > 0;
+
+  function keepFocusInside(event: React.KeyboardEvent<HTMLDivElement>): void {
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled])'));
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  return <div className="production-quantity-backdrop" onKeyDown={keepFocusInside} onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
+    <aside className="production-quantity-drawer" role="dialog" aria-modal="true" aria-labelledby="production-quantity-title">
+      <div className="dialog-title"><div><strong id="production-quantity-title">{order.quantityTargetSource === 'missing' ? '补充生产数量' : '校正生产数量'}</strong><small>{order.customerName || '客户待补充'} · {specText(order)}</small></div><button type="button" disabled={saving} aria-label="关闭数量校正" title="关闭" onClick={close}><X size={18} aria-hidden="true" /></button></div>
+      <div className="production-quantity-origin"><span>周计划原始总目标</span><strong title={importedText}>{importedText}</strong><small>原始导入值永久保留，生产校正不会要求重新上传计划。</small></div>
+      <div className="production-quantity-form-grid">
+        <label><span>生产总目标 T</span><input ref={targetInputRef} inputMode="numeric" pattern="[0-9]*" min="1" step="1" value={value.targetQty} disabled={saving} onChange={event => setValue({ ...value, targetQty: event.target.value })} placeholder="请输入大于 0 的整数" /></label>
+        <label><span>累计进入后端 F</span><input inputMode="numeric" pattern="[0-9]*" min="0" step="1" value={value.frontendTransferredQty} disabled={saving} onChange={event => setValue({ ...value, frontendTransferredQty: event.target.value })} placeholder="0" /></label>
+        <label><span>累计完成 C</span><input inputMode="numeric" pattern="[0-9]*" min="0" step="1" value={value.completedQty} disabled={saving} onChange={event => setValue({ ...value, completedQty: event.target.value })} placeholder="0" /></label>
+      </div>
+      <div className={`production-quantity-live ${preview ? '' : 'invalid'}`} aria-live="polite">
+        {preview ? <>
+          <div><span>保存后阶段</span><strong>{nextStageText}</strong></div>
+          <div><span>本阶段数量</span><strong>{formatProductionQuantity(preview.stageQuantity)} 套</strong></div>
+          <div><span>整体进度</span><strong>{formatProductionPercentage(preview.percentage)}</strong></div>
+          <div><span>前端剩余 T-F</span><strong>{formatProductionQuantity(preview.frontendRemainingQty)} 套</strong></div>
+          <div><span>后端待完成 F-C</span><strong>{formatProductionQuantity(preview.backendRemainingQty)} 套</strong></div>
+        </> : <p>{prepared.ok ? '' : prepared.message}</p>}
+      </div>
+      <label className="production-quantity-reason"><span>调整原因{requiresReason ? '（必填）' : '（首次补充可选）'}</span><textarea rows={3} maxLength={240} value={value.reason} disabled={saving} onChange={event => setValue({ ...value, reason: event.target.value })} placeholder={requiresReason ? '例如：现场复核后修正总目标' : '例如：补录周计划缺失数量'} /></label>
+      {preview?.reopensCompletedOrder && <label className="production-quantity-reopen"><input type="checkbox" checked={value.confirmReopen} disabled={saving} onChange={event => setValue({ ...value, confirmReopen: event.target.checked })} /><span><strong>确认重新打开已完成工单</strong><small>保存后工单会回到{nextStageText}，历史完成记录和调整日志仍保留。</small></span></label>}
+      <p className="production-quantity-rule">数量规则：累计完成 C ≤ 累计进入后端 F ≤ 生产总目标 T。保存后阶段和百分比自动重算。</p>
+      {error && <div className="form-error" role="alert">{error}</div>}
+      <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving || !preview} onClick={save}>{saving ? '保存中...' : order.quantityTargetSource === 'missing' ? '保存并启用流转' : '保存数量校正'}</button></div>
+    </aside>
+  </div>;
 }
 
 function UpdateDrawer({ order, value, setValue, saving, error, close, save }: { order: ProductionOrder; value: UpdateForm; setValue: (value: UpdateForm) => void; saving: boolean; error: string; close: () => void; save: () => void }) {
@@ -1576,14 +1820,15 @@ function CompletionSuggestionDialog({ order, saving, close, confirm }: { order: 
   </section></div>;
 }
 
-function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close, update, resources, drawingLibrary }: { order: ProductionOrder; tab: DetailTab; setTab: (tab: DetailTab) => void; progressLogs: ProgressLog[]; progressLoading: boolean; close: () => void; update: () => void; resources: () => void; drawingLibrary: () => void }) {
+function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close, update, adjustQuantity, resources, drawingLibrary }: { order: ProductionOrder; tab: DetailTab; setTab: (tab: DetailTab) => void; progressLogs: ProgressLog[]; progressLoading: boolean; close: () => void; update: () => void; adjustQuantity: () => void; resources: () => void; drawingLibrary: () => void }) {
   return (
     <div className="modal-backdrop"><section className="production-dialog detail" role="dialog" aria-modal="true" aria-label="生产工单详情">
       <div className="dialog-title"><div><strong>{specText(order)}</strong><small>{order.customerName || '客户待补充'} · {order.productName || '品名待补充'}</small></div><button type="button" aria-label="关闭" onClick={close}>×</button></div>
       <div className="production-detail-tabs">{([['production', '生产信息'], ['drawing', '工单资料'], ['progress', '进度记录'], ['source', '来源信息']] as Array<[DetailTab, string]>).map(item => <button className={tab === item[0] ? 'active' : ''} type="button" key={item[0]} onClick={() => setTab(item[0])}>{item[1]}</button>)}</div>
       <div className="production-detail-body">
         {tab === 'production' && <InfoGrid items={[
-          ['状态', order.stageText], ['优先级', priorityText(order.priority)], ['未交量', order.uncompletedQty || '-'], ['完成数量', order.completedQty || '-'],
+          ['状态', order.stageText], ['优先级', priorityText(order.priority)], ['周计划原始目标', order.importedTargetQty === null ? order.uncompletedQty || '-' : formatProductionQuantity(order.importedTargetQty)], ['当前生产目标', formatProductionQuantity(order.quantitySummary.targetQty)],
+          ['数量来源', quantitySourceText(order)], ['累计进入后端', formatProductionQuantity(order.quantityFlow.frontendTransferredQty)], ['累计完成', formatProductionQuantity(order.quantitySummary.completedQty)], ['整体进度', formatProductionPercentage(order.quantitySummary.percentage)],
           ['交期', deliveryText(order) || '-'], ['图纸', order.drawingStatus || '-'], ['配料', order.materialStatus || '-'], ['开始时间', dateTimeText(order.startedAt)],
           ['完成时间', dateTimeText(order.completedAt)], ['最近更新', dateTimeText(order.lastProgressAt)], ['最近进度', order.latestProgressRemark || '暂无进度备注'],
         ]} />}
@@ -1595,7 +1840,7 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
           ['工序', order.processName || '-'], ['单位工时', order.unitWorkHours || '-'], ['总工时', order.totalWorkHours || '-'], ['图纸说明', order.drawingIssueNote || '-'],
         ]} />}
       </div>
-      <div className="dialog-actions"><button type="button" onClick={resources}>工单资料</button><button className="primary-button" type="button" onClick={update}>更新进度</button><button type="button" onClick={close}>关闭</button></div>
+      <div className="dialog-actions"><button type="button" onClick={resources}>工单资料</button><button type="button" onClick={adjustQuantity}>校正数量</button><button className="primary-button" type="button" onClick={update}>更新进度</button><button type="button" onClick={close}>关闭</button></div>
     </section></div>
   );
 }

@@ -2,6 +2,7 @@ export type ProductionQuantityStatus = 'unknown' | 'in_progress' | 'complete' | 
 
 export type ProductionQuantityInput = {
   uncompletedQty?: unknown;
+  productionTargetQty?: unknown;
   completedQty?: unknown;
   stage?: string | null;
 };
@@ -26,13 +27,23 @@ function quantityNumber(value: unknown, emptyValue: number | null): number | nul
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
+export function effectiveProductionTarget(input: Pick<ProductionQuantityInput, 'uncompletedQty' | 'productionTargetQty'>): unknown {
+  return input.productionTargetQty === null || input.productionTargetQty === undefined
+    ? input.uncompletedQty
+    : input.productionTargetQty;
+}
+
+export function parsedImportedProductionTarget(value: unknown): number | null {
+  return quantityNumber(value, null);
+}
+
 function completedStage(stage?: string | null): boolean {
   const value = String(stage || '').trim().toLocaleLowerCase('zh-CN');
   return value === 'completed' || value === '已完成';
 }
 
 export function getProductionQuantitySummary(input: ProductionQuantityInput): ProductionQuantitySummary {
-  const targetQty = quantityNumber(input.uncompletedQty, null);
+  const targetQty = quantityNumber(effectiveProductionTarget(input), null);
   const completedQty = quantityNumber(input.completedQty, 0);
   if (targetQty === null || completedQty === null) {
     return { targetQty, completedQty, remainingQty: null, overrunQty: null, percentage: null, status: 'unknown' };

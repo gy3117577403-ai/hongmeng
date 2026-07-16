@@ -73,8 +73,9 @@ export function workOrderSnapshot(order: {
   orderDate?: Date | string | null;
   customerLevel?: string | null;
   specification?: string | null;
-  processName?: string | null;
-  uncompletedQty?: string | null;
+    processName?: string | null;
+    uncompletedQty?: string | null;
+    productionTargetQty?: number | null;
   unitWorkHours?: string | null;
   totalWorkHours?: string | null;
   drawingStatus?: string | null;
@@ -122,6 +123,7 @@ export function workOrderSnapshot(order: {
     specification: order.specification ?? null,
     processName: order.processName ?? null,
     uncompletedQty: order.uncompletedQty ?? null,
+    productionTargetQty: order.productionTargetQty ?? null,
     unitWorkHours: order.unitWorkHours ?? null,
     totalWorkHours: order.totalWorkHours ?? null,
     drawingStatus: order.drawingStatus ?? null,

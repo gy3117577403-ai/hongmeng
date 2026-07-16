@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
 import { getProductionAlerts, isDrawingConfirmationAlert } from '@/lib/production-alerts';
-import { getProductionQuantitySummary } from '@/lib/production-quantity';
+import { getProductionQuantitySummary, parsedImportedProductionTarget } from '@/lib/production-quantity';
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
@@ -213,6 +213,7 @@ export function productionExceptionCodes(order: ProductionExecutionOrderRecord, 
   const exceptions: ProductionExceptionCode[] = [];
   const alerts = getProductionAlerts({
     uncompletedQty: order.uncompletedQty,
+    productionTargetQty: order.productionTargetQty,
     completedQty: order.completedQty,
     stage,
     specification: order.specification,
@@ -238,11 +239,13 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
   const exceptionCodes = productionExceptionCodes(order, now);
   const quantitySummary = getProductionQuantitySummary({
     uncompletedQty: order.uncompletedQty,
+    productionTargetQty: order.productionTargetQty,
     completedQty: order.completedQty,
     stage,
   });
   const productionAlerts = getProductionAlerts({
     uncompletedQty: order.uncompletedQty,
+    productionTargetQty: order.productionTargetQty,
     completedQty: order.completedQty,
     stage,
     specification: order.specification,
@@ -253,6 +256,12 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     plannedAt: order.plannedAt,
   }, now);
   const flowResolution = resolveEffectiveFrontendTransferredQty(order);
+  const importedTargetQty = parsedImportedProductionTarget(order.uncompletedQty);
+  const quantityTargetSource = order.productionTargetQty !== null
+    ? 'manual_override' as const
+    : importedTargetQty !== null
+      ? 'weekly_plan' as const
+      : 'missing' as const;
   const quantityFlow = flowResolution.ok
     ? {
       valid: true as const,
@@ -296,6 +305,9 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     plannedAt: order.plannedAt?.toISOString() || null,
     deliveryDay: order.deliveryDay,
     uncompletedQty: order.uncompletedQty,
+    importedTargetQty,
+    productionTargetQty: order.productionTargetQty,
+    quantityTargetSource,
     productionOwner: order.productionOwner,
     workstation: order.workstation,
     completedQty: order.completedQty,
@@ -431,6 +443,7 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
   const productionAlerts = quick.some(item => item === 'drawing' || item === 'drawing_confirmation' || item === 'material' || item === 'tail_remaining')
     ? getProductionAlerts({
       uncompletedQty: order.uncompletedQty,
+      productionTargetQty: order.productionTargetQty,
       completedQty: order.completedQty,
       stage: normalizedStage,
       specification: order.specification,
@@ -464,6 +477,7 @@ function drawingConfirmationRequired(order: ProductionExecutionOrderRecord, now:
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   return getProductionAlerts({
     uncompletedQty: order.uncompletedQty,
+    productionTargetQty: order.productionTargetQty,
     completedQty: order.completedQty,
     stage,
     specification: order.specification,
@@ -488,10 +502,10 @@ export function compareProductionOrders(first: ProductionExecutionOrderRecord, s
   if (firstStage === 'completed' || secondStage === 'completed') return firstStage === 'completed' ? 1 : -1;
 
   const firstRemaining = getProductionQuantitySummary({
-    uncompletedQty: first.uncompletedQty, completedQty: first.completedQty, stage: firstStage,
+    uncompletedQty: first.uncompletedQty, productionTargetQty: first.productionTargetQty, completedQty: first.completedQty, stage: firstStage,
   }).remainingQty;
   const secondRemaining = getProductionQuantitySummary({
-    uncompletedQty: second.uncompletedQty, completedQty: second.completedQty, stage: secondStage,
+    uncompletedQty: second.uncompletedQty, productionTargetQty: second.productionTargetQty, completedQty: second.completedQty, stage: secondStage,
   }).remainingQty;
   return booleanRank(first.priority === 'urgent') - booleanRank(second.priority === 'urgent')
     || booleanRank(isOverdue(first, now)) - booleanRank(isOverdue(second, now))
@@ -553,6 +567,11 @@ export async function summarizeProduction(week: ProductionWeek) {
   const now = new Date();
   const orders = await loadProductionOrders(week);
   const stageCounts: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
+  const stageQuantityTotals: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
+  let targetQuantity = 0;
+  let completedQuantity = 0;
+  let quantityKnownOrders = 0;
+  let quantityMissingOrders = 0;
   let dueToday = 0;
   let overdue = 0;
   let notIssuedDrawing = 0;
@@ -566,12 +585,29 @@ export async function summarizeProduction(week: ProductionWeek) {
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
     const flowResolution = resolveEffectiveFrontendTransferredQty(order);
     const segments = flowResolution.ok ? flowResolution.state.segments : [{ stage, quantity: 0 }];
-    for (const segment of segments) stageCounts[segment.stage] += 1;
+    for (const segment of segments) {
+      stageCounts[segment.stage] += 1;
+      stageQuantityTotals[segment.stage] += segment.quantity;
+    }
+    const quantity = getProductionQuantitySummary({
+      uncompletedQty: order.uncompletedQty,
+      productionTargetQty: order.productionTargetQty,
+      completedQty: order.completedQty,
+      stage,
+    });
+    if (quantity.targetQty !== null && quantity.targetQty > 0 && quantity.completedQty !== null) {
+      targetQuantity += quantity.targetQty;
+      completedQuantity += quantity.completedQty;
+      quantityKnownOrders += 1;
+    } else {
+      quantityMissingOrders += 1;
+    }
     if (isDueToday(order, now)) dueToday += 1;
     if (isOverdue(order, now)) overdue += 1;
     if (!executionCompleteness(order).complete) incompleteDocuments += 1;
     const alerts = getProductionAlerts({
       uncompletedQty: order.uncompletedQty,
+      productionTargetQty: order.productionTargetQty,
       completedQty: order.completedQty,
       stage,
       specification: order.specification,
@@ -602,6 +638,14 @@ export async function summarizeProduction(week: ProductionWeek) {
     urgent,
     completed,
     stageCounts,
+    stageQuantityTotals,
+    quantityTotals: {
+      targetQty: targetQuantity,
+      completedQty: completedQuantity,
+      percentage: targetQuantity > 0 ? Math.round((completedQuantity / targetQuantity) * 1000) / 10 : null,
+      knownOrders: quantityKnownOrders,
+      missingOrders: quantityMissingOrders,
+    },
   };
 }
 

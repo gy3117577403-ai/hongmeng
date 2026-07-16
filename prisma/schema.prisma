@@ -44,6 +44,7 @@ model WorkOrder {
   specification           String?
   processName             String?                @map("process_name")
   uncompletedQty          String?                @map("uncompleted_qty")
+  productionTargetQty     Int?                   @map("production_target_qty")
   unitWorkHours           String?                @map("unit_work_hours")
   totalWorkHours          String?                @map("total_work_hours")
   drawingStatus           String?                @map("drawing_status")

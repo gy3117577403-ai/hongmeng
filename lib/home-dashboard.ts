@@ -92,6 +92,7 @@ function alertsFor(order: ProductionExecutionOrderRecord, now: Date): Production
   const stage = stageOf(order);
   return getProductionAlerts({
     uncompletedQty: order.uncompletedQty,
+    productionTargetQty: order.productionTargetQty,
     completedQty: order.completedQty,
     stage,
     specification: order.specification,

@@ -34,6 +34,22 @@ test('missing target is unknown', () => {
   assert.equal(getProductionQuantitySummary({ completedQty: '10', stage: 'frontend' }).status, 'unknown');
 });
 
+test('manual production target overrides the imported plan quantity without changing it', () => {
+  const result = getProductionQuantitySummary({
+    uncompletedQty: '500', productionTargetQty: 600, completedQty: '300', stage: 'frontend',
+  });
+  assert.equal(result.targetQty, 600);
+  assert.equal(result.remainingQty, 300);
+  assert.equal(result.percentage, 50);
+
+  const flow = resolveEffectiveFrontendTransferredQty({
+    uncompletedQty: '500', productionTargetQty: 600, completedQty: '300',
+    frontendTransferredQty: 400, executionVersion: 2, stage: 'frontend',
+  });
+  assert.equal(flow.ok, true);
+  if (flow.ok) assert.equal(flow.state.targetQty, 600);
+});
+
 test('missing completed quantity defaults to zero', () => {
   const result = getProductionQuantitySummary({ uncompletedQty: '3000', completedQty: '', stage: 'frontend' });
   assert.equal(result.completedQty, 0);

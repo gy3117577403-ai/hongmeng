@@ -299,6 +299,7 @@ export function alertsForProductionOrder(order: ProductionExecutionOrderRecord, 
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   return getProductionAlerts({
     uncompletedQty: order.uncompletedQty,
+    productionTargetQty: order.productionTargetQty,
     completedQty: order.completedQty,
     stage,
     specification: order.specification,

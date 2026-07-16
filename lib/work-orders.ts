@@ -293,6 +293,7 @@ export function serializeWorkOrder(order: WorkOrder & { resourceFiles?: { catego
     specification: order.specification,
     processName: order.processName,
     uncompletedQty: order.uncompletedQty,
+    productionTargetQty: order.productionTargetQty,
     unitWorkHours: order.unitWorkHours,
     totalWorkHours: order.totalWorkHours,
     drawingStatus: order.drawingStatus,

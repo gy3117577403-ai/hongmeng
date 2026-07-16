@@ -18,6 +18,7 @@ export type WorkOrderDTO = {
   specification?: string | null;
   processName?: string | null;
   uncompletedQty?: string | null;
+  productionTargetQty?: number | null;
   unitWorkHours?: string | null;
   totalWorkHours?: string | null;
   drawingStatus?: string | null;

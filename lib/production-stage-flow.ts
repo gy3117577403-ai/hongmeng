@@ -1,3 +1,4 @@
+import { effectiveProductionTarget } from '@/lib/production-quantity';
 import { normalizeWorkOrderStage, type WorkOrderStage } from '@/lib/work-orders';
 
 export type ProductionStageSegment = {
@@ -7,6 +8,7 @@ export type ProductionStageSegment = {
 
 export type ProductionStageFlowInput = {
   uncompletedQty?: unknown;
+  productionTargetQty?: unknown;
   completedQty?: unknown;
   frontendTransferredQty?: number | null;
   executionVersion?: number | null;
@@ -120,7 +122,7 @@ function failure(error: ProductionStageFlowError): ProductionStageFlowResolution
 }
 
 export function resolveEffectiveFrontendTransferredQty(input: ProductionStageFlowInput): ProductionStageFlowResolution {
-  const target = parseProductionInteger(input.uncompletedQty);
+  const target = parseProductionInteger(effectiveProductionTarget(input));
   if (!target.ok) {
     return failure({ code: 'INVALID_TARGET_QUANTITY', field: 'uncompletedQty', message: '目标数量必须是合法的非负整数' });
   }

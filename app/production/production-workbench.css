@@ -1728,6 +1728,312 @@
   }
 }
 
+/* Production quantity correction: keep plan imports immutable while allowing audited shop-floor fixes. */
+.hm-production-workbench .production-card-title-actions {
+  gap: 3px;
+}
+
+.hm-production-workbench .production-card-quantity-edit,
+.hm-production-workbench .production-card-copy,
+.hm-production-workbench .production-card-info {
+  width: 36px;
+  height: 38px;
+  min-height: 38px;
+  flex-basis: 36px;
+}
+
+.hm-production-workbench .production-card-quantity-edit {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #efc9ae;
+  border-radius: var(--hm-radius-sm);
+  background: #fff8f2;
+  color: var(--hm-color-accent);
+}
+
+.hm-production-workbench .production-card-quantity-edit:hover {
+  border-color: #d98b56;
+  background: var(--hm-color-accent-soft);
+  color: var(--hm-color-accent-hover);
+}
+
+.hm-production-workbench .production-card-quantity-status,
+.hm-production-workbench .production-completed-progress {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  margin-top: 5px;
+}
+
+.hm-production-workbench .production-card-quantity-status > span,
+.hm-production-workbench .production-quantity-source {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 6px;
+  border: 1px solid #d8dde3;
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-soft);
+  color: var(--hm-color-text-muted);
+  font-size: 9px;
+  font-weight: 720;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-quantity-source {
+  width: max-content;
+  max-width: 100%;
+  margin-top: 3px;
+}
+
+.hm-production-workbench .production-card-quantity-status > .production-progress-track,
+.hm-production-workbench .production-completed-progress > .production-progress-track {
+  min-width: 0;
+}
+
+.hm-production-workbench .production-card-quantity-status.missing > span,
+.hm-production-workbench .production-quantity-source.missing {
+  border-color: #efc39f;
+  background: #fff7ef;
+  color: #a44c13;
+}
+
+.hm-production-workbench .production-card-quantity-status.missing .production-progress-track i {
+  border: 1px dashed #e3a474;
+  background: #fffaf6;
+}
+
+.hm-production-workbench .production-quantity-source.manual_override {
+  border-color: #efc39f;
+  background: #fff7ef;
+  color: #a44c13;
+}
+
+.hm-production-workbench .production-card.completed .production-progress-track i b,
+.hm-production-workbench .production-completed-progress .production-progress-track i b {
+  background: var(--hm-color-success);
+}
+
+.hm-production-workbench .production-quantity-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(24, 32, 40, .34);
+}
+
+.hm-production-workbench .production-quantity-drawer {
+  width: min(500px, calc(100vw - 24px));
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-left: 1px solid var(--hm-color-border);
+  border-radius: 16px 0 0 16px;
+  background: var(--hm-color-surface);
+  box-shadow: var(--hm-shadow-lg);
+}
+
+.hm-production-workbench .production-quantity-drawer .dialog-title {
+  flex: 0 0 auto;
+  margin: -2px 0 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hm-color-border);
+}
+
+.hm-production-workbench .production-quantity-drawer .dialog-title > button {
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-soft);
+  color: var(--hm-color-text-muted);
+}
+
+.hm-production-workbench .production-quantity-origin {
+  display: grid;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid #f0d5c2;
+  border-radius: var(--hm-radius-md);
+  background: #fff9f5;
+}
+
+.hm-production-workbench .production-quantity-origin span,
+.hm-production-workbench .production-quantity-origin small,
+.hm-production-workbench .production-quantity-form-grid label > span,
+.hm-production-workbench .production-quantity-reason > span {
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+}
+
+.hm-production-workbench .production-quantity-origin strong {
+  overflow: hidden;
+  color: var(--hm-color-text);
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-quantity-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hm-production-workbench .production-quantity-form-grid label,
+.hm-production-workbench .production-quantity-reason {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.hm-production-workbench .production-quantity-form-grid input,
+.hm-production-workbench .production-quantity-reason textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 9px 10px;
+  border: 1px solid var(--hm-color-border-strong);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface);
+  color: var(--hm-color-text);
+  font: inherit;
+}
+
+.hm-production-workbench .production-quantity-reason textarea {
+  min-height: 78px;
+  resize: vertical;
+}
+
+.hm-production-workbench .production-quantity-live {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  padding: 10px;
+  border: 1px solid #cfe3d4;
+  border-radius: var(--hm-radius-md);
+  background: #f5fbf7;
+}
+
+.hm-production-workbench .production-quantity-live > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+  padding: 6px;
+  border-radius: var(--hm-radius-sm);
+  background: rgba(255, 255, 255, .76);
+}
+
+.hm-production-workbench .production-quantity-live span {
+  color: var(--hm-color-text-muted);
+  font-size: 9px;
+}
+
+.hm-production-workbench .production-quantity-live strong {
+  overflow: hidden;
+  color: var(--hm-color-text);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-quantity-live.invalid {
+  display: block;
+  border-color: #ecc8b1;
+  background: #fff8f3;
+}
+
+.hm-production-workbench .production-quantity-live.invalid p,
+.hm-production-workbench .production-quantity-rule {
+  margin: 0;
+  color: #8c4a20;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.hm-production-workbench .production-quantity-reopen {
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid #e6b4ad;
+  border-radius: var(--hm-radius-md);
+  background: var(--hm-color-danger-soft);
+  cursor: pointer;
+}
+
+.hm-production-workbench .production-quantity-reopen input {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  accent-color: var(--hm-color-danger);
+}
+
+.hm-production-workbench .production-quantity-reopen span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.hm-production-workbench .production-quantity-reopen strong {
+  color: var(--hm-color-danger);
+  font-size: 11px;
+}
+
+.hm-production-workbench .production-quantity-reopen small {
+  color: #7d4c47;
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.hm-production-workbench .production-quantity-drawer .dialog-actions {
+  position: sticky;
+  bottom: -16px;
+  z-index: 2;
+  margin: auto -16px -16px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--hm-color-border);
+  background: var(--hm-color-surface);
+}
+
+@media (max-width: 1160px) {
+  .hm-production-workbench .production-card-quantity-edit,
+  .hm-production-workbench .production-card-copy,
+  .hm-production-workbench .production-card-info {
+    width: 34px;
+    height: 36px;
+    min-height: 36px;
+    flex-basis: 34px;
+  }
+}
+
+@media (max-width: 640px) {
+  .hm-production-workbench .production-quantity-drawer {
+    width: 100%;
+    border-radius: 0;
+  }
+
+  .hm-production-workbench .production-quantity-form-grid,
+  .hm-production-workbench .production-quantity-live {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (min-width: 1280px) and (max-height: 820px) {
   .hm-production-workbench .production-summary {
     flex-basis: 50px;
