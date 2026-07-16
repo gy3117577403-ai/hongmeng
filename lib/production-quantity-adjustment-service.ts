@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { prepareProductionQuantityAdjustment } from '@/lib/production-quantity-adjustment';
 import { parsedImportedProductionTarget } from '@/lib/production-quantity';
 import { parseExecutionVersion, resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
-import { legacyStatusForStage } from '@/lib/work-orders';
+import { legacyStatusForStage, normalizeWorkOrderStage } from '@/lib/work-orders';
 
 export type ProductionQuantityAdjustmentCommand = {
   workOrderId: string;
@@ -78,6 +78,10 @@ export async function adjustProductionQuantities(input: ProductionQuantityAdjust
       if (!old) throw new ProductionQuantityAdjustmentServiceError('工单不存在', 404, 'WORK_ORDER_NOT_FOUND');
       validateActiveWeeklyOrder(old);
       if (old.executionVersion !== expectedVersion.value) throw conflict();
+      const processRoute = await tx.workOrderProcessRoute.findUnique({
+        where: { workOrderId: old.id },
+        select: { status: true },
+      });
 
       const prepared = prepareProductionQuantityAdjustment({
         targetQty: input.targetQty,
@@ -106,12 +110,20 @@ export async function adjustProductionQuantities(input: ProductionQuantityAdjust
           'REOPEN_CONFIRMATION_REQUIRED',
         );
       }
+      if (processRoute?.status === 'completed' && prepared.value.reopensCompletedOrder) {
+        throw new ProductionQuantityAdjustmentServiceError(
+          '完整工艺路线已经完成，不能仅通过数量校正重新打开，请先处理工艺路线状态',
+          409,
+          'PROCESS_ROUTE_REOPEN_REQUIRED',
+        );
+      }
 
       const reason = reasonInput || '补充缺失生产数量';
       const importedTargetQty = parsedImportedProductionTarget(old.uncompletedQty);
       const targetOverride = importedTargetQty === prepared.value.targetQty ? null : prepared.value.targetQty;
       const now = new Date();
-      const nextStage = prepared.value.nextStage;
+      const routeStage = processRoute ? normalizeWorkOrderStage(old.stage || old.status) : null;
+      const nextStage = routeStage || prepared.value.nextStage;
       const update = await tx.workOrder.updateMany({
         where: { id: old.id, deletedAt: null, executionVersion: expectedVersion.value },
         data: {

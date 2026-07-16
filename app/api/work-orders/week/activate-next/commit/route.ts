@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { activeWeeklyWhere, draftWeeklyWhere, parseWeek, summarizeWeeklyActivateNext } from '@/lib/weekly-work-orders';
 
 export const runtime = 'nodejs';
@@ -60,7 +61,20 @@ export async function POST(req: NextRequest) {
         data: activatedOrders.map(order => ({ workOrderId: order.id, status: 'pending' })),
         skipDuplicates: true,
       });
-      return { archived: archived.count, activated: activated.count, materialTasksCreated: materialTasks.count };
+      let processRoutesCreated = 0;
+      for (const order of activatedOrders) {
+        const route = await createWorkOrderProcessRoute(tx, {
+          workOrderId: order.id,
+          actorId: user.id,
+        });
+        if (route.created) processRoutesCreated += 1;
+      }
+      return {
+        archived: archived.count,
+        activated: activated.count,
+        materialTasksCreated: materialTasks.count,
+        processRoutesCreated,
+      };
     });
 
     await logOp({
@@ -73,6 +87,7 @@ export async function POST(req: NextRequest) {
         archivedWorkOrders: result.archived,
         activatedWorkOrders: result.activated,
         materialTasksCreated: result.materialTasksCreated,
+        processRoutesCreated: result.processRoutesCreated,
         missingWorkOrders: before.missingWorkOrders,
         anomalyCount: before.anomalyCount,
         warningCount: before.warningCount,
@@ -90,12 +105,16 @@ export async function POST(req: NextRequest) {
         archivedCount: result.archived,
         activatedCount: result.activated,
         materialTasksCreated: result.materialTasksCreated,
+        processRoutesCreated: result.processRoutesCreated,
       },
     });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     if (e instanceof Error && e.message === 'NEXT_WEEK_ALREADY_ACTIVATED') {
       return NextResponse.json({ ok: false, error: '下周计划已被启用，请刷新页面确认当前周' }, { status: 409 });
+    }
+    if (e instanceof Error && (e.message === 'PROCESS_TEMPLATE_NOT_FOUND' || e.message === 'PROCESS_TEMPLATE_EMPTY')) {
+      return NextResponse.json({ ok: false, error: '默认工艺模板不可用，请先到工艺管理检查模板' }, { status: 409 });
     }
     console.error(e);
     return NextResponse.json({ ok: false, error: '启用下周失败' }, { status: 500 });

@@ -428,6 +428,108 @@ export type WarehouseWeekOptionDTO = {
   taskCount: number;
 };
 
+export type ProcessStageGroup = 'frontend' | 'backend' | 'finish';
+export type ProcessRouteStatus = 'draft' | 'confirmed' | 'in_progress' | 'completed';
+export type ProcessStepStatus = 'pending' | 'current' | 'completed' | 'skipped';
+
+export type ProcessDefinitionDTO = {
+  id: string;
+  code: string;
+  name: string;
+  stageGroup: ProcessStageGroup;
+  isActive: boolean;
+  sortOrder: number;
+};
+
+export type ProcessTemplateStepDTO = {
+  id?: string;
+  processDefinitionId?: string | null;
+  processCode: string;
+  processName: string;
+  stageGroup: ProcessStageGroup;
+  position: number;
+};
+
+export type ProcessTemplateDTO = {
+  id: string;
+  templateKey: string;
+  name: string;
+  version: number;
+  isDefault: boolean;
+  isActive: boolean;
+  createdAt: string;
+  createdBy?: IssueUserDTO | null;
+  steps: ProcessTemplateStepDTO[];
+};
+
+export type WorkOrderProcessStepDTO = ProcessTemplateStepDTO & {
+  id: string;
+  status: ProcessStepStatus;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  completedBy?: IssueUserDTO | null;
+  remark?: string | null;
+};
+
+export type ProcessRouteActivityDTO = {
+  id: string;
+  stepId?: string | null;
+  action: string;
+  content?: string | null;
+  actor?: IssueUserDTO | null;
+  createdAt: string;
+};
+
+export type WorkOrderProcessRouteDTO = {
+  id: string;
+  workOrderId: string;
+  templateId?: string | null;
+  templateName: string;
+  templateVersion: number;
+  status: ProcessRouteStatus;
+  statusText: string;
+  version: number;
+  confirmedAt?: string | null;
+  confirmedBy?: IssueUserDTO | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  stepCount: number;
+  completedStepCount: number;
+  progress: number;
+  currentStep?: WorkOrderProcessStepDTO | null;
+  nextStep?: WorkOrderProcessStepDTO | null;
+  steps: WorkOrderProcessStepDTO[];
+  activities?: ProcessRouteActivityDTO[];
+};
+
+export type ProcessRouteWorkOrderDTO = {
+  id: string;
+  code: string;
+  customerName?: string | null;
+  specification?: string | null;
+  productName: string;
+  stage: string;
+  drawingStatus?: string | null;
+  materialStatus?: string | null;
+  plannedAt?: string | null;
+  deliveryDay?: string | null;
+  weekStartDate?: string | null;
+  weekEndDate?: string | null;
+  planActive: boolean;
+  route?: WorkOrderProcessRouteDTO | null;
+};
+
+export type ProcessRouteSummaryDTO = {
+  total: number;
+  missing: number;
+  draft: number;
+  confirmed: number;
+  inProgress: number;
+  completed: number;
+};
+
 export type WorkflowProcessStatus = 'waiting' | 'processing' | 'verifying' | 'closed';
 export type WorkflowEntityType = 'issue' | 'change' | 'production';
 

@@ -49,6 +49,12 @@ export async function POST(req: NextRequest) {
     }
 
     const orders = await prisma.workOrder.findMany({ where: { id: { in: ids }, deletedAt: null } });
+    const processRoutedIds = operation === 'set_stage'
+      ? new Set((await prisma.workOrderProcessRoute.findMany({
+          where: { workOrderId: { in: ids } },
+          select: { workOrderId: true },
+        })).map(route => route.workOrderId))
+      : new Set<string>();
     const byId = new Map(orders.map(order => [order.id, order]));
     const prepared: Array<{ old: WorkOrder; update: NonNullable<ReturnType<typeof prepareExecutionUpdate>['update']> }> = [];
     const failed: Array<{ id: string; ok: false; error: string }> = [];
@@ -65,6 +71,10 @@ export async function POST(req: NextRequest) {
       }
       if (operation === 'set_stage' && order.frontendTransferredQty !== null) {
         failed.push({ id, ok: false, error: '该工单已启用分批数量流转，请使用“下一步”更新生产数量' });
+        continue;
+      }
+      if (operation === 'set_stage' && processRoutedIds.has(order.id)) {
+        failed.push({ id, ok: false, error: '该工单已启用完整工艺路线，请按当前工序推进' });
         continue;
       }
       const result = prepareExecutionUpdate(order, input);

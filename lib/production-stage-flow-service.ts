@@ -1,6 +1,7 @@
 import { Prisma, type WorkOrder } from '@prisma/client';
 import { sanitizeSnapshotValue, workOrderSnapshot } from '@/lib/change-snapshots';
 import { prisma } from '@/lib/prisma';
+import { startConfirmedProcessRouteAfterDrawing } from '@/lib/process-route-service';
 import {
   compatibleStageForQuantities,
   parseExecutionVersion,
@@ -179,6 +180,19 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
       const old = await tx.workOrder.findFirst({ where: { id: input.workOrderId, deletedAt: null } });
       if (!old) throw new ProductionStageFlowServiceError('工单不存在', 404, 'WORK_ORDER_NOT_FOUND');
       validateActiveWeeklyOrder(old);
+      const processRoute = await tx.workOrderProcessRoute.findUnique({
+        where: { workOrderId: old.id },
+        select: { id: true, status: true },
+      });
+      if (processRoute && input.action !== 'confirm_drawing_issued') {
+        throw new ProductionStageFlowServiceError(
+          processRoute.status === 'draft'
+            ? '请先到工艺管理确认工艺路线'
+            : '该工单已启用完整工艺路线，请按当前工序推进',
+          409,
+          processRoute.status === 'draft' ? 'PROCESS_ROUTE_NOT_CONFIRMED' : 'USE_PROCESS_ROUTE',
+        );
+      }
 
       const state = resolveOrderFlow(old);
       failureContext.before = quantitySnapshot({
@@ -266,6 +280,14 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
       });
       if (update.count !== 1) throw conflict();
 
+      if (input.action === 'confirm_drawing_issued') {
+        await startConfirmedProcessRouteAfterDrawing(tx, {
+          workOrderId: old.id,
+          userId: input.userId,
+          actor: input.actor,
+          now,
+        });
+      }
       const changed = await tx.workOrder.findUniqueOrThrow({ where: { id: old.id } });
       const beforeQuantity = quantitySnapshot({
         targetQty: state.targetQty,

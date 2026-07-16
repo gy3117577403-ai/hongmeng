@@ -3,6 +3,7 @@ import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
 import { getProductionAlerts, isDrawingConfirmationAlert } from '@/lib/production-alerts';
 import { getProductionQuantitySummary, parsedImportedProductionTarget } from '@/lib/production-quantity';
+import { processRouteSummaryInclude, serializeProcessRoute } from '@/lib/process-routing';
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
@@ -34,6 +35,9 @@ export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclu
       completedAt: true,
       updatedAt: true,
     },
+  },
+  processRoute: {
+    include: processRouteSummaryInclude,
   },
 });
 
@@ -349,6 +353,7 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
       completedAt: order.materialTask.completedAt?.toISOString() || null,
       updatedAt: order.materialTask.updatedAt.toISOString(),
     } : null,
+    processRoute: order.processRoute ? serializeProcessRoute(order.processRoute) : null,
     drawingLibraryItemId: order.drawingLibraryItemId,
     documentCategoryCodes: [...new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || [])],
     documentCompleteness: completeness.text,

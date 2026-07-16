@@ -44,6 +44,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (old.planType !== 'weekly_plan' || !old.planActive || old.planClearedAt) {
       return NextResponse.json({ ok: false, error: '历史周和下周草稿为只读，请在当前启用周更新进度' }, { status: 409 });
     }
+    const processRoute = await prisma.workOrderProcessRoute.findUnique({
+      where: { workOrderId: old.id },
+      select: { status: true },
+    });
+    if (processRoute && (body.stage !== undefined || body.completedQty !== undefined)) {
+      return NextResponse.json({
+        ok: false,
+        error: processRoute.status === 'draft'
+          ? '请先到工艺管理确认工艺路线'
+          : '该工单已启用完整工艺路线，请使用当前工序按钮推进',
+      }, { status: 409 });
+    }
     if (old.frontendTransferredQty !== null && (body.stage !== undefined || body.completedQty !== undefined)) {
       return NextResponse.json({ ok: false, error: '该工单已启用分批数量流转，请使用“下一步”更新生产数量' }, { status: 409 });
     }

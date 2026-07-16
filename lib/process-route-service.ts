@@ -1,0 +1,462 @@
+import { Prisma } from '@prisma/client';
+import { sanitizeSnapshotValue, workOrderSnapshot } from '@/lib/change-snapshots';
+import { prisma } from '@/lib/prisma';
+import {
+  normalizeProcessStageGroup,
+  processRouteInclude,
+  processStageForGroup,
+  validateProcessSteps,
+  type ProcessStepInput,
+} from '@/lib/process-routing';
+import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
+import { legacyStatusForStage, normalizeWorkOrderStage, type WorkOrderStage } from '@/lib/work-orders';
+
+export class ProcessRouteServiceError extends Error {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(message: string, status = 400, code = 'PROCESS_ROUTE_INVALID') {
+    super(message);
+    this.name = 'ProcessRouteServiceError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+type ProcessRouteCommandBase = {
+  routeId: string;
+  expectedVersion: unknown;
+  userId: string;
+  actor: string;
+};
+
+export type ReplaceProcessRouteStepsCommand = ProcessRouteCommandBase & {
+  action: 'replace_steps';
+  steps: unknown;
+};
+
+export type ConfirmProcessRouteCommand = ProcessRouteCommandBase & {
+  action: 'confirm';
+};
+
+export type AdvanceProcessRouteCommand = ProcessRouteCommandBase & {
+  action: 'advance';
+  remark?: unknown;
+};
+
+export type ProcessRouteCommand =
+  | ReplaceProcessRouteStepsCommand
+  | ConfirmProcessRouteCommand
+  | AdvanceProcessRouteCommand;
+
+function cleanText(value: unknown, max: number): string {
+  return String(value ?? '').trim().slice(0, max);
+}
+
+function parseVersion(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new ProcessRouteServiceError('工艺路线版本不正确，请刷新后重试', 400, 'INVALID_PROCESS_ROUTE_VERSION');
+  }
+  return parsed;
+}
+
+function conflict(): ProcessRouteServiceError {
+  return new ProcessRouteServiceError(
+    '工艺路线已被其他账号更新，请刷新后重试',
+    409,
+    'PROCESS_ROUTE_VERSION_CONFLICT',
+  );
+}
+
+function ensureActiveWeeklyOrder(order: {
+  planType: string | null;
+  planActive: boolean;
+  planClearedAt: Date | null;
+}): void {
+  if (order.planType !== 'weekly_plan' || !order.planActive || order.planClearedAt) {
+    throw new ProcessRouteServiceError(
+      '历史周和下周草稿为只读，请在当前启用周维护工艺路线',
+      409,
+      'WORK_ORDER_READ_ONLY',
+    );
+  }
+}
+
+function targetQuantity(order: Parameters<typeof resolveEffectiveFrontendTransferredQty>[0]): number {
+  const resolution = resolveEffectiveFrontendTransferredQty(order);
+  if (!resolution.ok || resolution.state.targetQty <= 0) {
+    throw new ProcessRouteServiceError('请先补充有效的生产目标数量', 409, 'TARGET_QUANTITY_REQUIRED');
+  }
+  return resolution.state.targetQty;
+}
+
+function normalizeServiceError(error: unknown): ProcessRouteServiceError {
+  if (error instanceof ProcessRouteServiceError) return error;
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') return conflict();
+  return new ProcessRouteServiceError('工艺路线更新失败', 500, 'PROCESS_ROUTE_UPDATE_FAILED');
+}
+
+async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<string> {
+  const validation = validateProcessSteps(input.steps);
+  if (!validation.ok) throw new ProcessRouteServiceError(validation.error);
+
+  return prisma.$transaction(async tx => {
+    const route = await tx.workOrderProcessRoute.findUnique({
+      where: { id: input.routeId },
+      include: { workOrder: true },
+    });
+    if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
+    ensureActiveWeeklyOrder(route.workOrder);
+    if (route.status !== 'draft') {
+      throw new ProcessRouteServiceError('已确认或已开始的工艺路线不能重新编排', 409, 'PROCESS_ROUTE_LOCKED');
+    }
+    if (route.version !== parseVersion(input.expectedVersion)) throw conflict();
+
+    const definitionIds = validation.steps
+      .map(step => step.processDefinitionId)
+      .filter((id): id is string => Boolean(id));
+    const existingDefinitions = definitionIds.length
+      ? await tx.processDefinition.findMany({
+          where: { id: { in: definitionIds }, isActive: true },
+          select: { id: true },
+        })
+      : [];
+    const definitionSet = new Set(existingDefinitions.map(item => item.id));
+    const steps = validation.steps.map(step => ({
+      ...step,
+      processDefinitionId: step.processDefinitionId && definitionSet.has(step.processDefinitionId)
+        ? step.processDefinitionId
+        : null,
+    }));
+
+    const update = await tx.workOrderProcessRoute.updateMany({
+      where: { id: route.id, version: route.version, status: 'draft' },
+      data: { version: { increment: 1 } },
+    });
+    if (update.count !== 1) throw conflict();
+    await tx.workOrderProcessStep.deleteMany({ where: { routeId: route.id } });
+    await tx.workOrderProcessStep.createMany({
+      data: steps.map(step => ({
+        routeId: route.id,
+        processDefinitionId: step.processDefinitionId,
+        processCode: step.processCode,
+        processName: step.processName,
+        stageGroup: step.stageGroup,
+        position: step.position,
+        status: 'pending',
+      })),
+    });
+    await tx.processRouteActivity.create({
+      data: {
+        routeId: route.id,
+        action: 'update_process_route',
+        content: `调整工艺路线，共 ${steps.length} 个工序`,
+        actorId: input.userId,
+        detail: { stepCount: steps.length },
+      },
+    });
+    await tx.operationLog.create({
+      data: {
+        userId: input.userId,
+        action: 'update_process_route',
+        targetType: 'work_order_process_route',
+        targetId: route.id,
+        detail: { workOrderId: route.workOrderId, stepCount: steps.length },
+      },
+    });
+    return route.id;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> {
+  return prisma.$transaction(async tx => {
+    const route = await tx.workOrderProcessRoute.findUnique({
+      where: { id: input.routeId },
+      include: { workOrder: true, steps: { orderBy: { position: 'asc' } } },
+    });
+    if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
+    ensureActiveWeeklyOrder(route.workOrder);
+    if (route.status !== 'draft') {
+      throw new ProcessRouteServiceError('该工艺路线已经确认', 409, 'PROCESS_ROUTE_ALREADY_CONFIRMED');
+    }
+    if (!route.steps.length) throw new ProcessRouteServiceError('工艺路线至少需要一个工序');
+    if (route.version !== parseVersion(input.expectedVersion)) throw conflict();
+
+    const now = new Date();
+    const stage = normalizeWorkOrderStage(route.workOrder.stage || route.workOrder.status) || 'not_issued';
+    const first = route.steps[0];
+    const shouldStart = stage !== 'not_issued';
+    const firstGroup = normalizeProcessStageGroup(first.stageGroup) || 'frontend';
+    const nextStage = shouldStart ? processStageForGroup(firstGroup) : stage;
+    const update = await tx.workOrderProcessRoute.updateMany({
+      where: { id: route.id, version: route.version, status: 'draft' },
+      data: {
+        status: shouldStart ? 'in_progress' : 'confirmed',
+        confirmedAt: now,
+        confirmedById: input.userId,
+        startedAt: shouldStart ? now : null,
+        version: { increment: 1 },
+      },
+    });
+    if (update.count !== 1) throw conflict();
+    if (shouldStart) {
+      await tx.workOrderProcessStep.update({
+        where: { id: first.id },
+        data: { status: 'current', startedAt: now },
+      });
+      await tx.workOrder.update({
+        where: { id: route.workOrderId },
+        data: {
+          stage: nextStage,
+          status: legacyStatusForStage(nextStage),
+          startedAt: route.workOrder.startedAt || now,
+          latestProgressRemark: `当前工序：${first.processName}`,
+          lastProgressAt: now,
+        },
+      });
+    }
+    await tx.processRouteActivity.create({
+      data: {
+        routeId: route.id,
+        stepId: shouldStart ? first.id : null,
+        action: 'confirm_process_route',
+        content: shouldStart
+          ? `确认工艺路线，开始 ${first.processName}`
+          : '确认工艺路线，等待图纸下发后开始首道工序',
+        actorId: input.userId,
+      },
+    });
+    await tx.operationLog.create({
+      data: {
+        userId: input.userId,
+        action: 'confirm_process_route',
+        targetType: 'work_order_process_route',
+        targetId: route.id,
+        detail: { workOrderId: route.workOrderId, stepCount: route.steps.length, started: shouldStart },
+      },
+    });
+    return route.id;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> {
+  return prisma.$transaction(async tx => {
+    const route = await tx.workOrderProcessRoute.findUnique({
+      where: { id: input.routeId },
+      include: { workOrder: true, steps: { orderBy: { position: 'asc' } } },
+    });
+    if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
+    ensureActiveWeeklyOrder(route.workOrder);
+    if (route.status === 'draft') {
+      throw new ProcessRouteServiceError('请先由工艺确认路线后再上报生产进度', 409, 'PROCESS_ROUTE_NOT_CONFIRMED');
+    }
+    if (route.status === 'completed') {
+      throw new ProcessRouteServiceError('该工艺路线已经完成', 409, 'PROCESS_ROUTE_COMPLETED');
+    }
+    if (route.version !== parseVersion(input.expectedVersion)) throw conflict();
+    const stage = normalizeWorkOrderStage(route.workOrder.stage || route.workOrder.status) || 'not_issued';
+    if (stage === 'not_issued') {
+      throw new ProcessRouteServiceError('请先确认图纸已下发', 409, 'DRAWING_NOT_ISSUED');
+    }
+    const currentIndex = route.steps.findIndex(step => step.status === 'current');
+    if (currentIndex < 0) {
+      throw new ProcessRouteServiceError('当前工序状态异常，请到工艺管理检查路线', 409, 'PROCESS_CURRENT_STEP_MISSING');
+    }
+
+    const current = route.steps[currentIndex];
+    const next = route.steps.slice(currentIndex + 1).find(step => step.status === 'pending') || null;
+    const now = new Date();
+    const remark = cleanText(input.remark, 300);
+    const target = targetQuantity(route.workOrder);
+    const completedCount = route.steps.filter(step => step.status === 'completed' || step.status === 'skipped').length + 1;
+    const progress = Math.round((completedCount / route.steps.length) * 100);
+
+    const routeUpdate = await tx.workOrderProcessRoute.updateMany({
+      where: { id: route.id, version: route.version, status: { in: ['confirmed', 'in_progress'] } },
+      data: {
+        status: next ? 'in_progress' : 'completed',
+        completedAt: next ? null : now,
+        version: { increment: 1 },
+      },
+    });
+    if (routeUpdate.count !== 1) throw conflict();
+    await tx.workOrderProcessStep.update({
+      where: { id: current.id },
+      data: {
+        status: 'completed',
+        completedAt: now,
+        completedById: input.userId,
+        remark: remark || null,
+      },
+    });
+    if (next) {
+      await tx.workOrderProcessStep.update({
+        where: { id: next.id },
+        data: { status: 'current', startedAt: now },
+      });
+    }
+
+    const nextGroup = next ? normalizeProcessStageGroup(next.stageGroup) || 'frontend' : 'finish';
+    const nextStage: WorkOrderStage = next ? processStageForGroup(nextGroup) : 'completed';
+    const transferToBackend = next && nextGroup !== 'frontend';
+    const workOrderData: Prisma.WorkOrderUpdateInput = {
+      stage: nextStage,
+      status: legacyStatusForStage(nextStage),
+      progress,
+      executionVersion: { increment: 1 },
+      startedAt: route.workOrder.startedAt || now,
+      completedAt: next ? null : now,
+      lastProgressAt: now,
+      latestProgressRemark: next
+        ? `${current.processName}完成，进入${next.processName}${remark ? `：${remark}` : ''}`
+        : `${current.processName}完成，工艺路线已结束${remark ? `：${remark}` : ''}`,
+    };
+    if (route.workOrder.frontendTransferredQty === null) {
+      workOrderData.frontendTransferredQty = transferToBackend || !next ? target : 0;
+    } else if (transferToBackend || !next) {
+      workOrderData.frontendTransferredQty = target;
+    }
+    if (!next) workOrderData.completedQty = String(target);
+    const changed = await tx.workOrder.update({
+      where: { id: route.workOrderId },
+      data: workOrderData,
+    });
+
+    const content = next
+      ? `完成 ${current.processName}，进入 ${next.processName}`
+      : `完成 ${current.processName}，工单生产完成`;
+    await tx.processRouteActivity.create({
+      data: {
+        routeId: route.id,
+        stepId: current.id,
+        action: 'advance_process_route',
+        content: remark ? `${content}：${remark}` : content,
+        actorId: input.userId,
+        detail: { fromStep: current.processCode, toStep: next?.processCode || null, progress },
+      },
+    });
+    await tx.workOrderProgressLog.create({
+      data: {
+        workOrderId: route.workOrderId,
+        previousStage: stage,
+        stage: nextStage,
+        completedQty: changed.completedQty,
+        productionOwner: changed.productionOwner,
+        workstation: changed.workstation,
+        remark: remark ? `${content}：${remark}` : content,
+        createdBy: input.actor,
+      },
+    });
+    await tx.operationLog.create({
+      data: {
+        userId: input.userId,
+        action: 'advance_process_route',
+        targetType: 'work_order_process_route',
+        targetId: route.id,
+        detail: {
+          workOrderId: route.workOrderId,
+          fromStep: current.processCode,
+          toStep: next?.processCode || null,
+          progress,
+        },
+      },
+    });
+    await tx.dataChangeSnapshot.create({
+      data: {
+        entityType: 'work_order',
+        entityId: route.workOrderId,
+        action: 'advance_process_route',
+        beforeJson: sanitizeSnapshotValue(workOrderSnapshot(route.workOrder)),
+        afterJson: sanitizeSnapshotValue(workOrderSnapshot(changed)),
+        changedBy: input.actor,
+      },
+    });
+    return route.id;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+export async function updateProcessRoute(command: ProcessRouteCommand): Promise<string> {
+  try {
+    if (command.action === 'replace_steps') return await replaceSteps(command);
+    if (command.action === 'confirm') return await confirmRoute(command);
+    return await advanceRoute(command);
+  } catch (error) {
+    throw normalizeServiceError(error);
+  }
+}
+
+export async function startConfirmedProcessRouteAfterDrawing(
+  tx: Prisma.TransactionClient,
+  input: {
+    workOrderId: string;
+    userId: string;
+    actor: string;
+    now: Date;
+  },
+): Promise<void> {
+  const route = await tx.workOrderProcessRoute.findUnique({
+    where: { workOrderId: input.workOrderId },
+    include: { steps: { orderBy: { position: 'asc' } } },
+  });
+  if (!route || route.status !== 'confirmed' || route.startedAt || !route.steps.length) return;
+  const first = route.steps[0];
+  const stageGroup = normalizeProcessStageGroup(first.stageGroup) || 'frontend';
+  const nextStage = processStageForGroup(stageGroup);
+  await tx.workOrderProcessRoute.update({
+    where: { id: route.id },
+    data: {
+      status: 'in_progress',
+      startedAt: input.now,
+      version: { increment: 1 },
+    },
+  });
+  await tx.workOrderProcessStep.update({
+    where: { id: first.id },
+    data: { status: 'current', startedAt: input.now },
+  });
+  await tx.workOrder.update({
+    where: { id: input.workOrderId },
+    data: {
+      stage: nextStage,
+      status: legacyStatusForStage(nextStage),
+      latestProgressRemark: `当前工序：${first.processName}`,
+    },
+  });
+  await tx.processRouteActivity.create({
+    data: {
+      routeId: route.id,
+      stepId: first.id,
+      action: 'start_process_route',
+      content: `图纸已下发，开始 ${first.processName}`,
+      actorId: input.userId,
+    },
+  });
+  await tx.operationLog.create({
+    data: {
+      userId: input.userId,
+      action: 'start_process_route',
+      targetType: 'work_order_process_route',
+      targetId: route.id,
+      detail: {
+        workOrderId: input.workOrderId,
+        processCode: first.processCode,
+      },
+    },
+  });
+}
+
+export function parseProcessRouteAction(value: unknown): ProcessRouteCommand['action'] | null {
+  return value === 'replace_steps' || value === 'confirm' || value === 'advance' ? value : null;
+}
+
+export function asProcessStepInput(value: unknown): ProcessStepInput[] {
+  return Array.isArray(value) ? value as ProcessStepInput[] : [];
+}
+
+export async function loadProcessRoute(routeId: string) {
+  return prisma.workOrderProcessRoute.findUnique({
+    where: { id: routeId },
+    include: processRouteInclude,
+  });
+}

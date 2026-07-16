@@ -8,27 +8,31 @@ datasource db {
 }
 
 model User {
-  id                     String                      @id @default(uuid())
-  username               String                      @unique
-  passwordHash           String                      @map("password_hash")
-  displayName            String                      @map("display_name")
-  isActive               Boolean                     @default(true) @map("is_active")
-  createdAt              DateTime                    @default(now()) @map("created_at")
-  updatedAt              DateTime                    @updatedAt @map("updated_at")
-  uploadedFiles          ResourceFile[]              @relation("UploadedFiles")
-  drawingLibraryFiles    DrawingLibraryFile[]        @relation("UploadedDrawingLibraryFiles")
-  operationLogs          OperationLog[]
-  reportedIssues         Issue[]                     @relation("IssueReporter")
-  assignedIssues         Issue[]                     @relation("IssueAssignee")
-  issueActivities        IssueActivity[]             @relation("IssueActivityActor")
-  issueAttachments       IssueAttachment[]           @relation("IssueAttachmentUploader")
-  requestedChanges       ChangeRequest[]             @relation("ChangeRequester")
-  ownedChanges           ChangeRequest[]             @relation("ChangeOwner")
-  changeActivities       ChangeActivity[]            @relation("ChangeActivityActor")
-  changeAttachments      ChangeAttachment[]          @relation("ChangeAttachmentUploader")
-  completedMaterialTasks WarehouseMaterialTask[]     @relation("WarehouseTaskCompletedBy")
-  updatedMaterialTasks   WarehouseMaterialTask[]     @relation("WarehouseTaskUpdatedBy")
-  warehouseActivities    WarehouseMaterialActivity[] @relation("WarehouseActivityActor")
+  id                      String                      @id @default(uuid())
+  username                String                      @unique
+  passwordHash            String                      @map("password_hash")
+  displayName             String                      @map("display_name")
+  isActive                Boolean                     @default(true) @map("is_active")
+  createdAt               DateTime                    @default(now()) @map("created_at")
+  updatedAt               DateTime                    @updatedAt @map("updated_at")
+  uploadedFiles           ResourceFile[]              @relation("UploadedFiles")
+  drawingLibraryFiles     DrawingLibraryFile[]        @relation("UploadedDrawingLibraryFiles")
+  operationLogs           OperationLog[]
+  reportedIssues          Issue[]                     @relation("IssueReporter")
+  assignedIssues          Issue[]                     @relation("IssueAssignee")
+  issueActivities         IssueActivity[]             @relation("IssueActivityActor")
+  issueAttachments        IssueAttachment[]           @relation("IssueAttachmentUploader")
+  requestedChanges        ChangeRequest[]             @relation("ChangeRequester")
+  ownedChanges            ChangeRequest[]             @relation("ChangeOwner")
+  changeActivities        ChangeActivity[]            @relation("ChangeActivityActor")
+  changeAttachments       ChangeAttachment[]          @relation("ChangeAttachmentUploader")
+  completedMaterialTasks  WarehouseMaterialTask[]     @relation("WarehouseTaskCompletedBy")
+  updatedMaterialTasks    WarehouseMaterialTask[]     @relation("WarehouseTaskUpdatedBy")
+  warehouseActivities     WarehouseMaterialActivity[] @relation("WarehouseActivityActor")
+  createdProcessTemplates ProcessTemplate[]           @relation("ProcessTemplateCreatedBy")
+  confirmedProcessRoutes  WorkOrderProcessRoute[]     @relation("ProcessRouteConfirmedBy")
+  completedProcessSteps   WorkOrderProcessStep[]      @relation("ProcessStepCompletedBy")
+  processRouteActivities  ProcessRouteActivity[]      @relation("ProcessRouteActivityActor")
 
   @@map("users")
 }
@@ -89,6 +93,7 @@ model WorkOrder {
   issues                  Issue[]
   changeRequests          ChangeRequest[]
   materialTask            WarehouseMaterialTask?
+  processRoute            WorkOrderProcessRoute?
 
   @@index([code])
   @@index([productName])
@@ -113,6 +118,132 @@ model WorkOrder {
   @@index([workstation])
   @@index([lastProgressAt])
   @@map("work_orders")
+}
+
+model ProcessDefinition {
+  id            String                 @id @default(uuid())
+  code          String                 @unique
+  name          String
+  stageGroup    String                 @map("stage_group")
+  isActive      Boolean                @default(true) @map("is_active")
+  sortOrder     Int                    @default(0) @map("sort_order")
+  createdAt     DateTime               @default(now()) @map("created_at")
+  updatedAt     DateTime               @updatedAt @map("updated_at")
+  templateSteps ProcessTemplateStep[]
+  routeSteps    WorkOrderProcessStep[]
+
+  @@index([isActive, sortOrder])
+  @@index([stageGroup])
+  @@map("process_definitions")
+}
+
+model ProcessTemplate {
+  id          String                  @id @default(uuid())
+  templateKey String                  @map("template_key")
+  name        String
+  version     Int                     @default(1)
+  isDefault   Boolean                 @default(false) @map("is_default")
+  isActive    Boolean                 @default(true) @map("is_active")
+  createdById String?                 @map("created_by_id")
+  createdAt   DateTime                @default(now()) @map("created_at")
+  createdBy   User?                   @relation("ProcessTemplateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  steps       ProcessTemplateStep[]
+  routes      WorkOrderProcessRoute[]
+
+  @@unique([templateKey, version])
+  @@index([isDefault, isActive])
+  @@index([createdAt])
+  @@map("process_templates")
+}
+
+model ProcessTemplateStep {
+  id                  String             @id @default(uuid())
+  templateId          String             @map("template_id")
+  processDefinitionId String?            @map("process_definition_id")
+  processCode         String             @map("process_code")
+  processName         String             @map("process_name")
+  stageGroup          String             @map("stage_group")
+  position            Int
+  createdAt           DateTime           @default(now()) @map("created_at")
+  template            ProcessTemplate    @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  processDefinition   ProcessDefinition? @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
+
+  @@unique([templateId, position])
+  @@index([processDefinitionId])
+  @@map("process_template_steps")
+}
+
+model WorkOrderProcessRoute {
+  id              String                 @id @default(uuid())
+  workOrderId     String                 @unique @map("work_order_id")
+  templateId      String?                @map("template_id")
+  templateName    String                 @map("template_name")
+  templateVersion Int                    @map("template_version")
+  status          String                 @default("draft")
+  version         Int                    @default(0)
+  confirmedAt     DateTime?              @map("confirmed_at")
+  confirmedById   String?                @map("confirmed_by_id")
+  startedAt       DateTime?              @map("started_at")
+  completedAt     DateTime?              @map("completed_at")
+  createdAt       DateTime               @default(now()) @map("created_at")
+  updatedAt       DateTime               @updatedAt @map("updated_at")
+  workOrder       WorkOrder              @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  template        ProcessTemplate?       @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  confirmedBy     User?                  @relation("ProcessRouteConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  steps           WorkOrderProcessStep[]
+  activities      ProcessRouteActivity[]
+
+  @@index([status])
+  @@index([templateId])
+  @@index([updatedAt])
+  @@map("work_order_process_routes")
+}
+
+model WorkOrderProcessStep {
+  id                  String                 @id @default(uuid())
+  routeId             String                 @map("route_id")
+  processDefinitionId String?                @map("process_definition_id")
+  processCode         String                 @map("process_code")
+  processName         String                 @map("process_name")
+  stageGroup          String                 @map("stage_group")
+  position            Int
+  status              String                 @default("pending")
+  startedAt           DateTime?              @map("started_at")
+  completedAt         DateTime?              @map("completed_at")
+  completedById       String?                @map("completed_by_id")
+  remark              String?
+  createdAt           DateTime               @default(now()) @map("created_at")
+  updatedAt           DateTime               @updatedAt @map("updated_at")
+  route               WorkOrderProcessRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  processDefinition   ProcessDefinition?     @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
+  completedBy         User?                  @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  activities          ProcessRouteActivity[]
+
+  @@unique([routeId, position])
+  @@index([routeId, status])
+  @@index([processDefinitionId])
+  @@index([completedById])
+  @@map("work_order_process_steps")
+}
+
+model ProcessRouteActivity {
+  id        String                @id @default(uuid())
+  routeId   String                @map("route_id")
+  stepId    String?               @map("step_id")
+  action    String
+  content   String?
+  detail    Json?
+  actorId   String?               @map("actor_id")
+  createdAt DateTime              @default(now()) @map("created_at")
+  route     WorkOrderProcessRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  step      WorkOrderProcessStep? @relation(fields: [stepId], references: [id], onDelete: SetNull)
+  actor     User?                 @relation("ProcessRouteActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([routeId, createdAt])
+  @@index([stepId])
+  @@index([actorId])
+  @@index([action])
+  @@map("process_route_activities")
 }
 
 model WarehouseMaterialTask {
@@ -402,17 +533,17 @@ model ChangeRequest {
   workOrderId          String?            @map("work_order_id")
   requesterId          String?            @map("requester_id")
   ownerId              String?            @map("owner_id")
-  dueAt                DateTime?           @map("due_at")
-  effectiveAt          DateTime?           @map("effective_at")
+  dueAt                DateTime?          @map("due_at")
+  effectiveAt          DateTime?          @map("effective_at")
   version              Int                @default(0)
-  closedAt             DateTime?           @map("closed_at")
-  createdAt            DateTime            @default(now()) @map("created_at")
-  updatedAt            DateTime            @updatedAt @map("updated_at")
-  deletedAt            DateTime?           @map("deleted_at")
-  sourceIssue          Issue?              @relation(fields: [sourceIssueId], references: [id], onDelete: SetNull)
-  workOrder            WorkOrder?          @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
-  requester            User?               @relation("ChangeRequester", fields: [requesterId], references: [id], onDelete: SetNull)
-  owner                User?               @relation("ChangeOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  closedAt             DateTime?          @map("closed_at")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+  deletedAt            DateTime?          @map("deleted_at")
+  sourceIssue          Issue?             @relation(fields: [sourceIssueId], references: [id], onDelete: SetNull)
+  workOrder            WorkOrder?         @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  requester            User?              @relation("ChangeRequester", fields: [requesterId], references: [id], onDelete: SetNull)
+  owner                User?              @relation("ChangeOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   activities           ChangeActivity[]
   attachments          ChangeAttachment[]
 

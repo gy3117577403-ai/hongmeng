@@ -11,7 +11,7 @@ import { writeClipboardText } from '@/lib/client-platform';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
 import { prepareProductionQuantityAdjustment } from '@/lib/production-quantity-adjustment';
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
-import type { CurrentUserDTO } from '@/types';
+import type { CurrentUserDTO, WorkOrderProcessRouteDTO } from '@/types';
 
 type StageKey = 'not_issued' | 'frontend' | 'backend' | 'completed';
 type ViewKey = 'board' | 'today' | 'exceptions';
@@ -19,7 +19,7 @@ type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | '
 type DetailTab = 'production' | 'drawing' | 'progress' | 'source';
 type BatchOperation = 'set_priority' | 'set_stage' | 'add_remark';
 type DuePreset = '' | 'today' | 'tomorrow' | 'overdue' | 'week' | 'custom';
-type ProductionFlowAction = 'confirm_drawing_issued' | 'transfer_to_backend' | 'complete_from_backend';
+type ProductionFlowAction = 'confirm_drawing_issued' | 'transfer_to_backend' | 'complete_from_backend' | 'advance_process_route';
 
 type ProductionStageSegment = {
   stage: StageKey;
@@ -77,6 +77,7 @@ type ProductionOrder = {
     completedAt?: string | null;
     updatedAt: string;
   } | null;
+  processRoute?: WorkOrderProcessRouteDTO | null;
   drawingLibraryItemId?: string | null;
   documentCompleteness: string;
   documentFilledCount: number;
@@ -1166,6 +1167,23 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   function openNextStep(order: ProductionOrder, displayStage: StageKey): void {
     setStatusMenuOrder(null);
     setDrawingMenuOrder(null);
+    if (order.processRoute && displayStage !== 'not_issued') {
+      if (order.processRoute.status === 'draft') {
+        const returnKey = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        captureReturnState(returnKey, order.id, displayStage);
+        router.push(`/workspace/processes?workOrderId=${encodeURIComponent(order.id)}&from=production&returnKey=${encodeURIComponent(returnKey)}`);
+        return;
+      }
+      if (order.processRoute.status === 'completed') return;
+      if (!order.processRoute.currentStep) {
+        setToast('当前工序状态异常，请到工艺管理检查路线');
+        return;
+      }
+      setNextStepRequest({ order, displayStage, action: 'advance_process_route' });
+      setNextStepQuantity('');
+      setNextStepError('');
+      return;
+    }
     if (!order.quantityFlow.valid) {
       setToast(order.quantityFlow.error?.message || '工单数量数据不完整，暂时无法流转');
       return;
@@ -1189,7 +1207,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   async function saveNextStep(): Promise<void> {
     if (!nextStepRequest) return;
     const { order, action, displayStage } = nextStepRequest;
-    if (action !== 'confirm_drawing_issued') {
+    if (action !== 'confirm_drawing_issued' && action !== 'advance_process_route') {
       if (!/^[1-9]\d*$/.test(nextStepQuantity.trim())) {
         setNextStepError('本次数量必须是正整数');
         return;
@@ -1207,24 +1225,37 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setSaving(true);
     setNextStepError('');
     try {
-      const response = await fetch(`/api/work-orders/${order.id}/execution`, {
+      const processAdvance = action === 'advance_process_route' && order.processRoute;
+      const response = await fetch(processAdvance
+        ? `/api/process-management/routes/${order.processRoute?.id}`
+        : `/api/work-orders/${order.id}/execution`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action,
-          quantity: action === 'confirm_drawing_issued' ? undefined : nextStepQuantity.trim(),
-          expectedVersion: order.quantityFlow.executionVersion,
-        }),
+        body: JSON.stringify(processAdvance
+          ? {
+              action: 'advance',
+              version: order.processRoute?.version,
+            }
+          : {
+              action,
+              quantity: action === 'confirm_drawing_issued' ? undefined : nextStepQuantity.trim(),
+              expectedVersion: order.quantityFlow.executionVersion,
+            }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok || !body.data) throw new Error(body.error || '生产数量流转失败');
-      const updated = withProductionDerived(body.data as ProductionOrder);
+      const responseOrder = processAdvance ? body.workOrder : body.data;
+      if (!response.ok || !responseOrder) throw new Error(body.error || '生产工序流转失败');
+      const updated = withProductionDerived(responseOrder as ProductionOrder);
       applyLocalOrder(updated);
       setNextStepRequest(null);
       setNextStepQuantity('');
       productionBoardCache.clear();
       setSummaryRefreshToken(value => value + 1);
-      setToast(action === 'confirm_drawing_issued'
+      setToast(action === 'advance_process_route'
+        ? order.processRoute?.nextStep
+          ? `${order.processRoute.currentStep?.processName || '当前工序'}已完成，进入${order.processRoute.nextStep.processName}`
+          : '全部工序已完成'
+        : action === 'confirm_drawing_issued'
         ? '图纸已确认下发，工单已进入前端'
         : action === 'transfer_to_backend'
           ? '前端数量已转入后端'
@@ -1635,6 +1666,29 @@ function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu, ope
   </div>;
 }
 
+function ProcessRouteStrip({ order }: { order: ProductionOrder }) {
+  const route = order.processRoute;
+  if (!route) return null;
+  const label = route.status === 'draft'
+    ? '工艺待确认'
+    : route.status === 'confirmed'
+      ? '工艺已确认 · 等待图纸'
+      : route.status === 'completed'
+        ? '全部工序完成'
+        : `当前工序：${route.currentStep?.processName || '待检查'}`;
+  return <div className={`production-process-route ${route.status}`} title={`${route.templateName} V${route.templateVersion} · ${route.completedStepCount}/${route.stepCount} 工序`}>
+    <span>{label}</span><i><b style={{ width: `${route.progress}%` }} /></i><strong>{route.completedStepCount}/{route.stepCount}</strong>
+  </div>;
+}
+
+function nextStepButtonText(order: ProductionOrder): string {
+  const route = order.processRoute;
+  if (!route) return '下一步';
+  if (route.status === 'draft') return '确认工艺';
+  if (route.currentStep) return `完成${route.currentStep.processName}`;
+  return '检查工艺';
+}
+
 function WorkOrderCardTitle({ order, displayStage, batchMode, selected, toggleSelected, openDetail, openQuantityAdjustment, openResources, copySpecification }: Pick<ProductionCardProps, 'order' | 'displayStage' | 'batchMode' | 'selected' | 'toggleSelected' | 'openDetail' | 'openQuantityAdjustment' | 'openResources' | 'copySpecification'>) {
   return <>
     <div className="production-card-title">
@@ -1662,6 +1716,7 @@ function NotIssuedWorkOrderCard(props: ProductionCardProps) {
   const reminder = /样品|确认|变更|异常|返工|待处理/.test(order.latestProgressRemark || '') ? order.latestProgressRemark : '';
   return <article className={`production-card production-card-not-issued not_issued ${props.selected.includes(order.id) ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage="not_issued">
     <WorkOrderCardTitle {...props} />
+    <ProcessRouteStrip order={order} />
     <dl className="production-leader-metrics production-quantity-grid"><div><dt>本阶段数量</dt><dd>{stageQuantity === null ? '待补充' : formatProductionQuantity(stageQuantity)}</dd></div><div><dt>总目标</dt><dd>{quantity.targetQty === null ? '待补充' : formatProductionQuantity(quantity.targetQty)}</dd></div><div><dt>已完成</dt><dd>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</dd></div></dl>
     <div className={`production-card-quantity-status ${quantityUnavailable ? 'missing' : ''}`}><span>{quantitySourceText(order)}</span><div className="production-progress-track"><i><b style={{ width: `${percentageWidth}%` }} /></i><strong>{quantityUnavailable ? quantityActionText : formatProductionPercentage(quantity.percentage)}</strong></div></div>
     <div className="production-card-meta"><span>计划交期</span><strong>{deliveryText(order) || '待设置'}</strong></div>
@@ -1679,6 +1734,7 @@ function ActiveWorkOrderCard(props: ProductionCardProps) {
   const splitFlow = cardSegments(order).length > 1;
   return <article className={`production-card production-card-active ${displayStage} ${props.selected.includes(order.id) ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage={displayStage}>
     <WorkOrderCardTitle {...props} />
+    <ProcessRouteStrip order={order} />
     <button className="production-progress-hit" type="button" onClick={() => openUpdate(order)} title="记录生产进度备注">
       <span className="production-quantity-grid"><span><small>本阶段数量</small><strong>{stageQuantity === null ? '-' : formatProductionQuantity(stageQuantity)}</strong></span><span><small>总目标</small><strong>{quantity.targetQty === null ? '-' : formatProductionQuantity(quantity.targetQty)}</strong></span><span><small>累计完成</small><strong>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</strong></span></span>
       <span className="production-progress-track"><i><b style={{ width: `${percentageWidth}%` }} /></i><strong>{formatProductionPercentage(quantity.percentage)}</strong></span>
@@ -1687,7 +1743,7 @@ function ActiveWorkOrderCard(props: ProductionCardProps) {
     <span className={`production-quantity-source ${order.quantityTargetSource}`}>{quantitySourceText(order)}</span>
     {splitFlow && <span className="production-flow-badge">分批流转 · 同一工单</span>}
     <ProductionAlertList order={order} displayStage={displayStage} showExceptions={props.showExceptions} openDrawingStatusMenu={props.openDrawingStatusMenu} openIssue={props.openIssue} />
-    <footer><button type="button" onClick={() => openUpdate(order)}>记录进度</button>{quantityUnavailable ? <button className="primary" type="button" disabled={saving} onClick={event => openQuantityAdjustment(order, event.currentTarget)}>补充 / 校正数量</button> : <button className="primary" type="button" disabled={saving || !stageQuantity} onClick={() => openNextStep(order, displayStage)}>下一步</button>}</footer>
+    <footer><button type="button" onClick={() => openUpdate(order)}>记录进度</button>{quantityUnavailable ? <button className="primary" type="button" disabled={saving} onClick={event => openQuantityAdjustment(order, event.currentTarget)}>补充 / 校正数量</button> : <button className="primary" type="button" title={nextStepButtonText(order)} disabled={saving || !stageQuantity} onClick={() => openNextStep(order, displayStage)}>{nextStepButtonText(order)}</button>}</footer>
   </article>;
 }
 
@@ -1701,6 +1757,7 @@ function CompletedWorkOrderCard(props: ProductionCardProps) {
   const percentageWidth = Math.max(0, Math.min(quantity.percentage || 0, 100));
   return <article className={`production-card production-card-completed completed ${quantity.status} ${isSelected ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage="completed">
     <WorkOrderCardTitle {...props} />
+    <ProcessRouteStrip order={order} />
     <div className="production-completed-quantity">{quantityText}</div>
     <div className="production-completed-progress"><div className="production-progress-track"><i><b style={{ width: `${percentageWidth}%` }} /></i><strong>{formatProductionPercentage(quantity.percentage)}</strong></div><span className={`production-quantity-source ${order.quantityTargetSource}`}>{quantitySourceText(order)}</span></div>
     {quantity.status === 'tail_remaining' && <div className="production-completed-result tail">剩余 {formatProductionQuantity(quantity.remainingQty)} 套 · 尾数未清</div>}
@@ -1813,7 +1870,14 @@ function NextStepDialog({ request, quantity, setQuantity, saving, error, close, 
   const { order, action } = request;
   const flow = order.quantityFlow;
   const isDrawingConfirmation = action === 'confirm_drawing_issued';
-  const title = isDrawingConfirmation ? '确认图纸已下发并进入前端' : action === 'transfer_to_backend' ? '前端数量进入后端' : '确认后端完成数量';
+  const isProcessAdvance = action === 'advance_process_route';
+  const title = isProcessAdvance
+    ? `完成工序：${order.processRoute?.currentStep?.processName || '当前工序'}`
+    : isDrawingConfirmation
+      ? '确认图纸已下发并进入前端'
+      : action === 'transfer_to_backend'
+        ? '前端数量进入后端'
+        : '确认后端完成数量';
   const quantityLabel = action === 'transfer_to_backend' ? '本次进入后端数量' : '本次完成数量';
   return <div className="modal-backdrop"><section className="production-dialog production-next-step-dialog" role="dialog" aria-modal="true" aria-label={title}>
     <div className="dialog-title"><div><strong>{title}</strong><small>{order.customerName || '客户待补充'} · {specText(order)}</small></div><button type="button" disabled={saving} onClick={close} aria-label="关闭">×</button></div>
@@ -1823,7 +1887,9 @@ function NextStepDialog({ request, quantity, setQuantity, saving, error, close, 
       <div><span>后端待完成 F-C</span><strong>{formatProductionQuantity(flow.backendRemainingQty)}</strong></div>
       <div><span>累计已完成 C</span><strong>{formatProductionQuantity(flow.completedQty)}</strong></div>
     </div>
-    {isDrawingConfirmation
+    {isProcessAdvance
+      ? <div className="production-flow-confirm-copy"><strong>{order.processRoute?.nextStep ? `下一工序：${order.processRoute.nextStep.processName}` : '这是路线最后一道工序'}</strong><br />确认后将记录当前工序完成，并自动切换到下一道工序；已确认的路线顺序不会改变。</div>
+      : isDrawingConfirmation
       ? <p className="production-flow-confirm-copy">确认后，图纸状态将更新为“已发”，工单进入前端；目标数量和已有资料不会改变。</p>
       : <label className="production-flow-quantity-input"><span>{quantityLabel}</span><input autoFocus inputMode="numeric" pattern="[0-9]*" value={quantity} onChange={event => setQuantity(event.target.value)} disabled={saving} aria-describedby="production-flow-limit" /><small id="production-flow-limit">仅支持正整数，默认填写当前阶段全部可流转数量。</small></label>}
     {error && <div className="form-error" role="alert">{error}</div>}
@@ -1858,6 +1924,7 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
       <div className="production-detail-body">
         {tab === 'production' && <InfoGrid items={[
           ['状态', order.stageText], ['优先级', priorityText(order.priority)], ['周计划原始目标', order.importedTargetQty === null ? order.uncompletedQty || '-' : formatProductionQuantity(order.importedTargetQty)], ['当前生产目标', formatProductionQuantity(order.quantitySummary.targetQty)],
+          ['工艺路线', order.processRoute?.statusText || '沿用前后端流程'], ['当前工序', order.processRoute?.currentStep?.processName || (order.processRoute?.status === 'confirmed' ? '等待图纸下发' : '-')], ['工序进度', order.processRoute ? `${order.processRoute.completedStepCount}/${order.processRoute.stepCount}（${order.processRoute.progress}%）` : '-'],
           ['数量来源', quantitySourceText(order)], ['累计进入后端', formatProductionQuantity(order.quantityFlow.frontendTransferredQty)], ['累计完成', formatProductionQuantity(order.quantitySummary.completedQty)], ['整体进度', formatProductionPercentage(order.quantitySummary.percentage)],
           ['交期', deliveryText(order) || '-'], ['图纸', order.drawingStatus || '-'], ['仓库配料', warehouseMaterialText(order)], ['仓库异常', warehouseExceptionDetail(order)], ['开始时间', dateTimeText(order.startedAt)],
           ['完成时间', dateTimeText(order.completedAt)], ['最近更新', dateTimeText(order.lastProgressAt)], ['最近进度', order.latestProgressRemark || '暂无进度备注'],
