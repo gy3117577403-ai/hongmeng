@@ -282,6 +282,147 @@ export type DetectedIssueDTO = {
   existingIssueStatus?: IssueStatus | null;
 };
 
+export type ChangeStatus = 'draft' | 'assessing' | 'implementing' | 'verifying' | 'closed';
+export type ChangePriority = 'urgent' | 'high' | 'normal';
+export type ChangeType = 'drawing' | 'process' | 'plan' | 'material' | 'document' | 'other';
+export type ChangeImpactArea = 'drawing' | 'process' | 'plan' | 'material' | 'document' | 'production';
+
+export type ChangeActivityDTO = {
+  id: string;
+  action: string;
+  content?: string | null;
+  fromStatus?: ChangeStatus | null;
+  toStatus?: ChangeStatus | null;
+  actor?: IssueUserDTO | null;
+  detail?: Record<string, string | number | boolean | null> | null;
+  createdAt: string;
+};
+
+export type ChangeAttachmentDTO = {
+  id: string;
+  changeRequestId: string;
+  originalName: string;
+  displayName?: string | null;
+  mimeType: string;
+  fileType: string;
+  size: number;
+  uploadedBy?: IssueUserDTO | null;
+  createdAt: string;
+  contentUrl: string;
+  downloadUrl: string;
+};
+
+export type ChangeSourceIssueDTO = {
+  id: string;
+  code: string;
+  title: string;
+  status: IssueStatus;
+};
+
+export type ChangeRequestDTO = {
+  id: string;
+  sequence: number;
+  code: string;
+  title: string;
+  type: ChangeType;
+  priority: ChangePriority;
+  status: ChangeStatus;
+  reason?: string | null;
+  description?: string | null;
+  impactAreas: ChangeImpactArea[];
+  impactScope?: string | null;
+  implementationPlan?: string | null;
+  implementationResult?: string | null;
+  validationResult?: string | null;
+  rollbackPlan?: string | null;
+  sourceIssueId?: string | null;
+  sourceIssue?: ChangeSourceIssueDTO | null;
+  workOrderId?: string | null;
+  workOrder?: IssueWorkOrderDTO | null;
+  requester?: IssueUserDTO | null;
+  owner?: IssueUserDTO | null;
+  dueAt?: string | null;
+  effectiveAt?: string | null;
+  version: number;
+  closedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  isOverdue: boolean;
+  activityCount: number;
+  attachmentCount: number;
+  activities?: ChangeActivityDTO[];
+  attachments?: ChangeAttachmentDTO[];
+};
+
+export type ChangeSummaryDTO = {
+  total: number;
+  draft: number;
+  assessing: number;
+  implementing: number;
+  verifying: number;
+  closed: number;
+  overdue: number;
+  unassigned: number;
+};
+
+export type WorkflowProcessStatus = 'waiting' | 'processing' | 'verifying' | 'closed';
+export type WorkflowEntityType = 'issue' | 'change' | 'production';
+
+export type WorkflowStepDTO = {
+  key: string;
+  label: string;
+  state: 'done' | 'current' | 'pending';
+};
+
+export type WorkflowActivityDTO = {
+  id: string;
+  action: string;
+  label: string;
+  actor?: string | null;
+  createdAt: string;
+};
+
+export type WorkflowItemDTO = {
+  id: string;
+  entityId: string;
+  entityType: WorkflowEntityType;
+  code: string;
+  title: string;
+  subtitle: string;
+  processStatus: WorkflowProcessStatus;
+  currentStep: string;
+  nextStep?: string | null;
+  priority: 'urgent' | 'high' | 'normal';
+  owner?: string | null;
+  dueAt?: string | null;
+  updatedAt: string;
+  route: string;
+  sourceRoute?: string | null;
+  isOverdue: boolean;
+  steps: WorkflowStepDTO[];
+  activities: WorkflowActivityDTO[];
+};
+
+export type WorkflowSummaryDTO = {
+  total: number;
+  waiting: number;
+  processing: number;
+  verifying: number;
+  closed: number;
+  overdue: number;
+  issue: number;
+  change: number;
+  production: number;
+};
+
+export type WorkflowTemplateDTO = {
+  key: WorkflowEntityType;
+  name: string;
+  description: string;
+  steps: string[];
+  route: string;
+};
+
 export type ConnectorParameterDTO = {
   id: string;
   rowNo?: number | null;

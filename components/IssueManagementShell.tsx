@@ -13,6 +13,7 @@ import {
   ExternalLink,
   FileImage,
   FileText,
+  GitPullRequestArrow,
   Inbox,
   Info,
   Loader2,
@@ -679,6 +680,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
 
               <form className="issue-comment" onSubmit={addComment}><textarea value={comment} onChange={event => setComment(event.target.value)} rows={2} maxLength={2000} placeholder="补充处理进展、现场反馈或验证说明..." /><button type="submit" disabled={saving || !comment.trim()}><Send size={15} />添加记录</button></form>
               <div className="issue-transition-actions">
+                <a className="issue-change-link" href={`/workspace/changes?action=new&issueId=${encodeURIComponent(selected.id)}${selected.workOrderId ? `&workOrderId=${encodeURIComponent(selected.workOrderId)}` : ''}`}><GitPullRequestArrow size={15} />发起变更</a>
                 {selected.status === 'pending' && <button className="primary" type="button" onClick={() => beginTransition('processing')}>开始处理</button>}
                 {selected.status === 'processing' && <button className="primary" type="button" onClick={() => beginTransition('verifying')}>提交验证</button>}
                 {selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('processing')}>退回处理</button><button className="primary" type="button" onClick={() => beginTransition('closed')}>验证通过并关闭</button></>}

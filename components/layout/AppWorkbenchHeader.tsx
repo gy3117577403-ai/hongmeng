@@ -64,8 +64,8 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
     label: '协同规划',
     items: [
       { href: '/workspace/issues', label: '问题管理', icon: ShieldCheck },
-      { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow, planned: true },
-      { href: '/workspace/workflows', label: '流程中心', icon: Workflow, planned: true },
+      { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
+      { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
       { href: '/workspace/knowledge', label: '知识库', icon: BookOpen, planned: true },
       { href: '/workspace/reports', label: '报表中心', icon: BarChart3, planned: true },
     ],

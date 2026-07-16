@@ -15,11 +15,11 @@ export async function GET(req: NextRequest) {
     await requireUser();
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim();
     if (!keyword) {
-      const empty = { keyword, workOrders: [], resourceFiles: [], drawingLibraryItems: [], drawingLibraryFiles: [], connectorParameters: [], connectorAssemblyManuals: [], connectorAssemblyManualAssets: [], issues: [] };
+      const empty = { keyword, workOrders: [], resourceFiles: [], drawingLibraryItems: [], drawingLibraryFiles: [], connectorParameters: [], connectorAssemblyManuals: [], connectorAssemblyManualAssets: [], issues: [], changes: [] };
       return NextResponse.json({ ok: true, data: empty, ...empty });
     }
 
-    const [workOrders, resourceFiles, drawingCategories, drawingLibraryItems, drawingLibraryFiles, connectorParameters, connectorAssemblyManuals, connectorAssemblyManualAssets, issues] = await Promise.all([
+    const [workOrders, resourceFiles, drawingCategories, drawingLibraryItems, drawingLibraryFiles, connectorParameters, connectorAssemblyManuals, connectorAssemblyManualAssets, issues, changes] = await Promise.all([
       prisma.workOrder.findMany({
         where: {
           deletedAt: null,
@@ -177,6 +177,24 @@ export async function GET(req: NextRequest) {
         orderBy: { updatedAt: 'desc' },
         take: 10,
       }),
+      prisma.changeRequest.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { title: { contains: keyword, mode: 'insensitive' } },
+            { reason: { contains: keyword, mode: 'insensitive' } },
+            { impactScope: { contains: keyword, mode: 'insensitive' } },
+            { implementationPlan: { contains: keyword, mode: 'insensitive' } },
+            { sourceIssue: { title: { contains: keyword, mode: 'insensitive' } } },
+            { workOrder: { code: { contains: keyword, mode: 'insensitive' } } },
+            { workOrder: { customerName: { contains: keyword, mode: 'insensitive' } } },
+            { workOrder: { specification: { contains: keyword, mode: 'insensitive' } } },
+          ],
+        },
+        include: { workOrder: { select: { code: true, customerName: true, specification: true } } },
+        orderBy: { updatedAt: 'desc' },
+        take: 10,
+      }),
     ]);
 
     const data = {
@@ -228,6 +246,14 @@ export async function GET(req: NextRequest) {
         priority: issue.priority,
         sourceCode: issue.sourceCode,
         workOrder: issue.workOrder,
+      })),
+      changes: changes.map(change => ({
+        id: change.id,
+        code: `CHG-${String(change.sequence).padStart(6, '0')}`,
+        title: change.title,
+        status: change.status,
+        priority: change.priority,
+        workOrder: change.workOrder,
       })),
     };
 

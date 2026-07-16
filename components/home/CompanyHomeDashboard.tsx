@@ -56,6 +56,7 @@ type SearchParameter = { id: string; model?: string | null; outerPeelMm?: string
 type SearchManual = { id: string; title: string; manufacturer?: string | null; models: string[]; latestVersion?: { id: string; revision: string } | null };
 type SearchManualAsset = { id: string; manualId: string; versionId: string; manualTitle: string; revision: string; originalName: string; displayName?: string | null; pageNo?: number | null };
 type SearchIssue = { id: string; code: string; title: string; status: string; priority: string; sourceCode?: string | null; workOrder?: { customerName?: string | null; specification?: string | null; code: string } | null };
+type SearchChange = { id: string; code: string; title: string; status: string; priority: string; workOrder?: { customerName?: string | null; specification?: string | null; code: string } | null };
 type SearchPayload = {
   workOrders?: SearchWorkOrder[];
   resourceFiles?: SearchResourceFile[];
@@ -65,6 +66,7 @@ type SearchPayload = {
   connectorAssemblyManuals?: SearchManual[];
   connectorAssemblyManualAssets?: SearchManualAsset[];
   issues?: SearchIssue[];
+  changes?: SearchChange[];
 };
 type SearchResponse = SearchPayload & { ok?: boolean; error?: string; data?: SearchPayload };
 
@@ -75,7 +77,7 @@ const quickLinks: Array<{ href: string; label: string; icon: LucideIcon; tone: H
   { href: '/weekly-plan-center', label: '查看计划', icon: CalendarDays, tone: 'green' },
   { href: '/drawing-library', label: '图纸资料', icon: FolderKanban, tone: 'yellow' },
   { href: '/connector-assembly-manuals', label: '工艺文件', icon: BookOpen, tone: 'slate' },
-  { href: '/workspace/changes', label: '技术变更', icon: GitPullRequestArrow, tone: 'orange', planned: true },
+  { href: '/workspace/changes', label: '技术变更', icon: GitPullRequestArrow, tone: 'orange' },
   { href: '/dashboard', label: '生产工单', icon: FileStack, tone: 'green' },
   { href: '/connector-parameters', label: '连接器参数', icon: Boxes, tone: 'blue' },
   { href: '/workspace/more', label: '更多功能', icon: Wrench, tone: 'slate', planned: true },
@@ -140,6 +142,15 @@ function searchItems(payload: SearchPayload, keyword: string): HomeSearchItem[] 
       title: issue.title,
       detail: `${issue.code} · ${issue.workOrder?.customerName || '未关联客户'} · ${issue.workOrder?.specification || issue.sourceCode || '未关联工单'}`,
       route: `/workspace/issues?issueId=${encodeURIComponent(issue.id)}`,
+    });
+  }
+  for (const change of payload.changes || []) {
+    items.push({
+      id: `change:${change.id}`,
+      group: '变更管理',
+      title: change.title,
+      detail: `${change.code} · ${change.workOrder?.customerName || '未关联客户'} · ${change.workOrder?.specification || change.workOrder?.code || '未关联工单'}`,
+      route: `/workspace/changes?changeId=${encodeURIComponent(change.id)}`,
     });
   }
   return items.slice(0, 18);

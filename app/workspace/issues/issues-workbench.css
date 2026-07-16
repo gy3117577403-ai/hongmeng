@@ -564,7 +564,8 @@
 }
 
 .hm-issue-workbench .issue-comment button,
-.hm-issue-workbench .issue-transition-actions button {
+.hm-issue-workbench .issue-transition-actions button,
+.hm-issue-workbench .issue-transition-actions .issue-change-link {
   min-height: 36px;
   display: inline-flex;
   align-items: center;
@@ -577,6 +578,13 @@
   color: #526173;
   font-size: 10px;
   font-weight: 700;
+  text-decoration: none;
+}
+
+.hm-issue-workbench .issue-transition-actions .issue-change-link {
+  margin-right: auto;
+  border-color: #e2a276;
+  color: var(--hm-color-accent-hover);
 }
 
 .hm-issue-workbench .issue-comment button,

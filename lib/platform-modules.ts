@@ -35,8 +35,8 @@ const modules: PlatformModuleDefinition[] = [
   },
   {
     slug: 'changes', kicker: '协同中心', title: '变更管理',
-    description: '集中管理图纸、工艺和计划变更。当前提供统一入口，后续补充变更申请、影响范围和确认流程。',
-    capabilityTitle: '规划能力', capabilities: ['提交变更申请', '影响范围确认', '变更执行跟踪'],
+    description: '集中管理图纸、工艺、计划、物料和资料变更，覆盖影响评估、实施、验证、附件与审计闭环。',
+    capabilityTitle: '已接入能力', capabilities: ['变更申请与影响评估', '实施与验证流转', '附件、记录与软删除'],
     links: [
       { label: '进入图纸资料库', description: '查看当前版本图纸', href: '/drawing-library' },
       { label: '进入周计划中心', description: '查看当前计划与差异', href: '/weekly-plan-center' },
@@ -44,8 +44,8 @@ const modules: PlatformModuleDefinition[] = [
   },
   {
     slug: 'workflows', kicker: '协同中心', title: '流程中心',
-    description: '用于承载跨部门协作流程。当前不改变已有工单状态流转，后续按实际审批规则逐步接入。',
-    capabilityTitle: '规划能力', capabilities: ['流程模板', '待处理节点', '流程记录'],
+    description: '统一查看问题闭环、变更闭环和生产工单状态流转，并回到来源业务继续处理。',
+    capabilityTitle: '已接入能力', capabilities: ['真实流程实例汇总', '节点进度与逾期筛选', '来源业务回溯'],
     links: [
       { label: '查看生产执行', description: '使用现有工单状态流转', href: '/production' },
       { label: '查看操作日志', description: '进入现有操作记录', href: '/dashboard?openLogs=1' },
