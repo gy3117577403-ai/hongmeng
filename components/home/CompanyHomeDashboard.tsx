@@ -55,6 +55,7 @@ type SearchDrawingFile = { id: string; libraryItemId: string; originalName: stri
 type SearchParameter = { id: string; model?: string | null; outerPeelMm?: string | null; innerPeelMm?: string | null; insertionLengthMm?: string | null };
 type SearchManual = { id: string; title: string; manufacturer?: string | null; models: string[]; latestVersion?: { id: string; revision: string } | null };
 type SearchManualAsset = { id: string; manualId: string; versionId: string; manualTitle: string; revision: string; originalName: string; displayName?: string | null; pageNo?: number | null };
+type SearchIssue = { id: string; code: string; title: string; status: string; priority: string; sourceCode?: string | null; workOrder?: { customerName?: string | null; specification?: string | null; code: string } | null };
 type SearchPayload = {
   workOrders?: SearchWorkOrder[];
   resourceFiles?: SearchResourceFile[];
@@ -63,12 +64,13 @@ type SearchPayload = {
   connectorParameters?: SearchParameter[];
   connectorAssemblyManuals?: SearchManual[];
   connectorAssemblyManualAssets?: SearchManualAsset[];
+  issues?: SearchIssue[];
 };
 type SearchResponse = SearchPayload & { ok?: boolean; error?: string; data?: SearchPayload };
 
 type UtilityPanel = 'notifications' | 'messages' | 'help' | null;
 const quickLinks: Array<{ href: string; label: string; icon: LucideIcon; tone: HomeTone; planned?: boolean }> = [
-  { href: '/workspace/issues?action=new', label: '新建问题', icon: AlertTriangle, tone: 'orange', planned: true },
+  { href: '/workspace/issues?action=new', label: '新建问题', icon: AlertTriangle, tone: 'orange' },
   { href: '/production', label: '生产执行', icon: LayoutDashboard, tone: 'blue' },
   { href: '/weekly-plan-center', label: '查看计划', icon: CalendarDays, tone: 'green' },
   { href: '/drawing-library', label: '图纸资料', icon: FolderKanban, tone: 'yellow' },
@@ -130,6 +132,15 @@ function searchItems(payload: SearchPayload, keyword: string): HomeSearchItem[] 
     const params = new URLSearchParams({ manualId: asset.manualId, versionId: asset.versionId });
     if (asset.pageNo) params.set('page', String(asset.pageNo));
     items.push({ id: `manual-asset:${asset.id}`, group: '说明书文件', title: decodedName(asset.displayName || asset.originalName), detail: `${asset.manualTitle} · ${asset.revision}`, route: `/connector-assembly-manuals?${params.toString()}` });
+  }
+  for (const issue of payload.issues || []) {
+    items.push({
+      id: `issue:${issue.id}`,
+      group: '问题管理',
+      title: issue.title,
+      detail: `${issue.code} · ${issue.workOrder?.customerName || '未关联客户'} · ${issue.workOrder?.specification || issue.sourceCode || '未关联工单'}`,
+      route: `/workspace/issues?issueId=${encodeURIComponent(issue.id)}`,
+    });
   }
   return items.slice(0, 18);
 }
@@ -415,8 +426,8 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
                 {!data.todayNodes.length ? <EmptyState>今天没有已记录的关键节点</EmptyState> : <div className="hm-home-timeline">{data.todayNodes.slice(0, 4).map((node, index) => <a href={node.targetRoute} key={node.id}><time>{String(9 + index * 2).padStart(2, '0')}:00</time><span /><div><strong title={node.title}>{node.title}</strong><p>{node.source} · {node.status}</p></div><em>{node.type}</em></a>)}</div>}
               </article>
               <article className="hm-home-panel hm-home-issues-panel">
-                <SectionHeading title="生产问题看板" href="/production?view=exceptions" />
-                {!data.issues.length ? <EmptyState>当前没有现场异常</EmptyState> : <div className="hm-home-issue-list">{data.issues.slice(0, 4).map(issue => <a href={issue.targetRoute} key={issue.id}><span className={`hm-home-issue-level ${issue.priority}`}>{priorityLabel(issue.priority)}</span><div><strong>{issue.title}</strong><p title={issue.subtitle}>{issue.subtitle}</p></div><small>{issue.dateLabel}</small></a>)}</div>}
+                <SectionHeading title="生产问题看板" href="/workspace/issues" />
+                {!data.issues.length ? <EmptyState>当前没有未关闭问题</EmptyState> : <div className="hm-home-issue-list">{data.issues.slice(0, 4).map(issue => <a href={issue.targetRoute} key={issue.id}><span className={`hm-home-issue-level ${issue.priority}`}>{priorityLabel(issue.priority)}</span><div><strong>{issue.title}</strong><p title={issue.subtitle}>{issue.subtitle}</p></div><small>{issue.dateLabel}</small></a>)}</div>}
               </article>
             </div>
           </section>

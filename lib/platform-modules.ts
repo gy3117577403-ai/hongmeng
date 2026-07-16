@@ -26,8 +26,8 @@ const modules: PlatformModuleDefinition[] = [
   },
   {
     slug: 'issues', kicker: '协同中心', title: '问题管理',
-    description: '统一承接生产、计划和技术问题。当前入口已经建立，后续可接入问题创建、责任跟踪和关闭验证。',
-    capabilityTitle: '规划能力', capabilities: ['新建生产问题', '分派与跟踪', '处理结果闭环'],
+    description: '统一承接生产、计划和技术问题，支持创建、分派、处理、验证、附件和关闭闭环。',
+    capabilityTitle: '已接入能力', capabilities: ['新建与异常转入', '分派与处理跟踪', '验证与关闭闭环'],
     links: [
       { label: '查看生产异常', description: '使用现有生产异常数据', href: '/production?view=exceptions' },
       { label: '返回协同首页', description: '查看当前真实待办事项', href: '/home' },

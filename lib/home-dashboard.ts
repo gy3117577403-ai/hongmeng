@@ -10,6 +10,8 @@ import {
   type ProductionExecutionOrderRecord,
 } from '@/lib/production-execution';
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
+import { issueStatusLabels } from '@/lib/issues';
+import { prisma } from '@/lib/prisma';
 import { normalizeWorkOrderStage, stageText } from '@/lib/work-orders';
 import type {
   HomeActionItem,
@@ -169,6 +171,37 @@ function actionSort(first: HomeActionItem, second: HomeActionItem): number {
     || first.subtitle.localeCompare(second.subtitle, 'zh-CN');
 }
 
+function persistedIssueAction(issue: {
+  id: string;
+  type: string;
+  title: string;
+  priority: string;
+  status: string;
+  description: string | null;
+  dueAt: Date | null;
+  updatedAt: Date;
+  workOrder: { id: string; customerName: string | null; specification: string | null; code: string } | null;
+}): HomeActionItem {
+  const customer = text(issue.workOrder?.customerName) || '未关联客户';
+  const specification = text(issue.workOrder?.specification) || text(issue.workOrder?.code) || '未关联工单';
+  const priority: HomePriority = issue.priority === 'urgent' ? 'urgent' : issue.priority === 'high' ? 'high' : 'normal';
+  return {
+    id: issue.id,
+    workOrderId: issue.workOrder?.id || '',
+    sourceModule: '问题管理',
+    type: issue.type,
+    title: issue.title,
+    subtitle: issue.workOrder ? `${customer} · ${specification}` : (text(issue.description).slice(0, 80) || '独立问题'),
+    customerName: customer,
+    specification,
+    priority,
+    status: issueStatusLabels[issue.status as keyof typeof issueStatusLabels] || issue.status,
+    occurredAt: issue.updatedAt.toISOString(),
+    dateLabel: issue.dueAt ? `截止 ${shortDate(issue.dueAt)}` : `更新 ${shortDate(issue.updatedAt)}`,
+    targetRoute: `/workspace/issues?issueId=${encodeURIComponent(issue.id)}`,
+  };
+}
+
 function distribution(id: string, label: string, value: number, tone: HomeTone): HomeDistributionItem {
   return { id, label, value, tone };
 }
@@ -210,7 +243,15 @@ export function emptyHomeDashboardData(message: string, now = new Date()): HomeD
 
 export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboardData> {
   const week = await resolveProductionWeek();
-  const orders = await loadProductionOrders(week);
+  const [orders, persistedIssues] = await Promise.all([
+    loadProductionOrders(week),
+    prisma.issue.findMany({
+      where: { deletedAt: null, status: { not: 'closed' } },
+      include: { workOrder: { select: { id: true, customerName: true, specification: true, code: true } } },
+      orderBy: [{ priority: 'asc' }, { updatedAt: 'desc' }],
+      take: 20,
+    }),
+  ]);
   orders.sort((first, second) => compareProductionOrders(first, second, now));
 
   const stageCounts = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
@@ -269,6 +310,7 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
   }
 
   allActions.sort(actionSort);
+  const persistedIssueActions = persistedIssues.map(persistedIssueAction).sort(actionSort);
   todayNodes.sort((first, second) => first.title.localeCompare(second.title, 'zh-CN'));
   const total = orders.length;
   const executionRate = total > 0 ? Math.round((completedOrders / total) * 100) : null;
@@ -296,7 +338,7 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
     kpis,
     actionItems: allActions.slice(0, 8),
     todayNodes: todayNodes.slice(0, 6),
-    issues: allActions.filter(item => item.type !== 'due_today' && item.type !== 'documents_incomplete').slice(0, 5),
+    issues: persistedIssueActions.slice(0, 5),
     planChart: { total, completed: completedOrders, inProgress: inProgressOrders, notStarted: notStartedOrders, overdue: overdueCount, executionRate },
     stageDistribution: [
       distribution('not-issued', '未发图', stageCounts.not_issued, 'yellow'),

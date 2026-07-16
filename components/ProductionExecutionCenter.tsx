@@ -1164,6 +1164,19 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     router.push(`/drawing-library?${params.toString()}`);
   }
 
+  function openProductionIssue(order: ProductionOrder, alertCode: string, focusedStage?: StageKey): void {
+    const returnKey = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const returnTo = captureReturnState(returnKey, order.id, focusedStage);
+    const params = new URLSearchParams({
+      inbox: 'detected',
+      sourceWorkOrderId: order.id,
+      alertCode,
+      returnKey,
+      returnTo,
+    });
+    router.push(`/workspace/issues?${params.toString()}`, { scroll: false });
+  }
+
   function openBatch(operation: BatchOperation): void {
     setBatchOperation(operation); setBatchValue(''); setBatchRemark(''); setBatchConfirm(''); setFormError(''); setBatchOpen(true);
   }
@@ -1218,7 +1231,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   const cardProps = {
     batchMode, selected, toggleSelected, openDetail, openUpdate, openNextStep, saving,
-    openResources: openWorkOrderResources, copySpecification,
+    openResources: openWorkOrderResources, copySpecification, openIssue: openProductionIssue,
     openStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, item: ProductionOrder): void => {
       if (item.quantityFlow.materialized) {
         setToast('该工单已启用分批数量流转，请使用“下一步”更新生产数量');
@@ -1395,6 +1408,7 @@ type ProductionCardProps = {
   copySpecification: (order: ProductionOrder) => Promise<void>;
   openStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, order: ProductionOrder) => void;
   openDrawingStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, order: ProductionOrder) => void;
+  openIssue: (order: ProductionOrder, alertCode: string, focusedStage?: StageKey) => void;
   showExceptions?: boolean;
 };
 
@@ -1409,7 +1423,7 @@ function CardSelection({ order, batchMode, selected, toggleSelected }: Pick<Prod
   return <label className="production-card-selection" title={`选择${specText(order)}`}><input aria-label={`选择${specText(order)}`} type="checkbox" checked={selected.includes(order.id)} onChange={() => toggleSelected(order.id)} /></label>;
 }
 
-function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu }: Pick<ProductionCardProps, 'order' | 'showExceptions' | 'openDrawingStatusMenu'>) {
+function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu, openIssue, displayStage }: Pick<ProductionCardProps, 'order' | 'showExceptions' | 'openDrawingStatusMenu' | 'openIssue' | 'displayStage'>) {
   const fallback = showExceptions
     ? order.exceptionLabels.filter(label => !order.productionAlerts.some(alert => alert.label === label)).map((label, index) => ({ code: `legacy-${index}`, label, tone: 'amber' as const }))
     : [];
@@ -1421,6 +1435,7 @@ function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu }: P
       ? <button className={alert.tone} type="button" key={`${alert.code}-${alert.label}`} onClick={event => openDrawingStatusMenu(event, order)}>{alert.label}</button>
       : <span className={alert.tone} key={`${alert.code}-${alert.label}`}>{alert.label}</span>)}
     {all.length > 2 && <span className="more" title={all.slice(2).map(alert => alert.label).join('、')}>+{all.length - 2} 更多异常</span>}
+    {!!order.productionAlerts[0] && <button className="issue-action" type="button" title="将首要异常转入问题管理" onClick={() => openIssue(order, order.productionAlerts[0].code, displayStage)}>转问题</button>}
   </div>;
 }
 
@@ -1449,7 +1464,7 @@ function NotIssuedWorkOrderCard(props: ProductionCardProps) {
     <WorkOrderCardTitle {...props} />
     <dl className="production-leader-metrics production-quantity-grid"><div><dt>本阶段数量</dt><dd>{stageQuantity === null ? '待补充' : formatProductionQuantity(stageQuantity)}</dd></div><div><dt>总目标</dt><dd>{quantity.targetQty === null ? '待补充' : formatProductionQuantity(quantity.targetQty)}</dd></div><div><dt>已完成</dt><dd>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</dd></div></dl>
     <div className="production-card-meta"><span>计划交期</span><strong>{deliveryText(order) || '待设置'}</strong></div>
-    <ProductionAlertList order={order} showExceptions={props.showExceptions} openDrawingStatusMenu={openDrawingStatusMenu} />
+    <ProductionAlertList order={order} displayStage="not_issued" showExceptions={props.showExceptions} openDrawingStatusMenu={openDrawingStatusMenu} openIssue={props.openIssue} />
     {reminder && <p className="production-focus-reminder" title={reminder}>{reminder}</p>}
     <footer><button type="button" onClick={event => openDrawingStatusMenu(event, order)}>更新图纸状态</button><button className="primary" type="button" disabled={saving || !order.quantityFlow.valid} onClick={() => openNextStep(order, 'not_issued')}>下一步</button></footer>
   </article>;
@@ -1468,7 +1483,7 @@ function ActiveWorkOrderCard(props: ProductionCardProps) {
       {quantity.overrunQty !== null && quantity.overrunQty > 0 && <small className="overrun">超产 {formatProductionQuantity(quantity.overrunQty)} 套</small>}
     </button>
     {splitFlow && <span className="production-flow-badge">分批流转 · 同一工单</span>}
-    <ProductionAlertList order={order} showExceptions={props.showExceptions} openDrawingStatusMenu={props.openDrawingStatusMenu} />
+    <ProductionAlertList order={order} displayStage={displayStage} showExceptions={props.showExceptions} openDrawingStatusMenu={props.openDrawingStatusMenu} openIssue={props.openIssue} />
     <footer><button type="button" onClick={() => openUpdate(order)}>记录进度</button><button className="primary" type="button" disabled={saving || !order.quantityFlow.valid || !stageQuantity} onClick={() => openNextStep(order, displayStage)}>下一步</button></footer>
   </article>;
 }

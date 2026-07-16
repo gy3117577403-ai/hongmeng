@@ -15,7 +15,7 @@ import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platfor
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import { compressImageForUpload, normalizeCapturedImage } from '@/lib/image-client';
 import { normalizeLocalImportServiceOrigin } from '@/lib/local-import-service-origin';
-import type { ChangeSnapshotDTO, ConnectorAssemblyManualDTO, ConnectorAssemblyManualSearchAssetDTO, ConnectorParameterDTO, CurrentUserDTO, DrawingLibraryItemDTO, FieldSummaryDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
+import type { ChangeSnapshotDTO, ConnectorAssemblyManualDTO, ConnectorAssemblyManualSearchAssetDTO, ConnectorParameterDTO, CurrentUserDTO, DrawingLibraryItemDTO, FieldSummaryDTO, IssueDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
 type WorkOrderForm = {
   code: string;
@@ -161,6 +161,7 @@ type SearchResult = {
   connectorParameters: ConnectorParameterDTO[];
   connectorAssemblyManuals: ConnectorAssemblyManualDTO[];
   connectorAssemblyManualAssets: ConnectorAssemblyManualSearchAssetDTO[];
+  issues: Array<{ id: string; code: string; title: string; status: string; priority: string; sourceCode?: string | null; workOrder?: { code: string; customerName?: string | null; specification?: string | null } | null }>;
 };
 type QuickMenu = { type: 'stage' | 'priority'; orderId: string; x: number; y: number } | null;
 type ToolTab = 'info' | 'upload' | 'actions' | 'queue';
@@ -195,6 +196,7 @@ const emptySearchResult: SearchResult = {
   connectorParameters: [],
   connectorAssemblyManuals: [],
   connectorAssemblyManualAssets: [],
+  issues: [],
 };
 
 function dateParts(v: string | Date) {
@@ -285,7 +287,8 @@ function hasSearchResults(result: SearchResult) {
     || result.drawingLibraryFiles.length
     || result.connectorParameters.length
     || result.connectorAssemblyManuals.length
-    || result.connectorAssemblyManualAssets.length;
+    || result.connectorAssemblyManualAssets.length
+    || result.issues.length;
 }
 
 function fileExtOk(file: File) {
@@ -529,6 +532,7 @@ export default function DashboardShell({
   const [files, setFiles] = useState<ResourceFileDTO[]>([]);
   const [allFiles, setAllFiles] = useState<ResourceFileDTO[]>([]);
   const [relatedHistory, setRelatedHistory] = useState<RelatedHistory>(null);
+  const [relatedIssues, setRelatedIssues] = useState<IssueDTO[]>([]);
   const [managerOpen, setManagerOpen] = useState(false);
   const [managerCategory, setManagerCategory] = useState('all');
   const [sel, setSel] = useState('');
@@ -805,6 +809,16 @@ export default function DashboardShell({
   }, [wo, cat]);
 
   useEffect(() => {
+    if (!order?.id) { setRelatedIssues([]); return; }
+    const controller = new AbortController();
+    fetch(`/api/issues?workOrderId=${encodeURIComponent(order.id)}&pageSize=20`, { cache: 'no-store', signal: controller.signal })
+      .then(response => response.json().then(body => ({ response, body })))
+      .then(({ response, body }) => { if (response.ok) setRelatedIssues(Array.isArray(body.issues) ? body.issues : []); })
+      .catch(reason => { if (!(reason instanceof DOMException && reason.name === 'AbortError')) setRelatedIssues([]); });
+    return () => controller.abort();
+  }, [order?.id]);
+
+  useEffect(() => {
     const text = globalKw.trim();
     if (!text) {
       setGlobalSearch(emptySearchResult);
@@ -826,6 +840,7 @@ export default function DashboardShell({
             connectorParameters: Array.isArray(data.connectorParameters) ? data.connectorParameters : [],
             connectorAssemblyManuals: Array.isArray(data.connectorAssemblyManuals) ? data.connectorAssemblyManuals : [],
             connectorAssemblyManualAssets: Array.isArray(data.connectorAssemblyManualAssets) ? data.connectorAssemblyManualAssets : [],
+            issues: Array.isArray(data.issues) ? data.issues : [],
           });
           setSearchOpen(true);
         }
@@ -2577,6 +2592,15 @@ export default function DashboardShell({
                   </button>
                 ))}
               </>}
+              {globalSearch.issues.length > 0 && <>
+                <div className="search-group-title">问题管理</div>
+                {globalSearch.issues.map(item => (
+                  <button key={item.id} type="button" onClick={() => { location.href = `/workspace/issues?issueId=${encodeURIComponent(item.id)}`; }}>
+                    <strong>{item.title}</strong>
+                    <span>{item.code} · {item.workOrder?.customerName || '未关联客户'} · {item.workOrder?.specification || item.sourceCode || '未关联工单'}</span>
+                  </button>
+                ))}
+              </>}
               {!hasSearchResults(globalSearch) && <div className="search-empty">未找到匹配结果，请调整关键词</div>}
             </div>
           )}
@@ -2898,6 +2922,11 @@ export default function DashboardShell({
                           <Info label="来源订单" value={order.sourceOrderNo || '-'} />
                           <Info label="来源行号" value={order.sourceRowNo ? String(order.sourceRowNo) : '-'} />
                           <Info label="导入批次" value={order.importBatchId || '-'} wrap />
+                          <div className="tool-issue-summary">
+                            <div><span>关联问题</span><strong>{relatedIssues.filter(item => item.status !== 'closed').length} 个未关闭</strong></div>
+                            <a href={`/workspace/issues?workOrderId=${encodeURIComponent(order.id)}`}>查看问题</a>
+                            <a href={`/workspace/issues?action=new&workOrderId=${encodeURIComponent(order.id)}`}>新建问题</a>
+                          </div>
                         </>
                       )}
                       <Info label="文件状态" value={file ? fileStatusText[file.status] || file.status : '暂无文件'} ok={!!file} />

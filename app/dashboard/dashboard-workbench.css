@@ -1592,3 +1592,21 @@
     transition: none;
   }
 }
+.hm-dashboard-workbench .tool-issue-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 2px;
+  padding: 8px;
+  border: 1px solid #ead1bf;
+  border-radius: 7px;
+  background: #fff8f3;
+}
+
+.hm-dashboard-workbench .tool-issue-summary div { min-width: 0; }
+.hm-dashboard-workbench .tool-issue-summary span,
+.hm-dashboard-workbench .tool-issue-summary strong { display: block; }
+.hm-dashboard-workbench .tool-issue-summary span { color: #8a7567; font-size: 9px; }
+.hm-dashboard-workbench .tool-issue-summary strong { margin-top: 2px; color: #5f3b25; font-size: 10px; }
+.hm-dashboard-workbench .tool-issue-summary a { padding: 5px 6px; border: 1px solid #e7b491; border-radius: 5px; background: #fff; color: #ad4d10; font-size: 9px; font-weight: 700; text-decoration: none; white-space: nowrap; }

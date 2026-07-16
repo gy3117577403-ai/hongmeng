@@ -15,7 +15,7 @@ export type HomeKpi = {
 export type HomeActionItem = {
   id: string;
   workOrderId: string;
-  sourceModule: '生产执行';
+  sourceModule: '生产执行' | '问题管理';
   type: string;
   title: string;
   subtitle: string;

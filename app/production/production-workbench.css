@@ -955,6 +955,12 @@
 .hm-production-workbench .production-alerts .amber { border-color: #ead5ac; background: var(--hm-color-warning-soft); color: var(--hm-color-warning); }
 .hm-production-workbench .production-alerts .blue { border-color: #bdcfe5; background: var(--hm-color-info-soft); color: var(--hm-color-info); }
 .hm-production-workbench .production-alerts .more { flex: 0 0 auto; border-color: var(--hm-color-border); background: var(--hm-color-surface-soft); color: var(--hm-color-text-muted); }
+.hm-production-workbench .production-alerts button.issue-action {
+  flex: 0 0 auto;
+  border-color: #efb78f;
+  background: #fff8f3;
+  color: var(--hm-color-accent-hover);
+}
 
 .hm-production-workbench .production-focus-reminder {
   display: -webkit-box;

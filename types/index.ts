@@ -174,6 +174,113 @@ export type TrashDTO = {
   connectorAssemblyManualAssets?: ConnectorAssemblyManualTrashAssetDTO[];
 };
 
+export type IssueStatus = 'pending' | 'processing' | 'verifying' | 'closed';
+export type IssuePriority = 'urgent' | 'high' | 'normal';
+export type IssueType = 'production' | 'planning' | 'technical' | 'quality' | 'material' | 'equipment' | 'other';
+
+export type IssueUserDTO = {
+  id: string;
+  username: string;
+  displayName: string;
+};
+
+export type IssueWorkOrderDTO = {
+  id: string;
+  code: string;
+  specification?: string | null;
+  customerName?: string | null;
+  productName: string;
+  stage: string;
+  drawingStatus?: string | null;
+  materialStatus?: string | null;
+  plannedAt?: string | null;
+};
+
+export type IssueActivityDTO = {
+  id: string;
+  action: string;
+  content?: string | null;
+  fromStatus?: IssueStatus | null;
+  toStatus?: IssueStatus | null;
+  actor?: IssueUserDTO | null;
+  detail?: Record<string, string | number | boolean | null> | null;
+  createdAt: string;
+};
+
+export type IssueAttachmentDTO = {
+  id: string;
+  issueId: string;
+  originalName: string;
+  displayName?: string | null;
+  mimeType: string;
+  fileType: string;
+  size: number;
+  uploadedBy?: IssueUserDTO | null;
+  createdAt: string;
+  contentUrl: string;
+  downloadUrl: string;
+};
+
+export type IssueDTO = {
+  id: string;
+  sequence: number;
+  code: string;
+  title: string;
+  type: IssueType;
+  priority: IssuePriority;
+  status: IssueStatus;
+  description?: string | null;
+  sourceType?: string | null;
+  sourceId?: string | null;
+  sourceCode?: string | null;
+  sourceRoute?: string | null;
+  sourceAlertCode?: string | null;
+  workOrderId?: string | null;
+  reporter?: IssueUserDTO | null;
+  assignee?: IssueUserDTO | null;
+  workOrder?: IssueWorkOrderDTO | null;
+  dueAt?: string | null;
+  rootCause?: string | null;
+  solution?: string | null;
+  verificationResult?: string | null;
+  resolvedAt?: string | null;
+  verifiedAt?: string | null;
+  closedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  isOverdue: boolean;
+  activityCount: number;
+  attachmentCount: number;
+  activities?: IssueActivityDTO[];
+  attachments?: IssueAttachmentDTO[];
+};
+
+export type IssueSummaryDTO = {
+  total: number;
+  pending: number;
+  processing: number;
+  verifying: number;
+  closed: number;
+  overdue: number;
+  unassigned: number;
+};
+
+export type DetectedIssueDTO = {
+  id: string;
+  fingerprint: string;
+  alertCode: string;
+  label: string;
+  tone: 'red' | 'orange' | 'amber' | 'blue';
+  workOrderId: string;
+  workOrderCode: string;
+  specification?: string | null;
+  customerName?: string | null;
+  productName: string;
+  sourceRoute: string;
+  existingIssueId?: string | null;
+  existingIssueStatus?: IssueStatus | null;
+};
+
 export type ConnectorParameterDTO = {
   id: string;
   rowNo?: number | null;
