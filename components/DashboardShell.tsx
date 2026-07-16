@@ -509,45 +509,6 @@ function toForm(order?: WorkOrderDTO): WorkOrderForm {
   };
 }
 
-const productionRestoreStages = ['not_issued', 'frontend', 'backend', 'completed'];
-
-function scheduleProductionViewportRestore(returnKey: string, attempt = 0): void {
-  if (!returnKey || attempt > 10) return;
-  window.setTimeout(() => {
-    if (window.location.pathname !== '/production') {
-      scheduleProductionViewportRestore(returnKey, attempt + 1);
-      return;
-    }
-    try {
-      const raw = sessionStorage.getItem(`production-execution:return:${returnKey}`);
-      const saved = raw ? JSON.parse(raw) as { boardScrollLeft?: number; columnScrollTops?: Record<string, number> } : null;
-      const shell = document.querySelector<HTMLElement>('.production-board-shell');
-      const columns = Array.from(document.querySelectorAll<HTMLElement>('.production-column-list'));
-      if (!saved || !shell || columns.length !== 4) {
-        scheduleProductionViewportRestore(returnKey, attempt + 1);
-        return;
-      }
-      shell.scrollLeft = saved.boardScrollLeft || 0;
-      productionRestoreStages.forEach((stage, index) => { columns[index].scrollTop = saved.columnScrollTops?.[stage] || 0; });
-      window.requestAnimationFrame(() => {
-        const expectedLeft = Math.min(saved.boardScrollLeft || 0, Math.max(0, shell.scrollWidth - shell.clientWidth));
-        const columnsMatch = productionRestoreStages.every((stage, index) => {
-          const expected = Math.min(saved.columnScrollTops?.[stage] || 0, Math.max(0, columns[index].scrollHeight - columns[index].clientHeight));
-          return Math.abs(columns[index].scrollTop - expected) <= 1;
-        });
-        if (Math.abs(shell.scrollLeft - expectedLeft) <= 1 && columnsMatch) {
-          sessionStorage.removeItem(`production-execution:return:${returnKey}`);
-          if (sessionStorage.getItem('production-execution:pending-return') === returnKey) sessionStorage.removeItem('production-execution:pending-return');
-        } else {
-          scheduleProductionViewportRestore(returnKey, attempt + 1);
-        }
-      });
-    } catch {
-      scheduleProductionViewportRestore(returnKey, attempt + 1);
-    }
-  }, attempt === 0 ? 180 : 100);
-}
-
 export default function DashboardShell({
   user,
   initialWorkOrders,
@@ -785,13 +746,6 @@ export default function DashboardShell({
   useEffect(() => {
     window.localStorage.setItem('hongmeng:resourceTool', JSON.stringify({ open: toolOpen, tab: toolTab, width: toolWidth }));
   }, [toolOpen, toolTab, toolWidth]);
-
-  useEffect(() => {
-    if (!productionReturnKey) return undefined;
-    const handleHistoryReturn = (): void => scheduleProductionViewportRestore(productionReturnKey);
-    window.addEventListener('popstate', handleHistoryReturn);
-    return () => window.removeEventListener('popstate', handleHistoryReturn);
-  }, [productionReturnKey]);
 
   useEffect(() => {
     if (!loading && !file && !toolOpen && toolTab !== 'upload') setToolTab('upload');
@@ -1270,8 +1224,8 @@ export default function DashboardShell({
     } catch {
       sessionStorage.removeItem(`production-execution:return:${productionReturnKey}`);
     }
+    if (productionReturnKey) sessionStorage.setItem('production-execution:pending-return', productionReturnKey);
     if (window.history.length > 1) {
-      scheduleProductionViewportRestore(productionReturnKey);
       router.back();
       window.setTimeout(() => {
         if (window.location.pathname !== '/production') router.push(fallbackUrl, { scroll: false });

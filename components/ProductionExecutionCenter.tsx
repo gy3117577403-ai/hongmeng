@@ -171,7 +171,7 @@ type ProductionCardView = {
 };
 
 type ProductionExecutionViewState = {
-  version: 1;
+  version: 1 | 2;
   createdAt: number;
   returnUrl: string;
   view: ViewKey;
@@ -179,10 +179,19 @@ type ProductionExecutionViewState = {
   filters: AdvancedFilters;
   quick: QuickFilter[];
   weekStart: string;
+  page?: number;
   batchMode: boolean;
   selectedIds: string[];
+  completedCollapsed?: boolean;
   boardScrollLeft: number;
+  boardScrollTop?: number;
+  taskScrollTop?: number;
+  windowScrollY?: number;
   columnScrollTops: Record<StageKey, number>;
+  focusedOrderId?: string;
+  focusedStage?: StageKey;
+  focusedScrollRegion?: 'column' | 'board' | 'task' | 'window';
+  focusedOffsetTop?: number;
 };
 
 type FilterChip = {
@@ -341,6 +350,21 @@ function normalizedProductionUrl(value: string): string {
   }
 }
 
+function validProductionReturnState(value: ProductionExecutionViewState | null): value is ProductionExecutionViewState {
+  return !!value
+    && (value.version === 1 || value.version === 2)
+    && Date.now() - value.createdAt < 30 * 60 * 1000
+    && value.returnUrl.startsWith('/production');
+}
+
+function findProductionOrderCard(orderId?: string, stage?: StageKey): HTMLElement | null {
+  if (!orderId) return null;
+  const cards = Array.from(document.querySelectorAll<HTMLElement>('[data-production-order-id]'));
+  return cards.find(card => card.dataset.productionOrderId === orderId && (!stage || card.dataset.productionStage === stage))
+    || cards.find(card => card.dataset.productionOrderId === orderId)
+    || null;
+}
+
 function replaceOrder(payload: BoardPayload | null, order: ProductionOrder): BoardPayload | null {
   if (!payload) return payload;
   const items = payload.items.map(item => item.id === order.id ? order : item);
@@ -417,6 +441,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const statusButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawingButtonRef = useRef<HTMLButtonElement | null>(null);
   const boardShellRef = useRef<HTMLDivElement | null>(null);
+  const taskGridRef = useRef<HTMLDivElement | null>(null);
   const columnRefs = useRef<Record<StageKey, HTMLDivElement | null>>({ not_issued: null, frontend: null, backend: null, completed: null });
   const pendingRestoreRef = useRef<ProductionExecutionViewState | null>(null);
   const returnKeyRef = useRef('');
@@ -431,23 +456,16 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const parsedView = params.get('view');
-    const parsedQuick = (params.get('quick') || '').split(',').filter(value => validQuickFilters.has(value as QuickFilter)) as QuickFilter[];
-    setView(parsedView === 'today' || parsedView === 'exceptions' ? parsedView : 'board');
-    setKeyword(params.get('keyword') || '');
-    setDebouncedKeyword((params.get('keyword') || '').trim());
-    setQuick(parsedQuick);
-    setAdvanced(advancedFromParams(params));
-    setWeekStart(params.get('weekStart') || '');
-    setPage(Math.max(1, Number(params.get('page')) || 1));
-    let returnKey = params.get('returnKey') || sessionStorage.getItem('production-execution:pending-return') || '';
+    const explicitReturnKey = params.get('returnKey') || '';
+    const pendingReturnKey = sessionStorage.getItem('production-execution:pending-return') || '';
+    let returnKey = explicitReturnKey || pendingReturnKey;
     if (!returnKey) {
       const currentUrl = normalizedProductionUrl(window.location.href);
       let latest: { key: string; saved: ProductionExecutionViewState } | null = null;
       for (const key of Object.keys(sessionStorage).filter(item => item.startsWith('production-execution:return:'))) {
         try {
           const saved = JSON.parse(sessionStorage.getItem(key) || '{}') as ProductionExecutionViewState;
-          if (saved.version !== 1 || Date.now() - saved.createdAt >= 30 * 60 * 1000) {
+          if (!validProductionReturnState(saved)) {
             sessionStorage.removeItem(key);
             continue;
           }
@@ -459,19 +477,47 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       if (latest) returnKey = latest.key.replace('production-execution:return:', '');
     }
     returnKeyRef.current = returnKey;
+    let restored: ProductionExecutionViewState | null = null;
     if (returnKey) {
       try {
         const raw = sessionStorage.getItem(`production-execution:return:${returnKey}`);
         const saved = raw ? JSON.parse(raw) as ProductionExecutionViewState : null;
-        if (saved?.version === 1 && Date.now() - saved.createdAt < 30 * 60 * 1000 && saved.returnUrl.startsWith('/production') && normalizedProductionUrl(saved.returnUrl) === normalizedProductionUrl(window.location.href)) pendingRestoreRef.current = saved;
-        else {
+        const matchesCurrentUrl = !!saved && normalizedProductionUrl(saved.returnUrl) === normalizedProductionUrl(window.location.href);
+        const returningThroughNavigation = !explicitReturnKey && pendingReturnKey === returnKey;
+        if (validProductionReturnState(saved) && (matchesCurrentUrl || returningThroughNavigation)) {
+          restored = saved;
+          pendingRestoreRef.current = saved;
+          window.history.replaceState(window.history.state, '', saved.returnUrl);
+        } else {
           sessionStorage.removeItem(`production-execution:return:${returnKey}`);
           if (sessionStorage.getItem('production-execution:pending-return') === returnKey) sessionStorage.removeItem('production-execution:pending-return');
+          returnKeyRef.current = '';
         }
       } catch {
         sessionStorage.removeItem(`production-execution:return:${returnKey}`);
         if (sessionStorage.getItem('production-execution:pending-return') === returnKey) sessionStorage.removeItem('production-execution:pending-return');
+        returnKeyRef.current = '';
       }
+    }
+    const sourceParams = restored
+      ? new URL(restored.returnUrl, window.location.origin).searchParams
+      : params;
+    const parsedView = restored?.view || sourceParams.get('view');
+    const parsedKeyword = restored?.keyword ?? sourceParams.get('keyword') ?? '';
+    const parsedQuick = restored?.quick
+      ? restored.quick.filter(value => validQuickFilters.has(value))
+      : (sourceParams.get('quick') || '').split(',').filter(value => validQuickFilters.has(value as QuickFilter)) as QuickFilter[];
+    setView(parsedView === 'today' || parsedView === 'exceptions' ? parsedView : 'board');
+    setKeyword(parsedKeyword);
+    setDebouncedKeyword(parsedKeyword.trim());
+    setQuick(parsedQuick);
+    setAdvanced(restored ? cloneAdvanced(restored.filters) : advancedFromParams(sourceParams));
+    setWeekStart(restored?.weekStart || sourceParams.get('weekStart') || '');
+    setPage(Math.max(1, restored?.page || Number(sourceParams.get('page')) || 1));
+    if (restored) {
+      setBatchMode(restored.batchMode);
+      setSelected(Array.isArray(restored.selectedIds) ? restored.selectedIds : []);
+      if (typeof restored.completedCollapsed === 'boolean') setCompletedCollapsed(restored.completedCollapsed);
     }
     setStateReady(true);
   }, []);
@@ -560,31 +606,89 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     let cancelled = false;
     let timer = 0;
     let attempt = 0;
+    let stableAttemptCount = 0;
     const restore = (): void => {
       if (cancelled) return;
       attempt += 1;
-      if (boardShellRef.current) boardShellRef.current.scrollLeft = saved.boardScrollLeft;
-      stages.forEach(stage => {
-        const column = columnRefs.current[stage.key];
-        if (column) column.scrollTop = saved.columnScrollTops[stage.key] || 0;
-      });
+      const shell = boardShellRef.current;
+      const taskGrid = taskGridRef.current;
+      const narrowPageMode = window.innerWidth < 1024;
+      if (shell) {
+        shell.scrollLeft = saved.boardScrollLeft || 0;
+        shell.scrollTop = saved.boardScrollTop || 0;
+      }
+      if (taskGrid) taskGrid.scrollTop = saved.taskScrollTop || 0;
+      if (narrowPageMode) window.scrollTo({ top: saved.windowScrollY || 0, behavior: 'auto' });
+      if (view === 'board') {
+        stages.forEach(stage => {
+          const column = columnRefs.current[stage.key];
+          if (column) column.scrollTop = saved.columnScrollTops[stage.key] || 0;
+        });
+      }
       window.requestAnimationFrame(() => {
-        const shell = boardShellRef.current;
-        const expectedLeft = shell ? Math.min(saved.boardScrollLeft, Math.max(0, shell.scrollWidth - shell.clientWidth)) : 0;
-        const columnsMatch = stages.every(stage => {
+        const currentShell = boardShellRef.current;
+        const currentTaskGrid = taskGridRef.current;
+        const expectedLeft = currentShell ? Math.min(saved.boardScrollLeft || 0, Math.max(0, currentShell.scrollWidth - currentShell.clientWidth)) : 0;
+        const expectedBoardTop = currentShell ? Math.min(saved.boardScrollTop || 0, Math.max(0, currentShell.scrollHeight - currentShell.clientHeight)) : 0;
+        const expectedTaskTop = currentTaskGrid ? Math.min(saved.taskScrollTop || 0, Math.max(0, currentTaskGrid.scrollHeight - currentTaskGrid.clientHeight)) : 0;
+        const expectedWindowTop = Math.min(saved.windowScrollY || 0, Math.max(0, document.documentElement.scrollHeight - window.innerHeight));
+        const focusedCard = findProductionOrderCard(saved.focusedOrderId, saved.focusedStage);
+        let anchorContainer: HTMLElement | null = null;
+        let anchorMatches = true;
+        if (focusedCard && typeof saved.focusedOffsetTop === 'number' && saved.focusedScrollRegion) {
+          if (saved.focusedScrollRegion === 'column') anchorContainer = focusedCard.closest<HTMLElement>('.production-column-list');
+          else if (saved.focusedScrollRegion === 'board') anchorContainer = currentShell;
+          else if (saved.focusedScrollRegion === 'task') anchorContainer = currentTaskGrid;
+          const currentOffset = saved.focusedScrollRegion === 'window'
+            ? focusedCard.getBoundingClientRect().top
+            : anchorContainer
+              ? focusedCard.getBoundingClientRect().top - anchorContainer.getBoundingClientRect().top
+              : saved.focusedOffsetTop;
+          const delta = currentOffset - saved.focusedOffsetTop;
+          if (Math.abs(delta) > 0.5) {
+            if (saved.focusedScrollRegion === 'window') window.scrollBy({ top: delta, behavior: 'auto' });
+            else if (anchorContainer) anchorContainer.scrollTop += delta;
+          }
+          const restoredOffset = saved.focusedScrollRegion === 'window'
+            ? focusedCard.getBoundingClientRect().top
+            : anchorContainer
+              ? focusedCard.getBoundingClientRect().top - anchorContainer.getBoundingClientRect().top
+              : saved.focusedOffsetTop;
+          anchorMatches = Math.abs(restoredOffset - saved.focusedOffsetTop) <= 2;
+        }
+        const anchoredBoard = !!focusedCard && saved.focusedScrollRegion === 'board' && !!anchorContainer;
+        const anchoredTask = !!focusedCard && saved.focusedScrollRegion === 'task' && !!anchorContainer;
+        const anchoredColumn = !!focusedCard && saved.focusedScrollRegion === 'column' && !!anchorContainer;
+        const anchoredWindow = !!focusedCard && saved.focusedScrollRegion === 'window';
+        const shellMatches = view !== 'board' || (!!currentShell
+          && Math.abs(currentShell.scrollLeft - expectedLeft) <= 2
+          && (anchoredBoard ? anchorMatches : Math.abs(currentShell.scrollTop - expectedBoardTop) <= 2));
+        const taskMatches = view === 'board' || (!!currentTaskGrid && (anchoredTask ? anchorMatches : Math.abs(currentTaskGrid.scrollTop - expectedTaskTop) <= 2));
+        const columnsMatch = view !== 'board' || stages.every(stage => {
           const column = columnRefs.current[stage.key];
           if (!column) return false;
+          if (anchoredColumn && column === anchorContainer) return anchorMatches;
           const expected = Math.min(saved.columnScrollTops[stage.key] || 0, Math.max(0, column.scrollHeight - column.clientHeight));
-          return Math.abs(column.scrollTop - expected) <= 1;
+          return Math.abs(column.scrollTop - expected) <= 2;
         });
-        if (shell && Math.abs(shell.scrollLeft - expectedLeft) <= 1 && columnsMatch) {
-          sessionStorage.removeItem(`production-execution:return:${returnKeyRef.current}`);
-          if (sessionStorage.getItem('production-execution:pending-return') === returnKeyRef.current) sessionStorage.removeItem('production-execution:pending-return');
+        const windowMatches = !narrowPageMode || (anchoredWindow ? anchorMatches : Math.abs(window.scrollY - expectedWindowTop) <= 2);
+        if (shellMatches && taskMatches && columnsMatch && windowMatches) {
+          stableAttemptCount += 1;
+          if (stableAttemptCount < 3 && attempt < 12) {
+            timer = window.setTimeout(restore, 100);
+            return;
+          }
+          const returnKey = returnKeyRef.current;
+          const focusTarget = findProductionOrderCard(saved.focusedOrderId, saved.focusedStage)?.querySelector<HTMLElement>('.production-card-spec');
+          if (focusTarget) focusTarget.focus({ preventScroll: true });
+          sessionStorage.removeItem(`production-execution:return:${returnKey}`);
+          if (sessionStorage.getItem('production-execution:pending-return') === returnKey) sessionStorage.removeItem('production-execution:pending-return');
           pendingRestoreRef.current = null;
           returnKeyRef.current = '';
           const params = executionParams(view, debouncedKeyword, quick, advanced, weekStart, page);
           window.history.replaceState(window.history.state, '', `/production?${params.toString()}`);
-        } else if (attempt < 8) {
+        } else if (attempt < 12) {
+          stableAttemptCount = 0;
           timer = window.setTimeout(restore, 100);
         }
       });
@@ -602,6 +706,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }, []);
 
   useEffect(() => {
+    if (pendingRestoreRef.current && typeof pendingRestoreRef.current.completedCollapsed === 'boolean') return;
     const saved = sessionStorage.getItem('production-execution:completed-collapsed');
     setCompletedCollapsed(window.innerWidth >= 1280 && saved === '1');
   }, []);
@@ -980,12 +1085,34 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     if (tab === 'progress' && detailOrder) void loadProgress(detailOrder.id);
   }
 
-  function captureReturnState(returnKey: string): string {
+  function captureReturnState(returnKey: string, focusedOrderId: string, focusedStage?: StageKey): string {
     const params = executionParams(view, debouncedKeyword, quick, advanced, weekStart, page);
     params.set('returnKey', returnKey);
     const returnUrl = `/production?${params.toString()}`;
+    const focusedCard = findProductionOrderCard(focusedOrderId, focusedStage);
+    let focusedScrollRegion: ProductionExecutionViewState['focusedScrollRegion'];
+    let focusedOffsetTop: number | undefined;
+    if (focusedCard) {
+      const cardRect = focusedCard.getBoundingClientRect();
+      if (view === 'board' && window.innerWidth >= 1280) {
+        const column = focusedCard.closest<HTMLElement>('.production-column-list');
+        if (column) {
+          focusedScrollRegion = 'column';
+          focusedOffsetTop = cardRect.top - column.getBoundingClientRect().top;
+        }
+      } else if (view === 'board' && window.innerWidth >= 1024 && boardShellRef.current) {
+        focusedScrollRegion = 'board';
+        focusedOffsetTop = cardRect.top - boardShellRef.current.getBoundingClientRect().top;
+      } else if (view !== 'board' && taskGridRef.current && taskGridRef.current.scrollHeight > taskGridRef.current.clientHeight + 1) {
+        focusedScrollRegion = 'task';
+        focusedOffsetTop = cardRect.top - taskGridRef.current.getBoundingClientRect().top;
+      } else {
+        focusedScrollRegion = 'window';
+        focusedOffsetTop = cardRect.top;
+      }
+    }
     const state: ProductionExecutionViewState = {
-      version: 1,
+      version: 2,
       createdAt: Date.now(),
       returnUrl,
       view,
@@ -993,15 +1120,24 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       filters: cloneAdvanced(advanced),
       quick: [...quick],
       weekStart,
+      page,
       batchMode,
       selectedIds: [...selected],
+      completedCollapsed,
       boardScrollLeft: boardShellRef.current?.scrollLeft || 0,
+      boardScrollTop: boardShellRef.current?.scrollTop || 0,
+      taskScrollTop: taskGridRef.current?.scrollTop || 0,
+      windowScrollY: window.scrollY,
       columnScrollTops: {
         not_issued: columnRefs.current.not_issued?.scrollTop || 0,
         frontend: columnRefs.current.frontend?.scrollTop || 0,
         backend: columnRefs.current.backend?.scrollTop || 0,
         completed: columnRefs.current.completed?.scrollTop || 0,
       },
+      focusedOrderId,
+      focusedStage,
+      focusedScrollRegion,
+      focusedOffsetTop,
     };
     sessionStorage.setItem(`production-execution:return:${returnKey}`, JSON.stringify(state));
     sessionStorage.setItem('production-execution:pending-return', returnKey);
@@ -1009,9 +1145,9 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     return returnUrl;
   }
 
-  function openWorkOrderResources(order: ProductionOrder): void {
+  function openWorkOrderResources(order: ProductionOrder, focusedStage?: StageKey): void {
     const returnKey = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    captureReturnState(returnKey);
+    captureReturnState(returnKey, order.id, focusedStage);
     const params = new URLSearchParams({ workOrderId: order.id, categoryCode: 'drawing', from: 'production', returnKey });
     router.push(`/dashboard?${params.toString()}`, { scroll: false });
   }
@@ -1180,7 +1316,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             ) : (
               <section className="production-task-view">
                 <div className="production-task-heading"><div><strong>{view === 'today' ? '今日任务' : '异常任务'}</strong><span>{view === 'today' ? '今日交期、逾期与今日进展' : '聚合资料与基础字段异常，不自动修改数据'}</span></div><em>{board?.pagination.total || 0} 项</em></div>
-                <div className="production-task-grid hm-scroll-region" tabIndex={0} aria-label={`${view === 'today' ? '今日任务' : '异常任务'}列表`}>
+                <div ref={taskGridRef} className="production-task-grid hm-scroll-region" tabIndex={0} aria-label={`${view === 'today' ? '今日任务' : '异常任务'}列表`}>
                   {board?.items.map(order => {
                     const item = primaryCardView(order);
                     return <ProductionCard key={order.id} order={order} displayStage={item.displayStage} stageQuantity={item.stageQuantity} {...cardProps} showExceptions={view === 'exceptions'} />;
@@ -1255,7 +1391,7 @@ type ProductionCardProps = {
   openUpdate: (order: ProductionOrder) => void;
   openNextStep: (order: ProductionOrder, displayStage: StageKey) => void;
   saving: boolean;
-  openResources: (order: ProductionOrder) => void;
+  openResources: (order: ProductionOrder, focusedStage?: StageKey) => void;
   copySpecification: (order: ProductionOrder) => Promise<void>;
   openStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, order: ProductionOrder) => void;
   openDrawingStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, order: ProductionOrder) => void;
@@ -1288,13 +1424,13 @@ function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu }: P
   </div>;
 }
 
-function WorkOrderCardTitle({ order, batchMode, selected, toggleSelected, openDetail, openResources, copySpecification }: Pick<ProductionCardProps, 'order' | 'batchMode' | 'selected' | 'toggleSelected' | 'openDetail' | 'openResources' | 'copySpecification'>) {
+function WorkOrderCardTitle({ order, displayStage, batchMode, selected, toggleSelected, openDetail, openResources, copySpecification }: Pick<ProductionCardProps, 'order' | 'displayStage' | 'batchMode' | 'selected' | 'toggleSelected' | 'openDetail' | 'openResources' | 'copySpecification'>) {
   return <>
     <div className="production-card-title">
       <CardSelection order={order} batchMode={batchMode} selected={selected} toggleSelected={toggleSelected} />
       <div className="production-card-identity">
         <strong title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</strong>
-        <button className="production-card-spec" type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order)}>{specText(order)}</button>
+        <button className="production-card-spec" type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order, displayStage)}>{specText(order)}</button>
       </div>
       <div className="production-card-title-actions">
         <button className="production-card-copy" type="button" title="复制完整规格" aria-label="复制完整规格" onClick={() => void copySpecification(order)}><Copy size={15} aria-hidden="true" /></button>
@@ -1309,7 +1445,7 @@ function NotIssuedWorkOrderCard(props: ProductionCardProps) {
   const { order, openNextStep, openDrawingStatusMenu, saving, stageQuantity } = props;
   const quantity = order.quantitySummary;
   const reminder = /样品|确认|变更|异常|返工|待处理/.test(order.latestProgressRemark || '') ? order.latestProgressRemark : '';
-  return <article className={`production-card production-card-not-issued not_issued ${props.selected.includes(order.id) ? 'selected' : ''}`}>
+  return <article className={`production-card production-card-not-issued not_issued ${props.selected.includes(order.id) ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage="not_issued">
     <WorkOrderCardTitle {...props} />
     <dl className="production-leader-metrics production-quantity-grid"><div><dt>本阶段数量</dt><dd>{stageQuantity === null ? '待补充' : formatProductionQuantity(stageQuantity)}</dd></div><div><dt>总目标</dt><dd>{quantity.targetQty === null ? '待补充' : formatProductionQuantity(quantity.targetQty)}</dd></div><div><dt>已完成</dt><dd>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</dd></div></dl>
     <div className="production-card-meta"><span>计划交期</span><strong>{deliveryText(order) || '待设置'}</strong></div>
@@ -1324,7 +1460,7 @@ function ActiveWorkOrderCard(props: ProductionCardProps) {
   const quantity = order.quantitySummary;
   const percentageWidth = Math.max(0, Math.min(quantity.percentage || 0, 100));
   const splitFlow = cardSegments(order).length > 1;
-  return <article className={`production-card production-card-active ${displayStage} ${props.selected.includes(order.id) ? 'selected' : ''}`}>
+  return <article className={`production-card production-card-active ${displayStage} ${props.selected.includes(order.id) ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage={displayStage}>
     <WorkOrderCardTitle {...props} />
     <button className="production-progress-hit" type="button" onClick={() => openUpdate(order)} title="记录生产进度备注">
       <span className="production-quantity-grid"><span><small>本阶段数量</small><strong>{stageQuantity === null ? '-' : formatProductionQuantity(stageQuantity)}</strong></span><span><small>总目标</small><strong>{quantity.targetQty === null ? '-' : formatProductionQuantity(quantity.targetQty)}</strong></span><span><small>累计完成</small><strong>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</strong></span></span>
@@ -1344,7 +1480,7 @@ function CompletedWorkOrderCard(props: ProductionCardProps) {
   const quantityText = props.stageQuantity === null
     ? '完成数量待核对'
     : `本阶段完成 ${formatProductionQuantity(props.stageQuantity)} 套 · 累计 ${formatProductionQuantity(quantity.completedQty)} / ${formatProductionQuantity(quantity.targetQty)} 套`;
-  return <article className={`production-card production-card-completed completed ${quantity.status} ${isSelected ? 'selected' : ''}`}>
+  return <article className={`production-card production-card-completed completed ${quantity.status} ${isSelected ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage="completed">
     <WorkOrderCardTitle {...props} />
     <div className="production-completed-quantity">{quantityText}</div>
     {quantity.status === 'tail_remaining' && <div className="production-completed-result tail">剩余 {formatProductionQuantity(quantity.remainingQty)} 套 · 尾数未清</div>}

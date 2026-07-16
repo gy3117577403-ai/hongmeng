@@ -387,8 +387,8 @@
   z-index: calc(var(--z-side-tool) + 30);
   top: 72px;
   bottom: 12px;
-  left: 12px;
-  width: min(468px, calc(100vw - 24px));
+  left: calc(var(--hm-shell-rail) + 12px);
+  width: min(468px, calc(100vw - var(--hm-shell-rail) - 24px));
   max-width: none;
   height: auto;
   min-height: 0;
@@ -411,7 +411,7 @@
 
 .hm-dashboard-workbench .drawer-mask {
   z-index: calc(var(--z-side-tool) + 20);
-  inset: 62px 0 0;
+  inset: var(--hm-shell-header) 0 0 var(--hm-shell-rail);
   background: rgba(31, 41, 51, .28);
   backdrop-filter: blur(1px);
 }
@@ -850,16 +850,16 @@
   }
 
   .hm-dashboard-workbench .orders-drawer {
-    top: 8px;
+    top: calc(var(--hm-shell-header) + 8px);
     bottom: 8px;
-    left: 8px;
-    width: min(448px, calc(100vw - 16px));
+    left: calc(var(--hm-shell-rail) + 8px);
+    width: min(448px, calc(100vw - var(--hm-shell-rail) - 16px));
     gap: 6px;
     padding: 10px;
   }
 
   .hm-dashboard-workbench .drawer-mask {
-    inset: 0;
+    inset: var(--hm-shell-header) 0 0 var(--hm-shell-rail);
   }
 
   .hm-dashboard-workbench .orders-drawer :is(.plan-view-tabs, .panel-search, .weekly-filter-tabs, .hm-dashboard-filter-summary, .order-stats, .field-summary) {
