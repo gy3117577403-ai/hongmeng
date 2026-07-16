@@ -521,6 +521,41 @@ export type ProcessRouteWorkOrderDTO = {
   route?: WorkOrderProcessRouteDTO | null;
 };
 
+export type ProcessReferenceSource = 'work_order' | 'drawing_library';
+
+export type ProcessReferenceFileDTO = {
+  id: string;
+  source: ProcessReferenceSource;
+  sourceLabel: string;
+  workOrderId?: string | null;
+  libraryItemId?: string | null;
+  categoryId: string;
+  categoryName: string;
+  categoryCode: 'drawing' | 'sop';
+  originalName: string;
+  displayName?: string | null;
+  mimeType: string;
+  fileType: 'pdf' | 'image' | 'other';
+  fileSize: number;
+  version: string;
+  createdAt: string;
+  contentUrl: string;
+  downloadUrl: string;
+};
+
+export type ProcessReferenceCategoryDTO = {
+  code: 'drawing' | 'sop';
+  name: string;
+  fileCount: number;
+};
+
+export type ProcessReferencePayloadDTO = {
+  workOrderId: string;
+  drawingLibraryItemId?: string | null;
+  categories: ProcessReferenceCategoryDTO[];
+  files: ProcessReferenceFileDTO[];
+};
+
 export type ProcessRouteSummaryDTO = {
   total: number;
   missing: number;
