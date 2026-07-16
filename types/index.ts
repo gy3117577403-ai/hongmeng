@@ -431,6 +431,23 @@ export type WarehouseWeekOptionDTO = {
 export type ProcessStageGroup = 'frontend' | 'backend' | 'finish';
 export type ProcessRouteStatus = 'draft' | 'confirmed' | 'in_progress' | 'completed';
 export type ProcessStepStatus = 'pending' | 'current' | 'completed' | 'skipped';
+export type ProcessTimeBasis = 'per_unit' | 'per_batch';
+
+export type ProcessTimeStandardDTO = {
+  id: string;
+  processDefinitionId: string;
+  version: number;
+  timeBasis: ProcessTimeBasis;
+  unitLabel: string;
+  standardMillisecondsPerUnit: number;
+  setupMilliseconds: number;
+  countsForEfficiency: boolean;
+  isCurrent: boolean;
+  effectiveFrom: string;
+  remark?: string | null;
+  createdBy?: IssueUserDTO | null;
+  createdAt: string;
+};
 
 export type ProcessDefinitionDTO = {
   id: string;
@@ -439,6 +456,10 @@ export type ProcessDefinitionDTO = {
   stageGroup: ProcessStageGroup;
   isActive: boolean;
   sortOrder: number;
+  currentStandard?: ProcessTimeStandardDTO | null;
+  standardHistory?: ProcessTimeStandardDTO[];
+  templateUsageCount?: number;
+  routeUsageCount?: number;
 };
 
 export type ProcessTemplateStepDTO = {
@@ -448,6 +469,7 @@ export type ProcessTemplateStepDTO = {
   processName: string;
   stageGroup: ProcessStageGroup;
   position: number;
+  unitsPerProduct?: number;
 };
 
 export type ProcessTemplateDTO = {
@@ -469,6 +491,14 @@ export type WorkOrderProcessStepDTO = ProcessTemplateStepDTO & {
   completedAt?: string | null;
   completedBy?: IssueUserDTO | null;
   remark?: string | null;
+  standardTimeId?: string | null;
+  standardVersion?: number | null;
+  timeBasis?: ProcessTimeBasis | null;
+  unitLabel?: string | null;
+  standardMillisecondsPerUnit?: number | null;
+  setupMilliseconds?: number;
+  countsForEfficiency?: boolean;
+  executionCount?: number;
 };
 
 export type ProcessRouteActivityDTO = {
@@ -563,6 +593,98 @@ export type ProcessRouteSummaryDTO = {
   confirmed: number;
   inProgress: number;
   completed: number;
+};
+
+export type EmployeeDTO = {
+  id: string;
+  employeeNo: string;
+  name: string;
+  department?: string | null;
+  team?: string | null;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProcessExecutionContextDTO = {
+  stepId: string;
+  processName: string;
+  processCode: string;
+  targetQuantity: number;
+  suggestedStartedAt: string;
+  suggestedEndedAt: string;
+  standard?: {
+    standardTimeId?: string | null;
+    version?: number | null;
+    timeBasis: ProcessTimeBasis;
+    unitLabel: string;
+    standardMillisecondsPerUnit: number;
+    setupMilliseconds: number;
+    unitsPerProduct: number;
+    countsForEfficiency: boolean;
+  } | null;
+  employees: EmployeeDTO[];
+};
+
+export type ProcessExecutionDTO = {
+  id: string;
+  stepId: string;
+  employee: EmployeeDTO;
+  workOrderId: string;
+  workOrderCode: string;
+  customerName?: string | null;
+  specification?: string | null;
+  productName: string;
+  processCode: string;
+  processName: string;
+  startedAt: string;
+  endedAt: string;
+  breakMilliseconds: number;
+  goodQty: number;
+  scrapQty: number;
+  reworkQty: number;
+  timeBasis: ProcessTimeBasis;
+  unitLabel: string;
+  standardMillisecondsPerUnit: number;
+  setupMilliseconds: number;
+  unitsPerProduct: number;
+  standardLaborMilliseconds: number;
+  actualLaborMilliseconds: number;
+  attainmentBasisPoints: number;
+  countsForEfficiency: boolean;
+  source: string;
+  remark?: string | null;
+  createdAt: string;
+};
+
+export type EmployeeAttainmentRowDTO = {
+  employee: EmployeeDTO;
+  standardLaborMilliseconds: number;
+  actualLaborMilliseconds: number;
+  attainmentBasisPoints: number;
+  goodQty: number;
+  scrapQty: number;
+  reworkQty: number;
+  executionCount: number;
+  details: ProcessExecutionDTO[];
+};
+
+export type EmployeeAttainmentReportDTO = {
+  period: 'today' | 'week' | 'month';
+  date: string;
+  rangeStart: string;
+  rangeEnd: string;
+  summary: {
+    employeeCount: number;
+    executionCount: number;
+    standardLaborMilliseconds: number;
+    actualLaborMilliseconds: number;
+    attainmentBasisPoints: number;
+    goodQty: number;
+    scrapQty: number;
+    reworkQty: number;
+  };
+  rows: EmployeeAttainmentRowDTO[];
 };
 
 export type WorkflowProcessStatus = 'waiting' | 'processing' | 'verifying' | 'closed';

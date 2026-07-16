@@ -11,6 +11,7 @@ import {
   serializeProcessTemplate,
 } from '@/lib/process-routing';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
+import { serializeProcessTimeStandard } from '@/lib/process-time';
 import type { ProcessRouteStatus, ProcessRouteSummaryDTO } from '@/types';
 
 export const runtime = 'nodejs';
@@ -100,6 +101,15 @@ export async function GET(req: NextRequest) {
       }),
       prisma.processDefinition.findMany({
         where: { isActive: true },
+        include: {
+          timeStandards: {
+            where: { isCurrent: true },
+            take: 1,
+            include: {
+              createdBy: { select: { id: true, username: true, displayName: true } },
+            },
+          },
+        },
         orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
       }),
       prisma.processTemplate.findMany({
@@ -155,6 +165,9 @@ export async function GET(req: NextRequest) {
         stageGroup: definition.stageGroup,
         isActive: definition.isActive,
         sortOrder: definition.sortOrder,
+        currentStandard: definition.timeStandards[0]
+          ? serializeProcessTimeStandard(definition.timeStandards[0])
+          : null,
       })),
       templates: latestTemplates.map(serializeProcessTemplate),
       shortcutGroups: PROCESS_SHORTCUT_GROUPS,

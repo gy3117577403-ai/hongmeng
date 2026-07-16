@@ -7,6 +7,7 @@ import {
   CalendarDays,
   ChevronDown,
   ChevronRight,
+  Clock3,
   FileCheck2,
   FolderKanban,
   GitPullRequestArrow,
@@ -70,8 +71,9 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
       { href: '/workspace/warehouse', label: '仓库管理', icon: Warehouse },
       { href: '/workspace/processes', label: '工艺管理', icon: ListOrdered },
+      { href: '/workspace/time-standards', label: '标准工时', icon: Clock3 },
       { href: '/workspace/knowledge', label: '知识库', icon: BookOpen, planned: true },
-      { href: '/workspace/reports', label: '报表中心', icon: BarChart3, planned: true },
+      { href: '/workspace/reports', label: '报表中心', icon: BarChart3 },
     ],
   },
 ];

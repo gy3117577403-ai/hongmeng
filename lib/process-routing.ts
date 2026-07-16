@@ -54,7 +54,10 @@ export const processRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRoute
   confirmedBy: { select: { id: true, username: true, displayName: true } },
   steps: {
     orderBy: { position: 'asc' },
-    include: { completedBy: { select: { id: true, username: true, displayName: true } } },
+    include: {
+      completedBy: { select: { id: true, username: true, displayName: true } },
+      _count: { select: { executions: true } },
+    },
   },
   activities: {
     orderBy: { createdAt: 'desc' },
@@ -64,7 +67,10 @@ export const processRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRoute
 });
 
 export const processRouteSummaryInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
-  steps: { orderBy: { position: 'asc' } },
+  steps: {
+    orderBy: { position: 'asc' },
+    include: { _count: { select: { executions: true } } },
+  },
 });
 
 export type ProcessTemplateRecord = Prisma.ProcessTemplateGetPayload<{
@@ -84,6 +90,7 @@ export type ProcessStepInput = {
   processCode?: unknown;
   processName?: unknown;
   stageGroup?: unknown;
+  unitsPerProduct?: unknown;
 };
 
 export type ValidatedProcessStep = {
@@ -92,6 +99,7 @@ export type ValidatedProcessStep = {
   processName: string;
   stageGroup: ProcessStageGroup;
   position: number;
+  unitsPerProduct: number;
 };
 
 export type ProcessStepValidationResult =
@@ -137,12 +145,16 @@ export function validateProcessSteps(input: unknown): ProcessStepValidationResul
     const item = input[index] as ProcessStepInput;
     const processName = cleanText(item?.processName, 60);
     const stageGroup = normalizeProcessStageGroup(item?.stageGroup);
+    const unitsPerProduct = Number(item?.unitsPerProduct ?? 1);
     let processCode = cleanText(item?.processCode, 80)
       .toLocaleLowerCase('en-US')
       .replace(/[^a-z0-9_-]+/g, '-')
       .replace(/^-+|-+$/g, '');
     if (!processName) return { ok: false, error: `第 ${index + 1} 个工序缺少名称` };
     if (!stageGroup) return { ok: false, error: `第 ${index + 1} 个工序的阶段分组不正确` };
+    if (!Number.isInteger(unitsPerProduct) || unitsPerProduct <= 0 || unitsPerProduct > 10_000) {
+      return { ok: false, error: `第 ${index + 1} 个工序的每件次数必须是 1-10000 的整数` };
+    }
     if (!processCode) processCode = `custom-${index + 1}-${Date.now()}`;
     if (codes.has(processCode)) {
       return { ok: false, error: `工序“${processName}”重复，请删除重复项后再保存` };
@@ -154,6 +166,7 @@ export function validateProcessSteps(input: unknown): ProcessStepValidationResul
       processName,
       stageGroup,
       position: index + 1,
+      unitsPerProduct,
     });
   }
   return { ok: true, steps };
@@ -176,6 +189,7 @@ export function serializeProcessTemplate(template: ProcessTemplateRecord): Proce
       processName: step.processName,
       stageGroup: normalizeProcessStageGroup(step.stageGroup) || 'frontend',
       position: step.position,
+      unitsPerProduct: step.unitsPerProduct,
     })),
   };
 }
@@ -191,11 +205,24 @@ export function serializeProcessRoute(
     processName: step.processName,
     stageGroup: normalizeProcessStageGroup(step.stageGroup) || 'frontend',
     position: step.position,
+    unitsPerProduct: step.unitsPerProduct,
     status: normalizeStepStatus(step.status),
     startedAt: step.startedAt?.toISOString() || null,
     completedAt: step.completedAt?.toISOString() || null,
     completedBy: 'completedBy' in step ? step.completedBy : null,
     remark: step.remark,
+    standardTimeId: step.standardTimeId,
+    standardVersion: step.standardVersion,
+    timeBasis: step.timeBasis === 'per_batch'
+      ? 'per_batch' as const
+      : step.timeBasis === 'per_unit'
+        ? 'per_unit' as const
+        : null,
+    unitLabel: step.unitLabel,
+    standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
+    setupMilliseconds: step.setupMilliseconds,
+    countsForEfficiency: step.countsForEfficiency,
+    executionCount: '_count' in step ? step._count.executions : 0,
   }));
   const completedStepCount = steps.filter(step => step.status === 'completed' || step.status === 'skipped').length;
   const currentIndex = steps.findIndex(step => step.status === 'current');
@@ -270,6 +297,15 @@ export async function createWorkOrderProcessRoute(
     : await findDefaultProcessTemplate(tx);
   if (!template) throw new Error('PROCESS_TEMPLATE_NOT_FOUND');
   if (!template.steps.length) throw new Error('PROCESS_TEMPLATE_EMPTY');
+  const definitionIds = template.steps
+    .map(step => step.processDefinitionId)
+    .filter((id): id is string => Boolean(id));
+  const currentStandards = definitionIds.length
+    ? await tx.processTimeStandard.findMany({
+        where: { processDefinitionId: { in: definitionIds }, isCurrent: true },
+      })
+    : [];
+  const standardsByDefinition = new Map(currentStandards.map(standard => [standard.processDefinitionId, standard]));
 
   const route = await tx.workOrderProcessRoute.create({
     data: {
@@ -279,14 +315,27 @@ export async function createWorkOrderProcessRoute(
       templateVersion: template.version,
       status: 'draft',
       steps: {
-        create: template.steps.map(step => ({
-          processDefinitionId: step.processDefinitionId,
-          processCode: step.processCode,
-          processName: step.processName,
-          stageGroup: step.stageGroup,
-          position: step.position,
-          status: 'pending',
-        })),
+        create: template.steps.map(step => {
+          const standard = step.processDefinitionId
+            ? standardsByDefinition.get(step.processDefinitionId)
+            : null;
+          return {
+            processDefinitionId: step.processDefinitionId,
+            processCode: step.processCode,
+            processName: step.processName,
+            stageGroup: step.stageGroup,
+            position: step.position,
+            unitsPerProduct: step.unitsPerProduct,
+            standardTimeId: standard?.id || null,
+            standardVersion: standard?.version || null,
+            timeBasis: standard?.timeBasis || null,
+            unitLabel: standard?.unitLabel || null,
+            standardMillisecondsPerUnit: standard?.standardMillisecondsPerUnit || null,
+            setupMilliseconds: standard?.setupMilliseconds || 0,
+            countsForEfficiency: standard?.countsForEfficiency ?? true,
+            status: 'pending',
+          };
+        }),
       },
       activities: {
         create: {
@@ -322,5 +371,6 @@ export function processTemplateStepInput(step: ProcessTemplateStepDTO): Validate
     processName: step.processName,
     stageGroup: step.stageGroup,
     position: step.position,
+    unitsPerProduct: step.unitsPerProduct || 1,
   };
 }

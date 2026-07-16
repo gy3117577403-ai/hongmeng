@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, BarChart3, CalendarDays, ChevronRight, Copy, Download, Info, ListChecks, Pencil, Search, X } from 'lucide-react';
+import { AlertTriangle, BarChart3, CalendarDays, ChevronRight, Copy, Download, Info, ListChecks, Pencil, RefreshCw, Search, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -11,7 +11,11 @@ import { writeClipboardText } from '@/lib/client-platform';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
 import { prepareProductionQuantityAdjustment } from '@/lib/production-quantity-adjustment';
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
-import type { CurrentUserDTO, WorkOrderProcessRouteDTO } from '@/types';
+import type {
+  CurrentUserDTO,
+  ProcessExecutionContextDTO,
+  WorkOrderProcessRouteDTO,
+} from '@/types';
 
 type StageKey = 'not_issued' | 'frontend' | 'backend' | 'completed';
 type ViewKey = 'board' | 'today' | 'exceptions';
@@ -194,6 +198,17 @@ type NextStepRequest = {
   action: ProductionFlowAction;
 };
 
+type ProcessExecutionForm = {
+  employeeId: string;
+  startedAt: string;
+  endedAt: string;
+  breakMinutes: string;
+  goodQty: string;
+  scrapQty: string;
+  reworkQty: string;
+  remark: string;
+};
+
 type ProductionCardView = {
   order: ProductionOrder;
   displayStage: StageKey;
@@ -250,6 +265,54 @@ function stageMenuItems(order: ProductionOrder): Array<{ key: StageKey; label: s
     if (index !== 0) return { key, label };
     return { key, label: order.stage === 'completed' ? `撤回到${label}` : `推进到${label}` };
   });
+}
+
+function dateTimeLocalValue(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function positiveWholeNumber(value: string): number | null {
+  return /^[1-9]\d*$/.test(value.trim()) ? Number(value) : null;
+}
+
+function nonnegativeWholeNumber(value: string): number | null {
+  return /^\d+$/.test(value.trim()) ? Number(value) : null;
+}
+
+function executionPreview(context: ProcessExecutionContextDTO | null, form: ProcessExecutionForm | null): {
+  standardMilliseconds: number;
+  actualMilliseconds: number;
+  attainmentBasisPoints: number;
+} | null {
+  if (!context?.standard || !form) return null;
+  const goodQty = positiveWholeNumber(form.goodQty);
+  const breakMinutes = Number(form.breakMinutes || 0);
+  const startedAt = new Date(form.startedAt);
+  const endedAt = new Date(form.endedAt);
+  if (!goodQty || !Number.isFinite(breakMinutes) || breakMinutes < 0 || Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) return null;
+  const actualMilliseconds = endedAt.getTime() - startedAt.getTime() - Math.round(breakMinutes * 60_000);
+  if (actualMilliseconds <= 0) return null;
+  const standardMilliseconds = context.standard.setupMilliseconds + (
+    context.standard.timeBasis === 'per_batch'
+      ? context.standard.standardMillisecondsPerUnit
+      : context.standard.standardMillisecondsPerUnit * goodQty * context.standard.unitsPerProduct
+  );
+  return {
+    standardMilliseconds,
+    actualMilliseconds,
+    attainmentBasisPoints: Math.round((standardMilliseconds / actualMilliseconds) * 10_000),
+  };
+}
+
+function durationText(milliseconds: number): string {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '-';
+  const minutes = milliseconds / 60_000;
+  if (minutes < 1) return `${Math.round(milliseconds / 1000)} 秒`;
+  if (minutes < 60) return `${Number(minutes.toFixed(1))} 分钟`;
+  return `${Number((minutes / 60).toFixed(2))} 小时`;
 }
 
 const quickByView: Record<ViewKey, Array<{ key: QuickFilter; label: string }>> = {
@@ -510,6 +573,10 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [nextStepRequest, setNextStepRequest] = useState<NextStepRequest | null>(null);
   const [nextStepQuantity, setNextStepQuantity] = useState('');
   const [nextStepError, setNextStepError] = useState('');
+  const [executionContext, setExecutionContext] = useState<ProcessExecutionContextDTO | null>(null);
+  const [executionForm, setExecutionForm] = useState<ProcessExecutionForm | null>(null);
+  const [executionContextLoading, setExecutionContextLoading] = useState(false);
+  const [executionContextWarning, setExecutionContextWarning] = useState('');
   const [completedCollapsed, setCompletedCollapsed] = useState(false);
   const [insightsOpen, setInsightsOpen] = useState(false);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1164,6 +1231,42 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     await saveQuickUpdate(order, { drawingStatus }, optimistic, `图纸状态已更新为${drawingStatus}`);
   }
 
+  async function loadProcessExecutionContext(stepId: string): Promise<void> {
+    setExecutionContextLoading(true);
+    setExecutionContextWarning('');
+    setExecutionContext(null);
+    setExecutionForm(null);
+    try {
+      const response = await fetch(`/api/process-executions/context?stepId=${encodeURIComponent(stepId)}`, { cache: 'no-store' });
+      const body = await response.json().catch(() => ({})) as {
+        context?: ProcessExecutionContextDTO;
+        error?: string;
+      };
+      if (!response.ok || !body.context) throw new Error(body.error || '报工信息加载失败');
+      const context = body.context;
+      setExecutionContext(context);
+      setExecutionForm({
+        employeeId: context.employees[0]?.id || '',
+        startedAt: dateTimeLocalValue(context.suggestedStartedAt),
+        endedAt: dateTimeLocalValue(context.suggestedEndedAt),
+        breakMinutes: '0',
+        goodQty: String(Math.max(1, context.targetQuantity || 1)),
+        scrapQty: '0',
+        reworkQty: '0',
+        remark: '',
+      });
+      if (!context.standard) {
+        setExecutionContextWarning('当前工序尚未定标。本次可以继续完成工序，但不会生成员工达成率记录。');
+      } else if (!context.employees.length) {
+        setExecutionContextWarning('尚未建立在用员工档案。本次可以继续完成工序，但不会生成员工达成率记录。');
+      }
+    } catch (reason) {
+      setExecutionContextWarning(`${reason instanceof Error ? reason.message : '报工信息加载失败'}。本次仍可继续完成工序，但不会生成员工达成率记录。`);
+    } finally {
+      setExecutionContextLoading(false);
+    }
+  }
+
   function openNextStep(order: ProductionOrder, displayStage: StageKey): void {
     setStatusMenuOrder(null);
     setDrawingMenuOrder(null);
@@ -1182,6 +1285,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       setNextStepRequest({ order, displayStage, action: 'advance_process_route' });
       setNextStepQuantity('');
       setNextStepError('');
+      const currentStepId = order.processRoute.currentStep.id;
+      void loadProcessExecutionContext(currentStepId);
       return;
     }
     if (!order.quantityFlow.valid) {
@@ -1202,11 +1307,70 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setNextStepRequest({ order, displayStage, action });
     setNextStepQuantity(defaultQuantity && defaultQuantity > 0 ? String(defaultQuantity) : '');
     setNextStepError('');
+    setExecutionContext(null);
+    setExecutionForm(null);
+    setExecutionContextWarning('');
   }
 
   async function saveNextStep(): Promise<void> {
     if (!nextStepRequest) return;
     const { order, action, displayStage } = nextStepRequest;
+    let execution: {
+      employeeId: string;
+      startedAt: string;
+      endedAt: string;
+      breakMilliseconds: number;
+      goodQty: number;
+      scrapQty: number;
+      reworkQty: number;
+      remark: string;
+    } | undefined;
+    if (action === 'advance_process_route' && executionContext?.standard && executionContext.employees.length) {
+      if (executionContextLoading || !executionForm) {
+        setNextStepError('报工信息仍在加载，请稍候');
+        return;
+      }
+      if (!executionForm.employeeId) {
+        setNextStepError('请选择完成该工序的员工');
+        return;
+      }
+      const goodQty = positiveWholeNumber(executionForm.goodQty);
+      const scrapQty = nonnegativeWholeNumber(executionForm.scrapQty);
+      const reworkQty = nonnegativeWholeNumber(executionForm.reworkQty);
+      const breakMinutes = Number(executionForm.breakMinutes || 0);
+      const startedAt = new Date(executionForm.startedAt);
+      const endedAt = new Date(executionForm.endedAt);
+      if (!goodQty || goodQty > executionContext.targetQuantity) {
+        setNextStepError(`合格数量必须为正整数，且不能超过生产目标 ${executionContext.targetQuantity}`);
+        return;
+      }
+      if (scrapQty === null || reworkQty === null) {
+        setNextStepError('报废数量和返工数量必须为非负整数');
+        return;
+      }
+      if (!Number.isFinite(breakMinutes) || breakMinutes < 0) {
+        setNextStepError('休息时间不能小于 0');
+        return;
+      }
+      if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime()) || endedAt <= startedAt) {
+        setNextStepError('结束时间必须晚于开始时间');
+        return;
+      }
+      if (endedAt.getTime() - startedAt.getTime() <= breakMinutes * 60_000) {
+        setNextStepError('实际作业时间必须大于休息时间');
+        return;
+      }
+      execution = {
+        employeeId: executionForm.employeeId,
+        startedAt: startedAt.toISOString(),
+        endedAt: endedAt.toISOString(),
+        breakMilliseconds: Math.round(breakMinutes * 60_000),
+        goodQty,
+        scrapQty,
+        reworkQty,
+        remark: executionForm.remark.trim(),
+      };
+    }
     if (action !== 'confirm_drawing_issued' && action !== 'advance_process_route') {
       if (!/^[1-9]\d*$/.test(nextStepQuantity.trim())) {
         setNextStepError('本次数量必须是正整数');
@@ -1235,6 +1399,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           ? {
               action: 'advance',
               version: order.processRoute?.version,
+              execution,
             }
           : {
               action,
@@ -1249,6 +1414,9 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       applyLocalOrder(updated);
       setNextStepRequest(null);
       setNextStepQuantity('');
+      setExecutionContext(null);
+      setExecutionForm(null);
+      setExecutionContextWarning('');
       productionBoardCache.clear();
       setSummaryRefreshToken(value => value + 1);
       setToast(action === 'advance_process_route'
@@ -1609,7 +1777,29 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       {batchOpen && <BatchDialog count={selected.length} operation={batchOperation} value={batchValue} remark={batchRemark} confirm={batchConfirm} saving={saving} error={formError} setValue={setBatchValue} setRemark={setBatchRemark} setConfirm={setBatchConfirm} close={() => { if (!saving) setBatchOpen(false); }} save={saveBatch} />}
       {stageChangeRequest && <StageChangeDialog request={stageChangeRequest} saving={saving} close={() => { if (!saving) setStageChangeRequest(null); }} confirm={() => void saveStageChange(stageChangeRequest.order, stageChangeRequest.stage)} />}
       {completionSuggestion && <CompletionSuggestionDialog order={completionSuggestion} saving={saving} close={() => setCompletionSuggestion(null)} confirm={() => void saveStageChange(completionSuggestion, 'completed')} />}
-      {nextStepRequest && <NextStepDialog request={nextStepRequest} quantity={nextStepQuantity} setQuantity={setNextStepQuantity} saving={saving} error={nextStepError} close={() => { if (!saving) { setNextStepRequest(null); setNextStepQuantity(''); setNextStepError(''); } }} confirm={() => void saveNextStep()} />}
+      {nextStepRequest && <NextStepDialog
+        request={nextStepRequest}
+        quantity={nextStepQuantity}
+        setQuantity={setNextStepQuantity}
+        executionContext={executionContext}
+        executionForm={executionForm}
+        setExecutionForm={setExecutionForm}
+        executionContextLoading={executionContextLoading}
+        executionContextWarning={executionContextWarning}
+        saving={saving}
+        error={nextStepError}
+        close={() => {
+          if (!saving) {
+            setNextStepRequest(null);
+            setNextStepQuantity('');
+            setNextStepError('');
+            setExecutionContext(null);
+            setExecutionForm(null);
+            setExecutionContextWarning('');
+          }
+        }}
+        confirm={() => void saveNextStep()}
+      />}
       {toast && <div className="production-toast" role="status">{toast}</div>}
     </main>
   );
@@ -1858,10 +2048,15 @@ function UpdateDrawer({ order, value, setValue, saving, error, close, save }: { 
   );
 }
 
-function NextStepDialog({ request, quantity, setQuantity, saving, error, close, confirm }: {
+function NextStepDialog({ request, quantity, setQuantity, executionContext, executionForm, setExecutionForm, executionContextLoading, executionContextWarning, saving, error, close, confirm }: {
   request: NextStepRequest;
   quantity: string;
   setQuantity: (value: string) => void;
+  executionContext: ProcessExecutionContextDTO | null;
+  executionForm: ProcessExecutionForm | null;
+  setExecutionForm: (value: ProcessExecutionForm) => void;
+  executionContextLoading: boolean;
+  executionContextWarning: string;
   saving: boolean;
   error: string;
   close: () => void;
@@ -1879,6 +2074,8 @@ function NextStepDialog({ request, quantity, setQuantity, saving, error, close, 
         ? '前端数量进入后端'
         : '确认后端完成数量';
   const quantityLabel = action === 'transfer_to_backend' ? '本次进入后端数量' : '本次完成数量';
+  const preview = executionPreview(executionContext, executionForm);
+  const requiresExecution = Boolean(executionContext?.standard && executionContext.employees.length);
   return <div className="modal-backdrop"><section className="production-dialog production-next-step-dialog" role="dialog" aria-modal="true" aria-label={title}>
     <div className="dialog-title"><div><strong>{title}</strong><small>{order.customerName || '客户待补充'} · {specText(order)}</small></div><button type="button" disabled={saving} onClick={close} aria-label="关闭">×</button></div>
     <div className="production-flow-summary" aria-label="当前生产数量">
@@ -1888,12 +2085,34 @@ function NextStepDialog({ request, quantity, setQuantity, saving, error, close, 
       <div><span>累计已完成 C</span><strong>{formatProductionQuantity(flow.completedQty)}</strong></div>
     </div>
     {isProcessAdvance
-      ? <div className="production-flow-confirm-copy"><strong>{order.processRoute?.nextStep ? `下一工序：${order.processRoute.nextStep.processName}` : '这是路线最后一道工序'}</strong><br />确认后将记录当前工序完成，并自动切换到下一道工序；已确认的路线顺序不会改变。</div>
+      ? <>
+        <div className="production-flow-confirm-copy"><strong>{order.processRoute?.nextStep ? `下一工序：${order.processRoute.nextStep.processName}` : '这是路线最后一道工序'}</strong><br />确认后将记录当前工序完成，并自动切换到下一道工序；已确认的路线顺序不会改变。</div>
+        {executionContextLoading && <div className="production-execution-loading"><RefreshCw className="spin" />正在加载标准工时和员工档案...</div>}
+        {executionContextWarning && <div className="production-execution-warning" role="status"><AlertTriangle />{executionContextWarning}<a href="/workspace/time-standards">前往维护</a></div>}
+        {requiresExecution && executionForm && executionContext?.standard && <div className="production-execution-form">
+          <header><div><strong>本工序报工</strong><small>用于员工当日、周、月达成率汇总</small></div><em>标准 V{executionContext.standard.version || '-'}</em></header>
+          <div className="production-execution-fields">
+            <label><span>完成员工</span><select value={executionForm.employeeId} onChange={event => setExecutionForm({ ...executionForm, employeeId: event.target.value })}>{executionContext.employees.map(employee => <option value={employee.id} key={employee.id}>{employee.employeeNo} · {employee.name}{employee.team ? ` · ${employee.team}` : ''}</option>)}</select></label>
+            <label><span>合格数量</span><input type="number" min="1" max={executionContext.targetQuantity} value={executionForm.goodQty} onChange={event => setExecutionForm({ ...executionForm, goodQty: event.target.value })} /></label>
+            <label><span>开始时间</span><input type="datetime-local" value={executionForm.startedAt} onChange={event => setExecutionForm({ ...executionForm, startedAt: event.target.value })} /></label>
+            <label><span>结束时间</span><input type="datetime-local" value={executionForm.endedAt} onChange={event => setExecutionForm({ ...executionForm, endedAt: event.target.value })} /></label>
+            <label><span>休息时间（分钟）</span><input type="number" min="0" step="1" value={executionForm.breakMinutes} onChange={event => setExecutionForm({ ...executionForm, breakMinutes: event.target.value })} /></label>
+            <label><span>报废 / 返工</span><div className="production-execution-split"><input aria-label="报废数量" type="number" min="0" step="1" value={executionForm.scrapQty} onChange={event => setExecutionForm({ ...executionForm, scrapQty: event.target.value })} /><input aria-label="返工数量" type="number" min="0" step="1" value={executionForm.reworkQty} onChange={event => setExecutionForm({ ...executionForm, reworkQty: event.target.value })} /></div></label>
+            <label className="wide"><span>报工备注</span><input maxLength={300} value={executionForm.remark} onChange={event => setExecutionForm({ ...executionForm, remark: event.target.value })} placeholder="可选：记录异常、换线或人员协作情况" /></label>
+          </div>
+          <div className="production-execution-preview">
+            <span><small>标准口径</small><b>{executionContext.standard.timeBasis === 'per_batch' ? '按批' : `每${executionContext.standard.unitLabel}`} {executionContext.standard.standardMillisecondsPerUnit / 1000} 秒 × {executionContext.standard.unitsPerProduct}</b></span>
+            <span><small>标准工时</small><b>{preview ? durationText(preview.standardMilliseconds) : '-'}</b></span>
+            <span><small>实际工时</small><b>{preview ? durationText(preview.actualMilliseconds) : '-'}</b></span>
+            <span><small>预计达成率</small><b className={preview && preview.attainmentBasisPoints >= 10_000 ? 'good' : preview ? 'watch' : ''}>{preview ? `${(preview.attainmentBasisPoints / 100).toFixed(1)}%` : '-'}</b></span>
+          </div>
+        </div>}
+      </>
       : isDrawingConfirmation
       ? <p className="production-flow-confirm-copy">确认后，图纸状态将更新为“已发”，工单进入前端；目标数量和已有资料不会改变。</p>
       : <label className="production-flow-quantity-input"><span>{quantityLabel}</span><input autoFocus inputMode="numeric" pattern="[0-9]*" value={quantity} onChange={event => setQuantity(event.target.value)} disabled={saving} aria-describedby="production-flow-limit" /><small id="production-flow-limit">仅支持正整数，默认填写当前阶段全部可流转数量。</small></label>}
     {error && <div className="form-error" role="alert">{error}</div>}
-    <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={confirm}>{saving ? '提交中...' : '确认下一步'}</button></div>
+    <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving || executionContextLoading} onClick={confirm}>{saving ? '提交中...' : isProcessAdvance ? '完成工序并进入下一步' : '确认下一步'}</button></div>
   </section></div>;
 }
 

@@ -8,31 +8,33 @@ datasource db {
 }
 
 model User {
-  id                      String                      @id @default(uuid())
-  username                String                      @unique
-  passwordHash            String                      @map("password_hash")
-  displayName             String                      @map("display_name")
-  isActive                Boolean                     @default(true) @map("is_active")
-  createdAt               DateTime                    @default(now()) @map("created_at")
-  updatedAt               DateTime                    @updatedAt @map("updated_at")
-  uploadedFiles           ResourceFile[]              @relation("UploadedFiles")
-  drawingLibraryFiles     DrawingLibraryFile[]        @relation("UploadedDrawingLibraryFiles")
-  operationLogs           OperationLog[]
-  reportedIssues          Issue[]                     @relation("IssueReporter")
-  assignedIssues          Issue[]                     @relation("IssueAssignee")
-  issueActivities         IssueActivity[]             @relation("IssueActivityActor")
-  issueAttachments        IssueAttachment[]           @relation("IssueAttachmentUploader")
-  requestedChanges        ChangeRequest[]             @relation("ChangeRequester")
-  ownedChanges            ChangeRequest[]             @relation("ChangeOwner")
-  changeActivities        ChangeActivity[]            @relation("ChangeActivityActor")
-  changeAttachments       ChangeAttachment[]          @relation("ChangeAttachmentUploader")
-  completedMaterialTasks  WarehouseMaterialTask[]     @relation("WarehouseTaskCompletedBy")
-  updatedMaterialTasks    WarehouseMaterialTask[]     @relation("WarehouseTaskUpdatedBy")
-  warehouseActivities     WarehouseMaterialActivity[] @relation("WarehouseActivityActor")
-  createdProcessTemplates ProcessTemplate[]           @relation("ProcessTemplateCreatedBy")
-  confirmedProcessRoutes  WorkOrderProcessRoute[]     @relation("ProcessRouteConfirmedBy")
-  completedProcessSteps   WorkOrderProcessStep[]      @relation("ProcessStepCompletedBy")
-  processRouteActivities  ProcessRouteActivity[]      @relation("ProcessRouteActivityActor")
+  id                          String                      @id @default(uuid())
+  username                    String                      @unique
+  passwordHash                String                      @map("password_hash")
+  displayName                 String                      @map("display_name")
+  isActive                    Boolean                     @default(true) @map("is_active")
+  createdAt                   DateTime                    @default(now()) @map("created_at")
+  updatedAt                   DateTime                    @updatedAt @map("updated_at")
+  uploadedFiles               ResourceFile[]              @relation("UploadedFiles")
+  drawingLibraryFiles         DrawingLibraryFile[]        @relation("UploadedDrawingLibraryFiles")
+  operationLogs               OperationLog[]
+  reportedIssues              Issue[]                     @relation("IssueReporter")
+  assignedIssues              Issue[]                     @relation("IssueAssignee")
+  issueActivities             IssueActivity[]             @relation("IssueActivityActor")
+  issueAttachments            IssueAttachment[]           @relation("IssueAttachmentUploader")
+  requestedChanges            ChangeRequest[]             @relation("ChangeRequester")
+  ownedChanges                ChangeRequest[]             @relation("ChangeOwner")
+  changeActivities            ChangeActivity[]            @relation("ChangeActivityActor")
+  changeAttachments           ChangeAttachment[]          @relation("ChangeAttachmentUploader")
+  completedMaterialTasks      WarehouseMaterialTask[]     @relation("WarehouseTaskCompletedBy")
+  updatedMaterialTasks        WarehouseMaterialTask[]     @relation("WarehouseTaskUpdatedBy")
+  warehouseActivities         WarehouseMaterialActivity[] @relation("WarehouseActivityActor")
+  createdProcessTemplates     ProcessTemplate[]           @relation("ProcessTemplateCreatedBy")
+  createdProcessTimeStandards ProcessTimeStandard[]       @relation("ProcessTimeStandardCreatedBy")
+  confirmedProcessRoutes      WorkOrderProcessRoute[]     @relation("ProcessRouteConfirmedBy")
+  completedProcessSteps       WorkOrderProcessStep[]      @relation("ProcessStepCompletedBy")
+  recordedProcessExecutions   ProcessExecution[]          @relation("ProcessExecutionRecordedBy")
+  processRouteActivities      ProcessRouteActivity[]      @relation("ProcessRouteActivityActor")
 
   @@map("users")
 }
@@ -131,10 +133,36 @@ model ProcessDefinition {
   updatedAt     DateTime               @updatedAt @map("updated_at")
   templateSteps ProcessTemplateStep[]
   routeSteps    WorkOrderProcessStep[]
+  timeStandards ProcessTimeStandard[]
 
   @@index([isActive, sortOrder])
   @@index([stageGroup])
   @@map("process_definitions")
+}
+
+model ProcessTimeStandard {
+  id                          String                 @id @default(uuid())
+  processDefinitionId         String                 @map("process_definition_id")
+  version                     Int
+  timeBasis                   String                 @default("per_unit") @map("time_basis")
+  unitLabel                   String                 @default("件") @map("unit_label")
+  standardMillisecondsPerUnit Int                    @map("standard_milliseconds_per_unit")
+  setupMilliseconds           Int                    @default(0) @map("setup_milliseconds")
+  countsForEfficiency         Boolean                @default(true) @map("counts_for_efficiency")
+  isCurrent                   Boolean                @default(true) @map("is_current")
+  effectiveFrom               DateTime               @default(now()) @map("effective_from")
+  remark                      String?
+  createdById                 String?                @map("created_by_id")
+  createdAt                   DateTime               @default(now()) @map("created_at")
+  processDefinition           ProcessDefinition      @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
+  createdBy                   User?                  @relation("ProcessTimeStandardCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  routeSteps                  WorkOrderProcessStep[]
+
+  @@unique([processDefinitionId, version])
+  @@index([processDefinitionId, isCurrent])
+  @@index([effectiveFrom])
+  @@index([createdById])
+  @@map("process_time_standards")
 }
 
 model ProcessTemplate {
@@ -164,6 +192,7 @@ model ProcessTemplateStep {
   processName         String             @map("process_name")
   stageGroup          String             @map("stage_group")
   position            Int
+  unitsPerProduct     Int                @default(1) @map("units_per_product")
   createdAt           DateTime           @default(now()) @map("created_at")
   template            ProcessTemplate    @relation(fields: [templateId], references: [id], onDelete: Cascade)
   processDefinition   ProcessDefinition? @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
@@ -200,30 +229,96 @@ model WorkOrderProcessRoute {
 }
 
 model WorkOrderProcessStep {
-  id                  String                 @id @default(uuid())
-  routeId             String                 @map("route_id")
-  processDefinitionId String?                @map("process_definition_id")
-  processCode         String                 @map("process_code")
-  processName         String                 @map("process_name")
-  stageGroup          String                 @map("stage_group")
-  position            Int
-  status              String                 @default("pending")
-  startedAt           DateTime?              @map("started_at")
-  completedAt         DateTime?              @map("completed_at")
-  completedById       String?                @map("completed_by_id")
-  remark              String?
-  createdAt           DateTime               @default(now()) @map("created_at")
-  updatedAt           DateTime               @updatedAt @map("updated_at")
-  route               WorkOrderProcessRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  processDefinition   ProcessDefinition?     @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
-  completedBy         User?                  @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
-  activities          ProcessRouteActivity[]
+  id                          String                 @id @default(uuid())
+  routeId                     String                 @map("route_id")
+  processDefinitionId         String?                @map("process_definition_id")
+  processCode                 String                 @map("process_code")
+  processName                 String                 @map("process_name")
+  stageGroup                  String                 @map("stage_group")
+  position                    Int
+  standardTimeId              String?                @map("standard_time_id")
+  standardVersion             Int?                   @map("standard_version")
+  timeBasis                   String?                @map("time_basis")
+  unitLabel                   String?                @map("unit_label")
+  standardMillisecondsPerUnit Int?                   @map("standard_milliseconds_per_unit")
+  setupMilliseconds           Int                    @default(0) @map("setup_milliseconds")
+  unitsPerProduct             Int                    @default(1) @map("units_per_product")
+  countsForEfficiency         Boolean                @default(true) @map("counts_for_efficiency")
+  status                      String                 @default("pending")
+  startedAt                   DateTime?              @map("started_at")
+  completedAt                 DateTime?              @map("completed_at")
+  completedById               String?                @map("completed_by_id")
+  remark                      String?
+  createdAt                   DateTime               @default(now()) @map("created_at")
+  updatedAt                   DateTime               @updatedAt @map("updated_at")
+  route                       WorkOrderProcessRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  processDefinition           ProcessDefinition?     @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
+  standardTime                ProcessTimeStandard?   @relation(fields: [standardTimeId], references: [id], onDelete: SetNull)
+  completedBy                 User?                  @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  activities                  ProcessRouteActivity[]
+  executions                  ProcessExecution[]
 
   @@unique([routeId, position])
   @@index([routeId, status])
   @@index([processDefinitionId])
+  @@index([standardTimeId])
   @@index([completedById])
   @@map("work_order_process_steps")
+}
+
+model Employee {
+  id         String             @id @default(uuid())
+  employeeNo String             @unique @map("employee_no")
+  name       String
+  department String?
+  team       String?
+  isActive   Boolean            @default(true) @map("is_active")
+  createdAt  DateTime           @default(now()) @map("created_at")
+  updatedAt  DateTime           @updatedAt @map("updated_at")
+  executions ProcessExecution[]
+
+  @@index([isActive, employeeNo])
+  @@index([name])
+  @@index([department])
+  @@index([team])
+  @@map("employees")
+}
+
+model ProcessExecution {
+  id                          String               @id @default(uuid())
+  stepId                      String               @map("step_id")
+  employeeId                  String               @map("employee_id")
+  startedAt                   DateTime             @map("started_at")
+  endedAt                     DateTime             @map("ended_at")
+  breakMilliseconds           Int                  @default(0) @map("break_milliseconds")
+  goodQty                     Int                  @map("good_qty")
+  scrapQty                    Int                  @default(0) @map("scrap_qty")
+  reworkQty                   Int                  @default(0) @map("rework_qty")
+  timeBasis                   String               @default("per_unit") @map("time_basis")
+  unitLabel                   String               @map("unit_label")
+  standardMillisecondsPerUnit Int                  @map("standard_milliseconds_per_unit")
+  setupMilliseconds           Int                  @default(0) @map("setup_milliseconds")
+  unitsPerProduct             Int                  @default(1) @map("units_per_product")
+  standardLaborMilliseconds   Int                  @map("standard_labor_milliseconds")
+  actualLaborMilliseconds     Int                  @map("actual_labor_milliseconds")
+  attainmentBasisPoints       Int                  @map("attainment_basis_points")
+  countsForEfficiency         Boolean              @default(true) @map("counts_for_efficiency")
+  source                      String               @default("manual")
+  remark                      String?
+  recordedById                String?              @map("recorded_by_id")
+  createdAt                   DateTime             @default(now()) @map("created_at")
+  updatedAt                   DateTime             @updatedAt @map("updated_at")
+  voidedAt                    DateTime?            @map("voided_at")
+  step                        WorkOrderProcessStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
+  employee                    Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  recordedBy                  User?                @relation("ProcessExecutionRecordedBy", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@index([stepId, endedAt])
+  @@index([employeeId, endedAt])
+  @@index([endedAt])
+  @@index([voidedAt])
+  @@index([recordedById])
+  @@map("process_executions")
 }
 
 model ProcessRouteActivity {

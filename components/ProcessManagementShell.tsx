@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleDashed,
+  Clock3,
   ClipboardCheck,
   CopyPlus,
   GripVertical,
@@ -89,6 +90,7 @@ type SortableRouteStepProps = {
   onSelect: () => void;
   onMove: (direction: -1 | 1) => void;
   onRemove: () => void;
+  onUnitsChange: (value: number) => void;
 };
 
 type SortableTemplateStepProps = {
@@ -98,6 +100,7 @@ type SortableTemplateStepProps = {
   last: boolean;
   onMove: (direction: -1 | 1) => void;
   onRemove: () => void;
+  onUnitsChange: (value: number) => void;
 };
 
 const emptySummary: ProcessRouteSummaryDTO = {
@@ -164,6 +167,7 @@ function stepSignature(steps: ProcessTemplateStepDTO[]): string {
     processCode: step.processCode,
     processName: step.processName,
     stageGroup: step.stageGroup,
+    unitsPerProduct: step.unitsPerProduct || 1,
   })));
 }
 
@@ -176,6 +180,7 @@ function SortableRouteStep({
   onSelect,
   onMove,
   onRemove,
+  onUnitsChange,
 }: SortableRouteStepProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.clientId });
   return (
@@ -199,6 +204,17 @@ function SortableRouteStep({
         <b>{String(index + 1).padStart(2, '0')}</b>
       </div>
       <div className="process-step-name"><strong>{step.processName}</strong><span>{groupText[step.stageGroup]}</span></div>
+      <label className="process-step-units" title="一套产品中该工序需要执行的次数">
+        <span>每件次数</span>
+        <input
+          type="number"
+          min="1"
+          max="10000"
+          value={step.unitsPerProduct || 1}
+          onClick={event => event.stopPropagation()}
+          onChange={event => onUnitsChange(Math.max(1, Math.min(10000, Number(event.target.value) || 1)))}
+        />
+      </label>
       {selected && <span className="process-insert-anchor">插入点</span>}
       <div className="process-step-actions">
         <button type="button" disabled={first} aria-label={`上移${step.processName}`} title="上移" onClick={event => { event.stopPropagation(); onMove(-1); }}><ArrowUp aria-hidden="true" /></button>
@@ -216,6 +232,7 @@ function SortableTemplateStep({
   last,
   onMove,
   onRemove,
+  onUnitsChange,
 }: SortableTemplateStepProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.clientId });
   return (
@@ -223,6 +240,7 @@ function SortableTemplateStep({
       <button className="process-template-drag" type="button" aria-label={`拖动调整${step.processName}顺序`} title="拖动调整顺序" {...attributes} {...listeners}><GripVertical aria-hidden="true" /></button>
       <b>{index + 1}</b>
       <span><strong>{step.processName}</strong><small>{groupText[step.stageGroup]}</small></span>
+      <label className="process-template-units" title="一套产品中该工序需要执行的次数"><span>×</span><input type="number" min="1" max="10000" value={step.unitsPerProduct || 1} onChange={event => onUnitsChange(Math.max(1, Math.min(10000, Number(event.target.value) || 1)))} /></label>
       <button type="button" disabled={first} aria-label={`上移${step.processName}`} title="上移" onClick={() => onMove(-1)}><ArrowUp aria-hidden="true" /></button>
       <button type="button" disabled={last} aria-label={`下移${step.processName}`} title="下移" onClick={() => onMove(1)}><ArrowDown aria-hidden="true" /></button>
       <button className="danger" type="button" aria-label={`删除${step.processName}`} title="删除工序" onClick={onRemove}><Trash2 aria-hidden="true" /></button>
@@ -600,6 +618,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
       processName: definition.name,
       stageGroup: definition.stageGroup,
       position: 0,
+      unitsPerProduct: 1,
     }]);
     setToast(`${definition.name} 已加入所选工序之后`);
   }
@@ -618,6 +637,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
         processName: item.name,
         stageGroup: item.stageGroup,
         position: 0,
+        unitsPerProduct: 1,
       }));
     if (!additions.length) {
       setToast(`${group.name} 已完整加入`);
@@ -641,6 +661,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
       processName: name.slice(0, 60),
       stageGroup: customGroup,
       position: 0,
+      unitsPerProduct: 1,
     }]);
     setCustomName('');
     setFormError('');
@@ -689,6 +710,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
             processCode: step.processCode,
             processName: step.processName,
             stageGroup: step.stageGroup,
+            unitsPerProduct: step.unitsPerProduct || 1,
           })),
         }),
       });
@@ -790,6 +812,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
         processName: definition.name,
         stageGroup: definition.stageGroup,
         position: current.length + 1,
+        unitsPerProduct: 1,
       }]);
     });
   }
@@ -809,6 +832,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
           processName: item.name,
           stageGroup: item.stageGroup,
           position: 0,
+          unitsPerProduct: 1,
         }));
       return replaceStepPositions([...current, ...additions]);
     });
@@ -825,6 +849,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
       processName: name.slice(0, 60),
       stageGroup: templateCustomGroup,
       position: current.length + 1,
+      unitsPerProduct: 1,
     }]));
     setTemplateCustomName('');
   }
@@ -850,6 +875,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
             processCode: step.processCode,
             processName: step.processName,
             stageGroup: step.stageGroup,
+            unitsPerProduct: step.unitsPerProduct || 1,
           })),
         }),
       });
@@ -905,6 +931,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
           actions={<>
             {productionReturnHref && <a className="hm-workbench-button" href={productionReturnHref}>返回生产执行</a>}
             <a className="hm-workbench-button" href="/weekly-plan-center"><CalendarDays size={15} aria-hidden="true" />周计划</a>
+            <a className="hm-workbench-button" href="/workspace/time-standards"><Clock3 size={15} aria-hidden="true" />标准工时</a>
             <button className="hm-workbench-button" type="button" ref={drawerTriggerRef} onClick={event => openTemplateDrawer(event.currentTarget)}><Settings2 size={15} aria-hidden="true" />模板管理</button>
             <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" />刷新</button>
           </>}
@@ -992,6 +1019,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
                             onSelect={() => setInsertAfterClientId(step.clientId)}
                             onMove={direction => moveStep(index, direction)}
                             onRemove={() => removeStep(index)}
+                            onUnitsChange={value => commitDraft(draftSteps.map((item, itemIndex) => itemIndex === index ? { ...item, unitsPerProduct: value } : item))}
                           />
                         ))}
                       </div>
@@ -1003,6 +1031,11 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
                       <article className={`process-step-row ${step.status} ${step.stageGroup}`} key={step.id}>
                         <div className="process-step-index"><b>{String(index + 1).padStart(2, '0')}</b></div>
                         <div className="process-step-name"><strong>{step.processName}</strong><span>{groupText[step.stageGroup]}</span></div>
+                        <span className="process-step-standard" title={step.standardMillisecondsPerUnit ? `标准版本 V${step.standardVersion || 1}` : '尚未定标'}>
+                          {step.standardMillisecondsPerUnit
+                            ? `${step.timeBasis === 'per_batch' ? '每批' : `每${step.unitLabel || '件'}`} ${step.standardMillisecondsPerUnit / 1000}秒 × ${step.unitsPerProduct || 1}`
+                            : '待定标'}
+                        </span>
                         <span className={`process-step-status ${step.status}`}>{step.status === 'current' ? '当前' : step.status === 'completed' ? '完成' : step.status === 'skipped' ? '跳过' : '待开始'}</span>
                         {step.completedAt && <small className="process-step-time">{dateTimeText(step.completedAt)}</small>}
                       </article>
@@ -1054,7 +1087,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
           <section>
             <h3>标准工序 <span>{filteredDefinitions.length}</span></h3>
             <div className="process-definition-list">
-              {filteredDefinitions.map(definition => <button type="button" key={definition.id} disabled={!editable || draftSteps.some(step => step.processCode === definition.code)} onClick={() => addDefinition(definition)}><span><strong>{definition.name}</strong><small>{groupText[definition.stageGroup]}</small></span><Plus size={15} aria-hidden="true" /></button>)}
+              {filteredDefinitions.map(definition => <button type="button" key={definition.id} disabled={!editable || draftSteps.some(step => step.processCode === definition.code)} onClick={() => addDefinition(definition)}><span><strong>{definition.name}</strong><small>{groupText[definition.stageGroup]} · {definition.currentStandard ? `${definition.currentStandard.standardMillisecondsPerUnit / 1000}秒/${definition.currentStandard.timeBasis === 'per_batch' ? '批' : definition.currentStandard.unitLabel}` : '待定标'}</small></span><Plus size={15} aria-hidden="true" /></button>)}
               {!filteredDefinitions.length && <div className="process-library-empty">没有符合条件的工序</div>}
             </div>
           </section>
@@ -1085,6 +1118,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
                       last={index === templateSteps.length - 1}
                       onMove={direction => setTemplateSteps(current => replaceStepPositions(arrayMove(current, index, index + direction)))}
                       onRemove={() => setTemplateSteps(current => replaceStepPositions(current.filter((_, itemIndex) => itemIndex !== index)))}
+                      onUnitsChange={value => setTemplateSteps(current => current.map((item, itemIndex) => itemIndex === index ? { ...item, unitsPerProduct: value } : item))}
                     />
                   ))}
                 </div>

@@ -33,6 +33,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       version?: unknown;
       steps?: unknown;
       remark?: unknown;
+      execution?: unknown;
     };
     const action = parseProcessRouteAction(body.action);
     if (!action) return NextResponse.json({ ok: false, error: '工艺路线操作不正确' }, { status: 400 });
@@ -59,6 +60,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
             action,
             expectedVersion: body.version,
             remark: body.remark,
+            execution: body.execution,
             userId: user.id,
             actor,
           });

@@ -43,6 +43,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
               processName: step.processName,
               stageGroup: step.stageGroup,
               position: step.position,
+              unitsPerProduct: step.unitsPerProduct,
             })),
           },
         },

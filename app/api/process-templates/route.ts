@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
               processName: step.processName,
               stageGroup: step.stageGroup,
               position: step.position,
+              unitsPerProduct: step.unitsPerProduct,
             })),
           },
         },

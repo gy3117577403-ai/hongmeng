@@ -9,6 +9,15 @@ import {
   type ProcessStepInput,
 } from '@/lib/process-routing';
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
+import {
+  calculateActualLaborMilliseconds,
+  calculateAttainmentBasisPoints,
+  calculateStandardLaborMilliseconds,
+  cleanProcessText,
+  nonnegativeInteger,
+  parseProcessTimeBasis,
+  positiveInteger,
+} from '@/lib/process-time';
 import { legacyStatusForStage, normalizeWorkOrderStage, type WorkOrderStage } from '@/lib/work-orders';
 
 export class ProcessRouteServiceError extends Error {
@@ -42,6 +51,7 @@ export type ConfirmProcessRouteCommand = ProcessRouteCommandBase & {
 export type AdvanceProcessRouteCommand = ProcessRouteCommandBase & {
   action: 'advance';
   remark?: unknown;
+  execution?: unknown;
 };
 
 export type ProcessRouteCommand =
@@ -94,7 +104,37 @@ function targetQuantity(order: Parameters<typeof resolveEffectiveFrontendTransfe
 function normalizeServiceError(error: unknown): ProcessRouteServiceError {
   if (error instanceof ProcessRouteServiceError) return error;
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') return conflict();
+  if (error instanceof Error && (
+    error.message.includes('必须')
+    || error.message.includes('不能')
+    || error.message.includes('超出允许范围')
+  )) {
+    return new ProcessRouteServiceError(error.message, 400, 'PROCESS_EXECUTION_INVALID');
+  }
   return new ProcessRouteServiceError('工艺路线更新失败', 500, 'PROCESS_ROUTE_UPDATE_FAILED');
+}
+
+type ProcessExecutionInput = {
+  employeeId?: unknown;
+  startedAt?: unknown;
+  endedAt?: unknown;
+  breakMilliseconds?: unknown;
+  goodQty?: unknown;
+  scrapQty?: unknown;
+  reworkQty?: unknown;
+  remark?: unknown;
+};
+
+function executionInput(value: unknown): ProcessExecutionInput | null {
+  return value && typeof value === 'object' ? value as ProcessExecutionInput : null;
+}
+
+function parseExecutionDate(value: unknown, label: string): Date {
+  const date = new Date(String(value || ''));
+  if (Number.isNaN(date.getTime())) {
+    throw new ProcessRouteServiceError(`${label}不正确`, 400, 'PROCESS_EXECUTION_DATE_INVALID');
+  }
+  return date;
 }
 
 async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<string> {
@@ -119,10 +159,11 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
     const existingDefinitions = definitionIds.length
       ? await tx.processDefinition.findMany({
           where: { id: { in: definitionIds }, isActive: true },
-          select: { id: true },
+          include: { timeStandards: { where: { isCurrent: true }, take: 1 } },
         })
       : [];
     const definitionSet = new Set(existingDefinitions.map(item => item.id));
+    const standardMap = new Map(existingDefinitions.map(item => [item.id, item.timeStandards[0] || null]));
     const steps = validation.steps.map(step => ({
       ...step,
       processDefinitionId: step.processDefinitionId && definitionSet.has(step.processDefinitionId)
@@ -137,15 +178,26 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
     if (update.count !== 1) throw conflict();
     await tx.workOrderProcessStep.deleteMany({ where: { routeId: route.id } });
     await tx.workOrderProcessStep.createMany({
-      data: steps.map(step => ({
-        routeId: route.id,
-        processDefinitionId: step.processDefinitionId,
-        processCode: step.processCode,
-        processName: step.processName,
-        stageGroup: step.stageGroup,
-        position: step.position,
-        status: 'pending',
-      })),
+      data: steps.map(step => {
+        const standard = step.processDefinitionId ? standardMap.get(step.processDefinitionId) : null;
+        return {
+          routeId: route.id,
+          processDefinitionId: step.processDefinitionId,
+          processCode: step.processCode,
+          processName: step.processName,
+          stageGroup: step.stageGroup,
+          position: step.position,
+          unitsPerProduct: step.unitsPerProduct,
+          standardTimeId: standard?.id || null,
+          standardVersion: standard?.version || null,
+          timeBasis: standard?.timeBasis || null,
+          unitLabel: standard?.unitLabel || null,
+          standardMillisecondsPerUnit: standard?.standardMillisecondsPerUnit || null,
+          setupMilliseconds: standard?.setupMilliseconds || 0,
+          countsForEfficiency: standard?.countsForEfficiency ?? true,
+          status: 'pending',
+        };
+      }),
     });
     await tx.processRouteActivity.create({
       data: {
@@ -184,6 +236,30 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
     if (route.version !== parseVersion(input.expectedVersion)) throw conflict();
 
     const now = new Date();
+    const definitionIds = route.steps
+      .map(step => step.processDefinitionId)
+      .filter((id): id is string => Boolean(id));
+    const currentStandards = definitionIds.length
+      ? await tx.processTimeStandard.findMany({
+          where: { processDefinitionId: { in: definitionIds }, isCurrent: true },
+        })
+      : [];
+    const standardMap = new Map(currentStandards.map(standard => [standard.processDefinitionId, standard]));
+    for (const step of route.steps) {
+      const standard = step.processDefinitionId ? standardMap.get(step.processDefinitionId) : null;
+      await tx.workOrderProcessStep.update({
+        where: { id: step.id },
+        data: {
+          standardTimeId: standard?.id || null,
+          standardVersion: standard?.version || null,
+          timeBasis: standard?.timeBasis || null,
+          unitLabel: standard?.unitLabel || null,
+          standardMillisecondsPerUnit: standard?.standardMillisecondsPerUnit || null,
+          setupMilliseconds: standard?.setupMilliseconds || 0,
+          countsForEfficiency: standard?.countsForEfficiency ?? true,
+        },
+      });
+    }
     const stage = normalizeWorkOrderStage(route.workOrder.stage || route.workOrder.status) || 'not_issued';
     const first = route.steps[0];
     const shouldStart = stage !== 'not_issued';
@@ -271,6 +347,98 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
     const target = targetQuantity(route.workOrder);
     const completedCount = route.steps.filter(step => step.status === 'completed' || step.status === 'skipped').length + 1;
     const progress = Math.round((completedCount / route.steps.length) * 100);
+    const submittedExecution = executionInput(input.execution);
+    let executionId: string | null = null;
+    let resolvedStandard = current.standardMillisecondsPerUnit && current.timeBasis && current.unitLabel
+      ? {
+          id: current.standardTimeId,
+          version: current.standardVersion,
+          timeBasis: parseProcessTimeBasis(current.timeBasis),
+          unitLabel: current.unitLabel,
+          standardMillisecondsPerUnit: current.standardMillisecondsPerUnit,
+          setupMilliseconds: current.setupMilliseconds,
+          countsForEfficiency: current.countsForEfficiency,
+        }
+      : null;
+    if (!resolvedStandard && current.processDefinitionId) {
+      const standard = await tx.processTimeStandard.findFirst({
+        where: { processDefinitionId: current.processDefinitionId, isCurrent: true },
+        orderBy: { version: 'desc' },
+      });
+      if (standard) {
+        resolvedStandard = {
+          id: standard.id,
+          version: standard.version,
+          timeBasis: parseProcessTimeBasis(standard.timeBasis),
+          unitLabel: standard.unitLabel,
+          standardMillisecondsPerUnit: standard.standardMillisecondsPerUnit,
+          setupMilliseconds: standard.setupMilliseconds,
+          countsForEfficiency: standard.countsForEfficiency,
+        };
+      }
+    }
+    if (submittedExecution) {
+      if (!resolvedStandard) {
+        throw new ProcessRouteServiceError(
+          '当前工序尚未配置标准工时，请先到标准工时库定标',
+          409,
+          'PROCESS_STANDARD_REQUIRED',
+        );
+      }
+      const employeeId = cleanProcessText(submittedExecution.employeeId, 80);
+      const employee = employeeId
+        ? await tx.employee.findFirst({ where: { id: employeeId, isActive: true } })
+        : null;
+      if (!employee) {
+        throw new ProcessRouteServiceError('请选择有效员工', 400, 'PROCESS_EMPLOYEE_REQUIRED');
+      }
+      const startedAt = parseExecutionDate(submittedExecution.startedAt, '开始时间');
+      const endedAt = parseExecutionDate(submittedExecution.endedAt, '结束时间');
+      const breakMilliseconds = nonnegativeInteger(submittedExecution.breakMilliseconds, '暂停时长');
+      const goodQty = positiveInteger(submittedExecution.goodQty, '合格数量');
+      const scrapQty = nonnegativeInteger(submittedExecution.scrapQty, '报废数量');
+      const reworkQty = nonnegativeInteger(submittedExecution.reworkQty, '返工数量');
+      if (goodQty > target) {
+        throw new ProcessRouteServiceError('合格数量不能超过工单生产总目标', 400, 'PROCESS_EXECUTION_QTY_EXCEEDED');
+      }
+      const actualLaborMilliseconds = calculateActualLaborMilliseconds(startedAt, endedAt, breakMilliseconds);
+      const standardLaborMilliseconds = calculateStandardLaborMilliseconds({
+        timeBasis: resolvedStandard.timeBasis,
+        standardMillisecondsPerUnit: resolvedStandard.standardMillisecondsPerUnit,
+        setupMilliseconds: resolvedStandard.setupMilliseconds,
+        goodQty,
+        unitsPerProduct: current.unitsPerProduct,
+      });
+      const attainmentBasisPoints = calculateAttainmentBasisPoints(
+        standardLaborMilliseconds,
+        actualLaborMilliseconds,
+      );
+      const execution = await tx.processExecution.create({
+        data: {
+          stepId: current.id,
+          employeeId: employee.id,
+          startedAt,
+          endedAt,
+          breakMilliseconds,
+          goodQty,
+          scrapQty,
+          reworkQty,
+          timeBasis: resolvedStandard.timeBasis,
+          unitLabel: resolvedStandard.unitLabel,
+          standardMillisecondsPerUnit: resolvedStandard.standardMillisecondsPerUnit,
+          setupMilliseconds: resolvedStandard.setupMilliseconds,
+          unitsPerProduct: current.unitsPerProduct,
+          standardLaborMilliseconds,
+          actualLaborMilliseconds,
+          attainmentBasisPoints,
+          countsForEfficiency: resolvedStandard.countsForEfficiency,
+          source: 'completion_form',
+          remark: cleanProcessText(submittedExecution.remark, 300) || null,
+          recordedById: input.userId,
+        },
+      });
+      executionId = execution.id;
+    }
 
     const routeUpdate = await tx.workOrderProcessRoute.updateMany({
       where: { id: route.id, version: route.version, status: { in: ['confirmed', 'in_progress'] } },
@@ -288,6 +456,13 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
         completedAt: now,
         completedById: input.userId,
         remark: remark || null,
+        standardTimeId: resolvedStandard?.id || current.standardTimeId,
+        standardVersion: resolvedStandard?.version || current.standardVersion,
+        timeBasis: resolvedStandard?.timeBasis || current.timeBasis,
+        unitLabel: resolvedStandard?.unitLabel || current.unitLabel,
+        standardMillisecondsPerUnit: resolvedStandard?.standardMillisecondsPerUnit || current.standardMillisecondsPerUnit,
+        setupMilliseconds: resolvedStandard?.setupMilliseconds ?? current.setupMilliseconds,
+        countsForEfficiency: resolvedStandard?.countsForEfficiency ?? current.countsForEfficiency,
       },
     });
     if (next) {
@@ -333,7 +508,12 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
         action: 'advance_process_route',
         content: remark ? `${content}：${remark}` : content,
         actorId: input.userId,
-        detail: { fromStep: current.processCode, toStep: next?.processCode || null, progress },
+        detail: {
+          fromStep: current.processCode,
+          toStep: next?.processCode || null,
+          progress,
+          executionId,
+        },
       },
     });
     await tx.workOrderProgressLog.create({
@@ -359,6 +539,7 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
           fromStep: current.processCode,
           toStep: next?.processCode || null,
           progress,
+          executionId,
         },
       },
     });
