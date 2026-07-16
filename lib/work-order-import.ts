@@ -237,11 +237,9 @@ function plannedAtFromDeliveryDay(deliveryDay: string | null, weekStartDate?: st
   return next;
 }
 
-function stageFromWeekly(drawingStatus: string | null, materialStatus: string | null): WorkOrderStage {
+function stageFromWeekly(drawingStatus: string | null): WorkOrderStage {
   const drawing = cleanText(drawingStatus);
-  const material = cleanText(materialStatus);
   if (!drawing) return 'not_issued';
-  if (drawing.includes('已发') && (material.includes('已配料') || material.includes('料齐'))) return 'backend';
   if (drawing.includes('已发')) return 'frontend';
   return 'not_issued';
 }
@@ -472,8 +470,7 @@ export function buildWeeklyPlanPreview(options: {
     if (deliveryDay && !plannedAt && options.weekStartDate) errors.push('交期日期无法解析');
 
     const drawingStatus = nullableText(raw.drawingStatus, 80);
-    const materialStatus = nullableText(raw.materialStatus, 200);
-    const stage = stageFromWeekly(drawingStatus, materialStatus);
+    const stage = stageFromWeekly(drawingStatus);
     const priority = priorityFromWeekly(customerLevel, raw.remark);
 
     data.customerName = customerName;
@@ -500,7 +497,7 @@ export function buildWeeklyPlanPreview(options: {
     data.totalWorkHours = totalWorkHours;
     data.drawingStatus = drawingStatus;
     data.deliveryDay = deliveryDay;
-    data.materialStatus = materialStatus;
+    data.materialStatus = '未配料';
     data.drawingIssuedAt = dateOnlyIso(drawingDate.value);
     data.drawingIssueNote = drawingIssueNote;
 

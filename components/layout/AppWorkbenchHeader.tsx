@@ -19,6 +19,7 @@ import {
   Settings,
   ShieldCheck,
   Workflow,
+  Warehouse,
   type LucideIcon,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
@@ -66,6 +67,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/workspace/issues', label: '问题管理', icon: ShieldCheck },
       { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
       { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
+      { href: '/workspace/warehouse', label: '仓库管理', icon: Warehouse },
       { href: '/workspace/knowledge', label: '知识库', icon: BookOpen, planned: true },
       { href: '/workspace/reports', label: '报表中心', icon: BarChart3, planned: true },
     ],

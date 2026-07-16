@@ -8,24 +8,27 @@ datasource db {
 }
 
 model User {
-  id                  String               @id @default(uuid())
-  username            String               @unique
-  passwordHash        String               @map("password_hash")
-  displayName         String               @map("display_name")
-  isActive            Boolean              @default(true) @map("is_active")
-  createdAt           DateTime             @default(now()) @map("created_at")
-  updatedAt           DateTime             @updatedAt @map("updated_at")
-  uploadedFiles       ResourceFile[]       @relation("UploadedFiles")
-  drawingLibraryFiles DrawingLibraryFile[] @relation("UploadedDrawingLibraryFiles")
-  operationLogs       OperationLog[]
-  reportedIssues      Issue[]              @relation("IssueReporter")
-  assignedIssues      Issue[]              @relation("IssueAssignee")
-  issueActivities     IssueActivity[]      @relation("IssueActivityActor")
-  issueAttachments    IssueAttachment[]    @relation("IssueAttachmentUploader")
-  requestedChanges    ChangeRequest[]      @relation("ChangeRequester")
-  ownedChanges        ChangeRequest[]      @relation("ChangeOwner")
-  changeActivities    ChangeActivity[]     @relation("ChangeActivityActor")
-  changeAttachments   ChangeAttachment[]   @relation("ChangeAttachmentUploader")
+  id                     String                      @id @default(uuid())
+  username               String                      @unique
+  passwordHash           String                      @map("password_hash")
+  displayName            String                      @map("display_name")
+  isActive               Boolean                     @default(true) @map("is_active")
+  createdAt              DateTime                    @default(now()) @map("created_at")
+  updatedAt              DateTime                    @updatedAt @map("updated_at")
+  uploadedFiles          ResourceFile[]              @relation("UploadedFiles")
+  drawingLibraryFiles    DrawingLibraryFile[]        @relation("UploadedDrawingLibraryFiles")
+  operationLogs          OperationLog[]
+  reportedIssues         Issue[]                     @relation("IssueReporter")
+  assignedIssues         Issue[]                     @relation("IssueAssignee")
+  issueActivities        IssueActivity[]             @relation("IssueActivityActor")
+  issueAttachments       IssueAttachment[]           @relation("IssueAttachmentUploader")
+  requestedChanges       ChangeRequest[]             @relation("ChangeRequester")
+  ownedChanges           ChangeRequest[]             @relation("ChangeOwner")
+  changeActivities       ChangeActivity[]            @relation("ChangeActivityActor")
+  changeAttachments      ChangeAttachment[]          @relation("ChangeAttachmentUploader")
+  completedMaterialTasks WarehouseMaterialTask[]     @relation("WarehouseTaskCompletedBy")
+  updatedMaterialTasks   WarehouseMaterialTask[]     @relation("WarehouseTaskUpdatedBy")
+  warehouseActivities    WarehouseMaterialActivity[] @relation("WarehouseActivityActor")
 
   @@map("users")
 }
@@ -85,6 +88,7 @@ model WorkOrder {
   progressLogs            WorkOrderProgressLog[]
   issues                  Issue[]
   changeRequests          ChangeRequest[]
+  materialTask            WarehouseMaterialTask?
 
   @@index([code])
   @@index([productName])
@@ -109,6 +113,50 @@ model WorkOrder {
   @@index([workstation])
   @@index([lastProgressAt])
   @@map("work_orders")
+}
+
+model WarehouseMaterialTask {
+  id            String                      @id @default(uuid())
+  workOrderId   String                      @unique @map("work_order_id")
+  status        String                      @default("pending")
+  exceptionType String?                     @map("exception_type")
+  exceptionNote String?                     @map("exception_note")
+  expectedAt    DateTime?                   @map("expected_at")
+  completedAt   DateTime?                   @map("completed_at")
+  completedById String?                     @map("completed_by_id")
+  updatedById   String?                     @map("updated_by_id")
+  version       Int                         @default(0)
+  createdAt     DateTime                    @default(now()) @map("created_at")
+  updatedAt     DateTime                    @updatedAt @map("updated_at")
+  workOrder     WorkOrder                   @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  completedBy   User?                       @relation("WarehouseTaskCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  updatedBy     User?                       @relation("WarehouseTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  activities    WarehouseMaterialActivity[]
+
+  @@index([status])
+  @@index([exceptionType])
+  @@index([expectedAt])
+  @@index([updatedAt])
+  @@map("warehouse_material_tasks")
+}
+
+model WarehouseMaterialActivity {
+  id         String                @id @default(uuid())
+  taskId     String                @map("task_id")
+  action     String
+  fromStatus String?               @map("from_status")
+  toStatus   String?               @map("to_status")
+  content    String?
+  detail     Json?
+  actorId    String?               @map("actor_id")
+  createdAt  DateTime              @default(now()) @map("created_at")
+  task       WarehouseMaterialTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actor      User?                 @relation("WarehouseActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([taskId, createdAt])
+  @@index([actorId])
+  @@index([action])
+  @@map("warehouse_material_activities")
 }
 
 model WorkOrderProgressLog {

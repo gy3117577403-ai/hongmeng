@@ -99,6 +99,10 @@ function alertsFor(order: ProductionExecutionOrderRecord, now: Date): Production
     specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
     drawingStatus: order.drawingStatus,
     materialStatus: order.materialStatus,
+    warehouseMaterialStatus: order.materialTask?.status,
+    warehouseExceptionType: order.materialTask?.exceptionType,
+    warehouseExceptionNote: order.materialTask?.exceptionNote,
+    warehouseExpectedAt: order.materialTask?.expectedAt,
     latestProgressRemark: order.latestProgressRemark,
     plannedAt: order.plannedAt,
   }, now);
@@ -160,7 +164,7 @@ function actionsFor(order: ProductionExecutionOrderRecord, now: Date): HomeActio
   if (exceptions.has('overdue')) definitions.push({ type: 'overdue', label: '工单已逾期', priority: 'urgent', quick: 'overdue', view: 'exceptions' });
   if (dueToday(order, now)) definitions.push({ type: 'due_today', label: '今日交期', priority: order.priority === 'urgent' ? 'urgent' : 'high', quick: 'due_today', view: 'today' });
   if (drawingConfirmation(alerts)) definitions.push({ type: 'drawing_confirmation', label: '图纸待确认', priority: 'high', quick: 'drawing_confirmation', view: 'exceptions' });
-  if (hasAlert(alerts, 'MATERIAL_NOT_READY')) definitions.push({ type: 'material_not_ready', label: '配料异常', priority: 'high', quick: 'material', view: 'exceptions' });
+  if (hasAlert(alerts, 'MATERIAL_NOT_READY')) definitions.push({ type: 'material_not_ready', label: '仓库异常', priority: 'high', quick: 'material', view: 'exceptions' });
   if (hasAlert(alerts, 'TAIL_REMAINING')) definitions.push({ type: 'tail_remaining', label: '尾数未清', priority: 'normal', quick: 'tail_remaining', view: 'exceptions' });
   if (exceptions.has('documents_incomplete')) definitions.push({ type: 'documents_incomplete', label: '资料不完整', priority: 'normal', quick: 'documents', view: 'exceptions' });
   return definitions.map(definition => actionItem(order, definition));
@@ -217,7 +221,7 @@ function emptyKpis(): HomeKpi[] {
     { id: 'due', label: '今日交期', value: null, description: '暂不可用', route: '/production', tone: 'blue', icon: '今' },
     { id: 'overdue', label: '逾期工单', value: null, description: '暂不可用', route: '/production', tone: 'red', icon: '逾' },
     { id: 'drawing', label: '图纸待确认', value: null, description: '暂不可用', route: '/production', tone: 'yellow', icon: '图' },
-    { id: 'material', label: '配料异常', value: null, description: '暂不可用', route: '/production', tone: 'yellow', icon: '料' },
+    { id: 'material', label: '仓库异常', value: null, description: '暂不可用', route: '/production', tone: 'yellow', icon: '料' },
     { id: 'tail', label: '尾数未清', value: null, description: '暂不可用', route: '/production', tone: 'slate', icon: '尾' },
   ];
 }
@@ -324,7 +328,7 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
     { id: 'due', label: '今日交期', value: dueTodayCount, description: '今日需交付工单', route: '/production?view=today&quick=due_today', tone: 'blue', icon: '今' },
     { id: 'overdue', label: '逾期工单', value: overdueCount, description: '未完成且已过计划日', route: '/production?view=exceptions&quick=overdue', tone: 'red', icon: '逾' },
     { id: 'drawing', label: '图纸待确认', value: drawingConfirmationCount, description: '样品、客户确认或变更', route: '/production?view=exceptions&quick=drawing_confirmation', tone: 'yellow', icon: '图' },
-    { id: 'material', label: '配料异常', value: materialIssueCount, description: '按现有配料告警口径', route: '/production?view=exceptions&quick=material', tone: 'yellow', icon: '料' },
+    { id: 'material', label: '仓库异常', value: materialIssueCount, description: '仅统计未解决仓库异常', route: '/production?view=exceptions&quick=material', tone: 'yellow', icon: '料' },
     { id: 'tail', label: '尾数未清', value: tailRemainingCount, description: '按现有数量告警口径', route: '/production?view=exceptions&quick=tail_remaining', tone: 'slate', icon: '尾' },
   ];
 

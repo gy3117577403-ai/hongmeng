@@ -22,6 +22,10 @@ export type ProductionAlertInput = ProductionQuantityInput & {
   specificationInvalid?: boolean;
   drawingStatus?: string | null;
   materialStatus?: string | null;
+  warehouseMaterialStatus?: string | null;
+  warehouseExceptionType?: string | null;
+  warehouseExceptionNote?: string | null;
+  warehouseExpectedAt?: string | Date | null;
   latestProgressRemark?: string | null;
   plannedAt?: string | Date | null;
 };
@@ -31,6 +35,14 @@ const drawingConfirmationCodes = new Set<ProductionAlertCode>([
   'CUSTOMER_CONFIRMATION_REQUIRED',
   'DRAWING_CHANGE_REQUIRED',
 ]);
+
+const warehouseExceptionLabels: Record<string, string> = {
+  shortage: '缺料',
+  wrong_material: '料错',
+  insufficient_quantity: '数量不足',
+  quality_issue: '来料质量异常',
+  other: '仓库异常',
+};
 
 function chinaDayNumber(value: Date): number {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -51,6 +63,23 @@ function completedStage(stage?: string | null): boolean {
   return stage === 'completed' || stage === '已完成';
 }
 
+function warehouseAlertLabel(input: ProductionAlertInput, now: Date): string {
+  const type = warehouseExceptionLabels[String(input.warehouseExceptionType || '')] || '仓库异常';
+  if (!input.warehouseExpectedAt) return type;
+  const expected = input.warehouseExpectedAt instanceof Date
+    ? input.warehouseExpectedAt
+    : new Date(input.warehouseExpectedAt);
+  if (Number.isNaN(expected.getTime())) return type;
+  const days = overdueDays(expected, now);
+  if (days > 0) return `${type} · 到料逾期${days}天`;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric',
+  }).formatToParts(expected);
+  const part = (name: string): string => parts.find(item => item.type === name)?.value || '';
+  const label = `${Number(part('month'))}月${Number(part('day'))}日`;
+  return `${type} · 预计${label}到`;
+}
+
 export function isDrawingConfirmationAlert(code: ProductionAlertCode): boolean {
   return drawingConfirmationCodes.has(code);
 }
@@ -60,7 +89,6 @@ export function getProductionAlerts(input: ProductionAlertInput, now = new Date(
   const drawing = String(input.drawingStatus || '').trim();
   const remark = String(input.latestProgressRemark || '').trim();
   const drawingContext = `${drawing}\n${remark}`;
-  const material = String(input.materialStatus || '').trim();
   const stageCompleted = completedStage(input.stage);
   const quantity = getProductionQuantitySummary(input);
 
@@ -70,8 +98,11 @@ export function getProductionAlerts(input: ProductionAlertInput, now = new Date(
   else if (/客户/.test(drawingContext) && /确认|等待|待/.test(drawingContext)) alerts.push({ code: 'CUSTOMER_CONFIRMATION_REQUIRED', label: '待客户确认', tone: 'amber' });
   else if (!stageCompleted && (!drawing || /未发|待发|未下发/.test(drawing))) alerts.push({ code: 'DRAWING_NOT_ISSUED', label: '图纸待发', tone: 'orange' });
 
-  if (!stageCompleted && /未齐|缺料|待料|未配|待配|配料异常/.test(material)) {
-    alerts.push({ code: 'MATERIAL_NOT_READY', label: '配料未齐', tone: 'orange' });
+  if (!stageCompleted && input.warehouseMaterialStatus === 'exception') {
+    const critical = input.warehouseExceptionType === 'wrong_material'
+      || input.warehouseExceptionType === 'quality_issue'
+      || overdueDays(input.warehouseExpectedAt, now) > 0;
+    alerts.push({ code: 'MATERIAL_NOT_READY', label: warehouseAlertLabel(input, now), tone: critical ? 'red' : 'orange' });
   }
 
   const days = stageCompleted ? 0 : overdueDays(input.plannedAt, now);

@@ -1,0 +1,134 @@
+.warehouse-workbench { width: 100%; height: 100dvh; min-height: 640px; min-width: 0; overflow: hidden; background: var(--hm-color-bg); color: var(--hm-color-text); }
+.warehouse-page-frame { height: calc(100dvh - var(--hm-shell-header)); min-width: 0; padding: 10px 12px 12px; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 10px; overflow: hidden; }
+.warehouse-summary { display: grid; grid-template-columns: 1.35fr repeat(4, minmax(145px, 1fr)); gap: 10px; }
+.warehouse-summary > button { min-width: 0; height: 84px; border: 1px solid var(--hm-color-border); border-radius: var(--hm-radius-lg); background: #fff; padding: 13px 14px; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 11px; color: var(--hm-color-text); box-shadow: var(--hm-shadow-sm); text-align: left; cursor: pointer; transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease; }
+.warehouse-summary > button:hover { border-color: #fdba74; box-shadow: var(--hm-shadow-md); transform: translateY(-1px); }
+.warehouse-summary > button.active { border-color: #f97316; box-shadow: 0 0 0 2px rgba(249,115,22,.12), var(--hm-shadow-md); }
+.warehouse-summary > button > svg { width: 40px; height: 40px; padding: 10px; border-radius: 10px; color: #ea580c; background: #fff7ed; }
+.warehouse-summary > button.pending > svg { color: #b45309; background: #fffbeb; }
+.warehouse-summary > button.completed > svg { color: #047857; background: #ecfdf5; }
+.warehouse-summary > button.exception > svg, .warehouse-summary > button.overdue > svg { color: #dc2626; background: #fef2f2; }
+.warehouse-summary button span { min-width: 0; display: grid; gap: 4px; font-weight: 750; }
+.warehouse-summary button small { color: var(--hm-color-text-muted); font-size: 11px; font-weight: 500; }
+.warehouse-summary button > strong { font-size: 27px; line-height: 1; }
+.warehouse-toolbar { min-height: 58px; padding: 9px 10px; display: flex; align-items: center; gap: 9px; border: 1px solid var(--hm-color-border); border-radius: var(--hm-radius-lg); background: #fff; box-shadow: var(--hm-shadow-sm); }
+.warehouse-scope-tabs { display: inline-flex; padding: 3px; border-radius: 8px; background: #f3f4f6; }
+.warehouse-scope-tabs button { height: 34px; padding: 0 16px; border: 0; border-radius: 6px; background: transparent; color: #64748b; font-weight: 700; cursor: pointer; }
+.warehouse-scope-tabs button.active { background: #fff; color: #ea580c; box-shadow: 0 1px 4px rgba(15,23,42,.12); }
+.warehouse-search { flex: 1 1 270px; max-width: 520px; height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 11px; border: 1px solid var(--hm-color-border); border-radius: 8px; color: #94a3b8; background: #fff; }
+.warehouse-search:focus-within { border-color: #fb923c; box-shadow: 0 0 0 3px rgba(249,115,22,.1); }
+.warehouse-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--hm-color-text); font: inherit; }
+.warehouse-week-select, .warehouse-exception-select { height: 38px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border: 1px solid var(--hm-color-border); border-radius: 8px; color: #64748b; font-size: 12px; white-space: nowrap; }
+.warehouse-week-select select, .warehouse-exception-select select { max-width: 190px; border: 0; outline: 0; background: transparent; color: #334155; font: inherit; }
+.warehouse-reset { height: 38px; padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--hm-color-border); border-radius: 8px; background: #fff; color: #475569; font-weight: 650; cursor: pointer; }
+.warehouse-task-panel { min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr) auto; border: 1px solid var(--hm-color-border); border-radius: var(--hm-radius-lg); background: #fff; box-shadow: var(--hm-shadow-sm); overflow: hidden; }
+.warehouse-task-panel > header { min-height: 62px; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #eef2f7; }
+.warehouse-task-panel > header div { display: grid; gap: 2px; }
+.warehouse-task-panel > header span { color: #ea580c; font-size: 11px; font-weight: 750; }
+.warehouse-task-panel > header h2 { margin: 0; font-size: 17px; }
+.warehouse-task-panel > header em { color: #64748b; font-size: 12px; font-style: normal; }
+.warehouse-task-columns, .warehouse-task-row { display: grid; grid-template-columns: 54px minmax(240px, 1.6fr) minmax(150px, .8fr) minmax(155px, .8fr) minmax(170px, .72fr); gap: 12px; align-items: center; }
+.warehouse-task-columns { min-height: 34px; padding: 0 14px; border-bottom: 1px solid #eef2f7; background: #f8fafc; color: #64748b; font-size: 11px; font-weight: 700; }
+.warehouse-task-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.warehouse-task-row { min-height: 92px; padding: 11px 14px; border-bottom: 1px solid #eef2f7; position: relative; }
+.warehouse-task-row:last-child { border-bottom: 0; }
+.warehouse-task-row.exception { background: linear-gradient(90deg, rgba(254,242,242,.85), #fff 28%); }
+.warehouse-task-row.expected-overdue::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: #dc2626; }
+.warehouse-complete-check { width: 42px; height: 42px; display: grid; place-items: center; cursor: pointer; }
+.warehouse-complete-check input { position: absolute; opacity: 0; pointer-events: none; }
+.warehouse-complete-check span { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; color: #cbd5e1; transition: all .15s ease; }
+.warehouse-complete-check input:focus-visible + span { outline: 3px solid rgba(249,115,22,.2); outline-offset: 2px; }
+.warehouse-complete-check input:checked + span { border-color: #10b981; background: #10b981; color: #fff; }
+.warehouse-complete-check input:disabled + span { opacity: .55; cursor: not-allowed; }
+.warehouse-task-product { min-width: 0; display: grid; gap: 4px; }
+.warehouse-task-product strong, .warehouse-task-product b, .warehouse-task-product small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warehouse-task-product strong { font-size: 13px; }
+.warehouse-task-product b { font-size: 16px; color: #0f172a; }
+.warehouse-task-product small { color: #64748b; }
+.warehouse-task-plan { display: grid; gap: 8px; }
+.warehouse-task-plan span { color: #64748b; font-size: 11px; }
+.warehouse-task-plan b { display: block; margin-top: 2px; color: #1e293b; font-size: 13px; }
+.warehouse-task-state { min-width: 0; display: grid; gap: 4px; align-content: center; }
+.warehouse-task-state > span { width: fit-content; padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 750; }
+.warehouse-task-state > span.pending { color: #92400e; background: #fffbeb; }
+.warehouse-task-state > span.completed { color: #047857; background: #ecfdf5; }
+.warehouse-task-state > span.exception { color: #b91c1c; background: #fee2e2; }
+.warehouse-task-state b { color: #b91c1c; font-size: 12px; }
+.warehouse-task-state small { overflow: hidden; color: #64748b; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.warehouse-task-state small.overdue { color: #dc2626; font-weight: 700; }
+.warehouse-task-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.warehouse-task-actions button { min-height: 36px; padding: 0 12px; border: 1px solid #dbe2ea; border-radius: 8px; background: #fff; color: #475569; font-weight: 700; cursor: pointer; }
+.warehouse-task-actions button.primary { border-color: #f97316; background: #f97316; color: #fff; }
+.warehouse-task-actions button:disabled { opacity: .55; cursor: wait; }
+.warehouse-loading, .warehouse-empty { min-height: 180px; display: grid; place-content: center; justify-items: center; gap: 7px; color: #64748b; }
+.warehouse-empty svg { width: 38px; height: 38px; color: #fb923c; }
+.warehouse-empty strong { color: #334155; }
+.warehouse-empty span { font-size: 12px; }
+.warehouse-pagination { min-height: 46px; padding: 7px 14px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; border-top: 1px solid #eef2f7; color: #64748b; font-size: 12px; }
+.warehouse-pagination button { height: 32px; padding: 0 11px; border: 1px solid #dbe2ea; border-radius: 7px; background: #fff; }
+.warehouse-error { padding: 10px 13px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #fecaca; border-radius: 9px; background: #fef2f2; color: #b91c1c; }
+.warehouse-error span { display: flex; gap: 8px; }
+.warehouse-error button { border: 0; background: transparent; color: inherit; font-weight: 700; }
+.warehouse-drawer-scrim { position: fixed; inset: 0; z-index: calc(var(--z-header) + 10); border: 0; background: rgba(15,23,42,.28); backdrop-filter: blur(2px); }
+.warehouse-task-drawer { position: fixed; z-index: calc(var(--z-header) + 11); inset: 0 0 0 auto; width: min(520px, 92vw); display: grid; grid-template-rows: auto minmax(0, 1fr); background: #fff; box-shadow: -20px 0 48px rgba(15,23,42,.2); animation: warehouse-drawer-in .18s ease-out; }
+@keyframes warehouse-drawer-in { from { transform: translateX(22px); opacity: .6; } }
+.warehouse-task-drawer > header { min-height: 94px; padding: 18px 20px; display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 1px solid #e5e7eb; background: #fffaf5; }
+.warehouse-task-drawer > header div { min-width: 0; display: grid; gap: 3px; }
+.warehouse-task-drawer > header span { color: #ea580c; font-size: 12px; font-weight: 750; }
+.warehouse-task-drawer > header h2, .warehouse-task-drawer > header small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warehouse-task-drawer > header h2 { margin: 0; font-size: 20px; }
+.warehouse-task-drawer > header small { color: #64748b; }
+.warehouse-task-drawer > header button { width: 38px; height: 38px; display: grid; place-items: center; border: 1px solid #fed7aa; border-radius: 9px; background: #fff; color: #9a3412; }
+.warehouse-drawer-body { min-height: 0; padding: 16px 18px 28px; overflow-y: auto; overscroll-behavior: contain; }
+.warehouse-drawer-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+.warehouse-drawer-summary div { min-width: 0; min-height: 67px; padding: 10px 11px; display: grid; gap: 5px; border: 1px solid #e5e7eb; border-radius: 9px; background: #f8fafc; }
+.warehouse-drawer-summary span { color: #64748b; font-size: 11px; }
+.warehouse-drawer-summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warehouse-drawer-summary strong.pending { color: #b45309; }.warehouse-drawer-summary strong.completed { color: #047857; }.warehouse-drawer-summary strong.exception { color: #dc2626; }
+.warehouse-drawer-action, .warehouse-exception-form, .warehouse-resolution-form, .warehouse-reopen-form, .warehouse-activity-section { margin-top: 14px; padding: 14px; border: 1px solid #e5e7eb; border-radius: 11px; background: #fff; }
+.warehouse-complete-action { display: grid; gap: 12px; background: #f0fdf4; border-color: #bbf7d0; }
+.warehouse-complete-action > div, .warehouse-section-heading { display: flex; align-items: flex-start; gap: 9px; }
+.warehouse-complete-action svg, .warehouse-section-heading svg { flex: 0 0 auto; width: 20px; height: 20px; color: #f97316; }
+.warehouse-complete-action span, .warehouse-section-heading span { display: grid; gap: 3px; }
+.warehouse-complete-action small, .warehouse-section-heading small { color: #64748b; font-size: 11px; font-weight: 500; }
+.warehouse-complete-action button, .warehouse-save-exception, .warehouse-resolution-form button, .warehouse-reopen-form button { min-height: 40px; border-radius: 8px; font-weight: 750; cursor: pointer; }
+.warehouse-exception-form, .warehouse-resolution-form, .warehouse-reopen-form { display: grid; gap: 12px; }
+.warehouse-exception-form label, .warehouse-resolution-form label, .warehouse-reopen-form label { display: grid; gap: 6px; color: #475569; font-size: 12px; font-weight: 650; }
+.warehouse-exception-form select, .warehouse-exception-form textarea, .warehouse-exception-form input, .warehouse-resolution-form textarea, .warehouse-reopen-form textarea { width: 100%; border: 1px solid #dbe2ea; border-radius: 8px; background: #fff; padding: 9px 10px; color: #0f172a; font: inherit; resize: vertical; }
+.warehouse-exception-form select:focus, .warehouse-exception-form textarea:focus, .warehouse-exception-form input:focus, .warehouse-resolution-form textarea:focus, .warehouse-reopen-form textarea:focus { outline: 3px solid rgba(249,115,22,.12); border-color: #fb923c; }
+.warehouse-save-exception { border: 1px solid #f97316; background: #fff7ed; color: #c2410c; }
+.warehouse-resolution-form { border-color: #fed7aa; background: #fffaf5; }
+.warehouse-resolution-form > div:last-child { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.warehouse-resolution-form button, .warehouse-reopen-form button { border: 1px solid #dbe2ea; background: #fff; color: #475569; }
+.warehouse-resolution-form button.primary-button, .warehouse-complete-action button.primary-button { border-color: #f97316; background: #f97316; color: #fff; }
+.warehouse-reopen-form { border-color: #fecaca; background: #fffafa; }
+.warehouse-reopen-form button { border-color: #ef4444; color: #b91c1c; }
+.warehouse-exception-form button:disabled, .warehouse-resolution-form button:disabled, .warehouse-reopen-form button:disabled, .warehouse-complete-action button:disabled { opacity: .5; cursor: not-allowed; }
+.warehouse-form-error { margin-top: 12px; padding: 10px 11px; border-radius: 8px; background: #fef2f2; color: #b91c1c; font-size: 12px; }
+.warehouse-activity-list { margin-top: 12px; display: grid; }
+.warehouse-activity-list article { min-height: 54px; display: grid; grid-template-columns: 12px 1fr; gap: 8px; position: relative; }
+.warehouse-activity-list article::before { content: ''; position: absolute; left: 4px; top: 13px; bottom: -3px; width: 1px; background: #e2e8f0; }
+.warehouse-activity-list article:last-child::before { display: none; }
+.warehouse-activity-list i { z-index: 1; width: 9px; height: 9px; margin-top: 8px; border: 2px solid #fb923c; border-radius: 50%; background: #fff; }
+.warehouse-activity-list article div { display: grid; align-content: start; gap: 3px; }
+.warehouse-activity-list article strong { font-size: 12px; }.warehouse-activity-list article span, .warehouse-activity-list p { color: #64748b; font-size: 11px; }
+.warehouse-toast { position: fixed; z-index: calc(var(--z-header) + 20); left: 50%; bottom: 28px; transform: translateX(-50%); max-width: min(460px, 88vw); padding: 11px 16px; border-radius: 9px; background: #1e293b; color: #fff; box-shadow: 0 12px 30px rgba(15,23,42,.24); font-size: 13px; }
+.spin { animation: warehouse-spin .8s linear infinite; } @keyframes warehouse-spin { to { transform: rotate(360deg); } }
+@media (max-width: 1180px) {
+  .warehouse-page-frame { padding-inline: 10px; }
+  .warehouse-summary { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .warehouse-summary > button { height: 78px; padding: 10px; grid-template-columns: 34px minmax(0, 1fr); gap: 8px; }
+  .warehouse-summary > button > svg { width: 34px; height: 34px; padding: 8px; }
+  .warehouse-summary button > strong { grid-column: 2; grid-row: 2; font-size: 22px; }
+  .warehouse-summary button small { display: none; }
+  .warehouse-toolbar { flex-wrap: wrap; }
+  .warehouse-search { order: 3; flex-basis: 100%; max-width: none; }
+  .warehouse-task-columns, .warehouse-task-row { grid-template-columns: 46px minmax(215px, 1.35fr) minmax(125px, .72fr) minmax(135px, .72fr) minmax(145px, .65fr); gap: 8px; }
+}
+@media (max-width: 900px) {
+  .warehouse-page-frame { padding: 8px; }
+  .warehouse-summary { grid-template-columns: repeat(5, minmax(110px, 1fr)); overflow-x: auto; padding-bottom: 4px; }
+  .warehouse-task-columns { display: none; }
+  .warehouse-task-row { grid-template-columns: 42px minmax(0, 1fr) 138px; grid-template-areas: 'check product state' 'check plan actions'; min-height: 126px; }
+  .warehouse-complete-check { grid-area: check; }.warehouse-task-product { grid-area: product; }.warehouse-task-plan { grid-area: plan; grid-template-columns: 1fr 1fr; }.warehouse-task-state { grid-area: state; }.warehouse-task-actions { grid-area: actions; }
+}

@@ -48,10 +48,19 @@ export async function POST(req: NextRequest) {
           planActive: true,
           planClearedAt: null,
           planClearedBy: null,
+          materialStatus: '未配料',
         },
       });
       if (activated.count <= 0) throw new Error('NEXT_WEEK_ALREADY_ACTIVATED');
-      return { archived: archived.count, activated: activated.count };
+      const activatedOrders = await tx.workOrder.findMany({
+        where: activeWeeklyWhere(weekStartDate),
+        select: { id: true },
+      });
+      const materialTasks = await tx.warehouseMaterialTask.createMany({
+        data: activatedOrders.map(order => ({ workOrderId: order.id, status: 'pending' })),
+        skipDuplicates: true,
+      });
+      return { archived: archived.count, activated: activated.count, materialTasksCreated: materialTasks.count };
     });
 
     await logOp({
@@ -63,6 +72,7 @@ export async function POST(req: NextRequest) {
         weekEndDate: before.weekEndDate,
         archivedWorkOrders: result.archived,
         activatedWorkOrders: result.activated,
+        materialTasksCreated: result.materialTasksCreated,
         missingWorkOrders: before.missingWorkOrders,
         anomalyCount: before.anomalyCount,
         warningCount: before.warningCount,
@@ -75,7 +85,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      summary: { ...before, archivedCount: result.archived, activatedCount: result.activated },
+      summary: {
+        ...before,
+        archivedCount: result.archived,
+        activatedCount: result.activated,
+        materialTasksCreated: result.materialTasksCreated,
+      },
     });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();

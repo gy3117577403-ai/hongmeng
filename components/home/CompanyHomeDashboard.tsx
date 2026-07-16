@@ -27,6 +27,7 @@ import {
   RefreshCw,
   Search,
   Wrench,
+  Warehouse,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -80,6 +81,7 @@ const quickLinks: Array<{ href: string; label: string; icon: LucideIcon; tone: H
   { href: '/workspace/changes', label: '技术变更', icon: GitPullRequestArrow, tone: 'orange' },
   { href: '/dashboard', label: '生产工单', icon: FileStack, tone: 'green' },
   { href: '/connector-parameters', label: '连接器参数', icon: Boxes, tone: 'blue' },
+  { href: '/workspace/warehouse', label: '仓库配料', icon: Warehouse, tone: 'yellow' },
   { href: '/workspace/more', label: '更多功能', icon: Wrench, tone: 'slate', planned: true },
 ];
 

@@ -68,6 +68,15 @@ type ProductionOrder = {
   lastProgressBy?: string | null;
   drawingStatus?: string | null;
   materialStatus?: string | null;
+  warehouseMaterial?: {
+    taskId: string;
+    status: string;
+    exceptionType?: string | null;
+    exceptionNote?: string | null;
+    expectedAt?: string | null;
+    completedAt?: string | null;
+    updatedAt: string;
+  } | null;
   drawingLibraryItemId?: string | null;
   documentCompleteness: string;
   documentFilledCount: number;
@@ -245,7 +254,7 @@ function stageMenuItems(order: ProductionOrder): Array<{ key: StageKey; label: s
 const quickByView: Record<ViewKey, Array<{ key: QuickFilter; label: string }>> = {
   board: [
     { key: 'due_today', label: '今日交期' }, { key: 'overdue', label: '已逾期' },
-    { key: 'drawing_confirmation', label: '图纸待确认' }, { key: 'material', label: '配料异常' },
+    { key: 'drawing_confirmation', label: '图纸待确认' }, { key: 'material', label: '仓库异常' },
     { key: 'tail_remaining', label: '尾数未清' }, { key: 'completed', label: '已完成' },
   ],
   today: [
@@ -253,7 +262,7 @@ const quickByView: Record<ViewKey, Array<{ key: QuickFilter; label: string }>> =
     { key: 'updated_today', label: '今日更新' }, { key: 'completed_today', label: '今日完成' },
   ],
   exceptions: [
-    { key: 'drawing_confirmation', label: '图纸待确认' }, { key: 'material', label: '配料异常' }, { key: 'tail_remaining', label: '尾数未清' },
+    { key: 'drawing_confirmation', label: '图纸待确认' }, { key: 'material', label: '仓库异常' }, { key: 'tail_remaining', label: '尾数未清' },
     { key: 'documents', label: '资料不完整' },
     { key: 'delivery_missing', label: '交期缺失' }, { key: 'specification_invalid', label: '规格异常' }, { key: 'customer_missing', label: '客户缺失' },
   ],
@@ -302,6 +311,23 @@ function priorityText(priority: string): string {
 
 function deliveryText(order: ProductionOrder): string {
   return order.deliveryDay?.trim() || dateText(order.plannedAt);
+}
+
+function warehouseMaterialText(order: ProductionOrder): string {
+  if (order.warehouseMaterial?.status === 'completed') return '已配料';
+  if (order.warehouseMaterial?.status === 'exception') return '仓库异常';
+  if (order.warehouseMaterial?.status === 'pending') return '待配料';
+  return '未建立配料任务';
+}
+
+function warehouseExceptionDetail(order: ProductionOrder): string {
+  if (order.warehouseMaterial?.status !== 'exception') return '-';
+  const typeMap: Record<string, string> = {
+    shortage: '缺料', wrong_material: '料错', insufficient_quantity: '数量不足', quality_issue: '来料质量异常', other: '其他异常',
+  };
+  const type = typeMap[order.warehouseMaterial.exceptionType || ''] || '仓库异常';
+  const expected = order.warehouseMaterial.expectedAt ? ` · 预计 ${dateText(order.warehouseMaterial.expectedAt)} 解决` : '';
+  return `${type}${expected}${order.warehouseMaterial.exceptionNote ? ` · ${order.warehouseMaterial.exceptionNote}` : ''}`;
 }
 
 function specText(order: ProductionOrder): string {
@@ -421,6 +447,10 @@ function withProductionDerived(order: ProductionOrder): ProductionOrder {
   const productionAlerts = getProductionAlerts({
     ...order,
     specificationInvalid: order.exceptionCodes.includes('specification_invalid'),
+    warehouseMaterialStatus: order.warehouseMaterial?.status,
+    warehouseExceptionType: order.warehouseMaterial?.exceptionType,
+    warehouseExceptionNote: order.warehouseMaterial?.exceptionNote,
+    warehouseExpectedAt: order.warehouseMaterial?.expectedAt,
   });
   return { ...order, quantitySummary, productionAlerts };
 }
@@ -862,7 +892,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       issued: '已发', not_issued: '未发', sample_confirmation: '待样品确认', customer_confirmation: '待客户确认',
       change_required: '图纸需变更', confirmed: '已确认', unset: '未设置',
     });
-    add('material', '配料', { allocated: '已配料', ready: '料齐', not_ready: '未齐', unset: '未设置' });
+    add('material', '仓库', { pending: '待配料', completed: '已配料', exception: '异常', unset: '未建任务' });
     add('documents', '资料', { empty: '0/5', partial: '1-4/5', complete: '5/5' });
     return chips;
   }, [advanced]);
@@ -1829,7 +1859,7 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
         {tab === 'production' && <InfoGrid items={[
           ['状态', order.stageText], ['优先级', priorityText(order.priority)], ['周计划原始目标', order.importedTargetQty === null ? order.uncompletedQty || '-' : formatProductionQuantity(order.importedTargetQty)], ['当前生产目标', formatProductionQuantity(order.quantitySummary.targetQty)],
           ['数量来源', quantitySourceText(order)], ['累计进入后端', formatProductionQuantity(order.quantityFlow.frontendTransferredQty)], ['累计完成', formatProductionQuantity(order.quantitySummary.completedQty)], ['整体进度', formatProductionPercentage(order.quantitySummary.percentage)],
-          ['交期', deliveryText(order) || '-'], ['图纸', order.drawingStatus || '-'], ['配料', order.materialStatus || '-'], ['开始时间', dateTimeText(order.startedAt)],
+          ['交期', deliveryText(order) || '-'], ['图纸', order.drawingStatus || '-'], ['仓库配料', warehouseMaterialText(order)], ['仓库异常', warehouseExceptionDetail(order)], ['开始时间', dateTimeText(order.startedAt)],
           ['完成时间', dateTimeText(order.completedAt)], ['最近更新', dateTimeText(order.lastProgressAt)], ['最近进度', order.latestProgressRemark || '暂无进度备注'],
         ]} />}
         {tab === 'drawing' && <div className="production-drawing-detail"><div className="production-drawing-score"><span>工单资料完整度</span><strong>{order.documentFilledCount}/{order.documentTotalCount || 5}</strong></div><div className="production-category-status">{categoryLabels.map(category => <span className={order.documentCategoryCodes.includes(category.code) ? 'ready' : 'missing'} key={category.code}><i />{category.label}<b>{order.documentCategoryCodes.includes(category.code) ? '已有资料' : '待补充'}</b></span>)}</div><div className="production-drawing-actions"><button className="primary-button" type="button" onClick={resources}>打开工单资料</button><button type="button" onClick={drawingLibrary}>查看图纸资料库</button></div></div>}
@@ -1864,7 +1894,7 @@ function AdvancedFilterPanel({ customers, value, setValue, clear, apply }: { cus
       <label><span>状态</span><select value={value.stage} onChange={event => setValue({ ...value, stage: event.target.value })}><option value="">全部状态</option>{stages.map(stage => <option value={stage.key} key={stage.key}>{stage.label}</option>)}</select></label>
       <label><span>优先级</span><select value={value.priority} onChange={event => setValue({ ...value, priority: event.target.value })}><option value="">全部优先级</option><option value="urgent">紧急</option><option value="high">高</option><option value="normal">一般</option></select></label>
       <label><span>图纸状态</span><select value={value.drawing} onChange={event => setValue({ ...value, drawing: event.target.value })}><option value="">全部图纸状态</option><option value="issued">已发</option><option value="not_issued">未发</option><option value="sample_confirmation">待样品确认</option><option value="customer_confirmation">待客户确认</option><option value="change_required">图纸需变更</option><option value="confirmed">已确认</option><option value="unset">未设置</option></select></label>
-      <label><span>配料状态</span><select value={value.material} onChange={event => setValue({ ...value, material: event.target.value })}><option value="">全部配料状态</option><option value="allocated">已配料</option><option value="ready">料齐</option><option value="not_ready">未齐</option><option value="unset">未设置</option></select></label>
+      <label><span>仓库状态</span><select value={value.material} onChange={event => setValue({ ...value, material: event.target.value })}><option value="">全部仓库状态</option><option value="pending">待配料</option><option value="completed">已配料</option><option value="exception">仓库异常</option><option value="unset">未建立任务</option></select></label>
       <label><span>资料完整度</span><select value={value.documents} onChange={event => setValue({ ...value, documents: event.target.value })}><option value="">全部完整度</option><option value="empty">0/5</option><option value="partial">1-4/5</option><option value="complete">5/5</option></select></label>
     </div>
     <div className="production-filter-actions"><button type="button" onClick={clear}>清空全部</button><button className="primary-button" type="button" onClick={apply}>应用筛选</button></div>

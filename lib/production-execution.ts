@@ -24,6 +24,17 @@ export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclu
     take: 1,
     select: { createdBy: true },
   },
+  materialTask: {
+    select: {
+      id: true,
+      status: true,
+      exceptionType: true,
+      exceptionNote: true,
+      expectedAt: true,
+      completedAt: true,
+      updatedAt: true,
+    },
+  },
 });
 
 export type ProductionExecutionOrderRecord = Prisma.WorkOrderGetPayload<{
@@ -63,7 +74,7 @@ export type ProductionWeek = {
 const exceptionLabels: Record<ProductionExceptionCode, string> = {
   overdue: '已逾期',
   drawing_not_issued: '未发图',
-  material_not_ready: '配料未齐',
+  material_not_ready: '仓库异常',
   documents_incomplete: '资料不完整',
   delivery_missing: '交期缺失',
   specification_invalid: '规格异常',
@@ -79,7 +90,7 @@ const validStages = new Set(['not_issued', 'frontend', 'backend', 'completed']);
 const validPriorities = new Set(['urgent', 'high', 'normal']);
 const validDuePresets = new Set(['today', 'tomorrow', 'overdue', 'week', 'custom']);
 const validDrawingStatuses = new Set(['issued', 'not_issued', 'sample_confirmation', 'customer_confirmation', 'change_required', 'confirmed', 'unset']);
-const validMaterialStatuses = new Set(['allocated', 'ready', 'not_ready', 'unset']);
+const validMaterialStatuses = new Set(['pending', 'completed', 'exception', 'unset']);
 const validDocumentCompleteness = new Set(['empty', 'partial', 'complete', 'incomplete']);
 
 function validatedValue(value: string | null, allowed: Set<string>) {
@@ -220,6 +231,10 @@ export function productionExceptionCodes(order: ProductionExecutionOrderRecord, 
     specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
     drawingStatus: order.drawingStatus,
     materialStatus: order.materialStatus,
+    warehouseMaterialStatus: order.materialTask?.status,
+    warehouseExceptionType: order.materialTask?.exceptionType,
+    warehouseExceptionNote: order.materialTask?.exceptionNote,
+    warehouseExpectedAt: order.materialTask?.expectedAt,
     latestProgressRemark: order.latestProgressRemark,
     plannedAt: order.plannedAt,
   }, now);
@@ -252,6 +267,10 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
     drawingStatus: order.drawingStatus,
     materialStatus: order.materialStatus,
+    warehouseMaterialStatus: order.materialTask?.status,
+    warehouseExceptionType: order.materialTask?.exceptionType,
+    warehouseExceptionNote: order.materialTask?.exceptionNote,
+    warehouseExpectedAt: order.materialTask?.expectedAt,
     latestProgressRemark: order.latestProgressRemark,
     plannedAt: order.plannedAt,
   }, now);
@@ -321,6 +340,15 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     lastProgressBy: order.progressLogs[0]?.createdBy || null,
     drawingStatus: order.drawingStatus,
     materialStatus: order.materialStatus,
+    warehouseMaterial: order.materialTask ? {
+      taskId: order.materialTask.id,
+      status: order.materialTask.status,
+      exceptionType: order.materialTask.exceptionType,
+      exceptionNote: order.materialTask.exceptionNote,
+      expectedAt: order.materialTask.expectedAt?.toISOString() || null,
+      completedAt: order.materialTask.completedAt?.toISOString() || null,
+      updatedAt: order.materialTask.updatedAt.toISOString(),
+    } : null,
     drawingLibraryItemId: order.drawingLibraryItemId,
     documentCategoryCodes: [...new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || [])],
     documentCompleteness: completeness.text,
@@ -393,11 +421,11 @@ function drawingStatusValue(order: ProductionExecutionOrderRecord) {
 }
 
 function materialStatusValue(order: ProductionExecutionOrderRecord) {
-  const value = text(order.materialStatus);
-  if (!value || value === '-' || value.includes('未设置')) return 'unset';
-  if (value.includes('已配料')) return 'allocated';
-  if (value.includes('料齐') && !value.includes('未齐')) return 'ready';
-  return 'not_ready';
+  if (!order.materialTask) return 'unset';
+  if (order.materialTask.status === 'pending') return 'pending';
+  if (order.materialTask.status === 'completed') return 'completed';
+  if (order.materialTask.status === 'exception') return 'exception';
+  return 'unset';
 }
 
 function matchesDuePreset(order: ProductionExecutionOrderRecord, preset: string | undefined, week: ProductionWeek, now: Date) {
@@ -450,6 +478,10 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
       specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
       drawingStatus: order.drawingStatus,
       materialStatus: order.materialStatus,
+      warehouseMaterialStatus: order.materialTask?.status,
+      warehouseExceptionType: order.materialTask?.exceptionType,
+      warehouseExceptionNote: order.materialTask?.exceptionNote,
+      warehouseExpectedAt: order.materialTask?.expectedAt,
       latestProgressRemark: order.latestProgressRemark,
       plannedAt: order.plannedAt,
     }, now)
@@ -483,6 +515,10 @@ function drawingConfirmationRequired(order: ProductionExecutionOrderRecord, now:
     specification: order.specification,
     drawingStatus: order.drawingStatus,
     materialStatus: order.materialStatus,
+    warehouseMaterialStatus: order.materialTask?.status,
+    warehouseExceptionType: order.materialTask?.exceptionType,
+    warehouseExceptionNote: order.materialTask?.exceptionNote,
+    warehouseExpectedAt: order.materialTask?.expectedAt,
     latestProgressRemark: order.latestProgressRemark,
     plannedAt: order.plannedAt,
   }, now).some(alert => isDrawingConfirmationAlert(alert.code));
@@ -614,6 +650,10 @@ export async function summarizeProduction(week: ProductionWeek) {
       specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
       drawingStatus: order.drawingStatus,
       materialStatus: order.materialStatus,
+      warehouseMaterialStatus: order.materialTask?.status,
+      warehouseExceptionType: order.materialTask?.exceptionType,
+      warehouseExceptionNote: order.materialTask?.exceptionNote,
+      warehouseExpectedAt: order.materialTask?.expectedAt,
       latestProgressRemark: order.latestProgressRemark,
       plannedAt: order.plannedAt,
     }, now);

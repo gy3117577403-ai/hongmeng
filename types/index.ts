@@ -365,6 +365,69 @@ export type ChangeSummaryDTO = {
   unassigned: number;
 };
 
+export type WarehouseMaterialStatus = 'pending' | 'completed' | 'exception';
+export type WarehouseExceptionType = 'shortage' | 'wrong_material' | 'insufficient_quantity' | 'quality_issue' | 'other';
+
+export type WarehouseMaterialActivityDTO = {
+  id: string;
+  action: string;
+  fromStatus?: WarehouseMaterialStatus | null;
+  toStatus?: WarehouseMaterialStatus | null;
+  content?: string | null;
+  actor?: IssueUserDTO | null;
+  createdAt: string;
+};
+
+export type WarehouseMaterialTaskDTO = {
+  id: string;
+  workOrderId: string;
+  status: WarehouseMaterialStatus;
+  statusText: string;
+  exceptionType?: WarehouseExceptionType | null;
+  exceptionTypeText?: string | null;
+  exceptionNote?: string | null;
+  expectedAt?: string | null;
+  completedAt?: string | null;
+  completedBy?: IssueUserDTO | null;
+  updatedBy?: IssueUserDTO | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  isExpectedOverdue: boolean;
+  workOrder: {
+    id: string;
+    code: string;
+    customerName?: string | null;
+    specification?: string | null;
+    productName: string;
+    processName?: string | null;
+    uncompletedQty?: string | null;
+    productionTargetQty?: number | null;
+    plannedAt?: string | null;
+    deliveryDay?: string | null;
+    weekStartDate?: string | null;
+    weekEndDate?: string | null;
+    planActive: boolean;
+    stage: string;
+  };
+  activities?: WarehouseMaterialActivityDTO[];
+};
+
+export type WarehouseMaterialSummaryDTO = {
+  total: number;
+  pending: number;
+  completed: number;
+  exception: number;
+  expectedOverdue: number;
+};
+
+export type WarehouseWeekOptionDTO = {
+  weekStartDate: string;
+  weekEndDate?: string | null;
+  active: boolean;
+  taskCount: number;
+};
+
 export type WorkflowProcessStatus = 'waiting' | 'processing' | 'verifying' | 'closed';
 export type WorkflowEntityType = 'issue' | 'change' | 'production';
 
