@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
         department: cleanProcessText(body.department, 80) || null,
         position: cleanProcessText(body.position, 80) || null,
         team: cleanProcessText(body.team, 80) || null,
+        attendanceEnabled: body.attendanceEnabled !== false,
       },
     });
     await logOp({

@@ -603,6 +603,97 @@ export type EmployeeDTO = {
   position?: string | null;
   team?: string | null;
   isActive: boolean;
+  attendanceEnabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AttendanceStatus = 'draft' | 'confirmed';
+export type AttendanceType = 'normal' | 'leave' | 'absent' | 'rest';
+export type AttendanceSegmentType = 'regular' | 'overtime';
+
+export type AttendanceSegmentDTO = {
+  type: AttendanceSegmentType;
+  startedAt: string;
+  endedAt: string;
+  durationMilliseconds: number;
+};
+
+export type AttendanceRecordDTO = {
+  id: string;
+  employeeId: string;
+  employee: EmployeeDTO;
+  workDate: string;
+  status: AttendanceStatus;
+  attendanceType: AttendanceType;
+  plannedMilliseconds: number;
+  leaveMilliseconds: number;
+  actualMilliseconds: number;
+  overtimeMilliseconds: number;
+  segments: AttendanceSegmentDTO[];
+  source: string;
+  remark?: string | null;
+  confirmedBy?: { id: string; username: string; displayName: string } | null;
+  confirmedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type AbnormalTimeCategory =
+  | 'equipment'
+  | 'material_shortage'
+  | 'wrong_material'
+  | 'waiting_drawing'
+  | 'waiting_technical'
+  | 'process_change'
+  | 'incoming_quality'
+  | 'tooling'
+  | 'planning_change'
+  | 'power_network_system'
+  | 'other';
+
+export type AbnormalTimeQualityStatus = 'pending' | 'confirmed' | 'rejected';
+export type AbnormalTimeResolutionStatus = 'open' | 'resolved';
+
+export type AbnormalTimeAllocationDTO = {
+  id: string;
+  employeeId: string;
+  employee: EmployeeDTO;
+  durationMilliseconds: number;
+};
+
+export type AbnormalTimeEventDTO = {
+  id: string;
+  sequence: number;
+  workDate: string;
+  category: AbnormalTimeCategory;
+  categoryLabel: string;
+  title: string;
+  reason?: string | null;
+  startedAt: string;
+  endedAt: string;
+  durationMilliseconds: number;
+  affectedPersonMilliseconds: number;
+  employeeExempt: boolean;
+  qualityStatus: AbnormalTimeQualityStatus;
+  qualityNote?: string | null;
+  qualityConfirmedBy?: { id: string; username: string; displayName: string } | null;
+  qualityConfirmedAt?: string | null;
+  resolutionStatus: AbnormalTimeResolutionStatus;
+  responsibilityDepartment?: string | null;
+  expectedResolvedAt?: string | null;
+  resolutionNote?: string | null;
+  resolvedBy?: { id: string; username: string; displayName: string } | null;
+  resolvedAt?: string | null;
+  workOrder?: {
+    id: string;
+    code: string;
+    customerName?: string | null;
+    specification?: string | null;
+    productName: string;
+  } | null;
+  processStep?: { id: string; processCode: string; processName: string } | null;
+  allocations: AbnormalTimeAllocationDTO[];
   createdAt: string;
   updatedAt: string;
 };
@@ -662,7 +753,16 @@ export type EmployeeAttainmentRowDTO = {
   employee: EmployeeDTO;
   standardLaborMilliseconds: number;
   actualLaborMilliseconds: number;
-  attainmentBasisPoints: number;
+  attendanceMilliseconds: number;
+  exemptAbnormalMilliseconds: number;
+  effectiveProductionMilliseconds: number;
+  unexplainedMilliseconds: number;
+  attendanceConfirmedDays: number;
+  attendanceMissing: boolean;
+  attainmentBasisPoints: number | null;
+  processEfficiencyBasisPoints: number;
+  rawAttendanceOutputBasisPoints: number | null;
+  coverageBasisPoints: number | null;
   goodQty: number;
   scrapQty: number;
   reworkQty: number;
@@ -680,12 +780,46 @@ export type EmployeeAttainmentReportDTO = {
     executionCount: number;
     standardLaborMilliseconds: number;
     actualLaborMilliseconds: number;
-    attainmentBasisPoints: number;
+    attendanceMilliseconds: number;
+    exemptAbnormalMilliseconds: number;
+    effectiveProductionMilliseconds: number;
+    unexplainedMilliseconds: number;
+    attendanceConfirmedDays: number;
+    attendanceMissingCount: number;
+    attainmentBasisPoints: number | null;
+    processEfficiencyBasisPoints: number;
+    rawAttendanceOutputBasisPoints: number | null;
+    coverageBasisPoints: number | null;
     goodQty: number;
     scrapQty: number;
     reworkQty: number;
   };
   rows: EmployeeAttainmentRowDTO[];
+};
+
+export type AbnormalTimeReportDTO = {
+  period: 'today' | 'week' | 'month';
+  date: string;
+  rangeStart: string;
+  rangeEnd: string;
+  summary: {
+    eventCount: number;
+    pendingCount: number;
+    confirmedCount: number;
+    rejectedCount: number;
+    openCount: number;
+    incidentMilliseconds: number;
+    affectedPersonMilliseconds: number;
+    confirmedExemptPersonMilliseconds: number;
+  };
+  categories: Array<{
+    category: AbnormalTimeCategory;
+    categoryLabel: string;
+    eventCount: number;
+    incidentMilliseconds: number;
+    affectedPersonMilliseconds: number;
+  }>;
+  events: AbnormalTimeEventDTO[];
 };
 
 export type WorkflowProcessStatus = 'waiting' | 'processing' | 'verifying' | 'closed';

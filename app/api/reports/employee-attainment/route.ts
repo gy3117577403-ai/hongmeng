@@ -1,18 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { basisPoints, parseWorkDate } from '@/lib/attendance';
 import { prisma } from '@/lib/prisma';
-import {
-  calculateAttainmentBasisPoints,
-  employeeReportRange,
-  serializeEmployee,
-} from '@/lib/process-time';
-import type {
-  EmployeeAttainmentRowDTO,
-  ProcessExecutionDTO,
-} from '@/types';
+import { employeeReportRange, serializeEmployee } from '@/lib/process-time';
+import type { EmployeeAttainmentRowDTO, ProcessExecutionDTO } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+function emptyRow(employee: Parameters<typeof serializeEmployee>[0]): EmployeeAttainmentRowDTO {
+  return {
+    employee: serializeEmployee(employee),
+    standardLaborMilliseconds: 0,
+    actualLaborMilliseconds: 0,
+    attendanceMilliseconds: 0,
+    exemptAbnormalMilliseconds: 0,
+    effectiveProductionMilliseconds: 0,
+    unexplainedMilliseconds: 0,
+    attendanceConfirmedDays: 0,
+    attendanceMissing: true,
+    attainmentBasisPoints: null,
+    processEfficiencyBasisPoints: 0,
+    rawAttendanceOutputBasisPoints: null,
+    coverageBasisPoints: null,
+    goodQty: 0,
+    scrapQty: 0,
+    reworkQty: 0,
+    executionCount: 0,
+    details: [],
+  };
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -24,7 +41,9 @@ export async function GET(req: NextRequest) {
         : 'today' as const;
     const { date, start, end } = employeeReportRange(period, req.nextUrl.searchParams.get('date'));
     const employeeId = String(req.nextUrl.searchParams.get('employeeId') || '').trim();
-    const [executions, employees] = await Promise.all([
+    const startDate = parseWorkDate(start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
+    const endDate = parseWorkDate(end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
+    const [executions, employees, attendanceRecords, abnormalAllocations] = await Promise.all([
       prisma.processExecution.findMany({
         where: {
           voidedAt: null,
@@ -61,20 +80,35 @@ export async function GET(req: NextRequest) {
         },
         orderBy: [{ employeeNo: 'asc' }],
       }),
+      prisma.attendanceRecord.findMany({
+        where: {
+          status: 'confirmed',
+          workDate: { gte: startDate, lt: endDate },
+          ...(employeeId ? { employeeId } : {}),
+        },
+        select: { employeeId: true, actualMilliseconds: true },
+      }),
+      prisma.abnormalTimeAllocation.findMany({
+        where: {
+          workDate: { gte: startDate, lt: endDate },
+          ...(employeeId ? { employeeId } : {}),
+          event: { deletedAt: null, employeeExempt: true, qualityStatus: 'confirmed' },
+        },
+        select: { employeeId: true, durationMilliseconds: true },
+      }),
     ]);
     const groups = new Map<string, EmployeeAttainmentRowDTO>();
-    for (const employee of employees) {
-      groups.set(employee.id, {
-        employee: serializeEmployee(employee),
-        standardLaborMilliseconds: 0,
-        actualLaborMilliseconds: 0,
-        attainmentBasisPoints: 0,
-        goodQty: 0,
-        scrapQty: 0,
-        reworkQty: 0,
-        executionCount: 0,
-        details: [],
-      });
+    for (const employee of employees) groups.set(employee.id, emptyRow(employee));
+    for (const attendance of attendanceRecords) {
+      const row = groups.get(attendance.employeeId);
+      if (!row) continue;
+      row.attendanceMilliseconds += attendance.actualMilliseconds;
+      row.attendanceConfirmedDays += 1;
+      row.attendanceMissing = false;
+    }
+    for (const allocation of abnormalAllocations) {
+      const row = groups.get(allocation.employeeId);
+      if (row) row.exemptAbnormalMilliseconds += allocation.durationMilliseconds;
     }
     for (const execution of executions) {
       const workOrder = execution.step.route.workOrder;
@@ -108,17 +142,7 @@ export async function GET(req: NextRequest) {
         remark: execution.remark,
         createdAt: execution.createdAt.toISOString(),
       };
-      const row = groups.get(execution.employeeId) || {
-        employee: serializeEmployee(execution.employee),
-        standardLaborMilliseconds: 0,
-        actualLaborMilliseconds: 0,
-        attainmentBasisPoints: 0,
-        goodQty: 0,
-        scrapQty: 0,
-        reworkQty: 0,
-        executionCount: 0,
-        details: [],
-      };
+      const row = groups.get(execution.employeeId) || emptyRow(execution.employee);
       if (execution.countsForEfficiency) {
         row.standardLaborMilliseconds += execution.standardLaborMilliseconds;
         row.actualLaborMilliseconds += execution.actualLaborMilliseconds;
@@ -128,13 +152,22 @@ export async function GET(req: NextRequest) {
       row.reworkQty += execution.reworkQty;
       row.executionCount += 1;
       row.details.push(detail);
-      row.attainmentBasisPoints = row.actualLaborMilliseconds > 0
-        ? calculateAttainmentBasisPoints(row.standardLaborMilliseconds, row.actualLaborMilliseconds)
-        : 0;
       groups.set(execution.employeeId, row);
     }
+    for (const row of groups.values()) {
+      row.effectiveProductionMilliseconds = Math.max(0, row.attendanceMilliseconds - row.exemptAbnormalMilliseconds);
+      row.unexplainedMilliseconds = Math.max(0,
+        row.attendanceMilliseconds - row.actualLaborMilliseconds - row.exemptAbnormalMilliseconds);
+      row.attainmentBasisPoints = basisPoints(row.standardLaborMilliseconds, row.effectiveProductionMilliseconds);
+      row.processEfficiencyBasisPoints = basisPoints(row.standardLaborMilliseconds, row.actualLaborMilliseconds) || 0;
+      row.rawAttendanceOutputBasisPoints = basisPoints(row.standardLaborMilliseconds, row.attendanceMilliseconds);
+      row.coverageBasisPoints = basisPoints(
+        Math.min(row.attendanceMilliseconds, row.actualLaborMilliseconds + row.exemptAbnormalMilliseconds),
+        row.attendanceMilliseconds,
+      );
+    }
     const rows = [...groups.values()].sort((left, right) =>
-      right.attainmentBasisPoints - left.attainmentBasisPoints
+      (right.attainmentBasisPoints ?? -1) - (left.attainmentBasisPoints ?? -1)
       || right.standardLaborMilliseconds - left.standardLaborMilliseconds
       || left.employee.employeeNo.localeCompare(right.employee.employeeNo, 'zh-CN'));
     const summary = rows.reduce((result, row) => ({
@@ -142,7 +175,16 @@ export async function GET(req: NextRequest) {
       executionCount: result.executionCount + row.executionCount,
       standardLaborMilliseconds: result.standardLaborMilliseconds + row.standardLaborMilliseconds,
       actualLaborMilliseconds: result.actualLaborMilliseconds + row.actualLaborMilliseconds,
-      attainmentBasisPoints: 0,
+      attendanceMilliseconds: result.attendanceMilliseconds + row.attendanceMilliseconds,
+      exemptAbnormalMilliseconds: result.exemptAbnormalMilliseconds + row.exemptAbnormalMilliseconds,
+      effectiveProductionMilliseconds: result.effectiveProductionMilliseconds + row.effectiveProductionMilliseconds,
+      unexplainedMilliseconds: result.unexplainedMilliseconds + row.unexplainedMilliseconds,
+      attendanceConfirmedDays: result.attendanceConfirmedDays + row.attendanceConfirmedDays,
+      attendanceMissingCount: result.attendanceMissingCount + (row.attendanceMissing ? 1 : 0),
+      attainmentBasisPoints: null as number | null,
+      processEfficiencyBasisPoints: 0,
+      rawAttendanceOutputBasisPoints: null as number | null,
+      coverageBasisPoints: null as number | null,
       goodQty: result.goodQty + row.goodQty,
       scrapQty: result.scrapQty + row.scrapQty,
       reworkQty: result.reworkQty + row.reworkQty,
@@ -151,24 +193,30 @@ export async function GET(req: NextRequest) {
       executionCount: 0,
       standardLaborMilliseconds: 0,
       actualLaborMilliseconds: 0,
-      attainmentBasisPoints: 0,
+      attendanceMilliseconds: 0,
+      exemptAbnormalMilliseconds: 0,
+      effectiveProductionMilliseconds: 0,
+      unexplainedMilliseconds: 0,
+      attendanceConfirmedDays: 0,
+      attendanceMissingCount: 0,
+      attainmentBasisPoints: null as number | null,
+      processEfficiencyBasisPoints: 0,
+      rawAttendanceOutputBasisPoints: null as number | null,
+      coverageBasisPoints: null as number | null,
       goodQty: 0,
       scrapQty: 0,
       reworkQty: 0,
     });
-    summary.attainmentBasisPoints = summary.actualLaborMilliseconds > 0
-      ? calculateAttainmentBasisPoints(summary.standardLaborMilliseconds, summary.actualLaborMilliseconds)
-      : 0;
+    summary.attainmentBasisPoints = basisPoints(summary.standardLaborMilliseconds, summary.effectiveProductionMilliseconds);
+    summary.processEfficiencyBasisPoints = basisPoints(summary.standardLaborMilliseconds, summary.actualLaborMilliseconds) || 0;
+    summary.rawAttendanceOutputBasisPoints = basisPoints(summary.standardLaborMilliseconds, summary.attendanceMilliseconds);
+    summary.coverageBasisPoints = basisPoints(
+      Math.min(summary.attendanceMilliseconds, summary.actualLaborMilliseconds + summary.exemptAbnormalMilliseconds),
+      summary.attendanceMilliseconds,
+    );
     return NextResponse.json({
       ok: true,
-      report: {
-        period,
-        date,
-        rangeStart: start.toISOString(),
-        rangeEnd: end.toISOString(),
-        summary,
-        rows,
-      },
+      report: { period, date, rangeStart: start.toISOString(), rangeEnd: end.toISOString(), summary, rows },
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

@@ -26,6 +26,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         position: body.position === undefined ? existing.position : cleanProcessText(body.position, 80) || null,
         team: body.team === undefined ? existing.team : cleanProcessText(body.team, 80) || null,
         isActive: body.isActive === undefined ? existing.isActive : body.isActive === true,
+        attendanceEnabled: body.attendanceEnabled === undefined
+          ? existing.attendanceEnabled
+          : body.attendanceEnabled === true,
       },
     });
     await logOp({

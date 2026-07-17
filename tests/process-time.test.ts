@@ -66,6 +66,7 @@ test('employee serialization keeps position and team as separate profile fields'
     position: '压接操作员',
     team: '前端一组',
     isActive: true,
+    attendanceEnabled: true,
     createdAt: now,
     updatedAt: now,
   });

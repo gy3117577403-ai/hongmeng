@@ -1,0 +1,120 @@
+.attendance-workbench { width: 100%; height: 100dvh; min-width: 0; overflow: hidden; background: #f5f7f9; }
+.attendance-frame { height: calc(100dvh - var(--hm-shell-header)); padding: 10px 12px 12px; display: grid; grid-template-rows: auto auto auto minmax(0, 1fr); gap: 9px; overflow: hidden; }
+.attendance-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 9px; }
+.attendance-summary article { min-width: 0; height: 72px; padding: 9px 11px; display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--hm-color-border); border-radius: var(--hm-radius-lg); background: #fff; box-shadow: var(--hm-shadow-sm); }
+.attendance-summary article > svg { width: 36px; height: 36px; padding: 9px; border-radius: 9px; color: #c2410c; background: #fff1e8; }
+.attendance-summary article.warning > svg { color: #a16207; background: #fff7d6; }
+.attendance-summary article span { min-width: 0; display: grid; gap: 2px; font-size: 11px; font-weight: 800; }
+.attendance-summary article small { overflow: hidden; color: var(--hm-color-text-muted); font-size: 9px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.attendance-summary article strong { font-size: 18px; white-space: nowrap; }
+.attendance-toolbar { min-height: 52px; padding: 7px 8px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--hm-color-border); border-radius: var(--hm-radius-lg); background: #fff; box-shadow: var(--hm-shadow-sm); }
+.attendance-tabs, .attendance-period { display: flex; padding: 3px; border-radius: 8px; background: #f1f3f5; }
+.attendance-tabs button, .attendance-period button { min-height: 34px; padding: 0 13px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 6px; background: transparent; color: #66717e; font-size: 11px; font-weight: 800; }
+.attendance-tabs button.active, .attendance-period button.active { background: #fff; color: #c2410c; box-shadow: 0 1px 4px rgba(31, 41, 51, .12); }
+.attendance-tabs button em { min-width: 17px; height: 17px; padding: 0 4px; display: inline-grid; place-items: center; border-radius: 999px; background: #fce7db; color: #b94700; font-size: 9px; font-style: normal; }
+.attendance-date { height: 38px; margin-left: auto; padding: 0 9px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--hm-color-border); border-radius: 8px; color: #66717e; font-size: 10px; font-weight: 800; }
+.attendance-date input { border: 0; outline: 0; background: transparent; font: inherit; }
+.attendance-toolbar .primary-button, .attendance-toolbar .icon-button { min-height: 38px; }
+.attendance-toolbar > button { min-height: 38px; padding: 0 11px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--hm-color-border); border-radius: 8px; background: #fff; color: #4a5664; font-size: 10px; font-weight: 800; }
+.attendance-toolbar > button:disabled { opacity: .5; }
+.attendance-error { min-height: 36px; padding: 8px 11px; display: flex; align-items: center; gap: 7px; border: 1px solid #fecaca; border-radius: 8px; background: #fff1f0; color: #b42318; font-size: 11px; font-weight: 700; }
+.attendance-error:empty { display: none; }
+.attendance-ledger, .abnormal-ledger { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); border: 1px solid var(--hm-color-border); border-radius: var(--hm-radius-lg); background: #fff; box-shadow: var(--hm-shadow-sm); overflow: hidden; }
+.attendance-ledger > header, .abnormal-ledger > header { min-height: 58px; padding: 8px 13px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #edf0f3; background: linear-gradient(90deg, #fff7ed, #fff 48%); }
+.attendance-ledger > header > div, .abnormal-ledger > header > div { display: grid; gap: 1px; }
+.attendance-ledger > header span, .abnormal-ledger > header span { color: #d95600; font-size: 9px; font-weight: 850; }
+.attendance-ledger h1, .abnormal-ledger h1 { margin: 0; font-size: 17px; }
+.attendance-ledger > header label { width: min(360px, 42%); height: 36px; padding: 0 10px; border: 1px solid var(--hm-color-border); border-radius: 8px; background: #fff; }
+.attendance-ledger > header input { width: 100%; height: 100%; border: 0; outline: 0; background: transparent; font: inherit; }
+.abnormal-ledger > header p { max-width: 520px; margin: 0; color: #7a8796; font-size: 10px; text-align: right; }
+.attendance-table-wrap, .abnormal-list { min-height: 0; overflow: auto; }
+.attendance-table-wrap { padding: 0 9px 12px; }
+.attendance-table-head, .attendance-row { min-width: 820px; display: grid; grid-template-columns: minmax(220px, 1.5fr) 100px repeat(3, 105px) 90px 82px; align-items: center; gap: 8px; }
+.attendance-table-head { position: sticky; z-index: 2; top: 0; min-height: 38px; padding: 0 10px; border-bottom: 1px solid #dfe4e8; background: #fff; color: #66717e; font-size: 10px; font-weight: 850; }
+.attendance-row { min-height: 62px; padding: 7px 10px; border-bottom: 1px solid #eef1f4; }
+.attendance-row:hover { background: #fffaf6; }
+.attendance-row > div { min-width: 0; display: grid; gap: 3px; }
+.attendance-row strong, .attendance-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attendance-row strong { font-size: 12px; }
+.attendance-row small { color: #7a8796; font-size: 9px; }
+.attendance-row > span, .attendance-row > b { font-size: 10px; }
+.attendance-row > em { justify-self: start; padding: 4px 7px; border-radius: 999px; background: #fff7d6; color: #91600b; font-size: 9px; font-style: normal; font-weight: 850; }
+.attendance-row.confirmed > em { background: #edf8f0; color: #287a45; }
+.attendance-row.missing > em { background: #fff1f0; color: #b42318; }
+.attendance-row > button { min-height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid var(--hm-color-border); border-radius: 7px; background: #fff; color: #4a5664; font-size: 10px; font-weight: 800; }
+.attendance-row > button:hover { border-color: #ffb27f; color: #c2410c; }
+.abnormal-list { padding: 10px; display: grid; align-content: start; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.abnormal-card { min-width: 0; padding: 10px; display: grid; gap: 8px; border: 1px solid #e2e7eb; border-left: 3px solid #f59e0b; border-radius: 9px; background: #fff; }
+.abnormal-card.confirmed { border-left-color: #2d8a4e; }
+.abnormal-card.rejected { border-left-color: #c2410c; background: #fffafa; }
+.abnormal-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.abnormal-card > header > div { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.abnormal-card > header em, .abnormal-card > header span, .abnormal-card > header b { flex: none; padding: 4px 7px; border-radius: 999px; font-size: 9px; font-style: normal; }
+.abnormal-card > header em { background: #f1f3f5; color: #66717e; }
+.abnormal-card > header span { background: #fff1e8; color: #b94700; font-weight: 800; }
+.abnormal-card > header strong { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.abnormal-card > header b { background: #fff7d6; color: #91600b; }
+.abnormal-card.confirmed > header b { background: #edf8f0; color: #287a45; }
+.abnormal-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.abnormal-card-grid > span { min-width: 0; padding: 7px 8px; display: grid; gap: 2px; border-radius: 7px; background: #f7f8fa; }
+.abnormal-card-grid small { color: #7a8796; font-size: 8px; }
+.abnormal-card-grid strong { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.abnormal-card > p { margin: 0; color: #66717e; font-size: 10px; line-height: 1.5; }
+.abnormal-card > p.quality-note { padding: 6px 8px; border-radius: 7px; background: #f7f8fa; }
+.abnormal-card > footer { display: flex; justify-content: flex-end; gap: 6px; }
+.abnormal-card > footer button { min-height: 31px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--hm-color-border); border-radius: 7px; background: #fff; color: #4a5664; font-size: 9px; font-weight: 800; }
+.abnormal-card > footer button.confirm { border-color: #b6e2c3; color: #287a45; }
+.abnormal-card > footer button.danger { color: #b42318; }
+.attendance-empty { min-height: 230px; grid-column: 1 / -1; display: grid; place-items: center; align-content: center; gap: 7px; color: #7a8796; text-align: center; }
+.attendance-empty svg { width: 34px; height: 34px; color: #d95600; }
+.attendance-empty strong { color: #394553; font-size: 13px; }
+.attendance-empty span { font-size: 10px; }
+.attendance-dialog-backdrop { position: fixed; z-index: 160; inset: 0; padding: 24px; display: grid; place-items: center; background: rgba(27, 35, 44, .42); backdrop-filter: blur(2px); }
+.attendance-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid #e2e7eb; border-radius: 14px; background: #fff; box-shadow: 0 22px 60px rgba(24, 32, 40, .24); overflow: hidden; }
+.attendance-dialog.abnormal-dialog { width: min(820px, calc(100vw - 32px)); }
+.attendance-dialog > header { min-height: 62px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #edf0f3; background: #fffaf6; }
+.attendance-dialog > header div { display: grid; gap: 2px; }
+.attendance-dialog > header span { color: #d95600; font-size: 9px; font-weight: 850; }
+.attendance-dialog h2 { margin: 0; font-size: 17px; }
+.attendance-dialog > header button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--hm-color-border); border-radius: 8px; background: #fff; }
+.attendance-dialog-body { min-height: 0; padding: 13px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; overflow-y: auto; }
+.attendance-dialog-body > label { min-width: 0; display: grid; gap: 5px; color: #4a5664; font-size: 10px; font-weight: 800; }
+.attendance-dialog-body > label.wide, .attendance-dialog-body fieldset, .attendance-exempt { grid-column: 1 / -1; }
+.attendance-dialog-body input, .attendance-dialog-body select, .attendance-dialog-body textarea { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid #d9dfe5; border-radius: 8px; outline: 0; background: #fff; color: #273444; font: inherit; }
+.attendance-dialog-body input:focus, .attendance-dialog-body select:focus, .attendance-dialog-body textarea:focus { border-color: #ff9b57; box-shadow: 0 0 0 3px rgba(255, 106, 0, .1); }
+.attendance-dialog-body fieldset { margin: 0; padding: 10px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; border: 1px solid #e2e7eb; border-radius: 9px; }
+.attendance-dialog-body fieldset legend { padding: 0 5px; color: #66717e; font-size: 10px; font-weight: 850; }
+.attendance-dialog-body fieldset label { display: grid; gap: 4px; color: #66717e; font-size: 9px; font-weight: 750; }
+.attendance-dialog-body fieldset.employee-picker { max-height: 190px; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow-y: auto; }
+.employee-picker label { min-height: 46px; padding: 6px 8px; display: flex !important; align-items: center; gap: 8px; border: 1px solid #edf0f3; border-radius: 7px; }
+.employee-picker label input { width: 16px; min-height: 16px; }
+.employee-picker label span { min-width: 0; display: grid; gap: 1px; }
+.employee-picker label strong, .employee-picker label small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.employee-picker label small { color: #7a8796; font-size: 8px; }
+.attendance-dialog-body label.attendance-exempt { min-height: 62px; padding: 9px 11px; display: flex; align-items: center; gap: 9px; border: 1px solid #fed7aa; border-radius: 9px; background: #fffaf6; }
+.attendance-exempt input { width: 17px; min-height: 17px; }
+.attendance-exempt span { display: grid; gap: 2px; }
+.attendance-exempt small { color: #7a8796; font-size: 9px; font-weight: 500; }
+.attendance-dialog > footer { min-height: 58px; padding: 9px 13px; display: flex; justify-content: flex-end; align-items: center; gap: 8px; border-top: 1px solid #edf0f3; background: #fafbfc; }
+.attendance-dialog > footer button { min-height: 38px; padding: 0 13px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--hm-color-border); border-radius: 8px; background: #fff; color: #4a5664; font-size: 10px; font-weight: 800; }
+.attendance-dialog > footer button.primary-button { border-color: #e85d04; background: #e85d04; color: #fff; }
+.attendance-loading { position: fixed; z-index: 140; right: 18px; bottom: 18px; padding: 9px 12px; display: flex; align-items: center; gap: 7px; border: 1px solid #e2e7eb; border-radius: 9px; background: #fff; box-shadow: var(--hm-shadow-md); color: #66717e; font-size: 10px; }
+.attendance-toast { position: fixed; z-index: 200; left: 50%; bottom: 22px; transform: translateX(-50%); padding: 9px 14px; border-radius: 8px; background: #273444; color: #fff; font-size: 11px; box-shadow: 0 8px 28px rgba(24, 32, 40, .22); }
+.spin { animation: attendance-spin .8s linear infinite; }
+@keyframes attendance-spin { to { transform: rotate(360deg); } }
+@media (max-width: 1120px) {
+  .attendance-frame { padding-inline: 8px; }
+  .attendance-summary article { height: 66px; padding: 7px 8px; grid-template-columns: 32px minmax(0, 1fr) auto; }
+  .attendance-summary article > svg { width: 30px; height: 30px; padding: 7px; }
+  .attendance-summary article small { display: none; }
+  .attendance-tabs button { padding-inline: 9px; }
+  .abnormal-list { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .attendance-frame { overflow-y: auto; grid-template-rows: auto auto auto minmax(520px, 1fr); }
+  .attendance-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .attendance-toolbar { flex-wrap: wrap; }
+  .attendance-date { margin-left: 0; }
+  .attendance-dialog-body fieldset { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .attendance-dialog-body fieldset.employee-picker { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

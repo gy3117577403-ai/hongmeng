@@ -8,36 +8,43 @@ datasource db {
 }
 
 model User {
-  id                          String                      @id @default(uuid())
-  username                    String                      @unique
-  passwordHash                String                      @map("password_hash")
-  displayName                 String                      @map("display_name")
-  isActive                    Boolean                     @default(true) @map("is_active")
-  createdAt                   DateTime                    @default(now()) @map("created_at")
-  updatedAt                   DateTime                    @updatedAt @map("updated_at")
-  uploadedFiles               ResourceFile[]              @relation("UploadedFiles")
-  drawingLibraryFiles         DrawingLibraryFile[]        @relation("UploadedDrawingLibraryFiles")
-  operationLogs               OperationLog[]
-  reportedIssues              Issue[]                     @relation("IssueReporter")
-  assignedIssues              Issue[]                     @relation("IssueAssignee")
-  issueActivities             IssueActivity[]             @relation("IssueActivityActor")
-  issueAttachments            IssueAttachment[]           @relation("IssueAttachmentUploader")
-  requestedChanges            ChangeRequest[]             @relation("ChangeRequester")
-  ownedChanges                ChangeRequest[]             @relation("ChangeOwner")
-  changeActivities            ChangeActivity[]            @relation("ChangeActivityActor")
-  changeAttachments           ChangeAttachment[]          @relation("ChangeAttachmentUploader")
-  completedMaterialTasks      WarehouseMaterialTask[]     @relation("WarehouseTaskCompletedBy")
-  updatedMaterialTasks        WarehouseMaterialTask[]     @relation("WarehouseTaskUpdatedBy")
-  warehouseActivities         WarehouseMaterialActivity[] @relation("WarehouseActivityActor")
-  createdProcessTemplates     ProcessTemplate[]           @relation("ProcessTemplateCreatedBy")
-  createdProcessTimeStandards ProcessTimeStandard[]       @relation("ProcessTimeStandardCreatedBy")
-  confirmedProcessRoutes      WorkOrderProcessRoute[]     @relation("ProcessRouteConfirmedBy")
-  completedProcessSteps       WorkOrderProcessStep[]      @relation("ProcessStepCompletedBy")
-  recordedProcessExecutions   ProcessExecution[]          @relation("ProcessExecutionRecordedBy")
-  processRouteActivities      ProcessRouteActivity[]      @relation("ProcessRouteActivityActor")
-  createdKnowledgeArticles    KnowledgeArticle[]          @relation("KnowledgeArticleCreatedBy")
-  updatedKnowledgeArticles    KnowledgeArticle[]          @relation("KnowledgeArticleUpdatedBy")
-  knowledgeAttachments        KnowledgeAttachment[]       @relation("KnowledgeAttachmentUploader")
+  id                             String                      @id @default(uuid())
+  username                       String                      @unique
+  passwordHash                   String                      @map("password_hash")
+  displayName                    String                      @map("display_name")
+  isActive                       Boolean                     @default(true) @map("is_active")
+  createdAt                      DateTime                    @default(now()) @map("created_at")
+  updatedAt                      DateTime                    @updatedAt @map("updated_at")
+  uploadedFiles                  ResourceFile[]              @relation("UploadedFiles")
+  drawingLibraryFiles            DrawingLibraryFile[]        @relation("UploadedDrawingLibraryFiles")
+  operationLogs                  OperationLog[]
+  reportedIssues                 Issue[]                     @relation("IssueReporter")
+  assignedIssues                 Issue[]                     @relation("IssueAssignee")
+  issueActivities                IssueActivity[]             @relation("IssueActivityActor")
+  issueAttachments               IssueAttachment[]           @relation("IssueAttachmentUploader")
+  requestedChanges               ChangeRequest[]             @relation("ChangeRequester")
+  ownedChanges                   ChangeRequest[]             @relation("ChangeOwner")
+  changeActivities               ChangeActivity[]            @relation("ChangeActivityActor")
+  changeAttachments              ChangeAttachment[]          @relation("ChangeAttachmentUploader")
+  completedMaterialTasks         WarehouseMaterialTask[]     @relation("WarehouseTaskCompletedBy")
+  updatedMaterialTasks           WarehouseMaterialTask[]     @relation("WarehouseTaskUpdatedBy")
+  warehouseActivities            WarehouseMaterialActivity[] @relation("WarehouseActivityActor")
+  createdProcessTemplates        ProcessTemplate[]           @relation("ProcessTemplateCreatedBy")
+  createdProcessTimeStandards    ProcessTimeStandard[]       @relation("ProcessTimeStandardCreatedBy")
+  confirmedProcessRoutes         WorkOrderProcessRoute[]     @relation("ProcessRouteConfirmedBy")
+  completedProcessSteps          WorkOrderProcessStep[]      @relation("ProcessStepCompletedBy")
+  recordedProcessExecutions      ProcessExecution[]          @relation("ProcessExecutionRecordedBy")
+  processRouteActivities         ProcessRouteActivity[]      @relation("ProcessRouteActivityActor")
+  createdKnowledgeArticles       KnowledgeArticle[]          @relation("KnowledgeArticleCreatedBy")
+  updatedKnowledgeArticles       KnowledgeArticle[]          @relation("KnowledgeArticleUpdatedBy")
+  knowledgeAttachments           KnowledgeAttachment[]       @relation("KnowledgeAttachmentUploader")
+  createdAttendanceRecords       AttendanceRecord[]          @relation("AttendanceRecordCreatedBy")
+  updatedAttendanceRecords       AttendanceRecord[]          @relation("AttendanceRecordUpdatedBy")
+  confirmedAttendanceRecords     AttendanceRecord[]          @relation("AttendanceRecordConfirmedBy")
+  createdAbnormalTimeEvents      AbnormalTimeEvent[]         @relation("AbnormalTimeEventCreatedBy")
+  updatedAbnormalTimeEvents      AbnormalTimeEvent[]         @relation("AbnormalTimeEventUpdatedBy")
+  qualityConfirmedAbnormalEvents AbnormalTimeEvent[]         @relation("AbnormalTimeEventQualityConfirmedBy")
+  resolvedAbnormalTimeEvents     AbnormalTimeEvent[]         @relation("AbnormalTimeEventResolvedBy")
 
   @@map("users")
 }
@@ -99,6 +106,7 @@ model WorkOrder {
   changeRequests          ChangeRequest[]
   materialTask            WarehouseMaterialTask?
   processRoute            WorkOrderProcessRoute?
+  abnormalTimeEvents      AbnormalTimeEvent[]
 
   @@index([code])
   @@index([productName])
@@ -260,6 +268,7 @@ model WorkOrderProcessStep {
   completedBy                 User?                  @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
   activities                  ProcessRouteActivity[]
   executions                  ProcessExecution[]
+  abnormalTimeEvents          AbnormalTimeEvent[]
 
   @@unique([routeId, position])
   @@index([routeId, status])
@@ -270,22 +279,26 @@ model WorkOrderProcessStep {
 }
 
 model Employee {
-  id         String             @id @default(uuid())
-  employeeNo String             @unique @map("employee_no")
-  name       String
-  department String?
-  position   String?
-  team       String?
-  isActive   Boolean            @default(true) @map("is_active")
-  createdAt  DateTime           @default(now()) @map("created_at")
-  updatedAt  DateTime           @updatedAt @map("updated_at")
-  executions ProcessExecution[]
+  id                      String                   @id @default(uuid())
+  employeeNo              String                   @unique @map("employee_no")
+  name                    String
+  department              String?
+  position                String?
+  team                    String?
+  isActive                Boolean                  @default(true) @map("is_active")
+  attendanceEnabled       Boolean                  @default(true) @map("attendance_enabled")
+  createdAt               DateTime                 @default(now()) @map("created_at")
+  updatedAt               DateTime                 @updatedAt @map("updated_at")
+  executions              ProcessExecution[]
+  attendanceRecords       AttendanceRecord[]
+  abnormalTimeAllocations AbnormalTimeAllocation[]
 
   @@index([isActive, employeeNo])
   @@index([name])
   @@index([department])
   @@index([position])
   @@index([team])
+  @@index([attendanceEnabled, isActive])
   @@map("employees")
 }
 
@@ -324,6 +337,98 @@ model ProcessExecution {
   @@index([voidedAt])
   @@index([recordedById])
   @@map("process_executions")
+}
+
+model AttendanceRecord {
+  id                   String    @id @default(uuid())
+  employeeId           String    @map("employee_id")
+  workDate             DateTime  @map("work_date") @db.Date
+  status               String    @default("draft")
+  attendanceType       String    @default("normal") @map("attendance_type")
+  plannedMilliseconds  Int       @default(28800000) @map("planned_milliseconds")
+  leaveMilliseconds    Int       @default(0) @map("leave_milliseconds")
+  actualMilliseconds   Int       @default(0) @map("actual_milliseconds")
+  overtimeMilliseconds Int       @default(0) @map("overtime_milliseconds")
+  segments             Json
+  source               String    @default("manual")
+  remark               String?
+  createdById          String?   @map("created_by_id")
+  updatedById          String?   @map("updated_by_id")
+  confirmedById        String?   @map("confirmed_by_id")
+  confirmedAt          DateTime? @map("confirmed_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  employee             Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdBy            User?     @relation("AttendanceRecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy            User?     @relation("AttendanceRecordUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  confirmedBy          User?     @relation("AttendanceRecordConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+
+  @@unique([employeeId, workDate])
+  @@index([workDate, status])
+  @@index([employeeId, status])
+  @@index([confirmedById])
+  @@map("attendance_records")
+}
+
+model AbnormalTimeEvent {
+  id                       String                   @id @default(uuid())
+  sequence                 Int                      @unique @default(autoincrement())
+  workDate                 DateTime                 @map("work_date") @db.Date
+  category                 String
+  title                    String
+  reason                   String?
+  startedAt                DateTime                 @map("started_at")
+  endedAt                  DateTime                 @map("ended_at")
+  durationMilliseconds     Int                      @map("duration_milliseconds")
+  employeeExempt           Boolean                  @default(false) @map("employee_exempt")
+  qualityStatus            String                   @default("pending") @map("quality_status")
+  qualityNote              String?                  @map("quality_note")
+  qualityConfirmedById     String?                  @map("quality_confirmed_by_id")
+  qualityConfirmedAt       DateTime?                @map("quality_confirmed_at")
+  resolutionStatus         String                   @default("open") @map("resolution_status")
+  responsibilityDepartment String?                  @map("responsibility_department")
+  expectedResolvedAt       DateTime?                @map("expected_resolved_at")
+  resolutionNote           String?                  @map("resolution_note")
+  resolvedById             String?                  @map("resolved_by_id")
+  resolvedAt               DateTime?                @map("resolved_at")
+  workOrderId              String?                  @map("work_order_id")
+  processStepId            String?                  @map("process_step_id")
+  createdById              String?                  @map("created_by_id")
+  updatedById              String?                  @map("updated_by_id")
+  createdAt                DateTime                 @default(now()) @map("created_at")
+  updatedAt                DateTime                 @updatedAt @map("updated_at")
+  deletedAt                DateTime?                @map("deleted_at")
+  workOrder                WorkOrder?               @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  processStep              WorkOrderProcessStep?    @relation(fields: [processStepId], references: [id], onDelete: SetNull)
+  createdBy                User?                    @relation("AbnormalTimeEventCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy                User?                    @relation("AbnormalTimeEventUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  qualityConfirmedBy       User?                    @relation("AbnormalTimeEventQualityConfirmedBy", fields: [qualityConfirmedById], references: [id], onDelete: SetNull)
+  resolvedBy               User?                    @relation("AbnormalTimeEventResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  allocations              AbnormalTimeAllocation[]
+
+  @@index([workDate, qualityStatus])
+  @@index([category, workDate])
+  @@index([resolutionStatus, workDate])
+  @@index([workOrderId])
+  @@index([processStepId])
+  @@index([deletedAt])
+  @@map("abnormal_time_events")
+}
+
+model AbnormalTimeAllocation {
+  id                   String            @id @default(uuid())
+  eventId              String            @map("event_id")
+  employeeId           String            @map("employee_id")
+  workDate             DateTime          @map("work_date") @db.Date
+  durationMilliseconds Int               @map("duration_milliseconds")
+  createdAt            DateTime          @default(now()) @map("created_at")
+  event                AbnormalTimeEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  employee             Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([eventId, employeeId])
+  @@index([employeeId, workDate])
+  @@index([workDate])
+  @@map("abnormal_time_allocations")
 }
 
 model ProcessRouteActivity {

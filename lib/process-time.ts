@@ -112,6 +112,7 @@ export function serializeEmployee(employee: Employee): EmployeeDTO {
     position: employee.position,
     team: employee.team,
     isActive: employee.isActive,
+    attendanceEnabled: employee.attendanceEnabled,
     createdAt: employee.createdAt.toISOString(),
     updatedAt: employee.updatedAt.toISOString(),
   };

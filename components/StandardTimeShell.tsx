@@ -2,6 +2,7 @@
 
 import {
   BarChart3,
+  CalendarClock,
   CheckCircle2,
   Clock3,
   Gauge,
@@ -55,6 +56,7 @@ type EmployeeForm = {
   position: string;
   team: string;
   isActive: boolean;
+  attendanceEnabled: boolean;
 };
 
 const emptyStandardForm: StandardForm = {
@@ -75,6 +77,7 @@ const emptyEmployeeForm: EmployeeForm = {
   position: '',
   team: '',
   isActive: true,
+  attendanceEnabled: true,
 };
 const emptySummary: StandardSummary = { total: 0, active: 0, standardized: 0, pending: 0 };
 const stageText: Record<ProcessStageGroup, string> = { frontend: '前端', backend: '后端', finish: '完工' };
@@ -102,6 +105,7 @@ function employeeForm(employee: EmployeeDTO): EmployeeForm {
     position: employee.position || '',
     team: employee.team || '',
     isActive: employee.isActive,
+    attendanceEnabled: employee.attendanceEnabled,
   };
 }
 
@@ -400,7 +404,9 @@ export default function StandardTimeShell({ user }: { user: CurrentUserDTO }) {
                   <label><span>岗位</span><input value={employeeDraft.position} maxLength={80} onChange={event => setEmployeeDraft({ ...employeeDraft, position: event.target.value })} placeholder="例如 压接操作员" /></label>
                   <label className="employee-team-field"><span>班组</span><input value={employeeDraft.team} maxLength={80} onChange={event => setEmployeeDraft({ ...employeeDraft, team: event.target.value })} placeholder="例如 前端一组" /></label>
                 </div>
+                <label className="time-standard-check"><input type="checkbox" checked={employeeDraft.attendanceEnabled} onChange={event => setEmployeeDraft({ ...employeeDraft, attendanceEnabled: event.target.checked })} /><span><strong>纳入考勤与个人达成率</strong><small>关闭后不再生成新考勤，历史考勤和异常工时仍保留。</small></span></label>
                 {!newEmployee && <label className="time-standard-check"><input type="checkbox" checked={employeeDraft.isActive} onChange={event => setEmployeeDraft({ ...employeeDraft, isActive: event.target.checked })} /><span><strong>允许选择该员工报工</strong><small>停用不会删除历史工时记录。</small></span></label>}
+                <a className="employee-attendance-link" href={`/workspace/attendance?employeeId=${selectedEmployee?.id || ''}`}><CalendarClock size={17} /><span><strong>查看考勤与异常工时</strong><small>登记出勤、加班、请假并查看品质确认结果</small></span></a>
                 <div className="employee-note"><UsersRound size={20} /><div><strong>员工档案不等于登录账号</strong><span>生产员工无需拥有系统账号；所有已登录账号仍共享同一套业务数据。</span></div></div>
                 {formError && <div className="time-standard-form-error" role="alert">{formError}</div>}
                 <div className="time-standard-save"><button className="primary-button" type="button" disabled={saving || (!newEmployee && !selectedEmployee)} onClick={() => { void saveEmployee(); }}><Save size={16} />{saving ? '保存中...' : newEmployee ? '创建员工' : '保存员工档案'}</button></div>
