@@ -600,6 +600,7 @@ export type EmployeeDTO = {
   employeeNo: string;
   name: string;
   department?: string | null;
+  position?: string | null;
   team?: string | null;
   isActive: boolean;
   createdAt: string;

@@ -21,6 +21,7 @@ export async function GET(req: NextRequest) {
                 { employeeNo: { contains: keyword, mode: 'insensitive' } },
                 { name: { contains: keyword, mode: 'insensitive' } },
                 { department: { contains: keyword, mode: 'insensitive' } },
+                { position: { contains: keyword, mode: 'insensitive' } },
                 { team: { contains: keyword, mode: 'insensitive' } },
               ],
             }
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
         employeeNo,
         name,
         department: cleanProcessText(body.department, 80) || null,
+        position: cleanProcessText(body.position, 80) || null,
         team: cleanProcessText(body.team, 80) || null,
       },
     });

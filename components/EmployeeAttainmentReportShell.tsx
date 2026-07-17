@@ -99,7 +99,7 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
     const normalized = keyword.trim().toLocaleLowerCase('zh-CN');
     if (!normalized) return report?.rows || [];
     return (report?.rows || []).filter(row =>
-      `${row.employee.employeeNo} ${row.employee.name} ${row.employee.department || ''} ${row.employee.team || ''}`
+      `${row.employee.employeeNo} ${row.employee.name} ${row.employee.department || ''} ${row.employee.position || ''} ${row.employee.team || ''}`
         .toLocaleLowerCase('zh-CN')
         .includes(normalized));
   }, [keyword, report?.rows]);
@@ -148,7 +148,7 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
             ))}
           </div>
           <label className="employee-report-date"><span>统计日期</span><input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
-          <label className="employee-report-search"><Search size={16} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索员工编号、姓名、部门或班组" /></label>
+          <label className="employee-report-search"><Search size={16} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索员工编号、姓名、部门、岗位或班组" /></label>
         </section>
 
         {error && <div className="employee-report-error" role="alert">{error}</div>}
@@ -187,7 +187,7 @@ function EmployeeReportRow({ row, expanded, onToggle }: {
   return (
     <article className={`employee-report-row ${expanded ? 'expanded' : ''}`}>
       <button className="employee-report-row-main" type="button" aria-expanded={expanded} onClick={onToggle}>
-        <span className="employee-cell"><strong>{row.employee.name}</strong><small>{row.employee.employeeNo} · {row.employee.department || '部门未设置'}{row.employee.team ? ` / ${row.employee.team}` : ''}</small></span>
+        <span className="employee-cell"><strong>{row.employee.name}</strong><small>{row.employee.employeeNo} · {row.employee.department || '部门未设置'}{row.employee.position ? ` / ${row.employee.position}` : ''}{row.employee.team ? ` / ${row.employee.team}` : ''}</small></span>
         <b>{formatProcessDuration(row.standardLaborMilliseconds)}</b>
         <b>{formatProcessDuration(row.actualLaborMilliseconds)}</b>
         <b>{row.goodQty}</b>

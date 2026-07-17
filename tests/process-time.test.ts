@@ -5,6 +5,7 @@ import {
   calculateAttainmentBasisPoints,
   calculateStandardLaborMilliseconds,
   employeeReportRange,
+  serializeEmployee,
 } from '../lib/process-time';
 
 test('per-unit standard labor includes setup time and per-product process count', () => {
@@ -53,4 +54,22 @@ test('China Sunday belongs to the preceding Monday week', () => {
   const range = employeeReportRange('week', '2026-07-19');
   assert.equal(range.start.toISOString(), '2026-07-12T16:00:00.000Z');
   assert.equal(range.end.toISOString(), '2026-07-19T16:00:00.000Z');
+});
+
+test('employee serialization keeps position and team as separate profile fields', () => {
+  const now = new Date('2026-07-17T00:00:00.000Z');
+  const employee = serializeEmployee({
+    id: 'employee-1',
+    employeeNo: '0001',
+    name: '林波',
+    department: '生产',
+    position: '压接操作员',
+    team: '前端一组',
+    isActive: true,
+    createdAt: now,
+    updatedAt: now,
+  });
+
+  assert.equal(employee.position, '压接操作员');
+  assert.equal(employee.team, '前端一组');
 });

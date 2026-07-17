@@ -109,6 +109,7 @@ export function serializeEmployee(employee: Employee): EmployeeDTO {
     employeeNo: employee.employeeNo,
     name: employee.name,
     department: employee.department,
+    position: employee.position,
     team: employee.team,
     isActive: employee.isActive,
     createdAt: employee.createdAt.toISOString(),

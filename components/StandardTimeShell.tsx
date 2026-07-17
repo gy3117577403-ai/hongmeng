@@ -52,6 +52,7 @@ type EmployeeForm = {
   employeeNo: string;
   name: string;
   department: string;
+  position: string;
   team: string;
   isActive: boolean;
 };
@@ -71,6 +72,7 @@ const emptyEmployeeForm: EmployeeForm = {
   employeeNo: '',
   name: '',
   department: '',
+  position: '',
   team: '',
   isActive: true,
 };
@@ -97,6 +99,7 @@ function employeeForm(employee: EmployeeDTO): EmployeeForm {
     employeeNo: employee.employeeNo,
     name: employee.name,
     department: employee.department || '',
+    position: employee.position || '',
     team: employee.team || '',
     isActive: employee.isActive,
   };
@@ -193,7 +196,7 @@ export default function StandardTimeShell({ user }: { user: CurrentUserDTO }) {
   const filteredEmployees = useMemo(() => {
     const normalized = keyword.trim().toLocaleLowerCase('zh-CN');
     if (!normalized) return employees;
-    return employees.filter(item => `${item.employeeNo} ${item.name} ${item.department || ''} ${item.team || ''}`
+    return employees.filter(item => `${item.employeeNo} ${item.name} ${item.department || ''} ${item.position || ''} ${item.team || ''}`
       .toLocaleLowerCase('zh-CN').includes(normalized));
   }, [employees, keyword]);
 
@@ -311,7 +314,7 @@ export default function StandardTimeShell({ user }: { user: CurrentUserDTO }) {
             <button className={tab === 'standards' ? 'active' : ''} type="button" role="tab" aria-selected={tab === 'standards'} onClick={() => { setTab('standards'); setFormError(''); }}><Clock3 size={15} />工序标准</button>
             <button className={tab === 'employees' ? 'active' : ''} type="button" role="tab" aria-selected={tab === 'employees'} onClick={() => { setTab('employees'); setFormError(''); }}><UsersRound size={15} />员工档案</button>
           </div>
-          <label><Search size={16} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={tab === 'standards' ? '搜索工序名称或编码' : '搜索员工编号、姓名、部门或班组'} /></label>
+          <label><Search size={16} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={tab === 'standards' ? '搜索工序名称或编码' : '搜索员工编号、姓名、部门、岗位或班组'} /></label>
           <button className="primary-button" type="button" onClick={tab === 'standards' ? beginStandard : beginEmployee}><Plus size={16} />{tab === 'standards' ? '新增工序' : '新增员工'}</button>
           <div className="time-standard-toolbar-actions" aria-label="标准工时关联操作">
             <a className="hm-workbench-button" href="/workspace/processes" title="打开工艺管理"><ListOrdered size={15} /><span>工艺管理</span></a>
@@ -381,7 +384,7 @@ export default function StandardTimeShell({ user }: { user: CurrentUserDTO }) {
                     <UserRound />
                     <strong>{employee.name}</strong>
                     <b>{employee.employeeNo}</b>
-                    <small>{employee.department || '部门未设置'} · {employee.team || '班组未设置'}</small>
+                    <small>{employee.department || '部门未设置'} · {employee.position || '岗位未设置'} · {employee.team || '班组未设置'}</small>
                   </button>
                 ))}
                 {!loading && !filteredEmployees.length && <div className="time-standard-empty">尚未建立员工档案</div>}
@@ -394,7 +397,8 @@ export default function StandardTimeShell({ user }: { user: CurrentUserDTO }) {
                   <label><span>员工编号</span><input value={employeeDraft.employeeNo} maxLength={40} onChange={event => setEmployeeDraft({ ...employeeDraft, employeeNo: event.target.value })} placeholder="例如 HL001" /></label>
                   <label><span>员工姓名</span><input value={employeeDraft.name} maxLength={80} onChange={event => setEmployeeDraft({ ...employeeDraft, name: event.target.value })} /></label>
                   <label><span>部门</span><input value={employeeDraft.department} maxLength={80} onChange={event => setEmployeeDraft({ ...employeeDraft, department: event.target.value })} placeholder="例如 生产部" /></label>
-                  <label><span>班组</span><input value={employeeDraft.team} maxLength={80} onChange={event => setEmployeeDraft({ ...employeeDraft, team: event.target.value })} placeholder="例如 前端一组" /></label>
+                  <label><span>岗位</span><input value={employeeDraft.position} maxLength={80} onChange={event => setEmployeeDraft({ ...employeeDraft, position: event.target.value })} placeholder="例如 压接操作员" /></label>
+                  <label className="employee-team-field"><span>班组</span><input value={employeeDraft.team} maxLength={80} onChange={event => setEmployeeDraft({ ...employeeDraft, team: event.target.value })} placeholder="例如 前端一组" /></label>
                 </div>
                 {!newEmployee && <label className="time-standard-check"><input type="checkbox" checked={employeeDraft.isActive} onChange={event => setEmployeeDraft({ ...employeeDraft, isActive: event.target.checked })} /><span><strong>允许选择该员工报工</strong><small>停用不会删除历史工时记录。</small></span></label>}
                 <div className="employee-note"><UsersRound size={20} /><div><strong>员工档案不等于登录账号</strong><span>生产员工无需拥有系统账号；所有已登录账号仍共享同一套业务数据。</span></div></div>
