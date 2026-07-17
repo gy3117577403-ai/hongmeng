@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { BookOpenText, FilePlus2, Files, List, Search } from 'lucide-react';
+import { BookOpenText, FilePlus2, Files, History, List, Paperclip, Search } from 'lucide-react';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
@@ -10,7 +10,6 @@ import type { PdfTocSuggestion } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
 import { BulkConnectorManualImportModal } from '@/components/BulkConnectorManualImportModal';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { writeClipboardText } from '@/lib/client-platform';
 import { inspectConnectorManualFile } from '@/lib/client-connector-manual-inspector';
 import type { ClientManualInspection } from '@/lib/client-connector-manual-inspector';
@@ -894,7 +893,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
       <AppWorkbenchHeader
         user={user}
         activeHref="/connector-assembly-manuals"
-        subtitle="连接器工艺说明书阅读"
+        subtitle="检索、预览与版本维护"
         menuItems={[
           { label: '回收站', onSelect: loadTrash },
           { label: '操作日志', href: '/dashboard?openLogs=1' },
@@ -903,43 +902,17 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
       />
 
       <div className="hm-manual-main">
-        <WorkbenchPageHeader
-          kicker="工艺资料"
-          title="连接器组装说明书"
-          description="按制造商、系列与型号查找正确版本，在主阅读区定位章节和文件"
-          titleId="connector-assembly-manuals-title"
-          className="hm-manual-page-header"
-          actionsClassName="hm-manual-page-actions"
-          actions={
-            <>
-              <button className="hm-workbench-button" type="button" onClick={openCreateManual}><FilePlus2 aria-hidden="true" />单份新增</button>
-              <button className="hm-workbench-button primary" type="button" onClick={() => setBulkOpen(true)}><Files aria-hidden="true" />批量导入说明书</button>
-            </>
-          }
-        />
-
-        <nav className="manual-module-tabs hm-manual-module-tabs" aria-label="连接器资料库模块">
-          <a href="/connector-parameters">连接器参数</a>
-          <a className="active" href="/connector-assembly-manuals" aria-current="page">组装说明书</a>
-          <a href="/connector-parameters?openFiles=1">原始资料附件</a>
-          <a href="/connector-parameters?openBatches=1">导入批次</a>
-        </nav>
-
-        <section className="hm-manual-query" aria-label="说明书库搜索与筛选">
-          <div className="hm-manual-search-field">
-            <label htmlFor="manual-library-search">说明书库搜索</label>
-            <div>
-              <Search aria-hidden="true" />
-              <input id="manual-library-search" className="hm-workbench-input" value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="标题 / 型号 / 制造商 / 版本 / 关键词 / 已解析正文" />
-              {keyword && <button type="button" aria-label="清空说明书库搜索" onClick={() => setKeyword('')}>清空</button>}
-            </div>
-            <small>搜索范围：全部说明书记录及后端已有正文索引</small>
+        <section className="hm-manual-command-bar" aria-label="说明书库搜索、筛选与操作">
+          <div className="hm-manual-command-search">
+            <Search aria-hidden="true" />
+            <input id="manual-library-search" className="hm-workbench-input" aria-label="搜索说明书库" value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索标题、型号、制造商、版本或正文" />
+            {keyword && <button type="button" aria-label="清空说明书库搜索" onClick={() => setKeyword('')}>清空</button>}
           </div>
           <div className="manual-quick-filters hm-manual-quick-filters" aria-label="说明书快捷筛选">
             {([['all', '全部'], ['latest', '最新版'], ['incomplete', '待完善']] as Array<[string, string]>).map(([value, label]) => (
               <button className={statusFilter === value ? 'active' : ''} type="button" key={value} aria-pressed={statusFilter === value} onClick={() => { setStatusFilter(value); setPage(1); }}>{label}</button>
             ))}
-            <button ref={filterButtonRef} className={filterOpen || advancedFilterActive ? 'active' : ''} type="button" aria-expanded={filterOpen} onClick={() => setFilterOpen(value => !value)}>更多筛选{advancedFilterActive ? ` ${activeFilterLabels.length}` : ''}</button>
+            <button ref={filterButtonRef} className={filterOpen || advancedFilterActive ? 'active' : ''} type="button" aria-expanded={filterOpen} onClick={() => setFilterOpen(value => !value)}>筛选{advancedFilterActive ? ` ${activeFilterLabels.length}` : ''}</button>
             <PortalMenu open={filterOpen} anchorRef={filterButtonRef} align="left" className="manual-filter-menu" width={310} onClose={() => setFilterOpen(false)} closeOnSelect={false}>
               <div className="manual-advanced-filters">
                 <label><span>资料状态</span><select aria-label="资料状态筛选" value={statusFilter} onChange={event => { setStatusFilter(event.target.value); setPage(1); }}><option value="all">全部状态</option><option value="latest">最新版</option><option value="incomplete">待完善</option><option value="unbound">待关联</option><option value="parse_failed">解析失败</option></select></label>
@@ -952,11 +925,13 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
               </div>
             </PortalMenu>
           </div>
-          <div className="hm-manual-query-summary" aria-live="polite">
-            <strong>{loading ? '正在查询说明书' : `找到 ${total} 份说明书`}</strong>
-            <span>{activeFilterLabels.length ? `已启用 ${activeFilterLabels.length} 个条件` : '当前显示全部说明书'}</span>
-            {activeFilterLabels.length > 0 && <div>{activeFilterLabels.slice(0, 3).map(label => <i title={label} key={label}>{label}</i>)}{activeFilterLabels.length > 3 && <i>+{activeFilterLabels.length - 3}</i>}</div>}
-            {listFiltersActive && <button type="button" onClick={clearListFilters}>清除全部</button>}
+          <div className="hm-manual-support-links" aria-label="关联资料入口">
+            <a href="/connector-parameters?openFiles=1" title="打开原始资料附件"><Paperclip aria-hidden="true" />原始附件</a>
+            <a href="/connector-parameters?openBatches=1" title="打开参数导入批次"><History aria-hidden="true" />导入批次</a>
+          </div>
+          <div className="hm-manual-command-actions" aria-label="说明书操作">
+            <button className="hm-workbench-button" type="button" onClick={openCreateManual}><FilePlus2 aria-hidden="true" />新增</button>
+            <button className="hm-workbench-button primary" type="button" onClick={() => setBulkOpen(true)}><Files aria-hidden="true" />批量导入</button>
           </div>
         </section>
 
@@ -989,7 +964,6 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
         <section className="manual-preview-panel hm-manual-preview-panel" aria-label="说明书主阅读区">
           <div className="manual-current-bar">
             <div className="manual-current-copy">
-              <span className="hm-manual-current-kicker">当前说明书</span>
               <strong title={selectedManual?.title}>{selectedManual?.title || '请选择说明书'}</strong>
               {selectedManual && <span>{[selectedManual.manufacturer, meaningfulRevision(selectedVersion?.revision), selectedVersion?.pageCount ? `${selectedVersion.pageCount}页` : '', dateText(selectedVersion?.issuedAt)].filter(Boolean).join(' · ')}</span>}
               {!!selectedManual?.models.length && <div className="manual-current-models">{selectedManual.models.map(item => <i key={item}>{item}</i>)}</div>}

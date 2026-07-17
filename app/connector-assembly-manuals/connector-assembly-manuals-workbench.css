@@ -1603,3 +1603,205 @@
     padding-top: 0;
   }
 }
+
+/* Compact command bar: the global header owns the page title, while this row owns work. */
+.hm-manual-command-bar {
+  min-width: 0;
+  min-height: 56px;
+  flex: 0 0 56px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 8px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-md);
+  background: var(--hm-color-surface);
+  box-shadow: var(--hm-shadow-sm);
+}
+
+.hm-manual-command-search {
+  position: relative;
+  min-width: 220px;
+  flex: 1 1 300px;
+}
+
+.hm-manual-command-search > svg {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  color: var(--hm-color-text-weak);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.hm-manual-command-search .hm-workbench-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 0 54px 0 36px;
+  font-size: 12px;
+}
+
+.hm-manual-command-search > button {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  min-width: 44px;
+  min-height: 34px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--hm-radius-sm);
+  background: transparent;
+  color: var(--hm-color-accent);
+  font-size: 10px;
+  font-weight: 700;
+  transform: translateY(-50%);
+}
+
+.hm-manual-command-bar .hm-manual-quick-filters {
+  min-width: 0;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hm-manual-command-bar .hm-manual-quick-filters > button {
+  min-width: 54px;
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-sm);
+  background: var(--hm-color-surface-soft);
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.hm-manual-command-bar .hm-manual-quick-filters > button:hover,
+.hm-manual-command-bar .hm-manual-quick-filters > button.active {
+  border-color: #e5a77e;
+  background: var(--hm-color-accent-soft);
+  color: var(--hm-color-accent);
+}
+
+.hm-manual-support-links,
+.hm-manual-command-actions {
+  min-width: 0;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hm-manual-support-links {
+  padding-left: 7px;
+  border-left: 1px solid var(--hm-color-border);
+}
+
+.hm-manual-support-links a {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border-radius: var(--hm-radius-sm);
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.hm-manual-support-links a:hover,
+.hm-manual-support-links a:focus-visible {
+  background: var(--hm-color-surface-soft);
+  color: var(--hm-color-text);
+}
+
+.hm-manual-support-links svg,
+.hm-manual-command-actions svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.hm-manual-command-actions .hm-workbench-button {
+  min-height: 40px;
+  gap: 5px;
+  padding: 0 10px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.hm-manual-workbench .manual-current-bar {
+  min-height: 58px;
+}
+
+.hm-manual-workbench .manual-current-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+}
+
+.hm-manual-workbench .manual-current-models {
+  width: 100%;
+  grid-column: auto;
+}
+
+@media (max-width: 1120px) {
+  .hm-manual-command-bar {
+    gap: 5px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .hm-manual-command-search {
+    min-width: 190px;
+  }
+
+  .hm-manual-command-bar .hm-manual-quick-filters > button {
+    min-width: 48px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .hm-manual-support-links {
+    padding-left: 4px;
+  }
+
+  .hm-manual-support-links a,
+  .hm-manual-command-actions .hm-workbench-button {
+    padding-right: 7px;
+    padding-left: 7px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .hm-manual-command-search .hm-workbench-input {
+    font-size: 11px;
+  }
+
+  .hm-manual-support-links a {
+    width: 40px;
+    padding: 0;
+    overflow: hidden;
+    font-size: 0;
+  }
+
+  .hm-manual-support-links a svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .hm-manual-command-actions .hm-workbench-button {
+    gap: 4px;
+  }
+}
