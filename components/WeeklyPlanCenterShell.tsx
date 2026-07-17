@@ -3,7 +3,6 @@
 import { ArrowRight, CheckCircle2, Download, RefreshCw, ShieldCheck, Upload } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import type { CurrentUserDTO, WorkOrderDTO } from '@/types';
 import type {
   WeeklyPlanDiffItem,
@@ -268,9 +267,6 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
     }
   }
 
-  const pageDescription = data
-    ? `${rangeText(data.currentWeek)} 对比 ${rangeText(data.nextWeek)} · ${(data.summary.blockingAnomalyCount || 0) > 0 ? '存在待处理异常' : '切换门禁检查通过'}`
-    : '下周计划对比、异常审核与安全切换';
   const productionWeekStart = data?.currentWeek.weekStartDate || currentWeekStart;
   const productionHref = productionWeekStart ? `/production?weekStart=${encodeURIComponent(productionWeekStart)}` : '/production';
 
@@ -287,18 +283,6 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
       />
 
       <div className="weekly-plan-main">
-        <WorkbenchPageHeader
-          kicker="周计划"
-          title="周计划差异中心"
-          description={pageDescription}
-          titleId="weekly-plan-page-title"
-          actions={mode === 'diff' ? <>
-            <button className="hm-workbench-button primary" type="button" onClick={() => { location.href = '/dashboard?openWeeklyImport=1'; }}><Upload size={15} aria-hidden="true" />导入下周计划</button>
-            <button className="hm-workbench-button" type="button" onClick={exportDiff} disabled={!data?.summary.nextCount}><Download size={15} aria-hidden="true" />导出差异</button>
-            <button className="hm-workbench-button danger" type="button" onClick={previewActivate} disabled={!data?.summary.nextCount}><ShieldCheck size={15} aria-hidden="true" />预检并启用</button>
-          </> : undefined}
-        />
-
         <section className="weekly-commandbar">
           <div className="weekly-center-mode-tabs" aria-label="周计划视图">
             <button className={mode === 'diff' ? 'active' : ''} type="button" onClick={() => setMode('diff')}>差异审核</button>
@@ -315,6 +299,11 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
                 <CheckCircle2 size={17} aria-hidden="true" />
                 <span><strong>{data?.currentWeek.weekStartDate ? '已同步到生产执行' : '尚未启用生产周'}</strong><small>{data?.currentWeek.weekStartDate ? `${rangeText(data.currentWeek)} · ${data.summary.currentCount} 单` : '导入并启用计划后自动同步'}</small></span>
               </a>
+              <div className="weekly-command-actions" aria-label="周计划操作">
+                <button className="hm-workbench-button primary" type="button" title="导入下周计划" onClick={() => { location.href = '/dashboard?openWeeklyImport=1'; }}><Upload size={15} aria-hidden="true" /><span>导入</span></button>
+                <button className="hm-workbench-button" type="button" title="导出差异" onClick={exportDiff} disabled={!data?.summary.nextCount}><Download size={15} aria-hidden="true" /><span>导出</span></button>
+                <button className="hm-workbench-button danger" type="button" title="预检并启用下周计划" onClick={previewActivate} disabled={!data?.summary.nextCount}><ShieldCheck size={15} aria-hidden="true" /><span>预检启用</span></button>
+              </div>
               <button className="weekly-refresh-button" type="button" title="重新检查计划数据" aria-label="重新检查计划数据" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={17} aria-hidden="true" /></button>
             </>
           ) : <div className="weekly-history-context"><strong>历史生产周</strong><span>只读查询已归档计划，不影响当前生产清单</span></div>}

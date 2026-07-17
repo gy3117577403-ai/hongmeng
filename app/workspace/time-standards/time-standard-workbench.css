@@ -78,3 +78,102 @@
   .time-standard-grid { min-height: 700px; grid-template-columns: 1fr; }
   .time-standard-list-panel { min-height: 300px; }
 }
+
+/* Compact standards workspace: keep the master list and editor visible together. */
+.time-standard-workbench .time-standard-frame {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.time-standard-workbench .time-standard-summary {
+  gap: 7px;
+}
+
+.time-standard-workbench .time-standard-summary article {
+  height: 58px;
+  padding: 7px 9px;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  gap: 7px;
+  border-radius: var(--hm-radius-md);
+}
+
+.time-standard-workbench .time-standard-summary svg {
+  width: 30px;
+  height: 30px;
+  padding: 7px;
+  border-radius: 8px;
+}
+
+.time-standard-workbench .time-standard-summary span {
+  font-size: 11px;
+}
+
+.time-standard-workbench .time-standard-summary strong {
+  font-size: 20px;
+}
+
+.time-standard-workbench .time-standard-toolbar {
+  min-height: 50px;
+  gap: 7px;
+  padding: 5px 7px;
+}
+
+.time-standard-workbench .time-standard-toolbar > label {
+  min-width: 170px;
+  max-width: none;
+  flex: 1 1 380px;
+}
+
+.time-standard-workbench .time-standard-toolbar-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.time-standard-workbench .time-standard-toolbar-actions .hm-workbench-button {
+  min-height: 38px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.time-standard-workbench .time-standard-list-panel > header,
+.time-standard-workbench .time-standard-editor > header {
+  min-height: 56px;
+  padding: 8px 12px;
+}
+
+@media (max-width: 1366px) {
+  .time-standard-workbench .time-standard-frame {
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+
+  .time-standard-workbench .time-standard-summary article {
+    height: 56px;
+  }
+
+  .time-standard-workbench .time-standard-summary small {
+    display: none;
+  }
+
+  .time-standard-workbench .time-standard-tabs button {
+    padding-right: 9px;
+    padding-left: 9px;
+  }
+
+  .time-standard-workbench .time-standard-toolbar > label {
+    min-width: 150px;
+  }
+
+  .time-standard-workbench .time-standard-toolbar-actions .hm-workbench-button span {
+    display: none;
+  }
+
+  .time-standard-workbench .time-standard-toolbar-actions .hm-workbench-button {
+    width: 38px;
+    padding: 0;
+    justify-content: center;
+  }
+}

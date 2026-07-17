@@ -138,24 +138,23 @@ export function ProcessReferencePanel({ order }: { order: ProcessRouteWorkOrderD
   return (
     <section className={`process-reference-panel ${selectedFile ? 'has-file' : ''}`} aria-labelledby="process-reference-heading">
       <header className="process-reference-header">
-        <div>
+        <div className="process-reference-heading">
           <span>工艺依据</span>
-          <h2 id="process-reference-heading">图纸与作业指导书</h2>
+          <h2 id="process-reference-heading">参考资料</h2>
+        </div>
+        <div className="process-reference-tabs" role="tablist" aria-label="参考资料分类">
+          <button type="button" role="tab" aria-selected={category === 'drawing'} className={category === 'drawing' ? 'active' : ''} onClick={() => chooseCategory('drawing')}>
+            <FileImage size={15} aria-hidden="true" /><span>原图</span><em>{categoryCounts.get('drawing') || 0}</em>
+          </button>
+          <button type="button" role="tab" aria-selected={category === 'sop'} className={category === 'sop' ? 'active' : ''} onClick={() => chooseCategory('sop')}>
+            <FileText size={15} aria-hidden="true" /><span>SOP</span><em>{categoryCounts.get('sop') || 0}</em>
+          </button>
         </div>
         <div className="process-reference-header-actions">
           <a href={manageHref} title="在资料页面打开当前资料"><ExternalLink size={15} aria-hidden="true" />资料页</a>
           <button type="button" aria-label="重新加载参考资料" title="重新加载" disabled={loading} onClick={() => setReloadToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" /></button>
         </div>
       </header>
-
-      <div className="process-reference-tabs" role="tablist" aria-label="参考资料分类">
-        <button type="button" role="tab" aria-selected={category === 'drawing'} className={category === 'drawing' ? 'active' : ''} onClick={() => chooseCategory('drawing')}>
-          <FileImage size={15} aria-hidden="true" /><span>原图</span><em>{categoryCounts.get('drawing') || 0}</em>
-        </button>
-        <button type="button" role="tab" aria-selected={category === 'sop'} className={category === 'sop' ? 'active' : ''} onClick={() => chooseCategory('sop')}>
-          <FileText size={15} aria-hidden="true" /><span>SOP指导书</span><em>{categoryCounts.get('sop') || 0}</em>
-        </button>
-      </div>
 
       {loading && <div className="process-reference-loading"><RefreshCw className="spin" aria-hidden="true" /><strong>正在加载参考资料</strong><span>只读取文件信息和同源预览，不会修改资料。</span></div>}
       {!loading && error && <div className="process-reference-loading error" role="alert"><TriangleAlert aria-hidden="true" /><strong>{error}</strong><button type="button" onClick={() => setReloadToken(value => value + 1)}>重新加载</button></div>}

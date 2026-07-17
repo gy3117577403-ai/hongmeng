@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  ArrowLeft,
   ArrowDown,
   ArrowUp,
   CalendarDays,
@@ -50,7 +51,6 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { ProcessReferencePanel } from '@/components/process/ProcessReferencePanel';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import type {
   CurrentUserDTO,
   ProcessDefinitionDTO,
@@ -916,27 +916,13 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/processes"
-        subtitle="模板编排、工单路线确认与工序流转"
+        subtitle="路线编排、图纸对照与工序流转"
         menuItems={[
           { label: '系统设置', href: '/dashboard?openSettings=1' },
           { label: '退出登录', onSelect: () => { void logout(); } },
         ]}
       />
       <div className="process-page-frame">
-        <WorkbenchPageHeader
-          kicker="协同规划"
-          title="工艺管理"
-          titleId="process-page-title"
-          description="周计划启用后自动生成工艺草稿；确认后按具体工序流转，模板更新不会改动已排产工单。"
-          actions={<>
-            {productionReturnHref && <a className="hm-workbench-button" href={productionReturnHref}>返回生产执行</a>}
-            <a className="hm-workbench-button" href="/weekly-plan-center"><CalendarDays size={15} aria-hidden="true" />周计划</a>
-            <a className="hm-workbench-button" href="/workspace/time-standards"><Clock3 size={15} aria-hidden="true" />标准工时</a>
-            <button className="hm-workbench-button" type="button" ref={drawerTriggerRef} onClick={event => openTemplateDrawer(event.currentTarget)}><Settings2 size={15} aria-hidden="true" />模板管理</button>
-            <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" />刷新</button>
-          </>}
-        />
-
         <section className="process-summary" aria-label="工艺路线统计">
           <button className={status === 'all' ? 'active total' : 'total'} type="button" onClick={() => chooseSummary('all')}><ListChecks aria-hidden="true" /><span>本周工单<small>当前筛选范围</small></span><strong>{summary.total}</strong></button>
           <button className={status === 'missing' ? 'active missing' : 'missing'} type="button" onClick={() => chooseSummary('missing')}><CircleDashed aria-hidden="true" /><span>待编排<small>尚未生成路线</small></span><strong>{summary.missing}</strong></button>
@@ -956,7 +942,14 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
           {scope === 'history' && <label className="process-week-select"><span>生产周</span><select value={selectedWeek} onChange={event => setSelectedWeek(event.target.value)}><option value="">全部历史周</option>{payload?.weeks.filter(week => !week.active).map(week => <option value={week.weekStartDate} key={week.weekStartDate}>{dateText(week.weekStartDate)} - {dateText(week.weekEndDate)} · {week.taskCount} 单</option>)}</select></label>}
           <label className="process-search"><Search size={17} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、规格、品名或工单号" /></label>
           <button className="process-reset" type="button" onClick={resetFilters}><RotateCcw size={15} aria-hidden="true" />重置</button>
-          <button className="process-library-toggle" type="button" aria-expanded={libraryOpen} onClick={event => openLibrary(event.currentTarget)}>{libraryOpen ? <PanelRightClose size={16} aria-hidden="true" /> : <PanelRightOpen size={16} aria-hidden="true" />}工序库</button>
+          <button className="process-library-toggle" type="button" title={libraryOpen ? '收起工序库' : '打开工序库'} aria-label={libraryOpen ? '收起工序库' : '打开工序库'} aria-expanded={libraryOpen} onClick={event => openLibrary(event.currentTarget)}>{libraryOpen ? <PanelRightClose size={16} aria-hidden="true" /> : <PanelRightOpen size={16} aria-hidden="true" />}工序库</button>
+          <div className="process-toolbar-actions" aria-label="工艺管理操作">
+            {productionReturnHref && <a className="hm-workbench-button" href={productionReturnHref} title="返回生产执行"><ArrowLeft size={15} aria-hidden="true" /><span>返回生产</span></a>}
+            <a className="hm-workbench-button" href="/weekly-plan-center" title="打开周计划"><CalendarDays size={15} aria-hidden="true" /><span>周计划</span></a>
+            <a className="hm-workbench-button" href="/workspace/time-standards" title="打开标准工时"><Clock3 size={15} aria-hidden="true" /><span>标准工时</span></a>
+            <button className="hm-workbench-button" type="button" title="管理工艺模板" ref={drawerTriggerRef} onClick={event => openTemplateDrawer(event.currentTarget)}><Settings2 size={15} aria-hidden="true" /><span>模板</span></button>
+            <button className="hm-workbench-button" type="button" title="刷新工艺数据" aria-label="刷新工艺数据" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" /></button>
+          </div>
         </section>
 
         {error && <div className="process-error" role="alert"><strong>加载失败</strong><span>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重试</button></div>}

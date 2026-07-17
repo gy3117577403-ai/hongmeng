@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { formatProcessDuration } from '@/lib/process-time';
 import type {
   CurrentUserDTO,
@@ -293,25 +292,13 @@ export default function StandardTimeShell({ user }: { user: CurrentUserDTO }) {
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/time-standards"
-        subtitle="工序主数据、标准工时版本与员工档案"
+        subtitle="工序时间版本与员工档案"
         menuItems={[
           { label: '系统设置', href: '/dashboard?openSettings=1' },
           { label: '退出登录', onSelect: () => { void logout(); } },
         ]}
       />
       <div className="time-standard-frame">
-        <WorkbenchPageHeader
-          kicker="生产基础数据"
-          title="标准工时"
-          titleId="time-standard-title"
-          description="工序库与标准工时共用同一份主数据；新版本只影响后续路线，历史报工继续使用原快照。"
-          actions={<>
-            <a className="hm-workbench-button" href="/workspace/processes"><ListOrdered size={15} />工艺管理</a>
-            <a className="hm-workbench-button" href="/workspace/reports"><BarChart3 size={15} />达成率报表</a>
-            <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} />刷新</button>
-          </>}
-        />
-
         <section className="time-standard-summary" aria-label="标准工时概览">
           <article><Clock3 /><span>工序总数<small>统一工序主数据</small></span><strong>{summary.total}</strong></article>
           <article className="ready"><CheckCircle2 /><span>已定标<small>存在当前标准版本</small></span><strong>{summary.standardized}</strong></article>
@@ -326,6 +313,11 @@ export default function StandardTimeShell({ user }: { user: CurrentUserDTO }) {
           </div>
           <label><Search size={16} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={tab === 'standards' ? '搜索工序名称或编码' : '搜索员工编号、姓名、部门或班组'} /></label>
           <button className="primary-button" type="button" onClick={tab === 'standards' ? beginStandard : beginEmployee}><Plus size={16} />{tab === 'standards' ? '新增工序' : '新增员工'}</button>
+          <div className="time-standard-toolbar-actions" aria-label="标准工时关联操作">
+            <a className="hm-workbench-button" href="/workspace/processes" title="打开工艺管理"><ListOrdered size={15} /><span>工艺管理</span></a>
+            <a className="hm-workbench-button" href="/workspace/reports" title="打开达成率报表"><BarChart3 size={15} /><span>报表</span></a>
+            <button className="hm-workbench-button" type="button" title="刷新标准工时" aria-label="刷新标准工时" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} /></button>
+          </div>
         </section>
 
         {error && <div className="time-standard-error" role="alert">{error}</div>}

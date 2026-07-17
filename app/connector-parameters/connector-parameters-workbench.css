@@ -1427,3 +1427,162 @@
     transition: none;
   }
 }
+
+/* The app shell owns the title; this row is reserved for query and task actions. */
+.hm-parameters-workbench .hm-parameters-main {
+  gap: 7px;
+  padding-top: 8px;
+}
+
+.hm-parameters-workbench .hm-parameters-query {
+  flex: 0 0 58px;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+}
+
+.hm-parameters-workbench .hm-parameters-search {
+  min-width: 210px;
+  flex: 1 1 330px;
+  align-self: center;
+}
+
+.hm-parameters-workbench .hm-parameters-search > span:first-child,
+.hm-parameters-workbench .hm-parameters-filter > span:first-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.hm-parameters-workbench .hm-parameters-filter {
+  min-width: 300px;
+  flex: 1.35 1 480px;
+  align-self: center;
+}
+
+.hm-parameters-workbench .hm-parameters-filter > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hm-parameters-workbench .hm-parameters-filter button {
+  min-width: 0;
+  min-height: 38px;
+  flex: 1 1 0;
+  padding: 0 6px;
+}
+
+.hm-parameters-workbench .hm-parameters-result-count {
+  width: 66px;
+  min-width: 66px;
+  min-height: 40px;
+  padding: 4px 6px;
+}
+
+.hm-parameters-workbench .hm-parameters-result-count span,
+.hm-parameters-workbench .hm-parameters-result-count small {
+  display: none;
+}
+
+.hm-parameters-workbench .hm-parameters-result-count strong {
+  font-size: 19px;
+}
+
+.hm-parameters-workbench .hm-parameters-restore-button {
+  min-height: 40px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.hm-parameters-workbench .hm-parameters-command-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.hm-parameters-workbench .hm-parameters-command-actions .hm-workbench-button {
+  min-height: 40px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.hm-parameters-workbench .connector-table-panel {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+@media (max-width: 1366px) {
+  .hm-parameters-workbench .hm-parameters-query {
+    gap: 5px;
+  }
+
+  .hm-parameters-workbench .hm-parameters-search {
+    min-width: 190px;
+    flex-basis: 250px;
+  }
+
+  .hm-parameters-workbench .hm-parameters-filter {
+    min-width: 260px;
+  }
+
+  .hm-parameters-workbench .hm-parameters-result-count {
+    display: none;
+  }
+
+  .hm-parameters-workbench .hm-parameters-command-actions .hm-workbench-button span,
+  .hm-parameters-workbench .hm-parameters-restore-button {
+    font-size: 0;
+  }
+
+  .hm-parameters-workbench .hm-parameters-command-actions .hm-workbench-button,
+  .hm-parameters-workbench .hm-parameters-restore-button {
+    width: 40px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .hm-parameters-workbench .hm-parameters-command-actions .hm-workbench-button b {
+    position: absolute;
+    transform: translate(11px, -12px);
+    font-size: 8px;
+  }
+}
+
+@media (max-width: 1060px) {
+  .hm-parameters-workbench .hm-parameters-query {
+    flex: 0 0 56px;
+    min-height: 56px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .hm-parameters-workbench .hm-parameters-search {
+    min-width: 170px;
+  }
+
+  .hm-parameters-workbench .hm-parameters-filter {
+    min-width: 240px;
+  }
+
+  .hm-parameters-workbench .hm-parameters-filter button {
+    min-height: 36px;
+    padding-right: 3px;
+    padding-left: 3px;
+    font-size: 9px;
+  }
+
+  .hm-parameters-workbench .hm-parameters-filter button b {
+    display: none;
+  }
+}

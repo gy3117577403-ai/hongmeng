@@ -16,7 +16,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { useModalLayer } from '@/components/useModalLayer';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import type {
   CurrentUserDTO,
   WarehouseExceptionType,
@@ -272,17 +271,6 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
         menuItems={[{ label: '系统设置', href: '/dashboard?openSettings=1' }, { label: '退出登录', onSelect: () => { void logout(); } }]}
       />
       <div className="warehouse-page-frame">
-        <WorkbenchPageHeader
-          kicker="协同规划"
-          title="仓库管理"
-          titleId="warehouse-page-title"
-          description="按生产周完成配料确认；正常状态静默，只有未解决的仓库异常进入生产执行。"
-          actions={<>
-            <a className="hm-workbench-button" href="/weekly-plan-center"><CalendarDays size={15} aria-hidden="true" />周计划</a>
-            <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" />刷新</button>
-          </>}
-        />
-
         <section className="warehouse-summary" aria-label="仓库配料统计">
           <button className={status === 'all' && !expectedOverdue ? 'active total' : 'total'} type="button" onClick={() => chooseSummary('all')}><Warehouse aria-hidden="true" /><span>{scope === 'current' ? '本周配料任务' : '历史配料任务'}<small>{scope === 'current' ? '当前生产周全部产品' : '当前历史筛选范围'}</small></span><strong>{summary.total}</strong></button>
           <button className={status === 'pending' ? 'active pending' : 'pending'} type="button" onClick={() => chooseSummary('pending')}><Clock3 aria-hidden="true" /><span>待配料<small>等待仓库处理</small></span><strong>{summary.pending}</strong></button>
@@ -299,7 +287,11 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
           {scope === 'history' && <label className="warehouse-week-select"><span>生产周</span><select value={selectedWeek} onChange={event => { setSelectedWeek(event.target.value); setPage(1); }}><option value="">全部历史周</option>{payload?.weeks.filter(week => !week.active).map(week => <option value={week.weekStartDate} key={week.weekStartDate}>{rangeText(week)} · {week.taskCount} 单</option>)}</select></label>}
           <label className="warehouse-search"><Search size={17} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、规格、品名或工单号" /></label>
           <label className="warehouse-exception-select"><span>异常类型</span><select value={exceptionType} onChange={event => { setExceptionType(event.target.value as 'all' | WarehouseExceptionType); setPage(1); }}><option value="all">全部异常</option>{exceptionOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
-          <button className="warehouse-reset" type="button" onClick={resetFilters}><RotateCcw size={15} aria-hidden="true" />重置</button>
+          <button className="warehouse-reset" type="button" title="重置筛选" aria-label="重置筛选" onClick={resetFilters}><RotateCcw size={15} aria-hidden="true" />重置</button>
+          <div className="warehouse-toolbar-actions" aria-label="仓库管理操作">
+            <a className="hm-workbench-button" href="/weekly-plan-center" title="打开周计划"><CalendarDays size={15} aria-hidden="true" /><span>周计划</span></a>
+            <button className="hm-workbench-button" type="button" title="刷新仓库任务" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" /><span>刷新</span></button>
+          </div>
         </section>
 
         {error && <div className="warehouse-error" role="alert"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
@@ -319,7 +311,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
               <div className="warehouse-task-product"><strong title={task.workOrder.customerName || '客户未设置'}>{task.workOrder.customerName || '客户未设置'}</strong><b title={task.workOrder.specification || task.workOrder.code}>{task.workOrder.specification || task.workOrder.code}</b><small title={task.workOrder.productName}>{task.workOrder.productName}</small></div>
               <div className="warehouse-task-plan"><span>计划数量 <b>{quantityText(task)}</b></span><span>计划交期 <b>{task.workOrder.deliveryDay || dateText(task.workOrder.plannedAt)}</b></span></div>
               <div className="warehouse-task-state"><span className={task.status}>{task.statusText}</span>{task.status === 'exception' && <><b>{task.exceptionTypeText}</b><small className={task.isExpectedOverdue ? 'overdue' : ''}>{task.expectedAt ? `${task.isExpectedOverdue ? '已逾期 · ' : '预计 '} ${dateText(task.expectedAt)}` : '解决时间待确认'}</small></>}{task.status === 'completed' && <small>{dateTimeText(task.completedAt)} · {task.completedBy?.displayName || task.completedBy?.username || '已确认'}</small>}{task.status === 'pending' && <small>等待仓库完成配料</small>}</div>
-              <div className="warehouse-task-actions"><button type="button" disabled={savingId === task.id} onClick={event => { void openDrawer(task, event.currentTarget); }}>{task.status === 'exception' ? '处理异常' : task.status === 'completed' ? '查看记录' : '报告异常'}</button>{task.status === 'pending' && <button className="primary" type="button" disabled={savingId === task.id} onClick={() => { void markCompleted(task); }}>{savingId === task.id ? '保存中' : '已配料'}</button>}</div>
+              <div className="warehouse-task-actions"><button type="button" disabled={savingId === task.id} onClick={event => { void openDrawer(task, event.currentTarget); }}>{task.status === 'exception' ? '处理异常' : task.status === 'completed' ? '查看记录' : '报告异常'}</button>{task.status === 'pending' && <button className="primary" type="button" disabled={savingId === task.id} onClick={() => { void markCompleted(task); }}>{savingId === task.id ? '保存中' : '确认已配料'}</button>}</div>
             </article>)}
             {loading && <div className="warehouse-loading">正在加载配料任务...</div>}
             {!loading && !payload?.tasks.length && <div className="warehouse-empty"><PackageCheck aria-hidden="true" /><strong>当前筛选没有配料任务</strong><span>{scope === 'current' ? '启用周计划后，系统会自动生成待配料任务。' : '请选择其他历史生产周或清除筛选条件。'}</span></div>}

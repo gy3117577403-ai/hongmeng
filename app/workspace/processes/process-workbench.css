@@ -1080,3 +1080,156 @@
     grid-column: auto;
   }
 }
+
+/* Compact planning workspace with reference material and route editing sharing the first screen. */
+.process-workbench .process-page-frame {
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 8px;
+}
+
+.process-workbench .process-toolbar {
+  min-height: 50px;
+  padding: 5px 7px;
+  gap: 7px;
+}
+
+.process-workbench .process-search {
+  min-width: 170px;
+  max-width: none;
+  flex: 1 1 360px;
+}
+
+.process-workbench .process-toolbar-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.process-workbench .process-toolbar-actions .hm-workbench-button {
+  min-height: 38px;
+  padding: 0 9px;
+  white-space: nowrap;
+}
+
+.process-workbench .process-reference-panel {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.process-workbench .process-reference-panel.has-file {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.process-workbench .process-reference-header {
+  min-height: 50px;
+  display: grid;
+  grid-template-columns: minmax(92px, auto) minmax(150px, 1fr) auto;
+  gap: 8px;
+  padding: 6px 8px;
+}
+
+.process-workbench .process-reference-heading {
+  min-width: 0;
+  display: grid;
+  gap: 0;
+}
+
+.process-workbench .process-reference-heading span {
+  color: #ea580c;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.process-workbench .process-reference-tabs {
+  width: min(210px, 100%);
+  min-height: 36px;
+  justify-self: center;
+  padding: 2px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  border: 0;
+  border-radius: 8px;
+  background: #f3f4f6;
+}
+
+.process-workbench .process-reference-tabs button {
+  min-height: 32px;
+  padding: 0 7px;
+  gap: 4px;
+}
+
+.process-workbench .process-reference-filebar {
+  min-height: 42px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.process-workbench .process-order-panel > header,
+.process-workbench .process-route-panel > header,
+.process-workbench .process-library-panel > header {
+  min-height: 56px;
+  padding: 8px 12px;
+}
+
+@media (max-width: 1180px) {
+  .process-workbench .process-toolbar-actions .hm-workbench-button span {
+    display: none;
+  }
+
+  .process-workbench .process-toolbar-actions .hm-workbench-button {
+    width: 38px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .process-workbench .process-reference-header {
+    grid-template-columns: minmax(76px, auto) minmax(140px, 1fr) auto;
+  }
+
+  .process-workbench .process-reference-tabs {
+    width: min(180px, 100%);
+  }
+}
+
+@media (max-width: 1060px) {
+  .process-workbench .process-toolbar {
+    gap: 5px;
+  }
+
+  .process-workbench .process-scope-tabs button {
+    padding-right: 9px;
+    padding-left: 9px;
+  }
+
+  .process-workbench .process-search {
+    min-width: 140px;
+  }
+
+  .process-workbench .process-library-toggle {
+    width: 38px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+
+  .process-workbench .process-reference-heading span {
+    display: none;
+  }
+
+  .process-workbench .process-reference-header {
+    grid-template-columns: minmax(68px, auto) minmax(126px, 1fr) auto;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .process-workbench .process-reference-tabs {
+    width: min(160px, 100%);
+  }
+
+  .process-workbench .process-reference-tabs button span {
+    font-size: 10px;
+  }
+}

@@ -8,7 +8,6 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { safeDisplayFilename } from '@/lib/filenames';
 import type { CurrentUserDTO, DrawingLibraryCustomerDTO, DrawingLibraryFileDTO, DrawingLibraryItemDTO, ResourceCategoryDTO } from '@/types';
 
@@ -468,7 +467,7 @@ export function DrawingLibraryShell({
       <AppWorkbenchHeader
         user={user}
         activeHref="/drawing-library"
-        subtitle="长期图纸与工艺资料"
+        subtitle="客户、规格与图纸预览"
         menuItems={[
           { label: '返回生产工单', href: '/dashboard' },
           { label: '退出登录', onSelect: logout },
@@ -476,23 +475,6 @@ export function DrawingLibraryShell({
       />
 
       <div className="hm-drawing-main">
-        <WorkbenchPageHeader
-          kicker="长期资料"
-          title="图纸资料库"
-          description="按客户与规格集中查询、预览和维护长期图纸资料"
-          titleId="drawing-library-page-title"
-          actionsClassName="hm-drawing-page-actions"
-          actions={<>
-            <button className="hm-workbench-button" type="button" onClick={() => openModal('create')}><Plus size={15} aria-hidden="true" />新增资料</button>
-            <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)}><Upload size={15} aria-hidden="true" />批量导入原图</button>
-            <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}><BookOpenText size={15} aria-hidden="true" />导入说明</button>
-            <details className="hm-drawing-more-actions">
-              <summary className="hm-workbench-button"><MoreHorizontal size={15} aria-hidden="true" />更多</summary>
-              <div><button className="danger" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>资料治理</button></div>
-            </details>
-          </>}
-        />
-
         <section className="hm-drawing-query" aria-label="图纸资料搜索和筛选">
           <label className="hm-drawing-search-field" htmlFor="drawing-library-search">
             <span>搜索资料</span>
@@ -530,6 +512,15 @@ export function DrawingLibraryShell({
             </div>
           </details>
           <button className="hm-drawing-clear-filters" type="button" disabled={!hasActiveFilters} onClick={clearFilters}>清除筛选</button>
+          <div className="hm-drawing-command-actions" aria-label="图纸资料操作">
+            <button className="hm-workbench-button" type="button" onClick={() => openModal('create')} title="新增图纸资料"><Plus size={15} aria-hidden="true" /><span>新增</span></button>
+            <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)} title="批量导入原图"><Upload size={15} aria-hidden="true" /><span>批量导入</span></button>
+            <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}><BookOpenText size={15} aria-hidden="true" /><span>说明</span></button>
+            <details className="hm-drawing-more-actions">
+              <summary className="hm-workbench-button" title="更多图纸资料操作"><MoreHorizontal size={15} aria-hidden="true" /><span>更多</span></summary>
+              <div><button className="danger" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>资料治理</button></div>
+            </details>
+          </div>
         </section>
 
         {msg && <div className="hm-drawing-message" role="status"><span>{msg}</span><button type="button" onClick={loadData}>重新加载</button></div>}

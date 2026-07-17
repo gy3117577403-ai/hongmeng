@@ -1349,3 +1349,157 @@
     padding-bottom: 4px;
   }
 }
+
+/* Compact command surface: the global shell already carries the page title. */
+.hm-drawing-workbench .hm-drawing-main {
+  gap: 7px;
+  padding-top: 8px;
+}
+
+.hm-drawing-workbench .hm-drawing-query {
+  flex: 0 0 56px;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 8px;
+}
+
+.hm-drawing-workbench .hm-drawing-search-field,
+.hm-drawing-workbench .hm-drawing-customer-filter,
+.hm-drawing-workbench .hm-drawing-status-filter {
+  align-self: center;
+}
+
+.hm-drawing-workbench .hm-drawing-search-field {
+  min-width: 220px;
+  flex: 1 1 340px;
+}
+
+.hm-drawing-workbench .hm-drawing-customer-filter {
+  width: clamp(170px, 17vw, 230px);
+  flex: 0 1 230px;
+}
+
+.hm-drawing-workbench .hm-drawing-status-filter {
+  width: 112px;
+  flex: 0 0 112px;
+}
+
+.hm-drawing-workbench .hm-drawing-search-field > span:first-child,
+.hm-drawing-workbench .hm-drawing-customer-filter > span:first-child,
+.hm-drawing-workbench .hm-drawing-status-filter > span:first-child {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.hm-drawing-workbench .hm-drawing-result-count {
+  width: 76px;
+  min-width: 76px;
+  min-height: 40px;
+  padding: 4px 7px;
+}
+
+.hm-drawing-workbench .hm-drawing-result-count span,
+.hm-drawing-workbench .hm-drawing-result-count small {
+  display: none;
+}
+
+.hm-drawing-workbench .hm-drawing-result-count strong {
+  font-size: 19px;
+}
+
+.hm-drawing-workbench .hm-drawing-filter-summary,
+.hm-drawing-workbench .hm-drawing-more-filters {
+  display: none;
+}
+
+.hm-drawing-workbench .hm-drawing-clear-filters {
+  min-width: 42px;
+  min-height: 40px;
+  padding: 0 8px;
+}
+
+.hm-drawing-workbench .hm-drawing-command-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+
+.hm-drawing-workbench .hm-drawing-command-actions > .hm-workbench-button,
+.hm-drawing-workbench .hm-drawing-command-actions > .hm-drawing-more-actions > summary {
+  min-height: 40px;
+  padding: 0 10px;
+}
+
+.hm-drawing-workbench .drawing-detail-head {
+  min-height: 62px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.hm-drawing-workbench .drawing-detail-head h1 {
+  margin-bottom: 2px;
+  font-size: 17px;
+}
+
+@media (max-width: 1366px) {
+  .hm-drawing-workbench .hm-drawing-main {
+    padding-top: 7px;
+  }
+
+  .hm-drawing-workbench .hm-drawing-customer-filter {
+    width: 176px;
+    flex-basis: 176px;
+  }
+
+  .hm-drawing-workbench .hm-drawing-command-actions > .hm-workbench-button span,
+  .hm-drawing-workbench .hm-drawing-more-actions > summary span {
+    display: none;
+  }
+
+  .hm-drawing-workbench .hm-drawing-command-actions > .hm-workbench-button,
+  .hm-drawing-workbench .hm-drawing-command-actions > .hm-drawing-more-actions > summary {
+    width: 40px;
+    padding: 0;
+  }
+}
+
+@media (max-width: 1060px) {
+  .hm-drawing-workbench .hm-drawing-query {
+    gap: 5px;
+    padding-right: 6px;
+    padding-left: 6px;
+  }
+
+  .hm-drawing-workbench .hm-drawing-search-field {
+    min-width: 180px;
+  }
+
+  .hm-drawing-workbench .hm-drawing-customer-filter {
+    width: 148px;
+    flex-basis: 148px;
+  }
+
+  .hm-drawing-workbench .hm-drawing-status-filter {
+    width: 102px;
+    flex-basis: 102px;
+  }
+
+  .hm-drawing-workbench .hm-drawing-result-count,
+  .hm-drawing-workbench .hm-drawing-clear-filters {
+    display: none;
+  }
+
+  .hm-drawing-workbench .drawing-workspace {
+    grid-template-columns: 250px minmax(0, 1fr);
+  }
+}

@@ -5,7 +5,6 @@ import { Download, FileUp, History, Paperclip, Plus, RotateCcw, Search } from 'l
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { PortalMenu } from '@/components/PortalMenu';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { writeClipboardText } from '@/lib/client-platform';
 import type {
   ConnectorParameterDTO,
@@ -805,7 +804,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
       <AppWorkbenchHeader
         user={user}
         activeHref="/connector-parameters"
-        subtitle="连接器工艺参数维护"
+        subtitle="检索、维护与批量导入"
         menuItems={[
           { label: '操作日志', onSelect: loadLogs },
           { label: '返回生产工单', href: '/dashboard' },
@@ -814,28 +813,6 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
       />
 
       <div className="hm-parameters-main">
-        <WorkbenchPageHeader
-          kicker="工艺参数"
-          title="连接器参数库"
-          description="集中查询、维护和导入连接器剥皮与入长参数"
-          titleId="connector-parameters-page-title"
-          actionsClassName="hm-parameters-page-actions"
-          actions={<>
-            <button ref={createButtonRef} className="hm-workbench-button primary" type="button" onClick={event => openModal('create', undefined, event.currentTarget)}><Plus aria-hidden="true" />新增参数</button>
-            <button ref={importButtonRef} className="hm-workbench-button" type="button" onClick={() => setImportOpen(true)}><FileUp aria-hidden="true" />批量导入</button>
-            <button ref={fileDrawerButtonRef} className="hm-workbench-button" type="button" aria-controls="connector-parameter-files" aria-expanded={fileDrawerOpen} onClick={() => setFileDrawerOpen(true)}><Paperclip aria-hidden="true" />附件 {stats.fileCount}</button>
-            <button ref={batchDrawerButtonRef} className="hm-workbench-button" type="button" aria-controls="connector-import-batches" aria-expanded={batchDrawerOpen} onClick={() => { setBatchDrawerOpen(true); loadImportBatches(); }}><History aria-hidden="true" />导入批次</button>
-            <button className="hm-workbench-button" type="button" disabled={!!exporting} onClick={() => downloadFile('/api/connector-parameters/export.csv', '导出 CSV', '连接器参数资料.csv')}><Download aria-hidden="true" />{exporting === '导出 CSV' ? '导出中…' : '导出 CSV'}</button>
-          </>}
-        />
-
-        <nav className="manual-module-tabs connector-library-tabs hm-parameters-library-tabs" aria-label="连接器资料库模块">
-          <a className="active" href="/connector-parameters">连接器参数</a>
-          <a href="/connector-assembly-manuals">组装说明书</a>
-          <a href="/connector-parameters?openFiles=1">原始资料附件</a>
-          <a href="/connector-parameters?openBatches=1">导入批次</a>
-        </nav>
-
         <input ref={fileImportRef} hidden type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel" onChange={e => importFile(e.target.files)} />
         <input ref={sourceFileRef} hidden type="file" accept=".pdf,.jpg,.jpeg,.png,.csv,.xlsx,.xls,application/pdf,image/*,text/csv" onChange={e => uploadSourceFile(e.target.files)} />
 
@@ -871,7 +848,14 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             <small>条参数</small>
           </div>
 
-          <button className="hm-workbench-button hm-parameters-restore-button" type="button" aria-expanded={deletedOpen} onClick={() => { setDeletedOpen(v => !v); loadDeleted(); }}><RotateCcw aria-hidden="true" />恢复删除</button>
+          <button className="hm-workbench-button hm-parameters-restore-button" type="button" title="恢复已删除参数" aria-label="恢复已删除参数" aria-expanded={deletedOpen} onClick={() => { setDeletedOpen(v => !v); loadDeleted(); }}><RotateCcw aria-hidden="true" />恢复删除</button>
+          <div className="hm-parameters-command-actions" aria-label="连接器参数操作">
+            <button ref={createButtonRef} className="hm-workbench-button primary" type="button" title="新增参数" onClick={event => openModal('create', undefined, event.currentTarget)}><Plus aria-hidden="true" /><span>新增</span></button>
+            <button ref={importButtonRef} className="hm-workbench-button" type="button" title="批量导入参数" onClick={() => setImportOpen(true)}><FileUp aria-hidden="true" /><span>导入</span></button>
+            <button ref={fileDrawerButtonRef} className="hm-workbench-button" type="button" title="原始资料附件" aria-controls="connector-parameter-files" aria-expanded={fileDrawerOpen} onClick={() => setFileDrawerOpen(true)}><Paperclip aria-hidden="true" /><span>附件 {stats.fileCount}</span></button>
+            <button ref={batchDrawerButtonRef} className="hm-workbench-button" type="button" title="导入批次" aria-controls="connector-import-batches" aria-expanded={batchDrawerOpen} onClick={() => { setBatchDrawerOpen(true); loadImportBatches(); }}><History aria-hidden="true" /><span>批次</span></button>
+            <button className="hm-workbench-button" type="button" title="导出 CSV" disabled={!!exporting} onClick={() => downloadFile('/api/connector-parameters/export.csv', '导出 CSV', '连接器参数资料.csv')}><Download aria-hidden="true" /><span>{exporting === '导出 CSV' ? '导出中…' : '导出'}</span></button>
+          </div>
         </section>
 
         {hasActiveFilters && (
