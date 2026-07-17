@@ -1,9 +1,10 @@
 'use client';
 
 import { BookOpenText, FileImage, MoreHorizontal, Plus, Search, Upload } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -20,6 +21,9 @@ type DrawingLibraryForm = {
 
 type DrawingFilter = 'all' | 'complete' | 'recent' | 'anomaly';
 type DrawingModal = { mode: 'create' | 'edit'; item?: DrawingLibraryItemDTO } | null;
+type DrawingDeleteTarget =
+  | { kind: 'item'; item: DrawingLibraryItemDTO }
+  | { kind: 'file'; file: DrawingLibraryFileDTO };
 type CleanupSummary = {
   totalActive: number;
   candidateCount: number;
@@ -120,8 +124,11 @@ export function DrawingLibraryShell({
   const [bulkHelpOpen, setBulkHelpOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [filePanelOpen, setFilePanelOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<DrawingDeleteTarget | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const filePanelTriggerRef = useRef<HTMLButtonElement>(null);
+  const loadControllerRef = useRef<AbortController | null>(null);
   const filePanelRef = useRef<HTMLElement>(null);
   const filePanelCloseRef = useRef<HTMLButtonElement>(null);
   const initialUrlAppliedRef = useRef(false);
@@ -253,19 +260,18 @@ export function DrawingLibraryShell({
     };
   }, [bulkHelpOpen, bulkImportOpen, cleanupOpen, filePanelOpen, modal]);
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => loadData(), 260);
-    return () => window.clearTimeout(timer);
-  }, [keyword, filter]);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
+    loadControllerRef.current?.abort();
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
     setLoading(true);
     try {
       const params = new URLSearchParams();
       if (keyword.trim()) params.set('keyword', keyword.trim());
       params.set('filter', filter);
-      const res = await fetch(`/api/drawing-library?${params.toString()}`, { cache: 'no-store' });
+      const res = await fetch(`/api/drawing-library?${params.toString()}`, { cache: 'no-store', signal: controller.signal });
       const data = await res.json().catch(() => ({}));
+      if (controller.signal.aborted) return;
       if (!res.ok) {
         setMsg(data.error || '图纸资料库加载失败');
         return;
@@ -273,14 +279,22 @@ export function DrawingLibraryShell({
       const nextItems: DrawingLibraryItemDTO[] = Array.isArray(data.items) ? data.items : [];
       setItems(nextItems);
       setCustomers(Array.isArray(data.customers) ? data.customers : []);
-      if (customer !== '全部客户' && !nextItems.some(item => item.customerName === customer)) setCustomer('全部客户');
-      if (!nextItems.some(item => item.id === selectedId)) setSelectedId(nextItems[0]?.id || '');
-    } catch {
-      setMsg('图纸资料库加载失败，请检查网络');
+      setCustomer(current => current !== '全部客户' && !nextItems.some(item => item.customerName === current) ? '全部客户' : current);
+      setSelectedId(current => nextItems.some(item => item.id === current) ? current : nextItems[0]?.id || '');
+    } catch (reason) {
+      if (!(reason instanceof Error && reason.name === 'AbortError')) setMsg('图纸资料库加载失败，请检查网络');
     } finally {
-      setLoading(false);
+      if (loadControllerRef.current === controller) setLoading(false);
     }
-  }
+  }, [filter, keyword]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadData(); }, 260);
+    return () => {
+      window.clearTimeout(timer);
+      loadControllerRef.current?.abort();
+    };
+  }, [loadData]);
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -333,17 +347,9 @@ export function DrawingLibraryShell({
     }
   }
 
-  async function deleteItem() {
+  function deleteItem() {
     if (!selectedItem) return;
-    if (!window.confirm(`确认删除图纸资料：${selectedItem.specification}？`)) return;
-    const deletingId = selectedItem.id;
-    const res = await fetch(`/api/drawing-library/${selectedItem.id}`, { method: 'DELETE' });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setMsg(data.error || '删除失败');
-    setSelectedId('');
-    setMsg('图纸资料已删除，可在回收站恢复');
-    await loadData();
-    setItems(current => current.filter(item => item.id !== deletingId));
+    setDeleteTarget({ kind: 'item', item: selectedItem });
   }
 
   async function uploadFiles(fileList: FileList | null) {
@@ -371,13 +377,41 @@ export function DrawingLibraryShell({
     }
   }
 
-  async function deleteFile(file: DrawingLibraryFileDTO) {
-    if (!window.confirm(`确认软删除文件：${safeDisplayFilename(file)}？`)) return;
-    const res = await fetch(`/api/drawing-library/files/${file.id}`, { method: 'DELETE' });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) return setMsg(data.error || '删除文件失败');
-    setMsg('图纸资料文件已软删除');
-    await loadData();
+  function deleteFile(file: DrawingLibraryFileDTO) {
+    setDeleteTarget({ kind: 'file', file });
+  }
+
+  async function confirmDelete(): Promise<void> {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      if (deleteTarget.kind === 'item') {
+        const deletingId = deleteTarget.item.id;
+        const res = await fetch(`/api/drawing-library/${deletingId}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setMsg(data.error || '删除失败');
+          return;
+        }
+        setSelectedId('');
+        setMsg('图纸资料已删除，可在回收站恢复');
+        setItems(current => current.filter(item => item.id !== deletingId));
+      } else {
+        const res = await fetch(`/api/drawing-library/files/${deleteTarget.file.id}`, { method: 'DELETE' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setMsg(data.error || '删除文件失败');
+          return;
+        }
+        setMsg('图纸资料文件已软删除');
+      }
+      setDeleteTarget(null);
+      await loadData();
+    } catch {
+      setMsg(deleteTarget.kind === 'item' ? '删除图纸资料失败，请检查网络' : '删除文件失败，请检查网络');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   function chooseItem(item: DrawingLibraryItemDTO) {
@@ -756,6 +790,21 @@ export function DrawingLibraryShell({
         customers={customers}
         onClose={() => setBulkImportOpen(false)}
         onCompleted={loadData}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={deleteTarget?.kind === 'item' ? '删除图纸资料？' : '删除资料文件？'}
+        description={deleteTarget?.kind === 'item'
+          ? `“${deleteTarget.item.specification}”将移入回收站，现有文件不会从对象存储物理删除。`
+          : deleteTarget
+            ? `“${safeDisplayFilename(deleteTarget.file)}”将被软删除，可通过数据恢复流程找回。`
+            : ''}
+        confirmLabel="确认删除"
+        danger
+        busy={deleting}
+        onCancel={() => { if (!deleting) setDeleteTarget(null); }}
+        onConfirm={() => { void confirmDelete(); }}
       />
 
       {msg && <div className="status-toast">{msg}</div>}

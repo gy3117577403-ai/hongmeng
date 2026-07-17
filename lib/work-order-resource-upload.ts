@@ -3,8 +3,8 @@ import { syncResourceFileToDrawingLibrary } from '@/lib/drawing-library-sync';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { serializeResourceFile } from '@/lib/resource-files';
-import { getObjectStream, putObject } from '@/lib/s3';
-import { fileType, safeFilename, validateFile } from '@/lib/validation';
+import { deleteObjectsBestEffort, getObjectStream, putObject } from '@/lib/s3';
+import { fileType, safeFilename, validateFileContent } from '@/lib/validation';
 
 export type UploadableResource = {
   name: string;
@@ -102,23 +102,7 @@ export async function inspectResourceDuplicate(input: {
 }
 
 export function validateResourceContent(file: UploadableResource) {
-  const genericError = validateFile(file.name, file.mimeType, file.size);
-  if (genericError) return genericError;
-  const lower = file.name.toLowerCase();
-  if (lower.endsWith('.pdf') || file.mimeType === 'application/pdf') {
-    return file.body.subarray(0, 5).toString('ascii') === '%PDF-' ? null : 'PDF 文件头无效';
-  }
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg') || file.mimeType === 'image/jpeg') {
-    return file.body.length >= 3 && file.body[0] === 0xff && file.body[1] === 0xd8 && file.body[2] === 0xff ? null : 'JPEG 文件头无效';
-  }
-  if (lower.endsWith('.png') || file.mimeType === 'image/png') {
-    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-    return file.body.subarray(0, 8).equals(png) ? null : 'PNG 文件头无效';
-  }
-  if (lower.endsWith('.webp') || file.mimeType === 'image/webp') {
-    return file.body.subarray(0, 4).toString('ascii') === 'RIFF' && file.body.subarray(8, 12).toString('ascii') === 'WEBP' ? null : 'WEBP 文件头无效';
-  }
-  return '文件类型不受支持';
+  return validateFileContent(file.name, file.mimeType, file.size, file.body);
 }
 
 export async function uploadWorkOrderResource(input: {
@@ -131,7 +115,7 @@ export async function uploadWorkOrderResource(input: {
   logTargetId?: string;
   logDetail?: Record<string, string | number | boolean | null | undefined>;
 }) {
-  const validationError = validateFile(input.file.name, input.file.mimeType, input.file.size);
+  const validationError = validateFileContent(input.file.name, input.file.mimeType, input.file.size, input.file.body);
   if (validationError) throw new ResourceUploadError(validationError, 400);
   const [workOrder, category] = await Promise.all([
     prisma.workOrder.findFirst({ where: { id: input.workOrderId, deletedAt: null } }),
@@ -148,24 +132,30 @@ export async function uploadWorkOrderResource(input: {
     originalName: input.file.name,
   });
 
-  const resourceFile = await prisma.$transaction(async tx => {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${workOrder.id}:${category.id}`}))`;
-    const files = await tx.resourceFile.findMany({ where: { workOrderId: workOrder.id, categoryId: category.id }, select: { version: true } });
-    const version = `V1.${files.reduce((value, file) => Math.max(value, versionMinor(file.version)), -1) + 1}`;
-    return tx.resourceFile.create({
-      data: {
-        workOrderId: workOrder.id,
-        categoryId: category.id,
-        originalName: input.file.name,
-        mimeType: input.file.mimeType || 'application/octet-stream',
-        fileType: fileType(input.file.name, input.file.mimeType),
-        fileSize: input.file.size,
-        objectKey,
-        version,
-        uploadedById: input.userId,
-      },
+  let resourceFile;
+  try {
+    resourceFile = await prisma.$transaction(async tx => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`${workOrder.id}:${category.id}`}))`;
+      const files = await tx.resourceFile.findMany({ where: { workOrderId: workOrder.id, categoryId: category.id }, select: { version: true } });
+      const version = `V1.${files.reduce((value, file) => Math.max(value, versionMinor(file.version)), -1) + 1}`;
+      return tx.resourceFile.create({
+        data: {
+          workOrderId: workOrder.id,
+          categoryId: category.id,
+          originalName: input.file.name,
+          mimeType: input.file.mimeType || 'application/octet-stream',
+          fileType: fileType(input.file.name, input.file.mimeType),
+          fileSize: input.file.size,
+          objectKey,
+          version,
+          uploadedById: input.userId,
+        },
+      });
     });
-  });
+  } catch (error) {
+    await deleteObjectsBestEffort([objectKey]);
+    throw error;
+  }
   const version = resourceFile.version;
   const drawingLibrarySync = await syncResourceFileToDrawingLibrary(resourceFile.id, input.userId).catch(error => ({
     linked: false,

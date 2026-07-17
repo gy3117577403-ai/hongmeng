@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { useModalLayer } from '@/components/useModalLayer';
 import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import type {
   CurrentUserDTO,
@@ -118,6 +119,13 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   const mainRef = useRef<HTMLElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
+  useModalLayer({
+    open: Boolean(drawerTask),
+    layerRef: drawerRef,
+    triggerRef,
+    backgroundRef: mainRef,
+    onClose: closeDrawer,
+  });
 
   useEffect(() => {
     const timer = window.setTimeout(() => { setQuery(keyword.trim()); setPage(1); }, 250);
@@ -151,35 +159,6 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
     const timer = window.setTimeout(() => setToast(''), 2600);
     return () => window.clearTimeout(timer);
   }, [toast]);
-
-  useEffect(() => {
-    if (!drawerTask) return;
-    const main = mainRef.current;
-    const previousOverflow = document.body.style.overflow;
-    if (main) main.inert = true;
-    document.body.style.overflow = 'hidden';
-    window.requestAnimationFrame(() => drawerRef.current?.querySelector<HTMLElement>('button, input, select, textarea')?.focus());
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeDrawer();
-        return;
-      }
-      if (event.key !== 'Tab' || !drawerRef.current) return;
-      const focusable = [...drawerRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), a[href]')];
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      if (main) main.inert = false;
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [drawerTask]);
 
   const summary = payload?.summary || emptySummary;
   const selectedWeekOption = useMemo(

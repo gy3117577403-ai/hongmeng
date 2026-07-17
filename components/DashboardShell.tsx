@@ -11,6 +11,8 @@ import { PdfViewer } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { useHiddenLayerInert, useModalLayer } from '@/components/useModalLayer';
+import { APP_VERSION } from '@/lib/app-info';
 import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platform';
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import { compressImageForUpload, normalizeCapturedImage } from '@/lib/image-client';
@@ -662,6 +664,42 @@ export default function DashboardShell({
   const orderDrawerReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const moreActionsButtonRef = useRef<HTMLButtonElement>(null);
   const directTargetRef = useRef<{ workOrderId: string; categoryId: string; fileId: string } | null>(null);
+  const nestedLayerOpen = Boolean(
+    cameraOpen
+    || localImportOpen
+    || quickMenu
+    || moreActionsOpen
+    || weekAction
+    || orderModal
+    || fileEditTarget
+    || deleteTarget
+    || orderDeleteTarget
+    || logsOpen
+    || snapshotsOpen
+    || systemOpen
+    || accountsOpen
+    || trashOpen
+    || helpOpen
+    || qrOpen
+    || passwordOpen
+  );
+  useModalLayer({
+    open: drawerOpen,
+    layerRef: orderDrawerRef,
+    triggerRef: orderDrawerReturnFocusRef,
+    initialFocusRef: orderDrawerCloseRef,
+    onClose: closeOrderDrawer,
+    interactionEnabled: !nestedLayerOpen,
+  });
+  useModalLayer({
+    open: toolOpen,
+    layerRef: toolRef,
+    triggerRef: toolTriggerRef,
+    initialFocusRef: toolCloseRef,
+    onClose: closeTool,
+    interactionEnabled: !nestedLayerOpen,
+  });
+  useHiddenLayerInert(toolOpen, toolRef);
   const localImportLatestFileRef = useRef('');
   const localImportCompletionRef = useRef('');
   const localImportLaunchAttemptRef = useRef(0);
@@ -1545,38 +1583,6 @@ export default function DashboardShell({
   }, [wo]);
 
   useEffect(() => {
-    if (!drawerOpen) return undefined;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.requestAnimationFrame(() => orderDrawerCloseRef.current?.focus());
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        setDrawerOpen(false);
-        window.requestAnimationFrame(() => orderDrawerReturnFocusRef.current?.focus());
-        return;
-      }
-      if (event.key !== 'Tab' || !orderDrawerRef.current) return;
-      const focusable = Array.from(orderDrawerRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [drawerOpen]);
-
-  useEffect(() => {
     if (!quickMenu) return undefined;
     const close = (event: MouseEvent) => {
       const target = event.target as HTMLElement;
@@ -1593,37 +1599,6 @@ export default function DashboardShell({
       window.removeEventListener('keydown', closeByKey);
     };
   }, [quickMenu]);
-
-  useEffect(() => {
-    if (!toolOpen) return undefined;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    window.requestAnimationFrame(() => toolCloseRef.current?.focus());
-    const closeByKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        event.preventDefault();
-        closeTool();
-        return;
-      }
-      if (event.key !== 'Tab' || !toolRef.current) return;
-      const focusable = Array.from(toolRef.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener('keydown', closeByKey);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', closeByKey);
-    };
-  }, [toolOpen]);
 
   function onShellTouchStart(e: React.TouchEvent<HTMLElement>) {
     const t = e.touches[0];
@@ -2513,7 +2488,7 @@ export default function DashboardShell({
         setPasswordError(d.message || '修改密码失败');
         return;
       }
-      alert(d.message || '密码修改成功，请重新登录');
+      sessionStorage.setItem('hm-login-notice', d.message || '密码修改成功，请重新登录');
       location.href = '/login';
     } catch {
       setPasswordError('网络异常，请稍后重试');
@@ -4086,7 +4061,7 @@ function SystemSettings({
         <div className="dialog-title">
           <div>
             <strong>系统设置</strong>
-            <small>{status?.app.version || 'v1.13.0-rc.1'} · Web / PWA</small>
+            <small>{status?.app.version || APP_VERSION} · Web / PWA</small>
           </div>
           <button type="button" onClick={close}>×</button>
         </div>
@@ -4095,7 +4070,7 @@ function SystemSettings({
           <section className="system-section">
             <h3>基础信息</h3>
             <Info label="系统名称" value={status?.app.name || '工单资料库'} />
-            <Info label="当前版本" value={status?.app.version || 'v1.13.0-rc.1'} />
+            <Info label="当前版本" value={status?.app.version || APP_VERSION} />
             <Info label="部署模式" value={status?.app.mode || 'Web / PWA'} />
             <Info label="运行时长" value={status?.app.uptime ? `${Math.floor(status.app.uptime / 60)} 分钟` : '-'} />
             <Info label="数据模式" value={status?.data.mode || '账号登录，共享数据'} />

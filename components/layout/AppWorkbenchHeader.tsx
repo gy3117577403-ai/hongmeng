@@ -114,6 +114,16 @@ export function AppWorkbenchHeader({ user, activeHref, subtitle, menuItems, sear
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [sidebarExpanded]);
 
+  useEffect(() => {
+    function openGlobalSearch(event: KeyboardEvent): void {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k') return;
+      event.preventDefault();
+      window.location.href = '/home?focusSearch=1';
+    }
+    window.addEventListener('keydown', openGlobalSearch);
+    return () => window.removeEventListener('keydown', openGlobalSearch);
+  }, []);
+
   function closeSidebar(): void {
     setSidebarExpanded(false);
     window.requestAnimationFrame(() => sidebarButtonRef.current?.focus());

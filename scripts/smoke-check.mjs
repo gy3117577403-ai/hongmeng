@@ -10,6 +10,14 @@ const checks = [
     },
   },
   {
+    name: 'readiness',
+    path: '/api/ready',
+    validate: async response => {
+      const body = await response.json();
+      if (!body.ok || !body.database?.ok || !body.storage?.ok) throw new Error('database or object storage is not ready');
+    },
+  },
+  {
     name: 'manifest',
     path: '/manifest.webmanifest',
     validate: async response => {

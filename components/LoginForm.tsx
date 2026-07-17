@@ -1,12 +1,20 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 export default function LoginForm({ nextPath = '/home' }: { nextPath?: string }) {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    const message = sessionStorage.getItem('hm-login-notice') || '';
+    if (!message) return;
+    sessionStorage.removeItem('hm-login-notice');
+    setNotice(message);
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -54,6 +62,7 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
         </div>
         <label>账号<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label>
         <label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></label>
+        {notice && <div className="form-success" role="status">{notice}</div>}
         {error && <div className="form-error">{error}</div>}
         <button className="primary-button" disabled={loading}>{loading ? '登录中...' : '登录'}</button>
       </form>

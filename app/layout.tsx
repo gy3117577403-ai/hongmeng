@@ -17,5 +17,5 @@ export const metadata:Metadata={
     'apple-mobile-web-app-title':'杭连协同平台',
   },
 };
-export const viewport:Viewport={themeColor:'#ff6a00',width:'device-width',initialScale:1,maximumScale:1};
+export const viewport:Viewport={themeColor:'#ff6a00',width:'device-width',initialScale:1};
 export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="zh-CN"><body><PwaRegister />{children}</body></html>}

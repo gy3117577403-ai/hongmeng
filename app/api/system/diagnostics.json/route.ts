@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { appInfo } from '@/lib/app-info';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { detailSummary, jsonDownloadResponse, sanitizeDetail } from '@/lib/data-tools';
 import { logOp } from '@/lib/logs';
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
     }
     await logOp({ userId: user.id, action: 'export_diagnostics', targetType: 'system', detail: { logCount: logs.length, databaseOk } });
     return jsonDownloadResponse('系统诊断信息.json', {
-      app: { name: '杭连协同平台', version: 'v1.7.0-rc.1' },
+      app: appInfo(),
       exportedAt: new Date().toISOString(),
       userAgent: req.headers.get('user-agent') || '',
       health: { ok: databaseOk, database: databaseOk ? 'ok' : 'error' },

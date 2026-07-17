@@ -12,7 +12,8 @@ import { inspectPdf, manualObjectKey, validateManualAsset } from '@/lib/connecto
 import { isGenericConnectorManualManufacturer, sanitizeConnectorManualManufacturer } from '@/lib/connector-manual-parser';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { putObject } from '@/lib/s3';
+import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
+import { fileType, validateFileSignature } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -110,10 +111,15 @@ export async function POST(req: NextRequest) {
       const validationError = validateManualAsset(file, candidate.fileMode);
       if (validationError) throw new ImportItemError(validationError);
       const body = Buffer.from(await file.arrayBuffer());
+      const resolvedMimeType = mimeType(file, candidate.fileMode);
+      const resolvedFileType = fileType(file.name, resolvedMimeType);
+      if (resolvedFileType === 'unknown') throw new ImportItemError(`${file.name} 不是支持的文件格式`);
+      const signatureError = validateFileSignature(resolvedFileType, body);
+      if (signatureError) throw new ImportItemError(`${file.name}：${signatureError}`);
       const hash = sha256(body);
       const expected = candidate.assets[index];
       if (hash !== expected.hash || file.size !== expected.size) throw new ImportItemError(`${file.name} 与预览时文件不一致，请重新预览`);
-      prepared.push({ file, body, hash, mimeType: mimeType(file, candidate.fileMode), relativePath: expected.relativePath || candidate.relativePath });
+      prepared.push({ file, body, hash, mimeType: resolvedMimeType, relativePath: expected.relativePath || candidate.relativePath });
     }
     const existingHashCount = await prisma.connectorAssemblyManualAsset.count({
       where: { fileHash: { in: prepared.map(asset => asset.hash) }, deletedAt: null, version: { deletedAt: null, manual: { deletedAt: null } } },
@@ -161,10 +167,15 @@ export async function POST(req: NextRequest) {
     if (revisionExists) throw new ImportItemError(`版本 ${revision} 已存在，请修改版本号后重试`, 409);
     const versionId = randomUUID();
     const uploadedAssets: UploadedAsset[] = [];
-    for (const asset of prepared) {
-      const objectKey = manualObjectKey(manualId, versionId, asset.file.name);
-      await putObject({ key: objectKey, body: asset.body, contentType: asset.mimeType, originalName: asset.file.name });
-      uploadedAssets.push({ ...asset, objectKey });
+    try {
+      for (const asset of prepared) {
+        const objectKey = manualObjectKey(manualId, versionId, asset.file.name);
+        await putObject({ key: objectKey, body: asset.body, contentType: asset.mimeType, originalName: asset.file.name });
+        uploadedAssets.push({ ...asset, objectKey });
+      }
+    } catch (error) {
+      await deleteObjectsBestEffort(uploadedAssets.map(asset => asset.objectKey));
+      throw error;
     }
     let pageCount = candidate.fileMode === 'IMAGE_SET' ? uploadedAssets.length : candidate.pageCount;
     let pdfText = '';
@@ -199,70 +210,76 @@ export async function POST(req: NextRequest) {
       pdfText,
     });
     const userName = user.displayName || user.username;
-    const result = await prisma.$transaction(async tx => {
-      if (item.action === 'create_manual') {
-        await tx.connectorAssemblyManual.create({
-          data: { id: manualId, title, manufacturer, family, keywords: keywords.join('、') || null, createdBy: userName },
-        });
-      } else if (manual) {
-        await tx.connectorAssemblyManual.update({
-          where: { id: manual.id },
+    let result;
+    try {
+      result = await prisma.$transaction(async tx => {
+        if (item.action === 'create_manual') {
+          await tx.connectorAssemblyManual.create({
+            data: { id: manualId, title, manufacturer, family, keywords: keywords.join('、') || null, createdBy: userName },
+          });
+        } else if (manual) {
+          await tx.connectorAssemblyManual.update({
+            where: { id: manual.id },
+            data: {
+              manufacturer: manual.manufacturer || manufacturer,
+              family: manual.family || family,
+              keywords: manual.keywords || keywords.join('、') || null,
+            },
+          });
+        }
+        await tx.connectorAssemblyManualVersion.updateMany({ where: { manualId, deletedAt: null }, data: { isLatest: false } });
+        await tx.connectorAssemblyManualVersion.create({
           data: {
-            manufacturer: manual.manufacturer || manufacturer,
-            family: manual.family || family,
-            keywords: manual.keywords || keywords.join('、') || null,
+            id: versionId,
+            manualId,
+            revision,
+            issuedAt: dateValue(metadata.issuedAtCandidate),
+            pageCount: pageCount || null,
+            fileMode: candidate.fileMode,
+            isLatest: true,
+            status: parseStatus === 'parsed' ? '有效' : '待完善',
+            tocJson: tocJson as Prisma.InputJsonValue,
+            searchText,
+            detectedTitle,
+            parseStatus,
+            parseWarnings: warnings as Prisma.InputJsonValue,
+            createdBy: userName,
           },
         });
-      }
-      await tx.connectorAssemblyManualVersion.updateMany({ where: { manualId, deletedAt: null }, data: { isLatest: false } });
-      await tx.connectorAssemblyManualVersion.create({
-        data: {
-          id: versionId,
-          manualId,
-          revision,
-          issuedAt: dateValue(metadata.issuedAtCandidate),
-          pageCount: pageCount || null,
-          fileMode: candidate.fileMode,
-          isLatest: true,
-          status: parseStatus === 'parsed' ? '有效' : '待完善',
-          tocJson: tocJson as Prisma.InputJsonValue,
-          searchText,
-          detectedTitle,
-          parseStatus,
-          parseWarnings: warnings as Prisma.InputJsonValue,
-          createdBy: userName,
-        },
+        await tx.connectorAssemblyManualAsset.createMany({
+          data: uploadedAssets.map((asset, index) => ({
+            versionId,
+            assetType: candidate.fileMode === 'PDF' ? 'PDF' : 'IMAGE',
+            originalName: asset.file.name,
+            mimeType: asset.mimeType,
+            size: asset.file.size,
+            objectKey: asset.objectKey,
+            relativePath: asset.relativePath || null,
+            fileHash: asset.hash,
+            pageNo: candidate.fileMode === 'PDF' ? null : index + 1,
+            sortOrder: index,
+            isPrimary: index === 0,
+            uploadedBy: userName,
+          })),
+        });
+        if (bindingIds.length) await tx.connectorAssemblyManualBinding.createMany({ data: bindingIds.map(connectorParameterId => ({ manualId, connectorParameterId })), skipDuplicates: true });
+        return tx.connectorAssemblyManualImportItem.update({
+          where: { id: item.id },
+          data: {
+            status: 'success',
+            errorMessage: null,
+            manualId,
+            versionId,
+            pageCount: pageCount || null,
+            detectedTitle,
+            warningsJson: warnings as Prisma.InputJsonValue,
+          },
+        });
       });
-      await tx.connectorAssemblyManualAsset.createMany({
-        data: uploadedAssets.map((asset, index) => ({
-          versionId,
-          assetType: candidate.fileMode === 'PDF' ? 'PDF' : 'IMAGE',
-          originalName: asset.file.name,
-          mimeType: asset.mimeType,
-          size: asset.file.size,
-          objectKey: asset.objectKey,
-          relativePath: asset.relativePath || null,
-          fileHash: asset.hash,
-          pageNo: candidate.fileMode === 'PDF' ? null : index + 1,
-          sortOrder: index,
-          isPrimary: index === 0,
-          uploadedBy: userName,
-        })),
-      });
-      if (bindingIds.length) await tx.connectorAssemblyManualBinding.createMany({ data: bindingIds.map(connectorParameterId => ({ manualId, connectorParameterId })), skipDuplicates: true });
-      return tx.connectorAssemblyManualImportItem.update({
-        where: { id: item.id },
-        data: {
-          status: 'success',
-          errorMessage: null,
-          manualId,
-          versionId,
-          pageCount: pageCount || null,
-          detectedTitle,
-          warningsJson: warnings as Prisma.InputJsonValue,
-        },
-      });
-    });
+    } catch (error) {
+      await deleteObjectsBestEffort(uploadedAssets.map(asset => asset.objectKey));
+      throw error;
+    }
     await refreshManualImportBatch(batchId);
     await logOp({
       userId: user.id,

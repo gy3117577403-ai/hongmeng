@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FileUp, History, Paperclip, Plus, RotateCcw, Search } from 'lucide-react';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { PortalMenu } from '@/components/PortalMenu';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
@@ -142,6 +143,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [batching, setBatching] = useState(false);
+  const [batchConfirmAction, setBatchConfirmAction] = useState<'highlight' | 'unhighlight' | null>(null);
   const [logsOpen, setLogsOpen] = useState(false);
   const [logs, setLogs] = useState<OperationLogDTO[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -168,6 +170,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const fileDrawerCloseButtonRef = useRef<HTMLButtonElement>(null);
   const batchDrawerCloseButtonRef = useRef<HTMLButtonElement>(null);
   const confirmationTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const loadControllerRef = useRef<AbortController | null>(null);
 
   const pageSize = 80;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -189,11 +192,15 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     return params;
   }, [filter, keyword, page]);
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
+    loadControllerRef.current?.abort();
+    const controller = new AbortController();
+    loadControllerRef.current = controller;
     setLoading(true);
     try {
-      const r = await fetch(`/api/connector-parameters?${currentQuery.toString()}`, { cache: 'no-store' });
+      const r = await fetch(`/api/connector-parameters?${currentQuery.toString()}`, { cache: 'no-store', signal: controller.signal });
       const d = await r.json().catch(() => ({}));
+      if (controller.signal.aborted) return;
       if (!r.ok) {
         setMsg(d.error || '连接器参数加载失败');
         return;
@@ -201,12 +208,12 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
       setItems(Array.isArray(d.parameters) ? d.parameters : []);
       setTotal(Number(d.total || 0));
       if (d.stats) setStats(d.stats);
-    } catch {
-      setMsg('连接器参数加载失败');
+    } catch (reason) {
+      if (!(reason instanceof Error && reason.name === 'AbortError')) setMsg('连接器参数加载失败');
     } finally {
-      setLoading(false);
+      if (loadControllerRef.current === controller) setLoading(false);
     }
-  }
+  }, [currentQuery]);
 
   async function loadFiles() {
     try {
@@ -257,10 +264,12 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => loadData(), 300);
-    return () => window.clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentQuery]);
+    const timer = window.setTimeout(() => { void loadData(); }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      loadControllerRef.current?.abort();
+    };
+  }, [loadData]);
 
   useEffect(() => {
     loadFiles();
@@ -479,10 +488,13 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
     setSelectedIds(allPageSelected ? [] : pageIds);
   }
 
-  async function runBatch(action: 'highlight' | 'unhighlight' | 'delete') {
+  async function runBatch(action: 'highlight' | 'unhighlight' | 'delete', confirmed = false) {
     if (!selectedIds.length) return setMsg('请先选择参数行');
     if (action === 'delete' && batchDeleteConfirmText.trim() !== 'DELETE') return setMsg('请输入 DELETE 后再批量删除');
-    if (action !== 'delete' && !window.confirm(`将对已选 ${selectedIds.length} 条参数执行批量${action === 'highlight' ? '标记重点' : '取消重点'}，是否继续？`)) return;
+    if (action !== 'delete' && !confirmed) {
+      setBatchConfirmAction(action);
+      return;
+    }
     setBatching(true);
     try {
       const r = await fetch('/api/connector-parameters/batch', {
@@ -497,6 +509,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
       }
       setMsg(`批量操作完成：${d.count || 0} 条`);
       setSelectedIds([]);
+      setBatchConfirmAction(null);
       setBatchDeleteOpen(false);
       setBatchDeleteConfirmText('');
       await loadData();
@@ -1313,6 +1326,17 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
           </section>
         </div>
       )}
+      <ConfirmDialog
+        open={batchConfirmAction !== null}
+        title={batchConfirmAction === 'highlight' ? '批量标记重点？' : '批量取消重点？'}
+        description={`将更新当前选中的 ${selectedIds.length} 条连接器参数。参数内容不会被删除。`}
+        confirmLabel={batchConfirmAction === 'highlight' ? '确认标记' : '确认取消'}
+        busy={batching}
+        onCancel={() => { if (!batching) setBatchConfirmAction(null); }}
+        onConfirm={() => {
+          if (batchConfirmAction) void runBatch(batchConfirmAction, true);
+        }}
+      />
     </main>
   );
 }

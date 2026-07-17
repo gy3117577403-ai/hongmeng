@@ -1942,6 +1942,15 @@ input:focus-visible {
   font-size: 14px;
 }
 
+.login-card .form-success {
+  padding: 11px 12px;
+  border: 1px solid rgba(40, 122, 69, .22);
+  border-radius: 10px;
+  background: #edf8f0;
+  color: #287a45;
+  font-size: 14px;
+}
+
 .drawing-spec-title-line span,
 .drawing-detail-head small.anomaly {
   flex: 0 0 auto;

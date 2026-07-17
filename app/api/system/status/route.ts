@@ -1,38 +1,11 @@
-import { HeadBucketCommand } from '@aws-sdk/client-s3';
 import { NextResponse } from 'next/server';
+import { appInfo } from '@/lib/app-info';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { bucket, s3 } from '@/lib/s3';
 import { prisma } from '@/lib/prisma';
+import { getSystemReadiness } from '@/lib/system-readiness';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-async function checkDatabase() {
-  const start = Date.now();
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    return { ok: true, latencyMs: Date.now() - start };
-  } catch {
-    return { ok: false, latencyMs: Date.now() - start };
-  }
-}
-
-async function checkStorage() {
-  const start = Date.now();
-  const bucketName = process.env.S3_BUCKET;
-  const endpoint = process.env.S3_ENDPOINT;
-  const accessKey = process.env.S3_ACCESS_KEY_ID;
-  const secretKey = process.env.S3_SECRET_ACCESS_KEY;
-  const configured = !!bucketName && !!endpoint && !!accessKey && !!secretKey;
-  if (!configured) return { ok: false, bucketConfigured: !!bucketName, publicEndpointConfigured: !!process.env.S3_PUBLIC_ENDPOINT, latencyMs: Date.now() - start };
-
-  try {
-    await s3().send(new HeadBucketCommand({ Bucket: bucket() }));
-    return { ok: true, bucketConfigured: true, publicEndpointConfigured: !!process.env.S3_PUBLIC_ENDPOINT, latencyMs: Date.now() - start };
-  } catch {
-    return { ok: false, bucketConfigured: true, publicEndpointConfigured: !!process.env.S3_PUBLIC_ENDPOINT, latencyMs: Date.now() - start };
-  }
-}
 
 function warningList() {
   const warnings: string[] = [];
@@ -66,12 +39,12 @@ async function loadCounts() {
 export async function GET() {
   try {
     await requireUser();
-    const [database, storage, counts] = await Promise.all([checkDatabase(), checkStorage(), loadCounts()]);
+    const [readiness, counts] = await Promise.all([getSystemReadiness(), loadCounts()]);
+    const { database, storage } = readiness;
     return NextResponse.json({
-      ok: database.ok && storage.ok,
+      ok: readiness.ok,
       app: {
-        name: '杭连协同平台',
-        version: 'v1.13.0-rc.1',
+        ...appInfo(),
         mode: 'Web / PWA',
         uptime: Math.floor(process.uptime()),
       },
@@ -87,13 +60,13 @@ export async function GET() {
       storage: {
         ok: storage.ok,
         type: 'S3 兼容对象存储',
-        bucketConfigured: storage.bucketConfigured,
-        publicEndpointConfigured: storage.publicEndpointConfigured,
+        bucketConfigured: storage.configured,
+        publicEndpointConfigured: !!process.env.S3_PUBLIC_ENDPOINT,
         latencyMs: storage.latencyMs,
       },
       upload: {
         maxUploadSizeMb: Number(process.env.MAX_UPLOAD_SIZE_MB || 50) || 50,
-        supportedTypes: ['PDF', 'JPG', 'PNG'],
+        supportedTypes: ['PDF', 'JPG', 'JPEG', 'PNG', 'WEBP'],
       },
       migrations: {
         schemaReachable: database.ok,

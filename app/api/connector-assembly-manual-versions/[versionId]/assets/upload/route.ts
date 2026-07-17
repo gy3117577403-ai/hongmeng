@@ -10,7 +10,8 @@ import {
 } from '@/lib/connector-assembly-manuals';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { putObject } from '@/lib/s3';
+import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
+import { fileType, validateFileSignature } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -22,6 +23,14 @@ function imageMime(file: File): string {
   if (lower.endsWith('.webp')) return 'image/webp';
   return 'image/jpeg';
 }
+
+type PreparedAsset = {
+  file: File;
+  body: Buffer;
+  mimeType: string;
+  objectKey: string;
+  fileHash: string;
+};
 
 export async function POST(req: NextRequest, { params }: { params: { versionId: string } }) {
   try {
@@ -43,12 +52,16 @@ export async function POST(req: NextRequest, { params }: { params: { versionId: 
       if (error) return NextResponse.json({ ok: false, error }, { status: 400 });
     }
 
-    const userName = user.displayName || user.username;
-    const created = [];
+    const prepared: PreparedAsset[] = [];
     let pdfInfo: { pageCount: number; searchText: string } | null = null;
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
       const body = Buffer.from(await file.arrayBuffer());
+      const mimeType = version.fileMode === 'PDF' ? 'application/pdf' : imageMime(file);
+      const type = fileType(file.name, mimeType);
+      if (type === 'unknown') return NextResponse.json({ ok: false, error: `${file.name} 不是支持的文件格式` }, { status: 400 });
+      const signatureError = validateFileSignature(type, body);
+      if (signatureError) return NextResponse.json({ ok: false, error: `${file.name}：${signatureError}` }, { status: 400 });
       if (version.fileMode === 'PDF') {
         try {
           pdfInfo = await inspectPdf(body);
@@ -57,34 +70,57 @@ export async function POST(req: NextRequest, { params }: { params: { versionId: 
           return NextResponse.json({ ok: false, error: 'PDF 文件无法解析，请确认文件完整且未加密' }, { status: 400 });
         }
       }
-      const mimeType = version.fileMode === 'PDF' ? 'application/pdf' : imageMime(file);
       const objectKey = manualObjectKey(version.manualId, version.id, file.name);
-      await putObject({ key: objectKey, body, contentType: mimeType, originalName: file.name });
-      const asset = await prisma.connectorAssemblyManualAsset.create({
-        data: {
-          versionId: version.id,
-          assetType: version.fileMode === 'PDF' ? 'PDF' : 'IMAGE',
-          originalName: file.name,
-          mimeType,
-          size: file.size,
-          objectKey,
-          relativePath: file.name,
-          fileHash: createHash('sha256').update(body).digest('hex'),
-          pageNo: version.fileMode === 'PDF' ? null : version.assets.length + index + 1,
-          sortOrder: version.assets.length + index,
-          isPrimary: version.assets.length === 0 && index === 0,
-          uploadedBy: userName,
-        },
-      });
-      created.push(asset);
+      prepared.push({ file, body, mimeType, objectKey, fileHash: createHash('sha256').update(body).digest('hex') });
     }
 
-    if (pdfInfo) {
-      await prisma.connectorAssemblyManualVersion.update({ where: { id: version.id }, data: { pageCount: pdfInfo.pageCount, searchText: pdfInfo.searchText || null, parseStatus: pdfInfo.searchText ? 'parsed' : 'partial' } });
-    } else {
-      await prisma.connectorAssemblyManualVersion.update({ where: { id: version.id }, data: { pageCount: version.assets.length + created.length } });
+    const uploadedKeys: string[] = [];
+    try {
+      for (const asset of prepared) {
+        await putObject({ key: asset.objectKey, body: asset.body, contentType: asset.mimeType, originalName: asset.file.name });
+        uploadedKeys.push(asset.objectKey);
+      }
+    } catch (error) {
+      await deleteObjectsBestEffort(uploadedKeys);
+      throw error;
     }
-    await prisma.connectorAssemblyManual.update({ where: { id: version.manualId }, data: { updatedAt: new Date() } });
+
+    const userName = user.displayName || user.username;
+    let created;
+    try {
+      created = await prisma.$transaction(async tx => {
+        const assets = [];
+        for (let index = 0; index < prepared.length; index += 1) {
+          const asset = prepared[index];
+          assets.push(await tx.connectorAssemblyManualAsset.create({
+            data: {
+              versionId: version.id,
+              assetType: version.fileMode === 'PDF' ? 'PDF' : 'IMAGE',
+              originalName: asset.file.name,
+              mimeType: asset.mimeType,
+              size: asset.file.size,
+              objectKey: asset.objectKey,
+              relativePath: asset.file.name,
+              fileHash: asset.fileHash,
+              pageNo: version.fileMode === 'PDF' ? null : version.assets.length + index + 1,
+              sortOrder: version.assets.length + index,
+              isPrimary: version.assets.length === 0 && index === 0,
+              uploadedBy: userName,
+            },
+          }));
+        }
+        if (pdfInfo) {
+          await tx.connectorAssemblyManualVersion.update({ where: { id: version.id }, data: { pageCount: pdfInfo.pageCount, searchText: pdfInfo.searchText || null, parseStatus: pdfInfo.searchText ? 'parsed' : 'partial' } });
+        } else {
+          await tx.connectorAssemblyManualVersion.update({ where: { id: version.id }, data: { pageCount: version.assets.length + assets.length } });
+        }
+        await tx.connectorAssemblyManual.update({ where: { id: version.manualId }, data: { updatedAt: new Date() } });
+        return assets;
+      });
+    } catch (error) {
+      await deleteObjectsBestEffort(uploadedKeys);
+      throw error;
+    }
     await logOp({
       userId: user.id,
       action: 'upload_connector_assembly_manual_version',

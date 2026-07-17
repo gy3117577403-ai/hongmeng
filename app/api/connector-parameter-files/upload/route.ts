@@ -9,7 +9,8 @@ import {
 } from '@/lib/connector-parameters';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { putObject } from '@/lib/s3';
+import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
+import { validateFileSignature } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,23 +26,35 @@ export async function POST(req: NextRequest) {
 
     const objectKey = connectorObjectKey(file.name, crypto.randomUUID());
     const mimeType = file.type || 'application/octet-stream';
+    const body = Buffer.from(await file.arrayBuffer());
+    const type = connectorFileType(file.name, mimeType);
+    if (type === 'pdf' || type === 'jpg' || type === 'png') {
+      const signatureError = validateFileSignature(type, body);
+      if (signatureError) return NextResponse.json({ ok: false, error: signatureError }, { status: 400 });
+    }
     await putObject({
       key: objectKey,
-      body: Buffer.from(await file.arrayBuffer()),
+      body,
       contentType: mimeType,
       originalName: file.name,
     });
 
-    const item = await prisma.connectorParameterFile.create({
-      data: {
-        originalName: file.name,
-        mimeType,
-        fileType: connectorFileType(file.name, mimeType),
-        fileSize: file.size,
-        objectKey,
-        uploadedBy: user.displayName || user.username,
-      },
-    });
+    let item;
+    try {
+      item = await prisma.connectorParameterFile.create({
+        data: {
+          originalName: file.name,
+          mimeType,
+          fileType: type,
+          fileSize: file.size,
+          objectKey,
+          uploadedBy: user.displayName || user.username,
+        },
+      });
+    } catch (error) {
+      await deleteObjectsBestEffort([objectKey]);
+      throw error;
+    }
 
     await logOp({
       userId: user.id,

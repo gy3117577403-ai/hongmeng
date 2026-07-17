@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BookOpenText, FilePlus2, Files, List, Search } from 'lucide-react';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import type { PdfTocSuggestion } from '@/components/PdfViewer';
@@ -48,6 +49,9 @@ type VersionForm = {
 };
 type DeleteTarget = { type: 'manual'; item: ConnectorAssemblyManualDTO } | { type: 'version'; item: ConnectorAssemblyManualVersionDTO } | null;
 type TocEditState = { id: string; title: string; pageStart: number; pageEnd: number } | null;
+type LightweightDeleteTarget =
+  | { kind: 'toc'; item: ConnectorAssemblyManualTocDTO; index: number }
+  | { kind: 'asset'; asset: ConnectorAssemblyManualAssetDTO };
 type TrashPayload = {
   connectorAssemblyManuals?: ConnectorAssemblyManualDTO[];
   connectorAssemblyManualVersions?: Array<ConnectorAssemblyManualVersionDTO & { manualTitle: string }>;
@@ -204,6 +208,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const [bindingOptions, setBindingOptions] = useState<ConnectorParameterDTO[]>([]);
   const [bindingSelection, setBindingSelection] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget>(null);
+  const [lightweightDeleteTarget, setLightweightDeleteTarget] = useState<LightweightDeleteTarget | null>(null);
   const [deleteText, setDeleteText] = useState('');
   const [trashOpen, setTrashOpen] = useState(false);
   const [trash, setTrash] = useState<TrashPayload>({});
@@ -669,18 +674,8 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
     }
   }
 
-  async function deleteTocItem(item: ConnectorAssemblyManualTocDTO, index: number): Promise<void> {
-    if (!selectedVersion || !window.confirm(`确认删除目录“${item.title}”？说明书文件不会删除。`)) return;
-    const id = tocItemId(item, index);
-    const response = await fetch(`/api/connector-assembly-manual-versions/${selectedVersion.id}/toc/${encodeURIComponent(id)}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expectedUpdatedAt: selectedVersion.updatedAt }),
-    });
-    const data = await jsonResponse(response);
-    if (!response.ok) return setToast(String(data.error || '删除目录失败'));
-    updateSelectedVersionToc(Array.isArray(data.tocJson) ? data.tocJson as ConnectorAssemblyManualTocDTO[] : [], String(data.updatedAt || selectedVersion.updatedAt));
-    setToast('目录已删除，说明书文件未受影响');
+  function deleteTocItem(item: ConnectorAssemblyManualTocDTO, index: number): void {
+    setLightweightDeleteTarget({ kind: 'toc', item, index });
   }
 
   async function moveTocItem(index: number, direction: -1 | 1): Promise<void> {
@@ -773,13 +768,39 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
     await loadManual(selectedManual.id, selectedVersion.id);
   }
 
-  async function deleteAsset(asset: ConnectorAssemblyManualAssetDTO): Promise<void> {
-    if (!selectedManual || !selectedVersion || !window.confirm(`确认移除文件“${asset.displayName || asset.originalName}”？对象存储原文件会保留。`)) return;
-    const response = await fetch(`/api/connector-assembly-manual-assets/${asset.id}`, { method: 'DELETE' });
-    const data = await jsonResponse(response);
-    if (!response.ok) return setToast(String(data.error || '删除文件失败'));
-    setToast('文件已软删除');
-    await loadManual(selectedManual.id, selectedVersion.id);
+  function deleteAsset(asset: ConnectorAssemblyManualAssetDTO): void {
+    setLightweightDeleteTarget({ kind: 'asset', asset });
+  }
+
+  async function confirmLightweightDelete(): Promise<void> {
+    if (!lightweightDeleteTarget || !selectedVersion) return;
+    setSaving(true);
+    try {
+      if (lightweightDeleteTarget.kind === 'toc') {
+        const id = tocItemId(lightweightDeleteTarget.item, lightweightDeleteTarget.index);
+        const response = await fetch(`/api/connector-assembly-manual-versions/${selectedVersion.id}/toc/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ expectedUpdatedAt: selectedVersion.updatedAt }),
+        });
+        const data = await jsonResponse(response);
+        if (!response.ok) throw new Error(String(data.error || '删除目录失败'));
+        updateSelectedVersionToc(Array.isArray(data.tocJson) ? data.tocJson as ConnectorAssemblyManualTocDTO[] : [], String(data.updatedAt || selectedVersion.updatedAt));
+        setToast('目录已删除，说明书文件未受影响');
+      } else {
+        if (!selectedManual) return;
+        const response = await fetch(`/api/connector-assembly-manual-assets/${lightweightDeleteTarget.asset.id}`, { method: 'DELETE' });
+        const data = await jsonResponse(response);
+        if (!response.ok) throw new Error(String(data.error || '删除文件失败'));
+        setToast('文件已软删除');
+        await loadManual(selectedManual.id, selectedVersion.id);
+      }
+      setLightweightDeleteTarget(null);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : '删除失败');
+    } finally {
+      setSaving(false);
+    }
   }
 
   useEffect(() => {
@@ -1060,6 +1081,20 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
       {tocEdit && selectedVersion && <TocEditDialog value={tocEdit} setValue={setTocEdit} currentPage={currentPreviewPage} pageCount={selectedVersion.pageCount || Math.max(1, activeAssets.length)} saving={saving} close={() => setTocEdit(null)} submit={saveTocEdit} />}
       {tocSuggestionOpen && <TocSuggestionDialog suggestions={availableTocSuggestions} selected={selectedTocSuggestions} setSelected={setSelectedTocSuggestions} saving={saving} close={() => setTocSuggestionOpen(false)} save={saveTocSuggestions} />}
       <BulkConnectorManualImportModal open={bulkOpen} close={() => setBulkOpen(false)} completed={async () => { setRefreshKey(value => value + 1); }} />
+      <ConfirmDialog
+        open={Boolean(lightweightDeleteTarget)}
+        title={lightweightDeleteTarget?.kind === 'toc' ? '删除目录条目？' : '移除说明书文件？'}
+        description={lightweightDeleteTarget?.kind === 'toc'
+          ? `目录“${lightweightDeleteTarget.item.title}”将被删除，说明书原文件不会受影响。`
+          : lightweightDeleteTarget
+            ? `文件“${lightweightDeleteTarget.asset.displayName || lightweightDeleteTarget.asset.originalName}”将被软删除，对象存储历史文件仍会保留。`
+            : ''}
+        confirmLabel={lightweightDeleteTarget?.kind === 'toc' ? '确认删除目录' : '确认移除文件'}
+        danger
+        busy={saving}
+        onCancel={() => { if (!saving) setLightweightDeleteTarget(null); }}
+        onConfirm={() => { void confirmLightweightDelete(); }}
+      />
       {toast && <div className="manual-toast" role="status">{toast}</div>}
     </main>
   );
