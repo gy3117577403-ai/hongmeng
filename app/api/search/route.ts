@@ -6,6 +6,7 @@ import { serializeResourceFile } from '@/lib/resource-files';
 import { prisma } from '@/lib/prisma';
 import { serializeWorkOrder } from '@/lib/work-orders';
 import { serializeManual } from '@/lib/connector-assembly-manuals';
+import { knowledgeArticleInclude, serializeKnowledgeArticle } from '@/lib/knowledge';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,11 +16,11 @@ export async function GET(req: NextRequest) {
     await requireUser();
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim();
     if (!keyword) {
-      const empty = { keyword, workOrders: [], resourceFiles: [], drawingLibraryItems: [], drawingLibraryFiles: [], connectorParameters: [], connectorAssemblyManuals: [], connectorAssemblyManualAssets: [], issues: [], changes: [] };
+      const empty = { keyword, workOrders: [], resourceFiles: [], drawingLibraryItems: [], drawingLibraryFiles: [], connectorParameters: [], connectorAssemblyManuals: [], connectorAssemblyManualAssets: [], knowledgeArticles: [], issues: [], changes: [] };
       return NextResponse.json({ ok: true, data: empty, ...empty });
     }
 
-    const [workOrders, resourceFiles, drawingCategories, drawingLibraryItems, drawingLibraryFiles, connectorParameters, connectorAssemblyManuals, connectorAssemblyManualAssets, issues, changes] = await Promise.all([
+    const [workOrders, resourceFiles, drawingCategories, drawingLibraryItems, drawingLibraryFiles, connectorParameters, connectorAssemblyManuals, connectorAssemblyManualAssets, knowledgeArticles, issues, changes] = await Promise.all([
       prisma.workOrder.findMany({
         where: {
           deletedAt: null,
@@ -159,6 +160,23 @@ export async function GET(req: NextRequest) {
         orderBy: { updatedAt: 'desc' },
         take: 10,
       }),
+      prisma.knowledgeArticle.findMany({
+        where: {
+          deletedAt: null,
+          OR: [
+            { title: { contains: keyword, mode: 'insensitive' } },
+            { summary: { contains: keyword, mode: 'insensitive' } },
+            { content: { contains: keyword, mode: 'insensitive' } },
+            { customerName: { contains: keyword, mode: 'insensitive' } },
+            { specification: { contains: keyword, mode: 'insensitive' } },
+            { productModel: { contains: keyword, mode: 'insensitive' } },
+            { tags: { has: keyword } },
+          ],
+        },
+        include: knowledgeArticleInclude,
+        orderBy: { updatedAt: 'desc' },
+        take: 10,
+      }),
       prisma.issue.findMany({
         where: {
           deletedAt: null,
@@ -238,6 +256,7 @@ export async function GET(req: NextRequest) {
         pageNo: asset.pageNo,
         models: asset.version.manual.bindings.map(binding => binding.connectorParameter.model || '').filter(Boolean),
       })),
+      knowledgeArticles: knowledgeArticles.map(serializeKnowledgeArticle),
       issues: issues.map(issue => ({
         id: issue.id,
         code: `ISS-${String(issue.sequence).padStart(6, '0')}`,

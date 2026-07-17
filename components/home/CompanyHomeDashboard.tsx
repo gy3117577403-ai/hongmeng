@@ -59,6 +59,7 @@ type SearchManual = { id: string; title: string; manufacturer?: string | null; m
 type SearchManualAsset = { id: string; manualId: string; versionId: string; manualTitle: string; revision: string; originalName: string; displayName?: string | null; pageNo?: number | null };
 type SearchIssue = { id: string; code: string; title: string; status: string; priority: string; sourceCode?: string | null; workOrder?: { customerName?: string | null; specification?: string | null; code: string } | null };
 type SearchChange = { id: string; code: string; title: string; status: string; priority: string; workOrder?: { customerName?: string | null; specification?: string | null; code: string } | null };
+type SearchKnowledgeArticle = { id: string; code: string; title: string; category: string; summary?: string | null; customerName?: string | null; specification?: string | null; productModel?: string | null };
 type SearchPayload = {
   workOrders?: SearchWorkOrder[];
   resourceFiles?: SearchResourceFile[];
@@ -67,6 +68,7 @@ type SearchPayload = {
   connectorParameters?: SearchParameter[];
   connectorAssemblyManuals?: SearchManual[];
   connectorAssemblyManualAssets?: SearchManualAsset[];
+  knowledgeArticles?: SearchKnowledgeArticle[];
   issues?: SearchIssue[];
   changes?: SearchChange[];
 };
@@ -84,6 +86,7 @@ const quickLinks: Array<{ href: string; label: string; icon: LucideIcon; tone: H
   { href: '/connector-parameters', label: '连接器参数', icon: Boxes, tone: 'blue' },
   { href: '/workspace/warehouse', label: '仓库配料', icon: Warehouse, tone: 'yellow' },
   { href: '/workspace/processes', label: '工艺编排', icon: ListOrdered, tone: 'orange' },
+  { href: '/workspace/knowledge', label: '知识库', icon: BookOpen, tone: 'slate' },
   { href: '/workspace/more', label: '更多功能', icon: Wrench, tone: 'slate', planned: true },
 ];
 
@@ -138,6 +141,15 @@ function searchItems(payload: SearchPayload, keyword: string): HomeSearchItem[] 
     const params = new URLSearchParams({ manualId: asset.manualId, versionId: asset.versionId });
     if (asset.pageNo) params.set('page', String(asset.pageNo));
     items.push({ id: `manual-asset:${asset.id}`, group: '说明书文件', title: decodedName(asset.displayName || asset.originalName), detail: `${asset.manualTitle} · ${asset.revision}`, route: `/connector-assembly-manuals?${params.toString()}` });
+  }
+  for (const article of payload.knowledgeArticles || []) {
+    items.push({
+      id: `knowledge:${article.id}`,
+      group: '知识库',
+      title: article.title,
+      detail: `${article.code} · ${article.specification || article.productModel || article.customerName || '通用知识'}`,
+      route: `/workspace/knowledge?source=article&q=${encodeURIComponent(article.title)}&articleId=${encodeURIComponent(article.id)}`,
+    });
   }
   for (const issue of payload.issues || []) {
     items.push({

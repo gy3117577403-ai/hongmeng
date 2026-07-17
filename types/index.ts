@@ -1049,3 +1049,97 @@ export type ConnectorParameterImportBatchDTO = {
   rolledBackBy?: string | null;
   activeParameterCount?: number;
 };
+
+export type KnowledgeArticleCategory = 'problem' | 'process' | 'inspection' | 'equipment' | 'packaging' | 'general';
+export type KnowledgeArticleStatus = 'draft' | 'published' | 'archived';
+export type KnowledgeSourceType = 'article' | 'drawing' | 'manual' | 'parameter' | 'process' | 'issue' | 'change';
+
+export type KnowledgeRelationDTO = {
+  id: string;
+  articleId: string;
+  sourceType: KnowledgeSourceType;
+  sourceId: string;
+  sourceLabel?: string | null;
+  sourceHref?: string | null;
+  createdAt: string;
+};
+
+export type KnowledgeAttachmentDTO = {
+  id: string;
+  articleId: string;
+  originalName: string;
+  displayName?: string | null;
+  mimeType: string;
+  fileType: string;
+  size: number;
+  uploadedBy?: IssueUserDTO | null;
+  createdAt: string;
+  contentUrl: string;
+  downloadUrl: string;
+};
+
+export type KnowledgeArticleDTO = {
+  id: string;
+  sequence: number;
+  code: string;
+  title: string;
+  category: KnowledgeArticleCategory;
+  status: KnowledgeArticleStatus;
+  summary?: string | null;
+  content: string;
+  tags: string[];
+  customerName?: string | null;
+  specification?: string | null;
+  productModel?: string | null;
+  version: number;
+  createdBy?: IssueUserDTO | null;
+  updatedBy?: IssueUserDTO | null;
+  createdAt: string;
+  updatedAt: string;
+  attachmentCount: number;
+  relationCount: number;
+  attachments: KnowledgeAttachmentDTO[];
+  relations: KnowledgeRelationDTO[];
+};
+
+export type KnowledgePreviewDTO = {
+  fileId: string;
+  title: string;
+  fileType: 'pdf' | 'image';
+  contentUrl: string;
+  downloadUrl: string;
+};
+
+export type KnowledgeSearchItemDTO = {
+  key: string;
+  sourceType: KnowledgeSourceType;
+  sourceId: string;
+  title: string;
+  subtitle?: string | null;
+  summary?: string | null;
+  sourceHref: string;
+  updatedAt: string;
+  badges: string[];
+  customerName?: string | null;
+  specification?: string | null;
+  productModel?: string | null;
+  category?: KnowledgeArticleCategory | null;
+  preview?: KnowledgePreviewDTO | null;
+  article?: KnowledgeArticleDTO | null;
+  drawing?: DrawingLibraryItemDTO | null;
+  manual?: ConnectorAssemblyManualDTO | null;
+  parameter?: ConnectorParameterDTO | null;
+};
+
+export type KnowledgeOverviewDTO = {
+  totalSources: number;
+  articleCount: number;
+  drawingCount: number;
+  manualCount: number;
+  parameterCount: number;
+  processCount: number;
+  experienceCount: number;
+  changeCount: number;
+  draftCount: number;
+  updatedThisWeek: number;
+};

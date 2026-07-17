@@ -53,8 +53,8 @@ const modules: PlatformModuleDefinition[] = [
   },
   {
     slug: 'knowledge', kicker: '技术知识', title: '知识库',
-    description: '现有图纸、参数和组装说明书的统一知识入口。底层资料仍由各成熟模块分别维护。',
-    capabilityTitle: '已接入资料', capabilities: ['图纸资料库', '连接器参数库', '连接器组装说明书'],
+    description: '统一检索图纸、参数、组装说明书、工艺与已验证经验，并沉淀可复用的现场知识。',
+    capabilityTitle: '已接入资料', capabilities: ['跨模块统一检索', 'PDF 与图片预览', '经验知识与附件沉淀'],
     links: [
       { label: '图纸资料库', description: '长期图纸和工艺资料', href: '/drawing-library' },
       { label: '连接器参数', description: '连接器工艺参数查询', href: '/connector-parameters' },

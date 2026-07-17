@@ -35,6 +35,9 @@ model User {
   completedProcessSteps       WorkOrderProcessStep[]      @relation("ProcessStepCompletedBy")
   recordedProcessExecutions   ProcessExecution[]          @relation("ProcessExecutionRecordedBy")
   processRouteActivities      ProcessRouteActivity[]      @relation("ProcessRouteActivityActor")
+  createdKnowledgeArticles    KnowledgeArticle[]          @relation("KnowledgeArticleCreatedBy")
+  updatedKnowledgeArticles    KnowledgeArticle[]          @relation("KnowledgeArticleUpdatedBy")
+  knowledgeAttachments        KnowledgeAttachment[]       @relation("KnowledgeAttachmentUploader")
 
   @@map("users")
 }
@@ -694,6 +697,77 @@ model ChangeAttachment {
   @@index([uploadedById])
   @@index([deletedAt])
   @@map("change_attachments")
+}
+
+model KnowledgeArticle {
+  id            String                @id @default(uuid())
+  sequence      Int                   @unique @default(autoincrement())
+  title         String
+  category      String                @default("general")
+  status        String                @default("published")
+  summary       String?
+  content       String                @db.Text
+  tags          String[]              @default([])
+  customerName  String?               @map("customer_name")
+  specification String?
+  productModel  String?               @map("product_model")
+  version       Int                   @default(1)
+  createdById   String?               @map("created_by_id")
+  updatedById   String?               @map("updated_by_id")
+  createdAt     DateTime              @default(now()) @map("created_at")
+  updatedAt     DateTime              @updatedAt @map("updated_at")
+  deletedAt     DateTime?             @map("deleted_at")
+  createdBy     User?                 @relation("KnowledgeArticleCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy     User?                 @relation("KnowledgeArticleUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  attachments   KnowledgeAttachment[]
+  relations     KnowledgeRelation[]
+
+  @@index([category])
+  @@index([status])
+  @@index([customerName])
+  @@index([specification])
+  @@index([productModel])
+  @@index([updatedAt])
+  @@index([deletedAt])
+  @@map("knowledge_articles")
+}
+
+model KnowledgeAttachment {
+  id           String           @id @default(uuid())
+  articleId    String           @map("article_id")
+  objectKey    String           @unique @map("object_key")
+  originalName String           @map("original_name")
+  displayName  String?          @map("display_name")
+  mimeType     String           @map("mime_type")
+  fileType     String           @map("file_type")
+  size         BigInt
+  uploadedById String?          @map("uploaded_by_id")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+  deletedAt    DateTime?        @map("deleted_at")
+  article      KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  uploadedBy   User?            @relation("KnowledgeAttachmentUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([articleId, createdAt])
+  @@index([uploadedById])
+  @@index([deletedAt])
+  @@map("knowledge_attachments")
+}
+
+model KnowledgeRelation {
+  id          String           @id @default(uuid())
+  articleId   String           @map("article_id")
+  sourceType  String           @map("source_type")
+  sourceId    String           @map("source_id")
+  sourceLabel String?          @map("source_label")
+  sourceHref  String?          @map("source_href")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  article     KnowledgeArticle @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@unique([articleId, sourceType, sourceId])
+  @@index([sourceType, sourceId])
+  @@index([createdAt])
+  @@map("knowledge_relations")
 }
 
 model ConnectorParameter {
