@@ -1272,14 +1272,16 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setDrawingMenuOrder(null);
     if (order.processRoute && displayStage !== 'not_issued') {
       if (order.processRoute.status === 'draft') {
-        const returnKey = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-        captureReturnState(returnKey, order.id, displayStage);
-        router.push(`/workspace/processes?workOrderId=${encodeURIComponent(order.id)}&from=production&returnKey=${encodeURIComponent(returnKey)}`);
+        if (!order.drawingLibraryItemId) {
+          setToast('当前工单尚未关联图纸产品，无法匹配产品工序与工时');
+          return;
+        }
+        router.push(`/workspace/product-times?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`);
         return;
       }
       if (order.processRoute.status === 'completed') return;
       if (!order.processRoute.currentStep) {
-        setToast('当前工序状态异常，请到工艺管理检查路线');
+        setToast('当前执行工序状态异常，请检查并重新发布该产品工序与工时');
         return;
       }
       setNextStepRequest({ order, displayStage, action: 'advance_process_route' });

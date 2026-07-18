@@ -37,33 +37,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     };
     const action = parseProcessRouteAction(body.action);
     if (!action) return NextResponse.json({ ok: false, error: '工艺路线操作不正确' }, { status: 400 });
+    if (action !== 'advance') {
+      return NextResponse.json({
+        ok: false,
+        error: '旧工艺编排方式已下线，请在产品工序与工时中维护并发布',
+      }, { status: 410 });
+    }
     const actor = user.displayName || user.username;
-    await updateProcessRoute(action === 'replace_steps'
-      ? {
-          routeId: params.id,
-          action,
-          expectedVersion: body.version,
-          steps: body.steps,
-          userId: user.id,
-          actor,
-        }
-      : action === 'confirm' || action === 'apply_product_time'
-        ? {
-            routeId: params.id,
-            action,
-            expectedVersion: body.version,
-            userId: user.id,
-            actor,
-          }
-        : {
-            routeId: params.id,
-            action,
-            expectedVersion: body.version,
-            remark: body.remark,
-            execution: body.execution,
-            userId: user.id,
-            actor,
-          });
+    await updateProcessRoute({
+      routeId: params.id,
+      action,
+      expectedVersion: body.version,
+      remark: body.remark,
+      execution: body.execution,
+      userId: user.id,
+      actor,
+    });
     const route = await loadProcessRoute(params.id);
     const workOrder = route ? await loadProductionOrderById(route.workOrderId) : null;
     return NextResponse.json({

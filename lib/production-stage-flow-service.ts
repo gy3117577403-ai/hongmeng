@@ -187,7 +187,7 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
       if (processRoute && input.action !== 'confirm_drawing_issued') {
         throw new ProductionStageFlowServiceError(
           processRoute.status === 'draft'
-            ? '请先到工艺管理确认工艺路线'
+            ? '请先维护并发布当前产品的工序与工时'
             : '该工单已启用完整工艺路线，请按当前工序推进',
           409,
           processRoute.status === 'draft' ? 'PROCESS_ROUTE_NOT_CONFIRMED' : 'USE_PROCESS_ROUTE',

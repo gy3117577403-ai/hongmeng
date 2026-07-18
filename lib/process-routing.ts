@@ -7,7 +7,13 @@ import type {
   ProcessTemplateStepDTO,
   WorkOrderProcessRouteDTO,
 } from '@/types';
-import { legacyProcessStandardSnapshot, productTimeProfileInclude, productTimeStandardSnapshot } from '@/lib/product-time';
+import {
+  legacyProcessStandardSnapshot,
+  productTimeProfileInclude,
+  productTimeStandardSnapshot,
+  type ProductTimeProfileRecord,
+} from '@/lib/product-time';
+import { legacyStatusForStage, normalizeWorkOrderStage } from '@/lib/work-orders';
 
 export const PROCESS_STAGE_GROUPS: ProcessStageGroup[] = ['frontend', 'backend', 'finish'];
 export const PROCESS_ROUTE_STATUSES: ProcessRouteStatus[] = ['draft', 'confirmed', 'in_progress', 'completed'];
@@ -130,6 +136,21 @@ export function normalizeProcessStageGroup(value: unknown): ProcessStageGroup | 
 
 export function processStageForGroup(stageGroup: ProcessStageGroup): 'frontend' | 'backend' {
   return stageGroup === 'frontend' ? 'frontend' : 'backend';
+}
+
+export function initialProcessRouteStatus(routeSource: string): ProcessRouteStatus {
+  return routeSource === 'product_time_profile' ? 'confirmed' : 'draft';
+}
+
+export function productTimeRouteActivation(
+  stageValue: unknown,
+  statusValue?: unknown,
+): { status: 'confirmed' | 'in_progress'; shouldStart: boolean } | null {
+  const stage = normalizeWorkOrderStage(stageValue || statusValue) || 'not_issued';
+  if (stage === 'backend' || stage === 'completed') return null;
+  return stage === 'frontend'
+    ? { status: 'in_progress', shouldStart: true }
+    : { status: 'confirmed', shouldStart: false };
 }
 
 export function validateProcessSteps(input: unknown): ProcessStepValidationResult {
@@ -283,6 +304,19 @@ export async function findDefaultProcessTemplate(
   });
 }
 
+function productTimeRouteSteps(profile: ProductTimeProfileRecord, currentStartedAt?: Date) {
+  return profile.entries.map((entry, index) => ({
+    processDefinitionId: entry.processDefinitionId,
+    processCode: entry.processDefinition.code,
+    processName: entry.processDefinition.name,
+    stageGroup: entry.processDefinition.stageGroup,
+    position: entry.position,
+    ...productTimeStandardSnapshot(profile, entry),
+    status: currentStartedAt && index === 0 ? 'current' : 'pending',
+    startedAt: currentStartedAt && index === 0 ? currentStartedAt : null,
+  }));
+}
+
 export async function createWorkOrderProcessRoute(
   tx: Prisma.TransactionClient,
   input: {
@@ -327,6 +361,9 @@ export async function createWorkOrderProcessRoute(
       })
     : [];
   const standardsByDefinition = new Map(currentStandards.map(standard => [standard.processDefinitionId, standard]));
+  const autoConfirmed = Boolean(productProfile);
+  const initialStatus = initialProcessRouteStatus(productProfile ? 'product_time_profile' : 'process_template');
+  const confirmedAt = autoConfirmed ? new Date() : null;
 
   const route = await tx.workOrderProcessRoute.create({
     data: {
@@ -337,17 +374,11 @@ export async function createWorkOrderProcessRoute(
       productTimeProfileId: productProfile?.id || null,
       productTimeProfileVersion: productProfile?.version || null,
       routeSource: productProfile ? 'product_time_profile' : 'process_template',
-      status: 'draft',
+      status: initialStatus,
+      confirmedAt,
+      confirmedById: autoConfirmed ? input.actorId || null : null,
       steps: {
-        create: productProfile ? productProfile.entries.map(entry => ({
-          processDefinitionId: entry.processDefinitionId,
-          processCode: entry.processDefinition.code,
-          processName: entry.processDefinition.name,
-          stageGroup: entry.processDefinition.stageGroup,
-          position: entry.position,
-          ...productTimeStandardSnapshot(productProfile, entry),
-          status: 'pending',
-        })) : template!.steps.map(step => {
+        create: productProfile ? productTimeRouteSteps(productProfile) : template!.steps.map(step => {
           const standard = step.processDefinitionId
             ? standardsByDefinition.get(step.processDefinitionId)
             : null;
@@ -379,7 +410,7 @@ export async function createWorkOrderProcessRoute(
         create: {
           action: 'create_process_route',
           content: productProfile
-            ? `应用产品工时 V${productProfile.version}，共 ${productProfile.entries.length} 道工序，等待工艺确认`
+            ? `已从产品工序与工时 V${productProfile.version} 自动生成并确认，共 ${productProfile.entries.length} 道工序`
             : `应用 ${template!.name} V${template!.version}，等待工艺确认`,
           actorId: input.actorId || null,
           detail: productProfile
@@ -402,10 +433,105 @@ export async function createWorkOrderProcessRoute(
         templateVersion: template?.version || null,
         productTimeProfileId: productProfile?.id || null,
         productTimeProfileVersion: productProfile?.version || null,
+        autoConfirmed,
       },
     },
   });
   return { created: true, routeId: route.id };
+}
+
+export async function syncDraftRoutesFromPublishedProductTime(
+  tx: Prisma.TransactionClient,
+  input: { profileId: string; actorId: string },
+): Promise<{ updated: number; started: number; skipped: number }> {
+  const profile = await tx.productTimeProfile.findUnique({
+    where: { id: input.profileId },
+    include: productTimeProfileInclude,
+  });
+  if (!profile || profile.status !== 'published') return { updated: 0, started: 0, skipped: 0 };
+
+  const routes = await tx.workOrderProcessRoute.findMany({
+    where: {
+      status: 'draft',
+      workOrder: { drawingLibraryItemId: profile.drawingLibraryItemId },
+    },
+    include: {
+      workOrder: { select: { id: true, stage: true, status: true, specification: true } },
+      steps: { select: { id: true, _count: { select: { executions: true } } } },
+    },
+  });
+  const now = new Date();
+  let updated = 0;
+  let started = 0;
+  let skipped = 0;
+
+  for (const route of routes) {
+    const activation = productTimeRouteActivation(route.workOrder.stage, route.workOrder.status);
+    if (route.startedAt || route.steps.some(step => step._count.executions > 0) || !activation) {
+      skipped += 1;
+      continue;
+    }
+    const shouldStart = activation.shouldStart;
+    const firstDefinition = profile.entries[0]?.processDefinition;
+    if (!firstDefinition) {
+      skipped += 1;
+      continue;
+    }
+    await tx.workOrderProcessStep.deleteMany({ where: { routeId: route.id } });
+    await tx.workOrderProcessRoute.update({
+      where: { id: route.id },
+      data: {
+        templateId: null,
+        templateName: `${route.workOrder.specification || '当前产品'} 产品工时`,
+        templateVersion: profile.version,
+        productTimeProfileId: profile.id,
+        productTimeProfileVersion: profile.version,
+        routeSource: 'product_time_profile',
+        status: activation.status,
+        confirmedAt: now,
+        confirmedById: input.actorId,
+        startedAt: shouldStart ? now : null,
+        version: { increment: 1 },
+        steps: { create: productTimeRouteSteps(profile, shouldStart ? now : undefined) },
+        activities: {
+          create: {
+            action: 'sync_product_time_route',
+            content: `产品工序与工时 V${profile.version} 已发布，自动替换旧草稿并确认`,
+            actorId: input.actorId,
+            detail: { productTimeProfileId: profile.id, productTimeProfileVersion: profile.version },
+          },
+        },
+      },
+    });
+    if (shouldStart) {
+      const firstStage = processStageForGroup(normalizeProcessStageGroup(firstDefinition.stageGroup) || 'frontend');
+      await tx.workOrder.update({
+        where: { id: route.workOrderId },
+        data: {
+          stage: firstStage,
+          status: legacyStatusForStage(firstStage),
+          latestProgressRemark: `当前工序：${firstDefinition.name}`,
+        },
+      });
+      started += 1;
+    }
+    await tx.operationLog.create({
+      data: {
+        userId: input.actorId,
+        action: 'sync_product_time_route',
+        targetType: 'work_order_process_route',
+        targetId: route.id,
+        detail: {
+          workOrderId: route.workOrderId,
+          productTimeProfileId: profile.id,
+          productTimeProfileVersion: profile.version,
+          automaticallyStarted: shouldStart,
+        },
+      },
+    });
+    updated += 1;
+  }
+  return { updated, started, skipped };
 }
 
 export function processTemplateStepInput(step: ProcessTemplateStepDTO): ValidatedProcessStep {

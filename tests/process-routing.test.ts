@@ -1,10 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  initialProcessRouteStatus,
   normalizeProcessStageGroup,
+  productTimeRouteActivation,
   processStageForGroup,
   validateProcessSteps,
 } from '../lib/process-routing';
+
+test('已发布产品工时自动生成已确认路线，旧模板仅作为兼容草稿', () => {
+  assert.equal(initialProcessRouteStatus('product_time_profile'), 'confirmed');
+  assert.equal(initialProcessRouteStatus('process_template'), 'draft');
+});
+
+test('产品工时只接管尚未开始的路线，并在图纸已发后自动启动首工序', () => {
+  assert.deepEqual(productTimeRouteActivation('not_issued'), { status: 'confirmed', shouldStart: false });
+  assert.deepEqual(productTimeRouteActivation('frontend'), { status: 'in_progress', shouldStart: true });
+  assert.equal(productTimeRouteActivation('backend'), null);
+  assert.equal(productTimeRouteActivation('completed'), null);
+});
 
 test('标准全工序路线可以通过校验并保持顺序', () => {
   const names = [

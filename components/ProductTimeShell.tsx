@@ -395,9 +395,15 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ expectedRevision: activeDraft.revision }),
       });
-      const data = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; profile?: ProductTimeProfileDTO };
+      const data = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        error?: string;
+        profile?: ProductTimeProfileDTO;
+        routeSync?: { updated: number; started: number; skipped: number };
+      };
       if (!response.ok || !data.profile) throw new Error(data.error || '产品工时发布失败');
-      setMessage(`产品工时 V${data.profile.version} 已发布`);
+      const synced = data.routeSync?.updated || 0;
+      setMessage(`产品工序与工时 V${data.profile.version} 已发布${synced ? `，已自动同步 ${synced} 张待执行工单` : ''}`);
       await load(selectedItem.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '产品工时发布失败');
@@ -502,7 +508,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/product-times"
-        subtitle="按产品、按工序维护单位标准时间"
+        subtitle="按产品维护执行工序、顺序与单位标准时间"
         menuItems={[{ label: '返回图纸资料库', href: '/drawing-library' }, { label: '退出登录', onSelect: logout }]}
       />
 

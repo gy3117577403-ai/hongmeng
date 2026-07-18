@@ -1,10 +1,23 @@
 import { redirect } from 'next/navigation';
-import ProcessManagementShell from '@/components/ProcessManagementShell';
 import { currentUser } from '@/lib/auth';
-import './process-workbench.css';
+import { prisma } from '@/lib/prisma';
 
-export default async function ProcessManagementPage() {
+export default async function RetiredProcessManagementPage({
+  searchParams,
+}: {
+  searchParams: { workOrderId?: string };
+}) {
   const user = await currentUser();
   if (!user) redirect('/login?next=%2Fworkspace%2Fprocesses');
-  return <ProcessManagementShell user={user} />;
+  const workOrderId = String(searchParams.workOrderId || '').trim();
+  if (workOrderId) {
+    const workOrder = await prisma.workOrder.findUnique({
+      where: { id: workOrderId },
+      select: { drawingLibraryItemId: true },
+    });
+    if (workOrder?.drawingLibraryItemId) {
+      redirect(`/workspace/product-times?itemId=${encodeURIComponent(workOrder.drawingLibraryItemId)}`);
+    }
+  }
+  redirect('/workspace/product-times');
 }

@@ -52,7 +52,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({
         ok: false,
         error: processRoute.status === 'draft'
-          ? '请先到工艺管理确认工艺路线'
+          ? '请先维护并发布当前产品的工序与工时'
           : '该工单已启用完整工艺路线，请使用当前工序按钮推进',
       }, { status: 409 });
     }

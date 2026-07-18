@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: '下周计划已被启用，请刷新页面确认当前周' }, { status: 409 });
     }
     if (e instanceof Error && (e.message === 'PROCESS_TEMPLATE_NOT_FOUND' || e.message === 'PROCESS_TEMPLATE_EMPTY')) {
-      return NextResponse.json({ ok: false, error: '默认工艺模板不可用，请先到工艺管理检查模板' }, { status: 409 });
+      return NextResponse.json({ ok: false, error: '缺少可用的产品工序，请先维护并发布产品工序与工时' }, { status: 409 });
     }
     console.error(e);
     return NextResponse.json({ ok: false, error: '启用下周失败' }, { status: 500 });

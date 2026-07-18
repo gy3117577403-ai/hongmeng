@@ -469,7 +469,7 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
     }
     const currentIndex = route.steps.findIndex(step => step.status === 'current');
     if (currentIndex < 0) {
-      throw new ProcessRouteServiceError('当前工序状态异常，请到工艺管理检查路线', 409, 'PROCESS_CURRENT_STEP_MISSING');
+      throw new ProcessRouteServiceError('当前执行工序状态异常，请检查并重新发布该产品工序与工时', 409, 'PROCESS_CURRENT_STEP_MISSING');
     }
 
     const current = route.steps[currentIndex];

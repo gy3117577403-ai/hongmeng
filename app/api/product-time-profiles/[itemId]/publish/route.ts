@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { productTimeProfileInclude, serializeProductTimeProfile } from '@/lib/product-time';
+import { syncDraftRoutesFromPublishedProductTime } from '@/lib/process-routing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
     if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
       return NextResponse.json({ ok: false, error: '请先保存当前产品工时草稿' }, { status: 400 });
     }
-    const profileId = await prisma.$transaction(async tx => {
+    const result = await prisma.$transaction(async tx => {
       const draft = await tx.productTimeProfile.findFirst({
         where: { drawingLibraryItemId: params.itemId, status: 'draft' },
         include: { entries: { select: { id: true } } },
@@ -47,13 +48,21 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
           detail: { drawingLibraryItemId: params.itemId, version: draft.version, processCount: draft.entries.length },
         },
       });
-      return draft.id;
+      const routeSync = await syncDraftRoutesFromPublishedProductTime(tx, {
+        profileId: draft.id,
+        actorId: user.id,
+      });
+      return { profileId: draft.id, routeSync };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     const profile = await prisma.productTimeProfile.findUnique({
-      where: { id: profileId },
+      where: { id: result.profileId },
       include: productTimeProfileInclude,
     });
-    return NextResponse.json({ ok: true, profile: profile ? serializeProductTimeProfile(profile) : null });
+    return NextResponse.json({
+      ok: true,
+      profile: profile ? serializeProductTimeProfile(profile) : null,
+      routeSync: result.routeSync,
+    });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof Error) {
