@@ -432,6 +432,53 @@ export type ProcessStageGroup = 'frontend' | 'backend' | 'finish';
 export type ProcessRouteStatus = 'draft' | 'confirmed' | 'in_progress' | 'completed';
 export type ProcessStepStatus = 'pending' | 'current' | 'completed' | 'skipped';
 export type ProcessTimeBasis = 'per_unit' | 'per_batch';
+export type ProductTimeProfileStatus = 'draft' | 'published' | 'archived';
+
+export type ProductProcessTimeEntryDTO = {
+  id: string;
+  processDefinitionId: string;
+  processCode: string;
+  processName: string;
+  stageGroup: ProcessStageGroup;
+  position: number;
+  unitMilliseconds: number;
+  actionMilliseconds?: number | null;
+  occurrences: number;
+  setupMilliseconds: number;
+  unitLabel: string;
+  countsForEfficiency: boolean;
+  remark?: string | null;
+};
+
+export type ProductTimeProfileDTO = {
+  id: string;
+  drawingLibraryItemId: string;
+  version: number;
+  revision: number;
+  status: ProductTimeProfileStatus;
+  sourceType: string;
+  remark?: string | null;
+  totalMillisecondsPerUnit: number;
+  processCount: number;
+  publishedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: IssueUserDTO | null;
+  updatedBy?: IssueUserDTO | null;
+  publishedBy?: IssueUserDTO | null;
+  entries: ProductProcessTimeEntryDTO[];
+};
+
+export type ProductTimeListItemDTO = {
+  id: string;
+  customerName: string;
+  customerCode?: string | null;
+  specification: string;
+  productName?: string | null;
+  updatedAt: string;
+  draft?: ProductTimeProfileDTO | null;
+  published?: ProductTimeProfileDTO | null;
+};
 
 export type ProcessTimeStandardDTO = {
   id: string;
@@ -499,6 +546,10 @@ export type WorkOrderProcessStepDTO = ProcessTemplateStepDTO & {
   setupMilliseconds?: number;
   countsForEfficiency?: boolean;
   executionCount?: number;
+  productTimeProfileId?: string | null;
+  productTimeEntryId?: string | null;
+  productTimeProfileVersion?: number | null;
+  standardSource?: string;
 };
 
 export type ProcessRouteActivityDTO = {
@@ -532,6 +583,9 @@ export type WorkOrderProcessRouteDTO = {
   nextStep?: WorkOrderProcessStepDTO | null;
   steps: WorkOrderProcessStepDTO[];
   activities?: ProcessRouteActivityDTO[];
+  productTimeProfileId?: string | null;
+  productTimeProfileVersion?: number | null;
+  routeSource?: string;
 };
 
 export type ProcessRouteWorkOrderDTO = {
@@ -714,6 +768,8 @@ export type ProcessExecutionContextDTO = {
     setupMilliseconds: number;
     unitsPerProduct: number;
     countsForEfficiency: boolean;
+    source?: string;
+    productTimeProfileVersion?: number | null;
   } | null;
   employees: EmployeeDTO[];
 };
@@ -745,6 +801,8 @@ export type ProcessExecutionDTO = {
   attainmentBasisPoints: number;
   countsForEfficiency: boolean;
   source: string;
+  standardSource?: string;
+  productTimeProfileVersion?: number | null;
   remark?: string | null;
   createdAt: string;
 };

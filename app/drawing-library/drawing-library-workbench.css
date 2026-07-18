@@ -602,6 +602,17 @@
   font-weight: 750;
 }
 
+.hm-drawing-workbench .drawing-category-rail button.drawing-product-time-link {
+  margin-top: 8px;
+  border-top: 1px solid #f0d6c2;
+  background: #fff7f0;
+  color: #c64f00;
+}
+
+.hm-drawing-workbench .drawing-category-rail button.drawing-product-time-link:hover {
+  background: #ffecdc;
+}
+
 .hm-drawing-workbench .drawing-preview {
   min-width: 0;
   min-height: 0;

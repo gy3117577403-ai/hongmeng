@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpenText, FileImage, MoreHorizontal, Plus, Search, Upload } from 'lucide-react';
+import { BookOpenText, Clock3, FileImage, MoreHorizontal, Plus, Search, Upload } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
@@ -581,6 +581,7 @@ export function DrawingLibraryShell({
                   </p>
                 </div>
                 <div className="drawing-head-actions">
+                  <button className="hm-workbench-button" type="button" onClick={() => { location.href = `/workspace/product-times?itemId=${encodeURIComponent(selectedItem.id)}`; }}><Clock3 size={15} aria-hidden="true" />产品工时</button>
                   <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}>文件 {activeFiles.length}</button>
                   <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>
                   <button className="hm-workbench-button" type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>
@@ -600,6 +601,11 @@ export function DrawingLibraryShell({
                       </button>
                     );
                   })}
+                  <button className="drawing-product-time-link" type="button" title="维护当前产品的单位工时表" onClick={() => { location.href = `/workspace/product-times?itemId=${encodeURIComponent(selectedItem.id)}`; }}>
+                    <Clock3 size={14} aria-hidden="true" />
+                    <strong>工时表</strong>
+                    <em>进入</em>
+                  </button>
                 </nav>
 
                 <div className="drawing-preview">

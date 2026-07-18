@@ -7,6 +7,7 @@ import {
   employeeReportRange,
   serializeEmployee,
 } from '../lib/process-time';
+import { productTimeTotalMilliseconds, validateProductTimeEntries } from '../lib/product-time';
 
 test('per-unit standard labor includes setup time and per-product process count', () => {
   const result = calculateStandardLaborMilliseconds({
@@ -73,4 +74,36 @@ test('employee serialization keeps position and team as separate profile fields'
 
   assert.equal(employee.position, '压接操作员');
   assert.equal(employee.team, '前端一组');
+});
+
+test('product time accepts direct per-product seconds and keeps blank processes absent', () => {
+  const result = validateProductTimeEntries([
+    { processDefinitionId: 'cutting', unitSeconds: 6, occurrences: 1 },
+    { processDefinitionId: 'crimping', unitSeconds: 32, actionSeconds: 4, occurrences: 8 },
+  ]);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.entries.length, 2);
+  assert.equal(result.entries[1].unitMilliseconds, 32_000);
+  assert.equal(result.entries[1].actionMilliseconds, 4_000);
+  assert.equal(result.entries[1].occurrences, 8);
+  assert.equal(productTimeTotalMilliseconds(result.entries), 38_000);
+});
+
+test('product time can derive per-product seconds from action time and occurrences', () => {
+  const result = validateProductTimeEntries([
+    { processDefinitionId: 'terminal-insertion', actionSeconds: 6.75, occurrences: 8 },
+  ]);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.entries[0].unitMilliseconds, 54_000);
+});
+
+test('product time rejects zero, duplicate processes, and ambiguous empty rows', () => {
+  assert.equal(validateProductTimeEntries([{ processDefinitionId: 'cutting', unitSeconds: 0 }]).ok, false);
+  assert.equal(validateProductTimeEntries([{ processDefinitionId: 'cutting' }]).ok, false);
+  assert.equal(validateProductTimeEntries([
+    { processDefinitionId: 'cutting', unitSeconds: 6 },
+    { processDefinitionId: 'cutting', unitSeconds: 7 },
+  ]).ok, false);
 });

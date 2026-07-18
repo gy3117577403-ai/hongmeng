@@ -740,6 +740,32 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
     return Boolean(saved);
   }
 
+  async function applyProductTime(): Promise<void> {
+    if (!routeDetail) return;
+    if (draftDirty && !window.confirm('应用产品工时会替换当前未保存的路线草稿，确定继续吗？')) return;
+    setSaving(true);
+    setFormError('');
+    try {
+      const response = await fetch(`/api/process-management/routes/${routeDetail.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'apply_product_time', version: routeDetail.version }),
+      });
+      const body = await response.json().catch(() => ({})) as { route?: WorkOrderProcessRouteDTO; error?: string };
+      if (!response.ok || !body.route) throw new Error(body.error || '应用产品工时失败');
+      setRouteDetail(body.route);
+      setDraftSteps(editableSteps(body.route.steps));
+      setDraftHistory([]);
+      setInsertAfterClientId('');
+      setRefreshToken(value => value + 1);
+      setToast(`已应用产品工时 V${body.route.productTimeProfileVersion || 1}`);
+    } catch (reason) {
+      setFormError(reason instanceof Error ? reason.message : '应用产品工时失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function savePendingAndSwitch(): Promise<void> {
     if (!pendingOrder) return;
     setSaving(true);
@@ -946,7 +972,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
           <div className="process-toolbar-actions" aria-label="工艺管理操作">
             {productionReturnHref && <a className="hm-workbench-button" href={productionReturnHref} title="返回生产执行"><ArrowLeft size={15} aria-hidden="true" /><span>返回生产</span></a>}
             <a className="hm-workbench-button" href="/weekly-plan-center" title="打开周计划"><CalendarDays size={15} aria-hidden="true" /><span>周计划</span></a>
-            <a className="hm-workbench-button" href="/workspace/time-standards" title="打开标准工时"><Clock3 size={15} aria-hidden="true" /><span>标准工时</span></a>
+            <a className="hm-workbench-button" href="/workspace/product-times" title="打开产品工时"><Clock3 size={15} aria-hidden="true" /><span>产品工时</span></a>
             <button className="hm-workbench-button" type="button" title="管理工艺模板" ref={drawerTriggerRef} onClick={event => openTemplateDrawer(event.currentTarget)}><Settings2 size={15} aria-hidden="true" /><span>模板</span></button>
             <button className="hm-workbench-button" type="button" title="刷新工艺数据" aria-label="刷新工艺数据" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" /></button>
           </div>
@@ -991,7 +1017,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
               </div>}
               {!routeLoading && routeDetail && <div className="process-route-body">
                 <div className="process-route-overview">
-                  <div><span>来源模板</span><strong>{routeDetail.templateName} V{routeDetail.templateVersion}</strong></div>
+                  <div><span>{routeDetail.routeSource === 'product_time_profile' ? '产品工时来源' : '来源模板'}</span><strong>{routeDetail.templateName} V{routeDetail.productTimeProfileVersion || routeDetail.templateVersion}</strong></div>
                   <div><span>工序进度</span><strong>{routeDetail.completedStepCount} / {routeDetail.stepCount}</strong></div>
                   <div><span>当前工序</span><strong>{routeDetail.currentStep?.processName || (routeDetail.status === 'confirmed' ? '等待图纸下发' : '-')}</strong></div>
                   <div><span>路线版本</span><strong>R{routeDetail.version}</strong></div>
@@ -1024,9 +1050,9 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
                       <article className={`process-step-row ${step.status} ${step.stageGroup}`} key={step.id}>
                         <div className="process-step-index"><b>{String(index + 1).padStart(2, '0')}</b></div>
                         <div className="process-step-name"><strong>{step.processName}</strong><span>{groupText[step.stageGroup]}</span></div>
-                        <span className="process-step-standard" title={step.standardMillisecondsPerUnit ? `标准版本 V${step.standardVersion || 1}` : '尚未定标'}>
+                        <span className="process-step-standard" title={step.standardMillisecondsPerUnit ? (step.standardSource === 'product_profile' ? `产品工时 V${step.productTimeProfileVersion || 1}` : `旧工序基准 V${step.standardVersion || 1}`) : '尚未定标'}>
                           {step.standardMillisecondsPerUnit
-                            ? `${step.timeBasis === 'per_batch' ? '每批' : `每${step.unitLabel || '件'}`} ${step.standardMillisecondsPerUnit / 1000}秒 × ${step.unitsPerProduct || 1}`
+                            ? `${step.standardSource === 'product_profile' ? '产品' : '基准'} · ${step.timeBasis === 'per_batch' ? '每批' : `每${step.unitLabel || '件'}`} ${step.standardMillisecondsPerUnit / 1000}秒${(step.unitsPerProduct || 1) > 1 ? ` × ${step.unitsPerProduct}` : ''}`
                             : '待定标'}
                         </span>
                         <span className={`process-step-status ${step.status}`}>{step.status === 'current' ? '当前' : step.status === 'completed' ? '完成' : step.status === 'skipped' ? '跳过' : '待开始'}</span>
@@ -1045,6 +1071,7 @@ export default function ProcessManagementShell({ user }: { user: CurrentUserDTO 
                   {editable ? <>
                     <span className={draftDirty ? 'process-draft-state dirty' : 'process-draft-state'}>{draftDirty ? draftChangeSummary : '路线草稿已保存'}{insertAfterClientId ? ' · 新工序将插入所选项之后' : ''}</span>
                     <button type="button" disabled={saving || !draftHistory.length} onClick={undoDraft}><Undo2 size={16} aria-hidden="true" />撤销</button>
+                    <button type="button" disabled={saving} onClick={() => { void applyProductTime(); }} title="使用当前产品已发布的工时版本替换草稿路线"><Clock3 size={16} aria-hidden="true" />应用产品工时</button>
                     <button type="button" disabled={saving} onClick={event => openLibrary(event.currentTarget)}><PackagePlus size={16} aria-hidden="true" />添加工序</button>
                     <button type="button" disabled={saving || !draftDirty} onClick={() => { void saveDraft(); }}><Save size={16} aria-hidden="true" />保存草稿</button>
                     <button className="primary-button" type="button" disabled={saving || draftSteps.length === 0} onClick={() => { void confirmRoute(); }}><ClipboardCheck size={16} aria-hidden="true" />确认路线</button>

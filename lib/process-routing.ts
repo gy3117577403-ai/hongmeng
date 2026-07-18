@@ -7,6 +7,7 @@ import type {
   ProcessTemplateStepDTO,
   WorkOrderProcessRouteDTO,
 } from '@/types';
+import { legacyProcessStandardSnapshot, productTimeProfileInclude, productTimeStandardSnapshot } from '@/lib/product-time';
 
 export const PROCESS_STAGE_GROUPS: ProcessStageGroup[] = ['frontend', 'backend', 'finish'];
 export const PROCESS_ROUTE_STATUSES: ProcessRouteStatus[] = ['draft', 'confirmed', 'in_progress', 'completed'];
@@ -223,6 +224,10 @@ export function serializeProcessRoute(
     setupMilliseconds: step.setupMilliseconds,
     countsForEfficiency: step.countsForEfficiency,
     executionCount: '_count' in step ? step._count.executions : 0,
+    productTimeProfileId: step.productTimeProfileId,
+    productTimeEntryId: step.productTimeEntryId,
+    productTimeProfileVersion: step.productTimeProfileVersion,
+    standardSource: step.standardSource,
   }));
   const completedStepCount = steps.filter(step => step.status === 'completed' || step.status === 'skipped').length;
   const currentIndex = steps.findIndex(step => step.status === 'current');
@@ -262,6 +267,9 @@ export function serializeProcessRoute(
           createdAt: activity.createdAt.toISOString(),
         }))
       : undefined,
+    productTimeProfileId: route.productTimeProfileId,
+    productTimeProfileVersion: route.productTimeProfileVersion,
+    routeSource: route.routeSource,
   };
 }
 
@@ -289,15 +297,28 @@ export async function createWorkOrderProcessRoute(
   });
   if (existing) return { created: false, routeId: existing.id };
 
-  const template = input.templateId
+  const workOrder = await tx.workOrder.findUnique({
+    where: { id: input.workOrderId },
+    select: { id: true, drawingLibraryItemId: true, specification: true },
+  });
+  if (!workOrder) throw new Error('WORK_ORDER_NOT_FOUND');
+  const productProfile = workOrder.drawingLibraryItemId
+    ? await tx.productTimeProfile.findFirst({
+        where: { drawingLibraryItemId: workOrder.drawingLibraryItemId, status: 'published' },
+        include: productTimeProfileInclude,
+        orderBy: { version: 'desc' },
+      })
+    : null;
+
+  const template = productProfile ? null : input.templateId
     ? await tx.processTemplate.findFirst({
         where: { id: input.templateId, isActive: true },
         include: processTemplateInclude,
       })
     : await findDefaultProcessTemplate(tx);
-  if (!template) throw new Error('PROCESS_TEMPLATE_NOT_FOUND');
-  if (!template.steps.length) throw new Error('PROCESS_TEMPLATE_EMPTY');
-  const definitionIds = template.steps
+  if (!productProfile && !template) throw new Error('PROCESS_TEMPLATE_NOT_FOUND');
+  if (!productProfile && !template?.steps.length) throw new Error('PROCESS_TEMPLATE_EMPTY');
+  const definitionIds = (template?.steps || [])
     .map(step => step.processDefinitionId)
     .filter((id): id is string => Boolean(id));
   const currentStandards = definitionIds.length
@@ -310,12 +331,23 @@ export async function createWorkOrderProcessRoute(
   const route = await tx.workOrderProcessRoute.create({
     data: {
       workOrderId: input.workOrderId,
-      templateId: template.id,
-      templateName: template.name,
-      templateVersion: template.version,
+      templateId: template?.id || null,
+      templateName: productProfile ? `${workOrder.specification || '当前产品'} 产品工时` : template!.name,
+      templateVersion: productProfile?.version || template!.version,
+      productTimeProfileId: productProfile?.id || null,
+      productTimeProfileVersion: productProfile?.version || null,
+      routeSource: productProfile ? 'product_time_profile' : 'process_template',
       status: 'draft',
       steps: {
-        create: template.steps.map(step => {
+        create: productProfile ? productProfile.entries.map(entry => ({
+          processDefinitionId: entry.processDefinitionId,
+          processCode: entry.processDefinition.code,
+          processName: entry.processDefinition.name,
+          stageGroup: entry.processDefinition.stageGroup,
+          position: entry.position,
+          ...productTimeStandardSnapshot(productProfile, entry),
+          status: 'pending',
+        })) : template!.steps.map(step => {
           const standard = step.processDefinitionId
             ? standardsByDefinition.get(step.processDefinitionId)
             : null;
@@ -325,14 +357,20 @@ export async function createWorkOrderProcessRoute(
             processName: step.processName,
             stageGroup: step.stageGroup,
             position: step.position,
-            unitsPerProduct: step.unitsPerProduct,
-            standardTimeId: standard?.id || null,
-            standardVersion: standard?.version || null,
-            timeBasis: standard?.timeBasis || null,
-            unitLabel: standard?.unitLabel || null,
-            standardMillisecondsPerUnit: standard?.standardMillisecondsPerUnit || null,
-            setupMilliseconds: standard?.setupMilliseconds || 0,
-            countsForEfficiency: standard?.countsForEfficiency ?? true,
+            ...(standard ? legacyProcessStandardSnapshot(standard, step.unitsPerProduct) : {
+              unitsPerProduct: step.unitsPerProduct,
+              standardTimeId: null,
+              standardVersion: null,
+              productTimeProfileId: null,
+              productTimeEntryId: null,
+              productTimeProfileVersion: null,
+              standardSource: 'missing',
+              timeBasis: null,
+              unitLabel: null,
+              standardMillisecondsPerUnit: null,
+              setupMilliseconds: 0,
+              countsForEfficiency: true,
+            }),
             status: 'pending',
           };
         }),
@@ -340,9 +378,13 @@ export async function createWorkOrderProcessRoute(
       activities: {
         create: {
           action: 'create_process_route',
-          content: `应用 ${template.name} V${template.version}，等待工艺确认`,
+          content: productProfile
+            ? `应用产品工时 V${productProfile.version}，共 ${productProfile.entries.length} 道工序，等待工艺确认`
+            : `应用 ${template!.name} V${template!.version}，等待工艺确认`,
           actorId: input.actorId || null,
-          detail: { templateId: template.id, templateVersion: template.version },
+          detail: productProfile
+            ? { productTimeProfileId: productProfile.id, productTimeProfileVersion: productProfile.version }
+            : { templateId: template!.id, templateVersion: template!.version },
         },
       },
     },
@@ -356,8 +398,10 @@ export async function createWorkOrderProcessRoute(
       targetId: route.id,
       detail: {
         workOrderId: input.workOrderId,
-        templateId: template.id,
-        templateVersion: template.version,
+        templateId: template?.id || null,
+        templateVersion: template?.version || null,
+        productTimeProfileId: productProfile?.id || null,
+        productTimeProfileVersion: productProfile?.version || null,
       },
     },
   });

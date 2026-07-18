@@ -139,6 +139,8 @@ export async function GET(req: NextRequest) {
         attainmentBasisPoints: execution.attainmentBasisPoints,
         countsForEfficiency: execution.countsForEfficiency,
         source: execution.source,
+        standardSource: execution.standardSource,
+        productTimeProfileVersion: execution.productTimeProfileVersion,
         remark: execution.remark,
         createdAt: execution.createdAt.toISOString(),
       };

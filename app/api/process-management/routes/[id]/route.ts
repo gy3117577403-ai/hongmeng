@@ -47,7 +47,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           userId: user.id,
           actor,
         }
-      : action === 'confirm'
+      : action === 'confirm' || action === 'apply_product_time'
         ? {
             routeId: params.id,
             action,

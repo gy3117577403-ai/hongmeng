@@ -31,6 +31,9 @@ model User {
   warehouseActivities            WarehouseMaterialActivity[] @relation("WarehouseActivityActor")
   createdProcessTemplates        ProcessTemplate[]           @relation("ProcessTemplateCreatedBy")
   createdProcessTimeStandards    ProcessTimeStandard[]       @relation("ProcessTimeStandardCreatedBy")
+  createdProductTimeProfiles     ProductTimeProfile[]        @relation("ProductTimeProfileCreatedBy")
+  updatedProductTimeProfiles     ProductTimeProfile[]        @relation("ProductTimeProfileUpdatedBy")
+  publishedProductTimeProfiles   ProductTimeProfile[]        @relation("ProductTimeProfilePublishedBy")
   confirmedProcessRoutes         WorkOrderProcessRoute[]     @relation("ProcessRouteConfirmedBy")
   completedProcessSteps          WorkOrderProcessStep[]      @relation("ProcessStepCompletedBy")
   recordedProcessExecutions      ProcessExecution[]          @relation("ProcessExecutionRecordedBy")
@@ -134,17 +137,18 @@ model WorkOrder {
 }
 
 model ProcessDefinition {
-  id            String                 @id @default(uuid())
-  code          String                 @unique
-  name          String
-  stageGroup    String                 @map("stage_group")
-  isActive      Boolean                @default(true) @map("is_active")
-  sortOrder     Int                    @default(0) @map("sort_order")
-  createdAt     DateTime               @default(now()) @map("created_at")
-  updatedAt     DateTime               @updatedAt @map("updated_at")
-  templateSteps ProcessTemplateStep[]
-  routeSteps    WorkOrderProcessStep[]
-  timeStandards ProcessTimeStandard[]
+  id                 String                    @id @default(uuid())
+  code               String                    @unique
+  name               String
+  stageGroup         String                    @map("stage_group")
+  isActive           Boolean                   @default(true) @map("is_active")
+  sortOrder          Int                       @default(0) @map("sort_order")
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  updatedAt          DateTime                  @updatedAt @map("updated_at")
+  templateSteps      ProcessTemplateStep[]
+  routeSteps         WorkOrderProcessStep[]
+  timeStandards      ProcessTimeStandard[]
+  productTimeEntries ProductProcessTimeEntry[]
 
   @@index([isActive, sortOrder])
   @@index([stageGroup])
@@ -214,58 +218,69 @@ model ProcessTemplateStep {
 }
 
 model WorkOrderProcessRoute {
-  id              String                 @id @default(uuid())
-  workOrderId     String                 @unique @map("work_order_id")
-  templateId      String?                @map("template_id")
-  templateName    String                 @map("template_name")
-  templateVersion Int                    @map("template_version")
-  status          String                 @default("draft")
-  version         Int                    @default(0)
-  confirmedAt     DateTime?              @map("confirmed_at")
-  confirmedById   String?                @map("confirmed_by_id")
-  startedAt       DateTime?              @map("started_at")
-  completedAt     DateTime?              @map("completed_at")
-  createdAt       DateTime               @default(now()) @map("created_at")
-  updatedAt       DateTime               @updatedAt @map("updated_at")
-  workOrder       WorkOrder              @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
-  template        ProcessTemplate?       @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  confirmedBy     User?                  @relation("ProcessRouteConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
-  steps           WorkOrderProcessStep[]
-  activities      ProcessRouteActivity[]
+  id                        String                 @id @default(uuid())
+  workOrderId               String                 @unique @map("work_order_id")
+  templateId                String?                @map("template_id")
+  templateName              String                 @map("template_name")
+  templateVersion           Int                    @map("template_version")
+  status                    String                 @default("draft")
+  version                   Int                    @default(0)
+  confirmedAt               DateTime?              @map("confirmed_at")
+  confirmedById             String?                @map("confirmed_by_id")
+  startedAt                 DateTime?              @map("started_at")
+  completedAt               DateTime?              @map("completed_at")
+  productTimeProfileId      String?                @map("product_time_profile_id")
+  productTimeProfileVersion Int?                   @map("product_time_profile_version")
+  routeSource               String                 @default("process_template") @map("route_source")
+  createdAt                 DateTime               @default(now()) @map("created_at")
+  updatedAt                 DateTime               @updatedAt @map("updated_at")
+  workOrder                 WorkOrder              @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  template                  ProcessTemplate?       @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  productTimeProfile        ProductTimeProfile?    @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
+  confirmedBy               User?                  @relation("ProcessRouteConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  steps                     WorkOrderProcessStep[]
+  activities                ProcessRouteActivity[]
 
   @@index([status])
   @@index([templateId])
+  @@index([productTimeProfileId])
   @@index([updatedAt])
   @@map("work_order_process_routes")
 }
 
 model WorkOrderProcessStep {
-  id                          String                 @id @default(uuid())
-  routeId                     String                 @map("route_id")
-  processDefinitionId         String?                @map("process_definition_id")
-  processCode                 String                 @map("process_code")
-  processName                 String                 @map("process_name")
-  stageGroup                  String                 @map("stage_group")
+  id                          String                   @id @default(uuid())
+  routeId                     String                   @map("route_id")
+  processDefinitionId         String?                  @map("process_definition_id")
+  processCode                 String                   @map("process_code")
+  processName                 String                   @map("process_name")
+  stageGroup                  String                   @map("stage_group")
   position                    Int
-  standardTimeId              String?                @map("standard_time_id")
-  standardVersion             Int?                   @map("standard_version")
-  timeBasis                   String?                @map("time_basis")
-  unitLabel                   String?                @map("unit_label")
-  standardMillisecondsPerUnit Int?                   @map("standard_milliseconds_per_unit")
-  setupMilliseconds           Int                    @default(0) @map("setup_milliseconds")
-  unitsPerProduct             Int                    @default(1) @map("units_per_product")
-  countsForEfficiency         Boolean                @default(true) @map("counts_for_efficiency")
-  status                      String                 @default("pending")
-  startedAt                   DateTime?              @map("started_at")
-  completedAt                 DateTime?              @map("completed_at")
-  completedById               String?                @map("completed_by_id")
+  standardTimeId              String?                  @map("standard_time_id")
+  standardVersion             Int?                     @map("standard_version")
+  productTimeProfileId        String?                  @map("product_time_profile_id")
+  productTimeEntryId          String?                  @map("product_time_entry_id")
+  productTimeProfileVersion   Int?                     @map("product_time_profile_version")
+  standardSource              String                   @default("legacy") @map("standard_source")
+  timeBasis                   String?                  @map("time_basis")
+  unitLabel                   String?                  @map("unit_label")
+  standardMillisecondsPerUnit Int?                     @map("standard_milliseconds_per_unit")
+  setupMilliseconds           Int                      @default(0) @map("setup_milliseconds")
+  unitsPerProduct             Int                      @default(1) @map("units_per_product")
+  countsForEfficiency         Boolean                  @default(true) @map("counts_for_efficiency")
+  status                      String                   @default("pending")
+  startedAt                   DateTime?                @map("started_at")
+  completedAt                 DateTime?                @map("completed_at")
+  completedById               String?                  @map("completed_by_id")
   remark                      String?
-  createdAt                   DateTime               @default(now()) @map("created_at")
-  updatedAt                   DateTime               @updatedAt @map("updated_at")
-  route                       WorkOrderProcessRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  processDefinition           ProcessDefinition?     @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
-  standardTime                ProcessTimeStandard?   @relation(fields: [standardTimeId], references: [id], onDelete: SetNull)
-  completedBy                 User?                  @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  createdAt                   DateTime                 @default(now()) @map("created_at")
+  updatedAt                   DateTime                 @updatedAt @map("updated_at")
+  route                       WorkOrderProcessRoute    @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  processDefinition           ProcessDefinition?       @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
+  standardTime                ProcessTimeStandard?     @relation(fields: [standardTimeId], references: [id], onDelete: SetNull)
+  productTimeProfile          ProductTimeProfile?      @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
+  productTimeEntry            ProductProcessTimeEntry? @relation(fields: [productTimeEntryId], references: [id], onDelete: SetNull)
+  completedBy                 User?                    @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
   activities                  ProcessRouteActivity[]
   executions                  ProcessExecution[]
   abnormalTimeEvents          AbnormalTimeEvent[]
@@ -274,6 +289,8 @@ model WorkOrderProcessStep {
   @@index([routeId, status])
   @@index([processDefinitionId])
   @@index([standardTimeId])
+  @@index([productTimeProfileId])
+  @@index([productTimeEntryId])
   @@index([completedById])
   @@map("work_order_process_steps")
 }
@@ -321,6 +338,8 @@ model ProcessExecution {
   actualLaborMilliseconds     Int                  @map("actual_labor_milliseconds")
   attainmentBasisPoints       Int                  @map("attainment_basis_points")
   countsForEfficiency         Boolean              @default(true) @map("counts_for_efficiency")
+  standardSource              String               @default("legacy") @map("standard_source")
+  productTimeProfileVersion   Int?                 @map("product_time_profile_version")
   source                      String               @default("manual")
   remark                      String?
   recordedById                String?              @map("recorded_by_id")
@@ -559,21 +578,22 @@ model ResourceFile {
 }
 
 model DrawingLibraryItem {
-  id              String               @id @default(uuid())
-  customerName    String               @map("customer_name")
-  customerCode    String?              @map("customer_code")
-  productName     String?              @map("product_name")
-  specification   String
-  libraryKey      String               @unique @map("library_key")
-  remark          String?
-  deletedAt       DateTime?            @map("deleted_at")
-  createdAt       DateTime             @default(now()) @map("created_at")
-  updatedAt       DateTime             @updatedAt @map("updated_at")
-  lastWorkOrderId String?              @map("last_work_order_id")
-  lastImportedAt  DateTime?            @map("last_imported_at")
-  files           DrawingLibraryFile[]
-  workOrders      WorkOrder[]          @relation("DrawingLibraryWorkOrders")
-  lastWorkOrder   WorkOrder?           @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
+  id                  String               @id @default(uuid())
+  customerName        String               @map("customer_name")
+  customerCode        String?              @map("customer_code")
+  productName         String?              @map("product_name")
+  specification       String
+  libraryKey          String               @unique @map("library_key")
+  remark              String?
+  deletedAt           DateTime?            @map("deleted_at")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+  lastWorkOrderId     String?              @map("last_work_order_id")
+  lastImportedAt      DateTime?            @map("last_imported_at")
+  files               DrawingLibraryFile[]
+  workOrders          WorkOrder[]          @relation("DrawingLibraryWorkOrders")
+  lastWorkOrder       WorkOrder?           @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
+  productTimeProfiles ProductTimeProfile[]
 
   @@index([customerName])
   @@index([customerCode])
@@ -583,6 +603,59 @@ model DrawingLibraryItem {
   @@index([updatedAt])
   @@index([lastWorkOrderId])
   @@map("drawing_library_items")
+}
+
+model ProductTimeProfile {
+  id                   String                    @id @default(uuid())
+  drawingLibraryItemId String                    @map("drawing_library_item_id")
+  version              Int
+  revision             Int                       @default(0)
+  status               String                    @default("draft")
+  sourceType           String                    @default("manual") @map("source_type")
+  remark               String?
+  publishedAt          DateTime?                 @map("published_at")
+  createdById          String?                   @map("created_by_id")
+  updatedById          String?                   @map("updated_by_id")
+  publishedById        String?                   @map("published_by_id")
+  createdAt            DateTime                  @default(now()) @map("created_at")
+  updatedAt            DateTime                  @updatedAt @map("updated_at")
+  drawingLibraryItem   DrawingLibraryItem        @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Cascade)
+  createdBy            User?                     @relation("ProductTimeProfileCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy            User?                     @relation("ProductTimeProfileUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  publishedBy          User?                     @relation("ProductTimeProfilePublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
+  entries              ProductProcessTimeEntry[]
+  routes               WorkOrderProcessRoute[]
+  routeSteps           WorkOrderProcessStep[]
+
+  @@unique([drawingLibraryItemId, version])
+  @@index([drawingLibraryItemId, status])
+  @@index([status, updatedAt])
+  @@index([publishedAt])
+  @@map("product_time_profiles")
+}
+
+model ProductProcessTimeEntry {
+  id                  String                 @id @default(uuid())
+  profileId           String                 @map("profile_id")
+  processDefinitionId String                 @map("process_definition_id")
+  position            Int
+  unitMilliseconds    Int                    @map("unit_milliseconds")
+  actionMilliseconds  Int?                   @map("action_milliseconds")
+  occurrences         Int                    @default(1)
+  setupMilliseconds   Int                    @default(0) @map("setup_milliseconds")
+  unitLabel           String                 @default("件") @map("unit_label")
+  countsForEfficiency Boolean                @default(true) @map("counts_for_efficiency")
+  remark              String?
+  createdAt           DateTime               @default(now()) @map("created_at")
+  updatedAt           DateTime               @updatedAt @map("updated_at")
+  profile             ProductTimeProfile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  processDefinition   ProcessDefinition      @relation(fields: [processDefinitionId], references: [id], onDelete: Restrict)
+  routeSteps          WorkOrderProcessStep[]
+
+  @@unique([profileId, processDefinitionId])
+  @@unique([profileId, position])
+  @@index([processDefinitionId])
+  @@map("product_process_time_entries")
 }
 
 model DrawingLibraryFile {

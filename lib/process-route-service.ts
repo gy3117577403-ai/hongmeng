@@ -18,6 +18,7 @@ import {
   parseProcessTimeBasis,
   positiveInteger,
 } from '@/lib/process-time';
+import { legacyProcessStandardSnapshot, productTimeProfileInclude, productTimeStandardSnapshot } from '@/lib/product-time';
 import { legacyStatusForStage, normalizeWorkOrderStage, type WorkOrderStage } from '@/lib/work-orders';
 
 export class ProcessRouteServiceError extends Error {
@@ -48,6 +49,10 @@ export type ConfirmProcessRouteCommand = ProcessRouteCommandBase & {
   action: 'confirm';
 };
 
+export type ApplyProductTimeProfileCommand = ProcessRouteCommandBase & {
+  action: 'apply_product_time';
+};
+
 export type AdvanceProcessRouteCommand = ProcessRouteCommandBase & {
   action: 'advance';
   remark?: unknown;
@@ -56,6 +61,7 @@ export type AdvanceProcessRouteCommand = ProcessRouteCommandBase & {
 
 export type ProcessRouteCommand =
   | ReplaceProcessRouteStepsCommand
+  | ApplyProductTimeProfileCommand
   | ConfirmProcessRouteCommand
   | AdvanceProcessRouteCommand;
 
@@ -164,6 +170,19 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
       : [];
     const definitionSet = new Set(existingDefinitions.map(item => item.id));
     const standardMap = new Map(existingDefinitions.map(item => [item.id, item.timeStandards[0] || null]));
+    const productProfile = route.productTimeProfileId
+      ? await tx.productTimeProfile.findUnique({
+          where: { id: route.productTimeProfileId },
+          include: productTimeProfileInclude,
+        })
+      : route.workOrder.drawingLibraryItemId
+        ? await tx.productTimeProfile.findFirst({
+            where: { drawingLibraryItemId: route.workOrder.drawingLibraryItemId, status: 'published' },
+            include: productTimeProfileInclude,
+            orderBy: { version: 'desc' },
+          })
+        : null;
+    const productEntryMap = new Map((productProfile?.entries || []).map(entry => [entry.processDefinitionId, entry]));
     const steps = validation.steps.map(step => ({
       ...step,
       processDefinitionId: step.processDefinitionId && definitionSet.has(step.processDefinitionId)
@@ -173,12 +192,18 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
 
     const update = await tx.workOrderProcessRoute.updateMany({
       where: { id: route.id, version: route.version, status: 'draft' },
-      data: { version: { increment: 1 } },
+      data: {
+        version: { increment: 1 },
+        productTimeProfileId: productProfile?.id || route.productTimeProfileId,
+        productTimeProfileVersion: productProfile?.version || route.productTimeProfileVersion,
+        routeSource: productProfile ? 'product_time_profile' : route.routeSource,
+      },
     });
     if (update.count !== 1) throw conflict();
     await tx.workOrderProcessStep.deleteMany({ where: { routeId: route.id } });
     await tx.workOrderProcessStep.createMany({
       data: steps.map(step => {
+        const productEntry = step.processDefinitionId ? productEntryMap.get(step.processDefinitionId) : null;
         const standard = step.processDefinitionId ? standardMap.get(step.processDefinitionId) : null;
         return {
           routeId: route.id,
@@ -187,14 +212,24 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
           processName: step.processName,
           stageGroup: step.stageGroup,
           position: step.position,
-          unitsPerProduct: step.unitsPerProduct,
-          standardTimeId: standard?.id || null,
-          standardVersion: standard?.version || null,
-          timeBasis: standard?.timeBasis || null,
-          unitLabel: standard?.unitLabel || null,
-          standardMillisecondsPerUnit: standard?.standardMillisecondsPerUnit || null,
-          setupMilliseconds: standard?.setupMilliseconds || 0,
-          countsForEfficiency: standard?.countsForEfficiency ?? true,
+          ...(productProfile && productEntry
+            ? productTimeStandardSnapshot(productProfile, productEntry)
+            : !productProfile && standard
+              ? legacyProcessStandardSnapshot(standard, step.unitsPerProduct)
+              : {
+                  unitsPerProduct: step.unitsPerProduct,
+                  standardTimeId: null,
+                  standardVersion: null,
+                  productTimeProfileId: productProfile?.id || null,
+                  productTimeEntryId: null,
+                  productTimeProfileVersion: productProfile?.version || null,
+                  standardSource: 'missing',
+                  timeBasis: null,
+                  unitLabel: null,
+                  standardMillisecondsPerUnit: null,
+                  setupMilliseconds: 0,
+                  countsForEfficiency: true,
+                }),
           status: 'pending',
         };
       }),
@@ -205,7 +240,11 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
         action: 'update_process_route',
         content: `调整工艺路线，共 ${steps.length} 个工序`,
         actorId: input.userId,
-        detail: { stepCount: steps.length },
+        detail: {
+          stepCount: steps.length,
+          productTimeProfileId: productProfile?.id || null,
+          productTimeProfileVersion: productProfile?.version || null,
+        },
       },
     });
     await tx.operationLog.create({
@@ -215,6 +254,82 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
         targetType: 'work_order_process_route',
         targetId: route.id,
         detail: { workOrderId: route.workOrderId, stepCount: steps.length },
+      },
+    });
+    return route.id;
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+}
+
+async function applyProductTimeProfile(input: ApplyProductTimeProfileCommand): Promise<string> {
+  return prisma.$transaction(async tx => {
+    const route = await tx.workOrderProcessRoute.findUnique({
+      where: { id: input.routeId },
+      include: { workOrder: true },
+    });
+    if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
+    ensureActiveWeeklyOrder(route.workOrder);
+    if (route.status !== 'draft') {
+      throw new ProcessRouteServiceError('已确认或已开始的路线不能切换产品工时', 409, 'PROCESS_ROUTE_LOCKED');
+    }
+    if (route.version !== parseVersion(input.expectedVersion)) throw conflict();
+    if (!route.workOrder.drawingLibraryItemId) {
+      throw new ProcessRouteServiceError('当前工单尚未关联图纸资料产品', 409, 'PRODUCT_TIME_ITEM_MISSING');
+    }
+    const profile = await tx.productTimeProfile.findFirst({
+      where: { drawingLibraryItemId: route.workOrder.drawingLibraryItemId, status: 'published' },
+      include: productTimeProfileInclude,
+      orderBy: { version: 'desc' },
+    });
+    if (!profile?.entries.length) {
+      throw new ProcessRouteServiceError('当前产品没有已发布工时，请先到产品工时维护并发布', 409, 'PRODUCT_TIME_PROFILE_MISSING');
+    }
+    const update = await tx.workOrderProcessRoute.updateMany({
+      where: { id: route.id, version: route.version, status: 'draft' },
+      data: {
+        templateId: null,
+        templateName: `${route.workOrder.specification || '当前产品'} 产品工时`,
+        templateVersion: profile.version,
+        productTimeProfileId: profile.id,
+        productTimeProfileVersion: profile.version,
+        routeSource: 'product_time_profile',
+        version: { increment: 1 },
+      },
+    });
+    if (update.count !== 1) throw conflict();
+    await tx.workOrderProcessStep.deleteMany({ where: { routeId: route.id } });
+    await tx.workOrderProcessStep.createMany({
+      data: profile.entries.map(entry => ({
+        routeId: route.id,
+        processDefinitionId: entry.processDefinitionId,
+        processCode: entry.processDefinition.code,
+        processName: entry.processDefinition.name,
+        stageGroup: entry.processDefinition.stageGroup,
+        position: entry.position,
+        ...productTimeStandardSnapshot(profile, entry),
+        status: 'pending',
+      })),
+    });
+    await tx.processRouteActivity.create({
+      data: {
+        routeId: route.id,
+        action: 'apply_product_time_profile',
+        content: `应用产品工时 V${profile.version}，共 ${profile.entries.length} 道工序`,
+        actorId: input.userId,
+        detail: { productTimeProfileId: profile.id, productTimeProfileVersion: profile.version },
+      },
+    });
+    await tx.operationLog.create({
+      data: {
+        userId: input.userId,
+        action: 'apply_product_time_profile',
+        targetType: 'work_order_process_route',
+        targetId: route.id,
+        detail: {
+          workOrderId: route.workOrderId,
+          productTimeProfileId: profile.id,
+          productTimeProfileVersion: profile.version,
+          processCount: profile.entries.length,
+        },
       },
     });
     return route.id;
@@ -245,18 +360,35 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
         })
       : [];
     const standardMap = new Map(currentStandards.map(standard => [standard.processDefinitionId, standard]));
+    const productProfile = route.productTimeProfileId
+      ? await tx.productTimeProfile.findUnique({
+          where: { id: route.productTimeProfileId },
+          include: productTimeProfileInclude,
+        })
+      : null;
+    const productEntryMap = new Map((productProfile?.entries || []).map(entry => [entry.processDefinitionId, entry]));
     for (const step of route.steps) {
+      const productEntry = step.processDefinitionId ? productEntryMap.get(step.processDefinitionId) : null;
       const standard = step.processDefinitionId ? standardMap.get(step.processDefinitionId) : null;
+      const snapshot = productProfile && productEntry
+        ? productTimeStandardSnapshot(productProfile, productEntry)
+        : !productProfile && standard
+          ? legacyProcessStandardSnapshot(standard, step.unitsPerProduct)
+          : null;
       await tx.workOrderProcessStep.update({
         where: { id: step.id },
-        data: {
-          standardTimeId: standard?.id || null,
-          standardVersion: standard?.version || null,
-          timeBasis: standard?.timeBasis || null,
-          unitLabel: standard?.unitLabel || null,
-          standardMillisecondsPerUnit: standard?.standardMillisecondsPerUnit || null,
-          setupMilliseconds: standard?.setupMilliseconds || 0,
-          countsForEfficiency: standard?.countsForEfficiency ?? true,
+        data: snapshot || {
+          standardTimeId: null,
+          standardVersion: null,
+          productTimeProfileId: productProfile?.id || null,
+          productTimeEntryId: null,
+          productTimeProfileVersion: productProfile?.version || null,
+          standardSource: 'missing',
+          timeBasis: null,
+          unitLabel: null,
+          standardMillisecondsPerUnit: null,
+          setupMilliseconds: 0,
+          countsForEfficiency: true,
         },
       });
     }
@@ -353,6 +485,10 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
       ? {
           id: current.standardTimeId,
           version: current.standardVersion,
+          productTimeProfileId: current.productTimeProfileId,
+          productTimeEntryId: current.productTimeEntryId,
+          productTimeProfileVersion: current.productTimeProfileVersion,
+          standardSource: current.standardSource,
           timeBasis: parseProcessTimeBasis(current.timeBasis),
           unitLabel: current.unitLabel,
           standardMillisecondsPerUnit: current.standardMillisecondsPerUnit,
@@ -360,7 +496,31 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
           countsForEfficiency: current.countsForEfficiency,
         }
       : null;
-    if (!resolvedStandard && current.processDefinitionId) {
+    if (!resolvedStandard && route.productTimeProfileId && current.processDefinitionId) {
+      const productEntry = await tx.productProcessTimeEntry.findFirst({
+        where: {
+          profileId: route.productTimeProfileId,
+          processDefinitionId: current.processDefinitionId,
+        },
+        include: { profile: { select: { id: true, version: true } } },
+      });
+      if (productEntry) {
+        resolvedStandard = {
+          id: null,
+          version: null,
+          productTimeProfileId: productEntry.profile.id,
+          productTimeEntryId: productEntry.id,
+          productTimeProfileVersion: productEntry.profile.version,
+          standardSource: 'product_profile',
+          timeBasis: 'per_unit',
+          unitLabel: productEntry.unitLabel,
+          standardMillisecondsPerUnit: productEntry.unitMilliseconds,
+          setupMilliseconds: productEntry.setupMilliseconds,
+          countsForEfficiency: productEntry.countsForEfficiency,
+        };
+      }
+    }
+    if (!resolvedStandard && !route.productTimeProfileId && current.processDefinitionId) {
       const standard = await tx.processTimeStandard.findFirst({
         where: { processDefinitionId: current.processDefinitionId, isCurrent: true },
         orderBy: { version: 'desc' },
@@ -369,6 +529,10 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
         resolvedStandard = {
           id: standard.id,
           version: standard.version,
+          productTimeProfileId: null,
+          productTimeEntryId: null,
+          productTimeProfileVersion: null,
+          standardSource: 'process_standard',
           timeBasis: parseProcessTimeBasis(standard.timeBasis),
           unitLabel: standard.unitLabel,
           standardMillisecondsPerUnit: standard.standardMillisecondsPerUnit,
@@ -432,6 +596,8 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
           actualLaborMilliseconds,
           attainmentBasisPoints,
           countsForEfficiency: resolvedStandard.countsForEfficiency,
+          standardSource: resolvedStandard.standardSource,
+          productTimeProfileVersion: resolvedStandard.productTimeProfileVersion,
           source: 'completion_form',
           remark: cleanProcessText(submittedExecution.remark, 300) || null,
           recordedById: input.userId,
@@ -458,6 +624,10 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
         remark: remark || null,
         standardTimeId: resolvedStandard?.id || current.standardTimeId,
         standardVersion: resolvedStandard?.version || current.standardVersion,
+        productTimeProfileId: resolvedStandard?.productTimeProfileId || current.productTimeProfileId,
+        productTimeEntryId: resolvedStandard?.productTimeEntryId || current.productTimeEntryId,
+        productTimeProfileVersion: resolvedStandard?.productTimeProfileVersion || current.productTimeProfileVersion,
+        standardSource: resolvedStandard?.standardSource || current.standardSource,
         timeBasis: resolvedStandard?.timeBasis || current.timeBasis,
         unitLabel: resolvedStandard?.unitLabel || current.unitLabel,
         standardMillisecondsPerUnit: resolvedStandard?.standardMillisecondsPerUnit || current.standardMillisecondsPerUnit,
@@ -560,6 +730,7 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
 export async function updateProcessRoute(command: ProcessRouteCommand): Promise<string> {
   try {
     if (command.action === 'replace_steps') return await replaceSteps(command);
+    if (command.action === 'apply_product_time') return await applyProductTimeProfile(command);
     if (command.action === 'confirm') return await confirmRoute(command);
     return await advanceRoute(command);
   } catch (error) {
@@ -628,7 +799,7 @@ export async function startConfirmedProcessRouteAfterDrawing(
 }
 
 export function parseProcessRouteAction(value: unknown): ProcessRouteCommand['action'] | null {
-  return value === 'replace_steps' || value === 'confirm' || value === 'advance' ? value : null;
+  return value === 'replace_steps' || value === 'apply_product_time' || value === 'confirm' || value === 'advance' ? value : null;
 }
 
 export function asProcessStepInput(value: unknown): ProcessStepInput[] {

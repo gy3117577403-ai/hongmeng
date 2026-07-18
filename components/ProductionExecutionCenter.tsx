@@ -2087,8 +2087,8 @@ function NextStepDialog({ request, quantity, setQuantity, executionContext, exec
     {isProcessAdvance
       ? <>
         <div className="production-flow-confirm-copy"><strong>{order.processRoute?.nextStep ? `下一工序：${order.processRoute.nextStep.processName}` : '这是路线最后一道工序'}</strong><br />确认后将记录当前工序完成，并自动切换到下一道工序；已确认的路线顺序不会改变。</div>
-        {executionContextLoading && <div className="production-execution-loading"><RefreshCw className="spin" />正在加载标准工时和员工档案...</div>}
-        {executionContextWarning && <div className="production-execution-warning" role="status"><AlertTriangle />{executionContextWarning}<a href="/workspace/time-standards">前往维护</a></div>}
+        {executionContextLoading && <div className="production-execution-loading"><RefreshCw className="spin" />正在加载产品工时和员工档案...</div>}
+        {executionContextWarning && <div className="production-execution-warning" role="status"><AlertTriangle />{executionContextWarning}<a href="/workspace/product-times">前往维护</a></div>}
         {requiresExecution && executionForm && executionContext?.standard && <div className="production-execution-form">
           <header><div><strong>本工序报工</strong><small>用于员工当日、周、月达成率汇总</small></div><em>标准 V{executionContext.standard.version || '-'}</em></header>
           <div className="production-execution-fields">

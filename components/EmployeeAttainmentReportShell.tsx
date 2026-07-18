@@ -131,7 +131,7 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
           description="个人达成率按标准完成工时 ÷（确认出勤－品质确认免责异常）计算；工序效率仍按标准工时 ÷ 实际报工工时单独展示。"
           actions={<>
             <a className="hm-workbench-button" href="/workspace/attendance"><CalendarClock size={15} />考勤与异常</a>
-            <a className="hm-workbench-button" href="/workspace/time-standards"><Clock3 size={15} />标准工时</a>
+            <a className="hm-workbench-button" href="/workspace/product-times"><Clock3 size={15} />产品工时</a>
             <a className="hm-workbench-button" href="/workspace/processes"><ListOrdered size={15} />工艺管理</a>
             <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新</button>
           </>}

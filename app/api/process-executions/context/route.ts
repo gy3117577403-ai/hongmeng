@@ -17,6 +17,7 @@ export async function GET(req: NextRequest) {
         where: { id: stepId },
         include: {
           standardTime: true,
+          productTimeEntry: true,
           processDefinition: {
             include: {
               timeStandards: {
@@ -49,7 +50,22 @@ export async function GET(req: NextRequest) {
           setupMilliseconds: step.setupMilliseconds,
           unitsPerProduct: step.unitsPerProduct,
           countsForEfficiency: step.countsForEfficiency,
+          source: step.standardSource,
+          productTimeProfileVersion: step.productTimeProfileVersion,
         }
+      : step.route.productTimeProfileId && step.productTimeEntry
+        ? {
+            standardTimeId: null,
+            version: null,
+            timeBasis: 'per_unit' as const,
+            unitLabel: step.productTimeEntry.unitLabel,
+            standardMillisecondsPerUnit: step.productTimeEntry.unitMilliseconds,
+            setupMilliseconds: step.productTimeEntry.setupMilliseconds,
+            unitsPerProduct: 1,
+            countsForEfficiency: step.productTimeEntry.countsForEfficiency,
+            source: 'product_profile',
+            productTimeProfileVersion: step.route.productTimeProfileVersion,
+          }
       : currentStandard
         ? {
             standardTimeId: currentStandard.id,
@@ -60,6 +76,8 @@ export async function GET(req: NextRequest) {
             setupMilliseconds: currentStandard.setupMilliseconds,
             unitsPerProduct: step.unitsPerProduct,
             countsForEfficiency: currentStandard.countsForEfficiency,
+            source: 'process_standard',
+            productTimeProfileVersion: null,
           }
         : null;
     const resolution = resolveEffectiveFrontendTransferredQty(step.route.workOrder);
