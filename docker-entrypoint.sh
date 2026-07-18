@@ -13,7 +13,7 @@ until node -e "const net=require('net'); const url=new URL(process.env.DATABASE_
 done
 
 tries=1
-until npx prisma migrate deploy; do
+until node node_modules/prisma/build/index.js migrate deploy; do
   if [ "$tries" -ge 30 ]; then
     echo "migration deploy failed after retries"
     exit 1
