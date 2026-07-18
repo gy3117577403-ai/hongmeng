@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { PortalMenu } from '@/components/PortalMenu';
 import type { CurrentUserDTO } from '@/types';
 
@@ -42,6 +43,8 @@ type AppWorkbenchHeaderProps = {
   menuItems: HeaderMenuItem[];
   searchSlot?: ReactNode;
   utilityActions?: ReactNode;
+  hideHeader?: boolean;
+  sidebarTriggerTargetId?: string;
 };
 
 type SideNavigationItem = {
@@ -95,14 +98,32 @@ function activeModuleName(activeHref: string): string {
   return '工作台';
 }
 
-export function AppWorkbenchHeader({ user, activeHref, subtitle, menuItems, searchSlot, utilityActions }: AppWorkbenchHeaderProps) {
+export function AppWorkbenchHeader({
+  user,
+  activeHref,
+  subtitle,
+  menuItems,
+  searchSlot,
+  utilityActions,
+  hideHeader = false,
+  sidebarTriggerTargetId,
+}: AppWorkbenchHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [sidebarTriggerTarget, setSidebarTriggerTarget] = useState<HTMLElement | null>(null);
   const userButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarButtonRef = useRef<HTMLButtonElement>(null);
   const displayName = user.displayName || user.username;
   const moduleName = activeModuleName(activeHref);
   const isHome = isActiveRoute(activeHref, '/home');
+
+  useEffect(() => {
+    if (!sidebarTriggerTargetId) {
+      setSidebarTriggerTarget(null);
+      return;
+    }
+    setSidebarTriggerTarget(document.getElementById(sidebarTriggerTargetId));
+  }, [sidebarTriggerTargetId]);
 
   useEffect(() => {
     if (!sidebarExpanded) return;
@@ -129,6 +150,12 @@ export function AppWorkbenchHeader({ user, activeHref, subtitle, menuItems, sear
     setSidebarExpanded(false);
     window.requestAnimationFrame(() => sidebarButtonRef.current?.focus());
   }
+
+  const sidebarTrigger = (
+    <button ref={sidebarButtonRef} className="hm-workbench-sidebar-button" type="button" aria-label={sidebarExpanded ? '收起平台导航' : '展开平台导航'} aria-controls="hm-platform-sidebar" aria-expanded={sidebarExpanded} onClick={() => setSidebarExpanded(value => !value)}>
+      {sidebarExpanded ? <PanelLeftClose size={19} aria-hidden="true" /> : <PanelLeftOpen size={19} aria-hidden="true" />}
+    </button>
+  );
 
   return (
     <>
@@ -164,10 +191,10 @@ export function AppWorkbenchHeader({ user, activeHref, subtitle, menuItems, sear
         </div>
       </aside>
 
-      <header className={`hm-workbench-header ${isHome ? 'is-home' : 'is-module'}`}>
-        <button ref={sidebarButtonRef} className="hm-workbench-sidebar-button" type="button" aria-label={sidebarExpanded ? '收起平台导航' : '展开平台导航'} aria-controls="hm-platform-sidebar" aria-expanded={sidebarExpanded} onClick={() => setSidebarExpanded(value => !value)}>
-          {sidebarExpanded ? <PanelLeftClose size={19} aria-hidden="true" /> : <PanelLeftOpen size={19} aria-hidden="true" />}
-        </button>
+      {sidebarTriggerTarget && createPortal(sidebarTrigger, sidebarTriggerTarget)}
+
+      {!hideHeader && <header className={`hm-workbench-header ${isHome ? 'is-home' : 'is-module'}`}>
+        {!sidebarTriggerTargetId && sidebarTrigger}
         <div className="hm-workbench-context" title={`杭连协同平台 / ${moduleName} · ${subtitle}`}>
           <span>杭连协同平台</span><ChevronRight size={13} aria-hidden="true" /><strong>{moduleName}</strong><small>{subtitle}</small>
         </div>
@@ -193,7 +220,7 @@ export function AppWorkbenchHeader({ user, activeHref, subtitle, menuItems, sear
             ))}
           </PortalMenu>
         </div>}
-      </header>
+      </header>}
     </>
   );
 }
