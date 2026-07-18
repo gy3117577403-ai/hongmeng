@@ -703,8 +703,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
   const totalMilliseconds = draftTotal(entries);
   const selectedStatus = selectedItem ? statusText(selectedItem) : '未选择产品';
-  const matrixGridColumns = `minmax(210px, 1.8fr) repeat(${definitions.length}, minmax(62px, 1fr)) minmax(96px, .9fr)`;
-  const matrixMinWidth = Math.max(860, 210 + definitions.length * 62 + 96);
+  const matrixGridColumns = `minmax(210px, 1.8fr) repeat(${definitions.length}, minmax(58px, 1fr)) repeat(2, minmax(88px, .85fr))`;
+  const matrixMinWidth = Math.max(860, 210 + definitions.length * 58 + 176);
 
   return (
     <main className="product-time-page hm-product-time-workbench hm-product-time-headerless hm-workbench-root hm-workbench-navigation-overlay">
@@ -761,6 +761,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <div className="product-time-matrix-row product-time-matrix-head" style={{ gridTemplateColumns: matrixGridColumns }}>
                 <span className="product-time-product-column"><b>产品 / 客户</b><small>点击产品查看并调整完整路线</small></span>
                 {definitions.map(definition => <span key={definition.id} title={`${definition.name} · ${stageText[definition.stageGroup]}`}><b>{definition.name}</b><small>{stageText[definition.stageGroup]}</small></span>)}
+                <span><b>汇总工时</b><small>当前已填合计</small></span>
                 <span><b>报价工时</b><small>后续功能接入</small></span>
               </div>
               {items.map(item => {
@@ -804,6 +805,17 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                       {cellError && <span className="product-time-cell-error" role="alert" title={cellError}>输入无效</span>}
                     </div>;
                   })}
+                  <div
+                    className="product-time-total-cell"
+                    role="note"
+                    aria-label={profile && profile.processCount > 0
+                      ? `${item.specification}当前汇总工时${duration(profile.totalMillisecondsPerUnit)}，共${profile.processCount}道工序`
+                      : `${item.specification}尚未配置工序工时`}
+                    title={profile && profile.processCount > 0 ? `当前已填写 ${profile.processCount} 道工序` : '尚未配置工序工时'}
+                  >
+                    <strong>{profile && profile.processCount > 0 ? duration(profile.totalMillisecondsPerUnit) : '—'}</strong>
+                    <small>{profile && profile.processCount > 0 ? `${profile.processCount} 道工序` : '未配置'}</small>
+                  </div>
                   <div className="product-time-quote-cell" role="note" aria-label={`${item.specification}报价工时尚未录入`} title="报价工时将在后续功能中接入">
                     <span aria-hidden="true">—</span>
                   </div>

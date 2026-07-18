@@ -1050,7 +1050,12 @@ html:has(.hm-product-time-workbench) {
 .hm-product-time-workbench .product-time-matrix-cell.invalid > button { border-color: #d92d20; }
 .hm-product-time-workbench .product-time-cell-error { position: absolute; z-index: 2; right: 5px; bottom: 3px; max-width: calc(100% - 10px); overflow: hidden; color: #b42318; font-size: 8px; font-weight: 700; line-height: 1; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 
-.hm-product-time-workbench .product-time-quote-cell { min-width: 0; padding: 7px; display: grid; place-content: center; border: 0; background: #fff; color: #98a2b3; text-align: center; }
+.hm-product-time-workbench .product-time-total-cell,
+.hm-product-time-workbench .product-time-quote-cell { min-width: 0; padding: 7px; display: grid; place-content: center; gap: 3px; border: 0; background: #fff; text-align: center; }
+.hm-product-time-workbench .product-time-total-cell { color: #b54708; }
+.hm-product-time-workbench .product-time-total-cell strong { font-size: 12px; line-height: 1.2; white-space: nowrap; }
+.hm-product-time-workbench .product-time-total-cell small { color: #7a8798; font-size: 9px; white-space: nowrap; }
+.hm-product-time-workbench .product-time-quote-cell { color: #98a2b3; }
 .hm-product-time-workbench .product-time-quote-cell span { font-size: 18px; line-height: 1; }
 .hm-product-time-workbench .product-time-empty.matrix-empty { position: sticky; left: 0; min-height: 220px; }
 
