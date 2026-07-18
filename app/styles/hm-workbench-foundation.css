@@ -397,6 +397,14 @@ main.hm-workbench-root.hm-workbench-root {
   box-shadow: 0 2px 12px rgba(31, 45, 61, .05);
 }
 
+.hm-workbench-header.is-module {
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+}
+
+.hm-workbench-header.is-module .hm-workbench-utility-actions {
+  grid-column: 3;
+}
+
 .hm-workbench-sidebar-button {
   grid-column: 1;
   width: 38px;
@@ -808,6 +816,10 @@ main.hm-workbench-root.hm-workbench-root {
     padding-left: 9px;
   }
 
+  .hm-workbench-header.is-module {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+  }
+
   .hm-workbench-user-button {
     width: 44px;
     min-width: 44px;
@@ -832,6 +844,10 @@ main.hm-workbench-root.hm-workbench-root {
     padding-left: 8px;
   }
 
+  .hm-workbench-header.is-module {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+  }
+
   .hm-workbench-context span,
   .hm-workbench-context small,
   .hm-workbench-context > svg {
@@ -851,6 +867,11 @@ main.hm-workbench-root.hm-workbench-root {
 
   .hm-workbench-header {
     grid-template-columns: 40px 96px minmax(150px, 1fr) auto 42px;
+  }
+
+
+  .hm-workbench-header.is-module {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
   }
 }
 
@@ -940,7 +961,17 @@ main.hm-workbench-root.hm-workbench-root {
     padding-left: 16px;
   }
 
+
+  .hm-workbench-header.is-module {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
   .hm-workbench-context {
+    grid-column: 1;
+  }
+
+
+  .hm-workbench-header.is-module .hm-workbench-context {
     grid-column: 1;
   }
 
@@ -959,6 +990,11 @@ main.hm-workbench-root.hm-workbench-root {
 
   .hm-workbench-utility-actions {
     grid-column: 3;
+  }
+
+
+  .hm-workbench-header.is-module .hm-workbench-utility-actions {
+    grid-column: 2;
   }
 
   .hm-workbench-user-wrap {

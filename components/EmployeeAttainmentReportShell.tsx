@@ -127,7 +127,7 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
           kicker="数据分析"
           title="员工达成率与异常工时报表"
           titleId="employee-attainment-title"
-          description="个人达成率按标准完成工时 ÷（确认出勤－品质确认免责异常）计算；工序效率仍按标准工时 ÷ 实际报工工时单独展示。"
+          description="个人达成率按标准完成工时 ÷〔（确认出勤－品质确认免责异常）× 95%〕计算；工序效率仍按标准工时 ÷ 实际报工工时单独展示。"
           actions={<>
             <a className="hm-workbench-button" href="/workspace/attendance"><CalendarClock size={15} />考勤与异常</a>
             <a className="hm-workbench-button" href="/workspace/product-times"><Clock3 size={15} />产品工序与工时</a>
@@ -140,7 +140,7 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
           <article><CalendarClock /><span>确认出勤<small>{summary?.attendanceConfirmedDays || 0} 人日，缺失 {summary?.attendanceMissingCount || 0} 人</small></span><strong>{formatProcessDuration(summary?.attendanceMilliseconds || 0)}</strong></article>
           <article><TimerOff /><span>免责异常<small>品质确认后扣除个人基数</small></span><strong>{formatProcessDuration(summary?.exemptAbnormalMilliseconds || 0)}</strong></article>
           <article><Clock3 /><span>标准完成工时<small>已完成工序标准时间</small></span><strong>{formatProcessDuration(summary?.standardLaborMilliseconds || 0)}</strong></article>
-          <article className={attainmentClass(summary?.attainmentBasisPoints ?? null)}><Gauge /><span>出勤达成率<small>标准工时 ÷ 有效生产时段</small></span><strong>{percent(summary?.attainmentBasisPoints ?? null)}</strong></article>
+          <article className={attainmentClass(summary?.attainmentBasisPoints ?? null)}><Gauge /><span>出勤达成率<small>标准工时 ÷（有效出勤 × 95%）</small></span><strong>{percent(summary?.attainmentBasisPoints ?? null)}</strong></article>
           <article className={abnormalSummary?.openCount ? 'watch' : 'good'}><AlertTriangle /><span>异常影响人时<small>未关闭 {abnormalSummary?.openCount || 0} 条</small></span><strong>{formatProcessDuration(abnormalSummary?.affectedPersonMilliseconds || 0)}</strong></article>
         </section>
 
@@ -198,7 +198,8 @@ function EmployeeReportRow({ row, expanded, onToggle }: { row: EmployeeAttainmen
     </button>
     {expanded && <div className="employee-report-details">
       <div className="employee-report-metric-detail">
-        <span><small>有效生产时段</small><b>{formatProcessDuration(row.effectiveProductionMilliseconds)}</b></span>
+        <span><small>有效出勤</small><b>{formatProcessDuration(row.effectiveProductionMilliseconds)}</b></span>
+        <span><small>考核工时（95%）</small><b>{formatProcessDuration(row.attainmentCapacityMilliseconds)}</b></span>
         <span><small>原始出勤产出率</small><b>{percent(row.rawAttendanceOutputBasisPoints)}</b></span>
         <span><small>时间覆盖率</small><b>{percent(row.coverageBasisPoints)}</b></span>
         <span><small>未解释时间</small><b>{formatProcessDuration(row.unexplainedMilliseconds)}</b></span>

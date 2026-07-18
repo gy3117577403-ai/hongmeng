@@ -814,6 +814,7 @@ export type EmployeeAttainmentRowDTO = {
   attendanceMilliseconds: number;
   exemptAbnormalMilliseconds: number;
   effectiveProductionMilliseconds: number;
+  attainmentCapacityMilliseconds: number;
   unexplainedMilliseconds: number;
   attendanceConfirmedDays: number;
   attendanceMissing: boolean;
@@ -841,6 +842,7 @@ export type EmployeeAttainmentReportDTO = {
     attendanceMilliseconds: number;
     exemptAbnormalMilliseconds: number;
     effectiveProductionMilliseconds: number;
+    attainmentCapacityMilliseconds: number;
     unexplainedMilliseconds: number;
     attendanceConfirmedDays: number;
     attendanceMissingCount: number;

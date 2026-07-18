@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   attendanceTotals,
+  attainmentCapacityMilliseconds,
   basisPoints,
   defaultAttendanceSegments,
   parseAttendanceSegments,
@@ -66,4 +67,11 @@ test('abnormal time stays within one work date', () => {
 test('attainment denominator with no effective production time is explicit null', () => {
   assert.equal(basisPoints(60 * 60 * 1000, 0), null);
   assert.equal(basisPoints(6 * 60 * 60 * 1000, 8 * 60 * 60 * 1000), 7500);
+});
+
+test('attendance attainment uses 95 percent of effective attendance as capacity', () => {
+  const effectiveAttendance = 8 * 60 * 60 * 1000;
+  const capacity = attainmentCapacityMilliseconds(effectiveAttendance);
+  assert.equal(capacity, 7.6 * 60 * 60 * 1000);
+  assert.equal(basisPoints(capacity, capacity), 10_000);
 });

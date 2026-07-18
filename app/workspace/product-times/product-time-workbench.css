@@ -1,3 +1,7 @@
+html:has(.hm-product-time-workbench) {
+  overflow-x: hidden;
+}
+
 .hm-product-time-workbench {
   min-height: 100dvh;
   background: #f4f6f8;
@@ -858,4 +862,241 @@
     height: calc(100dvh - 20px);
   }
   .hm-product-time-workbench .product-time-import-dialog > footer > span { max-width: 44%; }
+}
+
+/* Matrix-first product labor workspace */
+.hm-product-time-workbench .product-time-main {
+  display: flex;
+  flex-direction: column;
+}
+
+.hm-product-time-workbench .product-time-summary,
+.hm-product-time-workbench .product-time-toolbar,
+.hm-product-time-workbench .product-time-message,
+.hm-product-time-workbench .product-time-error {
+  flex: 0 0 auto;
+}
+
+.hm-product-time-workbench .product-time-summary > button {
+  min-width: 0;
+  height: 64px;
+  padding: 9px 13px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #e2e7ed;
+  border-radius: 8px;
+  background: #fff;
+  color: #172235;
+  text-align: left;
+  box-shadow: 0 3px 10px rgba(26, 39, 58, .04);
+  cursor: pointer;
+}
+
+.hm-product-time-workbench .product-time-summary > button:hover,
+.hm-product-time-workbench .product-time-summary > button:focus-visible,
+.hm-product-time-workbench .product-time-summary > button.active {
+  border-color: #ee8b4b;
+  background: #fff9f5;
+  outline: 0;
+}
+
+.hm-product-time-workbench .product-time-summary > button > svg {
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+  border-radius: 7px;
+  background: #fff1e8;
+  color: #e85d04;
+}
+
+.hm-product-time-workbench .product-time-summary > button.warning > svg { background: #fff7df; color: #a15c00; }
+.hm-product-time-workbench .product-time-summary > button span { min-width: 0; display: grid; gap: 2px; font-size: 13px; font-weight: 700; }
+.hm-product-time-workbench .product-time-summary > button small { overflow: hidden; color: #8995a5; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.hm-product-time-workbench .product-time-summary > button > strong { font-size: 24px; line-height: 1; }
+
+.hm-product-time-workbench .product-time-toolbar { grid-template-columns: minmax(240px, 1fr) minmax(180px, 250px) 155px auto; }
+.hm-product-time-workbench .product-time-toolbar-actions { justify-content: center; }
+
+.hm-product-time-workbench .product-time-matrix-shell {
+  min-height: 0;
+  flex: 1 1 auto;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid #dfe5ec;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 5px 18px rgba(23, 34, 53, .05);
+}
+
+.hm-product-time-workbench .product-time-matrix-titlebar {
+  min-height: 62px;
+  padding: 9px 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid #e5e9ef;
+}
+
+.hm-product-time-workbench .product-time-matrix-titlebar > div:first-child { min-width: 0; }
+.hm-product-time-workbench .product-time-matrix-titlebar span { color: #e85d04; font-size: 10px; font-weight: 750; }
+.hm-product-time-workbench .product-time-matrix-titlebar h1 { margin: 1px 0; font-size: 16px; letter-spacing: 0; }
+.hm-product-time-workbench .product-time-matrix-titlebar p { margin: 0; overflow: hidden; color: #758295; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+.hm-product-time-workbench .product-time-matrix-legend { flex: 0 0 auto; display: flex; align-items: center; gap: 12px; }
+.hm-product-time-workbench .product-time-matrix-legend span { display: inline-flex; align-items: center; gap: 5px; color: #667386; font-size: 10px; font-weight: 600; }
+.hm-product-time-workbench .product-time-matrix-legend i { width: 12px; height: 12px; border: 1px solid #e0e5eb; border-radius: 3px; background: #f1f3f5; }
+.hm-product-time-workbench .product-time-matrix-legend i.configured { border-color: #efb084; background: #fff2e8; }
+.hm-product-time-workbench .product-time-matrix-legend b { padding: 1px 4px; border-radius: 4px; background: #fff0e5; color: #c54d00; font-size: 9px; }
+
+.hm-product-time-workbench .product-time-matrix-scroll {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.hm-product-time-workbench .product-time-matrix { position: relative; }
+.hm-product-time-workbench .product-time-matrix-row { display: grid; min-height: 68px; border-bottom: 1px solid #e9edf2; content-visibility: auto; contain-intrinsic-size: 68px; }
+.hm-product-time-workbench .product-time-matrix-row:last-child { border-bottom: 0; }
+.hm-product-time-workbench .product-time-matrix-head { position: sticky; z-index: 5; top: 0; min-height: 58px; background: #f7f8fa; content-visibility: visible; }
+.hm-product-time-workbench .product-time-matrix-head > span { min-width: 0; padding: 7px 6px; display: grid; place-content: center; gap: 2px; border-right: 1px solid #e3e8ee; text-align: center; }
+.hm-product-time-workbench .product-time-matrix-head > span b { overflow: hidden; color: #344054; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.hm-product-time-workbench .product-time-matrix-head > span small { color: #8a96a6; font-size: 9px; }
+
+.hm-product-time-workbench .product-time-matrix-head .product-time-product-column,
+.hm-product-time-workbench .product-time-product-cell {
+  position: sticky;
+  z-index: 4;
+  left: 0;
+  border-right: 1px solid #dce3eb;
+  box-shadow: 5px 0 10px rgba(30, 42, 58, .04);
+}
+
+.hm-product-time-workbench .product-time-matrix-head .product-time-product-column { z-index: 7; place-content: center start; padding-left: 13px; background: #f7f8fa; text-align: left; }
+.hm-product-time-workbench .product-time-product-cell { min-width: 0; padding: 8px 12px; display: grid; align-content: center; gap: 2px; border-width: 0 1px 0 0; background: #fff; color: #172235; text-align: left; cursor: pointer; }
+.hm-product-time-workbench .product-time-product-cell:hover,
+.hm-product-time-workbench .product-time-product-cell:focus-visible { background: #fff8f2; outline: 0; }
+.hm-product-time-workbench .product-time-product-cell strong,
+.hm-product-time-workbench .product-time-product-cell span,
+.hm-product-time-workbench .product-time-product-cell small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-product-time-workbench .product-time-product-cell strong { font-size: 13px; }
+.hm-product-time-workbench .product-time-product-cell span { color: #5f6e82; font-size: 11px; }
+.hm-product-time-workbench .product-time-product-cell small { color: #8a96a6; font-size: 10px; }
+
+.hm-product-time-workbench .product-time-matrix-cell { min-width: 0; padding: 5px; border-right: 1px solid #edf0f3; background: #f4f5f7; }
+.hm-product-time-workbench .product-time-matrix-cell.configured { background: #fff9f4; }
+.hm-product-time-workbench .product-time-matrix-cell > button { position: relative; width: 100%; height: 100%; min-height: 56px; padding: 5px; display: flex; align-items: center; justify-content: center; gap: 3px; border: 1px dashed #d7dde5; border-radius: 6px; background: #eef1f4; color: #8995a5; cursor: pointer; }
+.hm-product-time-workbench .product-time-matrix-cell.configured > button { border-style: solid; border-color: #f0c3a3; background: #fff; color: #b54708; }
+.hm-product-time-workbench .product-time-matrix-cell > button:hover,
+.hm-product-time-workbench .product-time-matrix-cell > button:focus-visible { border-color: #e85d04; background: #fff4eb; color: #c54d00; outline: 0; }
+.hm-product-time-workbench .product-time-matrix-cell > button b { font-size: 14px; }
+.hm-product-time-workbench .product-time-matrix-cell > button small { font-size: 9px; }
+.hm-product-time-workbench .product-time-matrix-cell > button span { font-size: 10px; }
+.hm-product-time-workbench .product-time-matrix-cell > button em { position: absolute; top: 3px; right: 3px; padding: 1px 3px; border-radius: 3px; background: #fff0e5; color: #c54d00; font-size: 8px; font-style: normal; }
+.hm-product-time-workbench .product-time-matrix-cell input { width: 100%; height: 100%; min-height: 56px; padding: 0 5px; border: 2px solid #e85d04; border-radius: 6px; background: #fff; color: #172235; text-align: center; outline: 0; font-size: 14px; font-weight: 700; }
+
+.hm-product-time-workbench .product-time-status-cell { min-width: 0; padding: 7px; display: grid; place-content: center; gap: 5px; border: 0; background: #fff; text-align: center; cursor: pointer; }
+.hm-product-time-workbench .product-time-status-cell:hover,
+.hm-product-time-workbench .product-time-status-cell:focus-visible { background: #fff8f2; outline: 0; }
+.hm-product-time-workbench .product-time-status-cell em { padding: 3px 6px; border-radius: 5px; font-size: 9px; font-style: normal; white-space: nowrap; }
+.hm-product-time-workbench .product-time-status-cell em.published { background: #eaf8ef; color: #067647; }
+.hm-product-time-workbench .product-time-status-cell em.draft { background: #fff5db; color: #a15c00; }
+.hm-product-time-workbench .product-time-status-cell em.missing { background: #fff1f2; color: #b42318; }
+.hm-product-time-workbench .product-time-status-cell small { color: #7a8798; font-size: 9px; white-space: nowrap; }
+.hm-product-time-workbench .product-time-empty.matrix-empty { position: sticky; left: 0; min-height: 220px; }
+
+.hm-product-time-workbench .product-time-detail-scrim,
+.hm-product-time-workbench .product-time-library-scrim {
+  position: fixed;
+  z-index: 71;
+  inset: var(--hm-shell-header) 0 0 var(--hm-shell-rail);
+  display: block;
+  border: 0;
+  background: rgba(20, 32, 51, .28);
+}
+
+.hm-product-time-workbench .product-time-detail-drawer {
+  position: fixed;
+  z-index: 72;
+  top: var(--hm-shell-header);
+  right: 0;
+  bottom: 0;
+  width: min(920px, calc(100vw - var(--hm-shell-rail)));
+  min-width: 0;
+  transform: translateX(102%);
+  transition: transform 180ms ease;
+  pointer-events: none;
+}
+
+.hm-product-time-workbench .product-time-detail-drawer.open { transform: translateX(0); pointer-events: auto; }
+
+.hm-product-time-workbench .product-time-detail-drawer .product-time-editor {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  border-left: 1px solid #dfe5ec;
+  border-radius: 0;
+  background: #fff;
+  box-shadow: -12px 0 30px rgba(23, 34, 53, .14);
+}
+
+.hm-product-time-workbench .product-time-detail-close {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dce3eb;
+  border-radius: 7px;
+  background: #fff;
+  color: #526174;
+  cursor: pointer;
+}
+
+.hm-product-time-workbench .product-time-detail-drawer .product-time-editor-actions {
+  padding: 8px 12px;
+  border-bottom: 1px solid #edf0f4;
+  background: #fff;
+}
+
+.hm-product-time-workbench .product-time-library {
+  position: fixed;
+  z-index: 74;
+  top: var(--hm-shell-header);
+  right: 0;
+  bottom: 0;
+  width: min(360px, calc(100vw - 24px));
+  border-radius: 0;
+  transform: translateX(102%);
+  transition: transform 180ms ease;
+  pointer-events: none;
+}
+
+.hm-product-time-workbench .product-time-library.open { transform: translateX(0); pointer-events: auto; }
+.hm-product-time-workbench .product-time-library header > button { display: inline-grid; }
+.hm-product-time-workbench .product-time-library-scrim { z-index: 73; }
+
+@media (max-width: 1180px) {
+  .hm-product-time-workbench .product-time-main { padding: 10px; gap: 8px; }
+  .hm-product-time-workbench .product-time-toolbar { grid-template-columns: minmax(210px, 1fr) 180px 140px auto; }
+  .hm-product-time-workbench .product-time-toolbar-actions .hm-workbench-button { padding-inline: 8px; }
+  .hm-product-time-workbench .product-time-matrix-titlebar p { max-width: 520px; }
+}
+
+@media (max-width: 1040px) {
+  .hm-product-time-workbench .product-time-summary { gap: 7px; }
+  .hm-product-time-workbench .product-time-summary > button { height: 58px; padding: 7px 9px; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 6px; }
+  .hm-product-time-workbench .product-time-summary > button > svg { width: 30px; height: 30px; padding: 7px; }
+  .hm-product-time-workbench .product-time-summary > button > strong { font-size: 20px; }
+  .hm-product-time-workbench .product-time-toolbar { grid-template-columns: minmax(190px, 1fr) 160px 130px auto; min-height: 52px; padding: 6px 8px; }
+  .hm-product-time-workbench .product-time-toolbar label,
+  .hm-product-time-workbench .product-time-toolbar input,
+  .hm-product-time-workbench .product-time-toolbar select { height: 36px; }
+  .hm-product-time-workbench .product-time-matrix-titlebar { min-height: 54px; padding-block: 7px; }
+  .hm-product-time-workbench .product-time-matrix-titlebar p { display: none; }
+  .hm-product-time-workbench .product-time-detail-drawer { width: calc(100vw - var(--hm-shell-rail)); }
 }

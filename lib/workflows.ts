@@ -34,8 +34,8 @@ export const workflowTemplates: WorkflowTemplateDTO[] = [
   {
     key: 'production',
     name: '生产流转',
-    description: '当前启用工单从图纸准备到前后端生产及完成归档。',
-    steps: ['未发图', '在前端', '在后端', '已完成'],
+    description: '查看产品已发布工序路线、当前工序和下一工序，并直达生产执行处理。',
+    steps: ['图纸准备', '产品工序路线', '完成归档'],
     route: '/production',
   },
 ];
@@ -135,6 +135,26 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
           select: { id: true, stage: true, remark: true, createdBy: true, createdAt: true },
           orderBy: { createdAt: 'desc' }, take: 8,
         },
+        processRoute: {
+          select: {
+            status: true,
+            steps: {
+              select: { id: true, processName: true, status: true, position: true, startedAt: true, completedAt: true },
+              orderBy: { position: 'asc' },
+            },
+            activities: {
+              select: {
+                id: true,
+                action: true,
+                content: true,
+                createdAt: true,
+                actor: { select: { username: true, displayName: true } },
+              },
+              orderBy: { createdAt: 'desc' },
+              take: 8,
+            },
+          },
+        },
       },
       orderBy: { updatedAt: 'desc' },
       take: 500,
@@ -185,15 +205,52 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     const index = Math.max(0, ['not_issued', 'frontend', 'backend', 'completed'].indexOf(stage));
     const closed = stage === 'completed';
     const dueAt = order.plannedAt?.toISOString() || null;
+    const routeSteps = order.processRoute?.steps || [];
+    const currentRouteIndex = routeSteps.findIndex(step => step.status === 'current');
+    const firstPendingIndex = routeSteps.findIndex(step => step.status === 'pending');
+    const routeIndex = currentRouteIndex >= 0 ? currentRouteIndex : firstPendingIndex;
+    const activeRouteStep = routeIndex >= 0 ? routeSteps[routeIndex] : routeSteps.at(-1) || null;
+    const nextRouteStep = routeIndex >= 0
+      ? routeSteps.slice(routeIndex + 1).find(step => step.status === 'pending' || step.status === 'current') || null
+      : null;
+    const hasProductRoute = routeSteps.length > 0;
+    const routeClosed = order.processRoute?.status === 'completed' || (hasProductRoute && routeSteps.every(step => step.status === 'completed' || step.status === 'skipped'));
+    const productionProcessStatus: WorkflowProcessStatus = hasProductRoute
+      ? routeClosed
+        ? 'closed'
+        : order.processRoute?.status === 'in_progress'
+          ? 'processing'
+          : 'waiting'
+      : processStatus(stage, 'production');
     items.push({
       id: `production:${order.id}`, entityId: order.id, entityType: 'production', code: order.specification || order.code,
       title: order.productName, subtitle: `${order.customerName || '客户未设置'} · 内部编号 ${order.code}`,
-      processStatus: processStatus(stage, 'production'), currentStep: stageText[stage], nextStep: nextLabel(productionLabels, index),
+      processStatus: productionProcessStatus,
+      currentStep: hasProductRoute ? activeRouteStep?.processName || '等待工序开始' : stageText[stage],
+      nextStep: hasProductRoute ? nextRouteStep?.processName || null : nextLabel(productionLabels, index),
       priority: (order.priority === 'urgent' || order.priority === 'high' ? order.priority : 'normal'), owner: order.productionOwner,
       dueAt, updatedAt: order.updatedAt.toISOString(), route: `/production?keyword=${encodeURIComponent(order.specification || order.code)}`,
       sourceRoute: `/dashboard?workOrderId=${encodeURIComponent(order.id)}`, isOverdue: !closed && !!order.plannedAt && order.plannedAt.getTime() < now,
-      steps: steps(productionLabels, index, closed),
-      activities: order.progressLogs.map(item => activity(item.id, 'production_progress', item.remark || `进入${stageText[normalizeWorkOrderStage(item.stage) || stage]}`, item.createdBy, item.createdAt)),
+      steps: hasProductRoute
+        ? routeSteps.map(step => ({
+          key: step.id,
+          label: step.processName,
+          state: step.status === 'completed' || step.status === 'skipped'
+            ? 'done' as const
+            : step.status === 'current'
+              ? 'current' as const
+              : 'pending' as const,
+        }))
+        : steps(productionLabels, index, closed),
+      activities: order.processRoute?.activities.length
+        ? order.processRoute.activities.map(item => activity(
+          item.id,
+          item.action,
+          item.content || '更新产品工序路线',
+          item.actor?.displayName || item.actor?.username,
+          item.createdAt,
+        ))
+        : order.progressLogs.map(item => activity(item.id, 'production_progress', item.remark || `进入${stageText[normalizeWorkOrderStage(item.stage) || stage]}`, item.createdBy, item.createdAt)),
     });
   }
 

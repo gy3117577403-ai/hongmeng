@@ -161,12 +161,18 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [newProcessStage, setNewProcessStage] = useState<ProcessStageGroup>('backend');
   const [creatingProcess, setCreatingProcess] = useState(false);
   const [copySourceId, setCopySourceId] = useState('');
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [matrixEditKey, setMatrixEditKey] = useState('');
+  const [matrixEditValue, setMatrixEditValue] = useState('');
+  const [matrixSavingKey, setMatrixSavingKey] = useState('');
   const [importOpen, setImportOpen] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [importCommitting, setImportCommitting] = useState(false);
   const [importPreview, setImportPreview] = useState<ProductTimeImportPreview | null>(null);
   const libraryTriggerRef = useRef<HTMLButtonElement>(null);
   const libraryCloseRef = useRef<HTMLButtonElement>(null);
+  const detailTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const detailCloseRef = useRef<HTMLButtonElement>(null);
   const importTriggerRef = useRef<HTMLButtonElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const importCloseRef = useRef<HTMLButtonElement>(null);
@@ -224,19 +230,20 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }, [activeProfile, selectedItem?.id]);
 
   useEffect(() => {
-    if (!libraryOpen && !importOpen) return;
+    if (!libraryOpen && !importOpen && !detailOpen) return;
 
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     window.requestAnimationFrame(() => {
       if (importOpen) importCloseRef.current?.focus();
       else if (libraryOpen && window.matchMedia('(max-width: 1500px)').matches) libraryCloseRef.current?.focus();
+      else if (detailOpen) detailCloseRef.current?.focus();
     });
 
     return () => {
       document.body.style.overflow = previousBodyOverflow;
     };
-  }, [importOpen, libraryOpen]);
+  }, [detailOpen, importOpen, libraryOpen]);
 
   useEffect(() => {
     function onEscape(event: KeyboardEvent): void {
@@ -249,11 +256,16 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       if (libraryOpen) {
         setLibraryOpen(false);
         window.requestAnimationFrame(() => libraryTriggerRef.current?.focus());
+        return;
+      }
+      if (detailOpen) {
+        setDetailOpen(false);
+        window.requestAnimationFrame(() => detailTriggerRef.current?.focus());
       }
     }
     window.addEventListener('keydown', onEscape);
     return () => window.removeEventListener('keydown', onEscape);
-  }, [importOpen, libraryOpen]);
+  }, [detailOpen, importOpen, libraryOpen]);
 
   const filteredDefinitions = useMemo(() => definitions.filter(definition => {
     if (entries.some(entry => entry.processDefinitionId === definition.id)) return false;
@@ -262,9 +274,107 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     return !normalized || `${definition.name} ${definition.code}`.toLocaleLowerCase('zh-CN').includes(normalized);
   }), [definitions, entries, libraryKeyword, libraryStage]);
 
-  function chooseItem(id: string): void {
-    if (dirty && !window.confirm('当前产品工时尚未保存，确定切换产品吗？')) return;
-    setSelectedId(id);
+  function openDetail(itemId: string, trigger: HTMLButtonElement): void {
+    if (dirty && selectedItem?.id !== itemId && !window.confirm('当前产品工时尚未保存，确定切换产品吗？')) return;
+    detailTriggerRef.current = trigger;
+    setSelectedId(itemId);
+    setDetailOpen(true);
+  }
+
+  function closeDetail(): void {
+    if (dirty && !window.confirm('当前产品工时尚未保存，确定关闭详情吗？')) return;
+    setDetailOpen(false);
+    window.requestAnimationFrame(() => detailTriggerRef.current?.focus());
+  }
+
+  function matrixKey(itemId: string, definitionId: string): string {
+    return `${itemId}:${definitionId}`;
+  }
+
+  function startMatrixEdit(item: ProductTimeListItemDTO, definition: ProcessDefinition): void {
+    if (dirty) {
+      setError('产品详情中有未保存修改，请先保存或关闭后再快速填写');
+      return;
+    }
+    const profile = item.draft || item.published;
+    const entry = profile?.entries.find(value => value.processDefinitionId === definition.id);
+    setSelectedId(item.id);
+    setMatrixEditKey(matrixKey(item.id, definition.id));
+    setMatrixEditValue(seconds(entry?.unitMilliseconds));
+    setError('');
+  }
+
+  async function saveMatrixCell(item: ProductTimeListItemDTO, definition: ProcessDefinition): Promise<void> {
+    const key = matrixKey(item.id, definition.id);
+    if (matrixEditKey !== key || matrixSavingKey) return;
+    const value = Number(matrixEditValue);
+    if (!Number.isFinite(value) || value <= 0 || value > 86_400) {
+      setError(`${definition.name}单件工时必须大于 0 秒且不超过 24 小时`);
+      return;
+    }
+    const profile = item.draft || item.published;
+    const nextEntries = profile?.entries.map(entryDraft) || [];
+    const definitionOrder = new Map(definitions.map((value, index) => [value.id, index]));
+    const followsSharedOrder = nextEntries.every((entry, index) => index === 0
+      || (definitionOrder.get(nextEntries[index - 1].processDefinitionId) ?? Number.MAX_SAFE_INTEGER)
+        <= (definitionOrder.get(entry.processDefinitionId) ?? Number.MAX_SAFE_INTEGER));
+    const existingIndex = nextEntries.findIndex(entry => entry.processDefinitionId === definition.id);
+    if (existingIndex >= 0) nextEntries[existingIndex] = { ...nextEntries[existingIndex], unitSeconds: String(value) };
+    else nextEntries.push({
+      processDefinitionId: definition.id,
+      unitSeconds: String(value),
+      actionSeconds: '',
+      occurrences: '1',
+      setupSeconds: '0',
+      countsForEfficiency: true,
+      remark: '',
+    });
+    if (existingIndex < 0 && followsSharedOrder) {
+      nextEntries.sort((left, right) => (definitionOrder.get(left.processDefinitionId) ?? Number.MAX_SAFE_INTEGER)
+        - (definitionOrder.get(right.processDefinitionId) ?? Number.MAX_SAFE_INTEGER));
+    }
+
+    setMatrixSavingKey(key);
+    setError('');
+    setMessage('');
+    try {
+      const response = await fetch(`/api/product-time-profiles/${item.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expectedRevision: item.draft?.revision ?? null,
+          remark: profile?.remark || '',
+          sourceType: 'matrix',
+          entries: nextEntries.map(entry => ({
+            processDefinitionId: entry.processDefinitionId,
+            unitSeconds: entry.unitSeconds,
+            actionSeconds: entry.actionSeconds,
+            occurrences: entry.occurrences,
+            setupSeconds: entry.setupSeconds,
+            countsForEfficiency: entry.countsForEfficiency,
+            remark: entry.remark,
+          })),
+        }),
+      });
+      const data = await response.json().catch(() => ({})) as { ok?: boolean; error?: string; profile?: ProductTimeProfileDTO };
+      if (!response.ok || !data.profile) throw new Error(data.error || '产品工时保存失败');
+      const hadDraft = Boolean(item.draft);
+      const wasMissing = !item.draft && !item.published;
+      setItems(current => current.map(currentItem => currentItem.id === item.id
+        ? { ...currentItem, draft: data.profile! }
+        : currentItem));
+      setSummary(current => ({
+        ...current,
+        draft: current.draft + (hadDraft ? 0 : 1),
+        missing: Math.max(0, current.missing - (wasMissing ? 1 : 0)),
+      }));
+      setMatrixEditKey('');
+      setMessage(`${item.specification} · ${definition.name} 已保存为草稿`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '产品工时保存失败');
+    } finally {
+      setMatrixSavingKey('');
+    }
   }
 
   function addDefinition(definition: ProcessDefinition): void {
@@ -495,13 +605,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     }
   }
 
-  async function logout(): Promise<void> {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    location.href = '/login';
-  }
-
   const totalMilliseconds = draftTotal(entries);
   const selectedStatus = selectedItem ? statusText(selectedItem) : '未选择产品';
+  const matrixGridColumns = `minmax(248px, 280px) repeat(${definitions.length}, 104px) 132px`;
+  const matrixMinWidth = Math.max(820, 280 + definitions.length * 104 + 132);
 
   return (
     <main className="product-time-page hm-product-time-workbench hm-workbench-root">
@@ -509,15 +616,15 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         user={user}
         activeHref="/workspace/product-times"
         subtitle="按产品维护执行工序、顺序与单位标准时间"
-        menuItems={[{ label: '返回图纸资料库', href: '/drawing-library' }, { label: '退出登录', onSelect: logout }]}
+        menuItems={[]}
       />
 
       <div className="product-time-main">
-        <section className="product-time-summary" aria-label="产品工时概览">
-          <article><Clock3 aria-hidden="true" /><span>图纸产品<strong>{summary.total}</strong><small>当前筛选范围</small></span></article>
-          <article><CheckCircle2 aria-hidden="true" /><span>已发布<strong>{summary.published}</strong><small>可用于新工单</small></span></article>
-          <article><Save aria-hidden="true" /><span>草稿待发布<strong>{summary.draft}</strong><small>继续维护</small></span></article>
-          <article className="warning"><Library aria-hidden="true" /><span>工时待维护<strong>{summary.missing}</strong><small>暂不计算正式达成率</small></span></article>
+        <section className="product-time-summary" aria-label="产品工时概览与快捷筛选">
+          <button className={status === 'all' ? 'active' : ''} type="button" onClick={() => setStatus('all')}><Clock3 aria-hidden="true" /><span>图纸产品<small>全部范围</small></span><strong>{summary.total}</strong></button>
+          <button className={status === 'published' ? 'active' : ''} type="button" onClick={() => setStatus('published')}><CheckCircle2 aria-hidden="true" /><span>已发布<small>可用于新工单</small></span><strong>{summary.published}</strong></button>
+          <button className={status === 'draft' ? 'active' : ''} type="button" onClick={() => setStatus('draft')}><Save aria-hidden="true" /><span>草稿待发布<small>继续维护</small></span><strong>{summary.draft}</strong></button>
+          <button className={`warning ${status === 'missing' ? 'active' : ''}`} type="button" onClick={() => setStatus('missing')}><Library aria-hidden="true" /><span>工时待维护<small>暂不计算达成率</small></span><strong>{summary.missing}</strong></button>
         </section>
 
         <section className="product-time-toolbar" aria-label="产品工时搜索和筛选">
@@ -545,46 +652,78 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         {message && <div className="product-time-message" role="status">{message}</div>}
         {error && <div className="product-time-error" role="alert">{error}</div>}
 
-        <section className="product-time-workspace">
-          <aside className="product-time-browser" aria-label="图纸产品列表">
-            <div className="product-time-panel-head"><span><strong>产品规格</strong><small>{items.length} 项</small></span></div>
-            <div className="product-time-product-list hm-scroll-region" tabIndex={0}>
+        <section className="product-time-matrix-shell" aria-labelledby="product-time-matrix-title">
+          <header className="product-time-matrix-titlebar">
+            <div><span>产品工时矩阵</span><h1 id="product-time-matrix-title">按产品维护单件工序时间</h1><p>灰色表示该产品不参与该工序；点击单元格即可填写秒数，详细路线可单独调整顺序。</p></div>
+            <div className="product-time-matrix-legend" aria-label="矩阵图例"><span><i className="configured" />已配置</span><span><i />未参与</span><span><b>01</b>产品路线顺序</span></div>
+          </header>
+          <div className="product-time-matrix-scroll hm-scroll-region" tabIndex={0} aria-label={`产品工时矩阵，共 ${items.length} 款产品、${definitions.length} 个共享工序`}>
+            <div className="product-time-matrix" style={{ minWidth: `${matrixMinWidth}px` }}>
+              <div className="product-time-matrix-row product-time-matrix-head" style={{ gridTemplateColumns: matrixGridColumns }}>
+                <span className="product-time-product-column"><b>产品 / 客户</b><small>点击产品查看并调整完整路线</small></span>
+                {definitions.map(definition => <span key={definition.id} title={`${definition.name} · ${stageText[definition.stageGroup]}`}><b>{definition.name}</b><small>{stageText[definition.stageGroup]}</small></span>)}
+                <span><b>版本状态</b><small>单件总工时</small></span>
+              </div>
               {items.map(item => {
                 const profile = item.draft || item.published;
-                return <button key={item.id} className={selectedItem?.id === item.id ? 'active' : ''} type="button" onClick={() => chooseItem(item.id)}>
-                  <strong title={item.specification}>{item.specification}</strong>
-                  <span title={`${item.customerName} · ${item.productName || '品名未设置'}`}>{item.customerName} · {item.productName || '品名未设置'}</span>
-                  <footer><em className={item.published ? 'published' : item.draft ? 'draft' : 'missing'}>{statusText(item)}</em><small>{profile ? `${profile.processCount} 工序 · ${duration(profile.totalMillisecondsPerUnit)}` : '未配置'}</small></footer>
-                </button>;
+                return <div className="product-time-matrix-row" style={{ gridTemplateColumns: matrixGridColumns }} key={item.id}>
+                  <button className="product-time-product-cell" type="button" title={`${item.specification} · ${item.customerName} · ${item.productName || '品名未设置'}`} onClick={event => openDetail(item.id, event.currentTarget)}>
+                    <strong>{item.specification}</strong><span>{item.customerName}</span><small>{item.productName || '品名未设置'}</small>
+                  </button>
+                  {definitions.map(definition => {
+                    const key = matrixKey(item.id, definition.id);
+                    const entry = profile?.entries.find(value => value.processDefinitionId === definition.id);
+                    const editing = matrixEditKey === key;
+                    const savingCell = matrixSavingKey === key;
+                    return <div className={`product-time-matrix-cell ${entry ? 'configured' : ''} ${editing ? 'editing' : ''}`} key={definition.id}>
+                      {editing ? <input
+                        autoFocus
+                        inputMode="decimal"
+                        aria-label={`${item.specification} ${definition.name}单件工时（秒）`}
+                        value={matrixEditValue}
+                        onChange={event => setMatrixEditValue(event.target.value)}
+                        onBlur={() => void saveMatrixCell(item, definition)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter') event.currentTarget.blur();
+                          if (event.key === 'Escape') setMatrixEditKey('');
+                        }}
+                      /> : <button type="button" disabled={Boolean(matrixSavingKey)} title={`${item.specification} · ${definition.name}：${entry ? `${seconds(entry.unitMilliseconds)} 秒，路线第 ${entry.position} 道` : '不参与，点击填写'}`} onClick={() => startMatrixEdit(item, definition)}>
+                        {savingCell ? <span>保存中</span> : entry ? <><b>{seconds(entry.unitMilliseconds)}</b><small>秒</small><em>{String(entry.position).padStart(2, '0')}</em></> : <><Plus size={14} aria-hidden="true" /><span>填写</span></>}
+                      </button>}
+                    </div>;
+                  })}
+                  <button className="product-time-status-cell" type="button" onClick={event => openDetail(item.id, event.currentTarget)}>
+                    <em className={item.published ? 'published' : item.draft ? 'draft' : 'missing'}>{statusText(item)}</em>
+                    <small>{profile ? `${profile.processCount} 道 · ${duration(profile.totalMillisecondsPerUnit)}` : '未配置'}</small>
+                  </button>
+                </div>;
               })}
-              {!loading && !items.length && <div className="product-time-empty"><Search aria-hidden="true" /><strong>没有符合条件的产品</strong><span>请调整搜索或先在图纸资料库建立产品资料。</span></div>}
+              {!loading && !items.length && <div className="product-time-empty matrix-empty"><Search aria-hidden="true" /><strong>没有符合条件的产品</strong><span>请调整筛选，或先在图纸资料库建立产品资料。</span></div>}
             </div>
-          </aside>
+          </div>
+        </section>
 
-          <section className="product-time-editor" aria-label="产品单位工时编辑">
-            {!selectedItem ? <div className="product-time-empty large"><Clock3 aria-hidden="true" /><strong>选择产品开始维护工时</strong><span>产品工时会绑定图纸资料，不会依赖容易重复的文本规格。</span></div> : <>
+        {detailOpen && <button className="product-time-detail-scrim" type="button" aria-label="关闭产品工时详情" onClick={closeDetail} />}
+        {detailOpen && <aside className="product-time-detail-drawer open" role="dialog" aria-modal="true" aria-labelledby="product-time-detail-title">
+          <div className="product-time-editor" aria-label="产品单位工时编辑">
+            {!selectedItem ? <div className="product-time-empty large"><Clock3 aria-hidden="true" /><strong>选择产品开始维护工时</strong></div> : <>
               <header className="product-time-editor-head">
-                <div><span>{selectedStatus}</span><h1 title={selectedItem.specification}>{selectedItem.specification}</h1><p title={`${selectedItem.customerName} · ${selectedItem.productName || '品名未设置'}`}>{selectedItem.customerName} · {selectedItem.productName || '品名未设置'}</p></div>
-                <div className="product-time-editor-actions">
-                  <a className="hm-workbench-button" href={`/drawing-library?itemId=${encodeURIComponent(selectedItem.id)}`}><BookOpenText size={15} aria-hidden="true" />查看图纸</a>
-                  <button ref={libraryTriggerRef} className="hm-workbench-button" type="button" aria-expanded={libraryOpen} aria-controls="product-process-library" onClick={() => setLibraryOpen(true)}><Library size={15} aria-hidden="true" />工序库</button>
-                  <button className="hm-workbench-button" type="button" disabled={saving} onClick={saveDraft}><Save size={15} aria-hidden="true" />{saving ? '保存中' : '保存草稿'}</button>
-                  <button className="hm-workbench-button primary" type="button" disabled={publishing || dirty || !activeDraft} onClick={publish}><CheckCircle2 size={15} aria-hidden="true" />{publishing ? '发布中' : '发布版本'}</button>
-                </div>
+                <div><span>{selectedStatus}</span><h1 id="product-time-detail-title" title={selectedItem.specification}>{selectedItem.specification}</h1><p title={`${selectedItem.customerName} · ${selectedItem.productName || '品名未设置'}`}>{selectedItem.customerName} · {selectedItem.productName || '品名未设置'}</p></div>
+                <button ref={detailCloseRef} className="product-time-detail-close" type="button" title="关闭产品工时详情" aria-label="关闭产品工时详情" onClick={closeDetail}><X size={18} /></button>
               </header>
-
-              <div className="product-time-metrics">
-                <span><small>工序数量</small><strong>{entries.length}</strong></span>
-                <span><small>单件总工时</small><strong>{duration(totalMilliseconds)}</strong></span>
-                <span><small>当前版本</small><strong>{activeProfile ? `V${activeProfile.version}` : '待创建'}</strong></span>
-                <span><small>工时来源</small><strong>{copySourceId ? '复制后调整' : '人工维护'}</strong></span>
+              <div className="product-time-editor-actions">
+                <a className="hm-workbench-button" href={`/drawing-library?itemId=${encodeURIComponent(selectedItem.id)}`}><BookOpenText size={15} aria-hidden="true" />查看图纸</a>
+                <button ref={libraryTriggerRef} className="hm-workbench-button" type="button" aria-expanded={libraryOpen} aria-controls="product-process-library" onClick={() => setLibraryOpen(true)}><Library size={15} aria-hidden="true" />工序库</button>
+                <button className="hm-workbench-button" type="button" disabled={saving} onClick={saveDraft}><Save size={15} aria-hidden="true" />{saving ? '保存中' : '保存草稿'}</button>
+                <button className="hm-workbench-button primary" type="button" disabled={publishing || dirty || !activeDraft} onClick={publish}><CheckCircle2 size={15} aria-hidden="true" />{publishing ? '发布中' : '发布版本'}</button>
               </div>
-
+              <div className="product-time-metrics">
+                <span><small>工序数量</small><strong>{entries.length}</strong></span><span><small>单件总工时</small><strong>{duration(totalMilliseconds)}</strong></span><span><small>当前版本</small><strong>{activeProfile ? `V${activeProfile.version}` : '待创建'}</strong></span><span><small>工时来源</small><strong>{copySourceId ? '复制后调整' : '人工维护'}</strong></span>
+              </div>
               <div className="product-time-copy-row">
                 <label><span>复制相似产品</span><select value={copySourceId} onChange={event => setCopySourceId(event.target.value)}><option value="">选择已发布产品</option>{items.filter(item => item.id !== selectedItem.id && item.published).map(item => <option key={item.id} value={item.id}>{item.customerName} · {item.specification}</option>)}</select></label>
                 <button className="hm-workbench-button" type="button" disabled={!copySourceId} onClick={copyProfile}><Copy size={15} aria-hidden="true" />复制工时</button>
               </div>
-
               <div className="product-time-table-head" aria-hidden="true"><span>顺序/工序</span><span>单件工时(秒)</span><span>单次(秒)</span><span>次数</span><span>准备(秒)</span><span>计入达成率</span><span>操作</span></div>
               <div className="product-time-entry-list hm-scroll-region" tabIndex={0} aria-label={`产品工时明细，共 ${entries.length} 道工序`}>
                 {entries.map((entry, index) => {
@@ -604,13 +743,14 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               </div>
               <label className="product-time-remark"><span>版本说明</span><textarea value={remark} onChange={event => { setRemark(event.target.value); setDirty(true); }} placeholder="记录工时测定依据、特殊设备或本次调整原因" /></label>
             </>}
-          </section>
+          </div>
+        </aside>}
 
-          {libraryOpen && <button className="product-time-library-scrim" type="button" aria-label="关闭工序库" onClick={() => {
-            setLibraryOpen(false);
-            window.requestAnimationFrame(() => libraryTriggerRef.current?.focus());
-          }} />}
-          <aside id="product-process-library" className={`product-time-library ${libraryOpen ? 'open' : ''}`} aria-label="共享工序库">
+        {libraryOpen && <button className="product-time-library-scrim" type="button" aria-label="关闭工序库" onClick={() => {
+          setLibraryOpen(false);
+          window.requestAnimationFrame(() => libraryTriggerRef.current?.focus());
+        }} />}
+        {libraryOpen && <aside id="product-process-library" className="product-time-library open" aria-label="共享工序库">
             <header><span><strong>共享工序库</strong><small>加入当前产品后填写单件工时</small></span><button ref={libraryCloseRef} type="button" title="关闭工序库" aria-label="关闭工序库" onClick={() => {
               setLibraryOpen(false);
               window.requestAnimationFrame(() => libraryTriggerRef.current?.focus());
@@ -619,8 +759,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             <div className="product-time-stage-tabs">{(['all', 'frontend', 'backend', 'finish'] as const).map(value => <button key={value} className={libraryStage === value ? 'active' : ''} type="button" onClick={() => setLibraryStage(value)}>{value === 'all' ? '全部' : stageText[value]}</button>)}</div>
             <div className="product-time-definition-list hm-scroll-region" tabIndex={0}>{filteredDefinitions.map(definition => <button key={definition.id} type="button" onClick={() => addDefinition(definition)}><span><strong>{definition.name}</strong><small>{stageText[definition.stageGroup]}</small></span><Plus size={15} aria-hidden="true" /></button>)}{!filteredDefinitions.length && <p>没有可添加的工序</p>}</div>
             <section className="product-time-new-process"><strong>新增共享工序</strong><input value={newProcessName} onChange={event => setNewProcessName(event.target.value)} placeholder="工序名称" maxLength={60} /><select value={newProcessStage} onChange={event => setNewProcessStage(event.target.value as ProcessStageGroup)}><option value="frontend">前端</option><option value="backend">后端</option><option value="finish">完工</option></select><button className="hm-workbench-button" type="button" disabled={creatingProcess} onClick={createProcess}><Plus size={15} />{creatingProcess ? '创建中' : '创建并加入'}</button></section>
-          </aside>
-        </section>
+        </aside>}
       </div>
 
       {importOpen && importPreview && <div className="product-time-import-backdrop" role="presentation" onMouseDown={event => {

@@ -12,6 +12,7 @@ import type {
 
 export const STANDARD_DAY_MILLISECONDS = 8 * 60 * 60 * 1000;
 export const MINUTE_MILLISECONDS = 60 * 1000;
+export const ATTAINMENT_CAPACITY_FACTOR = 0.95;
 
 export const ABNORMAL_TIME_CATEGORIES: Array<{ value: AbnormalTimeCategory; label: string }> = [
   { value: 'equipment', label: '设备异常' },
@@ -273,4 +274,8 @@ export function intervalOverlaps(
 export function basisPoints(numerator: number, denominator: number): number | null {
   if (denominator <= 0) return null;
   return Math.max(0, Math.round((numerator / denominator) * 10_000));
+}
+
+export function attainmentCapacityMilliseconds(effectiveAttendanceMilliseconds: number): number {
+  return Math.max(0, Math.round(effectiveAttendanceMilliseconds * ATTAINMENT_CAPACITY_FACTOR));
 }

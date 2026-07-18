@@ -102,6 +102,7 @@ export function AppWorkbenchHeader({ user, activeHref, subtitle, menuItems, sear
   const sidebarButtonRef = useRef<HTMLButtonElement>(null);
   const displayName = user.displayName || user.username;
   const moduleName = activeModuleName(activeHref);
+  const isHome = isActiveRoute(activeHref, '/home');
 
   useEffect(() => {
     if (!sidebarExpanded) return;
@@ -163,22 +164,22 @@ export function AppWorkbenchHeader({ user, activeHref, subtitle, menuItems, sear
         </div>
       </aside>
 
-      <header className="hm-workbench-header">
+      <header className={`hm-workbench-header ${isHome ? 'is-home' : 'is-module'}`}>
         <button ref={sidebarButtonRef} className="hm-workbench-sidebar-button" type="button" aria-label={sidebarExpanded ? '收起平台导航' : '展开平台导航'} aria-controls="hm-platform-sidebar" aria-expanded={sidebarExpanded} onClick={() => setSidebarExpanded(value => !value)}>
           {sidebarExpanded ? <PanelLeftClose size={19} aria-hidden="true" /> : <PanelLeftOpen size={19} aria-hidden="true" />}
         </button>
         <div className="hm-workbench-context" title={`杭连协同平台 / ${moduleName} · ${subtitle}`}>
           <span>杭连协同平台</span><ChevronRight size={13} aria-hidden="true" /><strong>{moduleName}</strong><small>{subtitle}</small>
         </div>
-        <div className="hm-workbench-search-slot">
+        {isHome && <div className="hm-workbench-search-slot">
           {searchSlot || (
             <a className="hm-workbench-search-link" href="/home?focusSearch=1" title="打开全局搜索">
               <Search size={16} aria-hidden="true" /><span>搜索工单、图纸、说明书</span><kbd>Ctrl K</kbd>
             </a>
           )}
-        </div>
+        </div>}
         {utilityActions && <div className="hm-workbench-utility-actions">{utilityActions}</div>}
-        <div className="hm-workbench-user-wrap">
+        {isHome && <div className="hm-workbench-user-wrap">
           <button ref={userButtonRef} className="hm-workbench-user-button" type="button" aria-label={`${displayName}，打开用户菜单`} title={displayName} aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}>
             <span aria-hidden="true">{displayName.slice(0, 1)}</span><b>{displayName}</b><ChevronDown size={14} aria-hidden="true" />
           </button>
@@ -191,7 +192,7 @@ export function AppWorkbenchHeader({ user, activeHref, subtitle, menuItems, sear
               }}>{item.label}</button>
             ))}
           </PortalMenu>
-        </div>
+        </div>}
       </header>
     </>
   );

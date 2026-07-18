@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { basisPoints, parseWorkDate } from '@/lib/attendance';
+import { attainmentCapacityMilliseconds, basisPoints, parseWorkDate } from '@/lib/attendance';
 import { prisma } from '@/lib/prisma';
 import { employeeReportRange, serializeEmployee } from '@/lib/process-time';
 import type { EmployeeAttainmentRowDTO, ProcessExecutionDTO } from '@/types';
@@ -16,6 +16,7 @@ function emptyRow(employee: Parameters<typeof serializeEmployee>[0]): EmployeeAt
     attendanceMilliseconds: 0,
     exemptAbnormalMilliseconds: 0,
     effectiveProductionMilliseconds: 0,
+    attainmentCapacityMilliseconds: 0,
     unexplainedMilliseconds: 0,
     attendanceConfirmedDays: 0,
     attendanceMissing: true,
@@ -158,9 +159,10 @@ export async function GET(req: NextRequest) {
     }
     for (const row of groups.values()) {
       row.effectiveProductionMilliseconds = Math.max(0, row.attendanceMilliseconds - row.exemptAbnormalMilliseconds);
+      row.attainmentCapacityMilliseconds = attainmentCapacityMilliseconds(row.effectiveProductionMilliseconds);
       row.unexplainedMilliseconds = Math.max(0,
         row.attendanceMilliseconds - row.actualLaborMilliseconds - row.exemptAbnormalMilliseconds);
-      row.attainmentBasisPoints = basisPoints(row.standardLaborMilliseconds, row.effectiveProductionMilliseconds);
+      row.attainmentBasisPoints = basisPoints(row.standardLaborMilliseconds, row.attainmentCapacityMilliseconds);
       row.processEfficiencyBasisPoints = basisPoints(row.standardLaborMilliseconds, row.actualLaborMilliseconds) || 0;
       row.rawAttendanceOutputBasisPoints = basisPoints(row.standardLaborMilliseconds, row.attendanceMilliseconds);
       row.coverageBasisPoints = basisPoints(
@@ -180,6 +182,7 @@ export async function GET(req: NextRequest) {
       attendanceMilliseconds: result.attendanceMilliseconds + row.attendanceMilliseconds,
       exemptAbnormalMilliseconds: result.exemptAbnormalMilliseconds + row.exemptAbnormalMilliseconds,
       effectiveProductionMilliseconds: result.effectiveProductionMilliseconds + row.effectiveProductionMilliseconds,
+      attainmentCapacityMilliseconds: result.attainmentCapacityMilliseconds + row.attainmentCapacityMilliseconds,
       unexplainedMilliseconds: result.unexplainedMilliseconds + row.unexplainedMilliseconds,
       attendanceConfirmedDays: result.attendanceConfirmedDays + row.attendanceConfirmedDays,
       attendanceMissingCount: result.attendanceMissingCount + (row.attendanceMissing ? 1 : 0),
@@ -198,6 +201,7 @@ export async function GET(req: NextRequest) {
       attendanceMilliseconds: 0,
       exemptAbnormalMilliseconds: 0,
       effectiveProductionMilliseconds: 0,
+      attainmentCapacityMilliseconds: 0,
       unexplainedMilliseconds: 0,
       attendanceConfirmedDays: 0,
       attendanceMissingCount: 0,
@@ -209,7 +213,7 @@ export async function GET(req: NextRequest) {
       scrapQty: 0,
       reworkQty: 0,
     });
-    summary.attainmentBasisPoints = basisPoints(summary.standardLaborMilliseconds, summary.effectiveProductionMilliseconds);
+    summary.attainmentBasisPoints = basisPoints(summary.standardLaborMilliseconds, summary.attainmentCapacityMilliseconds);
     summary.processEfficiencyBasisPoints = basisPoints(summary.standardLaborMilliseconds, summary.actualLaborMilliseconds) || 0;
     summary.rawAttendanceOutputBasisPoints = basisPoints(summary.standardLaborMilliseconds, summary.attendanceMilliseconds);
     summary.coverageBasisPoints = basisPoints(
