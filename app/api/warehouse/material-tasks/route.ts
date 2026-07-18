@@ -44,27 +44,63 @@ export async function GET(req: NextRequest) {
   try {
     await requireUser();
     const params = req.nextUrl.searchParams;
-    const scope = params.get('scope') === 'history' ? 'history' : 'current';
+    const scope = params.get('scope') === 'history'
+      ? 'history'
+      : params.get('scope') === 'preparation'
+        ? 'preparation'
+        : 'current';
     const requestedWeek = parseWeek(params.get('weekStart'));
     if (params.get('weekStart') && !requestedWeek) {
       return NextResponse.json({ ok: false, error: '周开始日期格式不正确' }, { status: 400 });
     }
 
-    const activeWeek = requestedWeek || (scope === 'current'
-      ? (await prisma.workOrder.findFirst({
-          where: { deletedAt: null, planType: 'weekly_plan', planActive: true, materialTask: { isNot: null }, weekStartDate: { not: null } },
+    let activeWeek = requestedWeek;
+    if (!activeWeek && scope === 'current') {
+      activeWeek = (await prisma.workOrder.findFirst({
+        where: { deletedAt: null, planType: { in: ['weekly_plan', 'managed_plan'] }, planActive: true, materialTask: { isNot: null }, weekStartDate: { not: null } },
+        select: { weekStartDate: true },
+        orderBy: [{ weekStartDate: 'desc' }, { updatedAt: 'desc' }],
+      }))?.weekStartDate || null;
+    }
+    if (!activeWeek && scope === 'preparation') {
+      const preparationWeek = (await prisma.workOrder.findFirst({
+        where: {
+          deletedAt: null,
+          planType: 'managed_plan',
+          planActive: false,
+          productionPlanBatch: { is: { releaseState: 'preparation', deletedAt: null } },
+          materialTask: { isNot: null },
+          weekStartDate: { not: null },
+        },
+        select: { weekStartDate: true },
+        orderBy: [{ weekStartDate: 'asc' }, { updatedAt: 'desc' }],
+      }))?.weekStartDate || null;
+      if (preparationWeek) {
+        activeWeek = preparationWeek;
+      } else {
+        const currentWeek = (await prisma.workOrder.findFirst({
+          where: { deletedAt: null, planType: { in: ['weekly_plan', 'managed_plan'] }, planActive: true, materialTask: { isNot: null }, weekStartDate: { not: null } },
           select: { weekStartDate: true },
           orderBy: [{ weekStartDate: 'desc' }, { updatedAt: 'desc' }],
-        }))?.weekStartDate || null
-      : null);
+        }))?.weekStartDate || null;
+        activeWeek = currentWeek ? addDays(currentWeek, 7) : null;
+      }
+    }
 
     const workOrderWhere: Prisma.WorkOrderWhereInput = {
       deletedAt: null,
-      planType: 'weekly_plan',
+      planType: { in: ['weekly_plan', 'managed_plan'] },
     };
     if (activeWeek) workOrderWhere.weekStartDate = sameDay(activeWeek);
-    else if (scope === 'history') workOrderWhere.planActive = false;
-    else workOrderWhere.id = '__no_active_warehouse_week__';
+    if (scope === 'current') {
+      workOrderWhere.planActive = true;
+      if (!activeWeek) workOrderWhere.id = '__no_active_warehouse_week__';
+    }
+    else if (scope === 'preparation') {
+      workOrderWhere.planActive = false;
+      workOrderWhere.productionPlanBatch = { is: { releaseState: 'preparation', deletedAt: null } };
+      if (!activeWeek) workOrderWhere.id = '__no_preparation_warehouse_week__';
+    } else workOrderWhere.planActive = false;
 
     const summaryWhere: Prisma.WarehouseMaterialTaskWhereInput = { workOrder: { is: workOrderWhere } };
     const where: Prisma.WarehouseMaterialTaskWhereInput = { ...summaryWhere };
@@ -114,7 +150,7 @@ export async function GET(req: NextRequest) {
       }),
       prisma.workOrder.groupBy({
         by: ['weekStartDate', 'weekEndDate', 'planActive'],
-        where: { deletedAt: null, planType: 'weekly_plan', weekStartDate: { not: null }, materialTask: { isNot: null } },
+        where: { deletedAt: null, planType: { in: ['weekly_plan', 'managed_plan'] }, weekStartDate: { not: null }, materialTask: { isNot: null } },
         _count: { _all: true },
         orderBy: { weekStartDate: 'desc' },
       }),

@@ -19,7 +19,7 @@ import {
   positiveInteger,
 } from '@/lib/process-time';
 import { legacyProcessStandardSnapshot, productTimeProfileInclude, productTimeStandardSnapshot } from '@/lib/product-time';
-import { legacyStatusForStage, normalizeWorkOrderStage, type WorkOrderStage } from '@/lib/work-orders';
+import { isActiveProductionWorkOrder, legacyStatusForStage, normalizeWorkOrderStage, type WorkOrderStage } from '@/lib/work-orders';
 
 export class ProcessRouteServiceError extends Error {
   readonly status: number;
@@ -90,7 +90,7 @@ function ensureActiveWeeklyOrder(order: {
   planActive: boolean;
   planClearedAt: Date | null;
 }): void {
-  if (order.planType !== 'weekly_plan' || !order.planActive || order.planClearedAt) {
+  if (!isActiveProductionWorkOrder(order)) {
     throw new ProcessRouteServiceError(
       '历史周和下周草稿为只读，请在当前启用周维护工艺路线',
       409,

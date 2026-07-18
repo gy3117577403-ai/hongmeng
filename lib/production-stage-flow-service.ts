@@ -8,7 +8,7 @@ import {
   parsePositiveProductionQuantity,
   resolveEffectiveFrontendTransferredQty,
 } from '@/lib/production-stage-flow';
-import { legacyStatusForStage, type WorkOrderStage } from '@/lib/work-orders';
+import { isActiveProductionWorkOrder, legacyStatusForStage, type WorkOrderStage } from '@/lib/work-orders';
 
 export const PRODUCTION_STAGE_FLOW_ACTIONS = [
   'confirm_drawing_issued',
@@ -78,7 +78,7 @@ function conflict(): ProductionStageFlowServiceError {
 }
 
 function validateActiveWeeklyOrder(order: WorkOrder): void {
-  if (order.planType !== 'weekly_plan' || !order.planActive || order.planClearedAt) {
+  if (!isActiveProductionWorkOrder(order)) {
     throw new ProductionStageFlowServiceError(
       '历史周和下周草稿为只读，请在当前启用周更新进度',
       409,

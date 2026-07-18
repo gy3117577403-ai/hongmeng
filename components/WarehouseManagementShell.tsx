@@ -85,6 +85,12 @@ function rangeText(week?: WarehouseWeekOptionDTO): string {
   return `${dateText(week.weekStartDate)} - ${dateText(week.weekEndDate)}`;
 }
 
+function addDaysText(value: string, days: number): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function quantityText(task: WarehouseMaterialTaskDTO): string {
   if (task.workOrder.productionTargetQty !== null && task.workOrder.productionTargetQty !== undefined) {
     return task.workOrder.productionTargetQty.toLocaleString('zh-CN');
@@ -97,7 +103,7 @@ function exceptionNeedsExpectedAt(type: WarehouseExceptionType): boolean {
 }
 
 export default function WarehouseManagementShell({ user }: { user: CurrentUserDTO }) {
-  const [scope, setScope] = useState<'current' | 'history'>('current');
+  const [scope, setScope] = useState<'current' | 'preparation' | 'history'>('current');
   const [selectedWeek, setSelectedWeek] = useState('');
   const [status, setStatus] = useState<'all' | WarehouseMaterialStatus>('all');
   const [exceptionType, setExceptionType] = useState<'all' | WarehouseExceptionType>('all');
@@ -127,6 +133,13 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   });
 
   useEffect(() => {
+    const requestedScope = new URLSearchParams(window.location.search).get('scope');
+    if (requestedScope === 'preparation' || requestedScope === 'history') {
+      setScope(requestedScope);
+    }
+  }, []);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => { setQuery(keyword.trim()); setPage(1); }, 250);
     return () => window.clearTimeout(timer);
   }, [keyword]);
@@ -134,7 +147,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   useEffect(() => {
     const controller = new AbortController();
     const params = new URLSearchParams({ scope, status, page: String(page), pageSize: '100' });
-    if (scope === 'history' && selectedWeek) params.set('weekStart', selectedWeek);
+    if ((scope === 'history' || scope === 'preparation') && selectedWeek) params.set('weekStart', selectedWeek);
     if (exceptionType !== 'all') params.set('exceptionType', exceptionType);
     if (expectedOverdue) params.set('expected', 'overdue');
     if (query) params.set('keyword', query);
@@ -160,10 +173,16 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   }, [toast]);
 
   const summary = payload?.summary || emptySummary;
-  const selectedWeekOption = useMemo(
-    () => payload?.weeks.find(week => week.weekStartDate === selectedWeek),
-    [payload?.weeks, selectedWeek],
-  );
+  const selectedWeekOption = useMemo(() => {
+    const weekStartDate = selectedWeek || payload?.selectedWeekStart || '';
+    if (!weekStartDate) return undefined;
+    return payload?.weeks.find(week => week.weekStartDate === weekStartDate) || {
+      weekStartDate,
+      weekEndDate: addDaysText(weekStartDate, 6),
+      active: false,
+      taskCount: 0,
+    };
+  }, [payload?.selectedWeekStart, payload?.weeks, selectedWeek]);
 
   function resetFilters(): void {
     setStatus('all');
@@ -272,7 +291,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
       />
       <div className="warehouse-page-frame">
         <section className="warehouse-summary" aria-label="仓库配料统计">
-          <button className={status === 'all' && !expectedOverdue ? 'active total' : 'total'} type="button" onClick={() => chooseSummary('all')}><Warehouse aria-hidden="true" /><span>{scope === 'current' ? '本周配料任务' : '历史配料任务'}<small>{scope === 'current' ? '当前生产周全部产品' : '当前历史筛选范围'}</small></span><strong>{summary.total}</strong></button>
+          <button className={status === 'all' && !expectedOverdue ? 'active total' : 'total'} type="button" onClick={() => chooseSummary('all')}><Warehouse aria-hidden="true" /><span>{scope === 'current' ? '本周配料任务' : scope === 'preparation' ? '下周预备任务' : '历史配料任务'}<small>{scope === 'current' ? '当前生产周全部产品' : scope === 'preparation' ? '提前配料，不进入生产执行' : '当前历史筛选范围'}</small></span><strong>{summary.total}</strong></button>
           <button className={status === 'pending' ? 'active pending' : 'pending'} type="button" onClick={() => chooseSummary('pending')}><Clock3 aria-hidden="true" /><span>待配料<small>等待仓库处理</small></span><strong>{summary.pending}</strong></button>
           <button className={status === 'completed' ? 'active completed' : 'completed'} type="button" onClick={() => chooseSummary('completed')}><PackageCheck aria-hidden="true" /><span>已配料<small>仓库已确认完成</small></span><strong>{summary.completed}</strong></button>
           <button className={status === 'exception' && !expectedOverdue ? 'active exception' : 'exception'} type="button" onClick={() => chooseSummary('exception')}><AlertTriangle aria-hidden="true" /><span>仓库异常<small>缺料、料错等</small></span><strong>{summary.exception}</strong></button>
@@ -282,14 +301,15 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
         <section className="warehouse-toolbar" aria-label="仓库任务筛选">
           <div className="warehouse-scope-tabs" role="tablist" aria-label="生产周范围">
             <button className={scope === 'current' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'current'} onClick={() => { setScope('current'); setSelectedWeek(''); setPage(1); }}>当前周</button>
+            <button className={scope === 'preparation' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'preparation'} onClick={() => { setScope('preparation'); setSelectedWeek(''); setPage(1); }}>下周预备</button>
             <button className={scope === 'history' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'history'} onClick={() => { setScope('history'); setPage(1); }}>历史周</button>
           </div>
-          {scope === 'history' && <label className="warehouse-week-select"><span>生产周</span><select value={selectedWeek} onChange={event => { setSelectedWeek(event.target.value); setPage(1); }}><option value="">全部历史周</option>{payload?.weeks.filter(week => !week.active).map(week => <option value={week.weekStartDate} key={week.weekStartDate}>{rangeText(week)} · {week.taskCount} 单</option>)}</select></label>}
+          {(scope === 'history' || scope === 'preparation') && <label className="warehouse-week-select"><span>生产周</span><select value={selectedWeek} onChange={event => { setSelectedWeek(event.target.value); setPage(1); }}><option value="">{scope === 'preparation' ? '最近预备周' : '全部历史周'}</option>{payload?.weeks.filter(week => !week.active).map(week => <option value={week.weekStartDate} key={week.weekStartDate}>{rangeText(week)} · {week.taskCount} 单</option>)}</select></label>}
           <label className="warehouse-search"><Search size={17} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、规格、品名或工单号" /></label>
           <label className="warehouse-exception-select"><span>异常类型</span><select value={exceptionType} onChange={event => { setExceptionType(event.target.value as 'all' | WarehouseExceptionType); setPage(1); }}><option value="all">全部异常</option>{exceptionOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           <button className="warehouse-reset" type="button" title="重置筛选" aria-label="重置筛选" onClick={resetFilters}><RotateCcw size={15} aria-hidden="true" />重置</button>
           <div className="warehouse-toolbar-actions" aria-label="仓库管理操作">
-            <a className="hm-workbench-button" href="/weekly-plan-center" title="打开周计划"><CalendarDays size={15} aria-hidden="true" /><span>周计划</span></a>
+            <a className="hm-workbench-button" href="/weekly-plan-center" title="打开计划中心"><CalendarDays size={15} aria-hidden="true" /><span>计划中心</span></a>
             <button className="hm-workbench-button" type="button" title="刷新仓库任务" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" /><span>刷新</span></button>
           </div>
         </section>
@@ -297,7 +317,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
         {error && <div className="warehouse-error" role="alert"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
 
         <section className="warehouse-task-panel" aria-labelledby="warehouse-task-heading">
-          <header><div><span>{scope === 'current' ? '当前生产周' : rangeText(selectedWeekOption)}</span><h2 id="warehouse-task-heading">产品配料清单</h2></div><em>筛选结果 {payload?.pagination.total || 0} 项</em></header>
+          <header><div><span>{scope === 'current' ? '当前生产周' : scope === 'preparation' ? `下周预备 · ${rangeText(selectedWeekOption)}` : rangeText(selectedWeekOption)}</span><h2 id="warehouse-task-heading">产品配料清单</h2></div><em>筛选结果 {payload?.pagination.total || 0} 项</em></header>
           <div className="warehouse-task-columns" aria-hidden="true"><span>完成</span><span>客户 / 规格 / 品名</span><span>计划与交期</span><span>配料状态</span><span>操作</span></div>
           <div className="warehouse-task-list hm-scroll-region" tabIndex={0} aria-label="仓库配料任务列表">
             {payload?.tasks.map(task => <article className={`warehouse-task-row ${task.status} ${task.isExpectedOverdue ? 'expected-overdue' : ''}`} key={task.id}>
@@ -314,7 +334,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
               <div className="warehouse-task-actions"><button type="button" disabled={savingId === task.id} onClick={event => { void openDrawer(task, event.currentTarget); }}>{task.status === 'exception' ? '处理异常' : task.status === 'completed' ? '查看记录' : '报告异常'}</button>{task.status === 'pending' && <button className="primary" type="button" disabled={savingId === task.id} onClick={() => { void markCompleted(task); }}>{savingId === task.id ? '保存中' : '确认已配料'}</button>}</div>
             </article>)}
             {loading && <div className="warehouse-loading">正在加载配料任务...</div>}
-            {!loading && !payload?.tasks.length && <div className="warehouse-empty"><PackageCheck aria-hidden="true" /><strong>当前筛选没有配料任务</strong><span>{scope === 'current' ? '启用周计划后，系统会自动生成待配料任务。' : '请选择其他历史生产周或清除筛选条件。'}</span></div>}
+            {!loading && !payload?.tasks.length && <div className="warehouse-empty"><PackageCheck aria-hidden="true" /><strong>当前筛选没有配料任务</strong><span>{scope === 'current' ? '下达本周计划后，系统会自动生成待配料任务。' : scope === 'preparation' ? '从计划中心下达“下周预备”后，任务会在这里提前出现。' : '请选择其他历史生产周或清除筛选条件。'}</span></div>}
           </div>
           {payload && payload.pagination.totalPages > 1 && <footer className="warehouse-pagination"><span>共 {payload.pagination.total} 项</span><button type="button" disabled={payload.pagination.page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</button><b>{payload.pagination.page} / {payload.pagination.totalPages}</b><button type="button" disabled={payload.pagination.page >= payload.pagination.totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></footer>}
         </section>

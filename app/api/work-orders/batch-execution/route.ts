@@ -5,7 +5,7 @@ import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { prepareExecutionUpdate, type ExecutionUpdateInput } from '@/lib/work-order-execution';
-import { normalizeWorkOrderStage } from '@/lib/work-orders';
+import { isActiveProductionWorkOrder, normalizeWorkOrderStage } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
         failed.push({ id, ok: false, error: '工单不存在' });
         continue;
       }
-      if (order.planType !== 'weekly_plan' || !order.planActive || order.planClearedAt) {
+      if (!isActiveProductionWorkOrder(order)) {
         failed.push({ id, ok: false, error: '历史周和下周草稿为只读' });
         continue;
       }

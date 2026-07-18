@@ -60,7 +60,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
     items: [
       { href: '/production', label: '生产执行', icon: LayoutDashboard },
       { href: '/dashboard', label: '生产工单', icon: FileCheck2 },
-      { href: '/weekly-plan-center', label: '周计划', icon: CalendarDays },
+      { href: '/weekly-plan-center', label: '计划中心', icon: CalendarDays },
       { href: '/drawing-library', label: '图纸资料库', icon: FolderKanban },
       { href: '/connector-assembly-manuals', label: '组装说明书', icon: BookOpen },
       { href: '/connector-parameters', label: '连接器参数', icon: Boxes },

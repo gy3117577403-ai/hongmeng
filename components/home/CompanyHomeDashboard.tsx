@@ -398,11 +398,11 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
             <section className="hm-home-start-banner" aria-labelledby="hm-home-start-title">
               <div>
                 <span>本周计划尚未启用</span>
-                <h2 id="hm-home-start-title">从计划导入开始今天的生产协同</h2>
-                <p>现有图纸、工单和连接器资料仍可正常使用；启用周计划后，待办、异常和执行进度会自动汇总到首页。</p>
+                <h2 id="hm-home-start-title">从实时订单排程开始今天的生产协同</h2>
+                <p>现有图纸、工单和连接器资料仍可正常使用；订单排程并下达后，待办、异常和执行进度会自动汇总到首页。</p>
               </div>
               <nav aria-label="开始本周工作">
-                <a className="primary" href="/weekly-plan-center">导入或审核周计划</a>
+                <a className="primary" href="/weekly-plan-center">进入计划中心</a>
                 <a href="/dashboard">打开生产工单</a>
                 <a href="/drawing-library">查看图纸资料</a>
               </nav>
@@ -428,7 +428,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
               <SectionHeading title={hasOperationalData ? '我的待办事项' : '开始本周工作'} meta={hasOperationalData ? `全部 ${data.actionItems.length}` : '三步进入生产执行'} href={hasOperationalData ? '/production?view=exceptions' : undefined} />
               {hasOperationalData ? <ActionList items={data.actionItems} /> : (
                 <div className="hm-home-start-steps">
-                  <a href="/weekly-plan-center"><span>01</span><CalendarDays size={19} aria-hidden="true" /><div><strong>导入并审核周计划</strong><p>导入 Excel，确认差异后启用当前生产周。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
+                  <a href="/weekly-plan-center"><span>01</span><CalendarDays size={19} aria-hidden="true" /><div><strong>建立并排程生产订单</strong><p>实时维护订单，拆分批次后下达本周执行或下周预备。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
                   <a href="/production"><span>02</span><LayoutDashboard size={19} aria-hidden="true" /><div><strong>进入生产执行中心</strong><p>按未发图、前端、后端和完成阶段推进工单。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
                   <a href="/dashboard"><span>03</span><FileCheck2 size={19} aria-hidden="true" /><div><strong>补齐工单生产资料</strong><p>上传原图、SOP、成品图并确认资料完整性。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
                 </div>

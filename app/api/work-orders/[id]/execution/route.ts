@@ -10,6 +10,7 @@ import {
 } from '@/lib/production-stage-flow-service';
 import { prisma } from '@/lib/prisma';
 import { prepareExecutionUpdate, type ExecutionUpdateInput } from '@/lib/work-order-execution';
+import { isActiveProductionWorkOrder } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,7 +42,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     const old = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!old) return NextResponse.json({ ok: false, error: '工单不存在' }, { status: 404 });
-    if (old.planType !== 'weekly_plan' || !old.planActive || old.planClearedAt) {
+    if (!isActiveProductionWorkOrder(old)) {
       return NextResponse.json({ ok: false, error: '历史周和下周草稿为只读，请在当前启用周更新进度' }, { status: 409 });
     }
     const processRoute = await prisma.workOrderProcessRoute.findUnique({

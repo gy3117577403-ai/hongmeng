@@ -49,6 +49,16 @@ export function legacyStatusForStage(stage: WorkOrderStage) {
   return 'processing';
 }
 
+export function isActiveProductionWorkOrder(order: {
+  planType?: string | null;
+  planActive?: boolean;
+  planClearedAt?: Date | string | null;
+}): boolean {
+  return (order.planType === 'weekly_plan' || order.planType === 'managed_plan')
+    && order.planActive === true
+    && !order.planClearedAt;
+}
+
 export function displayWorkOrderCode(order: Pick<WorkOrder, 'code' | 'specification'> | { code?: string | null; specification?: string | null }) {
   return order.specification?.trim() || order.code?.trim() || '-';
 }

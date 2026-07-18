@@ -428,6 +428,83 @@ export type WarehouseWeekOptionDTO = {
   taskCount: number;
 };
 
+export type ProductionPlanPriority = 'normal' | 'urgent' | 'insert';
+export type ProductionPlanOrderStatus = 'pending' | 'scheduled' | 'partially_released' | 'released' | 'paused' | 'cancelled' | 'completed';
+export type ProductionPlanReleaseState = 'draft' | 'preparation' | 'active' | 'archived';
+
+export type ProductionPlanBatchDTO = {
+  id: string;
+  planOrderId: string;
+  batchNo: number;
+  quantity: number;
+  weekStartDate: string;
+  weekEndDate: string;
+  plannedCompletionDate: string;
+  releaseState: ProductionPlanReleaseState;
+  workOrderId?: string | null;
+  productTimeProfileId?: string | null;
+  productTimeProfileVersion?: number | null;
+  unitMillisecondsSnapshot?: number | null;
+  totalMillisecondsSnapshot?: string | null;
+  warehouseStatus?: WarehouseMaterialStatus | 'not_created';
+  processStatus?: ProcessRouteStatus | 'not_created';
+  releasedAt?: string | null;
+  activatedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProductionPlanOrderDTO = {
+  id: string;
+  sourceOrderNo: string;
+  sourceLineNo: number;
+  customerName: string;
+  productName: string;
+  specification: string;
+  drawingLibraryItemId?: string | null;
+  drawingFileCount: number;
+  orderQuantity: number;
+  allocatedQuantity: number;
+  remainingQuantity: number;
+  orderDate: string;
+  customerDueDate: string;
+  priority: ProductionPlanPriority;
+  status: ProductionPlanOrderStatus;
+  remark?: string | null;
+  currentUnitMilliseconds?: number | null;
+  currentProductTimeVersion?: number | null;
+  batches: ProductionPlanBatchDTO[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProductionPlanChangeDTO = {
+  id: string;
+  planOrderId?: string | null;
+  batchId?: string | null;
+  action: string;
+  reason?: string | null;
+  beforeData?: Record<string, string | number | boolean | null> | null;
+  afterData?: Record<string, string | number | boolean | null> | null;
+  impactData?: Record<string, string | number | boolean | null> | null;
+  actor?: IssueUserDTO | null;
+  createdAt: string;
+};
+
+export type ProductionPlanningSummaryDTO = {
+  orderCount: number;
+  pendingOrderCount: number;
+  scheduledOrderCount: number;
+  thisWeekBatchCount: number;
+  nextWeekBatchCount: number;
+  preparationBatchCount: number;
+  activeBatchCount: number;
+  missingDrawingCount: number;
+  missingProductTimeCount: number;
+  warehouseExceptionCount: number;
+  processPendingCount: number;
+};
+
 export type ProcessStageGroup = 'frontend' | 'backend' | 'finish';
 export type ProcessRouteStatus = 'draft' | 'confirmed' | 'in_progress' | 'completed';
 export type ProcessStepStatus = 'pending' | 'current' | 'completed' | 'skipped';

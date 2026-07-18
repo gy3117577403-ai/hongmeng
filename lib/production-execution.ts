@@ -183,7 +183,7 @@ export async function resolveProductionWeek(weekStartInput?: string | null, week
   const active = await prisma.workOrder.findFirst({
     where: {
       deletedAt: null,
-      planType: 'weekly_plan',
+      planType: { in: ['weekly_plan', 'managed_plan'] },
       planActive: true,
       weekStartDate: { not: null },
     },
@@ -200,7 +200,7 @@ export function productionWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhere
   if (!week.weekStart) return { id: '__no_active_week__' };
   return {
     deletedAt: null,
-    planType: 'weekly_plan',
+    planType: { in: ['weekly_plan', 'managed_plan'] },
     planActive: true,
     weekStartDate: sameDayRange(week.weekStart),
   };

@@ -39,7 +39,7 @@ const modules: PlatformModuleDefinition[] = [
     capabilityTitle: '已接入能力', capabilities: ['变更申请与影响评估', '实施与验证流转', '附件、记录与软删除'],
     links: [
       { label: '进入图纸资料库', description: '查看当前版本图纸', href: '/drawing-library' },
-      { label: '进入周计划中心', description: '查看当前计划与差异', href: '/weekly-plan-center' },
+      { label: '进入计划中心', description: '查看订单排程与计划变更', href: '/weekly-plan-center' },
     ],
   },
   {
@@ -126,7 +126,7 @@ const modules: PlatformModuleDefinition[] = [
     description: '汇总杭连协同平台的业务模块与规划入口。已有模块保持真实可用，规划模块逐步补齐。',
     capabilityTitle: '平台模块', capabilities: ['计划中心', '技术资料', '生产执行'],
     links: [
-      { label: '周计划中心', description: '计划导入、审核与启用', href: '/weekly-plan-center' },
+      { label: '计划中心', description: '订单排程、下周预备与本周下达', href: '/weekly-plan-center' },
       { label: '生产执行中心', description: '阶段、数量和异常闭环', href: '/production' },
       { label: '知识库', description: '图纸、参数和说明书', href: '/workspace/knowledge' },
     ],

@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma';
 import { prepareProductionQuantityAdjustment } from '@/lib/production-quantity-adjustment';
 import { parsedImportedProductionTarget } from '@/lib/production-quantity';
 import { parseExecutionVersion, resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
-import { legacyStatusForStage, normalizeWorkOrderStage } from '@/lib/work-orders';
+import { isActiveProductionWorkOrder, legacyStatusForStage, normalizeWorkOrderStage } from '@/lib/work-orders';
 
 export type ProductionQuantityAdjustmentCommand = {
   workOrderId: string;
@@ -39,7 +39,7 @@ function conflict(): ProductionQuantityAdjustmentServiceError {
 }
 
 function validateActiveWeeklyOrder(order: WorkOrder): void {
-  if (order.planType !== 'weekly_plan' || !order.planActive || order.planClearedAt) {
+  if (!isActiveProductionWorkOrder(order)) {
     throw new ProductionQuantityAdjustmentServiceError(
       '历史周和下周草稿为只读，请在当前启用周校正数量',
       409,

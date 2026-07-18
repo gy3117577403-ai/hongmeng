@@ -48,6 +48,11 @@ model User {
   updatedAbnormalTimeEvents      AbnormalTimeEvent[]         @relation("AbnormalTimeEventUpdatedBy")
   qualityConfirmedAbnormalEvents AbnormalTimeEvent[]         @relation("AbnormalTimeEventQualityConfirmedBy")
   resolvedAbnormalTimeEvents     AbnormalTimeEvent[]         @relation("AbnormalTimeEventResolvedBy")
+  createdProductionPlanOrders   ProductionPlanOrder[]       @relation("ProductionPlanOrderCreatedBy")
+  updatedProductionPlanOrders   ProductionPlanOrder[]       @relation("ProductionPlanOrderUpdatedBy")
+  releasedProductionPlanBatches ProductionPlanBatch[]       @relation("ProductionPlanBatchReleasedBy")
+  activatedProductionPlanBatches ProductionPlanBatch[]      @relation("ProductionPlanBatchActivatedBy")
+  productionPlanChanges         ProductionPlanChange[]      @relation("ProductionPlanChangeActor")
 
   @@map("users")
 }
@@ -110,6 +115,7 @@ model WorkOrder {
   materialTask            WarehouseMaterialTask?
   processRoute            WorkOrderProcessRoute?
   abnormalTimeEvents      AbnormalTimeEvent[]
+  productionPlanBatch     ProductionPlanBatch?
 
   @@index([code])
   @@index([productName])
@@ -594,6 +600,7 @@ model DrawingLibraryItem {
   workOrders          WorkOrder[]          @relation("DrawingLibraryWorkOrders")
   lastWorkOrder       WorkOrder?           @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
   productTimeProfiles ProductTimeProfile[]
+  productionPlanOrders ProductionPlanOrder[]
 
   @@index([customerName])
   @@index([customerCode])
@@ -626,12 +633,107 @@ model ProductTimeProfile {
   entries              ProductProcessTimeEntry[]
   routes               WorkOrderProcessRoute[]
   routeSteps           WorkOrderProcessStep[]
+  productionPlanBatches ProductionPlanBatch[]
 
   @@unique([drawingLibraryItemId, version])
   @@index([drawingLibraryItemId, status])
   @@index([status, updatedAt])
   @@index([publishedAt])
   @@map("product_time_profiles")
+}
+
+model ProductionPlanOrder {
+  id                   String                 @id @default(uuid())
+  sourceOrderNo        String                 @map("source_order_no")
+  sourceLineNo         Int                    @map("source_line_no")
+  customerName         String                 @map("customer_name")
+  productName          String                 @map("product_name")
+  specification        String
+  drawingLibraryItemId String?                @map("drawing_library_item_id")
+  orderQuantity        Int                    @map("order_quantity")
+  orderDate            DateTime               @map("order_date")
+  customerDueDate      DateTime               @map("customer_due_date")
+  priority             String                 @default("normal")
+  status               String                 @default("pending")
+  remark               String?
+  createdById          String?                @map("created_by_id")
+  updatedById          String?                @map("updated_by_id")
+  createdAt            DateTime               @default(now()) @map("created_at")
+  updatedAt            DateTime               @updatedAt @map("updated_at")
+  deletedAt            DateTime?              @map("deleted_at")
+  drawingLibraryItem   DrawingLibraryItem?    @relation(fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
+  createdBy            User?                  @relation("ProductionPlanOrderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy            User?                  @relation("ProductionPlanOrderUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  batches              ProductionPlanBatch[]
+  changes              ProductionPlanChange[]
+
+  @@unique([sourceOrderNo, sourceLineNo])
+  @@index([customerName])
+  @@index([specification])
+  @@index([customerDueDate])
+  @@index([status])
+  @@index([priority])
+  @@index([drawingLibraryItemId])
+  @@index([deletedAt])
+  @@map("production_plan_orders")
+}
+
+model ProductionPlanBatch {
+  id                        String                  @id @default(uuid())
+  planOrderId               String                  @map("plan_order_id")
+  batchNo                   Int                     @map("batch_no")
+  quantity                  Int
+  weekStartDate             DateTime                @map("week_start_date")
+  weekEndDate               DateTime                @map("week_end_date")
+  plannedCompletionDate     DateTime                @map("planned_completion_date")
+  releaseState              String                  @default("draft") @map("release_state")
+  workOrderId               String?                 @unique @map("work_order_id")
+  productTimeProfileId      String?                 @map("product_time_profile_id")
+  productTimeProfileVersion Int?                    @map("product_time_profile_version")
+  unitMillisecondsSnapshot  Int?                    @map("unit_milliseconds_snapshot")
+  totalMillisecondsSnapshot BigInt?                 @map("total_milliseconds_snapshot")
+  releasedAt                DateTime?                @map("released_at")
+  releasedById              String?                 @map("released_by_id")
+  activatedAt               DateTime?                @map("activated_at")
+  activatedById             String?                 @map("activated_by_id")
+  createdAt                 DateTime                 @default(now()) @map("created_at")
+  updatedAt                 DateTime                 @updatedAt @map("updated_at")
+  deletedAt                 DateTime?                @map("deleted_at")
+  planOrder                 ProductionPlanOrder     @relation(fields: [planOrderId], references: [id], onDelete: Cascade)
+  workOrder                 WorkOrder?              @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  productTimeProfile        ProductTimeProfile?     @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
+  releasedBy                User?                   @relation("ProductionPlanBatchReleasedBy", fields: [releasedById], references: [id], onDelete: SetNull)
+  activatedBy               User?                   @relation("ProductionPlanBatchActivatedBy", fields: [activatedById], references: [id], onDelete: SetNull)
+  changes                   ProductionPlanChange[]
+
+  @@unique([planOrderId, batchNo])
+  @@index([weekStartDate, releaseState])
+  @@index([plannedCompletionDate])
+  @@index([productTimeProfileId])
+  @@index([deletedAt])
+  @@map("production_plan_batches")
+}
+
+model ProductionPlanChange {
+  id          String                @id @default(uuid())
+  planOrderId String?               @map("plan_order_id")
+  batchId     String?               @map("batch_id")
+  action      String
+  beforeData  Json?                 @map("before_data")
+  afterData   Json?                 @map("after_data")
+  impactData  Json?                 @map("impact_data")
+  reason      String?
+  actorId     String?               @map("actor_id")
+  createdAt   DateTime              @default(now()) @map("created_at")
+  planOrder   ProductionPlanOrder?  @relation(fields: [planOrderId], references: [id], onDelete: Cascade)
+  batch       ProductionPlanBatch?  @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  actor       User?                 @relation("ProductionPlanChangeActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([planOrderId, createdAt])
+  @@index([batchId, createdAt])
+  @@index([action])
+  @@index([createdAt])
+  @@map("production_plan_changes")
 }
 
 model ProductProcessTimeEntry {
