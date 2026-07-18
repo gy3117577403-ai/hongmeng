@@ -135,21 +135,43 @@ html:has(.hm-product-time-workbench) {
   background: transparent;
 }
 
+.hm-product-time-workbench input.product-time-file-input {
+  width: 1px;
+  height: 1px;
+}
+
 .hm-product-time-workbench .product-time-message,
 .hm-product-time-workbench .product-time-error {
-  min-height: 36px;
-  padding: 8px 12px;
+  position: fixed;
+  z-index: 90;
+  top: calc(var(--hm-shell-header) + 12px);
+  right: 16px;
+  min-height: 38px;
+  max-width: min(420px, calc(100vw - 32px));
+  padding: 9px 13px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   border-radius: 7px;
   border: 1px solid #bbf0d3;
   background: #ecfdf3;
   color: #067647;
   font-size: 13px;
+  font-weight: 650;
+  box-shadow: 0 12px 30px rgba(23, 34, 53, .16);
+  pointer-events: none;
+  animation: product-time-toast-in 140ms ease-out;
 }
 
 .hm-product-time-workbench .product-time-error {
   border-color: #fecaca;
   background: #fff1f2;
   color: #b42318;
+}
+
+@keyframes product-time-toast-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 .hm-product-time-workbench .product-time-workspace {
@@ -964,7 +986,7 @@ html:has(.hm-product-time-workbench) {
 .hm-product-time-workbench .product-time-matrix-row:last-child { border-bottom: 0; }
 .hm-product-time-workbench .product-time-matrix-head { position: sticky; z-index: 5; top: 0; min-height: 58px; background: #f7f8fa; content-visibility: visible; }
 .hm-product-time-workbench .product-time-matrix-head > span { min-width: 0; padding: 7px 6px; display: grid; place-content: center; gap: 2px; border-right: 1px solid #e3e8ee; text-align: center; }
-.hm-product-time-workbench .product-time-matrix-head > span b { overflow: hidden; color: #344054; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.hm-product-time-workbench .product-time-matrix-head > span b { overflow: hidden; color: #344054; font-size: 11px; line-height: 1.2; text-wrap: balance; }
 .hm-product-time-workbench .product-time-matrix-head > span small { color: #8a96a6; font-size: 9px; }
 
 .hm-product-time-workbench .product-time-matrix-head .product-time-product-column,
@@ -987,8 +1009,10 @@ html:has(.hm-product-time-workbench) {
 .hm-product-time-workbench .product-time-product-cell span { color: #5f6e82; font-size: 11px; }
 .hm-product-time-workbench .product-time-product-cell small { color: #8a96a6; font-size: 10px; }
 
-.hm-product-time-workbench .product-time-matrix-cell { min-width: 0; padding: 5px; border-right: 1px solid #edf0f3; background: #f4f5f7; }
+.hm-product-time-workbench .product-time-matrix-cell { position: relative; min-width: 0; padding: 5px; border-right: 1px solid #edf0f3; background: #f4f5f7; }
 .hm-product-time-workbench .product-time-matrix-cell.configured { background: #fff9f4; }
+.hm-product-time-workbench .product-time-matrix-cell.saving { background: #fff4eb; }
+.hm-product-time-workbench .product-time-matrix-cell.invalid { background: #fff1f2; }
 .hm-product-time-workbench .product-time-matrix-cell > button { position: relative; width: 100%; height: 100%; min-height: 56px; padding: 5px; display: flex; align-items: center; justify-content: center; gap: 3px; border: 1px dashed #d7dde5; border-radius: 6px; background: #eef1f4; color: #8995a5; cursor: pointer; }
 .hm-product-time-workbench .product-time-matrix-cell.configured > button { border-style: solid; border-color: #f0c3a3; background: #fff; color: #b54708; }
 .hm-product-time-workbench .product-time-matrix-cell > button:hover,
@@ -998,6 +1022,9 @@ html:has(.hm-product-time-workbench) {
 .hm-product-time-workbench .product-time-matrix-cell > button span { font-size: 10px; }
 .hm-product-time-workbench .product-time-matrix-cell > button em { position: absolute; top: 3px; right: 3px; padding: 1px 3px; border-radius: 3px; background: #fff0e5; color: #c54d00; font-size: 8px; font-style: normal; }
 .hm-product-time-workbench .product-time-matrix-cell input { width: 100%; height: 100%; min-height: 56px; padding: 0 5px; border: 2px solid #e85d04; border-radius: 6px; background: #fff; color: #172235; text-align: center; outline: 0; font-size: 14px; font-weight: 700; }
+.hm-product-time-workbench .product-time-matrix-cell.invalid input,
+.hm-product-time-workbench .product-time-matrix-cell.invalid > button { border-color: #d92d20; }
+.hm-product-time-workbench .product-time-cell-error { position: absolute; z-index: 2; right: 5px; bottom: 3px; max-width: calc(100% - 10px); overflow: hidden; color: #b42318; font-size: 8px; font-weight: 700; line-height: 1; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 
 .hm-product-time-workbench .product-time-status-cell { min-width: 0; padding: 7px; display: grid; place-content: center; gap: 5px; border: 0; background: #fff; text-align: center; cursor: pointer; }
 .hm-product-time-workbench .product-time-status-cell:hover,

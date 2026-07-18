@@ -164,7 +164,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [matrixEditKey, setMatrixEditKey] = useState('');
   const [matrixEditValue, setMatrixEditValue] = useState('');
-  const [matrixSavingKey, setMatrixSavingKey] = useState('');
+  const [matrixSavingKeys, setMatrixSavingKeys] = useState<string[]>([]);
+  const [matrixCellError, setMatrixCellError] = useState<{ key: string; message: string } | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [importCommitting, setImportCommitting] = useState(false);
@@ -177,6 +178,9 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const importInputRef = useRef<HTMLInputElement>(null);
   const importCloseRef = useRef<HTMLButtonElement>(null);
   const initialSelectionRef = useRef(false);
+  const itemsRef = useRef<ProductTimeListItemDTO[]>([]);
+  const matrixSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const matrixCancelRef = useRef('');
 
   const selectedItem = items.find(item => item.id === selectedId) || items[0] || null;
   const activeDraft = selectedItem?.draft || null;
@@ -195,6 +199,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       const data = await response.json().catch(() => ({})) as ProductTimePayload;
       if (!response.ok) throw new Error(data.error || '产品工时加载失败');
       const nextItems = data.items || [];
+      itemsRef.current = nextItems;
       setItems(nextItems);
       setDefinitions(data.definitions || []);
       setCustomers(data.customers || []);
@@ -208,6 +213,28 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setLoading(false);
     }
   }, [customer, keyword, selectedId, status]);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    if (!message) return undefined;
+    const timer = window.setTimeout(() => setMessage(''), message === '已保存' ? 1000 : 3200);
+    return () => window.clearTimeout(timer);
+  }, [message]);
+
+  useEffect(() => {
+    if (!error) return undefined;
+    const timer = window.setTimeout(() => setError(''), 4200);
+    return () => window.clearTimeout(timer);
+  }, [error]);
+
+  useEffect(() => {
+    if (!matrixCellError) return undefined;
+    const timer = window.setTimeout(() => setMatrixCellError(null), 4200);
+    return () => window.clearTimeout(timer);
+  }, [matrixCellError]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => load(), 220);
@@ -298,20 +325,49 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     }
     const profile = item.draft || item.published;
     const entry = profile?.entries.find(value => value.processDefinitionId === definition.id);
+    const key = matrixKey(item.id, definition.id);
+    if (matrixSavingKeys.includes(key)) return;
     setSelectedId(item.id);
-    setMatrixEditKey(matrixKey(item.id, definition.id));
+    matrixCancelRef.current = '';
+    setMatrixEditKey(key);
     setMatrixEditValue(seconds(entry?.unitMilliseconds));
+    setMatrixCellError(current => current?.key === key ? null : current);
     setError('');
   }
 
-  async function saveMatrixCell(item: ProductTimeListItemDTO, definition: ProcessDefinition): Promise<void> {
-    const key = matrixKey(item.id, definition.id);
-    if (matrixEditKey !== key || matrixSavingKey) return;
-    const value = Number(matrixEditValue);
-    if (!Number.isFinite(value) || value <= 0 || value > 86_400) {
-      setError(`${definition.name}单件工时必须大于 0 秒且不超过 24 小时`);
+  function cancelMatrixEdit(key: string): void {
+    matrixCancelRef.current = key;
+    setMatrixEditKey('');
+    setMatrixEditValue('');
+    setMatrixCellError(current => current?.key === key ? null : current);
+  }
+
+  function moveMatrixEditor(item: ProductTimeListItemDTO, definition: ProcessDefinition, direction: -1 | 1): void {
+    const index = definitions.findIndex(value => value.id === definition.id);
+    const nextDefinition = definitions[index + direction];
+    if (!nextDefinition) return;
+    window.setTimeout(() => startMatrixEdit(item, nextDefinition), 0);
+  }
+
+  function queueMatrixCellSave(itemId: string, definition: ProcessDefinition, value: number): void {
+    const key = matrixKey(itemId, definition.id);
+    setMatrixSavingKeys(current => current.includes(key) ? current : [...current, key]);
+    matrixSaveQueueRef.current = matrixSaveQueueRef.current
+      .catch(() => undefined)
+      .then(() => persistMatrixCell(itemId, definition, value))
+      .finally(() => setMatrixSavingKeys(current => current.filter(valueKey => valueKey !== key)));
+  }
+
+  async function persistMatrixCell(itemId: string, definition: ProcessDefinition, value: number): Promise<void> {
+    const key = matrixKey(itemId, definition.id);
+    const item = itemsRef.current.find(current => current.id === itemId);
+    if (!item) {
+      const failureMessage = '产品已不在当前列表，请刷新后重试';
+      setMatrixCellError({ key, message: failureMessage });
+      setError(failureMessage);
       return;
     }
+
     const profile = item.draft || item.published;
     const nextEntries = profile?.entries.map(entryDraft) || [];
     const definitionOrder = new Map(definitions.map((value, index) => [value.id, index]));
@@ -334,7 +390,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         - (definitionOrder.get(right.processDefinitionId) ?? Number.MAX_SAFE_INTEGER));
     }
 
-    setMatrixSavingKey(key);
     setError('');
     setMessage('');
     try {
@@ -360,21 +415,50 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       if (!response.ok || !data.profile) throw new Error(data.error || '产品工时保存失败');
       const hadDraft = Boolean(item.draft);
       const wasMissing = !item.draft && !item.published;
-      setItems(current => current.map(currentItem => currentItem.id === item.id
+      const nextItems = itemsRef.current.map(currentItem => currentItem.id === item.id
         ? { ...currentItem, draft: data.profile! }
-        : currentItem));
+        : currentItem);
+      itemsRef.current = nextItems;
+      setItems(nextItems);
       setSummary(current => ({
         ...current,
         draft: current.draft + (hadDraft ? 0 : 1),
         missing: Math.max(0, current.missing - (wasMissing ? 1 : 0)),
       }));
-      setMatrixEditKey('');
-      setMessage(`${item.specification} · ${definition.name} 已保存为草稿`);
+      setMatrixCellError(current => current?.key === key ? null : current);
+      setMessage('已保存');
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '产品工时保存失败');
-    } finally {
-      setMatrixSavingKey('');
+      const failureMessage = reason instanceof Error ? reason.message : '产品工时保存失败';
+      setMatrixCellError({ key, message: failureMessage });
+      setError(failureMessage);
     }
+  }
+
+  function saveMatrixCell(item: ProductTimeListItemDTO, definition: ProcessDefinition): void {
+    const key = matrixKey(item.id, definition.id);
+    if (matrixCancelRef.current === key) {
+      matrixCancelRef.current = '';
+      return;
+    }
+    if (matrixEditKey !== key) return;
+
+    const profile = item.draft || item.published;
+    const entry = profile?.entries.find(value => value.processDefinitionId === definition.id);
+    const rawValue = matrixEditValue.trim();
+    const value = Number(rawValue);
+    setMatrixEditKey('');
+    setMatrixEditValue('');
+
+    if (!rawValue || value === 0) {
+      setMatrixCellError(current => current?.key === key ? null : current);
+      return;
+    }
+    if (!Number.isFinite(value) || value < 0 || value > 86_400) {
+      setMatrixCellError({ key, message: '请输入 1 至 86400 秒；0 或留空将取消更改' });
+      return;
+    }
+    if (entry && Number(seconds(entry.unitMilliseconds)) === value) return;
+    queueMatrixCellSave(item.id, definition, value);
   }
 
   function addDefinition(definition: ProcessDefinition): void {
@@ -607,11 +691,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
   const totalMilliseconds = draftTotal(entries);
   const selectedStatus = selectedItem ? statusText(selectedItem) : '未选择产品';
-  const matrixGridColumns = `minmax(248px, 280px) repeat(${definitions.length}, 104px) 132px`;
-  const matrixMinWidth = Math.max(820, 280 + definitions.length * 104 + 132);
+  const matrixGridColumns = `minmax(210px, 1.8fr) repeat(${definitions.length}, minmax(62px, 1fr)) minmax(96px, .9fr)`;
+  const matrixMinWidth = Math.max(860, 210 + definitions.length * 62 + 96);
 
   return (
-    <main className="product-time-page hm-product-time-workbench hm-workbench-root">
+    <main className="product-time-page hm-product-time-workbench hm-workbench-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/product-times"
@@ -649,12 +733,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
           </div>
         </section>
 
-        {message && <div className="product-time-message" role="status">{message}</div>}
-        {error && <div className="product-time-error" role="alert">{error}</div>}
+        {message && <div className="product-time-message" role="status" aria-live="polite"><CheckCircle2 size={16} aria-hidden="true" />{message}</div>}
+        {error && <div className="product-time-error" role="alert"><AlertTriangle size={16} aria-hidden="true" />{error}</div>}
 
         <section className="product-time-matrix-shell" aria-labelledby="product-time-matrix-title">
           <header className="product-time-matrix-titlebar">
-            <div><span>产品工时矩阵</span><h1 id="product-time-matrix-title">按产品维护单件工序时间</h1><p>灰色表示该产品不参与该工序；点击单元格即可填写秒数，详细路线可单独调整顺序。</p></div>
+            <div><span>产品工时矩阵</span><h1 id="product-time-matrix-title">按产品维护单件工序时间</h1><p>单击选择工序并填写秒数；空白或 0 失焦会自动取消，Enter 或 Tab 可连续录入。</p></div>
             <div className="product-time-matrix-legend" aria-label="矩阵图例"><span><i className="configured" />已配置</span><span><i />未参与</span><span><b>01</b>产品路线顺序</span></div>
           </header>
           <div className="product-time-matrix-scroll hm-scroll-region" tabIndex={0} aria-label={`产品工时矩阵，共 ${items.length} 款产品、${definitions.length} 个共享工序`}>
@@ -674,22 +758,34 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                     const key = matrixKey(item.id, definition.id);
                     const entry = profile?.entries.find(value => value.processDefinitionId === definition.id);
                     const editing = matrixEditKey === key;
-                    const savingCell = matrixSavingKey === key;
-                    return <div className={`product-time-matrix-cell ${entry ? 'configured' : ''} ${editing ? 'editing' : ''}`} key={definition.id}>
+                    const savingCell = matrixSavingKeys.includes(key);
+                    const cellError = matrixCellError?.key === key ? matrixCellError.message : '';
+                    return <div className={`product-time-matrix-cell ${entry ? 'configured' : ''} ${editing ? 'editing' : ''} ${savingCell ? 'saving' : ''} ${cellError ? 'invalid' : ''}`} key={definition.id}>
                       {editing ? <input
                         autoFocus
                         inputMode="decimal"
                         aria-label={`${item.specification} ${definition.name}单件工时（秒）`}
+                        aria-invalid={Boolean(cellError)}
                         value={matrixEditValue}
                         onChange={event => setMatrixEditValue(event.target.value)}
-                        onBlur={() => void saveMatrixCell(item, definition)}
+                        onBlur={() => saveMatrixCell(item, definition)}
                         onKeyDown={event => {
-                          if (event.key === 'Enter') event.currentTarget.blur();
-                          if (event.key === 'Escape') setMatrixEditKey('');
+                          if (event.key === 'Escape') {
+                            event.preventDefault();
+                            cancelMatrixEdit(key);
+                            return;
+                          }
+                          if (event.key === 'Enter' || event.key === 'Tab') {
+                            event.preventDefault();
+                            const direction = event.shiftKey ? -1 : 1;
+                            event.currentTarget.blur();
+                            moveMatrixEditor(item, definition, direction);
+                          }
                         }}
-                      /> : <button type="button" disabled={Boolean(matrixSavingKey)} title={`${item.specification} · ${definition.name}：${entry ? `${seconds(entry.unitMilliseconds)} 秒，路线第 ${entry.position} 道` : '不参与，点击填写'}`} onClick={() => startMatrixEdit(item, definition)}>
+                      /> : <button type="button" disabled={savingCell} title={`${item.specification} · ${definition.name}：${entry ? `${seconds(entry.unitMilliseconds)} 秒，路线第 ${entry.position} 道` : '不参与，点击填写'}`} onClick={() => startMatrixEdit(item, definition)}>
                         {savingCell ? <span>保存中</span> : entry ? <><b>{seconds(entry.unitMilliseconds)}</b><small>秒</small><em>{String(entry.position).padStart(2, '0')}</em></> : <><Plus size={14} aria-hidden="true" /><span>填写</span></>}
                       </button>}
+                      {cellError && <span className="product-time-cell-error" role="alert" title={cellError}>输入无效</span>}
                     </div>;
                   })}
                   <button className="product-time-status-cell" type="button" onClick={event => openDetail(item.id, event.currentTarget)}>

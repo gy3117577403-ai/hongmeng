@@ -1000,6 +1000,51 @@ main.hm-workbench-root.hm-workbench-root {
   .hm-workbench-user-wrap {
     grid-column: 4;
   }
+
+  /* Opt-in desktop focus mode for dense workspaces. */
+  main.hm-workbench-root.hm-workbench-navigation-overlay {
+    --hm-shell-rail: 0px;
+  }
+
+  main.hm-workbench-root.hm-workbench-navigation-overlay .hm-platform-sidebar,
+  main.hm-workbench-root.hm-workbench-navigation-overlay .hm-platform-sidebar.expanded {
+    width: 224px;
+    transform: translateX(-100%);
+    transition: transform var(--hm-motion-normal), box-shadow var(--hm-motion-normal);
+  }
+
+  main.hm-workbench-root.hm-workbench-navigation-overlay .hm-platform-sidebar.expanded {
+    transform: translateX(0);
+  }
+
+  main.hm-workbench-root.hm-workbench-navigation-overlay .hm-platform-sidebar-scrim.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  main.hm-workbench-root.hm-workbench-navigation-overlay .hm-workbench-sidebar-button {
+    display: grid;
+  }
+
+  main.hm-workbench-root.hm-workbench-navigation-overlay .hm-platform-sidebar .hm-platform-sidebar-close {
+    display: none;
+  }
+
+  main.hm-workbench-root.hm-workbench-navigation-overlay .hm-platform-sidebar.expanded .hm-platform-sidebar-close {
+    display: grid;
+  }
+
+  main.hm-workbench-root.hm-workbench-navigation-overlay .hm-workbench-header.is-module {
+    grid-template-columns: 42px minmax(0, 1fr) auto;
+  }
+
+  main.hm-workbench-root.hm-workbench-navigation-overlay .hm-workbench-header.is-module .hm-workbench-context {
+    grid-column: 2;
+  }
+
+  main.hm-workbench-root.hm-workbench-navigation-overlay .hm-workbench-header.is-module .hm-workbench-utility-actions {
+    grid-column: 3;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
