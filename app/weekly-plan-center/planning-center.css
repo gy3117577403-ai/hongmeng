@@ -2,7 +2,7 @@ html:has(.planning-center-shell) {
   overflow: hidden;
 }
 
-.planning-center-shell.hm-workbench-root {
+main.planning-center-shell.hm-workbench-root {
   --hm-shell-header: 0px;
   min-height: 100dvh;
   padding-top: 0;
