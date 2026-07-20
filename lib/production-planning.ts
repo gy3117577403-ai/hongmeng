@@ -118,6 +118,44 @@ export type ProductionPlanReleasePreview = {
   }>;
 };
 
+export type ProductionPlanDeletionWorkOrderState = {
+  stage: string;
+  status: string;
+  progress: number;
+  startedAt: Date | string | null;
+  completedAt: Date | string | null;
+  lastProgressAt: Date | string | null;
+  completedQty: string | null;
+  frontendTransferredQty: number | null;
+  progressLogCount: number;
+  processRoute: {
+    status: string;
+    startedAt: Date | string | null;
+    completedAt: Date | string | null;
+    steps: Array<{
+      status: string;
+      startedAt: Date | string | null;
+      completedAt: Date | string | null;
+      executionCount: number;
+    }>;
+  } | null;
+};
+
+export type ProductionPlanBatchDeletionPreview = {
+  batchCount: number;
+  totalQuantity: number;
+  draftDeleteCount: number;
+  withdrawCount: number;
+  blockers: number;
+  items: Array<{
+    batchId: string;
+    specification: string;
+    quantity: number;
+    action: 'delete_draft' | 'withdraw_unstarted' | 'blocked';
+    message: string;
+  }>;
+};
+
 function text(value: unknown, max: number): string {
   return String(value ?? '').trim().slice(0, max);
 }
@@ -328,6 +366,227 @@ export async function previewProductionPlanRelease(
     warnings: items.reduce((sum, item) => sum + item.warnings.length, 0),
     blockers: items.reduce((sum, item) => sum + item.blockers.length, 0),
     items,
+  };
+}
+
+function storedPositiveQuantity(value: string | null): boolean {
+  if (!value) return false;
+  const normalized = value.replace(/,/g, '').match(/\d+(?:\.\d+)?/)?.[0];
+  return normalized ? Number(normalized) > 0 : false;
+}
+
+export function productionPlanWorkOrderStartBlocker(
+  workOrder: ProductionPlanDeletionWorkOrderState | null,
+): string | null {
+  if (!workOrder) return null;
+  if (workOrder.completedAt || workOrder.stage === 'completed' || workOrder.status === 'done') {
+    return '关联生产工单已经完成，不能删除计划';
+  }
+  if (
+    workOrder.startedAt
+    || workOrder.lastProgressAt
+    || workOrder.progress > 0
+    || (workOrder.frontendTransferredQty || 0) > 0
+    || storedPositiveQuantity(workOrder.completedQty)
+    || workOrder.progressLogCount > 0
+    || (workOrder.stage !== 'not_issued' && workOrder.stage !== 'pending')
+  ) {
+    return '关联生产工单已经开始执行，不能删除计划';
+  }
+  if (
+    workOrder.processRoute?.startedAt
+    || workOrder.processRoute?.completedAt
+    || workOrder.processRoute?.status === 'in_progress'
+    || workOrder.processRoute?.status === 'completed'
+    || workOrder.processRoute?.steps.some(step => (
+      step.startedAt
+      || step.completedAt
+      || step.status === 'current'
+      || step.status === 'completed'
+      || step.executionCount > 0
+    ))
+  ) {
+    return '关联生产工单已有工序执行记录，不能删除计划';
+  }
+  return null;
+}
+
+export async function previewProductionPlanBatchDeletion(
+  tx: Prisma.TransactionClient,
+  batchIds: string[],
+): Promise<ProductionPlanBatchDeletionPreview> {
+  const batches = await tx.productionPlanBatch.findMany({
+    where: { id: { in: batchIds }, deletedAt: null, planOrder: { deletedAt: null } },
+    include: {
+      planOrder: { select: { specification: true } },
+      workOrder: {
+        select: {
+          id: true,
+          stage: true,
+          status: true,
+          progress: true,
+          startedAt: true,
+          completedAt: true,
+          lastProgressAt: true,
+          completedQty: true,
+          frontendTransferredQty: true,
+          _count: { select: { progressLogs: true } },
+          processRoute: {
+            select: {
+              status: true,
+              startedAt: true,
+              completedAt: true,
+              steps: {
+                select: {
+                  status: true,
+                  startedAt: true,
+                  completedAt: true,
+                  _count: { select: { executions: true } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (batches.length !== batchIds.length) throw new Error('PLAN_BATCH_SELECTION_INVALID');
+
+  const items: ProductionPlanBatchDeletionPreview['items'] = batches.map(batch => {
+    if (batch.releaseState === 'archived') {
+      return {
+        batchId: batch.id,
+        specification: batch.planOrder.specification,
+        quantity: batch.quantity,
+        action: 'blocked' as const,
+        message: '历史归档批次不能删除',
+      };
+    }
+    if (!batch.workOrder) {
+      if (batch.releaseState !== 'draft') {
+        return {
+          batchId: batch.id,
+          specification: batch.planOrder.specification,
+          quantity: batch.quantity,
+          action: 'blocked' as const,
+          message: '已下达批次缺少关联生产工单，请先检查数据',
+        };
+      }
+      return {
+        batchId: batch.id,
+        specification: batch.planOrder.specification,
+        quantity: batch.quantity,
+        action: 'delete_draft' as const,
+        message: '尚未下达，将从计划排程中删除',
+      };
+    }
+
+    const blocker = productionPlanWorkOrderStartBlocker({
+      stage: batch.workOrder.stage,
+      status: batch.workOrder.status,
+      progress: batch.workOrder.progress,
+      startedAt: batch.workOrder.startedAt,
+      completedAt: batch.workOrder.completedAt,
+      lastProgressAt: batch.workOrder.lastProgressAt,
+      completedQty: batch.workOrder.completedQty,
+      frontendTransferredQty: batch.workOrder.frontendTransferredQty,
+      progressLogCount: batch.workOrder._count.progressLogs,
+      processRoute: batch.workOrder.processRoute
+        ? {
+            status: batch.workOrder.processRoute.status,
+            startedAt: batch.workOrder.processRoute.startedAt,
+            completedAt: batch.workOrder.processRoute.completedAt,
+            steps: batch.workOrder.processRoute.steps.map(step => ({
+              status: step.status,
+              startedAt: step.startedAt,
+              completedAt: step.completedAt,
+              executionCount: step._count.executions,
+            })),
+          }
+        : null,
+    });
+    return {
+      batchId: batch.id,
+      specification: batch.planOrder.specification,
+      quantity: batch.quantity,
+      action: blocker ? 'blocked' as const : 'withdraw_unstarted' as const,
+      message: blocker || '已下达但尚未开工，将撤回并软删除关联生产工单',
+    };
+  });
+
+  return {
+    batchCount: items.length,
+    totalQuantity: items.reduce((sum, item) => sum + item.quantity, 0),
+    draftDeleteCount: items.filter(item => item.action === 'delete_draft').length,
+    withdrawCount: items.filter(item => item.action === 'withdraw_unstarted').length,
+    blockers: items.filter(item => item.action === 'blocked').length,
+    items,
+  };
+}
+
+export async function deleteProductionPlanBatches(
+  tx: Prisma.TransactionClient,
+  input: { batchIds: string[]; actorId: string },
+): Promise<{ draftDeletedCount: number; withdrawnCount: number }> {
+  const preview = await previewProductionPlanBatchDeletion(tx, input.batchIds);
+  if (preview.blockers > 0) throw new Error('PLAN_BATCH_DELETE_BLOCKED');
+  const batches = await tx.productionPlanBatch.findMany({
+    where: { id: { in: input.batchIds }, deletedAt: null },
+    select: { id: true, planOrderId: true, releaseState: true, workOrderId: true, quantity: true },
+  });
+  if (batches.length !== input.batchIds.length) throw new Error('PLAN_BATCH_SELECTION_INVALID');
+
+  const now = new Date();
+  for (const batch of batches) {
+    const item = preview.items.find(candidate => candidate.batchId === batch.id);
+    if (!item || item.action === 'blocked') throw new Error('PLAN_BATCH_DELETE_BLOCKED');
+    if (item.action === 'withdraw_unstarted' && batch.workOrderId) {
+      await tx.workOrder.updateMany({
+        where: { id: batch.workOrderId, deletedAt: null },
+        data: {
+          deletedAt: now,
+          planActive: false,
+          planClearedAt: now,
+          planClearedBy: input.actorId,
+        },
+      });
+    }
+    await tx.productionPlanBatch.update({ where: { id: batch.id }, data: { deletedAt: now } });
+    await tx.productionPlanChange.create({
+      data: {
+        planOrderId: batch.planOrderId,
+        batchId: batch.id,
+        action: item.action === 'delete_draft' ? 'delete_plan_batch' : 'withdraw_unstarted_plan_batch',
+        beforeData: {
+          releaseState: batch.releaseState,
+          quantity: batch.quantity,
+          workOrderId: batch.workOrderId,
+        },
+        afterData: { deletedAt: now.toISOString() },
+        impactData: {
+          workOrderSoftDeleted: item.action === 'withdraw_unstarted',
+          retainedStorageFiles: true,
+          retainedPreparationHistory: true,
+        },
+        actorId: input.actorId,
+      },
+    });
+    await tx.operationLog.create({
+      data: {
+        userId: input.actorId,
+        action: item.action === 'delete_draft' ? 'delete_production_plan_batch' : 'withdraw_unstarted_production_plan_batch',
+        targetType: 'production_plan_batch',
+        targetId: batch.id,
+        detail: { workOrderId: batch.workOrderId, retainedStorageFiles: true },
+      },
+    });
+  }
+  for (const planOrderId of Array.from(new Set(batches.map(batch => batch.planOrderId)))) {
+    await refreshProductionPlanOrderStatus(tx, planOrderId);
+  }
+  return {
+    draftDeletedCount: preview.draftDeleteCount,
+    withdrawnCount: preview.withdrawCount,
   };
 }
 

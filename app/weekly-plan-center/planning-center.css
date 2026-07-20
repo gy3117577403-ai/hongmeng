@@ -1228,11 +1228,11 @@ main.planning-center-shell.hm-workbench-root {
   z-index: 35;
   right: 22px;
   bottom: 20px;
-  min-width: 480px;
+  min-width: 640px;
   min-height: 54px;
   padding: 7px 8px 7px 12px;
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) auto auto 36px;
+  grid-template-columns: minmax(120px, 1fr) auto auto auto 36px;
   align-items: center;
   gap: 7px;
   border: 1px solid #263449;
@@ -1278,6 +1278,11 @@ main.planning-center-shell.hm-workbench-root {
   background: #e4610b;
 }
 
+.planning-center-shell .planning-selection-bar button.danger-action {
+  border-color: #ef4444;
+  background: #b42318;
+}
+
 .planning-center-shell .planning-selection-bar > button:last-child {
   width: 34px;
   padding: 0;
@@ -1313,6 +1318,7 @@ main.planning-center-shell.hm-workbench-root {
 }
 
 .planning-dialog.release-dialog,
+.planning-dialog.delete-dialog,
 .planning-dialog.activation-dialog {
   width: min(760px, calc(100vw - 32px));
 }
@@ -1659,6 +1665,12 @@ main.planning-center-shell.hm-workbench-root {
   color: #85520a;
 }
 
+.planning-dialog-note.danger {
+  border-color: #fecaca;
+  background: #fff1f0;
+  color: #9f1c14;
+}
+
 .planning-dialog-note > svg {
   flex: 0 0 auto;
 }
@@ -1689,6 +1701,10 @@ main.planning-center-shell.hm-workbench-root {
   gap: 8px;
 }
 
+.planning-release-summary.four {
+  grid-template-columns: repeat(4, 1fr);
+}
+
 .planning-release-summary div {
   min-height: 64px;
   padding: 10px 12px;
@@ -1710,6 +1726,16 @@ main.planning-center-shell.hm-workbench-root {
 
 .planning-release-summary strong.warning {
   color: #b6540d;
+}
+
+.planning-release-summary strong.danger {
+  color: #b42318;
+}
+
+.planning-dialog > footer button.danger {
+  border-color: #b42318;
+  background: #b42318;
+  color: #fff;
 }
 
 .planning-warning-list {

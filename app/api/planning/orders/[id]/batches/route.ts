@@ -21,13 +21,13 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
     if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
     const order = await prisma.productionPlanOrder.findUnique({
       where: { id: context.params.id },
-      include: { batches: { where: { deletedAt: null }, select: { batchNo: true, quantity: true } } },
+      include: { batches: { select: { batchNo: true, quantity: true, deletedAt: true } } },
     });
     if (!order || order.deletedAt) return NextResponse.json({ ok: false, error: '计划订单不存在' }, { status: 404 });
     if (order.status === 'cancelled' || order.status === 'completed') {
       return NextResponse.json({ ok: false, error: '已取消或已完成订单不能继续排产' }, { status: 409 });
     }
-    const allocated = order.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+    const allocated = order.batches.filter(batch => !batch.deletedAt).reduce((sum, batch) => sum + batch.quantity, 0);
     if (allocated + parsed.data.quantity > order.orderQuantity) {
       return NextResponse.json({ ok: false, error: `本次排产超过剩余数量 ${Math.max(0, order.orderQuantity - allocated)}` }, { status: 409 });
     }
