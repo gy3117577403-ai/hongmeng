@@ -16,7 +16,11 @@ export const productionPlanOrderInclude = {
   drawingLibraryItem: {
     select: {
       id: true,
-      _count: { select: { files: { where: { deletedAt: null } } } },
+      _count: {
+        select: {
+          files: { where: { deletedAt: null, category: { code: 'drawing' } } },
+        },
+      },
       productTimeProfiles: {
         where: { status: 'published' },
         orderBy: { version: 'desc' as const },

@@ -202,6 +202,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const matrixSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const matrixCancelRef = useRef('');
   const matrixCommitRef = useRef('');
+  const lastExternalRefreshRef = useRef(0);
 
   const selectedItem = items.find(item => item.id === selectedId) || items[0] || null;
   const activeDraft = selectedItem?.draft || null;
@@ -239,6 +240,15 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     }
   }, [customer, historyWeekStart, keyword, planningScope, selectedId, status]);
 
+  const changePlanningScope = useCallback((scope: ProductTimePlanningScope) => {
+    setPlanningScope(scope);
+    setStatus('all');
+    const url = new URL(window.location.href);
+    if (scope === 'all') url.searchParams.delete('scope');
+    else url.searchParams.set('scope', scope);
+    window.history.replaceState(null, '', `${url.pathname}${url.search}`);
+  }, []);
+
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
@@ -263,9 +273,32 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }, [matrixCellError]);
 
   useEffect(() => {
+    const urlScope = new URLSearchParams(window.location.search).get('scope');
+    if (urlScope === 'current' || urlScope === 'next' || urlScope === 'carryover' || urlScope === 'history') {
+      setPlanningScope(urlScope);
+    }
+  }, []);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => load(), 220);
     return () => window.clearTimeout(timer);
   }, [keyword, customer, historyWeekStart, planningScope, status]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const refreshAfterExternalChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const now = Date.now();
+      if (now - lastExternalRefreshRef.current < 1200) return;
+      lastExternalRefreshRef.current = now;
+      void load();
+    };
+    window.addEventListener('focus', refreshAfterExternalChange);
+    document.addEventListener('visibilitychange', refreshAfterExternalChange);
+    return () => {
+      window.removeEventListener('focus', refreshAfterExternalChange);
+      document.removeEventListener('visibilitychange', refreshAfterExternalChange);
+    };
+  }, [load]);
 
   useEffect(() => {
     if (initialSelectionRef.current) return;
@@ -763,11 +796,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
         <section className="product-time-scope-bar" aria-label="按计划周查看产品工时">
           <div role="tablist" aria-label="产品工时范围">
-            <button type="button" role="tab" aria-selected={planningScope === 'all'} onClick={() => setPlanningScope('all')}>产品总库</button>
-            <button type="button" role="tab" aria-selected={planningScope === 'current'} onClick={() => setPlanningScope('current')}>本周计划</button>
-            <button type="button" role="tab" aria-selected={planningScope === 'next'} onClick={() => setPlanningScope('next')}>下周预备</button>
-            <button type="button" role="tab" aria-selected={planningScope === 'carryover'} onClick={() => setPlanningScope('carryover')}>遗留未完</button>
-            <button type="button" role="tab" aria-selected={planningScope === 'history'} onClick={() => setPlanningScope('history')}>历史周</button>
+            <button type="button" role="tab" aria-selected={planningScope === 'all'} onClick={() => changePlanningScope('all')}>产品总库</button>
+            <button type="button" role="tab" aria-selected={planningScope === 'current'} onClick={() => changePlanningScope('current')}>本周计划</button>
+            <button type="button" role="tab" aria-selected={planningScope === 'next'} onClick={() => changePlanningScope('next')}>下周预备</button>
+            <button type="button" role="tab" aria-selected={planningScope === 'carryover'} onClick={() => changePlanningScope('carryover')}>遗留未完</button>
+            <button type="button" role="tab" aria-selected={planningScope === 'history'} onClick={() => changePlanningScope('history')}>历史周</button>
           </div>
           <span>{planningScope === 'all' ? '维护全部图纸产品的标准工时' : planningPeriodText}</span>
           {planningScope === 'history' && <label><span>选择历史周</span><input type="date" value={historyWeekStart} max={periods?.current.weekStartDate} onChange={event => setHistoryWeekStart(event.target.value)} /></label>}

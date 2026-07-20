@@ -10,6 +10,7 @@ import {
   serializeDrawingLibraryItem,
 } from '@/lib/drawing-library';
 import { logOp } from '@/lib/logs';
+import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
@@ -116,18 +117,25 @@ export async function POST(req: NextRequest) {
     const remark = cleanDrawingText(body.remark, 500);
     const libraryKey = drawingLibraryKey(customerName === '未设置' ? '' : customerName, specification);
     const existing = await prisma.drawingLibraryItem.findUnique({ where: { libraryKey }, include: itemInclude() });
-    if (existing && !existing.deletedAt) return NextResponse.json({ ok: false, error: '该客户和规格已存在' }, { status: 409 });
+    if (existing && !existing.deletedAt) {
+      await prisma.$transaction(tx => reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId: existing.id }));
+      return NextResponse.json({ ok: false, error: '该客户和规格已存在，请直接使用现有资料', itemId: existing.id }, { status: 409 });
+    }
 
-    const item = existing
-      ? await prisma.drawingLibraryItem.update({
-          where: { id: existing.id },
-          data: { customerName, customerCode: parseCustomerCode(customerName), productName, specification, libraryKey, remark, deletedAt: null },
-          include: itemInclude(),
-        })
-      : await prisma.drawingLibraryItem.create({
-          data: { customerName, customerCode: parseCustomerCode(customerName), productName, specification, libraryKey, remark },
-          include: itemInclude(),
-        });
+    const item = await prisma.$transaction(async tx => {
+      const saved = existing
+        ? await tx.drawingLibraryItem.update({
+            where: { id: existing.id },
+            data: { customerName, customerCode: parseCustomerCode(customerName), productName, specification, libraryKey, remark, deletedAt: null },
+            include: itemInclude(),
+          })
+        : await tx.drawingLibraryItem.create({
+            data: { customerName, customerCode: parseCustomerCode(customerName), productName, specification, libraryKey, remark },
+            include: itemInclude(),
+          });
+      await reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId: saved.id });
+      return saved;
+    });
     const categories = await prisma.resourceCategory.findMany({ orderBy: { sortOrder: 'asc' } });
     await logOp({ userId: user.id, action: 'create_drawing_library_item', targetType: 'drawing_library_item', targetId: item.id, detail: { libraryKey } });
     return NextResponse.json({ ok: true, item: serializeDrawingLibraryItem(item, categories) });

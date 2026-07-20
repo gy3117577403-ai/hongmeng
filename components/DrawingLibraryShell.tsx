@@ -332,6 +332,22 @@ export function DrawingLibraryShell({
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        if (res.status === 409 && typeof data.itemId === 'string' && data.itemId) {
+          setModal(null);
+          setKeyword('');
+          setFilter('all');
+          setCustomer('全部客户');
+          setSelectedId(data.itemId);
+          const url = new URL(window.location.href);
+          url.searchParams.set('itemId', data.itemId);
+          url.searchParams.delete('create');
+          url.searchParams.delete('customerName');
+          url.searchParams.delete('specification');
+          url.searchParams.delete('productName');
+          window.history.replaceState(null, '', `${url.pathname}${url.search}`);
+          setMsg('已定位现有图纸资料，计划状态会自动同步。');
+          return;
+        }
         setFormError(data.error || '保存失败');
         return;
       }

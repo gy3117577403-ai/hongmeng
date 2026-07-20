@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
+import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import {
   chinaDate,
   chinaWeekRange,
@@ -33,6 +34,7 @@ function keywordWhere(keyword: string): Prisma.ProductionPlanOrderWhereInput {
 export async function GET(req: NextRequest) {
   try {
     await requireUser();
+    await prisma.$transaction(tx => reconcileProductionPlanDrawingLinks(tx));
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim().slice(0, 160);
     const status = String(req.nextUrl.searchParams.get('status') || '').trim();
     const customer = String(req.nextUrl.searchParams.get('customer') || '').trim().slice(0, 120);

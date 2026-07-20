@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { serializeDrawingLibraryFile } from '@/lib/drawing-library';
 import { logOp } from '@/lib/logs';
+import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import { prisma } from '@/lib/prisma';
 import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
 import { safeFilename, validateFileContent } from '@/lib/validation';
@@ -79,6 +80,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           },
         });
         await tx.drawingLibraryItem.update({ where: { id: item.id }, data: { updatedAt: new Date() } });
+        await reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId: item.id });
         return created;
       });
     } catch (error) {

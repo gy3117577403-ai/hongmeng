@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import { cleanProductTimeText, productTimeProfileInclude, serializeProductTimeProfile } from '@/lib/product-time';
 import { chinaDate, chinaWeekRange, parsePlanDate } from '@/lib/production-planning';
 import type { ProductTimePlanningScope } from '@/types';
@@ -26,6 +27,7 @@ function planningScope(value: string): ProductTimePlanningScope {
 export async function GET(req: NextRequest) {
   try {
     await requireUser();
+    await prisma.$transaction(tx => reconcileProductionPlanDrawingLinks(tx));
     const keyword = cleanProductTimeText(req.nextUrl.searchParams.get('keyword'), 100);
     const customer = cleanProductTimeText(req.nextUrl.searchParams.get('customer'), 120);
     const status = cleanProductTimeText(req.nextUrl.searchParams.get('status'), 20);
