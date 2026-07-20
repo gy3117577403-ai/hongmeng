@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
+  effectivePlanningUnitMilliseconds,
   parseProductionPlanBatchInput,
   planBatchSnapshot,
   productionPlanOrderInclude,
@@ -14,8 +15,20 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-function currentBatch(batch: { quantity: number; weekStartDate: Date; weekEndDate: Date; plannedCompletionDate: Date }): ParsedPlanBatch {
-  return batch;
+function currentBatch(batch: {
+  quantity: number;
+  weekStartDate: Date;
+  weekEndDate: Date;
+  plannedCompletionDate: Date;
+  unitMillisecondsSnapshot: number | null;
+}): ParsedPlanBatch {
+  return {
+    quantity: batch.quantity,
+    weekStartDate: batch.weekStartDate,
+    weekEndDate: batch.weekEndDate,
+    plannedCompletionDate: batch.plannedCompletionDate,
+    unitMilliseconds: batch.unitMillisecondsSnapshot,
+  };
 }
 
 export async function PATCH(req: NextRequest, context: { params: { id: string } }) {
@@ -50,11 +63,28 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
     }
     const updated = await prisma.$transaction(async tx => {
       const refs = await resolvePlanningReferences(tx, existing.planOrder);
-      const effectiveUnitMilliseconds = refs.unitMilliseconds || existing.planOrder.planningUnitMilliseconds;
+      const effectiveUnitMilliseconds = effectivePlanningUnitMilliseconds(
+        parsed.data.unitMilliseconds,
+        refs.unitMilliseconds,
+        existing.planOrder.planningUnitMilliseconds,
+      );
+      if (!effectiveUnitMilliseconds) throw new Error('PLAN_UNIT_WORK_TIME_REQUIRED');
+      const batchData = {
+        quantity: parsed.data.quantity,
+        weekStartDate: parsed.data.weekStartDate,
+        weekEndDate: parsed.data.weekEndDate,
+        plannedCompletionDate: parsed.data.plannedCompletionDate,
+      };
+      if (body.unitMilliseconds !== undefined && !existing.planOrder.planningUnitMilliseconds) {
+        await tx.productionPlanOrder.update({
+          where: { id: existing.planOrderId },
+          data: { planningUnitMilliseconds: effectiveUnitMilliseconds, updatedById: user.id },
+        });
+      }
       await tx.productionPlanBatch.update({
         where: { id: existing.id },
         data: {
-          ...parsed.data,
+          ...batchData,
           productTimeProfileId: refs.productTimeProfileId,
           productTimeProfileVersion: refs.productTimeProfileVersion,
           unitMillisecondsSnapshot: effectiveUnitMilliseconds,
@@ -62,11 +92,12 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         },
       });
       if (released && existing.workOrderId) {
+        const quantityChanged = parsed.data.quantity !== existing.quantity;
         await tx.workOrder.update({
           where: { id: existing.workOrderId },
           data: {
             productionTargetQty: parsed.data.quantity,
-            uncompletedQty: String(parsed.data.quantity),
+            uncompletedQty: quantityChanged ? String(parsed.data.quantity) : undefined,
             plannedAt: parsed.data.plannedCompletionDate,
             weekStartDate: parsed.data.weekStartDate,
             weekEndDate: parsed.data.weekEndDate,
@@ -82,7 +113,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
           batchId: existing.id,
           action: released ? 'update_released_plan_batch' : 'update_plan_batch',
           beforeData: planBatchSnapshot({ ...currentBatch(existing), batchNo: existing.batchNo, releaseState: existing.releaseState }),
-          afterData: planBatchSnapshot({ ...parsed.data, batchNo: existing.batchNo, releaseState: existing.releaseState }),
+          afterData: planBatchSnapshot({ ...parsed.data, unitMilliseconds: effectiveUnitMilliseconds, batchNo: existing.batchNo, releaseState: existing.releaseState }),
           impactData: { linkedWorkOrder: Boolean(existing.workOrderId), releaseState: existing.releaseState },
           reason: reason || null,
           actorId: user.id,
@@ -96,6 +127,9 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
     return NextResponse.json({ ok: true, order: serializeProductionPlanOrder(updated) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof Error && error.message === 'PLAN_UNIT_WORK_TIME_REQUIRED') {
+      return NextResponse.json({ ok: false, error: '请填写大于 0 且不超过 24 小时的单根工时' }, { status: 400 });
+    }
     console.error('update planning batch failed', error);
     return NextResponse.json({ ok: false, error: '更新排产批次失败' }, { status: 500 });
   }

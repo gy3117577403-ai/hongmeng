@@ -74,7 +74,7 @@ export async function GET(req: NextRequest) {
       preparationBatchCount: batches.filter(batch => batch.releaseState === 'preparation').length,
       activeBatchCount: batches.filter(batch => batch.releaseState === 'active').length,
       missingDrawingCount: all.filter(order => order.drawingFileCount === 0).length,
-      missingProductTimeCount: all.filter(order => !order.currentUnitMilliseconds).length,
+      missingProductTimeCount: all.filter(order => !order.effectiveUnitMilliseconds).length,
       warehouseExceptionCount: batches.filter(batch => batch.warehouseStatus === 'exception').length,
       processPendingCount: batches.filter(batch => batch.releaseState !== 'draft' && (batch.processStatus === 'not_created' || batch.processStatus === 'draft')).length,
     };

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
-import { chinaDate, chinaWeekRange, parsePlanDate } from '@/lib/production-planning';
+import { productTimeTotalMilliseconds } from '@/lib/product-time';
+import { chinaDate, chinaWeekRange, effectivePlanningUnitMilliseconds, parsePlanDate } from '@/lib/production-planning';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,18 +22,19 @@ export async function POST(req: NextRequest) {
         workOrderId: { not: null },
       },
       include: {
-        productTimeProfile: { select: { id: true } },
+        productTimeProfile: { select: { id: true, entries: { select: { unitMilliseconds: true } } } },
         planOrder: {
           select: {
             specification: true,
             customerName: true,
+            planningUnitMilliseconds: true,
             drawingLibraryItem: {
               select: {
                 productTimeProfiles: {
                   where: { status: 'published' },
                   orderBy: { version: 'desc' },
                   take: 1,
-                  select: { id: true },
+                  select: { id: true, entries: { select: { unitMilliseconds: true } } },
                 },
               },
             },
@@ -52,10 +54,16 @@ export async function POST(req: NextRequest) {
       const blockers: string[] = [];
       const warehouse = batch.workOrder?.materialTask?.status || 'not_created';
       const process = batch.workOrder?.processRoute?.status || 'not_created';
-      const productTimeProfileId = batch.productTimeProfile?.id
-        || batch.planOrder.drawingLibraryItem?.productTimeProfiles[0]?.id
+      const productTimeProfile = batch.productTimeProfile
+        || batch.planOrder.drawingLibraryItem?.productTimeProfiles[0]
         || null;
-      if (!productTimeProfileId) blockers.push('产品工时尚未发布，不能启用生产');
+      const effectiveUnitMilliseconds = effectivePlanningUnitMilliseconds(
+        batch.unitMillisecondsSnapshot,
+        productTimeProfile ? productTimeTotalMilliseconds(productTimeProfile.entries) : null,
+        batch.planOrder.planningUnitMilliseconds,
+      );
+      if (!effectiveUnitMilliseconds) blockers.push('未填写单根工时，不能启用生产');
+      else if (!productTimeProfile) warnings.push('产品工序工时尚未发布，当前使用批次单根工时');
       if (warehouse !== 'completed') warnings.push(warehouse === 'exception' ? '仓库存在异常' : '仓库尚未完成配料');
       if (process === 'not_created' || process === 'draft') warnings.push('工艺路线尚未确认');
       return {

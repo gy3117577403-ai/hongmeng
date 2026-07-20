@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
-import { chinaWeekRange, parsePlanDate } from '@/lib/production-planning';
+import { chinaWeekRange, effectivePlanningUnitMilliseconds, parsePlanDate } from '@/lib/production-planning';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
 
 export const runtime = 'nodejs';
@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
         },
         planOrder: {
           select: {
+            planningUnitMilliseconds: true,
             drawingLibraryItem: {
               select: {
                 productTimeProfiles: {
@@ -43,11 +44,19 @@ export async function POST(req: NextRequest) {
       batch.id,
       batch.productTimeProfile || batch.planOrder.drawingLibraryItem?.productTimeProfiles[0] || null,
     ]));
-    const blockedBatches = batches.filter(batch => !profileByBatch.get(batch.id));
+    const unitMillisecondsByBatch = new Map(batches.map(batch => {
+      const profile = profileByBatch.get(batch.id);
+      return [batch.id, effectivePlanningUnitMilliseconds(
+        batch.unitMillisecondsSnapshot,
+        profile ? productTimeTotalMilliseconds(profile.entries) : null,
+        batch.planOrder.planningUnitMilliseconds,
+      )] as const;
+    }));
+    const blockedBatches = batches.filter(batch => !unitMillisecondsByBatch.get(batch.id));
     if (blockedBatches.length) {
       return NextResponse.json({
         ok: false,
-        error: `有 ${blockedBatches.length} 个批次尚未发布产品工时，不能启用生产`,
+        error: `有 ${blockedBatches.length} 个批次未填写单根工时，不能启用生产`,
         blockerCount: blockedBatches.length,
       }, { status: 409 });
     }
@@ -79,14 +88,14 @@ export async function POST(req: NextRequest) {
       const currentWorkOrderIds = currentWorkOrders.map(item => item.id);
       for (const batch of batches) {
         const profile = profileByBatch.get(batch.id);
-        if (!profile) throw new Error('PLAN_PRODUCT_TIME_REQUIRED');
-        const unitMilliseconds = productTimeTotalMilliseconds(profile.entries);
+        const unitMilliseconds = unitMillisecondsByBatch.get(batch.id);
+        if (!unitMilliseconds) throw new Error('PLAN_UNIT_WORK_TIME_REQUIRED');
         const totalMilliseconds = BigInt(unitMilliseconds) * BigInt(batch.quantity);
         await tx.productionPlanBatch.update({
           where: { id: batch.id },
           data: {
-            productTimeProfileId: profile.id,
-            productTimeProfileVersion: profile.version,
+            productTimeProfileId: profile?.id || batch.productTimeProfileId || null,
+            productTimeProfileVersion: profile?.version || batch.productTimeProfileVersion || null,
             unitMillisecondsSnapshot: unitMilliseconds,
             totalMillisecondsSnapshot: totalMilliseconds,
           },
@@ -99,7 +108,12 @@ export async function POST(req: NextRequest) {
               totalWorkHours: (Number(totalMilliseconds) / 3_600_000).toFixed(4).replace(/0+$/, '').replace(/\.$/, ''),
             },
           });
-          await createWorkOrderProcessRoute(tx, { workOrderId: batch.workOrderId, actorId: user.id });
+          try {
+            await createWorkOrderProcessRoute(tx, { workOrderId: batch.workOrderId, actorId: user.id });
+          } catch (error) {
+            const code = error instanceof Error ? error.message : '';
+            if (code !== 'PROCESS_TEMPLATE_NOT_FOUND' && code !== 'PROCESS_TEMPLATE_EMPTY') throw error;
+          }
         }
       }
       if (currentWorkOrderIds.length) {
@@ -156,8 +170,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, result });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof Error && error.message === 'PLAN_PRODUCT_TIME_REQUIRED') {
-      return NextResponse.json({ ok: false, error: '产品工时尚未发布，不能启用生产' }, { status: 409 });
+    if (error instanceof Error && error.message === 'PLAN_UNIT_WORK_TIME_REQUIRED') {
+      return NextResponse.json({ ok: false, error: '未填写单根工时，不能启用生产' }, { status: 409 });
     }
     console.error('planning activation commit failed', error);
     return NextResponse.json({ ok: false, error: '启用本周计划失败' }, { status: 500 });

@@ -75,6 +75,7 @@ type OrderForm = {
 
 type BatchForm = {
   quantity: string;
+  unitSeconds: string;
   weekStartDate: string;
   plannedCompletionDate: string;
   reason: string;
@@ -183,6 +184,11 @@ function millisecondsInput(milliseconds?: number | null): string {
   return String(Number((milliseconds / 60_000).toFixed(3)));
 }
 
+function secondsInput(milliseconds?: number | null): string {
+  if (!milliseconds) return '';
+  return String(Number((milliseconds / 1000).toFixed(3)));
+}
+
 function planningUnitMilliseconds(order: ProductionPlanOrderDTO): number | null {
   return order.effectiveUnitMilliseconds || order.currentUnitMilliseconds || order.planningUnitMilliseconds || null;
 }
@@ -250,7 +256,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const [productKeyword, setProductKeyword] = useState('');
   const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [batchDialog, setBatchDialog] = useState<{ orderId: string; batchId?: string } | null>(null);
-  const [batchDraft, setBatchDraft] = useState<BatchForm>({ quantity: '', weekStartDate: '', plannedCompletionDate: '', reason: '' });
+  const [batchDraft, setBatchDraft] = useState<BatchForm>({ quantity: '', unitSeconds: '', weekStartDate: '', plannedCompletionDate: '', reason: '' });
   const [releasePreview, setReleasePreview] = useState<ReleasePreview | null>(null);
   const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null);
   const [activationPreview, setActivationPreview] = useState<ActivationPreview | null>(null);
@@ -330,6 +336,19 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       ? orderDraftUnitMilliseconds * quantity
       : null;
   }, [orderDraft.orderQuantity, orderDraftUnitMilliseconds]);
+  const batchDraftUnitMilliseconds = useMemo(() => {
+    const seconds = Number(batchDraft.unitSeconds);
+    const milliseconds = Math.round(seconds * 1000);
+    return Number.isFinite(seconds) && milliseconds > 0 && milliseconds <= 86_400_000
+      ? milliseconds
+      : null;
+  }, [batchDraft.unitSeconds]);
+  const batchDraftTotalMilliseconds = useMemo(() => {
+    const quantity = Number(batchDraft.quantity);
+    return batchDraftUnitMilliseconds && Number.isInteger(quantity) && quantity > 0
+      ? batchDraftUnitMilliseconds * quantity
+      : null;
+  }, [batchDraft.quantity, batchDraftUnitMilliseconds]);
   const visibleProductOptions = useMemo(() => {
     const word = productKeyword.trim().toLocaleLowerCase();
     const filtered = word
@@ -410,6 +429,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     const defaultWeek = batch?.weekStartDate || periods?.next.weekStartDate || '';
     setBatchDraft({
       quantity: String(batch?.quantity || order.remainingQuantity || ''),
+      unitSeconds: secondsInput(batch?.unitMillisecondsSnapshot || planningUnitMilliseconds(order)),
       weekStartDate: defaultWeek,
       plannedCompletionDate: batch?.plannedCompletionDate || periods?.next.weekEndDate || '',
       reason: '',
@@ -465,6 +485,10 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
 
   async function saveBatch(confirmImpact = false): Promise<void> {
     if (!batchDialog) return;
+    if (!batchDraftUnitMilliseconds) {
+      setError('请填写大于 0 且不超过 86400 秒的单根工时');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -472,7 +496,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       const response = await fetch(editing ? `/api/planning/batches/${batchDialog.batchId}` : `/api/planning/orders/${batchDialog.orderId}/batches`, {
         method: editing ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...batchDraft, confirmImpact }),
+        body: JSON.stringify({ ...batchDraft, unitMilliseconds: batchDraftUnitMilliseconds, confirmImpact }),
       });
       const body = await responseBody<{ order?: ProductionPlanOrderDTO }>(response);
       if (body.requiresConfirmation && !confirmImpact) {
@@ -481,7 +505,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         return;
       }
       if (!response.ok || !body.order) throw new Error(body.error || '排产批次保存失败');
-      setToast(editing ? '排产批次已调整' : '排产批次已创建');
+      setToast(editing ? '排产批次与总工时已调整' : '排产批次与总工时已创建');
       closeDialog();
       setRefreshToken(value => value + 1);
     } catch (reason) {
@@ -753,7 +777,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
 
         {view === 'preparation' && <section className="planning-preparation-view">
           <header><div><span>下周提前准备</span><h2>{periods ? `${periods.next.weekStartDate} 至 ${periods.next.weekEndDate}` : '下周预备清单'}</h2><p>仓库和工艺可先处理；只有人工启用后，工单才进入生产执行。</p></div><button className="planning-primary-action" type="button" disabled={!preparationRows.length || saving} onClick={event => { void previewActivation(event.currentTarget); }}><Factory size={16} />启用为本周执行</button></header>
-          <div className="planning-preparation-grid"><section><div className="planning-prep-heading"><Warehouse /><span><strong>仓库配料</strong><small>{preparationRows.filter(item => item.batch.warehouseStatus === 'completed').length} / {preparationRows.length} 已完成</small></span><a href="/workspace/warehouse?scope=preparation">进入仓库</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.warehouseStatus}`}><Boxes /></span><div><strong>{order.specification}</strong><small>{order.customerName} · {batch.quantity.toLocaleString()} 件</small></div><em>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '仓库异常' : '待配料'}</em></article>)}</section><section><div className="planning-prep-heading"><Settings2 /><span><strong>工艺准备</strong><small>{preparationRows.filter(item => item.batch.processStatus !== 'not_created' && item.batch.processStatus !== 'draft').length} / {preparationRows.length} 已确认</small></span><a href="/workspace/product-times">维护工时</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.processStatus}`}><Settings2 /></span><div><strong>{order.specification}</strong><small>{planningUnitMilliseconds(order) ? `单件 ${duration(planningUnitMilliseconds(order))}${order.currentProductTimeVersion ? '' : ' · 计划估算'}` : '产品工时待维护'}</small></div><em>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : '待工艺'}</em></article>)}</section></div>
+          <div className="planning-preparation-grid"><section><div className="planning-prep-heading"><Warehouse /><span><strong>仓库配料</strong><small>{preparationRows.filter(item => item.batch.warehouseStatus === 'completed').length} / {preparationRows.length} 已完成</small></span><a href="/workspace/warehouse?scope=preparation">进入仓库</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.warehouseStatus}`}><Boxes /></span><div><strong>{order.specification}</strong><small>{order.customerName} · {batch.quantity.toLocaleString()} 件</small></div><em>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '仓库异常' : '待配料'}</em></article>)}</section><section><div className="planning-prep-heading"><Settings2 /><span><strong>工艺准备</strong><small>{preparationRows.filter(item => item.batch.processStatus !== 'not_created' && item.batch.processStatus !== 'draft').length} / {preparationRows.length} 已确认</small></span><a href="/workspace/product-times">维护工时</a></div>{preparationRows.map(({ order, batch }) => { const unitMilliseconds = batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order); return <article key={batch.id}><span className={`state-${batch.processStatus}`}><Settings2 /></span><div><strong>{order.specification}</strong><small>{unitMilliseconds ? `单根 ${duration(unitMilliseconds)}${order.currentProductTimeVersion ? '' : ' · 批次计划值'}` : '单根工时待维护'}</small></div><em>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : '待工艺'}</em></article>; })}</section></div>
           {!preparationRows.length && <div className="planning-empty"><PackageCheck /><strong>当前没有下周预备任务</strong><span>在计划排程中勾选批次，点击“下达下周预备”。</span></div>}
         </section>}
 
@@ -803,13 +827,28 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !orderDraft.drawingLibraryItemId || !orderDraftUnitMilliseconds} onClick={() => { void saveOrder(); }}>{saving ? '保存中...' : '保存订单'}</button></footer>
     </div>}
 
-    {batchDialog && <div ref={dialogRef} className="planning-dialog batch-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-batch-dialog-title"><header><div><span>拆批排程</span><h2 id="planning-batch-dialog-title">{batchDialog.batchId ? '调整排产批次' : '安排生产批次'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><div className="planning-form-grid"><label><span>本批数量 *</span><input type="number" min="1" value={batchDraft.quantity} onChange={event => setBatchDraft(current => ({ ...current, quantity: event.target.value }))} /></label><label><span>生产周 *</span><input type="date" value={batchDraft.weekStartDate} onChange={event => setBatchDraft(current => ({ ...current, weekStartDate: event.target.value }))} /></label><label className="wide"><span>内部计划完成日期 *</span><input type="date" value={batchDraft.plannedCompletionDate} onChange={event => setBatchDraft(current => ({ ...current, plannedCompletionDate: event.target.value }))} /></label>{batchDialog.batchId && <label className="wide"><span>已下达批次调整原因</span><textarea rows={2} placeholder="如果批次已经下达，此项必填" value={batchDraft.reason} onChange={event => setBatchDraft(current => ({ ...current, reason: event.target.value }))} /></label>}</div><div className="planning-dialog-note"><CalendarClock /><span><strong>排产与下达分开</strong><small>保存后仍是排程草稿；勾选批次后再选择下达本周或下周预备。</small></span></div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving} onClick={() => { void saveBatch(); }}>{saving ? '保存中...' : '保存排程'}</button></footer></div>}
+    {batchDialog && <div ref={dialogRef} className="planning-dialog batch-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-batch-dialog-title">
+      <header><div><span>拆批排程</span><h2 id="planning-batch-dialog-title">{batchDialog.batchId ? '调整排产批次' : '安排生产批次'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>
+      <div className="planning-dialog-body">
+        <div className="planning-form-grid">
+          <label><span>本批数量 *</span><input type="number" min="1" value={batchDraft.quantity} onChange={event => setBatchDraft(current => ({ ...current, quantity: event.target.value }))} /></label>
+          <label><span>单根工时（秒） *</span><input type="number" min="0.001" max="86400" step="0.001" value={batchDraft.unitSeconds} onChange={event => setBatchDraft(current => ({ ...current, unitSeconds: event.target.value }))} /><small>优先带入已保存工时，可按本批实际情况调整</small></label>
+          <label><span>生产周 *</span><input type="date" value={batchDraft.weekStartDate} onChange={event => setBatchDraft(current => ({ ...current, weekStartDate: event.target.value }))} /></label>
+          <label><span>内部计划完成日期 *</span><input type="date" value={batchDraft.plannedCompletionDate} onChange={event => setBatchDraft(current => ({ ...current, plannedCompletionDate: event.target.value }))} /></label>
+          <label className="wide planning-total-time"><span>本批总工时</span><output>{batchDraftTotalMilliseconds ? duration(batchDraftTotalMilliseconds) : '填写本批数量与单根工时后自动计算'}</output><small>单根工时 × 本批数量，保存后用于下达与生产工时统计</small></label>
+          {batchDialog.batchId && <label className="wide"><span>已下达批次调整原因</span><textarea rows={2} placeholder="如果批次已经下达，此项必填" value={batchDraft.reason} onChange={event => setBatchDraft(current => ({ ...current, reason: event.target.value }))} /></label>}
+        </div>
+        <div className="planning-dialog-note"><CalendarClock /><span><strong>批次工时随排程冻结</strong><small>保存后会把单根工时和本批总工时应用到当前批次；不会改写产品工时库。</small></span></div>
+        {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
+      </div>
+      <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !batchDraftUnitMilliseconds || !batchDraftTotalMilliseconds} onClick={() => { void saveBatch(); }}>{saving ? '保存中...' : '保存并应用工时'}</button></footer>
+    </div>}
 
     {releasePreview && <div ref={dialogRef} className="planning-dialog release-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-release-dialog-title"><header><div><span>下达预检</span><h2 id="planning-release-dialog-title">{releasePreview.target === 'active' ? '下达本周执行' : '下达下周预备'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>批次数</span><strong>{releasePreview.batchCount}</strong></div><div><span>总数量</span><strong>{releasePreview.totalQuantity.toLocaleString()}</strong></div><div><span>提醒</span><strong className={releasePreview.warnings ? 'warning' : ''}>{releasePreview.warnings}</strong></div></section>{releasePreview.target === 'preparation' && <div className="planning-dialog-note"><PackageCheck /><span><strong>只进入准备区</strong><small>仓库和工艺可提前处理，但不会出现在生产执行中心。</small></span></div>}{releasePreview.target === 'active' && <div className="planning-dialog-note"><Factory /><span><strong>立即进入本周生产</strong><small>工单会出现在生产执行中心，同时生成仓库和工艺任务。</small></span></div>}<div className="planning-warning-list">{releasePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">资料检查通过</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>返回调整</button><button type="button" className="primary" disabled={saving || releasePreview.blockers > 0} onClick={() => { void commitRelease(); }}>{saving ? '下达中...' : '确认下达'}</button></footer></div>}
 
     {deletePreview && <div ref={dialogRef} className="planning-dialog delete-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-delete-dialog-title"><header><div><span>危险操作预检</span><h2 id="planning-delete-dialog-title">删除所选计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary four"><div><span>所选批次</span><strong>{deletePreview.batchCount}</strong></div><div><span>删除草稿</span><strong>{deletePreview.draftDeleteCount}</strong></div><div><span>撤回未开工</span><strong>{deletePreview.withdrawCount}</strong></div><div><span>禁止删除</span><strong className={deletePreview.blockers ? 'danger' : ''}>{deletePreview.blockers}</strong></div></section><div className="planning-dialog-note danger"><ShieldAlert /><span><strong>已开工计划不会被删除</strong><small>草稿会从排程中删除；已下达但未开工的计划会撤回并软删除关联工单。历史记录、图纸和对象存储文件全部保留。</small></span></div><div className="planning-warning-list">{deletePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong><span className={item.action === 'blocked' ? 'blocker' : item.action === 'withdraw_unstarted' ? 'warning' : 'ready'}>{item.message}</span></article>)}</div>{deletePreview.blockers > 0 && <div className="planning-dialog-error"><AlertTriangle />请取消勾选已开工或已完成的批次后再删除，本次不会处理任何批次。</div>}{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="danger" disabled={saving || deletePreview.blockers > 0} onClick={() => { void commitDeletion(); }}>{saving ? '删除中...' : '确认删除计划'}</button></footer></div>}
 
-    {activationPreview && <div ref={dialogRef} className="planning-dialog activation-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-activation-title"><header><div><span>生产周切换</span><h2 id="planning-activation-title">启用下周预备计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>生产周</span><strong>{activationPreview.weekStartDate.slice(5)} - {activationPreview.weekEndDate.slice(5)}</strong></div><div><span>批次 / 数量</span><strong>{activationPreview.batchCount} / {activationPreview.totalQuantity.toLocaleString()}</strong></div><div><span>阻断 / 提醒</span><strong className={activationPreview.blockerCount || activationPreview.warningCount ? 'warning' : ''}>{activationPreview.blockerCount} / {activationPreview.warningCount}</strong></div></section><div className="planning-dialog-note warning"><ShieldAlert /><span><strong>人工切换，不自动跨周</strong><small>缺少已发布产品工时的批次不能进入生产；仓库或工艺未完成会保留提醒，但准备数据不会丢失。</small></span></div><div className="planning-warning-list">{activationPreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.customerName}</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">工时、仓库与工艺准备完成</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>暂不启用</button><button type="button" className="primary" disabled={saving || activationPreview.blockerCount > 0} onClick={() => { void commitActivation(); }}>{saving ? '切换中...' : activationPreview.blockerCount > 0 ? '请先维护产品工时' : '确认启用为本周'}</button></footer></div>}
+    {activationPreview && <div ref={dialogRef} className="planning-dialog activation-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-activation-title"><header><div><span>生产周切换</span><h2 id="planning-activation-title">启用下周预备计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>生产周</span><strong>{activationPreview.weekStartDate.slice(5)} - {activationPreview.weekEndDate.slice(5)}</strong></div><div><span>批次 / 数量</span><strong>{activationPreview.batchCount} / {activationPreview.totalQuantity.toLocaleString()}</strong></div><div><span>阻断 / 提醒</span><strong className={activationPreview.blockerCount || activationPreview.warningCount ? 'warning' : ''}>{activationPreview.blockerCount} / {activationPreview.warningCount}</strong></div></section><div className="planning-dialog-note warning"><ShieldAlert /><span><strong>人工切换，不自动跨周</strong><small>缺少有效单根工时的批次不能进入生产；仓库或工艺未完成会保留提醒，但准备数据不会丢失。</small></span></div><div className="planning-warning-list">{activationPreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.customerName}</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">工时、仓库与工艺准备完成</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>暂不启用</button><button type="button" className="primary" disabled={saving || activationPreview.blockerCount > 0} onClick={() => { void commitActivation(); }}>{saving ? '切换中...' : activationPreview.blockerCount > 0 ? '请先补充单根工时' : '确认启用为本周'}</button></footer></div>}
 
     {toast && <div className="planning-toast" role="status"><CheckCircle2 size={17} />{toast}</div>}
   </>;

@@ -6,7 +6,12 @@ import {
   naturalProductionWeek,
   productionWeekWhere,
 } from '../lib/production-execution';
-import { parseProductionPlanOrderInput } from '../lib/production-planning';
+import {
+  effectivePlanningUnitMilliseconds,
+  parseProductionPlanBatchInput,
+  parseProductionPlanOrderInput,
+  planBatchSnapshot,
+} from '../lib/production-planning';
 
 test('natural production week is Monday through Sunday in China time', () => {
   const week = naturalProductionWeek(new Date('2026-07-20T04:00:00.000Z'));
@@ -75,4 +80,36 @@ test('new planning orders require a positive unit labor time', () => {
   assert.equal(parsed.ok, false);
   if (parsed.ok) return;
   assert.match(parsed.error, /单件产品工时/);
+});
+
+test('planning batches accept and snapshot an explicit unit labor time', () => {
+  const parsed = parseProductionPlanBatchInput({
+    quantity: 8500,
+    unitMilliseconds: 20_000,
+    weekStartDate: '2026-07-27',
+    plannedCompletionDate: '2026-08-02',
+  });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.data.unitMilliseconds, 20_000);
+  assert.equal(planBatchSnapshot(parsed.data).unitMilliseconds, 20_000);
+});
+
+test('planning batches reject zero unit labor time', () => {
+  const parsed = parseProductionPlanBatchInput({
+    quantity: 8500,
+    unitMilliseconds: 0,
+    weekStartDate: '2026-07-27',
+    plannedCompletionDate: '2026-08-02',
+  });
+  assert.equal(parsed.ok, false);
+  if (parsed.ok) return;
+  assert.match(parsed.error, /单根工时/);
+});
+
+test('batch labor time overrides product and order defaults', () => {
+  assert.equal(effectivePlanningUnitMilliseconds(20_000, 30_000, 40_000), 20_000);
+  assert.equal(effectivePlanningUnitMilliseconds(null, 30_000, 40_000), 30_000);
+  assert.equal(effectivePlanningUnitMilliseconds(null, null, 40_000), 40_000);
+  assert.equal(effectivePlanningUnitMilliseconds(null, null, null), null);
 });
