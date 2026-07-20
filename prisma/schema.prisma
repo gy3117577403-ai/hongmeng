@@ -647,6 +647,7 @@ model ProductionPlanOrder {
   sourceOrderNo        String                 @map("source_order_no")
   sourceLineNo         Int                    @map("source_line_no")
   customerName         String                 @map("customer_name")
+  salesperson          String?
   productName          String                 @map("product_name")
   specification        String
   drawingLibraryItemId String?                @map("drawing_library_item_id")

@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   try {
     await requireUser();
     const params = req.nextUrl.searchParams;
-    const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'));
+    const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'), params.get('scope'));
     const data = await loadProductionExecution({
       week,
       filters: productionFiltersFromSearchParams(params),

@@ -21,6 +21,7 @@ function keywordWhere(keyword: string): Prisma.ProductionPlanOrderWhereInput {
     OR: [
       { sourceOrderNo: { contains: keyword, mode: 'insensitive' } },
       { customerName: { contains: keyword, mode: 'insensitive' } },
+      { salesperson: { contains: keyword, mode: 'insensitive' } },
       { productName: { contains: keyword, mode: 'insensitive' } },
       { specification: { contains: keyword, mode: 'insensitive' } },
       { remark: { contains: keyword, mode: 'insensitive' } },
@@ -56,12 +57,9 @@ export async function GET(req: NextRequest) {
       : records;
     const all = allRecords.map(serializeProductionPlanOrder);
     const batches = all.flatMap(order => order.batches);
-    const activeBatch = batches
-      .filter(batch => batch.releaseState === 'active')
-      .sort((left, right) => right.weekStartDate.localeCompare(left.weekStartDate))[0];
     const naturalCurrentWeek = chinaWeekRange(new Date());
-    const currentStart = activeBatch?.weekStartDate || chinaDate(naturalCurrentWeek.start);
-    const currentEnd = activeBatch?.weekEndDate || chinaDate(naturalCurrentWeek.end);
+    const currentStart = chinaDate(naturalCurrentWeek.start);
+    const currentEnd = chinaDate(naturalCurrentWeek.end);
     const nextWeekStart = new Date(`${currentStart}T00:00:00+08:00`);
     nextWeekStart.setUTCDate(nextWeekStart.getUTCDate() + 7);
     const nextWeek = chinaWeekRange(nextWeekStart);
@@ -137,7 +135,7 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if ((error as { code?: string }).code === 'P2002') {
-      return NextResponse.json({ ok: false, error: '相同来源订单号和行号已经存在' }, { status: 409 });
+      return NextResponse.json({ ok: false, error: '计划订单内部编号冲突，请重试' }, { status: 409 });
     }
     console.error('create planning order failed', error);
     return NextResponse.json({ ok: false, error: '新建计划订单失败' }, { status: 500 });

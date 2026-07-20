@@ -459,6 +459,7 @@ export type ProductionPlanOrderDTO = {
   sourceOrderNo: string;
   sourceLineNo: number;
   customerName: string;
+  salesperson?: string | null;
   productName: string;
   specification: string;
   drawingLibraryItemId?: string | null;

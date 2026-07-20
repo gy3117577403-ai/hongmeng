@@ -55,6 +55,7 @@ export type ProductionExceptionCode =
   | 'customer_missing';
 
 export type ProductionExecutionView = 'board' | 'today' | 'exceptions';
+export type ProductionWeekScope = 'current' | 'carryover' | 'next' | 'history';
 
 export type ProductionExecutionFilters = {
   keyword?: string;
@@ -71,15 +72,23 @@ export type ProductionExecutionFilters = {
 };
 
 export type ProductionWeek = {
+  scope: ProductionWeekScope;
   weekStart: Date | null;
   weekEnd: Date | null;
+};
+
+export type ProductionWeekNavigation = {
+  current: { weekStartDate: string; weekEndDate: string; count: number };
+  next: { weekStartDate: string; weekEndDate: string; count: number };
+  carryoverCount: number;
+  history: Array<{ weekStartDate: string; weekEndDate: string; count: number }>;
 };
 
 const exceptionLabels: Record<ProductionExceptionCode, string> = {
   overdue: '已逾期',
   drawing_not_issued: '未发图',
   material_not_ready: '仓库异常',
-  documents_incomplete: '资料不完整',
+  documents_incomplete: '原图缺失',
   delivery_missing: '交期缺失',
   specification_invalid: '规格异常',
   customer_missing: '客户缺失',
@@ -172,37 +181,113 @@ function sameDayRange(date: Date) {
   return { gte: date, lt: addDays(date, 1) };
 }
 
-export async function resolveProductionWeek(weekStartInput?: string | null, weekEndInput?: string | null): Promise<ProductionWeek> {
+export function parseProductionWeekScope(value?: string | null): ProductionWeekScope {
+  if (value === 'carryover' || value === 'next' || value === 'history') return value;
+  return 'current';
+}
+
+export function naturalProductionWeek(now = new Date()): { start: Date; end: Date } {
+  const dateText = chinaYmd(now);
+  const localNoon = new Date(`${dateText}T12:00:00+08:00`);
+  const day = localNoon.getUTCDay();
+  const distance = day === 0 ? -6 : 1 - day;
+  const date = parseWeek(dateText);
+  if (!date) throw new Error('当前日期无法解析');
+  const start = addDays(date, distance);
+  return { start, end: addDays(start, 6) };
+}
+
+export async function resolveProductionWeek(
+  weekStartInput?: string | null,
+  weekEndInput?: string | null,
+  scopeInput?: string | null,
+): Promise<ProductionWeek> {
+  const explicitScope = scopeInput === 'current' || scopeInput === 'carryover' || scopeInput === 'next' || scopeInput === 'history';
+  const scope = explicitScope ? parseProductionWeekScope(scopeInput) : (weekStartInput ? 'history' : 'current');
+  const natural = naturalProductionWeek();
+  if (scope === 'current' || scope === 'carryover') {
+    return { scope, weekStart: natural.start, weekEnd: natural.end };
+  }
+  if (scope === 'next') {
+    return { scope, weekStart: addDays(natural.start, 7), weekEnd: addDays(natural.end, 7) };
+  }
   const requestedStart = parseWeek(weekStartInput);
   if (weekStartInput && !requestedStart) throw new Error('周开始日期格式不正确');
   if (requestedStart) {
     const requestedEnd = parseWeek(weekEndInput) || addDays(requestedStart, 6);
-    return { weekStart: requestedStart, weekEnd: requestedEnd };
+    return { scope: 'history', weekStart: requestedStart, weekEnd: requestedEnd };
   }
-
-  const active = await prisma.workOrder.findFirst({
+  const previous = await prisma.workOrder.findFirst({
     where: {
       deletedAt: null,
       planType: { in: ['weekly_plan', 'managed_plan'] },
-      planActive: true,
-      weekStartDate: { not: null },
+      weekStartDate: { lt: natural.start },
     },
     select: { weekStartDate: true, weekEndDate: true },
     orderBy: [{ weekStartDate: 'desc' }, { updatedAt: 'desc' }],
   });
   return {
-    weekStart: active?.weekStartDate || null,
-    weekEnd: active?.weekEndDate || (active?.weekStartDate ? addDays(active.weekStartDate, 6) : null),
+    scope: 'history',
+    weekStart: previous?.weekStartDate || null,
+    weekEnd: previous?.weekEndDate || (previous?.weekStartDate ? addDays(previous.weekStartDate, 6) : null),
   };
 }
 
 export function productionWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhereInput {
-  if (!week.weekStart) return { id: '__no_active_week__' };
-  return {
+  if (!week.weekStart) return { id: '__no_production_week__' };
+  const base: Prisma.WorkOrderWhereInput = {
     deletedAt: null,
     planType: { in: ['weekly_plan', 'managed_plan'] },
-    planActive: true,
+  };
+  if (week.scope === 'carryover') {
+    return { ...base, weekStartDate: { lt: week.weekStart } };
+  }
+  return {
+    ...base,
+    ...(week.scope === 'current' ? { planActive: true } : {}),
+    ...(week.scope === 'next' ? { planActive: false, planClearedAt: null } : {}),
     weekStartDate: sameDayRange(week.weekStart),
+  };
+}
+
+export async function loadProductionWeekNavigation(now = new Date()): Promise<ProductionWeekNavigation> {
+  const natural = naturalProductionWeek(now);
+  const nextStart = addDays(natural.start, 7);
+  const [currentCount, nextCount, priorOrders, historicalOrders] = await Promise.all([
+    prisma.workOrder.count({ where: productionWeekWhere({ scope: 'current', weekStart: natural.start, weekEnd: natural.end }) }),
+    prisma.workOrder.count({ where: productionWeekWhere({ scope: 'next', weekStart: nextStart, weekEnd: addDays(nextStart, 6) }) }),
+    prisma.workOrder.findMany({
+      where: productionWeekWhere({ scope: 'carryover', weekStart: natural.start, weekEnd: natural.end }),
+      select: { stage: true, status: true },
+    }),
+    prisma.workOrder.findMany({
+      where: {
+        deletedAt: null,
+        planType: { in: ['weekly_plan', 'managed_plan'] },
+        weekStartDate: { lt: natural.start },
+      },
+      select: { weekStartDate: true, weekEndDate: true },
+      orderBy: { weekStartDate: 'desc' },
+      take: 5000,
+    }),
+  ]);
+  const historyMap = new Map<string, { weekStartDate: string; weekEndDate: string; count: number }>();
+  for (const order of historicalOrders) {
+    if (!order.weekStartDate) continue;
+    const weekStartDate = chinaYmd(order.weekStartDate);
+    const current = historyMap.get(weekStartDate);
+    if (current) current.count += 1;
+    else historyMap.set(weekStartDate, {
+      weekStartDate,
+      weekEndDate: chinaYmd(order.weekEndDate || addDays(order.weekStartDate, 6)),
+      count: 1,
+    });
+  }
+  return {
+    current: { weekStartDate: chinaYmd(natural.start), weekEndDate: chinaYmd(natural.end), count: currentCount },
+    next: { weekStartDate: chinaYmd(nextStart), weekEndDate: chinaYmd(addDays(nextStart, 6)), count: nextCount },
+    carryoverCount: priorOrders.filter(order => normalizeWorkOrderStage(order.stage || order.status) !== 'completed').length,
+    history: [...historyMap.values()].slice(0, 26),
   };
 }
 
@@ -220,6 +305,10 @@ export function executionCompleteness(order: ProductionExecutionOrderRecord) {
     text: `${filled}/${PRODUCTION_CATEGORY_CODES.length}`,
     complete: filled === PRODUCTION_CATEGORY_CODES.length,
   };
+}
+
+export function hasRequiredProductionDocuments(order: Pick<ProductionExecutionOrderRecord, 'drawingLibraryItem'>): boolean {
+  return Boolean(order.drawingLibraryItem?.files.some(file => file.category.code === 'drawing'));
 }
 
 export function productionExceptionCodes(order: ProductionExecutionOrderRecord, now = new Date()): ProductionExceptionCode[] {
@@ -245,7 +334,7 @@ export function productionExceptionCodes(order: ProductionExecutionOrderRecord, 
   if (stage !== 'completed' && order.plannedAt && order.plannedAt < start) exceptions.push('overdue');
   if (alerts.some(alert => alert.code === 'DRAWING_NOT_ISSUED')) exceptions.push('drawing_not_issued');
   if (alerts.some(alert => alert.code === 'MATERIAL_NOT_READY')) exceptions.push('material_not_ready');
-  if (!executionCompleteness(order).complete) exceptions.push('documents_incomplete');
+  if (!hasRequiredProductionDocuments(order)) exceptions.push('documents_incomplete');
   if (!order.plannedAt && !text(order.deliveryDay)) exceptions.push('delivery_missing');
   if (!text(order.specification) || isInvalidSpecification(order.specification || '')) exceptions.push('specification_invalid');
   if (!text(order.customerName)) exceptions.push('customer_missing');
@@ -497,7 +586,7 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
     if (item === 'urgent' && order.priority !== 'urgent') return false;
     if (item === 'drawing' && !productionAlerts.some(alert => alert.code === 'DRAWING_NOT_ISSUED')) return false;
     if (item === 'material' && !productionAlerts.some(alert => alert.code === 'MATERIAL_NOT_READY')) return false;
-    if (item === 'documents' && completeness.complete) return false;
+    if (item === 'documents' && hasRequiredProductionDocuments(order)) return false;
     if (item === 'completed' && !flowStages.includes('completed')) return false;
     if (item === 'updated_today' && !inChinaDay(order.lastProgressAt, now)) return false;
     if (item === 'completed_today' && !inChinaDay(order.completedAt, now)) return false;
@@ -558,11 +647,14 @@ export function compareProductionOrders(first: ProductionExecutionOrderRecord, s
 }
 
 export async function loadProductionOrders(week: ProductionWeek) {
-  return prisma.workOrder.findMany({
+  const orders = await prisma.workOrder.findMany({
     where: productionWeekWhere(week),
     include: productionExecutionInclude,
     orderBy: [{ priority: 'asc' }, { plannedAt: 'asc' }, { createdAt: 'asc' }],
   });
+  return week.scope === 'carryover'
+    ? orders.filter(order => normalizeWorkOrderStage(order.stage || order.status) !== 'completed')
+    : orders;
 }
 
 export async function loadProductionExecution(input: {
@@ -593,6 +685,8 @@ export async function loadProductionExecution(input: {
   const page = Math.min(Math.max(input.page || 1, 1), totalPages);
   const items = filtered.slice((page - 1) * pageSize, page * pageSize).map(order => serializeProductionOrder(order, now));
   return {
+    scope: input.week.scope,
+    readOnly: input.week.scope === 'next',
     weekStartDate: input.week.weekStart ? chinaYmd(input.week.weekStart) : null,
     weekEndDate: input.week.weekEnd ? chinaYmd(input.week.weekEnd) : null,
     stageCounts,
@@ -622,6 +716,7 @@ export async function summarizeProduction(week: ProductionWeek) {
   let tailRemaining = 0;
   let urgent = 0;
   let completed = 0;
+  let exceptions = 0;
   for (const order of orders) {
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
     const flowResolution = resolveEffectiveFrontendTransferredQty(order);
@@ -645,7 +740,7 @@ export async function summarizeProduction(week: ProductionWeek) {
     }
     if (isDueToday(order, now)) dueToday += 1;
     if (isOverdue(order, now)) overdue += 1;
-    if (!executionCompleteness(order).complete) incompleteDocuments += 1;
+    if (!hasRequiredProductionDocuments(order)) incompleteDocuments += 1;
     const alerts = getProductionAlerts({
       uncompletedQty: order.uncompletedQty,
       productionTargetQty: order.productionTargetQty,
@@ -668,8 +763,11 @@ export async function summarizeProduction(week: ProductionWeek) {
     if (alerts.some(alert => alert.code === 'TAIL_REMAINING')) tailRemaining += 1;
     if (order.priority === 'urgent') urgent += 1;
     if (segments.some(segment => segment.stage === 'completed')) completed += 1;
+    if (productionExceptionCodes(order, now).length > 0) exceptions += 1;
   }
   return {
+    scope: week.scope,
+    readOnly: week.scope === 'next',
     weekStartDate: week.weekStart ? chinaYmd(week.weekStart) : null,
     weekEndDate: week.weekEnd ? chinaYmd(week.weekEnd) : null,
     total: orders.length,
@@ -682,6 +780,7 @@ export async function summarizeProduction(week: ProductionWeek) {
     tailRemaining,
     urgent,
     completed,
+    exceptions,
     stageCounts,
     stageQuantityTotals,
     quantityTotals: {

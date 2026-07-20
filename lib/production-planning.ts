@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { drawingLibraryKey } from '@/lib/drawing-library';
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
@@ -59,6 +60,7 @@ export type ProductionPlanOrderInput = {
   sourceOrderNo?: unknown;
   sourceLineNo?: unknown;
   customerName?: unknown;
+  salesperson?: unknown;
   productName?: unknown;
   specification?: unknown;
   orderQuantity?: unknown;
@@ -79,6 +81,7 @@ export type ParsedPlanOrder = {
   sourceOrderNo: string;
   sourceLineNo: number;
   customerName: string;
+  salesperson: string | null;
   productName: string;
   specification: string;
   orderQuantity: number;
@@ -164,9 +167,11 @@ export function parseProductionPlanOrderInput(
   input: ProductionPlanOrderInput,
   current?: ParsedPlanOrder,
 ): { ok: true; data: ParsedPlanOrder } | { ok: false; error: string } {
-  const sourceOrderNo = input.sourceOrderNo === undefined && current ? current.sourceOrderNo : text(input.sourceOrderNo, 120);
-  const sourceLineNo = input.sourceLineNo === undefined && current ? current.sourceLineNo : positiveInteger(input.sourceLineNo);
+  const suppliedSourceOrderNo = input.sourceOrderNo === undefined && current ? current.sourceOrderNo : text(input.sourceOrderNo, 120);
+  const sourceOrderNo = suppliedSourceOrderNo || `PLAN-${randomUUID()}`;
+  const sourceLineNo = input.sourceLineNo === undefined && current ? current.sourceLineNo : positiveInteger(input.sourceLineNo) || 1;
   const customerName = input.customerName === undefined && current ? current.customerName : text(input.customerName, 120);
+  const salesperson = input.salesperson === undefined && current ? current.salesperson : text(input.salesperson, 80) || null;
   const productName = input.productName === undefined && current ? current.productName : text(input.productName, 160);
   const specification = input.specification === undefined && current ? current.specification : text(input.specification, 180);
   const orderQuantity = input.orderQuantity === undefined && current ? current.orderQuantity : positiveInteger(input.orderQuantity);
@@ -176,8 +181,6 @@ export function parseProductionPlanOrderInput(
   const status = input.status === undefined && current ? current.status : planOrderStatus(input.status);
   const remark = input.remark === undefined && current ? current.remark : text(input.remark, 500) || null;
 
-  if (!sourceOrderNo) return { ok: false, error: '请填写来源订单号' };
-  if (!sourceLineNo) return { ok: false, error: '来源行号必须是正整数' };
   if (!customerName) return { ok: false, error: '请填写客户名称' };
   if (!productName) return { ok: false, error: '请填写产品名称' };
   if (!specification) return { ok: false, error: '请填写产品规格' };
@@ -187,7 +190,7 @@ export function parseProductionPlanOrderInput(
   if (customerDueDate < orderDate) return { ok: false, error: '客户交期不能早于下单日期' };
   return {
     ok: true,
-    data: { sourceOrderNo, sourceLineNo, customerName, productName, specification, orderQuantity, orderDate, customerDueDate, priority, status, remark },
+    data: { sourceOrderNo, sourceLineNo, customerName, salesperson, productName, specification, orderQuantity, orderDate, customerDueDate, priority, status, remark },
   };
 }
 
@@ -328,6 +331,7 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     sourceOrderNo: order.sourceOrderNo,
     sourceLineNo: order.sourceLineNo,
     customerName: order.customerName,
+    salesperson: order.salesperson,
     productName: order.productName,
     specification: order.specification,
     drawingLibraryItemId: order.drawingLibraryItemId,
@@ -399,6 +403,7 @@ export function planOrderSnapshot(order: ParsedPlanOrder): Prisma.InputJsonObjec
     sourceOrderNo: order.sourceOrderNo,
     sourceLineNo: order.sourceLineNo,
     customerName: order.customerName,
+    salesperson: order.salesperson,
     productName: order.productName,
     specification: order.specification,
     orderQuantity: order.orderQuantity,
@@ -447,6 +452,7 @@ export async function releaseProductionPlanBatch(
   const data = {
     code,
     customerName: batch.planOrder.customerName,
+    salesperson: batch.planOrder.salesperson,
     productName: batch.planOrder.productName,
     stage: 'not_issued',
     priority: batch.planOrder.priority === 'insert' ? 'urgent' : batch.planOrder.priority,
@@ -478,6 +484,7 @@ export async function releaseProductionPlanBatch(
         where: { id: batch.workOrderId },
         data: {
           customerName: data.customerName,
+          salesperson: data.salesperson,
           productName: data.productName,
           priority: data.priority,
           plannedAt: data.plannedAt,

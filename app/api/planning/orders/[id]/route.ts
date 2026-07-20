@@ -18,6 +18,7 @@ function currentInput(order: {
   sourceOrderNo: string;
   sourceLineNo: number;
   customerName: string;
+  salesperson: string | null;
   productName: string;
   specification: string;
   orderQuantity: number;
@@ -47,6 +48,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
     }
     const released = existing.batches.filter(batch => batch.releaseState !== 'draft');
     const impactful = parsed.data.customerName !== existing.customerName
+      || parsed.data.salesperson !== existing.salesperson
       || parsed.data.productName !== existing.productName
       || parsed.data.specification !== existing.specification
       || parsed.data.orderQuantity !== existing.orderQuantity
@@ -80,6 +82,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
           where: { id: { in: linkedIds } },
           data: {
             customerName: parsed.data.customerName,
+            salesperson: parsed.data.salesperson,
             productName: parsed.data.productName,
             specification: parsed.data.specification,
             orderDate: parsed.data.orderDate,
@@ -117,7 +120,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if ((error as { code?: string }).code === 'P2002') {
-      return NextResponse.json({ ok: false, error: '相同来源订单号和行号已经存在' }, { status: 409 });
+      return NextResponse.json({ ok: false, error: '计划订单内部编号冲突，请重试' }, { status: 409 });
     }
     console.error('update planning order failed', error);
     return NextResponse.json({ ok: false, error: '更新计划订单失败' }, { status: 500 });
