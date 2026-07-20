@@ -34,6 +34,7 @@ model User {
   createdProductTimeProfiles     ProductTimeProfile[]        @relation("ProductTimeProfileCreatedBy")
   updatedProductTimeProfiles     ProductTimeProfile[]        @relation("ProductTimeProfileUpdatedBy")
   publishedProductTimeProfiles   ProductTimeProfile[]        @relation("ProductTimeProfilePublishedBy")
+  createdProductQuotationTimes   ProductQuotationTime[]      @relation("ProductQuotationTimeCreatedBy")
   confirmedProcessRoutes         WorkOrderProcessRoute[]     @relation("ProcessRouteConfirmedBy")
   completedProcessSteps          WorkOrderProcessStep[]      @relation("ProcessStepCompletedBy")
   recordedProcessExecutions      ProcessExecution[]          @relation("ProcessExecutionRecordedBy")
@@ -600,6 +601,7 @@ model DrawingLibraryItem {
   workOrders          WorkOrder[]          @relation("DrawingLibraryWorkOrders")
   lastWorkOrder       WorkOrder?           @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
   productTimeProfiles ProductTimeProfile[]
+  quotationTimes      ProductQuotationTime[]
   productionPlanOrders ProductionPlanOrder[]
 
   @@index([customerName])
@@ -640,6 +642,27 @@ model ProductTimeProfile {
   @@index([status, updatedAt])
   @@index([publishedAt])
   @@map("product_time_profiles")
+}
+
+model ProductQuotationTime {
+  id                   String             @id @default(uuid())
+  drawingLibraryItemId String             @map("drawing_library_item_id")
+  version              Int
+  status               String             @default("active")
+  unitMilliseconds     Int                @map("unit_milliseconds")
+  sourceType           String             @default("manual") @map("source_type")
+  sourceRefId          String?            @map("source_ref_id")
+  remark               String?
+  effectiveAt          DateTime           @default(now()) @map("effective_at")
+  createdById          String?            @map("created_by_id")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  drawingLibraryItem   DrawingLibraryItem @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Cascade)
+  createdBy            User?              @relation("ProductQuotationTimeCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([drawingLibraryItemId, version])
+  @@index([drawingLibraryItemId, status])
+  @@index([status, effectiveAt])
+  @@map("product_quotation_times")
 }
 
 model ProductionPlanOrder {

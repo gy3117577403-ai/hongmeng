@@ -39,7 +39,7 @@ type ProcessDefinition = {
   sortOrder: number;
 };
 
-type ProductTimeSummary = { total: number; published: number; draft: number; missing: number };
+type ProductTimeSummary = { total: number; published: number; draft: number; missing: number; quotationMissing: number };
 type CustomerOption = { customerName: string; count: number };
 type ProductTimePayload = {
   ok: boolean;
@@ -98,7 +98,7 @@ type ProductTimeImportPreview = {
   };
 };
 
-const emptySummary: ProductTimeSummary = { total: 0, published: 0, draft: 0, missing: 0 };
+const emptySummary: ProductTimeSummary = { total: 0, published: 0, draft: 0, missing: 0, quotationMissing: 0 };
 const stageText: Record<ProcessStageGroup, string> = { frontend: '前端', backend: '后端', finish: '完工' };
 
 function seconds(value: number | null | undefined): string {
@@ -169,6 +169,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [entries, setEntries] = useState<EntryDraft[]>([]);
   const [remark, setRemark] = useState('');
   const [dirty, setDirty] = useState(false);
+  const [quotationSeconds, setQuotationSeconds] = useState('');
+  const [quotationRemark, setQuotationRemark] = useState('');
+  const [quotationDirty, setQuotationDirty] = useState(false);
+  const [quotationSaving, setQuotationSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
@@ -208,6 +212,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const activeDraft = selectedItem?.draft || null;
   const activePublished = selectedItem?.published || null;
   const activeProfile = activeDraft || activePublished;
+  const activeQuotation = selectedItem?.quotation || null;
 
   const load = useCallback(async (preferredItemId?: string) => {
     setLoading(true);
@@ -312,8 +317,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     setRemark(activeProfile?.remark || '');
     setCopySourceId('');
     setDirty(false);
+    setQuotationSeconds(seconds(selectedItem?.quotation?.unitMilliseconds));
+    setQuotationRemark(selectedItem?.quotation?.remark || '');
+    setQuotationDirty(false);
     setError('');
-  }, [activeProfile, selectedItem?.id]);
+  }, [activeProfile, selectedItem?.id, selectedItem?.quotation]);
 
   useEffect(() => {
     if (!libraryOpen && !importOpen && !detailOpen) return;
@@ -345,13 +353,14 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         return;
       }
       if (detailOpen) {
+        if ((dirty || quotationDirty) && !window.confirm('当前产品仍有未保存修改，确定关闭详情吗？')) return;
         setDetailOpen(false);
         window.requestAnimationFrame(() => detailTriggerRef.current?.focus());
       }
     }
     window.addEventListener('keydown', onEscape);
     return () => window.removeEventListener('keydown', onEscape);
-  }, [detailOpen, importOpen, libraryOpen]);
+  }, [detailOpen, dirty, importOpen, libraryOpen, quotationDirty]);
 
   const filteredDefinitions = useMemo(() => definitions.filter(definition => {
     if (entries.some(entry => entry.processDefinitionId === definition.id)) return false;
@@ -361,16 +370,53 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }), [definitions, entries, libraryKeyword, libraryStage]);
 
   function openDetail(itemId: string, trigger: HTMLButtonElement): void {
-    if (dirty && selectedItem?.id !== itemId && !window.confirm('当前产品工时尚未保存，确定切换产品吗？')) return;
+    if ((dirty || quotationDirty) && selectedItem?.id !== itemId && !window.confirm('当前产品仍有未保存修改，确定切换产品吗？')) return;
     detailTriggerRef.current = trigger;
     setSelectedId(itemId);
     setDetailOpen(true);
   }
 
   function closeDetail(): void {
-    if (dirty && !window.confirm('当前产品工时尚未保存，确定关闭详情吗？')) return;
+    if ((dirty || quotationDirty) && !window.confirm('当前产品仍有未保存修改，确定关闭详情吗？')) return;
     setDetailOpen(false);
     window.requestAnimationFrame(() => detailTriggerRef.current?.focus());
+  }
+
+  async function saveQuotation(): Promise<void> {
+    if (!selectedItem) return;
+    const parsedSeconds = Number(quotationSeconds);
+    if (!Number.isFinite(parsedSeconds) || parsedSeconds <= 0 || parsedSeconds > 86_400) {
+      setError('报价工时必须大于 0 秒且不超过 24 小时');
+      return;
+    }
+    setQuotationSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      const response = await fetch(`/api/product-time-profiles/${selectedItem.id}/quotation`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expectedVersion: activeQuotation?.version ?? null,
+          unitSeconds: parsedSeconds,
+          sourceType: 'manual',
+          remark: quotationRemark,
+        }),
+      });
+      const data = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        error?: string;
+        quotation?: ProductTimeListItemDTO['quotation'];
+      };
+      if (!response.ok || !data.quotation) throw new Error(data.error || '报价工时保存失败');
+      setQuotationDirty(false);
+      setMessage(`${selectedItem.specification} 报价工时 V${data.quotation.version} 已保存`);
+      await load(selectedItem.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '报价工时保存失败');
+    } finally {
+      setQuotationSaving(false);
+    }
   }
 
   function matrixKey(itemId: string, definitionId: string): string {
@@ -761,7 +807,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const totalMilliseconds = draftTotal(entries);
   const selectedStatus = selectedItem ? statusText(selectedItem) : '未选择产品';
   const isPlanningScope = planningScope !== 'all';
-  const matrixTrailingColumns = isPlanningScope ? 4 : 2;
+  const matrixTrailingColumns = 1;
   const matrixGridColumns = `minmax(210px, 1.8fr) repeat(${definitions.length}, minmax(58px, 1fr)) repeat(${matrixTrailingColumns}, minmax(88px, .85fr))`;
   const matrixMinWidth = Math.max(860, 210 + definitions.length * 58 + matrixTrailingColumns * 88);
   const planningPeriodText = planningSummary?.weekStartDate && planningSummary?.weekEndDate
@@ -783,14 +829,14 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         <section className="product-time-summary" aria-label="产品工时概览与快捷筛选">
           {isPlanningScope ? <>
             <button className={status === 'all' ? 'active' : ''} type="button" onClick={() => setStatus('all')}><Clock3 aria-hidden="true" /><span>计划产品<small>{planningPeriodText}</small></span><strong>{planningSummary?.productCount || 0}</strong></button>
-            <article><FileSpreadsheet aria-hidden="true" /><span>计划数量<small>{planningSummary?.batchCount || 0} 个生产批次</small></span><strong>{(planningSummary?.totalQuantity || 0).toLocaleString()}</strong></article>
             <button className={status === 'published' ? 'active' : ''} type="button" onClick={() => setStatus('published')}><CheckCircle2 aria-hidden="true" /><span>工时已发布<small>可冻结到生产批次</small></span><strong>{planningSummary?.publishedCount || 0}</strong></button>
             <button className={`warning ${status === 'unpublished' ? 'active' : ''}`} type="button" onClick={() => setStatus('unpublished')}><Library aria-hidden="true" /><span>工时待发布<small>正式启用前必须完成</small></span><strong>{planningSummary?.missingCount || 0}</strong></button>
+            <button className={`warning ${status === 'quotation_missing' ? 'active' : ''}`} type="button" onClick={() => setStatus('quotation_missing')}><FileSpreadsheet aria-hidden="true" /><span>报价待维护<small>单套报价基准未录入</small></span><strong>{planningSummary?.quotationMissingCount || 0}</strong></button>
           </> : <>
             <button className={status === 'all' ? 'active' : ''} type="button" onClick={() => setStatus('all')}><Clock3 aria-hidden="true" /><span>图纸产品<small>全部范围</small></span><strong>{summary.total}</strong></button>
             <button className={status === 'published' ? 'active' : ''} type="button" onClick={() => setStatus('published')}><CheckCircle2 aria-hidden="true" /><span>已发布<small>可用于新工单</small></span><strong>{summary.published}</strong></button>
-            <button className={status === 'draft' ? 'active' : ''} type="button" onClick={() => setStatus('draft')}><Save aria-hidden="true" /><span>草稿待发布<small>继续维护</small></span><strong>{summary.draft}</strong></button>
             <button className={`warning ${status === 'missing' ? 'active' : ''}`} type="button" onClick={() => setStatus('missing')}><Library aria-hidden="true" /><span>工时待维护<small>暂不计算达成率</small></span><strong>{summary.missing}</strong></button>
+            <button className={`warning ${status === 'quotation_missing' ? 'active' : ''}`} type="button" onClick={() => setStatus('quotation_missing')}><FileSpreadsheet aria-hidden="true" /><span>报价待维护<small>单套报价基准未录入</small></span><strong>{summary.quotationMissing}</strong></button>
           </>}
         </section>
 
@@ -810,7 +856,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
           <div className="product-time-navigation-trigger" id="product-time-navigation-trigger" aria-label="平台导航入口" />
           <label><Search aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、规格或品名" /></label>
           <select value={customer} onChange={event => setCustomer(event.target.value)} aria-label="筛选客户"><option value="">全部客户</option>{customers.map(option => <option key={option.customerName} value={option.customerName}>{option.customerName}（{option.count}）</option>)}</select>
-          <select value={status} onChange={event => setStatus(event.target.value)} aria-label="筛选工时状态"><option value="all">全部状态</option><option value="missing">工时待维护</option><option value="draft">草稿待发布</option><option value="unpublished">尚未发布</option><option value="published">已发布</option></select>
+          <select value={status} onChange={event => setStatus(event.target.value)} aria-label="筛选工时状态"><option value="all">全部状态</option><option value="missing">工时待维护</option><option value="quotation_missing">报价待维护</option><option value="draft">草稿待发布</option><option value="unpublished">尚未发布</option><option value="published">已发布</option></select>
           <div className="product-time-toolbar-actions">
             <input
               ref={importInputRef}
@@ -842,19 +888,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <div className="product-time-matrix-row product-time-matrix-head" style={{ gridTemplateColumns: matrixGridColumns }}>
                 <span className="product-time-product-column"><b>产品 / 客户</b><small>点击产品查看并调整完整路线</small></span>
                 {definitions.map(definition => <span key={definition.id} title={`${definition.name} · ${stageText[definition.stageGroup]}`}><b>{definition.name}</b><small>{stageText[definition.stageGroup]}</small></span>)}
-                {isPlanningScope && <span><b>计划数量</b><small>当前范围合计</small></span>}
-                <span><b>汇总工时</b><small>当前已填合计</small></span>
-                {isPlanningScope && <span><b>计划总工时</b><small>发布工时 × 数量</small></span>}
-                <span><b>报价工时</b><small>后续功能接入</small></span>
+                <span className="product-time-quote-head"><b>报价工时</b><small>单套报价基准</small></span>
               </div>
               {items.map(item => {
                 const profile = item.draft || item.published;
-                const planningQuantity = item.planning?.totalQuantity || 0;
-                const frozenPlanningTotal = item.planning?.frozenBatchCount === item.planning?.batchCount && item.planning?.snapshotTotalMilliseconds
-                  ? Number(item.planning.snapshotTotalMilliseconds)
-                  : 0;
-                const calculatedPlanningTotal = item.published ? item.published.totalMillisecondsPerUnit * planningQuantity : 0;
-                const planningTotal = frozenPlanningTotal || calculatedPlanningTotal;
                 return <div className="product-time-matrix-row" style={{ gridTemplateColumns: matrixGridColumns }} key={item.id}>
                   <button className="product-time-product-cell" type="button" title={`${item.specification} · ${item.customerName} · ${item.productName || '品名未设置'}`} onClick={event => openDetail(item.id, event.currentTarget)}>
                     <strong>{item.specification}</strong><span>{item.customerName}</span><small>{item.productName || '品名未设置'}</small>
@@ -894,22 +931,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                       {cellError && <span className="product-time-cell-error" role="alert" title={cellError}>输入无效</span>}
                     </div>;
                   })}
-                  {isPlanningScope && <div className="product-time-plan-quantity-cell" role="note" aria-label={`${item.specification}计划数量${planningQuantity}件`}><strong>{planningQuantity.toLocaleString()}</strong><small>{item.planning?.batchCount || 0} 批</small></div>}
-                  <div
-                    className="product-time-total-cell"
-                    role="note"
-                    aria-label={profile && profile.processCount > 0
-                      ? `${item.specification}当前汇总工时${duration(profile.totalMillisecondsPerUnit)}，共${profile.processCount}道工序`
-                      : `${item.specification}尚未配置工序工时`}
-                    title={profile && profile.processCount > 0 ? `当前已填写 ${profile.processCount} 道工序` : '尚未配置工序工时'}
-                  >
-                    <strong>{profile && profile.processCount > 0 ? duration(profile.totalMillisecondsPerUnit) : '—'}</strong>
-                    <small>{profile && profile.processCount > 0 ? `${profile.processCount} 道工序` : '未配置'}</small>
-                  </div>
-                  {isPlanningScope && <div className="product-time-plan-total-cell" role="note" aria-label={planningTotal > 0 ? `${item.specification}计划总工时${duration(planningTotal)}` : `${item.specification}尚无可用的已发布工时`} title={frozenPlanningTotal > 0 ? '生产批次已冻结工时版本' : item.published ? `按已发布 V${item.published.version} 计算` : '请先发布产品工时'}><strong>{planningTotal > 0 ? duration(planningTotal) : '—'}</strong><small>{frozenPlanningTotal > 0 ? '批次已冻结' : item.published ? `发布 V${item.published.version}` : '待发布'}</small></div>}
-                  <div className="product-time-quote-cell" role="note" aria-label={`${item.specification}报价工时尚未录入`} title="报价工时将在后续功能中接入">
-                    <span aria-hidden="true">—</span>
-                  </div>
+                  <button className={`product-time-quote-cell ${item.quotation ? 'configured' : ''}`} type="button" aria-label={`${item.specification}${item.quotation ? `报价工时${duration(item.quotation.unitMilliseconds)}` : '报价工时尚未录入'}`} title={item.quotation ? `报价工时 ${duration(item.quotation.unitMilliseconds)} / 套，V${item.quotation.version}` : '点击录入单套报价工时'} onClick={event => openDetail(item.id, event.currentTarget)}>
+                    <strong>{item.quotation ? duration(item.quotation.unitMilliseconds) : '待报价'}</strong>
+                    <small>{item.quotation ? `V${item.quotation.version} · 单套` : '点击录入'}</small>
+                  </button>
                 </div>;
               })}
               {!loading && !items.length && <div className="product-time-empty matrix-empty"><Search aria-hidden="true" /><strong>没有符合条件的产品</strong><span>请调整筛选，或先在图纸资料库建立产品资料。</span></div>}
@@ -934,6 +959,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <div className="product-time-metrics">
                 <span><small>工序数量</small><strong>{entries.length}</strong></span><span><small>单件总工时</small><strong>{duration(totalMilliseconds)}</strong></span><span><small>当前版本</small><strong>{activeProfile ? `V${activeProfile.version}` : '待创建'}</strong></span><span><small>工时来源</small><strong>{copySourceId ? '复制后调整' : '人工维护'}</strong></span>
               </div>
+              <section className="product-time-quotation-editor" aria-labelledby="product-time-quotation-title">
+                <div><span>商业报价基准</span><strong id="product-time-quotation-title">单套报价工时</strong><small>{activeQuotation ? `当前 V${activeQuotation.version} · ${activeQuotation.sourceType === 'quotation' ? '报价模块' : activeQuotation.sourceType === 'import' ? '导入' : '人工维护'}` : '尚未录入'}</small></div>
+                <label><span>秒 / 套</span><input inputMode="decimal" value={quotationSeconds} onChange={event => { setQuotationSeconds(event.target.value); setQuotationDirty(true); }} placeholder="输入单套报价秒数" /></label>
+                <label className="product-time-quotation-remark"><span>报价说明</span><input value={quotationRemark} onChange={event => { setQuotationRemark(event.target.value); setQuotationDirty(true); }} placeholder="可选：记录报价版本或依据" /></label>
+                <button className="hm-workbench-button" type="button" disabled={quotationSaving || !quotationDirty} onClick={saveQuotation}><Save size={15} aria-hidden="true" />{quotationSaving ? '保存中' : '保存报价工时'}</button>
+              </section>
               <div className="product-time-copy-row">
                 <label><span>复制相似产品</span><select value={copySourceId} onChange={event => setCopySourceId(event.target.value)}><option value="">选择已发布产品</option>{items.filter(item => item.id !== selectedItem.id && item.published).map(item => <option key={item.id} value={item.id}>{item.customerName} · {item.specification}</option>)}</select></label>
                 <button className="hm-workbench-button" type="button" disabled={!copySourceId} onClick={copyProfile}><Copy size={15} aria-hidden="true" />复制工时</button>

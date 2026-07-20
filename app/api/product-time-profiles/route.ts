@@ -3,6 +3,10 @@ import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
+import {
+  productQuotationTimeInclude,
+  serializeProductQuotationTime,
+} from '@/lib/product-quotation';
 import { cleanProductTimeText, productTimeProfileInclude, serializeProductTimeProfile } from '@/lib/product-time';
 import {
   chinaDate,
@@ -125,12 +129,19 @@ export async function GET(req: NextRequest) {
         ...(status === 'unpublished' ? { productTimeProfiles: { none: { status: 'published' } } } : {}),
         ...(status === 'draft' ? { productTimeProfiles: { some: { status: 'draft' } } } : {}),
         ...(status === 'published' ? { productTimeProfiles: { some: { status: 'published' } } } : {}),
+        ...(status === 'quotation_missing' ? { quotationTimes: { none: { status: 'active' } } } : {}),
       },
       include: {
         productTimeProfiles: {
           where: { status: { in: ['draft', 'published'] } },
           orderBy: { version: 'desc' },
           include: productTimeProfileInclude,
+        },
+        quotationTimes: {
+          where: { status: 'active' },
+          orderBy: { version: 'desc' },
+          take: 1,
+          include: productQuotationTimeInclude,
         },
       },
       orderBy: [{ updatedAt: 'desc' }, { customerName: 'asc' }, { specification: 'asc' }],
@@ -148,6 +159,7 @@ export async function GET(req: NextRequest) {
         updatedAt: item.updatedAt.toISOString(),
         draft: draft ? serializeProductTimeProfile(draft) : null,
         published: published ? serializeProductTimeProfile(published) : null,
+        quotation: item.quotationTimes[0] ? serializeProductQuotationTime(item.quotationTimes[0]) : null,
         planning: scope === 'all' ? null : (() => {
           const aggregate = planningByItem.get(item.id);
           if (!aggregate) return null;
@@ -188,6 +200,7 @@ export async function GET(req: NextRequest) {
         published: rows.filter(item => item.published).length,
         draft: rows.filter(item => item.draft).length,
         missing: rows.filter(item => !item.published && !item.draft).length,
+        quotationMissing: rows.filter(item => !item.quotation).length,
       },
       planningScope: scope,
       planningSummary: scope === 'all' ? null : {
@@ -197,6 +210,7 @@ export async function GET(req: NextRequest) {
         totalQuantity: planningBatches.reduce((sum, batch) => sum + batch.quantity, 0),
         publishedCount: rows.filter(item => item.published).length,
         missingCount: rows.filter(item => !item.published).length,
+        quotationMissingCount: rows.filter(item => !item.quotation).length,
         weekStartDate: selectedRange ? chinaDate(selectedRange.start) : null,
         weekEndDate: selectedRange ? chinaDate(selectedRange.end) : null,
       },

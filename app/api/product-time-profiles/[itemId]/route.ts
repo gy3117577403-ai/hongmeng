@@ -3,6 +3,10 @@ import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
+  productQuotationTimeInclude,
+  serializeProductQuotationTime,
+} from '@/lib/product-quotation';
+import {
   cleanProductTimeText,
   productTimeProfileInclude,
   serializeProductTimeProfile,
@@ -20,6 +24,12 @@ async function profilePayload(itemId: string) {
         orderBy: { version: 'desc' },
         include: productTimeProfileInclude,
       },
+      quotationTimes: {
+        where: { status: 'active' },
+        orderBy: { version: 'desc' },
+        take: 1,
+        include: productQuotationTimeInclude,
+      },
     },
   });
   if (!item) return null;
@@ -32,6 +42,7 @@ async function profilePayload(itemId: string) {
       productName: item.productName,
     },
     profiles: item.productTimeProfiles.map(serializeProductTimeProfile),
+    quotation: item.quotationTimes[0] ? serializeProductQuotationTime(item.quotationTimes[0]) : null,
   };
 }
 

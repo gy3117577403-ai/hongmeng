@@ -8,6 +8,7 @@ import {
   serializeEmployee,
 } from '../lib/process-time';
 import { productTimeTotalMilliseconds, validateProductTimeEntries } from '../lib/product-time';
+import { sameProductQuotationTime, validateProductQuotationTime } from '../lib/product-quotation';
 
 test('per-unit standard labor includes setup time and per-product process count', () => {
   const result = calculateStandardLaborMilliseconds({
@@ -97,6 +98,37 @@ test('product time can derive per-product seconds from action time and occurrenc
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.entries[0].unitMilliseconds, 54_000);
+});
+
+test('product quotation time stores a positive per-set commercial duration', () => {
+  const result = validateProductQuotationTime({
+    unitSeconds: '157.5',
+    sourceType: 'manual',
+    remark: '报价核定',
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.unitMilliseconds, 157_500);
+  assert.equal(result.value.sourceType, 'manual');
+  assert.equal(result.value.remark, '报价核定');
+});
+
+test('product quotation time rejects zero and durations above one day', () => {
+  const zero = validateProductQuotationTime({ unitSeconds: 0 });
+  const excessive = validateProductQuotationTime({ unitSeconds: 86_401 });
+  assert.equal(zero.ok, false);
+  assert.equal(excessive.ok, false);
+});
+
+test('identical quotation updates are idempotent', () => {
+  const input = {
+    unitMilliseconds: 120_000,
+    sourceType: 'quotation' as const,
+    sourceRefId: 'quote-2026-01',
+    remark: null,
+  };
+  assert.equal(sameProductQuotationTime(input, input), true);
+  assert.equal(sameProductQuotationTime({ ...input, unitMilliseconds: 121_000 }, input), false);
 });
 
 test('product time rejects zero, duplicate processes, and ambiguous empty rows', () => {

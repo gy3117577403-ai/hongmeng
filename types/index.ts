@@ -549,8 +549,23 @@ export type ProductTimePlanningSummaryDTO = {
   totalQuantity: number;
   publishedCount: number;
   missingCount: number;
+  quotationMissingCount: number;
   weekStartDate?: string | null;
   weekEndDate?: string | null;
+};
+
+export type ProductQuotationTimeDTO = {
+  id: string;
+  drawingLibraryItemId: string;
+  version: number;
+  status: 'active' | 'archived';
+  unitMilliseconds: number;
+  sourceType: 'manual' | 'import' | 'quotation';
+  sourceRefId?: string | null;
+  remark?: string | null;
+  effectiveAt: string;
+  createdAt: string;
+  createdBy?: IssueUserDTO | null;
 };
 
 export type ProductProcessTimeEntryDTO = {
@@ -597,6 +612,7 @@ export type ProductTimeListItemDTO = {
   updatedAt: string;
   draft?: ProductTimeProfileDTO | null;
   published?: ProductTimeProfileDTO | null;
+  quotation?: ProductQuotationTimeDTO | null;
   planning?: ProductTimePlanningContextDTO | null;
 };
 

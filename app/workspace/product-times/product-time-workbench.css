@@ -392,6 +392,25 @@ html:has(.hm-product-time-workbench) {
 .hm-product-time-workbench .product-time-metrics small { color: #7c8999; }
 .hm-product-time-workbench .product-time-metrics strong { font-size: 14px; white-space: nowrap; }
 
+.hm-product-time-workbench .product-time-quotation-editor {
+  padding: 9px 12px;
+  display: grid;
+  grid-template-columns: minmax(150px, .85fr) minmax(120px, .55fr) minmax(210px, 1.35fr) auto;
+  align-items: end;
+  gap: 8px;
+  border-bottom: 1px solid #edf0f4;
+  background: #fffaf5;
+}
+
+.hm-product-time-workbench .product-time-quotation-editor > div,
+.hm-product-time-workbench .product-time-quotation-editor label { min-width: 0; display: grid; gap: 4px; }
+.hm-product-time-workbench .product-time-quotation-editor > div > span { color: #e85d04; font-size: 10px; font-weight: 750; }
+.hm-product-time-workbench .product-time-quotation-editor > div > strong { font-size: 14px; }
+.hm-product-time-workbench .product-time-quotation-editor > div > small { overflow: hidden; color: #7c8999; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.hm-product-time-workbench .product-time-quotation-editor label > span { color: #68768a; font-size: 10px; font-weight: 650; }
+.hm-product-time-workbench .product-time-quotation-editor input { width: 100%; height: 36px; padding: 0 9px; border: 1px solid #dce3eb; border-radius: 6px; background: #fff; color: #172235; font: inherit; }
+.hm-product-time-workbench .product-time-quotation-editor input:focus { border-color: #e85d04; outline: 2px solid rgba(232, 93, 4, .12); }
+
 .hm-product-time-workbench .product-time-copy-row {
   padding: 8px 12px;
   display: flex;
@@ -1160,21 +1179,20 @@ html:has(.hm-product-time-workbench) {
 .hm-product-time-workbench .product-time-matrix-cell.invalid > button { border-color: #d92d20; }
 .hm-product-time-workbench .product-time-cell-error { position: absolute; z-index: 2; right: 5px; bottom: 3px; max-width: calc(100% - 10px); overflow: hidden; color: #b42318; font-size: 8px; font-weight: 700; line-height: 1; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 
-.hm-product-time-workbench .product-time-total-cell,
-.hm-product-time-workbench .product-time-plan-quantity-cell,
-.hm-product-time-workbench .product-time-plan-total-cell,
-.hm-product-time-workbench .product-time-quote-cell { min-width: 0; padding: 7px; display: grid; place-content: center; gap: 3px; border: 0; background: #fff; text-align: center; }
-.hm-product-time-workbench .product-time-total-cell { color: #b54708; }
-.hm-product-time-workbench .product-time-plan-quantity-cell { color: #275f9d; }
-.hm-product-time-workbench .product-time-plan-total-cell { color: #147447; }
-.hm-product-time-workbench .product-time-total-cell strong,
-.hm-product-time-workbench .product-time-plan-quantity-cell strong,
-.hm-product-time-workbench .product-time-plan-total-cell strong { font-size: 12px; line-height: 1.2; white-space: nowrap; }
-.hm-product-time-workbench .product-time-total-cell small,
-.hm-product-time-workbench .product-time-plan-quantity-cell small,
-.hm-product-time-workbench .product-time-plan-total-cell small { color: #7a8798; font-size: 9px; white-space: nowrap; }
-.hm-product-time-workbench .product-time-quote-cell { color: #98a2b3; }
-.hm-product-time-workbench .product-time-quote-cell span { font-size: 18px; line-height: 1; }
+.hm-product-time-workbench .product-time-matrix-head .product-time-quote-head,
+.hm-product-time-workbench .product-time-quote-cell {
+  position: sticky;
+  right: 0;
+  border-left: 1px solid #dce3eb;
+  box-shadow: -5px 0 10px rgba(30, 42, 58, .04);
+}
+.hm-product-time-workbench .product-time-matrix-head .product-time-quote-head { z-index: 7; background: #f7f8fa; }
+.hm-product-time-workbench .product-time-quote-cell { z-index: 4; min-width: 0; padding: 7px; display: grid; place-content: center; gap: 3px; border-width: 0 0 0 1px; background: #fff; color: #7c8999; text-align: center; cursor: pointer; }
+.hm-product-time-workbench .product-time-quote-cell:hover,
+.hm-product-time-workbench .product-time-quote-cell:focus-visible { background: #fff8f2; color: #b54708; outline: 0; }
+.hm-product-time-workbench .product-time-quote-cell.configured { color: #b54708; }
+.hm-product-time-workbench .product-time-quote-cell strong { font-size: 12px; line-height: 1.2; white-space: nowrap; }
+.hm-product-time-workbench .product-time-quote-cell small { color: #7a8798; font-size: 9px; white-space: nowrap; }
 .hm-product-time-workbench .product-time-empty.matrix-empty { position: sticky; left: 0; min-height: 220px; }
 
 .hm-product-time-workbench .product-time-detail-scrim,

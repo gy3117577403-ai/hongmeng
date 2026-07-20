@@ -24,6 +24,11 @@ export async function GET() {
             orderBy: [{ status: 'asc' }, { version: 'desc' }],
             include: { entries: true },
           },
+          quotationTimes: {
+            where: { status: 'active' },
+            orderBy: { version: 'desc' },
+            take: 1,
+          },
         },
       }),
     ]);
@@ -32,6 +37,7 @@ export async function GET() {
         || item.productTimeProfiles.find(candidate => candidate.status === 'published')
         || null;
       const entryMap = new Map((profile?.entries || []).map(entry => [entry.processDefinitionId, entry]));
+      const quotation = item.quotationTimes[0] || null;
       const row: Record<string, string | number> = {
         产品型号: item.specification,
         客户: item.customerName,
@@ -47,10 +53,13 @@ export async function GET() {
       }
       row['合计(秒)'] = totalMilliseconds / 1000;
       row['合计(分)'] = Math.round((totalMilliseconds / 60_000) * 1000) / 1000;
+      row['报价工时(秒/套)'] = quotation ? quotation.unitMilliseconds / 1000 : '';
+      row['报价工时(分/套)'] = quotation ? Math.round((quotation.unitMilliseconds / 60_000) * 1000) / 1000 : '';
+      row['报价版本'] = quotation ? `V${quotation.version}` : '';
       return row;
     });
     const workbook = XLSX.utils.book_new();
-    const sheet = XLSX.utils.json_to_sheet(rows, { header: ['产品型号', '客户', '品名', '工时状态', '版本', ...definitions.map(item => item.name), '合计(秒)', '合计(分)'] });
+    const sheet = XLSX.utils.json_to_sheet(rows, { header: ['产品型号', '客户', '品名', '工时状态', '版本', ...definitions.map(item => item.name), '合计(秒)', '合计(分)', '报价工时(秒/套)', '报价工时(分/套)', '报价版本'] });
     sheet['!freeze'] = { xSplit: 3, ySplit: 1 };
     XLSX.utils.book_append_sheet(workbook, sheet, '产品标准工时');
     const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
