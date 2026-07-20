@@ -15,13 +15,14 @@ export async function POST(req: NextRequest) {
       : [];
     const target = body.target === 'preparation' || body.target === 'active' ? body.target : null;
     if (!batchIds.length || !target) return NextResponse.json({ ok: false, error: '请选择有效的下达批次和目标' }, { status: 400 });
+    const releaseTime = new Date();
     const result = await prisma.$transaction(async tx => {
-      const preview = await previewProductionPlanRelease(tx, { batchIds, target });
+      const preview = await previewProductionPlanRelease(tx, { batchIds, target, now: releaseTime });
       if (preview.blockers > 0) throw new Error('PLAN_BATCH_BLOCKED');
       if (preview.warnings > 0 && body.confirmWarnings !== true) throw new Error('PLAN_BATCH_CONFIRMATION_REQUIRED');
       const released = [] as Array<{ batchId: string; workOrderId: string; warnings: string[] }>;
       for (const batchId of batchIds) {
-        const item = await releaseProductionPlanBatch(tx, { batchId, target, actorId: user.id });
+        const item = await releaseProductionPlanBatch(tx, { batchId, target, actorId: user.id, now: releaseTime });
         released.push({ batchId, workOrderId: item.workOrderId, warnings: item.warnings });
       }
       return released;

@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
-import { chinaDate, chinaWeekRange, effectivePlanningUnitMilliseconds, parsePlanDate } from '@/lib/production-planning';
+import {
+  chinaDate,
+  chinaWeekRange,
+  effectivePlanningUnitMilliseconds,
+  parsePlanDate,
+  productionPlanTargetWeek,
+} from '@/lib/production-planning';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,6 +20,7 @@ export async function POST(req: NextRequest) {
     const requested = parsePlanDate(body.weekStartDate);
     if (!requested) return NextResponse.json({ ok: false, error: '请选择要启用的预备周' }, { status: 400 });
     const range = chinaWeekRange(requested);
+    const targetRange = productionPlanTargetWeek('active');
     const batches = await prisma.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
@@ -66,6 +73,9 @@ export async function POST(req: NextRequest) {
       else if (!productTimeProfile) warnings.push('产品工序工时尚未发布，当前使用批次单根工时');
       if (warehouse !== 'completed') warnings.push(warehouse === 'exception' ? '仓库存在异常' : '仓库尚未完成配料');
       if (process === 'not_created' || process === 'draft') warnings.push('工艺路线尚未确认');
+      if (chinaDate(range.start) !== chinaDate(targetRange.start)) {
+        warnings.push(`生产周将从 ${chinaDate(range.start)} 至 ${chinaDate(range.end)} 调整为本周 ${chinaDate(targetRange.start)} 至 ${chinaDate(targetRange.end)}`);
+      }
       return {
         batchId: batch.id,
         specification: batch.planOrder.specification,
@@ -80,8 +90,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       preview: {
-        weekStartDate: chinaDate(range.start),
-        weekEndDate: chinaDate(range.end),
+        sourceWeekStartDate: chinaDate(range.start),
+        sourceWeekEndDate: chinaDate(range.end),
+        weekStartDate: chinaDate(targetRange.start),
+        weekEndDate: chinaDate(targetRange.end),
         batchCount: items.length,
         totalQuantity: items.reduce((sum, item) => sum + item.quantity, 0),
         warningCount: items.reduce((sum, item) => sum + item.warnings.length, 0),

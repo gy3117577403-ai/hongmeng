@@ -7,10 +7,13 @@ import {
   productionWeekWhere,
 } from '../lib/production-execution';
 import {
+  alignProductionPlanBatchWeek,
+  chinaDate,
   effectivePlanningUnitMilliseconds,
   parseProductionPlanBatchInput,
   parseProductionPlanOrderInput,
   planBatchSnapshot,
+  productionPlanTargetWeek,
 } from '../lib/production-planning';
 
 test('natural production week is Monday through Sunday in China time', () => {
@@ -105,6 +108,36 @@ test('planning batches reject zero unit labor time', () => {
   assert.equal(parsed.ok, false);
   if (parsed.ok) return;
   assert.match(parsed.error, /单根工时/);
+});
+
+test('current-week release aligns a next-week batch and keeps its completion weekday', () => {
+  const now = new Date('2026-07-20T04:00:00.000Z');
+  const target = productionPlanTargetWeek('active', now);
+  const aligned = alignProductionPlanBatchWeek({
+    weekStartDate: new Date('2026-07-27T04:00:00.000Z'),
+    plannedCompletionDate: new Date('2026-08-02T04:00:00.000Z'),
+  }, 'active', now);
+
+  assert.equal(chinaDate(target.start), '2026-07-20');
+  assert.equal(chinaDate(target.end), '2026-07-26');
+  assert.equal(chinaDate(aligned.weekStartDate), '2026-07-20');
+  assert.equal(chinaDate(aligned.weekEndDate), '2026-07-26');
+  assert.equal(chinaDate(aligned.plannedCompletionDate), '2026-07-26');
+});
+
+test('next-week preparation aligns a current-week batch to the natural next week', () => {
+  const now = new Date('2026-07-20T04:00:00.000Z');
+  const target = productionPlanTargetWeek('preparation', now);
+  const aligned = alignProductionPlanBatchWeek({
+    weekStartDate: new Date('2026-07-20T04:00:00.000Z'),
+    plannedCompletionDate: new Date('2026-07-22T04:00:00.000Z'),
+  }, 'preparation', now);
+
+  assert.equal(chinaDate(target.start), '2026-07-27');
+  assert.equal(chinaDate(target.end), '2026-08-02');
+  assert.equal(chinaDate(aligned.weekStartDate), '2026-07-27');
+  assert.equal(chinaDate(aligned.weekEndDate), '2026-08-02');
+  assert.equal(chinaDate(aligned.plannedCompletionDate), '2026-07-29');
 });
 
 test('batch labor time overrides product and order defaults', () => {

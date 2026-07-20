@@ -10,6 +10,7 @@ import {
   parseProductionPlanOrderInput,
   planOrderSnapshot,
   productionPlanOrderInclude,
+  reconcileFutureActiveProductionPlanWeeks,
   resolvePlanningReferences,
   serializeProductionPlanOrder,
 } from '@/lib/production-planning';
@@ -33,8 +34,11 @@ function keywordWhere(keyword: string): Prisma.ProductionPlanOrderWhereInput {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
-    await prisma.$transaction(tx => reconcileProductionPlanDrawingLinks(tx));
+    const user = await requireUser();
+    await prisma.$transaction(async tx => {
+      await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
+      await reconcileProductionPlanDrawingLinks(tx);
+    });
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim().slice(0, 160);
     const status = String(req.nextUrl.searchParams.get('status') || '').trim();
     const customer = String(req.nextUrl.searchParams.get('customer') || '').trim().slice(0, 120);
@@ -73,8 +77,8 @@ export async function GET(req: NextRequest) {
       scheduledOrderCount: all.filter(order => order.status === 'scheduled' || order.status === 'partially_released').length,
       thisWeekBatchCount: batches.filter(batch => batch.weekStartDate === currentStart).length,
       nextWeekBatchCount: batches.filter(batch => batch.weekStartDate === nextStart).length,
-      preparationBatchCount: batches.filter(batch => batch.releaseState === 'preparation').length,
-      activeBatchCount: batches.filter(batch => batch.releaseState === 'active').length,
+      preparationBatchCount: batches.filter(batch => batch.releaseState === 'preparation' && batch.weekStartDate === nextStart).length,
+      activeBatchCount: batches.filter(batch => batch.releaseState === 'active' && batch.weekStartDate === currentStart).length,
       missingDrawingCount: all.filter(order => order.drawingFileCount === 0).length,
       missingProductTimeCount: all.filter(order => !order.effectiveUnitMilliseconds).length,
       warehouseExceptionCount: batches.filter(batch => batch.warehouseStatus === 'exception').length,

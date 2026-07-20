@@ -2,7 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
-import { chinaWeekRange, effectivePlanningUnitMilliseconds, parsePlanDate } from '@/lib/production-planning';
+import {
+  alignProductionPlanBatchWeek,
+  chinaDate,
+  chinaWeekRange,
+  effectivePlanningUnitMilliseconds,
+  parsePlanDate,
+  productionPlanTargetWeek,
+} from '@/lib/production-planning';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
 
 export const runtime = 'nodejs';
@@ -15,6 +22,8 @@ export async function POST(req: NextRequest) {
     const requested = parsePlanDate(body.weekStartDate);
     if (!requested) return NextResponse.json({ ok: false, error: '请选择要启用的预备周' }, { status: 400 });
     const range = chinaWeekRange(requested);
+    const activationTime = new Date();
+    const targetRange = productionPlanTargetWeek('active', activationTime);
     const batches = await prisma.productionPlanBatch.findMany({
       where: { deletedAt: null, releaseState: 'preparation', weekStartDate: range.start, workOrderId: { not: null } },
       include: {
@@ -70,7 +79,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, requiresConfirmation: true, error: '仓库或工艺准备尚未全部完成，请确认风险后再启用', warningCount }, { status: 409 });
     }
     const result = await prisma.$transaction(async tx => {
-      const now = new Date();
+      const now = activationTime;
       const nextWorkOrderIds = batches.map(item => item.workOrderId).filter((id): id is string => Boolean(id));
       const current = await tx.productionPlanBatch.findMany({
         where: { deletedAt: null, releaseState: 'active', workOrderId: { not: null } },
@@ -91,9 +100,13 @@ export async function POST(req: NextRequest) {
         const unitMilliseconds = unitMillisecondsByBatch.get(batch.id);
         if (!unitMilliseconds) throw new Error('PLAN_UNIT_WORK_TIME_REQUIRED');
         const totalMilliseconds = BigInt(unitMilliseconds) * BigInt(batch.quantity);
+        const alignedWeek = alignProductionPlanBatchWeek(batch, 'active', now);
         await tx.productionPlanBatch.update({
           where: { id: batch.id },
           data: {
+            weekStartDate: alignedWeek.weekStartDate,
+            weekEndDate: alignedWeek.weekEndDate,
+            plannedCompletionDate: alignedWeek.plannedCompletionDate,
             productTimeProfileId: profile?.id || batch.productTimeProfileId || null,
             productTimeProfileVersion: profile?.version || batch.productTimeProfileVersion || null,
             unitMillisecondsSnapshot: unitMilliseconds,
@@ -104,6 +117,9 @@ export async function POST(req: NextRequest) {
           await tx.workOrder.update({
             where: { id: batch.workOrderId },
             data: {
+              weekStartDate: alignedWeek.weekStartDate,
+              weekEndDate: alignedWeek.weekEndDate,
+              plannedAt: alignedWeek.plannedCompletionDate,
               unitWorkHours: (unitMilliseconds / 3_600_000).toFixed(4).replace(/0+$/, '').replace(/\.$/, ''),
               totalWorkHours: (Number(totalMilliseconds) / 3_600_000).toFixed(4).replace(/0+$/, '').replace(/\.$/, ''),
             },
@@ -139,8 +155,18 @@ export async function POST(req: NextRequest) {
             planOrderId: batch.planOrderId,
             batchId: batch.id,
             action: 'activate_preparation_week',
-            beforeData: { releaseState: 'preparation' },
-            afterData: { releaseState: 'active', planActive: true },
+            beforeData: {
+              releaseState: 'preparation',
+              weekStartDate: chinaDate(batch.weekStartDate),
+              weekEndDate: chinaDate(batch.weekEndDate),
+              plannedCompletionDate: chinaDate(batch.plannedCompletionDate),
+            },
+            afterData: {
+              releaseState: 'active',
+              planActive: true,
+              weekStartDate: chinaDate(targetRange.start),
+              weekEndDate: chinaDate(targetRange.end),
+            },
             impactData: { warningCount },
             actorId: user.id,
           },
@@ -151,8 +177,10 @@ export async function POST(req: NextRequest) {
           userId: user.id,
           action: 'activate_production_plan_week',
           targetType: 'production_plan_week',
-          targetId: range.start.toISOString(),
+          targetId: targetRange.start.toISOString(),
           detail: {
+            sourceWeekStartDate: chinaDate(range.start),
+            targetWeekStartDate: chinaDate(targetRange.start),
             batchCount: batches.length,
             warningCount,
             archivedBatchCount: current.length,

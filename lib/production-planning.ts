@@ -111,6 +111,8 @@ export type ParsedPlanBatch = {
 
 export type ProductionPlanReleasePreview = {
   target: 'preparation' | 'active';
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
   batchCount: number;
   totalQuantity: number;
   warnings: number;
@@ -202,6 +204,41 @@ export function chinaWeekRange(input: Date): { start: Date; end: Date } {
   const end = new Date(start);
   end.setUTCDate(end.getUTCDate() + 6);
   return { start, end };
+}
+
+const PLANNING_DAY_MILLISECONDS = 86_400_000;
+
+function addPlanningDays(value: Date, days: number): Date {
+  const date = new Date(value);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date;
+}
+
+export function productionPlanTargetWeek(
+  target: 'preparation' | 'active',
+  now = new Date(),
+): { start: Date; end: Date } {
+  const current = chinaWeekRange(now);
+  if (target === 'active') return current;
+  return { start: addPlanningDays(current.start, 7), end: addPlanningDays(current.end, 7) };
+}
+
+export function alignProductionPlanBatchWeek(
+  batch: Pick<ParsedPlanBatch, 'weekStartDate' | 'plannedCompletionDate'>,
+  target: 'preparation' | 'active',
+  now = new Date(),
+): { weekStartDate: Date; weekEndDate: Date; plannedCompletionDate: Date } {
+  const source = chinaWeekRange(batch.weekStartDate);
+  const targetWeek = productionPlanTargetWeek(target, now);
+  const rawOffset = Math.round(
+    (batch.plannedCompletionDate.getTime() - source.start.getTime()) / PLANNING_DAY_MILLISECONDS,
+  );
+  const completionOffset = Math.max(0, Math.min(6, rawOffset));
+  return {
+    weekStartDate: targetWeek.start,
+    weekEndDate: targetWeek.end,
+    plannedCompletionDate: addPlanningDays(targetWeek.start, completionOffset),
+  };
 }
 
 function planPriority(value: unknown): ProductionPlanPriority {
@@ -343,7 +380,7 @@ export async function resolvePlanningReferences(
 
 export async function previewProductionPlanRelease(
   tx: Prisma.TransactionClient,
-  input: { batchIds: string[]; target: 'preparation' | 'active' },
+  input: { batchIds: string[]; target: 'preparation' | 'active'; now?: Date },
 ): Promise<ProductionPlanReleasePreview> {
   const [batches, defaultTemplate] = await Promise.all([
     tx.productionPlanBatch.findMany({
@@ -357,6 +394,7 @@ export async function previewProductionPlanRelease(
   ]);
   if (batches.length !== input.batchIds.length) throw new Error('PLAN_BATCH_SELECTION_INVALID');
 
+  const targetWeek = productionPlanTargetWeek(input.target, input.now);
   const items: ProductionPlanReleasePreview['items'] = [];
   for (const batch of batches) {
     const refs = await resolvePlanningReferences(tx, batch.planOrder);
@@ -370,6 +408,11 @@ export async function previewProductionPlanRelease(
     if (batch.releaseState === 'archived') blockers.push('该批次已经归档');
     if (batch.releaseState !== 'draft' && batch.releaseState !== input.target) {
       warnings.push(`当前已处于${batch.releaseState === 'active' ? '本周执行' : '下周预备'}状态`);
+    }
+    if (chinaDate(batch.weekStartDate) !== chinaDate(targetWeek.start)) {
+      warnings.push(
+        `生产周将调整为${input.target === 'active' ? '本周' : '下周'} ${chinaDate(targetWeek.start)} 至 ${chinaDate(targetWeek.end)}`,
+      );
     }
     if (!refs.drawingLibraryItemId) warnings.push('未匹配图纸资料');
     if (!effectiveUnitMilliseconds) {
@@ -391,6 +434,8 @@ export async function previewProductionPlanRelease(
   }
   return {
     target: input.target,
+    targetWeekStartDate: chinaDate(targetWeek.start),
+    targetWeekEndDate: chinaDate(targetWeek.end),
     batchCount: items.length,
     totalQuantity: items.reduce((sum, item) => sum + item.quantity, 0),
     warnings: items.reduce((sum, item) => sum + item.warnings.length, 0),
@@ -769,7 +814,7 @@ function workHours(milliseconds: number | null): string | null {
 
 export async function releaseProductionPlanBatch(
   tx: Prisma.TransactionClient,
-  input: { batchId: string; target: 'preparation' | 'active'; actorId: string },
+  input: { batchId: string; target: 'preparation' | 'active'; actorId: string; now?: Date },
 ): Promise<{ workOrderId: string; warnings: string[]; created: boolean }> {
   const batch = await tx.productionPlanBatch.findUnique({
     where: { id: input.batchId },
@@ -777,6 +822,8 @@ export async function releaseProductionPlanBatch(
   });
   if (!batch || batch.deletedAt || batch.planOrder.deletedAt) throw new Error('PLAN_BATCH_NOT_FOUND');
   if (batch.releaseState === 'archived') throw new Error('PLAN_BATCH_ARCHIVED');
+  const now = input.now || new Date();
+  const alignedWeek = alignProductionPlanBatchWeek(batch, input.target, now);
   const references = await resolvePlanningReferences(tx, batch.planOrder);
   const effectiveUnitMilliseconds = effectivePlanningUnitMilliseconds(
     batch.unitMillisecondsSnapshot,
@@ -796,7 +843,7 @@ export async function releaseProductionPlanBatch(
     priority: batch.planOrder.priority === 'insert' ? 'urgent' : batch.planOrder.priority,
     status: 'pending',
     progress: 0,
-    plannedAt: batch.plannedCompletionDate,
+    plannedAt: alignedWeek.plannedCompletionDate,
     remark: batch.planOrder.remark,
     sourceOrderNo: batch.planOrder.sourceOrderNo,
     orderDate: batch.planOrder.orderDate,
@@ -808,8 +855,8 @@ export async function releaseProductionPlanBatch(
     deliveryDay: chinaDate(batch.planOrder.customerDueDate),
     materialStatus: '待配料',
     planType: 'managed_plan',
-    weekStartDate: batch.weekStartDate,
-    weekEndDate: batch.weekEndDate,
+    weekStartDate: alignedWeek.weekStartDate,
+    weekEndDate: alignedWeek.weekEndDate,
     planActive,
     planClearedAt: null,
     planClearedBy: null,
@@ -868,12 +915,14 @@ export async function releaseProductionPlanBatch(
     }
   }
 
-  const now = new Date();
   await tx.productionPlanBatch.update({
     where: { id: batch.id },
     data: {
       workOrderId: workOrder.id,
       releaseState: input.target,
+      weekStartDate: alignedWeek.weekStartDate,
+      weekEndDate: alignedWeek.weekEndDate,
+      plannedCompletionDate: alignedWeek.plannedCompletionDate,
       productTimeProfileId: references.productTimeProfileId,
       productTimeProfileVersion: references.productTimeProfileVersion,
       unitMillisecondsSnapshot: effectiveUnitMilliseconds,
@@ -890,8 +939,25 @@ export async function releaseProductionPlanBatch(
       planOrderId: batch.planOrderId,
       batchId: batch.id,
       action: input.target === 'active' ? 'release_to_current_week' : 'release_to_next_week',
-      afterData: { workOrderId: workOrder.id, releaseState: input.target, planActive },
-      impactData: { warehouseTaskCreated: true, processWarnings: warnings.length },
+      beforeData: {
+        releaseState: batch.releaseState,
+        weekStartDate: chinaDate(batch.weekStartDate),
+        weekEndDate: chinaDate(batch.weekEndDate),
+        plannedCompletionDate: chinaDate(batch.plannedCompletionDate),
+      },
+      afterData: {
+        workOrderId: workOrder.id,
+        releaseState: input.target,
+        planActive,
+        weekStartDate: chinaDate(alignedWeek.weekStartDate),
+        weekEndDate: chinaDate(alignedWeek.weekEndDate),
+        plannedCompletionDate: chinaDate(alignedWeek.plannedCompletionDate),
+      },
+      impactData: {
+        warehouseTaskCreated: true,
+        processWarnings: warnings.length,
+        weekRealigned: chinaDate(batch.weekStartDate) !== chinaDate(alignedWeek.weekStartDate),
+      },
       actorId: input.actorId,
     },
   });
@@ -905,4 +971,93 @@ export async function releaseProductionPlanBatch(
     },
   });
   return { workOrderId: workOrder.id, warnings, created };
+}
+
+export async function reconcileFutureActiveProductionPlanWeeks(
+  tx: Prisma.TransactionClient,
+  input: { actorId: string; now?: Date },
+): Promise<number> {
+  const now = input.now || new Date();
+  const targetWeek = productionPlanTargetWeek('active', now);
+  const batches = await tx.productionPlanBatch.findMany({
+    where: {
+      deletedAt: null,
+      releaseState: 'active',
+      weekStartDate: { gt: targetWeek.start },
+    },
+    select: {
+      id: true,
+      planOrderId: true,
+      workOrderId: true,
+      weekStartDate: true,
+      weekEndDate: true,
+      plannedCompletionDate: true,
+    },
+  });
+  let repaired = 0;
+  for (const batch of batches) {
+    const alignedWeek = alignProductionPlanBatchWeek(batch, 'active', now);
+    const updated = await tx.productionPlanBatch.updateMany({
+      where: {
+        id: batch.id,
+        deletedAt: null,
+        releaseState: 'active',
+        weekStartDate: { gt: targetWeek.start },
+      },
+      data: {
+        weekStartDate: alignedWeek.weekStartDate,
+        weekEndDate: alignedWeek.weekEndDate,
+        plannedCompletionDate: alignedWeek.plannedCompletionDate,
+      },
+    });
+    if (!updated.count) continue;
+    repaired += 1;
+    if (batch.workOrderId) {
+      await tx.workOrder.update({
+        where: { id: batch.workOrderId },
+        data: {
+          weekStartDate: alignedWeek.weekStartDate,
+          weekEndDate: alignedWeek.weekEndDate,
+          plannedAt: alignedWeek.plannedCompletionDate,
+          planActive: true,
+          planClearedAt: null,
+          planClearedBy: null,
+        },
+      });
+    }
+    await tx.productionPlanChange.create({
+      data: {
+        planOrderId: batch.planOrderId,
+        batchId: batch.id,
+        action: 'repair_active_plan_week_alignment',
+        beforeData: {
+          releaseState: 'active',
+          weekStartDate: chinaDate(batch.weekStartDate),
+          weekEndDate: chinaDate(batch.weekEndDate),
+          plannedCompletionDate: chinaDate(batch.plannedCompletionDate),
+        },
+        afterData: {
+          releaseState: 'active',
+          weekStartDate: chinaDate(alignedWeek.weekStartDate),
+          weekEndDate: chinaDate(alignedWeek.weekEndDate),
+          plannedCompletionDate: chinaDate(alignedWeek.plannedCompletionDate),
+        },
+        impactData: { linkedWorkOrderUpdated: Boolean(batch.workOrderId) },
+        reason: '修复本周执行状态与未来生产周日期不一致',
+        actorId: input.actorId,
+      },
+    });
+  }
+  if (repaired) {
+    await tx.operationLog.create({
+      data: {
+        userId: input.actorId,
+        action: 'repair_active_plan_week_alignment',
+        targetType: 'production_plan_week',
+        targetId: chinaDate(targetWeek.start),
+        detail: { repairedBatchCount: repaired },
+      },
+    });
+  }
+  return repaired;
 }

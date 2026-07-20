@@ -4,7 +4,12 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import { cleanProductTimeText, productTimeProfileInclude, serializeProductTimeProfile } from '@/lib/product-time';
-import { chinaDate, chinaWeekRange, parsePlanDate } from '@/lib/production-planning';
+import {
+  chinaDate,
+  chinaWeekRange,
+  parsePlanDate,
+  reconcileFutureActiveProductionPlanWeeks,
+} from '@/lib/production-planning';
 import type { ProductTimePlanningScope } from '@/types';
 
 export const runtime = 'nodejs';
@@ -26,8 +31,11 @@ function planningScope(value: string): ProductTimePlanningScope {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
-    await prisma.$transaction(tx => reconcileProductionPlanDrawingLinks(tx));
+    const user = await requireUser();
+    await prisma.$transaction(async tx => {
+      await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
+      await reconcileProductionPlanDrawingLinks(tx);
+    });
     const keyword = cleanProductTimeText(req.nextUrl.searchParams.get('keyword'), 100);
     const customer = cleanProductTimeText(req.nextUrl.searchParams.get('customer'), 120);
     const status = cleanProductTimeText(req.nextUrl.searchParams.get('status'), 20);

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import { reconcileFutureActiveProductionPlanWeeks } from '@/lib/production-planning';
 import {
   loadProductionExecution,
   parseProductionExecutionView,
@@ -17,7 +19,8 @@ function positiveInt(value: string | null, fallback: number) {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
+    await prisma.$transaction(tx => reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id }));
     const params = req.nextUrl.searchParams;
     const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'), params.get('scope'));
     const data = await loadProductionExecution({

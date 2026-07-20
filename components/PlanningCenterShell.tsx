@@ -83,6 +83,8 @@ type BatchForm = {
 
 type ReleasePreview = {
   target: 'preparation' | 'active';
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
   batchCount: number;
   totalQuantity: number;
   warnings: number;
@@ -106,6 +108,8 @@ type DeletePreview = {
 };
 
 type ActivationPreview = {
+  sourceWeekStartDate?: string;
+  sourceWeekEndDate?: string;
   weekStartDate: string;
   weekEndDate: string;
   batchCount: number;
@@ -205,9 +209,16 @@ function priorityText(priority: ProductionPlanPriority): string {
   return '一般';
 }
 
-function releaseText(state: ProductionPlanBatchDTO['releaseState']): string {
+function releaseText(
+  state: ProductionPlanBatchDTO['releaseState'],
+  weekStartDate?: string,
+  currentWeekStartDate?: string,
+): string {
   if (state === 'preparation') return '下周预备';
-  if (state === 'active') return '本周执行';
+  if (state === 'active') {
+    if (weekStartDate && currentWeekStartDate && weekStartDate < currentWeekStartDate) return '遗留执行';
+    return '本周执行';
+  }
   if (state === 'archived') return '历史归档';
   return '排程草稿';
 }
@@ -225,6 +236,7 @@ function changeActionText(action: string): string {
     delete_plan_order: '删除订单', create_plan_batch: '新增排产批次', update_plan_batch: '调整排产',
     update_released_plan_batch: '调整已下达批次', delete_plan_batch: '删除排产批次',
     release_to_current_week: '下达本周执行', release_to_next_week: '下达下周预备', activate_preparation_week: '启用为本周执行',
+    repair_active_plan_week_alignment: '修复执行周次',
   };
   return labels[action] || action;
 }
@@ -409,7 +421,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     const word = keyword.trim().toLocaleLowerCase();
     return !word || [order.customerName, order.salesperson || '', order.productName, order.specification].some(value => value.toLocaleLowerCase().includes(word));
   });
-  const preparationRows = allBatches.filter(item => item.batch.releaseState === 'preparation');
+  const preparationRows = allBatches.filter(item => item.batch.releaseState === 'preparation'
+    && (!periods || item.batch.weekStartDate === periods.next.weekStartDate));
   const historyRows = allBatches.filter(item => item.batch.releaseState === 'archived');
 
   function closeDialog(): void {
@@ -677,7 +690,10 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     try {
       const response = await fetch('/api/planning/activate/commit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ weekStartDate: activationPreview.weekStartDate, confirmWarnings: true }),
+        body: JSON.stringify({
+          weekStartDate: activationPreview.sourceWeekStartDate || activationPreview.weekStartDate,
+          confirmWarnings: true,
+        }),
       });
       const body = await responseBody<{ result?: { activated: number; archived: number } }>(response);
       if (!response.ok || !body.result) throw new Error(body.error || '启用本周计划失败');
@@ -788,7 +804,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                     <td><span className={`planning-status ${order.drawingFileCount ? 'ready' : 'warning'}`}>{order.drawingFileCount ? `${order.drawingFileCount} 文件` : '缺资料'}</span></td>
                     <td><span className={`planning-status status-${batch.warehouseStatus}`}>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</span></td>
                     <td><span className={`planning-status status-${batch.processStatus}`}>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : batch.processStatus === 'not_created' ? '待生成' : '待编排'}</span></td>
-                    <td><span className={`planning-release state-${batch.releaseState}`}>{releaseText(batch.releaseState)}</span></td>
+                    <td><span className={`planning-release state-${batch.releaseState}`}>{releaseText(batch.releaseState, batch.weekStartDate, periods?.current.weekStartDate)}</span></td>
                     <td><div className="planning-row-actions"><button type="button" title="调整批次" aria-label="调整批次" onClick={event => openBatch(order, event.currentTarget, batch)}><Pencil size={15} /></button>{batch.releaseState === 'draft' && <button className="danger" type="button" title="删除批次" aria-label="删除批次" onClick={() => { void deleteBatch(batch); }}><Trash2 size={15} /></button>}<button type="button" title="展开详情" aria-label="展开详情" onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><ChevronDown size={15} /></button></div></td>
                   </tr>
                   {expandedOrderId === batch.id && <tr className="planning-inspector-row" key={`${batch.id}-detail`}><td colSpan={12}><div className="planning-inline-inspector">
@@ -878,7 +894,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !batchDraftUnitMilliseconds || !batchDraftTotalMilliseconds} onClick={() => { void saveBatch(); }}>{saving ? '保存中...' : '保存并应用工时'}</button></footer>
     </div>}
 
-    {releasePreview && <div ref={dialogRef} className="planning-dialog release-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-release-dialog-title"><header><div><span>下达预检</span><h2 id="planning-release-dialog-title">{releasePreview.target === 'active' ? '下达本周执行' : '下达下周预备'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>批次数</span><strong>{releasePreview.batchCount}</strong></div><div><span>总数量</span><strong>{releasePreview.totalQuantity.toLocaleString()}</strong></div><div><span>提醒</span><strong className={releasePreview.warnings ? 'warning' : ''}>{releasePreview.warnings}</strong></div></section>{releasePreview.target === 'preparation' && <div className="planning-dialog-note"><PackageCheck /><span><strong>只进入准备区</strong><small>仓库和工艺可提前处理，但不会出现在生产执行中心。</small></span></div>}{releasePreview.target === 'active' && <div className="planning-dialog-note"><Factory /><span><strong>立即进入本周生产</strong><small>工单会出现在生产执行中心，同时生成仓库和工艺任务。</small></span></div>}<div className="planning-warning-list">{releasePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">资料检查通过</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>返回调整</button><button type="button" className="primary" disabled={saving || releasePreview.blockers > 0} onClick={() => { void commitRelease(); }}>{saving ? '下达中...' : '确认下达'}</button></footer></div>}
+    {releasePreview && <div ref={dialogRef} className="planning-dialog release-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-release-dialog-title"><header><div><span>下达预检</span><h2 id="planning-release-dialog-title">{releasePreview.target === 'active' ? '下达本周执行' : '下达下周预备'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>批次数</span><strong>{releasePreview.batchCount}</strong></div><div><span>目标生产周</span><strong>{releasePreview.targetWeekStartDate.slice(5)} - {releasePreview.targetWeekEndDate.slice(5)}</strong></div><div><span>总数量 / 提醒</span><strong className={releasePreview.warnings ? 'warning' : ''}>{releasePreview.totalQuantity.toLocaleString()} / {releasePreview.warnings}</strong></div></section>{releasePreview.target === 'preparation' && <div className="planning-dialog-note"><PackageCheck /><span><strong>只进入下周准备区</strong><small>生产周统一为 {releasePreview.targetWeekStartDate} 至 {releasePreview.targetWeekEndDate}，不会出现在本周生产执行中心。</small></span></div>}{releasePreview.target === 'active' && <div className="planning-dialog-note"><Factory /><span><strong>立即进入本周生产</strong><small>生产周统一为 {releasePreview.targetWeekStartDate} 至 {releasePreview.targetWeekEndDate}，并同步到关联工单、仓库和工艺任务。</small></span></div>}<div className="planning-warning-list">{releasePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">资料检查通过</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>返回调整</button><button type="button" className="primary" disabled={saving || releasePreview.blockers > 0} onClick={() => { void commitRelease(); }}>{saving ? '下达中...' : '确认下达'}</button></footer></div>}
 
     {deletePreview && <div ref={dialogRef} className="planning-dialog delete-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-delete-dialog-title"><header><div><span>危险操作预检</span><h2 id="planning-delete-dialog-title">删除所选计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary four"><div><span>所选批次</span><strong>{deletePreview.batchCount}</strong></div><div><span>删除草稿</span><strong>{deletePreview.draftDeleteCount}</strong></div><div><span>撤回未开工</span><strong>{deletePreview.withdrawCount}</strong></div><div><span>禁止删除</span><strong className={deletePreview.blockers ? 'danger' : ''}>{deletePreview.blockers}</strong></div></section><div className="planning-dialog-note danger"><ShieldAlert /><span><strong>已开工计划不会被删除</strong><small>草稿会从排程中删除；已下达但未开工的计划会撤回并软删除关联工单。历史记录、图纸和对象存储文件全部保留。</small></span></div><div className="planning-warning-list">{deletePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong><span className={item.action === 'blocked' ? 'blocker' : item.action === 'withdraw_unstarted' ? 'warning' : 'ready'}>{item.message}</span></article>)}</div>{deletePreview.blockers > 0 && <div className="planning-dialog-error"><AlertTriangle />请取消勾选已开工或已完成的批次后再删除，本次不会处理任何批次。</div>}{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="danger" disabled={saving || deletePreview.blockers > 0} onClick={() => { void commitDeletion(); }}>{saving ? '删除中...' : '确认删除计划'}</button></footer></div>}
 
