@@ -49,6 +49,7 @@ test('planning order input keeps drawing product identity and salesperson withou
     productName: '测试产品',
     specification: 'TEST-001',
     orderQuantity: 20,
+    planningUnitMilliseconds: 120_000,
     orderDate: '2026-07-20',
     customerDueDate: '2026-07-24',
   });
@@ -56,6 +57,22 @@ test('planning order input keeps drawing product identity and salesperson withou
   if (!parsed.ok) return;
   assert.equal(parsed.data.drawingLibraryItemId, 'drawing-product-1');
   assert.equal(parsed.data.salesperson, '业务员甲');
+  assert.equal(parsed.data.planningUnitMilliseconds, 120_000);
   assert.match(parsed.data.sourceOrderNo, /^PLAN-/);
   assert.equal(parsed.data.sourceLineNo, 1);
+});
+
+test('new planning orders require a positive unit labor time', () => {
+  const parsed = parseProductionPlanOrderInput({
+    drawingLibraryItemId: 'drawing-product-1',
+    customerName: '测试客户',
+    productName: '测试产品',
+    specification: 'TEST-001',
+    orderQuantity: 20,
+    orderDate: '2026-07-20',
+    customerDueDate: '2026-07-24',
+  });
+  assert.equal(parsed.ok, false);
+  if (parsed.ok) return;
+  assert.match(parsed.error, /单件产品工时/);
 });

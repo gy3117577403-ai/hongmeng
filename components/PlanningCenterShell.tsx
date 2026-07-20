@@ -65,6 +65,7 @@ type OrderForm = {
   productName: string;
   specification: string;
   orderQuantity: string;
+  planningUnitMinutes: string;
   orderDate: string;
   customerDueDate: string;
   priority: ProductionPlanPriority;
@@ -126,7 +127,7 @@ function emptyOrderForm(): OrderForm {
   return {
     drawingLibraryItemId: '',
     customerName: '', salesperson: '', productName: '', specification: '',
-    orderQuantity: '', orderDate: today, customerDueDate: '', priority: 'normal', remark: '', reason: '',
+    orderQuantity: '', planningUnitMinutes: '', orderDate: today, customerDueDate: '', priority: 'normal', remark: '', reason: '',
   };
 }
 
@@ -138,6 +139,7 @@ function orderForm(order: ProductionPlanOrderDTO): OrderForm {
     productName: order.productName,
     specification: order.specification,
     orderQuantity: String(order.orderQuantity),
+    planningUnitMinutes: millisecondsInput(order.planningUnitMilliseconds || order.currentUnitMilliseconds),
     orderDate: order.orderDate,
     customerDueDate: order.customerDueDate,
     priority: order.priority,
@@ -159,6 +161,21 @@ function totalDuration(milliseconds?: string | null): string {
   if (!milliseconds) return '待计算';
   const number = Number(milliseconds);
   return Number.isFinite(number) ? duration(number) : '待计算';
+}
+
+function millisecondsInput(milliseconds?: number | null): string {
+  if (!milliseconds) return '';
+  return String(Number((milliseconds / 60_000).toFixed(3)));
+}
+
+function planningUnitMilliseconds(order: ProductionPlanOrderDTO): number | null {
+  return order.effectiveUnitMilliseconds || order.currentUnitMilliseconds || order.planningUnitMilliseconds || null;
+}
+
+function batchTotalMilliseconds(order: ProductionPlanOrderDTO, batch: ProductionPlanBatchDTO): string | null {
+  if (batch.totalMillisecondsSnapshot) return batch.totalMillisecondsSnapshot;
+  const unitMilliseconds = batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order);
+  return unitMilliseconds ? String(unitMilliseconds * batch.quantity) : null;
 }
 
 function priorityText(priority: ProductionPlanPriority): string {
@@ -287,6 +304,16 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     () => productOptions.find(item => item.id === orderDraft.drawingLibraryItemId) || null,
     [orderDraft.drawingLibraryItemId, productOptions],
   );
+  const orderDraftUnitMilliseconds = useMemo(() => {
+    const minutes = Number(orderDraft.planningUnitMinutes);
+    return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes * 60_000) : null;
+  }, [orderDraft.planningUnitMinutes]);
+  const orderDraftTotalMilliseconds = useMemo(() => {
+    const quantity = Number(orderDraft.orderQuantity);
+    return orderDraftUnitMilliseconds && Number.isInteger(quantity) && quantity > 0
+      ? orderDraftUnitMilliseconds * quantity
+      : null;
+  }, [orderDraft.orderQuantity, orderDraftUnitMilliseconds]);
   const visibleProductOptions = useMemo(() => {
     const word = productKeyword.trim().toLocaleLowerCase();
     const filtered = word
@@ -352,6 +379,9 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         specification: option.specification,
         productName: option.productName,
         salesperson: keepSalesperson ? current.salesperson : option.recommendedSalesperson || '',
+        planningUnitMinutes: previous?.id === option.id && current.planningUnitMinutes
+          ? current.planningUnitMinutes
+          : millisecondsInput(option.unitMilliseconds),
       };
     });
     setProductKeyword(option.specification);
@@ -376,6 +406,10 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       setError('请先从图纸资料库选择产品');
       return;
     }
+    if (!orderDraftUnitMilliseconds || orderDraftUnitMilliseconds > 86_400_000) {
+      setError('请填写大于 0 且不超过 1440 分钟的单件产品工时');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -383,7 +417,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       const response = await fetch(editing ? `/api/planning/orders/${orderDialog.orderId}` : '/api/planning/orders', {
         method: editing ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...orderDraft, confirmImpact }),
+        body: JSON.stringify({ ...orderDraft, planningUnitMilliseconds: orderDraftUnitMilliseconds, confirmImpact }),
       });
       const body = await responseBody<{ order?: ProductionPlanOrderDTO; impact?: Record<string, number | boolean | string> }>(response);
       if (body.requiresConfirmation && !confirmImpact) {
@@ -607,7 +641,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                 <div className="planning-pool-order"><span>{order.specification}</span><em>{priorityText(order.priority)}</em></div>
                 <strong title={order.specification}>{order.specification}</strong>
                 <p title={`${order.customerName} · ${order.productName}`}>{order.customerName}<small>{order.productName}</small></p>
-                <dl><div><dt>未排数量</dt><dd>{order.remainingQuantity.toLocaleString()}</dd></div><div><dt>客户交期</dt><dd>{order.customerDueDate.slice(5)}</dd></div><div><dt>单件工时</dt><dd>{duration(order.currentUnitMilliseconds)}</dd></div></dl>
+                <dl><div><dt>未排数量</dt><dd>{order.remainingQuantity.toLocaleString()}</dd></div><div><dt>客户交期</dt><dd>{order.customerDueDate.slice(5)}</dd></div><div><dt>单件工时</dt><dd>{duration(planningUnitMilliseconds(order))}</dd></div></dl>
                 <button type="button" onClick={event => openBatch(order, event.currentTarget)}><Plus size={15} />安排批次</button>
               </article>)}
               {!loading && !orderPool.length && <div className="planning-empty compact"><CheckCircle2 /><strong>订单池已安排完毕</strong><span>新增订单或调整筛选后继续排程。</span></div>}
@@ -627,7 +661,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                     <td><strong>{batch.weekStartDate.slice(5)} - {batch.weekEndDate.slice(5)}</strong></td>
                     <td><strong>{batch.plannedCompletionDate.slice(5)}</strong></td>
                     <td><strong className={batch.plannedCompletionDate > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate.slice(5)}</strong></td>
-                    <td><strong>{duration(batch.unitMillisecondsSnapshot)}</strong><small>{totalDuration(batch.totalMillisecondsSnapshot)}</small></td>
+                    <td><strong>{duration(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
                     <td><span className={`planning-status ${order.drawingFileCount ? 'ready' : 'warning'}`}>{order.drawingFileCount ? `${order.drawingFileCount} 文件` : '缺资料'}</span></td>
                     <td><span className={`planning-status status-${batch.warehouseStatus}`}>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</span></td>
                     <td><span className={`planning-status status-${batch.processStatus}`}>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : batch.processStatus === 'not_created' ? '待生成' : '待编排'}</span></td>
@@ -637,7 +671,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                   {expandedOrderId === batch.id && <tr className="planning-inspector-row" key={`${batch.id}-detail`}><td colSpan={12}><div className="planning-inline-inspector">
                     <div><span>订单信息</span><strong>{order.salesperson ? `业务员 ${order.salesperson}` : '业务员未设置'}</strong><small>{order.remark || '无备注'}</small></div>
                     <div><span>准备状态</span><strong>{preparationText(batch)}</strong><small>仓库 {batch.warehouseStatus} · 工艺 {batch.processStatus}</small></div>
-                    <div><span>数据来源</span><strong>{order.currentProductTimeVersion ? `产品工时 V${order.currentProductTimeVersion}` : '工时待维护'}</strong><small>{order.drawingLibraryItemId ? '已关联图纸资料库' : '未关联图纸资料库'}</small></div>
+                    <div><span>数据来源</span><strong>{order.currentProductTimeVersion ? `产品工时 V${order.currentProductTimeVersion}` : order.planningUnitMilliseconds ? '订单计划工时' : '工时待维护'}</strong><small>{order.currentProductTimeVersion ? '正式工序工时' : '计划估算，投产前仍需发布工序工时'}</small></div>
                     <nav><a href={order.drawingLibraryItemId ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`}>查看图纸</a><a href="/workspace/warehouse">仓库任务</a><a href={`/workspace/product-times?itemId=${encodeURIComponent(order.drawingLibraryItemId || '')}`}>工艺与工时</a></nav>
                   </div></td></tr>}
                 </Fragment>)}</tbody>
@@ -649,12 +683,12 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
 
         {view === 'orders' && <section className="planning-orders-view">
           <header><div><span>实时订单</span><h2>生产订单池</h2><p>订单变化直接在这里维护，不再依赖重复上传 Excel。</p></div><b>{filteredOrders.length} 单</b></header>
-          <div className="planning-table-scroll hm-scroll-region" tabIndex={0}><table className="planning-table orders"><thead><tr><th>客户 / 产品</th><th>业务员</th><th>规格</th><th>数量</th><th>已排 / 未排</th><th>下单日期</th><th>客户交期</th><th>优先级</th><th>工时资料</th><th>操作</th></tr></thead><tbody>{filteredOrders.map(order => <tr key={order.id}><td><strong>{order.customerName}</strong><small>{order.productName}</small></td><td>{order.salesperson || '未设置'}</td><td><b>{order.specification}</b></td><td>{order.orderQuantity.toLocaleString()}</td><td><strong>{order.allocatedQuantity.toLocaleString()} / {order.remainingQuantity.toLocaleString()}</strong></td><td>{order.orderDate}</td><td>{order.customerDueDate}</td><td><span className={`planning-priority ${order.priority}`}>{priorityText(order.priority)}</span></td><td><span className={`planning-status ${order.currentUnitMilliseconds ? 'ready' : 'warning'}`}>{duration(order.currentUnitMilliseconds)}</span></td><td><div className="planning-row-actions text"><button type="button" onClick={event => openBatch(order, event.currentTarget)}><Plus size={14} />排产</button><button type="button" onClick={event => openEditOrder(order, event.currentTarget)}><Pencil size={14} />编辑</button><button className="danger" type="button" onClick={() => { void deleteOrder(order); }}><Trash2 size={14} />删除</button></div></td></tr>)}</tbody></table>{!loading && !filteredOrders.length && <div className="planning-empty"><ClipboardList /><strong>订单池为空</strong><span>点击右上角“新建订单”开始建立实时计划。</span></div>}</div>
+          <div className="planning-table-scroll hm-scroll-region" tabIndex={0}><table className="planning-table orders"><thead><tr><th>客户 / 产品</th><th>业务员</th><th>规格</th><th>数量</th><th>已排 / 未排</th><th>下单日期</th><th>客户交期</th><th>优先级</th><th>单件 / 总工时</th><th>操作</th></tr></thead><tbody>{filteredOrders.map(order => <tr key={order.id}><td><strong>{order.customerName}</strong><small>{order.productName}</small></td><td>{order.salesperson || '未设置'}</td><td><b>{order.specification}</b></td><td>{order.orderQuantity.toLocaleString()}</td><td><strong>{order.allocatedQuantity.toLocaleString()} / {order.remainingQuantity.toLocaleString()}</strong></td><td>{order.orderDate}</td><td>{order.customerDueDate}</td><td><span className={`planning-priority ${order.priority}`}>{priorityText(order.priority)}</span></td><td><span className={`planning-status ${planningUnitMilliseconds(order) ? 'ready' : 'warning'}`}>{duration(planningUnitMilliseconds(order))}<small>{totalDuration(order.planningTotalMilliseconds)}</small></span></td><td><div className="planning-row-actions text"><button type="button" onClick={event => openBatch(order, event.currentTarget)}><Plus size={14} />排产</button><button type="button" onClick={event => openEditOrder(order, event.currentTarget)}><Pencil size={14} />编辑</button><button className="danger" type="button" onClick={() => { void deleteOrder(order); }}><Trash2 size={14} />删除</button></div></td></tr>)}</tbody></table>{!loading && !filteredOrders.length && <div className="planning-empty"><ClipboardList /><strong>订单池为空</strong><span>点击右上角“新建订单”开始建立实时计划。</span></div>}</div>
         </section>}
 
         {view === 'preparation' && <section className="planning-preparation-view">
           <header><div><span>下周提前准备</span><h2>{periods ? `${periods.next.weekStartDate} 至 ${periods.next.weekEndDate}` : '下周预备清单'}</h2><p>仓库和工艺可先处理；只有人工启用后，工单才进入生产执行。</p></div><button className="planning-primary-action" type="button" disabled={!preparationRows.length || saving} onClick={event => { void previewActivation(event.currentTarget); }}><Factory size={16} />启用为本周执行</button></header>
-          <div className="planning-preparation-grid"><section><div className="planning-prep-heading"><Warehouse /><span><strong>仓库配料</strong><small>{preparationRows.filter(item => item.batch.warehouseStatus === 'completed').length} / {preparationRows.length} 已完成</small></span><a href="/workspace/warehouse?scope=preparation">进入仓库</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.warehouseStatus}`}><Boxes /></span><div><strong>{order.specification}</strong><small>{order.customerName} · {batch.quantity.toLocaleString()} 件</small></div><em>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '仓库异常' : '待配料'}</em></article>)}</section><section><div className="planning-prep-heading"><Settings2 /><span><strong>工艺准备</strong><small>{preparationRows.filter(item => item.batch.processStatus !== 'not_created' && item.batch.processStatus !== 'draft').length} / {preparationRows.length} 已确认</small></span><a href="/workspace/product-times">维护工时</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.processStatus}`}><Settings2 /></span><div><strong>{order.specification}</strong><small>{order.currentUnitMilliseconds ? `单件 ${duration(order.currentUnitMilliseconds)}` : '产品工时待维护'}</small></div><em>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : '待工艺'}</em></article>)}</section></div>
+          <div className="planning-preparation-grid"><section><div className="planning-prep-heading"><Warehouse /><span><strong>仓库配料</strong><small>{preparationRows.filter(item => item.batch.warehouseStatus === 'completed').length} / {preparationRows.length} 已完成</small></span><a href="/workspace/warehouse?scope=preparation">进入仓库</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.warehouseStatus}`}><Boxes /></span><div><strong>{order.specification}</strong><small>{order.customerName} · {batch.quantity.toLocaleString()} 件</small></div><em>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '仓库异常' : '待配料'}</em></article>)}</section><section><div className="planning-prep-heading"><Settings2 /><span><strong>工艺准备</strong><small>{preparationRows.filter(item => item.batch.processStatus !== 'not_created' && item.batch.processStatus !== 'draft').length} / {preparationRows.length} 已确认</small></span><a href="/workspace/product-times">维护工时</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.processStatus}`}><Settings2 /></span><div><strong>{order.specification}</strong><small>{planningUnitMilliseconds(order) ? `单件 ${duration(planningUnitMilliseconds(order))}${order.currentProductTimeVersion ? '' : ' · 计划估算'}` : '产品工时待维护'}</small></div><em>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : '待工艺'}</em></article>)}</section></div>
           {!preparationRows.length && <div className="planning-empty"><PackageCheck /><strong>当前没有下周预备任务</strong><span>在计划排程中勾选批次，点击“下达下周预备”。</span></div>}
         </section>}
 
@@ -691,6 +725,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           <label><span>产品规格</span><input value={orderDraft.specification} readOnly aria-readonly="true" /></label>
           <label><span>产品名称</span><input value={orderDraft.productName} readOnly aria-readonly="true" /></label>
           <label><span>订单数量 *</span><input type="number" min="1" value={orderDraft.orderQuantity} onChange={event => setOrderDraft(current => ({ ...current, orderQuantity: event.target.value }))} /></label>
+          <label><span>单件产品工时（分钟） *</span><input type="number" min="0.001" max="1440" step="0.001" value={orderDraft.planningUnitMinutes} onChange={event => setOrderDraft(current => ({ ...current, planningUnitMinutes: event.target.value }))} /><small>已有正式工时时自动带出，也可作为本订单计划值调整</small></label>
+          <label className="planning-total-time"><span>订单总工时</span><output>{orderDraftTotalMilliseconds ? duration(orderDraftTotalMilliseconds) : '填写数量与单件工时后自动计算'}</output><small>单件工时 × 订单数量</small></label>
           <label><span>优先级</span><select value={orderDraft.priority} onChange={event => setOrderDraft(current => ({ ...current, priority: event.target.value as ProductionPlanPriority }))}><option value="normal">一般</option><option value="urgent">紧急</option><option value="insert">插单</option></select></label>
           <label><span>下单日期 *</span><input type="date" value={orderDraft.orderDate} onChange={event => setOrderDraft(current => ({ ...current, orderDate: event.target.value }))} /></label>
           <label><span>客户交期 *</span><input type="date" value={orderDraft.customerDueDate} onChange={event => setOrderDraft(current => ({ ...current, customerDueDate: event.target.value }))} /></label>
@@ -699,7 +735,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         </div>
         {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
       </div>
-      <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !orderDraft.drawingLibraryItemId} onClick={() => { void saveOrder(); }}>{saving ? '保存中...' : '保存订单'}</button></footer>
+      <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !orderDraft.drawingLibraryItemId || !orderDraftUnitMilliseconds} onClick={() => { void saveOrder(); }}>{saving ? '保存中...' : '保存订单'}</button></footer>
     </div>}
 
     {batchDialog && <div ref={dialogRef} className="planning-dialog batch-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-batch-dialog-title"><header><div><span>拆批排程</span><h2 id="planning-batch-dialog-title">{batchDialog.batchId ? '调整排产批次' : '安排生产批次'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><div className="planning-form-grid"><label><span>本批数量 *</span><input type="number" min="1" value={batchDraft.quantity} onChange={event => setBatchDraft(current => ({ ...current, quantity: event.target.value }))} /></label><label><span>生产周 *</span><input type="date" value={batchDraft.weekStartDate} onChange={event => setBatchDraft(current => ({ ...current, weekStartDate: event.target.value }))} /></label><label className="wide"><span>内部计划完成日期 *</span><input type="date" value={batchDraft.plannedCompletionDate} onChange={event => setBatchDraft(current => ({ ...current, plannedCompletionDate: event.target.value }))} /></label>{batchDialog.batchId && <label className="wide"><span>已下达批次调整原因</span><textarea rows={2} placeholder="如果批次已经下达，此项必填" value={batchDraft.reason} onChange={event => setBatchDraft(current => ({ ...current, reason: event.target.value }))} /></label>}</div><div className="planning-dialog-note"><CalendarClock /><span><strong>排产与下达分开</strong><small>保存后仍是排程草稿；勾选批次后再选择下达本周或下周预备。</small></span></div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving} onClick={() => { void saveBatch(); }}>{saving ? '保存中...' : '保存排程'}</button></footer></div>}

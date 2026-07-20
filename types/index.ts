@@ -479,6 +479,9 @@ export type ProductionPlanOrderDTO = {
   drawingLibraryItemId?: string | null;
   drawingFileCount: number;
   orderQuantity: number;
+  planningUnitMilliseconds?: number | null;
+  effectiveUnitMilliseconds?: number | null;
+  planningTotalMilliseconds?: string | null;
   allocatedQuantity: number;
   remainingQuantity: number;
   orderDate: string;

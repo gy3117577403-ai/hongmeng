@@ -65,6 +65,7 @@ export type ProductionPlanOrderInput = {
   productName?: unknown;
   specification?: unknown;
   orderQuantity?: unknown;
+  planningUnitMilliseconds?: unknown;
   orderDate?: unknown;
   customerDueDate?: unknown;
   priority?: unknown;
@@ -87,6 +88,7 @@ export type ParsedPlanOrder = {
   productName: string;
   specification: string;
   orderQuantity: number;
+  planningUnitMilliseconds: number;
   orderDate: Date;
   customerDueDate: Date;
   priority: ProductionPlanPriority;
@@ -123,6 +125,11 @@ function text(value: unknown, max: number): string {
 function positiveInteger(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function positiveMilliseconds(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 86_400_000 ? parsed : null;
 }
 
 export function parsePlanDate(value: unknown): Date | null {
@@ -180,6 +187,9 @@ export function parseProductionPlanOrderInput(
   const productName = input.productName === undefined && current ? current.productName : text(input.productName, 160);
   const specification = input.specification === undefined && current ? current.specification : text(input.specification, 180);
   const orderQuantity = input.orderQuantity === undefined && current ? current.orderQuantity : positiveInteger(input.orderQuantity);
+  const planningUnitMilliseconds = input.planningUnitMilliseconds === undefined && current
+    ? current.planningUnitMilliseconds
+    : positiveMilliseconds(input.planningUnitMilliseconds);
   const orderDate = input.orderDate === undefined && current ? current.orderDate : parsePlanDate(input.orderDate);
   const customerDueDate = input.customerDueDate === undefined && current ? current.customerDueDate : parsePlanDate(input.customerDueDate);
   const priority = input.priority === undefined && current ? current.priority : planPriority(input.priority);
@@ -190,12 +200,13 @@ export function parseProductionPlanOrderInput(
   if (!productName) return { ok: false, error: '请填写产品名称' };
   if (!specification) return { ok: false, error: '请填写产品规格' };
   if (!orderQuantity) return { ok: false, error: '订单数量必须是正整数' };
+  if (!planningUnitMilliseconds) return { ok: false, error: '单件产品工时必须大于 0 且不超过 24 小时' };
   if (!orderDate) return { ok: false, error: '下单日期格式不正确' };
   if (!customerDueDate) return { ok: false, error: '客户交期格式不正确' };
   if (customerDueDate < orderDate) return { ok: false, error: '客户交期不能早于下单日期' };
   return {
     ok: true,
-    data: { drawingLibraryItemId, sourceOrderNo, sourceLineNo, customerName, salesperson, productName, specification, orderQuantity, orderDate, customerDueDate, priority, status, remark },
+    data: { drawingLibraryItemId, sourceOrderNo, sourceLineNo, customerName, salesperson, productName, specification, orderQuantity, planningUnitMilliseconds, orderDate, customerDueDate, priority, status, remark },
   };
 }
 
@@ -348,6 +359,8 @@ function batchDto(batch: ProductionPlanOrderRecord['batches'][number]): Producti
 export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): ProductionPlanOrderDTO {
   const allocatedQuantity = order.batches.reduce((sum, batch) => sum + batch.quantity, 0);
   const profile = order.drawingLibraryItem?.productTimeProfiles[0] || null;
+  const currentUnitMilliseconds = profile ? productTimeTotalMilliseconds(profile.entries) : null;
+  const effectiveUnitMilliseconds = currentUnitMilliseconds || order.planningUnitMilliseconds;
   return {
     id: order.id,
     sourceOrderNo: order.sourceOrderNo,
@@ -359,6 +372,11 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     drawingLibraryItemId: order.drawingLibraryItemId,
     drawingFileCount: order.drawingLibraryItem?._count.files || 0,
     orderQuantity: order.orderQuantity,
+    planningUnitMilliseconds: order.planningUnitMilliseconds,
+    effectiveUnitMilliseconds,
+    planningTotalMilliseconds: effectiveUnitMilliseconds
+      ? (BigInt(effectiveUnitMilliseconds) * BigInt(order.orderQuantity)).toString()
+      : null,
     allocatedQuantity,
     remainingQuantity: Math.max(0, order.orderQuantity - allocatedQuantity),
     orderDate: chinaDate(order.orderDate),
@@ -366,7 +384,7 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     priority: order.priority as ProductionPlanPriority,
     status: order.status as ProductionPlanOrderStatus,
     remark: order.remark,
-    currentUnitMilliseconds: profile ? productTimeTotalMilliseconds(profile.entries) : null,
+    currentUnitMilliseconds,
     currentProductTimeVersion: profile?.version || null,
     batches: order.batches.map(batchDto),
     createdAt: order.createdAt.toISOString(),
@@ -430,6 +448,7 @@ export function planOrderSnapshot(order: ParsedPlanOrder): Prisma.InputJsonObjec
     productName: order.productName,
     specification: order.specification,
     orderQuantity: order.orderQuantity,
+    planningUnitMilliseconds: order.planningUnitMilliseconds,
     orderDate: chinaDate(order.orderDate),
     customerDueDate: chinaDate(order.customerDueDate),
     priority: order.priority,
@@ -469,7 +488,8 @@ export async function releaseProductionPlanBatch(
   if (!batch || batch.deletedAt || batch.planOrder.deletedAt) throw new Error('PLAN_BATCH_NOT_FOUND');
   if (batch.releaseState === 'archived') throw new Error('PLAN_BATCH_ARCHIVED');
   const references = await resolvePlanningReferences(tx, batch.planOrder);
-  const totalMilliseconds = references.unitMilliseconds ? BigInt(references.unitMilliseconds) * BigInt(batch.quantity) : null;
+  const effectiveUnitMilliseconds = references.unitMilliseconds || batch.planOrder.planningUnitMilliseconds;
+  const totalMilliseconds = effectiveUnitMilliseconds ? BigInt(effectiveUnitMilliseconds) * BigInt(batch.quantity) : null;
   const code = workOrderCode(batch.planOrder.sourceOrderNo, batch.planOrder.sourceLineNo, batch.batchNo);
   const planActive = input.target === 'active';
   const data = {
@@ -488,7 +508,7 @@ export async function releaseProductionPlanBatch(
     specification: batch.planOrder.specification,
     uncompletedQty: String(batch.quantity),
     productionTargetQty: batch.quantity,
-    unitWorkHours: workHours(references.unitMilliseconds),
+    unitWorkHours: workHours(effectiveUnitMilliseconds),
     totalWorkHours: workHours(totalMilliseconds ? Number(totalMilliseconds) : null),
     deliveryDay: chinaDate(batch.planOrder.customerDueDate),
     materialStatus: '待配料',
@@ -537,7 +557,7 @@ export async function releaseProductionPlanBatch(
 
   const warnings: string[] = [];
   if (!references.drawingLibraryItemId) warnings.push('未匹配图纸资料，工艺需人工核对');
-  if (!references.productTimeProfileId) warnings.push('产品工时尚未发布，暂不计算计划工时');
+  if (!references.productTimeProfileId) warnings.push('产品工时尚未发布，当前按订单计划工时估算，启用生产前仍需发布');
   try {
     await createWorkOrderProcessRoute(tx, { workOrderId: workOrder.id, actorId: input.actorId });
   } catch (error) {
@@ -557,7 +577,7 @@ export async function releaseProductionPlanBatch(
       releaseState: input.target,
       productTimeProfileId: references.productTimeProfileId,
       productTimeProfileVersion: references.productTimeProfileVersion,
-      unitMillisecondsSnapshot: references.unitMilliseconds,
+      unitMillisecondsSnapshot: effectiveUnitMilliseconds,
       totalMillisecondsSnapshot: totalMilliseconds,
       releasedAt: batch.releasedAt || now,
       releasedById: batch.releasedById || input.actorId,

@@ -23,6 +23,7 @@ function currentInput(order: {
   productName: string;
   specification: string;
   orderQuantity: number;
+  planningUnitMilliseconds: number | null;
   orderDate: Date;
   customerDueDate: Date;
   priority: string;
@@ -38,7 +39,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const existing = await prisma.productionPlanOrder.findUnique({
       where: { id: context.params.id },
-      include: { batches: { where: { deletedAt: null }, select: { id: true, quantity: true, releaseState: true, workOrderId: true } } },
+      include: { batches: { where: { deletedAt: null }, select: { id: true, quantity: true, releaseState: true, workOrderId: true, productTimeProfileId: true } } },
     });
     if (!existing || existing.deletedAt) return NextResponse.json({ ok: false, error: '计划订单不存在' }, { status: 404 });
     const parsed = parseProductionPlanOrderInput(body, currentInput(existing));
@@ -65,6 +66,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
       || canonical.productName !== existing.productName
       || canonical.specification !== existing.specification
       || canonical.orderQuantity !== existing.orderQuantity
+      || canonical.planningUnitMilliseconds !== existing.planningUnitMilliseconds
       || canonical.customerDueDate.getTime() !== existing.customerDueDate.getTime();
     const reason = String(body.reason || '').trim().slice(0, 300);
     if (released.length && impactful && !reason) {
@@ -104,6 +106,30 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
             drawingLibraryItemId: references.drawingLibraryItemId,
           },
         });
+      }
+      if (canonical.planningUnitMilliseconds !== existing.planningUnitMilliseconds) {
+        const effectiveUnitMilliseconds = references.unitMilliseconds || canonical.planningUnitMilliseconds;
+        for (const batch of existing.batches.filter(item => !item.productTimeProfileId)) {
+          const totalMilliseconds = BigInt(effectiveUnitMilliseconds) * BigInt(batch.quantity);
+          await tx.productionPlanBatch.update({
+            where: { id: batch.id },
+            data: {
+              productTimeProfileId: references.productTimeProfileId,
+              productTimeProfileVersion: references.productTimeProfileVersion,
+              unitMillisecondsSnapshot: effectiveUnitMilliseconds,
+              totalMillisecondsSnapshot: totalMilliseconds,
+            },
+          });
+          if (batch.releaseState !== 'draft' && batch.workOrderId) {
+            await tx.workOrder.update({
+              where: { id: batch.workOrderId },
+              data: {
+                unitWorkHours: String(effectiveUnitMilliseconds / 3_600_000),
+                totalWorkHours: String(Number(totalMilliseconds) / 3_600_000),
+              },
+            });
+          }
+        }
       }
       await refreshProductionPlanOrderStatus(tx, existing.id);
       await tx.productionPlanChange.create({

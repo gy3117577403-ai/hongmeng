@@ -50,14 +50,15 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
     }
     const updated = await prisma.$transaction(async tx => {
       const refs = await resolvePlanningReferences(tx, existing.planOrder);
+      const effectiveUnitMilliseconds = refs.unitMilliseconds || existing.planOrder.planningUnitMilliseconds;
       await tx.productionPlanBatch.update({
         where: { id: existing.id },
         data: {
           ...parsed.data,
           productTimeProfileId: refs.productTimeProfileId,
           productTimeProfileVersion: refs.productTimeProfileVersion,
-          unitMillisecondsSnapshot: refs.unitMilliseconds,
-          totalMillisecondsSnapshot: refs.unitMilliseconds ? BigInt(refs.unitMilliseconds) * BigInt(parsed.data.quantity) : null,
+          unitMillisecondsSnapshot: effectiveUnitMilliseconds,
+          totalMillisecondsSnapshot: effectiveUnitMilliseconds ? BigInt(effectiveUnitMilliseconds) * BigInt(parsed.data.quantity) : null,
         },
       });
       if (released && existing.workOrderId) {
@@ -69,8 +70,8 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
             plannedAt: parsed.data.plannedCompletionDate,
             weekStartDate: parsed.data.weekStartDate,
             weekEndDate: parsed.data.weekEndDate,
-            unitWorkHours: refs.unitMilliseconds ? String(refs.unitMilliseconds / 3_600_000) : null,
-            totalWorkHours: refs.unitMilliseconds ? String((refs.unitMilliseconds * parsed.data.quantity) / 3_600_000) : null,
+            unitWorkHours: effectiveUnitMilliseconds ? String(effectiveUnitMilliseconds / 3_600_000) : null,
+            totalWorkHours: effectiveUnitMilliseconds ? String((effectiveUnitMilliseconds * parsed.data.quantity) / 3_600_000) : null,
           },
         });
       }

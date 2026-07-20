@@ -33,6 +33,7 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
     }
     const updated = await prisma.$transaction(async tx => {
       const refs = await resolvePlanningReferences(tx, order);
+      const effectiveUnitMilliseconds = refs.unitMilliseconds || order.planningUnitMilliseconds;
       const batchNo = Math.max(0, ...order.batches.map(batch => batch.batchNo)) + 1;
       const batch = await tx.productionPlanBatch.create({
         data: {
@@ -41,8 +42,8 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
           ...parsed.data,
           productTimeProfileId: refs.productTimeProfileId,
           productTimeProfileVersion: refs.productTimeProfileVersion,
-          unitMillisecondsSnapshot: refs.unitMilliseconds,
-          totalMillisecondsSnapshot: refs.unitMilliseconds ? BigInt(refs.unitMilliseconds) * BigInt(parsed.data.quantity) : null,
+          unitMillisecondsSnapshot: effectiveUnitMilliseconds,
+          totalMillisecondsSnapshot: effectiveUnitMilliseconds ? BigInt(effectiveUnitMilliseconds) * BigInt(parsed.data.quantity) : null,
         },
       });
       await refreshProductionPlanOrderStatus(tx, order.id);
