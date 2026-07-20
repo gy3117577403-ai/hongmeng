@@ -1308,6 +1308,10 @@ main.planning-center-shell.hm-workbench-root {
   width: min(760px, calc(100vw - 32px));
 }
 
+.planning-dialog.order-dialog {
+  width: min(780px, calc(100vw - 32px));
+}
+
 .planning-dialog > header {
   min-height: 76px;
   padding: 15px 18px;
@@ -1401,6 +1405,178 @@ main.planning-center-shell.hm-workbench-root {
 .planning-form-grid textarea:focus {
   border-color: #e98f52;
   box-shadow: var(--hm-focus-ring);
+}
+
+.planning-form-grid input[readonly] {
+  background: #f6f8fa;
+  color: #526174;
+}
+
+.planning-product-picker {
+  position: relative;
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.planning-product-search {
+  position: relative;
+}
+
+.planning-product-search > svg {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: #718096;
+  pointer-events: none;
+}
+
+.planning-form-grid .planning-product-search input {
+  padding-left: 38px;
+}
+
+.planning-product-results {
+  position: absolute;
+  z-index: 8;
+  top: 69px;
+  right: 0;
+  left: 0;
+  max-height: 236px;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid #d9e0e8;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 14px 32px rgba(24, 37, 54, .16);
+}
+
+.planning-product-results > button {
+  width: 100%;
+  min-height: 55px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #1c2a3c;
+  text-align: left;
+  cursor: pointer;
+}
+
+.planning-product-results > button:hover,
+.planning-product-results > button[aria-selected='true'] {
+  background: #fff4eb;
+}
+
+.planning-product-results > button span,
+.planning-product-results > button strong,
+.planning-product-results > button small {
+  min-width: 0;
+  display: block;
+}
+
+.planning-product-results > button strong,
+.planning-product-results > button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planning-product-results > button small {
+  margin-top: 3px;
+  color: #738195;
+  font-size: 11px;
+}
+
+.planning-product-results > button em {
+  flex: 0 0 auto;
+  color: #c65c16;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.planning-product-empty {
+  min-height: 116px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 5px;
+  color: #728095;
+  text-align: center;
+}
+
+.planning-product-empty strong {
+  color: #2b384a;
+}
+
+.planning-product-empty a {
+  color: #d95600;
+  font-weight: 750;
+}
+
+.planning-selected-product {
+  margin-top: 8px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #f0d3be;
+  border-radius: 8px;
+  background: #fffaf6;
+}
+
+.planning-selected-product > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.planning-selected-product > div:first-child > span {
+  color: #d95600;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.planning-selected-product strong,
+.planning-selected-product small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planning-selected-product small {
+  color: #718095;
+  font-size: 11px;
+}
+
+.planning-selected-product > div:last-child {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 5px;
+}
+
+.planning-selected-product > div:last-child span {
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: #edf1f5;
+  color: #536174;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.planning-selected-product > div:last-child span.ready {
+  background: #e9f7ef;
+  color: #247a4b;
+}
+
+.planning-selected-product > div:last-child span.warning {
+  background: #fff0e8;
+  color: #bc4d08;
 }
 
 .planning-dialog > footer {

@@ -940,6 +940,44 @@ html:has(.hm-product-time-workbench) {
   cursor: pointer;
 }
 
+.hm-product-time-workbench .product-time-summary > article {
+  height: 64px;
+  padding: 9px 13px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.hm-product-time-workbench .product-time-summary > article > svg {
+  width: 34px;
+  height: 34px;
+  padding: 8px;
+}
+
+.hm-product-time-workbench .product-time-summary > article span {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.hm-product-time-workbench .product-time-summary > article strong {
+  grid-row: auto;
+  grid-column: auto;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.hm-product-time-workbench .product-time-summary > article small {
+  overflow: hidden;
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .hm-product-time-workbench .product-time-summary > button:hover,
 .hm-product-time-workbench .product-time-summary > button:focus-visible,
 .hm-product-time-workbench .product-time-summary > button.active {
@@ -961,6 +999,78 @@ html:has(.hm-product-time-workbench) {
 .hm-product-time-workbench .product-time-summary > button span { min-width: 0; display: grid; gap: 2px; font-size: 13px; font-weight: 700; }
 .hm-product-time-workbench .product-time-summary > button small { overflow: hidden; color: #8995a5; font-size: 10px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .hm-product-time-workbench .product-time-summary > button > strong { font-size: 24px; line-height: 1; }
+
+.hm-product-time-workbench .product-time-scope-bar {
+  min-height: 42px;
+  padding: 5px 8px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #e2e7ed;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.hm-product-time-workbench .product-time-scope-bar > div {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 7px;
+  background: #f3f5f7;
+}
+
+.hm-product-time-workbench .product-time-scope-bar button {
+  height: 30px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #59687b;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.hm-product-time-workbench .product-time-scope-bar button:hover,
+.hm-product-time-workbench .product-time-scope-bar button:focus-visible,
+.hm-product-time-workbench .product-time-scope-bar button[aria-selected='true'] {
+  background: #fff;
+  color: #d95600;
+  outline: 0;
+  box-shadow: 0 1px 4px rgba(26, 39, 58, .09);
+}
+
+.hm-product-time-workbench .product-time-scope-bar > span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: #758295;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-product-time-workbench .product-time-scope-bar > label {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #667386;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hm-product-time-workbench .product-time-scope-bar input {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #d8dfe7;
+  border-radius: 6px;
+  background: #fff;
+  color: #253348;
+  font: inherit;
+}
 
 .hm-product-time-workbench .product-time-toolbar { grid-template-columns: 40px minmax(240px, 1fr) minmax(180px, 250px) 155px auto; }
 .hm-product-time-workbench .product-time-toolbar-actions { justify-content: center; }
@@ -1051,10 +1161,18 @@ html:has(.hm-product-time-workbench) {
 .hm-product-time-workbench .product-time-cell-error { position: absolute; z-index: 2; right: 5px; bottom: 3px; max-width: calc(100% - 10px); overflow: hidden; color: #b42318; font-size: 8px; font-weight: 700; line-height: 1; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 
 .hm-product-time-workbench .product-time-total-cell,
+.hm-product-time-workbench .product-time-plan-quantity-cell,
+.hm-product-time-workbench .product-time-plan-total-cell,
 .hm-product-time-workbench .product-time-quote-cell { min-width: 0; padding: 7px; display: grid; place-content: center; gap: 3px; border: 0; background: #fff; text-align: center; }
 .hm-product-time-workbench .product-time-total-cell { color: #b54708; }
-.hm-product-time-workbench .product-time-total-cell strong { font-size: 12px; line-height: 1.2; white-space: nowrap; }
-.hm-product-time-workbench .product-time-total-cell small { color: #7a8798; font-size: 9px; white-space: nowrap; }
+.hm-product-time-workbench .product-time-plan-quantity-cell { color: #275f9d; }
+.hm-product-time-workbench .product-time-plan-total-cell { color: #147447; }
+.hm-product-time-workbench .product-time-total-cell strong,
+.hm-product-time-workbench .product-time-plan-quantity-cell strong,
+.hm-product-time-workbench .product-time-plan-total-cell strong { font-size: 12px; line-height: 1.2; white-space: nowrap; }
+.hm-product-time-workbench .product-time-total-cell small,
+.hm-product-time-workbench .product-time-plan-quantity-cell small,
+.hm-product-time-workbench .product-time-plan-total-cell small { color: #7a8798; font-size: 9px; white-space: nowrap; }
 .hm-product-time-workbench .product-time-quote-cell { color: #98a2b3; }
 .hm-product-time-workbench .product-time-quote-cell span { font-size: 18px; line-height: 1; }
 .hm-product-time-workbench .product-time-empty.matrix-empty { position: sticky; left: 0; min-height: 220px; }
@@ -1142,6 +1260,12 @@ html:has(.hm-product-time-workbench) {
   .hm-product-time-workbench .product-time-summary > button { height: 58px; padding: 7px 9px; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 6px; }
   .hm-product-time-workbench .product-time-summary > button > svg { width: 30px; height: 30px; padding: 7px; }
   .hm-product-time-workbench .product-time-summary > button > strong { font-size: 20px; }
+  .hm-product-time-workbench .product-time-summary > article { height: 58px; padding: 7px 9px; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 6px; }
+  .hm-product-time-workbench .product-time-summary > article > svg { width: 30px; height: 30px; padding: 7px; }
+  .hm-product-time-workbench .product-time-summary > article strong { font-size: 20px; }
+  .hm-product-time-workbench .product-time-scope-bar { gap: 7px; }
+  .hm-product-time-workbench .product-time-scope-bar button { padding-inline: 8px; }
+  .hm-product-time-workbench .product-time-scope-bar > span { display: none; }
   .hm-product-time-workbench .product-time-toolbar { grid-template-columns: 40px minmax(190px, 1fr) 160px 130px auto; min-height: 52px; padding: 6px 8px; }
   .hm-product-time-workbench .product-time-toolbar label,
   .hm-product-time-workbench .product-time-toolbar input,

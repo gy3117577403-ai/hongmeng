@@ -21,7 +21,23 @@ export async function POST(req: NextRequest) {
         workOrderId: { not: null },
       },
       include: {
-        planOrder: { select: { specification: true, customerName: true } },
+        productTimeProfile: { select: { id: true } },
+        planOrder: {
+          select: {
+            specification: true,
+            customerName: true,
+            drawingLibraryItem: {
+              select: {
+                productTimeProfiles: {
+                  where: { status: 'published' },
+                  orderBy: { version: 'desc' },
+                  take: 1,
+                  select: { id: true },
+                },
+              },
+            },
+          },
+        },
         workOrder: {
           select: {
             materialTask: { select: { status: true, exceptionType: true } },
@@ -33,8 +49,13 @@ export async function POST(req: NextRequest) {
     });
     const items = batches.map(batch => {
       const warnings: string[] = [];
+      const blockers: string[] = [];
       const warehouse = batch.workOrder?.materialTask?.status || 'not_created';
       const process = batch.workOrder?.processRoute?.status || 'not_created';
+      const productTimeProfileId = batch.productTimeProfile?.id
+        || batch.planOrder.drawingLibraryItem?.productTimeProfiles[0]?.id
+        || null;
+      if (!productTimeProfileId) blockers.push('产品工时尚未发布，不能启用生产');
       if (warehouse !== 'completed') warnings.push(warehouse === 'exception' ? '仓库存在异常' : '仓库尚未完成配料');
       if (process === 'not_created' || process === 'draft') warnings.push('工艺路线尚未确认');
       return {
@@ -45,6 +66,7 @@ export async function POST(req: NextRequest) {
         warehouseStatus: warehouse,
         processStatus: process,
         warnings,
+        blockers,
       };
     });
     return NextResponse.json({
@@ -55,6 +77,7 @@ export async function POST(req: NextRequest) {
         batchCount: items.length,
         totalQuantity: items.reduce((sum, item) => sum + item.quantity, 0),
         warningCount: items.reduce((sum, item) => sum + item.warnings.length, 0),
+        blockerCount: items.reduce((sum, item) => sum + item.blockers.length, 0),
         items,
       },
     });

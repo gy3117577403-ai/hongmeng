@@ -38,6 +38,7 @@ import type {
   ProductionPlanChangeDTO,
   ProductionPlanOrderDTO,
   ProductionPlanPriority,
+  ProductionPlanProductOptionDTO,
   ProductionPlanningSummaryDTO,
 } from '@/types';
 
@@ -48,6 +49,8 @@ type PlanningPayload = {
   orders?: ProductionPlanOrderDTO[];
   summary?: ProductionPlanningSummaryDTO;
   customers?: string[];
+  productOptions?: ProductionPlanProductOptionDTO[];
+  salespeople?: string[];
   periods?: {
     current: { weekStartDate: string; weekEndDate: string };
     next: { weekStartDate: string; weekEndDate: string };
@@ -56,6 +59,7 @@ type PlanningPayload = {
 };
 
 type OrderForm = {
+  drawingLibraryItemId: string;
   customerName: string;
   salesperson: string;
   productName: string;
@@ -90,6 +94,7 @@ type ActivationPreview = {
   batchCount: number;
   totalQuantity: number;
   warningCount: number;
+  blockerCount: number;
   items: Array<{
     batchId: string;
     specification: string;
@@ -98,6 +103,7 @@ type ActivationPreview = {
     warehouseStatus: string;
     processStatus: string;
     warnings: string[];
+    blockers: string[];
   }>;
 };
 
@@ -118,6 +124,7 @@ const emptySummary: ProductionPlanningSummaryDTO = {
 function emptyOrderForm(): OrderForm {
   const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
   return {
+    drawingLibraryItemId: '',
     customerName: '', salesperson: '', productName: '', specification: '',
     orderQuantity: '', orderDate: today, customerDueDate: '', priority: 'normal', remark: '', reason: '',
   };
@@ -125,6 +132,7 @@ function emptyOrderForm(): OrderForm {
 
 function orderForm(order: ProductionPlanOrderDTO): OrderForm {
   return {
+    drawingLibraryItemId: order.drawingLibraryItemId || '',
     customerName: order.customerName,
     salesperson: order.salesperson || '',
     productName: order.productName,
@@ -192,6 +200,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const [orders, setOrders] = useState<ProductionPlanOrderDTO[]>([]);
   const [summary, setSummary] = useState<ProductionPlanningSummaryDTO>(emptySummary);
   const [customers, setCustomers] = useState<string[]>([]);
+  const [productOptions, setProductOptions] = useState<ProductionPlanProductOptionDTO[]>([]);
+  const [salespeople, setSalespeople] = useState<string[]>([]);
   const [periods, setPeriods] = useState<PlanningPayload['periods']>();
   const [keyword, setKeyword] = useState('');
   const [customer, setCustomer] = useState('');
@@ -205,6 +215,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
   const [orderDialog, setOrderDialog] = useState<{ mode: 'create' | 'edit'; orderId?: string } | null>(null);
   const [orderDraft, setOrderDraft] = useState<OrderForm>(emptyOrderForm);
+  const [productKeyword, setProductKeyword] = useState('');
+  const [productPickerOpen, setProductPickerOpen] = useState(false);
   const [batchDialog, setBatchDialog] = useState<{ orderId: string; batchId?: string } | null>(null);
   const [batchDraft, setBatchDraft] = useState<BatchForm>({ quantity: '', weekStartDate: '', plannedCompletionDate: '', reason: '' });
   const [releasePreview, setReleasePreview] = useState<ReleasePreview | null>(null);
@@ -240,6 +252,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         setOrders(body.orders || []);
         setSummary(body.summary || emptySummary);
         setCustomers(body.customers || []);
+        setProductOptions(body.productOptions || []);
+        setSalespeople(body.salespeople || []);
         setPeriods(body.periods);
       })
       .catch(reason => {
@@ -269,6 +283,18 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   }, [view, refreshToken]);
 
   const allBatches = useMemo(() => orders.flatMap(order => order.batches.map(batch => ({ order, batch }))), [orders]);
+  const selectedProduct = useMemo(
+    () => productOptions.find(item => item.id === orderDraft.drawingLibraryItemId) || null,
+    [orderDraft.drawingLibraryItemId, productOptions],
+  );
+  const visibleProductOptions = useMemo(() => {
+    const word = productKeyword.trim().toLocaleLowerCase();
+    const filtered = word
+      ? productOptions.filter(item => [item.customerName, item.customerCode || '', item.specification, item.productName]
+          .some(value => value.toLocaleLowerCase().includes(word)))
+      : productOptions;
+    return filtered.slice(0, 18);
+  }, [productKeyword, productOptions]);
   const filteredOrders = useMemo(() => {
     const word = keyword.trim().toLocaleLowerCase();
     return orders.filter(order => {
@@ -295,19 +321,41 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     setBatchDialog(null);
     setReleasePreview(null);
     setActivationPreview(null);
+    setProductPickerOpen(false);
     setError('');
   }
 
   function openCreateOrder(trigger: HTMLElement): void {
     dialogTriggerRef.current = trigger;
     setOrderDraft(emptyOrderForm());
+    setProductKeyword('');
+    setProductPickerOpen(false);
     setOrderDialog({ mode: 'create' });
   }
 
   function openEditOrder(order: ProductionPlanOrderDTO, trigger: HTMLElement): void {
     dialogTriggerRef.current = trigger;
     setOrderDraft(orderForm(order));
+    setProductKeyword(order.specification);
+    setProductPickerOpen(false);
     setOrderDialog({ mode: 'edit', orderId: order.id });
+  }
+
+  function selectProduct(option: ProductionPlanProductOptionDTO): void {
+    setOrderDraft(current => {
+      const previous = productOptions.find(item => item.id === current.drawingLibraryItemId);
+      const keepSalesperson = Boolean(current.salesperson && previous?.customerName === option.customerName);
+      return {
+        ...current,
+        drawingLibraryItemId: option.id,
+        customerName: option.customerName,
+        specification: option.specification,
+        productName: option.productName,
+        salesperson: keepSalesperson ? current.salesperson : option.recommendedSalesperson || '',
+      };
+    });
+    setProductKeyword(option.specification);
+    setProductPickerOpen(false);
   }
 
   function openBatch(order: ProductionPlanOrderDTO, trigger: HTMLElement, batch?: ProductionPlanBatchDTO): void {
@@ -324,6 +372,10 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
 
   async function saveOrder(confirmImpact = false): Promise<void> {
     if (!orderDialog) return;
+    if (!orderDraft.drawingLibraryItemId) {
+      setError('请先从图纸资料库选择产品');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -616,13 +668,45 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
 
     {activeDialog && <button className="planning-dialog-scrim" type="button" aria-label="关闭弹窗" onClick={closeDialog} />}
 
-    {orderDialog && <div ref={dialogRef} className="planning-dialog order-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-order-dialog-title"><header><div><span>{orderDialog.mode === 'create' ? '实时订单池' : '订单变更'}</span><h2 id="planning-order-dialog-title">{orderDialog.mode === 'create' ? '新建计划订单' : '编辑计划订单'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><div className="planning-form-grid"><label><span>客户 *</span><input list="planning-customer-list" value={orderDraft.customerName} onChange={event => setOrderDraft(current => ({ ...current, customerName: event.target.value }))} /><datalist id="planning-customer-list">{customers.map(item => <option value={item} key={item} />)}</datalist></label><label><span>业务员</span><input value={orderDraft.salesperson} onChange={event => setOrderDraft(current => ({ ...current, salesperson: event.target.value }))} placeholder="可后续补充" /></label><label><span>产品规格 *</span><input value={orderDraft.specification} onChange={event => setOrderDraft(current => ({ ...current, specification: event.target.value }))} /></label><label><span>产品名称 *</span><input value={orderDraft.productName} onChange={event => setOrderDraft(current => ({ ...current, productName: event.target.value }))} /></label><label><span>订单数量 *</span><input type="number" min="1" value={orderDraft.orderQuantity} onChange={event => setOrderDraft(current => ({ ...current, orderQuantity: event.target.value }))} /></label><label><span>优先级</span><select value={orderDraft.priority} onChange={event => setOrderDraft(current => ({ ...current, priority: event.target.value as ProductionPlanPriority }))}><option value="normal">一般</option><option value="urgent">紧急</option><option value="insert">插单</option></select></label><label><span>下单日期 *</span><input type="date" value={orderDraft.orderDate} onChange={event => setOrderDraft(current => ({ ...current, orderDate: event.target.value }))} /></label><label><span>客户交期 *</span><input type="date" value={orderDraft.customerDueDate} onChange={event => setOrderDraft(current => ({ ...current, customerDueDate: event.target.value }))} /></label><label className="wide"><span>备注</span><textarea rows={3} value={orderDraft.remark} onChange={event => setOrderDraft(current => ({ ...current, remark: event.target.value }))} /></label>{orderDialog.mode === 'edit' && <label className="wide"><span>已下达订单变更原因</span><textarea rows={2} placeholder="修改已下达订单时必填" value={orderDraft.reason} onChange={event => setOrderDraft(current => ({ ...current, reason: event.target.value }))} /></label>}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving} onClick={() => { void saveOrder(); }}>{saving ? '保存中...' : '保存订单'}</button></footer></div>}
+    {orderDialog && <div ref={dialogRef} className="planning-dialog order-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-order-dialog-title">
+      <header><div><span>{orderDialog.mode === 'create' ? '实时订单池' : '订单变更'}</span><h2 id="planning-order-dialog-title">{orderDialog.mode === 'create' ? '新建计划订单' : '编辑计划订单'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>
+      <div className="planning-dialog-body">
+        <div className="planning-form-grid">
+          <div className="planning-product-picker wide">
+            <label><span>选择图纸资料库产品 *</span><div className="planning-product-search"><Search size={18} /><input value={productKeyword} onFocus={() => setProductPickerOpen(true)} onChange={event => { setProductKeyword(event.target.value); setProductPickerOpen(true); }} placeholder="搜索客户、规格或产品名称" /></div></label>
+            {productPickerOpen && <div className="planning-product-results" role="listbox" aria-label="图纸资料库产品">
+              {visibleProductOptions.map(option => <button key={option.id} type="button" role="option" aria-selected={option.id === orderDraft.drawingLibraryItemId} onClick={() => selectProduct(option)}>
+                <span><strong>{option.specification}</strong><small>{option.customerName} · {option.productName}</small></span>
+                <em>{option.publishedProductTimeVersion ? `工时 V${option.publishedProductTimeVersion}` : '工时待发布'}</em>
+              </button>)}
+              {!visibleProductOptions.length && <div className="planning-product-empty"><strong>没有匹配的图纸产品</strong><span>请先到图纸资料库新增或完善产品资料。</span><a href="/drawing-library">前往图纸资料库</a></div>}
+            </div>}
+            {selectedProduct && <section className="planning-selected-product">
+              <div><span>已绑定图纸产品</span><strong title={selectedProduct.specification}>{selectedProduct.specification}</strong><small>{selectedProduct.customerName} · {selectedProduct.productName}</small></div>
+              <div><span>原图 {selectedProduct.drawingFileCount}</span><span>SOP {selectedProduct.sopFileCount}</span><span className={selectedProduct.publishedProductTimeVersion ? 'ready' : 'warning'}>{selectedProduct.publishedProductTimeVersion ? `工时 V${selectedProduct.publishedProductTimeVersion}` : '工时待发布'}</span></div>
+            </section>}
+          </div>
+          <label><span>客户</span><input value={orderDraft.customerName} readOnly aria-readonly="true" /></label>
+          <label><span>业务员</span><input list="planning-salesperson-list" value={orderDraft.salesperson} onChange={event => setOrderDraft(current => ({ ...current, salesperson: event.target.value }))} placeholder="按同客户最近订单推荐，可修改" /><datalist id="planning-salesperson-list">{salespeople.map(item => <option value={item} key={item} />)}</datalist></label>
+          <label><span>产品规格</span><input value={orderDraft.specification} readOnly aria-readonly="true" /></label>
+          <label><span>产品名称</span><input value={orderDraft.productName} readOnly aria-readonly="true" /></label>
+          <label><span>订单数量 *</span><input type="number" min="1" value={orderDraft.orderQuantity} onChange={event => setOrderDraft(current => ({ ...current, orderQuantity: event.target.value }))} /></label>
+          <label><span>优先级</span><select value={orderDraft.priority} onChange={event => setOrderDraft(current => ({ ...current, priority: event.target.value as ProductionPlanPriority }))}><option value="normal">一般</option><option value="urgent">紧急</option><option value="insert">插单</option></select></label>
+          <label><span>下单日期 *</span><input type="date" value={orderDraft.orderDate} onChange={event => setOrderDraft(current => ({ ...current, orderDate: event.target.value }))} /></label>
+          <label><span>客户交期 *</span><input type="date" value={orderDraft.customerDueDate} onChange={event => setOrderDraft(current => ({ ...current, customerDueDate: event.target.value }))} /></label>
+          <label className="wide"><span>备注</span><textarea rows={3} value={orderDraft.remark} onChange={event => setOrderDraft(current => ({ ...current, remark: event.target.value }))} /></label>
+          {orderDialog.mode === 'edit' && <label className="wide"><span>已下达订单变更原因</span><textarea rows={2} placeholder="修改已下达订单时必填" value={orderDraft.reason} onChange={event => setOrderDraft(current => ({ ...current, reason: event.target.value }))} /></label>}
+        </div>
+        {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
+      </div>
+      <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !orderDraft.drawingLibraryItemId} onClick={() => { void saveOrder(); }}>{saving ? '保存中...' : '保存订单'}</button></footer>
+    </div>}
 
     {batchDialog && <div ref={dialogRef} className="planning-dialog batch-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-batch-dialog-title"><header><div><span>拆批排程</span><h2 id="planning-batch-dialog-title">{batchDialog.batchId ? '调整排产批次' : '安排生产批次'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><div className="planning-form-grid"><label><span>本批数量 *</span><input type="number" min="1" value={batchDraft.quantity} onChange={event => setBatchDraft(current => ({ ...current, quantity: event.target.value }))} /></label><label><span>生产周 *</span><input type="date" value={batchDraft.weekStartDate} onChange={event => setBatchDraft(current => ({ ...current, weekStartDate: event.target.value }))} /></label><label className="wide"><span>内部计划完成日期 *</span><input type="date" value={batchDraft.plannedCompletionDate} onChange={event => setBatchDraft(current => ({ ...current, plannedCompletionDate: event.target.value }))} /></label>{batchDialog.batchId && <label className="wide"><span>已下达批次调整原因</span><textarea rows={2} placeholder="如果批次已经下达，此项必填" value={batchDraft.reason} onChange={event => setBatchDraft(current => ({ ...current, reason: event.target.value }))} /></label>}</div><div className="planning-dialog-note"><CalendarClock /><span><strong>排产与下达分开</strong><small>保存后仍是排程草稿；勾选批次后再选择下达本周或下周预备。</small></span></div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving} onClick={() => { void saveBatch(); }}>{saving ? '保存中...' : '保存排程'}</button></footer></div>}
 
     {releasePreview && <div ref={dialogRef} className="planning-dialog release-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-release-dialog-title"><header><div><span>下达预检</span><h2 id="planning-release-dialog-title">{releasePreview.target === 'active' ? '下达本周执行' : '下达下周预备'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>批次数</span><strong>{releasePreview.batchCount}</strong></div><div><span>总数量</span><strong>{releasePreview.totalQuantity.toLocaleString()}</strong></div><div><span>提醒</span><strong className={releasePreview.warnings ? 'warning' : ''}>{releasePreview.warnings}</strong></div></section>{releasePreview.target === 'preparation' && <div className="planning-dialog-note"><PackageCheck /><span><strong>只进入准备区</strong><small>仓库和工艺可提前处理，但不会出现在生产执行中心。</small></span></div>}{releasePreview.target === 'active' && <div className="planning-dialog-note"><Factory /><span><strong>立即进入本周生产</strong><small>工单会出现在生产执行中心，同时生成仓库和工艺任务。</small></span></div>}<div className="planning-warning-list">{releasePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">资料检查通过</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>返回调整</button><button type="button" className="primary" disabled={saving || releasePreview.blockers > 0} onClick={() => { void commitRelease(); }}>{saving ? '下达中...' : '确认下达'}</button></footer></div>}
 
-    {activationPreview && <div ref={dialogRef} className="planning-dialog activation-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-activation-title"><header><div><span>生产周切换</span><h2 id="planning-activation-title">启用下周预备计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>生产周</span><strong>{activationPreview.weekStartDate.slice(5)} - {activationPreview.weekEndDate.slice(5)}</strong></div><div><span>批次 / 数量</span><strong>{activationPreview.batchCount} / {activationPreview.totalQuantity.toLocaleString()}</strong></div><div><span>准备提醒</span><strong className={activationPreview.warningCount ? 'warning' : ''}>{activationPreview.warningCount}</strong></div></section><div className="planning-dialog-note warning"><ShieldAlert /><span><strong>人工切换，不自动跨周</strong><small>确认后当前本周计划归档，下周预备进入生产执行；未完成的仓库或工艺事项不会丢失。</small></span></div><div className="planning-warning-list">{activationPreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.customerName}</strong>{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.warnings.length && <span className="ready">仓库与工艺准备完成</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>暂不启用</button><button type="button" className="primary" disabled={saving} onClick={() => { void commitActivation(); }}>{saving ? '切换中...' : '确认启用为本周'}</button></footer></div>}
+    {activationPreview && <div ref={dialogRef} className="planning-dialog activation-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-activation-title"><header><div><span>生产周切换</span><h2 id="planning-activation-title">启用下周预备计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>生产周</span><strong>{activationPreview.weekStartDate.slice(5)} - {activationPreview.weekEndDate.slice(5)}</strong></div><div><span>批次 / 数量</span><strong>{activationPreview.batchCount} / {activationPreview.totalQuantity.toLocaleString()}</strong></div><div><span>阻断 / 提醒</span><strong className={activationPreview.blockerCount || activationPreview.warningCount ? 'warning' : ''}>{activationPreview.blockerCount} / {activationPreview.warningCount}</strong></div></section><div className="planning-dialog-note warning"><ShieldAlert /><span><strong>人工切换，不自动跨周</strong><small>缺少已发布产品工时的批次不能进入生产；仓库或工艺未完成会保留提醒，但准备数据不会丢失。</small></span></div><div className="planning-warning-list">{activationPreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.customerName}</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">工时、仓库与工艺准备完成</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>暂不启用</button><button type="button" className="primary" disabled={saving || activationPreview.blockerCount > 0} onClick={() => { void commitActivation(); }}>{saving ? '切换中...' : activationPreview.blockerCount > 0 ? '请先维护产品工时' : '确认启用为本周'}</button></footer></div>}
 
     {toast && <div className="planning-toast" role="status"><CheckCircle2 size={17} />{toast}</div>}
   </>;

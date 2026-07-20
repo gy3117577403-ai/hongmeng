@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: false, error: '部分排产批次不存在或已删除' }, { status: 404 });
     }
     if (message === 'PLAN_BATCH_BLOCKED') {
-      return NextResponse.json({ ok: false, error: '存在不可下达的归档批次，请刷新后重试' }, { status: 409 });
+      return NextResponse.json({ ok: false, error: '存在不可下达的批次，请先处理阻断项后重试' }, { status: 409 });
     }
     if (message === 'PLAN_BATCH_CONFIRMATION_REQUIRED') {
       return NextResponse.json({ ok: false, requiresConfirmation: true, error: '存在资料、仓库或工艺提醒，请确认后继续' }, { status: 409 });

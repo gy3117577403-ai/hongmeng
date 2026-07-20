@@ -432,6 +432,20 @@ export type ProductionPlanPriority = 'normal' | 'urgent' | 'insert';
 export type ProductionPlanOrderStatus = 'pending' | 'scheduled' | 'partially_released' | 'released' | 'paused' | 'cancelled' | 'completed';
 export type ProductionPlanReleaseState = 'draft' | 'preparation' | 'active' | 'archived';
 
+export type ProductionPlanProductOptionDTO = {
+  id: string;
+  customerName: string;
+  customerCode?: string | null;
+  specification: string;
+  productName: string;
+  fileCount: number;
+  drawingFileCount: number;
+  sopFileCount: number;
+  recommendedSalesperson?: string | null;
+  publishedProductTimeVersion?: number | null;
+  unitMilliseconds?: number | null;
+};
+
 export type ProductionPlanBatchDTO = {
   id: string;
   planOrderId: string;
@@ -511,6 +525,30 @@ export type ProcessRouteStatus = 'draft' | 'confirmed' | 'in_progress' | 'comple
 export type ProcessStepStatus = 'pending' | 'current' | 'completed' | 'skipped';
 export type ProcessTimeBasis = 'per_unit' | 'per_batch';
 export type ProductTimeProfileStatus = 'draft' | 'published' | 'archived';
+export type ProductTimePlanningScope = 'all' | 'current' | 'next' | 'carryover' | 'history';
+
+export type ProductTimePlanningContextDTO = {
+  scope: Exclude<ProductTimePlanningScope, 'all'>;
+  weekStartDate?: string | null;
+  weekEndDate?: string | null;
+  orderCount: number;
+  batchCount: number;
+  totalQuantity: number;
+  releasedBatchCount: number;
+  frozenBatchCount: number;
+  snapshotTotalMilliseconds?: string | null;
+};
+
+export type ProductTimePlanningSummaryDTO = {
+  productCount: number;
+  orderCount: number;
+  batchCount: number;
+  totalQuantity: number;
+  publishedCount: number;
+  missingCount: number;
+  weekStartDate?: string | null;
+  weekEndDate?: string | null;
+};
 
 export type ProductProcessTimeEntryDTO = {
   id: string;
@@ -556,6 +594,7 @@ export type ProductTimeListItemDTO = {
   updatedAt: string;
   draft?: ProductTimeProfileDTO | null;
   published?: ProductTimeProfileDTO | null;
+  planning?: ProductTimePlanningContextDTO | null;
 };
 
 export type ProcessTimeStandardDTO = {

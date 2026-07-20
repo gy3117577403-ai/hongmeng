@@ -15,6 +15,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 function currentInput(order: {
+  drawingLibraryItemId: string | null;
   sourceOrderNo: string;
   sourceLineNo: number;
   customerName: string;
@@ -42,17 +43,29 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
     if (!existing || existing.deletedAt) return NextResponse.json({ ok: false, error: '计划订单不存在' }, { status: 404 });
     const parsed = parseProductionPlanOrderInput(body, currentInput(existing));
     if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
+    const references = await resolvePlanningReferences(prisma, parsed.data);
+    if (!references.drawingLibraryItemId || !references.customerName || !references.specification || !references.productName) {
+      return NextResponse.json({ ok: false, error: '请选择图纸资料库中的有效产品' }, { status: 400 });
+    }
+    const canonical = {
+      ...parsed.data,
+      drawingLibraryItemId: references.drawingLibraryItemId,
+      customerName: references.customerName,
+      productName: references.productName,
+      specification: references.specification,
+    };
     const allocated = existing.batches.reduce((sum, batch) => sum + batch.quantity, 0);
-    if (parsed.data.orderQuantity < allocated) {
+    if (canonical.orderQuantity < allocated) {
       return NextResponse.json({ ok: false, error: `订单数量不能小于已排产数量 ${allocated}` }, { status: 409 });
     }
     const released = existing.batches.filter(batch => batch.releaseState !== 'draft');
-    const impactful = parsed.data.customerName !== existing.customerName
-      || parsed.data.salesperson !== existing.salesperson
-      || parsed.data.productName !== existing.productName
-      || parsed.data.specification !== existing.specification
-      || parsed.data.orderQuantity !== existing.orderQuantity
-      || parsed.data.customerDueDate.getTime() !== existing.customerDueDate.getTime();
+    const impactful = canonical.drawingLibraryItemId !== existing.drawingLibraryItemId
+      || canonical.customerName !== existing.customerName
+      || canonical.salesperson !== existing.salesperson
+      || canonical.productName !== existing.productName
+      || canonical.specification !== existing.specification
+      || canonical.orderQuantity !== existing.orderQuantity
+      || canonical.customerDueDate.getTime() !== existing.customerDueDate.getTime();
     const reason = String(body.reason || '').trim().slice(0, 300);
     if (released.length && impactful && !reason) {
       return NextResponse.json({ ok: false, error: '已下达订单变更必须填写原因' }, { status: 400 });
@@ -71,24 +84,23 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
       });
     }
     const updated = await prisma.$transaction(async tx => {
-      const references = await resolvePlanningReferences(tx, parsed.data);
       await tx.productionPlanOrder.update({
         where: { id: existing.id },
-        data: { ...parsed.data, drawingLibraryItemId: references.drawingLibraryItemId, updatedById: user.id },
+        data: { ...canonical, updatedById: user.id },
       });
       const linkedIds = released.map(batch => batch.workOrderId).filter((id): id is string => Boolean(id));
       if (linkedIds.length) {
         await tx.workOrder.updateMany({
           where: { id: { in: linkedIds } },
           data: {
-            customerName: parsed.data.customerName,
-            salesperson: parsed.data.salesperson,
-            productName: parsed.data.productName,
-            specification: parsed.data.specification,
-            orderDate: parsed.data.orderDate,
-            deliveryDay: parsed.data.customerDueDate.toISOString().slice(0, 10),
-            priority: parsed.data.priority === 'insert' ? 'urgent' : parsed.data.priority,
-            remark: parsed.data.remark,
+            customerName: canonical.customerName,
+            salesperson: canonical.salesperson,
+            productName: canonical.productName,
+            specification: canonical.specification,
+            orderDate: canonical.orderDate,
+            deliveryDay: canonical.customerDueDate.toISOString().slice(0, 10),
+            priority: canonical.priority === 'insert' ? 'urgent' : canonical.priority,
+            remark: canonical.remark,
             drawingLibraryItemId: references.drawingLibraryItemId,
           },
         });
@@ -99,7 +111,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
           planOrderId: existing.id,
           action: released.length ? 'update_released_plan_order' : 'update_plan_order',
           beforeData: planOrderSnapshot(currentInput(existing)),
-          afterData: planOrderSnapshot(parsed.data),
+          afterData: planOrderSnapshot(canonical),
           impactData: { releasedBatchCount: released.length, linkedWorkOrderCount: linkedIds.length },
           reason: reason || null,
           actorId: user.id,

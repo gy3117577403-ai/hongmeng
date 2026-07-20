@@ -41,8 +41,9 @@ test('production documents require an original drawing but not every optional ca
   assert.equal(hasRequiredProductionDocuments(sopOnly), false);
 });
 
-test('planning order input accepts salesperson without exposing source order fields', () => {
+test('planning order input keeps drawing product identity and salesperson without exposing source order fields', () => {
   const parsed = parseProductionPlanOrderInput({
+    drawingLibraryItemId: 'drawing-product-1',
     customerName: '测试客户',
     salesperson: '业务员甲',
     productName: '测试产品',
@@ -53,6 +54,7 @@ test('planning order input accepts salesperson without exposing source order fie
   });
   assert.equal(parsed.ok, true);
   if (!parsed.ok) return;
+  assert.equal(parsed.data.drawingLibraryItemId, 'drawing-product-1');
   assert.equal(parsed.data.salesperson, '业务员甲');
   assert.match(parsed.data.sourceOrderNo, /^PLAN-/);
   assert.equal(parsed.data.sourceLineNo, 1);

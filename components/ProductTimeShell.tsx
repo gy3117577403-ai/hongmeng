@@ -25,6 +25,8 @@ import type {
   CurrentUserDTO,
   ProductProcessTimeEntryDTO,
   ProductTimeListItemDTO,
+  ProductTimePlanningScope,
+  ProductTimePlanningSummaryDTO,
   ProductTimeProfileDTO,
   ProcessStageGroup,
 } from '@/types';
@@ -46,6 +48,12 @@ type ProductTimePayload = {
   definitions?: ProcessDefinition[];
   customers?: CustomerOption[];
   summary?: ProductTimeSummary;
+  planningScope?: ProductTimePlanningScope;
+  planningSummary?: ProductTimePlanningSummaryDTO | null;
+  periods?: {
+    current: { weekStartDate: string; weekEndDate: string };
+    next: { weekStartDate: string; weekEndDate: string };
+  };
 };
 
 type EntryDraft = {
@@ -102,7 +110,15 @@ function duration(milliseconds: number): string {
   const totalSeconds = milliseconds / 1000;
   if (totalSeconds < 60) return `${Math.round(totalSeconds * 10) / 10} 秒`;
   const minutes = totalSeconds / 60;
+  if (minutes >= 60) return `${Math.round((minutes / 60) * 100) / 100} 小时`;
   return `${Math.round(minutes * 10) / 10} 分钟`;
+}
+
+function previousWeekStart(): string {
+  const value = new Date();
+  const daysFromMonday = (value.getDay() + 6) % 7;
+  value.setDate(value.getDate() - daysFromMonday - 7);
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(value);
 }
 
 function entryDraft(entry: ProductProcessTimeEntryDTO): EntryDraft {
@@ -142,6 +158,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [definitions, setDefinitions] = useState<ProcessDefinition[]>([]);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
   const [summary, setSummary] = useState<ProductTimeSummary>(emptySummary);
+  const [planningSummary, setPlanningSummary] = useState<ProductTimePlanningSummaryDTO | null>(null);
+  const [periods, setPeriods] = useState<ProductTimePayload['periods']>();
+  const [planningScope, setPlanningScope] = useState<ProductTimePlanningScope>('all');
+  const [historyWeekStart, setHistoryWeekStart] = useState(previousWeekStart);
   const [keyword, setKeyword] = useState('');
   const [customer, setCustomer] = useState('');
   const [status, setStatus] = useState('all');
@@ -196,6 +216,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       if (keyword.trim()) params.set('keyword', keyword.trim());
       if (customer) params.set('customer', customer);
       if (status !== 'all') params.set('status', status);
+      if (planningScope !== 'all') params.set('scope', planningScope);
+      if (planningScope === 'history') params.set('weekStartDate', historyWeekStart);
       const response = await fetch(`/api/product-time-profiles?${params.toString()}`, { cache: 'no-store' });
       const data = await response.json().catch(() => ({})) as ProductTimePayload;
       if (!response.ok) throw new Error(data.error || '产品工时加载失败');
@@ -205,6 +227,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setDefinitions(data.definitions || []);
       setCustomers(data.customers || []);
       setSummary(data.summary || emptySummary);
+      setPlanningSummary(data.planningSummary || null);
+      setPeriods(data.periods);
       const urlItemId = new URLSearchParams(window.location.search).get('itemId') || '';
       const requested = preferredItemId || urlItemId || selectedId;
       setSelectedId(nextItems.some(item => item.id === requested) ? requested : nextItems[0]?.id || '');
@@ -213,7 +237,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     } finally {
       setLoading(false);
     }
-  }, [customer, keyword, selectedId, status]);
+  }, [customer, historyWeekStart, keyword, planningScope, selectedId, status]);
 
   useEffect(() => {
     itemsRef.current = items;
@@ -241,7 +265,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   useEffect(() => {
     const timer = window.setTimeout(() => load(), 220);
     return () => window.clearTimeout(timer);
-  }, [keyword, customer, status]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [keyword, customer, historyWeekStart, planningScope, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (initialSelectionRef.current) return;
@@ -703,8 +727,13 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
   const totalMilliseconds = draftTotal(entries);
   const selectedStatus = selectedItem ? statusText(selectedItem) : '未选择产品';
-  const matrixGridColumns = `minmax(210px, 1.8fr) repeat(${definitions.length}, minmax(58px, 1fr)) repeat(2, minmax(88px, .85fr))`;
-  const matrixMinWidth = Math.max(860, 210 + definitions.length * 58 + 176);
+  const isPlanningScope = planningScope !== 'all';
+  const matrixTrailingColumns = isPlanningScope ? 4 : 2;
+  const matrixGridColumns = `minmax(210px, 1.8fr) repeat(${definitions.length}, minmax(58px, 1fr)) repeat(${matrixTrailingColumns}, minmax(88px, .85fr))`;
+  const matrixMinWidth = Math.max(860, 210 + definitions.length * 58 + matrixTrailingColumns * 88);
+  const planningPeriodText = planningSummary?.weekStartDate && planningSummary?.weekEndDate
+    ? `${planningSummary.weekStartDate} 至 ${planningSummary.weekEndDate}`
+    : planningScope === 'carryover' ? '早于本周且尚未完成' : '当前范围暂无计划批次';
 
   return (
     <main className="product-time-page hm-product-time-workbench hm-product-time-headerless hm-workbench-root hm-workbench-navigation-overlay">
@@ -719,17 +748,36 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
       <div className="product-time-main">
         <section className="product-time-summary" aria-label="产品工时概览与快捷筛选">
-          <button className={status === 'all' ? 'active' : ''} type="button" onClick={() => setStatus('all')}><Clock3 aria-hidden="true" /><span>图纸产品<small>全部范围</small></span><strong>{summary.total}</strong></button>
-          <button className={status === 'published' ? 'active' : ''} type="button" onClick={() => setStatus('published')}><CheckCircle2 aria-hidden="true" /><span>已发布<small>可用于新工单</small></span><strong>{summary.published}</strong></button>
-          <button className={status === 'draft' ? 'active' : ''} type="button" onClick={() => setStatus('draft')}><Save aria-hidden="true" /><span>草稿待发布<small>继续维护</small></span><strong>{summary.draft}</strong></button>
-          <button className={`warning ${status === 'missing' ? 'active' : ''}`} type="button" onClick={() => setStatus('missing')}><Library aria-hidden="true" /><span>工时待维护<small>暂不计算达成率</small></span><strong>{summary.missing}</strong></button>
+          {isPlanningScope ? <>
+            <button className={status === 'all' ? 'active' : ''} type="button" onClick={() => setStatus('all')}><Clock3 aria-hidden="true" /><span>计划产品<small>{planningPeriodText}</small></span><strong>{planningSummary?.productCount || 0}</strong></button>
+            <article><FileSpreadsheet aria-hidden="true" /><span>计划数量<small>{planningSummary?.batchCount || 0} 个生产批次</small></span><strong>{(planningSummary?.totalQuantity || 0).toLocaleString()}</strong></article>
+            <button className={status === 'published' ? 'active' : ''} type="button" onClick={() => setStatus('published')}><CheckCircle2 aria-hidden="true" /><span>工时已发布<small>可冻结到生产批次</small></span><strong>{planningSummary?.publishedCount || 0}</strong></button>
+            <button className={`warning ${status === 'unpublished' ? 'active' : ''}`} type="button" onClick={() => setStatus('unpublished')}><Library aria-hidden="true" /><span>工时待发布<small>正式启用前必须完成</small></span><strong>{planningSummary?.missingCount || 0}</strong></button>
+          </> : <>
+            <button className={status === 'all' ? 'active' : ''} type="button" onClick={() => setStatus('all')}><Clock3 aria-hidden="true" /><span>图纸产品<small>全部范围</small></span><strong>{summary.total}</strong></button>
+            <button className={status === 'published' ? 'active' : ''} type="button" onClick={() => setStatus('published')}><CheckCircle2 aria-hidden="true" /><span>已发布<small>可用于新工单</small></span><strong>{summary.published}</strong></button>
+            <button className={status === 'draft' ? 'active' : ''} type="button" onClick={() => setStatus('draft')}><Save aria-hidden="true" /><span>草稿待发布<small>继续维护</small></span><strong>{summary.draft}</strong></button>
+            <button className={`warning ${status === 'missing' ? 'active' : ''}`} type="button" onClick={() => setStatus('missing')}><Library aria-hidden="true" /><span>工时待维护<small>暂不计算达成率</small></span><strong>{summary.missing}</strong></button>
+          </>}
+        </section>
+
+        <section className="product-time-scope-bar" aria-label="按计划周查看产品工时">
+          <div role="tablist" aria-label="产品工时范围">
+            <button type="button" role="tab" aria-selected={planningScope === 'all'} onClick={() => setPlanningScope('all')}>产品总库</button>
+            <button type="button" role="tab" aria-selected={planningScope === 'current'} onClick={() => setPlanningScope('current')}>本周计划</button>
+            <button type="button" role="tab" aria-selected={planningScope === 'next'} onClick={() => setPlanningScope('next')}>下周预备</button>
+            <button type="button" role="tab" aria-selected={planningScope === 'carryover'} onClick={() => setPlanningScope('carryover')}>遗留未完</button>
+            <button type="button" role="tab" aria-selected={planningScope === 'history'} onClick={() => setPlanningScope('history')}>历史周</button>
+          </div>
+          <span>{planningScope === 'all' ? '维护全部图纸产品的标准工时' : planningPeriodText}</span>
+          {planningScope === 'history' && <label><span>选择历史周</span><input type="date" value={historyWeekStart} max={periods?.current.weekStartDate} onChange={event => setHistoryWeekStart(event.target.value)} /></label>}
         </section>
 
         <section className="product-time-toolbar" aria-label="产品工时搜索和筛选">
           <div className="product-time-navigation-trigger" id="product-time-navigation-trigger" aria-label="平台导航入口" />
           <label><Search aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、规格或品名" /></label>
           <select value={customer} onChange={event => setCustomer(event.target.value)} aria-label="筛选客户"><option value="">全部客户</option>{customers.map(option => <option key={option.customerName} value={option.customerName}>{option.customerName}（{option.count}）</option>)}</select>
-          <select value={status} onChange={event => setStatus(event.target.value)} aria-label="筛选工时状态"><option value="all">全部状态</option><option value="missing">工时待维护</option><option value="draft">草稿待发布</option><option value="published">已发布</option></select>
+          <select value={status} onChange={event => setStatus(event.target.value)} aria-label="筛选工时状态"><option value="all">全部状态</option><option value="missing">工时待维护</option><option value="draft">草稿待发布</option><option value="unpublished">尚未发布</option><option value="published">已发布</option></select>
           <div className="product-time-toolbar-actions">
             <input
               ref={importInputRef}
@@ -753,7 +801,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
         <section className="product-time-matrix-shell" aria-labelledby="product-time-matrix-title">
           <header className="product-time-matrix-titlebar">
-            <div><span>产品工时矩阵</span><h1 id="product-time-matrix-title">按产品维护单件工序时间</h1><p>输入正数后按 Enter 或 Tab 保存；输入 0 后按 Enter 取消工序，留空或按 Esc 放弃修改。</p></div>
+            <div><span>{isPlanningScope ? '计划产品工时' : '产品工时矩阵'}</span><h1 id="product-time-matrix-title">{isPlanningScope ? '按生产周登记并核对产品工时' : '按产品维护单件工序时间'}</h1><p>{isPlanningScope ? '只显示当前计划范围内的产品；工时仍保存到对应图纸产品，发布后才能用于正式生产。' : '输入正数后按 Enter 或 Tab 保存；输入 0 后按 Enter 取消工序，留空或按 Esc 放弃修改。'}</p></div>
             <div className="product-time-matrix-legend" aria-label="矩阵图例"><span><i className="configured" />已配置</span><span><i />未参与</span><span><b>01</b>产品路线顺序</span></div>
           </header>
           <div className="product-time-matrix-scroll hm-scroll-region" tabIndex={0} aria-label={`产品工时矩阵，共 ${items.length} 款产品、${definitions.length} 个共享工序`}>
@@ -761,11 +809,19 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <div className="product-time-matrix-row product-time-matrix-head" style={{ gridTemplateColumns: matrixGridColumns }}>
                 <span className="product-time-product-column"><b>产品 / 客户</b><small>点击产品查看并调整完整路线</small></span>
                 {definitions.map(definition => <span key={definition.id} title={`${definition.name} · ${stageText[definition.stageGroup]}`}><b>{definition.name}</b><small>{stageText[definition.stageGroup]}</small></span>)}
+                {isPlanningScope && <span><b>计划数量</b><small>当前范围合计</small></span>}
                 <span><b>汇总工时</b><small>当前已填合计</small></span>
+                {isPlanningScope && <span><b>计划总工时</b><small>发布工时 × 数量</small></span>}
                 <span><b>报价工时</b><small>后续功能接入</small></span>
               </div>
               {items.map(item => {
                 const profile = item.draft || item.published;
+                const planningQuantity = item.planning?.totalQuantity || 0;
+                const frozenPlanningTotal = item.planning?.frozenBatchCount === item.planning?.batchCount && item.planning?.snapshotTotalMilliseconds
+                  ? Number(item.planning.snapshotTotalMilliseconds)
+                  : 0;
+                const calculatedPlanningTotal = item.published ? item.published.totalMillisecondsPerUnit * planningQuantity : 0;
+                const planningTotal = frozenPlanningTotal || calculatedPlanningTotal;
                 return <div className="product-time-matrix-row" style={{ gridTemplateColumns: matrixGridColumns }} key={item.id}>
                   <button className="product-time-product-cell" type="button" title={`${item.specification} · ${item.customerName} · ${item.productName || '品名未设置'}`} onClick={event => openDetail(item.id, event.currentTarget)}>
                     <strong>{item.specification}</strong><span>{item.customerName}</span><small>{item.productName || '品名未设置'}</small>
@@ -805,6 +861,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                       {cellError && <span className="product-time-cell-error" role="alert" title={cellError}>输入无效</span>}
                     </div>;
                   })}
+                  {isPlanningScope && <div className="product-time-plan-quantity-cell" role="note" aria-label={`${item.specification}计划数量${planningQuantity}件`}><strong>{planningQuantity.toLocaleString()}</strong><small>{item.planning?.batchCount || 0} 批</small></div>}
                   <div
                     className="product-time-total-cell"
                     role="note"
@@ -816,6 +873,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                     <strong>{profile && profile.processCount > 0 ? duration(profile.totalMillisecondsPerUnit) : '—'}</strong>
                     <small>{profile && profile.processCount > 0 ? `${profile.processCount} 道工序` : '未配置'}</small>
                   </div>
+                  {isPlanningScope && <div className="product-time-plan-total-cell" role="note" aria-label={planningTotal > 0 ? `${item.specification}计划总工时${duration(planningTotal)}` : `${item.specification}尚无可用的已发布工时`} title={frozenPlanningTotal > 0 ? '生产批次已冻结工时版本' : item.published ? `按已发布 V${item.published.version} 计算` : '请先发布产品工时'}><strong>{planningTotal > 0 ? duration(planningTotal) : '—'}</strong><small>{frozenPlanningTotal > 0 ? '批次已冻结' : item.published ? `发布 V${item.published.version}` : '待发布'}</small></div>}
                   <div className="product-time-quote-cell" role="note" aria-label={`${item.specification}报价工时尚未录入`} title="报价工时将在后续功能中接入">
                     <span aria-hidden="true">—</span>
                   </div>

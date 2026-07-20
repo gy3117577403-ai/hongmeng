@@ -57,6 +57,7 @@ export type ProductionPlanChangeRecord = Prisma.ProductionPlanChangeGetPayload<{
 }>;
 
 export type ProductionPlanOrderInput = {
+  drawingLibraryItemId?: unknown;
   sourceOrderNo?: unknown;
   sourceLineNo?: unknown;
   customerName?: unknown;
@@ -78,6 +79,7 @@ export type ProductionPlanBatchInput = {
 };
 
 export type ParsedPlanOrder = {
+  drawingLibraryItemId: string | null;
   sourceOrderNo: string;
   sourceLineNo: number;
   customerName: string;
@@ -170,6 +172,9 @@ export function parseProductionPlanOrderInput(
   const suppliedSourceOrderNo = input.sourceOrderNo === undefined && current ? current.sourceOrderNo : text(input.sourceOrderNo, 120);
   const sourceOrderNo = suppliedSourceOrderNo || `PLAN-${randomUUID()}`;
   const sourceLineNo = input.sourceLineNo === undefined && current ? current.sourceLineNo : positiveInteger(input.sourceLineNo) || 1;
+  const drawingLibraryItemId = input.drawingLibraryItemId === undefined && current
+    ? current.drawingLibraryItemId
+    : text(input.drawingLibraryItemId, 80) || null;
   const customerName = input.customerName === undefined && current ? current.customerName : text(input.customerName, 120);
   const salesperson = input.salesperson === undefined && current ? current.salesperson : text(input.salesperson, 80) || null;
   const productName = input.productName === undefined && current ? current.productName : text(input.productName, 160);
@@ -190,7 +195,7 @@ export function parseProductionPlanOrderInput(
   if (customerDueDate < orderDate) return { ok: false, error: '客户交期不能早于下单日期' };
   return {
     ok: true,
-    data: { sourceOrderNo, sourceLineNo, customerName, salesperson, productName, specification, orderQuantity, orderDate, customerDueDate, priority, status, remark },
+    data: { drawingLibraryItemId, sourceOrderNo, sourceLineNo, customerName, salesperson, productName, specification, orderQuantity, orderDate, customerDueDate, priority, status, remark },
   };
 }
 
@@ -214,25 +219,36 @@ export function parseProductionPlanBatchInput(
 }
 
 export async function resolvePlanningReferences(
-  tx: Prisma.TransactionClient,
-  input: { customerName: string; specification: string },
+  tx: Pick<Prisma.TransactionClient, 'drawingLibraryItem'>,
+  input: { drawingLibraryItemId?: string | null; customerName: string; specification: string },
 ): Promise<{
   drawingLibraryItemId: string | null;
+  customerName: string | null;
+  productName: string | null;
+  specification: string | null;
   productTimeProfileId: string | null;
   productTimeProfileVersion: number | null;
   unitMilliseconds: number | null;
 }> {
+  const itemId = text(input.drawingLibraryItemId, 80);
   const key = drawingLibraryKey(input.customerName, input.specification);
   const drawing = await tx.drawingLibraryItem.findFirst({
     where: {
       deletedAt: null,
-      OR: [
-        { libraryKey: key },
-        { customerName: input.customerName, specification: input.specification },
-      ],
+      ...(itemId
+        ? { id: itemId }
+        : {
+            OR: [
+              { libraryKey: key },
+              { customerName: input.customerName, specification: input.specification },
+            ],
+          }),
     },
     select: {
       id: true,
+      customerName: true,
+      productName: true,
+      specification: true,
       productTimeProfiles: {
         where: { status: 'published' },
         orderBy: { version: 'desc' },
@@ -244,6 +260,9 @@ export async function resolvePlanningReferences(
   const profile = drawing?.productTimeProfiles[0] || null;
   return {
     drawingLibraryItemId: drawing?.id || null,
+    customerName: drawing?.customerName || null,
+    productName: drawing?.productName || drawing?.specification || null,
+    specification: drawing?.specification || null,
     productTimeProfileId: profile?.id || null,
     productTimeProfileVersion: profile?.version || null,
     unitMilliseconds: profile ? productTimeTotalMilliseconds(profile.entries) : null,
@@ -276,7 +295,10 @@ export async function previewProductionPlanRelease(
       warnings.push(`当前已处于${batch.releaseState === 'active' ? '本周执行' : '下周预备'}状态`);
     }
     if (!refs.drawingLibraryItemId) warnings.push('未匹配图纸资料');
-    if (!refs.productTimeProfileId) warnings.push('产品工时尚未发布');
+    if (!refs.productTimeProfileId) {
+      if (input.target === 'active') blockers.push('产品工时尚未发布，不能正式启用生产');
+      else warnings.push('产品工时尚未发布，可先进行仓库配料，启用生产前必须发布');
+    }
     if (!refs.productTimeProfileId && (!defaultTemplate || defaultTemplate._count.steps === 0)) {
       warnings.push('尚无可用工艺路线，将保留为待编排');
     }
@@ -400,6 +422,7 @@ export async function refreshProductionPlanOrderStatus(
 
 export function planOrderSnapshot(order: ParsedPlanOrder): Prisma.InputJsonObject {
   return {
+    drawingLibraryItemId: order.drawingLibraryItemId,
     sourceOrderNo: order.sourceOrderNo,
     sourceLineNo: order.sourceLineNo,
     customerName: order.customerName,
