@@ -31,6 +31,13 @@ export async function POST(req: NextRequest) {
         summary: before,
       }, { status: 409 });
     }
+    if (before.missingProductTimeProfiles > 0) {
+      return NextResponse.json({
+        ok: false,
+        error: `有 ${before.missingProductTimeProfiles} 个工单尚未发布产品工序与工时，不能启用下周`,
+        summary: before,
+      }, { status: 409 });
+    }
 
     const now = new Date();
     const userName = user.displayName || user.username;
@@ -112,9 +119,6 @@ export async function POST(req: NextRequest) {
     if (e instanceof UnauthorizedError) return unauthorized();
     if (e instanceof Error && e.message === 'NEXT_WEEK_ALREADY_ACTIVATED') {
       return NextResponse.json({ ok: false, error: '下周计划已被启用，请刷新页面确认当前周' }, { status: 409 });
-    }
-    if (e instanceof Error && (e.message === 'PROCESS_TEMPLATE_NOT_FOUND' || e.message === 'PROCESS_TEMPLATE_EMPTY')) {
-      return NextResponse.json({ ok: false, error: '缺少可用的产品工序，请先维护并发布产品工序与工时' }, { status: 409 });
     }
     console.error(e);
     return NextResponse.json({ ok: false, error: '启用下周失败' }, { status: 500 });

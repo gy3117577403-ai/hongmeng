@@ -18,6 +18,7 @@ import {
   productionPlanTargetWeek,
   resolveOrCreatePlanningProduct,
 } from '../lib/production-planning';
+import { countWeeklyOrdersMissingPublishedProductTime } from '../lib/weekly-work-orders';
 
 test('natural production week is Monday through Sunday in China time', () => {
   const week = naturalProductionWeek(new Date('2026-07-20T04:00:00.000Z'));
@@ -50,6 +51,16 @@ test('production documents require an original drawing but not every optional ca
   } as Input;
   assert.equal(hasRequiredProductionDocuments(originalOnly), true);
   assert.equal(hasRequiredProductionDocuments(sopOnly), false);
+});
+
+test('weekly activation blocks orders without a non-empty published product time profile', () => {
+  const orders = [
+    { drawingLibraryItem: null },
+    { drawingLibraryItem: { productTimeProfiles: [] } },
+    { drawingLibraryItem: { productTimeProfiles: [{ entries: [] }] } },
+    { drawingLibraryItem: { productTimeProfiles: [{ entries: [{ id: 'entry-1' }] }] } },
+  ];
+  assert.equal(countWeeklyOrdersMissingPublishedProductTime(orders), 3);
 });
 
 test('planning order input keeps drawing product identity and salesperson without exposing source order fields', () => {

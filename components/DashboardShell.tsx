@@ -127,6 +127,7 @@ type WeeklyPlanActivateSummary = {
   warningCount: number;
   drawingWithFilesCount: number;
   drawingWithoutFilesCount: number;
+  missingProductTimeProfiles: number;
   fileCount: number;
   activatedCount?: number;
   archivedCount?: number;
@@ -3452,7 +3453,8 @@ function WeekActionDialog({
   const required = isClose ? 'CLOSE_WEEK' : 'START_NEXT_WEEK';
   const title = isClose ? '结束本周 / 归档当前周' : '启用下周草稿';
   const activateSummary = summary && !isClose ? summary as WeeklyPlanActivateSummary : null;
-  const activationBlocked = (activateSummary?.blockingAnomalyCount || 0) > 0;
+  const activationBlocked = (activateSummary?.blockingAnomalyCount || 0) > 0
+    || (activateSummary?.missingProductTimeProfiles || 0) > 0;
   let summaryItems: string[][] = [];
   if (summary && isClose) {
     const item = summary as WeeklyPlanClearSummary;
@@ -3476,6 +3478,7 @@ function WeekActionDialog({
       ['变更', String(item.changedCount)],
       ['下周取消', String(item.removedCount)],
       ['阻断异常', String(item.blockingAnomalyCount)],
+      ['工时未发布', String(item.missingProductTimeProfiles)],
       ['警告', String(item.warningCount)],
       ['有图纸资料', String(item.drawingWithFilesCount)],
       ['无图纸资料', String(item.drawingWithoutFilesCount)],
@@ -3506,7 +3509,13 @@ function WeekActionDialog({
                 <span key={label}><b>{label}</b><em>{value}</em></span>
               ))}
             </div>
-            {activationBlocked && <div className="weekly-block-message">存在 {activateSummary?.blockingAnomalyCount} 项阻断异常，请先到周计划差异中心处理，当前不会启用下周。</div>}
+            {activationBlocked && (
+              <div className="weekly-block-message">
+                {(activateSummary?.blockingAnomalyCount || 0) > 0 && <>存在 {activateSummary?.blockingAnomalyCount} 项阻断异常。 </>}
+                {(activateSummary?.missingProductTimeProfiles || 0) > 0 && <>有 {activateSummary?.missingProductTimeProfiles} 个工单尚未发布产品工序与工时。 </>}
+                请先完成准备，当前不会启用下周。
+              </div>
+            )}
             {!isClose && !activationBlocked && (activateSummary?.warningCount || 0) > 0 && <div className="weekly-warning-message">仍有 {activateSummary?.warningCount} 项警告，可以继续启用，但请先确认已知悉。</div>}
             <p className="tool-note muted">图纸资料库、连接器参数、S3 文件和历史上传记录都会保留。</p>
             {!activationBlocked && (

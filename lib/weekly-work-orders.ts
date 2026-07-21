@@ -40,9 +40,16 @@ export type WeeklyActivateSummary = {
   warningCount: number;
   drawingWithFilesCount: number;
   drawingWithoutFilesCount: number;
+  missingProductTimeProfiles: number;
   fileCount: number;
   activatedCount?: number;
   archivedCount?: number;
+};
+
+type WeeklyProductTimeOrder = {
+  drawingLibraryItem: {
+    productTimeProfiles: Array<{ entries: Array<{ id: string }> }>;
+  } | null;
 };
 
 export function addDays(date: Date, days: number) {
@@ -93,6 +100,13 @@ function countMissingWorkOrders(
 ) {
   const requiredIds = categories.filter(category => REQUIRED_CATEGORY_CODES.has(category.code)).map(category => category.id);
   return orders.filter(order => requiredIds.some(id => !order.resourceFiles.some(file => file.categoryId === id))).length;
+}
+
+export function countWeeklyOrdersMissingPublishedProductTime(orders: WeeklyProductTimeOrder[]): number {
+  return orders.filter(order => {
+    const profile = order.drawingLibraryItem?.productTimeProfiles[0];
+    return !profile || profile.entries.length === 0;
+  }).length;
 }
 
 export async function summarizeWeeklyClose(weekStartDate: Date): Promise<WeeklyCloseSummary> {
@@ -146,6 +160,16 @@ export async function summarizeWeeklyActivateNext(weekStartDate: Date): Promise<
       select: {
         id: true,
         resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { id: true, categoryId: true } },
+        drawingLibraryItem: {
+          select: {
+            productTimeProfiles: {
+              where: { status: 'published' },
+              orderBy: { version: 'desc' },
+              take: 1,
+              select: { entries: { select: { id: true } } },
+            },
+          },
+        },
       },
     }),
     loadWeeklyPlanDiff({ nextWeekStart: weekStartDate }),
@@ -169,6 +193,7 @@ export async function summarizeWeeklyActivateNext(weekStartDate: Date): Promise<
     warningCount: diff.summary.warningCount,
     drawingWithFilesCount: diff.summary.drawingWithFilesCount,
     drawingWithoutFilesCount: diff.summary.drawingWithoutFilesCount,
+    missingProductTimeProfiles: countWeeklyOrdersMissingPublishedProductTime(nextOrders),
     fileCount,
   };
 }

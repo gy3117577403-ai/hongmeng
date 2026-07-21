@@ -35,6 +35,7 @@ type ActivateSummary = {
   warningCount: number;
   drawingWithFilesCount: number;
   drawingWithoutFilesCount: number;
+  missingProductTimeProfiles: number;
 };
 type HistoryWeek = {
   weekStartDate: string;
@@ -418,12 +419,17 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
                   <span><b>变更</b><em>{activateSummary.changedCount}</em></span>
                   <span><b>下周取消</b><em>{activateSummary.removedCount}</em></span>
                   <span className={activateSummary.blockingAnomalyCount ? 'danger' : ''}><b>阻断异常</b><em>{activateSummary.blockingAnomalyCount}</em></span>
+                  <span className={activateSummary.missingProductTimeProfiles ? 'danger' : ''}><b>工时未发布</b><em>{activateSummary.missingProductTimeProfiles}</em></span>
                   <span><b>警告</b><em>{activateSummary.warningCount}</em></span>
                   <span><b>有图纸资料</b><em>{activateSummary.drawingWithFilesCount}</em></span>
                   <span><b>无图纸资料</b><em>{activateSummary.drawingWithoutFilesCount}</em></span>
                 </div>
-                {activateSummary.blockingAnomalyCount > 0 ? (
-                  <div className="weekly-block-message">阻断异常未解决，系统不会启用下周。请关闭弹窗并在“异常 / 重复”中处理。</div>
+                {activateSummary.blockingAnomalyCount > 0 || activateSummary.missingProductTimeProfiles > 0 ? (
+                  <div className="weekly-block-message">
+                    {activateSummary.blockingAnomalyCount > 0 && <>有 {activateSummary.blockingAnomalyCount} 项阻断异常未解决。 </>}
+                    {activateSummary.missingProductTimeProfiles > 0 && <>有 {activateSummary.missingProductTimeProfiles} 个工单尚未发布产品工序与工时。 </>}
+                    系统不会启用下周，请先完成准备。
+                  </div>
                 ) : (
                   <>
                     {activateSummary.warningCount > 0 && <div className="weekly-warning-message">仍有 {activateSummary.warningCount} 项警告。警告不阻断切换，但请确认已知悉。</div>}
@@ -433,7 +439,7 @@ export default function WeeklyPlanCenterShell({ user }: { user: CurrentUserDTO }
                 <p className="tool-note muted">不会删除生产文件、图纸资料库、连接器参数或 S3 对象。</p>
                 <div className="dialog-actions">
                   <button type="button" onClick={() => setActivateOpen(false)}>取消</button>
-                  <button className="primary-button" type="button" disabled={activateLoading || activateSummary.blockingAnomalyCount > 0 || confirmText.trim() !== 'START_NEXT_WEEK'} onClick={commitActivate}>{activateLoading ? '处理中...' : '确认启用下周'}</button>
+                  <button className="primary-button" type="button" disabled={activateLoading || activateSummary.blockingAnomalyCount > 0 || activateSummary.missingProductTimeProfiles > 0 || confirmText.trim() !== 'START_NEXT_WEEK'} onClick={commitActivate}>{activateLoading ? '处理中...' : '确认启用下周'}</button>
                 </div>
               </>
             )}
