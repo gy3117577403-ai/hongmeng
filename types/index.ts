@@ -431,6 +431,18 @@ export type WarehouseWeekOptionDTO = {
 export type ProductionPlanPriority = 'normal' | 'urgent' | 'insert';
 export type ProductionPlanOrderStatus = 'pending' | 'scheduled' | 'partially_released' | 'released' | 'paused' | 'cancelled' | 'completed';
 export type ProductionPlanReleaseState = 'draft' | 'preparation' | 'active' | 'archived';
+export type PlanningFlowStatus =
+  | 'material_exception'
+  | 'missing_drawing'
+  | 'missing_time'
+  | 'pending_material'
+  | 'pending_process'
+  | 'ready_release'
+  | 'next_preparation'
+  | 'current_execution'
+  | 'production'
+  | 'pending_archive'
+  | 'completed';
 
 export type ProductionPlanProductOptionDTO = {
   id: string;
@@ -462,6 +474,14 @@ export type ProductionPlanBatchDTO = {
   totalMillisecondsSnapshot?: string | null;
   warehouseStatus?: WarehouseMaterialStatus | 'not_created';
   processStatus?: ProcessRouteStatus | 'not_created';
+  warehouseCompletedAt?: string | null;
+  processConfirmedAt?: string | null;
+  processStartedAt?: string | null;
+  processCompletedAt?: string | null;
+  workOrderStartedAt?: string | null;
+  workOrderCompletedAt?: string | null;
+  currentProcessName?: string | null;
+  currentProcessStartedAt?: string | null;
   releasedAt?: string | null;
   activatedAt?: string | null;
   createdAt: string;
@@ -1039,6 +1059,8 @@ export type WorkflowItemDTO = {
   id: string;
   entityId: string;
   entityType: WorkflowEntityType;
+  batchId?: string | null;
+  workOrderId?: string | null;
   code: string;
   title: string;
   subtitle: string;

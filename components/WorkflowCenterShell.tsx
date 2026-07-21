@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  ArrowLeft,
   ArrowUpRight,
   CheckCircle2,
   ChevronRight,
@@ -39,6 +40,7 @@ type WorkflowResponse = {
   error?: string;
 };
 type Filters = { entityType: WorkflowEntityType | 'all'; status: WorkflowProcessStatus | 'all'; overdue: boolean };
+type WorkflowDeepLink = { batchId: string; workOrderId: string; fromPlanning: boolean };
 
 const emptySummary: WorkflowSummaryDTO = {
   total: 0, waiting: 0, processing: 0, verifying: 0, closed: 0, overdue: 0, issue: 0, change: 0, production: 0,
@@ -80,6 +82,23 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const listRef = useRef<HTMLDivElement>(null);
   const contextRef = useRef<HTMLElement>(null);
   const contextTriggerRef = useRef<HTMLButtonElement>(null);
+  const [deepLink, setDeepLink] = useState<WorkflowDeepLink>({ batchId: '', workOrderId: '', fromPlanning: false });
+  const [deepLinkReady, setDeepLinkReady] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const next: WorkflowDeepLink = {
+      batchId: params.get('batchId') || '',
+      workOrderId: params.get('workOrderId') || '',
+      fromPlanning: params.get('from') === 'planning',
+    };
+    if (next.batchId) selectedIdRef.current = `production-plan:${next.batchId}`;
+    setDeepLink(next);
+    if (next.batchId || next.workOrderId) {
+      setFilters(current => ({ ...current, entityType: 'production' }));
+    }
+    setDeepLinkReady(true);
+  }, []);
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -90,12 +109,18 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       if (filters.entityType !== 'all') params.set('entityType', filters.entityType);
       if (filters.status !== 'all') params.set('status', filters.status);
       if (filters.overdue) params.set('overdue', 'true');
+      if (deepLink.batchId) params.set('batchId', deepLink.batchId);
+      if (deepLink.workOrderId) params.set('workOrderId', deepLink.workOrderId);
       const data = await jsonRequest<WorkflowResponse>(`/api/workflows?${params.toString()}`);
       setItems(data.items);
       setSummary(data.summary);
       setTemplates(data.templates);
       const desired = selectedIdRef.current || sessionStorage.getItem('hm-workflow-selected') || '';
-      const nextSelected = data.items.find(item => item.id === desired) || data.items[0] || null;
+      const nextSelected = data.items.find(item => item.id === desired)
+        || data.items.find(item => deepLink.batchId && item.batchId === deepLink.batchId)
+        || data.items.find(item => deepLink.workOrderId && item.workOrderId === deepLink.workOrderId)
+        || data.items[0]
+        || null;
       selectedIdRef.current = nextSelected?.id || '';
       setSelected(nextSelected);
     } catch (loadError) {
@@ -103,18 +128,26 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     } finally {
       setLoading(false);
     }
-  }, [filters, keyword]);
+  }, [deepLink.batchId, deepLink.workOrderId, filters, keyword]);
 
   useEffect(() => {
+    if (!deepLinkReady) return;
     const timer = window.setTimeout(() => { void load(); }, keyword ? 260 : 0);
     return () => window.clearTimeout(timer);
-  }, [keyword, load]);
+  }, [deepLinkReady, keyword, load]);
 
   useEffect(() => {
     if (!selected) return;
     selectedIdRef.current = selected.id;
     sessionStorage.setItem('hm-workflow-selected', selected.id);
   }, [selected]);
+
+  useEffect(() => {
+    if (loading || !selected || (!deepLink.batchId && !deepLink.workOrderId)) return;
+    window.requestAnimationFrame(() => {
+      listRef.current?.querySelector<HTMLElement>('.workflow-list-card.selected')?.scrollIntoView({ block: 'nearest' });
+    });
+  }, [deepLink.batchId, deepLink.workOrderId, loading, selected]);
 
   useEffect(() => {
     const element = listRef.current;
@@ -193,7 +226,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
           title="流程中心"
           titleId="workflow-page-title"
           description="统一查看问题闭环、变更闭环和生产流转，不重复创建业务数据。"
-          actions={<button className="hm-workbench-button" type="button" disabled={loading} onClick={() => { void load(); }}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新流程</button>}
+          actions={<>{deepLink.fromPlanning && <a className="hm-workbench-button workflow-back-planning" href="/weekly-plan-center?restore=1"><ArrowLeft size={15} />返回计划中心</a>}<button className="hm-workbench-button" type="button" disabled={loading} onClick={() => { void load(); }}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新流程</button></>}
         />
 
         <section className="workflow-summary" aria-label="流程统计">
@@ -231,7 +264,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                 <section className="workflow-current-state"><div><span>当前节点</span><strong>{selected.currentStep}</strong><p>{selected.nextStep ? `下一节点：${selected.nextStep}` : '流程已到达终态'}</p></div><dl><div><dt>负责人</dt><dd>{selected.owner || '待分派'}</dd></div><div><dt>截止时间</dt><dd className={selected.isOverdue ? 'overdue' : ''}>{formatDate(selected.dueAt)}</dd></div><div><dt>最近更新</dt><dd>{formatDate(selected.updatedAt)}</dd></div></dl></section>
                 <section className="workflow-stepper"><header><h3>流程节点</h3><span>{selectedTemplate?.name || `${entityLabels[selected.entityType]}流程`}</span></header><ol>{selected.steps.map((step, index) => <li className={step.state} key={step.key}><span>{step.state === 'done' ? <CheckCircle2 size={16} /> : step.state === 'current' ? <CircleDot size={16} /> : index + 1}</span><div><strong>{step.label}</strong><small>{step.state === 'done' ? '已完成' : step.state === 'current' ? '当前节点' : '待进入'}</small></div>{index < selected.steps.length - 1 && <ChevronRight size={15} aria-hidden="true" />}</li>)}</ol></section>
                 <section className="workflow-activity"><header><h3>最近记录</h3><span>{selected.activities.length} 条</span></header><div>{selected.activities.map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}{!selected.activities.length && <p className="activity-empty">该流程暂时没有可展示的业务记录。</p>}</div></section>
-                <section className="workflow-source-note"><ListChecks size={18} /><div><strong>数据来源</strong><p>该条记录直接来自{selected.entityType === 'issue' ? '问题管理' : selected.entityType === 'change' ? '变更管理' : '当前启用的生产工单'}，状态更新请在来源模块完成。</p></div></section>
+                <section className="workflow-source-note"><ListChecks size={18} /><div><strong>数据来源</strong><p>该条记录直接来自{selected.entityType === 'issue' ? '问题管理' : selected.entityType === 'change' ? '变更管理' : '计划批次及其关联生产工单'}，状态更新请在来源模块完成。</p></div></section>
               </div>
               <footer className="workflow-detail-actions"><a href={selected.route}>打开来源业务<ArrowUpRight size={14} /></a>{selected.sourceRoute && <a className="secondary" href={selected.sourceRoute}>查看关联资料</a>}{compactContext && <button ref={contextTriggerRef} type="button" onClick={() => setContextOpen(true)}>流程模板与入口</button>}</footer>
             </>}

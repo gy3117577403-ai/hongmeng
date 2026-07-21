@@ -1091,6 +1091,11 @@ main.planning-center-shell.hm-workbench-root {
   white-space: nowrap;
 }
 
+.planning-center-shell .planning-status {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
 .planning-center-shell .planning-status small {
   display: block;
   margin-top: 2px;
@@ -1121,6 +1126,58 @@ main.planning-center-shell.hm-workbench-root {
 .planning-center-shell .planning-status.status-exception {
   background: #fff1f0;
   color: #b42318;
+}
+
+.planning-center-shell .planning-flow-link {
+  width: fit-content;
+  min-width: 72px;
+  padding: 4px 6px;
+  display: inline-flex;
+  align-items: flex-start;
+  flex-direction: column;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: #5f6d7e;
+  font-size: 9px;
+  font-weight: 750;
+  line-height: 1.25;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.planning-center-shell .planning-flow-link small {
+  margin-top: 2px;
+  color: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.72;
+}
+
+.planning-center-shell .planning-flow-link.tone-complete,
+.planning-center-shell .planning-flow-link.tone-ready {
+  background: #edf8f0;
+  color: #287a45;
+}
+
+.planning-center-shell .planning-flow-link.tone-warning {
+  background: #fff7e6;
+  color: #9a5b08;
+}
+
+.planning-center-shell .planning-flow-link.tone-danger {
+  background: #fff1f0;
+  color: #b42318;
+}
+
+.planning-center-shell .planning-flow-link.tone-info {
+  background: #eef5ff;
+  color: #2468b4;
+}
+
+.planning-center-shell .planning-flow-link:hover,
+.planning-center-shell .planning-flow-link:focus-visible {
+  border-color: currentColor;
+  outline: none;
 }
 
 .planning-center-shell .planning-row-actions {

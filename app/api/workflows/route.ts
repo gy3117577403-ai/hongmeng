@@ -17,6 +17,8 @@ export async function GET(req: NextRequest) {
     const entityType = String(params.get('entityType') || 'all') as WorkflowEntityType | 'all';
     const status = String(params.get('status') || 'all') as WorkflowProcessStatus | 'all';
     const overdue = params.get('overdue') === 'true';
+    const batchId = String(params.get('batchId') || '').trim().slice(0, 80);
+    const workOrderId = String(params.get('workOrderId') || '').trim().slice(0, 80);
 
     if (!entityTypes.includes(entityType)) {
       return NextResponse.json({ ok: false, error: '流程类型筛选不正确' }, { status: 400 });
@@ -25,7 +27,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: '流程状态筛选不正确' }, { status: 400 });
     }
 
-    const result = await loadWorkflowCenter({ keyword, entityType, status, overdue });
+    const result = await loadWorkflowCenter({ keyword, entityType, status, overdue, batchId, workOrderId });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

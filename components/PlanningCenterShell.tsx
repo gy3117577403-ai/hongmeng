@@ -40,6 +40,7 @@ import {
   planningReadinessState,
   type PlanningReadinessFilter,
 } from '@/lib/planning-readiness';
+import { resolvePlanningFlow } from '@/lib/planning-flow';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
   CurrentUserDTO,
@@ -53,6 +54,19 @@ import type {
 
 type PlanningView = 'schedule' | 'orders' | 'preparation' | 'changes' | 'history';
 type ProductEntryMode = 'select' | 'create';
+
+const PLANNING_RETURN_STATE_KEY = 'hm-planning-return-state';
+
+type PlanningReturnState = {
+  view: PlanningView;
+  keyword: string;
+  customer: string;
+  priority: 'all' | ProductionPlanPriority;
+  readinessFilters: PlanningReadinessFilter[];
+  expandedOrderId: string;
+  scheduleScrollTop: number;
+  windowScrollY: number;
+};
 
 const readinessOptions: Array<{
   id: PlanningReadinessFilter;
@@ -235,25 +249,38 @@ function priorityText(priority: ProductionPlanPriority): string {
   return '一般';
 }
 
-function releaseText(
-  state: ProductionPlanBatchDTO['releaseState'],
-  weekStartDate?: string,
-  currentWeekStartDate?: string,
-): string {
-  if (state === 'preparation') return '下周预备';
-  if (state === 'active') {
-    if (weekStartDate && currentWeekStartDate && weekStartDate < currentWeekStartDate) return '遗留执行';
-    return '本周执行';
-  }
-  if (state === 'archived') return '历史归档';
-  return '排程草稿';
+function flowTime(value?: string | null): string {
+  if (!value) return '';
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date(value));
 }
 
-function preparationText(batch: ProductionPlanBatchDTO): string {
-  if (batch.warehouseStatus === 'exception') return '仓库异常';
-  if (batch.warehouseStatus !== 'completed') return '待配料';
-  if (batch.processStatus === 'not_created' || batch.processStatus === 'draft') return '待工艺';
-  return '准备完成';
+function weekLabel(batch: ProductionPlanBatchDTO, periods?: PlanningPayload['periods']): string {
+  if (!periods) return '计划周';
+  if (batch.weekStartDate === periods.current.weekStartDate) return '本周';
+  if (batch.weekStartDate === periods.next.weekStartDate) return '下周';
+  if (batch.weekEndDate < periods.current.weekStartDate) return '历史周';
+  return '未来周';
+}
+
+function planningFlow(order: ProductionPlanOrderDTO, batch: ProductionPlanBatchDTO) {
+  return resolvePlanningFlow({
+    releaseState: batch.releaseState,
+    drawingReady: order.drawingFileCount > 0,
+    timeReady: Boolean(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order)),
+    warehouseStatus: batch.warehouseStatus,
+    processStatus: batch.processStatus,
+    currentProcessName: batch.currentProcessName,
+    workOrderStartedAt: batch.workOrderStartedAt,
+    workOrderCompletedAt: batch.workOrderCompletedAt,
+    processCompletedAt: batch.processCompletedAt,
+  });
 }
 
 function changeActionText(action: string): string {
@@ -328,6 +355,9 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const productSearchInputRef = useRef<HTMLInputElement>(null);
   const readinessFilterRef = useRef<HTMLDivElement>(null);
   const readinessTriggerRef = useRef<HTMLButtonElement>(null);
+  const scheduleScrollRef = useRef<HTMLDivElement>(null);
+  const pendingReturnScrollRef = useRef<{ scheduleScrollTop: number; windowScrollY: number } | null>(null);
+  const pendingBatchFocusRef = useRef<string | null>(null);
   const lastExternalRefreshRef = useRef(0);
   const activeDialog = Boolean(orderDialog || batchDialog || releasePreview || deletePreview || activationPreview);
 
@@ -384,10 +414,36 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   }, [productPickerOpen]);
 
   useEffect(() => {
-    const values = new URLSearchParams(window.location.search)
-      .get('readiness')
-      ?.split(',')
-      .filter(isPlanningReadinessFilter) || [];
+    const search = new URLSearchParams(window.location.search);
+    if (search.get('restore') === '1') {
+      const stored = window.sessionStorage.getItem(PLANNING_RETURN_STATE_KEY);
+      if (stored) {
+        try {
+          const state = JSON.parse(stored) as PlanningReturnState;
+          setView(state.view);
+          setKeyword(state.keyword);
+          setCustomer(state.customer);
+          setPriority(state.priority);
+          setReadinessFilters(state.readinessFilters.filter(isPlanningReadinessFilter));
+          setExpandedOrderId(state.expandedOrderId);
+          pendingReturnScrollRef.current = {
+            scheduleScrollTop: state.scheduleScrollTop || 0,
+            windowScrollY: state.windowScrollY || 0,
+          };
+          window.sessionStorage.removeItem(PLANNING_RETURN_STATE_KEY);
+          return;
+        } catch {
+          window.sessionStorage.removeItem(PLANNING_RETURN_STATE_KEY);
+        }
+      }
+    }
+    const batchId = search.get('batchId');
+    if (batchId) {
+      setView('schedule');
+      setExpandedOrderId(batchId);
+      pendingBatchFocusRef.current = batchId;
+    }
+    const values = search.get('readiness')?.split(',').filter(isPlanningReadinessFilter) || [];
     if (values.length === 0) return;
     const readyValue = values.find(value => readyFilters.has(value));
     setReadinessFilters(readyValue ? [readyValue] : [...new Set(values)]);
@@ -529,6 +585,29 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const scheduleRows = useMemo(() => baseScheduleRows.filter(({ order, batch }) => (
     matchesPlanningReadiness(order, batch, readinessFilters)
   )), [baseScheduleRows, readinessFilters]);
+  useEffect(() => {
+    if (loading || !pendingReturnScrollRef.current) return;
+    const saved = pendingReturnScrollRef.current;
+    pendingReturnScrollRef.current = null;
+    const frame = window.requestAnimationFrame(() => {
+      if (scheduleScrollRef.current) scheduleScrollRef.current.scrollTop = saved.scheduleScrollTop;
+      window.scrollTo({ top: saved.windowScrollY, behavior: 'auto' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, scheduleRows.length]);
+  useEffect(() => {
+    if (loading || !pendingBatchFocusRef.current || !scheduleScrollRef.current) return;
+    const batchId = pendingBatchFocusRef.current;
+    const row = Array.from(scheduleScrollRef.current.querySelectorAll<HTMLTableRowElement>('tr[data-batch-id]'))
+      .find(item => item.dataset.batchId === batchId);
+    if (!row) return;
+    pendingBatchFocusRef.current = null;
+    const frame = window.requestAnimationFrame(() => {
+      row.scrollIntoView({ block: 'center', behavior: 'auto' });
+      row.querySelector<HTMLButtonElement>('.planning-product-link')?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, scheduleRows.length]);
   const basePreparationRows = useMemo(() => baseScheduleRows.filter(item => (
     item.batch.releaseState === 'preparation'
       && (!periods || item.batch.weekStartDate === periods.next.weekStartDate)
@@ -566,6 +645,20 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     if (next.length) url.searchParams.set('readiness', next.join(','));
     else url.searchParams.delete('readiness');
     window.history.replaceState(window.history.state, '', url);
+  }
+
+  function rememberPlanningState(): void {
+    const state: PlanningReturnState = {
+      view,
+      keyword,
+      customer,
+      priority,
+      readinessFilters,
+      expandedOrderId,
+      scheduleScrollTop: scheduleScrollRef.current?.scrollTop || 0,
+      windowScrollY: window.scrollY,
+    };
+    window.sessionStorage.setItem(PLANNING_RETURN_STATE_KEY, JSON.stringify(state));
   }
 
   function toggleReadinessFilter(filter: PlanningReadinessFilter): void {
@@ -1116,31 +1209,38 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
 
           <div className="planning-schedule-board">
             <header className="planning-board-heading"><div><span>排程清单</span><h2>本周与下周生产批次</h2></div><div><button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button><em>{readinessFilters.length ? `筛选 ${scheduleRows.length} / 全部 ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`}</em></div></header>
-            <div className="planning-table-scroll hm-scroll-region" tabIndex={0}>
+            <div ref={scheduleScrollRef} className="planning-table-scroll hm-scroll-region" tabIndex={0}>
               <table className="planning-table">
-                <thead><tr><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>单件 / 总工时</th><th>图纸</th><th>仓库</th><th>工艺</th><th>状态</th><th>操作</th></tr></thead>
-                <tbody>{scheduleRows.map(({ order, batch }) => <Fragment key={batch.id}>
-                  <tr className={`state-${batch.releaseState} ${expandedOrderId === batch.id ? 'expanded' : ''}`}>
+                <thead><tr><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>单件 / 总工时</th><th>图纸</th><th>仓库</th><th>工艺</th><th>流程状态</th><th>操作</th></tr></thead>
+                <tbody>{scheduleRows.map(({ order, batch }) => {
+                  const flow = planningFlow(order, batch);
+                  const processFinishedAt = batch.processCompletedAt || batch.processConfirmedAt;
+                  const flowFinishedAt = batch.workOrderCompletedAt || batch.processCompletedAt;
+                  const workflowParams = new URLSearchParams({ entityType: 'production', batchId: batch.id, from: 'planning' });
+                  if (batch.workOrderId) workflowParams.set('workOrderId', batch.workOrderId);
+                  return <Fragment key={batch.id}>
+                  <tr data-batch-id={batch.id} className={`state-${batch.releaseState} ${expandedOrderId === batch.id ? 'expanded' : ''}`}>
                     <td className="select-cell"><input type="checkbox" aria-label={`选择 ${order.specification} 第 ${batch.batchNo} 批`} checked={selectedBatchIds.includes(batch.id)} disabled={batch.releaseState === 'archived'} onChange={() => toggleBatch(batch.id)} /></td>
                     <td><button className="planning-product-link" type="button" title={`${order.specification} · ${order.productName}`} onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><strong>{order.specification}</strong><span>{order.customerName} · {order.productName}</span><small>{order.salesperson ? `业务员 ${order.salesperson} · ` : ''}第 {batch.batchNo} 批</small></button></td>
                     <td><b>{batch.quantity.toLocaleString()}</b><small>订单 {order.orderQuantity.toLocaleString()}</small></td>
-                    <td><strong>{batch.weekStartDate.slice(5)} - {batch.weekEndDate.slice(5)}</strong></td>
+                    <td><strong title={`${batch.weekStartDate} 至 ${batch.weekEndDate}`}>{weekLabel(batch, periods)}</strong></td>
                     <td><strong>{batch.plannedCompletionDate.slice(5)}</strong></td>
                     <td><strong className={batch.plannedCompletionDate > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate.slice(5)}</strong></td>
                     <td><strong>{duration(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
                     <td><span className={`planning-status ${order.drawingFileCount ? 'ready' : 'warning'}`}>{order.drawingFileCount ? `${order.drawingFileCount} 文件` : order.drawingLibraryItemId ? '待上传' : '未建档'}</span></td>
-                    <td><span className={`planning-status status-${batch.warehouseStatus}`}>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</span></td>
-                    <td><span className={`planning-status status-${batch.processStatus}`}>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : batch.processStatus === 'not_created' ? '待生成' : '待编排'}</span></td>
-                    <td><span className={`planning-release state-${batch.releaseState}`}>{releaseText(batch.releaseState, batch.weekStartDate, periods?.current.weekStartDate)}</span></td>
+                    <td><span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span></td>
+                    <td><span className={`planning-status status-${batch.processStatus}`}><strong>{batch.processStatus === 'completed' ? '已完成' : batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' ? '已确认' : batch.processStatus === 'not_created' ? '待生成' : '待编排'}</strong>{processFinishedAt && <small>{flowTime(processFinishedAt)}</small>}</span></td>
+                    <td><a className={`planning-flow-link tone-${flow.tone}`} href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState} title="查看该批次完整流程"><strong>{flow.label}</strong>{flowFinishedAt && <small>{flowTime(flowFinishedAt)}</small>}</a></td>
                     <td><div className="planning-row-actions"><button type="button" title="调整批次" aria-label="调整批次" onClick={event => openBatch(order, event.currentTarget, batch)}><Pencil size={15} /></button>{batch.releaseState === 'draft' && <button className="danger" type="button" title="删除批次" aria-label="删除批次" onClick={() => { void deleteBatch(batch); }}><Trash2 size={15} /></button>}<button type="button" title="展开详情" aria-label="展开详情" onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><ChevronDown size={15} /></button></div></td>
                   </tr>
                   {expandedOrderId === batch.id && <tr className="planning-inspector-row" key={`${batch.id}-detail`}><td colSpan={12}><div className="planning-inline-inspector">
                     <div><span>订单信息</span><strong>{order.salesperson ? `业务员 ${order.salesperson}` : '业务员未设置'}</strong><small>{order.remark || '无备注'}</small></div>
-                    <div><span>准备状态</span><strong>{preparationText(batch)}</strong><small>仓库 {batch.warehouseStatus} · 工艺 {batch.processStatus}</small></div>
+                    <div><span>流程状态</span><strong>{flow.label}</strong><small>仓库 {batch.warehouseStatus} · 工艺 {batch.processStatus}</small></div>
                     <div><span>数据来源</span><strong>{order.currentProductTimeVersion ? `产品工时 V${order.currentProductTimeVersion}` : order.planningUnitMilliseconds ? '订单计划工时' : '工时待维护'}</strong><small>{order.currentProductTimeVersion ? '正式工序工时' : '计划估算，投产前仍需发布工序工时'}</small></div>
-                    <nav><a href={order.drawingLibraryItemId ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`}>{order.drawingLibraryItemId ? '进入图纸档案' : '建立图纸档案'}</a><a href="/workspace/warehouse">仓库任务</a><a href={productTimeHref(order, periods)}>工艺与工时</a></nav>
+                    <nav><a href={order.drawingLibraryItemId ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`}>{order.drawingLibraryItemId ? '进入图纸档案' : '建立图纸档案'}</a><a href="/workspace/warehouse">仓库任务</a><a href={productTimeHref(order, periods)}>工艺与工时</a><a href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState}>查看完整流程</a></nav>
                   </div></td></tr>}
-                </Fragment>)}</tbody>
+                </Fragment>;
+                })}</tbody>
               </table>
               {!loading && !scheduleRows.length && <div className="planning-empty"><CalendarClock /><strong>{readinessFilters.length ? '没有符合准备状态的批次' : '还没有排产批次'}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : '从左侧订单池选择产品并安排本周或下周批次。'}</span></div>}
             </div>

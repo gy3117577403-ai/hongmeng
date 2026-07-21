@@ -44,8 +44,31 @@ export const productionPlanOrderInclude = {
       workOrder: {
         select: {
           id: true,
-          materialTask: { select: { status: true } },
-          processRoute: { select: { status: true } },
+          startedAt: true,
+          completedAt: true,
+          materialTask: {
+            select: {
+              status: true,
+              completedAt: true,
+            },
+          },
+          processRoute: {
+            select: {
+              status: true,
+              confirmedAt: true,
+              startedAt: true,
+              completedAt: true,
+              steps: {
+                orderBy: { position: 'asc' as const },
+                select: {
+                  processName: true,
+                  status: true,
+                  startedAt: true,
+                  completedAt: true,
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -783,6 +806,11 @@ export async function deleteProductionPlanBatches(
 
 function batchDto(batch: ProductionPlanOrderRecord['batches'][number]): ProductionPlanBatchDTO {
   const state = batch.releaseState as ProductionPlanReleaseState;
+  const route = batch.workOrder?.processRoute;
+  const currentStep = route?.steps.find(step => step.status === 'current')
+    || route?.steps.find(step => step.status === 'pending')
+    || [...(route?.steps || [])].reverse().find(step => step.status === 'completed')
+    || null;
   return {
     id: batch.id,
     planOrderId: batch.planOrderId,
@@ -798,7 +826,15 @@ function batchDto(batch: ProductionPlanOrderRecord['batches'][number]): Producti
     unitMillisecondsSnapshot: batch.unitMillisecondsSnapshot,
     totalMillisecondsSnapshot: batch.totalMillisecondsSnapshot?.toString() || null,
     warehouseStatus: (batch.workOrder?.materialTask?.status as ProductionPlanBatchDTO['warehouseStatus']) || 'not_created',
-    processStatus: (batch.workOrder?.processRoute?.status as ProductionPlanBatchDTO['processStatus']) || 'not_created',
+    processStatus: (route?.status as ProductionPlanBatchDTO['processStatus']) || 'not_created',
+    warehouseCompletedAt: batch.workOrder?.materialTask?.completedAt?.toISOString() || null,
+    processConfirmedAt: route?.confirmedAt?.toISOString() || null,
+    processStartedAt: route?.startedAt?.toISOString() || null,
+    processCompletedAt: route?.completedAt?.toISOString() || null,
+    workOrderStartedAt: batch.workOrder?.startedAt?.toISOString() || null,
+    workOrderCompletedAt: batch.workOrder?.completedAt?.toISOString() || null,
+    currentProcessName: currentStep?.processName || null,
+    currentProcessStartedAt: currentStep?.startedAt?.toISOString() || null,
     releasedAt: batch.releasedAt?.toISOString() || null,
     activatedAt: batch.activatedAt?.toISOString() || null,
     createdAt: batch.createdAt.toISOString(),

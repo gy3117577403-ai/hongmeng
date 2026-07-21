@@ -67,5 +67,5 @@ test('implementation, verification and closure enforce their completion evidence
 
 test('workflow center exposes only real source modules', () => {
   assert.deepEqual(workflowTemplates.map(item => item.key), ['issue', 'change', 'production']);
-  assert.deepEqual(workflowTemplates.map(item => item.route), ['/workspace/issues', '/workspace/changes', '/production']);
+  assert.deepEqual(workflowTemplates.map(item => item.route), ['/workspace/issues', '/workspace/changes', '/weekly-plan-center']);
 });
