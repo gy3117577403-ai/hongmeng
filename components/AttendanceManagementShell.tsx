@@ -479,6 +479,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
             <button className={tab === 'abnormal' ? 'active' : ''} type="button" role="tab" aria-selected={tab === 'abnormal'} onClick={() => setTab('abnormal')}><FileWarning size={16} />异常工时</button>
             <button className={tab === 'quality' ? 'active' : ''} type="button" role="tab" aria-selected={tab === 'quality'} onClick={() => setTab('quality')}><ShieldCheck size={16} />品质确认 <em>{eventSummary.pendingCount}</em></button>
           </div>
+          <a className="attendance-employee-link" href="/workspace/employees" title="打开员工档案"><UsersRound size={16} />员工档案</a>
           <label className="attendance-date"><span>基准日期</span><input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
           {tab !== 'attendance' && <div className="attendance-period" role="group" aria-label="异常汇总周期">{(['today', 'week', 'month'] as Period[]).map(item => <button className={period === item ? 'active' : ''} type="button" key={item} onClick={() => setPeriod(item)}>{periodLabel(item)}</button>)}</div>}
           <button className="icon-button" type="button" aria-label="刷新" title="刷新" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={17} /></button>
@@ -506,7 +507,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
                   <button type="button" onClick={() => openAttendance(employee)}><Pencil size={15} />{record ? '编辑' : '登记'}</button>
                 </div>;
               })}
-              {!loading && !filteredEmployees.length && <div className="attendance-empty"><UsersRound /><strong>没有可登记考勤的员工</strong><span>请先在标准工时的员工档案中启用考勤。</span></div>}
+              {!loading && !filteredEmployees.length && <div className="attendance-empty"><UsersRound /><strong>没有可登记考勤的员工</strong><span>请先在员工档案中启用考勤。</span><a href="/workspace/employees">打开员工档案</a></div>}
             </div>
           </section>
         ) : (

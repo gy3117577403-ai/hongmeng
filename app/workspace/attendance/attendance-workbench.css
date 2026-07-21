@@ -12,6 +12,8 @@
 .attendance-tabs button, .attendance-period button { min-height: 34px; padding: 0 13px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 6px; background: transparent; color: #66717e; font-size: 11px; font-weight: 800; }
 .attendance-tabs button.active, .attendance-period button.active { background: #fff; color: #c2410c; box-shadow: 0 1px 4px rgba(31, 41, 51, .12); }
 .attendance-tabs button em { min-width: 17px; height: 17px; padding: 0 4px; display: inline-grid; place-items: center; border-radius: 999px; background: #fce7db; color: #b94700; font-size: 9px; font-style: normal; }
+.attendance-employee-link { min-height: 38px; padding: 0 11px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--hm-color-border); border-radius: 8px; background: #fff; color: #4a5664; font-size: 10px; font-weight: 800; text-decoration: none; white-space: nowrap; }
+.attendance-employee-link:hover { border-color: #ffb27f; color: #c2410c; }
 .attendance-date { height: 38px; margin-left: auto; padding: 0 9px; display: flex; align-items: center; gap: 7px; border: 1px solid var(--hm-color-border); border-radius: 8px; color: #66717e; font-size: 10px; font-weight: 800; }
 .attendance-date input { border: 0; outline: 0; background: transparent; font: inherit; }
 .attendance-toolbar .primary-button, .attendance-toolbar .icon-button { min-height: 38px; }
@@ -69,6 +71,8 @@
 .attendance-empty svg { width: 34px; height: 34px; color: #d95600; }
 .attendance-empty strong { color: #394553; font-size: 13px; }
 .attendance-empty span { font-size: 10px; }
+.attendance-empty a { color: #c2410c; font-size: 10px; font-weight: 800; text-decoration: none; }
+.attendance-empty a:hover { text-decoration: underline; }
 .attendance-dialog-backdrop { position: fixed; z-index: 160; inset: 0; padding: 24px; display: grid; place-items: center; background: rgba(27, 35, 44, .42); backdrop-filter: blur(2px); }
 .attendance-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid #e2e7eb; border-radius: 14px; background: #fff; box-shadow: 0 22px 60px rgba(24, 32, 40, .24); overflow: hidden; }
 .attendance-dialog.abnormal-dialog { width: min(820px, calc(100vw - 32px)); }
