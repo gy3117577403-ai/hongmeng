@@ -258,7 +258,7 @@ test('batch labor time overrides product and order defaults', () => {
   assert.equal(effectivePlanningUnitMilliseconds(null, null, null), null);
 });
 
-test('both current and next week releases block drafts without unit labor time', async () => {
+test('both current and next week releases require a published product process profile', async () => {
   const tx = {
     productionPlanBatch: {
       findMany: async () => [{
@@ -266,18 +266,15 @@ test('both current and next week releases block drafts without unit labor time',
         quantity: 20,
         releaseState: 'draft',
         weekStartDate: new Date('2026-07-20T04:00:00.000Z'),
-        unitMillisecondsSnapshot: null,
+        unitMillisecondsSnapshot: 20_000,
         planOrder: {
           drawingLibraryItemId: 'drawing-product-1',
           customerName: '测试客户',
           productName: '测试产品',
           specification: 'TEST-001',
-          planningUnitMilliseconds: null,
+          planningUnitMilliseconds: 20_000,
         },
       }],
-    },
-    processTemplate: {
-      findFirst: async () => ({ id: 'template-1', _count: { steps: 1 } }),
     },
     drawingLibraryItem: {
       findFirst: async () => ({
@@ -297,6 +294,48 @@ test('both current and next week releases block drafts without unit labor time',
       now: new Date('2026-07-20T04:00:00.000Z'),
     });
     assert.equal(preview.blockers, 1);
-    assert.match(preview.items[0].blockers[0], /不能下达周计划/);
+    assert.match(preview.items[0].blockers[0], /产品工序与工时尚未发布/);
   }
+});
+
+test('published product process profile satisfies weekly release labor requirement', async () => {
+  const tx = {
+    productionPlanBatch: {
+      findMany: async () => [{
+        id: 'batch-1',
+        quantity: 20,
+        releaseState: 'draft',
+        weekStartDate: new Date('2026-07-20T04:00:00.000Z'),
+        unitMillisecondsSnapshot: null,
+        planOrder: {
+          drawingLibraryItemId: 'drawing-product-1',
+          customerName: '测试客户',
+          productName: '测试产品',
+          specification: 'TEST-001',
+          planningUnitMilliseconds: null,
+        },
+      }],
+    },
+    drawingLibraryItem: {
+      findFirst: async () => ({
+        id: 'drawing-product-1',
+        customerName: '测试客户',
+        productName: '测试产品',
+        specification: 'TEST-001',
+        productTimeProfiles: [{
+          id: 'profile-1',
+          version: 1,
+          entries: [{ unitMilliseconds: 12_000 }, { unitMilliseconds: 8_000 }],
+        }],
+      }),
+    },
+  } as unknown as Parameters<typeof previewProductionPlanRelease>[0];
+
+  const preview = await previewProductionPlanRelease(tx, {
+    batchIds: ['batch-1'],
+    target: 'active',
+    now: new Date('2026-07-20T04:00:00.000Z'),
+  });
+  assert.equal(preview.blockers, 0);
+  assert.equal(preview.items[0].blockers.length, 0);
 });

@@ -266,13 +266,13 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                 <section className="workflow-activity"><header><h3>最近记录</h3><span>{selected.activities.length} 条</span></header><div>{selected.activities.map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}{!selected.activities.length && <p className="activity-empty">该流程暂时没有可展示的业务记录。</p>}</div></section>
                 <section className="workflow-source-note"><ListChecks size={18} /><div><strong>数据来源</strong><p>该条记录直接来自{selected.entityType === 'issue' ? '问题管理' : selected.entityType === 'change' ? '变更管理' : '计划批次及其关联生产工单'}，状态更新请在来源模块完成。</p></div></section>
               </div>
-              <footer className="workflow-detail-actions"><a href={selected.route}>打开来源业务<ArrowUpRight size={14} /></a>{selected.sourceRoute && <a className="secondary" href={selected.sourceRoute}>查看关联资料</a>}{compactContext && <button ref={contextTriggerRef} type="button" onClick={() => setContextOpen(true)}>流程模板与入口</button>}</footer>
+              <footer className="workflow-detail-actions"><a href={selected.route}>打开来源业务<ArrowUpRight size={14} /></a>{selected.sourceRoute && <a className="secondary" href={selected.sourceRoute}>查看关联资料</a>}{compactContext && <button ref={contextTriggerRef} type="button" onClick={() => setContextOpen(true)}>流程上下文与入口</button>}</footer>
             </>}
           </section>
 
-          {compactContext && <button className={`workflow-context-scrim ${contextOpen ? 'open' : ''}`} type="button" aria-label="关闭流程模板面板" onClick={() => setContextOpen(false)} />}
-          <aside ref={contextRef} className={`workflow-context ${compactContext && contextOpen ? 'open' : ''}`} aria-label="流程模板和快速入口">
-            <header><div><span>业务流程</span><h2>模板与快速入口</h2></div>{compactContext && <button type="button" aria-label="关闭流程模板面板" title="关闭" onClick={() => { setContextOpen(false); window.requestAnimationFrame(() => contextTriggerRef.current?.focus()); }}><X size={18} /></button>}</header>
+          {compactContext && <button className={`workflow-context-scrim ${contextOpen ? 'open' : ''}`} type="button" aria-label="关闭流程上下文面板" onClick={() => setContextOpen(false)} />}
+          <aside ref={contextRef} className={`workflow-context ${compactContext && contextOpen ? 'open' : ''}`} aria-label="流程上下文和快速入口">
+            <header><div><span>业务流程</span><h2>流程上下文与入口</h2></div>{compactContext && <button type="button" aria-label="关闭流程上下文面板" title="关闭" onClick={() => { setContextOpen(false); window.requestAnimationFrame(() => contextTriggerRef.current?.focus()); }}><X size={18} /></button>}</header>
             <div className="workflow-context-scroll hm-scroll-region">
               <section className="workflow-governance"><TimerReset size={20} /><div><strong>一处查看，回源处理</strong><p>流程中心不复制业务数据，避免同一事项出现两套状态。</p></div></section>
               <section className="workflow-templates"><h3>已接入流程</h3>{templates.map(template => {

@@ -522,16 +522,10 @@ export async function previewProductionPlanRelease(
   tx: Prisma.TransactionClient,
   input: { batchIds: string[]; target: 'preparation' | 'active'; now?: Date },
 ): Promise<ProductionPlanReleasePreview> {
-  const [batches, defaultTemplate] = await Promise.all([
-    tx.productionPlanBatch.findMany({
-      where: { id: { in: input.batchIds }, deletedAt: null, planOrder: { deletedAt: null } },
-      include: { planOrder: true },
-    }),
-    tx.processTemplate.findFirst({
-      where: { isDefault: true, isActive: true },
-      select: { id: true, _count: { select: { steps: true } } },
-    }),
-  ]);
+  const batches = await tx.productionPlanBatch.findMany({
+    where: { id: { in: input.batchIds }, deletedAt: null, planOrder: { deletedAt: null } },
+    include: { planOrder: true },
+  });
   if (batches.length !== input.batchIds.length) throw new Error('PLAN_BATCH_SELECTION_INVALID');
 
   const targetWeek = productionPlanTargetWeek(input.target, input.now);
@@ -555,14 +549,8 @@ export async function previewProductionPlanRelease(
       );
     }
     if (!refs.drawingLibraryItemId) warnings.push('未匹配图纸资料');
-    if (!effectiveUnitMilliseconds) {
-      blockers.push('未填写单件工时，不能下达周计划');
-    } else if (!refs.productTimeProfileId) {
-      warnings.push('产品工序工时尚未发布，当前使用批次单根工时作为计划工时');
-    }
-    if (!refs.productTimeProfileId && (!defaultTemplate || defaultTemplate._count.steps === 0)) {
-      warnings.push('尚无可用工艺路线，将保留为待编排');
-    }
+    if (!refs.productTimeProfileId) blockers.push('产品工序与工时尚未发布，不能下达周计划');
+    else if (!effectiveUnitMilliseconds) blockers.push('已发布产品工时无有效总工时，不能下达周计划');
     items.push({
       batchId: batch.id,
       specification: batch.planOrder.specification,
@@ -977,6 +965,7 @@ export async function releaseProductionPlanBatch(
   const now = input.now || new Date();
   const alignedWeek = alignProductionPlanBatchWeek(batch, input.target, now);
   const references = await resolvePlanningReferences(tx, batch.planOrder);
+  if (!references.productTimeProfileId) throw new Error('PRODUCT_TIME_PROFILE_REQUIRED');
   const effectiveUnitMilliseconds = effectivePlanningUnitMilliseconds(
     batch.unitMillisecondsSnapshot,
     references.unitMilliseconds,
@@ -1051,19 +1040,7 @@ export async function releaseProductionPlanBatch(
 
   const warnings: string[] = [];
   if (!references.drawingLibraryItemId) warnings.push('未匹配图纸资料，工艺需人工核对');
-  if (!references.productTimeProfileId && effectiveUnitMilliseconds) {
-    warnings.push('产品工序工时尚未发布，当前使用批次单根工时作为计划工时');
-  }
-  try {
-    await createWorkOrderProcessRoute(tx, { workOrderId: workOrder.id, actorId: input.actorId });
-  } catch (error) {
-    const codeValue = error instanceof Error ? error.message : '';
-    if (codeValue === 'PROCESS_TEMPLATE_NOT_FOUND' || codeValue === 'PROCESS_TEMPLATE_EMPTY') {
-      warnings.push('尚无可用工艺路线，已保留为待编排');
-    } else {
-      throw error;
-    }
-  }
+  await createWorkOrderProcessRoute(tx, { workOrderId: workOrder.id, actorId: input.actorId });
 
   await tx.productionPlanBatch.update({
     where: { id: batch.id },

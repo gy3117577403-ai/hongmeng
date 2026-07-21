@@ -69,8 +69,8 @@ export async function POST(req: NextRequest) {
         productTimeProfile ? productTimeTotalMilliseconds(productTimeProfile.entries) : null,
         batch.planOrder.planningUnitMilliseconds,
       );
-      if (!effectiveUnitMilliseconds) blockers.push('未填写单根工时，不能启用生产');
-      else if (!productTimeProfile) warnings.push('产品工序工时尚未发布，当前使用批次单根工时');
+      if (!productTimeProfile) blockers.push('产品工序与工时尚未发布，不能启用生产');
+      else if (!effectiveUnitMilliseconds) blockers.push('已发布产品工时无有效总工时，不能启用生产');
       if (warehouse !== 'completed') warnings.push(warehouse === 'exception' ? '仓库存在异常' : '仓库尚未完成配料');
       if (process === 'not_created' || process === 'draft') warnings.push('工艺路线尚未确认');
       if (chinaDate(range.start) !== chinaDate(targetRange.start)) {
