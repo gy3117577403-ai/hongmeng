@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import { reconcileDraftProductTimeRoutes } from '@/lib/process-routing';
 import { reconcileFutureActiveProductionPlanWeeks } from '@/lib/production-planning';
 import {
   loadProductionExecution,
   parseProductionExecutionView,
+  productionWeekWhere,
   productionFiltersFromSearchParams,
   resolveProductionWeek,
 } from '@/lib/production-execution';
@@ -23,6 +25,10 @@ export async function GET(req: NextRequest) {
     await prisma.$transaction(tx => reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id }));
     const params = req.nextUrl.searchParams;
     const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'), params.get('scope'));
+    await prisma.$transaction(tx => reconcileDraftProductTimeRoutes(tx, {
+      workOrderWhere: productionWeekWhere(week),
+      actorId: user.id,
+    }));
     const data = await loadProductionExecution({
       week,
       filters: productionFiltersFromSearchParams(params),

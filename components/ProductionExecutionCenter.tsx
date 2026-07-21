@@ -1958,14 +1958,20 @@ function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu, ope
 function ProcessRouteStrip({ order }: { order: ProductionOrder }) {
   const route = order.processRoute;
   if (!route) return null;
-  const label = route.status === 'draft'
-    ? '工艺待确认'
+  const productTimePending = route.status === 'draft' && route.routeSource === 'product_time_pending';
+  const label = productTimePending
+    ? '产品工序待发布'
+    : route.status === 'draft'
+      ? '工艺待确认'
     : route.status === 'confirmed'
       ? '工艺已确认 · 等待图纸'
       : route.status === 'completed'
         ? '全部工序完成'
         : `当前工序：${route.currentStep?.processName || '待检查'}`;
-  return <div className={`production-process-route ${route.status}`} title={`${route.templateName} V${route.templateVersion} · ${route.completedStepCount}/${route.stepCount} 工序`}>
+  const title = productTimePending
+    ? '请在产品工序与工时中维护并发布当前产品路线'
+    : `${route.templateName} V${route.templateVersion} · ${route.completedStepCount}/${route.stepCount} 工序`;
+  return <div className={`production-process-route ${route.status}`} title={title}>
     <span>{label}</span><i><b style={{ width: `${route.progress}%` }} /></i><strong>{route.completedStepCount}/{route.stepCount}</strong>
   </div>;
 }
@@ -1973,7 +1979,7 @@ function ProcessRouteStrip({ order }: { order: ProductionOrder }) {
 function nextStepButtonText(order: ProductionOrder): string {
   const route = order.processRoute;
   if (!route) return '下一步';
-  if (route.status === 'draft') return '确认工艺';
+  if (route.status === 'draft') return '维护工序与工时';
   if (route.currentStep) return `完成${route.currentStep.processName}`;
   return '检查工艺';
 }
