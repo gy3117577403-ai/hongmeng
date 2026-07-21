@@ -17,6 +17,7 @@ import {
   FilePenLine,
   History,
   Layers3,
+  ListFilter,
   PackageCheck,
   Pencil,
   Plus,
@@ -31,6 +32,14 @@ import {
 } from 'lucide-react';
 import { Fragment, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import {
+  isPlanningReadinessFilter,
+  matchesPlanningReadiness,
+  orderLevelReadinessFilters,
+  PLANNING_READINESS_FILTERS,
+  planningReadinessState,
+  type PlanningReadinessFilter,
+} from '@/lib/planning-readiness';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
   CurrentUserDTO,
@@ -44,6 +53,22 @@ import type {
 
 type PlanningView = 'schedule' | 'orders' | 'preparation' | 'changes' | 'history';
 type ProductEntryMode = 'select' | 'create';
+
+const readinessOptions: Array<{
+  id: PlanningReadinessFilter;
+  label: string;
+  description: string;
+}> = [
+  { id: 'missing_time', label: '工时未维护', description: '没有有效单套工时' },
+  { id: 'missing_drawing', label: '图纸未下发', description: '没有有效原图文件' },
+  { id: 'missing_material', label: '材料未配', description: '仓库未下达或配料未完成' },
+  { id: 'material_exception', label: '材料异常', description: '缺料、错料或到料异常' },
+  { id: 'missing_process', label: '工艺未编排', description: '工艺路线未生成或未确认' },
+  { id: 'ready_preparation', label: '可下达预备', description: '图纸和工时均已就绪' },
+  { id: 'ready_production', label: '可启用生产', description: '图纸、工时、配料和工艺均就绪' },
+];
+
+const readyFilters = new Set<PlanningReadinessFilter>(['ready_preparation', 'ready_production']);
 
 type PlanningPayload = {
   ok?: boolean;
@@ -274,6 +299,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const [keyword, setKeyword] = useState('');
   const [customer, setCustomer] = useState('');
   const [priority, setPriority] = useState<'all' | ProductionPlanPriority>('all');
+  const [readinessFilters, setReadinessFilters] = useState<PlanningReadinessFilter[]>([]);
+  const [readinessOpen, setReadinessOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -299,6 +326,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const dialogTriggerRef = useRef<HTMLElement | null>(null);
   const productPickerRef = useRef<HTMLDivElement>(null);
   const productSearchInputRef = useRef<HTMLInputElement>(null);
+  const readinessFilterRef = useRef<HTMLDivElement>(null);
+  const readinessTriggerRef = useRef<HTMLButtonElement>(null);
   const lastExternalRefreshRef = useRef(0);
   const activeDialog = Boolean(orderDialog || batchDialog || releasePreview || deletePreview || activationPreview);
 
@@ -353,6 +382,36 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     document.addEventListener('pointerdown', closeOnOutsidePointer, true);
     return () => document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
   }, [productPickerOpen]);
+
+  useEffect(() => {
+    const values = new URLSearchParams(window.location.search)
+      .get('readiness')
+      ?.split(',')
+      .filter(isPlanningReadinessFilter) || [];
+    if (values.length === 0) return;
+    const readyValue = values.find(value => readyFilters.has(value));
+    setReadinessFilters(readyValue ? [readyValue] : [...new Set(values)]);
+  }, []);
+
+  useEffect(() => {
+    if (!readinessOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || readinessFilterRef.current?.contains(event.target)) return;
+      setReadinessOpen(false);
+    };
+    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setReadinessOpen(false);
+      readinessTriggerRef.current?.focus();
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [readinessOpen]);
 
   useEffect(() => {
     const refreshAfterExternalChange = () => {
@@ -443,7 +502,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       && Boolean(orderDraft.orderDate && orderDraft.customerDueDate)
       && timeIsValid;
   }, [orderDraft.customerDueDate, orderDraft.customerName, orderDraft.drawingLibraryItemId, orderDraft.orderDate, orderDraft.orderQuantity, orderDraft.planningUnitMinutes, orderDraft.productName, orderDraft.specification, orderDraftUnitMilliseconds, productEntryMode]);
-  const filteredOrders = useMemo(() => {
+  const baseFilteredOrders = useMemo(() => {
     const word = keyword.trim().toLocaleLowerCase();
     return orders.filter(order => {
       if (customer && order.customerName !== customer) return false;
@@ -453,17 +512,83 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         .some(value => value.toLocaleLowerCase().includes(word));
     });
   }, [orders, keyword, customer, priority]);
+  const orderReadiness = useMemo(() => orderLevelReadinessFilters(readinessFilters), [readinessFilters]);
+  const filteredOrders = useMemo(() => (
+    orderReadiness.length
+      ? baseFilteredOrders.filter(order => matchesPlanningReadiness(order, undefined, orderReadiness))
+      : baseFilteredOrders
+  ), [baseFilteredOrders, orderReadiness]);
   const orderPool = filteredOrders.filter(order => order.remainingQuantity > 0 && order.status !== 'cancelled' && order.status !== 'completed');
-  const scheduleRows = allBatches.filter(({ order, batch }) => {
+  const baseScheduleRows = useMemo(() => allBatches.filter(({ order, batch }) => {
     if (batch.releaseState === 'archived') return false;
     if (customer && order.customerName !== customer) return false;
     if (priority !== 'all' && order.priority !== priority) return false;
     const word = keyword.trim().toLocaleLowerCase();
     return !word || [order.customerName, order.salesperson || '', order.productName, order.specification].some(value => value.toLocaleLowerCase().includes(word));
-  });
-  const preparationRows = allBatches.filter(item => item.batch.releaseState === 'preparation'
-    && (!periods || item.batch.weekStartDate === periods.next.weekStartDate));
+  }), [allBatches, customer, keyword, priority]);
+  const scheduleRows = useMemo(() => baseScheduleRows.filter(({ order, batch }) => (
+    matchesPlanningReadiness(order, batch, readinessFilters)
+  )), [baseScheduleRows, readinessFilters]);
+  const basePreparationRows = useMemo(() => baseScheduleRows.filter(item => (
+    item.batch.releaseState === 'preparation'
+      && (!periods || item.batch.weekStartDate === periods.next.weekStartDate)
+  )), [baseScheduleRows, periods]);
+  const preparationRows = useMemo(() => basePreparationRows.filter(({ order, batch }) => (
+    matchesPlanningReadiness(order, batch, readinessFilters)
+  )), [basePreparationRows, readinessFilters]);
   const historyRows = allBatches.filter(item => item.batch.releaseState === 'archived');
+  const readinessCounts = useMemo(() => {
+    const result = Object.fromEntries(PLANNING_READINESS_FILTERS.map(filter => [filter, 0])) as Record<PlanningReadinessFilter, number>;
+    if (view === 'orders') {
+      for (const order of baseFilteredOrders) {
+        const state = planningReadinessState(order);
+        for (const filter of PLANNING_READINESS_FILTERS) if (state[filter]) result[filter] += 1;
+      }
+      return result;
+    }
+    const sourceRows = view === 'preparation' ? basePreparationRows : baseScheduleRows;
+    for (const { order, batch } of sourceRows) {
+      const state = planningReadinessState(order, batch);
+      for (const filter of PLANNING_READINESS_FILTERS) if (state[filter]) result[filter] += 1;
+    }
+    return result;
+  }, [baseFilteredOrders, basePreparationRows, baseScheduleRows, view]);
+  const readinessLabel = readinessFilters.length === 0
+    ? '准备状态'
+    : readinessFilters.length === 1
+      ? readinessOptions.find(option => option.id === readinessFilters[0])?.label || '准备状态'
+      : `准备状态 ${readinessFilters.length}`;
+  const readinessDisabled = view === 'changes' || view === 'history';
+
+  function persistReadinessFilters(next: PlanningReadinessFilter[]): void {
+    setReadinessFilters(next);
+    const url = new URL(window.location.href);
+    if (next.length) url.searchParams.set('readiness', next.join(','));
+    else url.searchParams.delete('readiness');
+    window.history.replaceState(window.history.state, '', url);
+  }
+
+  function toggleReadinessFilter(filter: PlanningReadinessFilter): void {
+    if (readyFilters.has(filter)) {
+      persistReadinessFilters(readinessFilters.includes(filter) ? [] : [filter]);
+      return;
+    }
+    const deficiencyFilters = readinessFilters.filter(item => !readyFilters.has(item));
+    const next = deficiencyFilters.includes(filter)
+      ? deficiencyFilters.filter(item => item !== filter)
+      : [...deficiencyFilters, filter];
+    persistReadinessFilters(next);
+  }
+
+  function selectView(nextView: PlanningView): void {
+    setView(nextView);
+    setReadinessOpen(false);
+    if (nextView === 'orders') {
+      persistReadinessFilters(orderLevelReadinessFilters(readinessFilters));
+      return;
+    }
+    if (nextView === 'changes' || nextView === 'history') persistReadinessFilters([]);
+  }
 
   function closeDialog(): void {
     setOrderDialog(null);
@@ -902,7 +1027,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           <nav aria-label="计划中心视图">
             {views.map(item => {
               const Icon = item.icon;
-              return <button className={view === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => setView(item.id)}><Icon size={16} aria-hidden="true" /><span>{item.label}</span>{item.count !== undefined && <b>{item.count}</b>}</button>;
+              return <button className={view === item.id ? 'active' : ''} type="button" key={item.id} onClick={() => selectView(item.id)}><Icon size={16} aria-hidden="true" /><span>{item.label}</span>{item.count !== undefined && <b>{item.count}</b>}</button>;
             })}
           </nav>
           <button className="planning-refresh" type="button" title="刷新计划数据" aria-label="刷新计划数据" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={17} className={loading ? 'spin' : ''} aria-hidden="true" /></button>
@@ -926,6 +1051,46 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           <label className="planning-search"><Search size={17} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、业务员、规格或品名" /></label>
           <select value={customer} onChange={event => setCustomer(event.target.value)} aria-label="筛选客户"><option value="">全部客户</option>{customers.map(item => <option value={item} key={item}>{item}</option>)}</select>
           <select value={priority} onChange={event => setPriority(event.target.value as typeof priority)} aria-label="筛选优先级"><option value="all">全部优先级</option><option value="insert">插单</option><option value="urgent">紧急</option><option value="normal">一般</option></select>
+          <div className="planning-readiness-filter" ref={readinessFilterRef}>
+            <button
+              ref={readinessTriggerRef}
+              className={readinessFilters.length ? 'planning-readiness-trigger active' : 'planning-readiness-trigger'}
+              type="button"
+              aria-haspopup="dialog"
+              aria-expanded={readinessOpen}
+              disabled={readinessDisabled}
+              title={readinessDisabled ? '当前页面不支持准备状态筛选' : '筛选工时、图纸、材料和工艺准备状态'}
+              onClick={() => setReadinessOpen(current => !current)}
+            >
+              <ListFilter size={16} aria-hidden="true" />
+              <span>{readinessLabel}</span>
+              {readinessFilters.length > 0 && <b>{readinessFilters.length}</b>}
+              <ChevronDown size={14} aria-hidden="true" />
+            </button>
+            {readinessOpen && <div className="planning-readiness-popover" role="dialog" aria-label="准备状态筛选">
+              <header>
+                <div><strong>准备状态</strong><span>快速找出需要处理的计划</span></div>
+                {readinessFilters.length > 0 && <button type="button" onClick={() => persistReadinessFilters([])}>清除</button>}
+              </header>
+              <div className="planning-readiness-options">
+                {readinessOptions.map(option => {
+                  const orderLevelAvailable = orderLevelReadinessFilters([option.id]).length > 0;
+                  const unavailable = view === 'orders' && !orderLevelAvailable;
+                  return <label className={unavailable ? 'planning-readiness-option disabled' : 'planning-readiness-option'} key={option.id}>
+                    <input
+                      type="checkbox"
+                      checked={readinessFilters.includes(option.id)}
+                      disabled={unavailable}
+                      onChange={() => toggleReadinessFilter(option.id)}
+                    />
+                    <span><strong>{option.label}</strong><small>{unavailable ? '排产后可筛选' : option.description}</small></span>
+                    <em>{readinessCounts[option.id]}</em>
+                  </label>;
+                })}
+              </div>
+              <footer>{view === 'orders' ? '订单池仅支持图纸、工时和预备就绪筛选' : '缺项可多选；就绪状态为单选条件'}</footer>
+            </div>}
+          </div>
           <div className="planning-toolbar-actions">
             <a className="planning-secondary-action" href="/workspace/product-times" title="维护产品工序与工时"><Clock3 size={16} />产品工时</a>
             <button className="planning-primary-action" type="button" onClick={event => openCreateOrder(event.currentTarget)}><Plus size={17} />新建订单</button>
@@ -950,7 +1115,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           </aside>
 
           <div className="planning-schedule-board">
-            <header className="planning-board-heading"><div><span>排程清单</span><h2>本周与下周生产批次</h2></div><div><button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button><em>{scheduleRows.length} 批</em></div></header>
+            <header className="planning-board-heading"><div><span>排程清单</span><h2>本周与下周生产批次</h2></div><div><button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button><em>{readinessFilters.length ? `筛选 ${scheduleRows.length} / 全部 ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`}</em></div></header>
             <div className="planning-table-scroll hm-scroll-region" tabIndex={0}>
               <table className="planning-table">
                 <thead><tr><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>单件 / 总工时</th><th>图纸</th><th>仓库</th><th>工艺</th><th>状态</th><th>操作</th></tr></thead>
@@ -977,14 +1142,14 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                   </div></td></tr>}
                 </Fragment>)}</tbody>
               </table>
-              {!loading && !scheduleRows.length && <div className="planning-empty"><CalendarClock /><strong>还没有排产批次</strong><span>从左侧订单池选择产品并安排本周或下周批次。</span></div>}
+              {!loading && !scheduleRows.length && <div className="planning-empty"><CalendarClock /><strong>{readinessFilters.length ? '没有符合准备状态的批次' : '还没有排产批次'}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : '从左侧订单池选择产品并安排本周或下周批次。'}</span></div>}
             </div>
           </div>
         </section>}
 
         {view === 'orders' && <section className="planning-orders-view">
-          <header><div><span>实时订单</span><h2>生产订单池</h2><p>订单变化直接在这里维护，不再依赖重复上传 Excel。</p></div><b>{filteredOrders.length} 单</b></header>
-          <div className="planning-table-scroll hm-scroll-region" tabIndex={0}><table className="planning-table orders"><thead><tr><th>客户 / 产品</th><th>业务员</th><th>规格</th><th>数量</th><th>已排 / 未排</th><th>下单日期</th><th>客户交期</th><th>优先级</th><th>单件 / 总工时</th><th>操作</th></tr></thead><tbody>{filteredOrders.map(order => <tr key={order.id}><td><strong>{order.customerName}</strong><small>{order.productName}</small></td><td>{order.salesperson || '未设置'}</td><td><b>{order.specification}</b></td><td>{order.orderQuantity.toLocaleString()}</td><td><strong>{order.allocatedQuantity.toLocaleString()} / {order.remainingQuantity.toLocaleString()}</strong></td><td>{order.orderDate}</td><td>{order.customerDueDate}</td><td><span className={`planning-priority ${order.priority}`}>{priorityText(order.priority)}</span></td><td><span className={`planning-status ${planningUnitMilliseconds(order) ? 'ready' : 'warning'}`}>{duration(planningUnitMilliseconds(order))}<small>{totalDuration(order.planningTotalMilliseconds)}</small></span></td><td><div className="planning-row-actions text"><button type="button" onClick={event => openBatch(order, event.currentTarget)}><Plus size={14} />排产</button><button type="button" onClick={event => openEditOrder(order, event.currentTarget)}><Pencil size={14} />编辑</button><button className="danger" type="button" onClick={() => { void deleteOrder(order); }}><Trash2 size={14} />删除</button></div></td></tr>)}</tbody></table>{!loading && !filteredOrders.length && <div className="planning-empty"><ClipboardList /><strong>订单池为空</strong><span>点击右上角“新建订单”开始建立实时计划。</span></div>}</div>
+          <header><div><span>实时订单</span><h2>生产订单池</h2><p>订单变化直接在这里维护，不再依赖重复上传 Excel。</p></div><b>{readinessFilters.length ? `筛选 ${filteredOrders.length} / ${baseFilteredOrders.length} 单` : `${filteredOrders.length} 单`}</b></header>
+          <div className="planning-table-scroll hm-scroll-region" tabIndex={0}><table className="planning-table orders"><thead><tr><th>客户 / 产品</th><th>业务员</th><th>规格</th><th>数量</th><th>已排 / 未排</th><th>下单日期</th><th>客户交期</th><th>优先级</th><th>单件 / 总工时</th><th>操作</th></tr></thead><tbody>{filteredOrders.map(order => <tr key={order.id}><td><strong>{order.customerName}</strong><small>{order.productName}</small></td><td>{order.salesperson || '未设置'}</td><td><b>{order.specification}</b></td><td>{order.orderQuantity.toLocaleString()}</td><td><strong>{order.allocatedQuantity.toLocaleString()} / {order.remainingQuantity.toLocaleString()}</strong></td><td>{order.orderDate}</td><td>{order.customerDueDate}</td><td><span className={`planning-priority ${order.priority}`}>{priorityText(order.priority)}</span></td><td><span className={`planning-status ${planningUnitMilliseconds(order) ? 'ready' : 'warning'}`}>{duration(planningUnitMilliseconds(order))}<small>{totalDuration(order.planningTotalMilliseconds)}</small></span></td><td><div className="planning-row-actions text"><button type="button" onClick={event => openBatch(order, event.currentTarget)}><Plus size={14} />排产</button><button type="button" onClick={event => openEditOrder(order, event.currentTarget)}><Pencil size={14} />编辑</button><button className="danger" type="button" onClick={() => { void deleteOrder(order); }}><Trash2 size={14} />删除</button></div></td></tr>)}</tbody></table>{!loading && !filteredOrders.length && <div className="planning-empty"><ClipboardList /><strong>{readinessFilters.length ? '没有符合准备状态的订单' : '订单池为空'}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : '点击右上角“新建订单”开始建立实时计划。'}</span></div>}</div>
         </section>}
 
         {view === 'preparation' && <section className="planning-preparation-view">
