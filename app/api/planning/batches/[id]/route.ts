@@ -68,14 +68,14 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         refs.unitMilliseconds,
         existing.planOrder.planningUnitMilliseconds,
       );
-      if (!effectiveUnitMilliseconds) throw new Error('PLAN_UNIT_WORK_TIME_REQUIRED');
+      if (released && !effectiveUnitMilliseconds) throw new Error('PLAN_UNIT_WORK_TIME_REQUIRED');
       const batchData = {
         quantity: parsed.data.quantity,
         weekStartDate: parsed.data.weekStartDate,
         weekEndDate: parsed.data.weekEndDate,
         plannedCompletionDate: parsed.data.plannedCompletionDate,
       };
-      if (body.unitMilliseconds !== undefined && !existing.planOrder.planningUnitMilliseconds) {
+      if (body.unitMilliseconds !== undefined && effectiveUnitMilliseconds && !existing.planOrder.planningUnitMilliseconds) {
         await tx.productionPlanOrder.update({
           where: { id: existing.planOrderId },
           data: { planningUnitMilliseconds: effectiveUnitMilliseconds, updatedById: user.id },
@@ -128,7 +128,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof Error && error.message === 'PLAN_UNIT_WORK_TIME_REQUIRED') {
-      return NextResponse.json({ ok: false, error: '请填写大于 0 且不超过 24 小时的单根工时' }, { status: 400 });
+      return NextResponse.json({ ok: false, error: '已下达批次必须保留有效单件工时' }, { status: 409 });
     }
     console.error('update planning batch failed', error);
     return NextResponse.json({ ok: false, error: '更新排产批次失败' }, { status: 500 });

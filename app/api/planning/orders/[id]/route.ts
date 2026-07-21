@@ -60,6 +60,10 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
       return NextResponse.json({ ok: false, error: `订单数量不能小于已排产数量 ${allocated}` }, { status: 409 });
     }
     const released = existing.batches.filter(batch => batch.releaseState !== 'draft');
+    const effectiveOrderUnitMilliseconds = references.unitMilliseconds || canonical.planningUnitMilliseconds;
+    if (released.length && !effectiveOrderUnitMilliseconds) {
+      return NextResponse.json({ ok: false, error: '已下达订单必须保留有效单件工时' }, { status: 409 });
+    }
     const impactful = canonical.drawingLibraryItemId !== existing.drawingLibraryItemId
       || canonical.customerName !== existing.customerName
       || canonical.salesperson !== existing.salesperson
@@ -108,9 +112,11 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         });
       }
       if (canonical.planningUnitMilliseconds !== existing.planningUnitMilliseconds) {
-        const effectiveUnitMilliseconds = references.unitMilliseconds || canonical.planningUnitMilliseconds;
+        const effectiveUnitMilliseconds = effectiveOrderUnitMilliseconds;
         for (const batch of existing.batches.filter(item => !item.productTimeProfileId)) {
-          const totalMilliseconds = BigInt(effectiveUnitMilliseconds) * BigInt(batch.quantity);
+          const totalMilliseconds = effectiveUnitMilliseconds
+            ? BigInt(effectiveUnitMilliseconds) * BigInt(batch.quantity)
+            : null;
           await tx.productionPlanBatch.update({
             where: { id: batch.id },
             data: {
@@ -120,7 +126,7 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
               totalMillisecondsSnapshot: totalMilliseconds,
             },
           });
-          if (batch.releaseState !== 'draft' && batch.workOrderId) {
+          if (batch.releaseState !== 'draft' && batch.workOrderId && effectiveUnitMilliseconds && totalMilliseconds) {
             await tx.workOrder.update({
               where: { id: batch.workOrderId },
               data: {

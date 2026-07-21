@@ -411,6 +411,13 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       ? batchDraftUnitMilliseconds * quantity
       : null;
   }, [batchDraft.quantity, batchDraftUnitMilliseconds]);
+  const canSaveBatch = useMemo(() => {
+    const quantity = Number(batchDraft.quantity);
+    const timeIsValid = !batchDraft.unitSeconds.trim() || Boolean(batchDraftUnitMilliseconds);
+    return Number.isInteger(quantity) && quantity > 0
+      && Boolean(batchDraft.weekStartDate && batchDraft.plannedCompletionDate)
+      && timeIsValid;
+  }, [batchDraft.plannedCompletionDate, batchDraft.quantity, batchDraft.unitSeconds, batchDraft.weekStartDate, batchDraftUnitMilliseconds]);
   const visibleProductOptions = useMemo(() => {
     const word = productKeyword.trim().toLocaleLowerCase();
     const filtered = word
@@ -428,8 +435,14 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     const productReady = productEntryMode === 'create'
       ? Boolean(orderDraft.customerName.trim() && orderDraft.specification.trim() && orderDraft.productName.trim())
       : Boolean(orderDraft.drawingLibraryItemId);
-    return productReady && Boolean(orderDraftUnitMilliseconds);
-  }, [orderDraft.customerName, orderDraft.drawingLibraryItemId, orderDraft.productName, orderDraft.specification, orderDraftUnitMilliseconds, productEntryMode]);
+    const quantity = Number(orderDraft.orderQuantity);
+    const timeIsValid = !orderDraft.planningUnitMinutes.trim()
+      || Boolean(orderDraftUnitMilliseconds && orderDraftUnitMilliseconds <= 86_400_000);
+    return productReady
+      && Number.isInteger(quantity) && quantity > 0
+      && Boolean(orderDraft.orderDate && orderDraft.customerDueDate)
+      && timeIsValid;
+  }, [orderDraft.customerDueDate, orderDraft.customerName, orderDraft.drawingLibraryItemId, orderDraft.orderDate, orderDraft.orderQuantity, orderDraft.planningUnitMinutes, orderDraft.productName, orderDraft.specification, orderDraftUnitMilliseconds, productEntryMode]);
   const filteredOrders = useMemo(() => {
     const word = keyword.trim().toLocaleLowerCase();
     return orders.filter(order => {
@@ -616,7 +629,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       setError('新型号必须填写客户、产品规格和产品名称');
       return;
     }
-    if (!orderDraftUnitMilliseconds || orderDraftUnitMilliseconds > 86_400_000) {
+    if (orderDraft.planningUnitMinutes.trim() && (!orderDraftUnitMilliseconds || orderDraftUnitMilliseconds > 86_400_000)) {
       setError('请填写大于 0 且不超过 1440 分钟的单件产品工时');
       return;
     }
@@ -653,12 +666,12 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       }
       if (!response.ok || !body.order) throw new Error(body.error || '计划订单保存失败');
       setToast(editing
-        ? '计划订单已更新'
+        ? orderDraftUnitMilliseconds ? '计划订单已更新' : '计划订单已更新，工时待维护'
         : body.productAction === 'created'
-          ? '订单已创建，新型号已进入图纸资料库'
+          ? orderDraftUnitMilliseconds ? '订单已创建，新型号已进入图纸资料库' : '订单已创建并建档，工时待维护'
           : body.productAction === 'restored'
-            ? '订单已创建，回收站型号已恢复'
-            : '计划订单已创建');
+            ? orderDraftUnitMilliseconds ? '订单已创建，回收站型号已恢复' : '订单已创建并恢复型号，工时待维护'
+            : orderDraftUnitMilliseconds ? '计划订单已创建' : '计划订单已创建，工时待维护');
       closeDialog();
       setRefreshToken(value => value + 1);
     } catch (reason) {
@@ -679,7 +692,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
 
   async function saveBatch(confirmImpact = false): Promise<void> {
     if (!batchDialog) return;
-    if (!batchDraftUnitMilliseconds) {
+    if (batchDraft.unitSeconds.trim() && !batchDraftUnitMilliseconds) {
       setError('请填写大于 0 且不超过 86400 秒的单根工时');
       return;
     }
@@ -699,7 +712,9 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         return;
       }
       if (!response.ok || !body.order) throw new Error(body.error || '排产批次保存失败');
-      setToast(editing ? '排产批次与总工时已调整' : '排产批次与总工时已创建');
+      setToast(batchDraftUnitMilliseconds
+        ? editing ? '排产批次与总工时已调整' : '排产批次与总工时已创建'
+        : editing ? '排产草稿已调整，工时待维护' : '排产草稿已创建，工时待维护');
       closeDialog();
       setRefreshToken(value => value + 1);
     } catch (reason) {
@@ -1058,8 +1073,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           <label><span>产品规格{productEntryMode === 'create' ? ' *' : ''}</span><input value={orderDraft.specification} readOnly={productEntryMode !== 'create'} aria-readonly={productEntryMode !== 'create'} onChange={event => setOrderDraft(current => ({ ...current, specification: event.target.value }))} /></label>
           <label><span>产品名称{productEntryMode === 'create' ? ' *' : ''}</span><input value={orderDraft.productName} readOnly={productEntryMode !== 'create'} aria-readonly={productEntryMode !== 'create'} onChange={event => setOrderDraft(current => ({ ...current, productName: event.target.value }))} /></label>
           <label><span>订单数量 *</span><input type="number" min="1" value={orderDraft.orderQuantity} onChange={event => setOrderDraft(current => ({ ...current, orderQuantity: event.target.value }))} /></label>
-          <label><span>单件产品工时（分钟） *</span><input type="number" min="0.001" max="1440" step="0.001" value={orderDraft.planningUnitMinutes} onChange={event => setOrderDraft(current => ({ ...current, planningUnitMinutes: event.target.value }))} /><small>已有正式工时时自动带出，也可作为本订单计划值调整</small></label>
-          <label className="planning-total-time"><span>订单总工时</span><output>{orderDraftTotalMilliseconds ? duration(orderDraftTotalMilliseconds) : '填写数量与单件工时后自动计算'}</output><small>单件工时 × 订单数量</small></label>
+          <label><span>单件产品工时（分钟）</span><input type="number" min="0.001" max="1440" step="0.001" value={orderDraft.planningUnitMinutes} onChange={event => setOrderDraft(current => ({ ...current, planningUnitMinutes: event.target.value }))} /><small>可暂不填写并进入订单池；下达本周或下周计划前必须补齐</small></label>
+          <label className="planning-total-time"><span>订单总工时</span><output>{orderDraftTotalMilliseconds ? duration(orderDraftTotalMilliseconds) : '待维护'}</output><small>{orderDraftTotalMilliseconds ? '单件工时 × 订单数量' : '补齐单件工时后自动计算'}</small></label>
           <label><span>优先级</span><select value={orderDraft.priority} onChange={event => setOrderDraft(current => ({ ...current, priority: event.target.value as ProductionPlanPriority }))}><option value="normal">一般</option><option value="urgent">紧急</option><option value="insert">插单</option></select></label>
           <label><span>下单日期 *</span><input type="date" value={orderDraft.orderDate} onChange={event => setOrderDraft(current => ({ ...current, orderDate: event.target.value }))} /></label>
           <label><span>客户交期 *</span><input type="date" value={orderDraft.customerDueDate} onChange={event => setOrderDraft(current => ({ ...current, customerDueDate: event.target.value }))} /></label>
@@ -1076,16 +1091,16 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       <div className="planning-dialog-body">
         <div className="planning-form-grid">
           <label><span>本批数量 *</span><input type="number" min="1" value={batchDraft.quantity} onChange={event => setBatchDraft(current => ({ ...current, quantity: event.target.value }))} /></label>
-          <label><span>单根工时（秒） *</span><input type="number" min="0.001" max="86400" step="0.001" value={batchDraft.unitSeconds} onChange={event => setBatchDraft(current => ({ ...current, unitSeconds: event.target.value }))} /><small>优先带入已保存工时，可按本批实际情况调整</small></label>
+          <label><span>单根工时（秒）</span><input type="number" min="0.001" max="86400" step="0.001" value={batchDraft.unitSeconds} onChange={event => setBatchDraft(current => ({ ...current, unitSeconds: event.target.value }))} /><small>草稿可暂不填写；下达本周或下周计划前必须补齐</small></label>
           <label><span>生产周 *</span><input type="date" value={batchDraft.weekStartDate} onChange={event => setBatchDraft(current => ({ ...current, weekStartDate: event.target.value }))} /></label>
           <label><span>内部计划完成日期 *</span><input type="date" value={batchDraft.plannedCompletionDate} onChange={event => setBatchDraft(current => ({ ...current, plannedCompletionDate: event.target.value }))} /></label>
-          <label className="wide planning-total-time"><span>本批总工时</span><output>{batchDraftTotalMilliseconds ? duration(batchDraftTotalMilliseconds) : '填写本批数量与单根工时后自动计算'}</output><small>单根工时 × 本批数量，保存后用于下达与生产工时统计</small></label>
+          <label className="wide planning-total-time"><span>本批总工时</span><output>{batchDraftTotalMilliseconds ? duration(batchDraftTotalMilliseconds) : '待维护'}</output><small>{batchDraftTotalMilliseconds ? '单根工时 × 本批数量，保存后用于下达与生产工时统计' : '可先保存排程草稿，下达周计划前补齐工时'}</small></label>
           {batchDialog.batchId && <label className="wide"><span>已下达批次调整原因</span><textarea rows={2} placeholder="如果批次已经下达，此项必填" value={batchDraft.reason} onChange={event => setBatchDraft(current => ({ ...current, reason: event.target.value }))} /></label>}
         </div>
-        <div className="planning-dialog-note"><CalendarClock /><span><strong>批次工时随排程冻结</strong><small>保存后会把单根工时和本批总工时应用到当前批次；不会改写产品工时库。</small></span></div>
+        <div className="planning-dialog-note"><CalendarClock /><span><strong>{batchDraftUnitMilliseconds ? '批次工时随排程冻结' : '先排程，后补工时'}</strong><small>{batchDraftUnitMilliseconds ? '保存后会把单根工时和本批总工时应用到当前批次；不会改写产品工时库。' : '当前仅保存排程草稿，不会进入本周执行或下周预备。'}</small></span></div>
         {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
       </div>
-      <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !batchDraftUnitMilliseconds || !batchDraftTotalMilliseconds} onClick={() => { void saveBatch(); }}>{saving ? '保存中...' : '保存并应用工时'}</button></footer>
+      <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !canSaveBatch} onClick={() => { void saveBatch(); }}>{saving ? '保存中...' : batchDraftUnitMilliseconds ? '保存并应用工时' : '保存排程草稿'}</button></footer>
     </div>}
 
     {releasePreview && <div ref={dialogRef} className="planning-dialog release-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-release-dialog-title"><header><div><span>下达预检</span><h2 id="planning-release-dialog-title">{releasePreview.target === 'active' ? '下达本周执行' : '下达下周预备'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>批次数</span><strong>{releasePreview.batchCount}</strong></div><div><span>目标生产周</span><strong>{releasePreview.targetWeekStartDate.slice(5)} - {releasePreview.targetWeekEndDate.slice(5)}</strong></div><div><span>总数量 / 提醒</span><strong className={releasePreview.warnings ? 'warning' : ''}>{releasePreview.totalQuantity.toLocaleString()} / {releasePreview.warnings}</strong></div></section>{releasePreview.target === 'preparation' && <div className="planning-dialog-note"><PackageCheck /><span><strong>只进入下周准备区</strong><small>生产周统一为 {releasePreview.targetWeekStartDate} 至 {releasePreview.targetWeekEndDate}，不会出现在本周生产执行中心。</small></span></div>}{releasePreview.target === 'active' && <div className="planning-dialog-note"><Factory /><span><strong>立即进入本周生产</strong><small>生产周统一为 {releasePreview.targetWeekStartDate} 至 {releasePreview.targetWeekEndDate}，并同步到关联工单、仓库和工艺任务。</small></span></div>}<div className="planning-warning-list">{releasePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">资料检查通过</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>返回调整</button><button type="button" className="primary" disabled={saving || releasePreview.blockers > 0} onClick={() => { void commitRelease(); }}>{saving ? '下达中...' : '确认下达'}</button></footer></div>}

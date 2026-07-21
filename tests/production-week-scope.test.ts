@@ -14,6 +14,7 @@ import {
   parseProductionPlanBatchInput,
   parseProductionPlanOrderInput,
   planBatchSnapshot,
+  previewProductionPlanRelease,
   productionPlanTargetWeek,
   resolveOrCreatePlanningProduct,
 } from '../lib/production-planning';
@@ -72,13 +73,29 @@ test('planning order input keeps drawing product identity and salesperson withou
   assert.equal(parsed.data.sourceLineNo, 1);
 });
 
-test('new planning orders require a positive unit labor time', () => {
+test('new planning orders may enter the order pool without unit labor time', () => {
   const parsed = parseProductionPlanOrderInput({
     drawingLibraryItemId: 'drawing-product-1',
     customerName: '测试客户',
     productName: '测试产品',
     specification: 'TEST-001',
     orderQuantity: 20,
+    orderDate: '2026-07-20',
+    customerDueDate: '2026-07-24',
+  });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.data.planningUnitMilliseconds, null);
+});
+
+test('planning orders still reject an explicitly invalid unit labor time', () => {
+  const parsed = parseProductionPlanOrderInput({
+    drawingLibraryItemId: 'drawing-product-1',
+    customerName: '测试客户',
+    productName: '测试产品',
+    specification: 'TEST-001',
+    orderQuantity: 20,
+    planningUnitMilliseconds: 0,
     orderDate: '2026-07-20',
     customerDueDate: '2026-07-24',
   });
@@ -180,6 +197,18 @@ test('planning batches accept and snapshot an explicit unit labor time', () => {
   assert.equal(planBatchSnapshot(parsed.data).unitMilliseconds, 20_000);
 });
 
+test('planning batches may remain drafts without unit labor time', () => {
+  const parsed = parseProductionPlanBatchInput({
+    quantity: 8500,
+    weekStartDate: '2026-07-27',
+    plannedCompletionDate: '2026-08-02',
+  });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.data.unitMilliseconds, null);
+  assert.equal(planBatchSnapshot(parsed.data).unitMilliseconds, null);
+});
+
 test('planning batches reject zero unit labor time', () => {
   const parsed = parseProductionPlanBatchInput({
     quantity: 8500,
@@ -227,4 +256,47 @@ test('batch labor time overrides product and order defaults', () => {
   assert.equal(effectivePlanningUnitMilliseconds(null, 30_000, 40_000), 30_000);
   assert.equal(effectivePlanningUnitMilliseconds(null, null, 40_000), 40_000);
   assert.equal(effectivePlanningUnitMilliseconds(null, null, null), null);
+});
+
+test('both current and next week releases block drafts without unit labor time', async () => {
+  const tx = {
+    productionPlanBatch: {
+      findMany: async () => [{
+        id: 'batch-1',
+        quantity: 20,
+        releaseState: 'draft',
+        weekStartDate: new Date('2026-07-20T04:00:00.000Z'),
+        unitMillisecondsSnapshot: null,
+        planOrder: {
+          drawingLibraryItemId: 'drawing-product-1',
+          customerName: '测试客户',
+          productName: '测试产品',
+          specification: 'TEST-001',
+          planningUnitMilliseconds: null,
+        },
+      }],
+    },
+    processTemplate: {
+      findFirst: async () => ({ id: 'template-1', _count: { steps: 1 } }),
+    },
+    drawingLibraryItem: {
+      findFirst: async () => ({
+        id: 'drawing-product-1',
+        customerName: '测试客户',
+        productName: '测试产品',
+        specification: 'TEST-001',
+        productTimeProfiles: [],
+      }),
+    },
+  } as unknown as Parameters<typeof previewProductionPlanRelease>[0];
+
+  for (const target of ['active', 'preparation'] as const) {
+    const preview = await previewProductionPlanRelease(tx, {
+      batchIds: ['batch-1'],
+      target,
+      now: new Date('2026-07-20T04:00:00.000Z'),
+    });
+    assert.equal(preview.blockers, 1);
+    assert.match(preview.items[0].blockers[0], /不能下达周计划/);
+  }
 });

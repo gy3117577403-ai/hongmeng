@@ -39,7 +39,6 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
         refs.unitMilliseconds,
         order.planningUnitMilliseconds,
       );
-      if (!effectiveUnitMilliseconds) throw new Error('PLAN_UNIT_WORK_TIME_REQUIRED');
       const batchData = {
         quantity: parsed.data.quantity,
         weekStartDate: parsed.data.weekStartDate,
@@ -47,7 +46,7 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
         plannedCompletionDate: parsed.data.plannedCompletionDate,
       };
       const batchNo = Math.max(0, ...order.batches.map(batch => batch.batchNo)) + 1;
-      if (body.unitMilliseconds !== undefined && !order.planningUnitMilliseconds) {
+      if (body.unitMilliseconds !== undefined && effectiveUnitMilliseconds && !order.planningUnitMilliseconds) {
         await tx.productionPlanOrder.update({
           where: { id: order.id },
           data: { planningUnitMilliseconds: effectiveUnitMilliseconds, updatedById: user.id },
@@ -88,9 +87,6 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
     return NextResponse.json({ ok: true, order: serializeProductionPlanOrder(updated) }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof Error && error.message === 'PLAN_UNIT_WORK_TIME_REQUIRED') {
-      return NextResponse.json({ ok: false, error: '请填写大于 0 且不超过 24 小时的单根工时' }, { status: 400 });
-    }
     console.error('create planning batch failed', error);
     return NextResponse.json({ ok: false, error: '新增排产批次失败' }, { status: 500 });
   }

@@ -97,7 +97,7 @@ export type ParsedPlanOrder = {
   productName: string;
   specification: string;
   orderQuantity: number;
-  planningUnitMilliseconds: number;
+  planningUnitMilliseconds: number | null;
   orderDate: Date;
   customerDueDate: Date;
   priority: ProductionPlanPriority;
@@ -189,6 +189,10 @@ function positiveInteger(value: unknown): number | null {
 function positiveMilliseconds(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 && parsed <= 86_400_000 ? parsed : null;
+}
+
+function hasInputValue(value: unknown): boolean {
+  return value !== undefined && value !== null && String(value).trim() !== '';
 }
 
 export function parsePlanDate(value: unknown): Date | null {
@@ -294,7 +298,9 @@ export function parseProductionPlanOrderInput(
   if (!productName) return { ok: false, error: '请填写产品名称' };
   if (!specification) return { ok: false, error: '请填写产品规格' };
   if (!orderQuantity) return { ok: false, error: '订单数量必须是正整数' };
-  if (!planningUnitMilliseconds) return { ok: false, error: '单件产品工时必须大于 0 且不超过 24 小时' };
+  if (hasInputValue(input.planningUnitMilliseconds) && !planningUnitMilliseconds) {
+    return { ok: false, error: '单件产品工时必须大于 0 且不超过 24 小时' };
+  }
   if (!orderDate) return { ok: false, error: '下单日期格式不正确' };
   if (!customerDueDate) return { ok: false, error: '客户交期格式不正确' };
   if (customerDueDate < orderDate) return { ok: false, error: '客户交期不能早于下单日期' };
@@ -317,7 +323,7 @@ export function parseProductionPlanBatchInput(
     ? current.plannedCompletionDate
     : parsePlanDate(input.plannedCompletionDate);
   if (!quantity) return { ok: false, error: '排产数量必须是正整数' };
-  if (input.unitMilliseconds !== undefined && !unitMilliseconds) {
+  if (hasInputValue(input.unitMilliseconds) && !unitMilliseconds) {
     return { ok: false, error: '单根工时必须大于 0 且不超过 24 小时' };
   }
   if (!weekInput) return { ok: false, error: '请选择排产周' };
@@ -527,8 +533,7 @@ export async function previewProductionPlanRelease(
     }
     if (!refs.drawingLibraryItemId) warnings.push('未匹配图纸资料');
     if (!effectiveUnitMilliseconds) {
-      if (input.target === 'active') blockers.push('未填写单根工时，不能正式启用生产');
-      else warnings.push('单根工时尚未填写，可先进行仓库配料，启用生产前必须补充');
+      blockers.push('未填写单件工时，不能下达周计划');
     } else if (!refs.productTimeProfileId) {
       warnings.push('产品工序工时尚未发布，当前使用批次单根工时作为计划工时');
     }
@@ -941,7 +946,7 @@ export async function releaseProductionPlanBatch(
     references.unitMilliseconds,
     batch.planOrder.planningUnitMilliseconds,
   );
-  if (input.target === 'active' && !effectiveUnitMilliseconds) throw new Error('PLAN_UNIT_WORK_TIME_REQUIRED');
+  if (!effectiveUnitMilliseconds) throw new Error('PLAN_UNIT_WORK_TIME_REQUIRED');
   const totalMilliseconds = effectiveUnitMilliseconds ? BigInt(effectiveUnitMilliseconds) * BigInt(batch.quantity) : null;
   const code = workOrderCode(batch.planOrder.sourceOrderNo, batch.planOrder.sourceLineNo, batch.batchNo);
   const planActive = input.target === 'active';
@@ -1012,8 +1017,6 @@ export async function releaseProductionPlanBatch(
   if (!references.drawingLibraryItemId) warnings.push('未匹配图纸资料，工艺需人工核对');
   if (!references.productTimeProfileId && effectiveUnitMilliseconds) {
     warnings.push('产品工序工时尚未发布，当前使用批次单根工时作为计划工时');
-  } else if (!effectiveUnitMilliseconds) {
-    warnings.push('单根工时尚未填写，启用生产前必须补充');
   }
   try {
     await createWorkOrderProcessRoute(tx, { workOrderId: workOrder.id, actorId: input.actorId });
