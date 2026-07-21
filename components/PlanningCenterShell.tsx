@@ -948,7 +948,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                     <td><strong>{batch.plannedCompletionDate.slice(5)}</strong></td>
                     <td><strong className={batch.plannedCompletionDate > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate.slice(5)}</strong></td>
                     <td><strong>{duration(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
-                    <td><span className={`planning-status ${order.drawingFileCount ? 'ready' : 'warning'}`}>{order.drawingFileCount ? `${order.drawingFileCount} 文件` : '缺资料'}</span></td>
+                    <td><span className={`planning-status ${order.drawingFileCount ? 'ready' : 'warning'}`}>{order.drawingFileCount ? `${order.drawingFileCount} 文件` : order.drawingLibraryItemId ? '待上传' : '未建档'}</span></td>
                     <td><span className={`planning-status status-${batch.warehouseStatus}`}>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</span></td>
                     <td><span className={`planning-status status-${batch.processStatus}`}>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : batch.processStatus === 'not_created' ? '待生成' : '待编排'}</span></td>
                     <td><span className={`planning-release state-${batch.releaseState}`}>{releaseText(batch.releaseState, batch.weekStartDate, periods?.current.weekStartDate)}</span></td>
@@ -958,7 +958,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                     <div><span>订单信息</span><strong>{order.salesperson ? `业务员 ${order.salesperson}` : '业务员未设置'}</strong><small>{order.remark || '无备注'}</small></div>
                     <div><span>准备状态</span><strong>{preparationText(batch)}</strong><small>仓库 {batch.warehouseStatus} · 工艺 {batch.processStatus}</small></div>
                     <div><span>数据来源</span><strong>{order.currentProductTimeVersion ? `产品工时 V${order.currentProductTimeVersion}` : order.planningUnitMilliseconds ? '订单计划工时' : '工时待维护'}</strong><small>{order.currentProductTimeVersion ? '正式工序工时' : '计划估算，投产前仍需发布工序工时'}</small></div>
-                    <nav><a href={order.drawingLibraryItemId ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`}>查看图纸</a><a href="/workspace/warehouse">仓库任务</a><a href={productTimeHref(order, periods)}>工艺与工时</a></nav>
+                    <nav><a href={order.drawingLibraryItemId ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`}>{order.drawingLibraryItemId ? '进入图纸档案' : '建立图纸档案'}</a><a href="/workspace/warehouse">仓库任务</a><a href={productTimeHref(order, periods)}>工艺与工时</a></nav>
                   </div></td></tr>}
                 </Fragment>)}</tbody>
               </table>

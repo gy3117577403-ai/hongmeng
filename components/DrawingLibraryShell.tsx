@@ -132,6 +132,7 @@ export function DrawingLibraryShell({
   const filePanelCloseRef = useRef<HTMLButtonElement>(null);
   const initialUrlAppliedRef = useRef(false);
   const urlMissingWarnedRef = useRef(false);
+  const requestedItemLoadingRef = useRef('');
 
   const visibleItems = useMemo(() => (
     customer === '全部客户' ? items : items.filter(item => item.customerName === customer)
@@ -179,11 +180,36 @@ export function DrawingLibraryShell({
     if (!targetItemId) return;
     const targetItem = items.find(item => item.id === targetItemId) || null;
     if (!targetItem) {
-      if (!urlMissingWarnedRef.current && items.length) {
-        urlMissingWarnedRef.current = true;
-        setMsg('图纸资料不存在或已删除。');
-      }
-      return;
+      if (urlMissingWarnedRef.current || requestedItemLoadingRef.current === targetItemId) return;
+      requestedItemLoadingRef.current = targetItemId;
+      const controller = new AbortController();
+      void (async () => {
+        try {
+          const response = await fetch(`/api/drawing-library/${encodeURIComponent(targetItemId)}`, {
+            cache: 'no-store',
+            signal: controller.signal,
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok || !data.item) {
+            urlMissingWarnedRef.current = true;
+            setMsg(response.status === 404 ? '图纸资料不存在或已删除。' : (data.error || '图纸资料加载失败'));
+            return;
+          }
+          const directItem = data.item as DrawingLibraryItemDTO;
+          setItems(current => current.some(item => item.id === directItem.id) ? current : [directItem, ...current]);
+          setCustomer('全部客户');
+          setSelectedId(directItem.id);
+          setMsg('');
+        } catch (reason) {
+          if (!(reason instanceof Error && reason.name === 'AbortError')) {
+            urlMissingWarnedRef.current = true;
+            setMsg('图纸资料加载失败，请检查网络');
+          }
+        } finally {
+          if (requestedItemLoadingRef.current === targetItemId) requestedItemLoadingRef.current = '';
+        }
+      })();
+      return () => controller.abort();
     }
 
     setCustomer('全部客户');
@@ -268,6 +294,8 @@ export function DrawingLibraryShell({
       const params = new URLSearchParams();
       if (keyword.trim()) params.set('keyword', keyword.trim());
       params.set('filter', filter);
+      const requestedItemId = new URLSearchParams(window.location.search).get('itemId') || '';
+      if (requestedItemId) params.set('itemId', requestedItemId);
       const res = await fetch(`/api/drawing-library?${params.toString()}`, { cache: 'no-store', signal: controller.signal });
       const data = await res.json().catch(() => ({}));
       if (controller.signal.aborted) return;
@@ -556,8 +584,8 @@ export function DrawingLibraryShell({
                   </div>
                   <p title={`${item.customerName} · ${item.productName || '未设置品名'}`}>{item.customerName} · {item.productName || '未设置品名'}</p>
                   <footer>
-                    <em>{item.completenessText}</em>
-                    <span>{item.fileCount} 个文件</span>
+                    <em>{item.fileCount ? item.completenessText : '待上传'}</em>
+                    <span>{item.fileCount ? `${item.fileCount} 个文件` : '档案已建立'}</span>
                     <time dateTime={item.updatedAt || undefined}>{dt(item.updatedAt)}</time>
                   </footer>
                 </button>
@@ -590,8 +618,8 @@ export function DrawingLibraryShell({
                   <p>
                     <b title={selectedItem.customerName}>{selectedItem.customerName}</b>
                     {hasText(selectedItem.productName) && <em title={selectedItem.productName || ''}>{selectedItem.productName}</em>}
-                    <small>{selectedItem.completenessText}</small>
-                    <small>{selectedItem.fileCount} 个文件</small>
+                    <small>{selectedItem.fileCount ? selectedItem.completenessText : '档案已建立 · 待上传资料'}</small>
+                    {selectedItem.fileCount > 0 && <small>{selectedItem.fileCount} 个文件</small>}
                     <small>更新于 {dt(selectedItem.updatedAt)}</small>
                     {selectedItem.isAnomaly && <small className="anomaly">{selectedItem.anomalyReason}</small>}
                   </p>
@@ -635,7 +663,7 @@ export function DrawingLibraryShell({
                     <div className="drawing-preview-placeholder" aria-label="当前分类暂无可预览文件">
                       <span aria-hidden="true">＋</span>
                       <strong>{activeCategory?.name || '当前分类'}暂无文件</strong>
-                      <p>支持 PDF、JPG、PNG 等现有资料类型，上传后可在这里直接预览。</p>
+                      <p>产品档案已经建立，可直接上传 PDF、JPG、PNG 等资料，上传后会在这里预览。</p>
                       <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : `上传到${activeCategory?.name || '当前分类'}`}</button>
                     </div>
                   ) : selectedFile.fileType === 'pdf' ? (
@@ -681,7 +709,7 @@ export function DrawingLibraryShell({
             </>
           ) : (
             <div className="drawing-file-empty">
-              <strong>{selectedItem ? '当前分类暂无文件' : '请选择规格'}</strong>
+              <strong>{selectedItem ? '档案已建立，当前分类待上传' : '请选择规格'}</strong>
               <p>{selectedItem ? '上传 PDF 或图片后会在中间预览区查看。' : '选择左侧规格后查看当前分类文件。'}</p>
               {selectedItem && <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传 PDF / 图片'}</button>}
             </div>

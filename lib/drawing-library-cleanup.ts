@@ -10,6 +10,7 @@ type CleanupItem = {
   lastImportedAt: Date | null;
   lastWorkOrderId: string | null;
   files: Array<{ id: string }>;
+  productionPlanOrders: Array<{ id: string }>;
 };
 
 export type DrawingLibraryCleanupSummary = {
@@ -57,6 +58,11 @@ async function loadCleanupScope() {
         lastImportedAt: true,
         lastWorkOrderId: true,
         files: { select: { id: true } },
+        productionPlanOrders: {
+          where: { deletedAt: null },
+          select: { id: true },
+          take: 1,
+        },
       },
     }),
     prisma.connectorParameter.count(),

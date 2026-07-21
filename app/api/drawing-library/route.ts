@@ -26,6 +26,11 @@ function itemInclude() {
       },
       orderBy: [{ createdAt: 'desc' as const }],
     },
+    productionPlanOrders: {
+      where: { deletedAt: null },
+      select: { id: true },
+      take: 1,
+    },
   };
 }
 
@@ -34,6 +39,7 @@ export async function GET(req: NextRequest) {
     await requireUser();
     const keyword = req.nextUrl.searchParams.get('keyword')?.trim() || '';
     const filter = req.nextUrl.searchParams.get('filter') || 'all';
+    const requestedItemId = req.nextUrl.searchParams.get('itemId')?.trim() || '';
     const categories = await prisma.resourceCategory.findMany({ orderBy: { sortOrder: 'asc' } });
     const items = await prisma.drawingLibraryItem.findMany({
       where: {
@@ -66,9 +72,19 @@ export async function GET(req: NextRequest) {
       take: 600,
     });
 
-    const serialized = items.map(item => serializeDrawingLibraryItem(item, categories));
+    const requestedItem = requestedItemId
+      ? await prisma.drawingLibraryItem.findFirst({
+          where: { id: requestedItemId, deletedAt: null },
+          include: itemInclude(),
+        })
+      : null;
+    const mergedItems = requestedItem && !items.some(item => item.id === requestedItem.id)
+      ? [requestedItem, ...items]
+      : items;
+    const serialized = mergedItems.map(item => serializeDrawingLibraryItem(item, categories));
     const filtered = serialized.filter((item, index) => {
-      const rawItem = items[index];
+      const rawItem = mergedItems[index];
+      if (rawItem.id === requestedItemId) return true;
       if (filter === 'anomaly') return !!drawingLibraryItemAnomalyReason(rawItem);
       if (!isVisibleDrawingLibraryItem(rawItem)) return false;
       if (filter === 'incomplete') return !item.isComplete;

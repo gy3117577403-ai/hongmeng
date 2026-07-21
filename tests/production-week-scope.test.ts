@@ -137,6 +137,7 @@ test('planning product creation is idempotent and requires confirmation before r
         id: 'drawing-1',
         deletedAt: state === 'deleted' ? new Date('2026-07-20T00:00:00.000Z') : null,
       },
+      updateMany: async () => ({ count: state === 'active' ? 1 : 0 }),
       upsert: async () => {
         upsertCount += 1;
         state = 'active';

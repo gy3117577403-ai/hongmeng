@@ -422,6 +422,14 @@ export async function resolveOrCreatePlanningProduct(
 ): Promise<PlanningProductReferenceResult> {
   const references = await resolvePlanningReferences(tx, input);
   if (references.drawingLibraryItemId) {
+    await tx.drawingLibraryItem.updateMany({
+      where: {
+        id: references.drawingLibraryItemId,
+        deletedAt: null,
+        OR: [{ remark: null }, { remark: '' }, { remark: '-' }],
+      },
+      data: { remark: '由计划中心关联建档，待补图纸资料' },
+    });
     return {
       status: 'resolved',
       action: 'existing',
@@ -463,6 +471,7 @@ export async function resolveOrCreatePlanningProduct(
           customerCode: createData.data.customerCode,
           productName: createData.data.productName,
           specification: createData.data.specification,
+          remark: createData.data.remark,
         }
       : {},
     select: { id: true },

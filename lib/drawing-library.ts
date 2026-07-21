@@ -29,26 +29,32 @@ export function hasMeaningfulDrawingRemark(remark?: string | null) {
   return !!text && text !== '-';
 }
 
-export function isAutoImportedEmptyDrawingLibraryItem(item: {
-  remark?: string | null;
-  lastImportedAt?: Date | string | null;
-  lastWorkOrderId?: string | null;
-  files?: Array<{ id: string }>;
-}) {
-  return !!item.lastImportedAt
-    && !!item.lastWorkOrderId
-    && !hasMeaningfulDrawingRemark(item.remark)
-    && (item.files?.length || 0) === 0;
-}
+type DrawingLibraryPlanningLink = { id: string };
 
-export function isVisibleDrawingLibraryItem(item: {
+type DrawingLibraryVisibilityInput = {
   specification?: string | null;
   remark?: string | null;
   lastImportedAt?: Date | string | null;
   lastWorkOrderId?: string | null;
   files?: Array<{ id: string }>;
-}) {
-  return !isAutoImportedEmptyDrawingLibraryItem(item) && !isInvalidSpecification(item.specification || '');
+  productionPlanOrders?: DrawingLibraryPlanningLink[];
+};
+
+export function isPlanningLinkedDrawingLibraryItem(item: DrawingLibraryVisibilityInput) {
+  return (item.productionPlanOrders?.length || 0) > 0;
+}
+
+export function isAutoImportedEmptyDrawingLibraryItem(item: DrawingLibraryVisibilityInput) {
+  return !isPlanningLinkedDrawingLibraryItem(item)
+    && !!item.lastImportedAt
+    && !!item.lastWorkOrderId
+    && !hasMeaningfulDrawingRemark(item.remark)
+    && (item.files?.length || 0) === 0;
+}
+
+export function isVisibleDrawingLibraryItem(item: DrawingLibraryVisibilityInput) {
+  if (isInvalidSpecification(item.specification || '')) return false;
+  return isPlanningLinkedDrawingLibraryItem(item) || !isAutoImportedEmptyDrawingLibraryItem(item);
 }
 
 export function drawingLibraryItemAnomalyReason(item: {
@@ -58,11 +64,12 @@ export function drawingLibraryItemAnomalyReason(item: {
   lastImportedAt?: Date | string | null;
   lastWorkOrderId?: string | null;
   files?: Array<{ id: string }>;
+  productionPlanOrders?: DrawingLibraryPlanningLink[];
 }) {
   const specReason = invalidSpecificationReason(item.specification || '');
   if (specReason) return specReason;
   const fileCount = item.files?.length || 0;
-  if (fileCount === 0 && !hasMeaningfulDrawingRemark(item.remark)) return '无文件空记录';
+  if (fileCount === 0 && !hasMeaningfulDrawingRemark(item.remark) && !isPlanningLinkedDrawingLibraryItem(item)) return '无文件空记录';
   if (!item.libraryKey?.trim()) return '未归档记录';
   return '';
 }
@@ -138,6 +145,7 @@ export type DrawingLibraryFileWithMeta = DrawingLibraryFile & {
 
 export type DrawingLibraryItemWithFiles = DrawingLibraryItem & {
   files?: DrawingLibraryFileWithMeta[];
+  productionPlanOrders?: DrawingLibraryPlanningLink[];
 };
 
 export function serializeDrawingLibraryFile(file: DrawingLibraryFileWithMeta) {

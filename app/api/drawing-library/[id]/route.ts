@@ -16,6 +16,11 @@ const includeFiles = {
     },
     orderBy: [{ createdAt: 'desc' as const }],
   },
+  productionPlanOrders: {
+    where: { deletedAt: null },
+    select: { id: true },
+    take: 1,
+  },
 };
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {

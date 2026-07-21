@@ -14,23 +14,43 @@ const includeFiles = {
     },
     orderBy: [{ createdAt: 'desc' as const }],
   },
+  productionPlanOrders: {
+    where: { deletedAt: null },
+    select: { id: true },
+    take: 1,
+  },
 };
 
-export default async function DrawingLibraryPage() {
+type DrawingLibraryPageProps = {
+  searchParams?: { itemId?: string | string[] };
+};
+
+export default async function DrawingLibraryPage({ searchParams }: DrawingLibraryPageProps) {
   const user = await currentUser();
   if (!user) redirect('/login');
 
-  const [items, categories] = await Promise.all([
+  const requestedItemId = Array.isArray(searchParams?.itemId) ? searchParams?.itemId[0] : searchParams?.itemId;
+
+  const [items, requestedItem, categories] = await Promise.all([
     prisma.drawingLibraryItem.findMany({
       where: { deletedAt: null },
       include: includeFiles,
       orderBy: [{ customerName: 'asc' }, { specification: 'asc' }],
       take: 600,
     }),
+    requestedItemId
+      ? prisma.drawingLibraryItem.findFirst({
+          where: { id: requestedItemId, deletedAt: null },
+          include: includeFiles,
+        })
+      : Promise.resolve(null),
     prisma.resourceCategory.findMany({ orderBy: { sortOrder: 'asc' } }),
   ]);
-  const serialized = items
-    .filter(isVisibleDrawingLibraryItem)
+  const mergedItems = requestedItem && !items.some(item => item.id === requestedItem.id)
+    ? [requestedItem, ...items]
+    : items;
+  const serialized = mergedItems
+    .filter(item => item.id === requestedItemId || isVisibleDrawingLibraryItem(item))
     .map(item => serializeDrawingLibraryItem(item, categories));
   const customerMap = new Map<string, { customerName: string; customerCode: string | null; itemCount: number; missingCount: number }>();
   for (const item of serialized) {
