@@ -11,7 +11,7 @@ import {
   planOrderSnapshot,
   productionPlanOrderInclude,
   reconcileFutureActiveProductionPlanWeeks,
-  resolvePlanningReferences,
+  resolveOrCreatePlanningProduct,
   serializeProductionPlanOrder,
 } from '@/lib/production-planning';
 import type { ProductionPlanProductOptionDTO, ProductionPlanningSummaryDTO } from '@/types';
@@ -162,9 +162,16 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const parsed = parseProductionPlanOrderInput(body);
     if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
-    const record = await prisma.$transaction(async tx => {
-      const references = await resolvePlanningReferences(tx, parsed.data);
-      if (!references.drawingLibraryItemId || !references.customerName || !references.specification || !references.productName) {
+    const createDrawingLibraryProduct = body.createDrawingLibraryProduct === true;
+    const restoreDrawingLibraryProduct = body.restoreDrawingLibraryProduct === true;
+    const result = await prisma.$transaction(async tx => {
+      const product = await resolveOrCreatePlanningProduct(tx, parsed.data, {
+        createIfMissing: createDrawingLibraryProduct,
+        restoreIfDeleted: restoreDrawingLibraryProduct,
+      });
+      if (product.status === 'restore_required') throw new Error('PLAN_PRODUCT_RESTORE_REQUIRED');
+      const references = product.references;
+      if (product.status !== 'resolved' || !references.drawingLibraryItemId || !references.customerName || !references.specification || !references.productName) {
         throw new Error('PLAN_PRODUCT_NOT_FOUND');
       }
       const canonical = {
@@ -199,9 +206,26 @@ export async function POST(req: NextRequest) {
           detail: { sourceOrderNo: created.sourceOrderNo, sourceLineNo: created.sourceLineNo },
         },
       });
-      return created;
+      if (product.action === 'created' || product.action === 'restored') {
+        await tx.operationLog.create({
+          data: {
+            userId: user.id,
+            action: product.action === 'created'
+              ? 'create_drawing_library_item_from_plan_order'
+              : 'restore_drawing_library_item_from_plan_order',
+            targetType: 'drawing_library_item',
+            targetId: references.drawingLibraryItemId,
+            detail: { source: 'production_plan_order', planOrderId: created.id },
+          },
+        });
+      }
+      return { record: created, productAction: product.action };
     });
-    return NextResponse.json({ ok: true, order: serializeProductionPlanOrder(record) }, { status: 201 });
+    return NextResponse.json({
+      ok: true,
+      order: serializeProductionPlanOrder(result.record),
+      productAction: result.productAction,
+    }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if ((error as { code?: string }).code === 'P2002') {
@@ -209,6 +233,16 @@ export async function POST(req: NextRequest) {
     }
     if (error instanceof Error && error.message === 'PLAN_PRODUCT_NOT_FOUND') {
       return NextResponse.json({ ok: false, error: '请选择图纸资料库中的有效产品' }, { status: 400 });
+    }
+    if (error instanceof Error && error.message === 'PLAN_PRODUCT_RESTORE_REQUIRED') {
+      return NextResponse.json({
+        ok: false,
+        error: '该客户和规格已在图纸资料库回收站中，确认后可恢复并继续创建订单',
+        requiresProductRestore: true,
+      }, { status: 409 });
+    }
+    if (error instanceof Error && error.message.startsWith('PLAN_PRODUCT_INVALID:')) {
+      return NextResponse.json({ ok: false, error: error.message.slice('PLAN_PRODUCT_INVALID:'.length) }, { status: 400 });
     }
     console.error('create planning order failed', error);
     return NextResponse.json({ ok: false, error: '新建计划订单失败' }, { status: 500 });

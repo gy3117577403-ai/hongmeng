@@ -29,7 +29,7 @@ import {
   Warehouse,
   X,
 } from 'lucide-react';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
@@ -43,6 +43,7 @@ import type {
 } from '@/types';
 
 type PlanningView = 'schedule' | 'orders' | 'preparation' | 'changes' | 'history';
+type ProductEntryMode = 'select' | 'create';
 
 type PlanningPayload = {
   ok?: boolean;
@@ -241,8 +242,8 @@ function changeActionText(action: string): string {
   return labels[action] || action;
 }
 
-async function responseBody<T>(response: Response): Promise<T & { error?: string; requiresConfirmation?: boolean }> {
-  return response.json().catch(() => ({})) as Promise<T & { error?: string; requiresConfirmation?: boolean }>;
+async function responseBody<T>(response: Response): Promise<T & { error?: string; requiresConfirmation?: boolean; requiresProductRestore?: boolean }> {
+  return response.json().catch(() => ({})) as Promise<T & { error?: string; requiresConfirmation?: boolean; requiresProductRestore?: boolean }>;
 }
 
 function productTimeHref(order: ProductionPlanOrderDTO, periods?: PlanningPayload['periods']): string {
@@ -284,6 +285,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const [orderDraft, setOrderDraft] = useState<OrderForm>(emptyOrderForm);
   const [productKeyword, setProductKeyword] = useState('');
   const [productPickerOpen, setProductPickerOpen] = useState(false);
+  const [productEntryMode, setProductEntryMode] = useState<ProductEntryMode>('select');
+  const [activeProductIndex, setActiveProductIndex] = useState(-1);
   const [batchDialog, setBatchDialog] = useState<{ orderId: string; batchId?: string } | null>(null);
   const [batchDraft, setBatchDraft] = useState<BatchForm>({ quantity: '', unitSeconds: '', weekStartDate: '', plannedCompletionDate: '', reason: '' });
   const [releasePreview, setReleasePreview] = useState<ReleasePreview | null>(null);
@@ -294,6 +297,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const dialogRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const dialogTriggerRef = useRef<HTMLElement | null>(null);
+  const productPickerRef = useRef<HTMLDivElement>(null);
+  const productSearchInputRef = useRef<HTMLInputElement>(null);
   const lastExternalRefreshRef = useRef(0);
   const activeDialog = Boolean(orderDialog || batchDialog || releasePreview || deletePreview || activationPreview);
 
@@ -302,7 +307,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     layerRef: dialogRef,
     triggerRef: dialogTriggerRef,
     backgroundRef: mainRef,
-    onClose: closeDialog,
+    onClose: handleDialogEscape,
   });
 
   useEffect(() => {
@@ -337,6 +342,17 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     const timer = window.setTimeout(() => setToast(''), 2200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (!productPickerOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (!(event.target instanceof Node) || productPickerRef.current?.contains(event.target)) return;
+      setProductPickerOpen(false);
+      setActiveProductIndex(-1);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
+  }, [productPickerOpen]);
 
   useEffect(() => {
     const refreshAfterExternalChange = () => {
@@ -403,6 +419,17 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       : productOptions;
     return filtered.slice(0, 18);
   }, [productKeyword, productOptions]);
+  useEffect(() => {
+    setActiveProductIndex(current => visibleProductOptions.length
+      ? Math.min(Math.max(current, 0), visibleProductOptions.length - 1)
+      : -1);
+  }, [visibleProductOptions]);
+  const canSaveOrder = useMemo(() => {
+    const productReady = productEntryMode === 'create'
+      ? Boolean(orderDraft.customerName.trim() && orderDraft.specification.trim() && orderDraft.productName.trim())
+      : Boolean(orderDraft.drawingLibraryItemId);
+    return productReady && Boolean(orderDraftUnitMilliseconds);
+  }, [orderDraft.customerName, orderDraft.drawingLibraryItemId, orderDraft.productName, orderDraft.specification, orderDraftUnitMilliseconds, productEntryMode]);
   const filteredOrders = useMemo(() => {
     const word = keyword.trim().toLocaleLowerCase();
     return orders.filter(order => {
@@ -432,7 +459,18 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     setDeletePreview(null);
     setActivationPreview(null);
     setProductPickerOpen(false);
+    setProductEntryMode('select');
+    setActiveProductIndex(-1);
     setError('');
+  }
+
+  function handleDialogEscape(): void {
+    if (productPickerOpen && productPickerRef.current?.contains(document.activeElement)) {
+      setProductPickerOpen(false);
+      setActiveProductIndex(-1);
+      return;
+    }
+    closeDialog();
   }
 
   function openCreateOrder(trigger: HTMLElement): void {
@@ -440,6 +478,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     setOrderDraft(emptyOrderForm());
     setProductKeyword('');
     setProductPickerOpen(false);
+    setProductEntryMode('select');
+    setActiveProductIndex(-1);
     setOrderDialog({ mode: 'create' });
   }
 
@@ -448,6 +488,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     setOrderDraft(orderForm(order));
     setProductKeyword(order.specification);
     setProductPickerOpen(false);
+    setProductEntryMode('select');
+    setActiveProductIndex(-1);
     setOrderDialog({ mode: 'edit', orderId: order.id });
   }
 
@@ -469,6 +511,86 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     });
     setProductKeyword(option.specification);
     setProductPickerOpen(false);
+    setProductEntryMode('select');
+    setActiveProductIndex(-1);
+  }
+
+  function clearProductSelection(openPicker = true): void {
+    setOrderDraft(current => ({
+      ...current,
+      drawingLibraryItemId: '',
+      customerName: '',
+      salesperson: '',
+      productName: '',
+      specification: '',
+      planningUnitMinutes: '',
+    }));
+    setProductKeyword('');
+    setProductEntryMode('select');
+    setProductPickerOpen(openPicker);
+    setActiveProductIndex(-1);
+    if (openPicker) window.requestAnimationFrame(() => productSearchInputRef.current?.focus());
+  }
+
+  function updateProductKeyword(value: string): void {
+    if (orderDraft.drawingLibraryItemId && value !== selectedProduct?.specification) {
+      setOrderDraft(current => ({
+        ...current,
+        drawingLibraryItemId: '',
+        customerName: '',
+        salesperson: '',
+        productName: '',
+        specification: '',
+        planningUnitMinutes: '',
+      }));
+    }
+    setProductKeyword(value);
+    setProductPickerOpen(true);
+    setActiveProductIndex(0);
+  }
+
+  function beginCreateProduct(): void {
+    const specification = productKeyword.trim();
+    setOrderDraft(current => ({
+      ...current,
+      drawingLibraryItemId: '',
+      customerName: '',
+      salesperson: '',
+      productName: '',
+      specification,
+      planningUnitMinutes: '',
+    }));
+    setProductEntryMode('create');
+    setProductPickerOpen(false);
+    setActiveProductIndex(-1);
+    setError('');
+  }
+
+  function handleProductSearchKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      setProductPickerOpen(false);
+      setActiveProductIndex(-1);
+      return;
+    }
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!productPickerOpen) setProductPickerOpen(true);
+      const direction = event.key === 'ArrowDown' ? 1 : -1;
+      setActiveProductIndex(current => {
+        if (!visibleProductOptions.length) return -1;
+        const start = current < 0 ? (direction > 0 ? -1 : 0) : current;
+        return (start + direction + visibleProductOptions.length) % visibleProductOptions.length;
+      });
+      return;
+    }
+    if (event.key === 'Enter' && productPickerOpen) {
+      event.preventDefault();
+      const option = visibleProductOptions[activeProductIndex] || visibleProductOptions[0];
+      if (option) selectProduct(option);
+      else if (orderDialog?.mode === 'create' && productKeyword.trim()) beginCreateProduct();
+    }
   }
 
   function openBatch(order: ProductionPlanOrderDTO, trigger: HTMLElement, batch?: ProductionPlanBatchDTO): void {
@@ -484,10 +606,14 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     setBatchDialog({ orderId: order.id, batchId: batch?.id });
   }
 
-  async function saveOrder(confirmImpact = false): Promise<void> {
+  async function saveOrder(confirmImpact = false, restoreDrawingLibraryProduct = false): Promise<void> {
     if (!orderDialog) return;
-    if (!orderDraft.drawingLibraryItemId) {
-      setError('请先从图纸资料库选择产品');
+    if (productEntryMode === 'select' && !orderDraft.drawingLibraryItemId) {
+      setError('请选择图纸资料库产品，或创建新型号');
+      return;
+    }
+    if (productEntryMode === 'create' && (!orderDraft.customerName.trim() || !orderDraft.specification.trim() || !orderDraft.productName.trim())) {
+      setError('新型号必须填写客户、产品规格和产品名称');
       return;
     }
     if (!orderDraftUnitMilliseconds || orderDraftUnitMilliseconds > 86_400_000) {
@@ -501,17 +627,38 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       const response = await fetch(editing ? `/api/planning/orders/${orderDialog.orderId}` : '/api/planning/orders', {
         method: editing ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...orderDraft, planningUnitMilliseconds: orderDraftUnitMilliseconds, confirmImpact }),
+        body: JSON.stringify({
+          ...orderDraft,
+          planningUnitMilliseconds: orderDraftUnitMilliseconds,
+          confirmImpact,
+          createDrawingLibraryProduct: productEntryMode === 'create',
+          restoreDrawingLibraryProduct,
+        }),
       });
-      const body = await responseBody<{ order?: ProductionPlanOrderDTO; impact?: Record<string, number | boolean | string> }>(response);
+      const body = await responseBody<{
+        order?: ProductionPlanOrderDTO;
+        impact?: Record<string, number | boolean | string>;
+        productAction?: 'existing' | 'created' | 'restored';
+      }>(response);
       if (body.requiresConfirmation && !confirmImpact) {
         if (!orderDraft.reason.trim()) throw new Error('订单已经下达，请填写变更原因后再次保存');
         const confirmed = window.confirm('该订单已经下达，数量、交期或产品信息会同步到关联工单，但不会重置仓库和工艺进度。确认继续吗？');
         if (confirmed) await saveOrder(true);
         return;
       }
+      if (body.requiresProductRestore && !restoreDrawingLibraryProduct) {
+        const confirmed = window.confirm('该客户和规格已在图纸资料库回收站中。是否恢复该型号并继续创建订单？');
+        if (confirmed) await saveOrder(confirmImpact, true);
+        return;
+      }
       if (!response.ok || !body.order) throw new Error(body.error || '计划订单保存失败');
-      setToast(editing ? '计划订单已更新' : '计划订单已创建');
+      setToast(editing
+        ? '计划订单已更新'
+        : body.productAction === 'created'
+          ? '订单已创建，新型号已进入图纸资料库'
+          : body.productAction === 'restored'
+            ? '订单已创建，回收站型号已恢复'
+            : '计划订单已创建');
       closeDialog();
       setRefreshToken(value => value + 1);
     } catch (reason) {
@@ -845,24 +992,71 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       <header><div><span>{orderDialog.mode === 'create' ? '实时订单池' : '订单变更'}</span><h2 id="planning-order-dialog-title">{orderDialog.mode === 'create' ? '新建计划订单' : '编辑计划订单'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>
       <div className="planning-dialog-body">
         <div className="planning-form-grid">
-          <div className="planning-product-picker wide">
-            <label><span>选择图纸资料库产品 *</span><div className="planning-product-search"><Search size={18} /><input value={productKeyword} onFocus={() => setProductPickerOpen(true)} onChange={event => { setProductKeyword(event.target.value); setProductPickerOpen(true); }} placeholder="搜索客户、规格或产品名称" /></div></label>
-            {productPickerOpen && <div className="planning-product-results" role="listbox" aria-label="图纸资料库产品">
-              {visibleProductOptions.map(option => <button key={option.id} type="button" role="option" aria-selected={option.id === orderDraft.drawingLibraryItemId} onClick={() => selectProduct(option)}>
-                <span><strong>{option.specification}</strong><small>{option.customerName} · {option.productName}</small></span>
-                <em>{option.publishedProductTimeVersion ? `工时 V${option.publishedProductTimeVersion}` : '工时待发布'}</em>
-              </button>)}
-              {!visibleProductOptions.length && <div className="planning-product-empty"><strong>没有匹配的图纸产品</strong><span>请先到图纸资料库新增或完善产品资料。</span><a href="/drawing-library">前往图纸资料库</a></div>}
-            </div>}
-            {selectedProduct && <section className="planning-selected-product">
-              <div><span>已绑定图纸产品</span><strong title={selectedProduct.specification}>{selectedProduct.specification}</strong><small>{selectedProduct.customerName} · {selectedProduct.productName}</small></div>
-              <div><span>原图 {selectedProduct.drawingFileCount}</span><span>SOP {selectedProduct.sopFileCount}</span><span className={selectedProduct.publishedProductTimeVersion ? 'ready' : 'warning'}>{selectedProduct.publishedProductTimeVersion ? `工时 V${selectedProduct.publishedProductTimeVersion}` : '工时待发布'}</span></div>
+          <div
+            ref={productPickerRef}
+            className={`planning-product-picker wide mode-${productEntryMode}`}
+            onBlur={event => {
+              if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+              setProductPickerOpen(false);
+              setActiveProductIndex(-1);
+            }}
+          >
+            {productEntryMode === 'select' ? <>
+              <label htmlFor="planning-product-search">选择图纸资料库产品 *</label>
+              <div className="planning-product-search">
+                <Search size={18} />
+                <input
+                  ref={productSearchInputRef}
+                  id="planning-product-search"
+                  role="combobox"
+                  aria-autocomplete="list"
+                  aria-expanded={productPickerOpen}
+                  aria-controls="planning-product-results"
+                  aria-activedescendant={productPickerOpen && activeProductIndex >= 0 ? `planning-product-option-${visibleProductOptions[activeProductIndex]?.id}` : undefined}
+                  value={productKeyword}
+                  onFocus={() => setProductPickerOpen(true)}
+                  onChange={event => updateProductKeyword(event.target.value)}
+                  onKeyDown={handleProductSearchKeyDown}
+                  placeholder="搜索客户、规格或产品名称"
+                />
+                <div className="planning-product-search-actions">
+                  {(productKeyword || orderDraft.drawingLibraryItemId) && <button type="button" aria-label="清除所选产品" title="清除所选产品" onClick={() => clearProductSelection()}><X size={16} /></button>}
+                  <button type="button" aria-label={productPickerOpen ? '收起产品列表' : '展开产品列表'} title={productPickerOpen ? '收起产品列表' : '展开产品列表'} onClick={() => { setProductPickerOpen(value => !value); setActiveProductIndex(0); productSearchInputRef.current?.focus(); }}><ChevronDown size={17} /></button>
+                </div>
+              </div>
+              {productPickerOpen && <div id="planning-product-results" className="planning-product-results" role="listbox" aria-label="图纸资料库产品">
+                {visibleProductOptions.map((option, index) => <button
+                  id={`planning-product-option-${option.id}`}
+                  key={option.id}
+                  type="button"
+                  role="option"
+                  aria-selected={index === activeProductIndex || option.id === orderDraft.drawingLibraryItemId}
+                  onPointerMove={() => setActiveProductIndex(index)}
+                  onClick={() => selectProduct(option)}
+                >
+                  <span><strong>{option.specification}</strong><small>{option.customerName} · {option.productName}</small></span>
+                  <em>{option.publishedProductTimeVersion ? `工时 V${option.publishedProductTimeVersion}` : '工时待发布'}</em>
+                </button>)}
+                {!visibleProductOptions.length && <div className="planning-product-empty">
+                  <strong>没有匹配的图纸产品</strong>
+                  <span>可以直接建立新型号，订单会自动与图纸资料库绑定。</span>
+                  {orderDialog.mode === 'create' && productKeyword.trim() && <button type="button" onClick={beginCreateProduct}><Plus size={15} />创建新型号“{productKeyword.trim()}”</button>}
+                  <a href="/drawing-library">前往图纸资料库</a>
+                </div>}
+              </div>}
+              {selectedProduct && <section className="planning-selected-product">
+                <div><span>已绑定图纸产品</span><strong title={selectedProduct.specification}>{selectedProduct.specification}</strong><small>{selectedProduct.customerName} · {selectedProduct.productName}</small></div>
+                <div><span>原图 {selectedProduct.drawingFileCount}</span><span>SOP {selectedProduct.sopFileCount}</span><span className={selectedProduct.publishedProductTimeVersion ? 'ready' : 'warning'}>{selectedProduct.publishedProductTimeVersion ? `工时 V${selectedProduct.publishedProductTimeVersion}` : '工时待发布'}</span><button type="button" onClick={() => clearProductSelection()}><Search size={14} />更换</button></div>
+              </section>}
+            </> : <section className="planning-new-product-mode">
+              <div><span>新型号建档</span><strong>{orderDraft.specification || '请填写产品规格'}</strong><small>保存订单时同步建立空白图纸资料项；图纸和正式产品工时仍需后续维护。</small></div>
+              <button type="button" onClick={() => clearProductSelection()}><Search size={15} />选择已有产品</button>
             </section>}
           </div>
-          <label><span>客户</span><input value={orderDraft.customerName} readOnly aria-readonly="true" /></label>
+          <label><span>客户{productEntryMode === 'create' ? ' *' : ''}</span><input list={productEntryMode === 'create' ? 'planning-customer-list' : undefined} value={orderDraft.customerName} readOnly={productEntryMode !== 'create'} aria-readonly={productEntryMode !== 'create'} onChange={event => setOrderDraft(current => ({ ...current, customerName: event.target.value }))} /><datalist id="planning-customer-list">{customers.map(item => <option value={item} key={item} />)}</datalist></label>
           <label><span>业务员</span><input list="planning-salesperson-list" value={orderDraft.salesperson} onChange={event => setOrderDraft(current => ({ ...current, salesperson: event.target.value }))} placeholder="按同客户最近订单推荐，可修改" /><datalist id="planning-salesperson-list">{salespeople.map(item => <option value={item} key={item} />)}</datalist></label>
-          <label><span>产品规格</span><input value={orderDraft.specification} readOnly aria-readonly="true" /></label>
-          <label><span>产品名称</span><input value={orderDraft.productName} readOnly aria-readonly="true" /></label>
+          <label><span>产品规格{productEntryMode === 'create' ? ' *' : ''}</span><input value={orderDraft.specification} readOnly={productEntryMode !== 'create'} aria-readonly={productEntryMode !== 'create'} onChange={event => setOrderDraft(current => ({ ...current, specification: event.target.value }))} /></label>
+          <label><span>产品名称{productEntryMode === 'create' ? ' *' : ''}</span><input value={orderDraft.productName} readOnly={productEntryMode !== 'create'} aria-readonly={productEntryMode !== 'create'} onChange={event => setOrderDraft(current => ({ ...current, productName: event.target.value }))} /></label>
           <label><span>订单数量 *</span><input type="number" min="1" value={orderDraft.orderQuantity} onChange={event => setOrderDraft(current => ({ ...current, orderQuantity: event.target.value }))} /></label>
           <label><span>单件产品工时（分钟） *</span><input type="number" min="0.001" max="1440" step="0.001" value={orderDraft.planningUnitMinutes} onChange={event => setOrderDraft(current => ({ ...current, planningUnitMinutes: event.target.value }))} /><small>已有正式工时时自动带出，也可作为本订单计划值调整</small></label>
           <label className="planning-total-time"><span>订单总工时</span><output>{orderDraftTotalMilliseconds ? duration(orderDraftTotalMilliseconds) : '填写数量与单件工时后自动计算'}</output><small>单件工时 × 订单数量</small></label>
@@ -874,7 +1068,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         </div>
         {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
       </div>
-      <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !orderDraft.drawingLibraryItemId || !orderDraftUnitMilliseconds} onClick={() => { void saveOrder(); }}>{saving ? '保存中...' : '保存订单'}</button></footer>
+      <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || !canSaveOrder} onClick={() => { void saveOrder(); }}>{saving ? '保存中...' : productEntryMode === 'create' ? '保存订单并建档' : '保存订单'}</button></footer>
     </div>}
 
     {batchDialog && <div ref={dialogRef} className="planning-dialog batch-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-batch-dialog-title">

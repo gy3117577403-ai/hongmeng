@@ -1452,6 +1452,14 @@ main.planning-center-shell.hm-workbench-root {
   min-width: 0;
 }
 
+.planning-product-picker > label {
+  margin-bottom: 6px;
+  display: block;
+  color: #4f5d70;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .planning-product-search {
   position: relative;
 }
@@ -1467,7 +1475,38 @@ main.planning-center-shell.hm-workbench-root {
 }
 
 .planning-form-grid .planning-product-search input {
+  padding-right: 78px;
   padding-left: 38px;
+}
+
+.planning-product-search-actions {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  transform: translateY(-50%);
+}
+
+.planning-product-search-actions button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #66758a;
+  cursor: pointer;
+}
+
+.planning-product-search-actions button:hover,
+.planning-product-search-actions button:focus-visible {
+  background: #f2f5f8;
+  color: #c8530c;
+  outline: none;
 }
 
 .planning-product-results {
@@ -1552,6 +1591,20 @@ main.planning-center-shell.hm-workbench-root {
   font-weight: 750;
 }
 
+.planning-product-empty button {
+  min-height: 34px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #efb88f;
+  border-radius: 7px;
+  background: #fff7f1;
+  color: #b94f0b;
+  font-weight: 750;
+  cursor: pointer;
+}
+
 .planning-selected-product {
   margin-top: 8px;
   padding: 10px 12px;
@@ -1594,6 +1647,21 @@ main.planning-center-shell.hm-workbench-root {
   gap: 5px;
 }
 
+.planning-selected-product > div:last-child button {
+  min-height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #e7b48e;
+  border-radius: 6px;
+  background: #fff;
+  color: #a8470a;
+  font-size: 10px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
 .planning-selected-product > div:last-child span {
   padding: 5px 7px;
   border-radius: 6px;
@@ -1611,6 +1679,59 @@ main.planning-center-shell.hm-workbench-root {
 .planning-selected-product > div:last-child span.warning {
   background: #fff0e8;
   color: #bc4d08;
+}
+
+.planning-new-product-mode {
+  min-height: 72px;
+  padding: 11px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid #efb98f;
+  border-radius: 8px;
+  background: #fff7f1;
+}
+
+.planning-new-product-mode > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.planning-new-product-mode span {
+  color: #d95600;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.planning-new-product-mode strong,
+.planning-new-product-mode small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.planning-new-product-mode small {
+  color: #6f7d90;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.planning-new-product-mode > button {
+  min-height: 36px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  border: 1px solid #e5ad84;
+  border-radius: 7px;
+  background: #fff;
+  color: #a8470a;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
 }
 
 .planning-dialog > footer {

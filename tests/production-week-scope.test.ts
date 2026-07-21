@@ -8,12 +8,14 @@ import {
 } from '../lib/production-execution';
 import {
   alignProductionPlanBatchWeek,
+  buildPlanningDrawingLibraryItemData,
   chinaDate,
   effectivePlanningUnitMilliseconds,
   parseProductionPlanBatchInput,
   parseProductionPlanOrderInput,
   planBatchSnapshot,
   productionPlanTargetWeek,
+  resolveOrCreatePlanningProduct,
 } from '../lib/production-planning';
 
 test('natural production week is Monday through Sunday in China time', () => {
@@ -83,6 +85,85 @@ test('new planning orders require a positive unit labor time', () => {
   assert.equal(parsed.ok, false);
   if (parsed.ok) return;
   assert.match(parsed.error, /单件产品工时/);
+});
+
+test('a new plan product can be parsed without an existing drawing library id', () => {
+  const parsed = parseProductionPlanOrderInput({
+    customerName: '杭州测试(10999)',
+    salesperson: '业务员甲',
+    productName: '测试线束',
+    specification: 'PLAN-NEW-001',
+    orderQuantity: 20,
+    planningUnitMilliseconds: 90_000,
+    orderDate: '2026-07-20',
+    customerDueDate: '2026-07-24',
+  });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+  assert.equal(parsed.data.drawingLibraryItemId, null);
+  const drawing = buildPlanningDrawingLibraryItemData(parsed.data);
+  assert.equal(drawing.ok, true);
+  if (!drawing.ok) return;
+  assert.equal(drawing.data.customerCode, '10999');
+  assert.equal(drawing.data.libraryKey, '杭州测试(10999)::PLAN-NEW-001');
+  assert.match(drawing.data.remark, /计划中心自动建档/);
+});
+
+test('planning product creation is idempotent and requires confirmation before restoring a deleted item', async () => {
+  const parsed = parseProductionPlanOrderInput({
+    customerName: '杭州测试(10999)',
+    productName: '测试线束',
+    specification: 'PLAN-NEW-002',
+    orderQuantity: 20,
+    planningUnitMilliseconds: 90_000,
+    orderDate: '2026-07-20',
+    customerDueDate: '2026-07-24',
+  });
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) return;
+
+  let state: 'missing' | 'active' | 'deleted' = 'missing';
+  let upsertCount = 0;
+  const tx = {
+    drawingLibraryItem: {
+      findFirst: async () => state === 'active' ? {
+        id: 'drawing-1',
+        customerName: parsed.data.customerName,
+        productName: parsed.data.productName,
+        specification: parsed.data.specification,
+        productTimeProfiles: [],
+      } : null,
+      findUnique: async () => state === 'missing' ? null : {
+        id: 'drawing-1',
+        deletedAt: state === 'deleted' ? new Date('2026-07-20T00:00:00.000Z') : null,
+      },
+      upsert: async () => {
+        upsertCount += 1;
+        state = 'active';
+        return { id: 'drawing-1' };
+      },
+    },
+  } as unknown as Parameters<typeof resolveOrCreatePlanningProduct>[0];
+
+  const created = await resolveOrCreatePlanningProduct(tx, parsed.data, { createIfMissing: true, restoreIfDeleted: false });
+  assert.equal(created.status, 'resolved');
+  assert.equal(created.action, 'created');
+  assert.equal(upsertCount, 1);
+
+  const repeated = await resolveOrCreatePlanningProduct(tx, parsed.data, { createIfMissing: true, restoreIfDeleted: false });
+  assert.equal(repeated.status, 'resolved');
+  assert.equal(repeated.action, 'existing');
+  assert.equal(upsertCount, 1);
+
+  state = 'deleted';
+  const blockedRestore = await resolveOrCreatePlanningProduct(tx, parsed.data, { createIfMissing: true, restoreIfDeleted: false });
+  assert.equal(blockedRestore.status, 'restore_required');
+  assert.equal(upsertCount, 1);
+
+  const restored = await resolveOrCreatePlanningProduct(tx, parsed.data, { createIfMissing: true, restoreIfDeleted: true });
+  assert.equal(restored.status, 'resolved');
+  assert.equal(restored.action, 'restored');
+  assert.equal(upsertCount, 2);
 });
 
 test('planning batches accept and snapshot an explicit unit labor time', () => {

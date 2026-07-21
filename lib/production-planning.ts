@@ -1,6 +1,10 @@
 import type { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { drawingLibraryKey } from '@/lib/drawing-library';
+import {
+  drawingLibraryKey,
+  invalidSpecificationReason,
+  parseCustomerCode,
+} from '@/lib/drawing-library';
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
 import type {
@@ -107,6 +111,15 @@ export type ParsedPlanBatch = {
   weekEndDate: Date;
   plannedCompletionDate: Date;
   unitMilliseconds: number | null;
+};
+
+export type PlanningProductReferenceAction = 'existing' | 'created' | 'restored';
+
+export type PlanningProductReferenceResult = {
+  status: 'resolved' | 'missing' | 'restore_required';
+  action: PlanningProductReferenceAction | null;
+  drawingLibraryItemId: string | null;
+  references: Awaited<ReturnType<typeof resolvePlanningReferences>>;
 };
 
 export type ProductionPlanReleasePreview = {
@@ -375,6 +388,95 @@ export async function resolvePlanningReferences(
     productTimeProfileId: profile?.id || null,
     productTimeProfileVersion: profile?.version || null,
     unitMilliseconds: profile ? productTimeTotalMilliseconds(profile.entries) : null,
+  };
+}
+
+export function buildPlanningDrawingLibraryItemData(input: Pick<ParsedPlanOrder, 'customerName' | 'productName' | 'specification'>):
+  | { ok: true; data: { customerName: string; customerCode: string | null; productName: string; specification: string; libraryKey: string; remark: string } }
+  | { ok: false; error: string } {
+  const customerName = text(input.customerName, 120);
+  const productName = text(input.productName, 160);
+  const specification = text(input.specification, 180);
+  if (!customerName) return { ok: false, error: '请填写客户名称' };
+  if (!productName) return { ok: false, error: '请填写产品名称' };
+  if (!specification) return { ok: false, error: '请填写产品规格' };
+  const specificationError = invalidSpecificationReason(specification);
+  if (specificationError) return { ok: false, error: specificationError };
+  return {
+    ok: true,
+    data: {
+      customerName,
+      customerCode: parseCustomerCode(customerName),
+      productName,
+      specification,
+      libraryKey: drawingLibraryKey(customerName, specification),
+      remark: '由计划中心自动建档，待补图纸资料',
+    },
+  };
+}
+
+export async function resolveOrCreatePlanningProduct(
+  tx: Pick<Prisma.TransactionClient, 'drawingLibraryItem'>,
+  input: ParsedPlanOrder,
+  options: { createIfMissing: boolean; restoreIfDeleted: boolean },
+): Promise<PlanningProductReferenceResult> {
+  const references = await resolvePlanningReferences(tx, input);
+  if (references.drawingLibraryItemId) {
+    return {
+      status: 'resolved',
+      action: 'existing',
+      drawingLibraryItemId: references.drawingLibraryItemId,
+      references,
+    };
+  }
+  if (!options.createIfMissing) {
+    return { status: 'missing', action: null, drawingLibraryItemId: null, references };
+  }
+
+  const createData = buildPlanningDrawingLibraryItemData(input);
+  if (!createData.ok) throw new Error(`PLAN_PRODUCT_INVALID:${createData.error}`);
+  const existing = await tx.drawingLibraryItem.findUnique({
+    where: { libraryKey: createData.data.libraryKey },
+    select: { id: true, deletedAt: true },
+  });
+  if (existing?.deletedAt && !options.restoreIfDeleted) {
+    return {
+      status: 'restore_required',
+      action: null,
+      drawingLibraryItemId: existing.id,
+      references,
+    };
+  }
+
+  const action: PlanningProductReferenceAction = existing?.deletedAt
+    ? 'restored'
+    : existing
+      ? 'existing'
+      : 'created';
+  const drawing = await tx.drawingLibraryItem.upsert({
+    where: { libraryKey: createData.data.libraryKey },
+    create: createData.data,
+    update: existing?.deletedAt && options.restoreIfDeleted
+      ? {
+          deletedAt: null,
+          customerName: createData.data.customerName,
+          customerCode: createData.data.customerCode,
+          productName: createData.data.productName,
+          specification: createData.data.specification,
+        }
+      : {},
+    select: { id: true },
+  });
+  const resolved = await resolvePlanningReferences(tx, {
+    drawingLibraryItemId: drawing.id,
+    customerName: createData.data.customerName,
+    specification: createData.data.specification,
+  });
+  return {
+    status: 'resolved',
+    action,
+    drawingLibraryItemId: drawing.id,
+    references: resolved,
   };
 }
 
