@@ -3,6 +3,8 @@ import test from 'node:test';
 import {
   calculateActualLaborMilliseconds,
   calculateAttainmentBasisPoints,
+  calculateProcessReportProgress,
+  calculateProductProcessLaborMilliseconds,
   calculateStandardLaborMilliseconds,
   employeeReportRange,
   serializeEmployee,
@@ -77,27 +79,71 @@ test('employee serialization keeps position and team as separate profile fields'
   assert.equal(employee.team, '前端一组');
 });
 
-test('product time accepts direct per-product seconds and keeps blank processes absent', () => {
+test('product time stores one aggregate per-set duration for each process', () => {
   const result = validateProductTimeEntries([
-    { processDefinitionId: 'cutting', unitSeconds: 6, occurrences: 1 },
-    { processDefinitionId: 'crimping', unitSeconds: 32, actionSeconds: 4, occurrences: 8 },
+    { processDefinitionId: 'cutting', unitSeconds: 6 },
+    { processDefinitionId: 'crimping', unitSeconds: 32, parallelWithPrevious: true },
   ]);
   assert.equal(result.ok, true);
   if (!result.ok) return;
   assert.equal(result.entries.length, 2);
   assert.equal(result.entries[1].unitMilliseconds, 32_000);
-  assert.equal(result.entries[1].actionMilliseconds, 4_000);
-  assert.equal(result.entries[1].occurrences, 8);
+  assert.equal(result.entries[1].actionMilliseconds, null);
+  assert.equal(result.entries[1].occurrences, 1);
+  assert.equal(result.entries[1].setupMilliseconds, 0);
+  assert.equal(result.entries[0].sequenceGroup, 1);
+  assert.equal(result.entries[1].sequenceGroup, 1);
   assert.equal(productTimeTotalMilliseconds(result.entries), 38_000);
 });
 
-test('product time can derive per-product seconds from action time and occurrences', () => {
+test('product time requires the aggregate duration and does not derive it from action counts', () => {
   const result = validateProductTimeEntries([
     { processDefinitionId: 'terminal-insertion', actionSeconds: 6.75, occurrences: 8 },
   ]);
+  assert.equal(result.ok, false);
+});
+
+test('sequential product processes advance to a new sequence group', () => {
+  const result = validateProductTimeEntries([
+    { processDefinitionId: 'cutting', unitSeconds: 20 },
+    { processDefinitionId: 'stripping', unitSeconds: 10 },
+    { processDefinitionId: 'crimping', unitSeconds: 35, parallelWithPrevious: true },
+  ]);
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.equal(result.entries[0].unitMilliseconds, 54_000);
+  assert.deepEqual(result.entries.map(entry => entry.sequenceGroup), [1, 2, 2]);
+});
+
+test('aggregate process labor multiplies only by employee good quantity', () => {
+  assert.equal(calculateProductProcessLaborMilliseconds({
+    aggregateMillisecondsPerProduct: 35_000,
+    goodQty: 120,
+  }), 4_200_000);
+});
+
+test('multiple employee reports accumulate until the process target is reached', () => {
+  const first = calculateProcessReportProgress({
+    targetQuantity: 8_500,
+    previouslyReportedGoodQuantity: 0,
+    submittedGoodQuantity: 3_000,
+  });
+  assert.deepEqual(first, {
+    reportedGoodQuantity: 3_000,
+    remainingGoodQuantity: 5_500,
+    completed: false,
+  });
+  const second = calculateProcessReportProgress({
+    targetQuantity: 8_500,
+    previouslyReportedGoodQuantity: first.reportedGoodQuantity,
+    submittedGoodQuantity: 5_500,
+  });
+  assert.equal(second.completed, true);
+  assert.equal(second.remainingGoodQuantity, 0);
+  assert.throws(() => calculateProcessReportProgress({
+    targetQuantity: 8_500,
+    previouslyReportedGoodQuantity: 8_000,
+    submittedGoodQuantity: 501,
+  }), /剩余数量 500/);
 });
 
 test('product quotation time stores a positive per-set commercial duration', () => {

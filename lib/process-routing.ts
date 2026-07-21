@@ -64,6 +64,10 @@ export const processRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRoute
     orderBy: { position: 'asc' },
     include: {
       completedBy: { select: { id: true, username: true, displayName: true } },
+      executions: {
+        where: { voidedAt: null },
+        select: { goodQty: true },
+      },
       _count: { select: { executions: true } },
     },
   },
@@ -77,7 +81,13 @@ export const processRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRoute
 export const processRouteSummaryInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
   steps: {
     orderBy: { position: 'asc' },
-    include: { _count: { select: { executions: true } } },
+    include: {
+      executions: {
+        where: { voidedAt: null },
+        select: { goodQty: true },
+      },
+      _count: { select: { executions: true } },
+    },
   },
 });
 
@@ -136,6 +146,7 @@ export type ProcessStepInput = {
   processName?: unknown;
   stageGroup?: unknown;
   unitsPerProduct?: unknown;
+  sequenceGroup?: unknown;
 };
 
 export type ValidatedProcessStep = {
@@ -145,11 +156,63 @@ export type ValidatedProcessStep = {
   stageGroup: ProcessStageGroup;
   position: number;
   unitsPerProduct: number;
+  sequenceGroup: number;
 };
 
 export type ProcessStepValidationResult =
   | { ok: true; steps: ValidatedProcessStep[] }
   | { ok: false; error: string };
+
+export type CompletedProcessGroupTransition = {
+  groupCompleted: boolean;
+  nextSequenceGroup: number | null;
+  nextStepIds: string[];
+  activeStepIds: string[];
+  routeCompleted: boolean;
+};
+
+export function resolveCompletedProcessGroupTransition(
+  steps: Array<{ id: string; sequenceGroup: number; status: string }>,
+  completedStepId: string,
+): CompletedProcessGroupTransition {
+  const completedStep = steps.find(step => step.id === completedStepId);
+  if (!completedStep) throw new Error('当前工序不存在');
+
+  const unfinishedParallelSteps = steps.filter(step => (
+    step.id !== completedStepId
+    && step.sequenceGroup === completedStep.sequenceGroup
+    && step.status !== 'completed'
+    && step.status !== 'skipped'
+  ));
+  if (unfinishedParallelSteps.length > 0) {
+    return {
+      groupCompleted: false,
+      nextSequenceGroup: null,
+      nextStepIds: [],
+      activeStepIds: unfinishedParallelSteps.map(step => step.id),
+      routeCompleted: false,
+    };
+  }
+
+  const futurePendingSteps = steps.filter(step => (
+    step.sequenceGroup > completedStep.sequenceGroup && step.status === 'pending'
+  ));
+  const nextSequenceGroup = futurePendingSteps.length
+    ? Math.min(...futurePendingSteps.map(step => step.sequenceGroup))
+    : null;
+  const nextStepIds = nextSequenceGroup === null
+    ? []
+    : futurePendingSteps
+        .filter(step => step.sequenceGroup === nextSequenceGroup)
+        .map(step => step.id);
+  return {
+    groupCompleted: true,
+    nextSequenceGroup,
+    nextStepIds,
+    activeStepIds: nextStepIds,
+    routeCompleted: nextStepIds.length === 0,
+  };
+}
 
 function cleanText(value: unknown, max: number): string {
   return String(value ?? '').trim().slice(0, max);
@@ -226,6 +289,7 @@ export function validateProcessSteps(input: unknown): ProcessStepValidationResul
     const processName = cleanText(item?.processName, 60);
     const stageGroup = normalizeProcessStageGroup(item?.stageGroup);
     const unitsPerProduct = Number(item?.unitsPerProduct ?? 1);
+    const sequenceGroup = Number(item?.sequenceGroup ?? index + 1);
     let processCode = cleanText(item?.processCode, 80)
       .toLocaleLowerCase('en-US')
       .replace(/[^a-z0-9_-]+/g, '-')
@@ -234,6 +298,9 @@ export function validateProcessSteps(input: unknown): ProcessStepValidationResul
     if (!stageGroup) return { ok: false, error: `第 ${index + 1} 个工序的阶段分组不正确` };
     if (!Number.isInteger(unitsPerProduct) || unitsPerProduct <= 0 || unitsPerProduct > 10_000) {
       return { ok: false, error: `第 ${index + 1} 个工序的每件次数必须是 1-10000 的整数` };
+    }
+    if (!Number.isInteger(sequenceGroup) || sequenceGroup <= 0 || sequenceGroup > 80) {
+      return { ok: false, error: `第 ${index + 1} 个工序的顺序组不正确` };
     }
     if (!processCode) processCode = `custom-${index + 1}-${Date.now()}`;
     if (codes.has(processCode)) {
@@ -247,6 +314,7 @@ export function validateProcessSteps(input: unknown): ProcessStepValidationResul
       stageGroup,
       position: index + 1,
       unitsPerProduct,
+      sequenceGroup,
     });
   }
   return { ok: true, steps };
@@ -278,42 +346,58 @@ export function serializeProcessRoute(
   route: ProcessRouteRecord | ProcessRouteSummaryRecord,
 ): WorkOrderProcessRouteDTO {
   const status = normalizeRouteStatus(route.status);
-  const steps = route.steps.map(step => ({
-    id: step.id,
-    processDefinitionId: step.processDefinitionId,
-    processCode: step.processCode,
-    processName: step.processName,
-    stageGroup: normalizeProcessStageGroup(step.stageGroup) || 'frontend',
-    position: step.position,
-    unitsPerProduct: step.unitsPerProduct,
-    status: normalizeStepStatus(step.status),
-    startedAt: step.startedAt?.toISOString() || null,
-    completedAt: step.completedAt?.toISOString() || null,
-    completedBy: 'completedBy' in step ? step.completedBy : null,
-    remark: step.remark,
-    standardTimeId: step.standardTimeId,
-    standardVersion: step.standardVersion,
-    timeBasis: step.timeBasis === 'per_batch'
-      ? 'per_batch' as const
-      : step.timeBasis === 'per_unit'
-        ? 'per_unit' as const
-        : null,
-    unitLabel: step.unitLabel,
-    standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
-    setupMilliseconds: step.setupMilliseconds,
-    countsForEfficiency: step.countsForEfficiency,
-    executionCount: '_count' in step ? step._count.executions : 0,
-    productTimeProfileId: step.productTimeProfileId,
-    productTimeEntryId: step.productTimeEntryId,
-    productTimeProfileVersion: step.productTimeProfileVersion,
-    standardSource: step.standardSource,
-  }));
+  const steps = route.steps.map(step => {
+    const reportedGoodQuantity = 'executions' in step
+      ? step.executions.reduce((total, execution) => total + execution.goodQty, 0)
+      : 0;
+    return {
+      id: step.id,
+      processDefinitionId: step.processDefinitionId,
+      processCode: step.processCode,
+      processName: step.processName,
+      stageGroup: normalizeProcessStageGroup(step.stageGroup) || 'frontend',
+      position: step.position,
+      sequenceGroup: step.sequenceGroup,
+      unitsPerProduct: step.unitsPerProduct,
+      status: normalizeStepStatus(step.status),
+      startedAt: step.startedAt?.toISOString() || null,
+      completedAt: step.completedAt?.toISOString() || null,
+      completedBy: 'completedBy' in step ? step.completedBy : null,
+      remark: step.remark,
+      standardTimeId: step.standardTimeId,
+      standardVersion: step.standardVersion,
+      timeBasis: step.timeBasis === 'per_batch'
+        ? 'per_batch' as const
+        : step.timeBasis === 'per_unit'
+          ? 'per_unit' as const
+          : null,
+      unitLabel: step.unitLabel,
+      standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
+      setupMilliseconds: step.setupMilliseconds,
+      countsForEfficiency: step.countsForEfficiency,
+      executionCount: '_count' in step ? step._count.executions : 0,
+      reportedGoodQuantity,
+      remainingGoodQuantity: null,
+      productTimeProfileId: step.productTimeProfileId,
+      productTimeEntryId: step.productTimeEntryId,
+      productTimeProfileVersion: step.productTimeProfileVersion,
+      standardSource: step.standardSource,
+    };
+  });
   const completedStepCount = steps.filter(step => step.status === 'completed' || step.status === 'skipped').length;
-  const currentIndex = steps.findIndex(step => step.status === 'current');
-  const currentStep = currentIndex >= 0 ? steps[currentIndex] : null;
-  const nextStep = currentIndex >= 0
-    ? steps.slice(currentIndex + 1).find(step => step.status === 'pending') || null
-    : steps.find(step => step.status === 'pending') || null;
+  const currentSteps = steps.filter(step => step.status === 'current');
+  const currentSequenceGroup = currentSteps.length
+    ? Math.min(...currentSteps.map(step => step.sequenceGroup))
+    : null;
+  const pendingGroups = steps
+    .filter(step => step.status === 'pending' && (currentSequenceGroup === null || step.sequenceGroup > currentSequenceGroup))
+    .map(step => step.sequenceGroup);
+  const nextSequenceGroup = pendingGroups.length ? Math.min(...pendingGroups) : null;
+  const nextSteps = nextSequenceGroup === null
+    ? []
+    : steps.filter(step => step.status === 'pending' && step.sequenceGroup === nextSequenceGroup);
+  const currentStep = currentSteps[0] || null;
+  const nextStep = nextSteps[0] || null;
   const detailRoute = route as ProcessRouteRecord;
   return {
     id: route.id,
@@ -335,6 +419,8 @@ export function serializeProcessRoute(
     stepCount: steps.length,
     completedStepCount,
     progress: steps.length > 0 ? Math.round((completedStepCount / steps.length) * 100) : 0,
+    currentSteps,
+    nextSteps,
     currentStep,
     nextStep,
     steps,
@@ -365,15 +451,17 @@ export async function findDefaultProcessTemplate(
 }
 
 function productTimeRouteSteps(profile: ProductTimeProfileRecord, currentStartedAt?: Date) {
-  return profile.entries.map((entry, index) => ({
+  const firstSequenceGroup = profile.entries[0]?.sequenceGroup;
+  return profile.entries.map(entry => ({
     processDefinitionId: entry.processDefinitionId,
     processCode: entry.processDefinition.code,
     processName: entry.processDefinition.name,
     stageGroup: entry.processDefinition.stageGroup,
     position: entry.position,
+    sequenceGroup: entry.sequenceGroup,
     ...productTimeStandardSnapshot(profile, entry),
-    status: currentStartedAt && index === 0 ? 'current' : 'pending',
-    startedAt: currentStartedAt && index === 0 ? currentStartedAt : null,
+    status: currentStartedAt && entry.sequenceGroup === firstSequenceGroup ? 'current' : 'pending',
+    startedAt: currentStartedAt && entry.sequenceGroup === firstSequenceGroup ? currentStartedAt : null,
   }));
 }
 
@@ -393,6 +481,8 @@ async function applyPublishedProductTimeToDraftRoute(
 
   const now = new Date();
   const shouldStart = activation.shouldStart;
+  const firstSequenceGroup = input.profile.entries[0].sequenceGroup;
+  const firstGroupEntries = input.profile.entries.filter(entry => entry.sequenceGroup === firstSequenceGroup);
   const update = await tx.workOrderProcessRoute.updateMany({
     where: { id: input.route.id, version: input.route.version, status: 'draft' },
     data: {
@@ -437,7 +527,7 @@ async function applyPublishedProductTimeToDraftRoute(
       data: {
         stage: firstStage,
         status: legacyStatusForStage(firstStage),
-        latestProgressRemark: `当前工序：${firstDefinition.name}`,
+        latestProgressRemark: `当前工序：${firstGroupEntries.map(entry => entry.processDefinition.name).join('、')}`,
       },
     });
   }
@@ -720,6 +810,7 @@ export function processTemplateStepInput(step: ProcessTemplateStepDTO): Validate
     processName: step.processName,
     stageGroup: step.stageGroup,
     position: step.position,
+    sequenceGroup: step.position,
     unitsPerProduct: step.unitsPerProduct || 1,
   };
 }

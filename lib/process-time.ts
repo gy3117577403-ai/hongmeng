@@ -60,6 +60,45 @@ export function calculateStandardLaborMilliseconds(input: {
   return total;
 }
 
+export function calculateProductProcessLaborMilliseconds(input: {
+  aggregateMillisecondsPerProduct: number;
+  goodQty: number;
+}): number {
+  const total = input.aggregateMillisecondsPerProduct * input.goodQty;
+  if (!Number.isSafeInteger(total) || total <= 0 || total > MAX_PROCESS_MILLISECONDS) {
+    throw new Error('本次标准工时超出允许范围，请拆分报工数量');
+  }
+  return total;
+}
+
+export function calculateProcessReportProgress(input: {
+  targetQuantity: number;
+  previouslyReportedGoodQuantity: number;
+  submittedGoodQuantity: number;
+}): {
+  reportedGoodQuantity: number;
+  remainingGoodQuantity: number;
+  completed: boolean;
+} {
+  const targetQuantity = Math.trunc(input.targetQuantity);
+  const previouslyReportedGoodQuantity = Math.trunc(input.previouslyReportedGoodQuantity);
+  const submittedGoodQuantity = Math.trunc(input.submittedGoodQuantity);
+  if (targetQuantity <= 0 || previouslyReportedGoodQuantity < 0 || submittedGoodQuantity <= 0) {
+    throw new Error('报工数量不正确');
+  }
+  const remainingBeforeReport = Math.max(0, targetQuantity - previouslyReportedGoodQuantity);
+  if (submittedGoodQuantity > remainingBeforeReport) {
+    throw new Error(`本次合格数量不能超过当前工序剩余数量 ${remainingBeforeReport}`);
+  }
+  const reportedGoodQuantity = previouslyReportedGoodQuantity + submittedGoodQuantity;
+  const remainingGoodQuantity = Math.max(0, targetQuantity - reportedGoodQuantity);
+  return {
+    reportedGoodQuantity,
+    remainingGoodQuantity,
+    completed: remainingGoodQuantity === 0,
+  };
+}
+
 export function calculateActualLaborMilliseconds(
   startedAt: Date,
   endedAt: Date,

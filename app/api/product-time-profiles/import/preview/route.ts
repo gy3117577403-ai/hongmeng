@@ -92,7 +92,6 @@ export async function POST(req: NextRequest) {
           processDefinitionId: column.definition.id,
           processName: column.definition.name,
           unitSeconds,
-          occurrences: 1,
         }] : [];
       });
       const warnings: string[] = [];

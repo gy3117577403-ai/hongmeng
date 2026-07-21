@@ -5,6 +5,7 @@ import {
   normalizeProcessStageGroup,
   processRouteInclude,
   processStageForGroup,
+  resolveCompletedProcessGroupTransition,
   validateProcessSteps,
   type ProcessStepInput,
 } from '@/lib/process-routing';
@@ -12,6 +13,8 @@ import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-f
 import {
   calculateActualLaborMilliseconds,
   calculateAttainmentBasisPoints,
+  calculateProcessReportProgress,
+  calculateProductProcessLaborMilliseconds,
   calculateStandardLaborMilliseconds,
   cleanProcessText,
   nonnegativeInteger,
@@ -55,6 +58,7 @@ export type ApplyProductTimeProfileCommand = ProcessRouteCommandBase & {
 
 export type AdvanceProcessRouteCommand = ProcessRouteCommandBase & {
   action: 'advance';
+  stepId?: unknown;
   remark?: unknown;
   execution?: unknown;
 };
@@ -212,6 +216,7 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
           processName: step.processName,
           stageGroup: step.stageGroup,
           position: step.position,
+          sequenceGroup: step.sequenceGroup,
           ...(productProfile && productEntry
             ? productTimeStandardSnapshot(productProfile, productEntry)
             : !productProfile && standard
@@ -305,6 +310,7 @@ async function applyProductTimeProfile(input: ApplyProductTimeProfileCommand): P
         processName: entry.processDefinition.name,
         stageGroup: entry.processDefinition.stageGroup,
         position: entry.position,
+        sequenceGroup: entry.sequenceGroup,
         ...productTimeStandardSnapshot(profile, entry),
         status: 'pending',
       })),
@@ -394,6 +400,8 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
     }
     const stage = normalizeWorkOrderStage(route.workOrder.stage || route.workOrder.status) || 'not_issued';
     const first = route.steps[0];
+    const firstSequenceGroup = first.sequenceGroup;
+    const firstSteps = route.steps.filter(step => step.sequenceGroup === firstSequenceGroup);
     const shouldStart = stage !== 'not_issued';
     const firstGroup = normalizeProcessStageGroup(first.stageGroup) || 'frontend';
     const nextStage = shouldStart ? processStageForGroup(firstGroup) : stage;
@@ -409,8 +417,8 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
     });
     if (update.count !== 1) throw conflict();
     if (shouldStart) {
-      await tx.workOrderProcessStep.update({
-        where: { id: first.id },
+      await tx.workOrderProcessStep.updateMany({
+        where: { routeId: route.id, sequenceGroup: firstSequenceGroup, status: 'pending' },
         data: { status: 'current', startedAt: now },
       });
       await tx.workOrder.update({
@@ -419,7 +427,7 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
           stage: nextStage,
           status: legacyStatusForStage(nextStage),
           startedAt: route.workOrder.startedAt || now,
-          latestProgressRemark: `当前工序：${first.processName}`,
+          latestProgressRemark: `当前工序：${firstSteps.map(step => step.processName).join('、')}`,
           lastProgressAt: now,
         },
       });
@@ -430,7 +438,7 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
         stepId: shouldStart ? first.id : null,
         action: 'confirm_process_route',
         content: shouldStart
-          ? `确认工艺路线，开始 ${first.processName}`
+          ? `确认工艺路线，开始 ${firstSteps.map(step => step.processName).join('、')}`
           : '确认工艺路线，等待图纸下发后开始首道工序',
         actorId: input.userId,
       },
@@ -467,20 +475,32 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
     if (stage === 'not_issued') {
       throw new ProcessRouteServiceError('请先确认图纸已下发', 409, 'DRAWING_NOT_ISSUED');
     }
-    const currentIndex = route.steps.findIndex(step => step.status === 'current');
-    if (currentIndex < 0) {
+    const currentSteps = route.steps.filter(step => step.status === 'current');
+    if (!currentSteps.length) {
       throw new ProcessRouteServiceError('当前执行工序状态异常，请检查并重新发布该产品工序与工时', 409, 'PROCESS_CURRENT_STEP_MISSING');
     }
-
-    const current = route.steps[currentIndex];
-    const next = route.steps.slice(currentIndex + 1).find(step => step.status === 'pending') || null;
+    const requestedStepId = cleanProcessText(input.stepId, 80);
+    const current = requestedStepId
+      ? currentSteps.find(step => step.id === requestedStepId)
+      : currentSteps[0];
+    if (!current) {
+      throw new ProcessRouteServiceError('所选工序不是当前可报工工序，请刷新后重试', 409, 'PROCESS_STEP_NOT_CURRENT');
+    }
     const now = new Date();
     const remark = cleanText(input.remark, 300);
     const target = targetQuantity(route.workOrder);
-    const completedCount = route.steps.filter(step => step.status === 'completed' || step.status === 'skipped').length + 1;
-    const progress = Math.round((completedCount / route.steps.length) * 100);
     const submittedExecution = executionInput(input.execution);
+    if (route.routeSource === 'product_time_profile' && !submittedExecution) {
+      throw new ProcessRouteServiceError('请选择员工并填写本次报工数量与时间', 400, 'PROCESS_EXECUTION_REQUIRED');
+    }
+    const executionTotal = await tx.processExecution.aggregate({
+      where: { stepId: current.id, voidedAt: null },
+      _sum: { goodQty: true },
+    });
+    const previouslyReportedGoodQty = executionTotal._sum.goodQty || 0;
+    const remainingBeforeReport = Math.max(0, target - previouslyReportedGoodQty);
     let executionId: string | null = null;
+    let reportedGoodQty = previouslyReportedGoodQty;
     let resolvedStandard = current.standardMillisecondsPerUnit && current.timeBasis && current.unitLabel
       ? {
           id: current.standardTimeId,
@@ -513,9 +533,9 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
           productTimeProfileVersion: productEntry.profile.version,
           standardSource: 'product_profile',
           timeBasis: 'per_unit',
-          unitLabel: productEntry.unitLabel,
+          unitLabel: '套',
           standardMillisecondsPerUnit: productEntry.unitMilliseconds,
-          setupMilliseconds: productEntry.setupMilliseconds,
+          setupMilliseconds: 0,
           countsForEfficiency: productEntry.countsForEfficiency,
         };
       }
@@ -562,17 +582,38 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
       const goodQty = positiveInteger(submittedExecution.goodQty, '合格数量');
       const scrapQty = nonnegativeInteger(submittedExecution.scrapQty, '报废数量');
       const reworkQty = nonnegativeInteger(submittedExecution.reworkQty, '返工数量');
-      if (goodQty > target) {
-        throw new ProcessRouteServiceError('合格数量不能超过工单生产总目标', 400, 'PROCESS_EXECUTION_QTY_EXCEEDED');
+      if (remainingBeforeReport <= 0) {
+        throw new ProcessRouteServiceError('当前工序已完成目标数量，请刷新后继续', 409, 'PROCESS_STEP_ALREADY_REPORTED');
       }
+      const reportProgress = (() => {
+        try {
+          return calculateProcessReportProgress({
+            targetQuantity: target,
+            previouslyReportedGoodQuantity: previouslyReportedGoodQty,
+            submittedGoodQuantity: goodQty,
+          });
+        } catch (error) {
+          throw new ProcessRouteServiceError(
+            error instanceof Error ? error.message : '本次报工数量不正确',
+            400,
+            'PROCESS_EXECUTION_QTY_EXCEEDED',
+          );
+        }
+      })();
       const actualLaborMilliseconds = calculateActualLaborMilliseconds(startedAt, endedAt, breakMilliseconds);
-      const standardLaborMilliseconds = calculateStandardLaborMilliseconds({
-        timeBasis: resolvedStandard.timeBasis,
-        standardMillisecondsPerUnit: resolvedStandard.standardMillisecondsPerUnit,
-        setupMilliseconds: resolvedStandard.setupMilliseconds,
-        goodQty,
-        unitsPerProduct: current.unitsPerProduct,
-      });
+      const productProfileStandard = route.routeSource === 'product_time_profile';
+      const standardLaborMilliseconds = productProfileStandard
+        ? calculateProductProcessLaborMilliseconds({
+            aggregateMillisecondsPerProduct: resolvedStandard.standardMillisecondsPerUnit,
+            goodQty,
+          })
+        : calculateStandardLaborMilliseconds({
+            timeBasis: resolvedStandard.timeBasis,
+            standardMillisecondsPerUnit: resolvedStandard.standardMillisecondsPerUnit,
+            setupMilliseconds: resolvedStandard.setupMilliseconds,
+            goodQty,
+            unitsPerProduct: current.unitsPerProduct,
+          });
       const attainmentBasisPoints = calculateAttainmentBasisPoints(
         standardLaborMilliseconds,
         actualLaborMilliseconds,
@@ -587,11 +628,11 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
           goodQty,
           scrapQty,
           reworkQty,
-          timeBasis: resolvedStandard.timeBasis,
-          unitLabel: resolvedStandard.unitLabel,
+          timeBasis: productProfileStandard ? 'per_unit' : resolvedStandard.timeBasis,
+          unitLabel: productProfileStandard ? '套' : resolvedStandard.unitLabel,
           standardMillisecondsPerUnit: resolvedStandard.standardMillisecondsPerUnit,
-          setupMilliseconds: resolvedStandard.setupMilliseconds,
-          unitsPerProduct: current.unitsPerProduct,
+          setupMilliseconds: productProfileStandard ? 0 : resolvedStandard.setupMilliseconds,
+          unitsPerProduct: productProfileStandard ? 1 : current.unitsPerProduct,
           standardLaborMilliseconds,
           actualLaborMilliseconds,
           attainmentBasisPoints,
@@ -604,17 +645,108 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
         },
       });
       executionId = execution.id;
+      reportedGoodQty = reportProgress.reportedGoodQuantity;
     }
 
+    const completesCurrentStep = route.routeSource !== 'product_time_profile' || reportedGoodQty >= target;
+    const remainingAfterReport = Math.max(0, target - reportedGoodQty);
+    const completedBefore = route.steps.filter(step => step.status === 'completed' || step.status === 'skipped').length;
+    const progress = route.steps.length > 0
+      ? Math.min(100, Math.round(((completedBefore + (completesCurrentStep ? 1 : reportedGoodQty / target)) / route.steps.length) * 100))
+      : 0;
     const routeUpdate = await tx.workOrderProcessRoute.updateMany({
       where: { id: route.id, version: route.version, status: { in: ['confirmed', 'in_progress'] } },
       data: {
-        status: next ? 'in_progress' : 'completed',
-        completedAt: next ? null : now,
+        status: completesCurrentStep ? route.status : 'in_progress',
+        completedAt: null,
         version: { increment: 1 },
       },
     });
     if (routeUpdate.count !== 1) throw conflict();
+
+    const standardSnapshot = {
+      standardTimeId: resolvedStandard?.id ?? current.standardTimeId,
+      standardVersion: resolvedStandard?.version ?? current.standardVersion,
+      productTimeProfileId: resolvedStandard?.productTimeProfileId ?? current.productTimeProfileId,
+      productTimeEntryId: resolvedStandard?.productTimeEntryId ?? current.productTimeEntryId,
+      productTimeProfileVersion: resolvedStandard?.productTimeProfileVersion ?? current.productTimeProfileVersion,
+      standardSource: resolvedStandard?.standardSource || current.standardSource,
+      timeBasis: resolvedStandard?.timeBasis || current.timeBasis,
+      unitLabel: route.routeSource === 'product_time_profile' ? '套' : resolvedStandard?.unitLabel || current.unitLabel,
+      standardMillisecondsPerUnit: resolvedStandard?.standardMillisecondsPerUnit ?? current.standardMillisecondsPerUnit,
+      setupMilliseconds: route.routeSource === 'product_time_profile' ? 0 : resolvedStandard?.setupMilliseconds ?? current.setupMilliseconds,
+      unitsPerProduct: route.routeSource === 'product_time_profile' ? 1 : current.unitsPerProduct,
+      countsForEfficiency: resolvedStandard?.countsForEfficiency ?? current.countsForEfficiency,
+    };
+
+    if (!completesCurrentStep) {
+      await tx.workOrderProcessStep.update({
+        where: { id: current.id },
+        data: {
+          ...standardSnapshot,
+          startedAt: current.startedAt || now,
+          remark: remark || current.remark,
+        },
+      });
+      const nextStage = processStageForGroup(normalizeProcessStageGroup(current.stageGroup) || 'frontend');
+      const content = `${current.processName}已报工 ${reportedGoodQty}/${target}，剩余 ${remainingAfterReport}`;
+      const changed = await tx.workOrder.update({
+        where: { id: route.workOrderId },
+        data: {
+          stage: nextStage,
+          status: legacyStatusForStage(nextStage),
+          progress,
+          executionVersion: { increment: 1 },
+          startedAt: route.workOrder.startedAt || now,
+          completedAt: null,
+          lastProgressAt: now,
+          latestProgressRemark: remark ? `${content}：${remark}` : content,
+        },
+      });
+      await tx.processRouteActivity.create({
+        data: {
+          routeId: route.id,
+          stepId: current.id,
+          action: 'record_process_execution',
+          content: remark ? `${content}：${remark}` : content,
+          actorId: input.userId,
+          detail: { processCode: current.processCode, reportedGoodQty, remainingGoodQty: remainingAfterReport, executionId },
+        },
+      });
+      await tx.workOrderProgressLog.create({
+        data: {
+          workOrderId: route.workOrderId,
+          previousStage: stage,
+          stage: nextStage,
+          completedQty: changed.completedQty,
+          productionOwner: changed.productionOwner,
+          workstation: changed.workstation,
+          remark: remark ? `${content}：${remark}` : content,
+          createdBy: input.actor,
+        },
+      });
+      await tx.operationLog.create({
+        data: {
+          userId: input.userId,
+          action: 'record_process_execution',
+          targetType: 'work_order_process_step',
+          targetId: current.id,
+          detail: { workOrderId: route.workOrderId, processCode: current.processCode, reportedGoodQty, remainingGoodQty: remainingAfterReport, executionId },
+        },
+      });
+      await tx.dataChangeSnapshot.create({
+        data: {
+          entityType: 'work_order',
+          entityId: route.workOrderId,
+          action: 'record_process_execution',
+          beforeJson: sanitizeSnapshotValue(workOrderSnapshot(route.workOrder)),
+          afterJson: sanitizeSnapshotValue(workOrderSnapshot(changed)),
+          changedBy: input.actor,
+        },
+      });
+      return route.id;
+    }
+
     await tx.workOrderProcessStep.update({
       where: { id: current.id },
       data: {
@@ -622,54 +754,58 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
         completedAt: now,
         completedById: input.userId,
         remark: remark || null,
-        standardTimeId: resolvedStandard?.id || current.standardTimeId,
-        standardVersion: resolvedStandard?.version || current.standardVersion,
-        productTimeProfileId: resolvedStandard?.productTimeProfileId || current.productTimeProfileId,
-        productTimeEntryId: resolvedStandard?.productTimeEntryId || current.productTimeEntryId,
-        productTimeProfileVersion: resolvedStandard?.productTimeProfileVersion || current.productTimeProfileVersion,
-        standardSource: resolvedStandard?.standardSource || current.standardSource,
-        timeBasis: resolvedStandard?.timeBasis || current.timeBasis,
-        unitLabel: resolvedStandard?.unitLabel || current.unitLabel,
-        standardMillisecondsPerUnit: resolvedStandard?.standardMillisecondsPerUnit || current.standardMillisecondsPerUnit,
-        setupMilliseconds: resolvedStandard?.setupMilliseconds ?? current.setupMilliseconds,
-        countsForEfficiency: resolvedStandard?.countsForEfficiency ?? current.countsForEfficiency,
+        ...standardSnapshot,
       },
     });
-    if (next) {
-      await tx.workOrderProcessStep.update({
-        where: { id: next.id },
+
+    const transition = resolveCompletedProcessGroupTransition(route.steps, current.id);
+    const groupCompleted = transition.groupCompleted;
+    const nextStepIds = new Set(transition.nextStepIds);
+    const activeStepIds = new Set(transition.activeStepIds);
+    const nextSteps = route.steps.filter(step => nextStepIds.has(step.id));
+    if (nextSteps.length) {
+      await tx.workOrderProcessStep.updateMany({
+        where: { id: { in: nextSteps.map(step => step.id) }, status: 'pending' },
         data: { status: 'current', startedAt: now },
       });
     }
 
+    const activeSteps = route.steps.filter(step => activeStepIds.has(step.id));
+    const next = activeSteps[0] || null;
+    const routeCompleted = transition.routeCompleted;
+    await tx.workOrderProcessRoute.update({
+      where: { id: route.id },
+      data: { status: routeCompleted ? 'completed' : 'in_progress', completedAt: routeCompleted ? now : null },
+    });
     const nextGroup = next ? normalizeProcessStageGroup(next.stageGroup) || 'frontend' : 'finish';
-    const nextStage: WorkOrderStage = next ? processStageForGroup(nextGroup) : 'completed';
-    const transferToBackend = next && nextGroup !== 'frontend';
+    const nextStage: WorkOrderStage = routeCompleted ? 'completed' : processStageForGroup(nextGroup);
+    const transferToBackend = !routeCompleted && nextGroup !== 'frontend';
+    const nextNames = activeSteps.map(step => step.processName).join('、');
     const workOrderData: Prisma.WorkOrderUpdateInput = {
       stage: nextStage,
       status: legacyStatusForStage(nextStage),
-      progress,
+      progress: routeCompleted ? 100 : progress,
       executionVersion: { increment: 1 },
       startedAt: route.workOrder.startedAt || now,
-      completedAt: next ? null : now,
+      completedAt: routeCompleted ? now : null,
       lastProgressAt: now,
-      latestProgressRemark: next
-        ? `${current.processName}完成，进入${next.processName}${remark ? `：${remark}` : ''}`
+      latestProgressRemark: !routeCompleted
+        ? `${current.processName}完成，${groupCompleted ? '进入' : '等待并行工序'}${nextNames}${remark ? `：${remark}` : ''}`
         : `${current.processName}完成，工艺路线已结束${remark ? `：${remark}` : ''}`,
     };
     if (route.workOrder.frontendTransferredQty === null) {
-      workOrderData.frontendTransferredQty = transferToBackend || !next ? target : 0;
-    } else if (transferToBackend || !next) {
+      workOrderData.frontendTransferredQty = transferToBackend || routeCompleted ? target : 0;
+    } else if (transferToBackend || routeCompleted) {
       workOrderData.frontendTransferredQty = target;
     }
-    if (!next) workOrderData.completedQty = String(target);
+    if (routeCompleted) workOrderData.completedQty = String(target);
     const changed = await tx.workOrder.update({
       where: { id: route.workOrderId },
       data: workOrderData,
     });
 
-    const content = next
-      ? `完成 ${current.processName}，进入 ${next.processName}`
+    const content = !routeCompleted
+      ? `完成 ${current.processName}，${groupCompleted ? '进入' : '等待并行工序'} ${nextNames}`
       : `完成 ${current.processName}，工单生产完成`;
     await tx.processRouteActivity.create({
       data: {
@@ -680,8 +816,9 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
         actorId: input.userId,
         detail: {
           fromStep: current.processCode,
-          toStep: next?.processCode || null,
-          progress,
+          toSteps: activeSteps.map(step => step.processCode),
+          progress: routeCompleted ? 100 : progress,
+          reportedGoodQty,
           executionId,
         },
       },
@@ -707,8 +844,9 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
         detail: {
           workOrderId: route.workOrderId,
           fromStep: current.processCode,
-          toStep: next?.processCode || null,
-          progress,
+          toSteps: activeSteps.map(step => step.processCode),
+          progress: routeCompleted ? 100 : progress,
+          reportedGoodQty,
           executionId,
         },
       },
@@ -753,6 +891,8 @@ export async function startConfirmedProcessRouteAfterDrawing(
   });
   if (!route || route.status !== 'confirmed' || route.startedAt || !route.steps.length) return;
   const first = route.steps[0];
+  const firstSequenceGroup = first.sequenceGroup;
+  const firstSteps = route.steps.filter(step => step.sequenceGroup === firstSequenceGroup);
   const stageGroup = normalizeProcessStageGroup(first.stageGroup) || 'frontend';
   const nextStage = processStageForGroup(stageGroup);
   await tx.workOrderProcessRoute.update({
@@ -763,8 +903,8 @@ export async function startConfirmedProcessRouteAfterDrawing(
       version: { increment: 1 },
     },
   });
-  await tx.workOrderProcessStep.update({
-    where: { id: first.id },
+  await tx.workOrderProcessStep.updateMany({
+    where: { routeId: route.id, sequenceGroup: firstSequenceGroup, status: 'pending' },
     data: { status: 'current', startedAt: input.now },
   });
   await tx.workOrder.update({
@@ -772,7 +912,7 @@ export async function startConfirmedProcessRouteAfterDrawing(
     data: {
       stage: nextStage,
       status: legacyStatusForStage(nextStage),
-      latestProgressRemark: `当前工序：${first.processName}`,
+      latestProgressRemark: `当前工序：${firstSteps.map(step => step.processName).join('、')}`,
     },
   });
   await tx.processRouteActivity.create({
@@ -780,7 +920,7 @@ export async function startConfirmedProcessRouteAfterDrawing(
       routeId: route.id,
       stepId: first.id,
       action: 'start_process_route',
-      content: `图纸已下发，开始 ${first.processName}`,
+      content: `图纸已下发，开始 ${firstSteps.map(step => step.processName).join('、')}`,
       actorId: input.userId,
     },
   });

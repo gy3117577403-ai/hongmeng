@@ -59,9 +59,7 @@ type ProductTimePayload = {
 type EntryDraft = {
   processDefinitionId: string;
   unitSeconds: string;
-  actionSeconds: string;
-  occurrences: string;
-  setupSeconds: string;
+  parallelWithPrevious: boolean;
   countsForEfficiency: boolean;
   remark: string;
 };
@@ -70,7 +68,6 @@ type ProductTimeImportEntry = {
   processDefinitionId: string;
   processName: string;
   unitSeconds: number;
-  occurrences: number;
 };
 
 type ProductTimeImportRow = {
@@ -121,13 +118,15 @@ function previousWeekStart(): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(value);
 }
 
-function entryDraft(entry: ProductProcessTimeEntryDTO): EntryDraft {
+function entryDraft(
+  entry: ProductProcessTimeEntryDTO,
+  index: number,
+  allEntries: ProductProcessTimeEntryDTO[],
+): EntryDraft {
   return {
     processDefinitionId: entry.processDefinitionId,
     unitSeconds: seconds(entry.unitMilliseconds),
-    actionSeconds: seconds(entry.actionMilliseconds),
-    occurrences: String(entry.occurrences || 1),
-    setupSeconds: seconds(entry.setupMilliseconds) || '0',
+    parallelWithPrevious: index > 0 && allEntries[index - 1].sequenceGroup === entry.sequenceGroup,
     countsForEfficiency: entry.countsForEfficiency,
     remark: entry.remark || '',
   };
@@ -135,14 +134,7 @@ function entryDraft(entry: ProductProcessTimeEntryDTO): EntryDraft {
 
 function draftTotal(entries: EntryDraft[]): number {
   return entries.reduce((total, entry) => {
-    const direct = Number(entry.unitSeconds);
-    const action = Number(entry.actionSeconds);
-    const occurrences = Number(entry.occurrences || 1);
-    const value = Number.isFinite(direct) && direct > 0
-      ? direct
-      : Number.isFinite(action) && action > 0 && Number.isFinite(occurrences) && occurrences > 0
-        ? action * occurrences
-        : 0;
+    const value = Number(entry.unitSeconds);
     return total + Math.round(value * 1000);
   }, 0);
 }
@@ -487,9 +479,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     else if (value > 0) nextEntries.push({
       processDefinitionId: definition.id,
       unitSeconds: String(value),
-      actionSeconds: '',
-      occurrences: '1',
-      setupSeconds: '0',
+      parallelWithPrevious: false,
       countsForEfficiency: true,
       remark: '',
     });
@@ -511,9 +501,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
           entries: nextEntries.map(entry => ({
             processDefinitionId: entry.processDefinitionId,
             unitSeconds: entry.unitSeconds,
-            actionSeconds: entry.actionSeconds,
-            occurrences: entry.occurrences,
-            setupSeconds: entry.setupSeconds,
+            parallelWithPrevious: entry.parallelWithPrevious,
             countsForEfficiency: entry.countsForEfficiency,
             remark: entry.remark,
           })),
@@ -580,9 +568,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     setEntries(current => [...current, {
       processDefinitionId: definition.id,
       unitSeconds: '',
-      actionSeconds: '',
-      occurrences: '1',
-      setupSeconds: '0',
+      parallelWithPrevious: false,
       countsForEfficiency: true,
       remark: '',
     }]);
@@ -601,13 +587,18 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     setEntries(current => {
       const next = [...current];
       [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+      next[0] = { ...next[0], parallelWithPrevious: false };
       return next;
     });
     setDirty(true);
   }
 
   function removeEntry(index: number): void {
-    setEntries(current => current.filter((_entry, entryIndex) => entryIndex !== index));
+    setEntries(current => {
+      const next = current.filter((_entry, entryIndex) => entryIndex !== index);
+      if (next.length) next[0] = { ...next[0], parallelWithPrevious: false };
+      return next;
+    });
     setDirty(true);
   }
 
@@ -664,9 +655,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
           entries: entries.map(entry => ({
             processDefinitionId: entry.processDefinitionId,
             unitSeconds: entry.unitSeconds,
-            actionSeconds: entry.actionSeconds,
-            occurrences: entry.occurrences,
-            setupSeconds: entry.setupSeconds,
+            parallelWithPrevious: entry.parallelWithPrevious,
             countsForEfficiency: entry.countsForEfficiency,
             remark: entry.remark,
           })),
@@ -880,7 +869,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
         <section className="product-time-matrix-shell" aria-labelledby="product-time-matrix-title">
           <header className="product-time-matrix-titlebar">
-            <div><span>{isPlanningScope ? '计划产品工时' : '产品工时矩阵'}</span><h1 id="product-time-matrix-title">{isPlanningScope ? '按生产周登记并核对产品工时' : '按产品维护单件工序时间'}</h1><p>{isPlanningScope ? '只显示当前计划范围内的产品；工时仍保存到对应图纸产品，发布后才能用于正式生产。' : '输入正数后按 Enter 或 Tab 保存；输入 0 后按 Enter 取消工序，留空或按 Esc 放弃修改。'}</p></div>
+            <div><span>{isPlanningScope ? '计划产品工时' : '产品工时矩阵'}</span><h1 id="product-time-matrix-title">{isPlanningScope ? '按生产周登记并核对产品工时' : '按产品维护单套工序时间'}</h1><p>{isPlanningScope ? '只显示当前计划范围内的产品；工时仍保存到对应图纸产品，发布后才能用于正式生产。' : '输入正数后按 Enter 或 Tab 保存；输入 0 后按 Enter 取消工序，留空或按 Esc 放弃修改。'}</p></div>
             <div className="product-time-matrix-legend" aria-label="矩阵图例"><span><i className="configured" />已配置</span><span><i />未参与</span><span><b>01</b>产品路线顺序</span></div>
           </header>
           <div className="product-time-matrix-scroll hm-scroll-region" tabIndex={0} aria-label={`产品工时矩阵，共 ${items.length} 款产品、${definitions.length} 个共享工序`}>
@@ -906,7 +895,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                       {editing ? <input
                         autoFocus
                         inputMode="decimal"
-                        aria-label={`${item.specification} ${definition.name}单件工时（秒）`}
+                        aria-label={`${item.specification} ${definition.name}单套本工序合计工时（秒）`}
                         aria-invalid={Boolean(cellError)}
                         value={matrixEditValue}
                         onChange={event => setMatrixEditValue(event.target.value)}
@@ -957,7 +946,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 <button className="hm-workbench-button primary" type="button" disabled={publishing || dirty || !activeDraft} onClick={publish}><CheckCircle2 size={15} aria-hidden="true" />{publishing ? '发布中' : '发布版本'}</button>
               </div>
               <div className="product-time-metrics">
-                <span><small>工序数量</small><strong>{entries.length}</strong></span><span><small>单件总工时</small><strong>{duration(totalMilliseconds)}</strong></span><span><small>当前版本</small><strong>{activeProfile ? `V${activeProfile.version}` : '待创建'}</strong></span><span><small>工时来源</small><strong>{copySourceId ? '复制后调整' : '人工维护'}</strong></span>
+                <span><small>工序数量</small><strong>{entries.length}</strong></span><span><small>单套总工时</small><strong>{duration(totalMilliseconds)}</strong></span><span><small>当前版本</small><strong>{activeProfile ? `V${activeProfile.version}` : '待创建'}</strong></span><span><small>工时来源</small><strong>{copySourceId ? '复制后调整' : '人工维护'}</strong></span>
               </div>
               <section className="product-time-quotation-editor" aria-labelledby="product-time-quotation-title">
                 <div><span>商业报价基准</span><strong id="product-time-quotation-title">单套报价工时</strong><small>{activeQuotation ? `当前 V${activeQuotation.version} · ${activeQuotation.sourceType === 'quotation' ? '报价模块' : activeQuotation.sourceType === 'import' ? '导入' : '人工维护'}` : '尚未录入'}</small></div>
@@ -969,16 +958,14 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 <label><span>复制相似产品</span><select value={copySourceId} onChange={event => setCopySourceId(event.target.value)}><option value="">选择已发布产品</option>{items.filter(item => item.id !== selectedItem.id && item.published).map(item => <option key={item.id} value={item.id}>{item.customerName} · {item.specification}</option>)}</select></label>
                 <button className="hm-workbench-button" type="button" disabled={!copySourceId} onClick={copyProfile}><Copy size={15} aria-hidden="true" />复制工时</button>
               </div>
-              <div className="product-time-table-head" aria-hidden="true"><span>顺序/工序</span><span>单件工时(秒)</span><span>单次(秒)</span><span>次数</span><span>准备(秒)</span><span>计入达成率</span><span>操作</span></div>
+              <div className="product-time-table-head" aria-hidden="true"><span>顺序/工序</span><span>单套本工序合计(秒)</span><span>并行关系</span><span>计入达成率</span><span>操作</span></div>
               <div className="product-time-entry-list hm-scroll-region" tabIndex={0} aria-label={`产品工时明细，共 ${entries.length} 道工序`}>
                 {entries.map((entry, index) => {
                   const definition = definitions.find(item => item.id === entry.processDefinitionId);
                   return <article key={entry.processDefinitionId}>
                     <div className="product-time-process-name"><b>{String(index + 1).padStart(2, '0')}</b><span><strong>{definition?.name || '工序已停用'}</strong><small>{definition ? stageText[definition.stageGroup] : '待处理'}</small></span></div>
-                    <label><span>单件工时</span><input inputMode="decimal" value={entry.unitSeconds} onChange={event => updateEntry(index, { unitSeconds: event.target.value })} placeholder="必填" /></label>
-                    <label><span>单次时间</span><input inputMode="decimal" value={entry.actionSeconds} onChange={event => updateEntry(index, { actionSeconds: event.target.value })} placeholder="可选" /></label>
-                    <label><span>次数</span><input inputMode="numeric" value={entry.occurrences} onChange={event => updateEntry(index, { occurrences: event.target.value })} /></label>
-                    <label><span>准备时间</span><input inputMode="decimal" value={entry.setupSeconds} onChange={event => updateEntry(index, { setupSeconds: event.target.value })} /></label>
+                    <label><span>单套本工序合计</span><input inputMode="decimal" value={entry.unitSeconds} onChange={event => updateEntry(index, { unitSeconds: event.target.value })} placeholder="必填" /></label>
+                    <label className="product-time-parallel"><input type="checkbox" disabled={index === 0} checked={entry.parallelWithPrevious} onChange={event => updateEntry(index, { parallelWithPrevious: event.target.checked })} /><span>{index === 0 ? '首道工序' : '与上一道并行'}</span></label>
                     <label className="product-time-efficiency"><input type="checkbox" checked={entry.countsForEfficiency} onChange={event => updateEntry(index, { countsForEfficiency: event.target.checked })} /><span>计入</span></label>
                     <div className="product-time-row-actions"><button type="button" title="上移" aria-label={`上移${definition?.name || '工序'}`} disabled={index === 0} onClick={() => moveEntry(index, -1)}><ArrowUp size={15} /></button><button type="button" title="下移" aria-label={`下移${definition?.name || '工序'}`} disabled={index === entries.length - 1} onClick={() => moveEntry(index, 1)}><ArrowDown size={15} /></button><button className="danger" type="button" title="移除" aria-label={`移除${definition?.name || '工序'}`} onClick={() => removeEntry(index)}><Trash2 size={15} /></button></div>
                     <input className="product-time-row-remark" value={entry.remark} onChange={event => updateEntry(index, { remark: event.target.value })} placeholder="工序备注，可选" />
@@ -996,7 +983,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
           window.requestAnimationFrame(() => libraryTriggerRef.current?.focus());
         }} />}
         {libraryOpen && <aside id="product-process-library" className="product-time-library open" aria-label="共享工序库">
-            <header><span><strong>共享工序库</strong><small>加入当前产品后填写单件工时</small></span><button ref={libraryCloseRef} type="button" title="关闭工序库" aria-label="关闭工序库" onClick={() => {
+            <header><span><strong>共享工序库</strong><small>加入当前产品后填写单套该工序合计工时</small></span><button ref={libraryCloseRef} type="button" title="关闭工序库" aria-label="关闭工序库" onClick={() => {
               setLibraryOpen(false);
               window.requestAnimationFrame(() => libraryTriggerRef.current?.focus());
             }}><X size={17} /></button></header>
@@ -1026,7 +1013,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             已识别工序：{importPreview.processColumns.join('、') || '无'}
           </div>
           <div className="product-time-import-list hm-scroll-region" tabIndex={0}>
-            <div className="product-time-import-list-head"><span>行</span><span>产品 / 客户</span><span>工序</span><span>单件合计</span><span>状态</span></div>
+            <div className="product-time-import-list-head"><span>行</span><span>产品 / 客户</span><span>工序</span><span>单套合计</span><span>状态</span></div>
             {importPreview.rows.map(row => <article key={`${row.rowNo}-${row.specification}`} className={row.status}>
               <span>{row.rowNo}</span>
               <span><strong title={row.specification}>{row.specification}</strong><small title={`${row.customerName} · ${row.productName || '品名未设置'}`}>{row.customerName || '客户未匹配'} · {row.productName || '品名未设置'}</small></span>

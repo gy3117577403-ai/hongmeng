@@ -8,6 +8,7 @@ import {
   PRODUCT_TIME_PENDING_ROUTE_SOURCE,
   productTimeRouteActivation,
   processStageForGroup,
+  resolveCompletedProcessGroupTransition,
   validateProcessSteps,
 } from '../lib/process-routing';
 
@@ -100,4 +101,38 @@ test('工序阶段分组只映射到兼容的生产汇总阶段', () => {
   assert.equal(processStageForGroup('frontend'), 'frontend');
   assert.equal(processStageForGroup('backend'), 'backend');
   assert.equal(processStageForGroup('finish'), 'backend');
+});
+
+test('产品工序路线校验保留并行顺序组', () => {
+  const result = validateProcessSteps([
+    { processCode: 'cutting', processName: '裁线', stageGroup: 'frontend', sequenceGroup: 1 },
+    { processCode: 'stripping', processName: '剥皮', stageGroup: 'frontend', sequenceGroup: 2 },
+    { processCode: 'crimping', processName: '压接', stageGroup: 'frontend', sequenceGroup: 2 },
+  ]);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.steps.map(step => step.sequenceGroup), [1, 2, 2]);
+});
+
+test('并行工序组全部完成后才开放下一组', () => {
+  const steps = [
+    { id: 'cutting', sequenceGroup: 1, status: 'current' },
+    { id: 'stripping', sequenceGroup: 1, status: 'current' },
+    { id: 'crimping', sequenceGroup: 2, status: 'pending' },
+    { id: 'inspection', sequenceGroup: 2, status: 'pending' },
+  ];
+  const first = resolveCompletedProcessGroupTransition(steps, 'cutting');
+  assert.equal(first.groupCompleted, false);
+  assert.deepEqual(first.activeStepIds, ['stripping']);
+
+  const second = resolveCompletedProcessGroupTransition([
+    { ...steps[0], status: 'completed' },
+    steps[1],
+    steps[2],
+    steps[3],
+  ], 'stripping');
+  assert.equal(second.groupCompleted, true);
+  assert.equal(second.nextSequenceGroup, 2);
+  assert.deepEqual(second.nextStepIds, ['crimping', 'inspection']);
+  assert.equal(second.routeCompleted, false);
 });

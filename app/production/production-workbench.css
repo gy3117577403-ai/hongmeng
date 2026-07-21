@@ -1926,6 +1926,31 @@
   background: #fffaf6;
 }
 
+.hm-production-workbench .production-process-picker {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #f0d0b8;
+  border-radius: 7px;
+  background: #fff9f4;
+  color: #5b493b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .production-process-picker select {
+  min-width: 0;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid #dce3eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #172235;
+  font: inherit;
+}
+
 .hm-production-workbench .production-execution-form > header {
   display: flex;
   align-items: center;

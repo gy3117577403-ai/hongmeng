@@ -595,10 +595,8 @@ export type ProductProcessTimeEntryDTO = {
   processName: string;
   stageGroup: ProcessStageGroup;
   position: number;
+  sequenceGroup: number;
   unitMilliseconds: number;
-  actionMilliseconds?: number | null;
-  occurrences: number;
-  setupMilliseconds: number;
   unitLabel: string;
   countsForEfficiency: boolean;
   remark?: string | null;
@@ -689,6 +687,7 @@ export type ProcessTemplateDTO = {
 
 export type WorkOrderProcessStepDTO = ProcessTemplateStepDTO & {
   id: string;
+  sequenceGroup: number;
   status: ProcessStepStatus;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -702,6 +701,8 @@ export type WorkOrderProcessStepDTO = ProcessTemplateStepDTO & {
   setupMilliseconds?: number;
   countsForEfficiency?: boolean;
   executionCount?: number;
+  reportedGoodQuantity?: number;
+  remainingGoodQuantity?: number | null;
   productTimeProfileId?: string | null;
   productTimeEntryId?: string | null;
   productTimeProfileVersion?: number | null;
@@ -735,6 +736,8 @@ export type WorkOrderProcessRouteDTO = {
   stepCount: number;
   completedStepCount: number;
   progress: number;
+  currentSteps: WorkOrderProcessStepDTO[];
+  nextSteps: WorkOrderProcessStepDTO[];
   currentStep?: WorkOrderProcessStepDTO | null;
   nextStep?: WorkOrderProcessStepDTO | null;
   steps: WorkOrderProcessStepDTO[];
@@ -913,6 +916,8 @@ export type ProcessExecutionContextDTO = {
   processName: string;
   processCode: string;
   targetQuantity: number;
+  reportedGoodQuantity: number;
+  remainingGoodQuantity: number;
   suggestedStartedAt: string;
   suggestedEndedAt: string;
   standard?: {

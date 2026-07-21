@@ -263,6 +263,7 @@ model WorkOrderProcessStep {
   processName                 String                   @map("process_name")
   stageGroup                  String                   @map("stage_group")
   position                    Int
+  sequenceGroup               Int                      @default(1) @map("sequence_group")
   standardTimeId              String?                  @map("standard_time_id")
   standardVersion             Int?                     @map("standard_version")
   productTimeProfileId        String?                  @map("product_time_profile_id")
@@ -294,6 +295,7 @@ model WorkOrderProcessStep {
 
   @@unique([routeId, position])
   @@index([routeId, status])
+  @@index([routeId, sequenceGroup, status])
   @@index([processDefinitionId])
   @@index([standardTimeId])
   @@index([productTimeProfileId])
@@ -766,6 +768,7 @@ model ProductProcessTimeEntry {
   profileId           String                 @map("profile_id")
   processDefinitionId String                 @map("process_definition_id")
   position            Int
+  sequenceGroup       Int                    @default(1) @map("sequence_group")
   unitMilliseconds    Int                    @map("unit_milliseconds")
   actionMilliseconds  Int?                   @map("action_milliseconds")
   occurrences         Int                    @default(1)

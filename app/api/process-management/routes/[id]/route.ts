@@ -32,6 +32,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       action?: unknown;
       version?: unknown;
       steps?: unknown;
+      stepId?: unknown;
       remark?: unknown;
       execution?: unknown;
     };
@@ -48,6 +49,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       routeId: params.id,
       action,
       expectedVersion: body.version,
+      stepId: body.stepId,
       remark: body.remark,
       execution: body.execution,
       userId: user.id,

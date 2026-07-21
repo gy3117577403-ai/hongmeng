@@ -23,6 +23,7 @@ export type ProductTimeProfileRecord = Prisma.ProductTimeProfileGetPayload<{
 export type ProductTimeEntryInput = {
   processDefinitionId: string;
   position: number;
+  sequenceGroup: number;
   unitMilliseconds: number;
   actionMilliseconds: number | null;
   occurrences: number;
@@ -39,10 +40,7 @@ export type ProductTimeEntryValidationResult =
 type RawProductTimeEntry = {
   processDefinitionId?: unknown;
   unitSeconds?: unknown;
-  actionSeconds?: unknown;
-  occurrences?: unknown;
-  setupSeconds?: unknown;
-  unitLabel?: unknown;
+  parallelWithPrevious?: unknown;
   countsForEfficiency?: unknown;
   remark?: unknown;
 };
@@ -60,21 +58,13 @@ function millisecondsFromSeconds(value: unknown, label: string, allowBlank = fal
   return Math.round(seconds * 1000);
 }
 
-function nonnegativeMilliseconds(value: unknown, label: string): number {
-  if (value === null || value === undefined || String(value).trim() === '') return 0;
-  const seconds = Number(value);
-  if (!Number.isFinite(seconds) || seconds < 0 || seconds > 86_400) {
-    throw new Error(`${label}必须是 0 到 86400 秒之间的数值`);
-  }
-  return Math.round(seconds * 1000);
-}
-
 export function validateProductTimeEntries(value: unknown): ProductTimeEntryValidationResult {
   if (!Array.isArray(value)) return { ok: false, error: '产品工时明细格式不正确' };
   if (value.length > 80) return { ok: false, error: '单个产品最多维护 80 道工序' };
 
   const entries: ProductTimeEntryInput[] = [];
   const definitionIds = new Set<string>();
+  let sequenceGroup = 0;
   try {
     for (let index = 0; index < value.length; index += 1) {
       const raw = value[index] as RawProductTimeEntry;
@@ -83,24 +73,26 @@ export function validateProductTimeEntries(value: unknown): ProductTimeEntryVali
       if (definitionIds.has(processDefinitionId)) return { ok: false, error: `第 ${index + 1} 行工序重复` };
       definitionIds.add(processDefinitionId);
 
-      const occurrences = Number(raw?.occurrences ?? 1);
-      if (!Number.isInteger(occurrences) || occurrences <= 0 || occurrences > 10_000) {
-        return { ok: false, error: `第 ${index + 1} 行操作次数必须是 1-10000 的整数` };
+      const unitMilliseconds = millisecondsFromSeconds(
+        raw?.unitSeconds,
+        `第 ${index + 1} 行单套该工序总工时`,
+      );
+      if (unitMilliseconds === null) {
+        return { ok: false, error: `第 ${index + 1} 行缺少单套该工序总工时` };
       }
-      const actionMilliseconds = millisecondsFromSeconds(raw?.actionSeconds, `第 ${index + 1} 行单次时间`, true);
-      const directMilliseconds = millisecondsFromSeconds(raw?.unitSeconds, `第 ${index + 1} 行单件工时`, true);
-      const unitMilliseconds = directMilliseconds || (actionMilliseconds ? actionMilliseconds * occurrences : null);
-      if (!unitMilliseconds) return { ok: false, error: `第 ${index + 1} 行请填写单件工时，或填写单次时间和次数` };
-      if (unitMilliseconds > 86_400_000) return { ok: false, error: `第 ${index + 1} 行单件工时不能超过 24 小时` };
+      sequenceGroup = index > 0 && raw?.parallelWithPrevious === true
+        ? sequenceGroup
+        : sequenceGroup + 1;
 
       entries.push({
         processDefinitionId,
         position: index + 1,
+        sequenceGroup,
         unitMilliseconds,
-        actionMilliseconds,
-        occurrences,
-        setupMilliseconds: nonnegativeMilliseconds(raw?.setupSeconds, `第 ${index + 1} 行准备时间`),
-        unitLabel: cleanProductTimeText(raw?.unitLabel, 20) || '件',
+        actionMilliseconds: null,
+        occurrences: 1,
+        setupMilliseconds: 0,
+        unitLabel: '套',
         countsForEfficiency: raw?.countsForEfficiency !== false,
         remark: cleanProductTimeText(raw?.remark, 300) || null,
       });
@@ -129,10 +121,8 @@ export function serializeProductTimeEntry(entry: ProductTimeProfileRecord['entri
     processName: entry.processDefinition.name,
     stageGroup: stageGroup === 'backend' || stageGroup === 'finish' ? stageGroup : 'frontend',
     position: entry.position,
+    sequenceGroup: entry.sequenceGroup,
     unitMilliseconds: entry.unitMilliseconds,
-    actionMilliseconds: entry.actionMilliseconds,
-    occurrences: entry.occurrences,
-    setupMilliseconds: entry.setupMilliseconds,
     unitLabel: entry.unitLabel,
     countsForEfficiency: entry.countsForEfficiency,
     remark: entry.remark,
@@ -172,9 +162,9 @@ export function productTimeStandardSnapshot(
     productTimeProfileVersion: profile.version,
     standardSource: 'product_profile',
     timeBasis: 'per_unit',
-    unitLabel: entry.unitLabel,
+    unitLabel: '套',
     standardMillisecondsPerUnit: entry.unitMilliseconds,
-    setupMilliseconds: entry.setupMilliseconds,
+    setupMilliseconds: 0,
     unitsPerProduct: 1,
     countsForEfficiency: entry.countsForEfficiency,
   } as const;

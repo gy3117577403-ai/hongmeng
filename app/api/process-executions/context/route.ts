@@ -26,6 +26,11 @@ export async function GET(req: NextRequest) {
               },
             },
           },
+          executions: {
+            where: { voidedAt: null },
+            select: { goodQty: true, endedAt: true },
+            orderBy: { endedAt: 'desc' },
+          },
           route: { include: { workOrder: true } },
         },
       }),
@@ -45,10 +50,10 @@ export async function GET(req: NextRequest) {
           standardTimeId: step.standardTimeId,
           version: step.standardVersion,
           timeBasis: step.timeBasis === 'per_batch' ? 'per_batch' as const : 'per_unit' as const,
-          unitLabel: step.unitLabel || '件',
+          unitLabel: step.route.productTimeProfileId ? '套' : step.unitLabel || '件',
           standardMillisecondsPerUnit: step.standardMillisecondsPerUnit || 0,
-          setupMilliseconds: step.setupMilliseconds,
-          unitsPerProduct: step.unitsPerProduct,
+          setupMilliseconds: step.route.productTimeProfileId ? 0 : step.setupMilliseconds,
+          unitsPerProduct: step.route.productTimeProfileId ? 1 : step.unitsPerProduct,
           countsForEfficiency: step.countsForEfficiency,
           source: step.standardSource,
           productTimeProfileVersion: step.productTimeProfileVersion,
@@ -58,15 +63,15 @@ export async function GET(req: NextRequest) {
             standardTimeId: null,
             version: null,
             timeBasis: 'per_unit' as const,
-            unitLabel: step.productTimeEntry.unitLabel,
+            unitLabel: '套',
             standardMillisecondsPerUnit: step.productTimeEntry.unitMilliseconds,
-            setupMilliseconds: step.productTimeEntry.setupMilliseconds,
+            setupMilliseconds: 0,
             unitsPerProduct: 1,
             countsForEfficiency: step.productTimeEntry.countsForEfficiency,
             source: 'product_profile',
             productTimeProfileVersion: step.route.productTimeProfileVersion,
           }
-      : currentStandard
+      : !step.route.productTimeProfileId && currentStandard
         ? {
             standardTimeId: currentStandard.id,
             version: currentStandard.version,
@@ -82,6 +87,9 @@ export async function GET(req: NextRequest) {
         : null;
     const resolution = resolveEffectiveFrontendTransferredQty(step.route.workOrder);
     const targetQuantity = resolution.ok ? resolution.state.targetQty : 0;
+    const reportedGoodQuantity = step.executions.reduce((total, execution) => total + execution.goodQty, 0);
+    const remainingGoodQuantity = Math.max(0, targetQuantity - reportedGoodQuantity);
+    const latestExecution = step.executions[0] || null;
     return NextResponse.json({
       ok: true,
       context: {
@@ -89,7 +97,9 @@ export async function GET(req: NextRequest) {
         processName: step.processName,
         processCode: step.processCode,
         targetQuantity,
-        suggestedStartedAt: (step.startedAt || new Date()).toISOString(),
+        reportedGoodQuantity,
+        remainingGoodQuantity,
+        suggestedStartedAt: (latestExecution?.endedAt || step.startedAt || new Date()).toISOString(),
         suggestedEndedAt: new Date().toISOString(),
         standard,
         employees: employees.map(serializeEmployee),
