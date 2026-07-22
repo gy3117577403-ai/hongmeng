@@ -3,6 +3,7 @@ import { changeCode, changeStatusLabels, changeTypeLabels } from '@/lib/changes'
 import { issueCode, issueStatusLabels, issueTypeLabels } from '@/lib/issues';
 import { PLANNING_FLOW_STEPS, planningFlowStepStates, resolvePlanningFlow } from '@/lib/planning-flow';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
+import { chinaWeekRange } from '@/lib/production-planning';
 import { normalizeWorkOrderStage, stageText } from '@/lib/work-orders';
 import type {
   ChangeStatus,
@@ -10,6 +11,8 @@ import type {
   IssueStatus,
   IssueType,
   ProcessRouteStatus,
+  ProcessStageGroup,
+  ProcessStepStatus,
   ProductionPlanReleaseState,
   WarehouseMaterialStatus,
   WorkflowActivityDTO,
@@ -19,6 +22,7 @@ import type {
   WorkflowStepDTO,
   WorkflowSummaryDTO,
   WorkflowTemplateDTO,
+  WorkflowWeekScope,
 } from '@/types';
 
 export const workflowTemplates: WorkflowTemplateDTO[] = [
@@ -76,6 +80,29 @@ function activity(id: string, action: string, label: string, actor: string | nul
   return { id, action, label, actor: actor || null, createdAt: createdAt.toISOString() };
 }
 
+function dedupeProductionActivities(items: WorkflowActivityDTO[]): WorkflowActivityDTO[] {
+  const sorted = [...items].sort(
+    (first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime(),
+  );
+  const deduped: WorkflowActivityDTO[] = [];
+
+  for (const item of sorted) {
+    const duplicateIndex = deduped.findIndex(existing => (
+      existing.label === item.label
+      && (existing.actor || null) === (item.actor || null)
+      && Math.abs(new Date(existing.createdAt).getTime() - new Date(item.createdAt).getTime()) <= 1_000
+      && (existing.action === 'production_progress' || item.action === 'production_progress')
+    ));
+    if (duplicateIndex < 0) {
+      deduped.push(item);
+    } else if (deduped[duplicateIndex].action === 'production_progress' && item.action !== 'production_progress') {
+      deduped[duplicateIndex] = item;
+    }
+  }
+
+  return deduped;
+}
+
 function summary(items: WorkflowItemDTO[]): WorkflowSummaryDTO {
   const value: WorkflowSummaryDTO = {
     total: items.length, waiting: 0, processing: 0, verifying: 0, closed: 0, overdue: 0,
@@ -89,6 +116,109 @@ function summary(items: WorkflowItemDTO[]): WorkflowSummaryDTO {
   return value;
 }
 
+type WorkflowRouteStepRecord = {
+  id: string;
+  processName: string;
+  status: string;
+  position: number;
+  sequenceGroup: number;
+  stageGroup: string;
+  standardMillisecondsPerUnit: number | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  remark: string | null;
+  productTimeEntry: { remark: string | null } | null;
+  executions: Array<{
+    goodQty: number;
+    endedAt: Date;
+    employee: { name: string };
+  }>;
+};
+
+type WorkflowRouteRecord = {
+  id: string;
+  status: string;
+  version: number;
+  templateName: string;
+  templateVersion: number;
+  productTimeProfileVersion: number | null;
+  routeSource: string;
+  confirmedAt: Date | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  productTimeProfile: { remark: string | null } | null;
+  steps: WorkflowRouteStepRecord[];
+};
+
+function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): WorkflowStepDTO[] {
+  return route.steps.map(step => {
+    const reportedGoodQuantity = step.executions.reduce((total, execution) => total + execution.goodQty, 0);
+    const latestExecution = step.executions[0] || null;
+    return {
+      key: step.id,
+      label: step.processName,
+      state: step.status === 'completed' || step.status === 'skipped'
+        ? 'done'
+        : step.status === 'current'
+          ? 'current'
+          : 'pending',
+      sequenceGroup: step.sequenceGroup,
+      status: step.status as ProcessStepStatus,
+      stageGroup: step.stageGroup as ProcessStageGroup,
+      standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
+      reportedGoodQuantity,
+      remainingGoodQuantity: targetQuantity === null ? null : Math.max(0, targetQuantity - reportedGoodQuantity),
+      startedAt: step.startedAt?.toISOString() || null,
+      completedAt: step.completedAt?.toISOString() || null,
+      remark: step.remark,
+      productRemark: step.productTimeEntry?.remark || route.productTimeProfile?.remark || null,
+      latestEmployeeName: latestExecution?.employee.name || null,
+      latestReportedAt: latestExecution?.endedAt.toISOString() || null,
+    };
+  });
+}
+
+function routeState(route: WorkflowRouteRecord, mappedSteps: WorkflowStepDTO[]): {
+  processStatus: WorkflowProcessStatus;
+  currentStep: string;
+  nextStep: string | null;
+  closed: boolean;
+} {
+  const closed = route.status === 'completed'
+    || (mappedSteps.length > 0 && mappedSteps.every(step => step.status === 'completed' || step.status === 'skipped'));
+  const currentGroup = mappedSteps.filter(step => step.status === 'current');
+  const firstPendingGroupNumber = mappedSteps.find(step => step.status === 'pending')?.sequenceGroup;
+  const firstPendingGroup = mappedSteps.filter(step => (
+    step.status === 'pending' && step.sequenceGroup === firstPendingGroupNumber
+  ));
+  const activeGroupNumber = currentGroup[0]?.sequenceGroup;
+  const nextGroupNumber = mappedSteps.find(step => (
+    step.status === 'pending'
+    && (activeGroupNumber === undefined || (step.sequenceGroup || 0) > activeGroupNumber)
+  ))?.sequenceGroup;
+  const nextGroup = currentGroup.length > 0
+    ? mappedSteps.filter(step => step.status === 'pending' && step.sequenceGroup === nextGroupNumber)
+    : firstPendingGroup;
+  return {
+    processStatus: closed ? 'closed' : route.status === 'in_progress' ? 'processing' : 'waiting',
+    currentStep: closed
+      ? '全部工序完成'
+      : currentGroup.length > 0
+        ? currentGroup.map(step => step.label).join('、')
+        : route.status === 'confirmed' && !route.startedAt
+          ? '等待图纸下发'
+          : '等待工序开始',
+    nextStep: nextGroup.length > 0 ? nextGroup.map(step => step.label).join('、') : null,
+    closed,
+  };
+}
+
+function inWeekRange(value: Date | null | undefined, start: Date, end: Date): boolean {
+  if (!value) return false;
+  const time = value.getTime();
+  return time >= start.getTime() && time <= end.getTime();
+}
+
 export type WorkflowCenterFilters = {
   keyword?: string;
   entityType?: WorkflowEntityType | 'all';
@@ -96,6 +226,7 @@ export type WorkflowCenterFilters = {
   overdue?: boolean;
   batchId?: string;
   workOrderId?: string;
+  weekScope?: WorkflowWeekScope;
 };
 
 export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): Promise<{
@@ -104,6 +235,9 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   templates: WorkflowTemplateDTO[];
 }> {
   const now = Date.now();
+  const currentWeek = chinaWeekRange(new Date());
+  const nextWeekStart = new Date(currentWeek.start.getTime() + 7 * 24 * 60 * 60 * 1000);
+  const nextWeek = chinaWeekRange(nextWeekStart);
   const [issues, changes, productionBatches, standaloneProductionOrders] = await Promise.all([
     prisma.issue.findMany({
       where: { deletedAt: null },
@@ -144,6 +278,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
         plannedCompletionDate: true,
         releaseState: true,
         workOrderId: true,
+        productTimeProfileVersion: true,
         unitMillisecondsSnapshot: true,
         releasedAt: true,
         activatedAt: true,
@@ -159,6 +294,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
             drawingLibraryItemId: true,
             planningUnitMilliseconds: true,
             priority: true,
+            remark: true,
             drawingLibraryItem: {
               select: {
                 _count: {
@@ -195,6 +331,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
             status: true,
             priority: true,
             productionOwner: true,
+            remark: true,
             startedAt: true,
             completedAt: true,
             updatedAt: true,
@@ -222,12 +359,36 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
             },
             processRoute: {
               select: {
+                id: true,
                 status: true,
+                version: true,
+                templateName: true,
+                templateVersion: true,
+                productTimeProfileVersion: true,
+                routeSource: true,
                 confirmedAt: true,
                 startedAt: true,
                 completedAt: true,
+                productTimeProfile: { select: { remark: true } },
                 steps: {
-                  select: { id: true, processName: true, status: true, position: true, startedAt: true, completedAt: true },
+                  select: {
+                    id: true,
+                    processName: true,
+                    status: true,
+                    position: true,
+                    sequenceGroup: true,
+                    stageGroup: true,
+                    standardMillisecondsPerUnit: true,
+                    startedAt: true,
+                    completedAt: true,
+                    remark: true,
+                    productTimeEntry: { select: { remark: true } },
+                    executions: {
+                      where: { voidedAt: null },
+                      select: { goodQty: true, endedAt: true, employee: { select: { name: true } } },
+                      orderBy: { endedAt: 'desc' },
+                    },
+                  },
                   orderBy: { position: 'asc' },
                 },
                 activities: {
@@ -253,16 +414,44 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       where: { deletedAt: null, planActive: true, productionPlanBatch: null },
       select: {
         id: true, code: true, specification: true, customerName: true, productName: true, priority: true, stage: true,
-        status: true, plannedAt: true, deliveryDay: true, updatedAt: true, productionOwner: true,
+        status: true, plannedAt: true, deliveryDay: true, updatedAt: true, productionOwner: true, remark: true,
+        productionTargetQty: true, weekStartDate: true, weekEndDate: true, drawingLibraryItemId: true,
         progressLogs: {
           select: { id: true, stage: true, remark: true, createdBy: true, createdAt: true },
           orderBy: { createdAt: 'desc' }, take: 8,
         },
         processRoute: {
           select: {
+            id: true,
             status: true,
+            version: true,
+            templateName: true,
+            templateVersion: true,
+            productTimeProfileVersion: true,
+            routeSource: true,
+            confirmedAt: true,
+            startedAt: true,
+            completedAt: true,
+            productTimeProfile: { select: { remark: true } },
             steps: {
-              select: { id: true, processName: true, status: true, position: true, startedAt: true, completedAt: true },
+              select: {
+                id: true,
+                processName: true,
+                status: true,
+                position: true,
+                sequenceGroup: true,
+                stageGroup: true,
+                standardMillisecondsPerUnit: true,
+                startedAt: true,
+                completedAt: true,
+                remark: true,
+                productTimeEntry: { select: { remark: true } },
+                executions: {
+                  where: { voidedAt: null },
+                  select: { goodQty: true, endedAt: true, employee: { select: { name: true } } },
+                  orderBy: { endedAt: 'desc' },
+                },
+              },
               orderBy: { position: 'asc' },
             },
             activities: {
@@ -348,16 +537,30 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       processCompletedAt: workOrder?.processRoute?.completedAt || null,
     };
     const flow = resolvePlanningFlow(facts);
-    const flowSteps = planningFlowStepStates(facts).map((state, index): WorkflowStepDTO => ({
-      key: String(index),
-      label: PLANNING_FLOW_STEPS[index],
-      state,
-    }));
+    const reportableRoute = workOrder?.processRoute?.routeSource === 'product_time_profile'
+      && workOrder.processRoute.productTimeProfileVersion !== null
+      ? workOrder.processRoute
+      : null;
+    const mappedRouteSteps = reportableRoute
+      ? routeSteps(reportableRoute, batch.quantity)
+      : [];
+    const actualRouteState = reportableRoute && mappedRouteSteps.length > 0
+      ? routeState(reportableRoute, mappedRouteSteps)
+      : null;
+    const flowSteps = actualRouteState
+      ? mappedRouteSteps
+      : planningFlowStepStates(facts).map((state, index): WorkflowStepDTO => ({
+        key: String(index),
+        label: PLANNING_FLOW_STEPS[index],
+        state,
+      }));
     const drawingRoute = order.drawingLibraryItemId
       ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`
       : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`;
     let targetRoute = `/weekly-plan-center?batchId=${encodeURIComponent(batch.id)}`;
-    if (flow.status === 'missing_drawing') targetRoute = drawingRoute;
+    if (actualRouteState && workOrder?.id) {
+      targetRoute = `/production?workOrderId=${encodeURIComponent(workOrder.id)}`;
+    } else if (flow.status === 'missing_drawing') targetRoute = drawingRoute;
     else if (flow.status === 'missing_time' || flow.status === 'pending_process') {
       targetRoute = `/workspace/product-times${order.drawingLibraryItemId ? `?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : ''}`;
     } else if (flow.status === 'material_exception' || flow.status === 'pending_material') {
@@ -395,10 +598,13 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       item.createdBy,
       item.createdAt,
     ));
-    const productionActivities = [...batchActivities, ...warehouseActivities, ...processActivities, ...progressActivities]
-      .sort((first, second) => new Date(second.createdAt).getTime() - new Date(first.createdAt).getTime())
-      .slice(0, 12);
-    const closed = flow.status === 'completed';
+    const productionActivities = dedupeProductionActivities([
+      ...batchActivities,
+      ...warehouseActivities,
+      ...processActivities,
+      ...progressActivities,
+    ]).slice(0, 12);
+    const closed = actualRouteState?.closed ?? flow.status === 'completed';
     items.push({
       id: `production-plan:${batch.id}`,
       entityId: batch.id,
@@ -408,9 +614,9 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       code: order.specification,
       title: order.productName,
       subtitle: `${order.customerName} · 第 ${batch.batchNo} 批 · ${batch.quantity.toLocaleString()} 件`,
-      processStatus: flow.workflowStatus,
-      currentStep: flow.label,
-      nextStep: flow.nextStep,
+      processStatus: actualRouteState?.processStatus || flow.workflowStatus,
+      currentStep: actualRouteState?.currentStep || flow.label,
+      nextStep: actualRouteState?.nextStep ?? flow.nextStep,
       priority: order.priority === 'insert' || order.priority === 'urgent'
         ? 'urgent'
         : order.priority === 'high'
@@ -422,6 +628,17 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       route: targetRoute,
       sourceRoute: drawingRoute,
       isOverdue: !closed && batch.plannedCompletionDate.getTime() < now,
+      quantity: batch.quantity,
+      weekStartDate: batch.weekStartDate.toISOString(),
+      weekEndDate: batch.weekEndDate.toISOString(),
+      processRouteId: workOrder?.processRoute?.id || null,
+      routeVersion: workOrder?.processRoute?.version ?? null,
+      routeStatus: (workOrder?.processRoute?.status as ProcessRouteStatus | undefined) || null,
+      routeSource: workOrder?.processRoute?.routeSource || null,
+      productTimeProfileVersion: workOrder?.processRoute?.productTimeProfileVersion || batch.productTimeProfileVersion || null,
+      productRemark: workOrder?.processRoute?.productTimeProfile?.remark || null,
+      orderRemark: workOrder?.remark || order.remark || null,
+      drawingLibraryItemId: order.drawingLibraryItemId,
       steps: flowSteps,
       activities: productionActivities,
     });
@@ -430,44 +647,47 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   for (const order of standaloneProductionOrders) {
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
     const index = Math.max(0, ['not_issued', 'frontend', 'backend', 'completed'].indexOf(stage));
-    const closed = stage === 'completed';
+    const stageClosed = stage === 'completed';
     const dueAt = order.plannedAt?.toISOString() || null;
-    const routeSteps = order.processRoute?.steps || [];
-    const currentRouteIndex = routeSteps.findIndex(step => step.status === 'current');
-    const firstPendingIndex = routeSteps.findIndex(step => step.status === 'pending');
-    const routeIndex = currentRouteIndex >= 0 ? currentRouteIndex : firstPendingIndex;
-    const activeRouteStep = routeIndex >= 0 ? routeSteps[routeIndex] : routeSteps.at(-1) || null;
-    const nextRouteStep = routeIndex >= 0
-      ? routeSteps.slice(routeIndex + 1).find(step => step.status === 'pending' || step.status === 'current') || null
+    const reportableRoute = order.processRoute?.routeSource === 'product_time_profile'
+      && order.processRoute.productTimeProfileVersion !== null
+      ? order.processRoute
       : null;
-    const hasProductRoute = routeSteps.length > 0;
-    const routeClosed = order.processRoute?.status === 'completed' || (hasProductRoute && routeSteps.every(step => step.status === 'completed' || step.status === 'skipped'));
-    const productionProcessStatus: WorkflowProcessStatus = hasProductRoute
-      ? routeClosed
-        ? 'closed'
-        : order.processRoute?.status === 'in_progress'
-          ? 'processing'
-          : 'waiting'
-      : processStatus(stage, 'production');
+    const mappedRouteSteps = reportableRoute
+      ? routeSteps(reportableRoute, order.productionTargetQty)
+      : [];
+    const actualRouteState = reportableRoute && mappedRouteSteps.length > 0
+      ? routeState(reportableRoute, mappedRouteSteps)
+      : null;
+    const closed = actualRouteState?.closed ?? stageClosed;
+    const targetRoute = order.processRoute?.routeSource === 'product_time_pending'
+      ? `/workspace/product-times${order.drawingLibraryItemId ? `?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : ''}`
+      : `/production?workOrderId=${encodeURIComponent(order.id)}`;
     items.push({
       id: `production:${order.id}`, entityId: order.id, entityType: 'production', workOrderId: order.id, code: order.specification || order.code,
       title: order.productName, subtitle: `${order.customerName || '客户未设置'} · 内部编号 ${order.code}`,
-      processStatus: productionProcessStatus,
-      currentStep: hasProductRoute ? activeRouteStep?.processName || '等待工序开始' : stageText[stage],
-      nextStep: hasProductRoute ? nextRouteStep?.processName || null : nextLabel(productionLabels, index),
+      processStatus: actualRouteState?.processStatus || processStatus(stage, 'production'),
+      currentStep: actualRouteState?.currentStep || stageText[stage],
+      nextStep: actualRouteState?.nextStep ?? nextLabel(productionLabels, index),
       priority: (order.priority === 'urgent' || order.priority === 'high' ? order.priority : 'normal'), owner: order.productionOwner,
-      dueAt, updatedAt: order.updatedAt.toISOString(), route: `/production?keyword=${encodeURIComponent(order.specification || order.code)}`,
-      sourceRoute: `/dashboard?workOrderId=${encodeURIComponent(order.id)}`, isOverdue: !closed && !!order.plannedAt && order.plannedAt.getTime() < now,
-      steps: hasProductRoute
-        ? routeSteps.map(step => ({
-          key: step.id,
-          label: step.processName,
-          state: step.status === 'completed' || step.status === 'skipped'
-            ? 'done' as const
-            : step.status === 'current'
-              ? 'current' as const
-              : 'pending' as const,
-        }))
+      dueAt, updatedAt: order.updatedAt.toISOString(), route: targetRoute,
+      sourceRoute: order.drawingLibraryItemId
+        ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`
+        : `/dashboard?workOrderId=${encodeURIComponent(order.id)}`,
+      isOverdue: !closed && !!order.plannedAt && order.plannedAt.getTime() < now,
+      quantity: order.productionTargetQty,
+      weekStartDate: order.weekStartDate?.toISOString() || null,
+      weekEndDate: order.weekEndDate?.toISOString() || null,
+      processRouteId: order.processRoute?.id || null,
+      routeVersion: order.processRoute?.version ?? null,
+      routeStatus: (order.processRoute?.status as ProcessRouteStatus | undefined) || null,
+      routeSource: order.processRoute?.routeSource || null,
+      productTimeProfileVersion: order.processRoute?.productTimeProfileVersion ?? null,
+      productRemark: order.processRoute?.productTimeProfile?.remark || null,
+      orderRemark: order.remark || null,
+      drawingLibraryItemId: order.drawingLibraryItemId,
+      steps: actualRouteState
+        ? mappedRouteSteps
         : steps(productionLabels, index, closed),
       activities: order.processRoute?.activities.length
         ? order.processRoute.activities.map(item => activity(
@@ -487,6 +707,19 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     if (filters.entityType && filters.entityType !== 'all' && item.entityType !== filters.entityType) return false;
     if (filters.status && filters.status !== 'all' && item.processStatus !== filters.status) return false;
     if (filters.overdue && !item.isOverdue) return false;
+    if (filters.weekScope && filters.weekScope !== 'all' && item.entityType === 'production') {
+      const weekStart = item.weekStartDate ? new Date(item.weekStartDate) : null;
+      const weekEnd = item.weekEndDate ? new Date(item.weekEndDate) : null;
+      const inCurrentWeek = inWeekRange(weekStart, currentWeek.start, currentWeek.end)
+        || inWeekRange(weekEnd, currentWeek.start, currentWeek.end);
+      const inNextWeek = inWeekRange(weekStart, nextWeek.start, nextWeek.end)
+        || inWeekRange(weekEnd, nextWeek.start, nextWeek.end);
+      const beforeCurrentWeek = !!weekEnd && weekEnd.getTime() < currentWeek.start.getTime();
+      if (filters.weekScope === 'current' && !inCurrentWeek) return false;
+      if (filters.weekScope === 'next' && !inNextWeek) return false;
+      if (filters.weekScope === 'carryover' && !(beforeCurrentWeek && item.processStatus !== 'closed')) return false;
+      if (filters.weekScope === 'history' && !beforeCurrentWeek) return false;
+    }
     if (keyword && !`${item.code} ${item.title} ${item.subtitle} ${item.owner || ''}`.toLocaleLowerCase('zh-CN').includes(keyword)) return false;
     return true;
   });

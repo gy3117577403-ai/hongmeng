@@ -19,6 +19,47 @@
   overflow: hidden;
 }
 
+.hm-production-workbench .production-compact-command {
+  flex: 0 0 42px;
+  min-width: 0;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 6px 3px 10px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: var(--hm-radius-md);
+  background: var(--hm-color-surface);
+}
+
+.hm-production-workbench .production-compact-title {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-compact-title > span {
+  color: var(--hm-color-accent);
+  font-size: 10px;
+  font-weight: 760;
+}
+
+.hm-production-workbench .production-compact-title > strong {
+  color: var(--hm-color-text);
+  font-size: 17px;
+  line-height: 1;
+}
+
+.hm-production-workbench .production-compact-title > small {
+  overflow: hidden;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+}
+
 .hm-production-workbench .production-page-actions {
   flex: 0 0 auto;
   display: flex;
@@ -33,6 +74,11 @@
   gap: 6px;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.hm-production-workbench .production-compact-command .production-page-actions .hm-workbench-button {
+  min-height: 34px;
+  padding: 0 10px;
 }
 
 .hm-production-workbench .production-week-scope-bar {
@@ -2606,15 +2652,15 @@
 
 /* White production command workspace: compact stage overview with an optional context rail. */
 .hm-production-workbench .production-command-strip {
-  flex: 0 0 72px;
-  min-height: 72px;
+  flex: 0 0 62px;
+  min-height: 62px;
   grid-template-columns: minmax(220px, 1.35fr) repeat(5, minmax(112px, 1fr));
   gap: 7px;
 }
 
 .hm-production-workbench .production-command-strip button,
 .hm-production-workbench .production-command-strip .production-week-label {
-  min-height: 72px;
+  min-height: 62px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   grid-template-rows: auto auto;
@@ -3112,7 +3158,21 @@
   border-radius: 7px;
   background: #f8fbff;
   color: #1d4ed8;
+  font-family: inherit;
   font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--hm-motion-fast), background-color var(--hm-motion-fast), box-shadow var(--hm-motion-fast), transform var(--hm-motion-fast);
+}
+
+.hm-production-workbench .production-process-route:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  box-shadow: 0 3px 10px rgba(37, 99, 235, .08);
+}
+
+.hm-production-workbench .production-process-route:active {
+  transform: translateY(1px);
 }
 
 .hm-production-workbench .production-process-route.draft {
@@ -3128,10 +3188,26 @@
 }
 
 .hm-production-workbench .production-process-route > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
   overflow: hidden;
-  font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.hm-production-workbench .production-process-route > span > b {
+  overflow: hidden;
+  font-weight: 760;
+  text-overflow: ellipsis;
+}
+
+.hm-production-workbench .production-process-route > span > small {
+  overflow: hidden;
+  color: var(--hm-color-text-muted);
+  font-size: 9px;
+  font-weight: 600;
+  text-overflow: ellipsis;
 }
 
 .hm-production-workbench .production-process-route > i {

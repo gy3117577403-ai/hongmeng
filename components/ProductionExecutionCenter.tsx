@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { writeClipboardText } from '@/lib/client-platform';
@@ -1606,7 +1605,9 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     router.push(`/dashboard?${params.toString()}`, { scroll: false });
   }
 
-  function openDrawingLibrary(order: ProductionOrder): void {
+  function openDrawingLibrary(order: ProductionOrder, focusedStage?: StageKey): void {
+    const returnKey = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const returnTo = captureReturnState(returnKey, order.id, focusedStage);
     const params = new URLSearchParams();
     if (order.drawingLibraryItemId) params.set('itemId', order.drawingLibraryItemId);
     else {
@@ -1615,7 +1616,43 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       params.set('specification', order.specification || '');
       params.set('productName', order.productName || '');
     }
-    router.push(`/drawing-library?${params.toString()}`);
+    params.set('from', 'production');
+    params.set('returnKey', returnKey);
+    params.set('returnTo', returnTo);
+    router.push(`/drawing-library?${params.toString()}`, { scroll: false });
+  }
+
+  function openWorkflow(order: ProductionOrder, focusedStage?: StageKey): void {
+    const returnKey = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const returnTo = captureReturnState(returnKey, order.id, focusedStage);
+    const params = new URLSearchParams({
+      workOrderId: order.id,
+      weekScope: scope,
+      from: 'production',
+      returnKey,
+      returnTo,
+    });
+    const stepId = order.processRoute?.currentSteps[0]?.id || order.processRoute?.currentStep?.id;
+    if (stepId) params.set('stepId', stepId);
+    if (weekStart) params.set('weekStart', weekStart);
+    router.push(`/workspace/workflows?${params.toString()}`, { scroll: false });
+  }
+
+  function openManualReport(order: ProductionOrder, focusedStage?: StageKey): void {
+    const returnKey = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const returnTo = captureReturnState(returnKey, order.id, focusedStage);
+    const params = new URLSearchParams({
+      view: 'manual',
+      workOrderId: order.id,
+      weekScope: scope,
+      from: 'production',
+      returnKey,
+      returnTo,
+    });
+    const stepId = order.processRoute?.currentSteps[0]?.id || order.processRoute?.currentStep?.id;
+    if (stepId) params.set('stepId', stepId);
+    if (weekStart) params.set('weekStart', weekStart);
+    router.push(`/workspace/reports?${params.toString()}`, { scroll: false });
   }
 
   function openProductionIssue(order: ProductionOrder, alertCode: string, focusedStage?: StageKey): void {
@@ -1690,7 +1727,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const cardProps = {
     readOnly: board?.readOnly || false,
     batchMode, selected, toggleSelected, openDetail, openUpdate, openQuantityAdjustment, openNextStep, saving,
-    openResources: openWorkOrderResources, copySpecification, openIssue: openProductionIssue,
+    openResources: openWorkOrderResources, openDrawingLibrary, openWorkflow, openManualReport,
+    copySpecification, openIssue: openProductionIssue,
     openStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, item: ProductionOrder): void => {
       if (item.quantityFlow.materialized) {
         setToast('该工单已启用分批数量流转，请使用“下一步”更新生产数量');
@@ -1728,14 +1766,16 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       />
 
       <div className="production-execution-main">
-        <WorkbenchPageHeader
-          kicker="生产执行"
-          title="生产执行中心"
-          description={`${todayLabel} · 本周任务、异常与进度闭环`}
-          titleId="production-page-title"
-          actionsClassName="production-page-actions"
-          actions={<><button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}><BarChart3 size={15} aria-hidden="true" />生产概览</button><a className="hm-workbench-button" href="/workspace/attendance?tab=abnormal"><AlertTriangle size={15} aria-hidden="true" />报异常工时</a><a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a><button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '下周预览不可批量修改' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量操作'}</button><button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button></>}
-        />
+        <section className="production-compact-command" aria-labelledby="production-page-title">
+          <div className="production-compact-title"><span>{weekScopeTitle}</span><strong id="production-page-title">生产执行</strong><small>{todayLabel} · {weekScopeRangeText}</small></div>
+          <div className="production-page-actions">
+            <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}><BarChart3 size={15} aria-hidden="true" />概览</button>
+            <a className="hm-workbench-button" href="/workspace/attendance?tab=abnormal"><AlertTriangle size={15} aria-hidden="true" />异常工时</a>
+            <a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a>
+            <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '下周预览不可批量修改' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>
+            <button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button>
+          </div>
+        </section>
 
         <nav className="production-week-scope-bar" aria-label="生产周范围">
           <div className="production-week-scope-tabs">
@@ -1858,7 +1898,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
       {updateOrder && updateForm && <UpdateDrawer order={updateOrder} value={updateForm} setValue={setUpdateForm} saving={saving} error={formError} close={() => { if (!saving) { setUpdateOrder(null); setUpdateForm(null); } }} save={saveUpdate} />}
       {quantityOrder && quantityForm && <QuantityAdjustmentDrawer order={quantityOrder} value={quantityForm} setValue={setQuantityForm} targetInputRef={quantityTargetInputRef} saving={quantitySaving} error={quantityError} close={closeQuantityAdjustment} save={() => void saveQuantityAdjustment()} />}
-      {detailOrder && <DetailDialog order={detailOrder} readOnly={board?.readOnly || (scope === 'history' && detailOrder.stage === 'completed')} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} update={() => openUpdate(detailOrder)} adjustQuantity={() => openQuantityAdjustment(detailOrder)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder)} />}
+      {detailOrder && <DetailDialog order={detailOrder} readOnly={board?.readOnly || (scope === 'history' && detailOrder.stage === 'completed')} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} update={() => openUpdate(detailOrder)} adjustQuantity={() => openQuantityAdjustment(detailOrder)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} />}
       {batchOpen && <BatchDialog count={selected.length} operation={batchOperation} value={batchValue} remark={batchRemark} confirm={batchConfirm} saving={saving} error={formError} setValue={setBatchValue} setRemark={setBatchRemark} setConfirm={setBatchConfirm} close={() => { if (!saving) setBatchOpen(false); }} save={saveBatch} />}
       {stageChangeRequest && <StageChangeDialog request={stageChangeRequest} saving={saving} close={() => { if (!saving) setStageChangeRequest(null); }} confirm={() => void saveStageChange(stageChangeRequest.order, stageChangeRequest.stage)} />}
       {completionSuggestion && <CompletionSuggestionDialog order={completionSuggestion} saving={saving} close={() => setCompletionSuggestion(null)} confirm={() => void saveStageChange(completionSuggestion, 'completed')} />}
@@ -1931,6 +1971,9 @@ type ProductionCardProps = {
   openNextStep: (order: ProductionOrder, displayStage: StageKey) => void;
   saving: boolean;
   openResources: (order: ProductionOrder, focusedStage?: StageKey) => void;
+  openDrawingLibrary: (order: ProductionOrder, focusedStage?: StageKey) => void;
+  openWorkflow: (order: ProductionOrder, focusedStage?: StageKey) => void;
+  openManualReport: (order: ProductionOrder, focusedStage?: StageKey) => void;
   copySpecification: (order: ProductionOrder) => Promise<void>;
   openStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, order: ProductionOrder) => void;
   openDrawingStatusMenu: (event: React.MouseEvent<HTMLButtonElement>, order: ProductionOrder) => void;
@@ -1965,7 +2008,7 @@ function ProductionAlertList({ order, showExceptions, openDrawingStatusMenu, ope
   </div>;
 }
 
-function ProcessRouteStrip({ order }: { order: ProductionOrder }) {
+function ProcessRouteStrip({ order, displayStage, openWorkflow }: Pick<ProductionCardProps, 'order' | 'displayStage' | 'openWorkflow'>) {
   const route = order.processRoute;
   if (!route) return null;
   const productTimePending = route.status === 'draft' && route.routeSource === 'product_time_pending';
@@ -1981,9 +2024,11 @@ function ProcessRouteStrip({ order }: { order: ProductionOrder }) {
   const title = productTimePending
     ? '请在产品工序与工时中维护并发布当前产品路线'
     : `${route.templateName} V${route.templateVersion} · ${route.completedStepCount}/${route.stepCount} 工序`;
-  return <div className={`production-process-route ${route.status}`} title={title}>
-    <span>{label}</span><i><b style={{ width: `${route.progress}%` }} /></i><strong>{route.completedStepCount}/{route.stepCount}</strong>
-  </div>;
+  const currentNames = route.currentSteps.map(step => step.processName).join(' + ') || route.currentStep?.processName || '待检查';
+  const nextNames = route.nextSteps.map(step => step.processName).join(' + ') || route.nextStep?.processName || (route.status === 'completed' ? '完成归档' : '待检查');
+  return <button className={`production-process-route ${route.status}`} type="button" title={`${title}；点击进入流程中心`} onClick={() => openWorkflow(order, displayStage)}>
+    <span><b>{label}</b><small>{route.status === 'draft' ? '维护后启用' : `${currentNames} → ${nextNames}`}</small></span><i><b style={{ width: `${route.progress}%` }} /></i><strong>{route.completedStepCount}/{route.stepCount}</strong>
+  </button>;
 }
 
 function nextStepButtonText(order: ProductionOrder): string {
@@ -1994,13 +2039,13 @@ function nextStepButtonText(order: ProductionOrder): string {
   return '检查工艺';
 }
 
-function WorkOrderCardTitle({ order, displayStage, batchMode, selected, toggleSelected, openDetail, openQuantityAdjustment, openResources, copySpecification, readOnly }: Pick<ProductionCardProps, 'order' | 'displayStage' | 'batchMode' | 'selected' | 'toggleSelected' | 'openDetail' | 'openQuantityAdjustment' | 'openResources' | 'copySpecification' | 'readOnly'>) {
+function WorkOrderCardTitle({ order, displayStage, batchMode, selected, toggleSelected, openDetail, openQuantityAdjustment, openDrawingLibrary, copySpecification, readOnly }: Pick<ProductionCardProps, 'order' | 'displayStage' | 'batchMode' | 'selected' | 'toggleSelected' | 'openDetail' | 'openQuantityAdjustment' | 'openDrawingLibrary' | 'copySpecification' | 'readOnly'>) {
   return <>
     <div className="production-card-title">
       <CardSelection order={order} batchMode={batchMode} selected={selected} toggleSelected={toggleSelected} readOnly={readOnly} />
       <div className="production-card-identity">
         <strong title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</strong>
-        <button className="production-card-spec" type="button" title={order.specification || '规格待补充'} onClick={() => openResources(order, displayStage)}>{specText(order)}</button>
+        <button className="production-card-spec" type="button" title={`${order.specification || '规格待补充'}；点击进入图纸资料库`} onClick={() => openDrawingLibrary(order, displayStage)}>{specText(order)}</button>
       </div>
       <div className="production-card-title-actions">
         <button className="production-card-quantity-edit" type="button" disabled={readOnly} title={readOnly ? '只读范围不可修改数量' : order.quantityTargetSource === 'missing' ? '补充生产数量' : '校正生产数量'} aria-label={readOnly ? '只读范围不可修改数量' : order.quantityTargetSource === 'missing' ? '补充生产数量' : '校正生产数量'} onClick={event => openQuantityAdjustment(order, event.currentTarget)}><Pencil size={14} aria-hidden="true" /></button>
@@ -2021,7 +2066,7 @@ function NotIssuedWorkOrderCard(props: ProductionCardProps) {
   const reminder = /样品|确认|变更|异常|返工|待处理/.test(order.latestProgressRemark || '') ? order.latestProgressRemark : '';
   return <article className={`production-card production-card-not-issued not_issued ${props.selected.includes(order.id) ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage="not_issued">
     <WorkOrderCardTitle {...props} />
-    <ProcessRouteStrip order={order} />
+    <ProcessRouteStrip order={order} displayStage="not_issued" openWorkflow={props.openWorkflow} />
     <dl className="production-leader-metrics production-quantity-grid"><div><dt>本阶段数量</dt><dd>{stageQuantity === null ? '待补充' : formatProductionQuantity(stageQuantity)}</dd></div><div><dt>总目标</dt><dd>{quantity.targetQty === null ? '待补充' : formatProductionQuantity(quantity.targetQty)}</dd></div><div><dt>已完成</dt><dd>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</dd></div></dl>
     <div className={`production-card-quantity-status ${quantityUnavailable ? 'missing' : ''}`}><span>{quantitySourceText(order)}</span><div className="production-progress-track"><i><b style={{ width: `${percentageWidth}%` }} /></i><strong>{quantityUnavailable ? quantityActionText : formatProductionPercentage(quantity.percentage)}</strong></div></div>
     <div className="production-card-meta"><span>计划交期</span><strong>{deliveryText(order) || '待设置'}</strong></div>
@@ -2032,14 +2077,14 @@ function NotIssuedWorkOrderCard(props: ProductionCardProps) {
 }
 
 function ActiveWorkOrderCard(props: ProductionCardProps) {
-  const { order, openUpdate, openQuantityAdjustment, openNextStep, displayStage, stageQuantity, saving } = props;
+  const { order, openUpdate, openQuantityAdjustment, openNextStep, openWorkflow, openManualReport, displayStage, stageQuantity, saving } = props;
   const quantity = order.quantitySummary;
   const quantityUnavailable = quantity.targetQty === null || !order.quantityFlow.valid;
   const percentageWidth = Math.max(0, Math.min(quantity.percentage || 0, 100));
   const splitFlow = cardSegments(order).length > 1;
   return <article className={`production-card production-card-active ${displayStage} ${props.selected.includes(order.id) ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage={displayStage}>
     <WorkOrderCardTitle {...props} />
-    <ProcessRouteStrip order={order} />
+    <ProcessRouteStrip order={order} displayStage={displayStage} openWorkflow={openWorkflow} />
     <button className="production-progress-hit" type="button" disabled={props.readOnly} onClick={() => openUpdate(order)} title={props.readOnly ? '只读范围不可记录进度' : '记录生产进度备注'}>
       <span className="production-quantity-grid"><span><small>本阶段数量</small><strong>{stageQuantity === null ? '-' : formatProductionQuantity(stageQuantity)}</strong></span><span><small>总目标</small><strong>{quantity.targetQty === null ? '-' : formatProductionQuantity(quantity.targetQty)}</strong></span><span><small>累计完成</small><strong>{quantity.completedQty === null ? '-' : formatProductionQuantity(quantity.completedQty)}</strong></span></span>
       <span className="production-progress-track"><i><b style={{ width: `${percentageWidth}%` }} /></i><strong>{formatProductionPercentage(quantity.percentage)}</strong></span>
@@ -2048,7 +2093,9 @@ function ActiveWorkOrderCard(props: ProductionCardProps) {
     <span className={`production-quantity-source ${order.quantityTargetSource}`}>{quantitySourceText(order)}</span>
     {splitFlow && <span className="production-flow-badge">分批流转 · 同一工单</span>}
     <ProductionAlertList order={order} displayStage={displayStage} showExceptions={props.showExceptions} openDrawingStatusMenu={props.openDrawingStatusMenu} openIssue={props.openIssue} readOnly={props.readOnly} />
-    {props.readOnly ? <footer><span className="production-readonly-note">下周预览，仅可查看</span></footer> : <footer><button type="button" onClick={() => openUpdate(order)}>记录进度</button>{quantityUnavailable ? <button className="primary" type="button" disabled={saving} onClick={event => openQuantityAdjustment(order, event.currentTarget)}>补充 / 校正数量</button> : <button className="primary" type="button" title={nextStepButtonText(order)} disabled={saving || !stageQuantity} onClick={() => openNextStep(order, displayStage)}>{nextStepButtonText(order)}</button>}</footer>}
+    {props.readOnly ? <footer><span className="production-readonly-note">下周预览，仅可查看</span></footer> : order.processRoute?.routeSource === 'product_time_profile' && order.processRoute.status !== 'draft' && order.processRoute.status !== 'completed'
+      ? <footer><button type="button" onClick={() => openWorkflow(order, displayStage)}>流程详情</button><button className="primary" type="button" disabled={saving || !stageQuantity || !order.processRoute.currentStep} onClick={() => openManualReport(order, displayStage)}>员工报工</button></footer>
+      : <footer><button type="button" onClick={() => openUpdate(order)}>记录进度</button>{quantityUnavailable ? <button className="primary" type="button" disabled={saving} onClick={event => openQuantityAdjustment(order, event.currentTarget)}>补充 / 校正数量</button> : <button className="primary" type="button" title={nextStepButtonText(order)} disabled={saving || !stageQuantity} onClick={() => openNextStep(order, displayStage)}>{nextStepButtonText(order)}</button>}</footer>}
   </article>;
 }
 
@@ -2062,7 +2109,7 @@ function CompletedWorkOrderCard(props: ProductionCardProps) {
   const percentageWidth = Math.max(0, Math.min(quantity.percentage || 0, 100));
   return <article className={`production-card production-card-completed completed ${quantity.status} ${isSelected ? 'selected' : ''}`} data-production-order-id={order.id} data-production-stage="completed">
     <WorkOrderCardTitle {...props} />
-    <ProcessRouteStrip order={order} />
+    <ProcessRouteStrip order={order} displayStage="completed" openWorkflow={props.openWorkflow} />
     <div className="production-completed-quantity">{quantityText}</div>
     <div className="production-completed-progress"><div className="production-progress-track"><i><b style={{ width: `${percentageWidth}%` }} /></i><strong>{formatProductionPercentage(quantity.percentage)}</strong></div><span className={`production-quantity-source ${order.quantityTargetSource}`}>{quantitySourceText(order)}</span></div>
     {quantity.status === 'tail_remaining' && <div className="production-completed-result tail">剩余 {formatProductionQuantity(quantity.remainingQty)} 套 · 尾数未清</div>}

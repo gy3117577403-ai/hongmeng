@@ -4,9 +4,12 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowUpRight,
+  CalendarDays,
   CheckCircle2,
   ChevronRight,
   CircleDot,
+  Clock3,
+  FileText,
   GitPullRequestArrow,
   LayoutDashboard,
   ListChecks,
@@ -21,14 +24,15 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import type {
   CurrentUserDTO,
   WorkflowEntityType,
   WorkflowItemDTO,
   WorkflowProcessStatus,
+  WorkflowStepDTO,
   WorkflowSummaryDTO,
   WorkflowTemplateDTO,
+  WorkflowWeekScope,
 } from '@/types';
 
 type WorkflowCenterShellProps = { user: CurrentUserDTO };
@@ -39,8 +43,20 @@ type WorkflowResponse = {
   templates: WorkflowTemplateDTO[];
   error?: string;
 };
-type Filters = { entityType: WorkflowEntityType | 'all'; status: WorkflowProcessStatus | 'all'; overdue: boolean };
-type WorkflowDeepLink = { batchId: string; workOrderId: string; fromPlanning: boolean };
+type Filters = {
+  entityType: WorkflowEntityType | 'all';
+  status: WorkflowProcessStatus | 'all';
+  overdue: boolean;
+  weekScope: WorkflowWeekScope;
+};
+type WorkflowDeepLink = {
+  batchId: string;
+  workOrderId: string;
+  stepId: string;
+  fromPlanning: boolean;
+  fromProduction: boolean;
+  returnTo: string;
+};
 
 const emptySummary: WorkflowSummaryDTO = {
   total: 0, waiting: 0, processing: 0, verifying: 0, closed: 0, overdue: 0, issue: 0, change: 0, production: 0,
@@ -49,6 +65,30 @@ const entityLabels: Record<WorkflowEntityType, string> = { issue: '问题', chan
 const statusLabels: Record<WorkflowProcessStatus, string> = { waiting: '待推进', processing: '处理中', verifying: '待验证', closed: '已完成' };
 const priorityLabels = { urgent: '紧急', high: '高', normal: '一般' } as const;
 const entityIcons = { issue: ShieldCheck, change: GitPullRequestArrow, production: LayoutDashboard };
+const weekScopeLabels: Record<WorkflowWeekScope, string> = {
+  all: '全部周期', carryover: '遗留未完', current: '本周', next: '下周', history: '历史周',
+};
+const stageLabels = { frontend: '前端', backend: '后端', finish: '完工' } as const;
+const routeStatusLabels = { draft: '待确认', confirmed: '已确认', in_progress: '生产中', completed: '已完成' } as const;
+
+function safeLocalRoute(value: string | null): string {
+  return value && value.startsWith('/') && !value.startsWith('//') ? value : '/production';
+}
+
+function formatDuration(milliseconds?: number | null): string {
+  if (!milliseconds || milliseconds <= 0) return '未设标准工时';
+  const seconds = milliseconds / 1000;
+  if (seconds < 60) return `${Number(seconds.toFixed(seconds < 10 ? 1 : 0))} 秒/套`;
+  const minutes = seconds / 60;
+  if (minutes < 60) return `${Number(minutes.toFixed(minutes < 10 ? 1 : 0))} 分/套`;
+  return `${Number((minutes / 60).toFixed(2))} 小时/套`;
+}
+
+function processStepStateLabel(step: WorkflowStepDTO): string {
+  if (step.state === 'done') return '已完成';
+  if (step.state === 'current') return '当前工序';
+  return '待进入';
+}
 
 function formatDate(value?: string | null, includeTime = true): string {
   if (!value) return '未设置';
@@ -69,7 +109,7 @@ async function jsonRequest<T>(url: string): Promise<T> {
 
 export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) {
   const [keyword, setKeyword] = useState('');
-  const [filters, setFilters] = useState<Filters>({ entityType: 'all', status: 'all', overdue: false });
+  const [filters, setFilters] = useState<Filters>({ entityType: 'all', status: 'all', overdue: false, weekScope: 'all' });
   const [items, setItems] = useState<WorkflowItemDTO[]>([]);
   const [summary, setSummary] = useState<WorkflowSummaryDTO>(emptySummary);
   const [templates, setTemplates] = useState<WorkflowTemplateDTO[]>([]);
@@ -82,20 +122,35 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const listRef = useRef<HTMLDivElement>(null);
   const contextRef = useRef<HTMLElement>(null);
   const contextTriggerRef = useRef<HTMLButtonElement>(null);
-  const [deepLink, setDeepLink] = useState<WorkflowDeepLink>({ batchId: '', workOrderId: '', fromPlanning: false });
+  const deepLinkStepRef = useRef<HTMLElement>(null);
+  const [deepLink, setDeepLink] = useState<WorkflowDeepLink>({
+    batchId: '', workOrderId: '', stepId: '', fromPlanning: false, fromProduction: false, returnTo: '/production',
+  });
   const [deepLinkReady, setDeepLinkReady] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const requestedWeekScope = params.get('weekScope');
+    const weekScope: WorkflowWeekScope = requestedWeekScope === 'carryover'
+      || requestedWeekScope === 'current'
+      || requestedWeekScope === 'next'
+      || requestedWeekScope === 'history'
+      ? requestedWeekScope
+      : 'all';
     const next: WorkflowDeepLink = {
       batchId: params.get('batchId') || '',
       workOrderId: params.get('workOrderId') || '',
+      stepId: params.get('stepId') || '',
       fromPlanning: params.get('from') === 'planning',
+      fromProduction: params.get('from') === 'production',
+      returnTo: safeLocalRoute(params.get('returnTo')),
     };
     if (next.batchId) selectedIdRef.current = `production-plan:${next.batchId}`;
     setDeepLink(next);
     if (next.batchId || next.workOrderId) {
-      setFilters(current => ({ ...current, entityType: 'production' }));
+      setFilters(current => ({ ...current, entityType: 'production', weekScope }));
+    } else if (weekScope !== 'all') {
+      setFilters(current => ({ ...current, weekScope }));
     }
     setDeepLinkReady(true);
   }, []);
@@ -109,6 +164,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       if (filters.entityType !== 'all') params.set('entityType', filters.entityType);
       if (filters.status !== 'all') params.set('status', filters.status);
       if (filters.overdue) params.set('overdue', 'true');
+      if (filters.weekScope !== 'all') params.set('weekScope', filters.weekScope);
       if (deepLink.batchId) params.set('batchId', deepLink.batchId);
       if (deepLink.workOrderId) params.set('workOrderId', deepLink.workOrderId);
       const data = await jsonRequest<WorkflowResponse>(`/api/workflows?${params.toString()}`);
@@ -116,9 +172,9 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       setSummary(data.summary);
       setTemplates(data.templates);
       const desired = selectedIdRef.current || sessionStorage.getItem('hm-workflow-selected') || '';
-      const nextSelected = data.items.find(item => item.id === desired)
-        || data.items.find(item => deepLink.batchId && item.batchId === deepLink.batchId)
+      const nextSelected = data.items.find(item => deepLink.batchId && item.batchId === deepLink.batchId)
         || data.items.find(item => deepLink.workOrderId && item.workOrderId === deepLink.workOrderId)
+        || data.items.find(item => item.id === desired)
         || data.items[0]
         || null;
       selectedIdRef.current = nextSelected?.id || '';
@@ -148,6 +204,11 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       listRef.current?.querySelector<HTMLElement>('.workflow-list-card.selected')?.scrollIntoView({ block: 'nearest' });
     });
   }, [deepLink.batchId, deepLink.workOrderId, loading, selected]);
+
+  useEffect(() => {
+    if (loading || !deepLink.stepId || !selected) return;
+    window.requestAnimationFrame(() => deepLinkStepRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+  }, [deepLink.stepId, loading, selected]);
 
   useEffect(() => {
     const element = listRef.current;
@@ -206,8 +267,36 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     location.href = '/login';
   }
 
-  const activeFilterCount = [filters.entityType !== 'all', filters.status !== 'all', filters.overdue].filter(Boolean).length;
+  const activeFilterCount = [filters.entityType !== 'all', filters.status !== 'all', filters.overdue, filters.weekScope !== 'all'].filter(Boolean).length;
   const selectedTemplate = useMemo(() => templates.find(item => item.key === selected?.entityType) || null, [selected, templates]);
+  const selectedRouteGroups = useMemo(() => {
+    if (!selected || selected.entityType !== 'production') return [];
+    const groups = new Map<number, WorkflowStepDTO[]>();
+    selected.steps.forEach((step, index) => {
+      const group = step.sequenceGroup ?? index + 1;
+      const current = groups.get(group) || [];
+      current.push(step);
+      groups.set(group, current);
+    });
+    return Array.from(groups.entries()).sort((first, second) => first[0] - second[0]);
+  }, [selected]);
+  const selectedCurrentStep = useMemo(() => {
+    if (!selected) return null;
+    return selected.steps.find(step => step.key === deepLink.stepId)
+      || selected.steps.find(step => step.state === 'current')
+      || null;
+  }, [deepLink.stepId, selected]);
+  const hasPublishedProductRoute = Boolean(
+    selected?.entityType === 'production'
+    && selected.processRouteId
+    && selected.routeSource === 'product_time_profile'
+    && selected.productTimeProfileVersion !== null,
+  );
+  function manualReportHref(stepId: string): string | null {
+    if (!hasPublishedProductRoute || !selected?.workOrderId) return null;
+    return `/workspace/reports?view=manual&workOrderId=${encodeURIComponent(selected.workOrderId)}&stepId=${encodeURIComponent(stepId)}&weekScope=${encodeURIComponent(filters.weekScope)}&from=workflow&returnTo=${encodeURIComponent(`/workspace/workflows?workOrderId=${selected.workOrderId}&stepId=${stepId}&weekScope=${filters.weekScope}`)}`;
+  }
+  const manualReportRoute = selectedCurrentStep ? manualReportHref(selectedCurrentStep.key) : null;
 
   return (
     <main className="hm-workbench-root hm-workflow-center">
@@ -221,13 +310,37 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       />
 
       <div className="workflow-page-frame">
-        <WorkbenchPageHeader
-          kicker="协同中心"
-          title="流程中心"
-          titleId="workflow-page-title"
-          description="统一查看问题闭环、变更闭环和生产流转，不重复创建业务数据。"
-          actions={<>{deepLink.fromPlanning && <a className="hm-workbench-button workflow-back-planning" href="/weekly-plan-center?restore=1"><ArrowLeft size={15} />返回计划中心</a>}<button className="hm-workbench-button" type="button" disabled={loading} onClick={() => { void load(); }}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新流程</button></>}
-        />
+        <section className="workflow-command-bar" aria-labelledby="workflow-page-title">
+          <div className="workflow-command-title">
+            <span>协同中心</span>
+            <strong id="workflow-page-title">流程中心</strong>
+            <small>问题、变更与生产工序统一跟踪</small>
+          </div>
+          <div className="workflow-week-tabs" role="group" aria-label="生产周范围">
+            {(['all', 'carryover', 'current', 'next', 'history'] as const).map(scope => (
+              <button
+                type="button"
+                key={scope}
+                className={filters.weekScope === scope ? 'active' : ''}
+                onClick={() => setFilters(current => ({
+                  ...current,
+                  weekScope: scope,
+                  entityType: scope === 'all' ? current.entityType : 'production',
+                }))}
+              >
+                <CalendarDays size={13} aria-hidden="true" />
+                {weekScopeLabels[scope]}
+              </button>
+            ))}
+          </div>
+          <div className="workflow-command-actions">
+            {deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回生产执行</a>}
+            {deepLink.fromPlanning && !deepLink.fromProduction && <a href="/weekly-plan-center?restore=1"><ArrowLeft size={14} />返回计划中心</a>}
+            <button type="button" disabled={loading} onClick={() => { void load(); }}>
+              <RefreshCw size={14} className={loading ? 'spin' : ''} />刷新
+            </button>
+          </div>
+        </section>
 
         <section className="workflow-summary" aria-label="流程统计">
           {([
@@ -239,7 +352,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
 
         <div className="workflow-workspace">
           <section className="workflow-list" aria-label="流程列表">
-            <header><div><h2>流程实例</h2><span>{items.length} 条当前结果</span></div>{activeFilterCount > 0 && <button type="button" onClick={() => setFilters({ entityType: 'all', status: 'all', overdue: false })}>清除 {activeFilterCount}</button>}</header>
+            <header><div><h2>流程实例</h2><span>{items.length} 条当前结果</span></div>{activeFilterCount > 0 && <button type="button" onClick={() => setFilters({ entityType: 'all', status: 'all', overdue: false, weekScope: 'all' })}>清除 {activeFilterCount}</button>}</header>
             <div className="workflow-type-filters" role="group" aria-label="流程类型筛选">
               {(['all', 'issue', 'change', 'production'] as const).map(type => <button type="button" key={type} className={filters.entityType === type ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, entityType: type }))}>{type === 'all' ? '全部' : entityLabels[type]}<span>{type === 'all' ? summary.total : summary[type]}</span></button>)}
             </div>
@@ -261,12 +374,98 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             {!selected ? <div className="workflow-detail-empty"><Workflow /><h2>选择一条流程查看节点</h2><p>流程中心显示真实业务记录，不生成独立副本。</p></div> : <>
               <header className="workflow-detail-header"><div><span>{entityLabels[selected.entityType]}流程 · {selected.code}</span><h2 title={selected.title}>{selected.title}</h2><p>{selected.subtitle}</p></div><div><span className={`workflow-status status-${selected.processStatus}`}>{statusLabels[selected.processStatus]}</span><a href={selected.route}>进入处理<ArrowUpRight size={14} /></a></div></header>
               <div className="workflow-detail-scroll hm-scroll-region">
-                <section className="workflow-current-state"><div><span>当前节点</span><strong>{selected.currentStep}</strong><p>{selected.nextStep ? `下一节点：${selected.nextStep}` : '流程已到达终态'}</p></div><dl><div><dt>负责人</dt><dd>{selected.owner || '待分派'}</dd></div><div><dt>截止时间</dt><dd className={selected.isOverdue ? 'overdue' : ''}>{formatDate(selected.dueAt)}</dd></div><div><dt>最近更新</dt><dd>{formatDate(selected.updatedAt)}</dd></div></dl></section>
-                <section className="workflow-stepper"><header><h3>流程节点</h3><span>{selectedTemplate?.name || `${entityLabels[selected.entityType]}流程`}</span></header><ol>{selected.steps.map((step, index) => <li className={step.state} key={step.key}><span>{step.state === 'done' ? <CheckCircle2 size={16} /> : step.state === 'current' ? <CircleDot size={16} /> : index + 1}</span><div><strong>{step.label}</strong><small>{step.state === 'done' ? '已完成' : step.state === 'current' ? '当前节点' : '待进入'}</small></div>{index < selected.steps.length - 1 && <ChevronRight size={15} aria-hidden="true" />}</li>)}</ol></section>
+                {hasPublishedProductRoute ? <>
+                  <section className="workflow-route-overview">
+                    <div className="workflow-route-current">
+                      <span>当前工序</span>
+                      <strong>{selected.currentStep}</strong>
+                      <p>{selected.nextStep ? `下一步：${selected.nextStep}` : '全部工序完成后进入归档'}</p>
+                    </div>
+                    <dl>
+                      <div><dt>生产数量</dt><dd>{(selected.quantity || 0).toLocaleString()} 件</dd></div>
+                      <div><dt>路线版本</dt><dd>R{selected.routeVersion || 1} · {selected.routeStatus ? routeStatusLabels[selected.routeStatus] : '待确认'}</dd></div>
+                      <div><dt>生产周期</dt><dd>{formatDate(selected.weekStartDate, false)} - {formatDate(selected.weekEndDate, false)}</dd></div>
+                      <div><dt>最近更新</dt><dd>{formatDate(selected.updatedAt)}</dd></div>
+                    </dl>
+                  </section>
+
+                  <section className="workflow-process-route">
+                    <header>
+                      <div><span>真实生产路线</span><h3>产品工序流转</h3></div>
+                      <p>并行组内工序可同时推进，整组完成后进入下一组。</p>
+                    </header>
+                    <div className="workflow-route-groups">
+                      {selectedRouteGroups.map(([group, steps], groupIndex) => {
+                        const groupState = steps.every(step => step.state === 'done')
+                          ? 'done'
+                          : steps.some(step => step.state === 'current') ? 'current' : 'pending';
+                        return <div className={`workflow-route-group ${groupState}`} key={group}>
+                          <div className="workflow-group-marker">
+                            <span>{groupState === 'done' ? <CheckCircle2 size={15} /> : groupState === 'current' ? <CircleDot size={15} /> : group}</span>
+                            <div><strong>第 {group} 组</strong><small>{steps.length > 1 ? `${steps.length} 道并行工序` : '顺序工序'}</small></div>
+                          </div>
+                          <div className="workflow-process-cards">
+                            {steps.map(step => {
+                              const reported = step.reportedGoodQuantity || 0;
+                              const target = selected.quantity || 0;
+                              const progress = target > 0 ? Math.min(100, Math.round((reported / target) * 100)) : 0;
+                              const isDeepLinked = step.key === deepLink.stepId;
+                              const stepManualReportRoute = step.state === 'current' ? manualReportHref(step.key) : null;
+                              return <article
+                                key={step.key}
+                                ref={isDeepLinked ? deepLinkStepRef : undefined}
+                                className={`workflow-process-card ${step.state}${isDeepLinked ? ' deep-linked' : ''}`}
+                              >
+                                <header>
+                                  <span className={`stage-${step.stageGroup || 'frontend'}`}>{step.stageGroup ? stageLabels[step.stageGroup] : '工序'}</span>
+                                  <strong>{step.label}</strong>
+                                  <em>{processStepStateLabel(step)}</em>
+                                </header>
+                                <div className="workflow-process-metrics">
+                                  <span><Clock3 size={13} />{formatDuration(step.standardMillisecondsPerUnit)}</span>
+                                  <span><ListChecks size={13} />{reported.toLocaleString()} / {target.toLocaleString()} 件</span>
+                                  <span><UserRound size={13} />{step.latestEmployeeName || '尚未报工'}</span>
+                                </div>
+                                <div className="workflow-process-progress" aria-label={`${step.label}完成${progress}%`}>
+                                  <span style={{ width: `${progress}%` }} />
+                                </div>
+                                <footer>
+                                  <div>
+                                    <span>{step.completedAt ? `完成 ${formatDate(step.completedAt)}` : step.startedAt ? `开始 ${formatDate(step.startedAt)}` : '尚未开始'}</span>
+                                    <span>剩余 {(step.remainingGoodQuantity ?? target).toLocaleString()} 件</span>
+                                  </div>
+                                  {stepManualReportRoute && <a href={stepManualReportRoute}>员工报工<ArrowUpRight size={13} /></a>}
+                                </footer>
+                                {(step.productRemark || step.remark) && <div className="workflow-step-notes">
+                                  {step.productRemark && <p><strong>产品标准</strong>{step.productRemark}</p>}
+                                  {step.remark && <p><strong>工序备注</strong>{step.remark}</p>}
+                                </div>}
+                              </article>;
+                            })}
+                          </div>
+                          {groupIndex < selectedRouteGroups.length - 1 && <div className="workflow-group-connector"><span /><ChevronRight size={15} /></div>}
+                        </div>;
+                      })}
+                    </div>
+                  </section>
+
+                  <section className="workflow-route-notes">
+                    <article><FileText size={16} /><div><strong>产品标准备注</strong><p>{selected.productRemark || '未填写产品标准备注'}</p></div></article>
+                    <article><FileText size={16} /><div><strong>当前工单临时备注</strong><p>{selected.orderRemark || '未填写本批次临时备注'}</p></div></article>
+                  </section>
+                </> : <>
+                  <section className="workflow-current-state"><div><span>当前节点</span><strong>{selected.currentStep}</strong><p>{selected.nextStep ? `下一节点：${selected.nextStep}` : '流程已到达终态'}</p></div><dl><div><dt>负责人</dt><dd>{selected.owner || '待分派'}</dd></div><div><dt>截止时间</dt><dd className={selected.isOverdue ? 'overdue' : ''}>{formatDate(selected.dueAt)}</dd></div><div><dt>最近更新</dt><dd>{formatDate(selected.updatedAt)}</dd></div></dl></section>
+                  <section className="workflow-stepper"><header><h3>流程节点</h3><span>{selectedTemplate?.name || `${entityLabels[selected.entityType]}流程`}</span></header><ol>{selected.steps.map((step, index) => <li className={step.state} key={step.key}><span>{step.state === 'done' ? <CheckCircle2 size={16} /> : step.state === 'current' ? <CircleDot size={16} /> : index + 1}</span><div><strong>{step.label}</strong><small>{processStepStateLabel(step)}</small></div>{index < selected.steps.length - 1 && <ChevronRight size={15} aria-hidden="true" />}</li>)}</ol></section>
+                </>}
                 <section className="workflow-activity"><header><h3>最近记录</h3><span>{selected.activities.length} 条</span></header><div>{selected.activities.map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}{!selected.activities.length && <p className="activity-empty">该流程暂时没有可展示的业务记录。</p>}</div></section>
                 <section className="workflow-source-note"><ListChecks size={18} /><div><strong>数据来源</strong><p>该条记录直接来自{selected.entityType === 'issue' ? '问题管理' : selected.entityType === 'change' ? '变更管理' : '计划批次及其关联生产工单'}，状态更新请在来源模块完成。</p></div></section>
               </div>
-              <footer className="workflow-detail-actions"><a href={selected.route}>打开来源业务<ArrowUpRight size={14} /></a>{selected.sourceRoute && <a className="secondary" href={selected.sourceRoute}>查看关联资料</a>}{compactContext && <button ref={contextTriggerRef} type="button" onClick={() => setContextOpen(true)}>流程上下文与入口</button>}</footer>
+              <footer className="workflow-detail-actions">
+                {manualReportRoute && <a href={manualReportRoute}>员工报工<ArrowUpRight size={14} /></a>}
+                <a className={manualReportRoute ? 'secondary' : ''} href={selected.route}>{selected.entityType === 'production' ? '打开生产执行' : '打开来源业务'}<ArrowUpRight size={14} /></a>
+                {selected.sourceRoute && <a className="secondary" href={selected.sourceRoute}>查看关联资料</a>}
+                {compactContext && <button ref={contextTriggerRef} type="button" onClick={() => setContextOpen(true)}>流程上下文与入口</button>}
+              </footer>
             </>}
           </section>
 

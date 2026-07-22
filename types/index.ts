@@ -1057,11 +1057,24 @@ export type AbnormalTimeReportDTO = {
 
 export type WorkflowProcessStatus = 'waiting' | 'processing' | 'verifying' | 'closed';
 export type WorkflowEntityType = 'issue' | 'change' | 'production';
+export type WorkflowWeekScope = 'all' | 'carryover' | 'current' | 'next' | 'history';
 
 export type WorkflowStepDTO = {
   key: string;
   label: string;
   state: 'done' | 'current' | 'pending';
+  sequenceGroup?: number;
+  status?: ProcessStepStatus;
+  stageGroup?: ProcessStageGroup;
+  standardMillisecondsPerUnit?: number | null;
+  reportedGoodQuantity?: number;
+  remainingGoodQuantity?: number | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  remark?: string | null;
+  productRemark?: string | null;
+  latestEmployeeName?: string | null;
+  latestReportedAt?: string | null;
 };
 
 export type WorkflowActivityDTO = {
@@ -1091,6 +1104,17 @@ export type WorkflowItemDTO = {
   route: string;
   sourceRoute?: string | null;
   isOverdue: boolean;
+  quantity?: number | null;
+  weekStartDate?: string | null;
+  weekEndDate?: string | null;
+  processRouteId?: string | null;
+  routeVersion?: number | null;
+  routeStatus?: ProcessRouteStatus | null;
+  routeSource?: string | null;
+  productTimeProfileVersion?: number | null;
+  productRemark?: string | null;
+  orderRemark?: string | null;
+  drawingLibraryItemId?: string | null;
   steps: WorkflowStepDTO[];
   activities: WorkflowActivityDTO[];
 };
