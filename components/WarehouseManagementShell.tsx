@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
@@ -120,6 +121,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   const [form, setForm] = useState<ExceptionForm>(() => emptyExceptionForm());
   const [formError, setFormError] = useState('');
   const [toast, setToast] = useState('');
+  useToastBridge(toast, setToast);
   const [refreshToken, setRefreshToken] = useState(0);
   const mainRef = useRef<HTMLElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
@@ -165,12 +167,6 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [scope, selectedWeek, status, exceptionType, expectedOverdue, query, page, refreshToken]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(''), 2600);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   const summary = payload?.summary || emptySummary;
   const selectedWeekOption = useMemo(() => {
@@ -364,6 +360,5 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
       </aside>
     </>}
 
-    {toast && <div className="warehouse-toast" role="status">{toast}</div>}
   </>;
 }

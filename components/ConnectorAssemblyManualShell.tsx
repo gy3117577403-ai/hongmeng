@@ -9,6 +9,7 @@ import { PdfViewer } from '@/components/PdfViewer';
 import type { PdfTocSuggestion } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
 import { BulkConnectorManualImportModal } from '@/components/BulkConnectorManualImportModal';
+import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { writeClipboardText } from '@/lib/client-platform';
 import { inspectConnectorManualFile } from '@/lib/client-connector-manual-inspector';
@@ -213,6 +214,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
   const [trash, setTrash] = useState<TrashPayload>({});
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState('');
+  useToastBridge(toast, setToast);
   const [bulkOpen, setBulkOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
@@ -248,12 +250,6 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
     if (issuedTo) labels.push(`至 ${issuedTo}`);
     return labels;
   }, [family, issuedFrom, issuedTo, keyword, manufacturer, model, statusFilter]);
-
-  useEffect(() => {
-    if (!toast) return undefined;
-    const timer = window.setTimeout(() => setToast(''), 3600);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   useEffect(() => {
     if (!detailsOpen) return undefined;
@@ -1069,7 +1065,6 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
         onCancel={() => { if (!saving) setLightweightDeleteTarget(null); }}
         onConfirm={() => { void confirmLightweightDelete(); }}
       />
-      {toast && <div className="manual-toast" role="status">{toast}</div>}
     </main>
   );
 }

@@ -16,6 +16,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import type { CurrentUserDTO, EmployeeDTO } from '@/types';
 
@@ -92,6 +93,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   const [error, setError] = useState('');
   const [formError, setFormError] = useState('');
   const [toast, setToast] = useState('');
+  useToastBridge(toast, setToast);
 
   const selectedEmployee = useMemo(
     () => employees.find(employee => employee.id === selectedEmployeeId) || null,
@@ -132,12 +134,6 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     setBaseline(nextDraft);
     setFormError('');
   }, [creating, selectedEmployee]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(''), 2200);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -313,7 +309,6 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
       </div>
 
       {loading && <div className="employee-workbench-loading"><Loader2 className="spin" size={17} aria-hidden="true" />正在加载员工档案</div>}
-      {toast && <div className="employee-workbench-toast" role="status">{toast}</div>}
     </main>
   );
 }

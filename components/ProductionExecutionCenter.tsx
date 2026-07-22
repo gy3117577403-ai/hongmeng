@@ -3,6 +3,7 @@
 import { AlertTriangle, BarChart3, CalendarDays, ChevronRight, Copy, Download, Info, ListChecks, Pencil, RefreshCw, Search, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { PortalMenu } from '@/components/PortalMenu';
@@ -565,6 +566,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
+  useToastBridge(toast, setToast);
   const [batchMode, setBatchMode] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [detailOrder, setDetailOrder] = useState<ProductionOrder | null>(null);
@@ -906,12 +908,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     const saved = sessionStorage.getItem('production-execution:completed-collapsed');
     setCompletedCollapsed(window.innerWidth >= 1280 && saved === '1');
   }, []);
-
-  useEffect(() => {
-    if (!toast) return undefined;
-    const timer = window.setTimeout(() => setToast(''), 2600);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   useEffect(() => {
     if (!insightsOpen) return undefined;
@@ -1890,7 +1886,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         }}
         confirm={() => void saveNextStep()}
       />}
-      {toast && <div className="production-toast" role="status">{toast}</div>}
     </main>
   );
 }

@@ -7,6 +7,7 @@ import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawing
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { safeDisplayFilename } from '@/lib/filenames';
 import type { CurrentUserDTO, DrawingLibraryCustomerDTO, DrawingLibraryFileDTO, DrawingLibraryItemDTO, ResourceCategoryDTO } from '@/types';
@@ -110,6 +111,7 @@ export function DrawingLibraryShell({
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id || '');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
+  useToastBridge(msg, setMsg);
   const [modal, setModal] = useState<DrawingModal>(null);
   const [form, setForm] = useState<DrawingLibraryForm>(emptyForm);
   const [formError, setFormError] = useState('');
@@ -567,8 +569,6 @@ export function DrawingLibraryShell({
           </div>
         </section>
 
-        {msg && <div className="hm-drawing-message" role="status"><span>{msg}</span><button type="button" onClick={loadData}>重新加载</button></div>}
-
         <section className="drawing-workspace">
           <aside className="drawing-browser" aria-label="图纸规格结果">
             <div className="drawing-panel-head">
@@ -848,7 +848,6 @@ export function DrawingLibraryShell({
         onConfirm={() => { void confirmDelete(); }}
       />
 
-      {msg && <div className="status-toast">{msg}</div>}
     </main>
   );
 }

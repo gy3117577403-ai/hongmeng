@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import type {
@@ -163,6 +164,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
+  useToastBridge(toast, setToast);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [formOpen, setFormOpen] = useState(initialParams.get('action') === 'new');
@@ -330,12 +332,6 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     if (compactContext && !contextOpen) panel.setAttribute('inert', '');
     else panel.removeAttribute('inert');
   }, [compactContext, contextOpen]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(''), 3200);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   const modalOpen = formOpen || !!transition || !!confirmDelete || !!confirmAttachmentDelete;
   useEffect(() => {
@@ -725,7 +721,6 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
 
       {confirmDelete && <div className="issue-modal-backdrop"><section className="issue-confirm" role="alertdialog" aria-modal="true" aria-labelledby="issue-delete-title"><AlertTriangle /><h2 id="issue-delete-title">确认删除问题？</h2><p>{confirmDelete.code} · {confirmDelete.title}</p><span>问题将被软删除，关联工单和 S3 附件原文件不会被物理删除。</span><footer><button type="button" disabled={saving} onClick={() => setConfirmDelete(null)}>取消</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteIssue(); }}>确认删除</button></footer></section></div>}
       {confirmAttachmentDelete && <div className="issue-modal-backdrop"><section className="issue-confirm" role="alertdialog" aria-modal="true" aria-labelledby="issue-attachment-delete-title"><AlertTriangle /><h2 id="issue-attachment-delete-title">确认删除附件？</h2><p title={confirmAttachmentDelete.name}>{confirmAttachmentDelete.name}</p><span>附件记录将被软删除，对象存储中的原文件不会立即物理清除。</span><footer><button type="button" disabled={saving} onClick={() => setConfirmAttachmentDelete(null)}>取消</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteAttachment(); }}>确认删除</button></footer></section></div>}
-      {toast && <div className="issue-toast" role="status">{toast}</div>}
     </main>
   );
 }

@@ -19,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { ABNORMAL_TIME_CATEGORIES } from '@/lib/attendance';
 import { formatProcessDuration } from '@/lib/process-time';
@@ -167,6 +168,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
+  useToastBridge(toast, setToast);
   const [refreshToken, setRefreshToken] = useState(0);
   const [attendanceDraft, setAttendanceDraft] = useState<AttendanceDraft | null>(null);
   const [abnormalDraft, setAbnormalDraft] = useState<AbnormalDraft | null>(null);
@@ -234,12 +236,6 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
   }, [attendanceDraft, abnormalDraft]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(''), 2600);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   const recordByEmployee = useMemo(() => new Map(records.map(item => [item.employeeId, item])), [records]);
   const filteredEmployees = useMemo(() => {
@@ -579,7 +575,6 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       </div>}
 
       {loading && <div className="attendance-loading"><Loader2 className="spin" /><span>正在加载考勤与异常账本</span></div>}
-      {toast && <div className="attendance-toast" role="status">{toast}</div>}
     </main>
   );
 }

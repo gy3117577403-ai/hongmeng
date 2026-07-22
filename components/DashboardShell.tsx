@@ -9,6 +9,7 @@ import { ImageViewer } from '@/components/ImageViewer';
 import { LocalImportDialog, type LocalImportConnectionState, type LocalImportTaskView } from '@/components/LocalImportDialog';
 import { PdfViewer } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
+import { useToastBridge } from '@/components/ToastProvider';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { useHiddenLayerInert, useModalLayer } from '@/components/useModalLayer';
@@ -566,6 +567,7 @@ export default function DashboardShell({
   const [uploadJobs, setUploadJobs] = useState<UploadJob[]>([]);
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [msg, setMsg] = useState('');
+  useToastBridge(msg, setMsg);
   const [syncing, setSyncing] = useState(false);
   const [drawingSyncing, setDrawingSyncing] = useState(false);
   const [passwordOpen, setPasswordOpen] = useState(false);
@@ -3038,8 +3040,6 @@ export default function DashboardShell({
           </table>
         </section>
       )}
-
-      {msg && <div className="status-toast">{msg}</div>}
 
       {quickMenu && (
         <div className="quick-menu" style={{ left: quickMenu.x, top: quickMenu.y }}>

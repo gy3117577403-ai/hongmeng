@@ -29,6 +29,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import { useToast, useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import type {
   CurrentUserDTO,
@@ -223,6 +224,19 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const importCloseRef = useRef<HTMLButtonElement>(null);
   const initialSelectionRef = useRef(false);
   const lastExternalRefreshRef = useRef(0);
+  const unsavedToastShownRef = useRef(false);
+  const { showToast } = useToast();
+  useToastBridge(message, setMessage);
+  useToastBridge(error, setError, 'error');
+
+  const hasUnsavedChanges = dirty || quotationDirty;
+
+  useEffect(() => {
+    if (hasUnsavedChanges && !unsavedToastShownRef.current) {
+      showToast('当前产品有未保存修改', { tone: 'warning' });
+    }
+    unsavedToastShownRef.current = hasUnsavedChanges;
+  }, [hasUnsavedChanges, showToast]);
 
   const selectedItem = items.find(item => item.id === selectedId) || items[0] || null;
   const selectedItemId = selectedItem?.id || null;
@@ -278,18 +292,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     else url.searchParams.set('scope', scope);
     window.history.replaceState(null, '', `${url.pathname}${url.search}`);
   }, [dirty, quotationDirty]);
-
-  useEffect(() => {
-    if (!message) return undefined;
-    const timer = window.setTimeout(() => setMessage(''), 3200);
-    return () => window.clearTimeout(timer);
-  }, [message]);
-
-  useEffect(() => {
-    if (!error) return undefined;
-    const timer = window.setTimeout(() => setError(''), 4200);
-    return () => window.clearTimeout(timer);
-  }, [error]);
 
   useEffect(() => {
     const urlScope = new URLSearchParams(window.location.search).get('scope');
@@ -768,7 +770,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const totalMilliseconds = draftTotal(entries);
   const selectedStatus = selectedItem ? statusText(selectedItem) : '未选择产品';
   const isPlanningScope = planningScope !== 'all';
-  const hasUnsavedChanges = dirty || quotationDirty;
   const invalidEntryCount = entries.filter(entry => {
     const value = Number(entry.unitSeconds);
     return !Number.isFinite(value) || value <= 0 || value > 86_400;
@@ -827,15 +828,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             <button className="hm-workbench-button" type="button" disabled={loading || hasUnsavedChanges} onClick={() => load(selectedItem?.id)} title="刷新产品工时"><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" />刷新</button>
           </div>
         </section>
-
-        {message && <div className="product-time-message" role="status" aria-live="polite"><CheckCircle2 size={16} aria-hidden="true" />{message}</div>}
-        {error && <div className="product-time-error" role="alert"><AlertTriangle size={16} aria-hidden="true" />{error}</div>}
-
-        {hasUnsavedChanges && <div className="product-time-unsaved" role="status">
-          <AlertTriangle size={16} aria-hidden="true" />
-          <span><strong>当前产品有未保存修改</strong><small>保存或放弃后，才能继续筛选、导入和刷新，避免误切换丢失内容。</small></span>
-          <button type="button" onClick={resetChanges}><RotateCcw size={15} aria-hidden="true" />放弃修改</button>
-        </div>}
 
         <section className="product-time-workspace" aria-label="产品工序与工时工作台">
           <aside className="product-time-products" aria-label="产品列表">
@@ -927,7 +919,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <label className="product-time-remark"><span>版本说明</span><textarea value={remark} onChange={event => { setRemark(event.target.value); setDirty(true); }} placeholder="记录测定依据、特殊设备或本次调整原因" /></label>
 
               <footer className="product-time-route-actions">
-                <span>{invalidEntryCount ? `${invalidEntryCount} 道工序工时无效` : activePublished ? '新发布版本只同步未开工路线，历史执行记录保持不变。' : '保存草稿后检查无误，再发布为生产可用版本。'}</span>
+                <span className="product-time-route-status">
+                  {hasUnsavedChanges && <b><AlertTriangle size={13} aria-hidden="true" />未保存</b>}
+                  <em>{invalidEntryCount ? `${invalidEntryCount} 道工序工时无效` : activePublished ? '新发布版本只同步未开工路线，历史执行记录保持不变。' : '保存草稿后检查无误，再发布为生产可用版本。'}</em>
+                </span>
                 <div>
                   <button className="hm-workbench-button" type="button" disabled={!dirty || saving} onClick={resetChanges}><RotateCcw size={15} aria-hidden="true" />放弃</button>
                   <button className="hm-workbench-button" type="button" disabled={saving || !dirty || invalidEntryCount > 0 || entries.length === 0} onClick={() => void saveDraft()}><Save size={15} aria-hidden="true" />{saving ? '保存中' : '保存草稿'}</button>

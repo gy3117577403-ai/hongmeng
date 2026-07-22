@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, FileUp, History, Paperclip, Plus, RotateCcw, Search } from 'lucide-react';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { PortalMenu } from '@/components/PortalMenu';
+import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { writeClipboardText } from '@/lib/client-platform';
 import type {
@@ -122,6 +123,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
+  useToastBridge(msg, setMsg);
   const [modal, setModal] = useState<ParameterModal>(null);
   const [form, setForm] = useState<ParameterForm>(emptyForm);
   const [formError, setFormError] = useState('');
@@ -179,7 +181,6 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
   const searchTerm = keyword.trim();
   const hasActiveFilters = !!searchTerm || filter !== 'all';
   const formDirty = !!modal && JSON.stringify(form) !== JSON.stringify(formFrom(modal.item));
-  const messageIsError = /失败|异常/.test(msg);
   const currentQuery = useMemo(() => {
     const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
     if (keyword.trim()) params.set('keyword', keyword.trim());
@@ -888,13 +889,6 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
             <button type="button" disabled={batching} onClick={() => runBatch('unhighlight')}>批量取消重点</button>
             <button className="danger-button" type="button" disabled={batching} onClick={event => { confirmationTriggerRef.current = event.currentTarget; setBatchDeleteOpen(true); }}>批量删除</button>
           </section>
-        )}
-
-        {msg && (
-          <div className={messageIsError ? 'hm-parameters-message error' : 'hm-parameters-message'} role={messageIsError ? 'alert' : 'status'}>
-            <span>{msg}</span>
-            {messageIsError && <button type="button" onClick={() => { void loadData(); void loadFiles(); }}>重新加载</button>}
-          </div>
         )}
 
         <section className="connector-content-grid">

@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import type {
@@ -193,6 +194,7 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
+  useToastBridge(toast, setToast);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [formOpen, setFormOpen] = useState(initialParams.get('action') === 'new');
@@ -334,12 +336,6 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
     if (compactContext && !contextOpen) panel.setAttribute('inert', '');
     else panel.removeAttribute('inert');
   }, [compactContext, contextOpen]);
-
-  useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(''), 3200);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   const modalOpen = formOpen || !!transition || !!confirmDelete || !!confirmAttachmentDelete;
   useEffect(() => {
@@ -697,7 +693,6 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
 
       {confirmDelete && <div className="change-modal-backdrop"><section className="change-confirm" role="alertdialog" aria-modal="true" aria-labelledby="change-delete-title"><AlertTriangle /><h2 id="change-delete-title">确认删除变更？</h2><p>{confirmDelete.code} · {confirmDelete.title}</p><span>变更将被软删除，关联问题、工单及对象存储附件不会被物理删除。</span><footer><button type="button" disabled={saving} onClick={() => setConfirmDelete(null)}>取消</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteChange(); }}>确认删除</button></footer></section></div>}
       {confirmAttachmentDelete && <div className="change-modal-backdrop"><section className="change-confirm" role="alertdialog" aria-modal="true" aria-labelledby="change-attachment-delete-title"><AlertTriangle /><h2 id="change-attachment-delete-title">确认删除附件？</h2><p title={confirmAttachmentDelete.name}>{confirmAttachmentDelete.name}</p><span>附件记录将被软删除，对象存储中的原文件不会立即物理清除。</span><footer><button type="button" disabled={saving} onClick={() => setConfirmAttachmentDelete(null)}>取消</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteAttachment(); }}>确认删除</button></footer></section></div>}
-      {toast && <div className="change-toast" role="status">{toast}</div>}
     </main>
   );
 }

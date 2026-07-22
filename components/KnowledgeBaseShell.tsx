@@ -29,6 +29,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -216,6 +217,7 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
+  useToastBridge(toast, setToast);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<KnowledgeArticleDTO | null>(null);
   const [form, setForm] = useState<ArticleForm>(emptyForm);
@@ -332,12 +334,6 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
     const next = params.toString() ? `/workspace/knowledge?${params.toString()}` : '/workspace/knowledge';
     window.history.replaceState(null, '', next);
   }, [category, keyword, selectedKey, source]);
-
-  useEffect(() => {
-    if (!toast) return undefined;
-    const timer = window.setTimeout(() => setToast(''), 3200);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
 
   async function logout(): Promise<void> {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -660,7 +656,6 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
 
       <ConfirmDialog open={!!deleteArticle} title="删除这条知识？" description="文章将软删除，关联的 S3 附件不会被物理清除。" confirmLabel="确认删除" danger busy={saving} onCancel={() => setDeleteArticle(null)} onConfirm={() => void removeArticle()} />
       <ConfirmDialog open={!!deleteAttachment} title="移除这个附件？" description={deleteAttachment ? `${deleteAttachment.displayName || deleteAttachment.originalName} 将从知识页面隐藏，S3 原文件保留。` : ''} confirmLabel="确认移除" danger busy={saving} onCancel={() => setDeleteAttachment(null)} onConfirm={() => void removeAttachment()} />
-      {toast && <div className="hm-knowledge-toast" role="status">{toast}</div>}
     </main>
   );
 }

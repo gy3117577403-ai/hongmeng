@@ -1,7 +1,9 @@
 import type {Metadata, Viewport} from 'next';
 import PwaRegister from '@/components/PwaRegister';
+import {ToastProvider} from '@/components/ToastProvider';
 import './styles/hm-design-tokens.css';
 import './styles/hm-workbench-foundation.css';
+import './styles/hm-toast.css';
 import './globals.css';
 import './account.css';
 export const metadata:Metadata={
@@ -18,4 +20,4 @@ export const metadata:Metadata={
   },
 };
 export const viewport:Viewport={themeColor:'#ff6a00',width:'device-width',initialScale:1};
-export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="zh-CN"><body><PwaRegister />{children}</body></html>}
+export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="zh-CN"><body><ToastProvider><PwaRegister />{children}</ToastProvider></body></html>}
