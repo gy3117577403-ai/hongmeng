@@ -27,10 +27,14 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ImageViewer } from '@/components/ImageViewer';
+import { PdfViewer } from '@/components/PdfViewer';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import type {
   CurrentUserDTO,
+  DrawingLibraryFileDTO,
   DrawingLibraryItemDTO,
+  ProductQuotationTimeDTO,
   ProductProcessTimeEntryDTO,
   ProductTimeListItemDTO,
   ProductTimePlanningScope,
@@ -47,7 +51,6 @@ type ProcessDefinition = {
   sortOrder: number;
 };
 
-type ProductTimeSummary = { total: number; published: number; draft: number; missing: number; quotationMissing: number };
 type CustomerOption = { customerName: string; count: number };
 type ProductTimePayload = {
   ok: boolean;
@@ -55,7 +58,6 @@ type ProductTimePayload = {
   items?: ProductTimeListItemDTO[];
   definitions?: ProcessDefinition[];
   customers?: CustomerOption[];
-  summary?: ProductTimeSummary;
   planningScope?: ProductTimePlanningScope;
   planningSummary?: ProductTimePlanningSummaryDTO | null;
   periods?: {
@@ -63,6 +65,8 @@ type ProductTimePayload = {
     next: { weekStartDate: string; weekEndDate: string };
   };
 };
+
+type ReferenceCategory = 'drawing' | 'sop' | 'all';
 
 type EntryDraft = {
   processDefinitionId: string;
@@ -103,8 +107,22 @@ type ProductTimeImportPreview = {
   };
 };
 
-const emptySummary: ProductTimeSummary = { total: 0, published: 0, draft: 0, missing: 0, quotationMissing: 0 };
 const stageText: Record<ProcessStageGroup, string> = { frontend: '前端', backend: '后端', finish: '完工' };
+
+function referenceCategory(file: DrawingLibraryFileDTO): Exclude<ReferenceCategory, 'all'> | 'other' {
+  const code = (file.categoryCode || '').toLocaleLowerCase('zh-CN');
+  const name = (file.categoryName || '').toLocaleLowerCase('zh-CN');
+  if (code.includes('sop') || code.includes('manual') || code.includes('instruction') || name.includes('指导书') || name.includes('sop')) return 'sop';
+  if (code.includes('original') || code.includes('drawing') || name.includes('原图') || name.includes('图纸')) return 'drawing';
+  return 'other';
+}
+
+function quotationSourceText(sourceType: ProductQuotationTimeDTO['sourceType'] | null): string {
+  if (sourceType === 'planning_order') return '采用计划单套工时';
+  if (sourceType === 'import') return '导入';
+  if (sourceType === 'quotation') return '报价资料';
+  return '人工录入';
+}
 
 function seconds(value: number | null | undefined): string {
   if (!value) return '';
@@ -157,7 +175,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [items, setItems] = useState<ProductTimeListItemDTO[]>([]);
   const [definitions, setDefinitions] = useState<ProcessDefinition[]>([]);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);
-  const [summary, setSummary] = useState<ProductTimeSummary>(emptySummary);
   const [planningSummary, setPlanningSummary] = useState<ProductTimePlanningSummaryDTO | null>(null);
   const [periods, setPeriods] = useState<ProductTimePayload['periods']>();
   const [planningScope, setPlanningScope] = useState<ProductTimePlanningScope>('all');
@@ -171,6 +188,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [dirty, setDirty] = useState(false);
   const [quotationSeconds, setQuotationSeconds] = useState('');
   const [quotationRemark, setQuotationRemark] = useState('');
+  const [quotationSourceType, setQuotationSourceType] = useState<ProductQuotationTimeDTO['sourceType']>('manual');
+  const [quotationSourceRefId, setQuotationSourceRefId] = useState<string | null>(null);
   const [quotationDirty, setQuotationDirty] = useState(false);
   const [quotationSaving, setQuotationSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -188,12 +207,17 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [referenceItem, setReferenceItem] = useState<DrawingLibraryItemDTO | null>(null);
   const [referenceLoading, setReferenceLoading] = useState(false);
   const [referenceError, setReferenceError] = useState('');
+  const [referenceOpen, setReferenceOpen] = useState(false);
+  const [referenceCategoryFilter, setReferenceCategoryFilter] = useState<ReferenceCategory>('drawing');
+  const [referenceFileId, setReferenceFileId] = useState('');
   const [importOpen, setImportOpen] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [importCommitting, setImportCommitting] = useState(false);
   const [importPreview, setImportPreview] = useState<ProductTimeImportPreview | null>(null);
   const libraryTriggerRef = useRef<HTMLButtonElement>(null);
   const libraryCloseRef = useRef<HTMLButtonElement>(null);
+  const referenceTriggerRef = useRef<HTMLButtonElement>(null);
+  const referenceCloseRef = useRef<HTMLButtonElement>(null);
   const importTriggerRef = useRef<HTMLButtonElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const importCloseRef = useRef<HTMLButtonElement>(null);
@@ -206,6 +230,15 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const activePublished = selectedItem?.published || null;
   const activeProfile = activeDraft || activePublished;
   const activeQuotation = selectedItem?.quotation || null;
+  const referenceFiles = useMemo(
+    () => referenceItem?.files.filter(file => !file.deletedAt) || [],
+    [referenceItem],
+  );
+  const visibleReferenceFiles = useMemo(
+    () => referenceFiles.filter(file => referenceCategoryFilter === 'all' || referenceCategory(file) === referenceCategoryFilter),
+    [referenceCategoryFilter, referenceFiles],
+  );
+  const selectedReferenceFile = visibleReferenceFiles.find(file => file.id === referenceFileId) || visibleReferenceFiles[0] || null;
 
   const load = useCallback(async (preferredItemId?: string) => {
     setLoading(true);
@@ -224,7 +257,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setItems(nextItems);
       setDefinitions(data.definitions || []);
       setCustomers(data.customers || []);
-      setSummary(data.summary || emptySummary);
       setPlanningSummary(data.planningSummary || null);
       setPeriods(data.periods);
       const urlItemId = new URLSearchParams(window.location.search).get('itemId') || '';
@@ -302,6 +334,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     setDirty(false);
     setQuotationSeconds(seconds(selectedItem?.quotation?.unitMilliseconds));
     setQuotationRemark(selectedItem?.quotation?.remark || '');
+    setQuotationSourceType(selectedItem?.quotation?.sourceType || 'manual');
+    setQuotationSourceRefId(selectedItem?.quotation?.sourceRefId || null);
     setQuotationDirty(false);
     setError('');
   }, [activeProfile, selectedItem?.id, selectedItem?.quotation]);
@@ -313,6 +347,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       return;
     }
     let cancelled = false;
+    setReferenceItem(null);
+    setReferenceFileId('');
     setReferenceLoading(true);
     setReferenceError('');
     fetch(`/api/drawing-library/${selectedItemId}`, { cache: 'no-store' })
@@ -336,6 +372,14 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }, [selectedItemId]);
 
   useEffect(() => {
+    if (!referenceOpen) return;
+    const nextFileId = visibleReferenceFiles.some(file => file.id === referenceFileId)
+      ? referenceFileId
+      : visibleReferenceFiles[0]?.id || '';
+    if (nextFileId !== referenceFileId) setReferenceFileId(nextFileId);
+  }, [referenceFileId, referenceOpen, visibleReferenceFiles]);
+
+  useEffect(() => {
     if (!dirty && !quotationDirty) return undefined;
     const warnBeforeUnload = (event: BeforeUnloadEvent): void => {
       event.preventDefault();
@@ -346,23 +390,29 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }, [dirty, quotationDirty]);
 
   useEffect(() => {
-    if (!libraryOpen && !importOpen) return;
+    if (!libraryOpen && !importOpen && !referenceOpen) return;
 
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     window.requestAnimationFrame(() => {
-      if (importOpen) importCloseRef.current?.focus();
+      if (referenceOpen) referenceCloseRef.current?.focus();
+      else if (importOpen) importCloseRef.current?.focus();
       else if (libraryOpen && window.matchMedia('(max-width: 1500px)').matches) libraryCloseRef.current?.focus();
     });
 
     return () => {
       document.body.style.overflow = previousBodyOverflow;
     };
-  }, [importOpen, libraryOpen]);
+  }, [importOpen, libraryOpen, referenceOpen]);
 
   useEffect(() => {
     function onEscape(event: KeyboardEvent): void {
       if (event.key !== 'Escape') return;
+      if (referenceOpen) {
+        setReferenceOpen(false);
+        window.requestAnimationFrame(() => referenceTriggerRef.current?.focus());
+        return;
+      }
       if (importOpen) {
         setImportOpen(false);
         window.requestAnimationFrame(() => importTriggerRef.current?.focus());
@@ -376,7 +426,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     }
     window.addEventListener('keydown', onEscape);
     return () => window.removeEventListener('keydown', onEscape);
-  }, [importOpen, libraryOpen]);
+  }, [importOpen, libraryOpen, referenceOpen]);
 
   const filteredDefinitions = useMemo(() => definitions.filter(definition => {
     if (entries.some(entry => entry.processDefinitionId === definition.id)) return false;
@@ -401,9 +451,38 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     setDirty(false);
     setQuotationSeconds(seconds(activeQuotation?.unitMilliseconds));
     setQuotationRemark(activeQuotation?.remark || '');
+    setQuotationSourceType(activeQuotation?.sourceType || 'manual');
+    setQuotationSourceRefId(activeQuotation?.sourceRefId || null);
     setQuotationDirty(false);
     setError('');
     setMessage('已放弃未保存修改');
+  }
+
+  function openReferencePreview(): void {
+    const nextCategory: ReferenceCategory = referenceFiles.some(file => referenceCategory(file) === 'drawing')
+      ? 'drawing'
+      : referenceFiles.some(file => referenceCategory(file) === 'sop')
+        ? 'sop'
+        : 'all';
+    setReferenceCategoryFilter(nextCategory);
+    const nextFile = referenceFiles.find(file => nextCategory === 'all' || referenceCategory(file) === nextCategory) || null;
+    setReferenceFileId(nextFile?.id || '');
+    setReferenceOpen(true);
+  }
+
+  function closeReferencePreview(): void {
+    setReferenceOpen(false);
+    window.requestAnimationFrame(() => referenceTriggerRef.current?.focus());
+  }
+
+  function adoptPlanningQuotation(): void {
+    const planningReference = selectedItem?.planningReference;
+    if (!planningReference) return;
+    setQuotationSeconds(seconds(planningReference.unitMilliseconds));
+    setQuotationSourceType('planning_order');
+    setQuotationSourceRefId(planningReference.planOrderId);
+    setQuotationDirty(true);
+    setMessage('已带入计划单套工时，请确认后保存报价版本');
   }
 
   async function saveQuotation(): Promise<void> {
@@ -423,7 +502,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         body: JSON.stringify({
           expectedVersion: activeQuotation?.version ?? null,
           unitSeconds: parsedSeconds,
-          sourceType: 'manual',
+          sourceType: quotationSourceType,
+          sourceRefId: quotationSourceRefId,
           remark: quotationRemark,
         }),
       });
@@ -693,9 +773,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     const value = Number(entry.unitSeconds);
     return !Number.isFinite(value) || value <= 0 || value > 86_400;
   }).length;
-  const referenceFiles = referenceItem?.files.filter(file => !file.deletedAt) || [];
-  const referenceCategories = Object.entries(referenceItem?.categoryFileCounts || {});
   const copySources = items.filter(item => item.id !== selectedItem?.id && item.published);
+  const planningReference = selectedItem?.planningReference || null;
+  const referenceDrawingCount = referenceFiles.filter(file => referenceCategory(file) === 'drawing').length;
+  const referenceSopCount = referenceFiles.filter(file => referenceCategory(file) === 'sop').length;
   const planningPeriodText = planningSummary?.weekStartDate && planningSummary?.weekEndDate
     ? `${planningSummary.weekStartDate} 至 ${planningSummary.weekEndDate}`
     : planningScope === 'carryover' ? '早于本周且尚未完成' : '当前范围暂无计划批次';
@@ -712,20 +793,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       />
 
       <div className="product-time-main">
-        <section className="product-time-summary" aria-label="产品工时概览与快捷筛选">
-          {isPlanningScope ? <>
-            <button className={status === 'all' ? 'active' : ''} type="button" disabled={hasUnsavedChanges} onClick={() => setStatus('all')}><Clock3 aria-hidden="true" /><span>计划产品<small>{planningPeriodText}</small></span><strong>{planningSummary?.productCount || 0}</strong></button>
-            <button className={status === 'published' ? 'active' : ''} type="button" disabled={hasUnsavedChanges} onClick={() => setStatus('published')}><CheckCircle2 aria-hidden="true" /><span>工时已发布<small>可冻结到生产批次</small></span><strong>{planningSummary?.publishedCount || 0}</strong></button>
-            <button className={`warning ${status === 'unpublished' ? 'active' : ''}`} type="button" disabled={hasUnsavedChanges} onClick={() => setStatus('unpublished')}><Library aria-hidden="true" /><span>工时待发布<small>正式启用前必须完成</small></span><strong>{planningSummary?.missingCount || 0}</strong></button>
-            <button className={`warning ${status === 'quotation_missing' ? 'active' : ''}`} type="button" disabled={hasUnsavedChanges} onClick={() => setStatus('quotation_missing')}><FileSpreadsheet aria-hidden="true" /><span>报价待维护<small>单套报价基准未录入</small></span><strong>{planningSummary?.quotationMissingCount || 0}</strong></button>
-          </> : <>
-            <button className={status === 'all' ? 'active' : ''} type="button" disabled={hasUnsavedChanges} onClick={() => setStatus('all')}><Clock3 aria-hidden="true" /><span>图纸产品<small>全部范围</small></span><strong>{summary.total}</strong></button>
-            <button className={status === 'published' ? 'active' : ''} type="button" disabled={hasUnsavedChanges} onClick={() => setStatus('published')}><CheckCircle2 aria-hidden="true" /><span>已发布<small>可用于新工单</small></span><strong>{summary.published}</strong></button>
-            <button className={`warning ${status === 'missing' ? 'active' : ''}`} type="button" disabled={hasUnsavedChanges} onClick={() => setStatus('missing')}><Library aria-hidden="true" /><span>工时待维护<small>暂不计算达成率</small></span><strong>{summary.missing}</strong></button>
-            <button className={`warning ${status === 'quotation_missing' ? 'active' : ''}`} type="button" disabled={hasUnsavedChanges} onClick={() => setStatus('quotation_missing')}><FileSpreadsheet aria-hidden="true" /><span>报价待维护<small>单套报价基准未录入</small></span><strong>{summary.quotationMissing}</strong></button>
-          </>}
-        </section>
-
         <section className="product-time-scope-bar" aria-label="按计划周查看产品工时">
           <div role="tablist" aria-label="产品工时范围">
             <button type="button" role="tab" aria-selected={planningScope === 'all'} disabled={hasUnsavedChanges} onClick={() => changePlanningScope('all')}>产品总库</button>
@@ -810,7 +877,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                   <p title={`${selectedItem.customerName} · ${selectedItem.productName || '品名未设置'}`}>{selectedItem.customerName} · {selectedItem.productName || '品名未设置'}</p>
                 </div>
                 <div>
-                  <a className="hm-workbench-button" href={`/drawing-library?itemId=${encodeURIComponent(selectedItem.id)}`}><BookOpenText size={15} aria-hidden="true" />查看图纸</a>
+                  <button ref={referenceTriggerRef} className="hm-workbench-button" type="button" title="临时查看图纸或作业指导书" aria-haspopup="dialog" aria-expanded={referenceOpen} onClick={openReferencePreview}><BookOpenText size={15} aria-hidden="true" />查看资料</button>
                   <button ref={libraryTriggerRef} className="hm-workbench-button primary" type="button" aria-expanded={libraryOpen} aria-controls="product-process-library" onClick={() => setLibraryOpen(true)}><Plus size={15} aria-hidden="true" />添加工序</button>
                 </div>
               </header>
@@ -870,31 +937,17 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             </>}
           </section>
 
-          <aside className="product-time-context" aria-label="当前产品参考资料和辅助信息">
-            <section className="product-time-reference">
-              <header><span><small>工艺参考</small><strong>图纸与作业指导书</strong></span><a href={selectedItem ? `/drawing-library?itemId=${encodeURIComponent(selectedItem.id)}` : '/drawing-library'} title="进入图纸资料页">资料页<ExternalLink size={14} aria-hidden="true" /></a></header>
-              {referenceLoading && <div className="product-time-context-loading"><RefreshCw className="spin" size={17} aria-hidden="true" />正在读取资料</div>}
-              {!referenceLoading && referenceError && <div className="product-time-context-error"><AlertTriangle size={16} aria-hidden="true" />{referenceError}</div>}
-              {!referenceLoading && !referenceError && <>
-                <div className="product-time-category-counts">
-                  {referenceCategories.map(([name, count]) => <span className={count > 0 ? 'ready' : ''} key={name}><i />{name}<b>{count}</b></span>)}
-                </div>
-                <div className="product-time-reference-files hm-scroll-region" tabIndex={0}>
-                  {referenceFiles.slice(0, 8).map(file => <a key={file.id} href={file.viewUrl} target="_blank" rel="noreferrer" title={file.displayName || file.originalName}>
-                    {file.mimeType.includes('pdf') ? <FileText size={17} aria-hidden="true" /> : <ImageIcon size={17} aria-hidden="true" />}
-                    <span><strong>{file.displayName || file.originalName}</strong><small>{file.categoryName || '未分类'} · {file.version || 'V1.0'}</small></span>
-                    <ExternalLink size={13} aria-hidden="true" />
-                  </a>)}
-                  {!referenceFiles.length && <div className="product-time-empty compact"><BookOpenText aria-hidden="true" /><strong>暂无参考资料</strong><span>进入图纸资料页上传原图或 SOP 后即可在这里查看。</span></div>}
-                </div>
-              </>}
-            </section>
-
+          <aside className="product-time-context" aria-label="当前产品报价与快速起草">
             <section className="product-time-quotation-editor" aria-labelledby="product-time-quotation-title">
               <header><span><small>商业基准</small><strong id="product-time-quotation-title">单套报价工时</strong></span><b>{activeQuotation ? `V${activeQuotation.version}` : '待维护'}</b></header>
-              <label><span>秒 / 套</span><input inputMode="decimal" value={quotationSeconds} onChange={event => { setQuotationSeconds(event.target.value); setQuotationDirty(true); }} placeholder="输入报价工时" /></label>
+              {planningReference ? <div className="product-time-planning-candidate">
+                <span><small>最近计划候选</small><strong>{duration(planningReference.unitMilliseconds)}</strong><em>{planningReference.weekStartDate && planningReference.weekEndDate ? `${planningReference.weekStartDate} 至 ${planningReference.weekEndDate}` : '计划订单'} · {planningReference.quantity.toLocaleString('zh-CN')} 件</em></span>
+                <button type="button" onClick={adoptPlanningQuotation}>采用计划工时</button>
+              </div> : <div className="product-time-planning-candidate empty"><span><small>最近计划候选</small><strong>暂无计划单套工时</strong><em>计划订单维护后可在这里人工采用</em></span></div>}
+              <label><span>秒 / 套</span><input inputMode="decimal" value={quotationSeconds} onChange={event => { setQuotationSeconds(event.target.value); setQuotationSourceType('manual'); setQuotationSourceRefId(null); setQuotationDirty(true); }} placeholder="输入报价工时" /></label>
               <label><span>报价说明</span><input value={quotationRemark} onChange={event => { setQuotationRemark(event.target.value); setQuotationDirty(true); }} placeholder="版本或测算依据，可选" /></label>
-              <div className="product-time-quotation-compare"><span>生产标准<strong>{duration(totalMilliseconds)}</strong></span><span>报价标准<strong>{activeQuotation ? duration(activeQuotation.unitMilliseconds) : '未录入'}</strong></span></div>
+              <div className="product-time-quotation-compare"><span>生产标准<strong>{duration(totalMilliseconds)}</strong></span><span>计划候选<strong>{planningReference ? duration(planningReference.unitMilliseconds) : '暂无'}</strong></span><span>当前报价<strong>{activeQuotation ? duration(activeQuotation.unitMilliseconds) : '未录入'}</strong></span></div>
+              <small className="product-time-quotation-source">当前编辑来源：{quotationSourceText(quotationSourceType)}。采用计划工时后仍需保存，保存会创建新的报价版本。</small>
               <button className="hm-workbench-button" type="button" disabled={quotationSaving || !quotationDirty} onClick={() => void saveQuotation()}><Save size={15} aria-hidden="true" />{quotationSaving ? '保存中' : '保存报价工时'}</button>
             </section>
 
@@ -922,6 +975,61 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             <section className="product-time-new-process"><strong>新增共享工序</strong><input value={newProcessName} onChange={event => setNewProcessName(event.target.value)} placeholder="工序名称" maxLength={60} /><select value={newProcessStage} onChange={event => setNewProcessStage(event.target.value as ProcessStageGroup)}><option value="frontend">前端</option><option value="backend">后端</option><option value="finish">完工</option></select><button className="hm-workbench-button" type="button" disabled={creatingProcess} onClick={createProcess}><Plus size={15} />{creatingProcess ? '创建中' : '创建并加入'}</button></section>
         </aside>}
       </div>
+
+      {referenceOpen && <div className="product-time-reference-backdrop" role="presentation" onMouseDown={event => {
+        if (event.currentTarget === event.target) closeReferencePreview();
+      }}>
+        <section
+          className="product-time-reference-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="product-time-reference-title"
+          onKeyDown={event => {
+            if (event.key !== 'Tab') return;
+            const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])'));
+            if (!focusable.length) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first.focus();
+            }
+          }}
+        >
+          <header>
+            <div><BookOpenText aria-hidden="true" /><span><small>工艺临时参考</small><strong id="product-time-reference-title">{selectedItem?.specification || '当前产品'} · 图纸与作业指导书</strong></span></div>
+            <div>
+              <a className="hm-workbench-button" href={selectedItem ? `/drawing-library?itemId=${encodeURIComponent(selectedItem.id)}` : '/drawing-library'} title="进入完整图纸资料页"><ExternalLink size={15} aria-hidden="true" />资料页</a>
+              <button ref={referenceCloseRef} type="button" title="关闭资料预览" aria-label="关闭资料预览" onClick={closeReferencePreview}><X size={18} /></button>
+            </div>
+          </header>
+          <nav aria-label="参考资料分类">
+            <button type="button" className={referenceCategoryFilter === 'drawing' ? 'active' : ''} onClick={() => setReferenceCategoryFilter('drawing')}>原图 <b>{referenceDrawingCount}</b></button>
+            <button type="button" className={referenceCategoryFilter === 'sop' ? 'active' : ''} onClick={() => setReferenceCategoryFilter('sop')}>作业指导书 <b>{referenceSopCount}</b></button>
+            <button type="button" className={referenceCategoryFilter === 'all' ? 'active' : ''} onClick={() => setReferenceCategoryFilter('all')}>全部资料 <b>{referenceFiles.length}</b></button>
+          </nav>
+          <div className="product-time-reference-body">
+            <aside className="product-time-reference-list hm-scroll-region" aria-label="参考资料文件列表" tabIndex={0}>
+              {referenceLoading && <div className="product-time-context-loading"><RefreshCw className="spin" size={17} aria-hidden="true" />正在读取资料</div>}
+              {!referenceLoading && referenceError && <div className="product-time-context-error"><AlertTriangle size={16} aria-hidden="true" />{referenceError}</div>}
+              {!referenceLoading && !referenceError && visibleReferenceFiles.map(file => <button className={selectedReferenceFile?.id === file.id ? 'active' : ''} type="button" key={file.id} onClick={() => setReferenceFileId(file.id)} title={file.displayName || file.originalName}>
+                {file.mimeType.includes('pdf') || file.fileType.toLocaleLowerCase('zh-CN') === 'pdf' ? <FileText size={18} aria-hidden="true" /> : <ImageIcon size={18} aria-hidden="true" />}
+                <span><strong>{file.displayName || file.originalName}</strong><small>{file.categoryName || '未分类'} · {file.version || 'V1.0'}</small></span>
+              </button>)}
+              {!referenceLoading && !referenceError && !visibleReferenceFiles.length && <div className="product-time-empty compact"><BookOpenText aria-hidden="true" /><strong>当前分类暂无资料</strong><span>可进入资料页上传原图或作业指导书。</span></div>}
+            </aside>
+            <div className="product-time-reference-viewer">
+              {selectedReferenceFile && (selectedReferenceFile.mimeType.includes('pdf') || selectedReferenceFile.fileType.toLocaleLowerCase('zh-CN') === 'pdf') && <PdfViewer fileId={selectedReferenceFile.id} title={selectedReferenceFile.displayName || selectedReferenceFile.originalName} contentUrl={selectedReferenceFile.contentUrl} downloadUrl={selectedReferenceFile.downloadUrl} viewUrl={selectedReferenceFile.viewUrl} dashboardMode />}
+              {selectedReferenceFile && selectedReferenceFile.mimeType.startsWith('image/') && <ImageViewer fileId={selectedReferenceFile.id} title={selectedReferenceFile.displayName || selectedReferenceFile.originalName} contentUrl={selectedReferenceFile.contentUrl} downloadUrl={selectedReferenceFile.downloadUrl} gestureResetKey={selectedReferenceFile.id} dashboardMode />}
+              {selectedReferenceFile && !selectedReferenceFile.mimeType.includes('pdf') && selectedReferenceFile.fileType.toLocaleLowerCase('zh-CN') !== 'pdf' && !selectedReferenceFile.mimeType.startsWith('image/') && <div className="product-time-empty large"><FileText aria-hidden="true" /><strong>此文件暂不支持内嵌预览</strong><span>{selectedReferenceFile.displayName || selectedReferenceFile.originalName}</span><a className="hm-workbench-button" href={selectedReferenceFile.viewUrl} target="_blank" rel="noreferrer">打开文件<ExternalLink size={15} aria-hidden="true" /></a></div>}
+              {!selectedReferenceFile && !referenceLoading && <div className="product-time-empty large"><BookOpenText aria-hidden="true" /><strong>暂无可预览资料</strong><span>进入图纸资料页上传原图或作业指导书后即可临时查阅。</span></div>}
+            </div>
+          </div>
+        </section>
+      </div>}
 
       {importOpen && importPreview && <div className="product-time-import-backdrop" role="presentation" onMouseDown={event => {
         if (event.currentTarget === event.target) closeImport();

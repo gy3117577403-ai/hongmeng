@@ -562,6 +562,17 @@ export type ProductTimePlanningContextDTO = {
   snapshotTotalMilliseconds?: string | null;
 };
 
+export type ProductTimePlanningReferenceDTO = {
+  planOrderId: string;
+  batchId?: string | null;
+  batchNo?: number | null;
+  quantity: number;
+  unitMilliseconds: number;
+  weekStartDate?: string | null;
+  weekEndDate?: string | null;
+  updatedAt: string;
+};
+
 export type ProductTimePlanningSummaryDTO = {
   productCount: number;
   orderCount: number;
@@ -580,7 +591,7 @@ export type ProductQuotationTimeDTO = {
   version: number;
   status: 'active' | 'archived';
   unitMilliseconds: number;
-  sourceType: 'manual' | 'import' | 'quotation';
+  sourceType: 'manual' | 'import' | 'quotation' | 'planning_order';
   sourceRefId?: string | null;
   remark?: string | null;
   effectiveAt: string;
@@ -632,6 +643,7 @@ export type ProductTimeListItemDTO = {
   published?: ProductTimeProfileDTO | null;
   quotation?: ProductQuotationTimeDTO | null;
   planning?: ProductTimePlanningContextDTO | null;
+  planningReference?: ProductTimePlanningReferenceDTO | null;
 };
 
 export type ProcessTimeStandardDTO = {

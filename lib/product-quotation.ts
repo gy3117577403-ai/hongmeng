@@ -12,7 +12,7 @@ export type ProductQuotationTimeRecord = Prisma.ProductQuotationTimeGetPayload<{
 
 export type ProductQuotationTimeInput = {
   unitMilliseconds: number;
-  sourceType: 'manual' | 'import' | 'quotation';
+  sourceType: 'manual' | 'import' | 'quotation' | 'planning_order';
   sourceRefId: string | null;
   remark: string | null;
 };
@@ -23,7 +23,7 @@ export type ProductQuotationValidationResult =
 
 function quotationSourceType(value: unknown): ProductQuotationTimeInput['sourceType'] | null {
   if (value === undefined || value === null || value === '') return 'manual';
-  if (value === 'manual' || value === 'import' || value === 'quotation') return value;
+  if (value === 'manual' || value === 'import' || value === 'quotation' || value === 'planning_order') return value;
   return null;
 }
 
@@ -56,7 +56,11 @@ export function serializeProductQuotationTime(record: ProductQuotationTimeRecord
     version: record.version,
     status: record.status === 'archived' ? 'archived' : 'active',
     unitMilliseconds: record.unitMilliseconds,
-    sourceType: record.sourceType === 'import' || record.sourceType === 'quotation' ? record.sourceType : 'manual',
+    sourceType: record.sourceType === 'import'
+      || record.sourceType === 'quotation'
+      || record.sourceType === 'planning_order'
+      ? record.sourceType
+      : 'manual',
     sourceRefId: record.sourceRefId,
     remark: record.remark,
     effectiveAt: record.effectiveAt.toISOString(),

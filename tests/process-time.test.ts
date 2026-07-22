@@ -177,6 +177,21 @@ test('identical quotation updates are idempotent', () => {
   assert.equal(sameProductQuotationTime({ ...input, unitMilliseconds: 121_000 }, input), false);
 });
 
+test('product quotation time accepts an explicitly adopted planning order duration', () => {
+  const result = validateProductQuotationTime({
+    unitSeconds: 35,
+    sourceType: 'planning_order',
+    sourceRefId: 'plan-order-1',
+    remark: '采用计划单套工时',
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.value.unitMilliseconds, 35_000);
+  assert.equal(result.value.sourceType, 'planning_order');
+  assert.equal(result.value.sourceRefId, 'plan-order-1');
+});
+
 test('product time rejects zero, duplicate processes, and ambiguous empty rows', () => {
   assert.equal(validateProductTimeEntries([{ processDefinitionId: 'cutting', unitSeconds: 0 }]).ok, false);
   assert.equal(validateProductTimeEntries([{ processDefinitionId: 'cutting' }]).ok, false);

@@ -147,6 +147,60 @@ export async function GET(req: NextRequest) {
       orderBy: [{ updatedAt: 'desc' }, { customerName: 'asc' }, { specification: 'asc' }],
       take: 800,
     });
+    const planningReferences = items.length
+      ? await prisma.productionPlanOrder.findMany({
+          where: {
+            deletedAt: null,
+            drawingLibraryItemId: { in: items.map(item => item.id) },
+            planningUnitMilliseconds: { gt: 0 },
+          },
+          select: {
+            id: true,
+            drawingLibraryItemId: true,
+            planningUnitMilliseconds: true,
+            updatedAt: true,
+            batches: {
+              where: { deletedAt: null },
+              orderBy: [{ updatedAt: 'desc' }, { batchNo: 'desc' }],
+              take: 1,
+              select: {
+                id: true,
+                batchNo: true,
+                quantity: true,
+                weekStartDate: true,
+                weekEndDate: true,
+                updatedAt: true,
+              },
+            },
+          },
+          orderBy: { updatedAt: 'desc' },
+          take: 5000,
+        })
+      : [];
+    const planningReferenceByItem = new Map<string, {
+      planOrderId: string;
+      batchId: string | null;
+      batchNo: number | null;
+      quantity: number;
+      unitMilliseconds: number;
+      weekStartDate: string | null;
+      weekEndDate: string | null;
+      updatedAt: string;
+    }>();
+    for (const order of planningReferences) {
+      if (!order.drawingLibraryItemId || !order.planningUnitMilliseconds || planningReferenceByItem.has(order.drawingLibraryItemId)) continue;
+      const batch = order.batches[0] || null;
+      planningReferenceByItem.set(order.drawingLibraryItemId, {
+        planOrderId: order.id,
+        batchId: batch?.id || null,
+        batchNo: batch?.batchNo ?? null,
+        quantity: batch?.quantity || 0,
+        unitMilliseconds: order.planningUnitMilliseconds,
+        weekStartDate: batch ? chinaDate(batch.weekStartDate) : null,
+        weekEndDate: batch ? chinaDate(batch.weekEndDate) : null,
+        updatedAt: (batch?.updatedAt || order.updatedAt).toISOString(),
+      });
+    }
     const rows = items.map(item => {
       const draft = item.productTimeProfiles.find(profile => profile.status === 'draft') || null;
       const published = item.productTimeProfiles.find(profile => profile.status === 'published') || null;
@@ -160,6 +214,7 @@ export async function GET(req: NextRequest) {
         draft: draft ? serializeProductTimeProfile(draft) : null,
         published: published ? serializeProductTimeProfile(published) : null,
         quotation: item.quotationTimes[0] ? serializeProductQuotationTime(item.quotationTimes[0]) : null,
+        planningReference: planningReferenceByItem.get(item.id) || null,
         planning: scope === 'all' ? null : (() => {
           const aggregate = planningByItem.get(item.id);
           if (!aggregate) return null;
