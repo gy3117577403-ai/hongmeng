@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, Info, ListChecks, PanelRightClose, PanelRightOpen, Pencil, RefreshCw, Rows3, Search, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, Info, ListChecks, PanelRightClose, PanelRightOpen, Pencil, RefreshCw, Rows3, Search, Users, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
@@ -265,6 +265,7 @@ type ProcessCompletionContext = {
     processName: string;
     sequenceGroup: number;
     status: string;
+    startedAt: string | null;
   };
   nextSteps: Array<{
     id: string;
@@ -276,6 +277,14 @@ type ProcessCompletionContext = {
   remainingInputQty: number;
   goodQty: number;
   defectQty: number;
+  employees: Array<{
+    id: string;
+    employeeNo: string;
+    name: string;
+    department?: string | null;
+    position?: string | null;
+    team?: string | null;
+  }>;
   recentCompletions: Array<{
     id: string;
     processedQty: number;
@@ -284,6 +293,17 @@ type ProcessCompletionContext = {
     defectDisposition?: string | null;
     workDate: string;
     completedAt: string;
+    workStartedAt: string | null;
+    workEndedAt: string | null;
+    team: string | null;
+    workstation: string | null;
+    remark: string | null;
+    participants: Array<{
+      id: string;
+      employeeNo: string;
+      name: string;
+      team?: string | null;
+    }>;
     branchWorkOrder?: {
       id: string;
       code: string;
@@ -298,6 +318,12 @@ type ProcessCompletionForm = {
   defectQty: string;
   defectDisposition: DefectDisposition;
   workDate: string;
+  workStartedAt: string;
+  workEndedAt: string;
+  employeeIds: string[];
+  team: string;
+  workstation: string;
+  remark: string;
 };
 
 type ProductionCardView = {
@@ -317,6 +343,7 @@ type ProductionExecutionViewState = {
   scope?: WeekScope;
   weekStart: string;
   page?: number;
+  pageSize?: number;
   batchMode: boolean;
   selectedIds: string[];
   completedCollapsed?: boolean;
@@ -409,6 +436,43 @@ function dateTimeText(value?: string | null): string {
   return new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(date);
+}
+
+function dateTimeLocalValue(value?: string | Date | null): string {
+  const date = value instanceof Date ? value : new Date(value || '');
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const valueFor = (type: Intl.DateTimeFormatPartTypes): string => (
+    parts.find(part => part.type === type)?.value || ''
+  );
+  const hour = valueFor('hour') === '24' ? '00' : valueFor('hour');
+  return `${valueFor('year')}-${valueFor('month')}-${valueFor('day')}T${hour}:${valueFor('minute')}`;
+}
+
+function defaultCompletionWorkWindow(startedAt?: string | null): {
+  workStartedAt: string;
+  workEndedAt: string;
+} {
+  const endedAt = new Date();
+  const candidate = startedAt ? new Date(startedAt) : null;
+  const duration = candidate && !Number.isNaN(candidate.getTime())
+    ? endedAt.getTime() - candidate.getTime()
+    : 0;
+  const safeStartedAt = candidate && duration > 0 && duration <= 72 * 60 * 60 * 1000
+    ? candidate
+    : new Date(endedAt.getTime() - 60 * 60 * 1000);
+  return {
+    workStartedAt: dateTimeLocalValue(safeStartedAt),
+    workEndedAt: dateTimeLocalValue(endedAt),
+  };
 }
 
 function priorityText(priority: string): string {
@@ -636,9 +700,11 @@ function executionParams(
   weekStart: string,
   page = 1,
   workOrderId = '',
+  displaySize = 12,
 ): URLSearchParams {
   const params = new URLSearchParams({ view, page: '1', pageSize: '5000' });
   if (page > 1) params.set('displayPage', String(page));
+  if (displaySize !== 12) params.set('displaySize', String(displaySize));
   params.set('scope', scope);
   if (workOrderId) params.set('workOrderId', workOrderId);
   if (keyword) params.set('keyword', keyword);
@@ -743,6 +809,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [stateReady, setStateReady] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [page, setPage] = useState(1);
+  const [dispatchPageSize, setDispatchPageSize] = useState(12);
   const [refreshToken, setRefreshToken] = useState(0);
   const [summaryRefreshToken, setSummaryRefreshToken] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -898,6 +965,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       : restoredWeekStart ? 'history' : 'current');
     setWeekStart(restoredWeekStart);
     setPage(Math.max(1, restored?.page || Number(sourceParams.get('displayPage')) || Number(sourceParams.get('page')) || 1));
+    const restoredPageSize = restored?.pageSize || Number(sourceParams.get('displaySize')) || 12;
+    setDispatchPageSize(restoredPageSize === 8 || restoredPageSize === 16 ? restoredPageSize : 12);
     if (restored) {
       setBatchMode(canAdministerProduction && restored.batchMode);
       setSelected(canAdministerProduction && Array.isArray(restored.selectedIds) ? restored.selectedIds : []);
@@ -920,10 +989,10 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   useEffect(() => {
     if (!stateReady) return;
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId, dispatchPageSize);
     if (returnKeyRef.current) params.set('returnKey', returnKeyRef.current);
     window.history.replaceState(window.history.state, '', `/production?${params.toString()}`);
-  }, [advanced, debouncedKeyword, page, quick, scope, stateReady, targetWorkOrderId, view, weekStart]);
+  }, [advanced, debouncedKeyword, dispatchPageSize, page, quick, scope, stateReady, targetWorkOrderId, view, weekStart]);
 
   useEffect(() => {
     if (!stateReady) return undefined;
@@ -1016,7 +1085,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           if (sessionStorage.getItem('production-execution:pending-return') === returnKey) sessionStorage.removeItem('production-execution:pending-return');
           pendingRestoreRef.current = null;
           returnKeyRef.current = '';
-          const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId);
+          const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId, dispatchPageSize);
           window.history.replaceState(window.history.state, '', `/production?${params.toString()}`);
         } else if (attempt < 8) {
           timer = window.setTimeout(restore, 100);
@@ -1028,7 +1097,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [advanced, board, debouncedKeyword, loading, page, quick, scope, targetWorkOrderId, view, weekStart]);
+  }, [advanced, board, debouncedKeyword, dispatchPageSize, loading, page, quick, scope, targetWorkOrderId, view, weekStart]);
 
   useEffect(() => {
     document.body.classList.toggle('hongmeng-webview', Boolean(window.__HONGMENG_WEBVIEW__));
@@ -1133,7 +1202,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const activeFilterCount = filterChips.length;
 
   const dispatchAllItems = useMemo(() => (board?.items || []).map(primaryCardView), [board]);
-  const dispatchPageSize = density === 'comfortable' ? 4 : 6;
   const dispatchTotalPages = Math.max(1, Math.ceil(dispatchAllItems.length / dispatchPageSize));
   const dispatchItems = useMemo(
     () => dispatchAllItems.slice((page - 1) * dispatchPageSize, page * dispatchPageSize),
@@ -1492,8 +1560,9 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     }
     const requestId = completionRequestRef.current + 1;
     completionRequestRef.current = requestId;
-    const workDate = completionForm?.workDate || todayShanghaiDateKey();
-    const defectDisposition = completionForm?.defectDisposition || 'rework';
+    const previousForm = completionForm;
+    const workDate = previousForm?.workDate || todayShanghaiDateKey();
+    const defectDisposition = previousForm?.defectDisposition || 'rework';
     setCompletionStepId(step.id);
     setCompletionContext(null);
     setCompletionForm(null);
@@ -1507,12 +1576,27 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       if (!response.ok || !body.data) throw new Error(body.error || '工序可完成数量加载失败');
       if (completionRequestRef.current !== requestId) return;
       const context = body.data as ProcessCompletionContext;
+      const workWindow = defaultCompletionWorkWindow(context.step.startedAt);
+      const previousEmployeeIds = previousForm?.employeeIds.filter(id => (
+        context.employees.some(employee => employee.id === id)
+      )) || [];
+      const defaultEmployeeIds = previousEmployeeIds.length
+        ? previousEmployeeIds
+        : user.employeeId && context.employees.some(employee => employee.id === user.employeeId)
+          ? [user.employeeId]
+          : [];
       setCompletionContext(context);
       setCompletionForm({
         processedQty: context.remainingInputQty > 0 ? String(context.remainingInputQty) : '',
         defectQty: '0',
         defectDisposition,
         workDate,
+        workStartedAt: previousForm?.workStartedAt || workWindow.workStartedAt,
+        workEndedAt: previousForm?.workEndedAt || workWindow.workEndedAt,
+        employeeIds: defaultEmployeeIds,
+        team: previousForm?.team || user.employee?.team || '',
+        workstation: previousForm?.workstation || '',
+        remark: previousForm?.remark || '',
       });
     } catch (reason) {
       if (completionRequestRef.current !== requestId) return;
@@ -1559,6 +1643,25 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       setCompletionError('请选择正确的生产归属日期');
       return;
     }
+    if (!completionForm.employeeIds.length) {
+      setCompletionError('请选择至少一名本次作业员工');
+      return;
+    }
+    if (!completionForm.workStartedAt || !completionForm.workEndedAt) {
+      setCompletionError('请填写作业开始时间和结束时间');
+      return;
+    }
+    const workStartedAt = new Date(completionForm.workStartedAt);
+    const workEndedAt = new Date(completionForm.workEndedAt);
+    const workDuration = workEndedAt.getTime() - workStartedAt.getTime();
+    if (Number.isNaN(workDuration) || workDuration <= 0) {
+      setCompletionError('作业结束时间必须晚于开始时间');
+      return;
+    }
+    if (workDuration > 72 * 60 * 60 * 1000) {
+      setCompletionError('单次作业时间不能超过 72 小时');
+      return;
+    }
 
     setCompletionSaving(true);
     setCompletionError('');
@@ -1572,6 +1675,12 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           defectQty,
           defectDisposition: defectQty > 0 ? completionForm.defectDisposition : undefined,
           workDate: completionForm.workDate,
+          workStartedAt: workStartedAt.toISOString(),
+          workEndedAt: workEndedAt.toISOString(),
+          employeeIds: completionForm.employeeIds,
+          team: completionForm.team,
+          workstation: completionForm.workstation,
+          remark: completionForm.remark,
           idempotencyKey: completionIdempotencyKey,
           expectedRouteVersion: completionContext.routeVersion,
         }),
@@ -1728,7 +1837,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }
 
   function captureReturnState(returnKey: string, focusedOrderId: string, focusedStage?: StageKey): string {
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId, dispatchPageSize);
     params.set('returnKey', returnKey);
     const returnUrl = `/production?${params.toString()}`;
     const focusedCard = findProductionOrderCard(focusedOrderId, focusedStage);
@@ -1753,6 +1862,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       scope,
       weekStart,
       page,
+      pageSize: dispatchPageSize,
       batchMode,
       selectedIds: [...selected],
       completedCollapsed: false,
@@ -1994,7 +2104,31 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
               {loading && <DispatchRowSkeleton count={dispatchPageSize} />}
               {!loading && !board?.items.length && <div className="production-dispatch-empty"><Rows3 size={28} aria-hidden="true" /><strong>当前没有匹配工单</strong><span>调整周范围或筛选条件后重试。</span></div>}
             </div>
-            {board && dispatchTotalPages > 1 && <div className="production-pagination production-dispatch-pagination"><span>共 {board.pagination.total} 单</span><button type="button" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</button><b>{page} / {dispatchTotalPages}</b><button type="button" disabled={page >= dispatchTotalPages} onClick={() => setPage(value => Math.min(dispatchTotalPages, value + 1))}>下一页</button></div>}
+            {board && dispatchAllItems.length > 0 && <div className="production-pagination production-dispatch-pagination">
+              <span>共 {dispatchAllItems.length} 单</span>
+              <label>
+                <span>显示范围</span>
+                <select aria-label="选择显示范围" value={page} onChange={event => setPage(Number(event.target.value))}>
+                  {Array.from({ length: dispatchTotalPages }, (_, index) => {
+                    const optionPage = index + 1;
+                    const start = index * dispatchPageSize + 1;
+                    const end = Math.min(dispatchAllItems.length, optionPage * dispatchPageSize);
+                    return <option value={optionPage} key={optionPage}>{start}–{end}</option>;
+                  })}
+                </select>
+              </label>
+              <label>
+                <span>每屏</span>
+                <select aria-label="选择每屏工单数" value={dispatchPageSize} onChange={event => {
+                  setDispatchPageSize(Number(event.target.value));
+                  setPage(1);
+                }}>
+                  <option value={8}>8 单</option>
+                  <option value={12}>12 单</option>
+                  <option value={16}>16 单</option>
+                </select>
+              </label>
+            </div>}
           </section>
 
           {insightsOpen && <button className="production-dispatch-scrim" type="button" aria-label="关闭调度侧栏" onClick={closeInsights} />}
@@ -2133,20 +2267,12 @@ function ProductionDispatchRow({
   const routeNeedsMaintenance = !route || route.status === 'draft';
   const quantityUnavailable = targetQuantity <= 0 || !order.quantityFlow.valid;
   const primaryText = readOnly
-    ? '查看详情'
+    ? '查看记录'
     : lifecycle.aggregateCompleted
-      ? '查看流转记录'
+      ? '查看记录'
       : lifecycle.awaitingBranchClosure
-        ? '查看分支闭环'
-        : quantityUnavailable
-          ? canAdministerProduction ? '补充数量' : '数量待管理员补充'
-          : routeNeedsMaintenance
-            ? canAdministerProduction ? '维护并发布工序' : '工序待管理员维护'
-            : displayStage === 'not_issued'
-              ? canAdministerProduction ? '确认发图并开始生产' : '图纸待管理员确认'
-              : route?.currentStep
-                ? `完成${currentProcess} → ${nextProcess}`
-                : '下一步工序';
+        ? '查看分支'
+        : '下一步';
 
   function runPrimaryAction(event: React.MouseEvent<HTMLButtonElement>): void {
     if (readOnly) {
@@ -2280,17 +2406,25 @@ function ProcessCompletionDrawer({ order, activeSteps, selectedStepId, selectSte
   const goodDestinationHint = waitsForParallelGroup
     ? `同组齐套后进入 ${nextProcessText}`
     : `立即进入 ${nextProcessText}`;
+  const workStartedAt = value?.workStartedAt ? new Date(value.workStartedAt) : null;
+  const workEndedAt = value?.workEndedAt ? new Date(value.workEndedAt) : null;
+  const workDuration = workStartedAt && workEndedAt
+    ? workEndedAt.getTime() - workStartedAt.getTime()
+    : 0;
+  const workRangeValid = workDuration > 0 && workDuration <= 72 * 60 * 60 * 1000;
   const invalid = !value
     || processedQty <= 0
     || defectQty < 0
     || defectQty > processedQty
     || !context
-    || processedQty > context.remainingInputQty;
+    || processedQty > context.remainingInputQty
+    || !value.employeeIds.length
+    || !workRangeValid;
 
   return <div className="production-update-backdrop process-completion-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
     <aside className="production-update-drawer process-completion-drawer" role="dialog" aria-modal="true" aria-labelledby="process-completion-title">
       <div className="dialog-title">
-        <div><strong id="process-completion-title">完成当前工序并转序</strong><small>{order.customerName || '客户待补充'} · {specText(order)} · {order.code}</small></div>
+        <div><strong id="process-completion-title">完成当前工序并进入下一步</strong><small>{order.customerName || '客户待补充'} · {specText(order)} · {order.code}</small></div>
         <button type="button" disabled={saving} aria-label="关闭转序抽屉" onClick={close}>×</button>
       </div>
 
@@ -2342,6 +2476,42 @@ function ProcessCompletionDrawer({ order, activeSteps, selectedStepId, selectSte
           <div className="process-completion-good" aria-live="polite"><span>本次良品</span><strong>{formatProductionQuantity(goodQty)} {unitLabel}</strong><small>{goodDestinationHint}</small></div>
         </section>
 
+        <section className="process-completion-work-session" aria-label="本次现场作业记录">
+          <header>
+            <div><strong>现场作业记录</strong><small>用于追溯并在手动报工中推荐领取人，不会自动记入员工工时</small></div>
+            <span>{value.employeeIds.length} 人</span>
+          </header>
+          <fieldset>
+            <legend>本次作业员工（必选，可多选）</legend>
+            <div className="process-completion-employee-list">
+              {context.employees.map(employee => {
+                const checked = value.employeeIds.includes(employee.id);
+                return <label className={checked ? 'selected' : ''} key={employee.id}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    disabled={saving}
+                    onChange={() => setValue({
+                      ...value,
+                      employeeIds: checked
+                        ? value.employeeIds.filter(id => id !== employee.id)
+                        : [...value.employeeIds, employee.id],
+                    })}
+                  />
+                  <span><strong>{employee.name}</strong><small>{employee.employeeNo}{employee.team ? ` · ${employee.team}` : ''}</small></span>
+                </label>;
+              })}
+            </div>
+          </fieldset>
+          <div className="process-completion-work-grid">
+            <label><span>作业开始时间</span><input type="datetime-local" value={value.workStartedAt} disabled={saving} onChange={event => setValue({ ...value, workStartedAt: event.target.value })} /></label>
+            <label><span>作业结束时间</span><input type="datetime-local" value={value.workEndedAt} disabled={saving} onChange={event => setValue({ ...value, workEndedAt: event.target.value })} /></label>
+            <label><span>班组</span><input maxLength={80} value={value.team} disabled={saving} onChange={event => setValue({ ...value, team: event.target.value })} placeholder="例如：前端一组" /></label>
+            <label><span>工位 / 设备</span><input maxLength={80} value={value.workstation} disabled={saving} onChange={event => setValue({ ...value, workstation: event.target.value })} placeholder="例如：裁线 C-03" /></label>
+          </div>
+          <label className="process-completion-work-remark"><span>现场备注（可选）</span><textarea rows={2} maxLength={500} value={value.remark} disabled={saving} onChange={event => setValue({ ...value, remark: event.target.value })} placeholder="记录换线、设备、交接或质量情况" /></label>
+        </section>
+
         {defectQty > 0 && <fieldset className="process-completion-disposition">
           <legend>不良品后续处理</legend>
           <label className={value.defectDisposition === 'rework' ? 'selected' : ''}><input type="radio" name="defectDisposition" value="rework" checked={value.defectDisposition === 'rework'} disabled={saving} onChange={() => setValue({ ...value, defectDisposition: 'rework' })} /><span><strong>返工</strong><small>建立返工分支，从当前工序重新处理后回接主线。</small></span></label>
@@ -2352,6 +2522,7 @@ function ProcessCompletionDrawer({ order, activeSteps, selectedStepId, selectSte
           <header><strong>提交结果预览</strong><span>生产事实与员工领取分开记录</span></header>
           <div><CheckCircle2 size={18} aria-hidden="true" /><span><strong>{waitsForParallelGroup ? `${formatProductionQuantity(goodQty)} ${unitLabel}良品登记，按同组齐套量进入 ${nextProcessText}` : `${formatProductionQuantity(goodQty)} ${unitLabel}良品进入 ${nextProcessText}`}</strong><small>{goodQty > 0 ? (waitsForParallelGroup ? '提交后由系统返回本次实际转序数量；员工领取工时不影响生产放行' : '下一工序无需等待员工领取工时') : '本批没有可转序良品'}</small></span></div>
           <div><Clock3 size={18} aria-hidden="true" /><span><strong>{laborPreviewTitle}</strong><small>{standardLaborMilliseconds > 0 ? `标准工时快照约 ${durationText(standardLaborMilliseconds)}；是否即时入池以服务端闭环校验为准` : '生产可继续，班组长需在报表中心补录标准后才能分配'}</small></span></div>
+          <div><Users size={18} aria-hidden="true" /><span><strong>{value.employeeIds.length ? context.employees.filter(employee => value.employeeIds.includes(employee.id)).map(employee => employee.name).join('、') : '尚未选择作业员工'}</strong><small>{workRangeValid ? `${dateTimeText(workStartedAt?.toISOString())} 至 ${dateTimeText(workEndedAt?.toISOString())}，仅作为报工推荐` : '请检查作业起止时间，单次不能超过 72 小时'}</small></span></div>
           {defectQty > 0 && <div className="defect"><AlertTriangle size={18} aria-hidden="true" /><span><strong>{formatProductionQuantity(defectQty)} {unitLabel}进入{defectDispositionText(value.defectDisposition)}</strong><small>分支完成后再形成对应工时，避免原工序重复计工。</small></span></div>}
         </section>
 
@@ -2360,7 +2531,7 @@ function ProcessCompletionDrawer({ order, activeSteps, selectedStepId, selectSte
           {context.recentCompletions.slice(0, 4).map(item => <article key={item.id}>
             <time>{dateText(item.workDate)} · {dateTimeText(item.completedAt)}</time>
             <span>处理 {formatProductionQuantity(item.processedQty)} / 良品 {formatProductionQuantity(item.goodQty)} / 不良 {formatProductionQuantity(item.defectQty)}</span>
-            <small>{item.branchWorkOrder ? `${item.branchWorkOrder.code} · ${defectDispositionText(item.defectDisposition)}` : '正常流转'}</small>
+            <small>{item.participants.length ? `${item.participants.map(participant => participant.name).join('、')} · ${item.workStartedAt && item.workEndedAt ? `${dateTimeText(item.workStartedAt)}–${dateTimeText(item.workEndedAt)}` : '未记录时段'}` : item.branchWorkOrder ? `${item.branchWorkOrder.code} · ${defectDispositionText(item.defectDisposition)}` : '正常流转'}</small>
           </article>)}
         </section>}
       </>}
@@ -2368,7 +2539,7 @@ function ProcessCompletionDrawer({ order, activeSteps, selectedStepId, selectSte
       {error && <div className="form-error" role="alert">{error}</div>}
       <div className="dialog-actions">
         <button type="button" disabled={saving} onClick={close}>取消</button>
-        <button className="primary-button" type="button" disabled={loading || saving || invalid} onClick={save}>{saving ? '正在转序...' : '确认完成并转序'}</button>
+        <button className="primary-button" type="button" disabled={loading || saving || invalid} onClick={save}>{saving ? '正在进入下一步...' : '确认完成并进入下一步'}</button>
       </div>
     </aside>
   </div>;

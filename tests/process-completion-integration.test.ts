@@ -233,6 +233,13 @@ test(
         defectQty: 5,
         defectDisposition: 'rework',
         workDate,
+        workStartedAt: `${workDate}T00:00:00.000Z`,
+        workEndedAt: `${workDate}T02:00:00.000Z`,
+        employeeIds: [employeeA.id, employeeB.id],
+        team: '集成测试班组',
+        workstation: '集成测试工位',
+        remark: '验证现场作业记录和报工推荐',
+        requireParticipants: true,
         idempotencyKey: completionKey(prefix, 'root-cut-60'),
         expectedRouteVersion: 0,
         userId: actor.id,
@@ -244,6 +251,22 @@ test(
       assert.equal(firstCompletion.routeCompleted, false);
       assert.ok(firstCompletion.laborPoolId);
       assert.ok(firstCompletion.branchWorkOrderId);
+      const storedCompletion = await prisma.processCompletion.findUniqueOrThrow({
+        where: { id: firstCompletion.completionId },
+        include: {
+          participants: {
+            orderBy: { position: 'asc' },
+          },
+        },
+      });
+      assert.equal(storedCompletion.workStartedAt?.toISOString(), `${workDate}T00:00:00.000Z`);
+      assert.equal(storedCompletion.workEndedAt?.toISOString(), `${workDate}T02:00:00.000Z`);
+      assert.equal(storedCompletion.team, '集成测试班组');
+      assert.equal(storedCompletion.workstation, '集成测试工位');
+      assert.deepEqual(
+        storedCompletion.participants.map(participant => participant.employeeId),
+        [employeeA.id, employeeB.id],
+      );
       await prisma.processRouteActivity.createMany({
         data: Array.from({ length: 101 }, (_, index) => ({
           routeId: rootRoute.id,

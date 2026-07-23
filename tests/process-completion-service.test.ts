@@ -16,6 +16,12 @@ function command(overrides: Record<string, unknown> = {}) {
     defectQty: 5,
     defectDisposition: 'rework',
     workDate: '2026-07-23',
+    workStartedAt: '2026-07-23T00:30:00.000Z',
+    workEndedAt: '2026-07-23T02:30:00.000Z',
+    employeeIds: ['employee-002', 'employee-001', 'employee-002'],
+    team: ' 前端一组 ',
+    workstation: ' 裁线 C-03 ',
+    remark: ' 换线后复核 ',
     idempotencyKey: 'completion-request-001',
     expectedRouteVersion: 7,
     userId: 'user-001',
@@ -33,6 +39,12 @@ test('completion command normalizes the API disposition and preserves the sessio
   assert.equal(parsed.defectDisposition, 'rework');
   assert.equal(parsed.databaseDefectDisposition, 'REWORK');
   assert.equal(parsed.workDateKey, '2026-07-23');
+  assert.deepEqual(parsed.employeeIds, ['employee-002', 'employee-001']);
+  assert.equal(parsed.workStartedAt?.toISOString(), '2026-07-23T00:30:00.000Z');
+  assert.equal(parsed.workEndedAt?.toISOString(), '2026-07-23T02:30:00.000Z');
+  assert.equal(parsed.team, '前端一组');
+  assert.equal(parsed.workstation, '裁线 C-03');
+  assert.equal(parsed.remark, '换线后复核');
   assert.equal(parsed.expectedRouteVersion, 7);
   assert.equal(parsed.userId, 'user-001');
 });
@@ -78,6 +90,35 @@ test('completion command rejects impossible quantities, stale-shaped dates, and 
     () => parseProcessCompletionCommand(command({ idempotencyKey: 'short' })),
     (error: unknown) => error instanceof ProcessCompletionServiceError
       && error.code === 'PROCESS_COMPLETION_IDEMPOTENCY_INVALID',
+  );
+});
+
+test('external completion submissions require workers and a valid work interval', () => {
+  assert.throws(
+    () => parseProcessCompletionCommand(command({
+      employeeIds: [],
+      requireParticipants: true,
+    })),
+    (error: unknown) => error instanceof ProcessCompletionServiceError
+      && error.code === 'PROCESS_COMPLETION_EMPLOYEE_REQUIRED',
+  );
+  assert.throws(
+    () => parseProcessCompletionCommand(command({
+      workStartedAt: '2026-07-23T03:00:00.000Z',
+      workEndedAt: '2026-07-23T02:30:00.000Z',
+      requireParticipants: true,
+    })),
+    (error: unknown) => error instanceof ProcessCompletionServiceError
+      && error.code === 'PROCESS_COMPLETION_TIME_RANGE_INVALID',
+  );
+  assert.throws(
+    () => parseProcessCompletionCommand(command({
+      workStartedAt: '2026-07-20T00:00:00.000Z',
+      workEndedAt: '2026-07-23T02:30:00.000Z',
+      requireParticipants: true,
+    })),
+    (error: unknown) => error instanceof ProcessCompletionServiceError
+      && error.code === 'PROCESS_COMPLETION_TIME_RANGE_TOO_LONG',
   );
 });
 

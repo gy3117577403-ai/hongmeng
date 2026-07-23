@@ -45,6 +45,13 @@ export type CompleteProcessStepCommand = {
   defectQty: unknown;
   defectDisposition?: unknown;
   workDate: unknown;
+  workStartedAt?: unknown;
+  workEndedAt?: unknown;
+  employeeIds?: unknown;
+  team?: unknown;
+  workstation?: unknown;
+  remark?: unknown;
+  requireParticipants?: boolean;
   idempotencyKey: unknown;
   expectedRouteVersion: unknown;
   userId: string;
@@ -71,6 +78,7 @@ export type ProcessCompletionContext = {
     processName: string;
     sequenceGroup: number;
     status: string;
+    startedAt: string | null;
   };
   nextSteps: Array<{
     id: string;
@@ -82,6 +90,14 @@ export type ProcessCompletionContext = {
   remainingInputQty: number;
   goodQty: number;
   defectQty: number;
+  employees: Array<{
+    id: string;
+    employeeNo: string;
+    name: string;
+    department: string | null;
+    position: string | null;
+    team: string | null;
+  }>;
   recentCompletions: Array<{
     id: string;
     processedQty: number;
@@ -90,6 +106,17 @@ export type ProcessCompletionContext = {
     defectDisposition: ProcessDefectDispositionInput | null;
     workDate: string;
     completedAt: string;
+    workStartedAt: string | null;
+    workEndedAt: string | null;
+    team: string | null;
+    workstation: string | null;
+    remark: string | null;
+    participants: Array<{
+      id: string;
+      employeeNo: string;
+      name: string;
+      team: string | null;
+    }>;
     branchWorkOrder?: {
       id: string;
       code: string;
@@ -108,6 +135,12 @@ type ParsedCompletionCommand = {
   databaseDefectDisposition: 'REWORK' | 'SCRAP_REPLENISH' | 'QUALITY_PENDING' | null;
   workDate: Date;
   workDateKey: string;
+  workStartedAt: Date | null;
+  workEndedAt: Date | null;
+  employeeIds: string[];
+  team: string | null;
+  workstation: string | null;
+  remark: string | null;
   idempotencyKey: string;
   expectedRouteVersion: number;
   userId: string;
@@ -162,6 +195,10 @@ type CompletionRouteRecord = Prisma.WorkOrderProcessRouteGetPayload<{
 const replayCompletionInclude = Prisma.validator<Prisma.ProcessCompletionInclude>()({
   laborPool: { select: { id: true, status: true, standardSource: true } },
   branchWorkOrder: { select: { id: true, code: true } },
+  participants: {
+    select: { employeeId: true, position: true },
+    orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+  },
   movements: {
     where: { voidedAt: null },
     select: { type: true, quantity: true },
@@ -182,6 +219,39 @@ type BranchRoutePlanStep<T> = T & {
 
 function cleanText(value: unknown, max: number): string {
   return String(value ?? '').trim().slice(0, max);
+}
+
+function parseOptionalDateTime(
+  value: unknown,
+  label: string,
+  code: string,
+): Date | null {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const parsed = new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) {
+    throw new ProcessCompletionServiceError(`${label}必须是有效时间`, 400, code);
+  }
+  return parsed;
+}
+
+function parseCompletionEmployeeIds(value: unknown): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new ProcessCompletionServiceError(
+      '作业员工格式不正确',
+      400,
+      'PROCESS_COMPLETION_EMPLOYEES_INVALID',
+    );
+  }
+  const ids = [...new Set(value.map(item => cleanText(item, 80)).filter(Boolean))];
+  if (ids.length > 20) {
+    throw new ProcessCompletionServiceError(
+      '单次最多选择 20 名作业员工',
+      400,
+      'PROCESS_COMPLETION_EMPLOYEES_LIMIT',
+    );
+  }
+  return ids;
 }
 
 function safeNonnegativeInteger(value: unknown): number {
@@ -376,6 +446,55 @@ export function parseProcessCompletionCommand(
     );
   }
   const disposition = parseDefectDisposition(command.defectDisposition, defectQty);
+  const employeeIds = parseCompletionEmployeeIds(command.employeeIds);
+  const workStartedAt = parseOptionalDateTime(
+    command.workStartedAt,
+    '作业开始时间',
+    'PROCESS_COMPLETION_STARTED_AT_INVALID',
+  );
+  const workEndedAt = parseOptionalDateTime(
+    command.workEndedAt,
+    '作业结束时间',
+    'PROCESS_COMPLETION_ENDED_AT_INVALID',
+  );
+  if ((workStartedAt && !workEndedAt) || (!workStartedAt && workEndedAt)) {
+    throw new ProcessCompletionServiceError(
+      '作业开始时间和结束时间必须同时填写',
+      400,
+      'PROCESS_COMPLETION_TIME_RANGE_REQUIRED',
+    );
+  }
+  if (workStartedAt && workEndedAt) {
+    const duration = workEndedAt.getTime() - workStartedAt.getTime();
+    if (duration <= 0) {
+      throw new ProcessCompletionServiceError(
+        '作业结束时间必须晚于开始时间',
+        400,
+        'PROCESS_COMPLETION_TIME_RANGE_INVALID',
+      );
+    }
+    if (duration > 72 * 60 * 60 * 1000) {
+      throw new ProcessCompletionServiceError(
+        '单次作业时间不能超过 72 小时',
+        400,
+        'PROCESS_COMPLETION_TIME_RANGE_TOO_LONG',
+      );
+    }
+  }
+  if (command.requireParticipants && !employeeIds.length) {
+    throw new ProcessCompletionServiceError(
+      '请选择至少一名作业员工',
+      400,
+      'PROCESS_COMPLETION_EMPLOYEE_REQUIRED',
+    );
+  }
+  if (command.requireParticipants && (!workStartedAt || !workEndedAt)) {
+    throw new ProcessCompletionServiceError(
+      '请填写作业开始时间和结束时间',
+      400,
+      'PROCESS_COMPLETION_TIME_REQUIRED',
+    );
+  }
   let parsedWorkDate: ReturnType<typeof parseWorkDate>;
   try {
     parsedWorkDate = parseWorkDate(command.workDate);
@@ -399,6 +518,12 @@ export function parseProcessCompletionCommand(
     databaseDefectDisposition: disposition.database,
     workDate: parsedWorkDate.value,
     workDateKey: parsedWorkDate.key,
+    workStartedAt,
+    workEndedAt,
+    employeeIds,
+    team: cleanText(command.team, 80) || null,
+    workstation: cleanText(command.workstation, 80) || null,
+    remark: cleanText(command.remark, 500) || null,
     idempotencyKey: parseIdempotencyKey(command.idempotencyKey),
     expectedRouteVersion: parseExpectedRouteVersion(command.expectedRouteVersion),
     userId,
@@ -564,12 +689,21 @@ function assertIdempotentPayload(
   completion: ReplayCompletionRecord,
   input: ParsedCompletionCommand,
 ): void {
+  const storedEmployeeIds = completion.participants.map(item => item.employeeId).sort();
+  const inputEmployeeIds = [...input.employeeIds].sort();
   const matches = completion.routeId === input.routeId
     && completion.stepId === input.stepId
     && completion.processedQty === input.processedQty
     && completion.defectQty === input.defectQty
     && completion.defectDisposition === input.databaseDefectDisposition
-    && dateKeyFromDatabase(completion.workDate) === input.workDateKey;
+    && dateKeyFromDatabase(completion.workDate) === input.workDateKey
+    && (completion.workStartedAt?.getTime() || null) === (input.workStartedAt?.getTime() || null)
+    && (completion.workEndedAt?.getTime() || null) === (input.workEndedAt?.getTime() || null)
+    && completion.team === input.team
+    && completion.workstation === input.workstation
+    && completion.remark === input.remark
+    && storedEmployeeIds.length === inputEmployeeIds.length
+    && storedEmployeeIds.every((id, index) => id === inputEmployeeIds[index]);
   if (!matches) {
     throw new ProcessCompletionServiceError(
       '请求标识已用于另一笔完成记录，请重新提交',
@@ -613,32 +747,50 @@ export async function loadProcessCompletionContext(
 ): Promise<ProcessCompletionContext> {
   const routeId = cleanText(routeIdInput, 80);
   const stepId = cleanText(stepIdInput, 80);
-  const route = await prisma.workOrderProcessRoute.findUnique({
-    where: { id: routeId },
-    include: {
-      workOrder: true,
-      steps: {
-        orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }],
-        include: {
-          completions: {
-            where: { voidedAt: null },
-            orderBy: [{ completedAt: 'desc' }, { createdAt: 'desc' }],
-            take: 20,
-            include: {
-              branchWorkOrder: {
-                select: {
-                  id: true,
-                  code: true,
-                  branchType: true,
-                  branchStatus: true,
+  const [route, employees] = await Promise.all([
+    prisma.workOrderProcessRoute.findUnique({
+      where: { id: routeId },
+      include: {
+        workOrder: true,
+        steps: {
+          orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }],
+          include: {
+            completions: {
+              where: { voidedAt: null },
+              orderBy: [{ completedAt: 'desc' }, { createdAt: 'desc' }],
+              take: 20,
+              include: {
+                branchWorkOrder: {
+                  select: {
+                    id: true,
+                    code: true,
+                    branchType: true,
+                    branchStatus: true,
+                  },
+                },
+                participants: {
+                  include: { employee: true },
+                  orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
                 },
               },
             },
           },
         },
       },
-    },
-  });
+    }),
+    prisma.employee.findMany({
+      where: { isActive: true },
+      orderBy: [{ employeeNo: 'asc' }, { name: 'asc' }],
+      select: {
+        id: true,
+        employeeNo: true,
+        name: true,
+        department: true,
+        position: true,
+        team: true,
+      },
+    }),
+  ]);
   if (!route) {
     throw new ProcessCompletionServiceError(
       '工艺路线不存在',
@@ -682,6 +834,7 @@ export async function loadProcessCompletionContext(
       processName: selected.processName,
       sequenceGroup: selected.sequenceGroup,
       status: selected.status,
+      startedAt: selected.startedAt?.toISOString() || null,
     },
     nextSteps: nextSteps.map(step => ({
       id: step.id,
@@ -693,6 +846,7 @@ export async function loadProcessCompletionContext(
     remainingInputQty: Math.max(0, availableInputQty - selected.processedQty),
     goodQty: selected.goodOutputQty,
     defectQty: selected.defectOutputQty,
+    employees,
     recentCompletions: selected.completions.map(completion => ({
       id: completion.id,
       processedQty: completion.processedQty,
@@ -701,6 +855,17 @@ export async function loadProcessCompletionContext(
       defectDisposition: lowercaseDisposition(completion.defectDisposition),
       workDate: dateKeyFromDatabase(completion.workDate),
       completedAt: completion.completedAt.toISOString(),
+      workStartedAt: completion.workStartedAt?.toISOString() || null,
+      workEndedAt: completion.workEndedAt?.toISOString() || null,
+      team: completion.team,
+      workstation: completion.workstation,
+      remark: completion.remark,
+      participants: completion.participants.map(participant => ({
+        id: participant.employee.id,
+        employeeNo: participant.employee.employeeNo,
+        name: participant.employee.name,
+        team: participant.employee.team,
+      })),
       ...(completion.branchWorkOrder ? {
         branchWorkOrder: {
           id: completion.branchWorkOrder.id,
@@ -1823,6 +1988,22 @@ async function performProcessCompletion(
       'PROCESS_ROUTE_STEPS_REQUIRED',
     );
   }
+  if (input.employeeIds.length) {
+    const activeEmployees = await tx.employee.findMany({
+      where: {
+        id: { in: input.employeeIds },
+        isActive: true,
+      },
+      select: { id: true },
+    });
+    if (activeEmployees.length !== input.employeeIds.length) {
+      throw new ProcessCompletionServiceError(
+        '所选作业员工不存在或已停用，请刷新后重新选择',
+        400,
+        'PROCESS_COMPLETION_EMPLOYEE_INVALID',
+      );
+    }
+  }
   const targetQty = targetQuantity(route.workOrder);
   const firstGroup = firstSequenceGroup(route.steps);
   for (const firstStep of route.steps.filter(step => step.sequenceGroup === firstGroup)) {
@@ -1890,6 +2071,11 @@ async function performProcessCompletion(
       stepId: current.id,
       workDate: input.workDate,
       completedAt: now,
+      workStartedAt: input.workStartedAt,
+      workEndedAt: input.workEndedAt,
+      team: input.team,
+      workstation: input.workstation,
+      remark: input.remark,
       processedQty: quantity.processedQty,
       goodQty: quantity.goodQty,
       defectQty: quantity.defectQty,
@@ -1909,6 +2095,14 @@ async function performProcessCompletion(
       unitsPerProduct: current.unitsPerProduct,
       countsForEfficiency: current.countsForEfficiency,
       createdById: input.userId,
+      ...(input.employeeIds.length ? {
+        participants: {
+          create: input.employeeIds.map((employeeId, position) => ({
+            employeeId,
+            position,
+          })),
+        },
+      } : {}),
     },
   });
   const goodOutputBeforeCompletion = current.goodOutputQty;
@@ -2156,6 +2350,12 @@ async function performProcessCompletion(
         ...result,
         defectDisposition: input.databaseDefectDisposition,
         workDate: input.workDateKey,
+        workStartedAt: input.workStartedAt?.toISOString() || null,
+        workEndedAt: input.workEndedAt?.toISOString() || null,
+        employeeIds: input.employeeIds,
+        team: input.team,
+        workstation: input.workstation,
+        remark: input.remark,
       },
     },
   });
@@ -2173,6 +2373,13 @@ async function performProcessCompletion(
         goodQty: quantity.goodQty,
         defectQty: quantity.defectQty,
         defectDisposition: input.databaseDefectDisposition,
+        workDate: input.workDateKey,
+        workStartedAt: input.workStartedAt?.toISOString() || null,
+        workEndedAt: input.workEndedAt?.toISOString() || null,
+        employeeIds: input.employeeIds,
+        team: input.team,
+        workstation: input.workstation,
+        remark: input.remark,
         laborPoolId,
         laborPoolPendingStandard,
         branchWorkOrderId: branchWorkOrderId || null,

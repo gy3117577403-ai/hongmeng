@@ -337,12 +337,18 @@ function ProcessLaborPoolPanel({ onCommitted }: { onCommitted: () => void }) {
     () => pools.find(pool => pool.id === selectedPoolId) || null,
     [pools, selectedPoolId],
   );
+  const suggestedEmployeeKey = selectedPool?.suggestedEmployees.map(employee => employee.id).join(',') || '';
   const parsedQuantity = positiveWholeNumber(quantity);
   const preview = claimPreview(selectedPool, parsedQuantity);
 
   useEffect(() => {
     setQuantity(selectedPool?.remainingQty ? String(selectedPool.remainingQty) : '');
-    setEmployeeId(access?.role === 'EMPLOYEE' ? access.selfEmployeeId || '' : '');
+    const suggestedEmployee = selectedPool?.suggestedEmployees.find(suggested => (
+      employees.some(employee => employee.id === suggested.id)
+    ));
+    setEmployeeId(access?.role === 'EMPLOYEE'
+      ? access.selfEmployeeId || ''
+      : suggestedEmployee?.id || '');
     setIdempotencyKey('');
     setStandardForm({
       timeBasis: selectedPool?.timeBasis || 'per_unit',
@@ -363,10 +369,13 @@ function ProcessLaborPoolPanel({ onCommitted }: { onCommitted: () => void }) {
     selectedPool?.remainingQty,
     selectedPool?.setupMilliseconds,
     selectedPool?.standardMillisecondsPerUnit,
+    selectedPool?.suggestedEmployees,
     selectedPool?.timeBasis,
     selectedPool?.unitsPerProduct,
+    suggestedEmployeeKey,
     access?.role,
     access?.selfEmployeeId,
+    employees,
   ]);
 
   async function resolveStandard(): Promise<void> {
@@ -519,6 +528,7 @@ function ProcessLaborPoolPanel({ onCommitted }: { onCommitted: () => void }) {
             <span><strong>{pool.workOrder.code}</strong><small>{pool.workOrder.specification || pool.workOrder.productName}</small></span>
             <em>{poolStatusLabel(pool)}</em>
             <small>{pool.step.processName} · 已领 {pool.claimedQty} / {pool.eligibleQty} {pool.unitLabel} · 剩余 {pool.remainingQty} {pool.unitLabel}</small>
+            {!!pool.suggestedEmployees.length && <small>现场推荐：{pool.suggestedEmployees.map(employee => employee.name).join('、')}</small>}
           </button>)}
           {!loading && !pools.length && <div className="manual-report-empty"><ClipboardCheck /><strong>当日暂无可领取工时</strong><span>请先从生产调度确认当前工序完成和良品数量。</span></div>}
           {loading && <div className="manual-report-empty"><Loader2 className="spin" /><strong>正在加载工时池</strong></div>}
@@ -544,6 +554,16 @@ function ProcessLaborPoolPanel({ onCommitted }: { onCommitted: () => void }) {
             <span><small>剩余标准工时</small><strong>{selectedPool.pendingStandard ? '补录后可领取' : formatProcessDuration(selectedPool.remainingStandardLaborMilliseconds)}</strong></span>
           </section>
 
+          <section className="labor-completion-trace" aria-label="现场完成记录">
+            <header><strong>现场完成记录</strong><span>仅作领取推荐，不代表已记工</span></header>
+            <div>
+              <span><small>推荐领取人</small><b>{selectedPool.suggestedEmployees.length ? selectedPool.suggestedEmployees.map(employee => employee.name).join('、') : '未记录'}</b></span>
+              <span><small>作业时段</small><b>{selectedPool.workStartedAt && selectedPool.workEndedAt ? `${dateTime(selectedPool.workStartedAt)} 至 ${dateTime(selectedPool.workEndedAt)}` : '未记录'}</b></span>
+              <span><small>班组 / 工位</small><b>{[selectedPool.team, selectedPool.workstation].filter(Boolean).join(' · ') || '未记录'}</b></span>
+              {selectedPool.completionRemark && <span><small>现场备注</small><b>{selectedPool.completionRemark}</b></span>}
+            </div>
+          </section>
+
           {selectedPool.pendingStandard
             ? access?.canResolveStandard
               ? <form className="manual-report-form labor-claim-form labor-standard-resolution" onSubmit={event => { event.preventDefault(); void resolveStandard(); }}>
@@ -565,7 +585,7 @@ function ProcessLaborPoolPanel({ onCommitted }: { onCommitted: () => void }) {
             : access?.canClaim
               ? <form className="manual-report-form labor-claim-form" onSubmit={event => { event.preventDefault(); void submitClaim(); }}>
             <div className="manual-report-fields">
-              <label><span>{access?.role === 'EMPLOYEE' ? '领取员工（本人）' : '领取员工 *'}</span><select value={employeeId} disabled={access?.role === 'EMPLOYEE'} onChange={event => { setEmployeeId(event.target.value); setIdempotencyKey(''); }}><option value="">选择员工</option>{employees.map(employee => <option value={employee.id} key={employee.id}>{employee.employeeNo} · {employee.name}{employee.team ? ` · ${employee.team}` : ''}</option>)}</select></label>
+              <label><span>{access?.role === 'EMPLOYEE' ? '领取员工（本人）' : '领取员工 *'}</span><select value={employeeId} disabled={access?.role === 'EMPLOYEE'} onChange={event => { setEmployeeId(event.target.value); setIdempotencyKey(''); }}><option value="">选择员工</option>{employees.map(employee => <option value={employee.id} key={employee.id}>{selectedPool.suggestedEmployees.some(suggested => suggested.id === employee.id) ? '推荐 · ' : ''}{employee.employeeNo} · {employee.name}{employee.team ? ` · ${employee.team}` : ''}</option>)}</select></label>
               <label><span>领取数量 *</span><input type="number" min="1" max={selectedPool.remainingQty} step="1" value={quantity} onChange={event => { setQuantity(event.target.value); setIdempotencyKey(''); }} /></label>
             </div>
             <footer>

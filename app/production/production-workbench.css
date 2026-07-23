@@ -4279,7 +4279,7 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
 }
 
 .hm-production-workbench .process-completion-drawer {
-  width: min(640px, 96vw);
+  width: min(760px, 96vw);
   gap: 14px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -4479,6 +4479,160 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-size: 22px;
 }
 
+.hm-production-workbench .process-completion-work-session {
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  border: 1px solid #bfd3f6;
+  border-radius: 10px;
+  background: #f7faff;
+}
+
+.hm-production-workbench .process-completion-work-session > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hm-production-workbench .process-completion-work-session > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.hm-production-workbench .process-completion-work-session > header strong {
+  color: var(--production-dispatch-ink);
+  font-size: 13px;
+}
+
+.hm-production-workbench .process-completion-work-session > header small,
+.hm-production-workbench .process-completion-work-session > header > span {
+  color: var(--production-dispatch-ink-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.hm-production-workbench .process-completion-work-session > header > span {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #e8f1ff;
+  color: var(--production-dispatch-blue);
+  font-weight: 800;
+}
+
+.hm-production-workbench .process-completion-work-session fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 9px;
+  border: 1px solid var(--production-dispatch-line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.hm-production-workbench .process-completion-work-session legend {
+  padding: 0 4px;
+  color: var(--production-dispatch-ink-secondary);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.hm-production-workbench .process-completion-employee-list {
+  max-height: 156px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  overflow-y: auto;
+}
+
+.hm-production-workbench .process-completion-employee-list > label {
+  min-width: 0;
+  padding: 7px 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--production-dispatch-line);
+  border-radius: 7px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.hm-production-workbench .process-completion-employee-list > label.selected {
+  border-color: #7cacf0;
+  background: #edf5ff;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, .08);
+}
+
+.hm-production-workbench .process-completion-employee-list input {
+  margin: 0;
+  accent-color: var(--production-dispatch-blue);
+}
+
+.hm-production-workbench .process-completion-employee-list label > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-production-workbench .process-completion-employee-list strong,
+.hm-production-workbench .process-completion-employee-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .process-completion-employee-list strong {
+  color: var(--production-dispatch-ink);
+  font-size: 12px;
+}
+
+.hm-production-workbench .process-completion-employee-list small {
+  color: var(--production-dispatch-ink-muted);
+  font-size: 10px;
+}
+
+.hm-production-workbench .process-completion-work-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hm-production-workbench .process-completion-work-grid label,
+.hm-production-workbench .process-completion-work-remark {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  color: var(--production-dispatch-ink-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .process-completion-work-grid input,
+.hm-production-workbench .process-completion-work-remark textarea {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 9px;
+  border: 1px solid var(--production-dispatch-line-strong);
+  border-radius: 7px;
+  outline: none;
+  background: #fff;
+  color: var(--production-dispatch-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.hm-production-workbench .process-completion-work-remark textarea {
+  min-height: 58px;
+  resize: vertical;
+}
+
+.hm-production-workbench .process-completion-work-grid input:focus,
+.hm-production-workbench .process-completion-work-remark textarea:focus {
+  border-color: var(--production-dispatch-blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .09);
+}
+
 .hm-production-workbench .process-completion-disposition {
   margin: 0;
   padding: 12px;
@@ -4670,10 +4824,34 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   background: var(--production-dispatch-panel);
 }
 
-.hm-production-workbench .production-dispatch-pagination span,
-.hm-production-workbench .production-dispatch-pagination b,
-.hm-production-workbench .production-dispatch-pagination button {
+.hm-production-workbench .production-dispatch-pagination > span,
+.hm-production-workbench .production-dispatch-pagination label {
   font-size: 12px;
+}
+
+.hm-production-workbench .production-dispatch-pagination label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--production-dispatch-ink-muted);
+}
+
+.hm-production-workbench .production-dispatch-pagination select {
+  height: 32px;
+  padding: 0 28px 0 9px;
+  border: 1px solid var(--production-dispatch-line-strong);
+  border-radius: 7px;
+  outline: none;
+  background: #fff;
+  color: var(--production-dispatch-ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .production-dispatch-pagination select:focus {
+  border-color: var(--production-dispatch-orange);
+  box-shadow: 0 0 0 3px rgba(240, 90, 0, .1);
 }
 
 .hm-production-workbench .production-dispatch-rail {
@@ -4927,32 +5105,47 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
 }
 
 .hm-production-workbench.production-dispatch-density-compact .production-dispatch-row {
-  min-height: 104px;
-  padding-top: 9px;
-  padding-bottom: 9px;
+  min-height: 84px;
+  padding-top: 6px;
+  padding-bottom: 6px;
 }
 
 .hm-production-workbench.production-dispatch-density-compact .production-dispatch-process,
 .hm-production-workbench.production-dispatch-density-compact .production-dispatch-progress,
 .hm-production-workbench.production-dispatch-density-compact .production-dispatch-risk,
 .hm-production-workbench.production-dispatch-density-compact .production-dispatch-row-actions {
-  min-height: 84px;
+  min-height: 70px;
 }
 
 .hm-production-workbench.production-dispatch-density-compact .production-dispatch-process,
 .hm-production-workbench.production-dispatch-density-compact .production-dispatch-progress,
 .hm-production-workbench.production-dispatch-density-compact .production-dispatch-risk {
-  min-height: 82px;
-  padding-top: 6px;
-  padding-bottom: 6px;
+  min-height: 68px;
+  padding-top: 4px;
+  padding-bottom: 4px;
 }
 
 .hm-production-workbench.production-dispatch-density-compact .production-dispatch-row-skeleton {
-  min-height: 104px;
+  min-height: 84px;
 }
 
 .hm-production-workbench.production-dispatch-density-compact .production-dispatch-row-skeleton > span {
-  min-height: 80px;
+  min-height: 68px;
+}
+
+.hm-production-workbench.production-dispatch-density-compact .production-dispatch-product {
+  gap: 3px;
+}
+
+.hm-production-workbench.production-dispatch-density-compact .production-dispatch-product > small,
+.hm-production-workbench.production-dispatch-density-compact .production-dispatch-process em,
+.hm-production-workbench.production-dispatch-density-compact .production-dispatch-risk small {
+  display: none;
+}
+
+.hm-production-workbench.production-dispatch-density-compact .production-dispatch-row-icon-actions button {
+  width: 30px;
+  height: 30px;
 }
 
 .hm-production-workbench .production-dispatch-command button:focus-visible,
@@ -5141,8 +5334,13 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
 
   .hm-production-workbench .process-completion-route,
   .hm-production-workbench .process-completion-form,
+  .hm-production-workbench .process-completion-work-grid,
   .hm-production-workbench .process-completion-disposition {
     grid-template-columns: 1fr;
+  }
+
+  .hm-production-workbench .process-completion-employee-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .hm-production-workbench .process-completion-step-picker label {

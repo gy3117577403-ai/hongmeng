@@ -188,6 +188,15 @@ const processLaborPoolInclude = Prisma.validator<Prisma.ProcessLaborPoolInclude>
     select: {
       timeBasis: true,
       unitLabel: true,
+      workStartedAt: true,
+      workEndedAt: true,
+      team: true,
+      workstation: true,
+      remark: true,
+      participants: {
+        include: { employee: true },
+        orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+      },
     },
   },
   workOrder: {
@@ -259,6 +268,14 @@ export function serializeProcessLaborPool(pool: ProcessLaborPoolRecord): Process
       ? pool.completion.timeBasis
       : null,
     unitLabel: pool.completion.unitLabel || pool.step.unitLabel || '件',
+    suggestedEmployees: pool.completion.participants.map(participant => (
+      serializeEmployee(participant.employee)
+    )),
+    workStartedAt: pool.completion.workStartedAt?.toISOString() || null,
+    workEndedAt: pool.completion.workEndedAt?.toISOString() || null,
+    team: pool.completion.team,
+    workstation: pool.completion.workstation,
+    completionRemark: pool.completion.remark,
     version: pool.version,
     standardMillisecondsPerUnit: pool.standardMillisecondsPerUnit,
     setupMilliseconds: pool.setupMilliseconds,
@@ -284,6 +301,12 @@ function serializeProcessLaborPoolForAccess(
 ): ProcessLaborPoolDTO {
   return serializeProcessLaborPool({
     ...pool,
+    completion: {
+      ...pool.completion,
+      participants: pool.completion.participants.filter(participant => (
+        canViewLaborClaim(access, participant.employee)
+      )),
+    },
     claims: pool.claims.filter(claim => canViewLaborClaim(access, claim.employee)),
   });
 }

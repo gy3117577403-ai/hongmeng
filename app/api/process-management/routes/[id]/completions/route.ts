@@ -50,6 +50,12 @@ export async function POST(
       defectQty?: unknown;
       defectDisposition?: unknown;
       workDate?: unknown;
+      workStartedAt?: unknown;
+      workEndedAt?: unknown;
+      employeeIds?: unknown;
+      team?: unknown;
+      workstation?: unknown;
+      remark?: unknown;
       idempotencyKey?: unknown;
       expectedRouteVersion?: unknown;
     };
@@ -60,6 +66,13 @@ export async function POST(
       defectQty: body.defectQty,
       defectDisposition: body.defectDisposition,
       workDate: body.workDate,
+      workStartedAt: body.workStartedAt,
+      workEndedAt: body.workEndedAt,
+      employeeIds: body.employeeIds,
+      team: body.team,
+      workstation: body.workstation,
+      remark: body.remark,
+      requireParticipants: true,
       idempotencyKey: body.idempotencyKey,
       expectedRouteVersion: body.expectedRouteVersion,
       userId: user.id,

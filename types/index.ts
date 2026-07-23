@@ -1062,6 +1062,12 @@ export type ProcessLaborPoolDTO = {
   pendingStandard: boolean;
   timeBasis?: 'per_unit' | 'per_batch' | null;
   unitLabel: string;
+  suggestedEmployees: EmployeeDTO[];
+  workStartedAt?: string | null;
+  workEndedAt?: string | null;
+  team?: string | null;
+  workstation?: string | null;
+  completionRemark?: string | null;
   version: number;
   standardMillisecondsPerUnit: number;
   setupMilliseconds: number;
