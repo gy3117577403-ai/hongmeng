@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { prisma } from '../lib/prisma';
-import { completeProcessStep } from '../lib/process-completion-service';
+import {
+  completeProcessStep,
+  loadProcessCompletionContext,
+} from '../lib/process-completion-service';
 import {
   claimProcessLaborPool,
   ProcessLaborServiceError,
@@ -148,6 +151,117 @@ test(
         (error: unknown) => error instanceof ProductionQuantityAdjustmentServiceError
           && error.code === 'PROCESS_QUANTITY_LEDGER_LOCKED',
       );
+
+      const legacyConflictOrder = await prisma.workOrder.create({
+        data: {
+          code: `${prefix}-ROUTE-OVERRIDES-LEGACY-FLOW`,
+          customerName: 'integration-test',
+          productName: 'route snapshot product',
+          stage: 'frontend',
+          status: 'processing',
+          processName: 'automatic',
+          uncompletedQty: '10',
+          productionTargetQty: 10,
+          completedQty: '0',
+          frontendTransferredQty: 10,
+          planType: 'managed_plan',
+          planActive: true,
+          startedAt: now,
+          processRoute: {
+            create: {
+              templateName: `${prefix} route snapshot`,
+              templateVersion: 1,
+              status: 'in_progress',
+              version: 0,
+              confirmedAt: now,
+              confirmedById: actor.id,
+              startedAt: now,
+              routeSource: 'process_template',
+              steps: {
+                create: [
+                  {
+                    processCode: `${prefix}-AUTOMATIC`,
+                    processName: 'automatic',
+                    stageGroup: 'frontend',
+                    position: 1,
+                    sequenceGroup: 1,
+                    standardSource: 'integration_test',
+                    timeBasis: 'per_unit',
+                    unitLabel: 'set',
+                    standardMillisecondsPerUnit: 1_000,
+                    setupMilliseconds: 0,
+                    unitsPerProduct: 1,
+                    countsForEfficiency: true,
+                    inputQty: 10,
+                    status: 'current',
+                    startedAt: now,
+                  },
+                  {
+                    processCode: `${prefix}-TAPING`,
+                    processName: 'taping',
+                    stageGroup: 'frontend',
+                    position: 2,
+                    sequenceGroup: 2,
+                    standardSource: 'integration_test',
+                    timeBasis: 'per_unit',
+                    unitLabel: 'set',
+                    standardMillisecondsPerUnit: 1_000,
+                    setupMilliseconds: 0,
+                    unitsPerProduct: 1,
+                    countsForEfficiency: true,
+                    inputQty: 0,
+                    status: 'pending',
+                  },
+                ],
+              },
+            },
+          },
+        },
+        include: {
+          processRoute: {
+            include: {
+              steps: { orderBy: { position: 'asc' } },
+            },
+          },
+        },
+      });
+      assert.ok(legacyConflictOrder.processRoute);
+      const [automaticStep, tapingStep] = legacyConflictOrder.processRoute.steps;
+      const legacyConflictContext = await loadProcessCompletionContext(
+        legacyConflictOrder.processRoute.id,
+        automaticStep.id,
+      );
+      assert.equal(legacyConflictContext.step.processName, 'automatic');
+      assert.deepEqual(
+        legacyConflictContext.nextSteps.map(step => step.processName),
+        ['taping'],
+      );
+      assert.equal(legacyConflictContext.remainingInputQty, 10);
+
+      const legacyConflictCompletion = await completeProcessStep({
+        routeId: legacyConflictOrder.processRoute.id,
+        stepId: automaticStep.id,
+        processedQty: 10,
+        defectQty: 0,
+        workDate,
+        workStartedAt: `${workDate}T00:00:00.000Z`,
+        workEndedAt: `${workDate}T01:00:00.000Z`,
+        employeeIds: [employeeA.id],
+        requireParticipants: true,
+        idempotencyKey: completionKey(prefix, 'route-overrides-legacy-flow'),
+        expectedRouteVersion: 0,
+        userId: actor.id,
+        actor: actor.displayName || actor.username,
+      });
+      assert.equal(legacyConflictCompletion.goodTransferredQty, 10);
+      const legacyConflictRoute = await prisma.workOrderProcessRoute.findUniqueOrThrow({
+        where: { id: legacyConflictOrder.processRoute.id },
+        include: { steps: { orderBy: { position: 'asc' } } },
+      });
+      assert.equal(legacyConflictRoute.steps[0].status, 'completed');
+      assert.equal(legacyConflictRoute.steps[1].id, tapingStep.id);
+      assert.equal(legacyConflictRoute.steps[1].status, 'current');
+      assert.equal(legacyConflictRoute.steps[1].inputQty, 10);
 
       const rootOrder = await prisma.workOrder.create({
         data: {

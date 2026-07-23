@@ -4355,6 +4355,49 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   animation: process-completion-spin .9s linear infinite;
 }
 
+.hm-production-workbench .process-completion-blocked {
+  min-height: 118px;
+  padding: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fff7f7;
+  color: #991b1b;
+}
+
+.hm-production-workbench .process-completion-blocked > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #dc2626;
+}
+
+.hm-production-workbench .process-completion-blocked > div {
+  display: grid;
+  gap: 6px;
+}
+
+.hm-production-workbench .process-completion-blocked strong {
+  font-size: 15px;
+}
+
+.hm-production-workbench .process-completion-blocked p,
+.hm-production-workbench .process-completion-blocked small {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.hm-production-workbench .process-completion-blocked p {
+  color: #7f1d1d;
+  font-size: 13px;
+}
+
+.hm-production-workbench .process-completion-blocked small {
+  color: #9f4444;
+  font-size: 11px;
+}
+
 @keyframes process-completion-spin {
   to { transform: rotate(360deg); }
 }
