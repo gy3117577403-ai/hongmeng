@@ -9,7 +9,11 @@ import {
   employeeReportRange,
   serializeEmployee,
 } from '../lib/process-time';
-import { productTimeTotalMilliseconds, validateProductTimeEntries } from '../lib/product-time';
+import {
+  productTimeStandardSnapshot,
+  productTimeTotalMilliseconds,
+  validateProductTimeEntries,
+} from '../lib/product-time';
 import { sameProductQuotationTime, validateProductQuotationTime } from '../lib/product-quotation';
 
 test('per-unit standard labor includes setup time and per-product process count', () => {
@@ -91,9 +95,99 @@ test('product time stores one aggregate per-set duration for each process', () =
   assert.equal(result.entries[1].actionMilliseconds, null);
   assert.equal(result.entries[1].occurrences, 1);
   assert.equal(result.entries[1].setupMilliseconds, 0);
+  assert.equal(result.entries[1].timeBasis, 'per_unit');
+  assert.equal(result.entries[1].unitLabel, '套');
   assert.equal(result.entries[0].sequenceGroup, 1);
   assert.equal(result.entries[1].sequenceGroup, 1);
   assert.equal(productTimeTotalMilliseconds(result.entries), 38_000);
+});
+
+test('product time accepts per-unit occurrences and preparation time', () => {
+  const result = validateProductTimeEntries([{
+    processDefinitionId: 'crimping',
+    timeBasis: 'per_unit',
+    unitSeconds: 4,
+    occurrences: 8,
+    setupSeconds: 120,
+    unitLabel: '端子',
+  }]);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(result.entries[0], {
+    processDefinitionId: 'crimping',
+    position: 1,
+    sequenceGroup: 1,
+    timeBasis: 'per_unit',
+    unitMilliseconds: 32_000,
+    actionMilliseconds: 4_000,
+    occurrences: 8,
+    setupMilliseconds: 120_000,
+    unitLabel: '端子',
+    countsForEfficiency: true,
+    remark: null,
+  });
+  assert.equal(productTimeTotalMilliseconds(result.entries), 32_000);
+  const snapshot = productTimeStandardSnapshot(
+    { id: 'profile-unit', version: 2 },
+    {
+      ...result.entries[0],
+      id: 'entry-unit',
+      profileId: 'profile-unit',
+      createdAt: new Date('2026-07-23T00:00:00.000Z'),
+      updatedAt: new Date('2026-07-23T00:00:00.000Z'),
+      processDefinition: {
+        id: 'crimping',
+        code: 'crimping',
+        name: '压接',
+        stageGroup: 'frontend',
+        isActive: true,
+        sortOrder: 1,
+        createdAt: new Date('2026-07-23T00:00:00.000Z'),
+        updatedAt: new Date('2026-07-23T00:00:00.000Z'),
+      },
+    } as Parameters<typeof productTimeStandardSnapshot>[1],
+  );
+  assert.equal(snapshot.standardMillisecondsPerUnit, 4_000);
+  assert.equal(snapshot.unitsPerProduct, 8);
+  assert.equal(snapshot.setupMilliseconds, 120_000);
+  assert.equal(snapshot.unitLabel, '端子');
+});
+
+test('product time per-batch snapshots preserve basis, batch duration and setup time', () => {
+  const result = validateProductTimeEntries([{
+    processDefinitionId: 'inspection',
+    timeBasis: 'per_batch',
+    unitSeconds: 600,
+    occurrences: 50,
+    setupSeconds: 120,
+  }]);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const entry = {
+    ...result.entries[0],
+    id: 'entry-batch',
+    profileId: 'profile-1',
+    createdAt: new Date('2026-07-23T00:00:00.000Z'),
+    updatedAt: new Date('2026-07-23T00:00:00.000Z'),
+    processDefinition: {
+      id: 'inspection',
+      code: 'inspection',
+      name: '检验',
+      stageGroup: 'finish',
+      isActive: true,
+      sortOrder: 1,
+      createdAt: new Date('2026-07-23T00:00:00.000Z'),
+      updatedAt: new Date('2026-07-23T00:00:00.000Z'),
+    },
+  } as Parameters<typeof productTimeStandardSnapshot>[1];
+  const snapshot = productTimeStandardSnapshot({ id: 'profile-1', version: 3 }, entry);
+
+  assert.equal(result.entries[0].occurrences, 1);
+  assert.equal(snapshot.timeBasis, 'per_batch');
+  assert.equal(snapshot.unitLabel, '套');
+  assert.equal(snapshot.standardMillisecondsPerUnit, 600_000);
+  assert.equal(snapshot.setupMilliseconds, 120_000);
+  assert.equal(snapshot.unitsPerProduct, 1);
 });
 
 test('product time requires the aggregate duration and does not derive it from action counts', () => {
@@ -195,6 +289,18 @@ test('product quotation time accepts an explicitly adopted planning order durati
 test('product time rejects zero, duplicate processes, and ambiguous empty rows', () => {
   assert.equal(validateProductTimeEntries([{ processDefinitionId: 'cutting', unitSeconds: 0 }]).ok, false);
   assert.equal(validateProductTimeEntries([{ processDefinitionId: 'cutting' }]).ok, false);
+  assert.equal(validateProductTimeEntries([{
+    processDefinitionId: 'cutting',
+    timeBasis: 'per_unit',
+    unitSeconds: 86_400,
+    occurrences: 2,
+  }]).ok, false);
+  assert.equal(validateProductTimeEntries([{
+    processDefinitionId: 'cutting',
+    timeBasis: 'per_batch',
+    unitSeconds: 60,
+    setupSeconds: -1,
+  }]).ok, false);
   assert.equal(validateProductTimeEntries([
     { processDefinitionId: 'cutting', unitSeconds: 6 },
     { processDefinitionId: 'cutting', unitSeconds: 7 },

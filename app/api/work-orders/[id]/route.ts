@@ -1,43 +1,69 @@
+import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { parseWorkOrderBody, serializeWorkOrder, workOrderStageText } from '@/lib/work-orders';
+import {
+  isActiveProductionWorkOrder,
+  parseWorkOrderBody,
+  serializeWorkOrder,
+  workOrderStageText,
+} from '@/lib/work-orders';
 import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
+import { genericWorkOrderPatchBlockReason } from '@/lib/process-quantity-ledger-guard';
+import {
+  softDeleteWorkOrderWithProductionGuard,
+  WorkOrderDeletionServiceError,
+} from '@/lib/work-order-deletion-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+class WorkOrderPatchGuardError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'WorkOrderPatchGuardError';
+    this.status = status;
+  }
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const old = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null } });
-    if (!old) return NextResponse.json({ ok: false, error: '工单不存在', message: '工单不存在' }, { status: 404 });
-
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    if (old.frontendTransferredQty !== null && (
-      body.stage !== undefined
-      || body.status !== undefined
-      || body.completedQty !== undefined
-      || body.uncompletedQty !== undefined
-    )) {
-      return NextResponse.json({
-        ok: false,
-        error: '该工单已启用分批数量流转，目标、阶段和完成数量不能在普通编辑中修改',
-        message: '该工单已启用分批数量流转，目标、阶段和完成数量不能在普通编辑中修改',
-      }, { status: 409 });
-    }
     const { data, errors } = parseWorkOrderBody(body, { partial: true });
     if (errors.length) return NextResponse.json({ ok: false, error: errors[0], message: errors[0] }, { status: 400 });
     if (Object.keys(data).length === 0) return NextResponse.json({ ok: false, error: '没有可更新字段', message: '没有可更新字段' }, { status: 400 });
 
-    const workOrder = await prisma.workOrder.update({
-      where: { id: params.id },
-      data,
-      include: {
-        resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } },
-      },
-    });
+    const { old, workOrder } = await prisma.$transaction(async tx => {
+      const current = await tx.workOrder.findFirst({
+        where: { id: params.id, deletedAt: null },
+      });
+      if (!current) throw new WorkOrderPatchGuardError('工单不存在', 404);
+      const hasProcessRoute = await tx.workOrderProcessRoute.count({
+        where: { workOrderId: current.id },
+      }) > 0;
+      const patchBlockReason = genericWorkOrderPatchBlockReason(
+        body,
+        isActiveProductionWorkOrder(current)
+          || current.frontendTransferredQty !== null
+          || hasProcessRoute,
+      );
+      if (patchBlockReason) throw new WorkOrderPatchGuardError(patchBlockReason, 409);
+      const updated = await tx.workOrder.update({
+        where: { id: params.id },
+        data,
+        include: {
+          resourceFiles: {
+            where: { deletedAt: null, status: 'uploaded' },
+            select: { categoryId: true },
+          },
+        },
+      });
+      return { old: current, workOrder: updated };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     await logOp({
       userId: user.id,
@@ -125,6 +151,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ ok: true, workOrder: serializeWorkOrder(workOrder) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof WorkOrderPatchGuardError) {
+      return NextResponse.json(
+        { ok: false, error: e.message, message: e.message },
+        { status: e.status },
+      );
+    }
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2034') {
+      return NextResponse.json({
+        ok: false,
+        error: '工单刚被其他流程更新，请刷新后重试',
+        message: '工单刚被其他流程更新，请刷新后重试',
+      }, { status: 409 });
+    }
     if ((e as { code?: string }).code === 'P2002') return NextResponse.json({ ok: false, error: '工单号已存在', message: '工单号已存在' }, { status: 409 });
     console.error(e);
     return NextResponse.json({ ok: false, error: '编辑工单失败', message: '编辑工单失败' }, { status: 500 });
@@ -134,16 +173,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const old = await prisma.workOrder.findFirst({ where: { id: params.id, deletedAt: null } });
-    if (!old) return NextResponse.json({ ok: false, error: '工单不存在', message: '工单不存在' }, { status: 404 });
     const body = await req.json().catch(() => ({})) as { confirmText?: unknown };
-    const expected = `${old.code} CONFIRM`;
-    const confirmText = String(body.confirmText || '').trim().replace(/\s+/g, ' ');
-    if (confirmText !== expected) return NextResponse.json({ ok: false, error: '删除确认不匹配', message: '删除确认不匹配' }, { status: 400 });
-
-    const workOrder = await prisma.workOrder.update({
-      where: { id: params.id },
-      data: { deletedAt: new Date() },
+    const { before: old, after: workOrder } = await softDeleteWorkOrderWithProductionGuard({
+      workOrderId: params.id,
+      confirmText: body.confirmText,
     });
 
     await logOp({ userId: user.id, action: 'delete_work_order', targetType: 'work_order', targetId: workOrder.id, detail: { code: workOrder.code, softDelete: true } });
@@ -158,6 +191,19 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ ok: true });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2034') {
+      return NextResponse.json({
+        ok: false,
+        error: '工单刚被其他流程更新，请刷新后重试',
+        message: '工单刚被其他流程更新，请刷新后重试',
+      }, { status: 409 });
+    }
+    if (e instanceof WorkOrderDeletionServiceError) {
+      return NextResponse.json(
+        { ok: false, error: e.message, message: e.message, code: e.code },
+        { status: e.status },
+      );
+    }
     console.error(e);
     return NextResponse.json({ ok: false, error: '删除工单失败', message: '删除工单失败' }, { status: 500 });
   }

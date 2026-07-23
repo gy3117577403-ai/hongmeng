@@ -9,6 +9,7 @@ import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { writeClipboardText } from '@/lib/client-platform';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
+import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
 import { prepareProductionQuantityAdjustment } from '@/lib/production-quantity-adjustment';
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
 import type {
@@ -21,9 +22,9 @@ type ViewKey = 'board' | 'today' | 'exceptions';
 type WeekScope = 'current' | 'carryover' | 'next' | 'history';
 type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing' | 'waiting_transfer';
 type DetailTab = 'production' | 'drawing' | 'progress' | 'source';
-type BatchOperation = 'set_priority' | 'set_stage' | 'add_remark';
+type BatchOperation = 'set_priority' | 'add_remark';
 type DuePreset = '' | 'today' | 'tomorrow' | 'overdue' | 'week' | 'custom';
-type ProductionFlowAction = 'confirm_drawing_issued' | 'transfer_to_backend' | 'complete_from_backend';
+type ProductionFlowAction = 'confirm_drawing_issued';
 type DispatchDensity = 'comfortable' | 'compact';
 type DispatchPreset = 'all' | 'today' | 'waiting' | 'exceptions' | 'completed';
 type DispatchTone = 'normal' | 'warning' | 'danger';
@@ -94,6 +95,24 @@ type ProductionOrder = {
   completedQty?: string | null;
   frontendTransferredQty?: number | null;
   executionVersion: number;
+  parentWorkOrderId?: string | null;
+  parentWorkOrder?: { id: string; code: string } | null;
+  branchWorkOrders?: Array<{
+    id: string;
+    code: string;
+    branchType?: 'REWORK' | 'SCRAP_REPLENISH' | 'QUALITY_PENDING' | null;
+    branchStatus?: 'OPEN' | 'RELEASED' | 'IN_PROGRESS' | 'QUALITY_PENDING' | 'RESOLVED' | 'CANCELLED' | null;
+    productionTargetQty?: number | null;
+    routeStatus?: string | null;
+    currentProcessName?: string | null;
+    unitLabel?: string | null;
+  }>;
+  rootWorkOrderId?: string | null;
+  branchType?: 'REWORK' | 'SCRAP_REPLENISH' | 'QUALITY_PENDING' | null;
+  branchStatus?: 'OPEN' | 'RELEASED' | 'IN_PROGRESS' | 'QUALITY_PENDING' | 'RESOLVED' | 'CANCELLED' | null;
+  originStep?: { id: string; processName: string } | null;
+  rejoinStep?: { id: string; processName: string } | null;
+  branchSequence?: number | null;
   quantityFlow: ProductionQuantityFlow;
   startedAt?: string | null;
   completedAt?: string | null;
@@ -210,11 +229,6 @@ type AdvancedFilters = {
   documents: string;
 };
 
-type UpdateForm = {
-  completedQty: string;
-  remark: string;
-};
-
 type QuantityAdjustmentForm = {
   targetQty: string;
   frontendTransferredQty: string;
@@ -223,7 +237,9 @@ type QuantityAdjustmentForm = {
   confirmReopen: boolean;
 };
 
-type ExecutionPatchPayload = Partial<UpdateForm> & {
+type ExecutionPatchPayload = {
+  completedQty?: string;
+  remark?: string;
   stage?: StageKey;
   drawingStatus?: string;
 };
@@ -237,6 +253,51 @@ type NextStepRequest = {
   order: ProductionOrder;
   displayStage: StageKey;
   action: ProductionFlowAction;
+};
+
+type DefectDisposition = 'rework' | 'scrap_replenish';
+
+type ProcessCompletionContext = {
+  routeId: string;
+  routeVersion: number;
+  step: {
+    id: string;
+    processName: string;
+    sequenceGroup: number;
+    status: string;
+  };
+  nextSteps: Array<{
+    id: string;
+    processName: string;
+    sequenceGroup: number;
+  }>;
+  availableInputQty: number;
+  processedQty: number;
+  remainingInputQty: number;
+  goodQty: number;
+  defectQty: number;
+  recentCompletions: Array<{
+    id: string;
+    processedQty: number;
+    goodQty: number;
+    defectQty: number;
+    defectDisposition?: string | null;
+    workDate: string;
+    completedAt: string;
+    branchWorkOrder?: {
+      id: string;
+      code: string;
+      branchType?: string | null;
+      branchStatus?: string | null;
+    } | null;
+  }>;
+};
+
+type ProcessCompletionForm = {
+  processedQty: string;
+  defectQty: string;
+  defectDisposition: DefectDisposition;
+  workDate: string;
 };
 
 type ProductionCardView = {
@@ -356,6 +417,21 @@ function priorityText(priority: string): string {
   return '一般';
 }
 
+function branchTypeText(branchType?: ProductionOrder['branchType']): string {
+  if (branchType === 'REWORK') return '返工分支';
+  if (branchType === 'SCRAP_REPLENISH') return '补产分支';
+  if (branchType === 'QUALITY_PENDING') return '质量待判';
+  return '';
+}
+
+function branchStatusText(status?: ProductionOrder['branchStatus']): string {
+  if (status === 'QUALITY_PENDING') return '待质量判定';
+  if (status === 'IN_PROGRESS' || status === 'OPEN' || status === 'RELEASED') return '处理中';
+  if (status === 'RESOLVED') return '已闭环';
+  if (status === 'CANCELLED') return '已取消';
+  return '状态待确认';
+}
+
 function deliveryText(order: ProductionOrder): string {
   return order.deliveryDay?.trim() || dateText(order.plannedAt);
 }
@@ -403,6 +479,30 @@ function shanghaiDateKey(value?: string | null): string {
   }).format(parsed);
 }
 
+function todayShanghaiDateKey(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+function durationText(milliseconds: number): string {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '未设置标准工时';
+  const minutes = milliseconds / 60_000;
+  if (minutes < 1) return `${Math.round(milliseconds / 100) / 10} 秒`;
+  if (minutes < 60) return `${Math.round(minutes * 10) / 10} 分钟`;
+  return `${Math.round((minutes / 60) * 10) / 10} 小时`;
+}
+
+function defectDispositionText(value?: string | null): string {
+  if (value === 'rework' || value === 'REWORK') return '返工分支';
+  if (value === 'scrap_replenish' || value === 'SCRAP_REPLENISH') return '报废补产';
+  if (value === 'quality_pending' || value === 'QUALITY_PENDING') return '质量待判';
+  return '无不良';
+}
+
 function dateKeyNumber(value: string): number | null {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!match) return null;
@@ -422,9 +522,29 @@ function currentProcessName(order: ProductionOrder): string {
   return order.processRoute?.currentStep?.processName || (order.stage === 'not_issued' ? '等待图纸' : order.stageText);
 }
 
+function nextRouteSteps(order: ProductionOrder): WorkOrderProcessRouteDTO['steps'] {
+  const route = order.processRoute;
+  const current = route?.currentStep;
+  if (!route || !current) return route?.nextSteps || [];
+  const candidates = route.steps.filter(step => (
+    step.sequenceGroup > current.sequenceGroup
+    && step.status !== 'completed'
+    && step.status !== 'skipped'
+  ));
+  if (!candidates.length) return [];
+  const nextSequenceGroup = Math.min(...candidates.map(step => step.sequenceGroup));
+  return candidates.filter(step => step.sequenceGroup === nextSequenceGroup);
+}
+
 function nextProcessName(order: ProductionOrder): string {
-  if (order.processRoute?.nextStep?.processName) return order.processRoute.nextStep.processName;
-  if (order.processRoute?.status === 'completed' || order.stage === 'completed') return '完成归档';
+  const lifecycle = resolveProductionLifecycle({
+    routeCompleted: order.processRoute?.status === 'completed',
+    workOrderCompletedAt: order.completedAt,
+  });
+  if (lifecycle.awaitingBranchClosure) return '返工/补产分支';
+  const nextSteps = nextRouteSteps(order);
+  if (nextSteps.length) return nextSteps.map(step => step.processName).join(' / ');
+  if (order.processRoute?.currentStep || lifecycle.aggregateCompleted) return '完成归档';
   if (!order.processRoute || order.processRoute.status === 'draft') return '维护工序';
   return '等待确认';
 }
@@ -454,10 +574,6 @@ function dispatchTargetQuantity(order: ProductionOrder): number {
 
 function dispatchCompletedQuantity(order: ProductionOrder): number {
   return order.quantitySummary.completedQty ?? order.quantityFlow.completedQty ?? 0;
-}
-
-function updateFormFor(order: ProductionOrder): UpdateForm {
-  return { completedQty: order.completedQty || '', remark: '' };
 }
 
 function quantityAdjustmentFormFor(order: ProductionOrder): QuantityAdjustmentForm {
@@ -511,10 +627,20 @@ function appendAdvancedParams(params: URLSearchParams, value: AdvancedFilters): 
   if (value.documents) params.set('documents', value.documents);
 }
 
-function executionParams(view: ViewKey, keyword: string, quick: QuickFilter[], advanced: AdvancedFilters, scope: WeekScope, weekStart: string, page = 1): URLSearchParams {
+function executionParams(
+  view: ViewKey,
+  keyword: string,
+  quick: QuickFilter[],
+  advanced: AdvancedFilters,
+  scope: WeekScope,
+  weekStart: string,
+  page = 1,
+  workOrderId = '',
+): URLSearchParams {
   const params = new URLSearchParams({ view, page: '1', pageSize: '5000' });
   if (page > 1) params.set('displayPage', String(page));
   params.set('scope', scope);
+  if (workOrderId) params.set('workOrderId', workOrderId);
   if (keyword) params.set('keyword', keyword);
   if (quick.length) params.set('quick', quick.join(','));
   if (scope === 'history' && weekStart) params.set('weekStart', weekStart);
@@ -600,22 +726,15 @@ function withProductionDerived(order: ProductionOrder): ProductionOrder {
   return { ...order, quantitySummary, productionAlerts };
 }
 
-function optimisticOrder(order: ProductionOrder, value: UpdateForm): ProductionOrder {
-  return withProductionDerived({
-    ...order,
-    completedQty: value.completedQty.trim() || order.completedQty,
-    latestProgressRemark: value.remark.trim() || order.latestProgressRemark,
-    lastProgressAt: new Date().toISOString(),
-  });
-}
-
 export default function ProductionExecutionCenter({ user }: { user: CurrentUserDTO }) {
   const router = useRouter();
+  const canAdministerProduction = user.laborRole === 'ADMIN';
   const [summary, setSummary] = useState<ProductionSummary | null>(null);
   const [board, setBoard] = useState<BoardPayload | null>(null);
   const [view, setView] = useState<ViewKey>('board');
   const [keyword, setKeyword] = useState('');
   const [debouncedKeyword, setDebouncedKeyword] = useState('');
+  const [targetWorkOrderId, setTargetWorkOrderId] = useState('');
   const [quick, setQuick] = useState<QuickFilter[]>([]);
   const [advanced, setAdvanced] = useState<AdvancedFilters>(emptyAdvanced);
   const [draftAdvanced, setDraftAdvanced] = useState<AdvancedFilters>(emptyAdvanced);
@@ -636,8 +755,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [detailTab, setDetailTab] = useState<DetailTab>('production');
   const [progressLogs, setProgressLogs] = useState<ProgressLog[]>([]);
   const [progressLoading, setProgressLoading] = useState(false);
-  const [updateOrder, setUpdateOrder] = useState<ProductionOrder | null>(null);
-  const [updateForm, setUpdateForm] = useState<UpdateForm | null>(null);
   const [quantityOrder, setQuantityOrder] = useState<ProductionOrder | null>(null);
   const [quantityForm, setQuantityForm] = useState<QuantityAdjustmentForm | null>(null);
   const [quantitySaving, setQuantitySaving] = useState(false);
@@ -648,14 +765,19 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [batchOperation, setBatchOperation] = useState<BatchOperation>('set_priority');
   const [batchValue, setBatchValue] = useState('');
   const [batchRemark, setBatchRemark] = useState('');
-  const [batchConfirm, setBatchConfirm] = useState('');
   const [statusMenuOrder, setStatusMenuOrder] = useState<ProductionOrder | null>(null);
   const [drawingMenuOrder, setDrawingMenuOrder] = useState<ProductionOrder | null>(null);
   const [stageChangeRequest, setStageChangeRequest] = useState<StageChangeRequest | null>(null);
-  const [completionSuggestion, setCompletionSuggestion] = useState<ProductionOrder | null>(null);
   const [nextStepRequest, setNextStepRequest] = useState<NextStepRequest | null>(null);
-  const [nextStepQuantity, setNextStepQuantity] = useState('');
   const [nextStepError, setNextStepError] = useState('');
+  const [completionOrder, setCompletionOrder] = useState<ProductionOrder | null>(null);
+  const [completionContext, setCompletionContext] = useState<ProcessCompletionContext | null>(null);
+  const [completionForm, setCompletionForm] = useState<ProcessCompletionForm | null>(null);
+  const [completionLoading, setCompletionLoading] = useState(false);
+  const [completionSaving, setCompletionSaving] = useState(false);
+  const [completionError, setCompletionError] = useState('');
+  const [completionStepId, setCompletionStepId] = useState('');
+  const [completionIdempotencyKey, setCompletionIdempotencyKey] = useState('');
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [density, setDensity] = useState<DispatchDensity>('comfortable');
@@ -669,6 +791,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const drawingButtonRef = useRef<HTMLButtonElement | null>(null);
   const quantityTriggerRef = useRef<HTMLButtonElement | null>(null);
   const quantityTargetInputRef = useRef<HTMLInputElement | null>(null);
+  const completionRequestRef = useRef(0);
   const boardShellRef = useRef<HTMLDivElement | null>(null);
   const pendingRestoreRef = useRef<ProductionExecutionViewState | null>(null);
   const returnKeyRef = useRef('');
@@ -709,6 +832,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const explicitReturnKey = params.get('returnKey') || '';
+    const explicitWorkOrderId = (params.get('workOrderId') || '').trim();
     const pendingReturnKey = sessionStorage.getItem('production-execution:pending-return') || '';
     let returnKey = explicitReturnKey || pendingReturnKey;
     if (!returnKey) {
@@ -735,7 +859,9 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         const raw = sessionStorage.getItem(`production-execution:return:${returnKey}`);
         const saved = raw ? JSON.parse(raw) as ProductionExecutionViewState : null;
         const matchesCurrentUrl = !!saved && normalizedProductionUrl(saved.returnUrl) === normalizedProductionUrl(window.location.href);
-        const returningThroughNavigation = !explicitReturnKey && pendingReturnKey === returnKey;
+        const returningThroughNavigation = !explicitReturnKey
+          && !explicitWorkOrderId
+          && pendingReturnKey === returnKey;
         if (validProductionReturnState(saved) && (matchesCurrentUrl || returningThroughNavigation)) {
           restored = saved;
           pendingRestoreRef.current = saved;
@@ -754,6 +880,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     const sourceParams = restored
       ? new URL(restored.returnUrl, window.location.origin).searchParams
       : params;
+    setTargetWorkOrderId((sourceParams.get('workOrderId') || '').trim().slice(0, 120));
     const parsedView = restored?.view || sourceParams.get('view');
     const parsedKeyword = restored?.keyword ?? sourceParams.get('keyword') ?? '';
     const parsedQuick = restored?.quick
@@ -772,11 +899,11 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setWeekStart(restoredWeekStart);
     setPage(Math.max(1, restored?.page || Number(sourceParams.get('displayPage')) || Number(sourceParams.get('page')) || 1));
     if (restored) {
-      setBatchMode(restored.batchMode);
-      setSelected(Array.isArray(restored.selectedIds) ? restored.selectedIds : []);
+      setBatchMode(canAdministerProduction && restored.batchMode);
+      setSelected(canAdministerProduction && Array.isArray(restored.selectedIds) ? restored.selectedIds : []);
     }
     setStateReady(true);
-  }, []);
+  }, [canAdministerProduction]);
 
   useEffect(() => {
     if (!stateReady) return undefined;
@@ -793,10 +920,10 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   useEffect(() => {
     if (!stateReady) return;
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId);
     if (returnKeyRef.current) params.set('returnKey', returnKeyRef.current);
     window.history.replaceState(window.history.state, '', `/production?${params.toString()}`);
-  }, [advanced, debouncedKeyword, page, quick, scope, stateReady, view, weekStart]);
+  }, [advanced, debouncedKeyword, page, quick, scope, stateReady, targetWorkOrderId, view, weekStart]);
 
   useEffect(() => {
     if (!stateReady) return undefined;
@@ -825,7 +952,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     const controller = new AbortController();
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId);
     const cacheKey = params.toString();
     const cached = productionBoardCache.get(cacheKey);
     if (cached) {
@@ -850,7 +977,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       })
       .finally(() => { if (requestId === requestRef.current) setLoading(false); });
     return () => controller.abort();
-  }, [advanced, debouncedKeyword, quick, refreshToken, scope, stateReady, view, weekStart]);
+  }, [advanced, debouncedKeyword, quick, refreshToken, scope, stateReady, targetWorkOrderId, view, weekStart]);
 
   useEffect(() => {
     if (loading || !board || !pendingRestoreRef.current) return;
@@ -889,7 +1016,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           if (sessionStorage.getItem('production-execution:pending-return') === returnKey) sessionStorage.removeItem('production-execution:pending-return');
           pendingRestoreRef.current = null;
           returnKeyRef.current = '';
-          const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page);
+          const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId);
           window.history.replaceState(window.history.state, '', `/production?${params.toString()}`);
         } else if (attempt < 8) {
           timer = window.setTimeout(restore, 100);
@@ -901,7 +1028,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [advanced, board, debouncedKeyword, loading, page, quick, scope, view, weekStart]);
+  }, [advanced, board, debouncedKeyword, loading, page, quick, scope, targetWorkOrderId, view, weekStart]);
 
   useEffect(() => {
     document.body.classList.toggle('hongmeng-webview', Boolean(window.__HONGMENG_WEBVIEW__));
@@ -973,6 +1100,14 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   const filterChips = useMemo<FilterChip[]>(() => {
     const chips: FilterChip[] = [];
+    if (targetWorkOrderId) {
+      const targetOrder = board?.items.find(order => order.id === targetWorkOrderId);
+      chips.push({
+        key: 'work-order-target',
+        label: `定位工单：${targetOrder?.code || targetWorkOrderId}`,
+        remove: () => setTargetWorkOrderId(''),
+      });
+    }
     advanced.customers.forEach(customer => chips.push({
       key: `customer-${customer}`, label: `客户：${customer}`,
       remove: () => setAdvanced(current => ({ ...current, customers: current.customers.filter(item => item !== customer) })),
@@ -993,7 +1128,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     add('material', '仓库', { pending: '待配料', completed: '已配料', exception: '异常', unset: '未建任务' });
     add('documents', '资料', { empty: '0/5', partial: '1-4/5', complete: '5/5' });
     return chips;
-  }, [advanced]);
+  }, [advanced, board, targetWorkOrderId]);
 
   const activeFilterCount = filterChips.length;
 
@@ -1072,6 +1207,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         : 'all';
 
   function changeView(next: ViewKey): void {
+    setTargetWorkOrderId('');
     setView(next);
     setQuick([]);
     setPage(1);
@@ -1079,6 +1215,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }
 
   function applyDispatchPreset(preset: DispatchPreset): void {
+    setTargetWorkOrderId('');
     setSelected([]);
     setPage(1);
     setQuick([]);
@@ -1098,6 +1235,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }
 
   function changeWeekScope(next: WeekScope, historyWeekStart?: string): void {
+    setTargetWorkOrderId('');
     setScope(next);
     setWeekStart(next === 'history' ? (historyWeekStart || summary?.navigation.history[0]?.weekStartDate || '') : '');
     setView('board');
@@ -1167,18 +1305,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     });
   }
 
-  function openUpdate(order: ProductionOrder): void {
-    if (board?.readOnly) {
-      setToast('下周预览为只读，启用为本周后才能记录进度');
-      return;
-    }
-    setStatusMenuOrder(null);
-    setDrawingMenuOrder(null);
-    setUpdateOrder(order);
-    setUpdateForm(updateFormFor(order));
-    setFormError('');
-  }
-
   function openQuantityAdjustment(order: ProductionOrder, trigger?: HTMLButtonElement): void {
     if (board?.readOnly) {
       setToast('下周预览为只读，启用为本周后才能调整数量');
@@ -1218,40 +1344,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     const body = await response.json().catch(() => ({}));
     if (!response.ok || !body.data) throw new Error(body.error || fallbackError);
     return withProductionDerived(body.data as ProductionOrder);
-  }
-
-  async function saveUpdate(): Promise<void> {
-    if (!updateOrder || !updateForm) return;
-    const previousBoard = board;
-    const previousDetail = detailOrder;
-    const payload: ExecutionPatchPayload = updateOrder.quantityFlow.materialized
-      ? { remark: updateForm.remark }
-      : updateForm;
-    const optimistic = optimisticOrder(updateOrder, updateOrder.quantityFlow.materialized
-      ? { completedQty: updateOrder.completedQty || '', remark: updateForm.remark }
-      : updateForm);
-    setBoard(current => replaceOrder(current, optimistic));
-    if (detailOrder?.id === updateOrder.id) setDetailOrder(optimistic);
-    setSaving(true);
-    setFormError('');
-    try {
-      const updated = await requestExecutionPatch(updateOrder.id, payload, '进度更新失败');
-      applyLocalOrder(updated);
-      setUpdateOrder(null);
-      setUpdateForm(null);
-      setToast('生产进度已更新');
-      productionBoardCache.clear();
-      setSummaryRefreshToken(value => value + 1);
-      if (updated.stage !== 'completed' && (updated.quantitySummary.status === 'complete' || updated.quantitySummary.status === 'overrun')) {
-        setCompletionSuggestion(updated);
-      }
-    } catch (reason) {
-      setBoard(previousBoard);
-      setDetailOrder(previousDetail);
-      setFormError(reason instanceof Error ? reason.message : '进度更新失败');
-    } finally {
-      setSaving(false);
-    }
   }
 
   async function saveQuantityAdjustment(): Promise<void> {
@@ -1346,7 +1438,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   async function saveStageChange(order: ProductionOrder, stage: StageKey): Promise<void> {
     setStatusMenuOrder(null);
     setStageChangeRequest(null);
-    setCompletionSuggestion(null);
     if (order.stage === stage) return;
     const optimistic = withProductionDerived({
       ...order,
@@ -1375,6 +1466,165 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     await saveQuickUpdate(order, { drawingStatus }, optimistic, `图纸状态已更新为${drawingStatus}`);
   }
 
+  function closeProcessCompletion(force = false): void {
+    if (completionSaving && !force) return;
+    completionRequestRef.current += 1;
+    setCompletionOrder(null);
+    setCompletionContext(null);
+    setCompletionForm(null);
+    setCompletionError('');
+    setCompletionStepId('');
+    setCompletionIdempotencyKey('');
+    setCompletionLoading(false);
+  }
+
+  async function loadProcessCompletionContext(order: ProductionOrder, stepId: string): Promise<void> {
+    const route = order.processRoute;
+    const activeSteps = route?.currentSteps.length
+      ? route.currentSteps
+      : route?.currentStep
+        ? [route.currentStep]
+        : [];
+    const step = activeSteps.find(item => item.id === stepId);
+    if (!route || !step) {
+      setCompletionError('所选工序已不在执行中，请刷新调度中心后重试');
+      return;
+    }
+    const requestId = completionRequestRef.current + 1;
+    completionRequestRef.current = requestId;
+    const workDate = completionForm?.workDate || todayShanghaiDateKey();
+    const defectDisposition = completionForm?.defectDisposition || 'rework';
+    setCompletionStepId(step.id);
+    setCompletionContext(null);
+    setCompletionForm(null);
+    setCompletionError('');
+    setCompletionIdempotencyKey(globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    setCompletionLoading(true);
+    try {
+      const params = new URLSearchParams({ stepId: step.id });
+      const response = await fetch(`/api/process-management/routes/${route.id}/completions?${params.toString()}`, { cache: 'no-store' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.data) throw new Error(body.error || '工序可完成数量加载失败');
+      if (completionRequestRef.current !== requestId) return;
+      const context = body.data as ProcessCompletionContext;
+      setCompletionContext(context);
+      setCompletionForm({
+        processedQty: context.remainingInputQty > 0 ? String(context.remainingInputQty) : '',
+        defectQty: '0',
+        defectDisposition,
+        workDate,
+      });
+    } catch (reason) {
+      if (completionRequestRef.current !== requestId) return;
+      setCompletionError(reason instanceof Error ? reason.message : '工序可完成数量加载失败');
+    } finally {
+      if (completionRequestRef.current === requestId) setCompletionLoading(false);
+    }
+  }
+
+  async function openProcessCompletion(order: ProductionOrder): Promise<void> {
+    const route = order.processRoute;
+    const step = route?.currentSteps[0] || route?.currentStep;
+    if (!route || !step) {
+      setToast('当前没有可完成的执行工序，请先检查工艺路线');
+      return;
+    }
+    setCompletionOrder(order);
+    await loadProcessCompletionContext(order, step.id);
+  }
+
+  async function saveProcessCompletion(): Promise<void> {
+    if (!completionOrder || !completionContext || !completionForm) return;
+    const processedText = completionForm.processedQty.trim();
+    const defectText = completionForm.defectQty.trim();
+    if (!/^[1-9]\d*$/.test(processedText)) {
+      setCompletionError('本次实际处理数量必须是正整数');
+      return;
+    }
+    if (!/^\d+$/.test(defectText)) {
+      setCompletionError('不良品数量必须是大于或等于 0 的整数');
+      return;
+    }
+    const processedQty = Number(processedText);
+    const defectQty = Number(defectText);
+    if (processedQty > completionContext.remainingInputQty) {
+      setCompletionError(`本次数量不能超过当前可处理数量 ${formatProductionQuantity(completionContext.remainingInputQty)}`);
+      return;
+    }
+    if (defectQty > processedQty) {
+      setCompletionError('不良品数量不能超过本次实际处理数量');
+      return;
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(completionForm.workDate)) {
+      setCompletionError('请选择正确的生产归属日期');
+      return;
+    }
+
+    setCompletionSaving(true);
+    setCompletionError('');
+    try {
+      const response = await fetch(`/api/process-management/routes/${completionContext.routeId}/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stepId: completionContext.step.id,
+          processedQty,
+          defectQty,
+          defectDisposition: defectQty > 0 ? completionForm.defectDisposition : undefined,
+          workDate: completionForm.workDate,
+          idempotencyKey: completionIdempotencyKey,
+          expectedRouteVersion: completionContext.routeVersion,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.data) throw new Error(body.error || '工序完成转序失败');
+      const goodQty = processedQty - defectQty;
+      const goodTransferredQty = Math.max(
+        0,
+        Number.isSafeInteger(Number(body.data.goodTransferredQty))
+          ? Number(body.data.goodTransferredQty)
+          : 0,
+      );
+      const goodWaitingForGroupQty = Math.max(0, goodQty - goodTransferredQty);
+      const branchMessage = body.data.branchWorkOrderId
+        ? `，不良品分支 ${body.data.branchWorkOrderCode || '工单'} 已建立`
+        : '';
+      const completedStep = completionOrder.processRoute?.steps.find(
+        step => step.id === completionContext.step.id,
+      ) || completionOrder.processRoute?.currentStep;
+      const laborMessage = body.data.laborPoolPendingStandard
+        ? '，工时已记入待补标准清单'
+        : body.data.laborPoolId
+        ? '，工时已进入待领取池'
+        : completedStep?.timeBasis === 'per_batch'
+          ? '，本批工时将在上下游闭环后自动进入待领取池'
+          : !completedStep?.standardMillisecondsPerUnit
+            ? '，未生成工时池，请维护该工序标准工时'
+            : '，本次未生成待领取工时';
+      const unitLabel = completedStep?.unitLabel || '件';
+      const transferMessage = goodTransferredQty > 0
+        ? `${formatProductionQuantity(goodTransferredQty)} ${unitLabel}良品已流转${goodWaitingForGroupQty > 0 ? `，${formatProductionQuantity(goodWaitingForGroupQty)} ${unitLabel}等待同组工序齐套` : ''}`
+        : goodQty > 0
+          ? `${formatProductionQuantity(goodQty)} ${unitLabel}良品已登记，等待同组工序齐套后转序`
+          : '本批没有良品可流转';
+      setToast(`${transferMessage}${laborMessage}${branchMessage}`);
+      closeProcessCompletion(true);
+      productionBoardCache.clear();
+      setRefreshToken(value => value + 1);
+      setSummaryRefreshToken(value => value + 1);
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : '工序完成转序失败';
+      setCompletionError(message);
+      if (message.includes('已被其他操作更新') || message.includes('版本')) {
+        productionBoardCache.clear();
+        setRefreshToken(value => value + 1);
+        setSummaryRefreshToken(value => value + 1);
+      }
+    } finally {
+      setCompletionSaving(false);
+    }
+  }
+
   function openNextStep(order: ProductionOrder, displayStage: StageKey): void {
     if (board?.readOnly) {
       setToast('下周预览为只读，启用为本周后才能流转工单');
@@ -1382,60 +1632,38 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     }
     setStatusMenuOrder(null);
     setDrawingMenuOrder(null);
-    if (order.processRoute && displayStage !== 'not_issued') {
-      if (order.processRoute.status === 'draft') {
-        if (!order.drawingLibraryItemId) {
-          setToast('当前工单尚未关联图纸产品，无法匹配产品工序与工时');
-          return;
-        }
-        router.push(`/workspace/product-times?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`);
+    if (!order.processRoute || order.processRoute.status === 'draft') {
+      if (!canAdministerProduction) {
+        setToast('当前产品工序与工时尚未发布，请联系管理员维护');
         return;
       }
-      if (order.processRoute.status === 'completed') return;
-      if (!order.processRoute.currentStep) {
-        setToast('当前执行工序状态异常，请检查并重新发布该产品工序与工时');
+      if (!order.drawingLibraryItemId) {
+        setToast('当前工单尚未关联图纸产品，无法匹配产品工序与工时');
         return;
       }
-      openWorkflow(order, displayStage);
+      router.push(`/workspace/product-times?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`);
       return;
     }
-    if (!order.quantityFlow.valid) {
-      setToast(order.quantityFlow.error?.message || '工单数量数据不完整，暂时无法流转');
+    if (order.processRoute.status === 'completed') return;
+    if (displayStage === 'not_issued') {
+      if (!canAdministerProduction) {
+        setToast('图纸需由管理员确认下发后才能开始生产');
+        return;
+      }
+      setNextStepRequest({ order, displayStage, action: 'confirm_drawing_issued' });
+      setNextStepError('');
       return;
     }
-    if (displayStage === 'completed') return;
-    const action: ProductionFlowAction = displayStage === 'not_issued'
-      ? 'confirm_drawing_issued'
-      : displayStage === 'frontend'
-        ? 'transfer_to_backend'
-        : 'complete_from_backend';
-    const defaultQuantity = displayStage === 'frontend'
-      ? order.quantityFlow.frontendRemainingQty
-      : displayStage === 'backend'
-        ? order.quantityFlow.backendRemainingQty
-        : null;
-    setNextStepRequest({ order, displayStage, action });
-    setNextStepQuantity(defaultQuantity && defaultQuantity > 0 ? String(defaultQuantity) : '');
-    setNextStepError('');
+    if (!order.processRoute.currentSteps.length && !order.processRoute.currentStep) {
+      setToast('当前执行工序状态异常，请联系管理员核对工单路线；已开工路线不会被新产品版本覆盖');
+      return;
+    }
+    void openProcessCompletion(order);
   }
 
   async function saveNextStep(): Promise<void> {
     if (!nextStepRequest) return;
-    const { order, action, displayStage } = nextStepRequest;
-    if (action !== 'confirm_drawing_issued') {
-      if (!/^[1-9]\d*$/.test(nextStepQuantity.trim())) {
-        setNextStepError('本次数量必须是正整数');
-        return;
-      }
-      const quantity = Number(nextStepQuantity);
-      const maximum = displayStage === 'frontend'
-        ? order.quantityFlow.frontendRemainingQty
-        : order.quantityFlow.backendRemainingQty;
-      if (maximum === null || quantity > maximum) {
-        setNextStepError(`本次数量不能超过当前可流转数量 ${formatProductionQuantity(maximum)}`);
-        return;
-      }
-    }
+    const { order, action } = nextStepRequest;
 
     setSaving(true);
     setNextStepError('');
@@ -1445,7 +1673,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action,
-          quantity: action === 'confirm_drawing_issued' ? undefined : nextStepQuantity.trim(),
           expectedVersion: order.quantityFlow.executionVersion,
         }),
       });
@@ -1455,14 +1682,9 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       const updated = withProductionDerived(responseOrder as ProductionOrder);
       applyLocalOrder(updated);
       setNextStepRequest(null);
-      setNextStepQuantity('');
       productionBoardCache.clear();
       setSummaryRefreshToken(value => value + 1);
-      setToast(action === 'confirm_drawing_issued'
-        ? '图纸已确认下发，工单已进入前端'
-        : action === 'transfer_to_backend'
-          ? '前端数量已转入后端'
-          : '后端完成数量已更新');
+      setToast('图纸已确认下发，工单已进入首道工序');
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : '生产数量流转失败';
       if (message === '工单进度已被其他操作更新，请刷新后重试') {
@@ -1506,7 +1728,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }
 
   function captureReturnState(returnKey: string, focusedOrderId: string, focusedStage?: StageKey): string {
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page, targetWorkOrderId);
     params.set('returnKey', returnKey);
     const returnUrl = `/production?${params.toString()}`;
     const focusedCard = findProductionOrderCard(focusedOrderId, focusedStage);
@@ -1608,18 +1830,17 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       setToast('下周预览为只读，启用为本周后才能批量修改');
       return;
     }
-    setBatchOperation(operation); setBatchValue(''); setBatchRemark(''); setBatchConfirm(''); setFormError(''); setBatchOpen(true);
+    setBatchOperation(operation); setBatchValue(''); setBatchRemark(''); setFormError(''); setBatchOpen(true);
   }
 
   async function saveBatch(): Promise<void> {
     if (!selected.length) return;
     setSaving(true);
     setFormError('');
-    const confirmText = batchOperation === 'set_stage' && batchValue !== 'completed' ? 'CONFIRM' : batchConfirm;
     try {
       const response = await fetch('/api/work-orders/batch-execution', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: selected, operation: batchOperation, value: batchValue, remark: batchRemark, confirmText }),
+        body: JSON.stringify({ ids: selected, operation: batchOperation, value: batchValue, remark: batchRemark }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || '批量更新失败');
@@ -1635,7 +1856,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }
 
   function exportCsv(): void {
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId);
     params.delete('page'); params.delete('pageSize');
     location.href = `/api/export/production-execution.csv?${params.toString()}`;
   }
@@ -1677,7 +1898,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         hideHeader
         sidebarTriggerTargetId="production-dispatch-sidebar-trigger"
         menuItems={[
-          { label: '系统设置', href: '/dashboard?openSettings=1' },
+          ...(canAdministerProduction ? [{ label: '系统设置', href: '/dashboard?openSettings=1' }] : []),
           { label: '退出登录', onSelect: () => { void logout(); } },
         ]}
       />
@@ -1705,8 +1926,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             </label>
           </nav>
           <div className="production-dispatch-command-actions">
-            <a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a>
-            <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '下周预览不可批量修改' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>
+            {canAdministerProduction && <a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a>}
+            {canAdministerProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '下周预览不可批量修改' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
             <button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button>
             <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
             <button className="hm-workbench-button production-fullscreen-trigger" type="button" onClick={() => void toggleFullscreen()}><Expand size={15} aria-hidden="true" />{isFullscreen ? '退出大屏' : '大屏模式'}</button>
@@ -1722,7 +1943,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         </section>
 
         <section className="production-dispatch-toolbar" aria-label="生产调度筛选">
-          <label className="production-dispatch-search"><Search size={18} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、型号、工单或品名" /></label>
+          <label className="production-dispatch-search"><Search size={18} aria-hidden="true" /><input value={keyword} onChange={event => { setTargetWorkOrderId(''); setKeyword(event.target.value); }} placeholder="搜索客户、型号、工单或品名" /></label>
           <div className="production-dispatch-presets" aria-label="调度视图">
             <button className={dispatchPreset === 'all' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'all'} onClick={() => applyDispatchPreset('all')}>全部</button>
             <button className={dispatchPreset === 'today' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'today'} onClick={() => applyDispatchPreset('today')}>今日交付</button>
@@ -1742,7 +1963,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           </div>
           <span className="production-dispatch-result">{board?.pagination.total || 0} 项</span>
         </section>
-        {!!filterChips.length && <div className="production-filter-chips production-dispatch-filter-chips" aria-label="已应用筛选">{filterChips.map(chip => <button key={chip.key} type="button" onClick={() => { chip.remove(); setPage(1); }} title={`移除${chip.label}`}>{chip.label}<span>×</span></button>)}<button className="clear" type="button" onClick={() => { setAdvanced(emptyAdvanced); setQuick([]); setKeyword(''); setPage(1); }}>清空全部</button></div>}
+        {!!filterChips.length && <div className="production-filter-chips production-dispatch-filter-chips" aria-label="已应用筛选">{filterChips.map(chip => <button key={chip.key} type="button" onClick={() => { chip.remove(); setPage(1); }} title={`移除${chip.label}`}>{chip.label}<span>×</span></button>)}<button className="clear" type="button" onClick={() => { setTargetWorkOrderId(''); setAdvanced(emptyAdvanced); setQuick([]); setKeyword(''); setPage(1); }}>清空全部</button></div>}
 
         {error && <div className="production-error"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
         {scope === 'current' && summary?.total === 0 && !loading && <div className="production-empty-week"><strong>本周暂无已启用生产工单</strong><span>历史遗留工单可从“遗留未完”继续处理；新计划请在计划中心下达。</span><a href={weeklyPlanHref}>进入计划中心</a></div>}
@@ -1757,12 +1978,12 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
                 key={item.order.id}
                 item={item}
                 readOnly={board?.readOnly || (scope === 'history' && item.order.stage === 'completed')}
+                canAdministerProduction={canAdministerProduction}
                 batchMode={batchMode}
                 selected={selected}
                 saving={saving}
                 toggleSelected={toggleSelected}
                 openDetail={openDetail}
-                openUpdate={openUpdate}
                 openQuantityAdjustment={openQuantityAdjustment}
                 openNextStep={openNextStep}
                 openDrawingLibrary={openDrawingLibrary}
@@ -1805,36 +2026,49 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         </div>
       </div>
 
-      {batchMode && !board?.readOnly && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong><button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button><button type="button" disabled={!selected.length} onClick={() => openBatch('set_stage')}>修改状态</button><button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button><button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
+      {canAdministerProduction && batchMode && !board?.readOnly && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong><button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button><button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button><button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
 
-      <PortalMenu open={!!statusMenuOrder} anchorRef={statusButtonRef} className="production-status-menu hm-production-menu hm-production-status-menu" width={164} onClose={() => setStatusMenuOrder(null)} closeOnSelect={false}>
+      <PortalMenu open={canAdministerProduction && !!statusMenuOrder} anchorRef={statusButtonRef} className="production-status-menu hm-production-menu hm-production-status-menu" width={164} onClose={() => setStatusMenuOrder(null)} closeOnSelect={false}>
         {statusMenuOrder && stageMenuItems(statusMenuOrder).map(stage => <button type="button" disabled={saving} key={stage.key} onClick={() => requestStageChange(statusMenuOrder, stage.key)}>{stage.label}</button>)}
       </PortalMenu>
 
-      <PortalMenu open={!!drawingMenuOrder} anchorRef={drawingButtonRef} className="production-status-menu hm-production-menu hm-production-status-menu" width={184} onClose={() => setDrawingMenuOrder(null)} closeOnSelect={false}>
+      <PortalMenu open={canAdministerProduction && !!drawingMenuOrder} anchorRef={drawingButtonRef} className="production-status-menu hm-production-menu hm-production-status-menu" width={184} onClose={() => setDrawingMenuOrder(null)} closeOnSelect={false}>
         {drawingMenuOrder && drawingStatuses.map(status => <button className={drawingMenuOrder.drawingStatus === status ? 'active' : ''} type="button" disabled={saving} key={status} onClick={() => void saveDrawingStatus(drawingMenuOrder, status)}>{status}</button>)}
       </PortalMenu>
 
-      {updateOrder && updateForm && <UpdateDrawer order={updateOrder} value={updateForm} setValue={setUpdateForm} saving={saving} error={formError} close={() => { if (!saving) { setUpdateOrder(null); setUpdateForm(null); } }} save={saveUpdate} />}
-      {quantityOrder && quantityForm && <QuantityAdjustmentDrawer order={quantityOrder} value={quantityForm} setValue={setQuantityForm} targetInputRef={quantityTargetInputRef} saving={quantitySaving} error={quantityError} close={closeQuantityAdjustment} save={() => void saveQuantityAdjustment()} />}
-      {detailOrder && <DetailDialog order={detailOrder} readOnly={board?.readOnly || (scope === 'history' && detailOrder.stage === 'completed')} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} update={() => openUpdate(detailOrder)} adjustQuantity={() => openQuantityAdjustment(detailOrder)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} />}
-      {batchOpen && <BatchDialog count={selected.length} operation={batchOperation} value={batchValue} remark={batchRemark} confirm={batchConfirm} saving={saving} error={formError} setValue={setBatchValue} setRemark={setBatchRemark} setConfirm={setBatchConfirm} close={() => { if (!saving) setBatchOpen(false); }} save={saveBatch} />}
-      {stageChangeRequest && <StageChangeDialog request={stageChangeRequest} saving={saving} close={() => { if (!saving) setStageChangeRequest(null); }} confirm={() => void saveStageChange(stageChangeRequest.order, stageChangeRequest.stage)} />}
-      {completionSuggestion && <CompletionSuggestionDialog order={completionSuggestion} saving={saving} close={() => setCompletionSuggestion(null)} confirm={() => void saveStageChange(completionSuggestion, 'completed')} />}
-      {nextStepRequest && <NextStepDialog
+      {canAdministerProduction && quantityOrder && quantityForm && <QuantityAdjustmentDrawer order={quantityOrder} value={quantityForm} setValue={setQuantityForm} targetInputRef={quantityTargetInputRef} saving={quantitySaving} error={quantityError} close={closeQuantityAdjustment} save={() => void saveQuantityAdjustment()} />}
+      {detailOrder && <DetailDialog order={detailOrder} readOnly={!canAdministerProduction || board?.readOnly || (scope === 'history' && detailOrder.stage === 'completed')} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} adjustQuantity={() => openQuantityAdjustment(detailOrder)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} />}
+      {canAdministerProduction && batchOpen && <BatchDialog count={selected.length} operation={batchOperation} value={batchValue} remark={batchRemark} saving={saving} error={formError} setValue={setBatchValue} setRemark={setBatchRemark} close={() => { if (!saving) setBatchOpen(false); }} save={saveBatch} />}
+      {canAdministerProduction && stageChangeRequest && <StageChangeDialog request={stageChangeRequest} saving={saving} close={() => { if (!saving) setStageChangeRequest(null); }} confirm={() => void saveStageChange(stageChangeRequest.order, stageChangeRequest.stage)} />}
+      {canAdministerProduction && nextStepRequest && <NextStepDialog
         request={nextStepRequest}
-        quantity={nextStepQuantity}
-        setQuantity={setNextStepQuantity}
         saving={saving}
         error={nextStepError}
         close={() => {
           if (!saving) {
             setNextStepRequest(null);
-            setNextStepQuantity('');
             setNextStepError('');
           }
         }}
         confirm={() => void saveNextStep()}
+      />}
+      {completionOrder && <ProcessCompletionDrawer
+        order={completionOrder}
+        activeSteps={completionOrder.processRoute?.currentSteps.length
+          ? completionOrder.processRoute.currentSteps
+          : completionOrder.processRoute?.currentStep
+            ? [completionOrder.processRoute.currentStep]
+            : []}
+        selectedStepId={completionStepId}
+        selectStep={stepId => void loadProcessCompletionContext(completionOrder, stepId)}
+        context={completionContext}
+        value={completionForm}
+        setValue={setCompletionForm}
+        loading={completionLoading}
+        saving={completionSaving}
+        error={completionError}
+        close={() => closeProcessCompletion()}
+        save={() => void saveProcessCompletion()}
       />}
     </main>
   );
@@ -1843,12 +2077,12 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 type ProductionDispatchRowProps = {
   item: ProductionCardView;
   readOnly: boolean;
+  canAdministerProduction: boolean;
   batchMode: boolean;
   selected: string[];
   saving: boolean;
   toggleSelected: (id: string) => void;
   openDetail: (order: ProductionOrder) => void;
-  openUpdate: (order: ProductionOrder) => void;
   openQuantityAdjustment: (order: ProductionOrder, trigger?: HTMLButtonElement) => void;
   openNextStep: (order: ProductionOrder, displayStage: StageKey) => void;
   openDrawingLibrary: (order: ProductionOrder, focusedStage?: StageKey) => void;
@@ -1866,12 +2100,12 @@ function DispatchRowSkeleton({ count }: { count: number }) {
 function ProductionDispatchRow({
   item,
   readOnly,
+  canAdministerProduction,
   batchMode,
   selected,
   saving,
   toggleSelected,
   openDetail,
-  openUpdate,
   openQuantityAdjustment,
   openNextStep,
   openDrawingLibrary,
@@ -1887,33 +2121,49 @@ function ProductionDispatchRow({
   const progressPercentage = Math.max(0, Math.min(quantityPercentage, 100));
   const risk = dispatchRisk(order);
   const selectedRow = selected.includes(order.id);
-  const currentProcess = currentProcessName(order);
+  const lifecycle = resolveProductionLifecycle({
+    routeCompleted: route?.status === 'completed',
+    workOrderCompletedAt: order.completedAt,
+  });
+  const currentProcess = lifecycle.awaitingBranchClosure ? '主路线完成' : currentProcessName(order);
   const nextProcess = nextProcessName(order);
+  const upcomingSteps = nextRouteSteps(order);
   const routeProgress = route?.progress ?? 0;
+  const unitLabel = route?.currentStep?.unitLabel || route?.steps[0]?.unitLabel || '件';
   const routeNeedsMaintenance = !route || route.status === 'draft';
   const quantityUnavailable = targetQuantity <= 0 || !order.quantityFlow.valid;
-  const completed = displayStage === 'completed' || route?.status === 'completed';
   const primaryText = readOnly
     ? '查看详情'
-    : completed
-      ? '查看记录'
+    : lifecycle.aggregateCompleted
+      ? '查看流转记录'
+      : lifecycle.awaitingBranchClosure
+        ? '查看分支闭环'
         : quantityUnavailable
-          ? '补充数量'
+          ? canAdministerProduction ? '补充数量' : '数量待管理员补充'
           : routeNeedsMaintenance
-            ? '维护工序'
-            : '处理工序';
+            ? canAdministerProduction ? '维护并发布工序' : '工序待管理员维护'
+            : displayStage === 'not_issued'
+              ? canAdministerProduction ? '确认发图并开始生产' : '图纸待管理员确认'
+              : route?.currentStep
+                ? `完成${currentProcess} → ${nextProcess}`
+                : '下一步工序';
 
   function runPrimaryAction(event: React.MouseEvent<HTMLButtonElement>): void {
     if (readOnly) {
       openDetail(order);
       return;
     }
-    if (completed) {
+    if (lifecycle.aggregateCompleted || lifecycle.awaitingBranchClosure) {
       openWorkflow(order, displayStage);
       return;
     }
     if (quantityUnavailable) {
-      openQuantityAdjustment(order, event.currentTarget);
+      if (canAdministerProduction) openQuantityAdjustment(order, event.currentTarget);
+      else openDetail(order);
+      return;
+    }
+    if (!canAdministerProduction && (routeNeedsMaintenance || displayStage === 'not_issued')) {
+      openDetail(order);
       return;
     }
     openNextStep(order, displayStage);
@@ -1922,15 +2172,15 @@ function ProductionDispatchRow({
   return <article className={`production-dispatch-row stage-${displayStage} risk-${risk.tone} ${selectedRow ? 'selected' : ''}`.trim()} data-production-order-id={order.id} data-production-stage={displayStage}>
     <div className="production-dispatch-row-identity">
       <div className="production-dispatch-row-select">
-        {batchMode && !readOnly
+        {canAdministerProduction && batchMode && !readOnly
           ? <input type="checkbox" checked={selectedRow} aria-label={`选择 ${specText(order)}`} onChange={() => toggleSelected(order.id)} />
           : <span className="production-dispatch-stage-dot" aria-hidden="true" />}
       </div>
       <div className="production-dispatch-product">
-        <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b><em className={order.priority}>{priorityText(order.priority)}</em></span>
+        <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b>{order.branchType ? <em className="branch">{branchTypeText(order.branchType)}</em> : <em className={order.priority}>{priorityText(order.priority)}</em>}</span>
         <button type="button" title={`${specText(order)}；进入图纸资料库`} onClick={() => openDrawingLibrary(order, displayStage)}>{specText(order)}</button>
-        <small title={`${order.productName || '品名待补充'} · ${order.code}`}>{order.productName || '品名待补充'} · {order.code}</small>
-        <div className="production-dispatch-product-quantity"><span>数量</span><b>{targetQuantity > 0 ? formatProductionQuantity(targetQuantity) : '待补充'} 件</b></div>
+        <small title={`${order.productName || '品名待补充'} · ${order.code}`}>{order.productName || '品名待补充'} · {order.code}{order.parentWorkOrder ? ` · 主单 ${order.parentWorkOrder.code}` : ''}</small>
+        <div className="production-dispatch-product-quantity"><span>数量</span><b>{targetQuantity > 0 ? formatProductionQuantity(targetQuantity) : '待补充'} {unitLabel}</b></div>
       </div>
       <div className="production-dispatch-row-icon-actions">
         <button type="button" aria-label={`复制 ${specText(order)} 规格`} title="复制完整规格" onClick={() => void copySpecification(order)}><Copy size={14} aria-hidden="true" /></button>
@@ -1939,21 +2189,31 @@ function ProductionDispatchRow({
     </div>
 
     <button className="production-dispatch-process current" type="button" title="进入流程中心查看当前工序" onClick={() => openWorkflow(order, displayStage)}>
-      <span><b>{routeNeedsMaintenance ? '工序待维护' : currentProcess}</b><small>{route?.statusText || order.stageText}</small></span>
+      <span><b>{routeNeedsMaintenance ? '工序待维护' : currentProcess}</b><small>{lifecycle.awaitingBranchClosure ? '等待返工/补产分支闭环' : route?.statusText || order.stageText}</small></span>
       <i><span style={{ width: `${routeProgress}%` }} /></i>
       <em>{route ? `${route.completedStepCount}/${route.stepCount}` : '未建路线'}</em>
     </button>
 
     <button className="production-dispatch-process next" type="button" title="进入流程中心查看下一工序" onClick={() => openWorkflow(order, displayStage)}>
       <ArrowRight size={16} aria-hidden="true" />
-      <span><b>{nextProcess}</b><small>{route?.nextSteps.length ? `${route.nextSteps.length} 道待衔接` : completed ? '生产已结束' : '等待当前工序完成'}</small></span>
+      <span><b>{nextProcess}</b><small>{upcomingSteps.length
+        ? `${upcomingSteps.length} 道待衔接`
+        : routeNeedsMaintenance
+          ? '等待工序发布'
+          : lifecycle.aggregateCompleted
+            ? '生产已结束'
+            : lifecycle.awaitingBranchClosure
+              ? '等待分支闭环'
+              : route?.currentStep
+                ? '当前为末道工序'
+                : '等待当前工序开始'}</small></span>
     </button>
 
-    <button className="production-dispatch-progress" type="button" disabled={readOnly} title={readOnly ? '历史范围只读' : '记录生产进度'} onClick={() => openUpdate(order)}>
+    <div className="production-dispatch-progress" title="工单累计完成进度">
       <span><b>{formatProductionPercentage(quantityPercentage)}</b><small>{formatProductionQuantity(completedQuantity)} / {targetQuantity > 0 ? formatProductionQuantity(targetQuantity) : '待补充'}</small></span>
       <i><span style={{ width: `${progressPercentage}%` }} /></i>
       <em>本阶段 {stageQuantity === null ? '待补充' : formatProductionQuantity(stageQuantity)}</em>
-    </button>
+    </div>
 
     <div className={`production-dispatch-risk ${risk.tone}`}>
       <strong>{deliveryText(order) || '交期待补'}</strong>
@@ -1965,10 +2225,153 @@ function ProductionDispatchRow({
 
     <div className="production-dispatch-row-actions">
       <button className="primary" type="button" disabled={saving} onClick={runPrimaryAction}>{primaryText}</button>
-      {!readOnly && !completed && <button type="button" disabled={saving} onClick={() => openUpdate(order)}>记录进度</button>}
-      <button type="button" onClick={() => openWorkflow(order, displayStage)}>流程详情</button>
     </div>
   </article>;
+}
+
+function ProcessCompletionDrawer({ order, activeSteps, selectedStepId, selectStep, context, value, setValue, loading, saving, error, close, save }: {
+  order: ProductionOrder;
+  activeSteps: WorkOrderProcessRouteDTO['currentSteps'];
+  selectedStepId: string;
+  selectStep: (stepId: string) => void;
+  context: ProcessCompletionContext | null;
+  value: ProcessCompletionForm | null;
+  setValue: (value: ProcessCompletionForm) => void;
+  loading: boolean;
+  saving: boolean;
+  error: string;
+  close: () => void;
+  save: () => void;
+}) {
+  const processedQty = value && /^\d+$/.test(value.processedQty.trim()) ? Number(value.processedQty) : 0;
+  const defectQty = value && /^\d+$/.test(value.defectQty.trim()) ? Number(value.defectQty) : 0;
+  const goodQty = Math.max(0, processedQty - defectQty);
+  const stepSnapshot = order.processRoute?.steps.find(step => step.id === context?.step.id) || order.processRoute?.currentStep;
+  const unitLabel = stepSnapshot?.unitLabel || '件';
+  const standardMillisecondsPerUnit = stepSnapshot?.standardMillisecondsPerUnit || 0;
+  const setupMilliseconds = stepSnapshot?.setupMilliseconds || 0;
+  const unitsPerProduct = stepSnapshot?.unitsPerProduct || 1;
+  const isPerBatch = stepSnapshot?.timeBasis === 'per_batch';
+  const laborEligibleQty = isPerBatch
+    ? (context && processedQty === context.remainingInputQty ? context.goodQty + goodQty : 0)
+    : goodQty;
+  const appliedSetupMilliseconds = isPerBatch || (context?.goodQty || 0) === 0
+    ? setupMilliseconds
+    : 0;
+  const standardLaborMilliseconds = laborEligibleQty <= 0 || standardMillisecondsPerUnit <= 0
+    ? 0
+    : appliedSetupMilliseconds + (isPerBatch
+        ? standardMillisecondsPerUnit
+        : standardMillisecondsPerUnit * laborEligibleQty * unitsPerProduct);
+  const laborPreviewTitle = standardMillisecondsPerUnit <= 0
+    ? '生成待补标准工时池，完成数量不会丢失'
+    : isPerBatch
+      ? laborEligibleQty > 0
+        ? `上下游与本批闭环后生成 ${formatProductionQuantity(laborEligibleQty)} ${unitLabel}待领取工时`
+        : '整批工时将在上下游与本批闭环后生成'
+      : laborEligibleQty > 0
+        ? `生成 ${formatProductionQuantity(laborEligibleQty)} ${unitLabel}待领取工时`
+        : '本次不生成正常工时池';
+  const nextProcessText = context?.nextSteps.length
+    ? context.nextSteps.map(step => step.processName).join(' / ')
+    : '成品入库';
+  const waitsForParallelGroup = !!context
+    && (order.processRoute?.steps.filter(step => step.sequenceGroup === context.step.sequenceGroup).length || 0) > 1;
+  const goodDestinationHint = waitsForParallelGroup
+    ? `同组齐套后进入 ${nextProcessText}`
+    : `立即进入 ${nextProcessText}`;
+  const invalid = !value
+    || processedQty <= 0
+    || defectQty < 0
+    || defectQty > processedQty
+    || !context
+    || processedQty > context.remainingInputQty;
+
+  return <div className="production-update-backdrop process-completion-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
+    <aside className="production-update-drawer process-completion-drawer" role="dialog" aria-modal="true" aria-labelledby="process-completion-title">
+      <div className="dialog-title">
+        <div><strong id="process-completion-title">完成当前工序并转序</strong><small>{order.customerName || '客户待补充'} · {specText(order)} · {order.code}</small></div>
+        <button type="button" disabled={saving} aria-label="关闭转序抽屉" onClick={close}>×</button>
+      </div>
+
+      {activeSteps.length > 1 && <section className="process-completion-step-picker" aria-label="选择本次完成工序">
+        <label htmlFor="process-completion-step">
+          <span>本次完成工序</span>
+          <select id="process-completion-step" value={selectedStepId} disabled={saving} aria-busy={loading} onChange={event => selectStep(event.target.value)}>
+            {activeSteps.map(step => {
+              const remainingQty = Math.max(0, (step.inputQty || 0) - (step.processedQty || 0));
+              const quantityHint = step.inputQty === undefined ? '' : ` · 剩余 ${formatProductionQuantity(remainingQty)} ${step.unitLabel || '件'}`;
+              return <option value={step.id} key={step.id}>第 {step.sequenceGroup} 组 · {step.processName}{quantityHint}</option>;
+            })}
+          </select>
+          <small>存在并行工序或已释放的下游在制品，请先确认本次实际完成哪一道工序。</small>
+        </label>
+      </section>}
+
+      {loading && <div className="process-completion-loading"><RefreshCw size={18} aria-hidden="true" /><span>正在核对工序数量与历史流转...</span></div>}
+
+      {context && value && <>
+        <section className="process-completion-route" aria-label="本次工序流转">
+          <div><span>当前工序</span><strong>{context.step.processName}</strong><small>第 {context.step.sequenceGroup} 顺序组</small></div>
+          <ArrowRight size={22} aria-hidden="true" />
+          <div><span>良品进入</span><strong>{nextProcessText}</strong><small>{context.nextSteps.length > 1 ? `${context.nextSteps.length} 道并行工序` : context.nextSteps.length ? '下一道工序' : '末道工序完成'}</small></div>
+        </section>
+
+        <section className="process-completion-quantity-summary" aria-label="当前工序数量">
+          <div><span>可投入数量</span><strong>{formatProductionQuantity(context.availableInputQty)}</strong></div>
+          <div><span>累计已处理</span><strong>{formatProductionQuantity(context.processedQty)}</strong></div>
+          <div><span>本次前剩余</span><strong>{formatProductionQuantity(context.remainingInputQty)}</strong></div>
+        </section>
+
+        <section className="process-completion-form">
+          <label>
+            <span>本次实际处理数量</span>
+            <input autoFocus inputMode="numeric" pattern="[0-9]*" min="1" max={context.remainingInputQty} step="1" value={value.processedQty} disabled={saving} onChange={event => setValue({ ...value, processedQty: event.target.value })} />
+            <small>不能超过当前可处理数量 {formatProductionQuantity(context.remainingInputQty)} {unitLabel}</small>
+          </label>
+          <label>
+            <span>不良品数量</span>
+            <input inputMode="numeric" pattern="[0-9]*" min="0" max={processedQty || context.remainingInputQty} step="1" value={value.defectQty} disabled={saving} onChange={event => setValue({ ...value, defectQty: event.target.value })} />
+            <small>良品将自动按“处理数 − 不良数”计算</small>
+          </label>
+          <label>
+            <span>生产归属日期</span>
+            <input type="date" value={value.workDate} disabled={saving} onChange={event => setValue({ ...value, workDate: event.target.value })} />
+            <small>员工稍后领取时仍归属这个生产日期</small>
+          </label>
+          <div className="process-completion-good" aria-live="polite"><span>本次良品</span><strong>{formatProductionQuantity(goodQty)} {unitLabel}</strong><small>{goodDestinationHint}</small></div>
+        </section>
+
+        {defectQty > 0 && <fieldset className="process-completion-disposition">
+          <legend>不良品后续处理</legend>
+          <label className={value.defectDisposition === 'rework' ? 'selected' : ''}><input type="radio" name="defectDisposition" value="rework" checked={value.defectDisposition === 'rework'} disabled={saving} onChange={() => setValue({ ...value, defectDisposition: 'rework' })} /><span><strong>返工</strong><small>建立返工分支，从当前工序重新处理后回接主线。</small></span></label>
+          {!order.parentWorkOrderId && <label className={value.defectDisposition === 'scrap_replenish' ? 'selected' : ''}><input type="radio" name="defectDisposition" value="scrap_replenish" checked={value.defectDisposition === 'scrap_replenish'} disabled={saving} onChange={() => setValue({ ...value, defectDisposition: 'scrap_replenish' })} /><span><strong>报废补产</strong><small>建立补产分支，从首道工序重新生产。</small></span></label>}
+        </fieldset>}
+
+        <section className="process-completion-preview" aria-label="提交结果预览">
+          <header><strong>提交结果预览</strong><span>生产事实与员工领取分开记录</span></header>
+          <div><CheckCircle2 size={18} aria-hidden="true" /><span><strong>{waitsForParallelGroup ? `${formatProductionQuantity(goodQty)} ${unitLabel}良品登记，按同组齐套量进入 ${nextProcessText}` : `${formatProductionQuantity(goodQty)} ${unitLabel}良品进入 ${nextProcessText}`}</strong><small>{goodQty > 0 ? (waitsForParallelGroup ? '提交后由系统返回本次实际转序数量；员工领取工时不影响生产放行' : '下一工序无需等待员工领取工时') : '本批没有可转序良品'}</small></span></div>
+          <div><Clock3 size={18} aria-hidden="true" /><span><strong>{laborPreviewTitle}</strong><small>{standardLaborMilliseconds > 0 ? `标准工时快照约 ${durationText(standardLaborMilliseconds)}；是否即时入池以服务端闭环校验为准` : '生产可继续，班组长需在报表中心补录标准后才能分配'}</small></span></div>
+          {defectQty > 0 && <div className="defect"><AlertTriangle size={18} aria-hidden="true" /><span><strong>{formatProductionQuantity(defectQty)} {unitLabel}进入{defectDispositionText(value.defectDisposition)}</strong><small>分支完成后再形成对应工时，避免原工序重复计工。</small></span></div>}
+        </section>
+
+        {!!context.recentCompletions.length && <section className="process-completion-history">
+          <header><strong>最近转序记录</strong><span>{context.recentCompletions.length} 条</span></header>
+          {context.recentCompletions.slice(0, 4).map(item => <article key={item.id}>
+            <time>{dateText(item.workDate)} · {dateTimeText(item.completedAt)}</time>
+            <span>处理 {formatProductionQuantity(item.processedQty)} / 良品 {formatProductionQuantity(item.goodQty)} / 不良 {formatProductionQuantity(item.defectQty)}</span>
+            <small>{item.branchWorkOrder ? `${item.branchWorkOrder.code} · ${defectDispositionText(item.defectDisposition)}` : '正常流转'}</small>
+          </article>)}
+        </section>}
+      </>}
+
+      {error && <div className="form-error" role="alert">{error}</div>}
+      <div className="dialog-actions">
+        <button type="button" disabled={saving} onClick={close}>取消</button>
+        <button className="primary-button" type="button" disabled={loading || saving || invalid} onClick={save}>{saving ? '正在转序...' : '确认完成并转序'}</button>
+      </div>
+    </aside>
+  </div>;
 }
 
 
@@ -2020,8 +2423,6 @@ function QuantityAdjustmentDrawer({ order, value, setValue, targetInputRef, savi
       <div className="production-quantity-origin"><span>周计划原始总目标</span><strong title={importedText}>{importedText}</strong><small>原始导入值永久保留，生产校正不会要求重新上传计划。</small></div>
       <div className="production-quantity-form-grid">
         <label><span>生产总目标 T</span><input ref={targetInputRef} inputMode="numeric" pattern="[0-9]*" min="1" step="1" value={value.targetQty} disabled={saving} onChange={event => setValue({ ...value, targetQty: event.target.value })} placeholder="请输入大于 0 的整数" /></label>
-        <label><span>累计进入后端 F</span><input inputMode="numeric" pattern="[0-9]*" min="0" step="1" value={value.frontendTransferredQty} disabled={saving} onChange={event => setValue({ ...value, frontendTransferredQty: event.target.value })} placeholder="0" /></label>
-        <label><span>累计完成 C</span><input inputMode="numeric" pattern="[0-9]*" min="0" step="1" value={value.completedQty} disabled={saving} onChange={event => setValue({ ...value, completedQty: event.target.value })} placeholder="0" /></label>
       </div>
       <div className={`production-quantity-live ${preview ? '' : 'invalid'}`} aria-live="polite">
         {preview ? <>
@@ -2034,54 +2435,23 @@ function QuantityAdjustmentDrawer({ order, value, setValue, targetInputRef, savi
       </div>
       <label className="production-quantity-reason"><span>调整原因{requiresReason ? '（必填）' : '（首次补充可选）'}</span><textarea rows={3} maxLength={240} value={value.reason} disabled={saving} onChange={event => setValue({ ...value, reason: event.target.value })} placeholder={requiresReason ? '例如：现场复核后修正总目标' : '例如：补录周计划缺失数量'} /></label>
       {preview?.reopensCompletedOrder && <label className="production-quantity-reopen"><input type="checkbox" checked={value.confirmReopen} disabled={saving} onChange={event => setValue({ ...value, confirmReopen: event.target.checked })} /><span><strong>确认重新打开已完成工单</strong><small>保存后工单会回到{nextStageText}，历史完成记录和调整日志仍保留。</small></span></label>}
-      <p className="production-quantity-rule">数量规则：累计完成 C ≤ 累计进入后端 F ≤ 生产总目标 T。保存后阶段和百分比自动重算。</p>
+      <p className="production-quantity-rule">这里只补充或校正生产总目标；在制品、良品和成品数量必须通过“完成当前工序”形成，不能手工改写。</p>
       {error && <div className="form-error" role="alert">{error}</div>}
       <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving || !preview} onClick={save}>{saving ? '保存中...' : order.quantityTargetSource === 'missing' ? '保存并启用流转' : '保存数量校正'}</button></div>
     </aside>
   </div>;
 }
 
-function UpdateDrawer({ order, value, setValue, saving, error, close, save }: { order: ProductionOrder; value: UpdateForm; setValue: (value: UpdateForm) => void; saving: boolean; error: string; close: () => void; save: () => void }) {
-  const draft = getProductionQuantitySummary({ ...order, completedQty: value.completedQty });
-  return (
-    <div className="production-update-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}><aside className="production-update-drawer" role="dialog" aria-modal="true" aria-label="快速更新工单进度">
-      <div className="dialog-title"><div><strong>更新生产进度</strong><small>{specText(order)} · {order.customerName || '客户待补充'}</small></div><button type="button" aria-label="关闭" onClick={close}>×</button></div>
-      <div className="production-update-product"><strong>{order.productName || '品名待补充'}</strong><span>{order.stageText}</span></div>
-      <div className="production-update-quantity">
-        <div><span>目标数量</span><strong>{formatProductionQuantity(draft.targetQty)}</strong></div>
-        <div><span>当前已完成</span><strong>{formatProductionQuantity(draft.completedQty)}</strong></div>
-        <div><span>当前剩余</span><strong>{formatProductionQuantity(draft.remainingQty)}</strong></div>
-      </div>
-      <div className="production-update-form">
-        {order.quantityFlow.materialized
-          ? <div className="production-flow-edit-note"><strong>数量由“下一步”流转维护</strong><span>此处仅记录生产进度备注，避免绕过分批数量校验。</span></div>
-          : <label><span>累计完成数量</span><input inputMode="decimal" value={value.completedQty} onChange={event => setValue({ ...value, completedQty: event.target.value })} placeholder="请输入累计完成数量" /></label>}
-        <label><span>进度备注</span><div className="production-voice-field"><textarea value={value.remark} onChange={event => setValue({ ...value, remark: event.target.value })} rows={4} placeholder="记录首件、批量生产或异常处理进度" /><VoiceInputButton value={value.remark} onChange={remark => setValue({ ...value, remark })} label="进度备注语音输入" /></div></label>
-      </div>
-      {error && <div className="form-error">{error}</div>}
-      <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={save}>{saving ? '保存中...' : '保存进度'}</button></div>
-    </aside></div>
-  );
-}
-
-function NextStepDialog({ request, quantity, setQuantity, saving, error, close, confirm }: {
+function NextStepDialog({ request, saving, error, close, confirm }: {
   request: NextStepRequest;
-  quantity: string;
-  setQuantity: (value: string) => void;
   saving: boolean;
   error: string;
   close: () => void;
   confirm: () => void;
 }) {
-  const { order, action } = request;
+  const { order } = request;
   const flow = order.quantityFlow;
-  const isDrawingConfirmation = action === 'confirm_drawing_issued';
-  const title = isDrawingConfirmation
-    ? '确认图纸已下发并进入前端'
-    : action === 'transfer_to_backend'
-      ? '前端数量进入后端'
-      : '确认后端完成数量';
-  const quantityLabel = action === 'transfer_to_backend' ? '本次进入后端数量' : '本次完成数量';
+  const title = '确认图纸已下发并进入首道工序';
   return <div className="modal-backdrop"><section className="production-dialog production-next-step-dialog" role="dialog" aria-modal="true" aria-label={title}>
     <div className="dialog-title"><div><strong>{title}</strong><small>{order.customerName || '客户待补充'} · {specText(order)}</small></div><button type="button" disabled={saving} onClick={close} aria-label="关闭">×</button></div>
     <div className="production-flow-summary" aria-label="当前生产数量">
@@ -2090,9 +2460,7 @@ function NextStepDialog({ request, quantity, setQuantity, saving, error, close, 
       <div><span>后端待完成 F-C</span><strong>{formatProductionQuantity(flow.backendRemainingQty)}</strong></div>
       <div><span>累计已完成 C</span><strong>{formatProductionQuantity(flow.completedQty)}</strong></div>
     </div>
-    {isDrawingConfirmation
-      ? <p className="production-flow-confirm-copy">确认后，图纸状态将更新为“已发”，工单进入前端；目标数量和已有资料不会改变。</p>
-      : <label className="production-flow-quantity-input"><span>{quantityLabel}</span><input autoFocus inputMode="numeric" pattern="[0-9]*" value={quantity} onChange={event => setQuantity(event.target.value)} disabled={saving} aria-describedby="production-flow-limit" /><small id="production-flow-limit">仅支持正整数，默认填写当前阶段全部可流转数量。</small></label>}
+    <p className="production-flow-confirm-copy">确认后，图纸状态将更新为“已发”，工单进入已发布工艺路线的首道工序；目标数量和已有资料不会改变。</p>
     {error && <div className="form-error" role="alert">{error}</div>}
     <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={confirm}>{saving ? '提交中...' : '确认下一步'}</button></div>
   </section></div>;
@@ -2109,27 +2477,33 @@ function StageChangeDialog({ request, saving, close, confirm }: { request: Stage
   </section></div>;
 }
 
-function CompletionSuggestionDialog({ order, saving, close, confirm }: { order: ProductionOrder; saving: boolean; close: () => void; confirm: () => void }) {
-  return <div className="modal-backdrop"><section className="production-dialog production-stage-confirm" role="dialog" aria-modal="true" aria-label="数量完成提示">
-    <div className="dialog-title"><div><strong>数量已经完成</strong><small>{specText(order)} · {formatProductionPercentage(order.quantitySummary.percentage)}</small></div><button type="button" onClick={close} aria-label="关闭">×</button></div>
-    <p className="production-complete-note">累计完成数量已达到目标。是否同步把工单状态更新为“已完成”？</p>
-    <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>暂不修改状态</button><button className="primary-button" type="button" disabled={saving} onClick={confirm}>{saving ? '更新中...' : '同步标记已完成'}</button></div>
-  </section></div>;
-}
-
-function DetailDialog({ order, readOnly, tab, setTab, progressLogs, progressLoading, close, update, adjustQuantity, resources, drawingLibrary }: { order: ProductionOrder; readOnly: boolean; tab: DetailTab; setTab: (tab: DetailTab) => void; progressLogs: ProgressLog[]; progressLoading: boolean; close: () => void; update: () => void; adjustQuantity: () => void; resources: () => void; drawingLibrary: () => void }) {
+function DetailDialog({ order, readOnly, tab, setTab, progressLogs, progressLoading, close, adjustQuantity, resources, drawingLibrary }: { order: ProductionOrder; readOnly: boolean; tab: DetailTab; setTab: (tab: DetailTab) => void; progressLogs: ProgressLog[]; progressLoading: boolean; close: () => void; adjustQuantity: () => void; resources: () => void; drawingLibrary: () => void }) {
   return (
     <div className="modal-backdrop"><section className="production-dialog detail" role="dialog" aria-modal="true" aria-label="生产工单详情">
       <div className="dialog-title"><div><strong>{specText(order)}</strong><small>{order.customerName || '客户待补充'} · {order.productName || '品名待补充'}</small></div><button type="button" aria-label="关闭" onClick={close}>×</button></div>
       <div className="production-detail-tabs">{([['production', '生产信息'], ['drawing', '工单资料'], ['progress', '进度记录'], ['source', '来源信息']] as Array<[DetailTab, string]>).map(item => <button className={tab === item[0] ? 'active' : ''} type="button" key={item[0]} onClick={() => setTab(item[0])}>{item[1]}</button>)}</div>
       <div className="production-detail-body">
-        {tab === 'production' && <InfoGrid items={[
+        {tab === 'production' && <><InfoGrid items={[
           ['状态', order.stageText], ['优先级', priorityText(order.priority)], ['周计划原始目标', order.importedTargetQty === null ? order.uncompletedQty || '-' : formatProductionQuantity(order.importedTargetQty)], ['当前生产目标', formatProductionQuantity(order.quantitySummary.targetQty)],
+          ...(order.branchType ? [
+            ['分支类型', branchTypeText(order.branchType)],
+            ['主工单', order.parentWorkOrder?.code || '-'],
+            ['来源工序', order.originStep?.processName || '-'],
+            ['回接工序', order.rejoinStep?.processName || '成品汇总'],
+          ] as Array<[string, string]> : []),
           ['工艺路线', order.processRoute?.statusText || '沿用前后端流程'], ['当前工序', order.processRoute?.currentStep?.processName || (order.processRoute?.status === 'confirmed' ? '等待图纸下发' : '-')], ['工序进度', order.processRoute ? `${order.processRoute.completedStepCount}/${order.processRoute.stepCount}（${order.processRoute.progress}%）` : '-'],
           ['数量来源', quantitySourceText(order)], ['累计进入后端', formatProductionQuantity(order.quantityFlow.frontendTransferredQty)], ['累计完成', formatProductionQuantity(order.quantitySummary.completedQty)], ['整体进度', formatProductionPercentage(order.quantitySummary.percentage)],
           ['交期', deliveryText(order) || '-'], ['图纸', order.drawingStatus || '-'], ['仓库配料', warehouseMaterialText(order)], ['仓库异常', warehouseExceptionDetail(order)], ['开始时间', dateTimeText(order.startedAt)],
           ['完成时间', dateTimeText(order.completedAt)], ['最近更新', dateTimeText(order.lastProgressAt)], ['最近进度', order.latestProgressRemark || '暂无进度备注'],
-        ]} />}
+        ]} />
+        {!!order.branchWorkOrders?.length && <section className="production-branch-list" aria-label="关联不良品分支">
+          <header><strong>关联不良品分支</strong><span>{order.branchWorkOrders.length} 单</span></header>
+          <div>{order.branchWorkOrders.map(branch => <article key={branch.id}>
+            <span><b>{branch.code}</b><small>{branchTypeText(branch.branchType)} · {branch.productionTargetQty || 0} {branch.unitLabel || '件'}</small></span>
+            <span><b>{branch.currentProcessName || (branch.routeStatus === 'completed' ? '路线已完成' : '工序待确认')}</b><small>{branchStatusText(branch.branchStatus)}</small></span>
+            <a href={`/workspace/workflows?workOrderId=${encodeURIComponent(branch.id)}&from=production&returnTo=${encodeURIComponent('/production')}`}>查看分支流程</a>
+          </article>)}</div>
+        </section>}</>}
         {tab === 'drawing' && <div className="production-drawing-detail"><div className="production-drawing-score"><span>工单资料完整度</span><strong>{order.documentFilledCount}/{order.documentTotalCount || 5}</strong></div><div className="production-category-status">{categoryLabels.map(category => <span className={order.documentCategoryCodes.includes(category.code) ? 'ready' : 'missing'} key={category.code}><i />{category.label}<b>{order.documentCategoryCodes.includes(category.code) ? '已有资料' : '待补充'}</b></span>)}</div><div className="production-drawing-actions"><button className="primary-button" type="button" onClick={resources}>打开工单资料</button><button type="button" onClick={drawingLibrary}>查看图纸资料库</button></div></div>}
         {tab === 'progress' && <div className="production-progress-list">{progressLoading && <div className="production-loading">进度记录加载中...</div>}{progressLogs.map(log => <article key={log.id}><time>{dateTimeText(log.createdAt)}</time><strong>{log.createdBy || '操作人未记录'}</strong><span>状态：{log.previousStageText && log.previousStage !== log.stage ? `${log.previousStageText} → ` : ''}{log.stageText}</span>{log.completedQty && <span>完成：{log.completedQty}</span>}{(log.productionOwner || log.workstation) && <span>历史记录：{log.productionOwner || ''}{log.productionOwner && log.workstation ? ' · ' : ''}{log.workstation || ''}</span>}<p>{log.remark || '未填写备注'}</p></article>)}{!progressLoading && !progressLogs.length && <div className="production-task-empty">暂无进度记录</div>}</div>}
         {tab === 'source' && <InfoGrid items={[
@@ -2138,7 +2512,7 @@ function DetailDialog({ order, readOnly, tab, setTab, progressLogs, progressLoad
           ['工序', order.processName || '-'], ['单位工时', order.unitWorkHours || '-'], ['总工时', order.totalWorkHours || '-'], ['图纸说明', order.drawingIssueNote || '-'],
         ]} />}
       </div>
-      <div className="dialog-actions"><button type="button" onClick={resources}>工单资料</button>{!readOnly && <button type="button" onClick={adjustQuantity}>校正数量</button>}{!readOnly && <button className="primary-button" type="button" onClick={update}>更新进度</button>}<button type="button" onClick={close}>关闭</button></div>
+      <div className="dialog-actions"><button type="button" onClick={resources}>工单资料</button>{!readOnly && !order.parentWorkOrderId && !order.processRoute?.steps.some(step => (step.completionCount || 0) > 0) && <button type="button" onClick={adjustQuantity}>校正数量</button>}<button className="primary-button" type="button" onClick={close}>关闭</button></div>
     </section></div>
   );
 }
@@ -2169,12 +2543,10 @@ function AdvancedFilterPanel({ customers, value, setValue, clear, apply }: { cus
   </section>;
 }
 
-function BatchDialog({ count, operation, value, remark, confirm, saving, error, setValue, setRemark, setConfirm, close, save }: { count: number; operation: BatchOperation; value: string; remark: string; confirm: string; saving: boolean; error: string; setValue: (value: string) => void; setRemark: (value: string) => void; setConfirm: (value: string) => void; close: () => void; save: () => void }) {
-  const labels: Record<BatchOperation, string> = { set_priority: '批量设置优先级', set_stage: '批量修改状态', add_remark: '批量添加进度备注' };
+function BatchDialog({ count, operation, value, remark, saving, error, setValue, setRemark, close, save }: { count: number; operation: BatchOperation; value: string; remark: string; saving: boolean; error: string; setValue: (value: string) => void; setRemark: (value: string) => void; close: () => void; save: () => void }) {
+  const labels: Record<BatchOperation, string> = { set_priority: '批量设置优先级', add_remark: '批量添加进度备注' };
   return <div className="modal-backdrop"><section className="production-dialog batch" role="dialog" aria-modal="true" aria-label={labels[operation]}><div className="dialog-title"><div><strong>{labels[operation]}</strong><small>将更新已选的 {count} 个当前周工单</small></div><button type="button" aria-label="关闭" onClick={close}>×</button></div><div className="production-batch-form">
     {operation === 'set_priority' && <label><span>优先级</span><select value={value} onChange={event => setValue(event.target.value)}><option value="">请选择</option><option value="urgent">紧急</option><option value="high">高</option><option value="normal">一般</option></select></label>}
-    {operation === 'set_stage' && <label><span>新状态</span><select value={value} onChange={event => { setValue(event.target.value); setConfirm(''); }}><option value="">请选择</option>{stages.map(stage => <option value={stage.key} key={stage.key}>{stage.label}</option>)}</select></label>}
     <label><span>{operation === 'add_remark' ? '进度备注' : '附加进度备注（可选）'}</span><div className="production-voice-field"><textarea value={remark} onChange={event => setRemark(event.target.value)} rows={3} /><VoiceInputButton value={remark} onChange={setRemark} label="批量进度备注语音输入" /></div></label>
-    {operation === 'set_stage' && value === 'completed' && <label className="danger-confirm-inline"><span>批量完成不可误触，请输入 COMPLETE_BATCH</span><input value={confirm} onChange={event => setConfirm(event.target.value)} placeholder="COMPLETE_BATCH" /></label>}
-  </div>{error && <div className="form-error">{error}</div>}<div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className={operation === 'set_stage' && value === 'completed' ? 'danger-button' : 'primary-button'} type="button" disabled={saving || (operation !== 'add_remark' && !value) || (operation === 'add_remark' && !remark.trim()) || (operation === 'set_stage' && value === 'completed' && confirm.trim() !== 'COMPLETE_BATCH')} onClick={save}>{saving ? '处理中...' : '确认批量更新'}</button></div></section></div>;
+  </div>{error && <div className="form-error">{error}</div>}<div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving || (operation !== 'add_remark' && !value) || (operation === 'add_remark' && !remark.trim())} onClick={save}>{saving ? '处理中...' : '确认批量更新'}</button></div></section></div>;
 }

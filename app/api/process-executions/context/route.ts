@@ -31,6 +31,11 @@ export async function GET(req: NextRequest) {
             select: { goodQty: true, endedAt: true },
             orderBy: { endedAt: 'desc' },
           },
+          completions: {
+            where: { voidedAt: null },
+            select: { goodQty: true, completedAt: true },
+            orderBy: { completedAt: 'desc' },
+          },
           route: { include: { workOrder: true } },
         },
       }),
@@ -87,7 +92,8 @@ export async function GET(req: NextRequest) {
         : null;
     const resolution = resolveEffectiveFrontendTransferredQty(step.route.workOrder);
     const targetQuantity = resolution.ok ? resolution.state.targetQty : 0;
-    const reportedGoodQuantity = step.executions.reduce((total, execution) => total + execution.goodQty, 0);
+    const reportedGoodQuantity = step.executions.reduce((total, execution) => total + execution.goodQty, 0)
+      + step.completions.reduce((total, completion) => total + completion.goodQty, 0);
     const remainingGoodQuantity = Math.max(0, targetQuantity - reportedGoodQuantity);
     const latestExecution = step.executions[0] || null;
     return NextResponse.json({

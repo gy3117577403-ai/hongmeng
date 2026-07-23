@@ -5,7 +5,7 @@ import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { prepareExecutionUpdate, type ExecutionUpdateInput } from '@/lib/work-order-execution';
-import { isActiveProductionWorkOrder, normalizeWorkOrderStage } from '@/lib/work-orders';
+import { isActiveProductionWorkOrder } from '@/lib/work-orders';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,7 +16,6 @@ type BatchBody = {
   operation?: unknown;
   value?: unknown;
   remark?: unknown;
-  confirmText?: unknown;
 };
 
 const operations = new Set<BatchOperation>(['set_owner', 'set_workstation', 'set_priority', 'set_stage', 'add_remark']);
@@ -38,23 +37,14 @@ export async function POST(req: NextRequest) {
     if (!ids.length) return NextResponse.json({ ok: false, error: '请至少选择一个工单' }, { status: 400 });
     if (ids.length > 200) return NextResponse.json({ ok: false, error: '单次最多批量处理 200 个工单' }, { status: 400 });
     if (!operations.has(operation)) return NextResponse.json({ ok: false, error: '批量操作类型不正确' }, { status: 400 });
-
     if (operation === 'set_stage') {
-      const stage = normalizeWorkOrderStage(body.value);
-      if (!stage) return NextResponse.json({ ok: false, error: '生产状态不正确' }, { status: 400 });
-      const expected = stage === 'completed' ? 'COMPLETE_BATCH' : 'CONFIRM';
-      if (String(body.confirmText || '').trim() !== expected) {
-        return NextResponse.json({ ok: false, error: stage === 'completed' ? '请输入 COMPLETE_BATCH 确认批量完成' : '请确认批量状态修改' }, { status: 400 });
-      }
+      return NextResponse.json({
+        ok: false,
+        error: '生产状态只能由图纸下发和“完成当前工序”流程推进，不能批量改写',
+      }, { status: 409 });
     }
 
     const orders = await prisma.workOrder.findMany({ where: { id: { in: ids }, deletedAt: null } });
-    const processRoutedIds = operation === 'set_stage'
-      ? new Set((await prisma.workOrderProcessRoute.findMany({
-          where: { workOrderId: { in: ids } },
-          select: { workOrderId: true },
-        })).map(route => route.workOrderId))
-      : new Set<string>();
     const byId = new Map(orders.map(order => [order.id, order]));
     const prepared: Array<{ old: WorkOrder; update: NonNullable<ReturnType<typeof prepareExecutionUpdate>['update']> }> = [];
     const failed: Array<{ id: string; ok: false; error: string }> = [];
@@ -67,14 +57,6 @@ export async function POST(req: NextRequest) {
       }
       if (!isActiveProductionWorkOrder(order)) {
         failed.push({ id, ok: false, error: '历史周和下周草稿为只读' });
-        continue;
-      }
-      if (operation === 'set_stage' && order.frontendTransferredQty !== null) {
-        failed.push({ id, ok: false, error: '该工单已启用分批数量流转，请使用“下一步”更新生产数量' });
-        continue;
-      }
-      if (operation === 'set_stage' && processRoutedIds.has(order.id)) {
-        failed.push({ id, ok: false, error: '该工单已启用完整工艺路线，请按当前工序推进' });
         continue;
       }
       const result = prepareExecutionUpdate(order, input);

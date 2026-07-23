@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   abnormalCategoryLabel,
   attendanceRange,
@@ -23,7 +23,7 @@ const include = {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const actor = await requireUser();
     const period = req.nextUrl.searchParams.get('period') === 'month'
       ? 'month' as const
       : req.nextUrl.searchParams.get('period') === 'week'
@@ -32,9 +32,35 @@ export async function GET(req: NextRequest) {
     const range = attendanceRange(period, req.nextUrl.searchParams.get('date'));
     const start = parseWorkDate(range.start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const end = parseWorkDate(range.end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
+    let scopedEmployeeIds: string[] | null = null;
+    if (actor.laborRole === 'EMPLOYEE') {
+      if (!actor.employee?.isActive) return forbidden('账号未绑定在职员工档案，无法查看异常工时');
+      scopedEmployeeIds = [actor.employee.id];
+    } else if (actor.laborRole === 'TEAM_LEAD') {
+      const team = actor.employee?.isActive ? String(actor.employee.team || '').trim() : '';
+      if (!team) return forbidden('班组长账号未绑定有效班组，无法查看异常工时');
+      scopedEmployeeIds = (await prisma.employee.findMany({
+        where: { isActive: true, team },
+        select: { id: true },
+      })).map(employee => employee.id);
+    }
     const events = await prisma.abnormalTimeEvent.findMany({
-      where: { deletedAt: null, workDate: { gte: start, lt: end } },
-      include,
+      where: {
+        deletedAt: null,
+        workDate: { gte: start, lt: end },
+        ...(scopedEmployeeIds
+          ? { allocations: { some: { employeeId: { in: scopedEmployeeIds } } } }
+          : {}),
+      },
+      include: {
+        ...include,
+        allocations: {
+          ...include.allocations,
+          ...(scopedEmployeeIds
+            ? { where: { employeeId: { in: scopedEmployeeIds } } }
+            : {}),
+        },
+      },
       orderBy: [{ startedAt: 'desc' }, { sequence: 'desc' }],
       take: 2000,
     });

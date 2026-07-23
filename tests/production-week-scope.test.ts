@@ -3,7 +3,10 @@ import test from 'node:test';
 import { chinaDateKey } from '../lib/china-date';
 import {
   hasRequiredProductionDocuments,
+  isRootProductionOrder,
   naturalProductionWeek,
+  productionFiltersFromSearchParams,
+  productionRootWeekWhere,
   productionWeekWhere,
 } from '../lib/production-execution';
 import {
@@ -39,6 +42,27 @@ test('production week scopes keep current, next, and carryover queries separate'
   assert.match(next, /"planClearedAt":null/);
   assert.match(carryover, /"lt":"2026-07-19T16:00:00.000Z"/);
   assert.doesNotMatch(carryover, /"planActive"/);
+});
+
+test('production list scope keeps branch rows while root summary scope excludes them', () => {
+  const start = new Date('2026-07-19T16:00:00.000Z');
+  const end = new Date('2026-07-25T16:00:00.000Z');
+  const listWhere = JSON.stringify(productionWeekWhere({ scope: 'current', weekStart: start, weekEnd: end }));
+  const summaryWhere = JSON.stringify(productionRootWeekWhere({ scope: 'current', weekStart: start, weekEnd: end }));
+
+  assert.doesNotMatch(listWhere, /"parentWorkOrderId"/);
+  assert.match(summaryWhere, /"parentWorkOrderId":null/);
+  assert.equal(isRootProductionOrder({ parentWorkOrderId: null }), true);
+  assert.equal(isRootProductionOrder({ parentWorkOrderId: 'branch-parent-1' }), false);
+});
+
+test('production execution accepts an exact work-order deep-link target', () => {
+  const filters = productionFiltersFromSearchParams(new URLSearchParams({
+    workOrderId: 'work-order-branch-1',
+    keyword: 'ignored only when it does not match the target',
+  }));
+  assert.equal(filters.workOrderId, 'work-order-branch-1');
+  assert.equal(filters.keyword, 'ignored only when it does not match the target');
 });
 
 test('production documents require an original drawing but not every optional category', () => {

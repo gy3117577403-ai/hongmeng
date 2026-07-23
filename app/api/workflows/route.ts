@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { loadWorkflowCenter } from '@/lib/workflows';
 import type { WorkflowEntityType, WorkflowProcessStatus, WorkflowWeekScope } from '@/types';
 
@@ -12,7 +12,8 @@ const weekScopes: WorkflowWeekScope[] = ['all', 'carryover', 'current', 'next', 
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
+    if (user.laborRole === 'EMPLOYEE') return forbidden('员工账号请在报表中心领取本人今日工时');
     const params = req.nextUrl.searchParams;
     const keyword = String(params.get('keyword') || '').trim().slice(0, 160);
     const entityType = String(params.get('entityType') || 'all') as WorkflowEntityType | 'all';
@@ -32,7 +33,18 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: '生产周范围筛选不正确' }, { status: 400 });
     }
 
-    const result = await loadWorkflowCenter({ keyword, entityType, status, overdue, batchId, workOrderId, weekScope });
+    const result = await loadWorkflowCenter({
+      keyword,
+      entityType,
+      status,
+      overdue,
+      batchId,
+      workOrderId,
+      weekScope,
+      laborEmployeeTeam: user.laborRole === 'TEAM_LEAD'
+        ? String(user.employee?.team || '__UNBOUND_TEAM_LEAD__').trim()
+        : undefined,
+    });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

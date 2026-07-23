@@ -3,6 +3,10 @@ import { sanitizeSnapshotValue, workOrderSnapshot } from '@/lib/change-snapshots
 import { prisma } from '@/lib/prisma';
 import { prepareProductionQuantityAdjustment } from '@/lib/production-quantity-adjustment';
 import { parsedImportedProductionTarget } from '@/lib/production-quantity';
+import {
+  loadProcessQuantityLedgerState,
+  processQuantityLedgerIsLocked,
+} from '@/lib/process-quantity-ledger-guard';
 import { parseExecutionVersion, resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
 import { isActiveProductionWorkOrder, legacyStatusForStage, normalizeWorkOrderStage } from '@/lib/work-orders';
 
@@ -78,10 +82,30 @@ export async function adjustProductionQuantities(input: ProductionQuantityAdjust
       if (!old) throw new ProductionQuantityAdjustmentServiceError('工单不存在', 404, 'WORK_ORDER_NOT_FOUND');
       validateActiveWeeklyOrder(old);
       if (old.executionVersion !== expectedVersion.value) throw conflict();
-      const processRoute = await tx.workOrderProcessRoute.findUnique({
-        where: { workOrderId: old.id },
-        select: { status: true },
+      const processRoute = await loadProcessQuantityLedgerState(tx, old.id);
+      const activeBranchCount = await tx.workOrder.count({
+        where: {
+          deletedAt: null,
+          branchStatus: { notIn: ['RESOLVED', 'CANCELLED'] },
+          OR: [
+            { parentWorkOrderId: old.id },
+            { rootWorkOrderId: old.id },
+          ],
+        },
       });
+      if (
+        old.parentWorkOrderId
+        || processQuantityLedgerIsLocked(processRoute)
+        || activeBranchCount > 0
+        || Number(old.frontendTransferredQty || 0) > 0
+        || Number(old.completedQty || 0) > 0
+      ) {
+        throw new ProductionQuantityAdjustmentServiceError(
+          '该工单已进入工序数量账本或存在未闭环分支，不能再直接校正汇总数量',
+          409,
+          'PROCESS_QUANTITY_LEDGER_LOCKED',
+        );
+      }
 
       const prepared = prepareProductionQuantityAdjustment({
         targetQty: input.targetQty,
@@ -91,6 +115,13 @@ export async function adjustProductionQuantities(input: ProductionQuantityAdjust
       });
       if (!prepared.ok) {
         throw new ProductionQuantityAdjustmentServiceError(prepared.message, 400, prepared.code);
+      }
+      if (prepared.value.frontendTransferredQty > 0 || prepared.value.completedQty > 0) {
+        throw new ProductionQuantityAdjustmentServiceError(
+          '在制品和成品数量必须通过已发布工艺路线的工序完成记录形成',
+          409,
+          'PROCESS_QUANTITY_LEDGER_LOCKED',
+        );
       }
 
       const beforeQuantity = quantityState(old);
@@ -110,14 +141,6 @@ export async function adjustProductionQuantities(input: ProductionQuantityAdjust
           'REOPEN_CONFIRMATION_REQUIRED',
         );
       }
-      if (processRoute?.status === 'completed' && prepared.value.reopensCompletedOrder) {
-        throw new ProductionQuantityAdjustmentServiceError(
-          '完整工艺路线已经完成，不能仅通过数量校正重新打开，请先处理工艺路线状态',
-          409,
-          'PROCESS_ROUTE_REOPEN_REQUIRED',
-        );
-      }
-
       const reason = reasonInput || '补充缺失生产数量';
       const importedTargetQty = parsedImportedProductionTarget(old.uncompletedQty);
       const targetOverride = importedTargetQty === prepared.value.targetQty ? null : prepared.value.targetQty;

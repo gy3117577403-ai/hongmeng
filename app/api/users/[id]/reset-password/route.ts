@@ -1,6 +1,12 @@
 import bcrypt from 'bcryptjs';
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  forbidden,
+  ForbiddenError,
+  requireAdmin,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 
@@ -9,7 +15,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const current = await requireUser();
+    const current = await requireAdmin();
     const body = await req.json().catch(() => ({})) as { password?: string };
     const password = String(body.password || '');
     if (password.length < 6) return NextResponse.json({ ok: false, error: '新密码至少 6 位' }, { status: 400 });
@@ -22,6 +28,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof ForbiddenError) return forbidden('只有管理员可以重置其他账号密码');
     return NextResponse.json({ ok: false, error: '重置密码失败' }, { status: 500 });
   }
 }

@@ -138,7 +138,10 @@ export async function POST(req: NextRequest) {
       }
       if (currentWorkOrderIds.length) {
         await tx.workOrder.updateMany({
-          where: { id: { in: currentWorkOrderIds } },
+          where: {
+            id: { in: currentWorkOrderIds },
+            completedAt: { not: null },
+          },
           data: { planActive: false, planClearedAt: now, planClearedBy: user.displayName || user.username },
         });
       }

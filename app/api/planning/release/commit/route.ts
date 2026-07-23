@@ -42,6 +42,12 @@ export async function POST(req: NextRequest) {
     if (message === 'PLAN_BATCH_NOT_FOUND' || message === 'PLAN_BATCH_ARCHIVED') {
       return NextResponse.json({ ok: false, error: '排产批次不存在或已经归档' }, { status: 409 });
     }
+    if (message === 'PLAN_ACTIVE_BATCH_CANNOT_MOVE_TO_PREPARATION') {
+      return NextResponse.json({
+        ok: false,
+        error: '本周执行批次不能退回下周预备；未开工请走撤回流程，已开工必须继续闭环',
+      }, { status: 409 });
+    }
     if (message === 'PLAN_BATCH_SELECTION_INVALID') {
       return NextResponse.json({ ok: false, error: '部分排产批次不存在或已删除' }, { status: 404 });
     }

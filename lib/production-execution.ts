@@ -39,6 +39,37 @@ export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclu
   processRoute: {
     include: processRouteSummaryInclude,
   },
+  parentWorkOrder: {
+    select: { id: true, code: true },
+  },
+  branchWorkOrders: {
+    where: { deletedAt: null },
+    orderBy: [{ branchSequence: 'asc' }, { createdAt: 'asc' }],
+    select: {
+      id: true,
+      code: true,
+      branchType: true,
+      branchStatus: true,
+      productionTargetQty: true,
+      processRoute: {
+        select: {
+          status: true,
+          steps: {
+            where: { status: 'current' },
+            orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }],
+            take: 1,
+            select: { processName: true, unitLabel: true },
+          },
+        },
+      },
+    },
+  },
+  originStep: {
+    select: { id: true, processName: true },
+  },
+  rejoinStep: {
+    select: { id: true, processName: true },
+  },
 });
 
 export type ProductionExecutionOrderRecord = Prisma.WorkOrderGetPayload<{
@@ -58,6 +89,7 @@ export type ProductionExecutionView = 'board' | 'today' | 'exceptions';
 export type ProductionWeekScope = 'current' | 'carryover' | 'next' | 'history';
 
 export type ProductionExecutionFilters = {
+  workOrderId?: string;
   keyword?: string;
   quick?: string[];
   customers?: string[];
@@ -132,6 +164,7 @@ export function productionFiltersFromSearchParams(params: URLSearchParams): Prod
   const dueTo = validatedDate(params.get('dueTo') || params.get('deliveryTo'));
   if (dueFrom && dueTo && dueFrom > dueTo) throw new Error('交期开始日期不能晚于结束日期');
   return {
+    workOrderId: text(params.get('workOrderId')).slice(0, 120),
     keyword: text(params.get('keyword')).slice(0, 160),
     quick: (params.get('quick') || '').split(',').map(item => item.trim()).filter(item => validQuickFilters.has(item)),
     customers: [...new Set(customers)],
@@ -221,6 +254,7 @@ export async function resolveProductionWeek(
     where: {
       deletedAt: null,
       planType: { in: ['weekly_plan', 'managed_plan'] },
+      parentWorkOrderId: null,
       weekStartDate: { lt: natural.start },
     },
     select: { weekStartDate: true, weekEndDate: true },
@@ -250,20 +284,28 @@ export function productionWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhere
   };
 }
 
+export function productionRootWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhereInput {
+  return {
+    ...productionWeekWhere(week),
+    parentWorkOrderId: null,
+  };
+}
+
 export async function loadProductionWeekNavigation(now = new Date()): Promise<ProductionWeekNavigation> {
   const natural = naturalProductionWeek(now);
   const nextStart = addDays(natural.start, 7);
   const [currentCount, nextCount, priorOrders, historicalOrders] = await Promise.all([
-    prisma.workOrder.count({ where: productionWeekWhere({ scope: 'current', weekStart: natural.start, weekEnd: natural.end }) }),
-    prisma.workOrder.count({ where: productionWeekWhere({ scope: 'next', weekStart: nextStart, weekEnd: addDays(nextStart, 6) }) }),
+    prisma.workOrder.count({ where: productionRootWeekWhere({ scope: 'current', weekStart: natural.start, weekEnd: natural.end }) }),
+    prisma.workOrder.count({ where: productionRootWeekWhere({ scope: 'next', weekStart: nextStart, weekEnd: addDays(nextStart, 6) }) }),
     prisma.workOrder.findMany({
-      where: productionWeekWhere({ scope: 'carryover', weekStart: natural.start, weekEnd: natural.end }),
+      where: productionRootWeekWhere({ scope: 'carryover', weekStart: natural.start, weekEnd: natural.end }),
       select: { stage: true, status: true },
     }),
     prisma.workOrder.findMany({
       where: {
         deletedAt: null,
         planType: { in: ['weekly_plan', 'managed_plan'] },
+        parentWorkOrderId: null,
         weekStartDate: { lt: natural.start },
       },
       select: { weekStartDate: true, weekEndDate: true },
@@ -425,6 +467,24 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     completedQty: order.completedQty,
     frontendTransferredQty: order.frontendTransferredQty,
     executionVersion: order.executionVersion,
+    parentWorkOrderId: order.parentWorkOrderId,
+    parentWorkOrder: order.parentWorkOrder,
+    branchWorkOrders: order.branchWorkOrders.map(branch => ({
+      id: branch.id,
+      code: branch.code,
+      branchType: branch.branchType,
+      branchStatus: branch.branchStatus,
+      productionTargetQty: branch.productionTargetQty,
+      routeStatus: branch.processRoute?.status || null,
+      currentProcessName: branch.processRoute?.steps[0]?.processName || null,
+      unitLabel: branch.processRoute?.steps[0]?.unitLabel || null,
+    })),
+    rootWorkOrderId: order.rootWorkOrderId,
+    branchType: order.branchType,
+    branchStatus: order.branchStatus,
+    originStep: order.originStep,
+    rejoinStep: order.rejoinStep,
+    branchSequence: order.branchSequence,
     quantityFlow,
     startedAt: order.startedAt?.toISOString() || null,
     completedAt: order.completedAt?.toISOString() || null,
@@ -470,6 +530,10 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     weekEndDate: order.weekEndDate?.toISOString() || null,
     updatedAt: order.updatedAt.toISOString(),
   };
+}
+
+export function isRootProductionOrder(order: Pick<ProductionExecutionOrderRecord, 'parentWorkOrderId'>): boolean {
+  return order.parentWorkOrderId === null;
 }
 
 function inChinaDay(value: Date | null | undefined, now = new Date()) {
@@ -535,6 +599,7 @@ function matchesDuePreset(order: ProductionExecutionOrderRecord, preset: string 
 }
 
 function matchesFilters(order: ProductionExecutionOrderRecord, filters: ProductionExecutionFilters, week: ProductionWeek, now = new Date()) {
+  if (filters.workOrderId) return order.id === filters.workOrderId;
   const keyword = lower(filters.keyword);
   if (keyword) {
     const haystack = [order.specification, order.customerName, order.productName, order.code, order.sourceOrderNo, order.latestProgressRemark]
@@ -647,13 +712,15 @@ export function compareProductionOrders(first: ProductionExecutionOrderRecord, s
     || text(first.specification).localeCompare(text(second.specification), 'zh-CN');
 }
 
-export async function loadProductionOrders(week: ProductionWeek) {
+export async function loadProductionOrders(week: ProductionWeek, workOrderId?: string) {
   const orders = await prisma.workOrder.findMany({
-    where: productionWeekWhere(week),
+    where: workOrderId
+      ? { id: workOrderId, deletedAt: null }
+      : productionWeekWhere(week),
     include: productionExecutionInclude,
     orderBy: [{ priority: 'asc' }, { plannedAt: 'asc' }, { createdAt: 'asc' }],
   });
-  return week.scope === 'carryover'
+  return !workOrderId && week.scope === 'carryover'
     ? orders.filter(order => normalizeWorkOrderStage(order.stage || order.status) !== 'completed')
     : orders;
 }
@@ -666,15 +733,15 @@ export async function loadProductionExecution(input: {
   pageSize?: number;
 }) {
   const now = new Date();
-  const all = await loadProductionOrders(input.week);
   const filters = input.filters || {};
+  const all = await loadProductionOrders(input.week, filters.workOrderId);
   let filtered = all.filter(order => matchesFilters(order, filters, input.week, now));
-  if (input.view === 'today') filtered = filtered.filter(order => isTodayTask(order, now));
-  if (input.view === 'exceptions') filtered = filtered.filter(order => productionExceptionCodes(order, now).length > 0);
+  if (!filters.workOrderId && input.view === 'today') filtered = filtered.filter(order => isTodayTask(order, now));
+  if (!filters.workOrderId && input.view === 'exceptions') filtered = filtered.filter(order => productionExceptionCodes(order, now).length > 0);
   filtered.sort((first, second) => compareProductionOrders(first, second, now));
 
   const stageCounts: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
-  for (const order of filtered) {
+  for (const order of filtered.filter(isRootProductionOrder)) {
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
     const resolution = resolveEffectiveFrontendTransferredQty(order);
     const segments = resolution.ok ? resolution.state.segments : [{ stage, quantity: 0 }];
@@ -701,7 +768,7 @@ export async function loadProductionExecution(input: {
 
 export async function summarizeProduction(week: ProductionWeek) {
   const now = new Date();
-  const orders = await loadProductionOrders(week);
+  const orders = (await loadProductionOrders(week)).filter(isRootProductionOrder);
   const stageCounts: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
   const stageQuantityTotals: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
   let targetQuantity = 0;

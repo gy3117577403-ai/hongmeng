@@ -1,3 +1,6 @@
+export type WorkOrderBranchType = 'REWORK' | 'SCRAP_REPLENISH' | 'QUALITY_PENDING';
+export type WorkOrderBranchStatus = 'OPEN' | 'RELEASED' | 'IN_PROGRESS' | 'QUALITY_PENDING' | 'RESOLVED' | 'CANCELLED';
+
 export type WorkOrderDTO = {
   id: string;
   code: string;
@@ -40,6 +43,14 @@ export type WorkOrderDTO = {
   productionOwner?: string | null;
   workstation?: string | null;
   completedQty?: string | null;
+  parentWorkOrderId?: string | null;
+  rootWorkOrderId?: string | null;
+  branchType?: WorkOrderBranchType | null;
+  branchStatus?: WorkOrderBranchStatus | null;
+  originCompletionId?: string | null;
+  originStepId?: string | null;
+  rejoinStepId?: string | null;
+  branchSequence?: number | null;
   startedAt?: string | null;
   completedAt?: string | null;
   lastProgressAt?: string | null;
@@ -133,7 +144,22 @@ export type DrawingLibraryCustomerDTO = {
   missingCount: number;
 };
 
-export type CurrentUserDTO = { id: string; username: string; displayName: string };
+export type LaborAccessRoleDTO = 'ADMIN' | 'TEAM_LEAD' | 'EMPLOYEE';
+
+export type CurrentUserDTO = {
+  id: string;
+  username: string;
+  displayName: string;
+  laborRole: LaborAccessRoleDTO;
+  employeeId: string | null;
+  employee: {
+    id: string;
+    employeeNo: string;
+    name: string;
+    team: string | null;
+    isActive: boolean;
+  } | null;
+};
 
 export type OperationLogDTO = {
   id: string;
@@ -150,6 +176,15 @@ export type UserDTO = {
   username: string;
   displayName: string;
   isActive: boolean;
+  laborRole: LaborAccessRoleDTO;
+  employeeId: string | null;
+  employee: {
+    id: string;
+    employeeNo: string;
+    name: string;
+    team: string | null;
+    isActive: boolean;
+  } | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -607,7 +642,11 @@ export type ProductProcessTimeEntryDTO = {
   stageGroup: ProcessStageGroup;
   position: number;
   sequenceGroup: number;
+  timeBasis: ProcessTimeBasis;
   unitMilliseconds: number;
+  actionMilliseconds?: number | null;
+  occurrences: number;
+  setupMilliseconds: number;
   unitLabel: string;
   countsForEfficiency: boolean;
   remark?: string | null;
@@ -712,7 +751,17 @@ export type WorkOrderProcessStepDTO = ProcessTemplateStepDTO & {
   standardMillisecondsPerUnit?: number | null;
   setupMilliseconds?: number;
   countsForEfficiency?: boolean;
+  inputQty?: number;
+  processedQty?: number;
+  goodOutputQty?: number;
+  defectOutputQty?: number;
+  releasedGoodQty?: number;
+  quantityVersion?: number;
   executionCount?: number;
+  completionCount?: number;
+  completedProcessedQuantity?: number;
+  completedGoodQuantity?: number;
+  completedDefectQuantity?: number;
   reportedGoodQuantity?: number;
   remainingGoodQuantity?: number | null;
   productTimeProfileId?: string | null;
@@ -980,9 +1029,119 @@ export type ProcessExecutionDTO = {
   createdAt: string;
 };
 
+export type ProcessLaborPoolStatus = 'OPEN' | 'PARTIAL' | 'EXHAUSTED' | 'LOCKED' | 'VOIDED';
+export type ProcessLaborClaimStatus = 'ACTIVE' | 'VOIDED' | 'REVERSAL';
+
+export type ProcessLaborClaimDTO = {
+  id: string;
+  poolId: string;
+  employee: EmployeeDTO;
+  quantity: number;
+  standardLaborMilliseconds: number;
+  workDate: string;
+  status: ProcessLaborClaimStatus;
+  claimedBy?: { id: string; username: string; displayName: string } | null;
+  claimedAt: string;
+  voidedAt?: string | null;
+  voidedBy?: { id: string; username: string; displayName: string } | null;
+  voidReason?: string | null;
+  reversalOfId?: string | null;
+  createdAt: string;
+};
+
+export type ProcessLaborPoolDTO = {
+  id: string;
+  completionId: string;
+  workOrderId: string;
+  stepId: string;
+  workDate: string;
+  eligibleQty: number;
+  claimedQty: number;
+  remainingQty: number;
+  status: ProcessLaborPoolStatus;
+  pendingStandard: boolean;
+  timeBasis?: 'per_unit' | 'per_batch' | null;
+  unitLabel: string;
+  version: number;
+  standardMillisecondsPerUnit: number;
+  setupMilliseconds: number;
+  unitsPerProduct: number;
+  totalStandardLaborMilliseconds: number;
+  claimedStandardLaborMilliseconds: number;
+  remainingStandardLaborMilliseconds: number;
+  countsForEfficiency: boolean;
+  standardSource: string;
+  productTimeProfileVersion?: number | null;
+  createdAt: string;
+  updatedAt: string;
+  lockedAt?: string | null;
+  workOrder: {
+    id: string;
+    code: string;
+    customerName?: string | null;
+    specification?: string | null;
+    productName: string;
+  };
+  step: {
+    id: string;
+    processCode: string;
+    processName: string;
+    stageGroup: string;
+  };
+  claims: ProcessLaborClaimDTO[];
+};
+
+export type ProcessLaborPoolSummaryDTO = {
+  poolCount: number;
+  openPoolCount: number;
+  pendingStandardPoolCount: number;
+  pendingStandardQty: number;
+  eligibleQty: number;
+  claimedQty: number;
+  remainingQty: number;
+  totalStandardLaborMilliseconds: number;
+  claimedStandardLaborMilliseconds: number;
+  remainingStandardLaborMilliseconds: number;
+};
+
+export type ProcessLaborAccessDTO = {
+  role: LaborAccessRoleDTO;
+  selfEmployeeId: string | null;
+  team: string | null;
+  canClaim: boolean;
+  canAssignOthers: boolean;
+  canVoid: boolean;
+  canResolveStandard: boolean;
+  blockedReason: string | null;
+};
+
+export type EmployeeLaborClaimDetailDTO = {
+  id: string;
+  poolId: string;
+  employee: EmployeeDTO;
+  workOrderId: string;
+  workOrderCode: string;
+  customerName?: string | null;
+  specification?: string | null;
+  productName: string;
+  processCode: string;
+  processName: string;
+  workDate: string;
+  quantity: number;
+  unitLabel: string;
+  standardLaborMilliseconds: number;
+  claimedAt: string;
+  attendanceMatched: boolean;
+  standardSource: string;
+  productTimeProfileVersion?: number | null;
+};
+
 export type EmployeeAttainmentRowDTO = {
   employee: EmployeeDTO;
   standardLaborMilliseconds: number;
+  legacyExecutionStandardLaborMilliseconds: number;
+  claimedStandardLaborMilliseconds: number;
+  unmatchedStandardLaborMilliseconds: number;
   actualLaborMilliseconds: number;
   attendanceMilliseconds: number;
   exemptAbnormalMilliseconds: number;
@@ -990,6 +1149,7 @@ export type EmployeeAttainmentRowDTO = {
   attainmentCapacityMilliseconds: number;
   unexplainedMilliseconds: number;
   attendanceConfirmedDays: number;
+  attendanceMissingDays: number;
   attendanceMissing: boolean;
   attainmentBasisPoints: number | null;
   processEfficiencyBasisPoints: number;
@@ -999,7 +1159,10 @@ export type EmployeeAttainmentRowDTO = {
   scrapQty: number;
   reworkQty: number;
   executionCount: number;
+  claimCount: number;
+  claimQuantity: number;
   details: ProcessExecutionDTO[];
+  claimDetails: EmployeeLaborClaimDetailDTO[];
 };
 
 export type EmployeeAttainmentReportDTO = {
@@ -1010,7 +1173,12 @@ export type EmployeeAttainmentReportDTO = {
   summary: {
     employeeCount: number;
     executionCount: number;
+    claimCount: number;
+    claimQuantity: number;
     standardLaborMilliseconds: number;
+    legacyExecutionStandardLaborMilliseconds: number;
+    claimedStandardLaborMilliseconds: number;
+    unmatchedStandardLaborMilliseconds: number;
     actualLaborMilliseconds: number;
     attendanceMilliseconds: number;
     exemptAbnormalMilliseconds: number;
@@ -1018,6 +1186,7 @@ export type EmployeeAttainmentReportDTO = {
     attainmentCapacityMilliseconds: number;
     unexplainedMilliseconds: number;
     attendanceConfirmedDays: number;
+    attendanceMissingDays: number;
     attendanceMissingCount: number;
     attainmentBasisPoints: number | null;
     processEfficiencyBasisPoints: number;
@@ -1066,9 +1235,23 @@ export type WorkflowStepDTO = {
   sequenceGroup?: number;
   status?: ProcessStepStatus;
   stageGroup?: ProcessStageGroup;
+  unitLabel?: string | null;
   standardMillisecondsPerUnit?: number | null;
+  inputQuantity?: number;
+  processedQuantity?: number;
   reportedGoodQuantity?: number;
+  defectQuantity?: number;
+  releasedGoodQuantity?: number;
+  remainingProcessQuantity?: number;
   remainingGoodQuantity?: number | null;
+  laborEligibleQuantity?: number;
+  laborClaimedQuantity?: number;
+  laborRemainingQuantity?: number;
+  laborClaimantNames?: string[];
+  hasLaborPool?: boolean;
+  laborPoolId?: string | null;
+  laborWorkDate?: string | null;
+  laborPendingStandard?: boolean;
   startedAt?: string | null;
   completedAt?: string | null;
   remark?: string | null;

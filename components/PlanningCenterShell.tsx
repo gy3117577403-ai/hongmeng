@@ -1211,7 +1211,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                 <tbody>{scheduleRows.map(({ order, batch }) => {
                   const flow = planningFlow(order, batch);
                   const processFinishedAt = batch.processCompletedAt || batch.processConfirmedAt;
-                  const flowFinishedAt = batch.workOrderCompletedAt || batch.processCompletedAt;
+                  const flowFinishedAt = batch.workOrderCompletedAt;
                   const workflowParams = new URLSearchParams({ entityType: 'production', batchId: batch.id, from: 'planning' });
                   if (batch.workOrderId) workflowParams.set('workOrderId', batch.workOrderId);
                   return <Fragment key={batch.id}>

@@ -7,6 +7,7 @@ export type WeeklyPlanClearSummary = {
   weekStartDate: string;
   weekEndDate: string;
   workOrderCount: number;
+  incompleteWorkOrderCount: number;
   workOrdersWithFiles: number;
   fileCount: number;
   connectorParameterCount: number;
@@ -45,6 +46,8 @@ export async function summarizeWeeklyPlanClear(weekStartDate: Date): Promise<Wee
     where: weeklyPlanWhere(weekStartDate),
     select: {
       id: true,
+      completedAt: true,
+      branchStatus: true,
       resourceFiles: {
         where: { deletedAt: null, status: 'uploaded' },
         select: { id: true },
@@ -57,6 +60,12 @@ export async function summarizeWeeklyPlanClear(weekStartDate: Date): Promise<Wee
     weekStartDate: ymd(weekStartDate),
     weekEndDate: ymd(addDays(weekStartDate, 6)),
     workOrderCount: workOrders.length,
+    incompleteWorkOrderCount: workOrders.filter(order => (
+      !order.completedAt
+      || (order.branchStatus !== null
+        && order.branchStatus !== 'RESOLVED'
+        && order.branchStatus !== 'CANCELLED')
+    )).length,
     workOrdersWithFiles: workOrders.filter(order => order.resourceFiles.length > 0).length,
     fileCount,
     connectorParameterCount,

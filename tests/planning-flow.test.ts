@@ -27,7 +27,16 @@ test('planning flow distinguishes release, preparation, production, and completi
   assert.equal(resolvePlanningFlow(facts({ releaseState: 'preparation' })).status, 'next_preparation');
   assert.equal(resolvePlanningFlow(facts({ releaseState: 'active' })).status, 'current_execution');
   assert.equal(resolvePlanningFlow(facts({ releaseState: 'active', currentProcessName: '压接' })).label, '生产中 · 压接');
-  assert.equal(resolvePlanningFlow(facts({ releaseState: 'active', processStatus: 'completed' })).status, 'pending_archive');
+  const awaitingBranches = resolvePlanningFlow(facts({ releaseState: 'active', processStatus: 'completed' }));
+  assert.equal(awaitingBranches.status, 'pending_archive');
+  assert.equal(awaitingBranches.label, '主路线完成 · 待分支闭环');
+  assert.equal(awaitingBranches.workflowStatus, 'processing');
+  assert.equal(awaitingBranches.nextStep, '处理返工/补产分支');
+  assert.notEqual(resolvePlanningFlow(facts({
+    releaseState: 'archived',
+    processStatus: 'completed',
+    processCompletedAt: new Date(),
+  })).status, 'completed');
   assert.equal(resolvePlanningFlow(facts({ releaseState: 'active', workOrderCompletedAt: new Date() })).status, 'completed');
 });
 

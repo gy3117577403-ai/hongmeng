@@ -1,9 +1,11 @@
+import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
   parseProductionPlanOrderInput,
   planOrderSnapshot,
+  productionPlanProductIdentityLocked,
   productionPlanOrderInclude,
   refreshProductionPlanOrderStatus,
   resolvePlanningReferences,
@@ -37,59 +39,84 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
   try {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const existing = await prisma.productionPlanOrder.findUnique({
-      where: { id: context.params.id },
-      include: { batches: { where: { deletedAt: null }, select: { id: true, quantity: true, releaseState: true, workOrderId: true, productTimeProfileId: true } } },
-    });
-    if (!existing || existing.deletedAt) return NextResponse.json({ ok: false, error: '计划订单不存在' }, { status: 404 });
-    const parsed = parseProductionPlanOrderInput(body, currentInput(existing));
-    if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
-    const references = await resolvePlanningReferences(prisma, parsed.data);
-    if (!references.drawingLibraryItemId || !references.customerName || !references.specification || !references.productName) {
-      return NextResponse.json({ ok: false, error: '请选择图纸资料库中的有效产品' }, { status: 400 });
-    }
-    const canonical = {
-      ...parsed.data,
-      drawingLibraryItemId: references.drawingLibraryItemId,
-      customerName: references.customerName,
-      productName: references.productName,
-      specification: references.specification,
-    };
-    const allocated = existing.batches.reduce((sum, batch) => sum + batch.quantity, 0);
-    if (canonical.orderQuantity < allocated) {
-      return NextResponse.json({ ok: false, error: `订单数量不能小于已排产数量 ${allocated}` }, { status: 409 });
-    }
-    const released = existing.batches.filter(batch => batch.releaseState !== 'draft');
-    const effectiveOrderUnitMilliseconds = references.unitMilliseconds || canonical.planningUnitMilliseconds;
-    if (released.length && !effectiveOrderUnitMilliseconds) {
-      return NextResponse.json({ ok: false, error: '已下达订单必须保留有效单件工时' }, { status: 409 });
-    }
-    const impactful = canonical.drawingLibraryItemId !== existing.drawingLibraryItemId
-      || canonical.customerName !== existing.customerName
-      || canonical.salesperson !== existing.salesperson
-      || canonical.productName !== existing.productName
-      || canonical.specification !== existing.specification
-      || canonical.orderQuantity !== existing.orderQuantity
-      || canonical.planningUnitMilliseconds !== existing.planningUnitMilliseconds
-      || canonical.customerDueDate.getTime() !== existing.customerDueDate.getTime();
-    const reason = String(body.reason || '').trim().slice(0, 300);
-    if (released.length && impactful && !reason) {
-      return NextResponse.json({ ok: false, error: '已下达订单变更必须填写原因' }, { status: 400 });
-    }
-    if (released.length && impactful && body.confirmImpact !== true) {
-      return NextResponse.json({
-        ok: false,
-        requiresConfirmation: true,
-        error: '该订单已经下达，修改会同步关联工单，请确认影响后继续',
-        impact: {
-          releasedBatchCount: released.length,
-          linkedWorkOrderCount: released.filter(batch => batch.workOrderId).length,
-          keepsWarehouseProgress: true,
-          keepsProcessProgress: true,
+    const updated = await prisma.$transaction(async tx => {
+      const existing = await tx.productionPlanOrder.findUnique({
+        where: { id: context.params.id },
+        include: {
+          batches: {
+            where: { deletedAt: null },
+            select: {
+              id: true,
+              quantity: true,
+              releaseState: true,
+              workOrderId: true,
+              productTimeProfileId: true,
+            },
+          },
         },
       });
-    }
-    const updated = await prisma.$transaction(async tx => {
+      if (!existing || existing.deletedAt) {
+        return NextResponse.json({ ok: false, error: '计划订单不存在' }, { status: 404 });
+      }
+      const parsed = parseProductionPlanOrderInput(body, currentInput(existing));
+      if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
+      const references = await resolvePlanningReferences(tx, parsed.data);
+      if (!references.drawingLibraryItemId || !references.customerName || !references.specification || !references.productName) {
+        return NextResponse.json({ ok: false, error: '请选择图纸资料库中的有效产品' }, { status: 400 });
+      }
+      const canonical = {
+        ...parsed.data,
+        drawingLibraryItemId: references.drawingLibraryItemId,
+        customerName: references.customerName,
+        productName: references.productName,
+        specification: references.specification,
+      };
+      const allocated = existing.batches.reduce((sum, batch) => sum + batch.quantity, 0);
+      if (canonical.orderQuantity < allocated) {
+        return NextResponse.json({ ok: false, error: `订单数量不能小于已排产数量 ${allocated}` }, { status: 409 });
+      }
+      const released = existing.batches.filter(batch => batch.releaseState !== 'draft');
+      const productIdentityChanged = canonical.drawingLibraryItemId !== existing.drawingLibraryItemId
+        || canonical.productName !== existing.productName
+        || canonical.specification !== existing.specification;
+      if (productionPlanProductIdentityLocked({
+        hasReleasedBatch: released.length > 0,
+        identityChanged: productIdentityChanged,
+      })) {
+        return NextResponse.json({
+          ok: false,
+          error: '订单已有下达批次，不能切换产品或规格；请新建计划，避免沿用旧产品工艺与标准工时',
+        }, { status: 409 });
+      }
+      const effectiveOrderUnitMilliseconds = references.unitMilliseconds || canonical.planningUnitMilliseconds;
+      if (released.length && !effectiveOrderUnitMilliseconds) {
+        return NextResponse.json({ ok: false, error: '已下达订单必须保留有效单件工时' }, { status: 409 });
+      }
+      const impactful = canonical.drawingLibraryItemId !== existing.drawingLibraryItemId
+        || canonical.customerName !== existing.customerName
+        || canonical.salesperson !== existing.salesperson
+        || canonical.productName !== existing.productName
+        || canonical.specification !== existing.specification
+        || canonical.orderQuantity !== existing.orderQuantity
+        || canonical.planningUnitMilliseconds !== existing.planningUnitMilliseconds
+        || canonical.customerDueDate.getTime() !== existing.customerDueDate.getTime();
+      const reason = String(body.reason || '').trim().slice(0, 300);
+      if (released.length && impactful && !reason) {
+        return NextResponse.json({ ok: false, error: '已下达订单变更必须填写原因' }, { status: 400 });
+      }
+      if (released.length && impactful && body.confirmImpact !== true) {
+        return NextResponse.json({
+          ok: false,
+          requiresConfirmation: true,
+          error: '该订单已经下达，修改会同步关联工单，请确认影响后继续',
+          impact: {
+            releasedBatchCount: released.length,
+            linkedWorkOrderCount: released.filter(batch => batch.workOrderId).length,
+            keepsWarehouseProgress: true,
+            keepsProcessProgress: true,
+          },
+        });
+      }
       await tx.productionPlanOrder.update({
         where: { id: existing.id },
         data: { ...canonical, updatedById: user.id },
@@ -159,10 +186,14 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         },
       });
       return tx.productionPlanOrder.findUniqueOrThrow({ where: { id: existing.id }, include: productionPlanOrderInclude });
-    });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    if (updated instanceof NextResponse) return updated;
     return NextResponse.json({ ok: true, order: serializeProductionPlanOrder(updated) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+      return NextResponse.json({ ok: false, error: '计划订单已被其他操作更新，请刷新后重试' }, { status: 409 });
+    }
     if ((error as { code?: string }).code === 'P2002') {
       return NextResponse.json({ ok: false, error: '计划订单内部编号冲突，请重试' }, { status: 409 });
     }
@@ -174,15 +205,17 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
 export async function DELETE(_req: NextRequest, context: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const existing = await prisma.productionPlanOrder.findUnique({
-      where: { id: context.params.id },
-      include: { batches: { where: { deletedAt: null }, select: { releaseState: true } } },
-    });
-    if (!existing || existing.deletedAt) return NextResponse.json({ ok: false, error: '计划订单不存在' }, { status: 404 });
-    if (existing.batches.some(batch => batch.releaseState !== 'draft')) {
-      return NextResponse.json({ ok: false, error: '已有下达批次的订单不能删除，请暂停或通过变更调整' }, { status: 409 });
-    }
-    await prisma.$transaction(async tx => {
+    const result = await prisma.$transaction(async tx => {
+      const existing = await tx.productionPlanOrder.findUnique({
+        where: { id: context.params.id },
+        include: { batches: { where: { deletedAt: null }, select: { releaseState: true } } },
+      });
+      if (!existing || existing.deletedAt) {
+        return NextResponse.json({ ok: false, error: '计划订单不存在' }, { status: 404 });
+      }
+      if (existing.batches.some(batch => batch.releaseState !== 'draft')) {
+        return NextResponse.json({ ok: false, error: '已有下达批次的订单不能删除，请暂停或通过变更调整' }, { status: 409 });
+      }
       const now = new Date();
       await tx.productionPlanBatch.updateMany({ where: { planOrderId: existing.id, deletedAt: null }, data: { deletedAt: now } });
       await tx.productionPlanOrder.update({ where: { id: existing.id }, data: { deletedAt: now, updatedById: user.id } });
@@ -190,10 +223,15 @@ export async function DELETE(_req: NextRequest, context: { params: { id: string 
       await tx.operationLog.create({
         data: { userId: user.id, action: 'delete_production_plan_order', targetType: 'production_plan_order', targetId: existing.id },
       });
-    });
+      return null;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    if (result instanceof NextResponse) return result;
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
+      return NextResponse.json({ ok: false, error: '计划订单已被其他操作更新，请刷新后重试' }, { status: 409 });
+    }
     console.error('delete planning order failed', error);
     return NextResponse.json({ ok: false, error: '删除计划订单失败' }, { status: 500 });
   }

@@ -3950,6 +3950,11 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   color: #c2410c;
 }
 
+.hm-production-workbench .production-dispatch-product > span em.branch {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
 .hm-production-workbench .production-dispatch-product > button {
   padding: 0;
   border: 0;
@@ -4263,6 +4268,362 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   border-color: var(--production-dispatch-orange-hover);
   background: var(--production-dispatch-orange-hover);
   color: #fff;
+}
+
+.hm-production-workbench .production-dispatch-progress {
+  cursor: default;
+}
+
+.hm-production-workbench .production-dispatch-progress:hover {
+  background: transparent;
+}
+
+.hm-production-workbench .process-completion-drawer {
+  width: min(640px, 96vw);
+  gap: 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.hm-production-workbench .process-completion-step-picker {
+  padding: 12px 13px;
+  border: 1px solid #bfd3f6;
+  border-radius: 10px;
+  background: #f5f8ff;
+}
+
+.hm-production-workbench .process-completion-step-picker label {
+  display: grid;
+  grid-template-columns: 126px minmax(0, 1fr);
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.hm-production-workbench .process-completion-step-picker span {
+  color: var(--production-dispatch-ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .process-completion-step-picker select {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0 34px 0 11px;
+  border: 1px solid #a9c4ef;
+  border-radius: 8px;
+  outline: none;
+  background: #fff;
+  color: var(--production-dispatch-ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .process-completion-step-picker select:focus {
+  border-color: var(--production-dispatch-blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .1);
+}
+
+.hm-production-workbench .process-completion-step-picker select:disabled {
+  cursor: not-allowed;
+  opacity: .68;
+}
+
+.hm-production-workbench .process-completion-step-picker small {
+  grid-column: 2;
+  color: var(--production-dispatch-ink-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.hm-production-workbench .process-completion-loading {
+  min-height: 72px;
+  padding: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px solid var(--production-dispatch-line);
+  border-radius: 9px;
+  background: var(--production-dispatch-panel-muted);
+  color: var(--production-dispatch-ink-secondary);
+  font-size: 13px;
+}
+
+.hm-production-workbench .process-completion-loading svg {
+  color: var(--production-dispatch-orange);
+  animation: process-completion-spin .9s linear infinite;
+}
+
+@keyframes process-completion-spin {
+  to { transform: rotate(360deg); }
+}
+
+.hm-production-workbench .process-completion-route {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid #f1b58c;
+  border-radius: 10px;
+  background: linear-gradient(90deg, #f4f8ff 0 46%, #fff7ed 54% 100%);
+}
+
+.hm-production-workbench .process-completion-route > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.hm-production-workbench .process-completion-route > div:last-child {
+  text-align: right;
+}
+
+.hm-production-workbench .process-completion-route span,
+.hm-production-workbench .process-completion-route small {
+  color: var(--production-dispatch-ink-muted);
+  font-size: 11px;
+}
+
+.hm-production-workbench .process-completion-route strong {
+  overflow: hidden;
+  color: var(--production-dispatch-ink);
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .process-completion-route > svg {
+  color: var(--production-dispatch-orange);
+}
+
+.hm-production-workbench .process-completion-quantity-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hm-production-workbench .process-completion-quantity-summary > div {
+  min-width: 0;
+  padding: 10px 11px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--production-dispatch-line);
+  border-radius: 8px;
+  background: var(--production-dispatch-panel-muted);
+}
+
+.hm-production-workbench .process-completion-quantity-summary span {
+  color: var(--production-dispatch-ink-muted);
+  font-size: 11px;
+}
+
+.hm-production-workbench .process-completion-quantity-summary strong {
+  color: var(--production-dispatch-ink);
+  font-size: 19px;
+}
+
+.hm-production-workbench .process-completion-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.hm-production-workbench .process-completion-form > label,
+.hm-production-workbench .process-completion-good {
+  min-width: 0;
+  padding: 11px;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  border: 1px solid var(--production-dispatch-line);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.hm-production-workbench .process-completion-form label > span,
+.hm-production-workbench .process-completion-good > span {
+  color: var(--production-dispatch-ink-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .process-completion-form input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--production-dispatch-line-strong);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--production-dispatch-ink);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.hm-production-workbench .process-completion-form small,
+.hm-production-workbench .process-completion-good small {
+  color: var(--production-dispatch-ink-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.hm-production-workbench .process-completion-good {
+  border-color: #9ddfc1;
+  background: var(--production-dispatch-green-soft);
+}
+
+.hm-production-workbench .process-completion-good strong {
+  color: var(--production-dispatch-green);
+  font-size: 22px;
+}
+
+.hm-production-workbench .process-completion-disposition {
+  margin: 0;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid #f2c39f;
+  border-radius: 9px;
+  background: #fffaf5;
+}
+
+.hm-production-workbench .process-completion-disposition legend {
+  padding: 0 5px;
+  color: var(--production-dispatch-orange);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hm-production-workbench .process-completion-disposition label {
+  min-width: 0;
+  padding: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid var(--production-dispatch-line);
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.hm-production-workbench .process-completion-disposition label.selected {
+  border-color: var(--production-dispatch-orange);
+  box-shadow: 0 0 0 1px rgba(240, 90, 0, .12);
+}
+
+.hm-production-workbench .process-completion-disposition input {
+  margin: 3px 0 0;
+  accent-color: var(--production-dispatch-orange);
+}
+
+.hm-production-workbench .process-completion-disposition label > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.hm-production-workbench .process-completion-disposition strong {
+  color: var(--production-dispatch-ink);
+  font-size: 12px;
+}
+
+.hm-production-workbench .process-completion-disposition small {
+  color: var(--production-dispatch-ink-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.hm-production-workbench .process-completion-preview,
+.hm-production-workbench .process-completion-history {
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--production-dispatch-line);
+  border-radius: 9px;
+  background: var(--production-dispatch-panel-muted);
+}
+
+.hm-production-workbench .process-completion-preview > header,
+.hm-production-workbench .process-completion-history > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hm-production-workbench .process-completion-preview > header strong,
+.hm-production-workbench .process-completion-history > header strong {
+  color: var(--production-dispatch-ink);
+  font-size: 13px;
+}
+
+.hm-production-workbench .process-completion-preview > header span,
+.hm-production-workbench .process-completion-history > header span {
+  color: var(--production-dispatch-ink-muted);
+  font-size: 10px;
+}
+
+.hm-production-workbench .process-completion-preview > div {
+  padding: 8px 9px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--production-dispatch-green);
+}
+
+.hm-production-workbench .process-completion-preview > div.defect {
+  color: var(--production-dispatch-red);
+}
+
+.hm-production-workbench .process-completion-preview > div > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-production-workbench .process-completion-preview > div strong {
+  color: var(--production-dispatch-ink);
+  font-size: 12px;
+}
+
+.hm-production-workbench .process-completion-preview > div small {
+  color: var(--production-dispatch-ink-muted);
+  font-size: 10px;
+}
+
+.hm-production-workbench .process-completion-history article {
+  padding-top: 8px;
+  display: grid;
+  grid-template-columns: minmax(118px, .7fr) minmax(0, 1.5fr) minmax(100px, .8fr);
+  gap: 8px;
+  border-top: 1px solid var(--production-dispatch-line);
+  color: var(--production-dispatch-ink-secondary);
+  font-size: 11px;
+}
+
+.hm-production-workbench .process-completion-history time,
+.hm-production-workbench .process-completion-history small {
+  color: var(--production-dispatch-ink-muted);
+}
+
+.hm-production-workbench .process-completion-drawer > .dialog-actions {
+  position: sticky;
+  bottom: -18px;
+  z-index: 2;
+  margin: auto -18px -18px;
+  padding: 12px 18px 18px;
+  border-top: 1px solid var(--production-dispatch-line);
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 -8px 18px rgba(23, 32, 51, .06);
+}
+
+.hm-production-workbench .process-completion-drawer > .dialog-actions .primary-button {
+  min-width: 180px;
 }
 
 .hm-production-workbench .production-dispatch-row-skeleton {
@@ -4733,6 +5094,10 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
     padding-left: 9px;
     font-size: 12px;
   }
+
+  .hm-production-workbench .process-completion-drawer {
+    width: min(600px, 100vw);
+  }
 }
 
 @media (max-width: 1180px) {
@@ -4768,6 +5133,47 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   }
 }
 
+@media (max-width: 720px) {
+  .hm-production-workbench .process-completion-drawer {
+    width: 100vw;
+    padding: 14px;
+  }
+
+  .hm-production-workbench .process-completion-route,
+  .hm-production-workbench .process-completion-form,
+  .hm-production-workbench .process-completion-disposition {
+    grid-template-columns: 1fr;
+  }
+
+  .hm-production-workbench .process-completion-step-picker label {
+    grid-template-columns: 1fr;
+  }
+
+  .hm-production-workbench .process-completion-step-picker small {
+    grid-column: 1;
+  }
+
+  .hm-production-workbench .process-completion-route > svg {
+    justify-self: center;
+    transform: rotate(90deg);
+  }
+
+  .hm-production-workbench .process-completion-route > div:last-child {
+    text-align: left;
+  }
+
+  .hm-production-workbench .process-completion-history article {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .hm-production-workbench .process-completion-drawer > .dialog-actions {
+    bottom: -14px;
+    margin: auto -14px -14px;
+    padding: 11px 14px 14px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .hm-production-workbench .production-dispatch-row-skeleton > span,
   .hm-production-workbench .production-dispatch-row,
@@ -4777,4 +5183,45 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
     animation: none;
     transition: none;
   }
+}
+.production-branch-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+  background: #fffaf5;
+}
+
+.production-branch-list > header,
+.production-branch-list article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.production-branch-list > header span,
+.production-branch-list article small {
+  color: #64748b;
+}
+
+.production-branch-list article {
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.production-branch-list article > span {
+  display: grid;
+  gap: 3px;
+}
+
+.production-branch-list article a {
+  flex: none;
+  color: #ea580c;
+  font-weight: 700;
+  text-decoration: none;
 }

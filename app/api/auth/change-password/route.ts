@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const sessionUser = await requireUser();
+    const sessionUser = await requireUser({ write: 'self' });
     const body = await req.json() as {
       currentPassword?: string;
       newPassword?: string;

@@ -25,13 +25,16 @@ export async function GET(req: NextRequest) {
     await prisma.$transaction(tx => reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id }));
     const params = req.nextUrl.searchParams;
     const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'), params.get('scope'));
+    const filters = productionFiltersFromSearchParams(params);
     await prisma.$transaction(tx => reconcileDraftProductTimeRoutes(tx, {
-      workOrderWhere: productionWeekWhere(week),
+      workOrderWhere: filters.workOrderId
+        ? { id: filters.workOrderId, deletedAt: null }
+        : productionWeekWhere(week),
       actorId: user.id,
     }));
     const data = await loadProductionExecution({
       week,
-      filters: productionFiltersFromSearchParams(params),
+      filters,
       view: parseProductionExecutionView(params.get('view')),
       page: positiveInt(params.get('page'), 1),
       pageSize: Math.min(500, positiveInt(params.get('pageSize'), 500)),

@@ -49,16 +49,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       where: { workOrderId: old.id },
       select: { status: true },
     });
-    if (processRoute && (body.stage !== undefined || body.completedQty !== undefined)) {
+    if (body.stage !== undefined || body.completedQty !== undefined) {
       return NextResponse.json({
         ok: false,
-        error: processRoute.status === 'draft'
+        error: !processRoute || processRoute.status === 'draft'
           ? '请先维护并发布当前产品的工序与工时'
           : '该工单已启用完整工艺路线，请使用当前工序按钮推进',
       }, { status: 409 });
-    }
-    if (old.frontendTransferredQty !== null && (body.stage !== undefined || body.completedQty !== undefined)) {
-      return NextResponse.json({ ok: false, error: '该工单已启用分批数量流转，请使用“下一步”更新生产数量' }, { status: 409 });
     }
 
     const prepared = prepareExecutionUpdate(old, body);

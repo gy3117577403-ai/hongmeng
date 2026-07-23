@@ -497,12 +497,12 @@ html:has(.hm-product-time-workbench) {
 
 .hm-product-time-workbench .product-time-entry-list article {
   min-width: 0;
-  min-height: 82px;
+  min-height: 118px;
   margin-bottom: 6px;
   padding: 7px;
   display: grid;
-  grid-template-columns: minmax(118px, .85fr) minmax(130px, .78fr) minmax(185px, 1.2fr) 82px;
-  grid-template-rows: auto auto;
+  grid-template-columns: minmax(118px, .8fr) minmax(430px, 3.2fr) 82px;
+  grid-template-rows: auto auto auto;
   align-items: center;
   gap: 6px 8px;
   border: 1px solid #e1e6ec;
@@ -520,7 +520,7 @@ html:has(.hm-product-time-workbench) {
 .hm-product-time-workbench .product-time-process-name {
   min-width: 0;
   grid-column: 1;
-  grid-row: 1 / 3;
+  grid-row: 1 / 4;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -560,21 +560,33 @@ html:has(.hm-product-time-workbench) {
   font-size: 10px;
 }
 
-.hm-product-time-workbench .product-time-duration-input {
+.hm-product-time-workbench .product-time-standard-editor {
   min-width: 0;
   grid-column: 2;
-  grid-row: 1 / 3;
+  grid-row: 1;
+  display: grid;
+  grid-template-columns: minmax(100px, .85fr) minmax(135px, 1.25fr) minmax(95px, .8fr) minmax(105px, .9fr) minmax(70px, .6fr);
+  align-items: end;
+  gap: 5px;
+}
+
+.hm-product-time-workbench .product-time-standard-editor > label {
+  min-width: 0;
   display: grid;
   gap: 3px;
 }
 
-.hm-product-time-workbench .product-time-duration-input > span {
+.hm-product-time-workbench .product-time-standard-editor > label > span {
+  overflow: hidden;
   color: #69778a;
   font-size: 9px;
   font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.hm-product-time-workbench .product-time-duration-input input,
+.hm-product-time-workbench .product-time-standard-editor input,
+.hm-product-time-workbench .product-time-standard-editor select,
 .hm-product-time-workbench .product-time-row-remark,
 .hm-product-time-workbench .product-time-remark textarea,
 .hm-product-time-workbench .product-time-context input,
@@ -589,14 +601,17 @@ html:has(.hm-product-time-workbench) {
   font: inherit;
 }
 
-.hm-product-time-workbench .product-time-duration-input input {
-  height: 36px;
-  padding: 0 9px;
-  font-size: 14px;
-  font-weight: 700;
+.hm-product-time-workbench .product-time-standard-editor input,
+.hm-product-time-workbench .product-time-standard-editor select {
+  min-width: 0;
+  height: 34px;
+  padding: 0 7px;
+  font-size: 11px;
+  font-weight: 650;
 }
 
-.hm-product-time-workbench .product-time-duration-input input:focus,
+.hm-product-time-workbench .product-time-standard-editor input:focus,
+.hm-product-time-workbench .product-time-standard-editor select:focus,
 .hm-product-time-workbench .product-time-row-remark:focus,
 .hm-product-time-workbench .product-time-remark textarea:focus,
 .hm-product-time-workbench .product-time-context input:focus,
@@ -607,15 +622,16 @@ html:has(.hm-product-time-workbench) {
   outline: 3px solid rgba(232, 93, 4, .1);
 }
 
-.hm-product-time-workbench .product-time-duration-input > small {
+.hm-product-time-workbench .product-time-standard-editor > small {
+  grid-column: 1 / -1;
   color: #c4322b;
   font-size: 9px;
 }
 
 .hm-product-time-workbench .product-time-process-options {
   min-width: 0;
-  grid-column: 3;
-  grid-row: 1;
+  grid-column: 2;
+  grid-row: 2;
   display: flex;
   align-items: center;
   gap: 11px;
@@ -640,15 +656,15 @@ html:has(.hm-product-time-workbench) {
 .hm-product-time-workbench .product-time-row-remark {
   min-width: 0;
   height: 31px;
-  grid-column: 3;
-  grid-row: 2;
+  grid-column: 2;
+  grid-row: 3;
   padding: 0 8px;
   font-size: 10px;
 }
 
 .hm-product-time-workbench .product-time-row-actions {
-  grid-column: 4;
-  grid-row: 1 / 3;
+  grid-column: 3;
+  grid-row: 1 / 4;
   display: grid;
   grid-template-columns: repeat(2, 34px);
   justify-content: end;
@@ -1693,7 +1709,7 @@ html:has(.hm-product-time-workbench) {
   }
 
   .hm-product-time-workbench .product-time-entry-list article {
-    grid-template-columns: minmax(105px, .8fr) minmax(115px, .72fr) minmax(150px, 1.1fr) 76px;
+    grid-template-columns: minmax(105px, .75fr) minmax(400px, 3fr) 76px;
   }
 }
 
@@ -1733,7 +1749,7 @@ html:has(.hm-product-time-workbench) {
   }
 
   .hm-product-time-workbench .product-time-entry-list article {
-    grid-template-columns: minmax(100px, .8fr) 116px minmax(130px, 1fr) 70px;
+    grid-template-columns: minmax(100px, .72fr) minmax(360px, 3fr) 70px;
     gap-inline: 5px;
   }
 
@@ -1824,34 +1840,35 @@ html:has(.hm-product-time-workbench) {
   }
 
   .hm-product-time-workbench .product-time-entry-list article {
-    min-height: 116px;
-    grid-template-columns: minmax(95px, 1fr) minmax(105px, .85fr) 65px;
+    min-height: 210px;
+    grid-template-columns: minmax(95px, 1fr) minmax(220px, 2fr) 65px;
     grid-template-rows: auto auto auto;
   }
 
   .hm-product-time-workbench .product-time-process-name {
     grid-column: 1;
-    grid-row: 1 / 3;
+    grid-row: 1 / 4;
   }
 
-  .hm-product-time-workbench .product-time-duration-input {
+  .hm-product-time-workbench .product-time-standard-editor {
     grid-column: 2;
-    grid-row: 1 / 3;
+    grid-row: 1;
+    grid-template-columns: repeat(2, minmax(100px, 1fr));
   }
 
   .hm-product-time-workbench .product-time-process-options {
-    grid-column: 1 / 3;
-    grid-row: 3;
+    grid-column: 2;
+    grid-row: 2;
   }
 
   .hm-product-time-workbench .product-time-row-remark {
-    grid-column: 1 / 3;
-    grid-row: 4;
+    grid-column: 2;
+    grid-row: 3;
   }
 
   .hm-product-time-workbench .product-time-row-actions {
     grid-column: 3;
-    grid-row: 1 / 5;
+    grid-row: 1 / 4;
   }
 
   .hm-product-time-workbench .product-time-route-actions > span {

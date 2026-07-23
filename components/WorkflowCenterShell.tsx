@@ -292,11 +292,20 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     && selected.routeSource === 'product_time_profile'
     && selected.productTimeProfileVersion !== null,
   );
-  function manualReportHref(stepId: string): string | null {
-    if (!hasPublishedProductRoute || !selected?.workOrderId) return null;
-    return `/workspace/reports?view=manual&workOrderId=${encodeURIComponent(selected.workOrderId)}&stepId=${encodeURIComponent(stepId)}&weekScope=${encodeURIComponent(filters.weekScope)}&from=workflow&returnTo=${encodeURIComponent(`/workspace/workflows?workOrderId=${selected.workOrderId}&stepId=${stepId}&weekScope=${filters.weekScope}`)}`;
+  function manualReportHref(step: WorkflowStepDTO): string | null {
+    if (!selected?.workOrderId || !step.hasLaborPool) return null;
+    const params = new URLSearchParams({
+      view: 'labor',
+      workOrderId: selected.workOrderId,
+      stepId: step.key,
+      from: 'workflow',
+      returnTo: `/workspace/workflows?workOrderId=${selected.workOrderId}&stepId=${step.key}&weekScope=${filters.weekScope}`,
+    });
+    if (step.laborPoolId) params.set('poolId', step.laborPoolId);
+    if (step.laborWorkDate) params.set('workDate', step.laborWorkDate);
+    return `/workspace/reports?${params.toString()}`;
   }
-  const manualReportRoute = selectedCurrentStep ? manualReportHref(selectedCurrentStep.key) : null;
+  const manualReportRoute = selectedCurrentStep ? manualReportHref(selectedCurrentStep) : null;
 
   return (
     <main className="hm-workbench-root hm-workflow-center">
@@ -406,11 +415,24 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                           </div>
                           <div className="workflow-process-cards">
                             {steps.map(step => {
-                              const reported = step.reportedGoodQuantity || 0;
-                              const target = selected.quantity || 0;
-                              const progress = target > 0 ? Math.min(100, Math.round((reported / target) * 100)) : 0;
-                              const isDeepLinked = step.key === deepLink.stepId;
-                              const stepManualReportRoute = step.state === 'current' ? manualReportHref(step.key) : null;
+                               const input = step.inputQuantity ?? selected.quantity ?? 0;
+                               const processed = step.processedQuantity || 0;
+                               const good = step.reportedGoodQuantity || 0;
+                               const defect = step.defectQuantity || 0;
+                               const released = step.releasedGoodQuantity || 0;
+                               const unitLabel = step.unitLabel || '件';
+                               const progress = input > 0
+                                 ? Math.min(100, Math.round((processed / input) * 100))
+                                 : step.state === 'done' ? 100 : 0;
+                               const isDeepLinked = step.key === deepLink.stepId;
+                               const stepManualReportRoute = manualReportHref(step);
+                               const laborStatusText = step.laborPendingStandard
+                                 ? '工时标准待补'
+                                 : step.hasLaborPool
+                                   ? (step.laborRemainingQuantity || 0) > 0
+                                      ? `${step.latestEmployeeName ? `${step.latestEmployeeName} · ` : ''}待领 ${(step.laborRemainingQuantity || 0).toLocaleString()} ${unitLabel}`
+                                     : step.latestEmployeeName || '工时已领取'
+                                   : '工时尚未生成';
                               return <article
                                 key={step.key}
                                 ref={isDeepLinked ? deepLinkStepRef : undefined}
@@ -423,18 +445,19 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                 </header>
                                 <div className="workflow-process-metrics">
                                   <span><Clock3 size={13} />{formatDuration(step.standardMillisecondsPerUnit)}</span>
-                                  <span><ListChecks size={13} />{reported.toLocaleString()} / {target.toLocaleString()} 件</span>
-                                  <span><UserRound size={13} />{step.latestEmployeeName || '尚未报工'}</span>
+                                  <span><ListChecks size={13} />已处理 {processed.toLocaleString()} / {input.toLocaleString()} {unitLabel}</span>
+                                  <span><UserRound size={13} />{laborStatusText}</span>
                                 </div>
                                 <div className="workflow-process-progress" aria-label={`${step.label}完成${progress}%`}>
                                   <span style={{ width: `${progress}%` }} />
                                 </div>
                                 <footer>
                                   <div>
-                                    <span>{step.completedAt ? `完成 ${formatDate(step.completedAt)}` : step.startedAt ? `开始 ${formatDate(step.startedAt)}` : '尚未开始'}</span>
-                                    <span>剩余 {(step.remainingGoodQuantity ?? target).toLocaleString()} 件</span>
+                                   <span>{step.completedAt ? `完成 ${formatDate(step.completedAt)}` : step.startedAt ? `开始 ${formatDate(step.startedAt)}` : '尚未开始'}</span>
+                                   <span>良品 {good.toLocaleString()} · 不良 {defect.toLocaleString()} · 已放行 {released.toLocaleString()} {unitLabel}</span>
+                                   <span>待处理 {(step.remainingProcessQuantity ?? Math.max(0, input - processed)).toLocaleString()} {unitLabel} · 工时已领 {(step.laborClaimedQuantity || 0).toLocaleString()} / {(step.laborEligibleQuantity || 0).toLocaleString()} {unitLabel}</span>
                                   </div>
-                                  {stepManualReportRoute && <a href={stepManualReportRoute}>员工报工<ArrowUpRight size={13} /></a>}
+                                  {stepManualReportRoute && <a href={stepManualReportRoute}>工时领取<ArrowUpRight size={13} /></a>}
                                 </footer>
                                 {(step.productRemark || step.remark) && <div className="workflow-step-notes">
                                   {step.productRemark && <p><strong>产品标准</strong>{step.productRemark}</p>}
@@ -461,7 +484,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                 <section className="workflow-source-note"><ListChecks size={18} /><div><strong>数据来源</strong><p>该条记录直接来自{selected.entityType === 'issue' ? '问题管理' : selected.entityType === 'change' ? '变更管理' : '计划批次及其关联生产工单'}，状态更新请在来源模块完成。</p></div></section>
               </div>
               <footer className="workflow-detail-actions">
-                {manualReportRoute && <a href={manualReportRoute}>员工报工<ArrowUpRight size={14} /></a>}
+                {manualReportRoute && <a href={manualReportRoute}>工时领取<ArrowUpRight size={14} /></a>}
                 <a className={manualReportRoute ? 'secondary' : ''} href={selected.route}>{selected.entityType === 'production' ? '打开生产执行' : '打开来源业务'}<ArrowUpRight size={14} /></a>
                 {selected.sourceRoute && <a className="secondary" href={selected.sourceRoute}>查看关联资料</a>}
                 {compactContext && <button ref={contextTriggerRef} type="button" onClick={() => setContextOpen(true)}>流程上下文与入口</button>}

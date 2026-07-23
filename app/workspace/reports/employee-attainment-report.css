@@ -96,6 +96,8 @@
 .manual-report-orders button { width: 100%; min-width: 0; min-height: 74px; padding: 8px 9px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 5px 8px; border: 1px solid #e4e8ed; border-left: 3px solid #a7b0ba; border-radius: 8px; background: #fff; color: #273444; text-align: left; }
 .manual-report-orders button:hover { border-color: #f2b48c; background: #fffaf6; }
 .manual-report-orders button.active { border-color: #f59a61; border-left-color: #e35d05; background: #fff7ed; box-shadow: 0 2px 8px rgba(224,87,0,.08); }
+.manual-report-orders button.pending-standard { border-left-color: #d99500; background: #fffdf5; }
+.manual-report-orders button.pending-standard em { background: #fff2c7; color: #8a5a00; }
 .manual-report-orders button > span { min-width: 0; display: grid; gap: 2px; }
 .manual-report-orders button strong, .manual-report-orders button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .manual-report-orders button strong { font-size: 12px; }
@@ -146,6 +148,34 @@
 .manual-report-empty.large { height: 100%; min-height: 280px; }
 .manual-report-empty svg { width: 30px; height: 30px; color: #d95600; }
 .manual-report-empty span { max-width: 380px; font-size: 9px; }
+.labor-pool-toolbar { padding-inline: 9px; gap: 14px; }
+.labor-pool-toolbar label { display: inline-flex; align-items: center; gap: 7px; color: #5f6c79; font-size: 9px; font-weight: 800; }
+.labor-pool-toolbar input { height: 30px; padding: 0 8px; border: 1px solid #ccd5dd; border-radius: 7px; background: #fff; color: #273444; font: inherit; }
+.labor-pool-toolbar > span { display: inline-flex; align-items: center; gap: 4px; color: #6c7885; font-size: 9px; }
+.labor-pool-toolbar > span b { color: #263545; font-size: 10px; }
+.labor-pool-workspace { grid-template-rows: auto auto auto minmax(120px, 1fr); }
+.labor-claim-form { min-height: 130px; grid-template-rows: minmax(0, 1fr) auto; }
+.labor-claim-form .manual-report-fields { grid-template-columns: repeat(2, minmax(180px, 300px)); }
+.labor-standard-resolution { grid-template-rows: auto minmax(0, 1fr) auto; border-color: #efd79a; background: #fffdf6; }
+.labor-standard-resolution > header { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; color: #6d4b00; }
+.labor-standard-resolution > header strong { font-size: 11px; }
+.labor-standard-resolution > header span { color: #7f7152; font-size: 8px; }
+.labor-standard-resolution .manual-report-fields { grid-template-columns: repeat(4, minmax(130px, 1fr)); }
+.labor-standard-resolution .labor-standard-reason { grid-column: span 3; }
+.labor-standard-resolution .labor-standard-checkbox { display: flex; flex-direction: row; align-items: center; align-self: end; height: 36px; }
+.labor-standard-resolution .labor-standard-checkbox input { width: 16px; height: 16px; }
+.labor-claim-list { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); border: 1px solid #e2e7eb; border-radius: 9px; background: #fff; overflow: hidden; }
+.labor-claim-list > header { min-height: 38px; padding: 0 10px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #edf0f3; color: #566473; font-size: 9px; font-weight: 800; }
+.labor-claim-list > header strong { padding: 3px 7px; border-radius: 999px; background: #edf8f0; color: #287a45; }
+.labor-claim-list > div { min-height: 0; padding: 6px; display: grid; align-content: start; gap: 5px; overflow-y: auto; }
+.labor-claim-list article { min-width: 0; min-height: 50px; padding: 6px 8px; display: grid; grid-template-columns: minmax(150px, 1.1fr) minmax(80px, .55fr) minmax(110px, .7fr) minmax(130px, .75fr) auto; align-items: center; gap: 8px; border: 1px solid #e7ebef; border-radius: 7px; background: #fbfcfd; }
+.labor-claim-list article > span { min-width: 0; display: grid; gap: 2px; }
+.labor-claim-list article strong, .labor-claim-list article b, .labor-claim-list article small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.labor-claim-list article strong, .labor-claim-list article b { font-size: 10px; }
+.labor-claim-list article small { color: #788594; font-size: 8px; }
+.labor-claim-list article button { min-height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid #f1c7ab; border-radius: 7px; background: #fff7ed; color: #b54708; font-size: 9px; font-weight: 800; }
+.labor-claim-list article button:disabled { opacity: .55; cursor: not-allowed; }
+.employee-report-details > div.employee-report-claim-detail { border-color: #cfe6d6; background: #f6fcf7; }
 .employee-report-toast { position: fixed; z-index: 90; left: 50%; top: calc(var(--hm-shell-header) + 14px); transform: translateX(-50%); min-height: 38px; max-width: min(520px, calc(100vw - 32px)); padding: 0 14px; display: flex; align-items: center; gap: 8px; border: 1px solid rgba(40,122,69,.28); border-radius: 8px; background: rgba(241,252,244,.94); box-shadow: 0 10px 30px rgba(31,41,51,.16); color: #287a45; font-size: 10px; font-weight: 800; backdrop-filter: blur(10px); animation: employee-report-toast-in .18s ease-out, employee-report-toast-out .35s ease-in 2.65s forwards; }
 @keyframes employee-report-toast-in { from { opacity: 0; transform: translate(-50%, -8px); } to { opacity: 1; transform: translate(-50%, 0); } }
 @keyframes employee-report-toast-out { to { opacity: 0; transform: translate(-50%, -6px); } }
@@ -159,6 +189,8 @@
   .manual-report-layout { grid-template-columns: 220px minmax(0, 1fr); }
   .manual-report-order-summary { grid-template-columns: minmax(190px, .8fr) minmax(390px, 1fr); }
   .manual-report-fields { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+  .labor-pool-toolbar { gap: 8px; }
+  .labor-claim-list article { grid-template-columns: minmax(140px, 1fr) repeat(3, minmax(80px, .65fr)) auto; }
 }
 @media (max-width: 1024px) {
   .employee-report-command { min-height: 58px; padding-block: 7px; }
@@ -175,6 +207,9 @@
   .manual-report-fields { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
   .manual-report-notes { grid-template-columns: 1fr; }
   .manual-report-remark { grid-column: span 2; }
+  .labor-pool-toolbar > span:last-child { display: none; }
+  .labor-claim-list article { grid-template-columns: minmax(120px, 1fr) repeat(2, minmax(75px, .6fr)) auto; }
+  .labor-claim-list article > span:nth-of-type(4) { display: none; }
 }
 @media (max-width: 900px) {
   .employee-report-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }

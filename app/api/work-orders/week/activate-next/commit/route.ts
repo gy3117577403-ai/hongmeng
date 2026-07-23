@@ -43,7 +43,10 @@ export async function POST(req: NextRequest) {
     const userName = user.displayName || user.username;
     const result = await prisma.$transaction(async tx => {
       const archived = await tx.workOrder.updateMany({
-        where: activeWeeklyWhere(),
+        where: {
+          ...activeWeeklyWhere(),
+          completedAt: { not: null },
+        },
         data: {
           planActive: false,
           planClearedAt: now,

@@ -83,6 +83,27 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
   },
 ];
 
+const teamLeadNavigation = new Set([
+  '/production',
+  '/workspace/workflows',
+  '/workspace/reports',
+]);
+
+function navigationForRole(
+  role: CurrentUserDTO['laborRole'],
+): Array<{ label: string; items: SideNavigationItem[] }> {
+  if (role === 'ADMIN') return sideNavigation;
+  const allowed = role === 'TEAM_LEAD'
+    ? teamLeadNavigation
+    : new Set(['/workspace/reports']);
+  return sideNavigation
+    .map(group => ({
+      ...group,
+      items: group.items.filter(item => allowed.has(item.href)),
+    }))
+    .filter(group => group.items.length > 0);
+}
+
 function routePath(href: string): string {
   return href.split('?')[0] || '/';
 }
@@ -118,6 +139,11 @@ export function AppWorkbenchHeader({
   const displayName = user.displayName || user.username;
   const moduleName = activeModuleName(activeHref);
   const isHome = isActiveRoute(activeHref, '/home');
+  const visibleNavigation = navigationForRole(user.laborRole);
+  const landingHref = user.laborRole === 'EMPLOYEE' ? '/workspace/reports' : '/home';
+  const visibleMenuItems = user.laborRole === 'ADMIN'
+    ? menuItems
+    : menuItems.filter(item => !item.href?.startsWith('/dashboard?openSettings=1'));
 
   useEffect(() => {
     if (!sidebarTriggerTargetId) {
@@ -164,15 +190,15 @@ export function AppWorkbenchHeader({
       <button className={`hm-platform-sidebar-scrim ${sidebarExpanded ? 'open' : ''}`} type="button" aria-label="关闭平台导航" onClick={closeSidebar} />
       <aside className={`hm-platform-sidebar ${sidebarExpanded ? 'expanded' : ''}`} id="hm-platform-sidebar" aria-label="杭连协同平台业务导航">
         <button className="hm-platform-sidebar-close" type="button" aria-label="收起平台导航" title="收起平台导航" onClick={closeSidebar}><PanelLeftClose size={18} aria-hidden="true" /></button>
-        <a className="hm-platform-brand" href="/home" title="返回杭连协同平台首页">
+        <a className="hm-platform-brand" href={landingHref} title="返回杭连协同平台">
           <span aria-hidden="true">杭</span>
           <div><strong>杭连协同平台</strong><small>生产与技术协同工作台</small></div>
         </a>
-        <a className={`hm-platform-home ${isActiveRoute(activeHref, '/home') ? 'active' : ''}`} href="/home" title="首页" aria-current={isActiveRoute(activeHref, '/home') ? 'page' : undefined}>
+        {user.laborRole !== 'EMPLOYEE' && <a className={`hm-platform-home ${isActiveRoute(activeHref, '/home') ? 'active' : ''}`} href="/home" title="首页" aria-current={isActiveRoute(activeHref, '/home') ? 'page' : undefined}>
           <Home size={18} aria-hidden="true" /><b>首页</b>
-        </a>
+        </a>}
         <nav className="hm-platform-side-nav">
-          {sideNavigation.map(group => (
+          {visibleNavigation.map(group => (
             <section key={group.label}>
               <h2>{group.label}</h2>
               {group.items.map(item => {
@@ -189,7 +215,7 @@ export function AppWorkbenchHeader({
         </nav>
         <div className="hm-platform-sidebar-footer">
           <a href="/workspace/help" title="使用帮助（规划中）" className="planned"><HelpCircle size={18} aria-hidden="true" /><span>使用帮助</span><em>规划</em></a>
-          <a href="/dashboard?openSettings=1" title="系统设置"><Settings size={18} aria-hidden="true" /><span>系统设置</span></a>
+          {user.laborRole === 'ADMIN' && <a href="/dashboard?openSettings=1" title="系统设置"><Settings size={18} aria-hidden="true" /><span>系统设置</span></a>}
         </div>
       </aside>
 
@@ -213,7 +239,7 @@ export function AppWorkbenchHeader({
             <span aria-hidden="true">{displayName.slice(0, 1)}</span><b>{displayName}</b><ChevronDown size={14} aria-hidden="true" />
           </button>
           <PortalMenu open={menuOpen} anchorRef={userButtonRef} className="user-menu app-user-menu hm-workbench-user-menu" width={176} onClose={() => setMenuOpen(false)}>
-            {menuItems.map(item => (
+            {visibleMenuItems.map(item => (
               <button type="button" key={item.label} onClick={() => {
                 setMenuOpen(false);
                 if (item.href) location.href = item.href;

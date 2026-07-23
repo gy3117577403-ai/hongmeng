@@ -5,6 +5,7 @@ import type {
   WarehouseMaterialStatus,
   WorkflowProcessStatus,
 } from '@/types';
+import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
 
 export type PlanningFlowFacts = {
   releaseState: ProductionPlanReleaseState;
@@ -42,7 +43,11 @@ export function hasConfirmedPlanningProcess(status?: ProcessRouteStatus | 'not_c
 }
 
 export function resolvePlanningFlow(facts: PlanningFlowFacts): PlanningFlowState {
-  if (facts.workOrderCompletedAt || facts.processCompletedAt || facts.releaseState === 'archived') {
+  const lifecycle = resolveProductionLifecycle({
+    routeCompleted: facts.processStatus === 'completed',
+    workOrderCompletedAt: facts.workOrderCompletedAt,
+  });
+  if (lifecycle.aggregateCompleted) {
     return { status: 'completed', label: '已完成', tone: 'complete', workflowStatus: 'closed', nextStep: null };
   }
   if (facts.warehouseStatus === 'exception') {
@@ -66,8 +71,14 @@ export function resolvePlanningFlow(facts: PlanningFlowFacts): PlanningFlowState
   if (facts.releaseState === 'preparation') {
     return { status: 'next_preparation', label: '下周预备', tone: 'info', workflowStatus: 'waiting', nextStep: '启用本周生产' };
   }
-  if (facts.processStatus === 'completed') {
-    return { status: 'pending_archive', label: '待完成归档', tone: 'ready', workflowStatus: 'verifying', nextStep: '完成生产归档' };
+  if (lifecycle.awaitingBranchClosure) {
+    return {
+      status: 'pending_archive',
+      label: '主路线完成 · 待分支闭环',
+      tone: 'info',
+      workflowStatus: 'processing',
+      nextStep: '处理返工/补产分支',
+    };
   }
   if (facts.currentProcessName) {
     return { status: 'production', label: `生产中 · ${facts.currentProcessName}`, tone: 'info', workflowStatus: 'processing', nextStep: '推进下一工序' };

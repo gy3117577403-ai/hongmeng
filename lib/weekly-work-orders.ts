@@ -10,6 +10,7 @@ export type WeeklyCloseSummary = {
   weekStartDate: string;
   weekEndDate: string;
   workOrderCount: number;
+  incompleteWorkOrderCount: number;
   workOrdersWithFiles: number;
   missingWorkOrders: number;
   fileCount: number;
@@ -27,6 +28,7 @@ export type WeeklyActivateSummary = {
   weekStartDate: string;
   weekEndDate: string;
   currentArchiveCount: number;
+  currentCarryoverCount: number;
   nextActivateCount: number;
   missingWorkOrders: number;
   anomalyCount: number;
@@ -116,6 +118,8 @@ export async function summarizeWeeklyClose(weekStartDate: Date): Promise<WeeklyC
       where: activeWeeklyWhere(weekStartDate),
       select: {
         id: true,
+        completedAt: true,
+        branchStatus: true,
         resourceFiles: {
           where: { deletedAt: null, status: 'uploaded' },
           select: { id: true, categoryId: true },
@@ -132,6 +136,12 @@ export async function summarizeWeeklyClose(weekStartDate: Date): Promise<WeeklyC
     weekStartDate: ymd(weekStartDate),
     weekEndDate: ymd(addDays(weekStartDate, 6)),
     workOrderCount: workOrders.length,
+    incompleteWorkOrderCount: workOrders.filter(order => (
+      !order.completedAt
+      || (order.branchStatus !== null
+        && order.branchStatus !== 'RESOLVED'
+        && order.branchStatus !== 'CANCELLED')
+    )).length,
     workOrdersWithFiles: workOrders.filter(order => order.resourceFiles.length > 0).length,
     missingWorkOrders: countMissingWorkOrders(categories, workOrders),
     fileCount,
@@ -152,6 +162,7 @@ export async function summarizeWeeklyActivateNext(weekStartDate: Date): Promise<
       where: activeWeeklyWhere(),
       select: {
         id: true,
+        completedAt: true,
         resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { id: true, categoryId: true } },
       },
     }),
@@ -179,7 +190,8 @@ export async function summarizeWeeklyActivateNext(weekStartDate: Date): Promise<
   return {
     weekStartDate: ymd(weekStartDate),
     weekEndDate: ymd(addDays(weekStartDate, 6)),
-    currentArchiveCount: currentOrders.length,
+    currentArchiveCount: currentOrders.filter(order => order.completedAt).length,
+    currentCarryoverCount: currentOrders.filter(order => !order.completedAt).length,
     nextActivateCount: nextOrders.length,
     missingWorkOrders: countMissingWorkOrders(categories, nextOrders),
     anomalyCount: diff.summary.blockingAnomalyCount,

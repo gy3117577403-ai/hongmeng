@@ -18,7 +18,7 @@ import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platfor
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import { compressImageForUpload, normalizeCapturedImage } from '@/lib/image-client';
 import { normalizeLocalImportServiceOrigin } from '@/lib/local-import-service-origin';
-import type { ChangeSnapshotDTO, ConnectorAssemblyManualDTO, ConnectorAssemblyManualSearchAssetDTO, ConnectorParameterDTO, CurrentUserDTO, DrawingLibraryItemDTO, FieldSummaryDTO, IssueDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
+import type { ChangeSnapshotDTO, ConnectorAssemblyManualDTO, ConnectorAssemblyManualSearchAssetDTO, ConnectorParameterDTO, CurrentUserDTO, DrawingLibraryItemDTO, EmployeeDTO, FieldSummaryDTO, IssueDTO, LaborAccessRoleDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
 
 type WorkOrderForm = {
   code: string;
@@ -99,6 +99,7 @@ type WeeklyPlanClearSummary = {
   weekStartDate: string;
   weekEndDate: string;
   workOrderCount: number;
+  incompleteWorkOrderCount?: number;
   workOrdersWithFiles: number;
   fileCount: number;
   connectorParameterCount: number;
@@ -115,6 +116,7 @@ type WeeklyPlanActivateSummary = {
   weekStartDate: string;
   weekEndDate: string;
   currentArchiveCount: number;
+  currentCarryoverCount: number;
   nextActivateCount: number;
   missingWorkOrders: number;
   anomalyCount: number;
@@ -135,8 +137,20 @@ type WeeklyPlanActivateSummary = {
 };
 type WeekAction = 'close' | 'activate_next' | null;
 type RelatedHistory = { fileCount: number; workOrderCount: number } | null;
-type UserForm = { username: string; displayName: string; password: string };
-type AccountEdit = { id: string; displayName: string; isActive: boolean } | null;
+type UserForm = {
+  username: string;
+  displayName: string;
+  password: string;
+  laborRole: LaborAccessRoleDTO;
+  employeeId: string;
+};
+type AccountEdit = {
+  id: string;
+  displayName: string;
+  isActive: boolean;
+  laborRole: LaborAccessRoleDTO;
+  employeeId: string;
+} | null;
 type PasswordReset = { id: string; username: string; password: string } | null;
 type SearchDrawingLibraryFile = {
   id: string;
@@ -627,7 +641,14 @@ export default function DashboardShell({
   const [fieldSummary, setFieldSummary] = useState<FieldSummaryDTO | null>(null);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [users, setUsers] = useState<UserDTO[]>([]);
-  const [userForm, setUserForm] = useState<UserForm>({ username: '', displayName: '', password: '' });
+  const [accountEmployees, setAccountEmployees] = useState<EmployeeDTO[]>([]);
+  const [userForm, setUserForm] = useState<UserForm>({
+    username: '',
+    displayName: '',
+    password: '',
+    laborRole: 'EMPLOYEE',
+    employeeId: '',
+  });
   const [accountEdit, setAccountEdit] = useState<AccountEdit>(null);
   const [passwordReset, setPasswordReset] = useState<PasswordReset>(null);
   const [accountError, setAccountError] = useState('');
@@ -1421,19 +1442,34 @@ export default function DashboardShell({
 
   async function loadUsers() {
     try {
-      const r = await fetch('/api/users', { cache: 'no-store' });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) {
-        setAccountError(d.error || d.message || '账号加载失败');
+      const [userResponse, employeeResponse] = await Promise.all([
+        fetch('/api/users', { cache: 'no-store' }),
+        fetch('/api/employees?active=true', { cache: 'no-store' }),
+      ]);
+      const [userBody, employeeBody] = await Promise.all([
+        userResponse.json().catch(() => ({})),
+        employeeResponse.json().catch(() => ({})),
+      ]);
+      if (!userResponse.ok) {
+        setAccountError(userBody.error || userBody.message || '账号加载失败');
         return;
       }
-      setUsers(Array.isArray(d.users) ? d.users : []);
+      if (!employeeResponse.ok) {
+        setAccountError(employeeBody.error || employeeBody.message || '员工档案加载失败');
+        return;
+      }
+      setUsers(Array.isArray(userBody.users) ? userBody.users : []);
+      setAccountEmployees(Array.isArray(employeeBody.employees) ? employeeBody.employees : []);
     } catch {
       setAccountError('账号加载失败');
     }
   }
 
   async function openAccounts() {
+    if (user.laborRole !== 'ADMIN') {
+      setMsg('只有管理员可以进入账号管理');
+      return;
+    }
     setAccountsOpen(true);
     setAccountError('');
     await loadUsers();
@@ -1444,6 +1480,9 @@ export default function DashboardShell({
     setAccountError('');
     if (!userForm.username.trim()) return setAccountError('账号不能为空');
     if (userForm.password.length < 6) return setAccountError('初始密码至少 6 位');
+    if (userForm.laborRole !== 'ADMIN' && !userForm.employeeId) {
+      return setAccountError('班组长或员工账号必须绑定员工档案');
+    }
     setAccountSaving(true);
     try {
       const r = await fetch('/api/users', {
@@ -1456,7 +1495,13 @@ export default function DashboardShell({
         setAccountError(d.error || d.message || '新增账号失败');
         return;
       }
-      setUserForm({ username: '', displayName: '', password: '' });
+      setUserForm({
+        username: '',
+        displayName: '',
+        password: '',
+        laborRole: 'EMPLOYEE',
+        employeeId: '',
+      });
       await loadUsers();
       setMsg('账号已新增');
     } catch {
@@ -1469,13 +1514,22 @@ export default function DashboardShell({
   async function saveAccountEdit(e: React.FormEvent) {
     e.preventDefault();
     if (!accountEdit) return;
+    if (accountEdit.laborRole !== 'ADMIN' && !accountEdit.employeeId) {
+      setAccountError('班组长或员工账号必须绑定员工档案');
+      return;
+    }
     setAccountSaving(true);
     setAccountError('');
     try {
       const r = await fetch(`/api/users/${accountEdit.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName: accountEdit.displayName, isActive: accountEdit.isActive }),
+        body: JSON.stringify({
+          displayName: accountEdit.displayName,
+          isActive: accountEdit.isActive,
+          laborRole: accountEdit.laborRole,
+          employeeId: accountEdit.laborRole === 'ADMIN' ? null : accountEdit.employeeId,
+        }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
@@ -2509,7 +2563,9 @@ export default function DashboardShell({
         menuItems={[
           { label: '操作日志', onSelect: () => { void loadLogs('all'); } },
           { label: '系统设置', onSelect: () => { void openSystemSettings(); } },
-          { label: '账号管理', onSelect: () => { void openAccounts(); } },
+          ...(user.laborRole === 'ADMIN'
+            ? [{ label: '账号管理', onSelect: () => { void openAccounts(); } }]
+            : []),
           { label: '回收站', onSelect: () => { void openTrash(); } },
           { label: '使用帮助', onSelect: () => setHelpOpen(true) },
           { label: '修改密码', onSelect: openPasswordDialog },
@@ -3123,6 +3179,7 @@ export default function DashboardShell({
           openLogs={() => loadLogs('all')}
           openSnapshots={loadChangeSnapshots}
           openAccounts={openAccounts}
+          canManageAccounts={user.laborRole === 'ADMIN'}
           openTrash={openTrash}
           openHelp={() => setHelpOpen(true)}
           logout={logout}
@@ -3150,6 +3207,7 @@ export default function DashboardShell({
       {accountsOpen && (
         <AccountManager
           users={users}
+          employees={accountEmployees}
           userForm={userForm}
           accountEdit={accountEdit}
           passwordReset={passwordReset}
@@ -3453,14 +3511,18 @@ function WeekActionDialog({
   const required = isClose ? 'CLOSE_WEEK' : 'START_NEXT_WEEK';
   const title = isClose ? '结束本周 / 归档当前周' : '启用下周草稿';
   const activateSummary = summary && !isClose ? summary as WeeklyPlanActivateSummary : null;
+  const closeSummary = summary && isClose ? summary as WeeklyPlanClearSummary : null;
   const activationBlocked = (activateSummary?.blockingAnomalyCount || 0) > 0
     || (activateSummary?.missingProductTimeProfiles || 0) > 0;
+  const closeBlocked = (closeSummary?.incompleteWorkOrderCount || 0) > 0;
+  const actionBlocked = activationBlocked || closeBlocked;
   let summaryItems: string[][] = [];
   if (summary && isClose) {
     const item = summary as WeeklyPlanClearSummary;
     summaryItems = [
       ['周期', `${item.weekStartDate} 至 ${item.weekEndDate}`],
       ['归档工单', String(item.archiveCount ?? item.workOrderCount)],
+      ['未闭环工单/分支', String(item.incompleteWorkOrderCount ?? 0)],
       ['已上传资料工单', String(item.workOrdersWithFiles)],
       ['缺资料工单', String(item.missingWorkOrders ?? 0)],
       ['保留文件', String(item.fileCount)],
@@ -3472,6 +3534,7 @@ function WeekActionDialog({
     summaryItems = [
       ['周期', `${item.weekStartDate} 至 ${item.weekEndDate}`],
       ['将归档当前周', String(item.currentArchiveCount)],
+      ['遗留未完继续执行', String(item.currentCarryoverCount)],
       ['将启用下周', String(item.nextActivateCount)],
       ['新增', String(item.newCount)],
       ['延续', String(item.continuedCount)],
@@ -3516,9 +3579,14 @@ function WeekActionDialog({
                 请先完成准备，当前不会启用下周。
               </div>
             )}
+            {closeBlocked && (
+              <div className="weekly-block-message">
+                仍有 {closeSummary?.incompleteWorkOrderCount} 张工单或分支未闭环。请先完成返工/补产与整单闭环，当前不会归档。
+              </div>
+            )}
             {!isClose && !activationBlocked && (activateSummary?.warningCount || 0) > 0 && <div className="weekly-warning-message">仍有 {activateSummary?.warningCount} 项警告，可以继续启用，但请先确认已知悉。</div>}
             <p className="tool-note muted">图纸资料库、连接器参数、S3 文件和历史上传记录都会保留。</p>
-            {!activationBlocked && (
+            {!actionBlocked && (
               <label className="danger-confirm-inline">
                 <span>确认请输入 {required}</span>
                 <input value={confirmText} onChange={e => setConfirmText(e.target.value)} placeholder={required} />
@@ -3526,7 +3594,7 @@ function WeekActionDialog({
             )}
             <div className="dialog-actions">
               <button type="button" onClick={close}>取消</button>
-              <button className={isClose ? 'danger-button' : 'primary-button'} type="button" disabled={loading || activationBlocked || confirmText.trim() !== required} onClick={commit}>
+              <button className={isClose ? 'danger-button' : 'primary-button'} type="button" disabled={loading || actionBlocked || confirmText.trim() !== required} onClick={commit}>
                 {loading ? '处理中...' : isClose ? '确认归档当前周' : '确认启用下周'}
               </button>
             </div>
@@ -3708,8 +3776,13 @@ function UploadManager({
   );
 }
 
+function laborRoleLabel(role: LaborAccessRoleDTO): string {
+  return role === 'ADMIN' ? '管理员' : role === 'TEAM_LEAD' ? '班组长' : '员工';
+}
+
 function AccountManager({
   users,
+  employees,
   userForm,
   accountEdit,
   passwordReset,
@@ -3724,6 +3797,7 @@ function AccountManager({
   resetUserPassword,
 }: {
   users: UserDTO[];
+  employees: EmployeeDTO[];
   userForm: UserForm;
   accountEdit: AccountEdit;
   passwordReset: PasswordReset;
@@ -3749,20 +3823,40 @@ function AccountManager({
           <label>账号<input value={userForm.username} onChange={e => setUserForm(v => ({ ...v, username: e.target.value }))} /></label>
           <label>姓名<input value={userForm.displayName} onChange={e => setUserForm(v => ({ ...v, displayName: e.target.value }))} /></label>
           <label>初始密码<input type="password" value={userForm.password} onChange={e => setUserForm(v => ({ ...v, password: e.target.value }))} /></label>
+          <label>账号角色<select value={userForm.laborRole} onChange={e => setUserForm(v => ({
+            ...v,
+            laborRole: e.target.value as LaborAccessRoleDTO,
+            employeeId: e.target.value === 'ADMIN' ? '' : v.employeeId,
+          }))}><option value="EMPLOYEE">员工（仅领取本人）</option><option value="TEAM_LEAD">班组长（本班组分配）</option><option value="ADMIN">管理员（全量管理）</option></select></label>
+          {userForm.laborRole !== 'ADMIN' && <label>绑定员工<select value={userForm.employeeId} onChange={e => setUserForm(v => ({ ...v, employeeId: e.target.value }))}><option value="">选择在职员工</option>{employees.map(employee => <option key={employee.id} value={employee.id}>{employee.employeeNo} · {employee.name}{employee.team ? ` · ${employee.team}` : ''}</option>)}</select></label>}
           <button className="primary-button" type="submit" disabled={saving}>{saving ? '保存中...' : '新增账号'}</button>
         </form>
         <div className="compact-table users-table">
-          <div className="compact-head"><span>账号</span><span>姓名</span><span>状态</span><span>创建时间</span><span>操作</span></div>
+          <div className="compact-head"><span>账号</span><span>姓名</span><span>角色</span><span>绑定员工</span><span>状态</span><span>创建时间</span><span>操作</span></div>
           {users.map(item => (
             <div className="compact-row" key={item.id}>
               <span>{item.username}</span>
               <span>{item.displayName}</span>
+              <span>{laborRoleLabel(item.laborRole)}</span>
+              <span>{item.employee ? `${item.employee.employeeNo} · ${item.employee.name}${item.employee.team ? ` · ${item.employee.team}` : ''}` : '-'}</span>
               <span>{item.isActive ? '启用' : '禁用'}</span>
               <span>{dt(item.createdAt)}</span>
               <span className="row-actions">
-                <button type="button" onClick={() => setAccountEdit({ id: item.id, displayName: item.displayName, isActive: item.isActive })}>编辑</button>
+                <button type="button" onClick={() => setAccountEdit({
+                  id: item.id,
+                  displayName: item.displayName,
+                  isActive: item.isActive,
+                  laborRole: item.laborRole,
+                  employeeId: item.employeeId || '',
+                })}>编辑</button>
                 <button type="button" onClick={() => setPasswordReset({ id: item.id, username: item.username, password: '' })}>重置密码</button>
-                {item.isActive && <button type="button" onClick={() => setAccountEdit({ id: item.id, displayName: item.displayName, isActive: false })}>禁用</button>}
+                {item.isActive && <button type="button" onClick={() => setAccountEdit({
+                  id: item.id,
+                  displayName: item.displayName,
+                  isActive: false,
+                  laborRole: item.laborRole,
+                  employeeId: item.employeeId || '',
+                })}>禁用</button>}
               </span>
             </div>
           ))}
@@ -3773,6 +3867,12 @@ function AccountManager({
           <form className="nested-dialog" onSubmit={saveAccountEdit}>
             <strong>编辑账号</strong>
             <label>姓名<input value={accountEdit.displayName} onChange={e => setAccountEdit({ ...accountEdit, displayName: e.target.value })} /></label>
+            <label>账号角色<select value={accountEdit.laborRole} onChange={e => setAccountEdit({
+              ...accountEdit,
+              laborRole: e.target.value as LaborAccessRoleDTO,
+              employeeId: e.target.value === 'ADMIN' ? '' : accountEdit.employeeId,
+            })}><option value="EMPLOYEE">员工（仅领取本人）</option><option value="TEAM_LEAD">班组长（本班组分配）</option><option value="ADMIN">管理员（全量管理）</option></select></label>
+            {accountEdit.laborRole !== 'ADMIN' && <label>绑定员工<select value={accountEdit.employeeId} onChange={e => setAccountEdit({ ...accountEdit, employeeId: e.target.value })}><option value="">选择在职员工</option>{employees.map(employee => <option key={employee.id} value={employee.id}>{employee.employeeNo} · {employee.name}{employee.team ? ` · ${employee.team}` : ''}</option>)}</select></label>}
             <label className="check-line"><input type="checkbox" checked={accountEdit.isActive} onChange={e => setAccountEdit({ ...accountEdit, isActive: e.target.checked })} /> 启用账号</label>
             <div className="dialog-actions">
               <button type="button" onClick={() => setAccountEdit(null)}>取消</button>
@@ -3992,6 +4092,7 @@ function SystemSettings({
   openLogs,
   openSnapshots,
   openAccounts,
+  canManageAccounts,
   openTrash,
   openHelp,
   logout,
@@ -4039,6 +4140,7 @@ function SystemSettings({
   openLogs: () => void;
   openSnapshots: () => void;
   openAccounts: () => void;
+  canManageAccounts: boolean;
   openTrash: () => void;
   openHelp: () => void;
   logout: () => void;
@@ -4203,6 +4305,7 @@ function SystemSettings({
                   <div className="import-summary">
                     <span>周期 {clearPreview.weekStartDate} 至 {clearPreview.weekEndDate}</span>
                     <span>生产工单 {clearPreview.workOrderCount}</span>
+                    <span>未闭环工单/分支 {clearPreview.incompleteWorkOrderCount ?? 0}</span>
                     <span>已上传资料工单 {clearPreview.workOrdersWithFiles}</span>
                     <span>不会删除文件 {clearPreview.fileCount}</span>
                     <span>不会删除图纸资料库</span>
@@ -4213,7 +4316,7 @@ function SystemSettings({
                     <span>确认请输入 CLOSE_WEEK</span>
                     <input value={clearConfirmText} onChange={e => setClearConfirmText(e.target.value)} placeholder="CLOSE_WEEK" />
                   </label>
-                  <button className="danger-button" type="button" disabled={clearingWeeklyPlan || clearConfirmText.trim() !== 'CLOSE_WEEK'} onClick={commitClearWeeklyPlan}>
+                  <button className="danger-button" type="button" disabled={clearingWeeklyPlan || (clearPreview.incompleteWorkOrderCount || 0) > 0 || clearConfirmText.trim() !== 'CLOSE_WEEK'} onClick={commitClearWeeklyPlan}>
                     {clearingWeeklyPlan ? '归档中...' : '确认归档当前周'}
                   </button>
                 </>
@@ -4317,7 +4420,7 @@ function SystemSettings({
             <button type="button" onClick={refreshStatus}>重新检查状态</button>
             <button type="button" onClick={refreshData}>刷新当前数据</button>
             <button type="button" onClick={openLogs}>打开操作日志</button>
-            <button type="button" onClick={openAccounts}>账号管理</button>
+            {canManageAccounts && <button type="button" onClick={openAccounts}>账号管理</button>}
             <button type="button" onClick={openTrash}>回收站</button>
             <button type="button" onClick={openHelp}>使用帮助</button>
             <button type="button" onClick={logout}>退出登录</button>

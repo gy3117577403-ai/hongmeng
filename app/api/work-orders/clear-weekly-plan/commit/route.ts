@@ -20,6 +20,13 @@ export async function POST(req: NextRequest) {
     }
 
     const before = await summarizeWeeklyPlanClear(weekStartDate);
+    if (before.incompleteWorkOrderCount > 0) {
+      return NextResponse.json({
+        ok: false,
+        error: `仍有 ${before.incompleteWorkOrderCount} 张工单或分支未闭环，不能归档当前周`,
+        summary: before,
+      }, { status: 409 });
+    }
     const result = await prisma.workOrder.updateMany({
       where: weeklyPlanWhere(weekStartDate),
       data: {

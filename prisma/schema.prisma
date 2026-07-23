@@ -7,14 +7,84 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum WorkOrderBranchType {
+  REWORK
+  SCRAP_REPLENISH
+  QUALITY_PENDING
+
+  @@map("work_order_branch_type")
+}
+
+enum WorkOrderBranchStatus {
+  OPEN
+  RELEASED
+  IN_PROGRESS
+  QUALITY_PENDING
+  RESOLVED
+  CANCELLED
+
+  @@map("work_order_branch_status")
+}
+
+enum ProcessDefectDisposition {
+  REWORK
+  SCRAP_REPLENISH
+  QUALITY_PENDING
+
+  @@map("process_defect_disposition")
+}
+
+enum ProcessMovementType {
+  GOOD_TRANSFER
+  FINISHED_GOOD
+  REWORK_SPLIT
+  SCRAP_REPLENISH_SPLIT
+  QUALITY_HOLD
+  REWORK_RETURN
+  SCRAP
+  ADJUSTMENT
+  REVERSAL
+
+  @@map("process_movement_type")
+}
+
+enum ProcessLaborPoolStatus {
+  OPEN
+  PARTIAL
+  EXHAUSTED
+  LOCKED
+  VOIDED
+
+  @@map("process_labor_pool_status")
+}
+
+enum ProcessLaborClaimStatus {
+  ACTIVE
+  VOIDED
+  REVERSAL
+
+  @@map("process_labor_claim_status")
+}
+
+enum LaborAccessRole {
+  ADMIN
+  TEAM_LEAD
+  EMPLOYEE
+
+  @@map("labor_access_role")
+}
+
 model User {
   id                             String                      @id @default(uuid())
   username                       String                      @unique
   passwordHash                   String                      @map("password_hash")
   displayName                    String                      @map("display_name")
   isActive                       Boolean                     @default(true) @map("is_active")
+  laborRole                      LaborAccessRole             @default(EMPLOYEE) @map("labor_role")
+  employeeId                     String?                     @unique @map("employee_id")
   createdAt                      DateTime                    @default(now()) @map("created_at")
   updatedAt                      DateTime                    @updatedAt @map("updated_at")
+  employee                       Employee?                   @relation(fields: [employeeId], references: [id], onDelete: SetNull)
   uploadedFiles                  ResourceFile[]              @relation("UploadedFiles")
   drawingLibraryFiles            DrawingLibraryFile[]        @relation("UploadedDrawingLibraryFiles")
   operationLogs                  OperationLog[]
@@ -49,67 +119,79 @@ model User {
   updatedAbnormalTimeEvents      AbnormalTimeEvent[]         @relation("AbnormalTimeEventUpdatedBy")
   qualityConfirmedAbnormalEvents AbnormalTimeEvent[]         @relation("AbnormalTimeEventQualityConfirmedBy")
   resolvedAbnormalTimeEvents     AbnormalTimeEvent[]         @relation("AbnormalTimeEventResolvedBy")
-  createdProductionPlanOrders   ProductionPlanOrder[]       @relation("ProductionPlanOrderCreatedBy")
-  updatedProductionPlanOrders   ProductionPlanOrder[]       @relation("ProductionPlanOrderUpdatedBy")
-  releasedProductionPlanBatches ProductionPlanBatch[]       @relation("ProductionPlanBatchReleasedBy")
-  activatedProductionPlanBatches ProductionPlanBatch[]      @relation("ProductionPlanBatchActivatedBy")
-  productionPlanChanges         ProductionPlanChange[]      @relation("ProductionPlanChangeActor")
+  createdProductionPlanOrders    ProductionPlanOrder[]       @relation("ProductionPlanOrderCreatedBy")
+  updatedProductionPlanOrders    ProductionPlanOrder[]       @relation("ProductionPlanOrderUpdatedBy")
+  releasedProductionPlanBatches  ProductionPlanBatch[]       @relation("ProductionPlanBatchReleasedBy")
+  activatedProductionPlanBatches ProductionPlanBatch[]       @relation("ProductionPlanBatchActivatedBy")
+  productionPlanChanges          ProductionPlanChange[]      @relation("ProductionPlanChangeActor")
+  createdProcessCompletions      ProcessCompletion[]         @relation("ProcessCompletionCreatedBy")
+  voidedProcessCompletions       ProcessCompletion[]         @relation("ProcessCompletionVoidedBy")
+  claimedProcessLaborClaims      ProcessLaborClaim[]         @relation("ProcessLaborClaimClaimedBy")
+  voidedProcessLaborClaims       ProcessLaborClaim[]         @relation("ProcessLaborClaimVoidedBy")
 
   @@map("users")
 }
 
 model WorkOrder {
-  id                      String                 @id @default(uuid())
-  code                    String                 @unique
-  customerName            String?                @map("customer_name")
-  productName             String                 @map("product_name")
+  id                      String                    @id @default(uuid())
+  code                    String                    @unique
+  customerName            String?                   @map("customer_name")
+  productName             String                    @map("product_name")
   stage                   String
-  progress                Int                    @default(0)
-  priority                String                 @default("normal")
-  status                  String                 @default("processing")
-  plannedAt               DateTime?              @map("planned_at")
+  progress                Int                       @default(0)
+  priority                String                    @default("normal")
+  status                  String                    @default("processing")
+  plannedAt               DateTime?                 @map("planned_at")
   remark                  String?
-  sourceOrderNo           String?                @map("source_order_no")
+  sourceOrderNo           String?                   @map("source_order_no")
   salesperson             String?
-  orderDate               DateTime?              @map("order_date")
-  customerLevel           String?                @map("customer_level")
+  orderDate               DateTime?                 @map("order_date")
+  customerLevel           String?                   @map("customer_level")
   specification           String?
-  processName             String?                @map("process_name")
-  uncompletedQty          String?                @map("uncompleted_qty")
-  productionTargetQty     Int?                   @map("production_target_qty")
-  unitWorkHours           String?                @map("unit_work_hours")
-  totalWorkHours          String?                @map("total_work_hours")
-  drawingStatus           String?                @map("drawing_status")
-  deliveryDay             String?                @map("delivery_day")
-  materialStatus          String?                @map("material_status")
-  drawingIssuedAt         DateTime?              @map("drawing_issued_at")
-  drawingIssueNote        String?                @map("drawing_issue_note")
-  importBatchId           String?                @map("import_batch_id")
-  sourceSheetName         String?                @map("source_sheet_name")
-  sourceRowNo             Int?                   @map("source_row_no")
-  planType                String?                @map("plan_type")
-  weekStartDate           DateTime?              @map("week_start_date")
-  weekEndDate             DateTime?              @map("week_end_date")
-  planActive              Boolean                @default(true) @map("plan_active")
-  planClearedAt           DateTime?              @map("plan_cleared_at")
-  planClearedBy           String?                @map("plan_cleared_by")
-  libraryKey              String?                @map("library_key")
-  drawingLibraryItemId    String?                @map("drawing_library_item_id")
-  productionOwner         String?                @map("production_owner")
+  processName             String?                   @map("process_name")
+  uncompletedQty          String?                   @map("uncompleted_qty")
+  productionTargetQty     Int?                      @map("production_target_qty")
+  unitWorkHours           String?                   @map("unit_work_hours")
+  totalWorkHours          String?                   @map("total_work_hours")
+  drawingStatus           String?                   @map("drawing_status")
+  deliveryDay             String?                   @map("delivery_day")
+  materialStatus          String?                   @map("material_status")
+  drawingIssuedAt         DateTime?                 @map("drawing_issued_at")
+  drawingIssueNote        String?                   @map("drawing_issue_note")
+  importBatchId           String?                   @map("import_batch_id")
+  sourceSheetName         String?                   @map("source_sheet_name")
+  sourceRowNo             Int?                      @map("source_row_no")
+  planType                String?                   @map("plan_type")
+  weekStartDate           DateTime?                 @map("week_start_date")
+  weekEndDate             DateTime?                 @map("week_end_date")
+  planActive              Boolean                   @default(true) @map("plan_active")
+  planClearedAt           DateTime?                 @map("plan_cleared_at")
+  planClearedBy           String?                   @map("plan_cleared_by")
+  libraryKey              String?                   @map("library_key")
+  drawingLibraryItemId    String?                   @map("drawing_library_item_id")
+  productionOwner         String?                   @map("production_owner")
   workstation             String?
-  completedQty            String?                @map("completed_qty")
-  frontendTransferredQty  Int?                   @map("frontend_transferred_qty")
-  executionVersion        Int                    @default(0) @map("execution_version")
-  startedAt               DateTime?              @map("started_at")
-  completedAt             DateTime?              @map("completed_at")
-  lastProgressAt          DateTime?              @map("last_progress_at")
-  latestProgressRemark    String?                @map("latest_progress_remark")
-  createdAt               DateTime               @default(now()) @map("created_at")
-  updatedAt               DateTime               @updatedAt @map("updated_at")
-  deletedAt               DateTime?              @map("deleted_at")
+  completedQty            String?                   @map("completed_qty")
+  frontendTransferredQty  Int?                      @map("frontend_transferred_qty")
+  executionVersion        Int                       @default(0) @map("execution_version")
+  parentWorkOrderId       String?                   @map("parent_work_order_id")
+  rootWorkOrderId         String?                   @map("root_work_order_id")
+  branchType              WorkOrderBranchType?      @map("branch_type")
+  branchStatus            WorkOrderBranchStatus?    @map("branch_status")
+  originCompletionId      String?                   @unique @map("origin_completion_id")
+  originStepId            String?                   @map("origin_step_id")
+  rejoinStepId            String?                   @map("rejoin_step_id")
+  branchSequence          Int?                      @map("branch_sequence")
+  startedAt               DateTime?                 @map("started_at")
+  completedAt             DateTime?                 @map("completed_at")
+  lastProgressAt          DateTime?                 @map("last_progress_at")
+  latestProgressRemark    String?                   @map("latest_progress_remark")
+  createdAt               DateTime                  @default(now()) @map("created_at")
+  updatedAt               DateTime                  @updatedAt @map("updated_at")
+  deletedAt               DateTime?                 @map("deleted_at")
   resourceFiles           ResourceFile[]
-  drawingLibraryItem      DrawingLibraryItem?    @relation("DrawingLibraryWorkOrders", fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
-  lastDrawingLibraryItems DrawingLibraryItem[]   @relation("LastDrawingLibraryWorkOrder")
+  drawingLibraryItem      DrawingLibraryItem?       @relation("DrawingLibraryWorkOrders", fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
+  lastDrawingLibraryItems DrawingLibraryItem[]      @relation("LastDrawingLibraryWorkOrder")
   progressLogs            WorkOrderProgressLog[]
   issues                  Issue[]
   changeRequests          ChangeRequest[]
@@ -117,7 +199,19 @@ model WorkOrder {
   processRoute            WorkOrderProcessRoute?
   abnormalTimeEvents      AbnormalTimeEvent[]
   productionPlanBatch     ProductionPlanBatch?
+  parentWorkOrder         WorkOrder?                @relation("WorkOrderBranchParent", fields: [parentWorkOrderId], references: [id], onDelete: SetNull)
+  branchWorkOrders        WorkOrder[]               @relation("WorkOrderBranchParent")
+  rootWorkOrder           WorkOrder?                @relation("WorkOrderBranchRoot", fields: [rootWorkOrderId], references: [id], onDelete: SetNull)
+  rootBranchWorkOrders    WorkOrder[]               @relation("WorkOrderBranchRoot")
+  originCompletion        ProcessCompletion?        @relation("CompletionBranchWorkOrder", fields: [originCompletionId], references: [id], onDelete: SetNull)
+  originStep              WorkOrderProcessStep?     @relation("WorkOrderBranchOriginStep", fields: [originStepId], references: [id], onDelete: SetNull)
+  rejoinStep              WorkOrderProcessStep?     @relation("WorkOrderBranchRejoinStep", fields: [rejoinStepId], references: [id], onDelete: SetNull)
+  processCompletions      ProcessCompletion[]       @relation("CompletionWorkOrder")
+  quantityMovements       ProcessQuantityMovement[] @relation("MovementWorkOrder")
+  branchQuantityMovements ProcessQuantityMovement[] @relation("MovementBranchWorkOrder")
+  processLaborPools       ProcessLaborPool[]
 
+  @@unique([parentWorkOrderId, branchSequence])
   @@index([code])
   @@index([productName])
   @@index([customerName])
@@ -140,6 +234,11 @@ model WorkOrder {
   @@index([productionOwner])
   @@index([workstation])
   @@index([lastProgressAt])
+  @@index([parentWorkOrderId])
+  @@index([rootWorkOrderId])
+  @@index([branchType, branchStatus])
+  @@index([originStepId])
+  @@index([rejoinStepId])
   @@map("work_orders")
 }
 
@@ -247,6 +346,7 @@ model WorkOrderProcessRoute {
   confirmedBy               User?                  @relation("ProcessRouteConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
   steps                     WorkOrderProcessStep[]
   activities                ProcessRouteActivity[]
+  completions               ProcessCompletion[]
 
   @@index([status])
   @@index([templateId])
@@ -256,42 +356,54 @@ model WorkOrderProcessRoute {
 }
 
 model WorkOrderProcessStep {
-  id                          String                   @id @default(uuid())
-  routeId                     String                   @map("route_id")
-  processDefinitionId         String?                  @map("process_definition_id")
-  processCode                 String                   @map("process_code")
-  processName                 String                   @map("process_name")
-  stageGroup                  String                   @map("stage_group")
+  id                          String                    @id @default(uuid())
+  routeId                     String                    @map("route_id")
+  processDefinitionId         String?                   @map("process_definition_id")
+  processCode                 String                    @map("process_code")
+  processName                 String                    @map("process_name")
+  stageGroup                  String                    @map("stage_group")
   position                    Int
-  sequenceGroup               Int                      @default(1) @map("sequence_group")
-  standardTimeId              String?                  @map("standard_time_id")
-  standardVersion             Int?                     @map("standard_version")
-  productTimeProfileId        String?                  @map("product_time_profile_id")
-  productTimeEntryId          String?                  @map("product_time_entry_id")
-  productTimeProfileVersion   Int?                     @map("product_time_profile_version")
-  standardSource              String                   @default("legacy") @map("standard_source")
-  timeBasis                   String?                  @map("time_basis")
-  unitLabel                   String?                  @map("unit_label")
-  standardMillisecondsPerUnit Int?                     @map("standard_milliseconds_per_unit")
-  setupMilliseconds           Int                      @default(0) @map("setup_milliseconds")
-  unitsPerProduct             Int                      @default(1) @map("units_per_product")
-  countsForEfficiency         Boolean                  @default(true) @map("counts_for_efficiency")
-  status                      String                   @default("pending")
-  startedAt                   DateTime?                @map("started_at")
-  completedAt                 DateTime?                @map("completed_at")
-  completedById               String?                  @map("completed_by_id")
+  sequenceGroup               Int                       @default(1) @map("sequence_group")
+  standardTimeId              String?                   @map("standard_time_id")
+  standardVersion             Int?                      @map("standard_version")
+  productTimeProfileId        String?                   @map("product_time_profile_id")
+  productTimeEntryId          String?                   @map("product_time_entry_id")
+  productTimeProfileVersion   Int?                      @map("product_time_profile_version")
+  standardSource              String                    @default("legacy") @map("standard_source")
+  timeBasis                   String?                   @map("time_basis")
+  unitLabel                   String?                   @map("unit_label")
+  standardMillisecondsPerUnit Int?                      @map("standard_milliseconds_per_unit")
+  setupMilliseconds           Int                       @default(0) @map("setup_milliseconds")
+  unitsPerProduct             Int                       @default(1) @map("units_per_product")
+  countsForEfficiency         Boolean                   @default(true) @map("counts_for_efficiency")
+  inputQty                    Int                       @default(0) @map("input_qty")
+  processedQty                Int                       @default(0) @map("processed_qty")
+  goodOutputQty               Int                       @default(0) @map("good_output_qty")
+  defectOutputQty             Int                       @default(0) @map("defect_output_qty")
+  releasedGoodQty             Int                       @default(0) @map("released_good_qty")
+  quantityVersion             Int                       @default(0) @map("quantity_version")
+  status                      String                    @default("pending")
+  startedAt                   DateTime?                 @map("started_at")
+  completedAt                 DateTime?                 @map("completed_at")
+  completedById               String?                   @map("completed_by_id")
   remark                      String?
-  createdAt                   DateTime                 @default(now()) @map("created_at")
-  updatedAt                   DateTime                 @updatedAt @map("updated_at")
-  route                       WorkOrderProcessRoute    @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  processDefinition           ProcessDefinition?       @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
-  standardTime                ProcessTimeStandard?     @relation(fields: [standardTimeId], references: [id], onDelete: SetNull)
-  productTimeProfile          ProductTimeProfile?      @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
-  productTimeEntry            ProductProcessTimeEntry? @relation(fields: [productTimeEntryId], references: [id], onDelete: SetNull)
-  completedBy                 User?                    @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  createdAt                   DateTime                  @default(now()) @map("created_at")
+  updatedAt                   DateTime                  @updatedAt @map("updated_at")
+  route                       WorkOrderProcessRoute     @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  processDefinition           ProcessDefinition?        @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
+  standardTime                ProcessTimeStandard?      @relation(fields: [standardTimeId], references: [id], onDelete: SetNull)
+  productTimeProfile          ProductTimeProfile?       @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
+  productTimeEntry            ProductProcessTimeEntry?  @relation(fields: [productTimeEntryId], references: [id], onDelete: SetNull)
+  completedBy                 User?                     @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
   activities                  ProcessRouteActivity[]
   executions                  ProcessExecution[]
   abnormalTimeEvents          AbnormalTimeEvent[]
+  completions                 ProcessCompletion[]
+  sourceQuantityMovements     ProcessQuantityMovement[] @relation("MovementSourceStep")
+  targetQuantityMovements     ProcessQuantityMovement[] @relation("MovementTargetStep")
+  processLaborPools           ProcessLaborPool[]
+  originatedBranchWorkOrders  WorkOrder[]               @relation("WorkOrderBranchOriginStep")
+  rejoiningBranchWorkOrders   WorkOrder[]               @relation("WorkOrderBranchRejoinStep")
 
   @@unique([routeId, position])
   @@index([routeId, status])
@@ -301,6 +413,7 @@ model WorkOrderProcessStep {
   @@index([productTimeProfileId])
   @@index([productTimeEntryId])
   @@index([completedById])
+  @@index([quantityVersion])
   @@map("work_order_process_steps")
 }
 
@@ -318,6 +431,8 @@ model Employee {
   executions              ProcessExecution[]
   attendanceRecords       AttendanceRecord[]
   abnormalTimeAllocations AbnormalTimeAllocation[]
+  laborClaims             ProcessLaborClaim[]
+  user                    User?
 
   @@index([isActive, employeeNo])
   @@index([name])
@@ -365,6 +480,152 @@ model ProcessExecution {
   @@index([voidedAt])
   @@index([recordedById])
   @@map("process_executions")
+}
+
+model ProcessCompletion {
+  id                          String                    @id @default(uuid())
+  workOrderId                 String                    @map("work_order_id")
+  routeId                     String                    @map("route_id")
+  stepId                      String                    @map("step_id")
+  workDate                    DateTime                  @map("work_date") @db.Date
+  completedAt                 DateTime                  @default(now()) @map("completed_at")
+  processedQty                Int                       @map("processed_qty")
+  goodQty                     Int                       @map("good_qty")
+  defectQty                   Int                       @map("defect_qty")
+  defectDisposition           ProcessDefectDisposition? @map("defect_disposition")
+  routeVersion                Int                       @map("route_version")
+  idempotencyKey              String                    @unique @map("idempotency_key")
+  standardTimeId              String?                   @map("standard_time_id")
+  standardVersion             Int?                      @map("standard_version")
+  productTimeProfileId        String?                   @map("product_time_profile_id")
+  productTimeEntryId          String?                   @map("product_time_entry_id")
+  productTimeProfileVersion   Int?                      @map("product_time_profile_version")
+  standardSource              String                    @map("standard_source")
+  timeBasis                   String?                   @map("time_basis")
+  unitLabel                   String?                   @map("unit_label")
+  standardMillisecondsPerUnit Int?                      @map("standard_milliseconds_per_unit")
+  setupMilliseconds           Int                       @default(0) @map("setup_milliseconds")
+  unitsPerProduct             Int                       @default(1) @map("units_per_product")
+  countsForEfficiency         Boolean                   @default(true) @map("counts_for_efficiency")
+  createdById                 String?                   @map("created_by_id")
+  createdAt                   DateTime                  @default(now()) @map("created_at")
+  updatedAt                   DateTime                  @updatedAt @map("updated_at")
+  voidedAt                    DateTime?                 @map("voided_at")
+  voidedById                  String?                   @map("voided_by_id")
+  voidReason                  String?                   @map("void_reason")
+  workOrder                   WorkOrder                 @relation("CompletionWorkOrder", fields: [workOrderId], references: [id], onDelete: Restrict)
+  route                       WorkOrderProcessRoute     @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  step                        WorkOrderProcessStep      @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  createdBy                   User?                     @relation("ProcessCompletionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  voidedBy                    User?                     @relation("ProcessCompletionVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  movements                   ProcessQuantityMovement[]
+  laborPool                   ProcessLaborPool?
+  branchWorkOrder             WorkOrder?                @relation("CompletionBranchWorkOrder")
+
+  @@index([workOrderId, workDate])
+  @@index([routeId, completedAt])
+  @@index([stepId, completedAt])
+  @@index([voidedAt])
+  @@index([createdById])
+  @@index([voidedById])
+  @@map("process_completions")
+}
+
+model ProcessQuantityMovement {
+  id                  String                @id @default(uuid())
+  completionId        String                @map("completion_id")
+  workOrderId         String                @map("work_order_id")
+  sourceStepId        String                @map("source_step_id")
+  targetStepId        String?               @map("target_step_id")
+  branchWorkOrderId   String?               @map("branch_work_order_id")
+  type                ProcessMovementType
+  quantity            Int
+  sourceSequenceGroup Int                   @map("source_sequence_group")
+  targetSequenceGroup Int?                  @map("target_sequence_group")
+  idempotencyKey      String                @unique @map("idempotency_key")
+  createdAt           DateTime              @default(now()) @map("created_at")
+  voidedAt            DateTime?             @map("voided_at")
+  completion          ProcessCompletion     @relation(fields: [completionId], references: [id], onDelete: Restrict)
+  workOrder           WorkOrder             @relation("MovementWorkOrder", fields: [workOrderId], references: [id], onDelete: Restrict)
+  sourceStep          WorkOrderProcessStep  @relation("MovementSourceStep", fields: [sourceStepId], references: [id], onDelete: Restrict)
+  targetStep          WorkOrderProcessStep? @relation("MovementTargetStep", fields: [targetStepId], references: [id], onDelete: Restrict)
+  branchWorkOrder     WorkOrder?            @relation("MovementBranchWorkOrder", fields: [branchWorkOrderId], references: [id], onDelete: SetNull)
+
+  @@index([completionId])
+  @@index([workOrderId, createdAt])
+  @@index([sourceStepId, createdAt])
+  @@index([targetStepId, createdAt])
+  @@index([branchWorkOrderId])
+  @@index([type, createdAt])
+  @@index([voidedAt])
+  @@map("process_quantity_movements")
+}
+
+model ProcessLaborPool {
+  id                                 String                 @id @default(uuid())
+  completionId                       String                 @unique @map("completion_id")
+  workOrderId                        String                 @map("work_order_id")
+  stepId                             String                 @map("step_id")
+  workDate                           DateTime               @map("work_date") @db.Date
+  eligibleQty                        Int                    @map("eligible_qty")
+  claimedQty                         Int                    @default(0) @map("claimed_qty")
+  remainingQty                       Int                    @map("remaining_qty")
+  status                             ProcessLaborPoolStatus @default(OPEN)
+  version                            Int                    @default(0)
+  standardMillisecondsPerUnit        Int                    @map("standard_milliseconds_per_unit")
+  setupMilliseconds                  Int                    @default(0) @map("setup_milliseconds")
+  unitsPerProduct                    Int                    @default(1) @map("units_per_product")
+  totalStandardLaborMilliseconds     BigInt                 @map("total_standard_labor_milliseconds")
+  claimedStandardLaborMilliseconds   BigInt                 @default(0) @map("claimed_standard_labor_milliseconds")
+  remainingStandardLaborMilliseconds BigInt                 @map("remaining_standard_labor_milliseconds")
+  countsForEfficiency                Boolean                @default(true) @map("counts_for_efficiency")
+  standardSource                     String                 @map("standard_source")
+  productTimeProfileVersion          Int?                   @map("product_time_profile_version")
+  createdAt                          DateTime               @default(now()) @map("created_at")
+  updatedAt                          DateTime               @updatedAt @map("updated_at")
+  lockedAt                           DateTime?              @map("locked_at")
+  completion                         ProcessCompletion      @relation(fields: [completionId], references: [id], onDelete: Restrict)
+  workOrder                          WorkOrder              @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  step                               WorkOrderProcessStep   @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  claims                             ProcessLaborClaim[]
+
+  @@index([workOrderId, workDate])
+  @@index([stepId, workDate])
+  @@index([status, workDate])
+  @@index([lockedAt])
+  @@map("process_labor_pools")
+}
+
+model ProcessLaborClaim {
+  id                        String                  @id @default(uuid())
+  poolId                    String                  @map("pool_id")
+  employeeId                String                  @map("employee_id")
+  quantity                  Int
+  standardLaborMilliseconds BigInt                  @map("standard_labor_milliseconds")
+  workDate                  DateTime                @map("work_date") @db.Date
+  status                    ProcessLaborClaimStatus @default(ACTIVE)
+  idempotencyKey            String                  @unique @map("idempotency_key")
+  claimedById               String?                 @map("claimed_by_id")
+  claimedAt                 DateTime                @default(now()) @map("claimed_at")
+  voidedAt                  DateTime?               @map("voided_at")
+  voidedById                String?                 @map("voided_by_id")
+  voidReason                String?                 @map("void_reason")
+  reversalOfId              String?                 @unique @map("reversal_of_id")
+  createdAt                 DateTime                @default(now()) @map("created_at")
+  pool                      ProcessLaborPool        @relation(fields: [poolId], references: [id], onDelete: Restrict)
+  employee                  Employee                @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  claimedBy                 User?                   @relation("ProcessLaborClaimClaimedBy", fields: [claimedById], references: [id], onDelete: SetNull)
+  voidedBy                  User?                   @relation("ProcessLaborClaimVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+  reversalOf                ProcessLaborClaim?      @relation("ProcessLaborClaimReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversal                  ProcessLaborClaim?      @relation("ProcessLaborClaimReversal")
+
+  @@index([poolId, status])
+  @@index([employeeId, workDate])
+  @@index([status, workDate])
+  @@index([claimedById])
+  @@index([voidedById])
+  @@index([voidedAt])
+  @@map("process_labor_claims")
 }
 
 model AttendanceRecord {
@@ -587,23 +848,23 @@ model ResourceFile {
 }
 
 model DrawingLibraryItem {
-  id                  String               @id @default(uuid())
-  customerName        String               @map("customer_name")
-  customerCode        String?              @map("customer_code")
-  productName         String?              @map("product_name")
-  specification       String
-  libraryKey          String               @unique @map("library_key")
-  remark              String?
-  deletedAt           DateTime?            @map("deleted_at")
-  createdAt           DateTime             @default(now()) @map("created_at")
-  updatedAt           DateTime             @updatedAt @map("updated_at")
-  lastWorkOrderId     String?              @map("last_work_order_id")
-  lastImportedAt      DateTime?            @map("last_imported_at")
-  files               DrawingLibraryFile[]
-  workOrders          WorkOrder[]          @relation("DrawingLibraryWorkOrders")
-  lastWorkOrder       WorkOrder?           @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
-  productTimeProfiles ProductTimeProfile[]
-  quotationTimes      ProductQuotationTime[]
+  id                   String                 @id @default(uuid())
+  customerName         String                 @map("customer_name")
+  customerCode         String?                @map("customer_code")
+  productName          String?                @map("product_name")
+  specification        String
+  libraryKey           String                 @unique @map("library_key")
+  remark               String?
+  deletedAt            DateTime?              @map("deleted_at")
+  createdAt            DateTime               @default(now()) @map("created_at")
+  updatedAt            DateTime               @updatedAt @map("updated_at")
+  lastWorkOrderId      String?                @map("last_work_order_id")
+  lastImportedAt       DateTime?              @map("last_imported_at")
+  files                DrawingLibraryFile[]
+  workOrders           WorkOrder[]            @relation("DrawingLibraryWorkOrders")
+  lastWorkOrder        WorkOrder?             @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
+  productTimeProfiles  ProductTimeProfile[]
+  quotationTimes       ProductQuotationTime[]
   productionPlanOrders ProductionPlanOrder[]
 
   @@index([customerName])
@@ -617,26 +878,26 @@ model DrawingLibraryItem {
 }
 
 model ProductTimeProfile {
-  id                   String                    @id @default(uuid())
-  drawingLibraryItemId String                    @map("drawing_library_item_id")
-  version              Int
-  revision             Int                       @default(0)
-  status               String                    @default("draft")
-  sourceType           String                    @default("manual") @map("source_type")
-  remark               String?
-  publishedAt          DateTime?                 @map("published_at")
-  createdById          String?                   @map("created_by_id")
-  updatedById          String?                   @map("updated_by_id")
-  publishedById        String?                   @map("published_by_id")
-  createdAt            DateTime                  @default(now()) @map("created_at")
-  updatedAt            DateTime                  @updatedAt @map("updated_at")
-  drawingLibraryItem   DrawingLibraryItem        @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Cascade)
-  createdBy            User?                     @relation("ProductTimeProfileCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedBy            User?                     @relation("ProductTimeProfileUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
-  publishedBy          User?                     @relation("ProductTimeProfilePublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
-  entries              ProductProcessTimeEntry[]
-  routes               WorkOrderProcessRoute[]
-  routeSteps           WorkOrderProcessStep[]
+  id                    String                    @id @default(uuid())
+  drawingLibraryItemId  String                    @map("drawing_library_item_id")
+  version               Int
+  revision              Int                       @default(0)
+  status                String                    @default("draft")
+  sourceType            String                    @default("manual") @map("source_type")
+  remark                String?
+  publishedAt           DateTime?                 @map("published_at")
+  createdById           String?                   @map("created_by_id")
+  updatedById           String?                   @map("updated_by_id")
+  publishedById         String?                   @map("published_by_id")
+  createdAt             DateTime                  @default(now()) @map("created_at")
+  updatedAt             DateTime                  @updatedAt @map("updated_at")
+  drawingLibraryItem    DrawingLibraryItem        @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Cascade)
+  createdBy             User?                     @relation("ProductTimeProfileCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy             User?                     @relation("ProductTimeProfileUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  publishedBy           User?                     @relation("ProductTimeProfilePublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
+  entries               ProductProcessTimeEntry[]
+  routes                WorkOrderProcessRoute[]
+  routeSteps            WorkOrderProcessStep[]
   productionPlanBatches ProductionPlanBatch[]
 
   @@unique([drawingLibraryItemId, version])
@@ -668,31 +929,31 @@ model ProductQuotationTime {
 }
 
 model ProductionPlanOrder {
-  id                   String                 @id @default(uuid())
-  sourceOrderNo        String                 @map("source_order_no")
-  sourceLineNo         Int                    @map("source_line_no")
-  customerName         String                 @map("customer_name")
-  salesperson          String?
-  productName          String                 @map("product_name")
-  specification        String
-  drawingLibraryItemId String?                @map("drawing_library_item_id")
-  orderQuantity        Int                    @map("order_quantity")
+  id                       String                 @id @default(uuid())
+  sourceOrderNo            String                 @map("source_order_no")
+  sourceLineNo             Int                    @map("source_line_no")
+  customerName             String                 @map("customer_name")
+  salesperson              String?
+  productName              String                 @map("product_name")
+  specification            String
+  drawingLibraryItemId     String?                @map("drawing_library_item_id")
+  orderQuantity            Int                    @map("order_quantity")
   planningUnitMilliseconds Int?                   @map("planning_unit_milliseconds")
-  orderDate            DateTime               @map("order_date")
-  customerDueDate      DateTime               @map("customer_due_date")
-  priority             String                 @default("normal")
-  status               String                 @default("pending")
-  remark               String?
-  createdById          String?                @map("created_by_id")
-  updatedById          String?                @map("updated_by_id")
-  createdAt            DateTime               @default(now()) @map("created_at")
-  updatedAt            DateTime               @updatedAt @map("updated_at")
-  deletedAt            DateTime?              @map("deleted_at")
-  drawingLibraryItem   DrawingLibraryItem?    @relation(fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
-  createdBy            User?                  @relation("ProductionPlanOrderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedBy            User?                  @relation("ProductionPlanOrderUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
-  batches              ProductionPlanBatch[]
-  changes              ProductionPlanChange[]
+  orderDate                DateTime               @map("order_date")
+  customerDueDate          DateTime               @map("customer_due_date")
+  priority                 String                 @default("normal")
+  status                   String                 @default("pending")
+  remark                   String?
+  createdById              String?                @map("created_by_id")
+  updatedById              String?                @map("updated_by_id")
+  createdAt                DateTime               @default(now()) @map("created_at")
+  updatedAt                DateTime               @updatedAt @map("updated_at")
+  deletedAt                DateTime?              @map("deleted_at")
+  drawingLibraryItem       DrawingLibraryItem?    @relation(fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
+  createdBy                User?                  @relation("ProductionPlanOrderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy                User?                  @relation("ProductionPlanOrderUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  batches                  ProductionPlanBatch[]
+  changes                  ProductionPlanChange[]
 
   @@unique([sourceOrderNo, sourceLineNo])
   @@index([customerName])
@@ -706,31 +967,31 @@ model ProductionPlanOrder {
 }
 
 model ProductionPlanBatch {
-  id                        String                  @id @default(uuid())
-  planOrderId               String                  @map("plan_order_id")
-  batchNo                   Int                     @map("batch_no")
+  id                        String                 @id @default(uuid())
+  planOrderId               String                 @map("plan_order_id")
+  batchNo                   Int                    @map("batch_no")
   quantity                  Int
-  weekStartDate             DateTime                @map("week_start_date")
-  weekEndDate               DateTime                @map("week_end_date")
-  plannedCompletionDate     DateTime                @map("planned_completion_date")
-  releaseState              String                  @default("draft") @map("release_state")
-  workOrderId               String?                 @unique @map("work_order_id")
-  productTimeProfileId      String?                 @map("product_time_profile_id")
-  productTimeProfileVersion Int?                    @map("product_time_profile_version")
-  unitMillisecondsSnapshot  Int?                    @map("unit_milliseconds_snapshot")
-  totalMillisecondsSnapshot BigInt?                 @map("total_milliseconds_snapshot")
-  releasedAt                DateTime?                @map("released_at")
-  releasedById              String?                 @map("released_by_id")
-  activatedAt               DateTime?                @map("activated_at")
-  activatedById             String?                 @map("activated_by_id")
-  createdAt                 DateTime                 @default(now()) @map("created_at")
-  updatedAt                 DateTime                 @updatedAt @map("updated_at")
-  deletedAt                 DateTime?                @map("deleted_at")
-  planOrder                 ProductionPlanOrder     @relation(fields: [planOrderId], references: [id], onDelete: Cascade)
-  workOrder                 WorkOrder?              @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
-  productTimeProfile        ProductTimeProfile?     @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
-  releasedBy                User?                   @relation("ProductionPlanBatchReleasedBy", fields: [releasedById], references: [id], onDelete: SetNull)
-  activatedBy               User?                   @relation("ProductionPlanBatchActivatedBy", fields: [activatedById], references: [id], onDelete: SetNull)
+  weekStartDate             DateTime               @map("week_start_date")
+  weekEndDate               DateTime               @map("week_end_date")
+  plannedCompletionDate     DateTime               @map("planned_completion_date")
+  releaseState              String                 @default("draft") @map("release_state")
+  workOrderId               String?                @unique @map("work_order_id")
+  productTimeProfileId      String?                @map("product_time_profile_id")
+  productTimeProfileVersion Int?                   @map("product_time_profile_version")
+  unitMillisecondsSnapshot  Int?                   @map("unit_milliseconds_snapshot")
+  totalMillisecondsSnapshot BigInt?                @map("total_milliseconds_snapshot")
+  releasedAt                DateTime?              @map("released_at")
+  releasedById              String?                @map("released_by_id")
+  activatedAt               DateTime?              @map("activated_at")
+  activatedById             String?                @map("activated_by_id")
+  createdAt                 DateTime               @default(now()) @map("created_at")
+  updatedAt                 DateTime               @updatedAt @map("updated_at")
+  deletedAt                 DateTime?              @map("deleted_at")
+  planOrder                 ProductionPlanOrder    @relation(fields: [planOrderId], references: [id], onDelete: Cascade)
+  workOrder                 WorkOrder?             @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  productTimeProfile        ProductTimeProfile?    @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
+  releasedBy                User?                  @relation("ProductionPlanBatchReleasedBy", fields: [releasedById], references: [id], onDelete: SetNull)
+  activatedBy               User?                  @relation("ProductionPlanBatchActivatedBy", fields: [activatedById], references: [id], onDelete: SetNull)
   changes                   ProductionPlanChange[]
 
   @@unique([planOrderId, batchNo])
@@ -742,19 +1003,19 @@ model ProductionPlanBatch {
 }
 
 model ProductionPlanChange {
-  id          String                @id @default(uuid())
-  planOrderId String?               @map("plan_order_id")
-  batchId     String?               @map("batch_id")
+  id          String               @id @default(uuid())
+  planOrderId String?              @map("plan_order_id")
+  batchId     String?              @map("batch_id")
   action      String
-  beforeData  Json?                 @map("before_data")
-  afterData   Json?                 @map("after_data")
-  impactData  Json?                 @map("impact_data")
+  beforeData  Json?                @map("before_data")
+  afterData   Json?                @map("after_data")
+  impactData  Json?                @map("impact_data")
   reason      String?
-  actorId     String?               @map("actor_id")
-  createdAt   DateTime              @default(now()) @map("created_at")
-  planOrder   ProductionPlanOrder?  @relation(fields: [planOrderId], references: [id], onDelete: Cascade)
-  batch       ProductionPlanBatch?  @relation(fields: [batchId], references: [id], onDelete: SetNull)
-  actor       User?                 @relation("ProductionPlanChangeActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actorId     String?              @map("actor_id")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  planOrder   ProductionPlanOrder? @relation(fields: [planOrderId], references: [id], onDelete: Cascade)
+  batch       ProductionPlanBatch? @relation(fields: [batchId], references: [id], onDelete: SetNull)
+  actor       User?                @relation("ProductionPlanChangeActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([planOrderId, createdAt])
   @@index([batchId, createdAt])
@@ -769,6 +1030,7 @@ model ProductProcessTimeEntry {
   processDefinitionId String                 @map("process_definition_id")
   position            Int
   sequenceGroup       Int                    @default(1) @map("sequence_group")
+  timeBasis           String                 @default("per_unit") @map("time_basis")
   unitMilliseconds    Int                    @map("unit_milliseconds")
   actionMilliseconds  Int?                   @map("action_milliseconds")
   occurrences         Int                    @default(1)

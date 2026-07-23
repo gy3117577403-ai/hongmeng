@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  ProcessRouteServiceError,
+  updateProcessRoute,
+} from '../lib/process-route-service';
+import {
   canReplaceDraftRouteWithProductTime,
   canResetLegacyDraftRouteToProductTimePending,
+  canUpgradeUnstartedConfirmedProductTimeRoute,
   initialProcessRouteStatus,
   normalizeProcessStageGroup,
   PRODUCT_TIME_PENDING_ROUTE_SOURCE,
@@ -11,6 +16,21 @@ import {
   resolveCompletedProcessGroupTransition,
   validateProcessSteps,
 } from '../lib/process-routing';
+
+test('旧转序服务入口统一要求使用生产完成账本', async () => {
+  await assert.rejects(
+    updateProcessRoute({
+      routeId: 'legacy-route',
+      action: 'advance',
+      expectedVersion: 0,
+      userId: 'legacy-user',
+      actor: 'legacy-user',
+    }),
+    (error: unknown) => error instanceof ProcessRouteServiceError
+      && error.status === 410
+      && error.code === 'PROCESS_COMPLETION_REQUIRED',
+  );
+});
 
 test('已发布产品工时自动生成已确认路线，未发布产品只保留待维护占位', () => {
   assert.equal(initialProcessRouteStatus('product_time_profile'), 'confirmed');
@@ -22,7 +42,12 @@ test('只有完全未开始且没有报工记录的草稿路线可以由产品�
     status: 'pending',
     startedAt: null,
     completedAt: null,
-    _count: { executions: 0 },
+    inputQty: 0,
+    processedQty: 0,
+    goodOutputQty: 0,
+    defectOutputQty: 0,
+    releasedGoodQty: 0,
+    _count: { executions: 0, completions: 0 },
   };
   assert.equal(canReplaceDraftRouteWithProductTime({
     status: 'draft',
@@ -32,13 +57,71 @@ test('只有完全未开始且没有报工记录的草稿路线可以由产品�
   assert.equal(canReplaceDraftRouteWithProductTime({
     status: 'draft',
     startedAt: null,
-    steps: [{ ...pendingStep, _count: { executions: 1 } }],
+    steps: [{ ...pendingStep, _count: { executions: 1, completions: 0 } }],
+  }), false);
+  assert.equal(canReplaceDraftRouteWithProductTime({
+    status: 'draft',
+    startedAt: null,
+    steps: [{ ...pendingStep, _count: { executions: 0, completions: 1 } }],
   }), false);
   assert.equal(canReplaceDraftRouteWithProductTime({
     status: 'in_progress',
     startedAt: new Date(),
     steps: [{ ...pendingStep, status: 'current' }],
   }), false);
+});
+
+test('已确认产品路线只有在完全未开工且没有生产事实时才随新版本升级', () => {
+  const pendingStep = {
+    status: 'pending',
+    startedAt: null,
+    completedAt: null,
+    inputQty: 1_000,
+    processedQty: 0,
+    goodOutputQty: 0,
+    defectOutputQty: 0,
+    releasedGoodQty: 0,
+    _count: { executions: 0, completions: 0 },
+  };
+  const route = {
+    status: 'confirmed',
+    routeSource: 'product_time_profile',
+    startedAt: null,
+    steps: [pendingStep],
+  };
+
+  assert.equal(canUpgradeUnstartedConfirmedProductTimeRoute(route), true);
+  assert.equal(canUpgradeUnstartedConfirmedProductTimeRoute({
+    ...route,
+    routeSource: PRODUCT_TIME_PENDING_ROUTE_SOURCE,
+  }), true);
+  assert.equal(canUpgradeUnstartedConfirmedProductTimeRoute({
+    ...route,
+    routeSource: 'process_template',
+  }), false);
+  assert.equal(canUpgradeUnstartedConfirmedProductTimeRoute({
+    ...route,
+    startedAt: new Date(),
+  }), false);
+  assert.equal(canUpgradeUnstartedConfirmedProductTimeRoute({
+    ...route,
+    steps: [{ ...pendingStep, status: 'current' }],
+  }), false);
+  assert.equal(canUpgradeUnstartedConfirmedProductTimeRoute({
+    ...route,
+    steps: [{ ...pendingStep, _count: { executions: 1, completions: 0 } }],
+  }), false);
+  assert.equal(canUpgradeUnstartedConfirmedProductTimeRoute({
+    ...route,
+    steps: [{ ...pendingStep, _count: { executions: 0, completions: 1 } }],
+  }), false);
+
+  for (const field of ['processedQty', 'goodOutputQty', 'defectOutputQty', 'releasedGoodQty'] as const) {
+    assert.equal(canUpgradeUnstartedConfirmedProductTimeRoute({
+      ...route,
+      steps: [{ ...pendingStep, [field]: 1 }],
+    }), false, `${field} 已有生产事实时必须冻结快照`);
+  }
 });
 
 test('旧模板只在未发图阶段转换为产品工序待发布，已进入生产的路线保持冻结', () => {
@@ -49,7 +132,12 @@ test('旧模板只在未发图阶段转换为产品工序待发布，已进入�
       status: 'pending',
       startedAt: null,
       completedAt: null,
-      _count: { executions: 0 },
+      inputQty: 0,
+      processedQty: 0,
+      goodOutputQty: 0,
+      defectOutputQty: 0,
+      releasedGoodQty: 0,
+      _count: { executions: 0, completions: 0 },
     }],
   };
   assert.equal(canResetLegacyDraftRouteToProductTimePending(route, 'not_issued'), true);

@@ -12,6 +12,7 @@ import {
   productTimeStandardSnapshot,
   type ProductTimeProfileRecord,
 } from '@/lib/product-time';
+import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { legacyStatusForStage, normalizeWorkOrderStage } from '@/lib/work-orders';
 
 export const PROCESS_STAGE_GROUPS: ProcessStageGroup[] = ['frontend', 'backend', 'finish'];
@@ -68,7 +69,11 @@ export const processRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRoute
         where: { voidedAt: null },
         select: { goodQty: true },
       },
-      _count: { select: { executions: true } },
+      completions: {
+        where: { voidedAt: null },
+        select: { processedQty: true, goodQty: true, defectQty: true },
+      },
+      _count: { select: { executions: true, completions: true } },
     },
   },
   activities: {
@@ -86,7 +91,11 @@ export const processRouteSummaryInclude = Prisma.validator<Prisma.WorkOrderProce
         where: { voidedAt: null },
         select: { goodQty: true },
       },
-      _count: { select: { executions: true } },
+      completions: {
+        where: { voidedAt: null },
+        select: { processedQty: true, goodQty: true, defectQty: true },
+      },
+      _count: { select: { executions: true, completions: true } },
     },
   },
 });
@@ -105,12 +114,18 @@ export type ProcessRouteSummaryRecord = Prisma.WorkOrderProcessRouteGetPayload<{
 
 type DraftRouteReplacementCheck = {
   status: string;
+  routeSource?: string | null;
   startedAt: Date | string | null;
   steps: Array<{
     status: string;
     startedAt: Date | string | null;
     completedAt: Date | string | null;
-    _count: { executions: number };
+    inputQty: number;
+    processedQty: number;
+    goodOutputQty: number;
+    defectOutputQty: number;
+    releasedGoodQty: number;
+    _count: { executions: number; completions: number };
   }>;
 };
 
@@ -122,6 +137,8 @@ const draftRouteSyncInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclu
       status: true,
       specification: true,
       drawingLibraryItemId: true,
+      uncompletedQty: true,
+      productionTargetQty: true,
     },
   },
   steps: {
@@ -131,7 +148,12 @@ const draftRouteSyncInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclu
       status: true,
       startedAt: true,
       completedAt: true,
-      _count: { select: { executions: true } },
+      inputQty: true,
+      processedQty: true,
+      goodOutputQty: true,
+      defectOutputQty: true,
+      releasedGoodQty: true,
+      _count: { select: { executions: true, completions: true } },
     },
   },
 });
@@ -251,6 +273,34 @@ export function canReplaceDraftRouteWithProductTime(route: DraftRouteReplacement
       && !step.startedAt
       && !step.completedAt
       && step._count.executions === 0
+      && step._count.completions === 0
+    ));
+}
+
+const AUTO_UPGRADE_PRODUCT_TIME_ROUTE_SOURCES = [
+  'product_time_profile',
+  PRODUCT_TIME_PENDING_ROUTE_SOURCE,
+] as const;
+
+export function canUpgradeUnstartedConfirmedProductTimeRoute(
+  route: DraftRouteReplacementCheck,
+): boolean {
+  return route.status === 'confirmed'
+    && AUTO_UPGRADE_PRODUCT_TIME_ROUTE_SOURCES.includes(
+      route.routeSource as typeof AUTO_UPGRADE_PRODUCT_TIME_ROUTE_SOURCES[number],
+    )
+    && !route.startedAt
+    && route.steps.length > 0
+    && route.steps.every(step => (
+      step.status === 'pending'
+      && !step.startedAt
+      && !step.completedAt
+      && step._count.executions === 0
+      && step._count.completions === 0
+      && Number(step.processedQty || 0) === 0
+      && Number(step.goodOutputQty || 0) === 0
+      && Number(step.defectOutputQty || 0) === 0
+      && Number(step.releasedGoodQty || 0) === 0
     ));
 }
 
@@ -347,9 +397,19 @@ export function serializeProcessRoute(
 ): WorkOrderProcessRouteDTO {
   const status = normalizeRouteStatus(route.status);
   const steps = route.steps.map(step => {
-    const reportedGoodQuantity = 'executions' in step
+    const executionGoodQuantity = 'executions' in step
       ? step.executions.reduce((total, execution) => total + execution.goodQty, 0)
       : 0;
+    const completionProcessedQuantity = 'completions' in step
+      ? step.completions.reduce((total, completion) => total + completion.processedQty, 0)
+      : 0;
+    const completionGoodQuantity = 'completions' in step
+      ? step.completions.reduce((total, completion) => total + completion.goodQty, 0)
+      : 0;
+    const completionDefectQuantity = 'completions' in step
+      ? step.completions.reduce((total, completion) => total + completion.defectQty, 0)
+      : 0;
+    const reportedGoodQuantity = executionGoodQuantity + completionGoodQuantity;
     return {
       id: step.id,
       processDefinitionId: step.processDefinitionId,
@@ -375,7 +435,17 @@ export function serializeProcessRoute(
       standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
       setupMilliseconds: step.setupMilliseconds,
       countsForEfficiency: step.countsForEfficiency,
+      inputQty: step.inputQty,
+      processedQty: step.processedQty,
+      goodOutputQty: step.goodOutputQty,
+      defectOutputQty: step.defectOutputQty,
+      releasedGoodQty: step.releasedGoodQty,
+      quantityVersion: step.quantityVersion,
       executionCount: '_count' in step ? step._count.executions : 0,
+      completionCount: '_count' in step ? step._count.completions : 0,
+      completedProcessedQuantity: completionProcessedQuantity,
+      completedGoodQuantity: completionGoodQuantity,
+      completedDefectQuantity: completionDefectQuantity,
       reportedGoodQuantity,
       remainingGoodQuantity: null,
       productTimeProfileId: step.productTimeProfileId,
@@ -450,7 +520,7 @@ export async function findDefaultProcessTemplate(
   });
 }
 
-function productTimeRouteSteps(profile: ProductTimeProfileRecord, currentStartedAt?: Date) {
+function productTimeRouteSteps(profile: ProductTimeProfileRecord, currentStartedAt?: Date, initialInputQty = 0) {
   const firstSequenceGroup = profile.entries[0]?.sequenceGroup;
   return profile.entries.map(entry => ({
     processDefinitionId: entry.processDefinitionId,
@@ -460,12 +530,13 @@ function productTimeRouteSteps(profile: ProductTimeProfileRecord, currentStarted
     position: entry.position,
     sequenceGroup: entry.sequenceGroup,
     ...productTimeStandardSnapshot(profile, entry),
+    inputQty: entry.sequenceGroup === firstSequenceGroup ? initialInputQty : 0,
     status: currentStartedAt && entry.sequenceGroup === firstSequenceGroup ? 'current' : 'pending',
     startedAt: currentStartedAt && entry.sequenceGroup === firstSequenceGroup ? currentStartedAt : null,
   }));
 }
 
-async function applyPublishedProductTimeToDraftRoute(
+async function applyPublishedProductTimeToUnstartedRoute(
   tx: Prisma.TransactionClient,
   input: {
     route: DraftRouteSyncRecord;
@@ -474,17 +545,47 @@ async function applyPublishedProductTimeToDraftRoute(
     activityContent: string;
   },
 ): Promise<{ updated: boolean; started: boolean }> {
-  if (!canReplaceDraftRouteWithProductTime(input.route)) return { updated: false, started: false };
+  const replacesDraft = canReplaceDraftRouteWithProductTime(input.route);
+  const upgradesConfirmed = canUpgradeUnstartedConfirmedProductTimeRoute(input.route);
+  if (!replacesDraft && !upgradesConfirmed) return { updated: false, started: false };
   const activation = productTimeRouteActivation(input.route.workOrder.stage, input.route.workOrder.status);
   const firstDefinition = input.profile.entries[0]?.processDefinition;
   if (!activation || !firstDefinition) return { updated: false, started: false };
 
   const now = new Date();
   const shouldStart = activation.shouldStart;
+  const initialInputQty = getProductionQuantitySummary(input.route.workOrder).targetQty || 0;
   const firstSequenceGroup = input.profile.entries[0].sequenceGroup;
   const firstGroupEntries = input.profile.entries.filter(entry => entry.sequenceGroup === firstSequenceGroup);
+  const routeLock: Prisma.WorkOrderProcessRouteWhereInput = upgradesConfirmed
+    ? {
+        id: input.route.id,
+        version: input.route.version,
+        status: 'confirmed',
+        startedAt: null,
+        routeSource: { in: [...AUTO_UPGRADE_PRODUCT_TIME_ROUTE_SOURCES] },
+        steps: {
+          some: {},
+          every: {
+            status: 'pending',
+            startedAt: null,
+            completedAt: null,
+            processedQty: 0,
+            goodOutputQty: 0,
+            defectOutputQty: 0,
+            releasedGoodQty: 0,
+            executions: { none: {} },
+            completions: { none: {} },
+          },
+        },
+      }
+    : {
+        id: input.route.id,
+        version: input.route.version,
+        status: 'draft',
+      };
   const update = await tx.workOrderProcessRoute.updateMany({
-    where: { id: input.route.id, version: input.route.version, status: 'draft' },
+    where: routeLock,
     data: {
       templateId: null,
       templateName: `${input.route.workOrder.specification || '当前产品'} 产品工时`,
@@ -503,7 +604,7 @@ async function applyPublishedProductTimeToDraftRoute(
 
   await tx.workOrderProcessStep.deleteMany({ where: { routeId: input.route.id } });
   await tx.workOrderProcessStep.createMany({
-    data: productTimeRouteSteps(input.profile, shouldStart ? now : undefined).map(step => ({
+    data: productTimeRouteSteps(input.profile, shouldStart ? now : undefined, initialInputQty).map(step => ({
       routeId: input.route.id,
       ...step,
     })),
@@ -646,7 +747,7 @@ export async function reconcileDraftProductTimeRoutes(
       ? profileByItem.get(route.workOrder.drawingLibraryItemId)
       : undefined;
     if (profile) {
-      const result = await applyPublishedProductTimeToDraftRoute(tx, {
+      const result = await applyPublishedProductTimeToUnstartedRoute(tx, {
         route,
         profile,
         actorId: input.actorId,
@@ -679,6 +780,8 @@ export async function createWorkOrderProcessRoute(
       specification: true,
       stage: true,
       status: true,
+      uncompletedQty: true,
+      productionTargetQty: true,
     },
   });
   if (!workOrder) throw new Error('WORK_ORDER_NOT_FOUND');
@@ -696,7 +799,7 @@ export async function createWorkOrderProcessRoute(
   });
   if (existing) {
     if (productProfile && canReplaceDraftRouteWithProductTime(existing)) {
-      await applyPublishedProductTimeToDraftRoute(tx, {
+      await applyPublishedProductTimeToUnstartedRoute(tx, {
         route: existing,
         profile: productProfile,
         actorId: input.actorId,
@@ -715,6 +818,7 @@ export async function createWorkOrderProcessRoute(
   const autoConfirmed = Boolean(productProfile);
   const initialStatus = productProfile ? activation?.status || 'confirmed' : 'draft';
   const confirmedAt = autoConfirmed ? new Date() : null;
+  const initialInputQty = getProductionQuantitySummary(workOrder).targetQty || 0;
 
   const route = await tx.workOrderProcessRoute.create({
     data: {
@@ -730,7 +834,7 @@ export async function createWorkOrderProcessRoute(
       confirmedById: autoConfirmed ? input.actorId || null : null,
       startedAt: shouldStart ? confirmedAt : null,
       ...(productProfile ? {
-        steps: { create: productTimeRouteSteps(productProfile, shouldStart && confirmedAt ? confirmedAt : undefined) },
+        steps: { create: productTimeRouteSteps(productProfile, shouldStart && confirmedAt ? confirmedAt : undefined, initialInputQty) },
       } : {}),
       activities: {
         create: {
@@ -777,8 +881,15 @@ export async function syncDraftRoutesFromPublishedProductTime(
 
   const routes = await tx.workOrderProcessRoute.findMany({
     where: {
-      status: 'draft',
       workOrder: { drawingLibraryItemId: profile.drawingLibraryItemId },
+      OR: [
+        { status: 'draft' },
+        {
+          status: 'confirmed',
+          startedAt: null,
+          routeSource: { in: [...AUTO_UPGRADE_PRODUCT_TIME_ROUTE_SOURCES] },
+        },
+      ],
     },
     include: draftRouteSyncInclude,
   });
@@ -787,11 +898,13 @@ export async function syncDraftRoutesFromPublishedProductTime(
   let skipped = 0;
 
   for (const route of routes) {
-    const result = await applyPublishedProductTimeToDraftRoute(tx, {
+    const result = await applyPublishedProductTimeToUnstartedRoute(tx, {
       route,
       profile,
       actorId: input.actorId,
-      activityContent: `产品工序与工时 V${profile.version} 已发布，自动替换旧草稿并确认`,
+      activityContent: route.status === 'confirmed'
+        ? `产品工序与工时 V${profile.version} 已发布，自动升级完全未开工路线`
+        : `产品工序与工时 V${profile.version} 已发布，自动替换旧草稿并确认`,
     });
     if (!result.updated) {
       skipped += 1;

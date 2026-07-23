@@ -119,8 +119,8 @@ export async function POST(req: NextRequest) {
         specification: typeof data.specification === 'string' ? data.specification : null,
         sourceOrderNo: typeof data.sourceOrderNo === 'string' ? data.sourceOrderNo : null,
         salesperson: typeof data.salesperson === 'string' ? data.salesperson : null,
-        planType: typeof data.planType === 'string' ? data.planType : 'manual',
-        planActive: typeof data.planActive === 'boolean' ? data.planActive : true,
+        planType: 'manual',
+        planActive: true,
         libraryKey: typeof data.libraryKey === 'string' && data.libraryKey ? data.libraryKey : (typeof data.specification === 'string' && data.specification ? data.specification : String(data.code)),
       },
       include: {

@@ -417,9 +417,10 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
     });
     if (update.count !== 1) throw conflict();
     if (shouldStart) {
+      const initialInputQty = targetQuantity(route.workOrder);
       await tx.workOrderProcessStep.updateMany({
         where: { routeId: route.id, sequenceGroup: firstSequenceGroup, status: 'pending' },
-        data: { status: 'current', startedAt: now },
+        data: { status: 'current', startedAt: now, inputQty: initialInputQty, quantityVersion: { increment: 1 } },
       });
       await tx.workOrder.update({
         where: { id: route.workOrderId },
@@ -457,6 +458,13 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
 }
 
 async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> {
+  if (input.action === 'advance') {
+    throw new ProcessRouteServiceError(
+      '旧转序入口已停用，请使用“完成当前工序并转序”',
+      410,
+      'PROCESS_COMPLETION_REQUIRED',
+    );
+  }
   return prisma.$transaction(async tx => {
     const route = await tx.workOrderProcessRoute.findUnique({
       where: { id: input.routeId },
@@ -485,6 +493,13 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
       : currentSteps[0];
     if (!current) {
       throw new ProcessRouteServiceError('所选工序不是当前可报工工序，请刷新后重试', 409, 'PROCESS_STEP_NOT_CURRENT');
+    }
+    if (route.routeSource === 'product_time_profile') {
+      throw new ProcessRouteServiceError(
+        '产品工序已启用“完成并转序 + 工时领取”，请在生产调度中心完成当前工序',
+        409,
+        'PROCESS_COMPLETION_REQUIRED',
+      );
     }
     const now = new Date();
     const remark = cleanText(input.remark, 300);
@@ -887,12 +902,13 @@ export async function startConfirmedProcessRouteAfterDrawing(
 ): Promise<void> {
   const route = await tx.workOrderProcessRoute.findUnique({
     where: { workOrderId: input.workOrderId },
-    include: { steps: { orderBy: { position: 'asc' } } },
+    include: { workOrder: true, steps: { orderBy: { position: 'asc' } } },
   });
   if (!route || route.status !== 'confirmed' || route.startedAt || !route.steps.length) return;
   const first = route.steps[0];
   const firstSequenceGroup = first.sequenceGroup;
   const firstSteps = route.steps.filter(step => step.sequenceGroup === firstSequenceGroup);
+  const initialInputQty = targetQuantity(route.workOrder);
   const stageGroup = normalizeProcessStageGroup(first.stageGroup) || 'frontend';
   const nextStage = processStageForGroup(stageGroup);
   await tx.workOrderProcessRoute.update({
@@ -905,7 +921,7 @@ export async function startConfirmedProcessRouteAfterDrawing(
   });
   await tx.workOrderProcessStep.updateMany({
     where: { routeId: route.id, sequenceGroup: firstSequenceGroup, status: 'pending' },
-    data: { status: 'current', startedAt: input.now },
+    data: { status: 'current', startedAt: input.now, inputQty: initialInputQty, quantityVersion: { increment: 1 } },
   });
   await tx.workOrder.update({
     where: { id: input.workOrderId },

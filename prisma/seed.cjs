@@ -18,18 +18,21 @@ async function main() {
         passwordHash,
         displayName: '管理员',
         isActive: true,
+        laborRole: 'ADMIN',
       },
     });
     console.log('created admin');
-  } else if (resetAdminPassword) {
+  } else {
     await prisma.user.update({
       where: { username },
       data: {
-        passwordHash,
         isActive: true,
+        laborRole: 'ADMIN',
+        employeeId: null,
+        ...(resetAdminPassword ? { passwordHash } : {}),
       },
     });
-    console.log('reset admin');
+    console.log(resetAdminPassword ? 'reset admin' : 'confirmed admin labor access');
   }
 
   const categories = [

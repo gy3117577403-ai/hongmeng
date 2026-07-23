@@ -42,6 +42,7 @@ import type {
   ProductTimePlanningSummaryDTO,
   ProductTimeProfileDTO,
   ProcessStageGroup,
+  ProcessTimeBasis,
 } from '@/types';
 
 type ProcessDefinition = {
@@ -71,7 +72,11 @@ type ReferenceCategory = 'drawing' | 'sop' | 'all';
 
 type EntryDraft = {
   processDefinitionId: string;
+  timeBasis: ProcessTimeBasis;
   unitSeconds: string;
+  occurrences: string;
+  setupSeconds: string;
+  unitLabel: string;
   parallelWithPrevious: boolean;
   countsForEfficiency: boolean;
   remark: string;
@@ -150,9 +155,16 @@ function entryDraft(
   index: number,
   allEntries: ProductProcessTimeEntryDTO[],
 ): EntryDraft {
+  const usesActionCount = entry.timeBasis === 'per_unit'
+    && Boolean(entry.actionMilliseconds)
+    && entry.occurrences > 1;
   return {
     processDefinitionId: entry.processDefinitionId,
-    unitSeconds: seconds(entry.unitMilliseconds),
+    timeBasis: entry.timeBasis,
+    unitSeconds: seconds(usesActionCount ? entry.actionMilliseconds : entry.unitMilliseconds),
+    occurrences: String(usesActionCount ? entry.occurrences : 1),
+    setupSeconds: seconds(entry.setupMilliseconds) || '0',
+    unitLabel: entry.unitLabel || '套',
     parallelWithPrevious: index > 0 && allEntries[index - 1].sequenceGroup === entry.sequenceGroup,
     countsForEfficiency: entry.countsForEfficiency,
     remark: entry.remark || '',
@@ -162,8 +174,25 @@ function entryDraft(
 function draftTotal(entries: EntryDraft[]): number {
   return entries.reduce((total, entry) => {
     const value = Number(entry.unitSeconds);
-    return total + Math.round(value * 1000);
+    const occurrences = entry.timeBasis === 'per_batch' ? 1 : Number(entry.occurrences || 1);
+    const variable = Number.isFinite(value) && value > 0 && Number.isInteger(occurrences) && occurrences > 0
+      ? value * occurrences
+      : 0;
+    return total + Math.round(variable * 1000);
   }, 0);
+}
+
+function invalidEntry(entry: EntryDraft): boolean {
+  const value = Number(entry.unitSeconds);
+  const setup = Number(entry.setupSeconds || 0);
+  const occurrences = Number(entry.occurrences || 1);
+  return !Number.isFinite(value)
+    || value <= 0
+    || value > 86_400
+    || !Number.isFinite(setup)
+    || setup < 0
+    || setup > 86_400
+    || (entry.timeBasis === 'per_unit' && (!Number.isInteger(occurrences) || occurrences <= 0 || occurrences > 10_000));
 }
 
 function statusText(item: ProductTimeListItemDTO): string {
@@ -528,7 +557,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   function addDefinition(definition: ProcessDefinition): void {
     setEntries(current => [...current, {
       processDefinitionId: definition.id,
+      timeBasis: 'per_unit',
       unitSeconds: '',
+      occurrences: '1',
+      setupSeconds: '0',
+      unitLabel: '套',
       parallelWithPrevious: false,
       countsForEfficiency: true,
       remark: '',
@@ -606,13 +639,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setError('请先从工序库添加该产品实际参与的工序');
       return null;
     }
-    const invalidEntry = entries.find(entry => {
-      const value = Number(entry.unitSeconds);
-      return !Number.isFinite(value) || value <= 0 || value > 86_400;
-    });
-    if (invalidEntry) {
-      const definition = definitions.find(item => item.id === invalidEntry.processDefinitionId);
-      setError(`${definition?.name || '工序'}的单套合计工时必须大于 0 秒且不超过 24 小时`);
+    const invalidDraftEntry = entries.find(invalidEntry);
+    if (invalidDraftEntry) {
+      const definition = definitions.find(item => item.id === invalidDraftEntry.processDefinitionId);
+      setError(`${definition?.name || '工序'}的工时口径、标准时间、次数或准备时间不正确`);
       return null;
     }
     setSaving(true);
@@ -628,7 +658,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
           sourceType: copySourceId ? 'copied' : 'manual',
           entries: entries.map(entry => ({
             processDefinitionId: entry.processDefinitionId,
+            timeBasis: entry.timeBasis,
             unitSeconds: entry.unitSeconds,
+            occurrences: entry.occurrences,
+            setupSeconds: entry.setupSeconds,
+            unitLabel: entry.unitLabel,
             parallelWithPrevious: entry.parallelWithPrevious,
             countsForEfficiency: entry.countsForEfficiency,
             remark: entry.remark,
@@ -658,7 +692,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setError('当前内容尚未保存，请先保存草稿再发布');
       return;
     }
-    if (!window.confirm(`确认发布 ${selectedItem.specification} 产品工时 V${activeDraft.version}？已确认工单不会被反向修改。`)) return;
+    if (!window.confirm(`确认发布 ${selectedItem.specification} 产品工时 V${activeDraft.version}？完全未开工且没有生产事实的待执行路线会自动升级；已开工路线继续保留原版本快照。`)) return;
     setPublishing(true);
     setError('');
     try {
@@ -768,12 +802,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }
 
   const totalMilliseconds = draftTotal(entries);
+  const perBatchEntryCount = entries.filter(entry => entry.timeBasis === 'per_batch').length;
   const selectedStatus = selectedItem ? statusText(selectedItem) : '未选择产品';
   const isPlanningScope = planningScope !== 'all';
-  const invalidEntryCount = entries.filter(entry => {
-    const value = Number(entry.unitSeconds);
-    return !Number.isFinite(value) || value <= 0 || value > 86_400;
-  }).length;
+  const invalidEntryCount = entries.filter(invalidEntry).length;
   const copySources = items.filter(item => item.id !== selectedItem?.id && item.published);
   const planningReference = selectedItem?.planningReference || null;
   const referenceDrawingCount = referenceFiles.filter(file => referenceCategory(file) === 'drawing').length;
@@ -850,7 +882,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                   <span className="product-time-product-main"><strong>{item.specification}</strong><small>{item.customerName}</small><em>{item.productName || '品名未设置'}</em></span>
                   <span className="product-time-product-meta">
                     <b className={item.published ? 'published' : item.draft ? 'draft' : 'missing'}>{statusText(item)}</b>
-                    <small>{profile ? `${profile.processCount} 道 · ${duration(profile.totalMillisecondsPerUnit)}` : '尚未建立产品路线'}</small>
+                    <small>{profile ? `${profile.processCount} 道 · ${profile.entries.some(entry => entry.timeBasis === 'per_batch') ? '含按批工时' : duration(profile.totalMillisecondsPerUnit)}` : '尚未建立产品路线'}</small>
                     {item.planning && <small>{item.planning.batchCount} 批 · {item.planning.totalQuantity.toLocaleString('zh-CN')} 件</small>}
                   </span>
                   <ChevronRight size={16} aria-hidden="true" />
@@ -876,31 +908,36 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
               <div className="product-time-route-metrics" aria-label="当前产品工时概览">
                 <span><small>工序数量</small><strong>{entries.length}</strong><em>实际参与工序</em></span>
-                <span><small>单套总工时</small><strong>{duration(totalMilliseconds)}</strong><em>各工序合计</em></span>
+                <span><small>工时口径</small><strong>{perBatchEntryCount ? `${perBatchEntryCount} 道按批` : '全部按件'}</strong><em>{perBatchEntryCount ? '按批工时不折算为单套' : `单套估算 ${duration(totalMilliseconds)}`}</em></span>
                 <span><small>当前版本</small><strong>{activeProfile ? `V${activeProfile.version}` : '待创建'}</strong><em>{activeDraft ? '草稿待发布' : activePublished ? '正式版本' : '尚未维护'}</em></span>
                 <span><small>计划关联</small><strong>{selectedItem.planning?.batchCount || 0} 批</strong><em>{selectedItem.planning ? `${selectedItem.planning.totalQuantity.toLocaleString('zh-CN')} 件` : '当前范围无批次'}</em></span>
               </div>
 
               <div className="product-time-route-guidance">
                 <Route size={18} aria-hidden="true" />
-                <span><strong>按单套产品填写每道工序的合计时间</strong><small>例如一套产品有 8 个端子，压接工序直接填写这一套全部压接所需总时间，不再填写次数或单次时间。</small></span>
+                <span><strong>每道工序可选择“按件”或“按整批”计时</strong><small>按件工时＝单次标准时间 × 每套工序次数；按批工时整批只计一次。准备时间在该次工时池中只计一次。</small></span>
               </div>
 
               <div className="product-time-entry-list hm-scroll-region" tabIndex={0} aria-label={`当前产品工序路线，共 ${entries.length} 道工序`}>
                 {entries.map((entry, index) => {
                   const definition = definitions.find(item => item.id === entry.processDefinitionId);
-                  const value = Number(entry.unitSeconds);
-                  const invalid = !Number.isFinite(value) || value <= 0 || value > 86_400;
+                  const invalid = invalidEntry(entry);
                   return <article className={invalid ? 'invalid' : ''} key={entry.processDefinitionId}>
                     <div className="product-time-process-name">
                       <b>{String(index + 1).padStart(2, '0')}</b>
                       <span><strong>{definition?.name || '工序已停用'}</strong><small>{definition ? stageText[definition.stageGroup] : '历史工序'}</small></span>
                     </div>
-                    <label className="product-time-duration-input">
-                      <span>单套本工序合计（秒）</span>
-                      <input inputMode="decimal" aria-invalid={invalid} value={entry.unitSeconds} onChange={event => updateEntry(index, { unitSeconds: event.target.value })} placeholder="输入正数" />
-                      {invalid && <small>请输入大于 0 且不超过 86400 的数值</small>}
-                    </label>
+                    <div className="product-time-standard-editor">
+                      <label><span>工时口径</span><select value={entry.timeBasis} onChange={event => {
+                        const timeBasis = event.target.value as ProcessTimeBasis;
+                        updateEntry(index, { timeBasis });
+                      }}><option value="per_unit">按件 / 按套</option><option value="per_batch">按整批</option></select></label>
+                      <label><span>{entry.timeBasis === 'per_batch' ? '整批标准时间（秒）' : '单次标准时间（秒）'}</span><input inputMode="decimal" aria-invalid={invalid} value={entry.unitSeconds} onChange={event => updateEntry(index, { unitSeconds: event.target.value })} placeholder="输入正数" /></label>
+                      <label><span>{entry.timeBasis === 'per_batch' ? '整批计次' : '每套工序次数'}</span><input inputMode="numeric" disabled={entry.timeBasis === 'per_batch'} value={entry.timeBasis === 'per_batch' ? '1' : entry.occurrences} onChange={event => updateEntry(index, { occurrences: event.target.value })} /></label>
+                      <label><span>准备时间（秒）</span><input inputMode="decimal" value={entry.setupSeconds} onChange={event => updateEntry(index, { setupSeconds: event.target.value })} /></label>
+                      <label><span>产品数量单位</span><input maxLength={20} value={entry.unitLabel} onChange={event => updateEntry(index, { unitLabel: event.target.value })} placeholder="套" /></label>
+                      {invalid && <small>标准时间须大于 0；次数须为正整数；准备时间不能小于 0，单项均不超过 24 小时。</small>}
+                    </div>
                     <div className="product-time-process-options">
                       <label><input type="checkbox" disabled={index === 0} checked={entry.parallelWithPrevious} onChange={event => updateEntry(index, { parallelWithPrevious: event.target.checked })} /><span>{index === 0 ? '首道工序' : '与上一道并行'}</span></label>
                       <label><input type="checkbox" checked={entry.countsForEfficiency} onChange={event => updateEntry(index, { countsForEfficiency: event.target.checked })} /><span>计入员工达成率</span></label>
@@ -921,7 +958,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <footer className="product-time-route-actions">
                 <span className="product-time-route-status">
                   {hasUnsavedChanges && <b><AlertTriangle size={13} aria-hidden="true" />未保存</b>}
-                  <em>{invalidEntryCount ? `${invalidEntryCount} 道工序工时无效` : activePublished ? '新发布版本只同步未开工路线，历史执行记录保持不变。' : '保存草稿后检查无误，再发布为生产可用版本。'}</em>
+                  <em>{invalidEntryCount ? `${invalidEntryCount} 道工序工时无效` : activePublished ? '新发布版本只升级完全未开工且没有生产事实的路线；已开工路线保留原版本快照。' : '保存草稿后检查无误，再发布为生产可用版本。'}</em>
                 </span>
                 <div>
                   <button className="hm-workbench-button" type="button" disabled={!dirty || saving} onClick={resetChanges}><RotateCcw size={15} aria-hidden="true" />放弃</button>
@@ -941,7 +978,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               </div> : <div className="product-time-planning-candidate empty"><span><small>最近计划候选</small><strong>暂无计划单套工时</strong><em>计划订单维护后可在这里人工采用</em></span></div>}
               <label><span>秒 / 套</span><input inputMode="decimal" value={quotationSeconds} onChange={event => { setQuotationSeconds(event.target.value); setQuotationSourceType('manual'); setQuotationSourceRefId(null); setQuotationDirty(true); }} placeholder="输入报价工时" /></label>
               <label><span>报价说明</span><input value={quotationRemark} onChange={event => { setQuotationRemark(event.target.value); setQuotationDirty(true); }} placeholder="版本或测算依据，可选" /></label>
-              <div className="product-time-quotation-compare"><span>生产标准<strong>{duration(totalMilliseconds)}</strong></span><span>计划候选<strong>{planningReference ? duration(planningReference.unitMilliseconds) : '暂无'}</strong></span><span>当前报价<strong>{activeQuotation ? duration(activeQuotation.unitMilliseconds) : '未录入'}</strong></span></div>
+              <div className="product-time-quotation-compare"><span>生产标准<strong>{perBatchEntryCount ? '含按批口径' : duration(totalMilliseconds)}</strong></span><span>计划候选<strong>{planningReference ? duration(planningReference.unitMilliseconds) : '暂无'}</strong></span><span>当前报价<strong>{activeQuotation ? duration(activeQuotation.unitMilliseconds) : '未录入'}</strong></span></div>
               <small className="product-time-quotation-source">当前编辑来源：{quotationSourceText(quotationSourceType)}。采用计划工时后仍需保存，保存会创建新的报价版本。</small>
               <button className="hm-workbench-button" type="button" disabled={quotationSaving || !quotationDirty} onClick={() => void saveQuotation()}><Save size={15} aria-hidden="true" />{quotationSaving ? '保存中' : '保存报价工时'}</button>
             </section>

@@ -1,9 +1,12 @@
 import { prisma } from '@/lib/prisma';
+import { dateKeyFromDatabase } from '@/lib/attendance';
 import { changeCode, changeStatusLabels, changeTypeLabels } from '@/lib/changes';
 import { issueCode, issueStatusLabels, issueTypeLabels } from '@/lib/issues';
 import { PLANNING_FLOW_STEPS, planningFlowStepStates, resolvePlanningFlow } from '@/lib/planning-flow';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
+import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
 import { chinaWeekRange } from '@/lib/production-planning';
+import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { normalizeWorkOrderStage, stageText } from '@/lib/work-orders';
 import type {
   ChangeStatus,
@@ -123,7 +126,13 @@ type WorkflowRouteStepRecord = {
   position: number;
   sequenceGroup: number;
   stageGroup: string;
+  unitLabel: string | null;
   standardMillisecondsPerUnit: number | null;
+  inputQty: number;
+  processedQty: number;
+  goodOutputQty: number;
+  defectOutputQty: number;
+  releasedGoodQty: number;
   startedAt: Date | null;
   completedAt: Date | null;
   remark: string | null;
@@ -132,6 +141,23 @@ type WorkflowRouteStepRecord = {
     goodQty: number;
     endedAt: Date;
     employee: { name: string };
+  }>;
+  completions: Array<{
+    completedAt: Date;
+  }>;
+  processLaborPools: Array<{
+    id: string;
+    workDate: Date;
+    eligibleQty: number;
+    claimedQty: number;
+    remainingQty: number;
+    status: string;
+    standardSource: string;
+    createdAt: Date;
+    claims: Array<{
+      claimedAt: Date;
+      employee: { name: string };
+    }>;
   }>;
 };
 
@@ -152,8 +178,27 @@ type WorkflowRouteRecord = {
 
 function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): WorkflowStepDTO[] {
   return route.steps.map(step => {
-    const reportedGoodQuantity = step.executions.reduce((total, execution) => total + execution.goodQty, 0);
+    const reportedGoodQuantity = step.goodOutputQty;
     const latestExecution = step.executions[0] || null;
+    const latestCompletion = step.completions[0] || null;
+    const laborClaims = step.processLaborPools
+      .flatMap(pool => pool.claims)
+      .sort((first, second) => second.claimedAt.getTime() - first.claimedAt.getTime());
+    const laborClaimantNames = [...new Set(laborClaims.map(claim => claim.employee.name))];
+    const latestClaim = laborClaims[0] || null;
+    const latestReportedAt = [latestExecution?.endedAt, latestCompletion?.completedAt, latestClaim?.claimedAt]
+      .filter((value): value is Date => Boolean(value))
+      .sort((first, second) => second.getTime() - first.getTime())[0] || null;
+    const laborEligibleQuantity = step.processLaborPools.reduce((total, pool) => total + pool.eligibleQty, 0);
+    const laborClaimedQuantity = step.processLaborPools.reduce((total, pool) => total + pool.claimedQty, 0);
+    const laborRemainingQuantity = step.processLaborPools.reduce((total, pool) => total + pool.remainingQty, 0);
+    const targetLaborPool = [...step.processLaborPools]
+      .sort((first, second) => second.createdAt.getTime() - first.createdAt.getTime())
+      .find(pool => pool.remainingQty > 0 || pool.status === 'LOCKED')
+      || [...step.processLaborPools].sort(
+        (first, second) => second.createdAt.getTime() - first.createdAt.getTime(),
+      )[0]
+      || null;
     return {
       key: step.id,
       label: step.processName,
@@ -165,27 +210,47 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
       sequenceGroup: step.sequenceGroup,
       status: step.status as ProcessStepStatus,
       stageGroup: step.stageGroup as ProcessStageGroup,
+      unitLabel: step.unitLabel || '件',
       standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
+      inputQuantity: step.inputQty,
+      processedQuantity: step.processedQty,
       reportedGoodQuantity,
-      remainingGoodQuantity: targetQuantity === null ? null : Math.max(0, targetQuantity - reportedGoodQuantity),
+      defectQuantity: step.defectOutputQty,
+      releasedGoodQuantity: step.releasedGoodQty,
+      remainingProcessQuantity: Math.max(0, step.inputQty - step.processedQty),
+      laborEligibleQuantity,
+      laborClaimedQuantity,
+      laborRemainingQuantity,
+      laborClaimantNames,
+      hasLaborPool: step.processLaborPools.length > 0,
+      laborPoolId: targetLaborPool?.id || null,
+      laborWorkDate: targetLaborPool ? dateKeyFromDatabase(targetLaborPool.workDate) : null,
+      laborPendingStandard: step.processLaborPools.some(pool => (
+        pool.status === 'LOCKED' && pool.standardSource === 'pending_standard'
+      )),
       startedAt: step.startedAt?.toISOString() || null,
       completedAt: step.completedAt?.toISOString() || null,
       remark: step.remark,
       productRemark: step.productTimeEntry?.remark || route.productTimeProfile?.remark || null,
-      latestEmployeeName: latestExecution?.employee.name || null,
-      latestReportedAt: latestExecution?.endedAt.toISOString() || null,
+      latestEmployeeName: laborClaimantNames.join('、') || latestExecution?.employee.name || null,
+      latestReportedAt: latestReportedAt?.toISOString() || null,
     };
   });
 }
 
-function routeState(route: WorkflowRouteRecord, mappedSteps: WorkflowStepDTO[]): {
+export function resolveWorkflowRouteState(
+  route: Pick<WorkflowRouteRecord, 'status' | 'startedAt'>,
+  mappedSteps: WorkflowStepDTO[],
+  workOrderCompletedAt?: string | Date | null,
+): {
   processStatus: WorkflowProcessStatus;
   currentStep: string;
   nextStep: string | null;
   closed: boolean;
 } {
-  const closed = route.status === 'completed'
+  const routeCompleted = route.status === 'completed'
     || (mappedSteps.length > 0 && mappedSteps.every(step => step.status === 'completed' || step.status === 'skipped'));
+  const lifecycle = resolveProductionLifecycle({ routeCompleted, workOrderCompletedAt });
   const currentGroup = mappedSteps.filter(step => step.status === 'current');
   const firstPendingGroupNumber = mappedSteps.find(step => step.status === 'pending')?.sequenceGroup;
   const firstPendingGroup = mappedSteps.filter(step => (
@@ -200,16 +265,26 @@ function routeState(route: WorkflowRouteRecord, mappedSteps: WorkflowStepDTO[]):
     ? mappedSteps.filter(step => step.status === 'pending' && step.sequenceGroup === nextGroupNumber)
     : firstPendingGroup;
   return {
-    processStatus: closed ? 'closed' : route.status === 'in_progress' ? 'processing' : 'waiting',
-    currentStep: closed
+    processStatus: lifecycle.aggregateCompleted
+      ? 'closed'
+      : routeCompleted || route.status === 'in_progress'
+        ? 'processing'
+        : 'waiting',
+    currentStep: lifecycle.aggregateCompleted
       ? '全部工序完成'
-      : currentGroup.length > 0
-        ? currentGroup.map(step => step.label).join('、')
-        : route.status === 'confirmed' && !route.startedAt
-          ? '等待图纸下发'
-          : '等待工序开始',
-    nextStep: nextGroup.length > 0 ? nextGroup.map(step => step.label).join('、') : null,
-    closed,
+      : lifecycle.awaitingBranchClosure
+        ? '主路线完成 · 待分支闭环'
+        : currentGroup.length > 0
+          ? currentGroup.map(step => step.label).join('、')
+          : route.status === 'confirmed' && !route.startedAt
+            ? '等待图纸下发'
+            : '等待工序开始',
+    nextStep: lifecycle.awaitingBranchClosure
+      ? '处理返工/补产分支'
+      : nextGroup.length > 0
+        ? nextGroup.map(step => step.label).join('、')
+        : null,
+    closed: lifecycle.aggregateCompleted,
   };
 }
 
@@ -227,6 +302,7 @@ export type WorkflowCenterFilters = {
   batchId?: string;
   workOrderId?: string;
   weekScope?: WorkflowWeekScope;
+  laborEmployeeTeam?: string;
 };
 
 export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): Promise<{
@@ -378,15 +454,58 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     position: true,
                     sequenceGroup: true,
                     stageGroup: true,
+                    unitLabel: true,
                     standardMillisecondsPerUnit: true,
+                    inputQty: true,
+                    processedQty: true,
+                    goodOutputQty: true,
+                    defectOutputQty: true,
+                    releasedGoodQty: true,
                     startedAt: true,
                     completedAt: true,
                     remark: true,
                     productTimeEntry: { select: { remark: true } },
                     executions: {
-                      where: { voidedAt: null },
+                      where: {
+                        voidedAt: null,
+                        ...(filters.laborEmployeeTeam
+                          ? { employee: { team: filters.laborEmployeeTeam } }
+                          : {}),
+                      },
                       select: { goodQty: true, endedAt: true, employee: { select: { name: true } } },
                       orderBy: { endedAt: 'desc' },
+                    },
+                    completions: {
+                      where: { voidedAt: null },
+                      select: { completedAt: true },
+                      orderBy: { completedAt: 'desc' },
+                    },
+                    processLaborPools: {
+                      where: { status: { not: 'VOIDED' } },
+                      select: {
+                        id: true,
+                        workDate: true,
+                        eligibleQty: true,
+                        claimedQty: true,
+                        remainingQty: true,
+                        status: true,
+                        standardSource: true,
+                        createdAt: true,
+                        claims: {
+                          where: {
+                            status: 'ACTIVE',
+                            ...(filters.laborEmployeeTeam
+                              ? { employee: { team: filters.laborEmployeeTeam } }
+                              : {}),
+                          },
+                          select: {
+                            claimedAt: true,
+                            employee: { select: { name: true } },
+                          },
+                          orderBy: { claimedAt: 'desc' },
+                        },
+                      },
+                      orderBy: { createdAt: 'asc' },
                     },
                   },
                   orderBy: { position: 'asc' },
@@ -415,7 +534,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       select: {
         id: true, code: true, specification: true, customerName: true, productName: true, priority: true, stage: true,
         status: true, plannedAt: true, deliveryDay: true, updatedAt: true, productionOwner: true, remark: true,
-        productionTargetQty: true, weekStartDate: true, weekEndDate: true, drawingLibraryItemId: true,
+        productionTargetQty: true, uncompletedQty: true, completedQty: true,
+        weekStartDate: true, weekEndDate: true, drawingLibraryItemId: true, completedAt: true,
         progressLogs: {
           select: { id: true, stage: true, remark: true, createdBy: true, createdAt: true },
           orderBy: { createdAt: 'desc' }, take: 8,
@@ -441,15 +561,58 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 position: true,
                 sequenceGroup: true,
                 stageGroup: true,
+                unitLabel: true,
                 standardMillisecondsPerUnit: true,
+                inputQty: true,
+                processedQty: true,
+                goodOutputQty: true,
+                defectOutputQty: true,
+                releasedGoodQty: true,
                 startedAt: true,
                 completedAt: true,
                 remark: true,
                 productTimeEntry: { select: { remark: true } },
                 executions: {
-                  where: { voidedAt: null },
+                  where: {
+                    voidedAt: null,
+                    ...(filters.laborEmployeeTeam
+                      ? { employee: { team: filters.laborEmployeeTeam } }
+                      : {}),
+                  },
                   select: { goodQty: true, endedAt: true, employee: { select: { name: true } } },
                   orderBy: { endedAt: 'desc' },
+                },
+                completions: {
+                  where: { voidedAt: null },
+                  select: { completedAt: true },
+                  orderBy: { completedAt: 'desc' },
+                },
+                processLaborPools: {
+                  where: { status: { not: 'VOIDED' } },
+                  select: {
+                    id: true,
+                    workDate: true,
+                    eligibleQty: true,
+                    claimedQty: true,
+                    remainingQty: true,
+                    status: true,
+                    standardSource: true,
+                    createdAt: true,
+                    claims: {
+                      where: {
+                        status: 'ACTIVE',
+                        ...(filters.laborEmployeeTeam
+                          ? { employee: { team: filters.laborEmployeeTeam } }
+                          : {}),
+                      },
+                      select: {
+                        claimedAt: true,
+                        employee: { select: { name: true } },
+                      },
+                      orderBy: { claimedAt: 'desc' },
+                    },
+                  },
+                  orderBy: { createdAt: 'asc' },
                 },
               },
               orderBy: { position: 'asc' },
@@ -545,7 +708,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       ? routeSteps(reportableRoute, batch.quantity)
       : [];
     const actualRouteState = reportableRoute && mappedRouteSteps.length > 0
-      ? routeState(reportableRoute, mappedRouteSteps)
+      ? resolveWorkflowRouteState(reportableRoute, mappedRouteSteps, workOrder?.completedAt)
       : null;
     const flowSteps = actualRouteState
       ? mappedRouteSteps
@@ -646,6 +809,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
 
   for (const order of standaloneProductionOrders) {
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+    const quantitySummary = getProductionQuantitySummary(order);
+    const targetQuantity = quantitySummary.targetQty;
     const index = Math.max(0, ['not_issued', 'frontend', 'backend', 'completed'].indexOf(stage));
     const stageClosed = stage === 'completed';
     const dueAt = order.plannedAt?.toISOString() || null;
@@ -654,10 +819,10 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       ? order.processRoute
       : null;
     const mappedRouteSteps = reportableRoute
-      ? routeSteps(reportableRoute, order.productionTargetQty)
+      ? routeSteps(reportableRoute, targetQuantity)
       : [];
     const actualRouteState = reportableRoute && mappedRouteSteps.length > 0
-      ? routeState(reportableRoute, mappedRouteSteps)
+      ? resolveWorkflowRouteState(reportableRoute, mappedRouteSteps, order.completedAt)
       : null;
     const closed = actualRouteState?.closed ?? stageClosed;
     const targetRoute = order.processRoute?.routeSource === 'product_time_pending'
@@ -675,7 +840,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
         ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`
         : `/dashboard?workOrderId=${encodeURIComponent(order.id)}`,
       isOverdue: !closed && !!order.plannedAt && order.plannedAt.getTime() < now,
-      quantity: order.productionTargetQty,
+      quantity: targetQuantity,
       weekStartDate: order.weekStartDate?.toISOString() || null,
       weekEndDate: order.weekEndDate?.toISOString() || null,
       processRouteId: order.processRoute?.id || null,

@@ -9,6 +9,7 @@ export const dynamic = 'force-dynamic';
 export default async function CompanyHomePage() {
   const user = await currentUser();
   if (!user) redirect('/login?next=%2Fhome');
+  if (user.laborRole === 'EMPLOYEE') redirect('/workspace/reports?view=labor');
 
   let data;
   try {

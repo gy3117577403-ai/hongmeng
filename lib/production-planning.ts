@@ -540,7 +540,12 @@ export async function previewProductionPlanRelease(
     const warnings: string[] = [];
     const blockers: string[] = [];
     if (batch.releaseState === 'archived') blockers.push('该批次已经归档');
-    if (batch.releaseState !== 'draft' && batch.releaseState !== input.target) {
+    const transitionBlocker = productionPlanReleaseTransitionBlocker(
+      batch.releaseState,
+      input.target,
+    );
+    if (transitionBlocker) blockers.push(transitionBlocker);
+    else if (batch.releaseState !== 'draft' && batch.releaseState !== input.target) {
       warnings.push(`当前已处于${batch.releaseState === 'active' ? '本周执行' : '下周预备'}状态`);
     }
     if (chinaDate(batch.weekStartDate) !== chinaDate(targetWeek.start)) {
@@ -569,6 +574,31 @@ export async function previewProductionPlanRelease(
     blockers: items.reduce((sum, item) => sum + item.blockers.length, 0),
     items,
   };
+}
+
+export function productionPlanReleaseTransitionBlocker(
+  releaseState: string,
+  target: 'preparation' | 'active',
+): string | null {
+  if (releaseState === 'active' && target === 'preparation') {
+    return '本周执行批次不能退回下周预备；未开工批次请使用撤回流程，已开工批次必须继续闭环';
+  }
+  return null;
+}
+
+export function productionPlanProductIdentityLocked(input: {
+  hasReleasedBatch: boolean;
+  identityChanged: boolean;
+}): boolean {
+  return input.hasReleasedBatch && input.identityChanged;
+}
+
+export function releasedBatchWeekChangeLocked(input: {
+  released: boolean;
+  weekStartChanged: boolean;
+  weekEndChanged: boolean;
+}): boolean {
+  return input.released && (input.weekStartChanged || input.weekEndChanged);
 }
 
 function storedPositiveQuantity(value: string | null): boolean {
@@ -962,6 +992,9 @@ export async function releaseProductionPlanBatch(
   });
   if (!batch || batch.deletedAt || batch.planOrder.deletedAt) throw new Error('PLAN_BATCH_NOT_FOUND');
   if (batch.releaseState === 'archived') throw new Error('PLAN_BATCH_ARCHIVED');
+  if (productionPlanReleaseTransitionBlocker(batch.releaseState, input.target)) {
+    throw new Error('PLAN_ACTIVE_BATCH_CANNOT_MOVE_TO_PREPARATION');
+  }
   const now = input.now || new Date();
   const alignedWeek = alignProductionPlanBatchWeek(batch, input.target, now);
   const references = await resolvePlanningReferences(tx, batch.planOrder);
