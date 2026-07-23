@@ -5425,6 +5425,933 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
     transition: none;
   }
 }
+
+/* Production step completion: centered task dialog */
+.hm-production-workbench .process-completion-backdrop {
+  padding: 16px;
+  background: rgba(19, 27, 38, .48);
+}
+
+.hm-production-workbench .process-completion-dialog {
+  width: min(980px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 32px));
+  max-height: calc(100vh - 32px);
+  border: 1px solid #dce2ea;
+  border-radius: 18px;
+  outline: none;
+  background: #fff;
+  box-shadow: 0 28px 80px rgba(15, 23, 42, .28);
+}
+
+.hm-production-workbench .process-completion-header {
+  min-height: 72px;
+  flex: 0 0 auto;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid #e4e9ef;
+  background: #fff;
+}
+
+.hm-production-workbench .process-completion-heading {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-production-workbench .process-completion-heading > span {
+  color: #e85b08;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.hm-production-workbench .process-completion-heading > strong {
+  overflow: hidden;
+  color: #172033;
+  font-size: 21px;
+  font-weight: 850;
+  letter-spacing: -.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .process-completion-heading > small {
+  overflow: hidden;
+  color: #748094;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .process-completion-next-badge {
+  min-width: 124px;
+  padding: 6px 10px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  background: #fff7ed;
+  text-align: right;
+}
+
+.hm-production-workbench .process-completion-next-badge span {
+  color: #9a5b2b;
+  font-size: 10px;
+}
+
+.hm-production-workbench .process-completion-next-badge strong {
+  overflow: hidden;
+  color: #c84a06;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .process-completion-header > button {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dce2ea;
+  border-radius: 10px;
+  background: #fff;
+  color: #697488;
+}
+
+.hm-production-workbench .process-completion-header > button:hover {
+  border-color: #c8d0dc;
+  background: #f7f9fc;
+  color: #172033;
+}
+
+.hm-production-workbench .process-completion-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 10px 12px 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: #f5f7fa;
+}
+
+.hm-production-workbench .process-completion-step-picker {
+  margin-bottom: 8px;
+  padding: 7px 9px;
+  border-color: #d9e1ed;
+  background: #fff;
+}
+
+.hm-production-workbench .process-completion-step-picker label {
+  grid-template-columns: 116px minmax(0, 1fr);
+}
+
+.hm-production-workbench .process-completion-step-picker select {
+  height: 34px;
+}
+
+.hm-production-workbench .process-completion-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 272px;
+  align-items: start;
+  gap: 10px;
+}
+
+.hm-production-workbench .process-completion-main {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.hm-production-workbench .process-completion-route {
+  min-height: 66px;
+  padding: 8px 10px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(142px, auto);
+  gap: 9px;
+  border-color: #e0e6ed;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 5px 18px rgba(26, 39, 58, .04);
+}
+
+.hm-production-workbench .process-completion-route > div {
+  gap: 2px;
+}
+
+.hm-production-workbench .process-completion-route > div:last-of-type {
+  text-align: left;
+}
+
+.hm-production-workbench .process-completion-route span,
+.hm-production-workbench .process-completion-route small {
+  color: #758196;
+  font-size: 10px;
+}
+
+.hm-production-workbench .process-completion-route strong {
+  color: #172033;
+  font-size: 16px;
+}
+
+.hm-production-workbench .process-completion-route > svg {
+  color: #ef5b0c;
+}
+
+.hm-production-workbench .process-completion-route dl {
+  min-width: 142px;
+  margin: 0;
+  padding-left: 12px;
+  display: grid;
+  align-self: stretch;
+  align-content: center;
+  gap: 5px;
+  border-left: 1px solid #e5e9ef;
+}
+
+.hm-production-workbench .process-completion-route dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hm-production-workbench .process-completion-route dt,
+.hm-production-workbench .process-completion-route dd {
+  margin: 0;
+  font-size: 10px;
+}
+
+.hm-production-workbench .process-completion-route dt {
+  color: #7a8597;
+}
+
+.hm-production-workbench .process-completion-route dd {
+  color: #344054;
+  font-weight: 800;
+}
+
+.hm-production-workbench .process-completion-quantity-panel,
+.hm-production-workbench .process-completion-work-session {
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+  border: 1px solid #e0e6ed;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 5px 18px rgba(26, 39, 58, .04);
+}
+
+.hm-production-workbench .process-completion-quantity-panel > header,
+.hm-production-workbench .process-completion-work-session > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hm-production-workbench .process-completion-quantity-panel > header > div,
+.hm-production-workbench .process-completion-work-session > header > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-production-workbench .process-completion-quantity-panel > header strong,
+.hm-production-workbench .process-completion-work-session > header strong {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.hm-production-workbench .process-completion-quantity-panel > header small,
+.hm-production-workbench .process-completion-work-session > header small {
+  color: #7a8597;
+  font-size: 10px;
+}
+
+.hm-production-workbench .process-completion-quantity-panel > header > label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #697488;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-production-workbench .process-completion-quantity-panel > header input {
+  width: 142px;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  outline: none;
+  background: #fff;
+  color: #263246;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.hm-production-workbench .process-completion-quantity-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.hm-production-workbench .process-completion-quantity-grid > label,
+.hm-production-workbench .process-completion-good {
+  min-width: 0;
+  min-height: 72px;
+  padding: 7px 9px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  border: 1px solid #dfe5ed;
+  border-radius: 10px;
+  background: #f9fafc;
+}
+
+.hm-production-workbench .process-completion-quantity-grid > label > span,
+.hm-production-workbench .process-completion-good > span {
+  color: #687489;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-production-workbench .process-completion-quantity-grid > label > div {
+  position: relative;
+}
+
+.hm-production-workbench .process-completion-quantity-grid input {
+  width: 100%;
+  height: 38px;
+  padding: 0 34px 0 10px;
+  border: 1px solid #cfd7e3;
+  border-radius: 8px;
+  outline: none;
+  background: #fff;
+  color: #182236;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 850;
+}
+
+.hm-production-workbench .process-completion-quantity-grid label em {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  color: #7a8597;
+  font-size: 11px;
+  font-style: normal;
+  transform: translateY(-50%);
+}
+
+.hm-production-workbench .process-completion-good {
+  border-color: #9eddbf;
+  background: #eefaf4;
+}
+
+.hm-production-workbench .process-completion-good strong {
+  overflow: hidden;
+  color: #07965d;
+  font-size: 21px;
+  line-height: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .process-completion-good strong small {
+  font-size: 11px;
+}
+
+.hm-production-workbench .process-completion-good em {
+  overflow: hidden;
+  color: #438069;
+  font-size: 9px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .process-completion-work-session {
+  border-color: #d9e1ec;
+  background: #fff;
+}
+
+.hm-production-workbench .process-completion-work-session > header > span {
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #f1f4f8;
+  color: #697488;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.hm-production-workbench .process-completion-work-session > header > span.selected {
+  background: #e8f2ff;
+  color: #1468d4;
+}
+
+.hm-production-workbench .process-completion-selected-employees {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hm-production-workbench .process-completion-selected-employees > span {
+  min-height: 28px;
+  padding: 4px 5px 4px 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #bad1f3;
+  border-radius: 999px;
+  background: #eef5ff;
+  color: #175fae;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-production-workbench .process-completion-selected-employees button {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: #dceaff;
+  color: #175fae;
+}
+
+.hm-production-workbench .process-completion-employee-picker {
+  padding: 7px;
+  display: grid;
+  gap: 6px;
+  border: 1px solid #e1e6ed;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.hm-production-workbench .process-completion-employee-picker > label {
+  height: 32px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #d8dee8;
+  border-radius: 8px;
+  background: #fff;
+  color: #7a8597;
+}
+
+.hm-production-workbench .process-completion-employee-picker > label input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #263246;
+  font: inherit;
+  font-size: 11px;
+}
+
+.hm-production-workbench .process-completion-employee-list {
+  max-height: none;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  overflow: visible;
+}
+
+.hm-production-workbench .process-completion-employee-list > label {
+  min-height: 40px;
+  padding: 6px 7px;
+  gap: 7px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.hm-production-workbench .process-completion-employee-list > label.selected {
+  border-color: #79a9ea;
+  background: #edf5ff;
+  box-shadow: none;
+}
+
+.hm-production-workbench .process-completion-employee-list strong {
+  font-size: 11px;
+}
+
+.hm-production-workbench .process-completion-employee-list small {
+  font-size: 9px;
+}
+
+.hm-production-workbench .process-completion-employee-list > p {
+  grid-column: 1 / -1;
+  margin: 8px 0;
+  color: #7a8597;
+  font-size: 11px;
+  text-align: center;
+}
+
+.hm-production-workbench .process-completion-show-employees {
+  justify-self: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #246cc4;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-production-workbench .process-completion-show-employees:hover {
+  background: #eaf2fd;
+}
+
+.hm-production-workbench .process-completion-work-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hm-production-workbench .process-completion-work-grid label {
+  gap: 4px;
+}
+
+.hm-production-workbench .process-completion-work-grid label > span,
+.hm-production-workbench .process-completion-more label > span {
+  color: #5e6a7e;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-production-workbench .process-completion-work-grid input,
+.hm-production-workbench .process-completion-more input,
+.hm-production-workbench .process-completion-more textarea {
+  width: 100%;
+  min-height: 34px;
+  padding: 6px 9px;
+  border: 1px solid #d5dce6;
+  border-radius: 8px;
+  outline: none;
+  background: #fff;
+  color: #263246;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.hm-production-workbench .process-completion-more {
+  border-top: 1px solid #e6eaf0;
+}
+
+.hm-production-workbench .process-completion-more summary {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #3c4a60;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.hm-production-workbench .process-completion-more summary span {
+  color: #8a94a5;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.hm-production-workbench .process-completion-more > div {
+  padding-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hm-production-workbench .process-completion-more label {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.hm-production-workbench .process-completion-more label.wide {
+  grid-column: 1 / -1;
+}
+
+.hm-production-workbench .process-completion-more textarea {
+  min-height: 56px;
+  resize: vertical;
+}
+
+.hm-production-workbench .process-completion-disposition {
+  padding: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-radius: 12px;
+}
+
+.hm-production-workbench .process-completion-disposition label {
+  min-height: 52px;
+  padding: 8px 9px;
+}
+
+.hm-production-workbench .process-completion-summary {
+  min-width: 0;
+  padding: 13px;
+  display: grid;
+  align-content: start;
+  gap: 11px;
+  position: sticky;
+  top: 0;
+  border: 1px solid #dfe5ed;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: 0 7px 24px rgba(26, 39, 58, .06);
+}
+
+.hm-production-workbench .process-completion-summary > header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #07965d;
+}
+
+.hm-production-workbench .process-completion-summary > header > div {
+  display: grid;
+  gap: 1px;
+}
+
+.hm-production-workbench .process-completion-summary > header strong {
+  color: #172033;
+  font-size: 13px;
+}
+
+.hm-production-workbench .process-completion-summary > header small {
+  color: #8993a3;
+  font-size: 9px;
+}
+
+.hm-production-workbench .process-completion-summary-hero {
+  padding: 13px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid #a7dfc4;
+  border-radius: 11px;
+  background: #eefaf4;
+}
+
+.hm-production-workbench .process-completion-summary-hero > span {
+  color: #4f806b;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-production-workbench .process-completion-summary-hero > strong {
+  overflow: hidden;
+  color: #07965d;
+  font-size: 28px;
+  line-height: 1.05;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .process-completion-summary-hero > strong small {
+  font-size: 12px;
+}
+
+.hm-production-workbench .process-completion-summary-hero > em {
+  color: #3b7a61;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.hm-production-workbench .process-completion-summary > dl {
+  margin: 0;
+  display: grid;
+  gap: 0;
+}
+
+.hm-production-workbench .process-completion-summary > dl > div {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.hm-production-workbench .process-completion-summary dt,
+.hm-production-workbench .process-completion-summary dd {
+  margin: 0;
+  font-size: 10px;
+}
+
+.hm-production-workbench .process-completion-summary dt {
+  color: #7b8698;
+}
+
+.hm-production-workbench .process-completion-summary dd {
+  color: #253147;
+  font-weight: 850;
+  text-align: right;
+}
+
+.hm-production-workbench .process-completion-summary dd.warning {
+  color: #c65b13;
+}
+
+.hm-production-workbench .process-completion-summary dd.danger {
+  color: #dc2626;
+}
+
+.hm-production-workbench .process-completion-summary-people,
+.hm-production-workbench .process-completion-summary-warning {
+  padding: 9px;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  border-radius: 9px;
+  background: #f4f7fb;
+  color: #687489;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.hm-production-workbench .process-completion-summary-people svg,
+.hm-production-workbench .process-completion-summary-warning svg {
+  flex: 0 0 auto;
+}
+
+.hm-production-workbench .process-completion-summary-warning {
+  background: #fff7ed;
+  color: #b45309;
+}
+
+.hm-production-workbench .process-completion-history {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.hm-production-workbench .process-completion-history summary {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #435168;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.hm-production-workbench .process-completion-history summary span {
+  color: #8993a3;
+  font-size: 9px;
+}
+
+.hm-production-workbench .process-completion-history > div {
+  display: grid;
+  gap: 6px;
+}
+
+.hm-production-workbench .process-completion-history article {
+  padding: 7px 0 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2px;
+  border-top: 1px solid #e7ebf0;
+}
+
+.hm-production-workbench .process-completion-history time,
+.hm-production-workbench .process-completion-history strong,
+.hm-production-workbench .process-completion-history small {
+  font-size: 9px;
+}
+
+.hm-production-workbench .process-completion-history strong {
+  color: #344054;
+}
+
+.hm-production-workbench .process-completion-dialog > .form-error {
+  margin: 0 16px 10px;
+}
+
+.hm-production-workbench .process-completion-dialog > .dialog-actions {
+  min-height: 60px;
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  border-top: 1px solid #e3e8ef;
+  background: #fff;
+  box-shadow: 0 -8px 24px rgba(26, 39, 58, .05);
+}
+
+.hm-production-workbench .process-completion-dialog > .dialog-actions > span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: #a55a20;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .process-completion-dialog > .dialog-actions > span.ready {
+  color: #25805b;
+}
+
+.hm-production-workbench .process-completion-dialog > .dialog-actions button {
+  min-height: 38px;
+  padding: 0 17px;
+  border: 1px solid #d7dde6;
+  border-radius: 9px;
+  background: #fff;
+  color: #465267;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hm-production-workbench .process-completion-dialog > .dialog-actions .primary-button {
+  min-width: 190px;
+  border-color: #f05a00;
+  background: #f05a00;
+  color: #fff;
+  box-shadow: 0 7px 16px rgba(240, 90, 0, .18);
+}
+
+.hm-production-workbench .process-completion-dialog > .dialog-actions .primary-button:disabled {
+  border-color: #ffd0b2;
+  background: #ffd0b2;
+  box-shadow: none;
+  color: #fff;
+}
+
+.hm-production-workbench .process-completion-dialog input:focus-visible,
+.hm-production-workbench .process-completion-dialog textarea:focus-visible,
+.hm-production-workbench .process-completion-dialog select:focus-visible,
+.hm-production-workbench .process-completion-dialog button:focus-visible,
+.hm-production-workbench .process-completion-dialog summary:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, .2);
+  outline-offset: 1px;
+}
+
+@media (max-width: 900px) {
+  .hm-production-workbench .process-completion-dialog {
+    height: calc(100vh - 24px);
+    max-height: calc(100vh - 24px);
+  }
+
+  .hm-production-workbench .process-completion-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .hm-production-workbench .process-completion-summary {
+    position: static;
+  }
+
+  .hm-production-workbench .process-completion-route {
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  }
+
+  .hm-production-workbench .process-completion-route dl {
+    grid-column: 1 / -1;
+    padding: 8px 0 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border-top: 1px solid #e5e9ef;
+    border-left: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  .hm-production-workbench .process-completion-backdrop {
+    padding: 0;
+  }
+
+  .hm-production-workbench .process-completion-dialog {
+    width: 100vw;
+    height: 100vh;
+    max-height: 100vh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .hm-production-workbench .process-completion-header {
+    min-height: 76px;
+    padding: 12px;
+  }
+
+  .hm-production-workbench .process-completion-heading > strong {
+    font-size: 19px;
+  }
+
+  .hm-production-workbench .process-completion-next-badge {
+    min-width: 102px;
+  }
+
+  .hm-production-workbench .process-completion-scroll {
+    padding: 10px;
+  }
+
+  .hm-production-workbench .process-completion-route,
+  .hm-production-workbench .process-completion-quantity-grid,
+  .hm-production-workbench .process-completion-work-grid,
+  .hm-production-workbench .process-completion-more > div,
+  .hm-production-workbench .process-completion-disposition {
+    grid-template-columns: 1fr;
+  }
+
+  .hm-production-workbench .process-completion-route > svg {
+    transform: rotate(90deg);
+  }
+
+  .hm-production-workbench .process-completion-route dl {
+    grid-column: 1;
+  }
+
+  .hm-production-workbench .process-completion-quantity-panel > header {
+    align-items: flex-start;
+  }
+
+  .hm-production-workbench .process-completion-quantity-panel > header > label {
+    display: grid;
+  }
+
+  .hm-production-workbench .process-completion-quantity-panel > header input {
+    width: 130px;
+  }
+
+  .hm-production-workbench .process-completion-employee-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hm-production-workbench .process-completion-more label.wide {
+    grid-column: 1;
+  }
+
+  .hm-production-workbench .process-completion-dialog > .dialog-actions {
+    padding: 9px 10px;
+  }
+
+  .hm-production-workbench .process-completion-dialog > .dialog-actions > span {
+    display: none;
+  }
+
+  .hm-production-workbench .process-completion-dialog > .dialog-actions button {
+    flex: 1 1 0;
+    padding: 0 10px;
+  }
+
+  .hm-production-workbench .process-completion-dialog > .dialog-actions .primary-button {
+    min-width: 0;
+    flex-grow: 2;
+  }
+}
+
 .production-branch-list {
   display: grid;
   gap: 10px;
