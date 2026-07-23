@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, GripVertical, Info, ListChecks, PanelRightClose, PanelRightOpen, Pencil, RefreshCw, Rows3, Search, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, Info, ListChecks, PanelRightClose, PanelRightOpen, Pencil, RefreshCw, Rows3, Search, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
@@ -13,30 +13,31 @@ import { prepareProductionQuantityAdjustment } from '@/lib/production-quantity-a
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
 import type {
   CurrentUserDTO,
-  ProcessExecutionContextDTO,
   WorkOrderProcessRouteDTO,
 } from '@/types';
 
 type StageKey = 'not_issued' | 'frontend' | 'backend' | 'completed';
 type ViewKey = 'board' | 'today' | 'exceptions';
 type WeekScope = 'current' | 'carryover' | 'next' | 'history';
-type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing';
+type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing' | 'waiting_transfer';
 type DetailTab = 'production' | 'drawing' | 'progress' | 'source';
 type BatchOperation = 'set_priority' | 'set_stage' | 'add_remark';
 type DuePreset = '' | 'today' | 'tomorrow' | 'overdue' | 'week' | 'custom';
-type ProductionFlowAction = 'confirm_drawing_issued' | 'transfer_to_backend' | 'complete_from_backend' | 'advance_process_route';
+type ProductionFlowAction = 'confirm_drawing_issued' | 'transfer_to_backend' | 'complete_from_backend';
 type DispatchDensity = 'comfortable' | 'compact';
-type DispatchPreset = 'all' | 'today' | 'exceptions' | 'completed';
+type DispatchPreset = 'all' | 'today' | 'waiting' | 'exceptions' | 'completed';
 type DispatchTone = 'normal' | 'warning' | 'danger';
 
 type DispatchRisk = {
   label: string;
   detail: string;
   tone: DispatchTone;
+  alert?: ProductionAlert;
 };
 
 type DispatchActivity = {
   id: string;
+  orderId: string;
   specification: string;
   content: string;
   actor: string;
@@ -236,18 +237,6 @@ type NextStepRequest = {
   order: ProductionOrder;
   displayStage: StageKey;
   action: ProductionFlowAction;
-  stepId?: string;
-};
-
-type ProcessExecutionForm = {
-  employeeId: string;
-  startedAt: string;
-  endedAt: string;
-  breakMinutes: string;
-  goodQty: string;
-  scrapQty: string;
-  reworkQty: string;
-  remark: string;
 };
 
 type ProductionCardView = {
@@ -309,56 +298,6 @@ function stageMenuItems(order: ProductionOrder): Array<{ key: StageKey; label: s
   });
 }
 
-function dateTimeLocalValue(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  return local.toISOString().slice(0, 16);
-}
-
-function positiveWholeNumber(value: string): number | null {
-  return /^[1-9]\d*$/.test(value.trim()) ? Number(value) : null;
-}
-
-function nonnegativeWholeNumber(value: string): number | null {
-  return /^\d+$/.test(value.trim()) ? Number(value) : null;
-}
-
-function executionPreview(context: ProcessExecutionContextDTO | null, form: ProcessExecutionForm | null): {
-  standardMilliseconds: number;
-  actualMilliseconds: number;
-  attainmentBasisPoints: number;
-} | null {
-  if (!context?.standard || !form) return null;
-  const goodQty = positiveWholeNumber(form.goodQty);
-  const breakMinutes = Number(form.breakMinutes || 0);
-  const startedAt = new Date(form.startedAt);
-  const endedAt = new Date(form.endedAt);
-  if (!goodQty || !Number.isFinite(breakMinutes) || breakMinutes < 0 || Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) return null;
-  const actualMilliseconds = endedAt.getTime() - startedAt.getTime() - Math.round(breakMinutes * 60_000);
-  if (actualMilliseconds <= 0) return null;
-  const standardMilliseconds = context.standard.source === 'product_profile'
-    ? context.standard.standardMillisecondsPerUnit * goodQty
-    : context.standard.setupMilliseconds + (
-    context.standard.timeBasis === 'per_batch'
-      ? context.standard.standardMillisecondsPerUnit
-      : context.standard.standardMillisecondsPerUnit * goodQty * context.standard.unitsPerProduct
-  );
-  return {
-    standardMilliseconds,
-    actualMilliseconds,
-    attainmentBasisPoints: Math.round((standardMilliseconds / actualMilliseconds) * 10_000),
-  };
-}
-
-function durationText(milliseconds: number): string {
-  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '-';
-  const minutes = milliseconds / 60_000;
-  if (minutes < 1) return `${Math.round(milliseconds / 1000)} 秒`;
-  if (minutes < 60) return `${Number(minutes.toFixed(1))} 分钟`;
-  return `${Number((minutes / 60).toFixed(2))} 小时`;
-}
-
 const quickByView: Record<ViewKey, Array<{ key: QuickFilter; label: string }>> = {
   board: [
     { key: 'due_today', label: '今日交期' }, { key: 'overdue', label: '已逾期' },
@@ -388,7 +327,7 @@ const emptyAdvanced: AdvancedFilters = {
 const productionBoardCache = new Map<string, BoardPayload>();
 const validQuickFilters = new Set<QuickFilter>([
   'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed', 'due_today', 'updated_today', 'completed_today',
-  'delivery_missing', 'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining',
+  'delivery_missing', 'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining', 'waiting_transfer',
 ]);
 
 function cloneAdvanced(value: AdvancedFilters): AdvancedFilters {
@@ -492,13 +431,13 @@ function nextProcessName(order: ProductionOrder): string {
 
 function dispatchRisk(order: ProductionOrder): DispatchRisk {
   const criticalAlert = order.productionAlerts.find(alert => alert.tone === 'red');
-  if (criticalAlert) return { label: criticalAlert.label, detail: '需要立即处理', tone: 'danger' };
+  if (criticalAlert) return { label: criticalAlert.label, detail: '需要立即处理', tone: 'danger', alert: criticalAlert };
   const remainingDays = daysUntilDelivery(order);
   if (remainingDays !== null && remainingDays < 0) {
     return { label: `逾期 ${Math.abs(remainingDays)} 天`, detail: `交期 ${deliveryText(order)}`, tone: 'danger' };
   }
   const warningAlert = order.productionAlerts.find(alert => alert.tone === 'amber' || alert.tone === 'orange');
-  if (warningAlert) return { label: warningAlert.label, detail: '请尽快处理', tone: 'warning' };
+  if (warningAlert) return { label: warningAlert.label, detail: '请尽快处理', tone: 'warning', alert: warningAlert };
   if (remainingDays !== null && remainingDays <= 2) {
     return { label: remainingDays === 0 ? '今日交付' : `${remainingDays} 天后交付`, detail: `交期 ${deliveryText(order)}`, tone: 'warning' };
   }
@@ -573,13 +512,46 @@ function appendAdvancedParams(params: URLSearchParams, value: AdvancedFilters): 
 }
 
 function executionParams(view: ViewKey, keyword: string, quick: QuickFilter[], advanced: AdvancedFilters, scope: WeekScope, weekStart: string, page = 1): URLSearchParams {
-  const params = new URLSearchParams({ view, page: String(page), pageSize: '500' });
+  const params = new URLSearchParams({ view, page: '1', pageSize: '5000' });
+  if (page > 1) params.set('displayPage', String(page));
   params.set('scope', scope);
   if (keyword) params.set('keyword', keyword);
   if (quick.length) params.set('quick', quick.join(','));
   if (scope === 'history' && weekStart) params.set('weekStart', weekStart);
   appendAdvancedParams(params, advanced);
   return params;
+}
+
+async function fetchCompleteProductionBoard(params: URLSearchParams, signal: AbortSignal): Promise<BoardPayload> {
+  const fetchPage = async (serverPage: number): Promise<BoardPayload> => {
+    const pageParams = new URLSearchParams(params);
+    pageParams.set('page', String(serverPage));
+    pageParams.delete('displayPage');
+    const response = await fetch(`/api/work-orders/execution?${pageParams.toString()}`, { cache: 'no-store', signal });
+    const body = await response.json().catch(() => ({}));
+    if (response.status === 401) location.href = '/login';
+    if (!response.ok) throw new Error(body.error || '生产看板加载失败');
+    return body.data as BoardPayload;
+  };
+
+  const firstPage = await fetchPage(1);
+  if (firstPage.pagination.totalPages <= 1) return firstPage;
+
+  const items = [...firstPage.items];
+  for (let serverPage = 2; serverPage <= firstPage.pagination.totalPages; serverPage += 1) {
+    const nextPage = await fetchPage(serverPage);
+    items.push(...nextPage.items);
+  }
+  return {
+    ...firstPage,
+    items,
+    pagination: {
+      page: 1,
+      pageSize: items.length,
+      total: firstPage.pagination.total,
+      totalPages: 1,
+    },
+  };
 }
 
 function normalizedProductionUrl(value: string): string {
@@ -684,13 +656,11 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [nextStepRequest, setNextStepRequest] = useState<NextStepRequest | null>(null);
   const [nextStepQuantity, setNextStepQuantity] = useState('');
   const [nextStepError, setNextStepError] = useState('');
-  const [executionContext, setExecutionContext] = useState<ProcessExecutionContextDTO | null>(null);
-  const [executionForm, setExecutionForm] = useState<ProcessExecutionForm | null>(null);
-  const [executionContextLoading, setExecutionContextLoading] = useState(false);
-  const [executionContextWarning, setExecutionContextWarning] = useState('');
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [density, setDensity] = useState<DispatchDensity>('comfortable');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const filterButtonRef = useRef<HTMLButtonElement | null>(null);
   const insightsButtonRef = useRef<HTMLButtonElement | null>(null);
   const insightsCloseRef = useRef<HTMLButtonElement | null>(null);
@@ -800,7 +770,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       ? restoredScope
       : restoredWeekStart ? 'history' : 'current');
     setWeekStart(restoredWeekStart);
-    setPage(Math.max(1, restored?.page || Number(sourceParams.get('page')) || 1));
+    setPage(Math.max(1, restored?.page || Number(sourceParams.get('displayPage')) || Number(sourceParams.get('page')) || 1));
     if (restored) {
       setBatchMode(restored.batchMode);
       setSelected(Array.isArray(restored.selectedIds) ? restored.selectedIds : []);
@@ -855,7 +825,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     const requestId = requestRef.current + 1;
     requestRef.current = requestId;
     const controller = new AbortController();
-    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, page);
+    const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1);
     const cacheKey = params.toString();
     const cached = productionBoardCache.get(cacheKey);
     if (cached) {
@@ -865,18 +835,13 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       setLoading(true);
     }
     setError('');
-    fetch(`/api/work-orders/execution?${cacheKey}`, { cache: 'no-store', signal: controller.signal })
-      .then(async response => {
-        const body = await response.json().catch(() => ({}));
-        if (response.status === 401) location.href = '/login';
-        if (!response.ok) throw new Error(body.error || '生产看板加载失败');
-        return body.data as BoardPayload;
-      })
+    fetchCompleteProductionBoard(params, controller.signal)
       .then(data => {
         if (requestId !== requestRef.current) return;
         productionBoardCache.set(cacheKey, data);
         if (productionBoardCache.size > 8) productionBoardCache.delete(productionBoardCache.keys().next().value || '');
         setBoard(data);
+        setLastRefreshedAt(new Date());
         setSelected(current => current.filter(id => data.items.some(item => item.id === id)));
       })
       .catch(reason => {
@@ -885,7 +850,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       })
       .finally(() => { if (requestId === requestRef.current) setLoading(false); });
     return () => controller.abort();
-  }, [advanced, debouncedKeyword, page, quick, refreshToken, scope, stateReady, view, weekStart]);
+  }, [advanced, debouncedKeyword, quick, refreshToken, scope, stateReady, view, weekStart]);
 
   useEffect(() => {
     if (loading || !board || !pendingRestoreRef.current) return;
@@ -944,7 +909,14 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }, []);
 
   useEffect(() => {
-    setInsightsOpen(window.matchMedia('(min-width: 1440px)').matches);
+    const syncFullscreenState = (): void => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', syncFullscreenState);
+    syncFullscreenState();
+    return () => document.removeEventListener('fullscreenchange', syncFullscreenState);
+  }, []);
+
+  useEffect(() => {
+    setInsightsOpen(window.matchMedia('(min-width: 1280px)').matches);
   }, []);
 
   useEffect(() => {
@@ -962,7 +934,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   useEffect(() => {
     if (!insightsOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
-    const overlayMode = !window.matchMedia('(min-width: 1440px)').matches;
+    const overlayMode = !window.matchMedia('(min-width: 1280px)').matches;
     if (overlayMode) document.body.style.overflow = 'hidden';
     const focusTimer = overlayMode ? window.setTimeout(() => insightsCloseRef.current?.focus(), 60) : 0;
     const handleInsightKeys = (event: KeyboardEvent): void => {
@@ -1025,25 +997,38 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   const activeFilterCount = filterChips.length;
 
-  const dispatchItems = useMemo(() => (board?.items || []).map(primaryCardView), [board]);
+  const dispatchAllItems = useMemo(() => (board?.items || []).map(primaryCardView), [board]);
+  const dispatchPageSize = density === 'comfortable' ? 4 : 6;
+  const dispatchTotalPages = Math.max(1, Math.ceil(dispatchAllItems.length / dispatchPageSize));
+  const dispatchItems = useMemo(
+    () => dispatchAllItems.slice((page - 1) * dispatchPageSize, page * dispatchPageSize),
+    [dispatchAllItems, dispatchPageSize, page],
+  );
 
-  const dispatchAlerts = useMemo<DispatchAlertItem[]>(() => (board?.items || [])
+  useEffect(() => {
+    if (page <= dispatchTotalPages) return;
+    setPage(dispatchTotalPages);
+  }, [dispatchTotalPages, page]);
+
+  const dispatchAlertItems = useMemo<DispatchAlertItem[]>(() => (board?.items || [])
     .filter(order => order.stage !== 'completed')
     .flatMap(order => order.productionAlerts.map((alert, index) => ({ id: `${order.id}-${alert.code}-${index}`, order, alert })))
     .sort((left, right) => {
       const score = (alert: ProductionAlert): number => alert.tone === 'red' ? 3 : alert.tone === 'orange' ? 2 : 1;
       return score(right.alert) - score(left.alert);
-    })
-    .slice(0, 5), [board]);
+    }), [board]);
+  const dispatchAlerts = useMemo(() => dispatchAlertItems.slice(0, 5), [dispatchAlertItems]);
 
   const dispatchActivities = useMemo<DispatchActivity[]>(() => (board?.items || [])
-    .flatMap(order => (order.processRoute?.activities || []).map(activity => ({
-      id: activity.id,
+    .filter(order => Boolean(order.lastProgressAt || order.completedAt))
+    .map(order => ({
+      id: `${order.id}-${order.lastProgressAt || order.completedAt}`,
+      orderId: order.id,
       specification: specText(order),
-      content: activity.content || activity.action,
-      actor: activity.actor?.displayName || activity.actor?.username || '系统',
-      createdAt: activity.createdAt,
-    })))
+      content: order.latestProgressRemark || (order.stage === 'completed' ? '工单已完成' : '生产进度已更新'),
+      actor: order.lastProgressBy || '系统',
+      createdAt: order.lastProgressAt || order.completedAt || order.updatedAt,
+    }))
     .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
     .slice(0, 6), [board]);
 
@@ -1052,7 +1037,10 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     for (const order of board?.items || []) {
       if (order.stage === 'completed') continue;
       const process = currentProcessName(order);
-      const pendingQuantity = Math.max(dispatchTargetQuantity(order) - dispatchCompletedQuantity(order), 0);
+      const stageQuantity = primaryCardView(order).stageQuantity;
+      const pendingQuantity = stageQuantity === null
+        ? Math.max(dispatchTargetQuantity(order) - dispatchCompletedQuantity(order), 0)
+        : Math.max(stageQuantity, 0);
       totals.set(process, (totals.get(process) || 0) + pendingQuantity);
     }
     return Array.from(totals.entries())
@@ -1064,7 +1052,11 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const dispatchMetric = useMemo(() => ({
     inProduction: (summary?.stageCounts.frontend || 0) + (summary?.stageCounts.backend || 0),
     waitingTransfer: (board?.items || []).filter(order => order.stage !== 'completed' && Boolean(order.processRoute?.nextStep)).length,
-    dueSoon: (board?.items || []).filter(order => order.stage !== 'completed' && dispatchRisk(order).tone !== 'normal').length,
+    dueSoon: (board?.items || []).filter(order => {
+      if (order.stage === 'completed') return false;
+      const days = daysUntilDelivery(order);
+      return days !== null && days >= 0 && days <= 2;
+    }).length,
     completed: summary?.completed || 0,
     percentage: summary?.quantityTotals.percentage ?? null,
   }), [board, summary]);
@@ -1073,6 +1065,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     ? 'today'
     : view === 'exceptions'
       ? 'exceptions'
+      : quick.includes('waiting_transfer')
+        ? 'waiting'
       : advanced.stage === 'completed'
         ? 'completed'
         : 'all';
@@ -1099,6 +1093,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       return;
     }
     setView('board');
+    if (preset === 'waiting') setQuick(['waiting_transfer']);
     setAdvanced(preset === 'completed' ? { ...emptyAdvanced, stage: 'completed' } : emptyAdvanced);
   }
 
@@ -1127,6 +1122,15 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   function closeInsights(): void {
     setInsightsOpen(false);
     window.requestAnimationFrame(() => insightsButtonRef.current?.focus());
+  }
+
+  async function toggleFullscreen(): Promise<void> {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch {
+      setToast('浏览器未允许进入大屏模式');
+    }
   }
 
   function toggleSummary(key: 'all' | 'due_today' | 'overdue' | 'drawing_confirmation' | 'material' | 'tail_remaining' | 'urgent' | 'completed'): void {
@@ -1371,42 +1375,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     await saveQuickUpdate(order, { drawingStatus }, optimistic, `图纸状态已更新为${drawingStatus}`);
   }
 
-  async function loadProcessExecutionContext(stepId: string): Promise<void> {
-    setExecutionContextLoading(true);
-    setExecutionContextWarning('');
-    setExecutionContext(null);
-    setExecutionForm(null);
-    try {
-      const response = await fetch(`/api/process-executions/context?stepId=${encodeURIComponent(stepId)}`, { cache: 'no-store' });
-      const body = await response.json().catch(() => ({})) as {
-        context?: ProcessExecutionContextDTO;
-        error?: string;
-      };
-      if (!response.ok || !body.context) throw new Error(body.error || '报工信息加载失败');
-      const context = body.context;
-      setExecutionContext(context);
-      setExecutionForm({
-        employeeId: context.employees[0]?.id || '',
-        startedAt: dateTimeLocalValue(context.suggestedStartedAt),
-        endedAt: dateTimeLocalValue(context.suggestedEndedAt),
-        breakMinutes: '0',
-        goodQty: String(Math.max(1, context.remainingGoodQuantity || 1)),
-        scrapQty: '0',
-        reworkQty: '0',
-        remark: '',
-      });
-      if (!context.standard) {
-        setExecutionContextWarning('当前工序尚未配置单套合计工时，请先到产品工序与工时维护并发布。');
-      } else if (!context.employees.length) {
-        setExecutionContextWarning('尚未建立在用员工档案，请先维护员工后再报工。');
-      }
-    } catch (reason) {
-      setExecutionContextWarning(reason instanceof Error ? reason.message : '报工信息加载失败');
-    } finally {
-      setExecutionContextLoading(false);
-    }
-  }
-
   function openNextStep(order: ProductionOrder, displayStage: StageKey): void {
     if (board?.readOnly) {
       setToast('下周预览为只读，启用为本周后才能流转工单');
@@ -1428,11 +1396,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         setToast('当前执行工序状态异常，请检查并重新发布该产品工序与工时');
         return;
       }
-      const currentStepId = order.processRoute.currentSteps[0]?.id || order.processRoute.currentStep.id;
-      setNextStepRequest({ order, displayStage, action: 'advance_process_route', stepId: currentStepId });
-      setNextStepQuantity('');
-      setNextStepError('');
-      void loadProcessExecutionContext(currentStepId);
+      openWorkflow(order, displayStage);
       return;
     }
     if (!order.quantityFlow.valid) {
@@ -1453,83 +1417,12 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setNextStepRequest({ order, displayStage, action });
     setNextStepQuantity(defaultQuantity && defaultQuantity > 0 ? String(defaultQuantity) : '');
     setNextStepError('');
-    setExecutionContext(null);
-    setExecutionForm(null);
-    setExecutionContextWarning('');
-  }
-
-  function selectCurrentProcess(stepId: string): void {
-    if (!nextStepRequest || nextStepRequest.action !== 'advance_process_route') return;
-    setNextStepRequest({ ...nextStepRequest, stepId });
-    setNextStepError('');
-    void loadProcessExecutionContext(stepId);
   }
 
   async function saveNextStep(): Promise<void> {
     if (!nextStepRequest) return;
     const { order, action, displayStage } = nextStepRequest;
-    let execution: {
-      employeeId: string;
-      startedAt: string;
-      endedAt: string;
-      breakMilliseconds: number;
-      goodQty: number;
-      scrapQty: number;
-      reworkQty: number;
-      remark: string;
-    } | undefined;
-    if (action === 'advance_process_route' && order.processRoute?.routeSource === 'product_time_profile'
-      && (!executionContext || !executionContext.standard || !executionContext.employees.length)) {
-      setNextStepError(executionContextWarning || '报工信息不完整，请先维护产品工时和员工档案');
-      return;
-    }
-    if (action === 'advance_process_route' && executionContext?.standard && executionContext.employees.length) {
-      if (executionContextLoading || !executionForm) {
-        setNextStepError('报工信息仍在加载，请稍候');
-        return;
-      }
-      if (!executionForm.employeeId) {
-        setNextStepError('请选择完成该工序的员工');
-        return;
-      }
-      const goodQty = positiveWholeNumber(executionForm.goodQty);
-      const scrapQty = nonnegativeWholeNumber(executionForm.scrapQty);
-      const reworkQty = nonnegativeWholeNumber(executionForm.reworkQty);
-      const breakMinutes = Number(executionForm.breakMinutes || 0);
-      const startedAt = new Date(executionForm.startedAt);
-      const endedAt = new Date(executionForm.endedAt);
-      if (!goodQty || goodQty > executionContext.remainingGoodQuantity) {
-        setNextStepError(`合格数量必须为正整数，且不能超过本工序剩余数量 ${executionContext.remainingGoodQuantity}`);
-        return;
-      }
-      if (scrapQty === null || reworkQty === null) {
-        setNextStepError('报废数量和返工数量必须为非负整数');
-        return;
-      }
-      if (!Number.isFinite(breakMinutes) || breakMinutes < 0) {
-        setNextStepError('休息时间不能小于 0');
-        return;
-      }
-      if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime()) || endedAt <= startedAt) {
-        setNextStepError('结束时间必须晚于开始时间');
-        return;
-      }
-      if (endedAt.getTime() - startedAt.getTime() <= breakMinutes * 60_000) {
-        setNextStepError('实际作业时间必须大于休息时间');
-        return;
-      }
-      execution = {
-        employeeId: executionForm.employeeId,
-        startedAt: startedAt.toISOString(),
-        endedAt: endedAt.toISOString(),
-        breakMilliseconds: Math.round(breakMinutes * 60_000),
-        goodQty,
-        scrapQty,
-        reworkQty,
-        remark: executionForm.remark.trim(),
-      };
-    }
-    if (action !== 'confirm_drawing_issued' && action !== 'advance_process_route') {
+    if (action !== 'confirm_drawing_issued') {
       if (!/^[1-9]\d*$/.test(nextStepQuantity.trim())) {
         setNextStepError('本次数量必须是正整数');
         return;
@@ -1547,40 +1440,25 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setSaving(true);
     setNextStepError('');
     try {
-      const processAdvance = action === 'advance_process_route' && order.processRoute;
-      const response = await fetch(processAdvance
-        ? `/api/process-management/routes/${order.processRoute?.id}`
-        : `/api/work-orders/${order.id}/execution`, {
+      const response = await fetch(`/api/work-orders/${order.id}/execution`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(processAdvance
-          ? {
-              action: 'advance',
-              version: order.processRoute?.version,
-              stepId: nextStepRequest.stepId,
-              execution,
-            }
-          : {
-              action,
-              quantity: action === 'confirm_drawing_issued' ? undefined : nextStepQuantity.trim(),
-              expectedVersion: order.quantityFlow.executionVersion,
-            }),
+        body: JSON.stringify({
+          action,
+          quantity: action === 'confirm_drawing_issued' ? undefined : nextStepQuantity.trim(),
+          expectedVersion: order.quantityFlow.executionVersion,
+        }),
       });
       const body = await response.json().catch(() => ({}));
-      const responseOrder = processAdvance ? body.workOrder : body.data;
+      const responseOrder = body.data;
       if (!response.ok || !responseOrder) throw new Error(body.error || '生产工序流转失败');
       const updated = withProductionDerived(responseOrder as ProductionOrder);
       applyLocalOrder(updated);
       setNextStepRequest(null);
       setNextStepQuantity('');
-      setExecutionContext(null);
-      setExecutionForm(null);
-      setExecutionContextWarning('');
       productionBoardCache.clear();
       setSummaryRefreshToken(value => value + 1);
-      setToast(action === 'advance_process_route'
-        ? '本次工序报工已提交'
-        : action === 'confirm_drawing_issued'
+      setToast(action === 'confirm_drawing_issued'
         ? '图纸已确认下发，工单已进入前端'
         : action === 'transfer_to_backend'
           ? '前端数量已转入后端'
@@ -1796,6 +1674,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         user={user}
         activeHref="/production"
         subtitle="现场排程与工序流转"
+        hideHeader
         sidebarTriggerTargetId="production-dispatch-sidebar-trigger"
         menuItems={[
           { label: '系统设置', href: '/dashboard?openSettings=1' },
@@ -1830,13 +1709,14 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '下周预览不可批量修改' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>
             <button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button>
             <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
+            <button className="hm-workbench-button production-fullscreen-trigger" type="button" onClick={() => void toggleFullscreen()}><Expand size={15} aria-hidden="true" />{isFullscreen ? '退出大屏' : '大屏模式'}</button>
           </div>
         </section>
 
         <section className="production-dispatch-metrics" aria-label="生产调度指标">
           <button type="button" className={dispatchPreset === 'all' ? 'active' : ''} onClick={() => applyDispatchPreset('all')}><span><CheckCircle2 size={18} aria-hidden="true" />生产中</span><strong>{dispatchMetric.inProduction}</strong><small>{weekScopeTitle} · {summary?.total || 0} 单</small></button>
-          <button type="button" onClick={() => applyDispatchPreset('all')}><span><ArrowRight size={18} aria-hidden="true" />待转序</span><strong>{dispatchMetric.waitingTransfer}</strong><small>已有下一工序待衔接</small></button>
-          <button type="button" className={dispatchPreset === 'exceptions' ? 'active warning' : 'warning'} onClick={() => applyDispatchPreset('exceptions')}><span><Clock3 size={18} aria-hidden="true" />即将超时</span><strong>{dispatchMetric.dueSoon}</strong><small>逾期、临期或异常任务</small></button>
+          <button type="button" className={dispatchPreset === 'waiting' ? 'active waiting' : 'waiting'} onClick={() => applyDispatchPreset('waiting')}><span><ArrowRight size={18} aria-hidden="true" />待转序</span><strong>{dispatchMetric.waitingTransfer}</strong><small>已有下一工序待衔接</small></button>
+          <button type="button" className={dispatchPreset === 'exceptions' ? 'active warning' : 'warning'} onClick={() => applyDispatchPreset('exceptions')}><span><Clock3 size={18} aria-hidden="true" />即将超时</span><strong>{dispatchMetric.dueSoon}</strong><small>交期在未来 0-2 天</small></button>
           <button type="button" className={dispatchPreset === 'completed' ? 'active completed' : 'completed'} onClick={() => applyDispatchPreset('completed')}><span><CheckCircle2 size={18} aria-hidden="true" />已完成</span><strong>{dispatchMetric.completed}</strong><small>当前周完成归档</small></button>
           <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />数量达成率</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>按已完成数量统计</small></div>
         </section>
@@ -1846,6 +1726,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           <div className="production-dispatch-presets" aria-label="调度视图">
             <button className={dispatchPreset === 'all' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'all'} onClick={() => applyDispatchPreset('all')}>全部</button>
             <button className={dispatchPreset === 'today' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'today'} onClick={() => applyDispatchPreset('today')}>今日交付</button>
+            <button className={dispatchPreset === 'waiting' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'waiting'} onClick={() => applyDispatchPreset('waiting')}>待转序</button>
             <button className={dispatchPreset === 'exceptions' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'exceptions'} onClick={() => applyDispatchPreset('exceptions')}>异常</button>
             <button className={dispatchPreset === 'completed' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'completed'} onClick={() => applyDispatchPreset('completed')}>已完成</button>
           </div>
@@ -1853,10 +1734,11 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           <PortalMenu open={filtersOpen} anchorRef={filterButtonRef} align="right" className="production-filter-menu hm-production-menu hm-production-filter-menu" width={420} onClose={() => setFiltersOpen(false)} closeOnSelect={false}>
             <AdvancedFilterPanel customers={board?.filterOptions.customers || []} value={draftAdvanced} setValue={setDraftAdvanced} clear={() => setDraftAdvanced(emptyAdvanced)} apply={() => { setAdvanced(cloneAdvanced(draftAdvanced)); setFiltersOpen(false); setPage(1); }} />
           </PortalMenu>
-          <button className={`production-auto-refresh ${autoRefresh ? 'active' : ''}`} type="button" aria-pressed={autoRefresh} title="每 30 秒自动刷新" onClick={() => setAutoRefresh(value => !value)}><RefreshCw size={15} aria-hidden="true" />自动刷新</button>
+          <button className={`production-auto-refresh ${autoRefresh ? 'active' : ''}`} type="button" aria-pressed={autoRefresh} title="每 30 秒自动刷新" onClick={() => setAutoRefresh(value => !value)}><RefreshCw size={15} aria-hidden="true" />自动刷新 <span>30 秒</span></button>
+          {lastRefreshedAt && <span className="production-refresh-status" aria-live="polite">更新 {new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(lastRefreshedAt)}</span>}
           <div className="production-density-control" aria-label="列表密度">
-            <button className={density === 'comfortable' ? 'active' : ''} type="button" aria-label="舒适列表" title="舒适列表" onClick={() => setDensity('comfortable')}><Rows3 size={16} aria-hidden="true" /></button>
-            <button className={density === 'compact' ? 'active' : ''} type="button" aria-label="紧凑列表" title="紧凑列表" onClick={() => setDensity('compact')}><ListChecks size={16} aria-hidden="true" /></button>
+            <button className={density === 'comfortable' ? 'active' : ''} type="button" aria-label="舒适列表" title="舒适列表" onClick={() => { setDensity('comfortable'); setPage(1); }}><Rows3 size={16} aria-hidden="true" /></button>
+            <button className={density === 'compact' ? 'active' : ''} type="button" aria-label="紧凑列表" title="紧凑列表" onClick={() => { setDensity('compact'); setPage(1); }}><ListChecks size={16} aria-hidden="true" /></button>
           </div>
           <span className="production-dispatch-result">{board?.pagination.total || 0} 项</span>
         </section>
@@ -1888,17 +1770,18 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
                 openIssue={openProductionIssue}
                 copySpecification={copySpecification}
               />)}
-              {loading && <DispatchRowSkeleton count={6} />}
+              {loading && <DispatchRowSkeleton count={dispatchPageSize} />}
               {!loading && !board?.items.length && <div className="production-dispatch-empty"><Rows3 size={28} aria-hidden="true" /><strong>当前没有匹配工单</strong><span>调整周范围或筛选条件后重试。</span></div>}
             </div>
-            {board && board.pagination.totalPages > 1 && <div className="production-pagination production-dispatch-pagination"><span>共 {board.pagination.total} 单</span><button type="button" disabled={board.pagination.page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</button><b>{board.pagination.page} / {board.pagination.totalPages}</b><button type="button" disabled={board.pagination.page >= board.pagination.totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></div>}
+            {board && dispatchTotalPages > 1 && <div className="production-pagination production-dispatch-pagination"><span>共 {board.pagination.total} 单</span><button type="button" disabled={page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</button><b>{page} / {dispatchTotalPages}</b><button type="button" disabled={page >= dispatchTotalPages} onClick={() => setPage(value => Math.min(dispatchTotalPages, value + 1))}>下一页</button></div>}
           </section>
 
           {insightsOpen && <button className="production-dispatch-scrim" type="button" aria-label="关闭调度侧栏" onClick={closeInsights} />}
           <aside ref={insightsPanelRef} id="production-insight-panel" className={`production-dispatch-rail ${insightsOpen ? 'open' : ''}`} aria-label="生产调度侧栏" aria-hidden={!insightsOpen} tabIndex={-1}>
-            <header><div><span>实时协同</span><strong>调度侧栏</strong></div><button ref={insightsCloseRef} type="button" aria-label="关闭调度侧栏" title="关闭调度侧栏" onClick={closeInsights}><X size={18} aria-hidden="true" /></button></header>
+            <header><div><span>实时协同</span><strong>调度建议</strong></div><button ref={insightsCloseRef} type="button" aria-label="关闭调度侧栏" title="关闭调度侧栏" onClick={closeInsights}><X size={18} aria-hidden="true" /></button></header>
             <section className="production-dispatch-rail-section production-dispatch-alerts" aria-label="待处理异常">
               <div className="production-dispatch-rail-title"><strong><AlertTriangle size={15} aria-hidden="true" />待处理异常</strong><button type="button" onClick={() => applyDispatchPreset('exceptions')}>查看全部</button></div>
+              <div className="production-dispatch-alert-summary"><AlertTriangle size={20} aria-hidden="true" /><b>{dispatchAlertItems.length}</b><span>项需要处理</span></div>
               {dispatchAlerts.map(item => <button type="button" key={item.id} onClick={() => openProductionIssue(item.order, item.alert.code, item.order.stage)}><span><b title={specText(item.order)}>{specText(item.order)}</b><small>{item.alert.label}</small></span><em className={item.alert.tone}>{item.alert.tone === 'red' ? '紧急' : '关注'}</em></button>)}
               {!dispatchAlerts.length && <p>当前筛选范围内没有待处理异常</p>}
             </section>
@@ -1913,7 +1796,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             <section className="production-dispatch-rail-section production-dispatch-activities" aria-label="最近流程动态">
               <div className="production-dispatch-rail-title"><strong>最近流程动态</strong><span>{dispatchActivities.length} 条</span></div>
               {dispatchActivities.map(activity => <button type="button" key={activity.id} onClick={() => {
-                const order = board?.items.find(item => specText(item) === activity.specification);
+                const order = board?.items.find(item => item.id === activity.orderId);
                 if (order) openWorkflow(order, order.stage);
               }}><i /><span><b title={activity.specification}>{activity.specification}</b><small>{activity.content}</small><em>{activity.actor} · {dateTimeText(activity.createdAt)}</em></span></button>)}
               {!dispatchActivities.length && <p>暂无流程动态</p>}
@@ -1942,12 +1825,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         request={nextStepRequest}
         quantity={nextStepQuantity}
         setQuantity={setNextStepQuantity}
-        executionContext={executionContext}
-        executionForm={executionForm}
-        setExecutionForm={setExecutionForm}
-        executionContextLoading={executionContextLoading}
-        executionContextWarning={executionContextWarning}
-        selectProcess={selectCurrentProcess}
         saving={saving}
         error={nextStepError}
         close={() => {
@@ -1955,9 +1832,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             setNextStepRequest(null);
             setNextStepQuantity('');
             setNextStepError('');
-            setExecutionContext(null);
-            setExecutionForm(null);
-            setExecutionContextWarning('');
           }
         }}
         confirm={() => void saveNextStep()}
@@ -2016,7 +1890,6 @@ function ProductionDispatchRow({
   const currentProcess = currentProcessName(order);
   const nextProcess = nextProcessName(order);
   const routeProgress = route?.progress ?? 0;
-  const firstAlert = order.productionAlerts[0];
   const routeNeedsMaintenance = !route || route.status === 'draft';
   const quantityUnavailable = targetQuantity <= 0 || !order.quantityFlow.valid;
   const completed = displayStage === 'completed' || route?.status === 'completed';
@@ -2024,11 +1897,11 @@ function ProductionDispatchRow({
     ? '查看详情'
     : completed
       ? '查看记录'
-      : quantityUnavailable
-        ? '补充数量'
-        : routeNeedsMaintenance
-          ? '维护工序'
-          : `完成${currentProcess}`;
+        : quantityUnavailable
+          ? '补充数量'
+          : routeNeedsMaintenance
+            ? '维护工序'
+            : '处理工序';
 
   function runPrimaryAction(event: React.MouseEvent<HTMLButtonElement>): void {
     if (readOnly) {
@@ -2051,12 +1924,13 @@ function ProductionDispatchRow({
       <div className="production-dispatch-row-select">
         {batchMode && !readOnly
           ? <input type="checkbox" checked={selectedRow} aria-label={`选择 ${specText(order)}`} onChange={() => toggleSelected(order.id)} />
-          : <GripVertical size={16} aria-hidden="true" />}
+          : <span className="production-dispatch-stage-dot" aria-hidden="true" />}
       </div>
       <div className="production-dispatch-product">
         <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b><em className={order.priority}>{priorityText(order.priority)}</em></span>
         <button type="button" title={`${specText(order)}；进入图纸资料库`} onClick={() => openDrawingLibrary(order, displayStage)}>{specText(order)}</button>
         <small title={`${order.productName || '品名待补充'} · ${order.code}`}>{order.productName || '品名待补充'} · {order.code}</small>
+        <div className="production-dispatch-product-quantity"><span>数量</span><b>{targetQuantity > 0 ? formatProductionQuantity(targetQuantity) : '待补充'} 件</b></div>
       </div>
       <div className="production-dispatch-row-icon-actions">
         <button type="button" aria-label={`复制 ${specText(order)} 规格`} title="复制完整规格" onClick={() => void copySpecification(order)}><Copy size={14} aria-hidden="true" /></button>
@@ -2083,9 +1957,10 @@ function ProductionDispatchRow({
 
     <div className={`production-dispatch-risk ${risk.tone}`}>
       <strong>{deliveryText(order) || '交期待补'}</strong>
-      <span>{risk.label}</span>
+      {risk.alert
+        ? <button type="button" title="进入问题管理处理该异常" onClick={() => openIssue(order, risk.alert!.code, displayStage)}>{risk.label}</button>
+        : <span>{risk.label}</span>}
       <small>{risk.detail}</small>
-      {firstAlert && <button type="button" title="进入问题管理处理该异常" onClick={() => openIssue(order, firstAlert.code, displayStage)}>{firstAlert.label}</button>}
     </div>
 
     <div className="production-dispatch-row-actions">
@@ -2189,16 +2064,10 @@ function UpdateDrawer({ order, value, setValue, saving, error, close, save }: { 
   );
 }
 
-function NextStepDialog({ request, quantity, setQuantity, executionContext, executionForm, setExecutionForm, executionContextLoading, executionContextWarning, selectProcess, saving, error, close, confirm }: {
+function NextStepDialog({ request, quantity, setQuantity, saving, error, close, confirm }: {
   request: NextStepRequest;
   quantity: string;
   setQuantity: (value: string) => void;
-  executionContext: ProcessExecutionContextDTO | null;
-  executionForm: ProcessExecutionForm | null;
-  setExecutionForm: (value: ProcessExecutionForm) => void;
-  executionContextLoading: boolean;
-  executionContextWarning: string;
-  selectProcess: (stepId: string) => void;
   saving: boolean;
   error: string;
   close: () => void;
@@ -2207,19 +2076,12 @@ function NextStepDialog({ request, quantity, setQuantity, executionContext, exec
   const { order, action } = request;
   const flow = order.quantityFlow;
   const isDrawingConfirmation = action === 'confirm_drawing_issued';
-  const isProcessAdvance = action === 'advance_process_route';
-  const selectedProcess = order.processRoute?.currentSteps.find(step => step.id === request.stepId)
-    || order.processRoute?.currentStep;
-  const title = isProcessAdvance
-    ? `工序报工：${selectedProcess?.processName || '当前工序'}`
-    : isDrawingConfirmation
-      ? '确认图纸已下发并进入前端'
-      : action === 'transfer_to_backend'
-        ? '前端数量进入后端'
-        : '确认后端完成数量';
+  const title = isDrawingConfirmation
+    ? '确认图纸已下发并进入前端'
+    : action === 'transfer_to_backend'
+      ? '前端数量进入后端'
+      : '确认后端完成数量';
   const quantityLabel = action === 'transfer_to_backend' ? '本次进入后端数量' : '本次完成数量';
-  const preview = executionPreview(executionContext, executionForm);
-  const requiresExecution = Boolean(executionContext?.standard && executionContext.employees.length);
   return <div className="modal-backdrop"><section className="production-dialog production-next-step-dialog" role="dialog" aria-modal="true" aria-label={title}>
     <div className="dialog-title"><div><strong>{title}</strong><small>{order.customerName || '客户待补充'} · {specText(order)}</small></div><button type="button" disabled={saving} onClick={close} aria-label="关闭">×</button></div>
     <div className="production-flow-summary" aria-label="当前生产数量">
@@ -2228,37 +2090,11 @@ function NextStepDialog({ request, quantity, setQuantity, executionContext, exec
       <div><span>后端待完成 F-C</span><strong>{formatProductionQuantity(flow.backendRemainingQty)}</strong></div>
       <div><span>累计已完成 C</span><strong>{formatProductionQuantity(flow.completedQty)}</strong></div>
     </div>
-    {isProcessAdvance
-      ? <>
-        <div className="production-flow-confirm-copy"><strong>{order.processRoute && order.processRoute.currentSteps.length > 1 ? `当前并行工序 ${order.processRoute.currentSteps.length} 道` : '按本次合格数量累计报工'}</strong><br />累计合格数量达到生产目标后完成本工序；同组并行工序全部完成后，才会开放下一顺序组。</div>
-        {order.processRoute && order.processRoute.currentSteps.length > 1 && <label className="production-process-picker"><span>本次报工工序</span><select value={request.stepId || ''} disabled={saving || executionContextLoading} onChange={event => selectProcess(event.target.value)}>{order.processRoute.currentSteps.map(step => <option value={step.id} key={step.id}>{step.processName} · 已报 {step.reportedGoodQuantity || 0}</option>)}</select></label>}
-        {executionContextLoading && <div className="production-execution-loading"><RefreshCw className="spin" />正在加载产品工时和员工档案...</div>}
-        {executionContextWarning && <div className="production-execution-warning" role="status"><AlertTriangle />{executionContextWarning}<a href="/workspace/product-times">前往维护</a></div>}
-        {requiresExecution && executionForm && executionContext?.standard && <div className="production-execution-form">
-          <header><div><strong>本工序报工</strong><small>用于员工当日、周、月达成率汇总</small></div><em>标准 V{executionContext.standard.version || '-'}</em></header>
-          <div className="production-execution-fields">
-            <label><span>完成员工</span><select value={executionForm.employeeId} onChange={event => setExecutionForm({ ...executionForm, employeeId: event.target.value })}>{executionContext.employees.map(employee => <option value={employee.id} key={employee.id}>{employee.employeeNo} · {employee.name}{employee.position ? ` · ${employee.position}` : ''}{employee.team ? ` · ${employee.team}` : ''}</option>)}</select></label>
-            <label><span>合格数量</span><input type="number" min="1" max={executionContext.remainingGoodQuantity} value={executionForm.goodQty} onChange={event => setExecutionForm({ ...executionForm, goodQty: event.target.value })} /></label>
-            <label><span>开始时间</span><input type="datetime-local" value={executionForm.startedAt} onChange={event => setExecutionForm({ ...executionForm, startedAt: event.target.value })} /></label>
-            <label><span>结束时间</span><input type="datetime-local" value={executionForm.endedAt} onChange={event => setExecutionForm({ ...executionForm, endedAt: event.target.value })} /></label>
-            <label><span>休息时间（分钟）</span><input type="number" min="0" step="1" value={executionForm.breakMinutes} onChange={event => setExecutionForm({ ...executionForm, breakMinutes: event.target.value })} /></label>
-            <label><span>报废 / 返工</span><div className="production-execution-split"><input aria-label="报废数量" type="number" min="0" step="1" value={executionForm.scrapQty} onChange={event => setExecutionForm({ ...executionForm, scrapQty: event.target.value })} /><input aria-label="返工数量" type="number" min="0" step="1" value={executionForm.reworkQty} onChange={event => setExecutionForm({ ...executionForm, reworkQty: event.target.value })} /></div></label>
-            <label className="wide"><span>报工备注</span><input maxLength={300} value={executionForm.remark} onChange={event => setExecutionForm({ ...executionForm, remark: event.target.value })} placeholder="可选：记录异常、换线或人员协作情况" /></label>
-          </div>
-          <div className="production-execution-preview">
-            <span><small>本工序累计</small><b>{executionContext.reportedGoodQuantity} / {executionContext.targetQuantity}，剩余 {executionContext.remainingGoodQuantity}</b></span>
-            <span><small>标准口径</small><b>{executionContext.standard.source === 'product_profile' ? `单套本工序合计 ${executionContext.standard.standardMillisecondsPerUnit / 1000} 秒` : executionContext.standard.timeBasis === 'per_batch' ? '按批' : `每${executionContext.standard.unitLabel} ${executionContext.standard.standardMillisecondsPerUnit / 1000} 秒`}</b></span>
-            <span><small>标准工时</small><b>{preview ? durationText(preview.standardMilliseconds) : '-'}</b></span>
-            <span><small>实际工时</small><b>{preview ? durationText(preview.actualMilliseconds) : '-'}</b></span>
-            <span><small>预计达成率</small><b className={preview && preview.attainmentBasisPoints >= 10_000 ? 'good' : preview ? 'watch' : ''}>{preview ? `${(preview.attainmentBasisPoints / 100).toFixed(1)}%` : '-'}</b></span>
-          </div>
-        </div>}
-      </>
-      : isDrawingConfirmation
+    {isDrawingConfirmation
       ? <p className="production-flow-confirm-copy">确认后，图纸状态将更新为“已发”，工单进入前端；目标数量和已有资料不会改变。</p>
       : <label className="production-flow-quantity-input"><span>{quantityLabel}</span><input autoFocus inputMode="numeric" pattern="[0-9]*" value={quantity} onChange={event => setQuantity(event.target.value)} disabled={saving} aria-describedby="production-flow-limit" /><small id="production-flow-limit">仅支持正整数，默认填写当前阶段全部可流转数量。</small></label>}
     {error && <div className="form-error" role="alert">{error}</div>}
-    <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving || executionContextLoading} onClick={confirm}>{saving ? '提交中...' : isProcessAdvance ? '提交本次报工' : '确认下一步'}</button></div>
+    <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={confirm}>{saving ? '提交中...' : '确认下一步'}</button></div>
   </section></div>;
 }
 

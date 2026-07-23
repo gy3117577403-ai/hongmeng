@@ -97,7 +97,7 @@ const exceptionLabels: Record<ProductionExceptionCode, string> = {
 const validQuickFilters = new Set([
   'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed',
   'due_today', 'updated_today', 'completed_today', 'delivery_missing',
-  'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining',
+  'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining', 'waiting_transfer',
 ]);
 const validStages = new Set(['not_issued', 'frontend', 'backend', 'completed']);
 const validPriorities = new Set(['urgent', 'high', 'normal']);
@@ -595,6 +595,7 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
     if (item === 'customer_missing' && text(order.customerName)) return false;
     if (item === 'drawing_confirmation' && !productionAlerts.some(alert => isDrawingConfirmationAlert(alert.code))) return false;
     if (item === 'tail_remaining' && !productionAlerts.some(alert => alert.code === 'TAIL_REMAINING')) return false;
+    if (item === 'waiting_transfer' && (!order.processRoute || !serializeProcessRoute(order.processRoute).nextStep)) return false;
   }
   return true;
 }
