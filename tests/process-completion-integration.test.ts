@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { prisma } from '../lib/prisma';
+import { auditProductionClosure } from '../lib/production-closure-audit';
+import { loadProductionClosureAuditSnapshot } from '../lib/production-closure-audit-prisma';
 import {
   completeProcessStep,
   loadProcessCompletionContext,
@@ -1858,6 +1860,15 @@ test(
       });
       assert.equal(noStandardCompletedOrder.completedQty, '10');
       assert.equal(noStandardCompletedOrder.processRoute?.status, 'completed');
+
+      const closureAudit = auditProductionClosure(
+        await loadProductionClosureAuditSnapshot(prisma),
+      );
+      assert.deepEqual(
+        closureAudit.findings.filter(finding => finding.severity === 'error'),
+        [],
+        JSON.stringify(closureAudit.findings, null, 2),
+      );
     } finally {
       if (databaseConnected) {
         const workOrders = await prisma.workOrder.findMany({
