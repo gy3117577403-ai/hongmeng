@@ -1,21 +1,30 @@
 'use client';
 
 import {
+  Activity,
   AlertTriangle,
   ArrowUpRight,
+  Box,
   CalendarDays,
+  ChevronRight,
   CheckCircle2,
+  CircleDot,
   ClipboardList,
   Clock3,
+  Gauge,
+  Layers3,
   PackageCheck,
+  Radio,
   RefreshCw,
   RotateCcw,
   Search,
+  ShieldCheck,
   Truck,
   Warehouse,
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { useModalLayer } from '@/components/useModalLayer';
@@ -54,6 +63,8 @@ const exceptionOptions: Array<{ value: WarehouseExceptionType; label: string }> 
   { value: 'quality_issue', label: '来料质量异常' },
   { value: 'other', label: '其他异常' },
 ];
+const warehouseFlowStages = ['任务下达', '仓库配料', '仓库复核', '已配料'];
+const warehouseFlowParticles = Array.from({ length: 14 }, (_, index) => index);
 
 function emptyExceptionForm(task?: WarehouseMaterialTaskDTO | null): ExceptionForm {
   return {
@@ -105,6 +116,12 @@ function exceptionNeedsExpectedAt(type: WarehouseExceptionType): boolean {
   return type === 'shortage' || type === 'insufficient_quantity';
 }
 
+function taskFlowIndex(task: WarehouseMaterialTaskDTO): number {
+  if (task.status === 'completed') return 3;
+  if (task.status === 'exception') return 2;
+  return 1;
+}
+
 export default function WarehouseManagementShell({ user }: { user: CurrentUserDTO }) {
   const [scope, setScope] = useState<'current' | 'preparation' | 'history'>('current');
   const [selectedWeek, setSelectedWeek] = useState('');
@@ -125,6 +142,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   const [toast, setToast] = useState('');
   useToastBridge(toast, setToast);
   const [refreshToken, setRefreshToken] = useState(0);
+  const [selectedTaskId, setSelectedTaskId] = useState('');
   const mainRef = useRef<HTMLElement>(null);
   const drawerRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -187,6 +205,29 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   }, [scope, selectedWeek, status, exceptionType, expectedOverdue, query, page, refreshToken]);
 
   const summary = payload?.summary || emptySummary;
+  const visibleTasks = useMemo(() => payload?.tasks || [], [payload?.tasks]);
+  const selectedTask = useMemo(
+    () => visibleTasks.find(task => task.id === selectedTaskId) || visibleTasks[0] || null,
+    [selectedTaskId, visibleTasks],
+  );
+  const exceptionTasks = useMemo(
+    () => visibleTasks.filter(task => task.status === 'exception').slice(0, 3),
+    [visibleTasks],
+  );
+  const followUpTasks = useMemo(
+    () => visibleTasks.filter(task => task.followUpTask).slice(0, 2),
+    [visibleTasks],
+  );
+  const recentTasks = useMemo(
+    () => [...visibleTasks]
+      .sort((first, second) => new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime())
+      .slice(0, 5),
+    [visibleTasks],
+  );
+  const selectedFlowIndex = selectedTask ? taskFlowIndex(selectedTask) : 0;
+  const selectedFlowProgress = selectedTask
+    ? Math.round((selectedFlowIndex / (warehouseFlowStages.length - 1)) * 100)
+    : 0;
   const selectedWeekOption = useMemo(() => {
     const weekStartDate = selectedWeek || payload?.selectedWeekStart || '';
     if (!weekStartDate) return undefined;
@@ -336,27 +377,153 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
 
         {error && <div className="warehouse-error" role="alert"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
 
-        <section className="warehouse-task-panel" aria-labelledby="warehouse-task-heading">
-          <header><div><span>{scope === 'current' ? '当前生产周' : scope === 'preparation' ? `下周预备 · ${rangeText(selectedWeekOption)}` : rangeText(selectedWeekOption)}</span><h2 id="warehouse-task-heading">产品配料清单</h2></div><em>筛选结果 {payload?.pagination.total || 0} 项</em></header>
-          <div className="warehouse-task-columns" aria-hidden="true"><span>完成</span><span>客户 / 规格 / 品名</span><span>计划与交期</span><span>配料状态</span><span>操作</span></div>
-          <div className="warehouse-task-list hm-scroll-region" tabIndex={0} aria-label="仓库配料任务列表">
-            {payload?.tasks.map(task => <article className={`warehouse-task-row ${task.status} ${task.isExpectedOverdue ? 'expected-overdue' : ''}`} key={task.id}>
-              <label className="warehouse-complete-check" title={task.status === 'completed' ? '取消已配料需要填写原因' : task.status === 'exception' ? '请先处理仓库异常' : '标记已配料'}>
-                <input type="checkbox" checked={task.status === 'completed'} disabled={savingId === task.id || task.status === 'exception'} onChange={event => {
-                  if (event.target.checked) void markCompleted(task);
-                  else void openDrawer(task, event.currentTarget);
-                }} />
-                <span><CheckCircle2 aria-hidden="true" /></span>
-              </label>
-              <div className="warehouse-task-product"><strong title={task.workOrder.customerName || '客户未设置'}>{task.workOrder.customerName || '客户未设置'}</strong><b title={task.workOrder.specification || task.workOrder.code}>{task.workOrder.specification || task.workOrder.code}</b><small title={task.workOrder.productName}>{task.workOrder.productName}</small></div>
-              <div className="warehouse-task-plan"><span>计划数量 <b>{quantityText(task)}</b></span><span>计划交期 <b>{task.workOrder.deliveryDay || dateText(task.workOrder.plannedAt)}</b></span></div>
-              <div className="warehouse-task-state"><span className={task.status}>{task.statusText}</span>{task.status === 'exception' && <><b>{task.exceptionTypeText}{task.followUpTask ? ` · ${task.followUpTask.statusText}` : ''}</b><small className={task.isExpectedOverdue ? 'overdue' : ''}>{task.expectedAt ? `${task.isExpectedOverdue ? '已逾期 · ' : '预计 '} ${dateText(task.expectedAt)}` : '解决时间待确认'}</small></>}{task.status === 'completed' && <small>{dateTimeText(task.completedAt)} · {task.completedBy?.displayName || task.completedBy?.username || '已确认'}</small>}{task.status === 'pending' && <small>等待仓库完成配料</small>}</div>
-              <div className="warehouse-task-actions"><button type="button" disabled={savingId === task.id} onClick={event => { void openDrawer(task, event.currentTarget); }}>{task.status === 'exception' ? '处理异常' : task.status === 'completed' ? '查看记录' : '报告异常'}</button>{task.status === 'pending' && <button className="primary" type="button" disabled={savingId === task.id} onClick={() => { void markCompleted(task); }}>{savingId === task.id ? '保存中' : '确认已配料'}</button>}</div>
-            </article>)}
-            {loading && <div className="warehouse-loading">正在加载配料任务...</div>}
-            {!loading && !payload?.tasks.length && <div className="warehouse-empty"><PackageCheck aria-hidden="true" /><strong>当前筛选没有配料任务</strong><span>{scope === 'current' ? '下达本周计划后，系统会自动生成待配料任务。' : scope === 'preparation' ? '从计划中心下达“下周预备”后，任务会在这里提前出现。' : '请选择其他历史生产周或清除筛选条件。'}</span></div>}
-          </div>
-          {payload && payload.pagination.totalPages > 1 && <footer className="warehouse-pagination"><span>共 {payload.pagination.total} 项</span><button type="button" disabled={payload.pagination.page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一页</button><b>{payload.pagination.page} / {payload.pagination.totalPages}</b><button type="button" disabled={payload.pagination.page >= payload.pagination.totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></footer>}
+        <section className="warehouse-control-grid" aria-label="仓库配料控制台">
+          <aside className="warehouse-queue-panel" aria-labelledby="warehouse-task-heading">
+            <header>
+              <div><span>{scope === 'current' ? '当前生产周' : scope === 'preparation' ? `下周预备 · ${rangeText(selectedWeekOption)}` : rangeText(selectedWeekOption)}</span><h2 id="warehouse-task-heading">配料任务队列</h2></div>
+              <em>{payload?.pagination.total || 0}</em>
+            </header>
+            <div className="warehouse-queue-list hm-scroll-region" tabIndex={0} aria-label="仓库配料任务列表">
+              {visibleTasks.map(task => <button
+                className={`warehouse-queue-card ${task.status} ${task.isExpectedOverdue ? 'expected-overdue' : ''} ${selectedTask?.id === task.id ? 'selected' : ''}`}
+                type="button"
+                aria-pressed={selectedTask?.id === task.id}
+                onClick={() => setSelectedTaskId(task.id)}
+                key={task.id}
+              >
+                <span className="warehouse-queue-icon"><Box aria-hidden="true" /></span>
+                <span className="warehouse-queue-copy">
+                  <span><b>{task.workOrder.customerName || '客户未设置'}</b><em className={task.status}>{task.isExpectedOverdue ? '逾期' : task.statusText}</em></span>
+                  <strong title={task.workOrder.specification || task.workOrder.code}>{task.workOrder.specification || task.workOrder.code}</strong>
+                  <small title={task.workOrder.productName}>{task.workOrder.productName}</small>
+                  <span className="warehouse-queue-meta"><i>{quantityText(task)} 套</i><i>{task.workOrder.deliveryDay || dateText(task.workOrder.plannedAt)}</i></span>
+                </span>
+                <ChevronRight aria-hidden="true" />
+              </button>)}
+              {loading && <div className="warehouse-loading"><RefreshCw className="spin" aria-hidden="true" /><span>正在同步任务流...</span></div>}
+              {!loading && !visibleTasks.length && <div className="warehouse-empty"><PackageCheck aria-hidden="true" /><strong>当前筛选没有配料任务</strong><span>{scope === 'current' ? '下达本周计划后，系统会自动生成待配料任务。' : scope === 'preparation' ? '从计划中心下达“下周预备”后，任务会在这里提前出现。' : '请选择其他历史生产周或清除筛选条件。'}</span></div>}
+            </div>
+            {payload && payload.pagination.totalPages > 1 && <footer className="warehouse-pagination"><button type="button" disabled={payload.pagination.page <= 1} onClick={() => setPage(value => Math.max(1, value - 1))}>上一批</button><b>{payload.pagination.page} / {payload.pagination.totalPages}</b><button type="button" disabled={payload.pagination.page >= payload.pagination.totalPages} onClick={() => setPage(value => value + 1)}>下一批</button></footer>}
+          </aside>
+
+          <section className="warehouse-flow-workspace" aria-labelledby="warehouse-flow-title">
+            {selectedTask ? <>
+              <header className="warehouse-focus-header">
+                <div className="warehouse-focus-heading">
+                  <span><CircleDot aria-hidden="true" /> 当前配料任务</span>
+                  <h2 id="warehouse-flow-title">{selectedTask.workOrder.specification || selectedTask.workOrder.code}</h2>
+                  <small>{selectedTask.workOrder.customerName || '客户未设置'} · {selectedTask.workOrder.productName}</small>
+                </div>
+                <div className="warehouse-focus-status">
+                  <span className={selectedTask.status}>{selectedTask.statusText}</span>
+                  <small>更新 {dateTimeText(selectedTask.updatedAt)}</small>
+                </div>
+              </header>
+
+              <section className={`warehouse-flow-scene ${selectedTask.status}`} aria-label={`${selectedTask.statusText}动态配料流程`}>
+                <div className="warehouse-scene-glow" aria-hidden="true" />
+                <div className="warehouse-scene-particles" aria-hidden="true">
+                  {warehouseFlowParticles.map(particle => <i key={particle} />)}
+                </div>
+                <header>
+                  <div><span>动态作业流</span><h3>仓库物料流转</h3></div>
+                  <div className="warehouse-scene-live"><i /><span>{loading ? '正在同步' : '实时连接'}</span></div>
+                </header>
+
+                <div
+                  className="warehouse-flow-track"
+                  style={{ '--warehouse-flow-progress': `${selectedFlowProgress}%` } as CSSProperties}
+                >
+                  <div className="warehouse-flow-rail" aria-hidden="true">
+                    <span />
+                    <div className="warehouse-rail-particles">
+                      {warehouseFlowParticles.slice(0, 8).map(particle => <i key={particle} />)}
+                    </div>
+                  </div>
+                  <ol>
+                    {warehouseFlowStages.map((stage, index) => {
+                      const stageState = index < selectedFlowIndex ? 'completed' : index === selectedFlowIndex ? 'current' : 'waiting';
+                      return <li className={stageState} key={stage}>
+                        <span className="warehouse-flow-node">{stageState === 'completed' ? <CheckCircle2 aria-hidden="true" /> : index + 1}</span>
+                        <strong>{stage}</strong>
+                        <small>{stageState === 'completed' ? '已通过' : stageState === 'current' ? selectedTask.statusText : '待进入'}</small>
+                      </li>;
+                    })}
+                  </ol>
+                </div>
+
+                <div className="warehouse-material-rail" aria-label="任务实时信息">
+                  <article><span><Layers3 aria-hidden="true" /> 计划数量</span><strong>{quantityText(selectedTask)} 套</strong><small>计划下达数量</small></article>
+                  <article><span><CalendarDays aria-hidden="true" /> 计划交期</span><strong>{selectedTask.workOrder.deliveryDay || dateText(selectedTask.workOrder.plannedAt)}</strong><small>{selectedTask.isExpectedOverdue ? '当前存在到料逾期' : '按计划准备'}</small></article>
+                  <article><span><ShieldCheck aria-hidden="true" /> 仓库状态</span><strong>{selectedTask.statusText}</strong><small>{selectedTask.exceptionTypeText || '物料状态正常'}</small></article>
+                </div>
+              </section>
+
+              <section className="warehouse-focus-facts" aria-label="当前任务信息">
+                <article><span>内部编号</span><strong>{selectedTask.workOrder.code}</strong></article>
+                <article><span>生产周</span><strong>{selectedTask.workOrder.weekStartDate ? `${dateText(selectedTask.workOrder.weekStartDate)} - ${dateText(selectedTask.workOrder.weekEndDate)}` : '未指定'}</strong></article>
+                <article><span>配料状态</span><strong className={selectedTask.status}>{selectedTask.statusText}</strong></article>
+                <article><span>预计解决</span><strong>{selectedTask.expectedAt ? dateText(selectedTask.expectedAt) : '—'}</strong></article>
+              </section>
+
+              {selectedTask.status === 'exception' && <section className="warehouse-focus-alert">
+                <AlertTriangle aria-hidden="true" />
+                <div><strong>{selectedTask.exceptionTypeText || '仓库异常'}</strong><span>{selectedTask.exceptionNote || '等待补充异常说明'}</span></div>
+                {selectedTask.followUpTask && <a href={`/workspace/procurement?taskId=${encodeURIComponent(selectedTask.followUpTask.id)}`}>打开跟进<ArrowUpRight aria-hidden="true" /></a>}
+              </section>}
+
+              <footer className="warehouse-action-dock">
+                <div><Activity aria-hidden="true" /><span><strong>任务操作</strong><small>所有操作沿用当前仓库处理规则</small></span></div>
+                <div>
+                  <button type="button" disabled={savingId === selectedTask.id} onClick={event => { void openDrawer(selectedTask, event.currentTarget); }}>{selectedTask.status === 'exception' ? '处理异常' : selectedTask.status === 'completed' ? '查看记录' : '报告异常'}</button>
+                  {selectedTask.status === 'pending' && <button className="primary" type="button" disabled={savingId === selectedTask.id} onClick={() => { void markCompleted(selectedTask); }}><PackageCheck aria-hidden="true" />{savingId === selectedTask.id ? '保存中...' : '确认已配料'}</button>}
+                </div>
+              </footer>
+            </> : <div className="warehouse-flow-empty"><Warehouse aria-hidden="true" /><strong>选择一项配料任务</strong><span>任务的实时流转、风险与操作会显示在这里。</span></div>}
+          </section>
+
+          <aside className="warehouse-collaboration" aria-label="仓库实时协同">
+            <header><div><span><Radio aria-hidden="true" /> 实时协同</span><h2>仓库协同台</h2></div><i className={loading ? 'syncing' : ''} title={loading ? '正在同步' : '数据已同步'} /></header>
+
+            <section className="warehouse-collab-section exceptions">
+              <div className="warehouse-collab-heading"><span><AlertTriangle aria-hidden="true" /><strong>待处理异常</strong></span><em>{summary.exception}</em></div>
+              <div className="warehouse-collab-list">
+                {exceptionTasks.map(task => <button type="button" key={task.id} onClick={event => { void openDrawer(task, event.currentTarget); }}>
+                  <span><b>{task.exceptionTypeText || '仓库异常'}</b><small>{task.workOrder.specification || task.workOrder.code}</small></span>
+                  <em className={task.isExpectedOverdue ? 'danger' : ''}>{task.isExpectedOverdue ? '逾期' : task.expectedAt ? dateText(task.expectedAt) : '待处理'}</em>
+                </button>)}
+                {!exceptionTasks.length && <p><CheckCircle2 aria-hidden="true" /> 当前没有待处理异常</p>}
+              </div>
+            </section>
+
+            <section className="warehouse-collab-section follow-ups">
+              <div className="warehouse-collab-heading"><span><ClipboardList aria-hidden="true" /><strong>缺料跟进</strong></span><a href="/workspace/procurement">查看全部</a></div>
+              <div className="warehouse-collab-list">
+                {followUpTasks.map(task => <a href={`/workspace/procurement?taskId=${encodeURIComponent(task.followUpTask!.id)}`} key={task.id}>
+                  <span><b>{task.workOrder.specification || task.workOrder.code}</b><small>{task.followUpTask?.latestProgress || task.exceptionNote || '等待更新进度'}</small></span>
+                  <em>{task.followUpTask?.statusText}</em>
+                </a>)}
+                {!followUpTasks.length && <p>当前筛选没有缺料跟进任务</p>}
+              </div>
+            </section>
+
+            <section className="warehouse-collab-section load">
+              <div className="warehouse-collab-heading"><span><Gauge aria-hidden="true" /><strong>任务负载</strong></span><em>{summary.total}</em></div>
+              <div className="warehouse-load-bars">
+                <span><i>待配料</i><b><em style={{ width: `${summary.total ? Math.round((summary.pending / summary.total) * 100) : 0}%` }} /></b><strong>{summary.pending}</strong></span>
+                <span><i>已配料</i><b><em style={{ width: `${summary.total ? Math.round((summary.completed / summary.total) * 100) : 0}%` }} /></b><strong>{summary.completed}</strong></span>
+                <span><i>异常</i><b><em style={{ width: `${summary.total ? Math.round((summary.exception / summary.total) * 100) : 0}%` }} /></b><strong>{summary.exception}</strong></span>
+              </div>
+            </section>
+
+            <section className="warehouse-collab-section timeline">
+              <div className="warehouse-collab-heading"><span><Clock3 aria-hidden="true" /><strong>近期动态</strong></span></div>
+              <div className="warehouse-mini-timeline">
+                {recentTasks.map(task => <article key={task.id}><i className={task.status} /><div><strong>{task.workOrder.specification || task.workOrder.code}</strong><span>{task.statusText} · {dateTimeText(task.updatedAt)}</span></div></article>)}
+                {!recentTasks.length && <p>暂无任务动态</p>}
+              </div>
+            </section>
+          </aside>
         </section>
       </div>
     </main>
