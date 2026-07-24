@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import type {
+  MaterialFollowUpStatusDTO,
   WarehouseExceptionType,
   WarehouseMaterialStatus,
   WarehouseMaterialTaskDTO,
@@ -49,6 +50,16 @@ export const warehouseMaterialTaskListInclude = Prisma.validator<Prisma.Warehous
   },
   completedBy: { select: { id: true, username: true, displayName: true } },
   updatedBy: { select: { id: true, username: true, displayName: true } },
+  followUpTask: {
+    select: {
+      id: true,
+      status: true,
+      owner: { select: { id: true, username: true, displayName: true } },
+      expectedAt: true,
+      latestProgress: true,
+      updatedAt: true,
+    },
+  },
 });
 
 export const warehouseMaterialTaskDetailInclude = Prisma.validator<Prisma.WarehouseMaterialTaskInclude>()({
@@ -235,6 +246,22 @@ export function serializeWarehouseMaterialTask(
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
     isExpectedOverdue: isExpectedOverdue(status, task.expectedAt, now),
+    followUpTask: task.followUpTask ? {
+      id: task.followUpTask.id,
+      status: task.followUpTask.status as MaterialFollowUpStatusDTO,
+      statusText: ({
+        PENDING: '待接收',
+        IN_PROGRESS: '跟进中',
+        WAITING_ARRIVAL: '等待物料',
+        WAITING_WAREHOUSE: '待仓库确认',
+        RESOLVED: '已解决',
+        CANCELLED: '已取消',
+      } as Record<MaterialFollowUpStatusDTO, string>)[task.followUpTask.status as MaterialFollowUpStatusDTO],
+      owner: task.followUpTask.owner,
+      expectedAt: task.followUpTask.expectedAt?.toISOString() || null,
+      latestProgress: task.followUpTask.latestProgress,
+      updatedAt: task.followUpTask.updatedAt.toISOString(),
+    } : null,
     workOrder: {
       ...task.workOrder,
       plannedAt: task.workOrder.plannedAt?.toISOString() || null,

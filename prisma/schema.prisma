@@ -74,6 +74,17 @@ enum LaborAccessRole {
   @@map("labor_access_role")
 }
 
+enum MaterialFollowUpStatus {
+  PENDING
+  IN_PROGRESS
+  WAITING_ARRIVAL
+  WAITING_WAREHOUSE
+  RESOLVED
+  CANCELLED
+
+  @@map("material_follow_up_status")
+}
+
 model User {
   id                             String                      @id @default(uuid())
   username                       String                      @unique
@@ -99,6 +110,10 @@ model User {
   completedMaterialTasks         WarehouseMaterialTask[]     @relation("WarehouseTaskCompletedBy")
   updatedMaterialTasks           WarehouseMaterialTask[]     @relation("WarehouseTaskUpdatedBy")
   warehouseActivities            WarehouseMaterialActivity[] @relation("WarehouseActivityActor")
+  createdMaterialFollowUps       MaterialFollowUpTask[]       @relation("MaterialFollowUpCreatedBy")
+  ownedMaterialFollowUps         MaterialFollowUpTask[]       @relation("MaterialFollowUpOwner")
+  resolvedMaterialFollowUps      MaterialFollowUpTask[]       @relation("MaterialFollowUpResolvedBy")
+  materialFollowUpActivities     MaterialFollowUpActivity[]   @relation("MaterialFollowUpActivityActor")
   createdProcessTemplates        ProcessTemplate[]           @relation("ProcessTemplateCreatedBy")
   createdProcessTimeStandards    ProcessTimeStandard[]       @relation("ProcessTimeStandardCreatedBy")
   createdProductTimeProfiles     ProductTimeProfile[]        @relation("ProductTimeProfileCreatedBy")
@@ -778,6 +793,7 @@ model WarehouseMaterialTask {
   completedBy   User?                       @relation("WarehouseTaskCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
   updatedBy     User?                       @relation("WarehouseTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   activities    WarehouseMaterialActivity[]
+  followUpTask  MaterialFollowUpTask?
 
   @@index([status])
   @@index([exceptionType])
@@ -803,6 +819,50 @@ model WarehouseMaterialActivity {
   @@index([actorId])
   @@index([action])
   @@map("warehouse_material_activities")
+}
+
+model MaterialFollowUpTask {
+  id              String                    @id @default(uuid())
+  warehouseTaskId String                    @unique @map("warehouse_task_id")
+  status          MaterialFollowUpStatus    @default(PENDING)
+  ownerId         String?                   @map("owner_id")
+  createdById     String?                   @map("created_by_id")
+  resolvedById    String?                   @map("resolved_by_id")
+  latestProgress  String?                   @map("latest_progress")
+  expectedAt      DateTime?                 @map("expected_at")
+  lastFollowedAt  DateTime?                 @map("last_followed_at")
+  resolvedAt      DateTime?                 @map("resolved_at")
+  version         Int                       @default(0)
+  createdAt       DateTime                  @default(now()) @map("created_at")
+  updatedAt       DateTime                  @updatedAt @map("updated_at")
+  warehouseTask   WarehouseMaterialTask     @relation(fields: [warehouseTaskId], references: [id], onDelete: Cascade)
+  owner           User?                     @relation("MaterialFollowUpOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdBy       User?                     @relation("MaterialFollowUpCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  resolvedBy      User?                     @relation("MaterialFollowUpResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  activities      MaterialFollowUpActivity[]
+
+  @@index([status, expectedAt])
+  @@index([ownerId, status])
+  @@index([updatedAt])
+  @@map("material_follow_up_tasks")
+}
+
+model MaterialFollowUpActivity {
+  id         String                  @id @default(uuid())
+  taskId     String                  @map("task_id")
+  action     String
+  fromStatus MaterialFollowUpStatus? @map("from_status")
+  toStatus   MaterialFollowUpStatus? @map("to_status")
+  content    String?
+  actorId    String?                 @map("actor_id")
+  createdAt  DateTime                @default(now()) @map("created_at")
+  task       MaterialFollowUpTask    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actor      User?                   @relation("MaterialFollowUpActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([taskId, createdAt])
+  @@index([actorId])
+  @@index([action])
+  @@map("material_follow_up_activities")
 }
 
 model WorkOrderProgressLog {

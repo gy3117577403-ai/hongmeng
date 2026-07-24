@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { MaterialFollowUpStatus, Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { isTrackedWarehouseException } from '@/lib/material-follow-up';
 import {
   prepareWarehouseTaskTransition,
   serializeWarehouseMaterialTask,
@@ -78,6 +79,79 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           },
         },
       });
+      const existingFollowUp = await tx.materialFollowUpTask.findUnique({
+        where: { warehouseTaskId: current.id },
+      });
+      const tracksShortage = isTrackedWarehouseException(transition.next.exceptionType);
+      if ((transition.action === 'report_exception' || transition.action === 'update_exception') && tracksShortage) {
+        const nextFollowUpStatus = existingFollowUp
+          && existingFollowUp.status !== MaterialFollowUpStatus.RESOLVED
+          && existingFollowUp.status !== MaterialFollowUpStatus.CANCELLED
+          ? existingFollowUp.status
+          : MaterialFollowUpStatus.PENDING;
+        const followUp = existingFollowUp
+          ? await tx.materialFollowUpTask.update({
+              where: { id: existingFollowUp.id },
+              data: {
+                status: nextFollowUpStatus,
+                latestProgress: transition.next.exceptionNote,
+                expectedAt: transition.next.expectedAt,
+                resolvedAt: null,
+                resolvedById: null,
+                version: { increment: 1 },
+              },
+            })
+          : await tx.materialFollowUpTask.create({
+              data: {
+                warehouseTaskId: current.id,
+                status: MaterialFollowUpStatus.PENDING,
+                latestProgress: transition.next.exceptionNote,
+                expectedAt: transition.next.expectedAt,
+                createdById: user.id,
+              },
+            });
+        await tx.materialFollowUpActivity.create({
+          data: {
+            taskId: followUp.id,
+            action: existingFollowUp ? 'warehouse_feedback_updated' : 'warehouse_feedback_created',
+            fromStatus: existingFollowUp?.status || null,
+            toStatus: followUp.status,
+            content: transition.content,
+            actorId: user.id,
+          },
+        });
+      } else if (existingFollowUp && (
+        transition.action === 'resolve'
+        || ((transition.action === 'report_exception' || transition.action === 'update_exception') && !tracksShortage)
+      )) {
+        const nextStatus = transition.action === 'resolve'
+          ? MaterialFollowUpStatus.RESOLVED
+          : MaterialFollowUpStatus.CANCELLED;
+        if (existingFollowUp.status !== MaterialFollowUpStatus.RESOLVED
+          && existingFollowUp.status !== MaterialFollowUpStatus.CANCELLED) {
+          const followUp = await tx.materialFollowUpTask.update({
+            where: { id: existingFollowUp.id },
+            data: {
+              status: nextStatus,
+              latestProgress: transition.content,
+              resolvedAt: new Date(),
+              resolvedById: user.id,
+              lastFollowedAt: new Date(),
+              version: { increment: 1 },
+            },
+          });
+          await tx.materialFollowUpActivity.create({
+            data: {
+              taskId: followUp.id,
+              action: transition.action === 'resolve' ? 'warehouse_confirmed_resolved' : 'warehouse_feedback_changed',
+              fromStatus: existingFollowUp.status,
+              toStatus: nextStatus,
+              content: transition.content,
+              actorId: user.id,
+            },
+          });
+        }
+      }
       await tx.workOrder.update({
         where: { id: current.workOrderId },
         data: { materialStatus: warehouseLegacyMaterialStatus(transition.next) },

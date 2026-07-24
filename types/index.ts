@@ -429,6 +429,15 @@ export type WarehouseMaterialTaskDTO = {
   createdAt: string;
   updatedAt: string;
   isExpectedOverdue: boolean;
+  followUpTask?: {
+    id: string;
+    status: MaterialFollowUpStatusDTO;
+    statusText: string;
+    owner?: IssueUserDTO | null;
+    expectedAt?: string | null;
+    latestProgress?: string | null;
+    updatedAt: string;
+  } | null;
   workOrder: {
     id: string;
     code: string;
@@ -454,6 +463,75 @@ export type WarehouseMaterialSummaryDTO = {
   completed: number;
   exception: number;
   expectedOverdue: number;
+};
+
+export type MaterialFollowUpStatusDTO =
+  | 'PENDING'
+  | 'IN_PROGRESS'
+  | 'WAITING_ARRIVAL'
+  | 'WAITING_WAREHOUSE'
+  | 'RESOLVED'
+  | 'CANCELLED';
+
+export type MaterialFollowUpRiskDTO = 'overdue' | 'unassigned' | 'due_soon' | 'normal' | 'closed';
+
+export type MaterialFollowUpActivityDTO = {
+  id: string;
+  action: string;
+  fromStatus?: MaterialFollowUpStatusDTO | null;
+  toStatus?: MaterialFollowUpStatusDTO | null;
+  content?: string | null;
+  actor?: IssueUserDTO | null;
+  createdAt: string;
+};
+
+export type MaterialFollowUpTaskDTO = {
+  id: string;
+  warehouseTaskId: string;
+  status: MaterialFollowUpStatusDTO;
+  statusText: string;
+  risk: MaterialFollowUpRiskDTO;
+  riskText: string;
+  owner?: IssueUserDTO | null;
+  createdBy?: IssueUserDTO | null;
+  resolvedBy?: IssueUserDTO | null;
+  latestProgress?: string | null;
+  expectedAt?: string | null;
+  lastFollowedAt?: string | null;
+  resolvedAt?: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  warehouseTask: {
+    status: WarehouseMaterialStatus;
+    exceptionType?: WarehouseExceptionType | null;
+    exceptionNote?: string | null;
+    expectedAt?: string | null;
+  };
+  workOrder: {
+    id: string;
+    code: string;
+    customerName?: string | null;
+    specification?: string | null;
+    productName: string;
+    productionTargetQty?: number | null;
+    uncompletedQty?: string | null;
+    plannedAt?: string | null;
+    deliveryDay?: string | null;
+    priority: string;
+  };
+  activities?: MaterialFollowUpActivityDTO[];
+};
+
+export type MaterialFollowUpSummaryDTO = {
+  total: number;
+  pending: number;
+  inProgress: number;
+  waitingArrival: number;
+  waitingWarehouse: number;
+  resolved: number;
+  overdue: number;
+  unassigned: number;
 };
 
 export type WarehouseWeekOptionDTO = {

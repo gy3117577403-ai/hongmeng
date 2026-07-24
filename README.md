@@ -120,6 +120,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.16.5.4-wecom-helper-dragdrop-intake-fix：修复 WPF 实际拖放区域命中和持续 DragOver 反馈，统一支持 Explorer FileDrop、Shell 虚拟文件流、文件剪贴板与稳定下载目录接收；加入任务级临时文件清理、脱敏格式诊断和普通用户完整性提示。仅修改 Windows 助手，无需更新 Sealos。
 - v1.17.0-production-leader-workbench：生产执行中心按未发图、进行中和已完成重构卡片，统一目标 / 完成 / 剩余 / 超产计算，只显示图纸、配料、交期和尾数异常；新增图纸快速确认、右侧进度侧栏、完成数量二次确认、图纸待确认与尾数筛选及 1024px 已完成列折叠。该版本为本地验证候选，尚未部署 Sealos。
 - v1.17.1-production-closure-local-gate：新增不依赖目标数据库或 Sealos 的生产闭环本地发布门禁，集中验证完成转序、数量守恒、不良分支、工时领取、角色权限和 95% 出勤达成率，并补充主管端与员工端验收清单。
+- v1.18.0-material-follow-up：新增缺料反馈与跟进中心，仓库登记缺料或数量不足后自动建立一条可持续跟进的任务；支持接收、负责人、预计解决时间、动态状态、风险排序、仓库确认闭环和完整时间轴。模块不创建采购单号，不管理供应商、价格、付款或生产状态。
 
 ## 交付文档索引
 
@@ -153,6 +154,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [生产组长工作台使用指南](docs/PRODUCTION_LEADER_WORKBENCH_GUIDE.md)
 - [生产组长工作台 QA](docs/QA_PRODUCTION_LEADER_WORKBENCH.md)
 - [生产闭环本地发布门禁与角色验收](docs/QA_PRODUCTION_CLOSURE_LOCAL_GATE.md)
+- [缺料反馈与跟进模块](docs/MATERIAL_FOLLOW_UP_GUIDE.md)
 - [平板真机测试前最终预检计划](docs/PRE_REAL_DATA_TEST_PLAN.md)
 - [周计划 Excel 工单导入说明](docs/WEEKLY_PLAN_IMPORT_GUIDE.md)
 - [周计划生产工单显示与清理机制](docs/WEEKLY_PLAN_WORKORDER_DISPLAY_AND_CLEANUP.md)

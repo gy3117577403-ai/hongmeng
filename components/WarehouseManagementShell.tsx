@@ -2,8 +2,10 @@
 
 import {
   AlertTriangle,
+  ArrowUpRight,
   CalendarDays,
   CheckCircle2,
+  ClipboardList,
   Clock3,
   PackageCheck,
   RefreshCw,
@@ -135,10 +137,26 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   });
 
   useEffect(() => {
-    const requestedScope = new URLSearchParams(window.location.search).get('scope');
+    const params = new URLSearchParams(window.location.search);
+    const requestedScope = params.get('scope');
     if (requestedScope === 'preparation' || requestedScope === 'history') {
       setScope(requestedScope);
     }
+    const requestedTaskId = params.get('taskId');
+    if (!requestedTaskId) return;
+    setDrawerLoading(true);
+    fetch(`/api/warehouse/material-tasks/${encodeURIComponent(requestedTaskId)}`, { cache: 'no-store' })
+      .then(async response => {
+        const body = await response.json().catch(() => ({})) as { ok?: boolean; task?: WarehouseMaterialTaskDTO; error?: string };
+        if (!response.ok || !body.task) throw new Error(body.error || '配料任务加载失败');
+        return body.task;
+      })
+      .then(task => {
+        setDrawerTask(task);
+        setForm(emptyExceptionForm(task));
+      })
+      .catch(reason => setError(reason instanceof Error ? reason.message : '配料任务加载失败'))
+      .finally(() => setDrawerLoading(false));
   }, []);
 
   useEffect(() => {
@@ -259,7 +277,12 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
       exceptionNote: form.exceptionNote,
       expectedAt: form.expectedAt,
     });
-    if (updated) setToast(task.status === 'exception' ? '仓库异常已更新' : '仓库异常已登记');
+    if (updated) {
+      const followsShortage = form.exceptionType === 'shortage' || form.exceptionType === 'insufficient_quantity';
+      setToast(followsShortage
+        ? task.status === 'exception' ? '缺料反馈与跟进任务已更新' : '缺料反馈已进入跟进中心'
+        : task.status === 'exception' ? '仓库异常已更新' : '仓库异常已登记');
+    }
   }
 
   async function resolveException(task: WarehouseMaterialTaskDTO, resolution: 'pending' | 'completed'): Promise<void> {
@@ -305,6 +328,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
           <label className="warehouse-exception-select"><span>异常类型</span><select value={exceptionType} onChange={event => { setExceptionType(event.target.value as 'all' | WarehouseExceptionType); setPage(1); }}><option value="all">全部异常</option>{exceptionOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           <button className="warehouse-reset" type="button" title="重置筛选" aria-label="重置筛选" onClick={resetFilters}><RotateCcw size={15} aria-hidden="true" />重置</button>
           <div className="warehouse-toolbar-actions" aria-label="仓库管理操作">
+            <a className="hm-workbench-button" href="/workspace/procurement" title="打开缺料反馈跟进"><ClipboardList size={15} aria-hidden="true" /><span>缺料跟进</span></a>
             <a className="hm-workbench-button" href="/weekly-plan-center" title="打开计划中心"><CalendarDays size={15} aria-hidden="true" /><span>计划中心</span></a>
             <button className="hm-workbench-button" type="button" title="刷新仓库任务" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" /><span>刷新</span></button>
           </div>
@@ -326,7 +350,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
               </label>
               <div className="warehouse-task-product"><strong title={task.workOrder.customerName || '客户未设置'}>{task.workOrder.customerName || '客户未设置'}</strong><b title={task.workOrder.specification || task.workOrder.code}>{task.workOrder.specification || task.workOrder.code}</b><small title={task.workOrder.productName}>{task.workOrder.productName}</small></div>
               <div className="warehouse-task-plan"><span>计划数量 <b>{quantityText(task)}</b></span><span>计划交期 <b>{task.workOrder.deliveryDay || dateText(task.workOrder.plannedAt)}</b></span></div>
-              <div className="warehouse-task-state"><span className={task.status}>{task.statusText}</span>{task.status === 'exception' && <><b>{task.exceptionTypeText}</b><small className={task.isExpectedOverdue ? 'overdue' : ''}>{task.expectedAt ? `${task.isExpectedOverdue ? '已逾期 · ' : '预计 '} ${dateText(task.expectedAt)}` : '解决时间待确认'}</small></>}{task.status === 'completed' && <small>{dateTimeText(task.completedAt)} · {task.completedBy?.displayName || task.completedBy?.username || '已确认'}</small>}{task.status === 'pending' && <small>等待仓库完成配料</small>}</div>
+              <div className="warehouse-task-state"><span className={task.status}>{task.statusText}</span>{task.status === 'exception' && <><b>{task.exceptionTypeText}{task.followUpTask ? ` · ${task.followUpTask.statusText}` : ''}</b><small className={task.isExpectedOverdue ? 'overdue' : ''}>{task.expectedAt ? `${task.isExpectedOverdue ? '已逾期 · ' : '预计 '} ${dateText(task.expectedAt)}` : '解决时间待确认'}</small></>}{task.status === 'completed' && <small>{dateTimeText(task.completedAt)} · {task.completedBy?.displayName || task.completedBy?.username || '已确认'}</small>}{task.status === 'pending' && <small>等待仓库完成配料</small>}</div>
               <div className="warehouse-task-actions"><button type="button" disabled={savingId === task.id} onClick={event => { void openDrawer(task, event.currentTarget); }}>{task.status === 'exception' ? '处理异常' : task.status === 'completed' ? '查看记录' : '报告异常'}</button>{task.status === 'pending' && <button className="primary" type="button" disabled={savingId === task.id} onClick={() => { void markCompleted(task); }}>{savingId === task.id ? '保存中' : '确认已配料'}</button>}</div>
             </article>)}
             {loading && <div className="warehouse-loading">正在加载配料任务...</div>}
@@ -350,6 +374,8 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
           {drawerTask.status !== 'completed' && <section className="warehouse-exception-form"><div className="warehouse-section-heading"><AlertTriangle aria-hidden="true" /><span><strong>{drawerTask.status === 'exception' ? '更新仓库异常' : '报告仓库异常'}</strong><small>异常会显示在生产执行工单卡片；正常状态不显示。</small></span></div><label><span>异常类型</span><select value={form.exceptionType} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, exceptionType: event.target.value as WarehouseExceptionType }))}>{exceptionOptions.map(item => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label><label><span>异常说明</span><textarea rows={4} maxLength={400} value={form.exceptionNote} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, exceptionNote: event.target.value }))} placeholder="例如：端子库存不足 500 套，已通知采购" /></label><label><span>{exceptionNeedsExpectedAt(form.exceptionType) ? '预计到料时间（必填）' : '预计解决时间（可选）'}</span><input type="date" value={form.expectedAt} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, expectedAt: event.target.value }))} /></label><button className="warehouse-save-exception" type="button" disabled={savingId === drawerTask.id || !form.exceptionNote.trim() || (exceptionNeedsExpectedAt(form.exceptionType) && !form.expectedAt)} onClick={() => { void saveException(drawerTask); }}>{savingId === drawerTask.id ? '保存中...' : drawerTask.status === 'exception' ? '保存异常更新' : '登记仓库异常'}</button></section>}
 
           {drawerTask.status === 'exception' && <section className="warehouse-resolution-form"><div className="warehouse-section-heading"><CheckCircle2 aria-hidden="true" /><span><strong>确认异常已解决</strong><small>处理记录会永久保留，当前异常字段将在解决后清空。</small></span></div><label><span>解决说明</span><textarea rows={3} maxLength={300} value={form.resolutionNote} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, resolutionNote: event.target.value }))} placeholder="例如：物料已于今日到仓并复核数量" /></label><div><button type="button" disabled={savingId === drawerTask.id || !form.resolutionNote.trim()} onClick={() => { void resolveException(drawerTask, 'pending'); }}>解决后继续配料</button><button className="primary-button" type="button" disabled={savingId === drawerTask.id || !form.resolutionNote.trim()} onClick={() => { void resolveException(drawerTask, 'completed'); }}>解决并完成配料</button></div></section>}
+
+          {drawerTask.followUpTask && <section className="warehouse-follow-up-card"><div><ClipboardList aria-hidden="true" /><span><strong>缺料反馈正在跟进</strong><small>{drawerTask.followUpTask.owner?.displayName || drawerTask.followUpTask.owner?.username || '等待负责人接收'} · {drawerTask.followUpTask.statusText}</small></span></div><p>{drawerTask.followUpTask.latestProgress || drawerTask.exceptionNote || '等待跟进进度'}</p><a href={`/workspace/procurement?taskId=${encodeURIComponent(drawerTask.followUpTask.id)}`}>打开跟进任务<ArrowUpRight size={14} /></a></section>}
 
           {drawerTask.status === 'completed' && <section className="warehouse-reopen-form"><div className="warehouse-section-heading"><RotateCcw aria-hidden="true" /><span><strong>取消已配料</strong><small>仅在误勾选或物料复核不通过时使用，必须填写原因。</small></span></div><label><span>取消原因</span><textarea rows={3} maxLength={300} value={form.reopenNote} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, reopenNote: event.target.value }))} placeholder="例如：复核发现端子型号不符，退回待配料" /></label><button type="button" disabled={savingId === drawerTask.id || !form.reopenNote.trim()} onClick={() => { void reopenTask(drawerTask); }}>确认取消已配料</button></section>}
 

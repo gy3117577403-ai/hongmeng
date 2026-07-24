@@ -86,6 +86,13 @@
 .warehouse-drawer-summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .warehouse-drawer-summary strong.pending { color: #b45309; }.warehouse-drawer-summary strong.completed { color: #047857; }.warehouse-drawer-summary strong.exception { color: #dc2626; }
 .warehouse-drawer-action, .warehouse-exception-form, .warehouse-resolution-form, .warehouse-reopen-form, .warehouse-activity-section { margin-top: 14px; padding: 14px; border: 1px solid #e5e7eb; border-radius: 11px; background: #fff; }
+.warehouse-follow-up-card { margin-top: 14px; padding: 14px; display: grid; gap: 10px; border: 1px solid #bfdbfe; border-radius: 11px; background: linear-gradient(145deg,#eff6ff,#fff); box-shadow: 0 9px 20px rgba(37,99,235,.08); }
+.warehouse-follow-up-card > div { display: flex; align-items: flex-start; gap: 9px; }
+.warehouse-follow-up-card > div > svg { flex: 0 0 auto; color: #2563eb; }
+.warehouse-follow-up-card > div > span { display: grid; gap: 3px; }
+.warehouse-follow-up-card small { color: #64748b; font-size: 11px; }
+.warehouse-follow-up-card p { margin: 0; color: #475569; font-size: 12px; line-height: 1.55; }
+.warehouse-follow-up-card a { width: fit-content; min-height: 36px; padding: 0 11px; display: inline-flex; align-items: center; gap: 6px; border-radius: 8px; background: #2563eb; color: #fff; font-size: 12px; font-weight: 750; text-decoration: none; }
 .warehouse-complete-action { display: grid; gap: 12px; background: #f0fdf4; border-color: #bbf7d0; }
 .warehouse-complete-action > div, .warehouse-section-heading { display: flex; align-items: flex-start; gap: 9px; }
 .warehouse-complete-action svg, .warehouse-section-heading svg { flex: 0 0 auto; width: 20px; height: 20px; color: #f97316; }
