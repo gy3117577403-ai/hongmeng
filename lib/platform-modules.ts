@@ -118,7 +118,7 @@ const modules: PlatformModuleDefinition[] = [
     capabilityTitle: '现有入口', capabilities: ['首页全局搜索', '业务模块导航', '系统诊断与设置'],
     links: [
       { label: '系统设置', description: '安装、诊断和账号设置', href: '/dashboard?openSettings=1' },
-      { label: '工单资料库', description: '上传、预览和下载资料', href: '/dashboard' },
+      { label: '图纸资料库', description: '上传、预览和下载生产资料', href: '/drawing-library' },
     ],
   },
   {

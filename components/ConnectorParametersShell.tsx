@@ -808,7 +808,7 @@ export function ConnectorParametersShell({ user }: { user: CurrentUserDTO }) {
         subtitle="检索、维护与批量导入"
         menuItems={[
           { label: '操作日志', onSelect: loadLogs },
-          { label: '返回生产工单', href: '/dashboard' },
+          { label: '返回生产执行', href: '/production' },
           { label: '退出登录', onSelect: logout },
         ]}
       />

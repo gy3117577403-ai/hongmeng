@@ -515,7 +515,7 @@ export function DrawingLibraryShell({
         activeHref="/drawing-library"
         subtitle="客户、规格与图纸预览"
         menuItems={[
-          { label: '返回生产工单', href: '/dashboard' },
+          { label: '返回生产执行', href: '/production' },
           { label: '退出登录', onSelect: logout },
         ]}
       />

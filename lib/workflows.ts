@@ -884,7 +884,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       dueAt, updatedAt: order.updatedAt.toISOString(), route: targetRoute,
       sourceRoute: order.drawingLibraryItemId
         ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`
-        : `/dashboard?workOrderId=${encodeURIComponent(order.id)}`,
+        : `/production?workOrderId=${encodeURIComponent(order.id)}`,
       isOverdue: !closed && !!order.plannedAt && order.plannedAt.getTime() < now,
       quantity: targetQuantity,
       weekStartDate: order.weekStartDate?.toISOString() || null,

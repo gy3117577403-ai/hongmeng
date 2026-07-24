@@ -21,6 +21,33 @@ export default async function Dashboard({ searchParams = {} }: DashboardPageProp
     redirect(`/login?next=${encodeURIComponent(next)}`);
   }
 
+  const hasParam = (name: string): boolean => {
+    const value = searchParams[name];
+    return Array.isArray(value) ? value.length > 0 : typeof value === 'string' && value.length > 0;
+  };
+  const keepsLegacyUtility = [
+    'openSettings',
+    'openLogs',
+    'openTrash',
+    'openWeeklyImport',
+    'openOrders',
+    'changePassword',
+    'categoryId',
+    'categoryCode',
+    'fileId',
+    'workOrder',
+    'workOrderCode',
+    'returnKey',
+  ].some(hasParam);
+
+  if (!keepsLegacyUtility) {
+    const productionParams = new URLSearchParams();
+    const workOrderId = searchParams.workOrderId;
+    const targetId = Array.isArray(workOrderId) ? workOrderId[0] : workOrderId;
+    if (targetId) productionParams.set('workOrderId', targetId);
+    redirect(`/production${productionParams.size ? `?${productionParams.toString()}` : ''}`);
+  }
+
   const [orders, categories] = await Promise.all([
     prisma.workOrder.findMany({
       where: { deletedAt: null, planActive: true },

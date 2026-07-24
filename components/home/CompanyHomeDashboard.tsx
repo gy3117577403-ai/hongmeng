@@ -16,7 +16,6 @@ import {
   CircleHelp,
   Clock3,
   FileCheck2,
-  FileStack,
   FileText,
   FolderKanban,
   GitPullRequestArrow,
@@ -81,7 +80,6 @@ const quickLinks: Array<{ href: string; label: string; icon: LucideIcon; tone: H
   { href: '/drawing-library', label: '图纸资料', icon: FolderKanban, tone: 'yellow' },
   { href: '/connector-assembly-manuals', label: '工艺文件', icon: BookOpen, tone: 'slate' },
   { href: '/workspace/changes', label: '技术变更', icon: GitPullRequestArrow, tone: 'orange' },
-  { href: '/dashboard', label: '生产工单', icon: FileStack, tone: 'green' },
   { href: '/connector-parameters', label: '连接器参数', icon: Boxes, tone: 'blue' },
   { href: '/workspace/warehouse', label: '仓库配料', icon: Warehouse, tone: 'yellow' },
   { href: '/workspace/product-times', label: '产品工序与工时', icon: Clock3, tone: 'orange' },
@@ -113,7 +111,7 @@ function searchItems(payload: SearchPayload, keyword: string): HomeSearchItem[] 
       group: '生产工单',
       title: order.specification || order.displayCode || order.code,
       detail: `${order.customerName || '客户未设置'} · ${order.productName || '品名未设置'}`,
-      route: `/dashboard?workOrderId=${encodeURIComponent(order.id)}`,
+      route: `/production?workOrderId=${encodeURIComponent(order.id)}`,
     });
   }
   for (const file of payload.resourceFiles || []) {
@@ -403,7 +401,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
               </div>
               <nav aria-label="开始本周工作">
                 <a className="primary" href="/weekly-plan-center">进入计划中心</a>
-                <a href="/dashboard">打开生产工单</a>
+                <a href="/production">进入生产执行</a>
                 <a href="/drawing-library">查看图纸资料</a>
               </nav>
             </section>
@@ -430,7 +428,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
                 <div className="hm-home-start-steps">
                   <a href="/weekly-plan-center"><span>01</span><CalendarDays size={19} aria-hidden="true" /><div><strong>建立并排程生产订单</strong><p>实时维护订单，拆分批次后下达本周执行或下周预备。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
                   <a href="/production"><span>02</span><LayoutDashboard size={19} aria-hidden="true" /><div><strong>进入生产执行中心</strong><p>按未发图、前端、后端和完成阶段推进工单。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
-                  <a href="/dashboard"><span>03</span><FileCheck2 size={19} aria-hidden="true" /><div><strong>补齐工单生产资料</strong><p>上传原图、SOP、成品图并确认资料完整性。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
+                  <a href="/drawing-library"><span>03</span><FolderKanban size={19} aria-hidden="true" /><div><strong>维护图纸生产资料</strong><p>在图纸资料库统一维护原图、SOP、成品图和版本文件。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
                 </div>
               )}
             </article>
