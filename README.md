@@ -119,6 +119,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - v1.16.5.3-wecom-helper-service-origin-fix：统一 Windows 助手与网页短期任务的正式服务 Origin，兼容尾斜杠、显式 443、主机名大小写和 API 路径，同时继续严格拒绝 HTTP、非标准端口、userinfo 与相似恶意域名。该版本为本地验证候选，尚未部署 Sealos。
 - v1.16.5.4-wecom-helper-dragdrop-intake-fix：修复 WPF 实际拖放区域命中和持续 DragOver 反馈，统一支持 Explorer FileDrop、Shell 虚拟文件流、文件剪贴板与稳定下载目录接收；加入任务级临时文件清理、脱敏格式诊断和普通用户完整性提示。仅修改 Windows 助手，无需更新 Sealos。
 - v1.17.0-production-leader-workbench：生产执行中心按未发图、进行中和已完成重构卡片，统一目标 / 完成 / 剩余 / 超产计算，只显示图纸、配料、交期和尾数异常；新增图纸快速确认、右侧进度侧栏、完成数量二次确认、图纸待确认与尾数筛选及 1024px 已完成列折叠。该版本为本地验证候选，尚未部署 Sealos。
+- v1.17.1-production-closure-local-gate：新增不依赖目标数据库或 Sealos 的生产闭环本地发布门禁，集中验证完成转序、数量守恒、不良分支、工时领取、角色权限和 95% 出勤达成率，并补充主管端与员工端验收清单。
 
 ## 交付文档索引
 
@@ -151,6 +152,7 @@ Harmony 原生 App 试验工作已归档到 tag `v2.0.0-native-archive`。当前
 - [Windows 微盘导入助手 1.16.5.4 拖放接收 QA](docs/QA_WECOM_HELPER_DRAGDROP_v1.16.5.4.md)
 - [生产组长工作台使用指南](docs/PRODUCTION_LEADER_WORKBENCH_GUIDE.md)
 - [生产组长工作台 QA](docs/QA_PRODUCTION_LEADER_WORKBENCH.md)
+- [生产闭环本地发布门禁与角色验收](docs/QA_PRODUCTION_CLOSURE_LOCAL_GATE.md)
 - [平板真机测试前最终预检计划](docs/PRE_REAL_DATA_TEST_PLAN.md)
 - [周计划 Excel 工单导入说明](docs/WEEKLY_PLAN_IMPORT_GUIDE.md)
 - [周计划生产工单显示与清理机制](docs/WEEKLY_PLAN_WORKORDER_DISPLAY_AND_CLEANUP.md)
