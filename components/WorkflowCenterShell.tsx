@@ -13,8 +13,9 @@ import {
   FileText,
   GitPullRequestArrow,
   LayoutDashboard,
-  ListChecks,
   Loader2,
+  LocateFixed,
+  PackageCheck,
   RefreshCw,
   Search,
   ShieldCheck,
@@ -115,7 +116,10 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
-  const deepLinkStepRef = useRef<HTMLElement>(null);
+  const deepLinkStepRef = useRef<HTMLElement | null>(null);
+  const processNodeRefs = useRef(new Map<string, HTMLButtonElement>());
+  const [selectedProcessStepKey, setSelectedProcessStepKey] = useState('');
+  const [selectedPreparationKey, setSelectedPreparationKey] = useState('');
   const [deepLink, setDeepLink] = useState<WorkflowDeepLink>({
     batchId: '', workOrderId: '', stepId: '', fromPlanning: false, fromProduction: false, returnTo: '/production',
   });
@@ -188,7 +192,17 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     if (!selected) return;
     selectedIdRef.current = selected.id;
     sessionStorage.setItem('hm-workflow-selected', selected.id);
-  }, [selected]);
+    const preferredStep = selected.steps.find(step => step.key === deepLink.stepId)
+      || selected.steps.find(step => step.state === 'current')
+      || selected.steps[0];
+    setSelectedProcessStepKey(preferredStep?.key || '');
+    setSelectedPreparationKey(
+      selected.preparationSteps?.find(step => step.state === 'current')?.key
+      || selected.preparationSteps?.find(step => step.state === 'pending')?.key
+      || selected.preparationSteps?.at(-1)?.key
+      || '',
+    );
+  }, [deepLink.stepId, selected]);
 
   useEffect(() => {
     if (loading || !selected || (!deepLink.batchId && !deepLink.workOrderId)) return;
@@ -234,6 +248,13 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       || selected.steps.find(step => step.state === 'current')
       || null;
   }, [deepLink.stepId, selected]);
+  const selectedProcessStep = useMemo(() => {
+    if (!selected) return null;
+    return selected.steps.find(step => step.key === selectedProcessStepKey)
+      || selectedCurrentStep
+      || selected.steps[0]
+      || null;
+  }, [selected, selectedCurrentStep, selectedProcessStepKey]);
   const hasPublishedProductRoute = Boolean(
     selected?.entityType === 'production'
     && selected.processRouteId
@@ -253,7 +274,18 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     if (step.laborWorkDate) params.set('workDate', step.laborWorkDate);
     return `/workspace/reports?${params.toString()}`;
   }
-  const manualReportRoute = selectedCurrentStep ? manualReportHref(selectedCurrentStep) : null;
+  const manualReportRoute = selectedProcessStep ? manualReportHref(selectedProcessStep) : null;
+
+  function focusProcessStep(step: WorkflowStepDTO): void {
+    setSelectedProcessStepKey(step.key);
+    window.requestAnimationFrame(() => {
+      processNodeRefs.current.get(step.key)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+        inline: 'center',
+      });
+    });
+  }
 
   return (
     <main className="hm-workbench-root hm-workbench-navigation-overlay hm-workflow-center">
@@ -262,19 +294,17 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
         activeHref="/workspace/workflows"
         subtitle="真实业务流程统一查看"
         menuItems={[{ label: '系统设置', href: '/dashboard?openSettings=1' }, { label: '退出登录', onSelect: () => { void logout(); } }]}
+        hideHeader
         sidebarTriggerTargetId="workflow-navigation-trigger"
-        utilityActions={<details className="workflow-create-menu">
-          <summary><GitPullRequestArrow size={15} />新建协同事项<ChevronDown size={14} /></summary>
-          <div>
-            <a href="/workspace/issues?action=new"><ShieldCheck size={15} /><span><strong>新建问题</strong><small>记录生产、计划或技术问题</small></span></a>
-            <a href="/workspace/changes?action=new"><GitPullRequestArrow size={15} /><span><strong>新建变更</strong><small>发起影响评估与验证闭环</small></span></a>
-          </div>
-        </details>}
       />
 
       <div className="workflow-page-frame">
         <section className="workflow-command-bar" aria-label="流程周期与操作">
           <span className="workflow-navigation-trigger" id="workflow-navigation-trigger" aria-label="平台导航入口" />
+          <div className="workflow-inline-title">
+            <Workflow size={18} aria-hidden="true" />
+            <div><strong>流程中心</strong><small>真实工艺路线</small></div>
+          </div>
           <div className="workflow-week-tabs" role="group" aria-label="生产周范围">
             {(['all', 'carryover', 'current', 'next', 'history'] as const).map(scope => (
               <button
@@ -298,6 +328,13 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             <button type="button" disabled={loading} onClick={() => { void load(); }}>
               <RefreshCw size={14} className={loading ? 'spin' : ''} />刷新
             </button>
+            <details className="workflow-create-menu">
+              <summary><GitPullRequestArrow size={14} />新建事项<ChevronDown size={13} /></summary>
+              <div>
+                <a href="/workspace/issues?action=new"><ShieldCheck size={15} /><span><strong>新建问题</strong><small>记录生产、计划或技术问题</small></span></a>
+                <a href="/workspace/changes?action=new"><GitPullRequestArrow size={15} /><span><strong>新建变更</strong><small>发起影响评估与验证闭环</small></span></a>
+              </div>
+            </details>
           </div>
         </section>
 
@@ -335,55 +372,49 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
               <header className="workflow-detail-header"><div><span>{entityLabels[selected.entityType]}流程 · {selected.code}</span><h2 title={selected.title}>{selected.title}</h2><p>{selected.subtitle}</p></div><div><span className={`workflow-status status-${selected.processStatus}`}>{statusLabels[selected.processStatus]}</span><a href={selected.route}>进入处理<ArrowUpRight size={14} /></a></div></header>
               <div className="workflow-detail-scroll hm-scroll-region">
                 {selected.entityType === 'production' && selected.preparationSteps?.length ? <section className="workflow-preparation-strip" aria-label="生产准备状态">
-                  <header><div><span>生产准备</span><h3>开工条件校验</h3></div><small>准备项只用于校验，实际流转以下方产品工艺为准</small></header>
-                  <ol>{selected.preparationSteps.map((step, index) => <li className={step.state} key={step.key}>
-                    <span>{step.state === 'done' ? <CheckCircle2 size={14} /> : step.state === 'current' ? <CircleDot size={14} /> : index + 1}</span>
-                    <strong>{step.label}</strong>
+                  <header>
+                    <div><span>开工准备</span><h3>生产条件已联动校验</h3></div>
+                    <small>{selected.preparationSteps.filter(step => step.state === 'done').length} / {selected.preparationSteps.length} 项已就绪</small>
+                  </header>
+                  <ol>{selected.preparationSteps.map((step, index) => <li className={`${step.state}${selectedPreparationKey === step.key ? ' selected' : ''}`} key={step.key}>
+                    <button type="button" aria-pressed={selectedPreparationKey === step.key} onClick={() => setSelectedPreparationKey(step.key)}>
+                      <span>{step.state === 'done' ? <CheckCircle2 size={14} /> : step.state === 'current' ? <CircleDot size={14} /> : index + 1}</span>
+                      <strong>{step.label}</strong>
+                      <small>{step.state === 'done' ? '已就绪' : step.state === 'current' ? '校验中' : '待校验'}</small>
+                    </button>
                   </li>)}</ol>
                 </section> : null}
                 {hasPublishedProductRoute ? <>
-                  <section className="workflow-route-overview">
-                    <div className="workflow-route-current">
-                      <span>当前工序</span>
-                      <strong>{selected.currentStep}</strong>
-                      <p>{selected.nextStep ? `下一步：${selected.nextStep}` : '全部工序完成后进入归档'}</p>
-                    </div>
-                    <dl>
-                      <div><dt>生产数量</dt><dd>{(selected.quantity || 0).toLocaleString()} 件</dd></div>
-                      <div><dt>路线版本</dt><dd>R{selected.routeVersion || 1} · {selected.routeStatus ? routeStatusLabels[selected.routeStatus] : '待确认'}</dd></div>
-                      <div><dt>生产周期</dt><dd>{formatDate(selected.weekStartDate, false)} - {formatDate(selected.weekEndDate, false)}</dd></div>
-                      <div><dt>最近更新</dt><dd>{formatDate(selected.updatedAt)}</dd></div>
-                    </dl>
-                  </section>
-
                   <section className="workflow-process-route">
                     <header>
-                      <div><span>真实生产路线</span><h3>产品工序流转</h3></div>
-                      <p>并行组内工序可同时推进，整组完成后进入下一组。</p>
+                      <div><span>动态工艺图</span><h3>产品工序流转</h3></div>
+                      <div className="workflow-route-meta">
+                        <span><PackageCheck size={13} />{(selected.quantity || 0).toLocaleString()} 件</span>
+                        <span>R{selected.routeVersion || 1} · {selected.routeStatus ? routeStatusLabels[selected.routeStatus] : '待确认'}</span>
+                        <span>{formatDate(selected.weekStartDate, false)} - {formatDate(selected.weekEndDate, false)}</span>
+                        {selectedCurrentStep && <button type="button" onClick={() => focusProcessStep(selectedCurrentStep)}><LocateFixed size={13} />定位当前</button>}
+                      </div>
                     </header>
-                    <div className="workflow-route-groups">
+                    <div className="workflow-flow-viewport hm-scroll-region" tabIndex={0} aria-label="工艺流程图，可横向滚动">
+                      <div className="workflow-flow-canvas">
                       {selectedRouteGroups.map(([group, steps], groupIndex) => {
                         const groupState = steps.every(step => step.state === 'done')
                           ? 'done'
                           : steps.some(step => step.state === 'current') ? 'current' : 'pending';
-                        return <div className={`workflow-route-group ${groupState}`} key={group}>
-                          <div className="workflow-group-marker">
-                            <span>{groupState === 'done' ? <CheckCircle2 size={15} /> : groupState === 'current' ? <CircleDot size={15} /> : group}</span>
-                            <div><strong>第 {group} 组</strong><small>{steps.length > 1 ? `${steps.length} 道并行工序` : '顺序工序'}</small></div>
-                          </div>
-                          <div className="workflow-process-cards">
+                        return <section className={`workflow-flow-stage ${groupState}`} key={group}>
+                          <header className="workflow-flow-stage-header">
+                            <span>{groupState === 'done' ? <CheckCircle2 size={14} /> : groupState === 'current' ? <CircleDot size={14} /> : group}</span>
+                            <div><strong>阶段 {group}</strong><small>{steps.length > 1 ? `${steps.length} 道并行` : '顺序工序'}</small></div>
+                          </header>
+                          <div className="workflow-flow-nodes">
                             {steps.map(step => {
                                const input = step.inputQuantity ?? selected.quantity ?? 0;
                                const processed = step.processedQuantity || 0;
-                               const good = step.reportedGoodQuantity || 0;
-                               const defect = step.defectQuantity || 0;
-                               const released = step.releasedGoodQuantity || 0;
                                const unitLabel = step.unitLabel || '件';
                                const progress = input > 0
                                  ? Math.min(100, Math.round((processed / input) * 100))
                                  : step.state === 'done' ? 100 : 0;
                                const isDeepLinked = step.key === deepLink.stepId;
-                               const stepManualReportRoute = manualReportHref(step);
                                const laborStatusText = step.laborPendingStandard
                                  ? '工时标准待补'
                                  : step.hasLaborPool
@@ -391,48 +422,66 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                       ? `${step.latestEmployeeName ? `${step.latestEmployeeName} · ` : ''}待领 ${(step.laborRemainingQuantity || 0).toLocaleString()} ${unitLabel}`
                                      : step.latestEmployeeName || '工时已领取'
                                    : '工时尚未生成';
-                              return <article
+                              return <button
+                                type="button"
                                 key={step.key}
-                                ref={isDeepLinked ? deepLinkStepRef : undefined}
-                                className={`workflow-process-card ${step.state}${isDeepLinked ? ' deep-linked' : ''}`}
+                                ref={node => {
+                                  if (node) processNodeRefs.current.set(step.key, node);
+                                  else processNodeRefs.current.delete(step.key);
+                                  if (isDeepLinked) deepLinkStepRef.current = node;
+                                }}
+                                aria-pressed={selectedProcessStep?.key === step.key}
+                                onClick={() => focusProcessStep(step)}
+                                className={`workflow-flow-node ${step.state}${isDeepLinked ? ' deep-linked' : ''}${selectedProcessStep?.key === step.key ? ' selected' : ''}`}
                               >
                                 <header>
                                   <span className={`stage-${step.stageGroup || 'frontend'}`}>{step.stageGroup ? stageLabels[step.stageGroup] : '工序'}</span>
-                                  <strong>{step.label}</strong>
                                   <em>{processStepStateLabel(step)}</em>
                                 </header>
-                                <div className="workflow-process-metrics">
-                                  <span><Clock3 size={13} />{formatDuration(step.standardMillisecondsPerUnit)}</span>
-                                  <span><ListChecks size={13} />已处理 {processed.toLocaleString()} / {input.toLocaleString()} {unitLabel}</span>
-                                  <span><UserRound size={13} />{laborStatusText}</span>
+                                <strong>{step.label}</strong>
+                                <div className="workflow-flow-node-main">
+                                  <span>{processed.toLocaleString()} / {input.toLocaleString()} {unitLabel}</span>
+                                  <b>{progress}%</b>
                                 </div>
-                                <div className="workflow-process-progress" aria-label={`${step.label}完成${progress}%`}>
-                                  <span style={{ width: `${progress}%` }} />
-                                </div>
-                                <footer>
-                                  <div>
-                                   <span>{step.completedAt ? `完成 ${formatDate(step.completedAt)}` : step.startedAt ? `开始 ${formatDate(step.startedAt)}` : '尚未开始'}</span>
-                                   <span>良品 {good.toLocaleString()} · 不良 {defect.toLocaleString()} · 已放行 {released.toLocaleString()} {unitLabel}</span>
-                                   <span>待处理 {(step.remainingProcessQuantity ?? Math.max(0, input - processed)).toLocaleString()} {unitLabel} · 工时已领 {(step.laborClaimedQuantity || 0).toLocaleString()} / {(step.laborEligibleQuantity || 0).toLocaleString()} {unitLabel}</span>
-                                  </div>
-                                  {stepManualReportRoute && <a href={stepManualReportRoute}>工时领取<ArrowUpRight size={13} /></a>}
-                                </footer>
-                                {(step.productRemark || step.remark) && <div className="workflow-step-notes">
-                                  {step.productRemark && <p><strong>产品标准</strong>{step.productRemark}</p>}
-                                  {step.remark && <p><strong>工序备注</strong>{step.remark}</p>}
-                                </div>}
-                              </article>;
+                                <div className="workflow-flow-progress" aria-label={`${step.label}完成${progress}%`}><span style={{ transform: `scaleX(${progress / 100})` }} /></div>
+                                <footer><span><Clock3 size={12} />{formatDuration(step.standardMillisecondsPerUnit)}</span><span><UserRound size={12} />{laborStatusText}</span></footer>
+                              </button>;
                             })}
                           </div>
-                          {groupIndex < selectedRouteGroups.length - 1 && <div className="workflow-group-connector"><span /><ChevronRight size={15} /></div>}
-                        </div>;
+                          {groupIndex < selectedRouteGroups.length - 1 && <div className="workflow-flow-connector" aria-hidden="true"><span /><ChevronRight size={16} />{groupState === 'current' && <i />}</div>}
+                        </section>;
                       })}
+                      </div>
                     </div>
-                  </section>
 
-                  <section className="workflow-route-notes">
-                    <article><FileText size={16} /><div><strong>产品标准备注</strong><p>{selected.productRemark || '未填写产品标准备注'}</p></div></article>
-                    <article><FileText size={16} /><div><strong>当前工单临时备注</strong><p>{selected.orderRemark || '未填写本批次临时备注'}</p></div></article>
+                    {selectedProcessStep && (() => {
+                      const step = selectedProcessStep;
+                      const input = step.inputQuantity ?? selected.quantity ?? 0;
+                      const processed = step.processedQuantity || 0;
+                      const unitLabel = step.unitLabel || '件';
+                      const stepManualReportRoute = manualReportHref(step);
+                      return <article className={`workflow-node-inspector ${step.state}`}>
+                        <header>
+                          <div><span>{processStepStateLabel(step)}</span><h4>{step.label}</h4></div>
+                          <strong>{formatDuration(step.standardMillisecondsPerUnit)}</strong>
+                        </header>
+                        <dl>
+                          <div><dt>投入 / 已处理</dt><dd>{input.toLocaleString()} / {processed.toLocaleString()} {unitLabel}</dd></div>
+                          <div><dt>良品 / 不良品</dt><dd>{(step.reportedGoodQuantity || 0).toLocaleString()} / {(step.defectQuantity || 0).toLocaleString()} {unitLabel}</dd></div>
+                          <div><dt>已放行 / 待处理</dt><dd>{(step.releasedGoodQuantity || 0).toLocaleString()} / {(step.remainingProcessQuantity ?? Math.max(0, input - processed)).toLocaleString()} {unitLabel}</dd></div>
+                          <div><dt>工时领取</dt><dd>{(step.laborClaimedQuantity || 0).toLocaleString()} / {(step.laborEligibleQuantity || 0).toLocaleString()} {unitLabel}</dd></div>
+                        </dl>
+                        <div className="workflow-inspector-notes">
+                          <FileText size={15} />
+                          <p><strong>工艺说明</strong>{step.productRemark || selected.productRemark || '未填写产品标准备注'}</p>
+                          <p><strong>本批备注</strong>{step.remark || selected.orderRemark || '未填写本批次临时备注'}</p>
+                        </div>
+                        <footer>
+                          <span>{step.completedAt ? `完成于 ${formatDate(step.completedAt)}` : step.startedAt ? `开始于 ${formatDate(step.startedAt)}` : '尚未开始'}</span>
+                          {stepManualReportRoute && <a href={stepManualReportRoute}>进入工时领取<ArrowUpRight size={13} /></a>}
+                        </footer>
+                      </article>;
+                    })()}
                   </section>
                 </> : selected.entityType === 'production' ? <section className={`workflow-route-missing ${selected.processStatus === 'closed' ? 'completed' : ''}`}>
                   <span>{selected.processStatus === 'closed' ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}</span>
