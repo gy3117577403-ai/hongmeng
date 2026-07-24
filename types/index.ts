@@ -1304,6 +1304,7 @@ export type WorkflowItemDTO = {
   productRemark?: string | null;
   orderRemark?: string | null;
   drawingLibraryItemId?: string | null;
+  preparationSteps?: WorkflowStepDTO[];
   steps: WorkflowStepDTO[];
   activities: WorkflowActivityDTO[];
 };

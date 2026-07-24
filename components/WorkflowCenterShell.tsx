@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   CalendarDays,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   CircleDot,
   Clock3,
@@ -17,7 +18,6 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
-  TimerReset,
   UserRound,
   Workflow,
   X,
@@ -31,7 +31,6 @@ import type {
   WorkflowProcessStatus,
   WorkflowStepDTO,
   WorkflowSummaryDTO,
-  WorkflowTemplateDTO,
   WorkflowWeekScope,
 } from '@/types';
 
@@ -40,7 +39,6 @@ type WorkflowResponse = {
   ok: boolean;
   items: WorkflowItemDTO[];
   summary: WorkflowSummaryDTO;
-  templates: WorkflowTemplateDTO[];
   error?: string;
 };
 type Filters = {
@@ -112,16 +110,11 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const [filters, setFilters] = useState<Filters>({ entityType: 'all', status: 'all', overdue: false, weekScope: 'all' });
   const [items, setItems] = useState<WorkflowItemDTO[]>([]);
   const [summary, setSummary] = useState<WorkflowSummaryDTO>(emptySummary);
-  const [templates, setTemplates] = useState<WorkflowTemplateDTO[]>([]);
   const [selected, setSelected] = useState<WorkflowItemDTO | null>(null);
   const selectedIdRef = useRef('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [contextOpen, setContextOpen] = useState(false);
-  const [compactContext, setCompactContext] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  const contextRef = useRef<HTMLElement>(null);
-  const contextTriggerRef = useRef<HTMLButtonElement>(null);
   const deepLinkStepRef = useRef<HTMLElement>(null);
   const [deepLink, setDeepLink] = useState<WorkflowDeepLink>({
     batchId: '', workOrderId: '', stepId: '', fromPlanning: false, fromProduction: false, returnTo: '/production',
@@ -170,7 +163,6 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       const data = await jsonRequest<WorkflowResponse>(`/api/workflows?${params.toString()}`);
       setItems(data.items);
       setSummary(data.summary);
-      setTemplates(data.templates);
       const desired = selectedIdRef.current || sessionStorage.getItem('hm-workflow-selected') || '';
       const nextSelected = data.items.find(item => deepLink.batchId && item.batchId === deepLink.batchId)
         || data.items.find(item => deepLink.workOrderId && item.workOrderId === deepLink.workOrderId)
@@ -219,56 +211,12 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     return () => element.removeEventListener('scroll', save);
   }, [loading]);
 
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 1100px)');
-    const sync = (): void => setCompactContext(media.matches);
-    sync();
-    media.addEventListener('change', sync);
-    return () => media.removeEventListener('change', sync);
-  }, []);
-
-  useEffect(() => {
-    if (!contextOpen || !compactContext) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const panel = contextRef.current;
-    const focusable = (): HTMLElement[] => panel ? Array.from(panel.querySelectorAll<HTMLElement>('button:not([disabled]), a[href]')) : [];
-    window.requestAnimationFrame(() => focusable()[0]?.focus());
-    function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') {
-        setContextOpen(false);
-        window.requestAnimationFrame(() => contextTriggerRef.current?.focus());
-        return;
-      }
-      if (event.key !== 'Tab') return;
-      const nodes = focusable();
-      if (!nodes.length) return;
-      const first = nodes[0];
-      const last = nodes[nodes.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    }
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', onKeyDown);
-    };
-  }, [compactContext, contextOpen]);
-
-  useEffect(() => {
-    const panel = contextRef.current;
-    if (!panel) return;
-    if (compactContext && !contextOpen) panel.setAttribute('inert', '');
-    else panel.removeAttribute('inert');
-  }, [compactContext, contextOpen]);
-
   async function logout(): Promise<void> {
     await fetch('/api/auth/logout', { method: 'POST' });
     location.href = '/login';
   }
 
   const activeFilterCount = [filters.entityType !== 'all', filters.status !== 'all', filters.overdue, filters.weekScope !== 'all'].filter(Boolean).length;
-  const selectedTemplate = useMemo(() => templates.find(item => item.key === selected?.entityType) || null, [selected, templates]);
   const selectedRouteGroups = useMemo(() => {
     if (!selected || selected.entityType !== 'production') return [];
     const groups = new Map<number, WorkflowStepDTO[]>();
@@ -308,23 +256,25 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const manualReportRoute = selectedCurrentStep ? manualReportHref(selectedCurrentStep) : null;
 
   return (
-    <main className="hm-workbench-root hm-workflow-center">
+    <main className="hm-workbench-root hm-workbench-navigation-overlay hm-workflow-center">
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/workflows"
         subtitle="真实业务流程统一查看"
         menuItems={[{ label: '系统设置', href: '/dashboard?openSettings=1' }, { label: '退出登录', onSelect: () => { void logout(); } }]}
-        searchSlot={<label className="workflow-global-search"><Search size={16} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索流程编号、标题、工单、规格或负责人" aria-label="搜索流程" />{keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={14} /></button>}</label>}
-        utilityActions={<a className="workflow-new-change" href="/workspace/changes?action=new"><GitPullRequestArrow size={15} />发起变更</a>}
+        sidebarTriggerTargetId="workflow-navigation-trigger"
+        utilityActions={<details className="workflow-create-menu">
+          <summary><GitPullRequestArrow size={15} />新建协同事项<ChevronDown size={14} /></summary>
+          <div>
+            <a href="/workspace/issues?action=new"><ShieldCheck size={15} /><span><strong>新建问题</strong><small>记录生产、计划或技术问题</small></span></a>
+            <a href="/workspace/changes?action=new"><GitPullRequestArrow size={15} /><span><strong>新建变更</strong><small>发起影响评估与验证闭环</small></span></a>
+          </div>
+        </details>}
       />
 
       <div className="workflow-page-frame">
-        <section className="workflow-command-bar" aria-labelledby="workflow-page-title">
-          <div className="workflow-command-title">
-            <span>协同中心</span>
-            <strong id="workflow-page-title">流程中心</strong>
-            <small>问题、变更与生产工序统一跟踪</small>
-          </div>
+        <section className="workflow-command-bar" aria-label="流程周期与操作">
+          <span className="workflow-navigation-trigger" id="workflow-navigation-trigger" aria-label="平台导航入口" />
           <div className="workflow-week-tabs" role="group" aria-label="生产周范围">
             {(['all', 'carryover', 'current', 'next', 'history'] as const).map(scope => (
               <button
@@ -362,6 +312,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
         <div className="workflow-workspace">
           <section className="workflow-list" aria-label="流程列表">
             <header><div><h2>流程实例</h2><span>{items.length} 条当前结果</span></div>{activeFilterCount > 0 && <button type="button" onClick={() => setFilters({ entityType: 'all', status: 'all', overdue: false, weekScope: 'all' })}>清除 {activeFilterCount}</button>}</header>
+            <label className="workflow-list-search"><Search size={15} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、产品或负责人" aria-label="搜索流程" />{keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={13} /></button>}</label>
             <div className="workflow-type-filters" role="group" aria-label="流程类型筛选">
               {(['all', 'issue', 'change', 'production'] as const).map(type => <button type="button" key={type} className={filters.entityType === type ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, entityType: type }))}>{type === 'all' ? '全部' : entityLabels[type]}<span>{type === 'all' ? summary.total : summary[type]}</span></button>)}
             </div>
@@ -383,6 +334,13 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             {!selected ? <div className="workflow-detail-empty"><Workflow /><h2>选择一条流程查看节点</h2><p>流程中心显示真实业务记录，不生成独立副本。</p></div> : <>
               <header className="workflow-detail-header"><div><span>{entityLabels[selected.entityType]}流程 · {selected.code}</span><h2 title={selected.title}>{selected.title}</h2><p>{selected.subtitle}</p></div><div><span className={`workflow-status status-${selected.processStatus}`}>{statusLabels[selected.processStatus]}</span><a href={selected.route}>进入处理<ArrowUpRight size={14} /></a></div></header>
               <div className="workflow-detail-scroll hm-scroll-region">
+                {selected.entityType === 'production' && selected.preparationSteps?.length ? <section className="workflow-preparation-strip" aria-label="生产准备状态">
+                  <header><div><span>生产准备</span><h3>开工条件校验</h3></div><small>准备项只用于校验，实际流转以下方产品工艺为准</small></header>
+                  <ol>{selected.preparationSteps.map((step, index) => <li className={step.state} key={step.key}>
+                    <span>{step.state === 'done' ? <CheckCircle2 size={14} /> : step.state === 'current' ? <CircleDot size={14} /> : index + 1}</span>
+                    <strong>{step.label}</strong>
+                  </li>)}</ol>
+                </section> : null}
                 {hasPublishedProductRoute ? <>
                   <section className="workflow-route-overview">
                     <div className="workflow-route-current">
@@ -476,34 +434,31 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                     <article><FileText size={16} /><div><strong>产品标准备注</strong><p>{selected.productRemark || '未填写产品标准备注'}</p></div></article>
                     <article><FileText size={16} /><div><strong>当前工单临时备注</strong><p>{selected.orderRemark || '未填写本批次临时备注'}</p></div></article>
                   </section>
-                </> : <>
+                </> : selected.entityType === 'production' ? <section className={`workflow-route-missing ${selected.processStatus === 'closed' ? 'completed' : ''}`}>
+                  <span>{selected.processStatus === 'closed' ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}</span>
+                  <div>
+                    <small>真实产品工艺</small>
+                    <h3>{selected.currentStep}</h3>
+                    <p>{selected.processStatus === 'closed'
+                      ? '该历史工单已经完成，不再回放旧版“前端 / 后端”阶段。'
+                      : selected.steps[0]?.key === 'route-repair-required'
+                        ? '该工单已经产生生产事实，系统不会静默改写历史。请先补齐已发布的产品工艺路线，再继续查看和推进工序。'
+                        : '尚未找到已发布的产品工艺路线。请先在产品工序与工时中完成配置，生产流程会自动按真实工序显示。'}</p>
+                  </div>
+                  {selected.processStatus !== 'closed' && <a href={selected.route}>{selected.steps[0]?.key === 'route-repair-required' ? '补齐产品工序' : '配置产品工序'}<ArrowUpRight size={14} /></a>}
+                </section> : <>
                   <section className="workflow-current-state"><div><span>当前节点</span><strong>{selected.currentStep}</strong><p>{selected.nextStep ? `下一节点：${selected.nextStep}` : '流程已到达终态'}</p></div><dl><div><dt>负责人</dt><dd>{selected.owner || '待分派'}</dd></div><div><dt>截止时间</dt><dd className={selected.isOverdue ? 'overdue' : ''}>{formatDate(selected.dueAt)}</dd></div><div><dt>最近更新</dt><dd>{formatDate(selected.updatedAt)}</dd></div></dl></section>
-                  <section className="workflow-stepper"><header><h3>流程节点</h3><span>{selectedTemplate?.name || `${entityLabels[selected.entityType]}流程`}</span></header><ol>{selected.steps.map((step, index) => <li className={step.state} key={step.key}><span>{step.state === 'done' ? <CheckCircle2 size={16} /> : step.state === 'current' ? <CircleDot size={16} /> : index + 1}</span><div><strong>{step.label}</strong><small>{processStepStateLabel(step)}</small></div>{index < selected.steps.length - 1 && <ChevronRight size={15} aria-hidden="true" />}</li>)}</ol></section>
+                  <section className="workflow-stepper"><header><h3>流程节点</h3><span>{entityLabels[selected.entityType]}闭环</span></header><ol>{selected.steps.map((step, index) => <li className={step.state} key={step.key}><span>{step.state === 'done' ? <CheckCircle2 size={16} /> : step.state === 'current' ? <CircleDot size={16} /> : index + 1}</span><div><strong>{step.label}</strong><small>{processStepStateLabel(step)}</small></div>{index < selected.steps.length - 1 && <ChevronRight size={15} aria-hidden="true" />}</li>)}</ol></section>
                 </>}
-                <section className="workflow-activity"><header><h3>最近记录</h3><span>{selected.activities.length} 条</span></header><div>{selected.activities.map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}{!selected.activities.length && <p className="activity-empty">该流程暂时没有可展示的业务记录。</p>}</div></section>
-                <section className="workflow-source-note"><ListChecks size={18} /><div><strong>数据来源</strong><p>该条记录直接来自{selected.entityType === 'issue' ? '问题管理' : selected.entityType === 'change' ? '变更管理' : '计划批次及其关联生产工单'}，状态更新请在来源模块完成。</p></div></section>
+                <section className="workflow-activity"><header><h3>最近记录</h3><span>最近 {Math.min(5, selected.activities.length)} / {selected.activities.length} 条</span></header><div>{selected.activities.slice(0, 5).map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}{!selected.activities.length && <p className="activity-empty">该流程暂时没有可展示的业务记录。</p>}{selected.activities.length > 5 && <details className="workflow-activity-more"><summary>展开其余 {selected.activities.length - 5} 条记录</summary><div>{selected.activities.slice(5).map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}</div></details>}</div></section>
               </div>
               <footer className="workflow-detail-actions">
                 {manualReportRoute && <a href={manualReportRoute}>工时领取<ArrowUpRight size={14} /></a>}
                 <a className={manualReportRoute ? 'secondary' : ''} href={selected.route}>{selected.entityType === 'production' ? '打开生产执行' : '打开来源业务'}<ArrowUpRight size={14} /></a>
                 {selected.sourceRoute && <a className="secondary" href={selected.sourceRoute}>查看关联资料</a>}
-                {compactContext && <button ref={contextTriggerRef} type="button" onClick={() => setContextOpen(true)}>流程上下文与入口</button>}
               </footer>
             </>}
           </section>
-
-          {compactContext && <button className={`workflow-context-scrim ${contextOpen ? 'open' : ''}`} type="button" aria-label="关闭流程上下文面板" onClick={() => setContextOpen(false)} />}
-          <aside ref={contextRef} className={`workflow-context ${compactContext && contextOpen ? 'open' : ''}`} aria-label="流程上下文和快速入口">
-            <header><div><span>业务流程</span><h2>流程上下文与入口</h2></div>{compactContext && <button type="button" aria-label="关闭流程上下文面板" title="关闭" onClick={() => { setContextOpen(false); window.requestAnimationFrame(() => contextTriggerRef.current?.focus()); }}><X size={18} /></button>}</header>
-            <div className="workflow-context-scroll hm-scroll-region">
-              <section className="workflow-governance"><TimerReset size={20} /><div><strong>一处查看，回源处理</strong><p>流程中心不复制业务数据，避免同一事项出现两套状态。</p></div></section>
-              <section className="workflow-templates"><h3>已接入流程</h3>{templates.map(template => {
-                const Icon = entityIcons[template.key];
-                return <article key={template.key} className={selected?.entityType === template.key ? 'active' : ''}><header><span className={`entity-${template.key}`}><Icon size={16} /></span><div><strong>{template.name}</strong><small>{summary[template.key]} 条真实记录</small></div><a href={template.route} aria-label={`打开${template.name}`} title={`打开${template.name}`}><ArrowUpRight size={14} /></a></header><p>{template.description}</p><ol>{template.steps.map((step, index) => <li key={step}><span>{index + 1}</span>{step}</li>)}</ol></article>;
-              })}</section>
-              <section className="workflow-quick-actions"><h3>新建协同事项</h3><a href="/workspace/issues?action=new"><ShieldCheck size={15} /><div><strong>新建问题</strong><span>记录并跟踪生产、计划或技术问题</span></div><ChevronRight size={14} /></a><a href="/workspace/changes?action=new"><GitPullRequestArrow size={15} /><div><strong>新建变更</strong><span>发起影响评估、实施和验证闭环</span></div><ChevronRight size={14} /></a></section>
-            </div>
-          </aside>
         </div>
       </div>
     </main>

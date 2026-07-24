@@ -7,7 +7,7 @@ import { productTimeTotalMilliseconds } from '@/lib/product-time';
 import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
 import { chinaWeekRange } from '@/lib/production-planning';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
-import { normalizeWorkOrderStage, stageText } from '@/lib/work-orders';
+import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import type {
   ChangeStatus,
   ChangeType,
@@ -46,11 +46,40 @@ export const workflowTemplates: WorkflowTemplateDTO[] = [
   {
     key: 'production',
     name: '生产流转',
-    description: '从计划排程、图纸、仓库、工时和工艺准备，到生产执行与完成归档。',
-    steps: [...PLANNING_FLOW_STEPS],
+    description: '准备校验完成后，严格按照产品已发布的真实工艺路线推进。',
+    steps: ['准备校验', '真实产品工序', '完成归档'],
     route: '/weekly-plan-center',
   },
 ];
+
+export function productionRouteFallback(params: {
+  completed: boolean;
+  started: boolean;
+}): {
+  currentStep: string;
+  nextStep: string | null;
+  steps: WorkflowStepDTO[];
+} {
+  if (params.completed) {
+    return {
+      currentStep: '生产已完成',
+      nextStep: null,
+      steps: [{ key: 'production-completed', label: '生产已完成', state: 'done' }],
+    };
+  }
+  if (params.started) {
+    return {
+      currentStep: '历史工艺待补齐',
+      nextStep: '补齐产品工序',
+      steps: [{ key: 'route-repair-required', label: '历史工艺待补齐', state: 'current' }],
+    };
+  }
+  return {
+    currentStep: '工艺路线待配置',
+    nextStep: '维护产品工序',
+    steps: [{ key: 'route-configuration-required', label: '工艺路线待配置', state: 'current' }],
+  };
+}
 
 function steps(labels: string[], currentIndex: number, closed = false): WorkflowStepDTO[] {
   return labels.map((label, index) => ({
@@ -638,7 +667,6 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
 
   const issueLabels = ['待受理', '处理中', '待验证', '已关闭'];
   const changeLabels = ['草稿', '待评估', '执行中', '待验证', '已关闭'];
-  const productionLabels = ['未发图', '在前端', '在后端', '已完成'];
   const items: WorkflowItemDTO[] = [];
 
   for (const issue of issues) {
@@ -710,13 +738,22 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     const actualRouteState = reportableRoute && mappedRouteSteps.length > 0
       ? resolveWorkflowRouteState(reportableRoute, mappedRouteSteps, workOrder?.completedAt)
       : null;
-    const flowSteps = actualRouteState
-      ? mappedRouteSteps
-      : planningFlowStepStates(facts).map((state, index): WorkflowStepDTO => ({
-        key: String(index),
+    const preparationSteps = planningFlowStepStates(facts)
+      .slice(0, 6)
+      .map((state, index): WorkflowStepDTO => ({
+        key: `preparation-${index}`,
         label: PLANNING_FLOW_STEPS[index],
         state,
       }));
+    const fallbackRoute = productionRouteFallback({
+      completed: flow.status === 'completed',
+      started: Boolean(
+        workOrder?.startedAt
+        || workOrder?.processRoute?.startedAt
+        || workOrder?.processRoute?.status === 'in_progress',
+      ),
+    });
+    const flowSteps = actualRouteState ? mappedRouteSteps : fallbackRoute.steps;
     const drawingRoute = order.drawingLibraryItemId
       ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`
       : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`;
@@ -757,7 +794,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     const progressActivities = (workOrder?.progressLogs || []).map(item => activity(
       item.id,
       'production_progress',
-      item.remark || `生产状态更新为${stageText[normalizeWorkOrderStage(item.stage) || 'not_issued']}`,
+      item.remark || '生产状态已更新',
       item.createdBy,
       item.createdAt,
     ));
@@ -778,8 +815,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       title: order.productName,
       subtitle: `${order.customerName} · 第 ${batch.batchNo} 批 · ${batch.quantity.toLocaleString()} 件`,
       processStatus: actualRouteState?.processStatus || flow.workflowStatus,
-      currentStep: actualRouteState?.currentStep || flow.label,
-      nextStep: actualRouteState?.nextStep ?? flow.nextStep,
+      currentStep: actualRouteState?.currentStep || fallbackRoute.currentStep,
+      nextStep: actualRouteState?.nextStep ?? fallbackRoute.nextStep,
       priority: order.priority === 'insert' || order.priority === 'urgent'
         ? 'urgent'
         : order.priority === 'high'
@@ -802,6 +839,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       productRemark: workOrder?.processRoute?.productTimeProfile?.remark || null,
       orderRemark: workOrder?.remark || order.remark || null,
       drawingLibraryItemId: order.drawingLibraryItemId,
+      preparationSteps,
       steps: flowSteps,
       activities: productionActivities,
     });
@@ -811,7 +849,6 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
     const quantitySummary = getProductionQuantitySummary(order);
     const targetQuantity = quantitySummary.targetQty;
-    const index = Math.max(0, ['not_issued', 'frontend', 'backend', 'completed'].indexOf(stage));
     const stageClosed = stage === 'completed';
     const dueAt = order.plannedAt?.toISOString() || null;
     const reportableRoute = order.processRoute?.routeSource === 'product_time_profile'
@@ -825,6 +862,15 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       ? resolveWorkflowRouteState(reportableRoute, mappedRouteSteps, order.completedAt)
       : null;
     const closed = actualRouteState?.closed ?? stageClosed;
+    const fallbackRoute = productionRouteFallback({
+      completed: stageClosed,
+      started: Boolean(
+        order.processRoute?.startedAt
+        || order.processRoute?.status === 'in_progress'
+        || stage === 'frontend'
+        || stage === 'backend',
+      ),
+    });
     const targetRoute = order.processRoute?.routeSource === 'product_time_pending'
       ? `/workspace/product-times${order.drawingLibraryItemId ? `?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : ''}`
       : `/production?workOrderId=${encodeURIComponent(order.id)}`;
@@ -832,8 +878,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       id: `production:${order.id}`, entityId: order.id, entityType: 'production', workOrderId: order.id, code: order.specification || order.code,
       title: order.productName, subtitle: `${order.customerName || '客户未设置'} · 内部编号 ${order.code}`,
       processStatus: actualRouteState?.processStatus || processStatus(stage, 'production'),
-      currentStep: actualRouteState?.currentStep || stageText[stage],
-      nextStep: actualRouteState?.nextStep ?? nextLabel(productionLabels, index),
+      currentStep: actualRouteState?.currentStep || fallbackRoute.currentStep,
+      nextStep: actualRouteState?.nextStep ?? fallbackRoute.nextStep,
       priority: (order.priority === 'urgent' || order.priority === 'high' ? order.priority : 'normal'), owner: order.productionOwner,
       dueAt, updatedAt: order.updatedAt.toISOString(), route: targetRoute,
       sourceRoute: order.drawingLibraryItemId
@@ -851,9 +897,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       productRemark: order.processRoute?.productTimeProfile?.remark || null,
       orderRemark: order.remark || null,
       drawingLibraryItemId: order.drawingLibraryItemId,
-      steps: actualRouteState
-        ? mappedRouteSteps
-        : steps(productionLabels, index, closed),
+      steps: actualRouteState ? mappedRouteSteps : fallbackRoute.steps,
       activities: order.processRoute?.activities.length
         ? order.processRoute.activities.map(item => activity(
           item.id,
@@ -862,7 +906,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
           item.actor?.displayName || item.actor?.username,
           item.createdAt,
         ))
-        : order.progressLogs.map(item => activity(item.id, 'production_progress', item.remark || `进入${stageText[normalizeWorkOrderStage(item.stage) || stage]}`, item.createdBy, item.createdAt)),
+        : order.progressLogs.map(item => activity(item.id, 'production_progress', item.remark || '生产状态已更新', item.createdBy, item.createdAt)),
     });
   }
 

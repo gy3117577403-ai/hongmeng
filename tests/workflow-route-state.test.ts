@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { resolveWorkflowRouteState } from '../lib/workflows';
+import { productionRouteFallback, resolveWorkflowRouteState } from '../lib/workflows';
 import type { WorkflowStepDTO } from '../types';
 
 const completedSteps: WorkflowStepDTO[] = [{
@@ -37,4 +37,20 @@ test('workflow closes only after the aggregate work order completes', () => {
     nextStep: null,
     closed: true,
   });
+});
+
+test('production without a published route never falls back to legacy front or back stages', () => {
+  const pending = productionRouteFallback({ completed: false, started: false });
+  const historical = productionRouteFallback({ completed: false, started: true });
+  const completed = productionRouteFallback({ completed: true, started: true });
+  const labels = [...pending.steps, ...historical.steps, ...completed.steps].map(step => step.label);
+
+  assert.deepEqual(pending, {
+    currentStep: '工艺路线待配置',
+    nextStep: '维护产品工序',
+    steps: [{ key: 'route-configuration-required', label: '工艺路线待配置', state: 'current' }],
+  });
+  assert.equal(historical.currentStep, '历史工艺待补齐');
+  assert.equal(completed.currentStep, '生产已完成');
+  assert.equal(labels.some(label => ['未发图', '在前端', '在后端'].includes(label)), false);
 });
