@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, Info, ListChecks, PanelRightClose, PanelRightOpen, Pencil, RefreshCw, Rows3, Search, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, RefreshCw, Rows3, Search, Users, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
@@ -829,6 +829,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const drawingButtonRef = useRef<HTMLButtonElement | null>(null);
   const completionRequestRef = useRef(0);
   const boardShellRef = useRef<HTMLDivElement | null>(null);
+  const dispatchLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const pendingRestoreRef = useRef<ProductionExecutionViewState | null>(null);
   const returnKeyRef = useRef('');
   const requestRef = useRef(0);
@@ -1146,16 +1147,33 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const activeFilterCount = filterChips.length;
 
   const dispatchAllItems = useMemo(() => (board?.items || []).map(primaryCardView), [board]);
-  const dispatchTotalPages = Math.max(1, Math.ceil(dispatchAllItems.length / dispatchPageSize));
+  const dispatchBatchCount = Math.max(1, Math.ceil(dispatchAllItems.length / dispatchPageSize));
   const dispatchItems = useMemo(
-    () => dispatchAllItems.slice((page - 1) * dispatchPageSize, page * dispatchPageSize),
+    () => dispatchAllItems.slice(0, page * dispatchPageSize),
     [dispatchAllItems, dispatchPageSize, page],
   );
+  const dispatchHasMore = dispatchItems.length < dispatchAllItems.length;
 
   useEffect(() => {
-    if (page <= dispatchTotalPages) return;
-    setPage(dispatchTotalPages);
-  }, [dispatchTotalPages, page]);
+    if (page <= dispatchBatchCount) return;
+    setPage(dispatchBatchCount);
+  }, [dispatchBatchCount, page]);
+
+  useEffect(() => {
+    const root = boardShellRef.current;
+    const target = dispatchLoadMoreRef.current;
+    if (!root || !target || loading || !dispatchHasMore) return undefined;
+    const observer = new IntersectionObserver(entries => {
+      if (!entries[0]?.isIntersecting) return;
+      setPage(current => Math.min(dispatchBatchCount, current + 1));
+    }, {
+      root,
+      rootMargin: '0px 0px 240px',
+      threshold: 0.01,
+    });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [dispatchBatchCount, dispatchHasMore, dispatchItems.length, loading]);
 
   const dispatchAlertItems = useMemo<DispatchAlertItem[]>(() => (board?.items || [])
     .filter(order => order.stage !== 'completed')
@@ -1850,7 +1868,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       : `${dateText(summary.weekStartDate)} - ${dateText(summary.weekEndDate)}`;
 
   return (
-    <main className={`production-page hm-production-workbench hm-workbench-root hm-workbench-navigation-overlay production-dispatch-density-${density}`}>
+    <main className={`production-page hm-production-workbench hm-workbench-root production-dispatch-density-${density}`}>
       <AppWorkbenchHeader
         user={user}
         activeHref="/production"
@@ -1931,7 +1949,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         <div className={`production-dispatch-layout ${insightsOpen ? 'rail-open' : ''}`.trim()}>
           <section className="production-dispatch-list-panel" aria-label="生产工单调度列表">
             <header className="production-dispatch-list-head">
-              <span>产品信息</span><span>当前工序</span><span>下一步工序</span><span>完成进度</span><span>交期 / 风险</span><span>现场操作</span>
+              <span>产品信息</span><span>当前工序</span><span>工艺路线</span><span>完成进度</span><span>交期 / 风险</span><span>现场操作</span>
             </header>
             <div ref={boardShellRef} className="production-dispatch-list hm-scroll-region" tabIndex={0} aria-label={`生产工单列表，共 ${board?.pagination.total || 0} 项`}>
               {dispatchItems.map(item => <ProductionDispatchRow
@@ -1952,32 +1970,12 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
               />)}
               {loading && <DispatchRowSkeleton count={dispatchPageSize} />}
               {!loading && !board?.items.length && <div className="production-dispatch-empty"><Rows3 size={28} aria-hidden="true" /><strong>当前没有匹配工单</strong><span>调整周范围或筛选条件后重试。</span></div>}
+              {!loading && dispatchAllItems.length > 0 && <div ref={dispatchLoadMoreRef} className={`production-dispatch-load-more ${dispatchHasMore ? 'loading' : 'complete'}`} aria-live="polite">
+                {dispatchHasMore
+                  ? <><Loader2 size={14} aria-hidden="true" /><span>正在加载更多</span></>
+                  : <><CheckCircle2 size={14} aria-hidden="true" /><span>无更多数据 · 共 {dispatchAllItems.length} 单</span></>}
+              </div>}
             </div>
-            {board && dispatchAllItems.length > 0 && <div className="production-pagination production-dispatch-pagination">
-              <span>共 {dispatchAllItems.length} 单</span>
-              <label>
-                <span>显示范围</span>
-                <select aria-label="选择显示范围" value={page} onChange={event => setPage(Number(event.target.value))}>
-                  {Array.from({ length: dispatchTotalPages }, (_, index) => {
-                    const optionPage = index + 1;
-                    const start = index * dispatchPageSize + 1;
-                    const end = Math.min(dispatchAllItems.length, optionPage * dispatchPageSize);
-                    return <option value={optionPage} key={optionPage}>{start}–{end}</option>;
-                  })}
-                </select>
-              </label>
-              <label>
-                <span>每屏</span>
-                <select aria-label="选择每屏工单数" value={dispatchPageSize} onChange={event => {
-                  setDispatchPageSize(Number(event.target.value));
-                  setPage(1);
-                }}>
-                  <option value={8}>8 单</option>
-                  <option value={12}>12 单</option>
-                  <option value={16}>16 单</option>
-                </select>
-              </label>
-            </div>}
           </section>
 
           {insightsOpen && <button className="production-dispatch-scrim" type="button" aria-label="关闭调度侧栏" onClick={closeInsights} />}
@@ -2109,6 +2107,10 @@ function ProductionDispatchRow({
   const nextProcess = nextProcessName(order);
   const upcomingSteps = nextRouteSteps(order);
   const routeProgress = route?.progress ?? 0;
+  const routeSteps = route?.steps || [];
+  const activeRouteIndex = routeSteps.findIndex(step => step.status === 'current');
+  const routePreviewStart = Math.max(0, Math.min(activeRouteIndex > 0 ? activeRouteIndex - 1 : 0, Math.max(0, routeSteps.length - 4)));
+  const routePreview = routeSteps.slice(routePreviewStart, routePreviewStart + 4);
   const unitLabel = route?.currentStep?.unitLabel || route?.steps[0]?.unitLabel || '件';
   const routeNeedsMaintenance = !route || route.status === 'draft';
   const primaryText = readOnly
@@ -2165,8 +2167,7 @@ function ProductionDispatchRow({
     </button>
 
     <button className="production-dispatch-process next" type="button" title="进入流程中心查看下一工序" onClick={() => openWorkflow(order, displayStage)}>
-      <ArrowRight size={16} aria-hidden="true" />
-      <span><b>{nextProcess}</b><small>{upcomingSteps.length
+      <span className="production-dispatch-route-summary"><b><ArrowRight size={13} aria-hidden="true" />{nextProcess}</b><small>{upcomingSteps.length
         ? `${upcomingSteps.length} 道待衔接`
         : routeNeedsMaintenance
           ? '等待工序发布'
@@ -2177,6 +2178,11 @@ function ProductionDispatchRow({
               : route?.currentStep
                 ? '当前为末道工序'
                 : '等待当前工序开始'}</small></span>
+      <span className="production-dispatch-route-track" aria-label={routePreview.length ? `工艺路线：${routePreview.map(step => step.processName).join('、')}` : '工艺路线待维护'}>
+        {routePreview.length
+          ? routePreview.map(step => <i className={`state-${step.status}`} title={`${step.processName} · ${step.status === 'completed' ? '已完成' : step.status === 'current' ? '当前工序' : '待处理'}`} key={step.id}><span /><em>{step.processName}</em></i>)
+          : <i className="state-pending"><span /><em>待维护</em></i>}
+      </span>
     </button>
 
     <div className="production-dispatch-progress" title="工单累计完成进度">
