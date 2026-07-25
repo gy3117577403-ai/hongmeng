@@ -1,4 +1,11 @@
+import { MaterialFollowUpStatus, ProcessLaborPoolStatus } from '@prisma/client';
+import { parseWorkDate } from '@/lib/attendance';
 import { isInvalidSpecification } from '@/lib/drawing-library';
+import {
+  MATERIAL_FOLLOW_UP_ACTIVE_STATUSES,
+  materialFollowUpRisk,
+  materialFollowUpStatusText,
+} from '@/lib/material-follow-up';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
 import {
   chinaDayBounds,
@@ -12,6 +19,7 @@ import {
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
 import { issueStatusLabels } from '@/lib/issues';
 import { prisma } from '@/lib/prisma';
+import { warehouseExceptionText, warehouseStatusText } from '@/lib/warehouse-material';
 import { normalizeWorkOrderStage, stageText } from '@/lib/work-orders';
 import type {
   HomeActionItem,
@@ -22,6 +30,9 @@ import type {
   HomePriority,
   HomeTimelineItem,
   HomeTone,
+  HomeWorkstream,
+  HomeWorkstreamItem,
+  HomeWorkstreamRisk,
 } from '@/types/home-dashboard';
 
 type ActionDefinition = {
@@ -215,6 +226,202 @@ function collaboration(id: string, label: string, value: number, description: st
   return { id, label, value, description, route, tone };
 }
 
+type WarehouseHomeTask = {
+  id: string;
+  status: string;
+  exceptionType: string | null;
+  expectedAt: Date | null;
+  updatedAt: Date;
+  workOrder: {
+    code: string;
+    customerName: string | null;
+    specification: string | null;
+    productName: string;
+    plannedAt: Date | null;
+  };
+};
+
+type MaterialHomeTask = {
+  id: string;
+  status: MaterialFollowUpStatus;
+  ownerId: string | null;
+  expectedAt: Date | null;
+  updatedAt: Date;
+  owner: { displayName: string; username: string } | null;
+  warehouseTask: {
+    workOrder: {
+      code: string;
+      customerName: string | null;
+      specification: string | null;
+      productName: string;
+    };
+  };
+};
+
+type LaborHomeTask = {
+  id: string;
+  status: ProcessLaborPoolStatus;
+  remainingQty: number;
+  workOrder: {
+    code: string;
+    customerName: string | null;
+    specification: string | null;
+    productName: string;
+  };
+  step: { processName: string };
+};
+
+const workstreamRiskOrder: Record<HomeWorkstreamRisk, number> = {
+  urgent: 0,
+  attention: 1,
+  normal: 2,
+};
+
+function orderWorkstreamItems(items: HomeWorkstreamItem[]): HomeWorkstreamItem[] {
+  return [...items].sort((first, second) => workstreamRiskOrder[first.risk] - workstreamRiskOrder[second.risk]
+    || first.meta.localeCompare(second.meta, 'zh-CN')
+    || first.title.localeCompare(second.title, 'zh-CN'));
+}
+
+function workstream(
+  id: HomeWorkstream['id'],
+  label: string,
+  count: number,
+  riskCount: number,
+  description: string,
+  route: string,
+  tone: HomeTone,
+  items: HomeWorkstreamItem[],
+): HomeWorkstream {
+  return { id, label, count, riskCount, description, route, tone, items: orderWorkstreamItems(items).slice(0, 3) };
+}
+
+function specificationTitle(record: {
+  code: string;
+  specification: string | null;
+  productName: string;
+}): string {
+  return text(record.specification) || text(record.productName) || text(record.code) || '产品未设置';
+}
+
+function warehouseWorkstream(tasks: WarehouseHomeTask[], now: Date): HomeWorkstream {
+  const todayStart = parseWorkDate(ymd(now) || '').value;
+  const exceptionCount = tasks.filter(task => task.status === 'exception').length;
+  const pendingCount = tasks.length - exceptionCount;
+  const items = tasks.map<HomeWorkstreamItem>(task => {
+    const overdue = task.status === 'exception' && Boolean(task.expectedAt && task.expectedAt < todayStart);
+    const exceptionLabel = task.exceptionType
+      ? warehouseExceptionText[task.exceptionType as keyof typeof warehouseExceptionText] || '仓库异常'
+      : '仓库异常';
+    const customer = text(task.workOrder.customerName) || '客户未设置';
+    return {
+      id: task.id,
+      title: specificationTitle(task.workOrder),
+      subtitle: `${customer} · ${task.workOrder.code}`,
+      status: task.status === 'exception' ? exceptionLabel : warehouseStatusText.pending,
+      meta: task.expectedAt
+        ? `${overdue ? '预计到料已逾期' : '预计到料'} ${shortDate(task.expectedAt)}`
+        : task.workOrder.plannedAt ? `计划 ${shortDate(task.workOrder.plannedAt)}` : `更新 ${shortDate(task.updatedAt)}`,
+      targetRoute: `/workspace/warehouse?taskId=${encodeURIComponent(task.id)}`,
+      risk: overdue ? 'urgent' : task.status === 'exception' ? 'attention' : 'normal',
+    };
+  });
+  return workstream(
+    'warehouse',
+    '仓库配料',
+    tasks.length,
+    exceptionCount,
+    `${pendingCount} 个待配料 · ${exceptionCount} 个异常`,
+    '/workspace/warehouse',
+    'blue',
+    items,
+  );
+}
+
+function materialWorkstream(tasks: MaterialHomeTask[], now: Date): HomeWorkstream {
+  let overdueCount = 0;
+  let unassignedCount = 0;
+  const items = tasks.map<HomeWorkstreamItem>(task => {
+    const risk = materialFollowUpRisk(task.status, task.ownerId, task.expectedAt, now);
+    if (risk.risk === 'overdue') overdueCount += 1;
+    if (risk.risk === 'unassigned') unassignedCount += 1;
+    const workOrder = task.warehouseTask.workOrder;
+    const owner = task.owner?.displayName || task.owner?.username || '待认领';
+    return {
+      id: task.id,
+      title: specificationTitle(workOrder),
+      subtitle: `${text(workOrder.customerName) || '客户未设置'} · ${workOrder.code}`,
+      status: materialFollowUpStatusText[task.status],
+      meta: task.expectedAt
+        ? `${risk.risk === 'overdue' ? '已逾期' : '预计'} ${shortDate(task.expectedAt)} · ${owner}`
+        : `${owner} · 更新 ${shortDate(task.updatedAt)}`,
+      targetRoute: `/workspace/procurement?taskId=${encodeURIComponent(task.id)}`,
+      risk: risk.risk === 'overdue' ? 'urgent' : risk.risk === 'unassigned' || risk.risk === 'due_soon' ? 'attention' : 'normal',
+    };
+  });
+  return workstream(
+    'material',
+    '缺料跟进',
+    tasks.length,
+    overdueCount + unassignedCount,
+    `${unassignedCount} 个待认领 · ${overdueCount} 个逾期`,
+    '/workspace/procurement',
+    'orange',
+    items,
+  );
+}
+
+function laborWorkstream(tasks: LaborHomeTask[], workDateKey: string): HomeWorkstream {
+  const lockedCount = tasks.filter(task => task.status === ProcessLaborPoolStatus.LOCKED).length;
+  const remainingQty = tasks.reduce((total, task) => total + Math.max(task.remainingQty, 0), 0);
+  const items = tasks.map<HomeWorkstreamItem>(task => {
+    const workOrder = task.workOrder;
+    const locked = task.status === ProcessLaborPoolStatus.LOCKED;
+    return {
+      id: task.id,
+      title: `${specificationTitle(workOrder)} · ${task.step.processName}`,
+      subtitle: `${text(workOrder.customerName) || '客户未设置'} · ${workOrder.code}`,
+      status: locked ? '工时标准待补' : '工时待领取',
+      meta: locked ? '补全标准后可领取' : `剩余 ${task.remainingQty.toLocaleString('zh-CN')} 件`,
+      targetRoute: `/workspace/reports?view=labor&workDate=${encodeURIComponent(workDateKey)}&poolId=${encodeURIComponent(task.id)}`,
+      risk: locked ? 'attention' : 'normal',
+    };
+  });
+  return workstream(
+    'labor',
+    '今日工时',
+    tasks.length,
+    lockedCount,
+    `${remainingQty.toLocaleString('zh-CN')} 件待领取 · ${lockedCount} 个标准待补`,
+    `/workspace/reports?view=labor&workDate=${encodeURIComponent(workDateKey)}`,
+    'green',
+    items,
+  );
+}
+
+function productionWorkstream(actions: HomeActionItem[]): HomeWorkstream {
+  const riskCount = actions.filter(item => item.priority === 'urgent' || item.priority === 'high').length;
+  const items = actions.map<HomeWorkstreamItem>(item => ({
+    id: item.id,
+    title: item.title,
+    subtitle: item.subtitle,
+    status: item.status,
+    meta: item.dateLabel,
+    targetRoute: item.targetRoute,
+    risk: item.priority === 'urgent' ? 'urgent' : item.priority === 'high' ? 'attention' : 'normal',
+  }));
+  return workstream(
+    'production',
+    '生产执行',
+    actions.length,
+    riskCount,
+    `${riskCount} 个优先事项 · ${Math.max(actions.length - riskCount, 0)} 个常规事项`,
+    '/production',
+    'yellow',
+    items,
+  );
+}
+
 function emptyKpis(): HomeKpi[] {
   return [
     { id: 'weekly', label: '本周计划工单', value: null, description: '暂不可用', route: '/weekly-plan-center', tone: 'orange', icon: '周' },
@@ -223,6 +430,15 @@ function emptyKpis(): HomeKpi[] {
     { id: 'drawing', label: '图纸待确认', value: null, description: '暂不可用', route: '/production', tone: 'yellow', icon: '图' },
     { id: 'material', label: '仓库异常', value: null, description: '暂不可用', route: '/production', tone: 'yellow', icon: '料' },
     { id: 'tail', label: '尾数未清', value: null, description: '暂不可用', route: '/production', tone: 'slate', icon: '尾' },
+  ];
+}
+
+function emptyWorkstreams(): HomeWorkstream[] {
+  return [
+    workstream('production', '生产执行', 0, 0, '暂无生产待办', '/production', 'yellow', []),
+    workstream('warehouse', '仓库配料', 0, 0, '暂无待配料任务', '/workspace/warehouse', 'blue', []),
+    workstream('material', '缺料跟进', 0, 0, '暂无缺料反馈', '/workspace/procurement', 'orange', []),
+    workstream('labor', '今日工时', 0, 0, '暂无待领取工时', '/workspace/reports?view=labor', 'green', []),
   ];
 }
 
@@ -237,6 +453,7 @@ export function emptyHomeDashboardData(message: string, now = new Date()): HomeD
     error: message,
     kpis: emptyKpis(),
     actionItems: [],
+    workstreams: emptyWorkstreams(),
     todayNodes: [],
     issues: [],
     planChart: { total: 0, completed: 0, inProgress: 0, notStarted: 0, overdue: 0, executionRate: null },
@@ -248,13 +465,89 @@ export function emptyHomeDashboardData(message: string, now = new Date()): HomeD
 
 export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboardData> {
   const week = await resolveProductionWeek();
-  const [orders, persistedIssues] = await Promise.all([
+  const workDateKey = ymd(now) || now.toISOString().slice(0, 10);
+  const workDate = parseWorkDate(workDateKey).value;
+  const [orders, persistedIssues, warehouseTasks, materialTasks, laborPools] = await Promise.all([
     loadProductionOrders(week),
     prisma.issue.findMany({
       where: { deletedAt: null, status: { not: 'closed' } },
       include: { workOrder: { select: { id: true, customerName: true, specification: true, code: true } } },
       orderBy: [{ priority: 'asc' }, { updatedAt: 'desc' }],
       take: 20,
+    }),
+    prisma.warehouseMaterialTask.findMany({
+      where: {
+        status: { in: ['pending', 'exception'] },
+        workOrder: { deletedAt: null, planActive: true },
+      },
+      select: {
+        id: true,
+        status: true,
+        exceptionType: true,
+        expectedAt: true,
+        updatedAt: true,
+        workOrder: {
+          select: {
+            code: true,
+            customerName: true,
+            specification: true,
+            productName: true,
+            plannedAt: true,
+          },
+        },
+      },
+      orderBy: [{ expectedAt: 'asc' }, { updatedAt: 'desc' }, { id: 'asc' }],
+    }),
+    prisma.materialFollowUpTask.findMany({
+      where: {
+        status: { in: [...MATERIAL_FOLLOW_UP_ACTIVE_STATUSES] },
+        warehouseTask: { workOrder: { deletedAt: null } },
+      },
+      select: {
+        id: true,
+        status: true,
+        ownerId: true,
+        expectedAt: true,
+        updatedAt: true,
+        owner: { select: { displayName: true, username: true } },
+        warehouseTask: {
+          select: {
+            workOrder: {
+              select: {
+                code: true,
+                customerName: true,
+                specification: true,
+                productName: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ expectedAt: 'asc' }, { updatedAt: 'desc' }, { id: 'asc' }],
+    }),
+    prisma.processLaborPool.findMany({
+      where: {
+        workDate,
+        OR: [
+          { status: { in: [ProcessLaborPoolStatus.OPEN, ProcessLaborPoolStatus.PARTIAL] }, remainingQty: { gt: 0 } },
+          { status: ProcessLaborPoolStatus.LOCKED, standardSource: 'pending_standard' },
+        ],
+      },
+      select: {
+        id: true,
+        status: true,
+        remainingQty: true,
+        workOrder: {
+          select: {
+            code: true,
+            customerName: true,
+            specification: true,
+            productName: true,
+          },
+        },
+        step: { select: { processName: true } },
+      },
+      orderBy: [{ remainingQty: 'desc' }, { updatedAt: 'asc' }, { id: 'asc' }],
     }),
   ]);
   orders.sort((first, second) => compareProductionOrders(first, second, now));
@@ -331,6 +624,12 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
     { id: 'material', label: '仓库异常', value: materialIssueCount, description: '仅统计未解决仓库异常', route: '/production?view=exceptions&quick=material', tone: 'yellow', icon: '料' },
     { id: 'tail', label: '尾数未清', value: tailRemainingCount, description: '按现有数量告警口径', route: '/production?view=exceptions&quick=tail_remaining', tone: 'slate', icon: '尾' },
   ];
+  const workstreams: HomeWorkstream[] = [
+    productionWorkstream(allActions),
+    warehouseWorkstream(warehouseTasks, now),
+    materialWorkstream(materialTasks, now),
+    laborWorkstream(laborPools, workDateKey),
+  ];
 
   return {
     generatedAt: now.toISOString(),
@@ -342,6 +641,7 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
     error: null,
     kpis,
     actionItems: allActions.slice(0, 8),
+    workstreams,
     todayNodes: todayNodes.slice(0, 6),
     issues: persistedIssueActions.slice(0, 5),
     planChart: { total, completed: completedOrders, inProgress: inProgressOrders, notStarted: notStartedOrders, overdue: overdueCount, executionRate },

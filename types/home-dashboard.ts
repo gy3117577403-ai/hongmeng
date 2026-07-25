@@ -2,6 +2,31 @@ export type HomeTone = 'orange' | 'blue' | 'green' | 'yellow' | 'red' | 'slate';
 
 export type HomePriority = 'urgent' | 'high' | 'normal';
 
+export type HomeWorkstreamId = 'production' | 'warehouse' | 'material' | 'labor';
+
+export type HomeWorkstreamRisk = 'urgent' | 'attention' | 'normal';
+
+export type HomeWorkstreamItem = {
+  id: string;
+  title: string;
+  subtitle: string;
+  status: string;
+  meta: string;
+  targetRoute: string;
+  risk: HomeWorkstreamRisk;
+};
+
+export type HomeWorkstream = {
+  id: HomeWorkstreamId;
+  label: string;
+  count: number;
+  riskCount: number;
+  description: string;
+  route: string;
+  tone: HomeTone;
+  items: HomeWorkstreamItem[];
+};
+
 export type HomeKpi = {
   id: string;
   label: string;
@@ -73,6 +98,7 @@ export type HomeDashboardData = {
   error: string | null;
   kpis: HomeKpi[];
   actionItems: HomeActionItem[];
+  workstreams: HomeWorkstream[];
   todayNodes: HomeTimelineItem[];
   issues: HomeActionItem[];
   planChart: HomePlanChart;

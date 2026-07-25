@@ -14,7 +14,9 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleHelp,
+  ClipboardList,
   Clock3,
+  Factory,
   FileCheck2,
   FileText,
   FolderKanban,
@@ -25,6 +27,7 @@ import {
   PackageCheck,
   RefreshCw,
   Search,
+  TimerReset,
   Wrench,
   Warehouse,
   X,
@@ -33,7 +36,14 @@ import {
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { PortalMenu } from '@/components/PortalMenu';
 import type { CurrentUserDTO } from '@/types';
-import type { HomeActionItem, HomeDashboardData, HomeDistributionItem, HomeTone } from '@/types/home-dashboard';
+import type {
+  HomeActionItem,
+  HomeDashboardData,
+  HomeDistributionItem,
+  HomeTone,
+  HomeWorkstream,
+  HomeWorkstreamId,
+} from '@/types/home-dashboard';
 
 type CompanyHomeDashboardProps = {
   user: CurrentUserDTO;
@@ -97,6 +107,13 @@ const kpiIcons: Record<string, LucideIcon> = {
   drawing: FileCheck2,
   material: PackageCheck,
   tail: ListChecks,
+};
+
+const workstreamIcons: Record<HomeWorkstreamId, LucideIcon> = {
+  production: Factory,
+  warehouse: Warehouse,
+  material: ClipboardList,
+  labor: TimerReset,
 };
 
 function decodedName(value: string): string {
@@ -230,6 +247,53 @@ function DistributionChart({ items }: { items: HomeDistributionItem[] }) {
   );
 }
 
+function TodayWorkstreamBoard({ workstreams }: { workstreams: HomeWorkstream[] }) {
+  const total = workstreams.reduce((sum, item) => sum + item.count, 0);
+  const risk = workstreams.reduce((sum, item) => sum + item.riskCount, 0);
+  return (
+    <section className="hm-home-today-hub" aria-labelledby="hm-home-today-title">
+      <header className="hm-home-today-heading">
+        <div>
+          <span>实时协同</span>
+          <h2 id="hm-home-today-title">今日任务总览</h2>
+          <p>生产、仓库、缺料与工时使用原模块实时数据，点击任务直接进入处理位置。</p>
+        </div>
+        <dl>
+          <div><dt>待处理</dt><dd>{total}</dd></div>
+          <div className={risk > 0 ? 'has-risk' : ''}><dt>需优先</dt><dd>{risk}</dd></div>
+        </dl>
+      </header>
+      <div className="hm-home-workstream-grid">
+        {workstreams.map(stream => {
+          const Icon = workstreamIcons[stream.id];
+          return (
+            <article className={`hm-home-workstream tone-${stream.tone}`} key={stream.id}>
+              <header>
+                <span className="hm-home-workstream-icon" aria-hidden="true"><Icon size={19} /></span>
+                <div><h3>{stream.label}</h3><p>{stream.description}</p></div>
+                <strong>{stream.count}</strong>
+                <a href={stream.route} aria-label={`查看全部${stream.label}`}>全部<ChevronRight size={13} aria-hidden="true" /></a>
+              </header>
+              <div className="hm-home-workstream-list">
+                {!stream.items.length ? (
+                  <div className="hm-home-workstream-empty"><CheckCircle2 size={15} aria-hidden="true" />当前没有待处理任务</div>
+                ) : stream.items.map(item => (
+                  <a className={`hm-home-workstream-item risk-${item.risk}`} href={item.targetRoute} key={item.id}>
+                    <span className="hm-home-workstream-status">{item.status}</span>
+                    <div><strong title={item.title}>{item.title}</strong><p title={item.subtitle}>{item.subtitle}</p></div>
+                    <small>{item.meta}</small>
+                    <ChevronRight size={14} aria-hidden="true" />
+                  </a>
+                ))}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboardProps) {
   const router = useRouter();
   const [utilityPanel, setUtilityPanel] = useState<UtilityPanel>(null);
@@ -327,6 +391,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const donutStyle = { '--hm-home-rate': `${data.planChart.executionRate || 0}%` } as CSSProperties;
   const hasOperationalData = data.planChart.total > 0
     || data.actionItems.length > 0
+    || data.workstreams.some(stream => stream.count > 0)
     || data.todayNodes.length > 0
     || data.issues.length > 0
     || data.kpis.some(kpi => typeof kpi.value === 'number' && kpi.value > 0);
@@ -420,6 +485,8 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
               );
             })}
           </section>
+
+          <TodayWorkstreamBoard workstreams={data.workstreams} />
 
           <section className={`hm-home-primary-grid ${hasOperationalData ? '' : 'is-empty-state'}`.trim()}>
             <article className="hm-home-panel hm-home-actions-panel">
