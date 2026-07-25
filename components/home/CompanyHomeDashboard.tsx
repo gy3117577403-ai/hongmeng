@@ -1,34 +1,29 @@
 'use client';
 
-import Image from 'next/image';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  Activity,
   AlertTriangle,
+  ArrowUpRight,
   BarChart3,
   Bell,
-  BookOpen,
   Boxes,
   CalendarDays,
   CheckCircle2,
   ChevronRight,
   CircleHelp,
-  ClipboardList,
   Clock3,
   Factory,
   FileCheck2,
-  FileText,
-  FolderKanban,
-  GitPullRequestArrow,
-  LayoutDashboard,
-  ListChecks,
+  Gauge,
+  Layers3,
   MessageSquareText,
   PackageCheck,
   RefreshCw,
   Search,
   TimerReset,
-  Wrench,
   Warehouse,
   X,
   type LucideIcon,
@@ -37,7 +32,6 @@ import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { PortalMenu } from '@/components/PortalMenu';
 import type { CurrentUserDTO } from '@/types';
 import type {
-  HomeActionItem,
   HomeDashboardData,
   HomeDistributionItem,
   HomeTone,
@@ -83,22 +77,6 @@ type SearchPayload = {
 type SearchResponse = SearchPayload & { ok?: boolean; error?: string; data?: SearchPayload };
 
 type UtilityPanel = 'notifications' | 'messages' | 'help' | null;
-const quickLinks: Array<{ href: string; label: string; icon: LucideIcon; tone: HomeTone; planned?: boolean }> = [
-  { href: '/workspace/issues?action=new', label: '新建问题', icon: AlertTriangle, tone: 'orange' },
-  { href: '/production', label: '生产执行', icon: LayoutDashboard, tone: 'blue' },
-  { href: '/weekly-plan-center', label: '查看计划', icon: CalendarDays, tone: 'green' },
-  { href: '/drawing-library', label: '图纸资料', icon: FolderKanban, tone: 'yellow' },
-  { href: '/connector-assembly-manuals', label: '工艺文件', icon: BookOpen, tone: 'slate' },
-  { href: '/workspace/changes', label: '技术变更', icon: GitPullRequestArrow, tone: 'orange' },
-  { href: '/connector-parameters', label: '连接器参数', icon: Boxes, tone: 'blue' },
-  { href: '/workspace/warehouse', label: '仓库配料', icon: Warehouse, tone: 'yellow' },
-  { href: '/workspace/product-times', label: '产品工序与工时', icon: Clock3, tone: 'orange' },
-  { href: '/workspace/knowledge', label: '知识库', icon: BookOpen, tone: 'slate' },
-  { href: '/workspace/more', label: '更多功能', icon: Wrench, tone: 'slate', planned: true },
-];
-
-const activeQuickLinks = quickLinks.filter(link => !link.planned);
-const plannedQuickLinks = quickLinks.filter(link => link.planned);
 
 const kpiIcons: Record<string, LucideIcon> = {
   weekly: CalendarDays,
@@ -106,13 +84,13 @@ const kpiIcons: Record<string, LucideIcon> = {
   overdue: AlertTriangle,
   drawing: FileCheck2,
   material: PackageCheck,
-  tail: ListChecks,
+  tail: BarChart3,
 };
 
 const workstreamIcons: Record<HomeWorkstreamId, LucideIcon> = {
   production: Factory,
   warehouse: Warehouse,
-  material: ClipboardList,
+  material: Boxes,
   labor: TimerReset,
 };
 
@@ -192,54 +170,160 @@ function updatedTime(value: string): string {
   }).format(new Date(value));
 }
 
-function priorityLabel(value: HomeActionItem['priority']): string {
-  return value === 'urgent' ? '紧急' : value === 'high' ? '重要' : '常规';
-}
-
 function kpiUnit(id: string): string {
   if (id === 'weekly') return '个';
   if (id === 'overdue' || id === 'tail') return '件';
   return '项';
 }
 
-function EmptyState({ children }: { children: string }) {
-  return <div className="hm-home-empty"><span aria-hidden="true"><CheckCircle2 size={18} /></span><p>{children}</p></div>;
+function AmbientParticleField({ riskCount }: { riskCount: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const context = canvas.getContext('2d');
+    if (!context) return undefined;
+    const surface = canvas;
+    const painter = context;
+
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let width = 0;
+    let height = 0;
+    let frame = 0;
+    let active = false;
+    let reducedMotion = motionQuery.matches;
+    const pointer = { x: 0, y: 0, active: false };
+    const warmThreshold = Math.min(.45, .08 + riskCount * .035);
+    const particles = Array.from({ length: 76 }, (_, index) => ({
+      angle: Math.random() * Math.PI * 2,
+      orbit: .12 + Math.random() * .38,
+      speed: .000018 + Math.random() * .000035,
+      depth: Math.random(),
+      phase: Math.random() * Math.PI * 2,
+      warm: index / 76 < warmThreshold,
+    }));
+
+    function resize(): void {
+      const rect = surface.getBoundingClientRect();
+      width = Math.max(1, rect.width);
+      height = Math.max(1, rect.height);
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      surface.width = Math.round(width * dpr);
+      surface.height = Math.round(height * dpr);
+      painter.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function render(time: number): void {
+      if (reducedMotion || document.visibilityState !== 'visible') {
+        active = false;
+        return;
+      }
+      painter.clearRect(0, 0, width, height);
+      const centerX = width * .5;
+      const centerY = height * .53;
+
+      for (const particle of particles) {
+        const angle = particle.angle + time * particle.speed;
+        const depthPulse = .5 + Math.sin(angle * 1.7 + particle.phase) * .5;
+        const scale = .62 + (particle.depth * .56) + depthPulse * .18;
+        const orbitX = width * particle.orbit;
+        const orbitY = height * (particle.orbit * .42 + .035);
+        const pointerX = pointer.active ? pointer.x * (5 + particle.depth * 10) : 0;
+        const pointerY = pointer.active ? pointer.y * (3 + particle.depth * 7) : 0;
+        const x = centerX + Math.cos(angle + particle.phase) * orbitX + pointerX;
+        const y = centerY + Math.sin(angle * .9 + particle.phase) * orbitY + pointerY;
+        const alpha = .1 + particle.depth * .24;
+        const radius = (.75 + particle.depth * 1.45) * scale;
+        const color = particle.warm ? `rgba(243, 106, 39, ${alpha})` : `rgba(55, 124, 205, ${alpha})`;
+
+        painter.beginPath();
+        painter.arc(x, y, radius, 0, Math.PI * 2);
+        painter.fillStyle = color;
+        painter.shadowBlur = 8 * scale;
+        painter.shadowColor = color;
+        painter.fill();
+
+        if (particle.depth > .7) {
+          painter.beginPath();
+          painter.moveTo(x, y);
+          painter.lineTo(x - Math.cos(angle) * 16 * scale, y - Math.sin(angle) * 7 * scale);
+          painter.strokeStyle = particle.warm
+            ? `rgba(243, 106, 39, ${alpha * .28})`
+            : `rgba(55, 124, 205, ${alpha * .24})`;
+          painter.lineWidth = .6;
+          painter.stroke();
+        }
+      }
+      painter.shadowBlur = 0;
+      frame = window.requestAnimationFrame(render);
+    }
+
+    function start(): void {
+      if (active || reducedMotion || document.visibilityState !== 'visible') return;
+      active = true;
+      frame = window.requestAnimationFrame(render);
+    }
+
+    function onPointerMove(event: PointerEvent): void {
+      pointer.x = (event.clientX / Math.max(window.innerWidth, 1) - .5) * 2;
+      pointer.y = (event.clientY / Math.max(window.innerHeight, 1) - .5) * 2;
+      pointer.active = true;
+    }
+
+    function onPointerLeave(): void {
+      pointer.active = false;
+    }
+
+    function onMotionChange(event: MediaQueryListEvent): void {
+      reducedMotion = event.matches;
+      if (reducedMotion) {
+        window.cancelAnimationFrame(frame);
+        active = false;
+        painter.clearRect(0, 0, width, height);
+      } else {
+        start();
+      }
+    }
+
+    function onVisibilityChange(): void {
+      if (document.visibilityState === 'visible') start();
+      else {
+        window.cancelAnimationFrame(frame);
+        active = false;
+      }
+    }
+
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(surface);
+    resize();
+    start();
+    window.addEventListener('pointermove', onPointerMove, { passive: true });
+    window.addEventListener('pointerleave', onPointerLeave);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    motionQuery.addEventListener('change', onMotionChange);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerleave', onPointerLeave);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      motionQuery.removeEventListener('change', onMotionChange);
+    };
+  }, [riskCount]);
+
+  return <canvas ref={canvasRef} className="hm-command-particles" aria-hidden="true" />;
 }
 
-function SectionHeading({ title, meta, href }: { title: string; meta?: string; href?: string }) {
-  return (
-    <header className="hm-home-section-heading">
-      <div><h2>{title}</h2>{meta && <span>{meta}</span>}</div>
-      {href && <a href={href}>查看全部 <ChevronRight size={14} aria-hidden="true" /></a>}
-    </header>
-  );
-}
-
-function ActionList({ items }: { items: HomeActionItem[] }) {
-  if (!items.length) return <EmptyState>当前没有需要集中处理的事项</EmptyState>;
-  return (
-    <div className="hm-home-action-list">
-      {items.slice(0, 5).map(item => (
-        <a className="hm-home-action-row" href={item.targetRoute} key={item.id}>
-          <span className={`hm-home-priority ${item.priority}`}>{item.type === 'due_today' ? '生产节点' : item.type === 'drawing_confirmation' ? '技术确认' : '生产问题'}</span>
-          <span className="hm-home-action-copy"><strong title={item.title}>{item.title}</strong><small title={item.subtitle}>{item.subtitle}</small></span>
-          <span className="hm-home-action-source"><b>{item.sourceModule}</b><small>{item.status}</small></span>
-          <span className={`hm-home-importance ${item.priority}`}>{priorityLabel(item.priority)}</span>
-          <ChevronRight size={15} aria-hidden="true" />
-        </a>
-      ))}
-    </div>
-  );
-}
-
-function DistributionChart({ items }: { items: HomeDistributionItem[] }) {
+function DistributionBars({ items }: { items: HomeDistributionItem[] }) {
   const max = Math.max(...items.map(item => item.value), 1);
   return (
-    <div className="hm-home-distribution">
+    <div className="hm-command-distribution">
       {items.map(item => (
-        <div className="hm-home-distribution-row" key={item.id}>
+        <div key={item.id}>
           <span><i className={`tone-${item.tone}`} />{item.label}</span>
-          <div aria-hidden="true"><b className={`tone-${item.tone}`} style={{ width: `${Math.max(item.value > 0 ? 7 : 0, (item.value / max) * 100)}%` }} /></div>
+          <b><em className={`tone-${item.tone}`} style={{ '--bar-size': `${Math.max(item.value ? 8 : 0, (item.value / max) * 100)}%` } as CSSProperties} /></b>
           <strong>{item.value}</strong>
         </div>
       ))}
@@ -247,51 +331,23 @@ function DistributionChart({ items }: { items: HomeDistributionItem[] }) {
   );
 }
 
-function TodayWorkstreamBoard({ workstreams }: { workstreams: HomeWorkstream[] }) {
-  const total = workstreams.reduce((sum, item) => sum + item.count, 0);
-  const risk = workstreams.reduce((sum, item) => sum + item.riskCount, 0);
-  return (
-    <section className="hm-home-today-hub" aria-labelledby="hm-home-today-title">
-      <header className="hm-home-today-heading">
-        <div>
-          <span>实时协同</span>
-          <h2 id="hm-home-today-title">今日任务总览</h2>
-          <p>生产、仓库、缺料与工时使用原模块实时数据，点击任务直接进入处理位置。</p>
-        </div>
-        <dl>
-          <div><dt>待处理</dt><dd>{total}</dd></div>
-          <div className={risk > 0 ? 'has-risk' : ''}><dt>需优先</dt><dd>{risk}</dd></div>
-        </dl>
-      </header>
-      <div className="hm-home-workstream-grid">
-        {workstreams.map(stream => {
-          const Icon = workstreamIcons[stream.id];
-          return (
-            <article className={`hm-home-workstream tone-${stream.tone}`} key={stream.id}>
-              <header>
-                <span className="hm-home-workstream-icon" aria-hidden="true"><Icon size={19} /></span>
-                <div><h3>{stream.label}</h3><p>{stream.description}</p></div>
-                <strong>{stream.count}</strong>
-                <a href={stream.route} aria-label={`查看全部${stream.label}`}>全部<ChevronRight size={13} aria-hidden="true" /></a>
-              </header>
-              <div className="hm-home-workstream-list">
-                {!stream.items.length ? (
-                  <div className="hm-home-workstream-empty"><CheckCircle2 size={15} aria-hidden="true" />当前没有待处理任务</div>
-                ) : stream.items.map(item => (
-                  <a className={`hm-home-workstream-item risk-${item.risk}`} href={item.targetRoute} key={item.id}>
-                    <span className="hm-home-workstream-status">{item.status}</span>
-                    <div><strong title={item.title}>{item.title}</strong><p title={item.subtitle}>{item.subtitle}</p></div>
-                    <small>{item.meta}</small>
-                    <ChevronRight size={14} aria-hidden="true" />
-                  </a>
-                ))}
-              </div>
-            </article>
-          );
-        })}
-      </div>
-    </section>
-  );
+function handleTiltMove(event: ReactPointerEvent<HTMLButtonElement>): void {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const element = event.currentTarget;
+  const rect = element.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width - .5;
+  const y = (event.clientY - rect.top) / rect.height - .5;
+  element.style.setProperty('--tilt-x', `${(-y * 7).toFixed(2)}deg`);
+  element.style.setProperty('--tilt-y', `${(x * 9).toFixed(2)}deg`);
+  element.style.setProperty('--shine-x', `${((x + .5) * 100).toFixed(1)}%`);
+  element.style.setProperty('--shine-y', `${((y + .5) * 100).toFixed(1)}%`);
+}
+
+function resetTilt(event: ReactPointerEvent<HTMLButtonElement>): void {
+  event.currentTarget.style.removeProperty('--tilt-x');
+  event.currentTarget.style.removeProperty('--tilt-y');
+  event.currentTarget.style.removeProperty('--shine-x');
+  event.currentTarget.style.removeProperty('--shine-y');
 }
 
 export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboardProps) {
@@ -302,10 +358,15 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const [searchError, setSearchError] = useState('');
   const [keyword, setKeyword] = useState('');
   const [results, setResults] = useState<HomeSearchItem[]>([]);
+  const [activeStreamId, setActiveStreamId] = useState<HomeWorkstreamId | null>(null);
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const [refreshing, startRefresh] = useTransition();
   const utilityButtonRef = useRef<HTMLButtonElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchWrapRef = useRef<HTMLDivElement>(null);
+  const drawerCloseRef = useRef<HTMLButtonElement>(null);
+  const drawerTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const analyticsButtonRef = useRef<HTMLButtonElement>(null);
   const displayName = user.displayName || user.username;
 
   useEffect(() => {
@@ -359,6 +420,14 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
         setSearchOpen(false);
         window.requestAnimationFrame(() => searchInputRef.current?.focus());
       }
+      if (activeStreamId) {
+        setActiveStreamId(null);
+        window.requestAnimationFrame(() => drawerTriggerRef.current?.focus());
+      }
+      if (analyticsOpen) {
+        setAnalyticsOpen(false);
+        window.requestAnimationFrame(() => analyticsButtonRef.current?.focus());
+      }
     }
     document.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('keydown', onKeyDown);
@@ -366,13 +435,34 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       document.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [searchOpen]);
+  }, [activeStreamId, analyticsOpen, searchOpen]);
+
+  useEffect(() => {
+    if (!activeStreamId) return;
+    window.requestAnimationFrame(() => drawerCloseRef.current?.focus());
+  }, [activeStreamId]);
 
   const searchGroups = useMemo(() => {
     const groups = new Map<string, HomeSearchItem[]>();
     for (const item of results) groups.set(item.group, [...(groups.get(item.group) || []), item]);
     return [...groups.entries()];
   }, [results]);
+
+  const hasOperationalData = data.planChart.total > 0
+    || data.actionItems.length > 0
+    || data.workstreams.some(stream => stream.count > 0)
+    || data.todayNodes.length > 0
+    || data.issues.length > 0
+    || data.kpis.some(kpi => typeof kpi.value === 'number' && kpi.value > 0);
+  const commandKpis = (hasOperationalData
+    ? data.kpis
+    : data.kpis.filter(kpi => ['weekly', 'due', 'drawing', 'overdue'].includes(kpi.id)))
+    .slice(0, 4);
+  const riskCount = data.workstreams.reduce((sum, stream) => sum + stream.riskCount, 0);
+  const taskCount = data.workstreams.reduce((sum, stream) => sum + stream.count, 0);
+  const activeStream = data.workstreams.find(stream => stream.id === activeStreamId) || null;
+  const progressRate = data.planChart.executionRate;
+  const topAction = data.actionItems[0] || null;
 
   async function logout(): Promise<void> {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -388,23 +478,34 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
     setUtilityPanel(current => current === panel ? null : panel);
   }
 
-  const donutStyle = { '--hm-home-rate': `${data.planChart.executionRate || 0}%` } as CSSProperties;
-  const hasOperationalData = data.planChart.total > 0
-    || data.actionItems.length > 0
-    || data.workstreams.some(stream => stream.count > 0)
-    || data.todayNodes.length > 0
-    || data.issues.length > 0
-    || data.kpis.some(kpi => typeof kpi.value === 'number' && kpi.value > 0);
-  const visibleKpis = hasOperationalData
-    ? data.kpis
-    : data.kpis.filter(kpi => ['weekly', 'due', 'drawing', 'overdue'].includes(kpi.id));
+  function openStream(stream: HomeWorkstream, trigger: HTMLButtonElement): void {
+    drawerTriggerRef.current = trigger;
+    setAnalyticsOpen(false);
+    setActiveStreamId(stream.id);
+  }
+
+  function closeOverlays(): void {
+    if (activeStreamId) {
+      setActiveStreamId(null);
+      window.requestAnimationFrame(() => drawerTriggerRef.current?.focus());
+    }
+    if (analyticsOpen) {
+      setAnalyticsOpen(false);
+      window.requestAnimationFrame(() => analyticsButtonRef.current?.focus());
+    }
+  }
+
+  function toggleAnalytics(): void {
+    setActiveStreamId(null);
+    setAnalyticsOpen(value => !value);
+  }
 
   return (
-    <main className={`hm-home-shell hm-workbench-root ${hasOperationalData ? 'has-live-data' : 'is-plan-empty'}`}>
+    <main className={`hm-home-shell hm-workbench-root hm-workbench-navigation-overlay hm-command-root ${hasOperationalData ? 'has-live-data' : 'is-plan-empty'}`}>
       <AppWorkbenchHeader
         user={user}
         activeHref="/home"
-        subtitle="计划、技术、生产统一入口"
+        subtitle="实时生产态势"
         menuItems={[
           { label: '系统设置', href: '/dashboard?openSettings=1' },
           { label: '退出登录', onSelect: () => { void logout(); } },
@@ -436,116 +537,157 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
           </div>
         )}
       />
+
       <PortalMenu open={utilityPanel !== null} anchorRef={utilityButtonRef} className="hm-home-utility-menu" width={300} closeOnSelect={false} onClose={() => setUtilityPanel(null)}>
         {utilityPanel === 'notifications' && <div><header><Bell size={17} /><strong>待办通知</strong></header>{data.actionItems.length ? data.actionItems.slice(0, 3).map(item => <a href={item.targetRoute} key={item.id}><b>{item.title}</b><span>{item.subtitle}</span></a>) : <p>当前没有新的待办通知</p>}<a className="hm-home-utility-all" href="/production?view=exceptions">查看全部待办</a></div>}
         {utilityPanel === 'messages' && <div><header><MessageSquareText size={17} /><strong>消息中心</strong></header><p>消息能力正在规划，当前入口不影响生产业务。</p><a className="hm-home-utility-all" href="/workspace/messages">查看规划说明</a></div>}
         {utilityPanel === 'help' && <div><header><CircleHelp size={17} /><strong>帮助与支持</strong></header><a href="/workspace/help"><b>使用帮助</b><span>查看平台模块和规划入口</span></a><a href="/dashboard?openSettings=1"><b>系统设置</b><span>安装、诊断和账号设置</span></a></div>}
       </PortalMenu>
 
-      <div className="hm-home-frame">
+      <div className="hm-home-frame hm-command-frame">
+        <AmbientParticleField riskCount={riskCount} />
+        <div className="hm-command-aurora" aria-hidden="true"><i /><i /><i /></div>
 
-        <div className="hm-home-content">
-          {data.error && <div className="hm-home-error" role="alert"><span>首页数据加载失败</span><p>{data.error}</p><button type="button" onClick={refresh} disabled={refreshing}>重新加载</button></div>}
-          <section className="hm-home-welcome">
-            <div className="hm-home-welcome-copy"><h1>{data.greeting}，{displayName}</h1><p>今天是 {data.dateLabel}</p><small>{data.periodLabel}</small></div>
-            <div className="hm-home-welcome-art" aria-hidden="true">
-              <span className="tile tile-one"><CalendarDays size={22} /></span>
-              <span className="tile tile-two"><Image src="/icon-192.png" width={56} height={56} alt="" /></span>
-              <span className="tile tile-three"><PackageCheck size={23} /></span>
-              <i /><b /><em />
+        <div className="hm-command-content">
+          {data.error && <div className="hm-home-error hm-command-error" role="alert"><span>首页数据加载失败</span><p>{data.error}</p><button type="button" onClick={refresh} disabled={refreshing}>重新加载</button></div>}
+
+          <header className="hm-command-heading">
+            <div>
+              <span className="hm-command-eyebrow"><Activity size={13} aria-hidden="true" /> LIVE OPERATIONS</span>
+              <h1>生产态势指挥舱</h1>
+              <p>{data.greeting}，{displayName} · {data.dateLabel} · {data.periodLabel}</p>
             </div>
-            <div className="hm-home-updated"><span>数据更新</span><strong>{updatedTime(data.generatedAt)}</strong><small>{refreshing ? '正在刷新' : '读取当前业务数据'}</small></div>
-          </section>
+            <div className="hm-command-live-state" aria-live="polite">
+              <span className={refreshing ? 'refreshing' : ''} aria-hidden="true" />
+              <p><strong>{refreshing ? '同步中' : '运行正常'}</strong><small>数据更新 {updatedTime(data.generatedAt)}</small></p>
+            </div>
+          </header>
 
-          {!hasOperationalData && !data.error && (
-            <section className="hm-home-start-banner" aria-labelledby="hm-home-start-title">
-              <div>
-                <span>本周计划尚未启用</span>
-                <h2 id="hm-home-start-title">从实时订单排程开始今天的生产协同</h2>
-                <p>现有图纸、工单和连接器资料仍可正常使用；订单排程并下达后，待办、异常和执行进度会自动汇总到首页。</p>
-              </div>
-              <nav aria-label="开始本周工作">
-                <a className="primary" href="/weekly-plan-center">进入计划中心</a>
-                <a href="/production">进入生产执行</a>
-                <a href="/drawing-library">查看图纸资料</a>
-              </nav>
-            </section>
-          )}
-
-          <section className={`hm-home-kpis ${hasOperationalData ? '' : 'is-condensed'}`.trim()} aria-label="生产关键指标">
-            {visibleKpis.map(kpi => {
-              const Icon = kpiIcons[kpi.id] || BarChart3;
-              const deltaLabel = kpi.id === 'weekly' ? '当前计划' : kpi.value && kpi.value > 0 ? '需要关注' : '状态正常';
+          <section className="hm-command-kpis" aria-label="核心生产指标">
+            {commandKpis.map((kpi, index) => {
+              const Icon = kpiIcons[kpi.id] || Gauge;
               return (
-                <a className={`hm-home-kpi tone-${kpi.tone}`} href={kpi.route} key={kpi.id}>
-                  <span className="hm-home-kpi-icon" aria-hidden="true"><Icon size={23} /></span>
-                  <div><small>{kpi.label}</small><strong>{kpi.value === null ? '--' : kpi.value}<em> {kpiUnit(kpi.id)}</em></strong><p>{deltaLabel}</p></div>
-                  <ChevronRight size={15} aria-hidden="true" />
+                <a className={`hm-command-kpi tone-${kpi.tone}`} href={kpi.route} key={kpi.id} style={{ '--kpi-index': index } as CSSProperties}>
+                  <span aria-hidden="true"><Icon size={17} /></span>
+                  <p><small>{kpi.label}</small><strong>{kpi.value === null ? '--' : kpi.value}<em>{kpiUnit(kpi.id)}</em></strong></p>
+                  <i>{kpi.value && kpi.value > 0 ? '实时' : '正常'}</i>
                 </a>
               );
             })}
           </section>
 
-          <TodayWorkstreamBoard workstreams={data.workstreams} />
+          <section className="hm-command-deck" aria-labelledby="hm-command-deck-title">
+            <div className="hm-command-grid-plane" aria-hidden="true" />
+            <svg className="hm-command-energy-map" viewBox="0 0 1000 520" preserveAspectRatio="none" aria-hidden="true">
+              <path className="flow blue flow-one" d="M210 140 C350 120 390 220 500 260" />
+              <path className="flow orange flow-two" d="M790 140 C650 120 610 220 500 260" />
+              <path className="flow amber flow-three" d="M210 390 C350 410 390 300 500 260" />
+              <path className="flow green flow-four" d="M790 390 C650 410 610 300 500 260" />
+            </svg>
 
-          <section className={`hm-home-primary-grid ${hasOperationalData ? '' : 'is-empty-state'}`.trim()}>
-            <article className="hm-home-panel hm-home-actions-panel">
-              <SectionHeading title={hasOperationalData ? '我的待办事项' : '开始本周工作'} meta={hasOperationalData ? `全部 ${data.actionItems.length}` : '三步进入生产执行'} href={hasOperationalData ? '/production?view=exceptions' : undefined} />
-              {hasOperationalData ? <ActionList items={data.actionItems} /> : (
-                <div className="hm-home-start-steps">
-                  <a href="/weekly-plan-center"><span>01</span><CalendarDays size={19} aria-hidden="true" /><div><strong>建立并排程生产订单</strong><p>实时维护订单，拆分批次后下达本周执行或下周预备。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
-                  <a href="/production"><span>02</span><LayoutDashboard size={19} aria-hidden="true" /><div><strong>进入生产执行中心</strong><p>按未发图、前端、后端和完成阶段推进工单。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
-                  <a href="/drawing-library"><span>03</span><FolderKanban size={19} aria-hidden="true" /><div><strong>维护图纸生产资料</strong><p>在图纸资料库统一维护原图、SOP、成品图和版本文件。</p></div><ChevronRight size={16} aria-hidden="true" /></a>
-                </div>
-              )}
-            </article>
-
-            <article className="hm-home-panel hm-home-quick-panel">
-              <SectionHeading title="业务入口" meta={`已接入 ${activeQuickLinks.length} 个模块`} />
-              <div className="hm-home-quick-grid">
-                {activeQuickLinks.map(link => {
-                  const Icon = link.icon;
-                  return <a href={link.href} key={link.href} title={link.label}><span className={`tone-${link.tone}`} aria-hidden="true"><Icon size={21} /></span><strong>{link.label}</strong></a>;
-                })}
+            <div className="hm-command-core" aria-label={`本周计划执行率${progressRate === null ? '暂未生成' : `${progressRate}%`}`}>
+              <div className="hm-command-orbit orbit-one" aria-hidden="true"><i /><i /><i /></div>
+              <div className="hm-command-orbit orbit-two" aria-hidden="true"><i /><i /></div>
+              <div className="hm-command-core-disc">
+                <span>本周计划执行率</span>
+                <strong>{progressRate === null ? '--' : progressRate}<em>{progressRate === null ? '' : '%'}</em></strong>
+                <small>{data.planChart.completed} 已完成 · {data.planChart.inProgress} 执行中</small>
+                <a href={hasOperationalData ? '/production' : '/weekly-plan-center'}>
+                  {hasOperationalData ? '进入生产执行' : '建立本周计划'}<ArrowUpRight size={15} aria-hidden="true" />
+                </a>
               </div>
-              <div className="hm-home-planned-shortcuts"><span>规划能力</span>{plannedQuickLinks.map(link => <a href={link.href} key={link.href} title={`${link.label}（规划中）`}>{link.label}<small>规划中</small></a>)}</div>
-            </article>
+              <div className="hm-command-radar" aria-hidden="true" />
+            </div>
 
-            <div className="hm-home-right-stack">
-              <article className="hm-home-panel hm-home-timeline-panel">
-                <SectionHeading title="今日节点" href="/production?view=today" />
-                {!data.todayNodes.length ? <EmptyState>今天没有已记录的关键节点</EmptyState> : <div className="hm-home-timeline">{data.todayNodes.slice(0, 4).map((node, index) => <a href={node.targetRoute} key={node.id}><time>{String(9 + index * 2).padStart(2, '0')}:00</time><span /><div><strong title={node.title}>{node.title}</strong><p>{node.source} · {node.status}</p></div><em>{node.type}</em></a>)}</div>}
-              </article>
-              <article className="hm-home-panel hm-home-issues-panel">
-                <SectionHeading title="生产问题看板" href="/workspace/issues" />
-                {!data.issues.length ? <EmptyState>当前没有未关闭问题</EmptyState> : <div className="hm-home-issue-list">{data.issues.slice(0, 4).map(issue => <a href={issue.targetRoute} key={issue.id}><span className={`hm-home-issue-level ${issue.priority}`}>{priorityLabel(issue.priority)}</span><div><strong>{issue.title}</strong><p title={issue.subtitle}>{issue.subtitle}</p></div><small>{issue.dateLabel}</small></a>)}</div>}
-              </article>
+            {data.workstreams.map((stream, index) => {
+              const Icon = workstreamIcons[stream.id];
+              const topItem = stream.items[0];
+              return (
+                <button
+                  className={`hm-command-node node-${stream.id} tone-${stream.tone}`}
+                  type="button"
+                  key={stream.id}
+                  style={{ '--node-index': index } as CSSProperties}
+                  aria-label={`展开${stream.label}任务，待处理${stream.count}项`}
+                  onClick={event => openStream(stream, event.currentTarget)}
+                  onPointerMove={handleTiltMove}
+                  onPointerLeave={resetTilt}
+                >
+                  <span className="hm-command-node-icon" aria-hidden="true"><Icon size={21} /></span>
+                  <p><small>{stream.description}</small><strong>{stream.label}</strong></p>
+                  <b>{stream.count}</b>
+                  <i className={stream.riskCount > 0 ? 'has-risk' : ''}>{stream.riskCount > 0 ? `${stream.riskCount} 项优先` : '状态正常'}</i>
+                  <div><span>{topItem?.title || '当前没有待处理任务'}</span><small>{topItem?.status || '运行平稳'}</small><ChevronRight size={14} aria-hidden="true" /></div>
+                </button>
+              );
+            })}
+
+            <div className="hm-command-deck-caption">
+              <span><Layers3 size={14} aria-hidden="true" />实时业务流</span>
+              <h2 id="hm-command-deck-title">{topAction ? topAction.title : '当前生产协同运行平稳'}</h2>
+              <p>{topAction ? topAction.subtitle : '生产、仓库、缺料与工时数据均已接入统一态势面板'}</p>
             </div>
           </section>
 
-          {hasOperationalData && (
-            <>
-              <section className="hm-home-charts" aria-label="协同数据图表">
-                <article className="hm-home-panel hm-home-plan-chart">
-                  <SectionHeading title="计划执行情况" meta="本周" />
-                  <div className="hm-home-plan-chart-body">
-                    <div className="hm-home-donut" style={donutStyle}><div><strong>{data.planChart.executionRate === null ? '--' : `${data.planChart.executionRate}%`}</strong><span>执行率</span></div></div>
-                    <dl><div><dt>已完成</dt><dd>{data.planChart.completed}</dd></div><div><dt>执行中</dt><dd>{data.planChart.inProgress}</dd></div><div><dt>未开始</dt><dd>{data.planChart.notStarted}</dd></div><div><dt>逾期</dt><dd>{data.planChart.overdue}</dd></div></dl>
-                  </div>
-                </article>
-                <article className="hm-home-panel"><SectionHeading title="工单状态分布" meta={`${data.planChart.total} 个工单`} /><DistributionChart items={data.stageDistribution} /></article>
-                <article className="hm-home-panel"><SectionHeading title="技术资料状态" meta="当前周计划" /><DistributionChart items={data.technicalDistribution} /></article>
-              </section>
+          <footer className="hm-command-statusbar">
+            <div><span>生产计划</span><strong>{data.planChart.total}</strong><small>个工单</small></div>
+            <div><span>当前待处理</span><strong>{taskCount}</strong><small>项任务</small></div>
+            <div className={riskCount > 0 ? 'has-risk' : ''}><span>优先风险</span><strong>{riskCount}</strong><small>项关注</small></div>
+            <div className={data.issues.length > 0 ? 'has-risk' : ''}><span>质量与问题</span><strong>{data.issues.length}</strong><small>项未关闭</small></div>
+            <button ref={analyticsButtonRef} type="button" aria-expanded={analyticsOpen} aria-controls="hm-command-analytics" onClick={toggleAnalytics}>
+              <BarChart3 size={16} aria-hidden="true" /><span>数据分析</span><ChevronRight size={14} aria-hidden="true" />
+            </button>
+          </footer>
+        </div>
 
-              <section className="hm-home-collaboration" aria-label="计划到完成协作链路">
-                <SectionHeading title="协同流程状态" meta="计划、技术与生产共享同一套数据" />
-                <div>{data.collaboration.map((node, index) => <span className="hm-home-flow-part" key={node.id}>{index > 0 && <ChevronRight aria-hidden="true" />}<a className={`tone-${node.tone}`} href={node.route}><small>0{index + 1}</small><p><strong>{node.label}</strong><span>{node.description}</span></p><b>{node.value}</b></a></span>)}</div>
-              </section>
+        <button className={`hm-command-overlay ${activeStream || analyticsOpen ? 'open' : ''}`} type="button" aria-label="关闭展开面板" aria-hidden={!activeStream && !analyticsOpen} tabIndex={activeStream || analyticsOpen ? 0 : -1} onClick={closeOverlays} />
+
+        <aside className={`hm-command-task-drawer ${activeStream ? 'open' : ''}`} aria-hidden={!activeStream} aria-labelledby="hm-command-task-title">
+          {activeStream && (
+            <>
+              <header>
+                <span className={`tone-${activeStream.tone}`} aria-hidden="true">{(() => {
+                  const Icon = workstreamIcons[activeStream.id];
+                  return <Icon size={21} />;
+                })()}</span>
+                <div><small>实时任务抽屉</small><h2 id="hm-command-task-title">{activeStream.label}</h2><p>{activeStream.description}</p></div>
+                <button ref={drawerCloseRef} type="button" aria-label={`关闭${activeStream.label}任务`} onClick={closeOverlays}><X size={19} /></button>
+              </header>
+              <div className="hm-command-drawer-summary">
+                <div><span>待处理</span><strong>{activeStream.count}</strong></div>
+                <div className={activeStream.riskCount > 0 ? 'has-risk' : ''}><span>需优先</span><strong>{activeStream.riskCount}</strong></div>
+              </div>
+              <div className="hm-command-drawer-list hm-scroll-region">
+                {!activeStream.items.length ? (
+                  <div className="hm-command-drawer-empty"><CheckCircle2 size={26} aria-hidden="true" /><strong>当前没有待处理任务</strong><p>该业务节点运行平稳。</p></div>
+                ) : activeStream.items.map(item => (
+                  <a className={`risk-${item.risk}`} href={item.targetRoute} key={item.id}>
+                    <span>{item.status}</span>
+                    <div><strong>{item.title}</strong><p>{item.subtitle}</p><small>{item.meta}</small></div>
+                    <ChevronRight size={16} aria-hidden="true" />
+                  </a>
+                ))}
+              </div>
+              <footer><a href={activeStream.route}>进入{activeStream.label}<ArrowUpRight size={15} aria-hidden="true" /></a></footer>
             </>
           )}
+        </aside>
 
-          <footer className="hm-home-footer"><span>© 2026 杭连协同平台 · 企业内部使用</span><small>计划 · 技术 · 生产高效闭环</small></footer>
-        </div>
+        <section className={`hm-command-analytics ${analyticsOpen ? 'open' : ''}`} id="hm-command-analytics" aria-hidden={!analyticsOpen} aria-labelledby="hm-command-analytics-title">
+          <header>
+            <div><small>SECONDARY INSIGHTS</small><h2 id="hm-command-analytics-title">生产数据分析</h2></div>
+            <button type="button" aria-label="关闭数据分析" tabIndex={analyticsOpen ? 0 : -1} onClick={closeOverlays}><X size={19} /></button>
+          </header>
+          <div className="hm-command-analytics-grid">
+            <article>
+              <span>计划执行</span>
+              <div className="hm-command-mini-donut" style={{ '--rate': `${progressRate || 0}%` } as CSSProperties}><strong>{progressRate === null ? '--' : `${progressRate}%`}</strong></div>
+              <dl><div><dt>已完成</dt><dd>{data.planChart.completed}</dd></div><div><dt>执行中</dt><dd>{data.planChart.inProgress}</dd></div><div><dt>逾期</dt><dd>{data.planChart.overdue}</dd></div></dl>
+            </article>
+            <article><span>工单状态分布</span><DistributionBars items={data.stageDistribution} /></article>
+            <article><span>技术资料状态</span><DistributionBars items={data.technicalDistribution} /></article>
+          </div>
+        </section>
       </div>
     </main>
   );
