@@ -42,6 +42,7 @@ type AppWorkbenchHeaderProps = {
   activeHref: string;
   subtitle: string;
   menuItems: HeaderMenuItem[];
+  brandTitle?: string;
   searchSlot?: ReactNode;
   utilityActions?: ReactNode;
   hideHeader?: boolean;
@@ -127,6 +128,7 @@ export function AppWorkbenchHeader({
   activeHref,
   subtitle,
   menuItems,
+  brandTitle = '杭连协同平台',
   searchSlot,
   utilityActions,
   hideHeader = false,
@@ -189,11 +191,11 @@ export function AppWorkbenchHeader({
   return (
     <>
       <button className={`hm-platform-sidebar-scrim ${sidebarExpanded ? 'open' : ''}`} type="button" aria-label="关闭平台导航" onClick={closeSidebar} />
-      <aside className={`hm-platform-sidebar ${sidebarExpanded ? 'expanded' : ''}`} id="hm-platform-sidebar" aria-label="杭连协同平台业务导航">
+      <aside className={`hm-platform-sidebar ${sidebarExpanded ? 'expanded' : ''}`} id="hm-platform-sidebar" aria-label={`${brandTitle}业务导航`}>
         <button className="hm-platform-sidebar-close" type="button" aria-label="收起平台导航" title="收起平台导航" onClick={closeSidebar}><PanelLeftClose size={18} aria-hidden="true" /></button>
-        <a className="hm-platform-brand" href={landingHref} title="返回杭连协同平台">
+        <a className="hm-platform-brand" href={landingHref} title={`返回${brandTitle}`}>
           <span aria-hidden="true">杭</span>
-          <div><strong>杭连协同平台</strong><small>生产与技术协同工作台</small></div>
+          <div><strong>{brandTitle}</strong><small>生产与技术协同工作台</small></div>
         </a>
         {user.laborRole !== 'EMPLOYEE' && <a className={`hm-platform-home ${isActiveRoute(activeHref, '/home') ? 'active' : ''}`} href="/home" title="首页" aria-current={isActiveRoute(activeHref, '/home') ? 'page' : undefined}>
           <Home size={18} aria-hidden="true" /><b>首页</b>
@@ -224,8 +226,8 @@ export function AppWorkbenchHeader({
 
       {!hideHeader && <header className={`hm-workbench-header ${isHome ? 'is-home' : 'is-module'}`}>
         {!sidebarTriggerTargetId && sidebarTrigger}
-        <div className="hm-workbench-context" title={`杭连协同平台 / ${moduleName} · ${subtitle}`}>
-          <span>杭连协同平台</span><ChevronRight size={13} aria-hidden="true" /><strong>{moduleName}</strong><small>{subtitle}</small>
+        <div className="hm-workbench-context" title={`${brandTitle} / ${moduleName} · ${subtitle}`}>
+          <span>{brandTitle}</span><ChevronRight size={13} aria-hidden="true" /><strong>{moduleName}</strong><small>{subtitle}</small>
         </div>
         {isHome && <div className="hm-workbench-search-slot">
           {searchSlot || (

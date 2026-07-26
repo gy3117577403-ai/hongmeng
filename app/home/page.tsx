@@ -3,6 +3,7 @@ import CompanyHomeDashboard from '@/components/home/CompanyHomeDashboard';
 import { currentUser } from '@/lib/auth';
 import { emptyHomeDashboardData, loadHomeDashboard } from '@/lib/home-dashboard';
 import './home-dashboard.css';
+import './home-collaboration.css';
 
 export const dynamic = 'force-dynamic';
 
