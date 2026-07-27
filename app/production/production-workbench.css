@@ -7133,56 +7133,6 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   }
 }
 
-/* Keep this page's platform navigation as a narrow icon rail on large screens. */
-@media (min-width: 1200px) {
-  main.hm-production-workbench.hm-workbench-root.hm-workbench-root {
-    --hm-shell-rail: 64px;
-  }
-
-  .hm-production-workbench > .hm-platform-sidebar,
-  .hm-production-workbench > .hm-platform-sidebar.expanded {
-    width: 64px;
-  }
-
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-brand {
-    justify-content: center;
-    padding: 0;
-  }
-
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-brand div,
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-home b,
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-side-nav h2,
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-side-nav a span,
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-side-nav a em,
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-sidebar-footer a span,
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-sidebar-footer a em {
-    display: none;
-  }
-
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-home,
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-side-nav a,
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-sidebar-footer a {
-    justify-content: center;
-    gap: 0;
-    margin-right: 7px;
-    margin-left: 7px;
-    padding: 0;
-  }
-
-  .hm-production-workbench > .hm-platform-sidebar .hm-platform-side-nav {
-    padding-right: 0;
-    padding-left: 0;
-  }
-
-  .hm-production-workbench .production-dispatch-title {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .hm-production-workbench .production-dispatch-nav-trigger {
-    display: none;
-  }
-}
-
 @media (max-width: 1366px) {
   .hm-production-workbench .production-dispatch-command {
     grid-template-columns: minmax(205px, .68fr) minmax(350px, 1.22fr) auto;

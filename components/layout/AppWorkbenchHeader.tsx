@@ -31,6 +31,8 @@ import { createPortal } from 'react-dom';
 import { PortalMenu } from '@/components/PortalMenu';
 import type { CurrentUserDTO } from '@/types';
 
+const SIDEBAR_PREFERENCE_KEY = 'hm-platform-sidebar-expanded';
+
 type HeaderMenuItem = {
   label: string;
   href?: string;
@@ -128,7 +130,7 @@ export function AppWorkbenchHeader({
   activeHref,
   subtitle,
   menuItems,
-  brandTitle = '杭连协同平台',
+  brandTitle = '杭连电子协同平台',
   searchSlot,
   utilityActions,
   hideHeader = false,
@@ -136,9 +138,11 @@ export function AppWorkbenchHeader({
 }: AppWorkbenchHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [sidebarPreferenceLoaded, setSidebarPreferenceLoaded] = useState(false);
   const [sidebarTriggerTarget, setSidebarTriggerTarget] = useState<HTMLElement | null>(null);
   const userButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarButtonRef = useRef<HTMLButtonElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
   const displayName = user.displayName || user.username;
   const moduleName = activeModuleName(activeHref);
   const isHome = isActiveRoute(activeHref, '/home');
@@ -155,6 +159,32 @@ export function AppWorkbenchHeader({
     }
     setSidebarTriggerTarget(document.getElementById(sidebarTriggerTargetId));
   }, [sidebarTriggerTargetId]);
+
+  useEffect(() => {
+    try {
+      setSidebarExpanded(window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY) === 'true');
+    } catch {
+      setSidebarExpanded(false);
+    } finally {
+      setSidebarPreferenceLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    const root = sidebarRef.current?.closest<HTMLElement>('.hm-workbench-root');
+    if (!root) return undefined;
+    root.classList.toggle('hm-sidebar-expanded', sidebarExpanded);
+    return () => root.classList.remove('hm-sidebar-expanded');
+  }, [sidebarExpanded]);
+
+  useEffect(() => {
+    if (!sidebarPreferenceLoaded) return;
+    try {
+      window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, String(sidebarExpanded));
+    } catch {
+      // Storage can be unavailable in hardened browser profiles; the in-page toggle still works.
+    }
+  }, [sidebarExpanded, sidebarPreferenceLoaded]);
 
   useEffect(() => {
     if (!sidebarExpanded) return;
@@ -191,7 +221,7 @@ export function AppWorkbenchHeader({
   return (
     <>
       <button className={`hm-platform-sidebar-scrim ${sidebarExpanded ? 'open' : ''}`} type="button" aria-label="关闭平台导航" onClick={closeSidebar} />
-      <aside className={`hm-platform-sidebar ${sidebarExpanded ? 'expanded' : ''}`} id="hm-platform-sidebar" aria-label={`${brandTitle}业务导航`}>
+      <aside ref={sidebarRef} className={`hm-platform-sidebar ${sidebarExpanded ? 'expanded' : ''}`} id="hm-platform-sidebar" aria-label={`${brandTitle}业务导航`}>
         <button className="hm-platform-sidebar-close" type="button" aria-label="收起平台导航" title="收起平台导航" onClick={closeSidebar}><PanelLeftClose size={18} aria-hidden="true" /></button>
         <a className="hm-platform-brand" href={landingHref} title={`返回${brandTitle}`}>
           <span aria-hidden="true">杭</span>

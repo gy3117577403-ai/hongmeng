@@ -476,7 +476,6 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
         user={user}
         activeHref="/home"
         subtitle="跨部门协同工作台"
-        brandTitle="杭连电子协同平台"
         menuItems={[
           { label: '系统设置', href: '/dashboard?openSettings=1' },
           { label: '退出登录', onSelect: () => { void logout(); } },
