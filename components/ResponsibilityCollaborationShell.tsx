@@ -8,9 +8,13 @@ import {
   BellRing,
   BriefcaseBusiness,
   CalendarDays,
+  CalendarClock,
   Check,
+  CheckCheck,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   CircleDot,
   Clock3,
   Eye,
@@ -18,8 +22,13 @@ import {
   GitBranch,
   Info,
   Layers3,
+  Link2,
+  ListChecks,
+  MessageSquareText,
   Network,
+  PencilLine,
   Search,
+  Send,
   ShieldCheck,
   Sparkles,
   Target,
@@ -35,6 +44,7 @@ import {
   responsibilityCollaborationPrototype,
   type ResponsibilityMatrixItem,
   type ResponsibilityPerson,
+  type ResponsibilityPersonStatus,
   type ResponsibilityRuleState,
   type ResponsibilityWarningKind,
   type ResponsibilityWorkItem,
@@ -104,7 +114,11 @@ function getPerson(personId: string): ResponsibilityPerson {
 function PersonAvatar({ personId, size = 'normal' }: { personId: string; size?: 'small' | 'normal' | 'large' }) {
   const person = getPerson(personId);
   return (
-    <span className={`rc-person-avatar ${size} ${person.status === 'unconfigured' ? 'unconfigured' : ''}`} aria-hidden="true">
+    <span
+      className={`rc-person-avatar ${size} ${person.status === 'unconfigured' ? 'unconfigured' : ''}`}
+      aria-label={`${person.name}，${person.role}`}
+      title={`${person.name} · ${person.role}\n${person.summary}`}
+    >
       {person.initials}
     </span>
   );
@@ -117,7 +131,7 @@ function PersonPills({ ids, limit = 2 }: { ids: string[]; limit?: number }) {
     <span className="rc-person-pills">
       {visible.map(id => {
         const person = getPerson(id);
-        return <span className={person.status === 'unconfigured' ? 'unconfigured' : ''} key={id} title={`${person.name} · ${person.role}`}><PersonAvatar personId={id} size="small" />{person.name}</span>;
+        return <span className={person.status === 'unconfigured' ? 'unconfigured' : ''} key={id} title={`${person.name} · ${person.role}\n${person.summary}`}><PersonAvatar personId={id} size="small" />{person.name}</span>;
       })}
       {ids.length > limit && <em>+{ids.length - limit}</em>}
     </span>
@@ -257,16 +271,16 @@ function MatrixView({
   return (
     <div className="rc-matrix-view">
       <section className="rc-alert-strip" aria-label="责任规则提示">
-        <button type="button" className={risk === 'missing-owner' ? 'active missing' : 'missing'} onClick={() => setRisk(current => current === 'missing-owner' ? 'all' : 'missing-owner')}>
-          <span><UserCheck size={16} /></span><div><strong>负责人缺失</strong><small>岗位或账号尚未绑定</small></div><b>{warningCounts['missing-owner']}</b>
+        <button type="button" aria-pressed={risk === 'missing-owner'} className={risk === 'missing-owner' ? 'active missing' : 'missing'} onClick={() => setRisk(current => current === 'missing-owner' ? 'all' : 'missing-owner')}>
+          <span><UserCheck size={16} /></span><div><strong>责任缺失</strong><small>点击筛选待配置事项</small></div><b>{warningCounts['missing-owner']}</b>
         </button>
-        <button type="button" className={risk === 'responsibility-conflict' ? 'active conflict' : 'conflict'} onClick={() => setRisk(current => current === 'responsibility-conflict' ? 'all' : 'responsibility-conflict')}>
-          <span><GitBranch size={16} /></span><div><strong>责任冲突</strong><small>同一事项存在多个主责</small></div><b>{warningCounts['responsibility-conflict']}</b>
+        <button type="button" aria-pressed={risk === 'responsibility-conflict'} className={risk === 'responsibility-conflict' ? 'active conflict' : 'conflict'} onClick={() => setRisk(current => current === 'responsibility-conflict' ? 'all' : 'responsibility-conflict')}>
+          <span><GitBranch size={16} /></span><div><strong>责任冲突</strong><small>点击查看多主责规则</small></div><b>{warningCounts['responsibility-conflict']}</b>
         </button>
-        <button type="button" className={risk === 'overdue' ? 'active overdue' : 'overdue'} onClick={() => setRisk(current => current === 'overdue' ? 'all' : 'overdue')}>
-          <span><Clock3 size={16} /></span><div><strong>超时升级</strong><small>超过责任规则处理时限</small></div><b>{warningCounts.overdue}</b>
+        <button type="button" aria-pressed={risk === 'overdue'} className={risk === 'overdue' ? 'active overdue' : 'overdue'} onClick={() => setRisk(current => current === 'overdue' ? 'all' : 'overdue')}>
+          <span><Clock3 size={16} /></span><div><strong>超时升级</strong><small>点击查看临期与超时</small></div><b>{warningCounts.overdue}</b>
         </button>
-        <div className="rc-rule-health"><span><CheckCircle2 size={17} /></span><div><strong>规则覆盖率 {ruleCoverage}%</strong><small>{ownedRuleCount} / {snapshot.matrix.length} 项已有明确主责</small></div><em>原型</em></div>
+        <div className="rc-rule-health"><span><CheckCircle2 size={17} /></span><div><strong>{ruleCoverage}% 规则已覆盖</strong><small>{ownedRuleCount} / {snapshot.matrix.length} 项主责明确</small></div><em>运行概览</em></div>
       </section>
 
       <section className="rc-filter-bar" aria-label="责任矩阵筛选">
@@ -282,7 +296,7 @@ function MatrixView({
           <header><div><span>全局责任规则</span><h2>业务事项责任矩阵</h2></div><small>{filtered.length} / {snapshot.matrix.length} 项</small></header>
           <div className="rc-matrix-table-scroll hm-scroll-region" tabIndex={0}>
             <table className="rc-matrix-table">
-              <thead><tr><th>业务事项</th><th>主责</th><th>协同</th><th>审核</th><th>知会</th><th>时限</th><th>状态</th></tr></thead>
+              <thead><tr><th>业务事项</th><th>主责</th><th>协同</th><th>审核</th><th>知会</th><th>时限</th><th>状态 / 操作</th></tr></thead>
               <tbody>
                 {filtered.map(item => (
                   <tr
@@ -293,12 +307,23 @@ function MatrixView({
                     onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectItem(item); } }}
                   >
                     <td><span>{item.module}</span><strong>{item.matter}</strong><small>{item.description}</small></td>
-                    <td><PersonPills ids={item.ownerIds} /></td>
+                    <td>
+                      {item.ownerIds.length
+                        ? <PersonPills ids={item.ownerIds} />
+                        : <button type="button" className="rc-configure-owner" onClick={event => { event.stopPropagation(); selectItem(item); }}><UserCheck size={12} />补充主责</button>}
+                    </td>
                     <td><PersonPills ids={item.collaboratorIds} /></td>
                     <td><PersonPills ids={item.reviewerIds} /></td>
                     <td><PersonPills ids={item.informedIds} limit={1} /></td>
                     <td><strong className="rc-due-label">{item.dueLabel}</strong></td>
-                    <td><span className={`rc-state-pill ${item.state}`}>{item.warning && <AlertCircle size={11} />}{ruleStateLabels[item.state]}</span></td>
+                    <td className="rc-state-action-cell">
+                      <button type="button" className={`rc-state-pill ${item.state}`} onClick={event => { event.stopPropagation(); selectItem(item); }}>{item.warning && <AlertCircle size={11} />}{ruleStateLabels[item.state]}</button>
+                      <div className="rc-row-actions" aria-label={`${item.matter}快捷操作`}>
+                        <button type="button" title="查看责任链" aria-label="查看责任链" onClick={event => { event.stopPropagation(); selectItem(item); }}><GitBranch size={13} /></button>
+                        <button type="button" title="编辑责任规则" aria-label="编辑责任规则" onClick={event => { event.stopPropagation(); selectItem(item); }}><PencilLine size={13} /></button>
+                        <a href={item.route} title="查看关联事项" aria-label="查看关联事项" onClick={event => event.stopPropagation()}><Link2 size={13} /></a>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -312,33 +337,93 @@ function MatrixView({
   );
 }
 
+type RoleDetailPanel = 'responsibilities' | 'modules' | 'collaboration' | 'escalation';
+
+function responsibilityType(item: ResponsibilityMatrixItem, personId: string): string {
+  if (item.ownerIds.includes(personId)) return '主责';
+  if (item.reviewerIds.includes(personId)) return '审核';
+  if (item.collaboratorIds.includes(personId)) return '协同';
+  return '知会';
+}
+
+function responsibilityHandoff(item: ResponsibilityMatrixItem, personId: string): ResponsibilityPerson | null {
+  const candidateId = [...item.collaboratorIds, ...item.reviewerIds, ...item.informedIds, ...item.ownerIds]
+    .find(id => id !== personId);
+  return candidateId ? getPerson(candidateId) : null;
+}
+
+function rulesForPerson(personId: string): ResponsibilityMatrixItem[] {
+  return snapshot.matrix.filter(item => (
+    [...item.ownerIds, ...item.collaboratorIds, ...item.reviewerIds, ...item.informedIds].includes(personId)
+  ));
+}
+
 function CollaborationNetwork({
   person,
+  responsibilities,
   onSelect,
 }: {
   person: ResponsibilityPerson;
+  responsibilities: ResponsibilityMatrixItem[];
   onSelect: (personId: string) => void;
 }) {
-  const collaborators = person.collaboratorIds.slice(0, 6);
+  const collaborators = person.collaboratorIds.slice(0, 5);
+  const [activeCollaboratorId, setActiveCollaboratorId] = useState(collaborators[0] || '');
+  const activeCollaborator = activeCollaboratorId ? getPerson(activeCollaboratorId) : null;
+  const activeRelations = activeCollaborator
+    ? responsibilities.filter(item => (
+      [...item.ownerIds, ...item.collaboratorIds, ...item.reviewerIds, ...item.informedIds].includes(activeCollaborator.id)
+    ))
+    : [];
+
+  useEffect(() => {
+    setActiveCollaboratorId(person.collaboratorIds[0] || '');
+  }, [person.id, person.collaboratorIds]);
+
   return (
     <section className="rc-network-card">
-      <div className="rc-section-heading"><div><span>协作网络</span><h3>主要关系路径</h3></div><small>{collaborators.length} 个高频对象</small></div>
+      <div className="rc-section-heading"><div><span>协作网络</span><h3>关键协作关系</h3></div><small>{collaborators.length} 位高频对象</small></div>
       <div
         className="rc-network-map"
         onPointerMove={event => applyPerspective(event.currentTarget, event.clientX, event.clientY)}
         onPointerLeave={event => clearPerspective(event.currentTarget)}
       >
-        <div className="rc-network-halo" aria-hidden="true" />
-        {collaborators.map((collaboratorId, index) => <span className={`rc-network-line line-${index + 1}`} key={`line-${collaboratorId}`} aria-hidden="true" />)}
+        {collaborators.map((collaboratorId, index) => (
+          <span
+            className={`rc-network-line line-${index + 1} ${activeCollaboratorId === collaboratorId ? 'active' : activeCollaboratorId ? 'muted' : ''}`}
+            key={`line-${collaboratorId}`}
+            aria-hidden="true"
+          />
+        ))}
         <div className="rc-network-center"><PersonAvatar personId={person.id} size="large" /><strong>{person.name}</strong><small>{person.role}</small></div>
         {collaborators.map((collaboratorId, index) => {
           const collaborator = getPerson(collaboratorId);
+          const relationCount = responsibilities.filter(item => (
+            [...item.ownerIds, ...item.collaboratorIds, ...item.reviewerIds, ...item.informedIds].includes(collaboratorId)
+          )).length;
           return (
-            <button type="button" className={`rc-network-node node-${index + 1}`} key={collaboratorId} onClick={() => onSelect(collaboratorId)}>
-              <PersonAvatar personId={collaboratorId} /><span><strong>{collaborator.name}</strong><small>{departmentMap.get(collaborator.departmentId)?.shortLabel}</small></span>
+            <button
+              type="button"
+              className={`rc-network-node node-${index + 1} ${activeCollaboratorId === collaboratorId ? 'active' : ''}`}
+              key={collaboratorId}
+              title={`${collaborator.name} · ${collaborator.role}\n共同关联 ${relationCount} 项责任规则`}
+              onPointerEnter={() => setActiveCollaboratorId(collaboratorId)}
+              onFocus={() => setActiveCollaboratorId(collaboratorId)}
+              onClick={() => onSelect(collaboratorId)}
+            >
+              <PersonAvatar personId={collaboratorId} /><span><strong>{collaborator.name}</strong><small>{collaborator.role}</small></span><b>{relationCount}</b>
             </button>
           );
         })}
+      </div>
+      <div className="rc-network-context" aria-live="polite">
+        {activeCollaborator ? (
+          <>
+            <span><PersonAvatar personId={activeCollaborator.id} size="small" /><strong>{activeCollaborator.name}</strong></span>
+            <p>{activeRelations[0]?.matter || '日常跨部门协作'}{activeRelations.length > 1 ? ` 等 ${activeRelations.length} 项关联事项` : ''}</p>
+            <button type="button" onClick={() => onSelect(activeCollaborator.id)}>查看角色<ChevronRight size={13} /></button>
+          </>
+        ) : <p>悬停协作对象查看责任摘要</p>}
       </div>
     </section>
   );
@@ -356,21 +441,40 @@ function RolesView({
   onOpenWork: (personId: string) => void;
 }) {
   const [keyword, setKeyword] = useState('');
+  const [department, setDepartment] = useState('all');
+  const [roleStatus, setRoleStatus] = useState<ResponsibilityPersonStatus | 'all'>('all');
+  const [activePanel, setActivePanel] = useState<RoleDetailPanel>('responsibilities');
   const selected = getPerson(selectedPersonId);
-  const groupedPeople = useMemo(() => snapshot.departments.map(department => ({
-    department,
+  const selectedRules = useMemo(() => rulesForPerson(selectedPersonId), [selectedPersonId]);
+  const selectedWork = useMemo(() => snapshot.workItems.filter(item => (
+    item.ownerId === selectedPersonId || item.nextPersonId === selectedPersonId || item.participantIds.includes(selectedPersonId)
+  )), [selectedPersonId]);
+  const ownedCount = selectedRules.filter(item => item.ownerIds.includes(selectedPersonId)).length;
+  const loadPercent = Math.min(100, Math.max(18, 28 + selectedWork.filter(item => item.state !== 'done').length * 11));
+  const groupedPeople = useMemo(() => snapshot.departments.map(groupDepartment => ({
+    department: groupDepartment,
     people: snapshot.people.filter(person => {
-      if (person.departmentId !== department.id) return false;
+      if (person.departmentId !== groupDepartment.id) return false;
+      if (department !== 'all' && person.departmentId !== department) return false;
+      if (roleStatus !== 'all' && person.status !== roleStatus) return false;
       const search = keyword.trim().toLowerCase();
-      return !search || `${person.name} ${person.role} ${department.label}`.toLowerCase().includes(search);
+      return !search || `${person.name} ${person.role} ${groupDepartment.label}`.toLowerCase().includes(search);
     }),
-  })).filter(group => group.people.length), [keyword]);
+  })).filter(group => group.people.length), [department, keyword, roleStatus]);
+
+  useEffect(() => {
+    setActivePanel('responsibilities');
+  }, [selectedPersonId]);
 
   return (
-    <div className="rc-roles-view">
+    <div className="rc-roles-view rc-roles-view-v2">
       <aside className="rc-role-list">
         <header><div><span>组织角色</span><h2>角色与人员</h2></div><b>{snapshot.people.length}</b></header>
         <label className="rc-search-field"><Search size={15} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索姓名或岗位" aria-label="搜索角色或人员" />{keyword && <button type="button" aria-label="清空搜索" onClick={() => setKeyword('')}><X size={13} /></button>}</label>
+        <div className="rc-role-list-filters">
+          <label><span>部门</span><select value={department} onChange={event => setDepartment(event.target.value)}><option value="all">全部</option>{snapshot.departments.map(item => <option value={item.id} key={item.id}>{item.shortLabel}</option>)}</select></label>
+          <label><span>状态</span><select value={roleStatus} onChange={event => setRoleStatus(event.target.value as ResponsibilityPersonStatus | 'all')}><option value="all">全部</option><option value="active">在岗</option><option value="unconfigured">待配置</option></select></label>
+        </div>
         <div className="rc-role-list-scroll hm-scroll-region" tabIndex={0}>
           {groupedPeople.map(group => (
             <section key={group.department.id}>
@@ -379,72 +483,100 @@ function RolesView({
                 <button type="button" key={person.id} className={`${selected.id === person.id ? 'selected' : ''} ${person.status}`} onClick={() => onSelectPerson(person.id)}>
                   <PersonAvatar personId={person.id} />
                   <span><strong>{person.name}</strong><small>{person.role}</small></span>
-                  {person.status === 'unconfigured' ? <em>待配置</em> : <ChevronRight size={14} />}
+                  {person.status === 'unconfigured' ? <em>待配置</em> : <i className="rc-role-online" title="在岗" />}
                 </button>
               ))}
             </section>
           ))}
+          {!groupedPeople.length && <div className="rc-role-list-empty"><Search size={18} /><strong>暂无匹配人员</strong><button type="button" onClick={() => { setKeyword(''); setDepartment('all'); setRoleStatus('all'); }}>清除筛选</button></div>}
         </div>
       </aside>
 
-      <section className="rc-role-detail hm-scroll-region" tabIndex={0}>
+      <section className="rc-role-workbench hm-scroll-region" tabIndex={0}>
         <header className="rc-role-hero">
-          <div className="rc-role-identity"><PersonAvatar personId={selected.id} size="large" /><div><span>{departmentMap.get(selected.departmentId)?.label}</span><h2>{selected.name}</h2><p>{selected.role}</p></div></div>
-          <div className="rc-role-hero-actions">
-            <span className={selected.status}>{selected.status === 'active' ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}{selected.status === 'active' ? '职责已建立' : '岗位待配置'}</span>
-            <button type="button" onClick={() => onOpenMatrix(selected.id)}>关联责任矩阵<ArrowRight size={13} /></button>
-            <button type="button" className="primary" onClick={() => onOpenWork(selected.id)}>预览工作事项<ArrowRight size={13} /></button>
+          <div className="rc-role-identity">
+            <PersonAvatar personId={selected.id} size="large" />
+            <div><span>{departmentMap.get(selected.departmentId)?.label}</span><h2>{selected.name}</h2><p>{selected.role}</p></div>
           </div>
           <p className="rc-role-summary">{selected.summary}</p>
+          <div className="rc-role-kpis" aria-label={`${selected.name}角色概览`}>
+            <div><span>状态</span><strong className={selected.status}>{selected.status === 'active' ? '在岗' : '待配置'}</strong></div>
+            <div><span>当前负荷</span><strong>{loadPercent}%</strong><i><em style={{ width: `${loadPercent}%` }} /></i></div>
+            <div><span>主要责任</span><strong>{ownedCount}</strong><small>项主责规则</small></div>
+            <div><span>协同事项</span><strong>{selectedWork.length}</strong><small>项工作关联</small></div>
+          </div>
+          <div className="rc-role-hero-actions">
+            <button type="button" onClick={() => onOpenMatrix(selected.id)}>责任矩阵<ArrowRight size={13} /></button>
+            <button type="button" className="primary" onClick={() => onOpenWork(selected.id)}>进入工作预览<ArrowRight size={13} /></button>
+          </div>
         </header>
 
-        <div className="rc-role-detail-grid">
-          <section className="rc-content-card responsibilities">
-            <div className="rc-section-heading"><div><span>职责边界</span><h3>核心职责</h3></div><Target size={17} /></div>
-            <ol>{selected.coreResponsibilities.map((item, index) => <li key={item}><span>{String(index + 1).padStart(2, '0')}</span><p>{item}</p></li>)}</ol>
-          </section>
-          <section className="rc-content-card modules">
-            <div className="rc-section-heading"><div><span>业务范围</span><h3>可管理模块</h3></div><Layers3 size={17} /></div>
-            <div>{selected.managedModules.map(module => <span key={module}>{module}</span>)}</div>
-          </section>
-          <section className="rc-content-card collaborators">
-            <div className="rc-section-heading"><div><span>协同对象</span><h3>主要协作关系</h3></div><UsersRound size={17} /></div>
-            <div>{selected.collaboratorIds.slice(0, 6).map(id => { const person = getPerson(id); return <button type="button" key={id} onClick={() => onSelectPerson(id)}><PersonAvatar personId={id} /><span><strong>{person.name}</strong><small>{person.role}</small></span><ChevronRight size={13} /></button>; })}</div>
-          </section>
-          <section className="rc-content-card escalation">
-            <div className="rc-section-heading"><div><span>治理关系</span><h3>审核与升级</h3></div><ShieldCheck size={17} /></div>
-            <div className="rc-escalation-flow">
-              <div><span>日常审核</span><PersonPills ids={selected.reviewerIds} limit={3} /></div>
-              <ArrowRight size={16} />
-              <div><span>升级决策</span><PersonPills ids={selected.escalationIds} limit={3} /></div>
+        <div className="rc-role-workspace-grid">
+          <div className="rc-role-primary">
+            <div className="rc-role-overview-grid" aria-label="角色职责概览">
+              <button type="button" className={activePanel === 'responsibilities' ? 'active' : ''} onClick={() => setActivePanel('responsibilities')}>
+                <span><Target size={17} /></span><div><small>职责边界</small><h3>核心职责</h3><p>{selected.coreResponsibilities[0]}</p></div><b>{selected.coreResponsibilities.length}</b>
+              </button>
+              <button type="button" className={activePanel === 'modules' ? 'active' : ''} onClick={() => setActivePanel('modules')}>
+                <span><Layers3 size={17} /></span><div><small>业务范围</small><h3>管理模块</h3><p>{selected.managedModules.slice(0, 2).join('、')}</p></div><b>{selected.managedModules.length}</b>
+              </button>
+              <button type="button" className={activePanel === 'collaboration' ? 'active' : ''} onClick={() => setActivePanel('collaboration')}>
+                <span><UsersRound size={17} /></span><div><small>协同对象</small><h3>主要协作</h3><p>{selected.collaboratorIds.slice(0, 2).map(id => getPerson(id).name).join('、')}</p></div><b>{selected.collaboratorIds.length}</b>
+              </button>
+              <button type="button" className={activePanel === 'escalation' ? 'active' : ''} onClick={() => setActivePanel('escalation')}>
+                <span><ShieldCheck size={17} /></span><div><small>治理关系</small><h3>审核与升级</h3><p>{[...selected.reviewerIds, ...selected.escalationIds].slice(0, 2).map(id => getPerson(id).name).join('、') || '无需上级审核'}</p></div><b>{selected.reviewerIds.length + selected.escalationIds.length}</b>
+              </button>
             </div>
-          </section>
-          <section className="rc-content-card checklist">
-            <div className="rc-section-heading"><div><span>执行清单</span><h3>职责检查点</h3></div><CheckCircle2 size={17} /></div>
-            <ul>{selected.checklist.map((item, index) => <li key={item}><span className={index === 0 ? 'current' : ''}>{index === 0 ? <CircleDot size={13} /> : <Check size={12} />}</span><p>{item}</p></li>)}</ul>
-          </section>
-          <section className="rc-content-card flows">
-            <div className="rc-section-heading"><div><span>流程关联</span><h3>关联业务流程</h3></div><Workflow size={17} /></div>
-            <div>{selected.flowNames.map((flow, index) => <span key={flow}><i>{index + 1}</i>{flow}<ArrowUpRight size={12} /></span>)}</div>
-          </section>
+
+            <section className={`rc-role-panel-detail panel-${activePanel}`}>
+              {activePanel === 'responsibilities' && <ol>{selected.coreResponsibilities.map((item, index) => <li key={item}><span>{String(index + 1).padStart(2, '0')}</span><strong>{item}</strong></li>)}</ol>}
+              {activePanel === 'modules' && <div className="rc-role-module-links">{selected.managedModules.map(module => <button type="button" onClick={() => onOpenMatrix(selected.id)} key={module}>{module}<ArrowUpRight size={12} /></button>)}</div>}
+              {activePanel === 'collaboration' && <div className="rc-role-collaborator-links">{selected.collaboratorIds.slice(0, 6).map(id => { const person = getPerson(id); return <button type="button" key={id} onClick={() => onSelectPerson(id)}><PersonAvatar personId={id} size="small" /><span><strong>{person.name}</strong><small>{person.role}</small></span></button>; })}</div>}
+              {activePanel === 'escalation' && <div className="rc-escalation-flow"><div><span>日常审核</span><PersonPills ids={selected.reviewerIds} limit={3} /></div><ArrowRight size={16} /><div><span>升级决策</span><PersonPills ids={selected.escalationIds} limit={3} /></div></div>}
+            </section>
+
+            <section className="rc-role-ledger">
+              <div className="rc-section-heading"><div><span>职责清单</span><h3>责任规则与交接</h3></div><small>{selectedRules.length} 项关联规则</small></div>
+              <div className="rc-role-ledger-scroll hm-scroll-region" tabIndex={0}>
+                <table>
+                  <thead><tr><th>业务事项</th><th>责任类型</th><th>触发条件</th><th>交接对象</th><th>时限</th><th>关联流程</th><th>状态</th></tr></thead>
+                  <tbody>{selectedRules.map(item => {
+                    const handoff = responsibilityHandoff(item, selected.id);
+                    return (
+                      <tr key={`${selected.id}-${item.id}`}>
+                        <td><a href={item.route}><strong>{item.matter}</strong><small>{item.module}</small></a></td>
+                        <td><span className={`rc-relation-type type-${responsibilityType(item, selected.id)}`}>{responsibilityType(item, selected.id)}</span></td>
+                        <td title={item.description}>{item.description}</td>
+                        <td>{handoff ? <button type="button" onClick={() => onSelectPerson(handoff.id)}><PersonAvatar personId={handoff.id} size="small" />{handoff.name}</button> : <span>—</span>}</td>
+                        <td><strong>{item.dueLabel}</strong></td>
+                        <td title={item.flow.map(step => step.label).join(' → ')}>{item.flow.map(step => step.label).slice(0, 2).join(' → ')}</td>
+                        <td><button type="button" className={`rc-state-pill ${item.state}`} onClick={() => onOpenMatrix(selected.id)}>{ruleStateLabels[item.state]}</button></td>
+                      </tr>
+                    );
+                  })}</tbody>
+                </table>
+                {!selectedRules.length && <div className="rc-role-ledger-empty"><Info size={18} /><strong>当前角色尚未关联责任规则</strong><button type="button" onClick={() => onOpenMatrix(selected.id)}>前往责任矩阵配置</button></div>}
+              </div>
+            </section>
+          </div>
+
+          <aside className="rc-role-insights">
+            <CollaborationNetwork person={selected} responsibilities={selectedRules} onSelect={onSelectPerson} />
+            <section className="rc-permission-card">
+              <div className="rc-section-heading"><div><span>权限范围</span><h3>初版配置预览</h3></div><em>未生效</em></div>
+              <p><Info size={13} /><strong>仅用于后续配置参考</strong><span>当前不会改变任何账号访问范围或操作权限。</span></p>
+              <div>
+                {selected.permissions.map(permission => (
+                  <article key={`${permission.module}-${permission.scope}`}>
+                    <span className={`mode-${permission.mode}`}>{permission.mode === '查看' ? <Eye size={13} /> : permission.mode === '审核' ? <ShieldCheck size={13} /> : <UserCog size={13} />}{permission.mode}</span>
+                    <div><strong>{permission.module}</strong><small>{permission.scope}</small></div>
+                  </article>
+                ))}
+              </div>
+            </section>
+          </aside>
         </div>
       </section>
-
-      <aside className="rc-role-insights hm-scroll-region" tabIndex={0}>
-        <CollaborationNetwork person={selected} onSelect={onSelectPerson} />
-        <section className="rc-permission-card">
-          <div className="rc-section-heading"><div><span>权限范围（初版）</span><h3>未来配置预览</h3></div><em>尚未生效</em></div>
-          <p><Info size={13} />本期不改变账号权限，仅展示建议范围。</p>
-          <div>
-            {selected.permissions.map(permission => (
-              <article key={`${permission.module}-${permission.scope}`}>
-                <span className={`mode-${permission.mode}`}>{permission.mode === '查看' ? <Eye size={13} /> : permission.mode === '审核' ? <ShieldCheck size={13} /> : <UserCog size={13} />}{permission.mode}</span>
-                <div><strong>{permission.module}</strong><small>{permission.scope}</small></div>
-              </article>
-            ))}
-          </div>
-        </section>
-      </aside>
     </div>
   );
 }
@@ -458,16 +590,28 @@ function relationForPerson(item: ResponsibilityWorkItem, personId: string): Work
   return null;
 }
 
-function WorkItemCard({ item }: { item: DerivedWorkItem }) {
+function WorkItemCard({
+  item,
+  onQuickAction,
+}: {
+  item: DerivedWorkItem;
+  onQuickAction: (label: string, item: DerivedWorkItem) => void;
+}) {
   const nextPerson = getPerson(item.nextPersonId);
   return (
-    <a className={`rc-work-item priority-${item.priority}`} href={item.route}>
+    <article className={`rc-work-item priority-${item.priority}`}>
       <header><span>{item.source}</span><em>{priorityLabels[item.priority]}</em></header>
-      <h3>{item.title}</h3>
+      <a className="rc-work-item-title" href={item.route}><h3>{item.title}</h3><ArrowUpRight size={13} /></a>
       <div className="rc-work-progress"><span style={{ width: `${item.progress}%` }} /></div>
       <div className="rc-work-meta"><span className={`state-${item.state}`}>{item.stateLabel}</span><span><Clock3 size={11} />{item.dueLabel}</span></div>
-      <footer><span>下一步</span><PersonAvatar personId={nextPerson.id} size="small" /><strong>{nextPerson.name}</strong><ArrowUpRight size={12} /></footer>
-    </a>
+      <footer><span>下一步交接</span><PersonAvatar personId={nextPerson.id} size="small" /><strong>{nextPerson.name}</strong><small>{nextPerson.role}</small></footer>
+      <div className="rc-work-quick-actions" aria-label={`${item.title}快捷操作`}>
+        <a href={item.route} title="查看详情"><Eye size={13} />查看</a>
+        <button type="button" title="确认接收" onClick={() => onQuickAction('已确认接收', item)}><CheckCheck size={13} />接收</button>
+        <button type="button" title="催办协同人" onClick={() => onQuickAction(`已提醒${nextPerson.name}`, item)}><Send size={13} />催办</button>
+        <button type="button" title="标记已读" onClick={() => onQuickAction('已标记为已读', item)}><MessageSquareText size={13} />已读</button>
+      </div>
+    </article>
   );
 }
 
@@ -481,6 +625,8 @@ function WorkPreview({
   const [dateScope, setDateScope] = useState<WorkDateScope | 'all'>('today');
   const [priority, setPriority] = useState<WorkPriority | 'all'>('all');
   const [state, setState] = useState<WorkState | 'all'>('all');
+  const [collapsedRelations, setCollapsedRelations] = useState<Record<'assist' | 'informed', boolean>>({ assist: false, informed: false });
+  const [quickFeedback, setQuickFeedback] = useState('');
   const selected = getPerson(selectedPersonId);
   const allPersonItems = useMemo(() => snapshot.workItems.map(item => {
     const displayRelation = relationForPerson(item, selectedPersonId);
@@ -495,6 +641,9 @@ function WorkPreview({
     ? Math.round(allPersonItems.reduce((sum, item) => sum + item.progress, 0) / allPersonItems.length)
     : 0;
   const urgentItems = allPersonItems.filter(item => item.priority === 'urgent' && item.state !== 'done');
+  const focusItem = urgentItems[0] || allPersonItems.find(item => item.state !== 'done') || allPersonItems[0];
+  const focusOwner = focusItem ? getPerson(focusItem.ownerId) : selected;
+  const focusNext = focusItem ? getPerson(focusItem.nextPersonId) : selected;
   const collaboratorFrequency = new Map<string, number>();
   allPersonItems.forEach(item => {
     [...item.participantIds, item.nextPersonId].forEach(id => {
@@ -502,14 +651,40 @@ function WorkPreview({
     });
   });
   const workload = Array.from(collaboratorFrequency.entries()).sort((first, second) => second[1] - first[1]).slice(0, 5);
+  const todayTodo = allPersonItems.filter(item => item.dateScope === 'today' && item.state !== 'done').length;
+  const dueSoon = allPersonItems.filter(item => item.state !== 'done' && (item.priority === 'urgent' || item.priority === 'high')).length;
+  const completed = allPersonItems.filter(item => item.state === 'done').length;
+  const focusPathIds = focusItem
+    ? Array.from(new Set([focusItem.ownerId, ...focusItem.participantIds.slice(0, 2), focusItem.nextPersonId]))
+    : [selected.id];
+
+  function handleQuickAction(label: string, item: DerivedWorkItem): void {
+    setQuickFeedback(`${item.title} · ${label}（预览）`);
+    window.setTimeout(() => setQuickFeedback(''), 2400);
+  }
+
+  function clearWorkFilters(): void {
+    setDateScope('all');
+    setPriority('all');
+    setState('all');
+  }
 
   return (
     <div className="rc-work-view">
       <section className="rc-work-focus">
-        <div className="rc-focus-icon"><Sparkles size={20} /></div>
-        <div><span>今日协同焦点 · {selected.name}</span><h2>{urgentItems[0]?.title || '保持当前节奏，按责任规则完成交接'}</h2><p>{selected.role} · 当前共有 {allPersonItems.length} 项相关工作</p></div>
-        <div className="rc-focus-progress"><div><strong>{progress}%</strong><span>推进进度</span></div><i><span style={{ width: `${progress}%` }} /></i></div>
-        <a href={urgentItems[0]?.route || '/workspace/workflows'}>进入当前焦点<ArrowUpRight size={14} /></a>
+        <div className="rc-focus-leading">
+          <div className="rc-focus-icon"><Sparkles size={20} /></div>
+          <div><span>今日协同焦点 · {selected.name}</span><h2>{focusItem?.title || '当前没有需要推进的协同事项'}</h2><p>{focusItem ? `${focusItem.source} · ${focusItem.module}` : `${selected.role} · 工作节奏正常`}</p></div>
+        </div>
+        <div className="rc-focus-context">
+          <div><span>风险原因</span><strong>{focusItem?.priority === 'urgent' ? '紧急事项，需在当前时限内完成交接' : focusItem?.state === 'waiting' ? '当前节点等待协作输入' : '按计划推进，关注下一节点衔接'}</strong></div>
+          <div><span>下一步动作</span><strong>{focusItem ? `完成当前处理并交接给 ${focusNext.name}` : '查看全部工作事项'}</strong></div>
+          <div className="rc-focus-people"><span>相关责任人</span><button type="button" onClick={() => onSelectPerson(focusOwner.id)}><PersonAvatar personId={focusOwner.id} size="small" />{focusOwner.name}</button><ArrowRight size={12} /><button type="button" onClick={() => onSelectPerson(focusNext.id)}><PersonAvatar personId={focusNext.id} size="small" />{focusNext.name}</button></div>
+        </div>
+        <div className="rc-focus-action">
+          <div className="rc-focus-progress"><div><strong>{focusItem?.progress ?? progress}%</strong><span>当前推进</span></div><i><span style={{ width: `${focusItem?.progress ?? progress}%` }} /></i></div>
+          <a href={focusItem?.route || '/workspace/workflows'}>进入处理<ArrowUpRight size={14} /></a>
+        </div>
       </section>
 
       <section className="rc-work-toolbar" aria-label="工作预览筛选">
@@ -522,24 +697,50 @@ function WorkPreview({
 
       <div className="rc-work-main">
         <section className="rc-work-board">
-          {(Object.keys(relationLabels) as WorkRelation[]).map(relation => {
+          {(['owned', 'review'] as WorkRelation[]).map(relation => {
             const items = filtered.filter(item => item.displayRelation === relation);
             return (
               <section className={`rc-work-column relation-${relation}`} key={relation}>
                 <header><div><span>{relation === 'owned' ? <Target size={15} /> : relation === 'review' ? <ShieldCheck size={15} /> : relation === 'assist' ? <UsersRound size={15} /> : <BellRing size={15} />}</span><div><h2>{relationLabels[relation]}</h2><p>{relationDescriptions[relation]}</p></div></div><b>{items.length}</b></header>
                 <div className="rc-work-column-scroll hm-scroll-region" tabIndex={0}>
-                  {items.map(item => <WorkItemCard item={item} key={`${selectedPersonId}-${item.id}-${relation}`} />)}
-                  {!items.length && <div className="rc-work-empty"><CheckCircle2 size={19} /><strong>当前没有事项</strong><span>筛选范围内无需处理</span></div>}
+                  {items.map(item => <WorkItemCard item={item} onQuickAction={handleQuickAction} key={`${selectedPersonId}-${item.id}-${relation}`} />)}
+                  {!items.length && <div className="rc-work-empty"><CheckCircle2 size={19} /><strong>{relation === 'owned' ? '当前没有主责事项' : '当前没有待审核事项'}</strong><span>{filtered.length ? '当前职责关系下没有匹配事项' : '可能是日期或状态筛选隐藏了事项'}</span><div><button type="button" onClick={clearWorkFilters}>查看全部</button><button type="button" onClick={() => setDateScope('week')}>切换本周</button></div></div>}
                 </div>
               </section>
             );
           })}
+          <div className="rc-work-secondary">
+            {(['assist', 'informed'] as const).map(relation => {
+              const items = filtered.filter(item => item.displayRelation === relation);
+              const collapsed = collapsedRelations[relation];
+              return (
+                <section className={`rc-work-column rc-work-column-compact relation-${relation} ${collapsed ? 'collapsed' : ''}`} key={relation}>
+                  <header>
+                    <div><span>{relation === 'assist' ? <UsersRound size={15} /> : <BellRing size={15} />}</span><div><h2>{relationLabels[relation]}</h2><p>{relationDescriptions[relation]}</p></div></div>
+                    <b>{items.length}</b>
+                    <button type="button" aria-label={collapsed ? `展开${relationLabels[relation]}` : `收起${relationLabels[relation]}`} onClick={() => setCollapsedRelations(current => ({ ...current, [relation]: !current[relation] }))}>{collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}</button>
+                  </header>
+                  {!collapsed && <div className="rc-work-column-scroll hm-scroll-region" tabIndex={0}>
+                    {items.map(item => <WorkItemCard item={item} onQuickAction={handleQuickAction} key={`${selectedPersonId}-${item.id}-${relation}`} />)}
+                    {!items.length && <div className="rc-work-empty compact"><CheckCircle2 size={17} /><strong>暂无{relationLabels[relation]}</strong><span>可查看全部日期或切换人员</span><div><button type="button" onClick={clearWorkFilters}>查看全部</button></div></div>}
+                  </div>}
+                </section>
+              );
+            })}
+          </div>
         </section>
 
         <aside className="rc-work-side hm-scroll-region" tabIndex={0}>
           <section className="rc-load-card">
-            <div className="rc-section-heading"><div><span>协作对象</span><h3>工作负荷</h3></div><Network size={16} /></div>
+            <div className="rc-section-heading"><div><span>今日工作</span><h3>工作负荷</h3></div><ListChecks size={16} /></div>
             <div className="rc-selected-person-mini"><PersonAvatar personId={selected.id} size="large" /><div><strong>{selected.name}</strong><span>{selected.role}</span></div><em>{allPersonItems.length} 项</em></div>
+            <div className="rc-workload-metrics">
+              <div><span>今日待办</span><strong>{todayTodo}</strong><CalendarDays size={13} /></div>
+              <div><span>临期</span><strong>{dueSoon}</strong><CalendarClock size={13} /></div>
+              <div className="risk"><span>高风险</span><strong>{urgentItems.length}</strong><AlertTriangle size={13} /></div>
+              <div className="done"><span>已完成</span><strong>{completed}</strong><CheckCircle2 size={13} /></div>
+            </div>
+            <div className="rc-load-subheading"><span>协作对象负荷</span><Network size={13} /></div>
             <div className="rc-load-bars">
               {workload.length ? workload.map(([personId, count], index) => {
                 const person = getPerson(personId);
@@ -557,9 +758,13 @@ function WorkPreview({
       </div>
 
       <section className="rc-work-footer-grid">
-        <article>
+        <article className="rc-handoff-timeline">
           <div className="rc-section-heading"><div><span>当前工作流</span><h3>责任交接路径</h3></div><Workflow size={16} /></div>
-          <div className="rc-mini-flow">{allPersonItems.slice(0, 3).map((item, index) => <span key={item.id}><i className={index === 0 ? 'current' : ''}>{index + 1}</i><strong>{item.module}</strong>{index < Math.min(2, allPersonItems.length - 1) && <ArrowRight size={13} />}</span>)}</div>
+          <div className="rc-mini-flow">{focusPathIds.map((personId, index) => {
+            const person = getPerson(personId);
+            const isCurrent = personId === selected.id || index === Math.min(1, focusPathIds.length - 1);
+            return <span key={`${focusItem?.id || 'empty'}-${personId}-${index}`}><button type="button" className={isCurrent ? 'current' : ''} onClick={() => onSelectPerson(personId)}><PersonAvatar personId={personId} size="small" /><i>{isCurrent ? '当前' : index + 1}</i><strong>{person.name}</strong><small>{person.role}</small></button>{index < focusPathIds.length - 1 && <ArrowRight size={13} />}</span>;
+          })}</div>
         </article>
         <article>
           <div className="rc-section-heading"><div><span>今日完成</span><h3>职责检查点</h3></div><CheckCircle2 size={16} /></div>
@@ -570,6 +775,7 @@ function WorkPreview({
           <div className="rc-escalation-people"><PersonPills ids={selected.reviewerIds} limit={2} /><ArrowRight size={14} /><PersonPills ids={selected.escalationIds} limit={2} /></div>
         </article>
       </section>
+      {quickFeedback && <div className="rc-action-toast" role="status"><CheckCircle2 size={15} />{quickFeedback}</div>}
     </div>
   );
 }
