@@ -7,9 +7,12 @@ import {
   WAREHOUSE_EXCEPTION_TYPES,
   WAREHOUSE_MATERIAL_STATUSES,
   serializeWarehouseMaterialTask,
+  warehouseMaterialScopeWeekStart,
+  warehouseMaterialWorkOrderWhere,
   warehouseMaterialTaskListInclude,
 } from '@/lib/warehouse-material';
 import type { WarehouseExceptionType, WarehouseMaterialStatus } from '@/types';
+import { naturalProductionWeek } from '@/lib/production-execution';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,10 +20,6 @@ export const dynamic = 'force-dynamic';
 function integer(value: string | null, fallback: number, max: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) ? Math.min(Math.max(parsed, 1), max) : fallback;
-}
-
-function sameDay(value: Date): { gte: Date; lt: Date } {
-  return { gte: value, lt: addDays(value, 1) };
 }
 
 function chinaDayStart(value = new Date()): Date {
@@ -53,54 +52,20 @@ export async function GET(req: NextRequest) {
     if (params.get('weekStart') && !requestedWeek) {
       return NextResponse.json({ ok: false, error: '周开始日期格式不正确' }, { status: 400 });
     }
-
-    let activeWeek = requestedWeek;
-    if (!activeWeek && scope === 'current') {
-      activeWeek = (await prisma.workOrder.findFirst({
-        where: { deletedAt: null, planType: { in: ['weekly_plan', 'managed_plan'] }, planActive: true, materialTask: { isNot: null }, weekStartDate: { not: null } },
-        select: { weekStartDate: true },
-        orderBy: [{ weekStartDate: 'desc' }, { updatedAt: 'desc' }],
-      }))?.weekStartDate || null;
+    const naturalWeek = naturalProductionWeek();
+    const nextWeekStart = addDays(naturalWeek.start, 7);
+    if (requestedWeek && scope === 'history' && requestedWeek >= naturalWeek.start) {
+      return NextResponse.json({ ok: false, error: '历史周只能选择本周以前的生产周' }, { status: 400 });
     }
-    if (!activeWeek && scope === 'preparation') {
-      const preparationWeek = (await prisma.workOrder.findFirst({
-        where: {
-          deletedAt: null,
-          planType: 'managed_plan',
-          planActive: false,
-          productionPlanBatch: { is: { releaseState: 'preparation', deletedAt: null } },
-          materialTask: { isNot: null },
-          weekStartDate: { not: null },
-        },
-        select: { weekStartDate: true },
-        orderBy: [{ weekStartDate: 'asc' }, { updatedAt: 'desc' }],
-      }))?.weekStartDate || null;
-      if (preparationWeek) {
-        activeWeek = preparationWeek;
-      } else {
-        const currentWeek = (await prisma.workOrder.findFirst({
-          where: { deletedAt: null, planType: { in: ['weekly_plan', 'managed_plan'] }, planActive: true, materialTask: { isNot: null }, weekStartDate: { not: null } },
-          select: { weekStartDate: true },
-          orderBy: [{ weekStartDate: 'desc' }, { updatedAt: 'desc' }],
-        }))?.weekStartDate || null;
-        activeWeek = currentWeek ? addDays(currentWeek, 7) : null;
-      }
+    if (requestedWeek && scope === 'preparation' && requestedWeek < nextWeekStart) {
+      return NextResponse.json({ ok: false, error: '预备周只能选择下周及以后的生产周' }, { status: 400 });
     }
-
-    const workOrderWhere: Prisma.WorkOrderWhereInput = {
-      deletedAt: null,
-      planType: { in: ['weekly_plan', 'managed_plan'] },
-    };
-    if (activeWeek) workOrderWhere.weekStartDate = sameDay(activeWeek);
-    if (scope === 'current') {
-      workOrderWhere.planActive = true;
-      if (!activeWeek) workOrderWhere.id = '__no_active_warehouse_week__';
-    }
-    else if (scope === 'preparation') {
-      workOrderWhere.planActive = false;
-      workOrderWhere.productionPlanBatch = { is: { releaseState: 'preparation', deletedAt: null } };
-      if (!activeWeek) workOrderWhere.id = '__no_preparation_warehouse_week__';
-    } else workOrderWhere.planActive = false;
+    const activeWeek = warehouseMaterialScopeWeekStart(scope, naturalWeek.start, requestedWeek);
+    const workOrderWhere = warehouseMaterialWorkOrderWhere({
+      scope,
+      currentWeekStart: naturalWeek.start,
+      requestedWeekStart: requestedWeek,
+    });
 
     const summaryWhere: Prisma.WarehouseMaterialTaskWhereInput = { workOrder: { is: workOrderWhere } };
     const where: Prisma.WarehouseMaterialTaskWhereInput = { ...summaryWhere };
@@ -135,6 +100,20 @@ export async function GET(req: NextRequest) {
 
     const page = integer(params.get('page'), 1, 100000);
     const pageSize = integer(params.get('pageSize'), 100, 300);
+    const weekOptionsWhere: Prisma.WorkOrderWhereInput = {
+      deletedAt: null,
+      planType: { in: ['weekly_plan', 'managed_plan'] },
+      materialTask: { isNot: null },
+      ...(scope === 'current'
+        ? { planActive: true, weekStartDate: { gte: naturalWeek.start, lt: addDays(naturalWeek.start, 1) } }
+        : scope === 'preparation'
+          ? {
+              planActive: false,
+              productionPlanBatch: { is: { releaseState: 'preparation', deletedAt: null } },
+              weekStartDate: { gte: nextWeekStart },
+            }
+          : { weekStartDate: { lt: naturalWeek.start } }),
+    };
     const [records, total, grouped, expectedOverdue, weekGroups] = await Promise.all([
       prisma.warehouseMaterialTask.findMany({
         where,
@@ -150,7 +129,7 @@ export async function GET(req: NextRequest) {
       }),
       prisma.workOrder.groupBy({
         by: ['weekStartDate', 'weekEndDate', 'planActive'],
-        where: { deletedAt: null, planType: { in: ['weekly_plan', 'managed_plan'] }, weekStartDate: { not: null }, materialTask: { isNot: null } },
+        where: weekOptionsWhere,
         _count: { _all: true },
         orderBy: { weekStartDate: 'desc' },
       }),
@@ -164,19 +143,41 @@ export async function GET(req: NextRequest) {
       expectedOverdue,
     };
 
+    const weeksByStart = new Map<string, {
+      weekStartDate: string;
+      weekEndDate: string | null;
+      active: boolean;
+      taskCount: number;
+    }>();
+    for (const item of weekGroups) {
+      const weekStartDate = ymd(item.weekStartDate);
+      if (!weekStartDate) continue;
+      const existing = weeksByStart.get(weekStartDate);
+      if (existing) {
+        existing.active = existing.active || item.planActive;
+        existing.taskCount += item._count._all;
+        if (!existing.weekEndDate) existing.weekEndDate = ymd(item.weekEndDate);
+      } else {
+        weeksByStart.set(weekStartDate, {
+          weekStartDate,
+          weekEndDate: ymd(item.weekEndDate),
+          active: item.planActive,
+          taskCount: item._count._all,
+        });
+      }
+    }
+    const weeks = [...weeksByStart.values()].sort((first, second) => (
+      scope === 'preparation'
+        ? first.weekStartDate.localeCompare(second.weekStartDate)
+        : second.weekStartDate.localeCompare(first.weekStartDate)
+    ));
+
     return NextResponse.json({
       ok: true,
       tasks: records.map(record => serializeWarehouseMaterialTask(record)),
       summary,
       selectedWeekStart: ymd(activeWeek),
-      weeks: weekGroups
-        .filter(item => item.weekStartDate)
-        .map(item => ({
-          weekStartDate: ymd(item.weekStartDate),
-          weekEndDate: ymd(item.weekEndDate),
-          active: item.planActive,
-          taskCount: item._count._all,
-        })),
+      weeks,
       pagination: { page, pageSize, total, totalPages: Math.max(1, Math.ceil(total / pageSize)) },
     });
   } catch (error) {

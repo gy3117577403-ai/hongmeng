@@ -15,6 +15,66 @@ export const WAREHOUSE_EXCEPTION_TYPES: WarehouseExceptionType[] = [
   'other',
 ];
 
+export type WarehouseMaterialScope = 'current' | 'preparation' | 'history';
+
+function addWarehouseDays(value: Date, days: number): Date {
+  const next = new Date(value.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function sameWarehouseDay(value: Date): { gte: Date; lt: Date } {
+  return { gte: value, lt: addWarehouseDays(value, 1) };
+}
+
+export function warehouseMaterialScopeWeekStart(
+  scope: WarehouseMaterialScope,
+  currentWeekStart: Date,
+  requestedWeekStart: Date | null = null,
+): Date | null {
+  if (scope === 'current') return currentWeekStart;
+  if (scope === 'preparation') return requestedWeekStart || addWarehouseDays(currentWeekStart, 7);
+  return requestedWeekStart;
+}
+
+export function warehouseMaterialWorkOrderWhere(input: {
+  scope: WarehouseMaterialScope;
+  currentWeekStart: Date;
+  requestedWeekStart?: Date | null;
+}): Prisma.WorkOrderWhereInput {
+  const base: Prisma.WorkOrderWhereInput = {
+    deletedAt: null,
+    planType: { in: ['weekly_plan', 'managed_plan'] },
+  };
+  const selectedWeekStart = warehouseMaterialScopeWeekStart(
+    input.scope,
+    input.currentWeekStart,
+    input.requestedWeekStart || null,
+  );
+
+  if (input.scope === 'current') {
+    return {
+      ...base,
+      planActive: true,
+      weekStartDate: sameWarehouseDay(input.currentWeekStart),
+    };
+  }
+  if (input.scope === 'preparation') {
+    return {
+      ...base,
+      planActive: false,
+      productionPlanBatch: { is: { releaseState: 'preparation', deletedAt: null } },
+      weekStartDate: sameWarehouseDay(selectedWeekStart!),
+    };
+  }
+  return {
+    ...base,
+    weekStartDate: selectedWeekStart
+      ? sameWarehouseDay(selectedWeekStart)
+      : { lt: input.currentWeekStart },
+  };
+}
+
 export const warehouseStatusText: Record<WarehouseMaterialStatus, string> = {
   pending: '待配料',
   completed: '已配料',

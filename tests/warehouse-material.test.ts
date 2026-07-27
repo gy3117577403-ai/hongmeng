@@ -4,6 +4,8 @@ import { buildWeeklyPlanPreview } from '../lib/work-order-import';
 import {
   prepareWarehouseTaskTransition,
   warehouseLegacyMaterialStatus,
+  warehouseMaterialScopeWeekStart,
+  warehouseMaterialWorkOrderWhere,
   type WarehouseTaskTransitionState,
 } from '../lib/warehouse-material';
 
@@ -24,6 +26,41 @@ test('weekly plan import always starts warehouse preparation as pending', () => 
   assert.equal(rows[0].status, 'ready');
   assert.equal(rows[0].workOrder.stage, 'frontend');
   assert.equal(rows[0].workOrder.materialStatus, '未配料');
+});
+
+test('warehouse current scope is pinned to the natural production week', () => {
+  const currentWeekStart = new Date('2026-07-26T16:00:00.000Z');
+  const staleRequestedWeek = new Date('2026-07-19T16:00:00.000Z');
+  const selected = warehouseMaterialScopeWeekStart('current', currentWeekStart, staleRequestedWeek);
+  const where = JSON.stringify(warehouseMaterialWorkOrderWhere({
+    scope: 'current',
+    currentWeekStart,
+    requestedWeekStart: staleRequestedWeek,
+  }));
+
+  assert.equal(selected, currentWeekStart);
+  assert.match(where, /"planActive":true/);
+  assert.match(where, /"gte":"2026-07-26T16:00:00.000Z"/);
+  assert.doesNotMatch(where, /2026-07-19/);
+});
+
+test('warehouse history keeps prior tasks without treating them as current', () => {
+  const currentWeekStart = new Date('2026-07-26T16:00:00.000Z');
+  const where = JSON.stringify(warehouseMaterialWorkOrderWhere({ scope: 'history', currentWeekStart }));
+
+  assert.match(where, /"lt":"2026-07-26T16:00:00.000Z"/);
+  assert.doesNotMatch(where, /"planActive"/);
+});
+
+test('warehouse preparation defaults to next week and only includes released preparation tasks', () => {
+  const currentWeekStart = new Date('2026-07-26T16:00:00.000Z');
+  const selected = warehouseMaterialScopeWeekStart('preparation', currentWeekStart);
+  const where = JSON.stringify(warehouseMaterialWorkOrderWhere({ scope: 'preparation', currentWeekStart }));
+
+  assert.equal(selected?.toISOString(), '2026-08-02T16:00:00.000Z');
+  assert.match(where, /"planActive":false/);
+  assert.match(where, /"releaseState":"preparation"/);
+  assert.match(where, /"gte":"2026-08-02T16:00:00.000Z"/);
 });
 
 test('pending material task can be completed without changing production stage', () => {

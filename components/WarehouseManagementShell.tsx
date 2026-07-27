@@ -63,7 +63,12 @@ const exceptionOptions: Array<{ value: WarehouseExceptionType; label: string }> 
   { value: 'quality_issue', label: '来料质量异常' },
   { value: 'other', label: '其他异常' },
 ];
-const warehouseFlowStages = ['任务下达', '仓库配料', '仓库复核', '已配料'];
+const warehouseFlowStages = [
+  { label: '任务下达', hint: '计划同步', icon: ClipboardList },
+  { label: '仓库配料', hint: '物料拣配', icon: Box },
+  { label: '仓库复核', hint: '数量校验', icon: ShieldCheck },
+  { label: '已配料', hint: '等待生产', icon: PackageCheck },
+];
 const warehouseFlowParticles = Array.from({ length: 14 }, (_, index) => index);
 
 function emptyExceptionForm(task?: WarehouseMaterialTaskDTO | null): ExceptionForm {
@@ -362,9 +367,9 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
           <div className="warehouse-scope-tabs" role="tablist" aria-label="生产周范围">
             <button className={scope === 'current' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'current'} onClick={() => { setScope('current'); setSelectedWeek(''); setPage(1); }}>当前周</button>
             <button className={scope === 'preparation' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'preparation'} onClick={() => { setScope('preparation'); setSelectedWeek(''); setPage(1); }}>下周预备</button>
-            <button className={scope === 'history' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'history'} onClick={() => { setScope('history'); setPage(1); }}>历史周</button>
+            <button className={scope === 'history' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'history'} onClick={() => { setScope('history'); setSelectedWeek(''); setPage(1); }}>历史周</button>
           </div>
-          {(scope === 'history' || scope === 'preparation') && <label className="warehouse-week-select"><span>生产周</span><select value={selectedWeek} onChange={event => { setSelectedWeek(event.target.value); setPage(1); }}><option value="">{scope === 'preparation' ? '最近预备周' : '全部历史周'}</option>{payload?.weeks.filter(week => !week.active).map(week => <option value={week.weekStartDate} key={week.weekStartDate}>{rangeText(week)} · {week.taskCount} 单</option>)}</select></label>}
+          {(scope === 'history' || scope === 'preparation') && <label className="warehouse-week-select"><span>生产周</span><select value={selectedWeek} onChange={event => { setSelectedWeek(event.target.value); setPage(1); }}><option value="">{scope === 'preparation' ? '下周预备' : '全部历史周'}</option>{payload?.weeks.map(week => <option value={week.weekStartDate} key={week.weekStartDate}>{rangeText(week)} · {week.taskCount} 单</option>)}</select></label>}
           <label className="warehouse-search"><Search size={17} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、规格、品名或工单号" /></label>
           <label className="warehouse-exception-select"><span>异常类型</span><select value={exceptionType} onChange={event => { setExceptionType(event.target.value as 'all' | WarehouseExceptionType); setPage(1); }}><option value="all">全部异常</option>{exceptionOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           <button className="warehouse-reset" type="button" title="重置筛选" aria-label="重置筛选" onClick={resetFilters}><RotateCcw size={15} aria-hidden="true" />重置</button>
@@ -443,10 +448,15 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
                   <ol>
                     {warehouseFlowStages.map((stage, index) => {
                       const stageState = index < selectedFlowIndex ? 'completed' : index === selectedFlowIndex ? 'current' : 'waiting';
-                      return <li className={stageState} key={stage}>
-                        <span className="warehouse-flow-node">{stageState === 'completed' ? <CheckCircle2 aria-hidden="true" /> : index + 1}</span>
-                        <strong>{stage}</strong>
-                        <small>{stageState === 'completed' ? '已通过' : stageState === 'current' ? selectedTask.statusText : '待进入'}</small>
+                      const StageIcon = stage.icon;
+                      return <li className={stageState} key={stage.label}>
+                        <span className="warehouse-stage-order">0{index + 1}</span>
+                        <span className="warehouse-flow-node">{stageState === 'completed' ? <CheckCircle2 aria-hidden="true" /> : <StageIcon aria-hidden="true" />}</span>
+                        <span className="warehouse-stage-copy">
+                          <strong>{stage.label}</strong>
+                          <small>{stageState === 'completed' ? '已通过' : stageState === 'current' ? selectedTask.statusText : stage.hint}</small>
+                        </span>
+                        <i className="warehouse-stage-signal" aria-hidden="true" />
                       </li>;
                     })}
                   </ol>
@@ -479,7 +489,34 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
                   {selectedTask.status === 'pending' && <button className="primary" type="button" disabled={savingId === selectedTask.id} onClick={() => { void markCompleted(selectedTask); }}><PackageCheck aria-hidden="true" />{savingId === selectedTask.id ? '保存中...' : '确认已配料'}</button>}
                 </div>
               </footer>
-            </> : <div className="warehouse-flow-empty"><Warehouse aria-hidden="true" /><strong>选择一项配料任务</strong><span>任务的实时流转、风险与操作会显示在这里。</span></div>}
+            </> : <div className="warehouse-flow-idle">
+              <header>
+                <span><CircleDot aria-hidden="true" /> 仓库作业台</span>
+                <h2 id="warehouse-flow-title">{loading ? '正在同步本周任务' : scope === 'current' ? '本周尚未下达配料任务' : '当前范围暂无配料任务'}</h2>
+                <small>{scope === 'current' ? '计划中心启用本周生产后，配料任务会自动进入这里；历史任务仍可在“历史周”查看。' : '切换生产周或调整筛选条件后继续查看。'}</small>
+              </header>
+              <section className="warehouse-idle-scene" aria-label="仓库物料流转待命状态">
+                <div className="warehouse-scene-glow" aria-hidden="true" />
+                <div className="warehouse-scene-particles" aria-hidden="true">
+                  {warehouseFlowParticles.map(particle => <i key={particle} />)}
+                </div>
+                <div className="warehouse-idle-rail" aria-hidden="true"><span /></div>
+                <ol>
+                  {warehouseFlowStages.map((stage, index) => {
+                    const StageIcon = stage.icon;
+                    return <li key={stage.label}>
+                      <span className="warehouse-stage-order">0{index + 1}</span>
+                      <span className="warehouse-flow-node"><StageIcon aria-hidden="true" /></span>
+                      <span className="warehouse-stage-copy"><strong>{stage.label}</strong><small>等待任务</small></span>
+                    </li>;
+                  })}
+                </ol>
+              </section>
+              <footer>
+                <span><Radio aria-hidden="true" /> 数据通道正常，当前生产周为独立范围</span>
+                <a href="/weekly-plan-center">进入计划中心<ArrowUpRight aria-hidden="true" /></a>
+              </footer>
+            </div>}
           </section>
 
           <aside className="warehouse-collaboration" aria-label="仓库实时协同">
