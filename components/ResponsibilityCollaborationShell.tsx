@@ -17,12 +17,13 @@ import {
   ChevronUp,
   CircleDot,
   Clock3,
+  Copy,
+  CirclePause,
   Eye,
   Filter,
   GitBranch,
   Info,
   Layers3,
-  Link2,
   ListChecks,
   MessageSquareText,
   Network,
@@ -35,7 +36,6 @@ import {
   UserCheck,
   UserCog,
   UsersRound,
-  Workflow,
   X,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -44,7 +44,6 @@ import {
   responsibilityCollaborationPrototype,
   type ResponsibilityMatrixItem,
   type ResponsibilityPerson,
-  type ResponsibilityPersonStatus,
   type ResponsibilityRuleState,
   type ResponsibilityWarningKind,
   type ResponsibilityWorkItem,
@@ -61,6 +60,7 @@ type ResponsibilityCollaborationShellProps = {
 
 type ResponsibilityTab = 'matrix' | 'roles' | 'work';
 type MatrixRiskFilter = ResponsibilityWarningKind | 'all';
+type MatrixStatusFilter = ResponsibilityRuleState | 'all';
 
 const snapshot = responsibilityCollaborationPrototype;
 const personMap = new Map(snapshot.people.map(person => [person.id, person]));
@@ -125,15 +125,30 @@ function PersonAvatar({ personId, size = 'normal' }: { personId: string; size?: 
 }
 
 function PersonPills({ ids, limit = 2 }: { ids: string[]; limit?: number }) {
+  const [expanded, setExpanded] = useState(false);
   if (!ids.length) return <span className="rc-empty-owner"><AlertCircle size={12} />待配置</span>;
-  const visible = ids.slice(0, limit);
+  const visible = expanded ? ids : ids.slice(0, limit);
+  const hiddenCount = ids.length - limit;
   return (
-    <span className="rc-person-pills">
+    <span className={`rc-person-pills ${expanded ? 'expanded' : ''}`}>
       {visible.map(id => {
         const person = getPerson(id);
         return <span className={person.status === 'unconfigured' ? 'unconfigured' : ''} key={id} title={`${person.name} · ${person.role}\n${person.summary}`}><PersonAvatar personId={id} size="small" />{person.name}</span>;
       })}
-      {ids.length > limit && <em>+{ids.length - limit}</em>}
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          className="rc-person-pill-more"
+          title={expanded ? '收起完整名单' : ids.slice(limit).map(id => `${getPerson(id).name} · ${getPerson(id).role}`).join('\n')}
+          aria-label={expanded ? '收起完整人员名单' : `展开另外${hiddenCount}人`}
+          onClick={event => {
+            event.stopPropagation();
+            setExpanded(current => !current);
+          }}
+        >
+          {expanded ? '收起' : `+${hiddenCount}`}
+        </button>
+      )}
     </span>
   );
 }
@@ -146,23 +161,6 @@ function updateLocation(tab: ResponsibilityTab, personId?: string, matterId?: st
   if (matterId) params.set('matter', matterId);
   else params.delete('matter');
   window.history.replaceState(null, '', `${window.location.pathname}?${params.toString()}`);
-}
-
-function applyPerspective(element: HTMLElement, clientX: number, clientY: number): void {
-  const bounds = element.getBoundingClientRect();
-  const x = (clientX - bounds.left) / Math.max(bounds.width, 1) - 0.5;
-  const y = (clientY - bounds.top) / Math.max(bounds.height, 1) - 0.5;
-  element.style.setProperty('--rc-tilt-x', `${(-y * 2.4).toFixed(2)}deg`);
-  element.style.setProperty('--rc-tilt-y', `${(x * 3).toFixed(2)}deg`);
-  element.style.setProperty('--rc-glow-x', `${((x + 0.5) * 100).toFixed(1)}%`);
-  element.style.setProperty('--rc-glow-y', `${((y + 0.5) * 100).toFixed(1)}%`);
-}
-
-function clearPerspective(element: HTMLElement): void {
-  element.style.removeProperty('--rc-tilt-x');
-  element.style.removeProperty('--rc-tilt-y');
-  element.style.removeProperty('--rc-glow-x');
-  element.style.removeProperty('--rc-glow-y');
 }
 
 function MatrixDetail({
@@ -180,6 +178,7 @@ function MatrixDetail({
     { label: '审核', ids: item.reviewerIds, tone: 'review' },
     { label: '知会', ids: item.informedIds, tone: 'informed' },
   ];
+  const escalationIds = Array.from(new Set(item.reviewerIds.flatMap(id => getPerson(id).escalationIds)));
 
   return (
     <aside className="rc-matrix-detail" aria-label={`${item.matter}责任详情`}>
@@ -200,6 +199,15 @@ function MatrixDetail({
           ))}
         </ol>
       </section>
+      <section className="rc-detail-section rc-detail-rule-section">
+        <div className="rc-section-heading"><div><span>规则条件</span><h3>触发、时限与升级</h3></div></div>
+        <div className="rc-detail-rule-grid">
+          <article><span>触发条件</span><strong>{item.triggerCondition}</strong></article>
+          <article><span>完成时限</span><strong>{item.dueLabel}</strong></article>
+          <article className="wide"><span>升级规则</span><strong>{item.escalationRule}</strong><PersonPills ids={escalationIds.length ? escalationIds : item.reviewerIds} limit={2} /></article>
+          <article className="wide"><span>关联流程</span><strong>{item.flow.map(step => step.label).join(' → ')}</strong></article>
+        </div>
+      </section>
       <section className="rc-detail-section">
         <div className="rc-section-heading"><div><span>关联人员</span><h3>责任关系分布</h3></div></div>
         <div className="rc-responsibility-groups">
@@ -215,6 +223,15 @@ function MatrixDetail({
             </div>
           ))}
         </div>
+      </section>
+      <section className="rc-detail-section rc-change-log">
+        <div className="rc-section-heading"><div><span>配置记录</span><h3>最近修改</h3></div><small>{item.changeLog.length} 条</small></div>
+        <ol>
+          {item.changeLog.map(change => {
+            const actor = getPerson(change.actorId);
+            return <li key={`${item.id}-${change.at}-${change.actorId}`}><PersonAvatar personId={actor.id} size="small" /><span><strong>{change.action}</strong><small>{actor.name} · {change.at}</small></span></li>;
+          })}
+        </ol>
       </section>
       <footer>
         <a href={item.route}>打开来源业务<ArrowUpRight size={14} /></a>
@@ -235,8 +252,10 @@ function MatrixView({
   const [department, setDepartment] = useState('all');
   const [person, setPerson] = useState('all');
   const [module, setModule] = useState('all');
+  const [ruleStatus, setRuleStatus] = useState<MatrixStatusFilter>('all');
   const [risk, setRisk] = useState<MatrixRiskFilter>('all');
   const [selectedId, setSelectedId] = useState(initialMatterId);
+  const [ruleFeedback, setRuleFeedback] = useState('');
 
   useEffect(() => {
     if (initialMatterId) setSelectedId(initialMatterId);
@@ -251,49 +270,49 @@ function MatrixView({
     const matchesDepartment = department === 'all' || item.departmentId === department;
     const matchesPerson = person === 'all' || people.includes(person);
     const matchesModule = module === 'all' || item.module === module;
+    const matchesStatus = ruleStatus === 'all' || item.state === ruleStatus;
     const matchesRisk = risk === 'all' || item.warning === risk;
-    return matchesKeyword && matchesDepartment && matchesPerson && matchesModule && matchesRisk;
-  }), [department, keyword, module, person, risk]);
+    return matchesKeyword && matchesDepartment && matchesPerson && matchesModule && matchesStatus && matchesRisk;
+  }), [department, keyword, module, person, risk, ruleStatus]);
   const selected = snapshot.matrix.find(item => item.id === selectedId) || null;
   const warningCounts = {
     'missing-owner': snapshot.matrix.filter(item => item.warning === 'missing-owner').length,
     'responsibility-conflict': snapshot.matrix.filter(item => item.warning === 'responsibility-conflict').length,
     overdue: snapshot.matrix.filter(item => item.warning === 'overdue').length,
   };
-  const ownedRuleCount = snapshot.matrix.filter(item => item.ownerIds.length > 0).length;
-  const ruleCoverage = Math.round((ownedRuleCount / snapshot.matrix.length) * 100);
 
   function selectItem(item: ResponsibilityMatrixItem): void {
     setSelectedId(item.id);
     updateLocation('matrix', person === 'all' ? undefined : person, item.id);
   }
 
+  function previewRuleAction(action: string, item: ResponsibilityMatrixItem): void {
+    setRuleFeedback(`${item.matter} · ${action}（配置预览）`);
+    window.setTimeout(() => setRuleFeedback(''), 2400);
+  }
+
   return (
     <div className="rc-matrix-view">
-      <section className="rc-alert-strip" aria-label="责任规则提示">
-        <button type="button" aria-pressed={risk === 'missing-owner'} className={risk === 'missing-owner' ? 'active missing' : 'missing'} onClick={() => setRisk(current => current === 'missing-owner' ? 'all' : 'missing-owner')}>
-          <span><UserCheck size={16} /></span><div><strong>责任缺失</strong><small>点击筛选待配置事项</small></div><b>{warningCounts['missing-owner']}</b>
-        </button>
-        <button type="button" aria-pressed={risk === 'responsibility-conflict'} className={risk === 'responsibility-conflict' ? 'active conflict' : 'conflict'} onClick={() => setRisk(current => current === 'responsibility-conflict' ? 'all' : 'responsibility-conflict')}>
-          <span><GitBranch size={16} /></span><div><strong>责任冲突</strong><small>点击查看多主责规则</small></div><b>{warningCounts['responsibility-conflict']}</b>
-        </button>
-        <button type="button" aria-pressed={risk === 'overdue'} className={risk === 'overdue' ? 'active overdue' : 'overdue'} onClick={() => setRisk(current => current === 'overdue' ? 'all' : 'overdue')}>
-          <span><Clock3 size={16} /></span><div><strong>超时升级</strong><small>点击查看临期与超时</small></div><b>{warningCounts.overdue}</b>
-        </button>
-        <div className="rc-rule-health"><span><CheckCircle2 size={17} /></span><div><strong>{ruleCoverage}% 规则已覆盖</strong><small>{ownedRuleCount} / {snapshot.matrix.length} 项主责明确</small></div><em>运行概览</em></div>
-      </section>
-
-      <section className="rc-filter-bar" aria-label="责任矩阵筛选">
-        <label className="rc-search-field"><Search size={15} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索事项、岗位或人员" aria-label="搜索责任规则" />{keyword && <button type="button" aria-label="清空搜索" onClick={() => setKeyword('')}><X size={13} /></button>}</label>
-        <label><span>部门</span><select value={department} onChange={event => setDepartment(event.target.value)}><option value="all">全部部门</option>{snapshot.departments.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
-        <label><span>人员</span><select value={person} onChange={event => setPerson(event.target.value)}><option value="all">全部人员</option>{snapshot.people.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
-        <label><span>业务模块</span><select value={module} onChange={event => setModule(event.target.value)}><option value="all">全部模块</option>{modules.map(item => <option value={item} key={item}>{item}</option>)}</select></label>
-        <button type="button" className="rc-clear-filter" onClick={() => { setKeyword(''); setDepartment('all'); setPerson('all'); setModule('all'); setRisk('all'); }}><Filter size={14} />重置</button>
+      <section className="rc-matrix-toolbar" aria-label="责任矩阵筛选和异常入口">
+        <div className="rc-filter-bar">
+          <label className="rc-search-field"><Search size={15} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索事项、岗位或人员" aria-label="搜索责任规则" />{keyword && <button type="button" aria-label="清空搜索" onClick={() => setKeyword('')}><X size={13} /></button>}</label>
+          <label><span>部门</span><select value={department} onChange={event => setDepartment(event.target.value)}><option value="all">全部部门</option>{snapshot.departments.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}</select></label>
+          <label><span>人员</span><select value={person} onChange={event => setPerson(event.target.value)}><option value="all">全部人员</option>{snapshot.people.map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label>
+          <label><span>业务模块</span><select value={module} onChange={event => setModule(event.target.value)}><option value="all">全部模块</option>{modules.map(item => <option value={item} key={item}>{item}</option>)}</select></label>
+          <label><span>状态</span><select value={ruleStatus} onChange={event => setRuleStatus(event.target.value as MatrixStatusFilter)}><option value="all">全部状态</option>{Object.entries(ruleStateLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+          <button type="button" className="rc-clear-filter" onClick={() => { setKeyword(''); setDepartment('all'); setPerson('all'); setModule('all'); setRuleStatus('all'); setRisk('all'); }}><Filter size={14} />重置</button>
+        </div>
+        <div className="rc-exception-tags">
+          <span>异常入口</span>
+          <button type="button" aria-pressed={risk === 'missing-owner'} className={risk === 'missing-owner' ? 'active missing' : 'missing'} onClick={() => setRisk(current => current === 'missing-owner' ? 'all' : 'missing-owner')}><UserCheck size={13} />责任缺失<b>{warningCounts['missing-owner']}</b></button>
+          <button type="button" aria-pressed={risk === 'responsibility-conflict'} className={risk === 'responsibility-conflict' ? 'active conflict' : 'conflict'} onClick={() => setRisk(current => current === 'responsibility-conflict' ? 'all' : 'responsibility-conflict')}><GitBranch size={13} />责任冲突<b>{warningCounts['responsibility-conflict']}</b></button>
+          <button type="button" aria-pressed={risk === 'overdue'} className={risk === 'overdue' ? 'active overdue' : 'overdue'} onClick={() => setRisk(current => current === 'overdue' ? 'all' : 'overdue')}><Clock3 size={13} />超时升级<b>{warningCounts.overdue}</b></button>
+        </div>
       </section>
 
       <div className={`rc-matrix-workspace ${selected ? 'has-detail' : ''}`}>
         <section className="rc-matrix-table-panel">
-          <header><div><span>全局责任规则</span><h2>业务事项责任矩阵</h2></div><small>{filtered.length} / {snapshot.matrix.length} 项</small></header>
+          <header><div><span>规则管理工作台</span><h2>业务事项责任矩阵</h2></div><small>{filtered.length} / {snapshot.matrix.length} 项</small></header>
           <div className="rc-matrix-table-scroll hm-scroll-region" tabIndex={0}>
             <table className="rc-matrix-table">
               <thead><tr><th>业务事项</th><th>主责</th><th>协同</th><th>审核</th><th>知会</th><th>时限</th><th>状态 / 操作</th></tr></thead>
@@ -306,11 +325,15 @@ function MatrixView({
                     onClick={() => selectItem(item)}
                     onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectItem(item); } }}
                   >
-                    <td><span>{item.module}</span><strong>{item.matter}</strong><small>{item.description}</small></td>
+                    <td>
+                      <span className="rc-matter-meta">{item.module}{item.warning && <em className={`warning-${item.warning}`}>{ruleStateLabels[item.state]}</em>}</span>
+                      <strong>{item.matter}</strong>
+                      <small>{item.description}</small>
+                    </td>
                     <td>
                       {item.ownerIds.length
                         ? <PersonPills ids={item.ownerIds} />
-                        : <button type="button" className="rc-configure-owner" onClick={event => { event.stopPropagation(); selectItem(item); }}><UserCheck size={12} />补充主责</button>}
+                        : <button type="button" className="rc-configure-owner" onClick={event => { event.stopPropagation(); selectItem(item); }}><UserCheck size={12} />{item.ownerPlaceholder || '补充主责'}</button>}
                     </td>
                     <td><PersonPills ids={item.collaboratorIds} /></td>
                     <td><PersonPills ids={item.reviewerIds} /></td>
@@ -321,7 +344,8 @@ function MatrixView({
                       <div className="rc-row-actions" aria-label={`${item.matter}快捷操作`}>
                         <button type="button" title="查看责任链" aria-label="查看责任链" onClick={event => { event.stopPropagation(); selectItem(item); }}><GitBranch size={13} /></button>
                         <button type="button" title="编辑责任规则" aria-label="编辑责任规则" onClick={event => { event.stopPropagation(); selectItem(item); }}><PencilLine size={13} /></button>
-                        <a href={item.route} title="查看关联事项" aria-label="查看关联事项" onClick={event => event.stopPropagation()}><Link2 size={13} /></a>
+                        <button type="button" title="复制责任规则" aria-label="复制责任规则" onClick={event => { event.stopPropagation(); previewRuleAction('已复制规则草稿', item); }}><Copy size={13} /></button>
+                        <button type="button" title="停用责任规则" aria-label="停用责任规则" onClick={event => { event.stopPropagation(); previewRuleAction('已进入停用确认', item); }}><CirclePause size={13} /></button>
                       </div>
                     </td>
                   </tr>
@@ -333,11 +357,21 @@ function MatrixView({
         </section>
         {selected && <MatrixDetail item={selected} onClose={() => { setSelectedId(''); updateLocation('matrix', person === 'all' ? undefined : person); }} onPerson={onOpenRole} />}
       </div>
+      {ruleFeedback && <div className="rc-action-toast" role="status"><CheckCircle2 size={15} />{ruleFeedback}</div>}
     </div>
   );
 }
 
-type RoleDetailPanel = 'responsibilities' | 'modules' | 'collaboration' | 'escalation';
+type RoleListFilter = 'all' | 'active' | 'high-load' | 'rule-missing' | 'pending-confirmation';
+type RoleRelationFilter = 'all' | '主责' | '协同' | '审核' | '知会';
+type CollaborationCategory = 'upstream' | 'peer' | 'downstream' | 'governance';
+
+const collaborationCategoryLabels: Record<CollaborationCategory, string> = {
+  upstream: '上游输入',
+  peer: '同级协同',
+  downstream: '下游交接',
+  governance: '审核 / 升级',
+};
 
 function responsibilityType(item: ResponsibilityMatrixItem, personId: string): string {
   if (item.ownerIds.includes(personId)) return '主责';
@@ -358,6 +392,45 @@ function rulesForPerson(personId: string): ResponsibilityMatrixItem[] {
   ));
 }
 
+function workForPerson(personId: string): ResponsibilityWorkItem[] {
+  return snapshot.workItems.filter(item => (
+    item.ownerId === personId || item.nextPersonId === personId || item.participantIds.includes(personId)
+  ));
+}
+
+function personLoadPercent(personId: string): number {
+  const openCount = workForPerson(personId).filter(item => item.state !== 'done').length;
+  return Math.min(100, Math.max(16, 24 + openCount * 12));
+}
+
+function uniquePersonIds(ids: string[], excludedId: string): string[] {
+  return Array.from(new Set(ids.filter(id => id !== excludedId && personMap.has(id))));
+}
+
+function collaborationGroupsFor(
+  person: ResponsibilityPerson,
+  responsibilities: ResponsibilityMatrixItem[],
+): Record<CollaborationCategory, string[]> {
+  const upstream = responsibilities.flatMap(item => item.ownerIds.includes(person.id) ? [] : item.ownerIds);
+  const downstream = responsibilities.flatMap(item => (
+    item.ownerIds.includes(person.id) ? [...item.collaboratorIds, ...item.informedIds] : []
+  ));
+  const peer = person.collaboratorIds.filter(id => getPerson(id).departmentId === person.departmentId);
+  const governance = [...person.reviewerIds, ...person.escalationIds, ...responsibilities.flatMap(item => item.reviewerIds)];
+  const occupied = new Set(uniquePersonIds(governance, person.id));
+  const normalizedPeer = uniquePersonIds(peer, person.id).filter(id => !occupied.has(id));
+  normalizedPeer.forEach(id => occupied.add(id));
+  const normalizedUpstream = uniquePersonIds(upstream, person.id).filter(id => !occupied.has(id));
+  normalizedUpstream.forEach(id => occupied.add(id));
+  const normalizedDownstream = uniquePersonIds([...downstream, ...person.collaboratorIds], person.id).filter(id => !occupied.has(id));
+  return {
+    upstream: normalizedUpstream.slice(0, 2),
+    peer: normalizedPeer.slice(0, 2),
+    downstream: normalizedDownstream.slice(0, 2),
+    governance: uniquePersonIds(governance, person.id).slice(0, 2),
+  };
+}
+
 function CollaborationNetwork({
   person,
   responsibilities,
@@ -367,7 +440,8 @@ function CollaborationNetwork({
   responsibilities: ResponsibilityMatrixItem[];
   onSelect: (personId: string) => void;
 }) {
-  const collaborators = person.collaboratorIds.slice(0, 5);
+  const groups = useMemo(() => collaborationGroupsFor(person, responsibilities), [person, responsibilities]);
+  const collaborators = useMemo(() => Object.values(groups).flat(), [groups]);
   const [activeCollaboratorId, setActiveCollaboratorId] = useState(collaborators[0] || '');
   const activeCollaborator = activeCollaboratorId ? getPerson(activeCollaboratorId) : null;
   const activeRelations = activeCollaborator
@@ -377,53 +451,51 @@ function CollaborationNetwork({
     : [];
 
   useEffect(() => {
-    setActiveCollaboratorId(person.collaboratorIds[0] || '');
-  }, [person.id, person.collaboratorIds]);
+    setActiveCollaboratorId(collaborators[0] || '');
+  }, [collaborators, person.id]);
 
   return (
-    <section className="rc-network-card">
-      <div className="rc-section-heading"><div><span>协作网络</span><h3>关键协作关系</h3></div><small>{collaborators.length} 位高频对象</small></div>
-      <div
-        className="rc-network-map"
-        onPointerMove={event => applyPerspective(event.currentTarget, event.clientX, event.clientY)}
-        onPointerLeave={event => clearPerspective(event.currentTarget)}
-      >
-        {collaborators.map((collaboratorId, index) => (
-          <span
-            className={`rc-network-line line-${index + 1} ${activeCollaboratorId === collaboratorId ? 'active' : activeCollaboratorId ? 'muted' : ''}`}
-            key={`line-${collaboratorId}`}
-            aria-hidden="true"
-          />
-        ))}
+    <section className="rc-collaboration-workbench">
+      <div className="rc-section-heading"><div><span>关键协作关系</span><h3>交接关系与共同事项</h3></div><small>{collaborators.length} 位关键对象</small></div>
+      <div className="rc-collaboration-map">
         <div className="rc-network-center"><PersonAvatar personId={person.id} size="large" /><strong>{person.name}</strong><small>{person.role}</small></div>
-        {collaborators.map((collaboratorId, index) => {
-          const collaborator = getPerson(collaboratorId);
-          const relationCount = responsibilities.filter(item => (
-            [...item.ownerIds, ...item.collaboratorIds, ...item.reviewerIds, ...item.informedIds].includes(collaboratorId)
-          )).length;
-          return (
-            <button
-              type="button"
-              className={`rc-network-node node-${index + 1} ${activeCollaboratorId === collaboratorId ? 'active' : ''}`}
-              key={collaboratorId}
-              title={`${collaborator.name} · ${collaborator.role}\n共同关联 ${relationCount} 项责任规则`}
-              onPointerEnter={() => setActiveCollaboratorId(collaboratorId)}
-              onFocus={() => setActiveCollaboratorId(collaboratorId)}
-              onClick={() => onSelect(collaboratorId)}
-            >
-              <PersonAvatar personId={collaboratorId} /><span><strong>{collaborator.name}</strong><small>{collaborator.role}</small></span><b>{relationCount}</b>
-            </button>
-          );
-        })}
+        {(Object.entries(groups) as Array<[CollaborationCategory, string[]]>).map(([category, ids]) => (
+          <section className={`rc-relation-group group-${category}`} key={category}>
+            <h4>{collaborationCategoryLabels[category]}</h4>
+            <div>
+              {ids.map(collaboratorId => {
+                const collaborator = getPerson(collaboratorId);
+                const shared = responsibilities.filter(item => (
+                  [...item.ownerIds, ...item.collaboratorIds, ...item.reviewerIds, ...item.informedIds].includes(collaboratorId)
+                ));
+                return (
+                  <button
+                    type="button"
+                    className={activeCollaboratorId === collaboratorId ? 'active' : ''}
+                    key={`${category}-${collaboratorId}`}
+                    title={`${collaborator.name} · ${collaborator.role}\n共同关联 ${shared.length} 项责任规则`}
+                    onPointerEnter={() => setActiveCollaboratorId(collaboratorId)}
+                    onFocus={() => setActiveCollaboratorId(collaboratorId)}
+                    onClick={() => setActiveCollaboratorId(collaboratorId)}
+                  >
+                    <PersonAvatar personId={collaboratorId} size="small" />
+                    <span><strong>{collaborator.name}</strong><small>{collaborator.role}</small></span>
+                    <b>{shared.length}</b>
+                  </button>
+                );
+              })}
+              {!ids.length && <span className="rc-relation-empty">待配置</span>}
+            </div>
+          </section>
+        ))}
       </div>
-      <div className="rc-network-context" aria-live="polite">
+      <div className="rc-collaboration-context" aria-live="polite">
         {activeCollaborator ? (
           <>
-            <span><PersonAvatar personId={activeCollaborator.id} size="small" /><strong>{activeCollaborator.name}</strong></span>
-            <p>{activeRelations[0]?.matter || '日常跨部门协作'}{activeRelations.length > 1 ? ` 等 ${activeRelations.length} 项关联事项` : ''}</p>
-            <button type="button" onClick={() => onSelect(activeCollaborator.id)}>查看角色<ChevronRight size={13} /></button>
+            <div><span><PersonAvatar personId={activeCollaborator.id} size="small" /><strong>{person.name} ↔ {activeCollaborator.name}</strong></span><button type="button" onClick={() => onSelect(activeCollaborator.id)}>查看人员档案<ChevronRight size={13} /></button></div>
+            <p>{activeRelations.length ? activeRelations.slice(0, 3).map(item => item.matter).join(' · ') : '当前为日常协作关系，尚未关联独立责任规则。'}</p>
           </>
-        ) : <p>悬停协作对象查看责任摘要</p>}
+        ) : <p>点击协作人员，查看双方共有事项和交接规则。</p>}
       </div>
     </section>
   );
@@ -442,38 +514,56 @@ function RolesView({
 }) {
   const [keyword, setKeyword] = useState('');
   const [department, setDepartment] = useState('all');
-  const [roleStatus, setRoleStatus] = useState<ResponsibilityPersonStatus | 'all'>('all');
-  const [activePanel, setActivePanel] = useState<RoleDetailPanel>('responsibilities');
+  const [roleFilter, setRoleFilter] = useState<RoleListFilter>('all');
+  const [relationFilter, setRelationFilter] = useState<RoleRelationFilter>('all');
   const selected = getPerson(selectedPersonId);
   const selectedRules = useMemo(() => rulesForPerson(selectedPersonId), [selectedPersonId]);
-  const selectedWork = useMemo(() => snapshot.workItems.filter(item => (
-    item.ownerId === selectedPersonId || item.nextPersonId === selectedPersonId || item.participantIds.includes(selectedPersonId)
-  )), [selectedPersonId]);
   const ownedCount = selectedRules.filter(item => item.ownerIds.includes(selectedPersonId)).length;
-  const loadPercent = Math.min(100, Math.max(18, 28 + selectedWork.filter(item => item.state !== 'done').length * 11));
+  const collaborationCount = selectedRules.filter(item => item.collaboratorIds.includes(selectedPersonId)).length;
+  const loadPercent = personLoadPercent(selectedPersonId);
+  const selectedRisks = selectedRules.filter(item => item.warning || item.state === 'attention');
+  const visibleRules = relationFilter === 'all'
+    ? selectedRules
+    : selectedRules.filter(item => responsibilityType(item, selectedPersonId) === relationFilter);
   const groupedPeople = useMemo(() => snapshot.departments.map(groupDepartment => ({
     department: groupDepartment,
     people: snapshot.people.filter(person => {
       if (person.departmentId !== groupDepartment.id) return false;
       if (department !== 'all' && person.departmentId !== department) return false;
-      if (roleStatus !== 'all' && person.status !== roleStatus) return false;
+      const personRules = rulesForPerson(person.id);
+      const matchesRoleFilter = roleFilter === 'all'
+        || (roleFilter === 'active' && person.status === 'active')
+        || (roleFilter === 'high-load' && personLoadPercent(person.id) >= 70)
+        || (roleFilter === 'rule-missing' && (person.status === 'unconfigured' || !personRules.length || personRules.some(item => item.warning === 'missing-owner')))
+        || (roleFilter === 'pending-confirmation' && (person.status === 'unconfigured' || personRules.some(item => item.state === 'attention' || Boolean(item.warning))));
+      if (!matchesRoleFilter) return false;
       const search = keyword.trim().toLowerCase();
       return !search || `${person.name} ${person.role} ${groupDepartment.label}`.toLowerCase().includes(search);
     }),
-  })).filter(group => group.people.length), [department, keyword, roleStatus]);
+  })).filter(group => group.people.length), [department, keyword, roleFilter]);
 
   useEffect(() => {
-    setActivePanel('responsibilities');
+    setRelationFilter('all');
   }, [selectedPersonId]);
 
   return (
     <div className="rc-roles-view rc-roles-view-v2">
       <aside className="rc-role-list">
-        <header><div><span>组织角色</span><h2>角色与人员</h2></div><b>{snapshot.people.length}</b></header>
+        <header><div><span>人员职责档案</span><h2>组织人员</h2></div><b>{snapshot.people.length}</b></header>
         <label className="rc-search-field"><Search size={15} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索姓名或岗位" aria-label="搜索角色或人员" />{keyword && <button type="button" aria-label="清空搜索" onClick={() => setKeyword('')}><X size={13} /></button>}</label>
         <div className="rc-role-list-filters">
-          <label><span>部门</span><select value={department} onChange={event => setDepartment(event.target.value)}><option value="all">全部</option>{snapshot.departments.map(item => <option value={item.id} key={item.id}>{item.shortLabel}</option>)}</select></label>
-          <label><span>状态</span><select value={roleStatus} onChange={event => setRoleStatus(event.target.value as ResponsibilityPersonStatus | 'all')}><option value="all">全部</option><option value="active">在岗</option><option value="unconfigured">待配置</option></select></label>
+          <label><span>部门</span><select value={department} onChange={event => setDepartment(event.target.value)}><option value="all">全部部门</option>{snapshot.departments.map(item => <option value={item.id} key={item.id}>{item.shortLabel}</option>)}</select></label>
+        </div>
+        <div className="rc-role-status-filters" aria-label="人员状态筛选">
+          {([
+            ['all', '全部'],
+            ['active', '在岗'],
+            ['high-load', '负荷高'],
+            ['rule-missing', '规则缺失'],
+            ['pending-confirmation', '待确认'],
+          ] as Array<[RoleListFilter, string]>).map(([value, label]) => (
+            <button type="button" className={roleFilter === value ? 'active' : ''} aria-pressed={roleFilter === value} onClick={() => setRoleFilter(value)} key={value}>{label}</button>
+          ))}
         </div>
         <div className="rc-role-list-scroll hm-scroll-region" tabIndex={0}>
           {groupedPeople.map(group => (
@@ -483,27 +573,32 @@ function RolesView({
                 <button type="button" key={person.id} className={`${selected.id === person.id ? 'selected' : ''} ${person.status}`} onClick={() => onSelectPerson(person.id)}>
                   <PersonAvatar personId={person.id} />
                   <span><strong>{person.name}</strong><small>{person.role}</small></span>
-                  {person.status === 'unconfigured' ? <em>待配置</em> : <i className="rc-role-online" title="在岗" />}
+                  {person.status === 'unconfigured'
+                    ? <em>待配置</em>
+                    : personLoadPercent(person.id) >= 70
+                      ? <em className="load-high">负荷高</em>
+                      : rulesForPerson(person.id).some(item => item.warning || item.state === 'attention')
+                        ? <em className="pending-rule">待确认</em>
+                        : <i className="rc-role-online" title="在岗" />}
                 </button>
               ))}
             </section>
           ))}
-          {!groupedPeople.length && <div className="rc-role-list-empty"><Search size={18} /><strong>暂无匹配人员</strong><button type="button" onClick={() => { setKeyword(''); setDepartment('all'); setRoleStatus('all'); }}>清除筛选</button></div>}
+          {!groupedPeople.length && <div className="rc-role-list-empty"><Search size={18} /><strong>暂无匹配人员</strong><button type="button" onClick={() => { setKeyword(''); setDepartment('all'); setRoleFilter('all'); }}>清除筛选</button></div>}
         </div>
       </aside>
 
       <section className="rc-role-workbench hm-scroll-region" tabIndex={0}>
-        <header className="rc-role-hero">
+        <header className="rc-role-identity-bar">
           <div className="rc-role-identity">
             <PersonAvatar personId={selected.id} size="large" />
-            <div><span>{departmentMap.get(selected.departmentId)?.label}</span><h2>{selected.name}</h2><p>{selected.role}</p></div>
+            <div><span>{departmentMap.get(selected.departmentId)?.label}</span><h2>{selected.name}</h2><p>{selected.role} · {selected.summary}</p></div>
           </div>
-          <p className="rc-role-summary">{selected.summary}</p>
           <div className="rc-role-kpis" aria-label={`${selected.name}角色概览`}>
             <div><span>状态</span><strong className={selected.status}>{selected.status === 'active' ? '在岗' : '待配置'}</strong></div>
             <div><span>当前负荷</span><strong>{loadPercent}%</strong><i><em style={{ width: `${loadPercent}%` }} /></i></div>
-            <div><span>主要责任</span><strong>{ownedCount}</strong><small>项主责规则</small></div>
-            <div><span>协同事项</span><strong>{selectedWork.length}</strong><small>项工作关联</small></div>
+            <div><span>主责数量</span><strong>{ownedCount}</strong><small>项</small></div>
+            <div><span>协同数量</span><strong>{collaborationCount}</strong><small>项</small></div>
           </div>
           <div className="rc-role-hero-actions">
             <button type="button" onClick={() => onOpenMatrix(selected.id)}>责任矩阵<ArrowRight size={13} /></button>
@@ -511,42 +606,36 @@ function RolesView({
           </div>
         </header>
 
-        <div className="rc-role-workspace-grid">
-          <div className="rc-role-primary">
-            <div className="rc-role-overview-grid" aria-label="角色职责概览">
-              <button type="button" className={activePanel === 'responsibilities' ? 'active' : ''} onClick={() => setActivePanel('responsibilities')}>
-                <span><Target size={17} /></span><div><small>职责边界</small><h3>核心职责</h3><p>{selected.coreResponsibilities[0]}</p></div><b>{selected.coreResponsibilities.length}</b>
-              </button>
-              <button type="button" className={activePanel === 'modules' ? 'active' : ''} onClick={() => setActivePanel('modules')}>
-                <span><Layers3 size={17} /></span><div><small>业务范围</small><h3>管理模块</h3><p>{selected.managedModules.slice(0, 2).join('、')}</p></div><b>{selected.managedModules.length}</b>
-              </button>
-              <button type="button" className={activePanel === 'collaboration' ? 'active' : ''} onClick={() => setActivePanel('collaboration')}>
-                <span><UsersRound size={17} /></span><div><small>协同对象</small><h3>主要协作</h3><p>{selected.collaboratorIds.slice(0, 2).map(id => getPerson(id).name).join('、')}</p></div><b>{selected.collaboratorIds.length}</b>
-              </button>
-              <button type="button" className={activePanel === 'escalation' ? 'active' : ''} onClick={() => setActivePanel('escalation')}>
-                <span><ShieldCheck size={17} /></span><div><small>治理关系</small><h3>审核与升级</h3><p>{[...selected.reviewerIds, ...selected.escalationIds].slice(0, 2).map(id => getPerson(id).name).join('、') || '无需上级审核'}</p></div><b>{selected.reviewerIds.length + selected.escalationIds.length}</b>
-              </button>
-            </div>
-
-            <section className={`rc-role-panel-detail panel-${activePanel}`}>
-              {activePanel === 'responsibilities' && <ol>{selected.coreResponsibilities.map((item, index) => <li key={item}><span>{String(index + 1).padStart(2, '0')}</span><strong>{item}</strong></li>)}</ol>}
-              {activePanel === 'modules' && <div className="rc-role-module-links">{selected.managedModules.map(module => <button type="button" onClick={() => onOpenMatrix(selected.id)} key={module}>{module}<ArrowUpRight size={12} /></button>)}</div>}
-              {activePanel === 'collaboration' && <div className="rc-role-collaborator-links">{selected.collaboratorIds.slice(0, 6).map(id => { const person = getPerson(id); return <button type="button" key={id} onClick={() => onSelectPerson(id)}><PersonAvatar personId={id} size="small" /><span><strong>{person.name}</strong><small>{person.role}</small></span></button>; })}</div>}
-              {activePanel === 'escalation' && <div className="rc-escalation-flow"><div><span>日常审核</span><PersonPills ids={selected.reviewerIds} limit={3} /></div><ArrowRight size={16} /><div><span>升级决策</span><PersonPills ids={selected.escalationIds} limit={3} /></div></div>}
+        <div className="rc-role-profile-grid">
+          <div className="rc-role-profile-main">
+            <section className="rc-role-priority-sections">
+              <article className="rc-role-core">
+                <div className="rc-section-heading"><div><span>优先级 01</span><h3>三项核心职责</h3></div><Target size={16} /></div>
+                <ol>{selected.coreResponsibilities.slice(0, 3).map((item, index) => <li key={item}><span>{index + 1}</span><strong>{item}</strong></li>)}</ol>
+              </article>
+              <article className="rc-role-modules">
+                <div className="rc-section-heading"><div><span>优先级 02</span><h3>可管理业务模块</h3></div><Layers3 size={16} /></div>
+                <div>{selected.managedModules.map(moduleName => <button type="button" onClick={() => onOpenMatrix(selected.id)} key={moduleName}>{moduleName}<ArrowUpRight size={12} /></button>)}</div>
+                <p><Info size={12} />模块范围来自职责配置，不代表正式权限已生效。</p>
+              </article>
             </section>
-
             <section className="rc-role-ledger">
-              <div className="rc-section-heading"><div><span>职责清单</span><h3>责任规则与交接</h3></div><small>{selectedRules.length} 项关联规则</small></div>
+              <div className="rc-role-ledger-heading">
+                <div className="rc-section-heading"><div><span>优先级 03</span><h3>责任清单与交接对象</h3></div><small>{visibleRules.length} / {selectedRules.length} 项</small></div>
+                <div className="rc-relation-filters" aria-label="责任类型筛选">
+                  {(['all', '主责', '协同', '审核', '知会'] as RoleRelationFilter[]).map(value => <button type="button" className={relationFilter === value ? 'active' : ''} aria-pressed={relationFilter === value} onClick={() => setRelationFilter(value)} key={value}>{value === 'all' ? '全部' : value}</button>)}
+                </div>
+              </div>
               <div className="rc-role-ledger-scroll hm-scroll-region" tabIndex={0}>
                 <table>
                   <thead><tr><th>业务事项</th><th>责任类型</th><th>触发条件</th><th>交接对象</th><th>时限</th><th>关联流程</th><th>状态</th></tr></thead>
-                  <tbody>{selectedRules.map(item => {
+                  <tbody>{visibleRules.map(item => {
                     const handoff = responsibilityHandoff(item, selected.id);
                     return (
                       <tr key={`${selected.id}-${item.id}`}>
                         <td><a href={item.route}><strong>{item.matter}</strong><small>{item.module}</small></a></td>
                         <td><span className={`rc-relation-type type-${responsibilityType(item, selected.id)}`}>{responsibilityType(item, selected.id)}</span></td>
-                        <td title={item.description}>{item.description}</td>
+                        <td title={item.triggerCondition}>{item.triggerCondition}</td>
                         <td>{handoff ? <button type="button" onClick={() => onSelectPerson(handoff.id)}><PersonAvatar personId={handoff.id} size="small" />{handoff.name}</button> : <span>—</span>}</td>
                         <td><strong>{item.dueLabel}</strong></td>
                         <td title={item.flow.map(step => step.label).join(' → ')}>{item.flow.map(step => step.label).slice(0, 2).join(' → ')}</td>
@@ -556,6 +645,15 @@ function RolesView({
                   })}</tbody>
                 </table>
                 {!selectedRules.length && <div className="rc-role-ledger-empty"><Info size={18} /><strong>当前角色尚未关联责任规则</strong><button type="button" onClick={() => onOpenMatrix(selected.id)}>前往责任矩阵配置</button></div>}
+              </div>
+            </section>
+
+            <section className="rc-role-risks">
+              <div className="rc-section-heading"><div><span>优先级 04</span><h3>待确认规则与风险</h3></div><b>{selectedRisks.length + (selected.status === 'unconfigured' ? 1 : 0)}</b></div>
+              <div>
+                {selected.status === 'unconfigured' && <button type="button" onClick={() => onOpenMatrix(selected.id)}><AlertTriangle size={14} /><span><strong>人员岗位尚未配置</strong><small>需要管理者确认正式负责人和职责边界</small></span><ChevronRight size={13} /></button>}
+                {selectedRisks.slice(0, 3).map(item => <button type="button" onClick={() => onOpenMatrix(selected.id)} key={item.id}><AlertTriangle size={14} /><span><strong>{item.matter}</strong><small>{item.warningText || item.escalationRule}</small></span><ChevronRight size={13} /></button>)}
+                {!selectedRisks.length && selected.status !== 'unconfigured' && <p><CheckCircle2 size={15} />当前没有待确认规则或职责风险</p>}
               </div>
             </section>
           </div>
@@ -606,10 +704,12 @@ function WorkItemCard({
       <div className="rc-work-meta"><span className={`state-${item.state}`}>{item.stateLabel}</span><span><Clock3 size={11} />{item.dueLabel}</span></div>
       <footer><span>下一步交接</span><PersonAvatar personId={nextPerson.id} size="small" /><strong>{nextPerson.name}</strong><small>{nextPerson.role}</small></footer>
       <div className="rc-work-quick-actions" aria-label={`${item.title}快捷操作`}>
-        <a href={item.route} title="查看详情"><Eye size={13} />查看</a>
-        <button type="button" title="确认接收" onClick={() => onQuickAction('已确认接收', item)}><CheckCheck size={13} />接收</button>
-        <button type="button" title="催办协同人" onClick={() => onQuickAction(`已提醒${nextPerson.name}`, item)}><Send size={13} />催办</button>
-        <button type="button" title="标记已读" onClick={() => onQuickAction('已标记为已读', item)}><MessageSquareText size={13} />已读</button>
+        <a href={item.route} title="查看详情"><Eye size={13} />详情</a>
+        {(item.displayRelation === 'owned' || item.displayRelation === 'assist') && <button type="button" title="确认接收" onClick={() => onQuickAction('已确认接收', item)}><CheckCheck size={13} />接收</button>}
+        {item.displayRelation === 'owned' && <button type="button" title="提交审核" onClick={() => onQuickAction(`已提交${nextPerson.name}审核`, item)}><ShieldCheck size={13} />提交审核</button>}
+        {(item.displayRelation === 'review' || item.displayRelation === 'assist') && <button type="button" title="催办协同人" onClick={() => onQuickAction(`已提醒${nextPerson.name}`, item)}><Send size={13} />催办</button>}
+        {item.displayRelation === 'review' && <button type="button" title="提交审核结论" onClick={() => onQuickAction('已提交审核结论', item)}><CheckCircle2 size={13} />审核</button>}
+        {item.displayRelation === 'informed' && <button type="button" title="标记已读" onClick={() => onQuickAction('已标记为已读', item)}><MessageSquareText size={13} />已读</button>}
       </div>
     </article>
   );
@@ -653,6 +753,7 @@ function WorkPreview({
   const workload = Array.from(collaboratorFrequency.entries()).sort((first, second) => second[1] - first[1]).slice(0, 5);
   const todayTodo = allPersonItems.filter(item => item.dateScope === 'today' && item.state !== 'done').length;
   const dueSoon = allPersonItems.filter(item => item.state !== 'done' && (item.priority === 'urgent' || item.priority === 'high')).length;
+  const overdueCount = allPersonItems.filter(item => item.state !== 'done' && item.dueLabel.includes('超时')).length;
   const completed = allPersonItems.filter(item => item.state === 'done').length;
   const focusPathIds = focusItem
     ? Array.from(new Set([focusItem.ownerId, ...focusItem.participantIds.slice(0, 2), focusItem.nextPersonId]))
@@ -674,12 +775,12 @@ function WorkPreview({
       <section className="rc-work-focus">
         <div className="rc-focus-leading">
           <div className="rc-focus-icon"><Sparkles size={20} /></div>
-          <div><span>今日协同焦点 · {selected.name}</span><h2>{focusItem?.title || '当前没有需要推进的协同事项'}</h2><p>{focusItem ? `${focusItem.source} · ${focusItem.module}` : `${selected.role} · 工作节奏正常`}</p></div>
+          <div><span>今日协同焦点 · {selected.name}</span><h2>{focusItem?.title || '当前没有需要推进的协同事项'}</h2><p>{focusItem ? `${focusItem.source} · ${focusItem.module}` : `${selected.role} · 工作节奏正常`}</p>{focusItem && <strong className="rc-focus-deadline"><Clock3 size={13} />截止 {focusItem.dueLabel}</strong>}</div>
         </div>
         <div className="rc-focus-context">
           <div><span>风险原因</span><strong>{focusItem?.priority === 'urgent' ? '紧急事项，需在当前时限内完成交接' : focusItem?.state === 'waiting' ? '当前节点等待协作输入' : '按计划推进，关注下一节点衔接'}</strong></div>
           <div><span>下一步动作</span><strong>{focusItem ? `完成当前处理并交接给 ${focusNext.name}` : '查看全部工作事项'}</strong></div>
-          <div className="rc-focus-people"><span>相关责任人</span><button type="button" onClick={() => onSelectPerson(focusOwner.id)}><PersonAvatar personId={focusOwner.id} size="small" />{focusOwner.name}</button><ArrowRight size={12} /><button type="button" onClick={() => onSelectPerson(focusNext.id)}><PersonAvatar personId={focusNext.id} size="small" />{focusNext.name}</button></div>
+          <div className="rc-focus-people"><span>上下游责任人</span><button type="button" onClick={() => onSelectPerson(focusOwner.id)}><PersonAvatar personId={focusOwner.id} size="small" />{focusOwner.name}</button><ArrowRight size={12} /><button type="button" onClick={() => onSelectPerson(focusNext.id)}><PersonAvatar personId={focusNext.id} size="small" />{focusNext.name}</button></div>
         </div>
         <div className="rc-focus-action">
           <div className="rc-focus-progress"><div><strong>{focusItem?.progress ?? progress}%</strong><span>当前推进</span></div><i><span style={{ width: `${focusItem?.progress ?? progress}%` }} /></i></div>
@@ -737,6 +838,7 @@ function WorkPreview({
             <div className="rc-workload-metrics">
               <div><span>今日待办</span><strong>{todayTodo}</strong><CalendarDays size={13} /></div>
               <div><span>临期</span><strong>{dueSoon}</strong><CalendarClock size={13} /></div>
+              <div className="overdue"><span>已超时</span><strong>{overdueCount}</strong><Clock3 size={13} /></div>
               <div className="risk"><span>高风险</span><strong>{urgentItems.length}</strong><AlertTriangle size={13} /></div>
               <div className="done"><span>已完成</span><strong>{completed}</strong><CheckCircle2 size={13} /></div>
             </div>
@@ -757,23 +859,17 @@ function WorkPreview({
         </aside>
       </div>
 
-      <section className="rc-work-footer-grid">
-        <article className="rc-handoff-timeline">
-          <div className="rc-section-heading"><div><span>当前工作流</span><h3>责任交接路径</h3></div><Workflow size={16} /></div>
-          <div className="rc-mini-flow">{focusPathIds.map((personId, index) => {
-            const person = getPerson(personId);
-            const isCurrent = personId === selected.id || index === Math.min(1, focusPathIds.length - 1);
-            return <span key={`${focusItem?.id || 'empty'}-${personId}-${index}`}><button type="button" className={isCurrent ? 'current' : ''} onClick={() => onSelectPerson(personId)}><PersonAvatar personId={personId} size="small" /><i>{isCurrent ? '当前' : index + 1}</i><strong>{person.name}</strong><small>{person.role}</small></button>{index < focusPathIds.length - 1 && <ArrowRight size={13} />}</span>;
-          })}</div>
-        </article>
-        <article>
-          <div className="rc-section-heading"><div><span>今日完成</span><h3>职责检查点</h3></div><CheckCircle2 size={16} /></div>
-          <ul>{selected.checklist.slice(0, 3).map((item, index) => <li key={item}><span className={index < 2 ? 'done' : ''}>{index < 2 ? <Check size={11} /> : <Clock3 size={11} />}</span>{item}</li>)}</ul>
-        </article>
-        <article>
-          <div className="rc-section-heading"><div><span>升级关系</span><h3>需要协调时</h3></div><ShieldCheck size={16} /></div>
-          <div className="rc-escalation-people"><PersonPills ids={selected.reviewerIds} limit={2} /><ArrowRight size={14} /><PersonPills ids={selected.escalationIds} limit={2} /></div>
-        </article>
+      <section className="rc-focus-handoff">
+        <div className="rc-section-heading"><div><span>当前焦点事项</span><h3>责任交接路径</h3></div><small>{focusItem?.title || '暂无焦点事项'}</small></div>
+        <div className="rc-mini-flow">{focusPathIds.map((personId, index) => {
+          const person = getPerson(personId);
+          const currentIndex = Math.max(0, focusPathIds.indexOf(selected.id));
+          const isCurrent = index === currentIndex;
+          const requirement = index < focusPathIds.length - 1
+            ? `完成当前输入后交接给 ${getPerson(focusPathIds[index + 1]).name}`
+            : '完成最终确认并回写业务结果';
+          return <span key={`${focusItem?.id || 'empty'}-${personId}-${index}`}><button type="button" className={isCurrent ? 'current' : ''} title={requirement} onClick={() => onSelectPerson(personId)}><PersonAvatar personId={personId} size="small" /><i>{isCurrent ? '当前节点' : index < currentIndex ? '已完成' : '待交接'}</i><strong>{person.name}</strong><small>{requirement}</small></button>{index < focusPathIds.length - 1 && <ArrowRight size={13} />}</span>;
+        })}</div>
       </section>
       {quickFeedback && <div className="rc-action-toast" role="status"><CheckCircle2 size={15} />{quickFeedback}</div>}
     </div>
@@ -819,6 +915,9 @@ export default function ResponsibilityCollaborationShell({ user }: Responsibilit
 
   const riskCount = snapshot.matrix.filter(item => item.warning).length;
   const configuredCount = snapshot.people.filter(person => person.status === 'active').length;
+  const todayWorkCount = snapshot.workItems.filter(item => item.dateScope === 'today').length;
+  const healthyRuleCount = snapshot.matrix.filter(item => item.state === 'healthy').length;
+  const collaborationHealth = Math.round(((healthyRuleCount + configuredCount) / (snapshot.matrix.length + snapshot.people.length)) * 100);
 
   return (
     <main className="hm-workbench-root hm-workbench-navigation-overlay rc-shell">
@@ -844,11 +943,14 @@ export default function ResponsibilityCollaborationShell({ user }: Responsibilit
           <div className="rc-command-meta"><span><CircleDot size={12} />前端原型数据</span><a href="/workspace/workflows">流程中心<ArrowUpRight size={13} /></a></div>
         </section>
 
-        <section className="rc-summary-strip" aria-label="职责协同概览">
-          <button type="button" className={activeTab === 'roles' ? 'active' : ''} onClick={() => openTab('roles')}><span className="blue"><UsersRound size={16} /></span><div><small>人员与岗位</small><strong>{snapshot.people.length}</strong><em>{configuredCount} 已配置</em></div></button>
-          <button type="button" className={activeTab === 'matrix' ? 'active' : ''} onClick={() => openTab('matrix')}><span className="indigo"><Layers3 size={16} /></span><div><small>责任事项</small><strong>{snapshot.matrix.length}</strong><em>{snapshot.departments.length} 个部门</em></div></button>
-          <button type="button" onClick={() => { setActiveTab('matrix'); setInitialMatterId(snapshot.matrix.find(item => item.warning)?.id || ''); updateLocation('matrix', undefined, snapshot.matrix.find(item => item.warning)?.id); }}><span className="orange"><AlertTriangle size={16} /></span><div><small>规则提醒</small><strong>{riskCount}</strong><em>缺失 · 冲突 · 超时</em></div></button>
-          <button type="button" className={activeTab === 'work' ? 'active' : ''} onClick={() => openTab('work')}><span className="green"><BriefcaseBusiness size={16} /></span><div><small>今日协同事项</small><strong>{snapshot.workItems.filter(item => item.dateScope === 'today').length}</strong><em>个人入口模拟</em></div></button>
+        <section className="rc-health-bar" aria-label="协同健康栏">
+          <div className="rc-health-status"><span><CheckCircle2 size={15} /></span><strong>协同健康 {collaborationHealth}%</strong><small>规则与人员配置总览</small></div>
+          <dl>
+            <div><dt>人员</dt><dd>{snapshot.people.length}</dd><small>{configuredCount} 在岗</small></div>
+            <div><dt>责任事项</dt><dd>{snapshot.matrix.length}</dd><small>{healthyRuleCount} 运行正常</small></div>
+            <div><dt>今日协同</dt><dd>{todayWorkCount}</dd><small>跨部门工作入口</small></div>
+          </dl>
+          <button type="button" onClick={() => { setActiveTab('matrix'); setInitialMatterId(snapshot.matrix.find(item => item.warning)?.id || ''); updateLocation('matrix', undefined, snapshot.matrix.find(item => item.warning)?.id); }}><AlertTriangle size={14} /><span><strong>{riskCount} 项异常</strong><small>查看缺失、冲突与超时升级</small></span><ChevronRight size={14} /></button>
         </section>
 
         <section className="rc-page-content">

@@ -23,6 +23,8 @@ const expectedPeople = [
   '胡军瑞',
   '王伟红',
   '贾改真',
+  '潘丹丹',
+  '李琴',
   '韦林',
   '销售岗位待配置',
 ];
@@ -36,6 +38,23 @@ test('prototype contains every confirmed person and the sales placeholder', () =
   assert.equal(responsibilityPeople.find(person => person.id === 'sales-open')?.status, 'unconfigured');
 });
 
+test('sales assistant supports records without replacing the pending sales owner', () => {
+  const salesAssistant = responsibilityPeople.find(person => person.id === 'li-qin');
+  const salesDemand = responsibilityMatrix.find(item => item.id === 'sales-demand-intake');
+  assert.equal(salesAssistant?.role, '销售助理');
+  assert.equal(salesDemand?.ownerIds.length, 0);
+  assert.equal(salesDemand?.ownerPlaceholder, '销售主责待配置');
+  assert.equal(salesDemand?.collaboratorIds.includes('li-qin'), true);
+  assert.equal(salesDemand?.reviewerIds.includes('li-qin'), false);
+});
+
+test('people operations and sales collaboration groups contain the new staff', () => {
+  assert.equal(responsibilityPeople.find(person => person.id === 'pan-dan-dan')?.departmentId, 'people-operations');
+  assert.equal(responsibilityPeople.find(person => person.id === 'li-qin')?.departmentId, 'sales');
+  assert.equal(responsibilityMatrix.some(item => item.ownerIds.includes('pan-dan-dan')), true);
+  assert.equal(responsibilityMatrix.some(item => item.ownerIds.includes('li-qin')), true);
+});
+
 test('responsibility matrix demonstrates missing owner, conflict and overdue escalation', () => {
   const warnings = new Set(responsibilityMatrix.map(item => item.warning).filter(Boolean));
   assert.equal(warnings.has('missing-owner'), true);
@@ -43,6 +62,9 @@ test('responsibility matrix demonstrates missing owner, conflict and overdue esc
   assert.equal(warnings.has('overdue'), true);
   assert.equal(responsibilityMatrix.some(item => item.warning === 'missing-owner' && item.ownerIds.length === 0), true);
   assert.equal(responsibilityMatrix.every(item => item.flow.length >= 3), true);
+  assert.equal(responsibilityMatrix.every(item => item.triggerCondition.length > 0), true);
+  assert.equal(responsibilityMatrix.every(item => item.escalationRule.length > 0), true);
+  assert.equal(responsibilityMatrix.every(item => item.changeLog.length > 0), true);
 });
 
 test('all responsibility and work links stay inside existing application routes', () => {
