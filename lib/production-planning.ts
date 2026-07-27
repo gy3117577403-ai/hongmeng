@@ -200,6 +200,13 @@ export type ProductionPlanBatchDeletionPreview = {
   }>;
 };
 
+export type ProductionPlanOrderDeletionDisposition = {
+  nextOrderQuantity: number;
+  activeBatchQuantity: number;
+  removedBatchQuantity: number;
+  shouldDeleteOrder: boolean;
+};
+
 function text(value: unknown, max: number): string {
   return String(value ?? '').trim().slice(0, max);
 }
@@ -673,6 +680,23 @@ export function productionPlanWorkOrderStartBlocker(
   return null;
 }
 
+export function productionPlanOrderDeletionDisposition(input: {
+  orderQuantity: number;
+  activeBatchQuantity: number;
+  removedBatchQuantity: number;
+}): ProductionPlanOrderDeletionDisposition {
+  const orderQuantity = Math.max(0, Math.trunc(input.orderQuantity));
+  const activeBatchQuantity = Math.max(0, Math.trunc(input.activeBatchQuantity));
+  const removedBatchQuantity = Math.max(0, Math.trunc(input.removedBatchQuantity));
+  const nextOrderQuantity = Math.max(activeBatchQuantity, orderQuantity - removedBatchQuantity);
+  return {
+    nextOrderQuantity,
+    activeBatchQuantity,
+    removedBatchQuantity,
+    shouldDeleteOrder: nextOrderQuantity === 0 && activeBatchQuantity === 0,
+  };
+}
+
 export async function previewProductionPlanBatchDeletion(
   tx: Prisma.TransactionClient,
   batchIds: string[],
@@ -739,7 +763,7 @@ export async function previewProductionPlanBatchDeletion(
         specification: batch.planOrder.specification,
         quantity: batch.quantity,
         action: 'delete_draft' as const,
-        message: '尚未下达，将从计划排程中删除',
+        message: '尚未下达，将从计划系统移除且不会回到订单池',
       };
     }
 
@@ -772,7 +796,7 @@ export async function previewProductionPlanBatchDeletion(
       specification: batch.planOrder.specification,
       quantity: batch.quantity,
       action: blocker ? 'blocked' as const : 'withdraw_unstarted' as const,
-      message: blocker || '已下达但尚未开工，将撤回并软删除关联生产工单',
+      message: blocker || '已下达但尚未开工，将撤回并软删除关联生产工单；删除数量不会回到订单池',
     };
   });
 
@@ -789,7 +813,12 @@ export async function previewProductionPlanBatchDeletion(
 export async function deleteProductionPlanBatches(
   tx: Prisma.TransactionClient,
   input: { batchIds: string[]; actorId: string },
-): Promise<{ draftDeletedCount: number; withdrawnCount: number }> {
+): Promise<{
+  draftDeletedCount: number;
+  withdrawnCount: number;
+  planOrderDeletedCount: number;
+  removedOrderQuantity: number;
+}> {
   const preview = await previewProductionPlanBatchDeletion(tx, input.batchIds);
   if (preview.blockers > 0) throw new Error('PLAN_BATCH_DELETE_BLOCKED');
   const batches = await tx.productionPlanBatch.findMany({
@@ -797,6 +826,19 @@ export async function deleteProductionPlanBatches(
     select: { id: true, planOrderId: true, releaseState: true, workOrderId: true, quantity: true },
   });
   if (batches.length !== input.batchIds.length) throw new Error('PLAN_BATCH_SELECTION_INVALID');
+  const affectedOrderIds = Array.from(new Set(batches.map(batch => batch.planOrderId)));
+  const affectedOrders = await tx.productionPlanOrder.findMany({
+    where: { id: { in: affectedOrderIds }, deletedAt: null },
+    select: {
+      id: true,
+      orderQuantity: true,
+      batches: {
+        where: { deletedAt: null },
+        select: { id: true, quantity: true },
+      },
+    },
+  });
+  if (affectedOrders.length !== affectedOrderIds.length) throw new Error('PLAN_BATCH_SELECTION_INVALID');
 
   const now = new Date();
   for (const batch of batches) {
@@ -827,6 +869,9 @@ export async function deleteProductionPlanBatches(
         afterData: { deletedAt: now.toISOString() },
         impactData: {
           workOrderSoftDeleted: item.action === 'withdraw_unstarted',
+          returnedToOrderPool: false,
+          retainedDrawingLibraryItem: true,
+          retainedProductTimeProfiles: true,
           retainedStorageFiles: true,
           retainedPreparationHistory: true,
         },
@@ -839,17 +884,177 @@ export async function deleteProductionPlanBatches(
         action: item.action === 'delete_draft' ? 'delete_production_plan_batch' : 'withdraw_unstarted_production_plan_batch',
         targetType: 'production_plan_batch',
         targetId: batch.id,
-        detail: { workOrderId: batch.workOrderId, retainedStorageFiles: true },
+        detail: {
+          workOrderId: batch.workOrderId,
+          returnedToOrderPool: false,
+          retainedDrawingLibraryItem: true,
+          retainedProductTimeProfiles: true,
+          retainedStorageFiles: true,
+        },
       },
     });
   }
-  for (const planOrderId of Array.from(new Set(batches.map(batch => batch.planOrderId)))) {
-    await refreshProductionPlanOrderStatus(tx, planOrderId);
+
+  let planOrderDeletedCount = 0;
+  let removedOrderQuantity = 0;
+  const selectedBatchIds = new Set(input.batchIds);
+  for (const order of affectedOrders) {
+    const removedBatchQuantity = batches
+      .filter(batch => batch.planOrderId === order.id)
+      .reduce((sum, batch) => sum + batch.quantity, 0);
+    const activeBatchQuantity = order.batches
+      .filter(batch => !selectedBatchIds.has(batch.id))
+      .reduce((sum, batch) => sum + batch.quantity, 0);
+    const disposition = productionPlanOrderDeletionDisposition({
+      orderQuantity: order.orderQuantity,
+      activeBatchQuantity,
+      removedBatchQuantity,
+    });
+    removedOrderQuantity += Math.max(0, order.orderQuantity - disposition.nextOrderQuantity);
+    if (disposition.shouldDeleteOrder) {
+      await tx.productionPlanOrder.update({
+        where: { id: order.id },
+        data: { deletedAt: now, updatedById: input.actorId },
+      });
+      planOrderDeletedCount += 1;
+    } else if (disposition.nextOrderQuantity !== order.orderQuantity) {
+      await tx.productionPlanOrder.update({
+        where: { id: order.id },
+        data: { orderQuantity: disposition.nextOrderQuantity, updatedById: input.actorId },
+      });
+      await refreshProductionPlanOrderStatus(tx, order.id);
+    } else {
+      await refreshProductionPlanOrderStatus(tx, order.id);
+    }
+    await tx.productionPlanChange.create({
+      data: {
+        planOrderId: order.id,
+        action: disposition.shouldDeleteOrder
+          ? 'delete_empty_plan_order_after_batch_deletion'
+          : 'remove_deleted_plan_quantity',
+        beforeData: { orderQuantity: order.orderQuantity },
+        afterData: disposition.shouldDeleteOrder
+          ? { deletedAt: now.toISOString() }
+          : { orderQuantity: disposition.nextOrderQuantity },
+        impactData: {
+          removedBatchQuantity,
+          activeBatchQuantity,
+          returnedToOrderPool: false,
+          retainedDrawingLibraryItem: true,
+          retainedProductTimeProfiles: true,
+        },
+        actorId: input.actorId,
+      },
+    });
+    await tx.operationLog.create({
+      data: {
+        userId: input.actorId,
+        action: disposition.shouldDeleteOrder
+          ? 'delete_empty_production_plan_order'
+          : 'remove_deleted_production_plan_quantity',
+        targetType: 'production_plan_order',
+        targetId: order.id,
+        detail: {
+          previousOrderQuantity: order.orderQuantity,
+          nextOrderQuantity: disposition.nextOrderQuantity,
+          removedBatchQuantity,
+          activeBatchQuantity,
+          returnedToOrderPool: false,
+          retainedDrawingLibraryItem: true,
+          retainedProductTimeProfiles: true,
+        },
+      },
+    });
   }
   return {
     draftDeletedCount: preview.draftDeleteCount,
     withdrawnCount: preview.withdrawCount,
+    planOrderDeletedCount,
+    removedOrderQuantity,
   };
+}
+
+export async function reconcileLegacyDeletedPlanQuantities(
+  tx: Prisma.TransactionClient,
+  input: { actorId: string; now?: Date },
+): Promise<{ adjustedOrderCount: number; deletedOrderCount: number }> {
+  const orders = await tx.productionPlanOrder.findMany({
+    where: {
+      deletedAt: null,
+      batches: { some: { deletedAt: { not: null } } },
+    },
+    select: {
+      id: true,
+      orderQuantity: true,
+      batches: { select: { quantity: true, deletedAt: true } },
+    },
+    take: 1000,
+  });
+  const now = input.now || new Date();
+  let adjustedOrderCount = 0;
+  let deletedOrderCount = 0;
+  for (const order of orders) {
+    const activeBatchQuantity = order.batches
+      .filter(batch => !batch.deletedAt)
+      .reduce((sum, batch) => sum + batch.quantity, 0);
+    const deletedBatchQuantity = order.batches
+      .filter(batch => Boolean(batch.deletedAt))
+      .reduce((sum, batch) => sum + batch.quantity, 0);
+    if (!deletedBatchQuantity || activeBatchQuantity >= order.orderQuantity) continue;
+    if (activeBatchQuantity + deletedBatchQuantity < order.orderQuantity) continue;
+    if (activeBatchQuantity === 0) {
+      await tx.productionPlanOrder.update({
+        where: { id: order.id },
+        data: { deletedAt: now, updatedById: input.actorId },
+      });
+      deletedOrderCount += 1;
+    } else {
+      await tx.productionPlanOrder.update({
+        where: { id: order.id },
+        data: { orderQuantity: activeBatchQuantity, updatedById: input.actorId },
+      });
+      await refreshProductionPlanOrderStatus(tx, order.id);
+      adjustedOrderCount += 1;
+    }
+    await tx.productionPlanChange.create({
+      data: {
+        planOrderId: order.id,
+        action: activeBatchQuantity === 0
+          ? 'reconcile_deleted_plan_order'
+          : 'reconcile_deleted_plan_quantity',
+        beforeData: { orderQuantity: order.orderQuantity },
+        afterData: activeBatchQuantity === 0
+          ? { deletedAt: now.toISOString() }
+          : { orderQuantity: activeBatchQuantity },
+        impactData: {
+          deletedBatchQuantity,
+          activeBatchQuantity,
+          returnedToOrderPool: false,
+          retainedDrawingLibraryItem: true,
+          retainedProductTimeProfiles: true,
+        },
+        reason: '兼容历史删除记录：删除计划数量不再回到订单池',
+        actorId: input.actorId,
+      },
+    });
+  }
+  if (adjustedOrderCount || deletedOrderCount) {
+    await tx.operationLog.create({
+      data: {
+        userId: input.actorId,
+        action: 'reconcile_deleted_production_plan_quantities',
+        targetType: 'production_plan_order',
+        targetId: 'legacy-deleted-plan-quantities',
+        detail: {
+          adjustedOrderCount,
+          deletedOrderCount,
+          retainedDrawingLibraryItems: true,
+          retainedProductTimeProfiles: true,
+        },
+      },
+    });
+  }
+  return { adjustedOrderCount, deletedOrderCount };
 }
 
 function batchDto(batch: ProductionPlanOrderRecord['batches'][number]): ProductionPlanBatchDTO {

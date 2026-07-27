@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  productionPlanOrderDeletionDisposition,
   productionPlanWorkOrderStartBlocker,
   type ProductionPlanDeletionWorkOrderState,
 } from '../lib/production-planning';
@@ -48,4 +49,43 @@ test('process execution and completed work orders block plan deletion', () => {
     },
   })) || '', /工序执行记录/);
   assert.match(productionPlanWorkOrderStartBlocker(untouched({ stage: 'completed', completedAt: new Date() })) || '', /已经完成/);
+});
+
+test('deleting a fully scheduled imported plan removes the empty planning order', () => {
+  assert.deepEqual(productionPlanOrderDeletionDisposition({
+    orderQuantity: 300,
+    activeBatchQuantity: 0,
+    removedBatchQuantity: 300,
+  }), {
+    nextOrderQuantity: 0,
+    activeBatchQuantity: 0,
+    removedBatchQuantity: 300,
+    shouldDeleteOrder: true,
+  });
+});
+
+test('deleted batch quantity is removed without consuming pre-existing unscheduled quantity', () => {
+  assert.deepEqual(productionPlanOrderDeletionDisposition({
+    orderQuantity: 100,
+    activeBatchQuantity: 20,
+    removedBatchQuantity: 40,
+  }), {
+    nextOrderQuantity: 60,
+    activeBatchQuantity: 20,
+    removedBatchQuantity: 40,
+    shouldDeleteOrder: false,
+  });
+});
+
+test('remaining active batches keep the plan order consistent when legacy totals are stale', () => {
+  assert.deepEqual(productionPlanOrderDeletionDisposition({
+    orderQuantity: 30,
+    activeBatchQuantity: 40,
+    removedBatchQuantity: 10,
+  }), {
+    nextOrderQuantity: 40,
+    activeBatchQuantity: 40,
+    removedBatchQuantity: 10,
+    shouldDeleteOrder: false,
+  });
 });

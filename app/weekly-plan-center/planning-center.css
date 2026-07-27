@@ -1207,8 +1207,13 @@ main.planning-center-shell.hm-workbench-root {
   white-space: nowrap;
 }
 
-.planning-center-shell .planning-pool-list > article > button {
-  width: 100%;
+.planning-center-shell .planning-pool-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+}
+
+.planning-center-shell .planning-pool-actions button {
   height: 32px;
   display: inline-flex;
   align-items: center;
@@ -1220,6 +1225,28 @@ main.planning-center-shell.hm-workbench-root {
   color: #c44e00;
   font-weight: 750;
   cursor: pointer;
+}
+
+.planning-center-shell .planning-pool-actions button.schedule:hover {
+  border-color: #dc6a1f;
+  background: #fff2e9;
+}
+
+.planning-center-shell .planning-pool-actions button.delete {
+  padding: 0;
+  border-color: #f0c3bf;
+  background: #fffafa;
+  color: #b42318;
+}
+
+.planning-center-shell .planning-pool-actions button.delete:hover {
+  border-color: #e5756d;
+  background: #fff1f0;
+}
+
+.planning-center-shell .planning-pool-actions button:disabled {
+  opacity: .55;
+  cursor: wait;
 }
 
 .planning-center-shell .planning-table-scroll {

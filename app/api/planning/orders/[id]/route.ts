@@ -219,9 +219,32 @@ export async function DELETE(_req: NextRequest, context: { params: { id: string 
       const now = new Date();
       await tx.productionPlanBatch.updateMany({ where: { planOrderId: existing.id, deletedAt: null }, data: { deletedAt: now } });
       await tx.productionPlanOrder.update({ where: { id: existing.id }, data: { deletedAt: now, updatedById: user.id } });
-      await tx.productionPlanChange.create({ data: { planOrderId: existing.id, action: 'delete_plan_order', actorId: user.id } });
+      await tx.productionPlanChange.create({
+        data: {
+          planOrderId: existing.id,
+          action: 'delete_plan_order',
+          impactData: {
+            returnedToOrderPool: false,
+            retainedDrawingLibraryItem: true,
+            retainedProductTimeProfiles: true,
+            retainedDrawingFiles: true,
+          },
+          actorId: user.id,
+        },
+      });
       await tx.operationLog.create({
-        data: { userId: user.id, action: 'delete_production_plan_order', targetType: 'production_plan_order', targetId: existing.id },
+        data: {
+          userId: user.id,
+          action: 'delete_production_plan_order',
+          targetType: 'production_plan_order',
+          targetId: existing.id,
+          detail: {
+            returnedToOrderPool: false,
+            retainedDrawingLibraryItem: true,
+            retainedProductTimeProfiles: true,
+            retainedDrawingFiles: true,
+          },
+        },
       });
       return null;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });

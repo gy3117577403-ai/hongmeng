@@ -10,6 +10,7 @@ import {
   parseProductionPlanOrderInput,
   planOrderSnapshot,
   productionPlanOrderInclude,
+  reconcileLegacyDeletedPlanQuantities,
   reconcileFutureActiveProductionPlanWeeks,
   resolveOrCreatePlanningProduct,
   serializeProductionPlanOrder,
@@ -46,6 +47,7 @@ export async function GET(req: NextRequest) {
   try {
     const user = await requireUser();
     await prisma.$transaction(async tx => {
+      await reconcileLegacyDeletedPlanQuantities(tx, { actorId: user.id });
       await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
       await reconcileProductionPlanDrawingLinks(tx);
     });

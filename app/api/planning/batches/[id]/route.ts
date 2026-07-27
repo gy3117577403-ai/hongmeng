@@ -7,6 +7,7 @@ import {
   processQuantityLedgerIsLocked,
 } from '@/lib/process-quantity-ledger-guard';
 import {
+  deleteProductionPlanBatches,
   effectivePlanningUnitMilliseconds,
   parseProductionPlanBatchInput,
   planBatchSnapshot,
@@ -191,20 +192,19 @@ export async function DELETE(_req: NextRequest, context: { params: { id: string 
       if (existing.releaseState !== 'draft') {
         return NextResponse.json({ ok: false, error: '已下达批次不能删除，请通过变更调整' }, { status: 409 });
       }
-      await tx.productionPlanBatch.update({ where: { id: existing.id }, data: { deletedAt: new Date() } });
-      await refreshProductionPlanOrderStatus(tx, existing.planOrderId);
-      await tx.productionPlanChange.create({
-        data: { planOrderId: existing.planOrderId, batchId: existing.id, action: 'delete_plan_batch', actorId: user.id },
-      });
-      await tx.operationLog.create({
-        data: { userId: user.id, action: 'delete_production_plan_batch', targetType: 'production_plan_batch', targetId: existing.id },
-      });
+      await deleteProductionPlanBatches(tx, { batchIds: [existing.id], actorId: user.id });
       return null;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     if (result instanceof NextResponse) return result;
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof Error && error.message === 'PLAN_BATCH_SELECTION_INVALID') {
+      return NextResponse.json({ ok: false, error: '排产批次状态已变化，请刷新后重试' }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === 'PLAN_BATCH_DELETE_BLOCKED') {
+      return NextResponse.json({ ok: false, error: '该计划已经开工，不能删除' }, { status: 409 });
+    }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
       return NextResponse.json({ ok: false, error: '排产批次已被其他操作更新，请刷新后重试' }, { status: 409 });
     }

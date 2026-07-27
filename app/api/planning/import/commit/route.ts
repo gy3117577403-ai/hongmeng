@@ -157,17 +157,17 @@ export async function POST(req: NextRequest) {
             where: { sourceOrderNo_sourceLineNo: { sourceOrderNo, sourceLineNo } },
             include: {
               batches: {
-                where: { deletedAt: null },
                 orderBy: { batchNo: 'asc' },
               },
             },
           });
-          if (existing?.deletedAt) throw new Error('PLAN_IMPORT_ORDER_DELETED');
-          if (existing && (existing.status === 'cancelled' || existing.status === 'completed')) {
+          const activeBatches = existing?.batches.filter(batch => !batch.deletedAt) || [];
+          const restoringDeletedOrder = Boolean(existing?.deletedAt);
+          if (existing && !restoringDeletedOrder && (existing.status === 'cancelled' || existing.status === 'completed')) {
             throw new Error('PLAN_IMPORT_ORDER_CLOSED');
           }
-          if (existing?.batches.some(batch => chinaDate(batch.weekStartDate) === targetWeekStartDate)) {
-            return { duplicate: true, planOrderId: existing.id, batchId: null };
+          if (activeBatches.some(batch => chinaDate(batch.weekStartDate) === targetWeekStartDate)) {
+            return { duplicate: true, restored: false, planOrderId: existing!.id, batchId: null };
           }
 
           const references = await resolvePlanningReferences(tx, {
@@ -186,14 +186,31 @@ export async function POST(req: NextRequest) {
           const planOrder = existing
             ? await tx.productionPlanOrder.update({
                 where: { id: existing.id },
-                data: {
-                  orderQuantity: existing.orderQuantity + quantity,
-                  customerDueDate: customerDueDate > existing.customerDueDate ? customerDueDate : existing.customerDueDate,
-                  salesperson: existing.salesperson || clean(item?.salesperson, 80) || null,
-                  planningUnitMilliseconds: existing.planningUnitMilliseconds || effectiveUnit,
-                  drawingLibraryItemId: existing.drawingLibraryItemId || references.drawingLibraryItemId,
-                  updatedById: user.id,
-                },
+                data: restoringDeletedOrder
+                  ? {
+                      customerName: references.customerName || customerName,
+                      salesperson: clean(item?.salesperson, 80) || existing.salesperson || null,
+                      productName: references.productName || productName,
+                      specification: references.specification || specification,
+                      drawingLibraryItemId: references.drawingLibraryItemId || existing.drawingLibraryItemId,
+                      orderQuantity: quantity,
+                      planningUnitMilliseconds: effectiveUnit,
+                      orderDate,
+                      customerDueDate,
+                      priority: priority(item?.priority),
+                      status: 'scheduled',
+                      remark: clean(item?.remark, 500) || null,
+                      deletedAt: null,
+                      updatedById: user.id,
+                    }
+                  : {
+                      orderQuantity: existing.orderQuantity + quantity,
+                      customerDueDate: customerDueDate > existing.customerDueDate ? customerDueDate : existing.customerDueDate,
+                      salesperson: existing.salesperson || clean(item?.salesperson, 80) || null,
+                      planningUnitMilliseconds: existing.planningUnitMilliseconds || effectiveUnit,
+                      drawingLibraryItemId: existing.drawingLibraryItemId || references.drawingLibraryItemId,
+                      updatedById: user.id,
+                    },
               })
             : await tx.productionPlanOrder.create({
                 data: {
@@ -234,7 +251,7 @@ export async function POST(req: NextRequest) {
             data: {
               planOrderId: planOrder.id,
               batchId: batch.id,
-              action: 'import_plan_week',
+              action: restoringDeletedOrder ? 'restore_deleted_plan_order_from_import' : 'import_plan_week',
               afterData: planBatchSnapshot({
                 quantity,
                 weekStartDate: targetWeek.start,
@@ -254,7 +271,12 @@ export async function POST(req: NextRequest) {
               actorId: user.id,
             },
           });
-          return { duplicate: false, planOrderId: planOrder.id, batchId: batch.id };
+          return {
+            duplicate: false,
+            restored: restoringDeletedOrder,
+            planOrderId: planOrder.id,
+            batchId: batch.id,
+          };
         }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
         if (outcome.duplicate) {
@@ -271,14 +293,12 @@ export async function POST(req: NextRequest) {
             row: rowNo,
             specification,
             status: 'created',
-            message: '已加入目标周排单清单',
+            message: outcome.restored ? '已恢复该计划并加入目标周排单清单' : '已加入目标周排单清单',
           });
         }
       } catch (error) {
         failed += 1;
-        const message = error instanceof Error && error.message === 'PLAN_IMPORT_ORDER_DELETED'
-          ? '关联计划订单已删除，请先恢复或更换来源订单号'
-          : error instanceof Error && error.message === 'PLAN_IMPORT_ORDER_CLOSED'
+        const message = error instanceof Error && error.message === 'PLAN_IMPORT_ORDER_CLOSED'
             ? '关联计划订单已经完成或取消，不能继续追加周批次'
             : error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034'
               ? '数据刚被其他操作更新，请重新导入'
