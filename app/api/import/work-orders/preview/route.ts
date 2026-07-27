@@ -69,6 +69,7 @@ export async function POST(req: NextRequest) {
     if (!(file instanceof File)) return NextResponse.json({ ok: false, error: '请选择导入文件' }, { status: 400 });
 
     const mode = (String(form.get('mode') || 'standard') === 'weekly_plan' ? 'weekly_plan' : 'standard') as WorkOrderImportMode;
+    const destination = String(form.get('destination') || 'work_orders') === 'planning' ? 'planning' : 'work_orders';
     let parsed: ParsedFile;
     try {
       parsed = await rowsFromFile(file);
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
     if (!knownHeaders.length) return NextResponse.json({ ok: false, error: '表头缺失或格式不支持' }, { status: 400 });
 
     const dataRows = parsed.rows.slice(headerIndex + 1);
-    const codes = await existingCodes();
+    const codes = destination === 'planning' ? new Set<string>() : await existingCodes();
     const weekStartDate = String(form.get('weekStartDate') || inferWeekStartDateFromFilename(file.name)).trim();
     if (mode === 'weekly_plan' && !parseWeekStartDate(weekStartDate)) {
       return NextResponse.json({ ok: false, error: '请选择有效的计划周开始日期' }, { status: 400 });
@@ -117,6 +118,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       mode,
+      destination,
       sourceFileName: file.name,
       sourceSheetName: parsed.sheetName || null,
       weekStartDate,

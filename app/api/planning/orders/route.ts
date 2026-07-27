@@ -14,7 +14,11 @@ import {
   resolveOrCreatePlanningProduct,
   serializeProductionPlanOrder,
 } from '@/lib/production-planning';
-import type { ProductionPlanProductOptionDTO, ProductionPlanningSummaryDTO } from '@/types';
+import type {
+  ProductionPlanProductOptionDTO,
+  ProductionPlanningSummaryDTO,
+  ProductionPlanningWeekDTO,
+} from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +34,12 @@ function keywordWhere(keyword: string): Prisma.ProductionPlanOrderWhereInput {
       { remark: { contains: keyword, mode: 'insensitive' } },
     ],
   };
+}
+
+function addDays(value: Date, days: number): Date {
+  const next = new Date(value);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
 }
 
 export async function GET(req: NextRequest) {
@@ -67,10 +77,47 @@ export async function GET(req: NextRequest) {
     const naturalCurrentWeek = chinaWeekRange(new Date());
     const currentStart = chinaDate(naturalCurrentWeek.start);
     const currentEnd = chinaDate(naturalCurrentWeek.end);
-    const nextWeekStart = new Date(`${currentStart}T00:00:00+08:00`);
-    nextWeekStart.setUTCDate(nextWeekStart.getUTCDate() + 7);
+    const nextWeekStart = addDays(naturalCurrentWeek.start, 7);
     const nextWeek = chinaWeekRange(nextWeekStart);
     const nextStart = chinaDate(nextWeek.start);
+    const nextEnd = chinaDate(nextWeek.end);
+    const afterNextWeek = chinaWeekRange(addDays(naturalCurrentWeek.start, 14));
+    const afterNextStart = chinaDate(afterNextWeek.start);
+    const afterNextEnd = chinaDate(afterNextWeek.end);
+    const weekSummary = (weekStartDate: string, weekEndDate: string): ProductionPlanningWeekDTO => {
+      const weekBatches = batches.filter(batch => batch.weekStartDate === weekStartDate);
+      return {
+        weekStartDate,
+        weekEndDate,
+        batchCount: weekBatches.length,
+        totalQuantity: weekBatches.reduce((sum, batch) => sum + batch.quantity, 0),
+        unfinishedCount: weekBatches.filter(batch => (
+          batch.releaseState !== 'archived' && !batch.workOrderCompletedAt
+        )).length,
+      };
+    };
+    const historyMap = new Map<string, ProductionPlanningWeekDTO>();
+    for (const batch of batches) {
+      if (batch.weekStartDate >= currentStart) continue;
+      const current = historyMap.get(batch.weekStartDate);
+      if (current) {
+        current.batchCount += 1;
+        current.totalQuantity += batch.quantity;
+        if (batch.releaseState !== 'archived' && !batch.workOrderCompletedAt) {
+          current.unfinishedCount = (current.unfinishedCount || 0) + 1;
+        }
+        continue;
+      }
+      historyMap.set(batch.weekStartDate, {
+        weekStartDate: batch.weekStartDate,
+        weekEndDate: batch.weekEndDate,
+        batchCount: 1,
+        totalQuantity: batch.quantity,
+        unfinishedCount: batch.releaseState !== 'archived' && !batch.workOrderCompletedAt ? 1 : 0,
+      });
+    }
+    const history = [...historyMap.values()]
+      .sort((left, right) => right.weekStartDate.localeCompare(left.weekStartDate));
     const summary: ProductionPlanningSummaryDTO = {
       orderCount: all.length,
       pendingOrderCount: all.filter(order => order.status === 'pending').length,
@@ -145,8 +192,10 @@ export async function GET(req: NextRequest) {
       productOptions,
       salespeople: [...new Set(salespersonRows.map(row => row.salesperson).filter((value): value is string => Boolean(value)))],
       periods: {
-        current: { weekStartDate: currentStart, weekEndDate: currentEnd },
-        next: { weekStartDate: nextStart, weekEndDate: chinaDate(nextWeek.end) },
+        current: weekSummary(currentStart, currentEnd),
+        next: weekSummary(nextStart, nextEnd),
+        afterNext: weekSummary(afterNextStart, afterNextEnd),
+        history,
       },
     });
   } catch (error) {

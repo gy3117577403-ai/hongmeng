@@ -281,6 +281,36 @@ export function alignProductionPlanBatchWeek(
   };
 }
 
+export function moveProductionPlanBatchToWeek(
+  batch: Pick<ParsedPlanBatch, 'weekStartDate' | 'plannedCompletionDate'>,
+  targetWeekStartDate: Date,
+): { weekStartDate: Date; weekEndDate: Date; plannedCompletionDate: Date } {
+  const sourceWeek = chinaWeekRange(batch.weekStartDate);
+  const targetWeek = chinaWeekRange(targetWeekStartDate);
+  const rawOffset = Math.round(
+    (batch.plannedCompletionDate.getTime() - sourceWeek.start.getTime()) / PLANNING_DAY_MILLISECONDS,
+  );
+  const completionOffset = Math.max(0, Math.min(6, rawOffset));
+  return {
+    weekStartDate: targetWeek.start,
+    weekEndDate: targetWeek.end,
+    plannedCompletionDate: addPlanningDays(targetWeek.start, completionOffset),
+  };
+}
+
+export function editableProductionPlanningWeek(
+  value: unknown,
+  now = new Date(),
+): { start: Date; end: Date } | null {
+  const requested = parsePlanDate(value);
+  if (!requested) return null;
+  const requestedWeek = chinaWeekRange(requested);
+  const currentWeek = chinaWeekRange(now);
+  const lastEditableStart = addPlanningDays(currentWeek.start, 14);
+  if (requestedWeek.start < currentWeek.start || requestedWeek.start > lastEditableStart) return null;
+  return requestedWeek;
+}
+
 function planPriority(value: unknown): ProductionPlanPriority {
   const source = text(value, 20);
   if (source === 'urgent' || source === 'insert') return source;

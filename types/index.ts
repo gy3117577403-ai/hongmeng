@@ -642,6 +642,21 @@ export type ProductionPlanChangeDTO = {
   createdAt: string;
 };
 
+export type ProductionPlanningWeekDTO = {
+  weekStartDate: string;
+  weekEndDate: string;
+  batchCount: number;
+  totalQuantity: number;
+  unfinishedCount?: number;
+};
+
+export type ProductionPlanningPeriodsDTO = {
+  current: ProductionPlanningWeekDTO;
+  next: ProductionPlanningWeekDTO;
+  afterNext: ProductionPlanningWeekDTO;
+  history: ProductionPlanningWeekDTO[];
+};
+
 export type ProductionPlanningSummaryDTO = {
   orderCount: number;
   pendingOrderCount: number;

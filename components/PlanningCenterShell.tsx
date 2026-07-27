@@ -14,10 +14,11 @@ import {
   ClipboardList,
   Clock3,
   Factory,
+  FileSpreadsheet,
   FilePenLine,
   History,
-  Layers3,
   ListFilter,
+  MoveRight,
   PackageCheck,
   Pencil,
   Plus,
@@ -27,6 +28,7 @@ import {
   Settings2,
   ShieldAlert,
   Trash2,
+  Upload,
   Warehouse,
   X,
 } from 'lucide-react';
@@ -50,11 +52,13 @@ import type {
   ProductionPlanOrderDTO,
   ProductionPlanPriority,
   ProductionPlanProductOptionDTO,
+  ProductionPlanningPeriodsDTO,
   ProductionPlanningSummaryDTO,
 } from '@/types';
 
 type PlanningView = 'schedule' | 'orders' | 'preparation' | 'changes' | 'history';
 type ProductEntryMode = 'select' | 'create';
+type EditableWeekKey = 'current' | 'next' | 'afterNext';
 
 const PLANNING_RETURN_STATE_KEY = 'hm-planning-return-state';
 
@@ -65,6 +69,8 @@ type PlanningReturnState = {
   priority: 'all' | ProductionPlanPriority;
   readinessFilters: PlanningReadinessFilter[];
   expandedOrderId: string;
+  selectedWeekStartDate?: string;
+  historyWeekStartDate?: string;
   scheduleScrollTop: number;
   windowScrollY: number;
 };
@@ -92,10 +98,7 @@ type PlanningPayload = {
   customers?: string[];
   productOptions?: ProductionPlanProductOptionDTO[];
   salespeople?: string[];
-  periods?: {
-    current: { weekStartDate: string; weekEndDate: string };
-    next: { weekStartDate: string; weekEndDate: string };
-  };
+  periods?: ProductionPlanningPeriodsDTO;
   error?: string;
 };
 
@@ -167,6 +170,62 @@ type ActivationPreview = {
     warnings: string[];
     blockers: string[];
   }>;
+};
+
+type MovePreview = {
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
+  batchCount: number;
+  totalQuantity: number;
+  blockers: number;
+  missingCount: number;
+  items: Array<{
+    batchId: string;
+    specification: string;
+    customerName: string;
+    quantity: number;
+    sourceWeekStartDate: string;
+    sourceWeekEndDate: string;
+    blockers: string[];
+  }>;
+};
+
+type PlanningImportRow = {
+  rowNo: number;
+  status: 'ready' | 'skipped' | 'invalid' | 'duplicate';
+  reason: string;
+  code: string;
+  workOrder: {
+    customerName?: string | null;
+    productName?: string | null;
+    specification?: string | null;
+    uncompletedQty?: string | null;
+    plannedAt?: string | null;
+    [key: string]: unknown;
+  };
+};
+
+type PlanningImportPreview = {
+  mode: 'weekly_plan';
+  sourceFileName: string;
+  sourceSheetName?: string | null;
+  weekStartDate: string;
+  summary: {
+    totalRows: number;
+    readyCount: number;
+    skippedCount: number;
+    invalidCount: number;
+    duplicateCount: number;
+  };
+  rows: PlanningImportRow[];
+};
+
+type PlanningImportDialog = {
+  targetWeekStartDate: string;
+  targetWeekEndDate: string;
+  fileName: string;
+  preview: PlanningImportPreview | null;
+  loading: boolean;
 };
 
 const emptySummary: ProductionPlanningSummaryDTO = {
@@ -262,10 +321,34 @@ function flowTime(value?: string | null): string {
   }).format(new Date(value));
 }
 
+function addDateDays(value: string, days: number): string {
+  const date = new Date(`${value}T12:00:00+08:00`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
+function dayOffset(weekStartDate: string, date: string): number {
+  const start = new Date(`${weekStartDate}T12:00:00+08:00`);
+  const target = new Date(`${date}T12:00:00+08:00`);
+  return Math.max(0, Math.min(6, Math.round((target.getTime() - start.getTime()) / 86_400_000)));
+}
+
+function editableWeekLabel(key: EditableWeekKey): string {
+  if (key === 'current') return '本周';
+  if (key === 'next') return '下周';
+  return '下下周';
+}
+
 function weekLabel(batch: ProductionPlanBatchDTO, periods?: PlanningPayload['periods']): string {
   if (!periods) return '计划周';
   if (batch.weekStartDate === periods.current.weekStartDate) return '本周';
   if (batch.weekStartDate === periods.next.weekStartDate) return '下周';
+  if (batch.weekStartDate === periods.afterNext.weekStartDate) return '下下周';
   if (batch.weekEndDate < periods.current.weekStartDate) return '历史周';
   return '未来周';
 }
@@ -289,6 +372,7 @@ function changeActionText(action: string): string {
     create_plan_order: '新建订单', update_plan_order: '修改订单', update_released_plan_order: '变更已下达订单',
     delete_plan_order: '删除订单', create_plan_batch: '新增排产批次', update_plan_batch: '调整排产',
     update_released_plan_batch: '调整已下达批次', delete_plan_batch: '删除排产批次',
+    move_plan_batch_week: '调配生产周', import_plan_week: '导入周排单',
     release_to_current_week: '下达本周执行', release_to_next_week: '下达下周预备', activate_preparation_week: '启用为本周执行',
     repair_active_plan_week_alignment: '修复执行周次',
   };
@@ -324,6 +408,10 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const [productOptions, setProductOptions] = useState<ProductionPlanProductOptionDTO[]>([]);
   const [salespeople, setSalespeople] = useState<string[]>([]);
   const [periods, setPeriods] = useState<PlanningPayload['periods']>();
+  const [selectedWeekStartDate, setSelectedWeekStartDate] = useState('');
+  const [historyWeekStartDate, setHistoryWeekStartDate] = useState('');
+  const [carryoverOpen, setCarryoverOpen] = useState(false);
+  const [moveTargetWeekStartDate, setMoveTargetWeekStartDate] = useState('');
   const [keyword, setKeyword] = useState('');
   const [customer, setCustomer] = useState('');
   const [priority, setPriority] = useState<'all' | ProductionPlanPriority>('all');
@@ -348,6 +436,9 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const [releasePreview, setReleasePreview] = useState<ReleasePreview | null>(null);
   const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null);
   const [activationPreview, setActivationPreview] = useState<ActivationPreview | null>(null);
+  const [movePreview, setMovePreview] = useState<MovePreview | null>(null);
+  const [moveBatchIds, setMoveBatchIds] = useState<string[]>([]);
+  const [importDialog, setImportDialog] = useState<PlanningImportDialog | null>(null);
   const [changes, setChanges] = useState<ProductionPlanChangeDTO[]>([]);
   const [changesLoading, setChangesLoading] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -358,10 +449,13 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const readinessFilterRef = useRef<HTMLDivElement>(null);
   const readinessTriggerRef = useRef<HTMLButtonElement>(null);
   const scheduleScrollRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const requestedWeekStartRef = useRef('');
+  const weekScrollPositionsRef = useRef(new Map<string, number>());
   const pendingReturnScrollRef = useRef<{ scheduleScrollTop: number; windowScrollY: number } | null>(null);
   const pendingBatchFocusRef = useRef<string | null>(null);
   const lastExternalRefreshRef = useRef(0);
-  const activeDialog = Boolean(orderDialog || batchDialog || releasePreview || deletePreview || activationPreview);
+  const activeDialog = Boolean(orderDialog || batchDialog || releasePreview || deletePreview || activationPreview || movePreview || importDialog);
 
   useModalLayer({
     open: activeDialog,
@@ -390,6 +484,31 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         setProductOptions(body.productOptions || []);
         setSalespeople(body.salespeople || []);
         setPeriods(body.periods);
+        if (body.periods) {
+          const editableStarts = [
+            body.periods.current.weekStartDate,
+            body.periods.next.weekStartDate,
+            body.periods.afterNext.weekStartDate,
+          ];
+          const requestedWeekStartDate = requestedWeekStartRef.current;
+          setSelectedWeekStartDate(current => (
+            editableStarts.includes(current)
+              ? current
+              : editableStarts.includes(requestedWeekStartDate)
+                ? requestedWeekStartDate
+                : body.periods!.current.weekStartDate
+          ));
+          setHistoryWeekStartDate(current => (
+            body.periods!.history.some(item => item.weekStartDate === current)
+              ? current
+              : body.periods!.history.some(item => item.weekStartDate === requestedWeekStartDate)
+                ? requestedWeekStartDate
+                : body.periods!.history[0]?.weekStartDate || ''
+          ));
+          if (body.periods.history.some(item => item.weekStartDate === requestedWeekStartDate)) {
+            setView('history');
+          }
+        }
       })
       .catch(reason => {
         if (reason instanceof Error && reason.name !== 'AbortError') setError(reason.message);
@@ -422,6 +541,11 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           setPriority(state.priority);
           setReadinessFilters(state.readinessFilters.filter(isPlanningReadinessFilter));
           setExpandedOrderId(state.expandedOrderId);
+          if (state.selectedWeekStartDate) {
+            requestedWeekStartRef.current = state.selectedWeekStartDate;
+            setSelectedWeekStartDate(state.selectedWeekStartDate);
+          }
+          if (state.historyWeekStartDate) setHistoryWeekStartDate(state.historyWeekStartDate);
           pendingReturnScrollRef.current = {
             scheduleScrollTop: state.scheduleScrollTop || 0,
             windowScrollY: state.windowScrollY || 0,
@@ -433,6 +557,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         }
       }
     }
+    const requestedWeekStartDate = String(search.get('week') || '').trim();
+    requestedWeekStartRef.current = requestedWeekStartDate;
     const batchId = search.get('batchId');
     if (batchId) {
       setView('schedule');
@@ -495,6 +621,29 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   }, [view, refreshToken]);
 
   const allBatches = useMemo(() => orders.flatMap(order => order.batches.map(batch => ({ order, batch }))), [orders]);
+  const editableWeeks = useMemo(() => periods ? ([
+    { key: 'current' as const, ...periods.current },
+    { key: 'next' as const, ...periods.next },
+    { key: 'afterNext' as const, ...periods.afterNext },
+  ]) : [], [periods]);
+  const selectedWeek = editableWeeks.find(item => item.weekStartDate === selectedWeekStartDate)
+    || editableWeeks[0]
+    || null;
+  const selectedWeekKey = selectedWeek?.key || 'current';
+  const selectedHistoryWeek = periods?.history.find(item => item.weekStartDate === historyWeekStartDate)
+    || periods?.history[0]
+    || null;
+  const moveTargetWeeks = useMemo(
+    () => editableWeeks.filter(item => item.weekStartDate !== selectedWeek?.weekStartDate),
+    [editableWeeks, selectedWeek?.weekStartDate],
+  );
+  useEffect(() => {
+    if (moveTargetWeeks.some(item => item.weekStartDate === moveTargetWeekStartDate)) return;
+    const preferred = selectedWeekKey === 'current'
+      ? editableWeeks.find(item => item.key === 'next')
+      : editableWeeks.find(item => item.key === 'current');
+    setMoveTargetWeekStartDate(preferred?.weekStartDate || moveTargetWeeks[0]?.weekStartDate || '');
+  }, [editableWeeks, moveTargetWeekStartDate, moveTargetWeeks, selectedWeekKey]);
   const selectedProduct = useMemo(
     () => productOptions.find(item => item.id === orderDraft.drawingLibraryItemId) || null,
     [orderDraft.drawingLibraryItemId, productOptions],
@@ -571,16 +720,24 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       : baseFilteredOrders
   ), [baseFilteredOrders, orderReadiness]);
   const orderPool = filteredOrders.filter(order => order.remainingQuantity > 0 && order.status !== 'cancelled' && order.status !== 'completed');
-  const baseScheduleRows = useMemo(() => allBatches.filter(({ order, batch }) => {
+  const baseOpenScheduleRows = useMemo(() => allBatches.filter(({ order, batch }) => {
     if (batch.releaseState === 'archived') return false;
     if (customer && order.customerName !== customer) return false;
     if (priority !== 'all' && order.priority !== priority) return false;
     const word = keyword.trim().toLocaleLowerCase();
     return !word || [order.customerName, order.salesperson || '', order.productName, order.specification].some(value => value.toLocaleLowerCase().includes(word));
   }), [allBatches, customer, keyword, priority]);
+  const baseScheduleRows = useMemo(() => baseOpenScheduleRows.filter(({ batch }) => (
+    Boolean(selectedWeekStartDate) && batch.weekStartDate === selectedWeekStartDate
+  )), [baseOpenScheduleRows, selectedWeekStartDate]);
   const scheduleRows = useMemo(() => baseScheduleRows.filter(({ order, batch }) => (
     matchesPlanningReadiness(order, batch, readinessFilters)
   )), [baseScheduleRows, readinessFilters]);
+  const carryoverRows = useMemo(() => (
+    periods
+      ? baseOpenScheduleRows.filter(({ batch }) => batch.weekEndDate < periods.current.weekStartDate)
+      : []
+  ), [baseOpenScheduleRows, periods]);
   useEffect(() => {
     if (loading || !pendingReturnScrollRef.current) return;
     const saved = pendingReturnScrollRef.current;
@@ -604,14 +761,24 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     });
     return () => window.cancelAnimationFrame(frame);
   }, [loading, scheduleRows.length]);
-  const basePreparationRows = useMemo(() => baseScheduleRows.filter(item => (
+  const basePreparationRows = useMemo(() => baseOpenScheduleRows.filter(item => (
     item.batch.releaseState === 'preparation'
       && (!periods || item.batch.weekStartDate === periods.next.weekStartDate)
-  )), [baseScheduleRows, periods]);
+  )), [baseOpenScheduleRows, periods]);
   const preparationRows = useMemo(() => basePreparationRows.filter(({ order, batch }) => (
     matchesPlanningReadiness(order, batch, readinessFilters)
   )), [basePreparationRows, readinessFilters]);
-  const historyRows = allBatches.filter(item => item.batch.releaseState === 'archived');
+  const baseHistoryRows = useMemo(() => allBatches.filter(({ order, batch }) => {
+    if (!periods || batch.weekEndDate >= periods.current.weekStartDate) return false;
+    if (customer && order.customerName !== customer) return false;
+    if (priority !== 'all' && order.priority !== priority) return false;
+    const word = keyword.trim().toLocaleLowerCase();
+    return !word || [order.customerName, order.salesperson || '', order.productName, order.specification]
+      .some(value => value.toLocaleLowerCase().includes(word));
+  }), [allBatches, customer, keyword, periods, priority]);
+  const historyRows = useMemo(() => baseHistoryRows.filter(({ batch }) => (
+    Boolean(selectedHistoryWeek) && batch.weekStartDate === selectedHistoryWeek?.weekStartDate
+  )), [baseHistoryRows, selectedHistoryWeek]);
   const readinessCounts = useMemo(() => {
     const result = Object.fromEntries(PLANNING_READINESS_FILTERS.map(filter => [filter, 0])) as Record<PlanningReadinessFilter, number>;
     if (view === 'orders') {
@@ -634,6 +801,16 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       ? readinessOptions.find(option => option.id === readinessFilters[0])?.label || '准备状态'
       : `准备状态 ${readinessFilters.length}`;
   const readinessDisabled = view === 'changes' || view === 'history';
+  const selectedWeekQuantity = baseScheduleRows.reduce((sum, item) => sum + item.batch.quantity, 0);
+  const selectedWeekTotalMilliseconds = baseScheduleRows.reduce((sum, item) => {
+    const total = batchTotalMilliseconds(item.order, item.batch);
+    return sum + (total ? Number(total) : 0);
+  }, 0);
+  const carryoverQuantity = carryoverRows.reduce((sum, item) => sum + item.batch.quantity, 0);
+  const historyQuantity = historyRows.reduce((sum, item) => sum + item.batch.quantity, 0);
+  const editingBatch = batchDialog?.batchId
+    ? allBatches.find(item => item.batch.id === batchDialog.batchId)?.batch || null
+    : null;
 
   function persistReadinessFilters(next: PlanningReadinessFilter[]): void {
     setReadinessFilters(next);
@@ -651,6 +828,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
       priority,
       readinessFilters,
       expandedOrderId,
+      selectedWeekStartDate,
+      historyWeekStartDate,
       scheduleScrollTop: scheduleScrollRef.current?.scrollTop || 0,
       windowScrollY: window.scrollY,
     };
@@ -669,14 +848,57 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     persistReadinessFilters(next);
   }
 
+  function writeWeekToUrl(weekStartDate: string): void {
+    requestedWeekStartRef.current = weekStartDate;
+    const url = new URL(window.location.href);
+    if (weekStartDate) url.searchParams.set('week', weekStartDate);
+    else url.searchParams.delete('week');
+    window.history.replaceState(window.history.state, '', url);
+  }
+
+  function selectScheduleWeek(weekStartDate: string): void {
+    if (selectedWeekStartDate) {
+      weekScrollPositionsRef.current.set(selectedWeekStartDate, scheduleScrollRef.current?.scrollTop || 0);
+    }
+    setSelectedWeekStartDate(weekStartDate);
+    setSelectedBatchIds([]);
+    setExpandedOrderId('');
+    setView('schedule');
+    setReadinessOpen(false);
+    writeWeekToUrl(weekStartDate);
+    window.requestAnimationFrame(() => {
+      if (scheduleScrollRef.current) {
+        scheduleScrollRef.current.scrollTop = weekScrollPositionsRef.current.get(weekStartDate) || 0;
+      }
+    });
+  }
+
+  function selectHistoryWeek(weekStartDate: string): void {
+    setHistoryWeekStartDate(weekStartDate);
+    setSelectedBatchIds([]);
+    setExpandedOrderId('');
+    setView('history');
+    setReadinessOpen(false);
+    persistReadinessFilters([]);
+    writeWeekToUrl(weekStartDate);
+  }
+
   function selectView(nextView: PlanningView): void {
+    if (nextView === 'schedule') {
+      selectScheduleWeek(selectedWeek?.weekStartDate || periods?.current.weekStartDate || '');
+      return;
+    }
+    if (nextView === 'history') {
+      selectHistoryWeek(selectedHistoryWeek?.weekStartDate || periods?.history[0]?.weekStartDate || '');
+      return;
+    }
     setView(nextView);
     setReadinessOpen(false);
     if (nextView === 'orders') {
       persistReadinessFilters(orderLevelReadinessFilters(readinessFilters));
       return;
     }
-    if (nextView === 'changes' || nextView === 'history') persistReadinessFilters([]);
+    if (nextView === 'changes') persistReadinessFilters([]);
   }
 
   function closeDialog(): void {
@@ -685,6 +907,9 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     setReleasePreview(null);
     setDeletePreview(null);
     setActivationPreview(null);
+    setMovePreview(null);
+    setMoveBatchIds([]);
+    setImportDialog(null);
     setProductPickerOpen(false);
     setProductEntryMode('select');
     setActiveProductIndex(-1);
@@ -822,15 +1047,34 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
 
   function openBatch(order: ProductionPlanOrderDTO, trigger: HTMLElement, batch?: ProductionPlanBatchDTO): void {
     dialogTriggerRef.current = trigger;
-    const defaultWeek = batch?.weekStartDate || periods?.next.weekStartDate || '';
+    const defaultWeek = batch?.weekStartDate || selectedWeek?.weekStartDate || periods?.current.weekStartDate || '';
+    const defaultWeekEnd = editableWeeks.find(item => item.weekStartDate === defaultWeek)?.weekEndDate
+      || batch?.weekEndDate
+      || periods?.current.weekEndDate
+      || '';
     setBatchDraft({
       quantity: String(batch?.quantity || order.remainingQuantity || ''),
       unitSeconds: secondsInput(batch?.unitMillisecondsSnapshot || planningUnitMilliseconds(order)),
       weekStartDate: defaultWeek,
-      plannedCompletionDate: batch?.plannedCompletionDate || periods?.next.weekEndDate || '',
+      plannedCompletionDate: batch?.plannedCompletionDate || defaultWeekEnd,
       reason: '',
     });
     setBatchDialog({ orderId: order.id, batchId: batch?.id });
+  }
+
+  function changeBatchWeek(weekStartDate: string): void {
+    const targetWeek = editableWeeks.find(item => item.weekStartDate === weekStartDate);
+    if (!targetWeek) return;
+    setBatchDraft(current => {
+      const offset = current.weekStartDate && current.plannedCompletionDate
+        ? dayOffset(current.weekStartDate, current.plannedCompletionDate)
+        : 6;
+      return {
+        ...current,
+        weekStartDate,
+        plannedCompletionDate: addDateDays(weekStartDate, offset),
+      };
+    });
   }
 
   async function saveOrder(confirmImpact = false, restoreDrawingLibraryProduct = false): Promise<void> {
@@ -1084,6 +1328,133 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     }
   }
 
+  async function previewMove(
+    targetWeekStartDate: string,
+    trigger: HTMLElement,
+    ids = selectedBatchIds,
+  ): Promise<void> {
+    if (!ids.length) { setToast('请先勾选需要调配的排产批次'); return; }
+    if (!targetWeekStartDate) { setToast('请选择目标生产周'); return; }
+    dialogTriggerRef.current = trigger;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch('/api/planning/move/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ batchIds: ids, targetWeekStartDate }),
+      });
+      const body = await responseBody<{ preview?: MovePreview }>(response);
+      if (!response.ok || !body.preview) throw new Error(body.error || '周次调配预检失败');
+      setMoveBatchIds(ids);
+      setMovePreview(body.preview);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '周次调配预检失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function commitMove(): Promise<void> {
+    if (!movePreview || !moveBatchIds.length) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch('/api/planning/move/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          batchIds: moveBatchIds,
+          targetWeekStartDate: movePreview.targetWeekStartDate,
+          reason: '周排单工作区调配',
+        }),
+      });
+      const body = await responseBody<{ result?: { movedCount: number; targetWeekStartDate: string } }>(response);
+      if (!response.ok || !body.result) throw new Error(body.error || '周次调配失败');
+      setToast(`${body.result.movedCount} 个草稿批次已调配到 ${body.result.targetWeekStartDate}`);
+      setSelectedBatchIds([]);
+      const targetWeekStartDate = body.result.targetWeekStartDate;
+      closeDialog();
+      selectScheduleWeek(targetWeekStartDate);
+      setRefreshToken(value => value + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '周次调配失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function openPlanningImport(trigger: HTMLElement): void {
+    if (!selectedWeek) {
+      setToast('计划周期尚未加载完成');
+      return;
+    }
+    dialogTriggerRef.current = trigger;
+    setError('');
+    setImportDialog({
+      targetWeekStartDate: selectedWeek.weekStartDate,
+      targetWeekEndDate: selectedWeek.weekEndDate,
+      fileName: '',
+      preview: null,
+      loading: false,
+    });
+    window.requestAnimationFrame(() => importInputRef.current?.focus());
+  }
+
+  async function previewPlanningImport(file: File): Promise<void> {
+    if (!importDialog) return;
+    setError('');
+    setImportDialog(current => current ? { ...current, fileName: file.name, preview: null, loading: true } : current);
+    try {
+      const form = new FormData();
+      form.set('file', file);
+      form.set('mode', 'weekly_plan');
+      form.set('destination', 'planning');
+      form.set('weekStartDate', importDialog.targetWeekStartDate);
+      const response = await fetch('/api/import/work-orders/preview', { method: 'POST', body: form });
+      const body = await responseBody<PlanningImportPreview>(response);
+      if (!response.ok || !Array.isArray(body.rows)) throw new Error(body.error || '排单清单预览失败');
+      setImportDialog(current => current ? {
+        ...current,
+        fileName: file.name,
+        preview: body,
+        loading: false,
+      } : current);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '排单清单预览失败');
+      setImportDialog(current => current ? { ...current, loading: false } : current);
+    }
+  }
+
+  async function commitPlanningImport(): Promise<void> {
+    if (!importDialog?.preview) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch('/api/planning/import/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rows: importDialog.preview.rows,
+          targetWeekStartDate: importDialog.targetWeekStartDate,
+          sourceFileName: importDialog.preview.sourceFileName,
+          sourceSheetName: importDialog.preview.sourceSheetName,
+        }),
+      });
+      const body = await responseBody<{
+        summary?: { created: number; skipped: number; failed: number; total: number };
+      }>(response);
+      if (!response.ok || !body.summary) throw new Error(body.error || '排单清单导入失败');
+      setToast(`已导入 ${body.summary.created} 批，跳过 ${body.summary.skipped} 行，失败 ${body.summary.failed} 行`);
+      closeDialog();
+      setRefreshToken(value => value + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '排单清单导入失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function selectAllDrafts(): void {
     const ids = scheduleRows.filter(item => item.batch.releaseState === 'draft').map(item => item.batch.id);
     setSelectedBatchIds(current => current.length === ids.length && ids.every(id => current.includes(id)) ? [] : ids);
@@ -1129,11 +1500,27 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           <div className="planning-readiness"><span><Warehouse size={15} />仓库异常 <b>{summary.warehouseExceptionCount}</b></span><span><Settings2 size={15} />待工艺 <b>{summary.processPendingCount}</b></span><span><ShieldAlert size={15} />缺工时 <b>{summary.missingProductTimeCount}</b></span></div>
         </section>
 
-        <section className="planning-flowline" aria-label="计划下达流程">
-          {[['01', '订单池', '录入实时订单', ClipboardList], ['02', '计划排程', '拆批与安排日期', Layers3], ['03', '仓库配料', '下周提前准备', Warehouse], ['04', '工艺编排', '产品路线与工时', Settings2], ['05', '启用生产', '人工切换本周', Factory]].map(([no, label, copy, IconValue], index) => {
-            const Icon = IconValue as typeof ClipboardList;
-            return <div key={String(no)}><i>{String(no)}</i><Icon size={18} aria-hidden="true" /><span><strong>{String(label)}</strong><small>{String(copy)}</small></span>{index < 4 && <ChevronRight size={14} aria-hidden="true" />}</div>;
-          })}
+        <section className="planning-week-switcher" aria-label="周排单工作区">
+          <button
+            className={view === 'history' ? 'active history' : 'history'}
+            type="button"
+            disabled={!periods?.history.length}
+            onClick={() => selectHistoryWeek(selectedHistoryWeek?.weekStartDate || periods?.history[0]?.weekStartDate || '')}
+          >
+            <History size={17} aria-hidden="true" />
+            <span><strong>历史周</strong><small>{selectedHistoryWeek ? `${selectedHistoryWeek.weekStartDate.slice(5)} - ${selectedHistoryWeek.weekEndDate.slice(5)}` : '暂无归档周'}</small></span>
+            <b>{periods?.history.length || 0}<small>周</small></b>
+          </button>
+          {editableWeeks.map(week => <button
+            className={view === 'schedule' && selectedWeek?.key === week.key ? `active ${week.key}` : week.key}
+            type="button"
+            key={week.key}
+            onClick={() => selectScheduleWeek(week.weekStartDate)}
+          >
+            {week.key === 'current' ? <CalendarCheck2 size={17} aria-hidden="true" /> : <CalendarClock size={17} aria-hidden="true" />}
+            <span><strong>{editableWeekLabel(week.key)}</strong><small>{week.weekStartDate.slice(5)} - {week.weekEndDate.slice(5)}</small></span>
+            <b>{week.batchCount}<small>批</small></b>
+          </button>)}
         </section>
 
         <section className="planning-toolbar" aria-label="计划筛选和操作">
@@ -1204,7 +1591,39 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           </aside>
 
           <div className="planning-schedule-board">
-            <header className="planning-board-heading"><div><span>排程清单</span><h2>本周与下周生产批次</h2></div><div><button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button><em>{readinessFilters.length ? `筛选 ${scheduleRows.length} / 全部 ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`}</em></div></header>
+            <header className="planning-board-heading">
+              <div>
+                <span>{editableWeekLabel(selectedWeekKey)}排单工作区</span>
+                <h2>{selectedWeek ? `${selectedWeek.weekStartDate.slice(5)} - ${selectedWeek.weekEndDate.slice(5)}` : '生产周加载中'}</h2>
+              </div>
+              <div>
+                <button className="import" type="button" onClick={event => openPlanningImport(event.currentTarget)}><Upload size={15} />导入{editableWeekLabel(selectedWeekKey)}清单</button>
+                <button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button>
+                <em>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`} · {selectedWeekQuantity.toLocaleString()} 件 · {selectedWeekTotalMilliseconds ? duration(selectedWeekTotalMilliseconds) : '工时待补'}</em>
+              </div>
+            </header>
+            <section className={selectedWeekKey === 'current' && carryoverRows.length ? `planning-carryover ${carryoverOpen ? 'open' : ''}` : 'planning-carryover empty'} aria-label="历史周遗留未完">
+              {selectedWeekKey === 'current' && carryoverRows.length > 0 && <>
+                <button className="planning-carryover-summary" type="button" aria-expanded={carryoverOpen} onClick={() => setCarryoverOpen(current => !current)}>
+                  <span><AlertTriangle size={15} /><strong>历史周遗留未完 {carryoverRows.length} 批</strong><small>{carryoverQuantity.toLocaleString()} 件仍保留原生产周，不会混入本周清单</small></span>
+                  <ChevronDown size={15} aria-hidden="true" />
+                </button>
+                {carryoverOpen && <div className="planning-carryover-list">
+                  {carryoverRows.map(({ order, batch }) => {
+                    const flow = planningFlow(order, batch);
+                    return <article key={batch.id}>
+                      <span><small>{batch.weekStartDate.slice(5)} - {batch.weekEndDate.slice(5)}</small><strong>{order.specification}</strong><em>{order.customerName} · {batch.quantity.toLocaleString()} 件</em></span>
+                      <b className={`tone-${flow.tone}`}>{flow.label}</b>
+                      {batch.releaseState === 'draft'
+                        ? <button type="button" onClick={event => { void previewMove(periods?.current.weekStartDate || '', event.currentTarget, [batch.id]); }}><MoveRight size={14} />移入本周</button>
+                        : batch.workOrderId
+                          ? <a href={`/production?workOrderId=${encodeURIComponent(batch.workOrderId)}`}>查看执行<ChevronRight size={13} /></a>
+                          : <span className="locked">已下达</span>}
+                    </article>;
+                  })}
+                </div>}
+              </>}
+            </section>
             <div ref={scheduleScrollRef} className="planning-table-scroll hm-scroll-region" tabIndex={0}>
               <table className="planning-table">
                 <thead><tr><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>单件 / 总工时</th><th>图纸</th><th>仓库</th><th>工艺</th><th>流程状态</th><th>操作</th></tr></thead>
@@ -1219,7 +1638,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                     <td className="select-cell"><input type="checkbox" aria-label={`选择 ${order.specification} 第 ${batch.batchNo} 批`} checked={selectedBatchIds.includes(batch.id)} disabled={batch.releaseState === 'archived'} onChange={() => toggleBatch(batch.id)} /></td>
                     <td><button className="planning-product-link" type="button" title={`${order.specification} · ${order.productName}`} onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><strong>{order.specification}</strong><span>{order.customerName} · {order.productName}</span><small>{order.salesperson ? `业务员 ${order.salesperson} · ` : ''}第 {batch.batchNo} 批</small></button></td>
                     <td><b>{batch.quantity.toLocaleString()}</b><small>订单 {order.orderQuantity.toLocaleString()}</small></td>
-                    <td><strong title={`${batch.weekStartDate} 至 ${batch.weekEndDate}`}>{weekLabel(batch, periods)}</strong></td>
+                    <td><strong title={`${batch.weekStartDate} 至 ${batch.weekEndDate}`}>{weekLabel(batch, periods)}</strong><small>{batch.weekStartDate.slice(5)} - {batch.weekEndDate.slice(5)}</small></td>
                     <td><strong>{batch.plannedCompletionDate.slice(5)}</strong></td>
                     <td><strong className={batch.plannedCompletionDate > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate.slice(5)}</strong></td>
                     <td><strong>{duration(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
@@ -1238,7 +1657,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                 </Fragment>;
                 })}</tbody>
               </table>
-              {!loading && !scheduleRows.length && <div className="planning-empty"><CalendarClock /><strong>{readinessFilters.length ? '没有符合准备状态的批次' : '还没有排产批次'}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : '从左侧订单池选择产品并安排本周或下周批次。'}</span></div>}
+              {!loading && !scheduleRows.length && <div className="planning-empty"><CalendarClock /><strong>{readinessFilters.length ? '没有符合准备状态的批次' : `${editableWeekLabel(selectedWeekKey)}还没有排产批次`}</strong><span>{readinessFilters.length ? '清除或调整准备状态筛选后再查看。' : `从左侧订单池安排到 ${selectedWeek?.weekStartDate.slice(5) || ''} - ${selectedWeek?.weekEndDate.slice(5) || ''}，或直接导入该周清单。`}</span></div>}
             </div>
           </div>
         </section>}
@@ -1256,9 +1675,47 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
 
         {view === 'changes' && <section className="planning-changes-view"><header><div><span>可追溯变更</span><h2>插单与计划调整记录</h2><p>已下达订单修改后同步关联工单，同时保留仓库与工艺处理进度。</p></div><b>{changes.length} 条</b></header><div className="planning-change-list hm-scroll-region">{changes.map(change => <article key={change.id}><i><FilePenLine /></i><div><strong>{changeActionText(change.action)}</strong><span>{change.actor?.displayName || change.actor?.username || '系统'} · {new Date(change.createdAt).toLocaleString('zh-CN')}</span><p>{change.reason || '常规计划操作'}</p></div><em>{change.planOrderId ? '订单变更' : '计划操作'}</em></article>)}{changesLoading && <div className="planning-loading">正在加载变更记录...</div>}{!changesLoading && !changes.length && <div className="planning-empty"><History /><strong>暂无计划变更</strong><span>新增、排程和下达操作会自动记录。</span></div>}</div></section>}
 
-        {view === 'history' && <section className="planning-history-view"><header><div><span>已完成生产周</span><h2>历史计划</h2><p>历史批次只读展示，不影响当前生产数据。</p></div><b>{historyRows.length} 批</b></header><div className="planning-table-scroll hm-scroll-region"><table className="planning-table"><thead><tr><th>规格</th><th>客户 / 品名</th><th>业务员</th><th>批次数量</th><th>生产周</th><th>计划完成</th><th>仓库</th><th>工艺</th><th>关联工单</th></tr></thead><tbody>{historyRows.map(({ order, batch }) => <tr key={batch.id}><td><strong>{order.specification}</strong></td><td><strong>{order.customerName}</strong><small>{order.productName}</small></td><td>{order.salesperson || '未设置'}</td><td>{batch.quantity.toLocaleString()}</td><td>{batch.weekStartDate} - {batch.weekEndDate}</td><td>{batch.plannedCompletionDate}</td><td>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus}</td><td>{batch.processStatus}</td><td>{batch.workOrderId ? <a href={`/production?workOrderId=${encodeURIComponent(batch.workOrderId)}`}>查看执行</a> : '-'}</td></tr>)}</tbody></table>{!historyRows.length && <div className="planning-empty"><History /><strong>暂无历史计划</strong><span>人工切换生产周后，原本周计划会归档到这里。</span></div>}</div></section>}
+        {view === 'history' && <section className="planning-history-view">
+          <header>
+            <div>
+              <span>独立历史周排单</span>
+              <h2>{selectedHistoryWeek ? `${selectedHistoryWeek.weekStartDate} 至 ${selectedHistoryWeek.weekEndDate}` : '历史计划'}</h2>
+              <p>每个历史周独立保存并只读展示，未完任务在本周“遗留未完”区继续跟进。</p>
+            </div>
+            <div className="planning-history-controls">
+              <label><span>选择历史周</span><select value={selectedHistoryWeek?.weekStartDate || ''} onChange={event => selectHistoryWeek(event.target.value)}>{periods?.history.map(week => <option key={week.weekStartDate} value={week.weekStartDate}>{week.weekStartDate.slice(5)} - {week.weekEndDate.slice(5)} · {week.batchCount} 批</option>)}</select></label>
+              <b>{historyRows.length} 批<small>{historyQuantity.toLocaleString()} 件</small></b>
+            </div>
+          </header>
+          <div className="planning-table-scroll hm-scroll-region" tabIndex={0}>
+            <table className="planning-table history">
+              <thead><tr><th>规格</th><th>客户 / 品名</th><th>业务员</th><th>批次数量</th><th>原生产周</th><th>计划完成</th><th>计划状态</th><th>仓库</th><th>工艺</th><th>关联执行</th></tr></thead>
+              <tbody>{historyRows.map(({ order, batch }) => <tr className={`state-${batch.releaseState}`} key={batch.id}>
+                <td><strong>{order.specification}</strong></td>
+                <td><strong>{order.customerName}</strong><small>{order.productName}</small></td>
+                <td>{order.salesperson || '未设置'}</td>
+                <td><strong>{batch.quantity.toLocaleString()}</strong></td>
+                <td>{batch.weekStartDate.slice(5)} - {batch.weekEndDate.slice(5)}</td>
+                <td>{batch.plannedCompletionDate}</td>
+                <td><span className={`planning-release state-${batch.releaseState}`}>{batch.releaseState === 'archived' ? '已归档' : batch.releaseState === 'active' ? '遗留执行中' : batch.releaseState === 'preparation' ? '遗留预备' : '遗留草稿'}</span></td>
+                <td>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : '未完成'}</td>
+                <td>{batch.processStatus === 'completed' ? '已完成' : batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' ? '已确认' : '未完成'}</td>
+                <td>{batch.workOrderId ? <a href={`/production?workOrderId=${encodeURIComponent(batch.workOrderId)}`}>查看执行</a> : '未下达'}</td>
+              </tr>)}</tbody>
+            </table>
+            {!loading && !historyRows.length && <div className="planning-empty"><History /><strong>该历史周暂无计划</strong><span>选择其他历史周查看；历史计划不会再混入本周排单清单。</span></div>}
+          </div>
+        </section>}
 
-        {selectedBatchIds.length > 0 && <div className="planning-selection-bar"><div><CheckCircle2 /><span><strong>已选 {selectedBatchIds.length} 个批次</strong><small>合计 {selectedQuantity.toLocaleString()} 件</small></span></div><button type="button" className="danger-action" disabled={saving} onClick={event => { void previewDeletion(event.currentTarget); }}><Trash2 size={16} />删除计划</button><button type="button" className="secondary" disabled={saving} onClick={event => { void previewRelease('preparation', event.currentTarget); }}><PackageCheck size={16} />下达下周预备</button><button type="button" className="primary" disabled={saving} onClick={event => { void previewRelease('active', event.currentTarget); }}><Send size={16} />下达本周执行</button><button type="button" aria-label="清除选择" title="清除选择" onClick={() => setSelectedBatchIds([])}><X size={16} /></button></div>}
+        {view === 'schedule' && selectedBatchIds.length > 0 && <div className="planning-selection-bar">
+          <div><CheckCircle2 /><span><strong>已选 {selectedBatchIds.length} 个批次</strong><small>合计 {selectedQuantity.toLocaleString()} 件 · {editableWeekLabel(selectedWeekKey)}</small></span></div>
+          <label className="planning-move-control"><span>调配到</span><select value={moveTargetWeekStartDate} onChange={event => setMoveTargetWeekStartDate(event.target.value)}>{moveTargetWeeks.map(week => <option key={week.key} value={week.weekStartDate}>{editableWeekLabel(week.key)} {week.weekStartDate.slice(5)} - {week.weekEndDate.slice(5)}</option>)}</select></label>
+          <button type="button" className="move-action" disabled={saving || !moveTargetWeekStartDate} onClick={event => { void previewMove(moveTargetWeekStartDate, event.currentTarget); }}><MoveRight size={16} />调配周次</button>
+          <button type="button" className="danger-action" disabled={saving} onClick={event => { void previewDeletion(event.currentTarget); }}><Trash2 size={16} />删除计划</button>
+          {selectedWeekKey === 'next' && <button type="button" className="secondary" disabled={saving} onClick={event => { void previewRelease('preparation', event.currentTarget); }}><PackageCheck size={16} />下达下周预备</button>}
+          {selectedWeekKey === 'current' && <button type="button" className="primary" disabled={saving} onClick={event => { void previewRelease('active', event.currentTarget); }}><Send size={16} />下达本周执行</button>}
+          <button type="button" aria-label="清除选择" title="清除选择" onClick={() => setSelectedBatchIds([])}><X size={16} /></button>
+        </div>}
       </div>
     </main>
 
@@ -1353,7 +1810,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         <div className="planning-form-grid">
           <label><span>本批数量 *</span><input type="number" min="1" value={batchDraft.quantity} onChange={event => setBatchDraft(current => ({ ...current, quantity: event.target.value }))} /></label>
           <label><span>单根工时（秒）</span><input type="number" min="0.001" max="86400" step="0.001" value={batchDraft.unitSeconds} onChange={event => setBatchDraft(current => ({ ...current, unitSeconds: event.target.value }))} /><small>草稿可暂不填写；下达本周或下周计划前必须补齐</small></label>
-          <label><span>生产周 *</span><input type="date" value={batchDraft.weekStartDate} onChange={event => setBatchDraft(current => ({ ...current, weekStartDate: event.target.value }))} /></label>
+          <label><span>目标排单周 *</span><select value={batchDraft.weekStartDate} disabled={Boolean(editingBatch && editingBatch.releaseState !== 'draft')} onChange={event => changeBatchWeek(event.target.value)}>{editableWeeks.map(week => <option value={week.weekStartDate} key={week.key}>{editableWeekLabel(week.key)} · {week.weekStartDate.slice(5)} - {week.weekEndDate.slice(5)}</option>)}</select><small>{editingBatch && editingBatch.releaseState !== 'draft' ? '已下达批次不能直接跨周调配' : '每个生产周使用独立排单清单'}</small></label>
           <label><span>内部计划完成日期 *</span><input type="date" value={batchDraft.plannedCompletionDate} onChange={event => setBatchDraft(current => ({ ...current, plannedCompletionDate: event.target.value }))} /></label>
           <label className="wide planning-total-time"><span>本批总工时</span><output>{batchDraftTotalMilliseconds ? duration(batchDraftTotalMilliseconds) : '待维护'}</output><small>{batchDraftTotalMilliseconds ? '单根工时 × 本批数量，保存后用于下达与生产工时统计' : '可先保存排程草稿，下达周计划前补齐工时'}</small></label>
           {batchDialog.batchId && <label className="wide"><span>已下达批次调整原因</span><textarea rows={2} placeholder="如果批次已经下达，此项必填" value={batchDraft.reason} onChange={event => setBatchDraft(current => ({ ...current, reason: event.target.value }))} /></label>}
@@ -1369,6 +1826,54 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     {deletePreview && <div ref={dialogRef} className="planning-dialog delete-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-delete-dialog-title"><header><div><span>危险操作预检</span><h2 id="planning-delete-dialog-title">删除所选计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary four"><div><span>所选批次</span><strong>{deletePreview.batchCount}</strong></div><div><span>删除草稿</span><strong>{deletePreview.draftDeleteCount}</strong></div><div><span>撤回未开工</span><strong>{deletePreview.withdrawCount}</strong></div><div><span>禁止删除</span><strong className={deletePreview.blockers ? 'danger' : ''}>{deletePreview.blockers}</strong></div></section><div className="planning-dialog-note danger"><ShieldAlert /><span><strong>已开工计划不会被删除</strong><small>草稿会从排程中删除；已下达但未开工的计划会撤回并软删除关联工单。历史记录、图纸和对象存储文件全部保留。</small></span></div><div className="planning-warning-list">{deletePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong><span className={item.action === 'blocked' ? 'blocker' : item.action === 'withdraw_unstarted' ? 'warning' : 'ready'}>{item.message}</span></article>)}</div>{deletePreview.blockers > 0 && <div className="planning-dialog-error"><AlertTriangle />请取消勾选已开工或已完成的批次后再删除，本次不会处理任何批次。</div>}{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="danger" disabled={saving || deletePreview.blockers > 0} onClick={() => { void commitDeletion(); }}>{saving ? '删除中...' : '确认删除计划'}</button></footer></div>}
 
     {activationPreview && <div ref={dialogRef} className="planning-dialog activation-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-activation-title"><header><div><span>生产周切换</span><h2 id="planning-activation-title">启用下周预备计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>生产周</span><strong>{activationPreview.weekStartDate.slice(5)} - {activationPreview.weekEndDate.slice(5)}</strong></div><div><span>批次 / 数量</span><strong>{activationPreview.batchCount} / {activationPreview.totalQuantity.toLocaleString()}</strong></div><div><span>阻断 / 提醒</span><strong className={activationPreview.blockerCount || activationPreview.warningCount ? 'warning' : ''}>{activationPreview.blockerCount} / {activationPreview.warningCount}</strong></div></section><div className="planning-dialog-note warning"><ShieldAlert /><span><strong>人工切换，不自动跨周</strong><small>缺少有效单根工时的批次不能进入生产；仓库或工艺未完成会保留提醒，但准备数据不会丢失。</small></span></div><div className="planning-warning-list">{activationPreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.customerName}</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">工时、仓库与工艺准备完成</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>暂不启用</button><button type="button" className="primary" disabled={saving || activationPreview.blockerCount > 0} onClick={() => { void commitActivation(); }}>{saving ? '切换中...' : activationPreview.blockerCount > 0 ? '请先补充单根工时' : '确认启用为本周'}</button></footer></div>}
+
+    {movePreview && <div ref={dialogRef} className="planning-dialog move-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-move-title">
+      <header><div><span>周次调配预检</span><h2 id="planning-move-title">移动草稿批次</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>
+      <div className="planning-dialog-body">
+        <section className="planning-release-summary">
+          <div><span>目标生产周</span><strong>{movePreview.targetWeekStartDate.slice(5)} - {movePreview.targetWeekEndDate.slice(5)}</strong></div>
+          <div><span>批次 / 数量</span><strong>{movePreview.batchCount} / {movePreview.totalQuantity.toLocaleString()}</strong></div>
+          <div><span>阻断项</span><strong className={movePreview.blockers ? 'danger' : ''}>{movePreview.blockers}</strong></div>
+        </section>
+        <div className="planning-dialog-note"><MoveRight /><span><strong>只移动排产草稿</strong><small>计划完成日期会保留原来的星期位置；已下达或已开工批次不会被直接改周。</small></span></div>
+        <div className="planning-warning-list">{movePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong><span>{item.sourceWeekStartDate.slice(5)} - {item.sourceWeekEndDate.slice(5)} → {movePreview.targetWeekStartDate.slice(5)} - {movePreview.targetWeekEndDate.slice(5)}</span>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}</article>)}</div>
+        {movePreview.missingCount > 0 && <div className="planning-dialog-error"><AlertTriangle />有 {movePreview.missingCount} 个批次已不存在，请刷新后重试。</div>}
+        {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
+      </div>
+      <footer><button type="button" onClick={closeDialog}>返回调整</button><button type="button" className="primary" disabled={saving || movePreview.blockers > 0} onClick={() => { void commitMove(); }}>{saving ? '调配中...' : '确认调配周次'}</button></footer>
+    </div>}
+
+    {importDialog && <div ref={dialogRef} className="planning-dialog import-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-import-title">
+      <header><div><span>独立周排单导入</span><h2 id="planning-import-title">导入到 {importDialog.targetWeekStartDate.slice(5)} - {importDialog.targetWeekEndDate.slice(5)}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>
+      <div className="planning-dialog-body">
+        <section className="planning-import-target">
+          <CalendarCheck2 />
+          <div><span>本次唯一目标周</span><strong>{importDialog.targetWeekStartDate} 至 {importDialog.targetWeekEndDate}</strong><small>不会覆盖其他生产周；目标周已有相同订单时自动跳过。</small></div>
+          <em>{editableWeeks.find(week => week.weekStartDate === importDialog.targetWeekStartDate) ? editableWeekLabel(editableWeeks.find(week => week.weekStartDate === importDialog.targetWeekStartDate)!.key) : '目标周'}</em>
+        </section>
+        <label className="planning-import-picker">
+          <input ref={importInputRef} type="file" accept=".xls,.xlsx,.csv" onChange={event => { const file = event.target.files?.[0]; if (file) void previewPlanningImport(file); }} />
+          <FileSpreadsheet />
+          <span><strong>{importDialog.fileName || '选择 Excel 或 CSV 排单清单'}</strong><small>{importDialog.loading ? '正在读取并校验清单…' : '支持现有周排单字段；文件仅用于本次解析，不保存到本地磁盘。'}</small></span>
+          <b>{importDialog.fileName ? '重新选择' : '选择文件'}</b>
+        </label>
+        <div className="planning-import-tools"><a href="/api/planning/import/template.csv"><FileSpreadsheet size={15} />下载周排单模板</a><span>导入前必须确认目标周，历史周不可写入。</span></div>
+        {importDialog.loading && <div className="planning-loading compact">正在生成排单预览...</div>}
+        {importDialog.preview && <section className="planning-import-preview">
+          <div className="planning-import-summary">
+            <span><small>总行数</small><strong>{importDialog.preview.summary.totalRows}</strong></span>
+            <span className="ready"><small>可导入</small><strong>{importDialog.preview.summary.readyCount}</strong></span>
+            <span><small>自动跳过</small><strong>{importDialog.preview.summary.skippedCount + importDialog.preview.summary.duplicateCount}</strong></span>
+            <span className={importDialog.preview.summary.invalidCount ? 'danger' : ''}><small>异常行</small><strong>{importDialog.preview.summary.invalidCount}</strong></span>
+          </div>
+          <div className="planning-import-table hm-scroll-region">
+            <table><thead><tr><th>行</th><th>客户 / 规格</th><th>数量</th><th>计划完成</th><th>校验结果</th></tr></thead><tbody>{importDialog.preview.rows.map(row => <tr className={`status-${row.status}`} key={row.rowNo}><td>{row.rowNo}</td><td><strong>{String(row.workOrder.specification || row.workOrder.productName || '-')}</strong><small>{String(row.workOrder.customerName || '客户缺失')}</small></td><td>{String(row.workOrder.uncompletedQty || '-')}</td><td>{row.workOrder.plannedAt ? String(row.workOrder.plannedAt).slice(0, 10) : importDialog.targetWeekEndDate}</td><td><span>{row.status === 'ready' ? '可导入' : row.reason || (row.status === 'skipped' ? '已跳过' : '需处理')}</span></td></tr>)}</tbody></table>
+          </div>
+        </section>}
+        {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
+      </div>
+      <footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || importDialog.loading || !importDialog.preview?.summary.readyCount} onClick={() => { void commitPlanningImport(); }}>{saving ? '导入中...' : `确认导入到 ${importDialog.targetWeekStartDate.slice(5)} 周`}</button></footer>
+    </div>}
 
   </>;
 }
