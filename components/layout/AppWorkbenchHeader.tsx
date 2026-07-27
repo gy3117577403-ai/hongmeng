@@ -20,6 +20,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  UserRoundCog,
   UsersRound,
   Workflow,
   Warehouse,
@@ -75,6 +76,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/workspace/issues', label: '问题管理', icon: ShieldCheck },
       { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
       { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
+      { href: '/workspace/responsibilities', label: '职责与协同', icon: UserRoundCog },
       { href: '/workspace/warehouse', label: '仓库管理', icon: Warehouse },
       { href: '/workspace/procurement', label: '缺料跟进', icon: PackageSearch },
       { href: '/workspace/product-times', label: '产品工序与工时', icon: Clock3 },
@@ -89,6 +91,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
 const teamLeadNavigation = new Set([
   '/production',
   '/workspace/workflows',
+  '/workspace/responsibilities',
   '/workspace/procurement',
   '/workspace/reports',
 ]);
@@ -99,7 +102,7 @@ function navigationForRole(
   if (role === 'ADMIN') return sideNavigation;
   const allowed = role === 'TEAM_LEAD'
     ? teamLeadNavigation
-    : new Set(['/workspace/reports']);
+    : new Set(['/workspace/responsibilities', '/workspace/reports']);
   return sideNavigation
     .map(group => ({
       ...group,
