@@ -88,6 +88,229 @@ main.hm-workbench-root.hm-workbench-root {
   }
 }
 
+.hm-week-reconciliation {
+  min-width: 0;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: minmax(205px, 1fr) auto minmax(180px, auto);
+  align-items: center;
+  gap: 14px;
+  padding: 6px 10px;
+  border: 1px solid #dfe6ef;
+  border-left: 3px solid #4b83d1;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .82);
+  box-shadow: 0 5px 14px rgba(35, 52, 78, .055), inset 0 1px 0 rgba(255, 255, 255, .88);
+  color: #1c2d43;
+  backdrop-filter: blur(12px);
+}
+
+.hm-week-reconciliation.aligned {
+  border-left-color: #1aa66a;
+}
+
+.hm-week-reconciliation.attention {
+  border-color: #f1d6bd;
+  border-left-color: #ef6c1a;
+  background: rgba(255, 250, 246, .92);
+}
+
+.hm-week-reconciliation.loading,
+.hm-week-reconciliation.unavailable {
+  display: flex;
+  color: #758397;
+  font-size: 12px;
+}
+
+.hm-week-reconciliation-title,
+.hm-week-reconciliation-title > span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.hm-week-reconciliation-title {
+  gap: 8px;
+  color: #2872c7;
+}
+
+.hm-week-reconciliation.aligned .hm-week-reconciliation-title {
+  color: #108b58;
+}
+
+.hm-week-reconciliation.attention .hm-week-reconciliation-title {
+  color: #dc5a08;
+}
+
+.hm-week-reconciliation-title > span {
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.15;
+}
+
+.hm-week-reconciliation-title strong {
+  color: #1d2d43;
+  font-size: 12px;
+}
+
+.hm-week-reconciliation-title small {
+  margin-top: 2px;
+  color: #7b899a;
+  font-size: 9px;
+}
+
+.hm-week-reconciliation dl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.hm-week-reconciliation dl > div {
+  min-width: 66px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 7px;
+  padding: 4px 7px;
+  border-radius: 7px;
+  background: #f3f6fa;
+}
+
+.hm-week-reconciliation dt {
+  color: #738196;
+  font-size: 9px;
+}
+
+.hm-week-reconciliation dd {
+  margin: 0;
+  color: #17283f;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.hm-week-reconciliation-status {
+  justify-self: end;
+  color: #27805b;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.hm-week-reconciliation details {
+  position: relative;
+  justify-self: end;
+}
+
+.hm-week-reconciliation summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 1px solid #efc7a7;
+  border-radius: 7px;
+  background: #fff;
+  color: #cc570d;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  list-style: none;
+}
+
+.hm-week-reconciliation summary::-webkit-details-marker {
+  display: none;
+}
+
+.hm-week-reconciliation details[open] summary svg {
+  transform: rotate(180deg);
+}
+
+.hm-week-reconciliation-detail {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 7px);
+  right: 0;
+  width: min(520px, 72vw);
+  max-height: 360px;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid #dfe5ed;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .98);
+  box-shadow: 0 18px 45px rgba(29, 44, 68, .18);
+}
+
+.hm-week-reconciliation-detail article + article {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid #edf0f4;
+}
+
+.hm-week-reconciliation-detail header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hm-week-reconciliation-detail header strong {
+  font-size: 11px;
+}
+
+.hm-week-reconciliation-detail header b {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fff0e5;
+  color: #d25a0e;
+  font-size: 10px;
+  text-align: center;
+}
+
+.hm-week-reconciliation-detail ul {
+  display: grid;
+  gap: 4px;
+  margin: 7px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hm-week-reconciliation-detail li {
+  display: grid;
+  grid-template-columns: minmax(100px, .7fr) minmax(160px, 1.3fr);
+  gap: 8px;
+  padding: 5px 7px;
+  border-radius: 6px;
+  background: #f7f9fb;
+}
+
+.hm-week-reconciliation-detail li span {
+  overflow: hidden;
+  color: #26384f;
+  font-size: 10px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-week-reconciliation-detail li small,
+.hm-week-reconciliation-detail p {
+  margin: 0;
+  color: #718095;
+  font-size: 9px;
+}
+
+@media (max-width: 1180px) {
+  .hm-week-reconciliation {
+    grid-template-columns: minmax(180px, 1fr) auto;
+  }
+
+  .hm-week-reconciliation-status,
+  .hm-week-reconciliation details {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
+
 .hm-platform-sidebar {
   position: fixed;
   z-index: calc(var(--z-header) + 2);

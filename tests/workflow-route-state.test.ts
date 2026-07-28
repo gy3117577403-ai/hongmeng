@@ -4,6 +4,7 @@ import {
   productionRouteFallback,
   resolveWorkflowRouteState,
   workflowItemMatchesWeekScope,
+  workflowWeekNavigationFromBatches,
   workflowWeekRanges,
 } from '../lib/workflows';
 import type { WorkflowItemDTO, WorkflowStepDTO, WorkflowWeekScope } from '../types';
@@ -75,7 +76,7 @@ test('workflow week scopes match the planning center four-week model', () => {
   }
 });
 
-test('history scope contains only the immediately previous week', () => {
+test('history scope defaults to previous week and supports an exact selected historical week', () => {
   const now = new Date('2026-07-28T04:00:00.000Z');
   const item = (weekStartDate: string, weekEndDate: string) => ({
     entityType: 'production',
@@ -94,6 +95,12 @@ test('history scope contains only the immediately previous week', () => {
     now,
   ), false);
   assert.equal(workflowItemMatchesWeekScope(
+    item('2026-07-13T04:00:00.000Z', '2026-07-19T04:00:00.000Z'),
+    'history',
+    now,
+    '2026-07-13',
+  ), true);
+  assert.equal(workflowItemMatchesWeekScope(
     item('2026-08-10T04:00:00.000Z', '2026-08-16T04:00:00.000Z'),
     'afterNext',
     now,
@@ -107,4 +114,19 @@ test('history scope contains only the immediately previous week', () => {
     'history',
     now,
   ), false);
+});
+
+test('workflow history navigation is derived from canonical planning batches', () => {
+  const now = new Date('2026-07-28T04:00:00.000Z');
+  const navigation = workflowWeekNavigationFromBatches([
+    { weekStartDate: new Date('2026-07-19T16:00:00.000Z'), weekEndDate: new Date('2026-07-25T16:00:00.000Z') },
+    { weekStartDate: new Date('2026-07-19T16:00:00.000Z'), weekEndDate: new Date('2026-07-25T16:00:00.000Z') },
+    { weekStartDate: new Date('2026-07-26T16:00:00.000Z'), weekEndDate: new Date('2026-08-01T16:00:00.000Z') },
+    { weekStartDate: new Date('2026-08-02T16:00:00.000Z'), weekEndDate: new Date('2026-08-08T16:00:00.000Z') },
+  ], now);
+
+  assert.equal(navigation.history[0]?.weekStartDate, '2026-07-20');
+  assert.equal(navigation.history[0]?.count, 2);
+  assert.equal(navigation.current.count, 1);
+  assert.equal(navigation.next.count, 1);
 });

@@ -86,7 +86,7 @@ export type ProductionExceptionCode =
   | 'customer_missing';
 
 export type ProductionExecutionView = 'board' | 'today' | 'exceptions';
-export type ProductionWeekScope = 'current' | 'carryover' | 'next' | 'history';
+export type ProductionWeekScope = 'current' | 'carryover' | 'next' | 'afterNext' | 'history';
 
 export type ProductionExecutionFilters = {
   workOrderId?: string;
@@ -112,6 +112,7 @@ export type ProductionWeek = {
 export type ProductionWeekNavigation = {
   current: { weekStartDate: string; weekEndDate: string; count: number };
   next: { weekStartDate: string; weekEndDate: string; count: number };
+  afterNext: { weekStartDate: string; weekEndDate: string; count: number };
   carryoverCount: number;
   history: Array<{ weekStartDate: string; weekEndDate: string; count: number }>;
 };
@@ -215,7 +216,7 @@ function sameDayRange(date: Date) {
 }
 
 export function parseProductionWeekScope(value?: string | null): ProductionWeekScope {
-  if (value === 'carryover' || value === 'next' || value === 'history') return value;
+  if (value === 'carryover' || value === 'next' || value === 'afterNext' || value === 'history') return value;
   return 'current';
 }
 
@@ -235,14 +236,19 @@ export async function resolveProductionWeek(
   weekEndInput?: string | null,
   scopeInput?: string | null,
 ): Promise<ProductionWeek> {
-  const explicitScope = scopeInput === 'current' || scopeInput === 'carryover' || scopeInput === 'next' || scopeInput === 'history';
+  const explicitScope = scopeInput === 'current'
+    || scopeInput === 'carryover'
+    || scopeInput === 'next'
+    || scopeInput === 'afterNext'
+    || scopeInput === 'history';
   const scope = explicitScope ? parseProductionWeekScope(scopeInput) : (weekStartInput ? 'history' : 'current');
   const natural = naturalProductionWeek();
   if (scope === 'current' || scope === 'carryover') {
     return { scope, weekStart: natural.start, weekEnd: natural.end };
   }
-  if (scope === 'next') {
-    return { scope, weekStart: addDays(natural.start, 7), weekEnd: addDays(natural.end, 7) };
+  if (scope === 'next' || scope === 'afterNext') {
+    const offset = scope === 'afterNext' ? 14 : 7;
+    return { scope, weekStart: addDays(natural.start, offset), weekEnd: addDays(natural.end, offset) };
   }
   const requestedStart = parseWeek(weekStartInput);
   if (weekStartInput && !requestedStart) throw new Error('周开始日期格式不正确');
@@ -250,11 +256,10 @@ export async function resolveProductionWeek(
     const requestedEnd = parseWeek(weekEndInput) || addDays(requestedStart, 6);
     return { scope: 'history', weekStart: requestedStart, weekEnd: requestedEnd };
   }
-  const previous = await prisma.workOrder.findFirst({
+  const previous = await prisma.productionPlanBatch.findFirst({
     where: {
       deletedAt: null,
-      planType: { in: ['weekly_plan', 'managed_plan'] },
-      parentWorkOrderId: null,
+      planOrder: { deletedAt: null },
       weekStartDate: { lt: natural.start },
     },
     select: { weekStartDate: true, weekEndDate: true },
@@ -278,8 +283,33 @@ export function productionWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhere
   }
   return {
     ...base,
+    OR: [
+      {
+        productionPlanBatch: {
+          is: { deletedAt: null, planOrder: { deletedAt: null } },
+        },
+      },
+      {
+        parentWorkOrder: {
+          is: {
+            productionPlanBatch: {
+              is: { deletedAt: null, planOrder: { deletedAt: null } },
+            },
+          },
+        },
+      },
+      {
+        rootWorkOrder: {
+          is: {
+            productionPlanBatch: {
+              is: { deletedAt: null, planOrder: { deletedAt: null } },
+            },
+          },
+        },
+      },
+    ],
     ...(week.scope === 'current' ? { planActive: true } : {}),
-    ...(week.scope === 'next' ? { planActive: false, planClearedAt: null } : {}),
+    ...(week.scope === 'next' || week.scope === 'afterNext' ? { planActive: false, planClearedAt: null } : {}),
     weekStartDate: sameDayRange(week.weekStart),
   };
 }
@@ -294,18 +324,24 @@ export function productionRootWeekWhere(week: ProductionWeek): Prisma.WorkOrderW
 export async function loadProductionWeekNavigation(now = new Date()): Promise<ProductionWeekNavigation> {
   const natural = naturalProductionWeek(now);
   const nextStart = addDays(natural.start, 7);
-  const [currentCount, nextCount, priorOrders, historicalOrders] = await Promise.all([
-    prisma.workOrder.count({ where: productionRootWeekWhere({ scope: 'current', weekStart: natural.start, weekEnd: natural.end }) }),
-    prisma.workOrder.count({ where: productionRootWeekWhere({ scope: 'next', weekStart: nextStart, weekEnd: addDays(nextStart, 6) }) }),
+  const afterNextStart = addDays(natural.start, 14);
+  const planningBatchWhere = (weekStart: Date) => ({
+    deletedAt: null,
+    planOrder: { deletedAt: null },
+    weekStartDate: sameDayRange(weekStart),
+  });
+  const [currentCount, nextCount, afterNextCount, priorOrders, historicalBatches] = await Promise.all([
+    prisma.productionPlanBatch.count({ where: planningBatchWhere(natural.start) }),
+    prisma.productionPlanBatch.count({ where: planningBatchWhere(nextStart) }),
+    prisma.productionPlanBatch.count({ where: planningBatchWhere(afterNextStart) }),
     prisma.workOrder.findMany({
       where: productionRootWeekWhere({ scope: 'carryover', weekStart: natural.start, weekEnd: natural.end }),
       select: { stage: true, status: true },
     }),
-    prisma.workOrder.findMany({
+    prisma.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
-        planType: { in: ['weekly_plan', 'managed_plan'] },
-        parentWorkOrderId: null,
+        planOrder: { deletedAt: null },
         weekStartDate: { lt: natural.start },
       },
       select: { weekStartDate: true, weekEndDate: true },
@@ -314,22 +350,22 @@ export async function loadProductionWeekNavigation(now = new Date()): Promise<Pr
     }),
   ]);
   const historyMap = new Map<string, { weekStartDate: string; weekEndDate: string; count: number }>();
-  for (const order of historicalOrders) {
-    if (!order.weekStartDate) continue;
-    const weekStartDate = chinaYmd(order.weekStartDate);
+  for (const batch of historicalBatches) {
+    const weekStartDate = chinaYmd(batch.weekStartDate);
     const current = historyMap.get(weekStartDate);
     if (current) current.count += 1;
     else historyMap.set(weekStartDate, {
       weekStartDate,
-      weekEndDate: chinaYmd(order.weekEndDate || addDays(order.weekStartDate, 6)),
+      weekEndDate: chinaYmd(batch.weekEndDate || addDays(batch.weekStartDate, 6)),
       count: 1,
     });
   }
   return {
     current: { weekStartDate: chinaYmd(natural.start), weekEndDate: chinaYmd(natural.end), count: currentCount },
     next: { weekStartDate: chinaYmd(nextStart), weekEndDate: chinaYmd(addDays(nextStart, 6)), count: nextCount },
+    afterNext: { weekStartDate: chinaYmd(afterNextStart), weekEndDate: chinaYmd(addDays(afterNextStart, 6)), count: afterNextCount },
     carryoverCount: priorOrders.filter(order => normalizeWorkOrderStage(order.stage || order.status) !== 'completed').length,
-    history: [...historyMap.values()].slice(0, 26),
+    history: [...historyMap.values()],
   };
 }
 
@@ -754,7 +790,7 @@ export async function loadProductionExecution(input: {
   const items = filtered.slice((page - 1) * pageSize, page * pageSize).map(order => serializeProductionOrder(order, now));
   return {
     scope: input.week.scope,
-    readOnly: input.week.scope === 'next',
+    readOnly: input.week.scope === 'next' || input.week.scope === 'afterNext' || input.week.scope === 'history',
     weekStartDate: input.week.weekStart ? chinaYmd(input.week.weekStart) : null,
     weekEndDate: input.week.weekEnd ? chinaYmd(input.week.weekEnd) : null,
     stageCounts,
@@ -835,7 +871,7 @@ export async function summarizeProduction(week: ProductionWeek) {
   }
   return {
     scope: week.scope,
-    readOnly: week.scope === 'next',
+    readOnly: week.scope === 'next' || week.scope === 'afterNext' || week.scope === 'history',
     weekStartDate: week.weekStart ? chinaYmd(week.weekStart) : null,
     weekEndDate: week.weekEnd ? chinaYmd(week.weekEnd) : null,
     total: orders.length,

@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
+import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
@@ -19,7 +20,7 @@ import type {
 
 type StageKey = 'not_issued' | 'frontend' | 'backend' | 'completed';
 type ViewKey = 'board' | 'today' | 'exceptions';
-type WeekScope = 'current' | 'carryover' | 'next' | 'history';
+type WeekScope = 'current' | 'carryover' | 'next' | 'afterNext' | 'history';
 type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing' | 'waiting_transfer';
 type DetailTab = 'production' | 'drawing' | 'progress' | 'source';
 type BatchOperation = 'set_priority' | 'add_remark';
@@ -187,6 +188,7 @@ type ProductionSummary = {
   navigation: {
     current: { weekStartDate: string; weekEndDate: string; count: number };
     next: { weekStartDate: string; weekEndDate: string; count: number };
+    afterNext: { weekStartDate: string; weekEndDate: string; count: number };
     carryoverCount: number;
     history: Array<{ weekStartDate: string; weekEndDate: string; count: number }>;
   };
@@ -905,7 +907,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setAdvanced(restored ? cloneAdvanced(restored.filters) : advancedFromParams(sourceParams));
     const restoredScope = restored?.scope || sourceParams.get('scope');
     const restoredWeekStart = restored?.weekStart || sourceParams.get('weekStart') || '';
-    setScope(restoredScope === 'carryover' || restoredScope === 'next' || restoredScope === 'history'
+    setScope(restoredScope === 'carryover' || restoredScope === 'next' || restoredScope === 'afterNext' || restoredScope === 'history'
       ? restoredScope
       : restoredWeekStart ? 'history' : 'current');
     setWeekStart(restoredWeekStart);
@@ -1805,7 +1807,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   function openBatch(operation: BatchOperation): void {
     if (board?.readOnly) {
-      setToast('下周预览为只读，启用为本周后才能批量修改');
+      setToast('历史周和未来周为只读视图；请在本周或跨周遗留中处理');
       return;
     }
     setBatchOperation(operation); setBatchValue(''); setBatchRemark(''); setFormError(''); setBatchOpen(true);
@@ -1859,8 +1861,16 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }
 
   const weeklyPlanWeekStart = weekStart || summary?.weekStartDate || '';
-  const weeklyPlanHref = weeklyPlanWeekStart ? `/weekly-plan-center?currentWeekStart=${encodeURIComponent(weeklyPlanWeekStart)}` : '/weekly-plan-center';
-  const weekScopeTitle = scope === 'carryover' ? '遗留未完' : scope === 'next' ? '下周预览' : scope === 'history' ? '历史周' : '当前执行周';
+  const weeklyPlanHref = weeklyPlanWeekStart ? `/weekly-plan-center?week=${encodeURIComponent(weeklyPlanWeekStart)}` : '/weekly-plan-center';
+  const weekScopeTitle = scope === 'carryover'
+    ? '跨周遗留'
+    : scope === 'next'
+      ? '下周预览'
+      : scope === 'afterNext'
+        ? '下下周预览'
+        : scope === 'history'
+          ? '历史周'
+          : '当前执行周';
   const weekScopeRangeText = !summary?.weekStartDate
     ? '前往周计划中心启用'
     : scope === 'carryover'
@@ -1892,25 +1902,47 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             </div>
           </div>
           <nav className="production-dispatch-week-tabs" aria-label="生产周范围">
-            <button className={scope === 'carryover' ? 'active' : ''} type="button" aria-pressed={scope === 'carryover'} onClick={() => changeWeekScope('carryover')}>遗留未完 <b>{summary?.navigation.carryoverCount ?? 0}</b></button>
-            <button className={scope === 'current' ? 'active' : ''} type="button" aria-pressed={scope === 'current'} onClick={() => changeWeekScope('current')}>本周 <b>{summary?.navigation.current.count ?? 0}</b></button>
-            <button className={scope === 'next' ? 'active' : ''} type="button" aria-pressed={scope === 'next'} onClick={() => changeWeekScope('next')}>下周 <b>{summary?.navigation.next.count ?? 0}</b></button>
             <label className={scope === 'history' ? 'active' : ''}>
               <span>历史周</span>
-              <select aria-label="选择历史生产周" value={scope === 'history' ? weekStart : ''} onChange={event => changeWeekScope('history', event.target.value)}>
+              <select
+                aria-label="选择历史生产周"
+                value={scope === 'history' ? weekStart : ''}
+                onFocus={() => {
+                  if (scope !== 'history') changeWeekScope('history');
+                }}
+                onChange={event => changeWeekScope('history', event.target.value)}
+              >
                 <option value="" disabled>选择历史周</option>
-                {summary?.navigation.history.map(item => <option key={item.weekStartDate} value={item.weekStartDate}>{dateText(item.weekStartDate)} - {dateText(item.weekEndDate)}（{item.count}）</option>)}
+                {summary?.navigation.history.map(item => <option key={item.weekStartDate} value={item.weekStartDate}>{dateText(item.weekStartDate)} - {dateText(item.weekEndDate)} · {item.count} 批</option>)}
               </select>
             </label>
+            <button className={scope === 'current' ? 'active' : ''} type="button" aria-pressed={scope === 'current'} onClick={() => changeWeekScope('current')}>本周 <b>{summary?.navigation.current.count ?? 0}</b></button>
+            <button className={scope === 'next' ? 'active' : ''} type="button" aria-pressed={scope === 'next'} onClick={() => changeWeekScope('next')}>下周 <b>{summary?.navigation.next.count ?? 0}</b></button>
+            <button className={scope === 'afterNext' ? 'active' : ''} type="button" aria-pressed={scope === 'afterNext'} onClick={() => changeWeekScope('afterNext')}>下下周 <b>{summary?.navigation.afterNext.count ?? 0}</b></button>
           </nav>
           <div className="production-dispatch-command-actions">
+            <button
+              className={`hm-workbench-button production-carryover-trigger ${scope === 'carryover' ? 'active' : ''}`.trim()}
+              type="button"
+              aria-pressed={scope === 'carryover'}
+              title="查看所有历史周仍未完成的生产工单"
+              onClick={() => changeWeekScope('carryover')}
+            >
+              <AlertTriangle size={15} aria-hidden="true" />跨周遗留 <b>{summary?.navigation.carryoverCount ?? 0}</b>
+            </button>
             {canAdministerProduction && <a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a>}
-            {canAdministerProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '下周预览不可批量修改' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
+            {canAdministerProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史与未来周为只读视图' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
             <button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button>
             <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
             <button className="hm-workbench-button production-fullscreen-trigger" type="button" onClick={() => void toggleFullscreen()}><Expand size={15} aria-hidden="true" />{isFullscreen ? '退出大屏' : '大屏模式'}</button>
           </div>
         </section>
+
+        {scope !== 'carryover' && <WeekReconciliationBar
+          className="production-week-reconciliation"
+          weekStartDate={summary?.weekStartDate}
+          weekEndDate={summary?.weekEndDate}
+        />}
 
         <section className="production-dispatch-metrics" aria-label="生产调度指标">
           <button type="button" className={dispatchPreset === 'all' ? 'active' : ''} onClick={() => applyDispatchPreset('all')}><span><CheckCircle2 size={18} aria-hidden="true" />生产中</span><strong>{dispatchMetric.inProduction}</strong><small>{weekScopeTitle} · {summary?.total || 0} 单</small></button>
@@ -1944,7 +1976,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         {!!filterChips.length && <div className="production-filter-chips production-dispatch-filter-chips" aria-label="已应用筛选">{filterChips.map(chip => <button key={chip.key} type="button" onClick={() => { chip.remove(); setPage(1); }} title={`移除${chip.label}`}>{chip.label}<span>×</span></button>)}<button className="clear" type="button" onClick={() => { setTargetWorkOrderId(''); setAdvanced(emptyAdvanced); setQuick([]); setKeyword(''); setPage(1); }}>清空全部</button></div>}
 
         {error && <div className="production-error"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
-        {scope === 'current' && summary?.total === 0 && !loading && <div className="production-empty-week"><strong>本周暂无已启用生产工单</strong><span>历史遗留工单可从“遗留未完”继续处理；新计划请在计划中心下达。</span><a href={weeklyPlanHref}>进入计划中心</a></div>}
+        {scope === 'current' && summary?.total === 0 && !loading && <div className="production-empty-week"><strong>本周暂无已启用生产工单</strong><span>历史遗留工单可从“跨周遗留”继续处理；新计划请在计划中心下达。</span><a href={weeklyPlanHref}>进入计划中心</a></div>}
 
         <div className={`production-dispatch-layout ${insightsOpen ? 'rail-open' : ''}`.trim()}>
           <section className="production-dispatch-list-panel" aria-label="生产工单调度列表">

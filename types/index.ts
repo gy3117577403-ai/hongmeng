@@ -1327,6 +1327,48 @@ export type WorkflowProcessStatus = 'waiting' | 'processing' | 'verifying' | 'cl
 export type WorkflowEntityType = 'issue' | 'change' | 'production';
 export type WorkflowWeekScope = 'history' | 'current' | 'next' | 'afterNext';
 
+export type ProductionWeekNavigationItemDTO = {
+  weekStartDate: string;
+  weekEndDate: string;
+  count: number;
+};
+
+export type WorkflowWeekNavigationDTO = {
+  current: ProductionWeekNavigationItemDTO;
+  next: ProductionWeekNavigationItemDTO;
+  afterNext: ProductionWeekNavigationItemDTO;
+  history: ProductionWeekNavigationItemDTO[];
+};
+
+export type ProductionWeekReconciliationIssueCode =
+  | 'plan_missing_work_order'
+  | 'work_order_week_mismatch'
+  | 'work_order_missing_plan'
+  | 'workflow_missing_work_order';
+
+export type ProductionWeekReconciliationIssueDTO = {
+  code: ProductionWeekReconciliationIssueCode;
+  label: string;
+  count: number;
+  items: Array<{
+    id: string;
+    code: string;
+    detail: string;
+  }>;
+};
+
+export type ProductionWeekReconciliationDTO = {
+  weekStartDate: string;
+  weekEndDate: string;
+  planBatchCount: number;
+  productionWorkOrderCount: number;
+  workflowInstanceCount: number;
+  alignedWorkOrderCount: number;
+  aligned: boolean;
+  differenceCount: number;
+  issues: ProductionWeekReconciliationIssueDTO[];
+};
+
 export type WorkflowStepDTO = {
   key: string;
   label: string;

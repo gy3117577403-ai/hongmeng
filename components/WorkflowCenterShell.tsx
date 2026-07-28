@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import type {
   CurrentUserDTO,
@@ -31,6 +32,7 @@ import type {
   WorkflowProcessStatus,
   WorkflowStepDTO,
   WorkflowSummaryDTO,
+  WorkflowWeekNavigationDTO,
   WorkflowWeekScope,
 } from '@/types';
 
@@ -39,6 +41,7 @@ type WorkflowResponse = {
   ok: boolean;
   items: WorkflowItemDTO[];
   summary: WorkflowSummaryDTO;
+  navigation: WorkflowWeekNavigationDTO;
   error?: string;
 };
 type Filters = {
@@ -58,6 +61,12 @@ type WorkflowDeepLink = {
 
 const emptySummary: WorkflowSummaryDTO = {
   total: 0, waiting: 0, processing: 0, verifying: 0, closed: 0, overdue: 0, issue: 0, change: 0, production: 0,
+};
+const emptyNavigation: WorkflowWeekNavigationDTO = {
+  current: { weekStartDate: '', weekEndDate: '', count: 0 },
+  next: { weekStartDate: '', weekEndDate: '', count: 0 },
+  afterNext: { weekStartDate: '', weekEndDate: '', count: 0 },
+  history: [],
 };
 const entityLabels: Record<WorkflowEntityType, string> = { issue: '问题', change: '变更', production: '生产' };
 const statusLabels: Record<WorkflowProcessStatus, string> = { waiting: '待推进', processing: '处理中', verifying: '待验证', closed: '已完成' };
@@ -110,6 +119,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const [filters, setFilters] = useState<Filters>({ entityType: 'production', status: 'all', overdue: false, weekScope: 'current' });
   const [items, setItems] = useState<WorkflowItemDTO[]>([]);
   const [summary, setSummary] = useState<WorkflowSummaryDTO>(emptySummary);
+  const [navigation, setNavigation] = useState<WorkflowWeekNavigationDTO>(emptyNavigation);
+  const [historyWeekStart, setHistoryWeekStart] = useState('');
   const [selected, setSelected] = useState<WorkflowItemDTO | null>(null);
   const selectedIdRef = useRef('');
   const [loading, setLoading] = useState(true);
@@ -133,6 +144,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     const params = new URLSearchParams(window.location.search);
     const requestedKeyword = String(params.get('keyword') || '').trim().slice(0, 160);
     const requestedWeekScope = params.get('weekScope');
+    const requestedWeekStart = String(params.get('weekStart') || '').trim().slice(0, 10);
     const weekScope: WorkflowWeekScope = requestedWeekScope === 'history'
       || requestedWeekScope === 'current'
       || requestedWeekScope === 'next'
@@ -151,6 +163,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     };
     if (next.batchId) selectedIdRef.current = `production-plan:${next.batchId}`;
     if (requestedKeyword) setKeyword(requestedKeyword);
+    if (requestedWeekStart) setHistoryWeekStart(requestedWeekStart);
     setDeepLink(next);
     if (next.batchId || next.workOrderId) {
       setFilters(current => ({ ...current, entityType: 'production', weekScope }));
@@ -168,11 +181,16 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       if (filters.status !== 'all') params.set('status', filters.status);
       if (filters.overdue) params.set('overdue', 'true');
       params.set('weekScope', filters.weekScope);
+      if (filters.weekScope === 'history' && historyWeekStart) params.set('weekStart', historyWeekStart);
       if (deepLink.batchId) params.set('batchId', deepLink.batchId);
       if (deepLink.workOrderId) params.set('workOrderId', deepLink.workOrderId);
       const data = await jsonRequest<WorkflowResponse>(`/api/workflows?${params.toString()}`);
       setItems(data.items);
       setSummary(data.summary);
+      setNavigation(data.navigation);
+      if (filters.weekScope === 'history' && !historyWeekStart && data.navigation.history[0]?.weekStartDate) {
+        setHistoryWeekStart(data.navigation.history[0].weekStartDate);
+      }
       const desired = selectedIdRef.current || sessionStorage.getItem('hm-workflow-selected') || '';
       const nextSelected = data.items.find(item => deepLink.batchId && item.batchId === deepLink.batchId)
         || data.items.find(item => deepLink.workOrderId && item.workOrderId === deepLink.workOrderId)
@@ -186,13 +204,28 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     } finally {
       setLoading(false);
     }
-  }, [deepLink.batchId, deepLink.workOrderId, filters, keyword]);
+  }, [deepLink.batchId, deepLink.workOrderId, filters, historyWeekStart, keyword]);
 
   useEffect(() => {
     if (!deepLinkReady) return;
     const timer = window.setTimeout(() => { void load(); }, keyword ? 260 : 0);
     return () => window.clearTimeout(timer);
   }, [deepLinkReady, keyword, load]);
+
+  useEffect(() => {
+    if (!deepLinkReady) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('weekScope', filters.weekScope);
+    if (filters.weekScope === 'history' && historyWeekStart) url.searchParams.set('weekStart', historyWeekStart);
+    else url.searchParams.delete('weekStart');
+    if (deepLink.batchId) url.searchParams.set('batchId', deepLink.batchId);
+    else url.searchParams.delete('batchId');
+    if (deepLink.workOrderId) url.searchParams.set('workOrderId', deepLink.workOrderId);
+    else url.searchParams.delete('workOrderId');
+    if (deepLink.stepId) url.searchParams.set('stepId', deepLink.stepId);
+    else url.searchParams.delete('stepId');
+    window.history.replaceState(window.history.state, '', `${url.pathname}?${url.searchParams.toString()}`);
+  }, [deepLink.batchId, deepLink.stepId, deepLink.workOrderId, deepLinkReady, filters.weekScope, historyWeekStart]);
 
   useEffect(() => {
     if (!selected) return;
@@ -407,6 +440,24 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     });
   }
 
+  function changeWorkflowWeekScope(scope: WorkflowWeekScope, selectedHistoryWeek?: string): void {
+    selectedIdRef.current = '';
+    setDeepLink(current => ({ ...current, batchId: '', workOrderId: '', stepId: '' }));
+    setFilters(current => ({
+      ...current,
+      entityType: 'production',
+      weekScope: scope,
+    }));
+    if (scope === 'history') {
+      setHistoryWeekStart(selectedHistoryWeek || historyWeekStart || navigation.history[0]?.weekStartDate || '');
+    }
+  }
+
+  const activeWeek = filters.weekScope === 'history'
+    ? navigation.history.find(item => item.weekStartDate === historyWeekStart)
+      || null
+    : navigation[filters.weekScope];
+
   return (
     <main className="hm-workbench-root hm-workbench-navigation-overlay hm-workflow-center">
       <AppWorkbenchHeader
@@ -426,19 +477,32 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             <div><strong>流程中心</strong><small>真实工艺路线</small></div>
           </div>
           <div className="workflow-week-tabs" role="group" aria-label="生产周范围">
-            {(['history', 'current', 'next', 'afterNext'] as const).map(scope => (
+            <div className={`workflow-history-week ${filters.weekScope === 'history' ? 'active' : ''}`.trim()}>
+              <button type="button" onClick={() => changeWorkflowWeekScope('history')}>
+                <CalendarDays size={13} aria-hidden="true" />历史周
+              </button>
+              <select
+                aria-label="选择历史流程周"
+                disabled={!navigation.history.length}
+                value={filters.weekScope === 'history' ? historyWeekStart : ''}
+                onFocus={() => {
+                  if (filters.weekScope !== 'history') changeWorkflowWeekScope('history');
+                }}
+                onChange={event => changeWorkflowWeekScope('history', event.target.value)}
+              >
+                <option value="" disabled>选择历史周</option>
+                {navigation.history.map(item => <option key={item.weekStartDate} value={item.weekStartDate}>{item.weekStartDate.slice(5)} - {item.weekEndDate.slice(5)} · {item.count} 批</option>)}
+              </select>
+            </div>
+            {(['current', 'next', 'afterNext'] as const).map(scope => (
               <button
                 type="button"
                 key={scope}
                 className={filters.weekScope === scope ? 'active' : ''}
-                onClick={() => setFilters(current => ({
-                  ...current,
-                  weekScope: scope,
-                  entityType: 'production',
-                }))}
+                onClick={() => changeWorkflowWeekScope(scope)}
               >
                 <CalendarDays size={13} aria-hidden="true" />
-                {weekScopeLabels[scope]}
+                {weekScopeLabels[scope]} <b>{navigation[scope].count}</b>
               </button>
             ))}
           </div>
@@ -465,6 +529,12 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
           ] as const).map(([label, count, status]) => <button key={status} type="button" className={filters.status === status ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, status }))}><span>{label}</span><strong>{count}</strong></button>)}
           <button type="button" className={`danger ${filters.overdue ? 'active' : ''}`} onClick={() => setFilters(current => ({ ...current, overdue: !current.overdue }))}><span>已逾期</span><strong>{summary.overdue}</strong></button>
         </section>
+
+        <WeekReconciliationBar
+          className="workflow-week-reconciliation"
+          weekStartDate={activeWeek?.weekStartDate}
+          weekEndDate={activeWeek?.weekEndDate}
+        />
 
         <div className="workflow-workspace">
           <section className="workflow-list" aria-label="流程列表">

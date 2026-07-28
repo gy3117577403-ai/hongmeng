@@ -34,6 +34,7 @@ import {
 } from 'lucide-react';
 import { Fragment, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
+import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import {
   isPlanningReadinessFilter,
@@ -351,6 +352,44 @@ function weekLabel(batch: ProductionPlanBatchDTO, periods?: PlanningPayload['per
   if (batch.weekStartDate === periods.afterNext.weekStartDate) return '下下周';
   if (batch.weekEndDate < periods.current.weekStartDate) return '历史周';
   return '未来周';
+}
+
+function linkedWeekScope(
+  batch: ProductionPlanBatchDTO,
+  periods?: PlanningPayload['periods'],
+): 'history' | 'current' | 'next' | 'afterNext' {
+  if (!periods || batch.weekStartDate < periods.current.weekStartDate) return 'history';
+  if (batch.weekStartDate === periods.next.weekStartDate) return 'next';
+  if (batch.weekStartDate === periods.afterNext.weekStartDate) return 'afterNext';
+  return 'current';
+}
+
+function productionExecutionHref(
+  batch: ProductionPlanBatchDTO,
+  periods?: PlanningPayload['periods'],
+  forceCarryover = false,
+): string {
+  const scope = forceCarryover ? 'carryover' : linkedWeekScope(batch, periods);
+  const params = new URLSearchParams({ scope });
+  if (scope === 'history') params.set('weekStart', batch.weekStartDate);
+  if (batch.workOrderId) params.set('workOrderId', batch.workOrderId);
+  return `/production?${params.toString()}`;
+}
+
+function workflowCenterParams(
+  batch: ProductionPlanBatchDTO,
+  periods?: PlanningPayload['periods'],
+): URLSearchParams {
+  const weekScope = linkedWeekScope(batch, periods);
+  const params = new URLSearchParams({
+    entityType: 'production',
+    batchId: batch.id,
+    from: 'planning',
+    weekScope,
+  });
+  if (weekScope === 'history') params.set('weekStart', batch.weekStartDate);
+  if (batch.workOrderId) params.set('workOrderId', batch.workOrderId);
+  return params;
 }
 
 function planningFlow(order: ProductionPlanOrderDTO, batch: ProductionPlanBatchDTO) {
@@ -1505,7 +1544,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         </header>
 
         <section className="planning-period-ribbon" aria-label="本周与下周计划状态">
-          <article className="current"><div><CalendarCheck2 aria-hidden="true" /><span><small>本周执行</small><strong>{periods ? `${periods.current.weekStartDate.slice(5)} - ${periods.current.weekEndDate.slice(5)}` : '加载中'}</strong></span></div><b>{summary.activeBatchCount}<small>批执行中</small></b><a href="/production">进入生产<ChevronRight size={14} /></a></article>
+          <article className="current"><div><CalendarCheck2 aria-hidden="true" /><span><small>本周执行</small><strong>{periods ? `${periods.current.weekStartDate.slice(5)} - ${periods.current.weekEndDate.slice(5)}` : '加载中'}</strong></span></div><b>{summary.activeBatchCount}<small>批执行中</small></b><a href="/production?scope=current">进入生产<ChevronRight size={14} /></a></article>
           <div className="planning-period-link"><span>提前准备</span><ArrowRight aria-hidden="true" /></div>
           <article className="next"><div><CalendarClock aria-hidden="true" /><span><small>下周预备</small><strong>{periods ? `${periods.next.weekStartDate.slice(5)} - ${periods.next.weekEndDate.slice(5)}` : '加载中'}</strong></span></div><b>{summary.preparationBatchCount}<small>批已下达</small></b><a href="/workspace/warehouse?scope=preparation">仓库配料<ChevronRight size={14} /></a></article>
           <div className="planning-readiness"><span><Warehouse size={15} />仓库异常 <b>{summary.warehouseExceptionCount}</b></span><span><Settings2 size={15} />待工艺 <b>{summary.processPendingCount}</b></span><span><ShieldAlert size={15} />缺工时 <b>{summary.missingProductTimeCount}</b></span></div>
@@ -1616,6 +1655,11 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                 <em>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`} · {selectedWeekQuantity.toLocaleString()} 件 · {selectedWeekTotalMilliseconds ? duration(selectedWeekTotalMilliseconds) : '工时待补'}</em>
               </div>
             </header>
+            <WeekReconciliationBar
+              className="planning-week-reconciliation"
+              weekStartDate={selectedWeek?.weekStartDate}
+              weekEndDate={selectedWeek?.weekEndDate}
+            />
             <section className={selectedWeekKey === 'current' && carryoverRows.length ? `planning-carryover ${carryoverOpen ? 'open' : ''}` : 'planning-carryover empty'} aria-label="历史周遗留未完">
               {selectedWeekKey === 'current' && carryoverRows.length > 0 && <>
                 <button className="planning-carryover-summary" type="button" aria-expanded={carryoverOpen} onClick={() => setCarryoverOpen(current => !current)}>
@@ -1631,7 +1675,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                       {batch.releaseState === 'draft'
                         ? <button type="button" onClick={event => { void previewMove(periods?.current.weekStartDate || '', event.currentTarget, [batch.id]); }}><MoveRight size={14} />移入本周</button>
                         : batch.workOrderId
-                          ? <a href={`/production?workOrderId=${encodeURIComponent(batch.workOrderId)}`}>查看执行<ChevronRight size={13} /></a>
+                          ? <a href={productionExecutionHref(batch, periods, true)}>查看执行<ChevronRight size={13} /></a>
                           : <span className="locked">已下达</span>}
                     </article>;
                   })}
@@ -1645,8 +1689,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                   const flow = planningFlow(order, batch);
                   const processFinishedAt = batch.processCompletedAt || batch.processConfirmedAt;
                   const flowFinishedAt = batch.workOrderCompletedAt;
-                  const workflowParams = new URLSearchParams({ entityType: 'production', batchId: batch.id, from: 'planning' });
-                  if (batch.workOrderId) workflowParams.set('workOrderId', batch.workOrderId);
+                  const workflowParams = workflowCenterParams(batch, periods);
                   return <Fragment key={batch.id}>
                   <tr data-batch-id={batch.id} className={`state-${batch.releaseState} ${expandedOrderId === batch.id ? 'expanded' : ''}`}>
                     <td className="select-cell"><input type="checkbox" aria-label={`选择 ${order.specification} 第 ${batch.batchNo} 批`} checked={selectedBatchIds.includes(batch.id)} disabled={batch.releaseState === 'archived'} onChange={() => toggleBatch(batch.id)} /></td>
@@ -1701,6 +1744,11 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
               <b>{historyRows.length} 批<small>{historyQuantity.toLocaleString()} 件</small></b>
             </div>
           </header>
+          <WeekReconciliationBar
+            className="planning-week-reconciliation history"
+            weekStartDate={selectedHistoryWeek?.weekStartDate}
+            weekEndDate={selectedHistoryWeek?.weekEndDate}
+          />
           <div className="planning-table-scroll hm-scroll-region" tabIndex={0}>
             <table className="planning-table history">
               <thead><tr><th>规格</th><th>客户 / 品名</th><th>业务员</th><th>批次数量</th><th>原生产周</th><th>计划完成</th><th>计划状态</th><th>仓库</th><th>工艺</th><th>关联执行</th></tr></thead>
@@ -1714,7 +1762,12 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                 <td><span className={`planning-release state-${batch.releaseState}`}>{batch.releaseState === 'archived' ? '已归档' : batch.releaseState === 'active' ? '遗留执行中' : batch.releaseState === 'preparation' ? '遗留预备' : '遗留草稿'}</span></td>
                 <td>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : '未完成'}</td>
                 <td>{batch.processStatus === 'completed' ? '已完成' : batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' ? '已确认' : '未完成'}</td>
-                <td>{batch.workOrderId ? <a href={`/production?workOrderId=${encodeURIComponent(batch.workOrderId)}`}>查看执行</a> : '未下达'}</td>
+                <td>{batch.workOrderId
+                  ? <nav className="planning-linked-actions">
+                      <a href={productionExecutionHref(batch, periods)}>生产执行</a>
+                      <a href={`/workspace/workflows?${workflowCenterParams(batch, periods).toString()}`} onClick={rememberPlanningState}>流程中心</a>
+                    </nav>
+                  : '未下达'}</td>
               </tr>)}</tbody>
             </table>
             {!loading && !historyRows.length && <div className="planning-empty"><History /><strong>该历史周暂无计划</strong><span>选择其他历史周查看；历史计划不会再混入本周排单清单。</span></div>}

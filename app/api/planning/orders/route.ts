@@ -64,14 +64,14 @@ export async function GET(req: NextRequest) {
       where,
       include: productionPlanOrderInclude,
       orderBy: [{ priority: 'asc' }, { customerDueDate: 'asc' }, { createdAt: 'desc' }],
-      take: 1000,
+      take: 5000,
     });
     const allRecords = keyword || (status && status !== 'all') || customer
       ? await prisma.productionPlanOrder.findMany({
           where: { deletedAt: null },
           include: productionPlanOrderInclude,
           orderBy: { customerDueDate: 'asc' },
-          take: 2000,
+          take: 5000,
         })
       : records;
     const all = allRecords.map(serializeProductionPlanOrder);

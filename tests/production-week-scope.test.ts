@@ -30,19 +30,24 @@ test('natural production week is Monday through Sunday in China time', () => {
   assert.equal(chinaDateKey(week.end), '2026-07-26');
 });
 
-test('production week scopes keep current, next, and carryover queries separate', () => {
+test('production week scopes keep canonical current, future, and carryover queries separate', () => {
   const start = new Date('2026-07-19T16:00:00.000Z');
   const end = new Date('2026-07-25T16:00:00.000Z');
   const current = JSON.stringify(productionWeekWhere({ scope: 'current', weekStart: start, weekEnd: end }));
   const next = JSON.stringify(productionWeekWhere({ scope: 'next', weekStart: start, weekEnd: end }));
+  const afterNext = JSON.stringify(productionWeekWhere({ scope: 'afterNext', weekStart: start, weekEnd: end }));
   const carryover = JSON.stringify(productionWeekWhere({ scope: 'carryover', weekStart: start, weekEnd: end }));
 
   assert.match(current, /"planActive":true/);
+  assert.match(current, /"productionPlanBatch"/);
   assert.match(current, /"gte":"2026-07-19T16:00:00.000Z"/);
   assert.match(next, /"planActive":false/);
   assert.match(next, /"planClearedAt":null/);
+  assert.match(afterNext, /"planActive":false/);
+  assert.match(afterNext, /"productionPlanBatch"/);
   assert.match(carryover, /"lt":"2026-07-19T16:00:00.000Z"/);
   assert.doesNotMatch(carryover, /"planActive"/);
+  assert.doesNotMatch(carryover, /"productionPlanBatch"/);
 });
 
 test('production list scope keeps branch rows while root summary scope excludes them', () => {

@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { chinaDateKey } from '@/lib/china-date';
 import { dateKeyFromDatabase } from '@/lib/attendance';
 import { changeCode, changeStatusLabels, changeTypeLabels } from '@/lib/changes';
 import { issueCode, issueStatusLabels, issueTypeLabels } from '@/lib/issues';
@@ -14,6 +15,7 @@ import {
   canUpgradeUnstartedConfirmedProductTimeRoute,
 } from '@/lib/process-routing';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
+import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import type {
   ChangeStatus,
   ChangeType,
@@ -31,6 +33,7 @@ import type {
   WorkflowStepDTO,
   WorkflowSummaryDTO,
   WorkflowTemplateDTO,
+  WorkflowWeekNavigationDTO,
   WorkflowWeekScope,
 } from '@/types';
 
@@ -494,12 +497,6 @@ export function resolveWorkflowRouteState(
   };
 }
 
-function inWeekRange(value: Date | null | undefined, start: Date, end: Date): boolean {
-  if (!value) return false;
-  const time = value.getTime();
-  return time >= start.getTime() && time <= end.getTime();
-}
-
 function addUtcDays(value: Date, days: number): Date {
   const date = new Date(value);
   date.setUTCDate(date.getUTCDate() + days);
@@ -516,24 +513,60 @@ export function workflowWeekRanges(now = new Date()): Record<WorkflowWeekScope, 
   };
 }
 
+export function workflowWeekRange(
+  scope: WorkflowWeekScope,
+  now = new Date(),
+  historyWeekStartDate?: string | null,
+): { start: Date; end: Date } {
+  if (scope === 'history' && historyWeekStartDate) {
+    const requested = parseWeek(historyWeekStartDate);
+    if (requested) return { start: requested, end: addDays(requested, 6) };
+  }
+  return workflowWeekRanges(now)[scope];
+}
+
 export function workflowItemMatchesWeekScope(
   item: Pick<WorkflowItemDTO, 'entityType' | 'weekStartDate' | 'weekEndDate'>,
   scope: WorkflowWeekScope,
   now = new Date(),
+  historyWeekStartDate?: string | null,
 ): boolean {
   if (item.entityType !== 'production') return false;
   const weekStart = item.weekStartDate ? new Date(item.weekStartDate) : null;
   const weekEnd = item.weekEndDate ? new Date(item.weekEndDate) : null;
-  const range = workflowWeekRanges(now)[scope];
+  const range = workflowWeekRange(scope, now, historyWeekStartDate);
   if (!weekStart && !weekEnd) return false;
-  return inWeekRange(weekStart, range.start, range.end)
-    || inWeekRange(weekEnd, range.start, range.end)
-    || Boolean(
-      weekStart
-      && weekEnd
-      && weekStart.getTime() <= range.start.getTime()
-      && weekEnd.getTime() >= range.end.getTime(),
-    );
+  const rangeStartKey = chinaDateKey(range.start);
+  const rangeEndKey = chinaDateKey(range.end);
+  const weekStartKey = chinaDateKey(weekStart);
+  const weekEndKey = chinaDateKey(weekEnd);
+  if (weekStartKey) return weekStartKey === rangeStartKey;
+  return Boolean(weekEndKey && weekEndKey >= rangeStartKey && weekEndKey <= rangeEndKey);
+}
+
+function productionExecutionRouteForWeek(
+  workOrderId: string,
+  weekStartDate: Date | null,
+  now = new Date(),
+): string {
+  const params = new URLSearchParams({ workOrderId });
+  if (!weekStartDate) return `/production?${params.toString()}`;
+  const ranges = workflowWeekRanges(now);
+  const weekKey = chinaDateKey(weekStartDate);
+  const currentKey = chinaDateKey(ranges.current.start);
+  const nextKey = chinaDateKey(ranges.next.start);
+  const afterNextKey = chinaDateKey(ranges.afterNext.start);
+  if (weekKey < currentKey) {
+    params.set('scope', 'history');
+    params.set('weekStart', weekKey);
+  } else if (weekKey === nextKey) {
+    params.set('scope', 'next');
+  } else if (weekKey === afterNextKey) {
+    params.set('scope', 'afterNext');
+  } else {
+    params.set('scope', 'current');
+  }
+  return `/production?${params.toString()}`;
 }
 
 export type WorkflowCenterFilters = {
@@ -544,13 +577,47 @@ export type WorkflowCenterFilters = {
   batchId?: string;
   workOrderId?: string;
   weekScope?: WorkflowWeekScope;
+  weekStartDate?: string;
   laborEmployeeTeam?: string;
 };
+
+export function workflowWeekNavigationFromBatches(
+  batches: Array<{ weekStartDate: Date; weekEndDate: Date }>,
+  now = new Date(),
+): WorkflowWeekNavigationDTO {
+  const ranges = workflowWeekRanges(now);
+  const item = (scope: 'current' | 'next' | 'afterNext') => ({
+    weekStartDate: chinaDateKey(ranges[scope].start),
+    weekEndDate: chinaDateKey(ranges[scope].end),
+    count: batches.filter(batch => chinaDateKey(batch.weekStartDate) === chinaDateKey(ranges[scope].start)).length,
+  });
+  const historyMap = new Map<string, { weekStartDate: string; weekEndDate: string; count: number }>();
+  const currentWeekStartDate = chinaDateKey(ranges.current.start);
+  for (const batch of batches) {
+    const weekStartDate = chinaDateKey(batch.weekStartDate);
+    if (weekStartDate >= currentWeekStartDate) continue;
+    const current = historyMap.get(weekStartDate);
+    if (current) current.count += 1;
+    else historyMap.set(weekStartDate, {
+      weekStartDate,
+      weekEndDate: chinaDateKey(batch.weekEndDate),
+      count: 1,
+    });
+  }
+  return {
+    current: item('current'),
+    next: item('next'),
+    afterNext: item('afterNext'),
+    history: [...historyMap.values()]
+      .sort((left, right) => right.weekStartDate.localeCompare(left.weekStartDate)),
+  };
+}
 
 export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): Promise<{
   items: WorkflowItemDTO[];
   summary: WorkflowSummaryDTO;
   templates: WorkflowTemplateDTO[];
+  navigation: WorkflowWeekNavigationDTO;
 }> {
   const now = Date.now();
   const nowDate = new Date(now);
@@ -791,7 +858,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
         },
       },
       orderBy: { updatedAt: 'desc' },
-      take: 1000,
+      take: 5000,
     }),
     prisma.workOrder.findMany({
       where: { deletedAt: null, planActive: true, productionPlanBatch: null },
@@ -1033,9 +1100,12 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     const drawingRoute = order.drawingLibraryItemId
       ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`
       : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`;
-    let targetRoute = `/weekly-plan-center?batchId=${encodeURIComponent(batch.id)}`;
+    const productionRoute = workOrder?.id
+      ? productionExecutionRouteForWeek(workOrder.id, batch.weekStartDate, nowDate)
+      : '';
+    let targetRoute = `/weekly-plan-center?batchId=${encodeURIComponent(batch.id)}&week=${encodeURIComponent(chinaDateKey(batch.weekStartDate))}`;
     if ((actualRouteState || referenceRoute) && workOrder?.id) {
-      targetRoute = `/production?workOrderId=${encodeURIComponent(workOrder.id)}`;
+      targetRoute = productionRoute;
     } else if (flow.status === 'missing_drawing') targetRoute = drawingRoute;
     else if (flow.status === 'missing_time' || flow.status === 'pending_process') {
       targetRoute = `/workspace/product-times${order.drawingLibraryItemId ? `?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : ''}`;
@@ -1043,7 +1113,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       targetRoute = `/workspace/warehouse${workOrder?.id ? `?workOrderId=${encodeURIComponent(workOrder.id)}` : ''}`;
     } else if (flow.status === 'production' || flow.status === 'pending_archive' || flow.status === 'completed') {
       targetRoute = workOrder?.id
-        ? `/production?workOrderId=${encodeURIComponent(workOrder.id)}`
+        ? productionRoute
         : `/production?keyword=${encodeURIComponent(order.specification)}`;
     }
     const batchActivities = batch.changes.map(item => activity(
@@ -1165,9 +1235,10 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
         || stage === 'backend',
       ),
     });
+    const productionRoute = productionExecutionRouteForWeek(order.id, order.weekStartDate, nowDate);
     const targetRoute = order.processRoute?.routeSource === 'product_time_pending' && !referenceRoute
       ? `/workspace/product-times${order.drawingLibraryItemId ? `?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : ''}`
-      : `/production?workOrderId=${encodeURIComponent(order.id)}`;
+      : productionRoute;
     items.push({
       id: `production:${order.id}`, entityId: order.id, entityType: 'production', workOrderId: order.id, code: order.specification || order.code,
       title: order.productName, subtitle: `${order.customerName || '客户未设置'} · 内部编号 ${order.code}`,
@@ -1178,7 +1249,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       dueAt, updatedAt: order.updatedAt.toISOString(), route: targetRoute,
       sourceRoute: order.drawingLibraryItemId
         ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`
-        : `/production?workOrderId=${encodeURIComponent(order.id)}`,
+        : productionRoute,
       isOverdue: !closed && !!order.plannedAt && order.plannedAt.getTime() < now,
       quantity: targetQuantity,
       weekStartDate: order.weekStartDate?.toISOString() || null,
@@ -1210,13 +1281,17 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   }
 
   const weekScope = filters.weekScope || 'current';
+  const navigation = workflowWeekNavigationFromBatches(productionBatches, nowDate);
   const requestedEntityType = filters.entityType || 'production';
   const scoped = items.filter(item => {
     if (requestedEntityType === 'issue' || requestedEntityType === 'change') {
       return item.entityType === requestedEntityType;
     }
     if (item.entityType !== 'production') return false;
-    return workflowItemMatchesWeekScope(item, weekScope, nowDate);
+    // 周视图以计划批次为唯一主线。旧版未关联计划的独立工单仍可通过深链查看，
+    // 但不再混入历史周/本周/未来周统计。
+    if (!item.batchId) return false;
+    return workflowItemMatchesWeekScope(item, weekScope, nowDate, filters.weekStartDate);
   });
   const scopedSummary = summary(scoped);
   const keyword = String(filters.keyword || '').trim().toLocaleLowerCase('zh-CN');
@@ -1238,5 +1313,5 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   const result = target
     ? [target, ...filtered.filter(item => item.id !== target.id)]
     : filtered;
-  return { items: result.slice(0, 300), summary: scopedSummary, templates: workflowTemplates };
+  return { items: result.slice(0, 300), summary: scopedSummary, templates: workflowTemplates, navigation };
 }

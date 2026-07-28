@@ -48,6 +48,54 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
   background: #f2f4f7;
 }
 
+.hm-workflow-center .workflow-history-week {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+
+.hm-workflow-center .workflow-history-week.active {
+  border-color: #ebc4aa;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(31, 44, 61, .06);
+}
+
+.hm-workflow-center .workflow-history-week > button {
+  min-width: 56px;
+  padding: 0 4px;
+}
+
+.hm-workflow-center .workflow-history-week > select {
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 18px 0 5px;
+  border: 0;
+  border-left: 1px solid #e6e9ed;
+  background: #fff;
+  color: #3e4d60;
+  font: inherit;
+  font-size: 8px;
+  font-weight: 700;
+  outline: none;
+  cursor: pointer;
+}
+
+.hm-workflow-center .workflow-history-week:not(.active) > select {
+  color: #758293;
+  background: transparent;
+}
+
+.hm-workflow-center .workflow-history-week > select:disabled {
+  opacity: .52;
+  cursor: default;
+}
+
 .hm-workflow-center .workflow-week-tabs button,
 .hm-workflow-center .workflow-command-actions a,
 .hm-workflow-center .workflow-command-actions button {
@@ -203,6 +251,10 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
 .hm-workflow-center .workflow-summary strong {
   color: var(--hm-color-text);
   font-size: 20px;
+}
+
+.hm-workflow-center .workflow-week-reconciliation {
+  flex: 0 0 40px;
 }
 
 .hm-workflow-center .workflow-workspace {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { loadWorkflowCenter } from '@/lib/workflows';
+import { parseWeek } from '@/lib/weekly-work-orders';
 import type { WorkflowEntityType, WorkflowProcessStatus, WorkflowWeekScope } from '@/types';
 
 export const runtime = 'nodejs';
@@ -30,6 +31,7 @@ export async function GET(req: NextRequest) {
     const workOrderId = String(params.get('workOrderId') || '').trim().slice(0, 80);
     const requestedWeekScope = params.get('weekScope');
     const weekScope = workflowWeekScope(requestedWeekScope);
+    const weekStartDate = String(params.get('weekStart') || '').trim().slice(0, 10);
 
     if (!entityTypes.includes(entityType)) {
       return NextResponse.json({ ok: false, error: '流程类型筛选不正确' }, { status: 400 });
@@ -45,6 +47,9 @@ export async function GET(req: NextRequest) {
     ) {
       return NextResponse.json({ ok: false, error: '生产周范围筛选不正确' }, { status: 400 });
     }
+    if (weekStartDate && !parseWeek(weekStartDate)) {
+      return NextResponse.json({ ok: false, error: '历史生产周日期格式不正确' }, { status: 400 });
+    }
 
     const result = await loadWorkflowCenter({
       keyword,
@@ -54,6 +59,7 @@ export async function GET(req: NextRequest) {
       batchId,
       workOrderId,
       weekScope,
+      weekStartDate: weekScope === 'history' ? weekStartDate : '',
       laborEmployeeTeam: user.laborRole === 'TEAM_LEAD'
         ? String(user.employee?.team || '__UNBOUND_TEAM_LEAD__').trim()
         : undefined,

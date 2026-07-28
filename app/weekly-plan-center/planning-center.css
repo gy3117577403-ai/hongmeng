@@ -830,7 +830,19 @@ main.planning-center-shell.hm-workbench-root {
 }
 
 .planning-center-shell .planning-schedule-board {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.planning-center-shell .planning-history-view {
   grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.planning-center-shell .planning-week-reconciliation {
+  min-height: 36px;
+  margin: 6px 8px;
+  padding-block: 4px;
+  border-radius: 7px;
+  box-shadow: none;
 }
 
 .planning-center-shell .planning-order-pool > header,
@@ -1554,6 +1566,18 @@ main.planning-center-shell.hm-workbench-root {
   font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.planning-center-shell .planning-linked-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.planning-center-shell .planning-linked-actions a:first-child {
+  border-color: #edb28a;
+  background: #fff7f1;
+  color: #bd4d06;
 }
 
 .planning-center-shell .planning-orders-view > header p,
