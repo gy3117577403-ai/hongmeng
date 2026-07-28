@@ -41,7 +41,7 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
 .hm-workflow-center .workflow-week-tabs {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(5, minmax(74px, 1fr));
+  grid-template-columns: repeat(4, minmax(86px, 1fr));
   gap: 4px;
   padding: 3px;
   border-radius: 7px;
@@ -1290,6 +1290,18 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
   cursor: pointer;
 }
 .hm-workflow-center .workflow-activity-more > div { margin-top: 9px; }
+.hm-workflow-center .workflow-activity-more.historical {
+  padding-top: 7px;
+  border-top: 1px dashed #dce3ea;
+}
+.hm-workflow-center .workflow-activity-more.historical > summary {
+  background: #f7f8fa;
+  color: #7b8795;
+}
+.hm-workflow-center .workflow-activity-more.historical article > span {
+  background: #9aa5b2;
+  box-shadow: 0 0 0 1px #cbd2da;
+}
 
 .hm-workflow-center .workflow-detail-actions {
   min-height: 56px;
@@ -1641,12 +1653,260 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
   background: var(--hm-color-accent-soft);
 }
 
+.hm-workflow-center .workflow-route-reference-notice {
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #f2cda9;
+  background: #fffaf4;
+  color: #a35312;
+}
+
+.hm-workflow-center .workflow-route-reference-notice > svg {
+  color: var(--hm-color-accent);
+}
+
+.hm-workflow-center .workflow-route-reference-notice span,
+.hm-workflow-center .workflow-route-reference-notice strong,
+.hm-workflow-center .workflow-route-reference-notice small {
+  min-width: 0;
+  display: block;
+}
+
+.hm-workflow-center .workflow-route-reference-notice strong {
+  color: #774018;
+  font-size: 9px;
+}
+
+.hm-workflow-center .workflow-route-reference-notice small {
+  margin-top: 2px;
+  color: #9a7457;
+  font-size: 8px;
+}
+
+.hm-workflow-center .workflow-route-reference-notice button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid #e8a16d;
+  border-radius: 6px;
+  background: #fff;
+  color: #a64d0e;
+  font-size: 9px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.hm-workflow-center .workflow-route-reference-notice button:hover {
+  background: var(--hm-color-accent-soft);
+}
+
 .hm-workflow-center .workflow-flow-viewport {
   min-height: 228px;
   overflow: hidden;
   background-color: #f7f9fb;
   background-image: radial-gradient(#d9dfe6 .7px, transparent .7px);
   background-size: 15px 15px;
+}
+
+.hm-workflow-center .workflow-history-repair-backdrop {
+  position: fixed;
+  z-index: var(--z-modal);
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(24, 34, 47, .34);
+  backdrop-filter: blur(7px);
+}
+
+.hm-workflow-center .workflow-history-repair-dialog {
+  width: min(620px, calc(100vw - 36px));
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, .9);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, .97);
+  box-shadow: 0 28px 70px rgba(24, 34, 47, .24), 0 2px 6px rgba(24, 34, 47, .08);
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > header {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e7ebef;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > header small,
+.hm-workflow-center .workflow-history-repair-dialog > header h2 {
+  display: block;
+  margin: 0;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > header small {
+  color: var(--hm-color-accent);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > header h2 {
+  margin-top: 3px;
+  color: #1f2d40;
+  font-size: 19px;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > header button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dfe5eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #647284;
+  cursor: pointer;
+}
+
+.hm-workflow-center .workflow-history-repair-warning {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  margin: 14px 18px 10px;
+  padding: 11px 12px;
+  border: 1px solid #f1c59e;
+  border-radius: 11px;
+  background: #fff9f2;
+  color: #a64f10;
+}
+
+.hm-workflow-center .workflow-history-repair-warning span,
+.hm-workflow-center .workflow-history-repair-warning strong,
+.hm-workflow-center .workflow-history-repair-warning small {
+  min-width: 0;
+  display: block;
+}
+
+.hm-workflow-center .workflow-history-repair-warning strong {
+  color: #753a13;
+  font-size: 12px;
+}
+
+.hm-workflow-center .workflow-history-repair-warning small {
+  margin-top: 3px;
+  color: #9b7559;
+  font-size: 10px;
+}
+
+.hm-workflow-center .workflow-history-repair-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+  padding: 0 18px 12px;
+}
+
+.hm-workflow-center .workflow-history-repair-facts > span {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #e4e9ee;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.hm-workflow-center .workflow-history-repair-facts small,
+.hm-workflow-center .workflow-history-repair-facts strong {
+  display: block;
+}
+
+.hm-workflow-center .workflow-history-repair-facts small {
+  color: #8793a1;
+  font-size: 9px;
+}
+
+.hm-workflow-center .workflow-history-repair-facts strong {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #26364a;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > label {
+  display: grid;
+  gap: 5px;
+  margin: 0 18px 12px;
+  color: #3e4d60;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > label select,
+.hm-workflow-center .workflow-history-repair-dialog > label input {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid #d7dee6;
+  border-radius: 9px;
+  outline: none;
+  background: #fff;
+  color: #223247;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > label select:focus,
+.hm-workflow-center .workflow-history-repair-dialog > label input:focus {
+  border-color: #78a9e6;
+  box-shadow: 0 0 0 3px rgba(38, 116, 209, .1);
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > label small {
+  color: #8a95a2;
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > footer {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 11px 18px;
+  border-top: 1px solid #e7ebef;
+  background: #fafbfd;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > footer button {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 16px;
+  border: 1px solid #d9e0e7;
+  border-radius: 9px;
+  background: #fff;
+  color: #4d5c70;
+  font-size: 11px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog > footer button.primary {
+  border-color: var(--hm-color-accent);
+  background: var(--hm-color-accent);
+  color: #fff;
+}
+
+.hm-workflow-center .workflow-history-repair-dialog button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
 }
 
 .hm-workflow-center .workflow-flow-canvas {

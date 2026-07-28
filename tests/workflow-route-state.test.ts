@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { productionRouteFallback, resolveWorkflowRouteState } from '../lib/workflows';
-import type { WorkflowStepDTO } from '../types';
+import {
+  productionRouteFallback,
+  resolveWorkflowRouteState,
+  workflowItemMatchesWeekScope,
+  workflowWeekRanges,
+} from '../lib/workflows';
+import type { WorkflowItemDTO, WorkflowStepDTO, WorkflowWeekScope } from '../types';
 
 const completedSteps: WorkflowStepDTO[] = [{
   key: 'cutting',
@@ -53,4 +58,53 @@ test('production without a published route never falls back to legacy front or b
   assert.equal(historical.currentStep, '历史工艺待补齐');
   assert.equal(completed.currentStep, '生产已完成');
   assert.equal(labels.some(label => ['未发图', '在前端', '在后端'].includes(label)), false);
+});
+
+test('workflow week scopes match the planning center four-week model', () => {
+  const now = new Date('2026-07-28T04:00:00.000Z');
+  const ranges = workflowWeekRanges(now);
+  const scopeStarts: Record<WorkflowWeekScope, string> = {
+    history: '2026-07-20',
+    current: '2026-07-27',
+    next: '2026-08-03',
+    afterNext: '2026-08-10',
+  };
+
+  for (const scope of Object.keys(scopeStarts) as WorkflowWeekScope[]) {
+    assert.equal(ranges[scope].start.toISOString().slice(0, 10), scopeStarts[scope]);
+  }
+});
+
+test('history scope contains only the immediately previous week', () => {
+  const now = new Date('2026-07-28T04:00:00.000Z');
+  const item = (weekStartDate: string, weekEndDate: string) => ({
+    entityType: 'production',
+    weekStartDate,
+    weekEndDate,
+  }) as Pick<WorkflowItemDTO, 'entityType' | 'weekStartDate' | 'weekEndDate'>;
+
+  assert.equal(workflowItemMatchesWeekScope(
+    item('2026-07-20T04:00:00.000Z', '2026-07-26T04:00:00.000Z'),
+    'history',
+    now,
+  ), true);
+  assert.equal(workflowItemMatchesWeekScope(
+    item('2026-07-13T04:00:00.000Z', '2026-07-19T04:00:00.000Z'),
+    'history',
+    now,
+  ), false);
+  assert.equal(workflowItemMatchesWeekScope(
+    item('2026-08-10T04:00:00.000Z', '2026-08-16T04:00:00.000Z'),
+    'afterNext',
+    now,
+  ), true);
+  assert.equal(workflowItemMatchesWeekScope(
+    {
+      entityType: 'issue',
+      weekStartDate: '2026-07-20T04:00:00.000Z',
+      weekEndDate: '2026-07-26T04:00:00.000Z',
+    },
+    'history',
+    now,
+  ), false);
 });

@@ -64,7 +64,7 @@ const statusLabels: Record<WorkflowProcessStatus, string> = { waiting: '待推�
 const priorityLabels = { urgent: '紧急', high: '高', normal: '一般' } as const;
 const entityIcons = { issue: ShieldCheck, change: GitPullRequestArrow, production: LayoutDashboard };
 const weekScopeLabels: Record<WorkflowWeekScope, string> = {
-  all: '全部周期', carryover: '遗留未完', current: '本周', next: '下周', history: '历史周',
+  history: '历史周', current: '本周', next: '下周', afterNext: '下下周',
 };
 const stageLabels = { frontend: '前端', backend: '后端', finish: '完工' } as const;
 const routeStatusLabels = { draft: '待确认', confirmed: '已确认', in_progress: '生产中', completed: '已完成' } as const;
@@ -107,7 +107,7 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
 
 export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) {
   const [keyword, setKeyword] = useState('');
-  const [filters, setFilters] = useState<Filters>({ entityType: 'all', status: 'all', overdue: false, weekScope: 'all' });
+  const [filters, setFilters] = useState<Filters>({ entityType: 'production', status: 'all', overdue: false, weekScope: 'current' });
   const [items, setItems] = useState<WorkflowItemDTO[]>([]);
   const [summary, setSummary] = useState<WorkflowSummaryDTO>(emptySummary);
   const [selected, setSelected] = useState<WorkflowItemDTO | null>(null);
@@ -125,16 +125,22 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const [deepLinkReady, setDeepLinkReady] = useState(false);
   const [routeActionPending, setRouteActionPending] = useState(false);
   const [routeActionMessage, setRouteActionMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [historyRepairOpen, setHistoryRepairOpen] = useState(false);
+  const [historyRepairStepKey, setHistoryRepairStepKey] = useState('');
+  const [historyRepairQuantity, setHistoryRepairQuantity] = useState('0');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const requestedKeyword = String(params.get('keyword') || '').trim().slice(0, 160);
     const requestedWeekScope = params.get('weekScope');
-    const weekScope: WorkflowWeekScope = requestedWeekScope === 'carryover'
+    const weekScope: WorkflowWeekScope = requestedWeekScope === 'history'
       || requestedWeekScope === 'current'
       || requestedWeekScope === 'next'
-      || requestedWeekScope === 'history'
+      || requestedWeekScope === 'afterNext'
       ? requestedWeekScope
-      : 'all';
+      : requestedWeekScope === 'carryover'
+        ? 'history'
+        : 'current';
     const next: WorkflowDeepLink = {
       batchId: params.get('batchId') || '',
       workOrderId: params.get('workOrderId') || '',
@@ -144,12 +150,11 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       returnTo: safeLocalRoute(params.get('returnTo')),
     };
     if (next.batchId) selectedIdRef.current = `production-plan:${next.batchId}`;
+    if (requestedKeyword) setKeyword(requestedKeyword);
     setDeepLink(next);
     if (next.batchId || next.workOrderId) {
       setFilters(current => ({ ...current, entityType: 'production', weekScope }));
-    } else if (weekScope !== 'all') {
-      setFilters(current => ({ ...current, weekScope }));
-    }
+    } else setFilters(current => ({ ...current, weekScope }));
     setDeepLinkReady(true);
   }, []);
 
@@ -162,7 +167,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       if (filters.entityType !== 'all') params.set('entityType', filters.entityType);
       if (filters.status !== 'all') params.set('status', filters.status);
       if (filters.overdue) params.set('overdue', 'true');
-      if (filters.weekScope !== 'all') params.set('weekScope', filters.weekScope);
+      params.set('weekScope', filters.weekScope);
       if (deepLink.batchId) params.set('batchId', deepLink.batchId);
       if (deepLink.workOrderId) params.set('workOrderId', deepLink.workOrderId);
       const data = await jsonRequest<WorkflowResponse>(`/api/workflows?${params.toString()}`);
@@ -203,6 +208,9 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       || selected.preparationSteps?.at(-1)?.key
       || '',
     );
+    setHistoryRepairOpen(false);
+    setHistoryRepairStepKey(selected.historicalRouteRepair?.suggestedStepKey || '');
+    setHistoryRepairQuantity(String(selected.historicalRouteRepair?.completedQuantity || 0));
   }, [deepLink.stepId, selected]);
 
   useEffect(() => {
@@ -231,7 +239,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     location.href = '/login';
   }
 
-  const activeFilterCount = [filters.entityType !== 'all', filters.status !== 'all', filters.overdue, filters.weekScope !== 'all'].filter(Boolean).length;
+  const activeFilterCount = [filters.entityType !== 'production', filters.status !== 'all', filters.overdue].filter(Boolean).length;
   const selectedRouteGroups = useMemo(() => {
     if (!selected || selected.entityType !== 'production') return [];
     const groups = new Map<number, WorkflowStepDTO[]>();
@@ -263,11 +271,28 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       || selected.steps[0]
       || null;
   }, [selected, selectedCurrentStep, selectedProcessStepKey]);
+  const activityVersions = useMemo(() => {
+    if (!selected) return { current: [], historical: [] };
+    const repairIndex = selected.activities.findIndex(item => item.action === 'repair_historical_product_time_route');
+    if (repairIndex < 0) return { current: selected.activities, historical: [] };
+    return {
+      current: selected.activities.slice(0, repairIndex + 1),
+      historical: selected.activities.slice(repairIndex + 1),
+    };
+  }, [selected]);
+  const isHistoricalRouteReference = Boolean(
+    selected?.entityType === 'production'
+    && selected.routeDisplayMode === 'published_reference'
+    && selected.historicalRouteRepair,
+  );
   const hasPublishedProductRoute = Boolean(
+    isHistoricalRouteReference
+    || (
     selected?.entityType === 'production'
     && selected.processRouteId
     && selected.routeSource === 'product_time_profile'
-    && selected.productTimeProfileVersion !== null,
+    && selected.productTimeProfileVersion !== null
+    ),
   );
   function manualReportHref(step: WorkflowStepDTO): string | null {
     if (!selected?.workOrderId || !step.hasLaborPool) return null;
@@ -319,6 +344,58 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     }
   }
 
+  function openHistoricalRouteRepair(): void {
+    if (!selected?.historicalRouteRepair) return;
+    setHistoryRepairStepKey(
+      historyRepairStepKey
+      || selected.historicalRouteRepair.suggestedStepKey,
+    );
+    setHistoryRepairQuantity(
+      historyRepairQuantity
+      || String(selected.historicalRouteRepair.completedQuantity),
+    );
+    setHistoryRepairOpen(true);
+  }
+
+  async function repairHistoricalRoute(): Promise<void> {
+    if (
+      !selected?.workOrderId
+      || !selected.historicalRouteRepair
+      || !historyRepairStepKey
+      || routeActionPending
+    ) return;
+    const processedQuantity = Number(historyRepairQuantity);
+    if (!Number.isInteger(processedQuantity) || processedQuantity < 0) {
+      setRouteActionMessage({ tone: 'error', text: '历史已完成数量必须是非负整数' });
+      return;
+    }
+    setRouteActionPending(true);
+    setRouteActionMessage(null);
+    try {
+      const result = await jsonRequest<{ ok: boolean; message: string }>(
+        `/api/work-orders/${encodeURIComponent(selected.workOrderId)}/process-route/repair-history`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            currentProductTimeEntryId: historyRepairStepKey,
+            processedQuantity,
+          }),
+        },
+      );
+      setHistoryRepairOpen(false);
+      setRouteActionMessage({ tone: 'success', text: result.message });
+      await load();
+    } catch (actionError) {
+      setRouteActionMessage({
+        tone: 'error',
+        text: actionError instanceof Error ? actionError.message : '历史工艺路线核对失败',
+      });
+    } finally {
+      setRouteActionPending(false);
+    }
+  }
+
   function focusProcessStep(step: WorkflowStepDTO): void {
     setSelectedProcessStepKey(step.key);
     window.requestAnimationFrame(() => {
@@ -349,7 +426,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             <div><strong>流程中心</strong><small>真实工艺路线</small></div>
           </div>
           <div className="workflow-week-tabs" role="group" aria-label="生产周范围">
-            {(['all', 'carryover', 'current', 'next', 'history'] as const).map(scope => (
+            {(['history', 'current', 'next', 'afterNext'] as const).map(scope => (
               <button
                 type="button"
                 key={scope}
@@ -357,7 +434,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                 onClick={() => setFilters(current => ({
                   ...current,
                   weekScope: scope,
-                  entityType: scope === 'all' ? current.entityType : 'production',
+                  entityType: 'production',
                 }))}
               >
                 <CalendarDays size={13} aria-hidden="true" />
@@ -391,7 +468,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
 
         <div className="workflow-workspace">
           <section className="workflow-list" aria-label="流程列表">
-            <header><div><h2>流程实例</h2><span>{items.length} 条当前结果</span></div>{activeFilterCount > 0 && <button type="button" onClick={() => setFilters({ entityType: 'all', status: 'all', overdue: false, weekScope: 'all' })}>清除 {activeFilterCount}</button>}</header>
+            <header><div><h2>流程实例</h2><span>{items.length} 条当前结果</span></div>{activeFilterCount > 0 && <button type="button" onClick={() => setFilters(current => ({ entityType: 'production', status: 'all', overdue: false, weekScope: current.weekScope }))}>清除 {activeFilterCount}</button>}</header>
             <label className="workflow-list-search"><Search size={15} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、产品或负责人" aria-label="搜索流程" />{keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={13} /></button>}</label>
             <div className="workflow-type-filters" role="group" aria-label="流程类型筛选">
               {(['all', 'issue', 'change', 'production'] as const).map(type => <button type="button" key={type} className={filters.entityType === type ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, entityType: type }))}>{type === 'all' ? '全部' : entityLabels[type]}<span>{type === 'all' ? summary.total : summary[type]}</span></button>)}
@@ -435,17 +512,27 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                 {hasPublishedProductRoute ? <>
                   <section className="workflow-process-route">
                     <header>
-                      <div><span>动态工艺图</span><h3>产品工序流转</h3></div>
+                      <div><span>{isHistoricalRouteReference ? '发布版本预览' : '动态工艺图'}</span><h3>产品工序流转</h3></div>
                       <div className="workflow-route-meta">
                         <span><PackageCheck size={13} />{(selected.quantity || 0).toLocaleString()} 件</span>
-                        <span>R{selected.routeVersion || 1} · {selected.routeStatus ? routeStatusLabels[selected.routeStatus] : '待确认'}</span>
+                        <span>{isHistoricalRouteReference
+                          ? `V${availableProductTimeVersion || 1} · 历史起点待确认`
+                          : `R${selected.routeVersion || 1} · ${selected.routeStatus ? routeStatusLabels[selected.routeStatus] : '待确认'}`}</span>
                         <span>{formatDate(selected.weekStartDate, false)} - {formatDate(selected.weekEndDate, false)}</span>
+                        {isHistoricalRouteReference && <button type="button" onClick={openHistoricalRouteRepair}>
+                          <PackageCheck size={13} />确认历史起点
+                        </button>}
                         {canApplyProductTime && selected.productTimeRouteLinkState === 'upgrade_available' && <button type="button" disabled={routeActionPending} onClick={() => { void applyProductTimeToSelectedWorkOrder(); }}>
                           {routeActionPending ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}{productTimeActionLabel}
                         </button>}
                         {selectedCurrentStep && <button type="button" onClick={() => focusProcessStep(selectedCurrentStep)}><LocateFixed size={13} />定位当前</button>}
                       </div>
                     </header>
+                    {isHistoricalRouteReference && <div className="workflow-route-reference-notice">
+                      <AlertTriangle size={15} />
+                      <span><strong>已同步最新产品工艺，尚未改写历史生产事实</strong><small>当前节点和数量为历史数据投影；核对实际所在工序后，才会写入本工单路线，且不会生成过去的员工工时。</small></span>
+                      <button type="button" onClick={openHistoricalRouteRepair}>现在核对</button>
+                    </div>}
                     <div className="workflow-flow-viewport" aria-label="按工序顺序向下延伸的工艺流程图">
                       <div className="workflow-flow-canvas">
                         {selectedRouteRows.map((row, rowIndex) => {
@@ -544,7 +631,15 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                   <section className="workflow-current-state"><div><span>当前节点</span><strong>{selected.currentStep}</strong><p>{selected.nextStep ? `下一节点：${selected.nextStep}` : '流程已到达终态'}</p></div><dl><div><dt>负责人</dt><dd>{selected.owner || '待分派'}</dd></div><div><dt>截止时间</dt><dd className={selected.isOverdue ? 'overdue' : ''}>{formatDate(selected.dueAt)}</dd></div><div><dt>最近更新</dt><dd>{formatDate(selected.updatedAt)}</dd></div></dl></section>
                   <section className="workflow-stepper"><header><h3>流程节点</h3><span>{entityLabels[selected.entityType]}闭环</span></header><ol>{selected.steps.map((step, index) => <li className={step.state} key={step.key}><span>{step.state === 'done' ? <CheckCircle2 size={16} /> : step.state === 'current' ? <CircleDot size={16} /> : index + 1}</span><div><strong>{step.label}</strong><small>{processStepStateLabel(step)}</small></div>{index < selected.steps.length - 1 && <ChevronRight size={15} aria-hidden="true" />}</li>)}</ol></section>
                 </>}
-                <section className="workflow-activity"><header><h3>最近记录</h3><span>最近 {Math.min(5, selected.activities.length)} / {selected.activities.length} 条</span></header><div>{selected.activities.slice(0, 5).map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}{!selected.activities.length && <p className="activity-empty">该流程暂时没有可展示的业务记录。</p>}{selected.activities.length > 5 && <details className="workflow-activity-more"><summary>展开其余 {selected.activities.length - 5} 条记录</summary><div>{selected.activities.slice(5).map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}</div></details>}</div></section>
+                <section className="workflow-activity">
+                  <header><h3>最近记录</h3><span>{activityVersions.historical.length ? `当前版本 ${activityVersions.current.length} 条` : `最近 ${Math.min(5, selected.activities.length)} / ${selected.activities.length} 条`}</span></header>
+                  <div>
+                    {activityVersions.current.slice(0, 5).map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}
+                    {!selected.activities.length && <p className="activity-empty">该流程暂时没有可展示的业务记录。</p>}
+                    {activityVersions.current.length > 5 && <details className="workflow-activity-more"><summary>展开当前版本其余 {activityVersions.current.length - 5} 条记录</summary><div>{activityVersions.current.slice(5).map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}</div></details>}
+                    {activityVersions.historical.length > 0 && <details className="workflow-activity-more historical"><summary>迁移前历史记录 {activityVersions.historical.length} 条</summary><div>{activityVersions.historical.map(item => <article key={item.id}><span /><div><strong>{item.label}</strong><p>{item.actor || '系统'} · {formatDate(item.createdAt)}</p></div></article>)}</div></details>}
+                  </div>
+                </section>
               </div>
               <footer className="workflow-detail-actions">
                 {manualReportRoute && <a href={manualReportRoute}>工时领取<ArrowUpRight size={14} /></a>}
@@ -555,6 +650,55 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
           </section>
         </div>
       </div>
+
+      {historyRepairOpen && selected?.historicalRouteRepair && <div className="workflow-history-repair-backdrop" role="presentation" onMouseDown={event => {
+        if (event.currentTarget === event.target && !routeActionPending) setHistoryRepairOpen(false);
+      }}>
+        <section className="workflow-history-repair-dialog" role="dialog" aria-modal="true" aria-labelledby="workflow-history-repair-title">
+          <header>
+            <div><small>历史工艺核对</small><h2 id="workflow-history-repair-title">{selected.code} · 接入 V{availableProductTimeVersion}</h2></div>
+            <button type="button" disabled={routeActionPending} aria-label="关闭历史工艺核对" onClick={() => setHistoryRepairOpen(false)}><X size={18} /></button>
+          </header>
+          <div className="workflow-history-repair-warning">
+            <AlertTriangle size={18} />
+            <span><strong>只建立继续生产所需的工艺与数量基线</strong><small>原生产数量、旧进度和历史记录会完整保留；系统不会补造过去的报工或员工工时。</small></span>
+          </div>
+          <div className="workflow-history-repair-facts">
+            <span><small>计划数量</small><strong>{selected.historicalRouteRepair.targetQuantity.toLocaleString()} 件</strong></span>
+            <span><small>前端已转交</small><strong>{selected.historicalRouteRepair.transferredQuantity.toLocaleString()} 件</strong></span>
+            <span><small>旧系统已完成</small><strong>{selected.historicalRouteRepair.completedQuantity.toLocaleString()} 件</strong></span>
+            <span><small>原阶段</small><strong>{selected.historicalRouteRepair.legacyStage === 'backend' ? '后端' : selected.historicalRouteRepair.legacyStage === 'frontend' ? '前端' : '待开始'}</strong></span>
+          </div>
+          <label>
+            <span>当前实际所在工序</span>
+            <select value={historyRepairStepKey} onChange={event => {
+              const stepKey = event.target.value;
+              const step = selected.steps.find(item => item.key === stepKey);
+              setHistoryRepairStepKey(stepKey);
+              setHistoryRepairQuantity(step?.stageGroup === 'frontend'
+                ? '0'
+                : String(selected.historicalRouteRepair?.completedQuantity || 0));
+            }}>
+              {selected.steps.map((step, index) => <option key={step.key} value={step.key}>
+                {index + 1}. {step.label}（{step.stageGroup ? stageLabels[step.stageGroup] : '工序'}）
+              </option>)}
+            </select>
+            <small>该工序之前的节点会标记为“历史已完成”，之后从这里继续。</small>
+          </label>
+          <label>
+            <span>该工序历史已完成数量</span>
+            <input inputMode="numeric" min={0} value={historyRepairQuantity} onChange={event => setHistoryRepairQuantity(event.target.value.replace(/[^\d]/g, ''))} />
+            <small>用于计算当前工序剩余数量；不会生成历史工时领取任务。</small>
+          </label>
+          <footer>
+            <button type="button" disabled={routeActionPending} onClick={() => setHistoryRepairOpen(false)}>取消</button>
+            <button className="primary" type="button" disabled={routeActionPending || !historyRepairStepKey} onClick={() => { void repairHistoricalRoute(); }}>
+              {routeActionPending ? <Loader2 className="spin" size={15} /> : <PackageCheck size={15} />}
+              确认并接入当前工序
+            </button>
+          </footer>
+        </section>
+      </div>}
     </main>
   );
 }

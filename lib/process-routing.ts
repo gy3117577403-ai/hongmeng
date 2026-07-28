@@ -157,6 +157,11 @@ type WorkOrderRouteMaterializationCheck = {
   planClearedAt?: Date | string | null;
 };
 
+type HistoricalProductTimeRouteRepairCheck = {
+  workOrder: WorkOrderRouteMaterializationCheck;
+  route: DraftRouteReplacementCheck | null;
+};
+
 const draftRouteSyncInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
   workOrder: {
     select: {
@@ -347,6 +352,40 @@ export function canMaterializeProductTimeRouteForWorkOrder(
     && Number(workOrder.progress || 0) === 0
     && Number(workOrder.frontendTransferredQty || 0) === 0
     && quantity.completedQty === 0;
+}
+
+export function canRepairHistoricalProductTimeRoute({
+  workOrder,
+  route,
+}: HistoricalProductTimeRouteRepairCheck): boolean {
+  const stage = normalizeWorkOrderStage(workOrder.stage || workOrder.status) || 'not_issued';
+  const quantity = getProductionQuantitySummary(workOrder);
+  const hasLegacyProductionFacts = stage === 'frontend'
+    || stage === 'backend'
+    || Boolean(workOrder.startedAt)
+    || Boolean(workOrder.lastProgressAt)
+    || Number(workOrder.progress || 0) > 0
+    || Number(quantity.completedQty || 0) > 0
+    || Number(workOrder.frontendTransferredQty || 0) > 0;
+  if (
+    stage === 'completed'
+    || workOrder.completedAt
+    || workOrder.planActive === false
+    || workOrder.planClearedAt
+    || workOrder.branchType
+    || !hasLegacyProductionFacts
+  ) return false;
+  if (!route) return true;
+  if (route.routeSource !== PRODUCT_TIME_PENDING_ROUTE_SOURCE) return false;
+  return route.steps.every(step => (
+    step._count.executions === 0
+    && step._count.completions === 0
+    && Number(step.inputQty || 0) === 0
+    && Number(step.processedQty || 0) === 0
+    && Number(step.goodOutputQty || 0) === 0
+    && Number(step.defectOutputQty || 0) === 0
+    && Number(step.releasedGoodQty || 0) === 0
+  ));
 }
 
 export function canResetLegacyDraftRouteToProductTimePending(
@@ -1044,16 +1083,288 @@ export async function applyPublishedProductTimeToWorkOrder(
   };
 }
 
+export async function repairHistoricalProductTimeRoute(
+  tx: Prisma.TransactionClient,
+  input: {
+    workOrderId: string;
+    currentProductTimeEntryId: string;
+    processedQuantity: number;
+    actorId?: string | null;
+  },
+): Promise<{
+  routeId: string;
+  productTimeProfileVersion: number;
+  currentProcessName: string;
+  processCount: number;
+}> {
+  const workOrder = await tx.workOrder.findUnique({
+    where: { id: input.workOrderId },
+    select: {
+      id: true,
+      deletedAt: true,
+      drawingLibraryItemId: true,
+      specification: true,
+      stage: true,
+      status: true,
+      startedAt: true,
+      completedAt: true,
+      lastProgressAt: true,
+      progress: true,
+      completedQty: true,
+      uncompletedQty: true,
+      productionTargetQty: true,
+      frontendTransferredQty: true,
+      branchType: true,
+      planActive: true,
+      planClearedAt: true,
+      processRoute: {
+        select: {
+          id: true,
+          version: true,
+          status: true,
+          routeSource: true,
+          startedAt: true,
+          steps: {
+            select: {
+              status: true,
+              startedAt: true,
+              completedAt: true,
+              inputQty: true,
+              processedQty: true,
+              goodOutputQty: true,
+              defectOutputQty: true,
+              releasedGoodQty: true,
+              _count: { select: { executions: true, completions: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  if (!workOrder || workOrder.deletedAt) {
+    throw new ProductTimeRouteLinkError('工单不存在或已经删除', 404, 'WORK_ORDER_NOT_FOUND');
+  }
+  if (!workOrder.drawingLibraryItemId) {
+    throw new ProductTimeRouteLinkError('当前工单尚未关联产品资料', 409, 'PRODUCT_TIME_ITEM_MISSING');
+  }
+  if (!canRepairHistoricalProductTimeRoute({ workOrder, route: workOrder.processRoute })) {
+    throw new ProductTimeRouteLinkError(
+      '当前工单已有真实工序报工或已完成，不能按历史起点重建路线',
+      409,
+      'HISTORICAL_ROUTE_REPAIR_LOCKED',
+    );
+  }
+
+  const profile = await tx.productTimeProfile.findFirst({
+    where: { drawingLibraryItemId: workOrder.drawingLibraryItemId, status: 'published' },
+    include: productTimeProfileInclude,
+    orderBy: { version: 'desc' },
+  });
+  if (!profile?.entries.length) {
+    throw new ProductTimeRouteLinkError(
+      '当前产品没有已发布工序与工时',
+      409,
+      'PRODUCT_TIME_PROFILE_MISSING',
+    );
+  }
+  const currentEntry = profile.entries.find(entry => entry.id === input.currentProductTimeEntryId);
+  if (!currentEntry) {
+    throw new ProductTimeRouteLinkError(
+      '所选历史起点不属于当前已发布工艺，请刷新后重试',
+      409,
+      'HISTORICAL_ROUTE_STEP_CHANGED',
+    );
+  }
+
+  const quantity = getProductionQuantitySummary(workOrder);
+  const targetQuantity = Math.max(0, Number(quantity.targetQty || 0));
+  const transferredQuantity = Math.min(
+    targetQuantity,
+    Math.max(0, Number(workOrder.frontendTransferredQty || 0)),
+  );
+  const currentInputQuantity = currentEntry.processDefinition.stageGroup === 'frontend'
+    ? targetQuantity
+    : transferredQuantity || targetQuantity;
+  if (
+    !Number.isInteger(input.processedQuantity)
+    || input.processedQuantity < 0
+    || input.processedQuantity > currentInputQuantity
+  ) {
+    throw new ProductTimeRouteLinkError(
+      `历史已完成数量必须是 0-${currentInputQuantity} 的整数`,
+      400,
+      'HISTORICAL_ROUTE_QUANTITY_INVALID',
+    );
+  }
+
+  const now = new Date();
+  const historicalAt = workOrder.lastProgressAt || workOrder.startedAt || now;
+  const currentSequenceGroup = currentEntry.sequenceGroup;
+  const firstEntryByGroup = new Map<number, ProductTimeProfileRecord['entries'][number]>();
+  profile.entries.forEach(entry => {
+    if (!firstEntryByGroup.has(entry.sequenceGroup)) firstEntryByGroup.set(entry.sequenceGroup, entry);
+  });
+  const stepRows = profile.entries.map(entry => {
+    const beforeCurrent = entry.sequenceGroup < currentSequenceGroup;
+    const isCurrent = entry.sequenceGroup === currentSequenceGroup;
+    const groupEntry = firstEntryByGroup.get(entry.sequenceGroup) || entry;
+    const groupInputQuantity = groupEntry.processDefinition.stageGroup === 'frontend'
+      ? targetQuantity
+      : transferredQuantity || targetQuantity;
+    const completedBaseline = beforeCurrent ? groupInputQuantity : isCurrent ? input.processedQuantity : 0;
+    const status: ProcessStepStatus = beforeCurrent ? 'completed' : isCurrent ? 'current' : 'pending';
+    return {
+      processDefinitionId: entry.processDefinitionId,
+      processCode: entry.processDefinition.code,
+      processName: entry.processDefinition.name,
+      stageGroup: entry.processDefinition.stageGroup,
+      position: entry.position,
+      sequenceGroup: entry.sequenceGroup,
+      ...productTimeStandardSnapshot(profile, entry),
+      inputQty: beforeCurrent || isCurrent ? groupInputQuantity : 0,
+      processedQty: completedBaseline,
+      goodOutputQty: completedBaseline,
+      defectOutputQty: 0,
+      releasedGoodQty: completedBaseline,
+      status,
+      startedAt: beforeCurrent || isCurrent ? historicalAt : null,
+      completedAt: beforeCurrent ? historicalAt : null,
+      remark: beforeCurrent
+        ? '历史路线补齐：仅建立数量基线，不生成历史员工工时'
+        : isCurrent ? '历史路线补齐：从核对后的当前工序继续执行' : null,
+    };
+  });
+
+  let routeId: string;
+  if (workOrder.processRoute) {
+    const updated = await tx.workOrderProcessRoute.updateMany({
+      where: {
+        id: workOrder.processRoute.id,
+        version: workOrder.processRoute.version,
+        routeSource: PRODUCT_TIME_PENDING_ROUTE_SOURCE,
+        steps: {
+          every: {
+            inputQty: 0,
+            processedQty: 0,
+            goodOutputQty: 0,
+            defectOutputQty: 0,
+            releasedGoodQty: 0,
+            executions: { none: {} },
+            completions: { none: {} },
+          },
+        },
+      },
+      data: {
+        templateId: null,
+        templateName: `${workOrder.specification || '当前产品'} 产品工时`,
+        templateVersion: profile.version,
+        productTimeProfileId: profile.id,
+        productTimeProfileVersion: profile.version,
+        routeSource: 'product_time_profile',
+        status: 'in_progress',
+        confirmedAt: now,
+        confirmedById: input.actorId || null,
+        startedAt: workOrder.processRoute.startedAt || workOrder.startedAt || now,
+        completedAt: null,
+        version: { increment: 1 },
+      },
+    });
+    if (updated.count !== 1) {
+      throw new ProductTimeRouteLinkError(
+        '工单路线刚刚发生变化，请刷新后重新核对',
+        409,
+        'HISTORICAL_ROUTE_REPAIR_CONFLICT',
+      );
+    }
+    routeId = workOrder.processRoute.id;
+    await tx.workOrderProcessStep.deleteMany({ where: { routeId } });
+  } else {
+    const created = await tx.workOrderProcessRoute.create({
+      data: {
+        workOrderId: workOrder.id,
+        templateName: `${workOrder.specification || '当前产品'} 产品工时`,
+        templateVersion: profile.version,
+        productTimeProfileId: profile.id,
+        productTimeProfileVersion: profile.version,
+        routeSource: 'product_time_profile',
+        status: 'in_progress',
+        confirmedAt: now,
+        confirmedById: input.actorId || null,
+        startedAt: workOrder.startedAt || now,
+        version: 1,
+      },
+      select: { id: true },
+    });
+    routeId = created.id;
+  }
+
+  await tx.workOrderProcessStep.createMany({
+    data: stepRows.map(step => ({ routeId, ...step })),
+  });
+  await tx.processRouteActivity.create({
+    data: {
+      routeId,
+      action: 'repair_historical_product_time_route',
+      content: `历史工艺已核对到产品工序与工时 V${profile.version}，从“${currentEntry.processDefinition.name}”继续执行`,
+      actorId: input.actorId || null,
+      detail: {
+        productTimeProfileId: profile.id,
+        productTimeProfileVersion: profile.version,
+        currentProductTimeEntryId: currentEntry.id,
+        currentProcessName: currentEntry.processDefinition.name,
+        targetQuantity,
+        transferredQuantity,
+        processedQuantity: input.processedQuantity,
+        legacyStage: workOrder.stage,
+      },
+    },
+  });
+  const nextStage = processStageForGroup(
+    normalizeProcessStageGroup(currentEntry.processDefinition.stageGroup) || 'frontend',
+  );
+  await tx.workOrder.update({
+    where: { id: workOrder.id },
+    data: {
+      stage: nextStage,
+      status: legacyStatusForStage(nextStage),
+      startedAt: workOrder.startedAt || now,
+      latestProgressRemark: `历史工艺起点已核对：${currentEntry.processDefinition.name}`,
+      executionVersion: { increment: 1 },
+    },
+  });
+  await tx.operationLog.create({
+    data: {
+      userId: input.actorId || null,
+      action: 'repair_historical_product_time_route',
+      targetType: 'work_order_process_route',
+      targetId: routeId,
+      detail: {
+        workOrderId: workOrder.id,
+        productTimeProfileId: profile.id,
+        productTimeProfileVersion: profile.version,
+        currentProductTimeEntryId: currentEntry.id,
+        processedQuantity: input.processedQuantity,
+      },
+    },
+  });
+  return {
+    routeId,
+    productTimeProfileVersion: profile.version,
+    currentProcessName: currentEntry.processDefinition.name,
+    processCount: profile.entries.length,
+  };
+}
+
 export async function syncDraftRoutesFromPublishedProductTime(
   tx: Prisma.TransactionClient,
   input: { profileId: string; actorId: string },
-): Promise<{ updated: number; created: number; started: number; skipped: number }> {
+): Promise<{ updated: number; created: number; started: number; skipped: number; reviewRequired: number }> {
   const profile = await tx.productTimeProfile.findUnique({
     where: { id: input.profileId },
     include: productTimeProfileInclude,
   });
   if (!profile || profile.status !== 'published') {
-    return { updated: 0, created: 0, started: 0, skipped: 0 };
+    return { updated: 0, created: 0, started: 0, skipped: 0, reviewRequired: 0 };
   }
 
   const routes = await tx.workOrderProcessRoute.findMany({
@@ -1128,7 +1439,57 @@ export async function syncDraftRoutesFromPublishedProductTime(
     });
     if (result.created) created += 1;
   }
-  return { updated, created, started, skipped };
+  const reviewCandidates = await tx.workOrder.findMany({
+    where: {
+      deletedAt: null,
+      completedAt: null,
+      planActive: true,
+      branchType: null,
+      drawingLibraryItemId: profile.drawingLibraryItemId,
+    },
+    select: {
+      stage: true,
+      status: true,
+      startedAt: true,
+      completedAt: true,
+      lastProgressAt: true,
+      progress: true,
+      completedQty: true,
+      uncompletedQty: true,
+      productionTargetQty: true,
+      frontendTransferredQty: true,
+      branchType: true,
+      planActive: true,
+      planClearedAt: true,
+      processRoute: {
+        select: {
+          status: true,
+          routeSource: true,
+          startedAt: true,
+          steps: {
+            select: {
+              status: true,
+              startedAt: true,
+              completedAt: true,
+              inputQty: true,
+              processedQty: true,
+              goodOutputQty: true,
+              defectOutputQty: true,
+              releasedGoodQty: true,
+              _count: { select: { executions: true, completions: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+  const reviewRequired = reviewCandidates.filter(workOrder => (
+    canRepairHistoricalProductTimeRoute({
+      workOrder,
+      route: workOrder.processRoute,
+    })
+  )).length;
+  return { updated, created, started, skipped, reviewRequired };
 }
 
 export function processTemplateStepInput(step: ProcessTemplateStepDTO): ValidatedProcessStep {

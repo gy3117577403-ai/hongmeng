@@ -9,6 +9,7 @@ import { chinaWeekRange } from '@/lib/production-planning';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import {
   canMaterializeProductTimeRouteForWorkOrder,
+  canRepairHistoricalProductTimeRoute,
   canReplaceDraftRouteWithProductTime,
   canUpgradeUnstartedConfirmedProductTimeRoute,
 } from '@/lib/process-routing';
@@ -284,6 +285,22 @@ type WorkflowRouteRecord = {
   steps: WorkflowRouteStepRecord[];
 };
 
+type WorkflowPublishedProductTimeProfile = {
+  version: number;
+  entries: Array<{
+    id: string;
+    position: number;
+    sequenceGroup: number;
+    unitMilliseconds: number;
+    unitLabel: string;
+    remark: string | null;
+    processDefinition: {
+      name: string;
+      stageGroup: string;
+    };
+  }>;
+};
+
 function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): WorkflowStepDTO[] {
   return route.steps.map(step => {
     const reportedGoodQuantity = step.goodOutputQty;
@@ -346,6 +363,87 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
   });
 }
 
+function publishedReferenceRoute(
+  profile: WorkflowPublishedProductTimeProfile | null,
+  workOrder: ProductTimeLinkWorkOrder | null,
+): {
+  steps: WorkflowStepDTO[];
+  repair: NonNullable<WorkflowItemDTO['historicalRouteRepair']>;
+} | null {
+  if (
+    !profile?.entries.length
+    || !workOrder
+    || !canRepairHistoricalProductTimeRoute({ workOrder, route: workOrder.processRoute })
+  ) return null;
+  const stage = normalizeWorkOrderStage(workOrder.stage || workOrder.status) || 'not_issued';
+  const quantity = getProductionQuantitySummary(workOrder);
+  const targetQuantity = Math.max(0, Number(quantity.targetQty || 0));
+  const transferredQuantity = Math.min(
+    targetQuantity,
+    Math.max(0, Number(workOrder.frontendTransferredQty || 0)),
+  );
+  const suggested = stage === 'backend'
+    ? profile.entries.find(entry => entry.processDefinition.stageGroup !== 'frontend')
+      || profile.entries.at(-1)
+    : profile.entries.find(entry => entry.processDefinition.stageGroup === 'frontend')
+      || profile.entries[0];
+  if (!suggested) return null;
+  const completedQuantity = Math.min(
+    suggested.processDefinition.stageGroup === 'frontend'
+      ? 0
+      : transferredQuantity || targetQuantity,
+    Math.max(0, Number(quantity.completedQty || 0)),
+  );
+  const steps = profile.entries.map((entry): WorkflowStepDTO => {
+    const state: WorkflowStepDTO['state'] = entry.sequenceGroup < suggested.sequenceGroup
+      ? 'done'
+      : entry.sequenceGroup === suggested.sequenceGroup ? 'current' : 'pending';
+    const groupInput = entry.processDefinition.stageGroup === 'frontend'
+      ? targetQuantity
+      : transferredQuantity || targetQuantity;
+    const processed = state === 'done' ? groupInput : state === 'current' ? completedQuantity : 0;
+    const stageGroup = entry.processDefinition.stageGroup === 'backend'
+      || entry.processDefinition.stageGroup === 'finish'
+      ? entry.processDefinition.stageGroup
+      : 'frontend';
+    const status: ProcessStepStatus = state === 'done' ? 'completed' : state === 'current' ? 'current' : 'pending';
+    return {
+      key: entry.id,
+      label: entry.processDefinition.name,
+      state,
+      sequenceGroup: entry.sequenceGroup,
+      status,
+      stageGroup,
+      unitLabel: entry.unitLabel || '套',
+      standardMillisecondsPerUnit: entry.unitMilliseconds,
+      inputQuantity: state === 'pending' ? 0 : groupInput,
+      processedQuantity: processed,
+      reportedGoodQuantity: processed,
+      defectQuantity: 0,
+      releasedGoodQuantity: processed,
+      remainingProcessQuantity: Math.max(0, groupInput - processed),
+      laborEligibleQuantity: 0,
+      laborClaimedQuantity: 0,
+      laborRemainingQuantity: 0,
+      laborClaimantNames: [],
+      hasLaborPool: false,
+      laborPendingStandard: false,
+      remark: state === 'pending' ? null : '历史执行投影，确认起点后写入工单路线',
+      productRemark: entry.remark,
+    };
+  });
+  return {
+    steps,
+    repair: {
+      suggestedStepKey: suggested.id,
+      legacyStage: stage,
+      targetQuantity,
+      transferredQuantity,
+      completedQuantity,
+    },
+  };
+}
+
 export function resolveWorkflowRouteState(
   route: Pick<WorkflowRouteRecord, 'status' | 'startedAt'>,
   mappedSteps: WorkflowStepDTO[],
@@ -402,6 +500,42 @@ function inWeekRange(value: Date | null | undefined, start: Date, end: Date): bo
   return time >= start.getTime() && time <= end.getTime();
 }
 
+function addUtcDays(value: Date, days: number): Date {
+  const date = new Date(value);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date;
+}
+
+export function workflowWeekRanges(now = new Date()): Record<WorkflowWeekScope, { start: Date; end: Date }> {
+  const current = chinaWeekRange(now);
+  return {
+    history: chinaWeekRange(addUtcDays(current.start, -7)),
+    current,
+    next: chinaWeekRange(addUtcDays(current.start, 7)),
+    afterNext: chinaWeekRange(addUtcDays(current.start, 14)),
+  };
+}
+
+export function workflowItemMatchesWeekScope(
+  item: Pick<WorkflowItemDTO, 'entityType' | 'weekStartDate' | 'weekEndDate'>,
+  scope: WorkflowWeekScope,
+  now = new Date(),
+): boolean {
+  if (item.entityType !== 'production') return false;
+  const weekStart = item.weekStartDate ? new Date(item.weekStartDate) : null;
+  const weekEnd = item.weekEndDate ? new Date(item.weekEndDate) : null;
+  const range = workflowWeekRanges(now)[scope];
+  if (!weekStart && !weekEnd) return false;
+  return inWeekRange(weekStart, range.start, range.end)
+    || inWeekRange(weekEnd, range.start, range.end)
+    || Boolean(
+      weekStart
+      && weekEnd
+      && weekStart.getTime() <= range.start.getTime()
+      && weekEnd.getTime() >= range.end.getTime(),
+    );
+}
+
 export type WorkflowCenterFilters = {
   keyword?: string;
   entityType?: WorkflowEntityType | 'all';
@@ -419,9 +553,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   templates: WorkflowTemplateDTO[];
 }> {
   const now = Date.now();
-  const currentWeek = chinaWeekRange(new Date());
-  const nextWeekStart = new Date(currentWeek.start.getTime() + 7 * 24 * 60 * 60 * 1000);
-  const nextWeek = chinaWeekRange(nextWeekStart);
+  const nowDate = new Date(now);
   const [issues, changes, productionBatches, standaloneProductionOrders] = await Promise.all([
     prisma.issue.findMany({
       where: { deletedAt: null },
@@ -492,7 +624,18 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                   take: 1,
                   select: {
                     version: true,
-                    entries: { select: { unitMilliseconds: true } },
+                    entries: {
+                      orderBy: { position: 'asc' },
+                      select: {
+                        id: true,
+                        position: true,
+                        sequenceGroup: true,
+                        unitMilliseconds: true,
+                        unitLabel: true,
+                        remark: true,
+                        processDefinition: { select: { name: true, stageGroup: true } },
+                      },
+                    },
                   },
                 },
               },
@@ -667,7 +810,18 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
               take: 1,
               select: {
                 version: true,
-                entries: { select: { id: true } },
+                entries: {
+                  orderBy: { position: 'asc' },
+                  select: {
+                    id: true,
+                    position: true,
+                    sequenceGroup: true,
+                    unitMilliseconds: true,
+                    unitLabel: true,
+                    remark: true,
+                    processDefinition: { select: { name: true, stageGroup: true } },
+                  },
+                },
               },
             },
           },
@@ -847,6 +1001,17 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     const actualRouteState = reportableRoute && mappedRouteSteps.length > 0
       ? resolveWorkflowRouteState(reportableRoute, mappedRouteSteps, workOrder?.completedAt)
       : null;
+    const referenceRoute = actualRouteState
+      ? null
+      : publishedReferenceRoute(publishedProfile, workOrder);
+    const referenceRouteState = referenceRoute
+      ? resolveWorkflowRouteState(
+          { status: 'in_progress', startedAt: workOrder?.startedAt || workOrder?.lastProgressAt || null },
+          referenceRoute.steps,
+          workOrder?.completedAt,
+        )
+      : null;
+    const displayedRouteState = actualRouteState || referenceRouteState;
     const preparationSteps = planningFlowStepStates(facts)
       .slice(0, 6)
       .map((state, index): WorkflowStepDTO => ({
@@ -862,12 +1027,14 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
         || workOrder?.processRoute?.status === 'in_progress',
       ),
     });
-    const flowSteps = actualRouteState ? mappedRouteSteps : fallbackRoute.steps;
+    const flowSteps = actualRouteState
+      ? mappedRouteSteps
+      : referenceRoute?.steps || fallbackRoute.steps;
     const drawingRoute = order.drawingLibraryItemId
       ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`
       : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`;
     let targetRoute = `/weekly-plan-center?batchId=${encodeURIComponent(batch.id)}`;
-    if (actualRouteState && workOrder?.id) {
+    if ((actualRouteState || referenceRoute) && workOrder?.id) {
       targetRoute = `/production?workOrderId=${encodeURIComponent(workOrder.id)}`;
     } else if (flow.status === 'missing_drawing') targetRoute = drawingRoute;
     else if (flow.status === 'missing_time' || flow.status === 'pending_process') {
@@ -913,7 +1080,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       ...processActivities,
       ...progressActivities,
     ]).slice(0, 12);
-    const closed = actualRouteState?.closed ?? flow.status === 'completed';
+    const closed = displayedRouteState?.closed ?? flow.status === 'completed';
     items.push({
       id: `production-plan:${batch.id}`,
       entityId: batch.id,
@@ -923,9 +1090,9 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       code: order.specification,
       title: order.productName,
       subtitle: `${order.customerName} · 第 ${batch.batchNo} 批 · ${batch.quantity.toLocaleString()} 件`,
-      processStatus: actualRouteState?.processStatus || flow.workflowStatus,
-      currentStep: actualRouteState?.currentStep || fallbackRoute.currentStep,
-      nextStep: actualRouteState?.nextStep ?? fallbackRoute.nextStep,
+      processStatus: displayedRouteState?.processStatus || flow.workflowStatus,
+      currentStep: displayedRouteState?.currentStep || fallbackRoute.currentStep,
+      nextStep: displayedRouteState?.nextStep ?? fallbackRoute.nextStep,
       priority: order.priority === 'insert' || order.priority === 'urgent'
         ? 'urgent'
         : order.priority === 'high'
@@ -948,6 +1115,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       availableProductTimeProfileVersion: publishedProfile?.version || null,
       availableProductTimeProcessCount: publishedProfile?.entries.length || null,
       ...productTimeLink,
+      routeDisplayMode: actualRouteState ? 'actual' : referenceRoute ? 'published_reference' : 'fallback',
+      historicalRouteRepair: referenceRoute?.repair || null,
       productRemark: workOrder?.processRoute?.productTimeProfile?.remark || null,
       orderRemark: workOrder?.remark || order.remark || null,
       drawingLibraryItemId: order.drawingLibraryItemId,
@@ -975,7 +1144,18 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     const actualRouteState = reportableRoute && mappedRouteSteps.length > 0
       ? resolveWorkflowRouteState(reportableRoute, mappedRouteSteps, order.completedAt)
       : null;
-    const closed = actualRouteState?.closed ?? stageClosed;
+    const referenceRoute = actualRouteState
+      ? null
+      : publishedReferenceRoute(publishedProfile, order);
+    const referenceRouteState = referenceRoute
+      ? resolveWorkflowRouteState(
+          { status: 'in_progress', startedAt: order.startedAt || order.lastProgressAt || null },
+          referenceRoute.steps,
+          order.completedAt,
+        )
+      : null;
+    const displayedRouteState = actualRouteState || referenceRouteState;
+    const closed = displayedRouteState?.closed ?? stageClosed;
     const fallbackRoute = productionRouteFallback({
       completed: stageClosed,
       started: Boolean(
@@ -985,15 +1165,15 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
         || stage === 'backend',
       ),
     });
-    const targetRoute = order.processRoute?.routeSource === 'product_time_pending'
+    const targetRoute = order.processRoute?.routeSource === 'product_time_pending' && !referenceRoute
       ? `/workspace/product-times${order.drawingLibraryItemId ? `?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : ''}`
       : `/production?workOrderId=${encodeURIComponent(order.id)}`;
     items.push({
       id: `production:${order.id}`, entityId: order.id, entityType: 'production', workOrderId: order.id, code: order.specification || order.code,
       title: order.productName, subtitle: `${order.customerName || '客户未设置'} · 内部编号 ${order.code}`,
-      processStatus: actualRouteState?.processStatus || processStatus(stage, 'production'),
-      currentStep: actualRouteState?.currentStep || fallbackRoute.currentStep,
-      nextStep: actualRouteState?.nextStep ?? fallbackRoute.nextStep,
+      processStatus: displayedRouteState?.processStatus || processStatus(stage, 'production'),
+      currentStep: displayedRouteState?.currentStep || fallbackRoute.currentStep,
+      nextStep: displayedRouteState?.nextStep ?? fallbackRoute.nextStep,
       priority: (order.priority === 'urgent' || order.priority === 'high' ? order.priority : 'normal'), owner: order.productionOwner,
       dueAt, updatedAt: order.updatedAt.toISOString(), route: targetRoute,
       sourceRoute: order.drawingLibraryItemId
@@ -1011,10 +1191,12 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       availableProductTimeProfileVersion: publishedProfile?.version || null,
       availableProductTimeProcessCount: publishedProfile?.entries.length || null,
       ...productTimeLink,
+      routeDisplayMode: actualRouteState ? 'actual' : referenceRoute ? 'published_reference' : 'fallback',
+      historicalRouteRepair: referenceRoute?.repair || null,
       productRemark: order.processRoute?.productTimeProfile?.remark || null,
       orderRemark: order.remark || null,
       drawingLibraryItemId: order.drawingLibraryItemId,
-      steps: actualRouteState ? mappedRouteSteps : fallbackRoute.steps,
+      steps: actualRouteState ? mappedRouteSteps : referenceRoute?.steps || fallbackRoute.steps,
       activities: order.processRoute?.activities.length
         ? order.processRoute.activities.map(item => activity(
           item.id,
@@ -1027,25 +1209,20 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     });
   }
 
-  const allSummary = summary(items);
+  const weekScope = filters.weekScope || 'current';
+  const requestedEntityType = filters.entityType || 'production';
+  const scoped = items.filter(item => {
+    if (requestedEntityType === 'issue' || requestedEntityType === 'change') {
+      return item.entityType === requestedEntityType;
+    }
+    if (item.entityType !== 'production') return false;
+    return workflowItemMatchesWeekScope(item, weekScope, nowDate);
+  });
+  const scopedSummary = summary(scoped);
   const keyword = String(filters.keyword || '').trim().toLocaleLowerCase('zh-CN');
-  const filtered = items.filter(item => {
-    if (filters.entityType && filters.entityType !== 'all' && item.entityType !== filters.entityType) return false;
+  const filtered = scoped.filter(item => {
     if (filters.status && filters.status !== 'all' && item.processStatus !== filters.status) return false;
     if (filters.overdue && !item.isOverdue) return false;
-    if (filters.weekScope && filters.weekScope !== 'all' && item.entityType === 'production') {
-      const weekStart = item.weekStartDate ? new Date(item.weekStartDate) : null;
-      const weekEnd = item.weekEndDate ? new Date(item.weekEndDate) : null;
-      const inCurrentWeek = inWeekRange(weekStart, currentWeek.start, currentWeek.end)
-        || inWeekRange(weekEnd, currentWeek.start, currentWeek.end);
-      const inNextWeek = inWeekRange(weekStart, nextWeek.start, nextWeek.end)
-        || inWeekRange(weekEnd, nextWeek.start, nextWeek.end);
-      const beforeCurrentWeek = !!weekEnd && weekEnd.getTime() < currentWeek.start.getTime();
-      if (filters.weekScope === 'current' && !inCurrentWeek) return false;
-      if (filters.weekScope === 'next' && !inNextWeek) return false;
-      if (filters.weekScope === 'carryover' && !(beforeCurrentWeek && item.processStatus !== 'closed')) return false;
-      if (filters.weekScope === 'history' && !beforeCurrentWeek) return false;
-    }
     if (keyword && !`${item.code} ${item.title} ${item.subtitle} ${item.owner || ''}`.toLocaleLowerCase('zh-CN').includes(keyword)) return false;
     return true;
   });
@@ -1061,5 +1238,5 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   const result = target
     ? [target, ...filtered.filter(item => item.id !== target.id)]
     : filtered;
-  return { items: result.slice(0, 300), summary: allSummary, templates: workflowTemplates };
+  return { items: result.slice(0, 300), summary: scopedSummary, templates: workflowTemplates };
 }

@@ -227,6 +227,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [publishing, setPublishing] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [routeSyncReview, setRouteSyncReview] = useState<{
+    itemId: string;
+    specification: string;
+    version: number;
+    count: number;
+  } | null>(null);
   const [libraryKeyword, setLibraryKeyword] = useState('');
   const [libraryStage, setLibraryStage] = useState<'all' | ProcessStageGroup>('all');
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -705,16 +711,31 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         ok?: boolean;
         error?: string;
         profile?: ProductTimeProfileDTO;
-        routeSync?: { updated: number; created: number; started: number; skipped: number };
+        routeSync?: { updated: number; created: number; started: number; skipped: number; reviewRequired: number };
       };
       if (!response.ok || !data.profile) throw new Error(data.error || '产品工时发布失败');
       const updated = data.routeSync?.updated || 0;
       const created = data.routeSync?.created || 0;
+      const reviewRequired = data.routeSync?.reviewRequired || 0;
       const syncSummary = [
         created ? `已生成 ${created} 张工单路线` : '',
         updated ? `已升级 ${updated} 张待执行路线` : '',
       ].filter(Boolean).join('，');
       setMessage(`产品工序与工时 V${data.profile.version} 已发布${syncSummary ? `，${syncSummary}` : ''}`);
+      if (reviewRequired > 0) {
+        setRouteSyncReview({
+          itemId: selectedItem.id,
+          specification: selectedItem.specification,
+          version: data.profile.version,
+          count: reviewRequired,
+        });
+        showToast(
+          `${reviewRequired} 张已有历史生产事实的工单需要核对当前工序，旧数量和旧记录不会被覆盖`,
+          { tone: 'warning', duration: 6500, dedupeKey: `product-time-route-review:${selectedItem.id}:${data.profile.version}` },
+        );
+      } else {
+        setRouteSyncReview(null);
+      }
       await load(selectedItem.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '产品工时发布失败');
@@ -918,9 +939,18 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 <span><small>计划关联</small><strong>{selectedItem.planning?.batchCount || 0} 批</strong><em>{selectedItem.planning ? `${selectedItem.planning.totalQuantity.toLocaleString('zh-CN')} 件` : '当前范围无批次'}</em></span>
               </div>
 
-              <div className="product-time-route-guidance">
-                <Route size={18} aria-hidden="true" />
-                <span><strong>每道工序可选择“按件”或“按整批”计时</strong><small>按件工时＝单次标准时间 × 每套工序次数；按批工时整批只计一次。准备时间在该次工时池中只计一次。</small></span>
+              <div className="product-time-route-notices">
+                <div className="product-time-route-guidance">
+                  <Route size={18} aria-hidden="true" />
+                  <span><strong>每道工序可选择“按件”或“按整批”计时</strong><small>按件工时＝单次标准时间 × 每套工序次数；按批工时整批只计一次。准备时间在该次工时池中只计一次。</small></span>
+                </div>
+
+                {routeSyncReview?.itemId === selectedItem.id && <div className="product-time-route-review">
+                  <AlertTriangle size={17} aria-hidden="true" />
+                  <span><strong>{routeSyncReview.count} 张历史工单等待核对</strong><small>V{routeSyncReview.version} 已同步到流程中心作为工艺预览；确认实际所在工序后才会接入执行，历史数量与记录保持不变。</small></span>
+                  <a href={`/workspace/workflows?weekScope=history&entityType=production&keyword=${encodeURIComponent(routeSyncReview.specification)}`}>去历史周核对<ExternalLink size={13} /></a>
+                  <button type="button" aria-label="关闭历史工单核对提示" onClick={() => setRouteSyncReview(null)}><X size={14} /></button>
+                </div>}
               </div>
 
               <div className="product-time-entry-list hm-scroll-region" tabIndex={0} aria-label={`当前产品工序路线，共 ${entries.length} 道工序`}>

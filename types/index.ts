@@ -1325,7 +1325,7 @@ export type AbnormalTimeReportDTO = {
 
 export type WorkflowProcessStatus = 'waiting' | 'processing' | 'verifying' | 'closed';
 export type WorkflowEntityType = 'issue' | 'change' | 'production';
-export type WorkflowWeekScope = 'all' | 'carryover' | 'current' | 'next' | 'history';
+export type WorkflowWeekScope = 'history' | 'current' | 'next' | 'afterNext';
 
 export type WorkflowStepDTO = {
   key: string;
@@ -1374,6 +1374,14 @@ export type ProductTimeRouteLinkState =
   | 'missing_profile'
   | 'locked';
 
+export type HistoricalRouteRepairDTO = {
+  suggestedStepKey: string;
+  legacyStage: string;
+  targetQuantity: number;
+  transferredQuantity: number;
+  completedQuantity: number;
+};
+
 export type WorkflowItemDTO = {
   id: string;
   entityId: string;
@@ -1405,6 +1413,8 @@ export type WorkflowItemDTO = {
   availableProductTimeProcessCount?: number | null;
   productTimeRouteLinkState?: ProductTimeRouteLinkState | null;
   canApplyProductTimeProfile?: boolean;
+  routeDisplayMode?: 'actual' | 'published_reference' | 'fallback';
+  historicalRouteRepair?: HistoricalRouteRepairDTO | null;
   productRemark?: string | null;
   orderRemark?: string | null;
   drawingLibraryItemId?: string | null;

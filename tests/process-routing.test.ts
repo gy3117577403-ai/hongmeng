@@ -6,6 +6,7 @@ import {
 } from '../lib/process-route-service';
 import {
   canReplaceDraftRouteWithProductTime,
+  canRepairHistoricalProductTimeRoute,
   canResetLegacyDraftRouteToProductTimePending,
   canUpgradeUnstartedConfirmedProductTimeRoute,
   canMaterializeProductTimeRouteForWorkOrder,
@@ -95,6 +96,92 @@ test('只有完全未开始且没有报工记录的草稿路线可以由产品�
     startedAt: new Date(),
     steps: [{ ...pendingStep, status: 'current' }],
   }), false);
+});
+
+test('历史工单只允许从无明细报工的待发布占位路线接入新工艺', () => {
+  const workOrder = {
+    stage: 'backend',
+    status: 'processing',
+    startedAt: new Date('2026-07-18T08:00:00.000Z'),
+    completedAt: null,
+    lastProgressAt: new Date('2026-07-21T08:00:00.000Z'),
+    progress: 72,
+    completedQty: '1,800',
+    uncompletedQty: '699',
+    productionTargetQty: 2_499,
+    frontendTransferredQty: 2_499,
+    branchType: null,
+    planActive: true,
+    planClearedAt: null,
+  };
+  const emptyStep = {
+    status: 'current',
+    startedAt: new Date('2026-07-18T08:00:00.000Z'),
+    completedAt: null,
+    inputQty: 0,
+    processedQty: 0,
+    goodOutputQty: 0,
+    defectOutputQty: 0,
+    releasedGoodQty: 0,
+    _count: { executions: 0, completions: 0 },
+  };
+  assert.equal(canRepairHistoricalProductTimeRoute({
+    workOrder,
+    route: {
+      status: 'in_progress',
+      routeSource: PRODUCT_TIME_PENDING_ROUTE_SOURCE,
+      startedAt: workOrder.startedAt,
+      steps: [emptyStep],
+    },
+  }), true);
+  assert.equal(canRepairHistoricalProductTimeRoute({
+    workOrder,
+    route: {
+      status: 'in_progress',
+      routeSource: PRODUCT_TIME_PENDING_ROUTE_SOURCE,
+      startedAt: workOrder.startedAt,
+      steps: [{ ...emptyStep, _count: { executions: 0, completions: 1 } }],
+    },
+  }), false);
+  assert.equal(canRepairHistoricalProductTimeRoute({
+    workOrder,
+    route: {
+      status: 'in_progress',
+      routeSource: PRODUCT_TIME_PENDING_ROUTE_SOURCE,
+      startedAt: workOrder.startedAt,
+      steps: [{ ...emptyStep, processedQty: 1 }],
+    },
+  }), false);
+  assert.equal(canRepairHistoricalProductTimeRoute({
+    workOrder,
+    route: {
+      status: 'in_progress',
+      routeSource: 'product_time_profile',
+      startedAt: workOrder.startedAt,
+      steps: [emptyStep],
+    },
+  }), false);
+  assert.equal(canRepairHistoricalProductTimeRoute({
+    workOrder: { ...workOrder, completedAt: new Date() },
+    route: null,
+  }), false);
+  assert.equal(canRepairHistoricalProductTimeRoute({
+    workOrder: {
+      ...workOrder,
+      stage: 'not_issued',
+      status: 'pending',
+      startedAt: null,
+      lastProgressAt: null,
+      progress: 0,
+      completedQty: '0',
+      frontendTransferredQty: 0,
+    },
+    route: null,
+  }), false);
+  assert.equal(canRepairHistoricalProductTimeRoute({
+    workOrder,
+    route: null,
+  }), true);
 });
 
 test('已确认产品路线只有在完全未开工且没有生产事实时才随新版本升级', () => {

@@ -8,7 +8,14 @@ export const dynamic = 'force-dynamic';
 
 const entityTypes: Array<WorkflowEntityType | 'all'> = ['all', 'issue', 'change', 'production'];
 const processStatuses: Array<WorkflowProcessStatus | 'all'> = ['all', 'waiting', 'processing', 'verifying', 'closed'];
-const weekScopes: WorkflowWeekScope[] = ['all', 'carryover', 'current', 'next', 'history'];
+const weekScopes: WorkflowWeekScope[] = ['history', 'current', 'next', 'afterNext'];
+
+function workflowWeekScope(value: string | null): WorkflowWeekScope {
+  if (value === 'history' || value === 'current' || value === 'next' || value === 'afterNext') return value;
+  // Keep old deep links usable without exposing the retired scopes in the UI.
+  if (value === 'carryover') return 'history';
+  return 'current';
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -16,12 +23,13 @@ export async function GET(req: NextRequest) {
     if (user.laborRole === 'EMPLOYEE') return forbidden('员工账号请在报表中心领取本人今日工时');
     const params = req.nextUrl.searchParams;
     const keyword = String(params.get('keyword') || '').trim().slice(0, 160);
-    const entityType = String(params.get('entityType') || 'all') as WorkflowEntityType | 'all';
+    const entityType = String(params.get('entityType') || 'production') as WorkflowEntityType | 'all';
     const status = String(params.get('status') || 'all') as WorkflowProcessStatus | 'all';
     const overdue = params.get('overdue') === 'true';
     const batchId = String(params.get('batchId') || '').trim().slice(0, 80);
     const workOrderId = String(params.get('workOrderId') || '').trim().slice(0, 80);
-    const weekScope = String(params.get('weekScope') || 'all') as WorkflowWeekScope;
+    const requestedWeekScope = params.get('weekScope');
+    const weekScope = workflowWeekScope(requestedWeekScope);
 
     if (!entityTypes.includes(entityType)) {
       return NextResponse.json({ ok: false, error: '流程类型筛选不正确' }, { status: 400 });
@@ -29,7 +37,12 @@ export async function GET(req: NextRequest) {
     if (!processStatuses.includes(status)) {
       return NextResponse.json({ ok: false, error: '流程状态筛选不正确' }, { status: 400 });
     }
-    if (!weekScopes.includes(weekScope)) {
+    if (
+      requestedWeekScope
+      && requestedWeekScope !== 'all'
+      && requestedWeekScope !== 'carryover'
+      && !weekScopes.includes(requestedWeekScope as WorkflowWeekScope)
+    ) {
       return NextResponse.json({ ok: false, error: '生产周范围筛选不正确' }, { status: 400 });
     }
 
