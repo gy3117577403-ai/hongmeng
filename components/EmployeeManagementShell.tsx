@@ -460,17 +460,15 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }, [employees]);
 
   const maxDepartmentCount = Math.max(...departmentStats.map(item => item.active), 1);
-  const normalAttendanceCount = attendanceRecords.filter(
-    record => record.status === 'confirmed' && record.attendanceType === 'normal',
-  ).length;
-  const attendanceRate = attendanceSummary.confirmedCount
-    ? Math.round((normalAttendanceCount / attendanceSummary.confirmedCount) * 1000) / 10
-    : 0;
   const archiveCompleteness = summary.active
     ? Math.round((employees.filter(employee => (
       employee.isActive && employee.department && employee.position && employee.team
     )).length / summary.active) * 100)
     : 0;
+  const archiveCompleteCount = employees.filter(employee => (
+    employee.isActive && employee.department && employee.position && employee.team
+  )).length;
+  const archiveMissingCount = Math.max(0, summary.active - archiveCompleteCount);
   const attendanceCoverage = summary.active
     ? Math.round((summary.attendance / summary.active) * 100)
     : 0;
@@ -569,62 +567,149 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     const attainment = attainmentReport?.summary.attainmentBasisPoints;
     const primaryTask = hrWorkItems.find(item => item.priority === 'high' || item.priority === 'urgent')
       || hrWorkItems[0];
+    const focusOwner = primaryTask
+      ? responsibilityPeople.find(person => person.id === primaryTask.ownerId)
+      : null;
+    const focusNextPerson = primaryTask
+      ? responsibilityPeople.find(person => person.id === primaryTask.nextPersonId)
+      : null;
+    const focusCollaborators = primaryTask
+      ? primaryTask.participantIds
+        .map(personId => responsibilityPeople.find(person => person.id === personId))
+        .filter((person): person is NonNullable<typeof person> => Boolean(person))
+        .slice(0, 3)
+      : [];
+
     return (
       <div className="hr-view hr-overview-view">
-        <section className="hr-welcome-panel">
+        <section className="hr-overview-heading">
           <div>
             <span className="hr-eyebrow">人力协同工作台</span>
             <h1>{greeting()}，{user.displayName}</h1>
-            <p>{currentDateLabel()} · 从人员档案、考勤和生产工时中汇总当前人力状态。</p>
+            <p>{currentDateLabel()} · 今天优先处理待确认事项与人员基础信息。</p>
           </div>
-          <div className="hr-welcome-actions">
+          <div className="hr-overview-heading-actions">
             <button type="button" className="hr-secondary-button" onClick={() => changeView('approvals')}>
               <ClipboardCheck size={17} />查看待办
               {pendingApprovalCount > 0 && <em>{pendingApprovalCount}</em>}
             </button>
             <button type="button" className="hr-primary-button" onClick={beginCreate}>
-              <Plus size={17} />快速创建员工
+              <Plus size={17} />新增员工
             </button>
           </div>
         </section>
 
-        <section className="hr-metric-grid" aria-label="人事关键指标">
-          <MetricCard icon={UsersRound} label="在岗员工" value={summary.active} note={`档案总数 ${summary.total}`} />
-          <MetricCard icon={UserRoundCheck} label="本月新建档案" value={summary.newThisMonth} note="按档案创建时间统计" tone="green" />
-          <MetricCard icon={CalendarCheck2} label="正常出勤占比" value={`${attendanceRate}%`} note={`已确认 ${attendanceSummary.confirmedCount} 条`} tone="violet" onClick={() => changeView('attendance')} />
-          <MetricCard icon={ClipboardCheck} label="待确认事项" value={pendingApprovalCount} note="考勤草稿与异常审核" tone="orange" onClick={() => changeView('approvals')} />
-          <MetricCard icon={Activity} label="本月人员达成率" value={formatPercent(attainment)} note="来自生产工时与出勤" tone="cyan" onClick={() => changeView('performance')} />
-          <MetricCard icon={AlertTriangle} label="未闭环异常" value={abnormalSummary.openCount} note={`本月异常 ${abnormalSummary.eventCount} 项`} tone={abnormalSummary.openCount ? 'red' : 'green'} onClick={() => changeView('attendance')} />
+        <section className="hr-health-strip" aria-label="人事健康概览">
+          <button type="button" onClick={() => changeView('directory')}>
+            <span><UsersRound /></span>
+            <small>在岗人员</small>
+            <strong>{summary.active}</strong>
+            <em>档案共 {summary.total} 人</em>
+          </button>
+          <button type="button" onClick={() => changeView('directory')}>
+            <span><BadgeCheck /></span>
+            <small>档案完整</small>
+            <strong>{archiveCompleteCount}/{summary.active}</strong>
+            <em>{archiveCompleteness}% 已完善</em>
+          </button>
+          <button type="button" onClick={() => changeView('attendance')}>
+            <span className="green"><CalendarCheck2 /></span>
+            <small>考勤覆盖</small>
+            <strong>{attendanceCoverage}%</strong>
+            <em>{summary.attendance} 人已启用</em>
+          </button>
+          <button type="button" className={pendingApprovalCount ? 'attention' : ''} onClick={() => changeView('approvals')}>
+            <span className="orange"><ClipboardCheck /></span>
+            <small>待处理事项</small>
+            <strong>{pendingApprovalCount}</strong>
+            <em>考勤与异常确认</em>
+          </button>
+          <button type="button" onClick={() => changeView('performance')}>
+            <span><Activity /></span>
+            <small>人员达成率</small>
+            <strong>{formatPercent(attainment)}</strong>
+            <em>本月工时口径</em>
+          </button>
+          <button type="button" className={abnormalSummary.openCount ? 'danger' : ''} onClick={() => changeView('attendance')}>
+            <span className={abnormalSummary.openCount ? 'red' : 'green'}><AlertTriangle /></span>
+            <small>未闭环异常</small>
+            <strong>{abnormalSummary.openCount}</strong>
+            <em>本月共 {abnormalSummary.eventCount} 项</em>
+          </button>
         </section>
 
-        <div className="hr-overview-grid">
-          <section className="hr-main-panel hr-workforce-panel">
-            <header className="hr-section-header">
-              <div><span>真实数据</span><h2>人力数据概览</h2></div>
+        <div className="hr-overview-command-grid">
+          <section className="hr-focus-workspace">
+            <header>
+              <div>
+                <span><Sparkles size={15} />今日人事焦点</span>
+                <em>{primaryTask?.stateLabel || '运行正常'}</em>
+              </div>
+              {primaryTask && <small>{primaryTask.source} · 截止 {primaryTask.dueLabel}</small>}
+            </header>
+            {primaryTask ? (
+              <>
+                <div className="hr-focus-workspace-copy">
+                  <span>{primaryTask.priority === 'urgent' ? '紧急事项' : '优先事项'}</span>
+                  <h2>{primaryTask.title}</h2>
+                  <p>当前需要完成岗位信息核对，并交由下一责任人确认，避免人员档案与组织结构脱节。</p>
+                </div>
+                <div className="hr-focus-workspace-meta">
+                  <span><small>当前主责</small><strong>{focusOwner?.name || hrCoordinator?.name || '人事'}</strong></span>
+                  <span><small>下一步交接</small><strong>{focusNextPerson?.name || '相关部门负责人'}</strong></span>
+                  <span><small>协同人员</small><strong>{focusCollaborators.map(person => person.name).join('、') || '待确认'}</strong></span>
+                </div>
+                <div className="hr-focus-workspace-footer">
+                  <div>
+                    <span><i style={{ width: `${primaryTask.progress}%` }} /></span>
+                    <small>当前进度</small>
+                    <strong>{primaryTask.progress}%</strong>
+                  </div>
+                  <button type="button" className="hr-secondary-button" onClick={() => changeView('approvals')}>查看全部待办</button>
+                  <a className="hr-primary-button" href={primaryTask.route}>进入处理<ArrowRight size={15} /></a>
+                </div>
+              </>
+            ) : (
+              <EmptyPanel icon={CheckCircle2} title="当前没有人事协同待办" description="人员档案、考勤和组织状态均可继续正常维护。" />
+            )}
+          </section>
+
+          <section className="hr-action-queue">
+            <header>
+              <div><span className="hr-eyebrow">行动队列</span><h2>待办与异常</h2></div>
+              <button type="button" onClick={() => changeView('approvals')}>全部<ChevronRight size={15} /></button>
+            </header>
+            <div>
+              <a href="/workspace/attendance">
+                <span className="orange"><CalendarClock /></span>
+                <span><strong>考勤待确认</strong><small>{attendanceSummary.draftCount} 条草稿等待确认</small></span>
+                <em>{attendanceSummary.draftCount}</em>
+              </a>
+              <button type="button" onClick={() => changeView('attendance')}>
+                <span className={abnormalSummary.openCount ? 'red' : 'green'}><ShieldCheck /></span>
+                <span><strong>异常待闭环</strong><small>{abnormalSummary.openCount ? '需要核对影响工时' : '当前没有未闭环异常'}</small></span>
+                <em>{abnormalSummary.openCount}</em>
+              </button>
+              <button type="button" onClick={() => changeView('directory')}>
+                <span><UserRoundCheck /></span>
+                <span><strong>档案待完善</strong><small>缺少部门、岗位或班组信息</small></span>
+                <em>{archiveMissingCount}</em>
+              </button>
+            </div>
+          </section>
+        </div>
+
+        <div className="hr-overview-insights-grid">
+          <section className="hr-people-insight-panel">
+            <header>
+              <div><span className="hr-eyebrow">真实人员数据</span><h2>人员结构与运行状态</h2></div>
               <button type="button" onClick={() => changeView('analytics')}>查看分析<ChevronRight size={15} /></button>
             </header>
-            <div className="hr-workforce-grid">
-              <article className="hr-progress-card">
-                <div><strong>档案完整度</strong><em>{archiveCompleteness}%</em></div>
-                <p>部门、岗位、班组均已维护的在岗员工</p>
-                <span className="hr-progress-track"><i style={{ width: `${archiveCompleteness}%` }} /></span>
-                <small>{summary.active ? `${Math.round(summary.active * archiveCompleteness / 100)} / ${summary.active} 人` : '暂无在岗员工'}</small>
-              </article>
-              <article className="hr-progress-card green">
-                <div><strong>考勤覆盖率</strong><em>{attendanceCoverage}%</em></div>
-                <p>已启用考勤的在岗员工比例</p>
-                <span className="hr-progress-track"><i style={{ width: `${attendanceCoverage}%` }} /></span>
-                <small>{summary.attendance} / {summary.active} 人</small>
-              </article>
-              <article className="hr-hours-card">
-                <div><Clock3 /><span><small>本月确认出勤</small><strong>{formatHours(attendanceSummary.actualMilliseconds)}</strong></span></div>
-                <div><CalendarClock /><span><small>本月加班</small><strong>{formatHours(attendanceSummary.overtimeMilliseconds)}</strong></span></div>
-                <div><ShieldCheck /><span><small>异常影响工时</small><strong>{formatHours(abnormalSummary.affectedPersonMilliseconds)}</strong></span></div>
-              </article>
-              <article className="hr-department-card">
-                <strong>部门人数分布</strong>
+            <div className="hr-people-insight-body">
+              <div className="hr-department-insights">
+                <strong>部门在岗分布</strong>
                 <div>
-                  {departmentStats.slice(0, 5).map(item => (
+                  {departmentStats.slice(0, 6).map(item => (
                     <button type="button" key={item.name} onClick={() => focusDepartment(item.name)}>
                       <span>{item.name}<small>{item.active} 人</small></span>
                       <i><b style={{ width: `${(item.active / maxDepartmentCount) * 100}%` }} /></i>
@@ -632,94 +717,54 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                   ))}
                   {!departmentStats.length && <p>员工档案中尚未形成部门数据。</p>}
                 </div>
-              </article>
-            </div>
-          </section>
-
-          <aside className="hr-side-stack">
-            <section className="hr-main-panel hr-focus-card">
-              <header><span><Sparkles size={15} />今日人事焦点</span><em>{primaryTask ? '协同推进中' : '暂无待办'}</em></header>
-              {primaryTask ? (
-                <>
-                  <h2>{primaryTask.title}</h2>
-                  <p>由{hrCoordinator?.name || '人事'}牵头，下一步交接至相关部门确认。</p>
-                  <div className="hr-focus-progress">
-                    <span><i style={{ width: `${primaryTask.progress}%` }} /></span><strong>{primaryTask.progress}%</strong>
-                  </div>
-                  <a href={primaryTask.route}>进入处理<ArrowRight size={15} /></a>
-                </>
-              ) : (
-                <EmptyPanel icon={CheckCircle2} title="当前没有人事协同待办" description="可前往员工档案检查岗位与班组信息。" />
-              )}
-            </section>
-            <section className="hr-main-panel hr-recent-panel">
-              <header className="hr-section-header">
-                <div><span>档案动态</span><h2>最近更新</h2></div>
-                <button type="button" onClick={() => changeView('directory')}>全部<ChevronRight size={15} /></button>
-              </header>
-              <div>
-                {recentEmployees.map(employee => (
-                  <button type="button" key={employee.id} onClick={() => { chooseEmployee(employee); changeView('directory'); }}>
-                    <span className="hr-person-avatar">{employee.name.slice(0, 1)}</span>
-                    <span><strong>{employee.name}</strong><small>{employee.position || '岗位待维护'} · {formatDateTime(employee.updatedAt)}</small></span>
-                    <em className={employee.isActive ? 'ok' : ''}>{employee.isActive ? '在岗' : '停用'}</em>
-                  </button>
-                ))}
               </div>
-            </section>
-          </aside>
-        </div>
-
-        <section className="hr-main-panel hr-task-panel">
-          <header className="hr-section-header">
-            <div><span>协同入口</span><h2>待办事项与快速处理</h2></div>
-            <button type="button" onClick={() => changeView('approvals')}>查看全部<ChevronRight size={15} /></button>
-          </header>
-          <div className="hr-task-strip">
-            <button type="button" onClick={() => changeView('directory')}>
-              <span className="blue"><UserRound /></span><strong>档案待完善</strong><p>{summary.active - Math.round(summary.active * archiveCompleteness / 100)} 人缺少组织信息</p><em>去维护</em>
-            </button>
-            <a href="/workspace/attendance">
-              <span className="green"><CalendarCheck2 /></span><strong>考勤待确认</strong><p>{attendanceSummary.draftCount} 条草稿待确认</p><em>打开考勤</em>
-            </a>
-            <button type="button" onClick={() => changeView('performance')}>
-              <span className="violet"><BarChart3 /></span><strong>绩效数据</strong><p>{attainmentReport?.rows.length || 0} 人形成月度统计</p><em>查看结果</em>
-            </button>
-            <button type="button" onClick={() => changeView('training')}>
-              <span className="orange"><GraduationCap /></span><strong>能力培养</strong><p>{Math.max(1, departmentStats.length)} 个部门可建立计划</p><em>查看建议</em>
-            </button>
-          </div>
-        </section>
-
-        <div className="hr-overview-footer-grid">
-          <section className="hr-main-panel hr-organization-overview">
-            <header className="hr-section-header">
-              <div><span>真实组织</span><h2>组织架构概览</h2></div>
-              <button type="button" onClick={() => changeView('organization')}>查看组织<ChevronRight size={15} /></button>
-            </header>
-            <div className="hr-organization-strip">
-              <span className="hr-organization-root-chip"><Network size={16} /><strong>杭连电子</strong><small>{summary.active} 人在岗</small></span>
-              <i aria-hidden="true" />
-              <div>
-                {departmentStats.slice(0, 6).map(item => (
-                  <button type="button" key={item.name} onClick={() => focusDepartment(item.name)}>
-                    <strong>{item.name}</strong><small>{item.active} 人</small>
-                  </button>
-                ))}
+              <div className="hr-running-summary">
+                <article><span><Clock3 /></span><small>本月确认出勤</small><strong>{formatHours(attendanceSummary.actualMilliseconds)}</strong></article>
+                <article><span className="violet"><CalendarClock /></span><small>本月加班</small><strong>{formatHours(attendanceSummary.overtimeMilliseconds)}</strong></article>
+                <article><span className={abnormalSummary.openCount ? 'red' : 'green'}><ShieldCheck /></span><small>异常影响工时</small><strong>{formatHours(abnormalSummary.affectedPersonMilliseconds)}</strong></article>
+                <article><span className="green"><UserRoundCheck /></span><small>本月新建档案</small><strong>{summary.newThisMonth} 人</strong></article>
               </div>
             </div>
           </section>
 
-          <section className="hr-main-panel hr-quick-statistics">
-            <header className="hr-section-header">
-              <div><span>当前口径</span><h2>快速统计</h2></div>
-              <button type="button" onClick={() => changeView('analytics')}>展开分析<ChevronRight size={15} /></button>
+          <section className="hr-recent-people-panel">
+            <header>
+              <div><span className="hr-eyebrow">档案动态</span><h2>最近人员变化</h2></div>
+              <button type="button" onClick={() => changeView('directory')}>查看全部<ChevronRight size={15} /></button>
             </header>
             <div>
-              <span><UsersRound /><strong>{summary.active}</strong><small>在岗人数</small></span>
-              <span><Network /><strong>{departmentStats.length}</strong><small>组织部门</small></span>
-              <span><CalendarCheck2 /><strong>{summary.attendance}</strong><small>启用考勤</small></span>
-              <span><ClipboardCheck /><strong>{pendingApprovalCount}</strong><small>待确认项</small></span>
+              {recentEmployees.map(employee => (
+                <button type="button" key={employee.id} onClick={() => { chooseEmployee(employee); changeView('directory'); }}>
+                  <span className="hr-person-avatar">{employee.name.slice(0, 1)}</span>
+                  <span><strong>{employee.name}</strong><small>{employee.department || '部门待维护'} · {employee.position || '岗位待维护'}</small></span>
+                  <span><em className={employee.isActive ? 'ok' : ''}>{employee.isActive ? '在岗' : '停用'}</em><small>{formatDateTime(employee.updatedAt)}</small></span>
+                </button>
+              ))}
+              {!recentEmployees.length && <EmptyPanel icon={UserRound} title="暂无人员档案" description="创建员工后会在这里显示最近变化。" />}
+            </div>
+          </section>
+        </div>
+
+        <div className="hr-overview-bottom-grid">
+          <section className="hr-quick-entry-panel">
+            <header><div><span className="hr-eyebrow">快捷入口</span><h2>常用人事操作</h2></div></header>
+            <div>
+              <button type="button" onClick={beginCreate}><span><Plus /></span><strong>新增员工</strong><small>建立人员与岗位档案</small></button>
+              <a href="/workspace/attendance"><span className="green"><CalendarCheck2 /></span><strong>考勤确认</strong><small>处理出勤与异常记录</small></a>
+              <button type="button" onClick={() => changeView('performance')}><span className="violet"><BarChart3 /></span><strong>绩效数据</strong><small>{attainmentReport?.rows.length || 0} 人形成月度统计</small></button>
+              <button type="button" onClick={() => changeView('training')}><span className="orange"><GraduationCap /></span><strong>培训建议</strong><small>{Math.max(1, departmentStats.length)} 个部门可建立计划</small></button>
+            </div>
+          </section>
+
+          <section className="hr-organization-health">
+            <header>
+              <div><span className="hr-eyebrow">组织状态</span><h2>组织健康</h2></div>
+              <button type="button" onClick={() => changeView('organization')}>查看组织<ChevronRight size={15} /></button>
+            </header>
+            <div>
+              <span><Network /><strong>{departmentStats.length}</strong><small>已建立部门</small></span>
+              <span><BadgeCheck /><strong>{archiveCompleteness}%</strong><small>岗位资料完整</small></span>
+              <span className={archiveMissingCount ? 'attention' : ''}><UserRoundCheck /><strong>{archiveMissingCount}</strong><small>待补充档案</small></span>
             </div>
           </section>
         </div>
@@ -1174,8 +1219,6 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     }
   }
 
-  const activeNav = hrNavigation.find(item => item.id === view) || hrNavigation[0];
-
   return (
     <main className="hr-workbench hm-workbench-root">
       <AppWorkbenchHeader
@@ -1196,37 +1239,28 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
       />
 
       <div className="hr-shell">
-        <aside className="hr-module-navigation" aria-label="人事管理功能导航">
-          <div className="hr-module-brand">
-            <span><UsersRound /></span>
-            <div><strong>人事管理</strong><small>高效管理 · 赋能人才</small></div>
-          </div>
-          <nav>
+        <nav className="hr-module-tabs" aria-label="人事管理功能导航">
+          <div className="hr-module-tab-list">
             {hrNavigation.map(item => {
               const Icon = item.icon;
               return (
                 <button type="button" key={item.id} className={view === item.id ? 'active' : ''} onClick={() => changeView(item.id)}>
                   <Icon aria-hidden="true" />
-                  <span><strong>{item.label}</strong><small>{item.description}</small></span>
+                  <span>{item.label}</span>
                   {item.id === 'approvals' && pendingApprovalCount > 0 && <em>{pendingApprovalCount}</em>}
                 </button>
               );
             })}
-          </nav>
-          <div className="hr-module-nav-footer">
-            <Sparkles />
-            <div><strong>人事数据持续完善</strong><p>先统一入口，再逐步接入招聘、薪酬和培训台账。</p></div>
           </div>
-        </aside>
-
-        <section className="hr-content">
-          <header className="hr-mobile-context">
-            <span><activeNav.icon /></span>
-            <div><strong>{activeNav.label}</strong><small>{activeNav.description}</small></div>
+          <label className="hr-module-mobile-select">
+            <span>当前功能</span>
             <select value={view} onChange={event => changeView(event.target.value as HrView)} aria-label="切换人事功能">
               {hrNavigation.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}
             </select>
-          </header>
+          </label>
+        </nav>
+
+        <section className="hr-content">
           {error && <div className="hr-page-error" role="alert"><AlertTriangle size={17} />{error}<button type="button" onClick={() => void loadHumanResources()}>重新加载</button></div>}
           {auxiliaryWarning && !error && <div className="hr-auxiliary-warning" title={auxiliaryWarning}><AlertTriangle size={14} /><span>部分辅助数据暂不可用，员工档案仍可正常使用</span></div>}
           {renderActiveView()}
