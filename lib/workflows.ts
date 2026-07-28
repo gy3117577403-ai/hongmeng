@@ -7,6 +7,11 @@ import { productTimeTotalMilliseconds } from '@/lib/product-time';
 import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
 import { chinaWeekRange } from '@/lib/production-planning';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
+import {
+  canMaterializeProductTimeRouteForWorkOrder,
+  canReplaceDraftRouteWithProductTime,
+  canUpgradeUnstartedConfirmedProductTimeRoute,
+} from '@/lib/process-routing';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import type {
   ChangeStatus,
@@ -27,6 +32,80 @@ import type {
   WorkflowTemplateDTO,
   WorkflowWeekScope,
 } from '@/types';
+
+type ProductTimeLinkRoute = {
+  status: string;
+  routeSource: string;
+  productTimeProfileVersion: number | null;
+  startedAt: Date | null;
+  steps: Array<{
+    status: string;
+    startedAt: Date | null;
+    completedAt: Date | null;
+    inputQty: number;
+    processedQty: number;
+    goodOutputQty: number;
+    defectOutputQty: number;
+    releasedGoodQty: number;
+    _count: { executions: number; completions: number };
+  }>;
+};
+
+type ProductTimeLinkWorkOrder = {
+  stage: string;
+  status: string;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  lastProgressAt: Date | null;
+  progress: number;
+  completedQty: string | null;
+  uncompletedQty: string | null;
+  productionTargetQty: number | null;
+  frontendTransferredQty: number | null;
+  branchType: unknown;
+  planActive: boolean;
+  planClearedAt: Date | null;
+  processRoute: ProductTimeLinkRoute | null;
+};
+
+function productTimeRouteLink(
+  workOrder: ProductTimeLinkWorkOrder | null,
+  availableVersion: number | null,
+): Pick<
+  WorkflowItemDTO,
+  'productTimeRouteLinkState' | 'canApplyProductTimeProfile'
+> {
+  if (!availableVersion) {
+    return { productTimeRouteLinkState: 'missing_profile', canApplyProductTimeProfile: false };
+  }
+  if (!workOrder) {
+    return { productTimeRouteLinkState: 'available', canApplyProductTimeProfile: false };
+  }
+  const route = workOrder.processRoute;
+  if (
+    route?.routeSource === 'product_time_profile'
+    && route.productTimeProfileVersion !== null
+    && route.productTimeProfileVersion >= availableVersion
+    && route.steps.length > 0
+  ) {
+    return { productTimeRouteLinkState: 'linked', canApplyProductTimeProfile: false };
+  }
+  if (route) {
+    const canApply = canReplaceDraftRouteWithProductTime(route)
+      || canUpgradeUnstartedConfirmedProductTimeRoute(route);
+    return {
+      productTimeRouteLinkState: canApply && route.productTimeProfileVersion
+        ? 'upgrade_available'
+        : canApply ? 'available' : 'locked',
+      canApplyProductTimeProfile: canApply,
+    };
+  }
+  const canApply = canMaterializeProductTimeRouteForWorkOrder(workOrder);
+  return {
+    productTimeRouteLinkState: canApply ? 'available' : 'locked',
+    canApplyProductTimeProfile: canApply,
+  };
+}
 
 export const workflowTemplates: WorkflowTemplateDTO[] = [
   {
@@ -411,7 +490,10 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                   where: { status: 'published' },
                   orderBy: { version: 'desc' },
                   take: 1,
-                  select: { entries: { select: { unitMilliseconds: true } } },
+                  select: {
+                    version: true,
+                    entries: { select: { unitMilliseconds: true } },
+                  },
                 },
               },
             },
@@ -437,8 +519,17 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
             priority: true,
             productionOwner: true,
             remark: true,
+            progress: true,
             startedAt: true,
             completedAt: true,
+            lastProgressAt: true,
+            completedQty: true,
+            uncompletedQty: true,
+            productionTargetQty: true,
+            frontendTransferredQty: true,
+            branchType: true,
+            planActive: true,
+            planClearedAt: true,
             updatedAt: true,
             progressLogs: {
               select: { id: true, stage: true, remark: true, createdBy: true, createdAt: true },
@@ -493,6 +584,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     startedAt: true,
                     completedAt: true,
                     remark: true,
+                    _count: { select: { executions: true, completions: true } },
                     productTimeEntry: { select: { remark: true } },
                     executions: {
                       where: {
@@ -563,8 +655,23 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       select: {
         id: true, code: true, specification: true, customerName: true, productName: true, priority: true, stage: true,
         status: true, plannedAt: true, deliveryDay: true, updatedAt: true, productionOwner: true, remark: true,
+        progress: true, startedAt: true, lastProgressAt: true, frontendTransferredQty: true, branchType: true,
+        planActive: true, planClearedAt: true,
         productionTargetQty: true, uncompletedQty: true, completedQty: true,
         weekStartDate: true, weekEndDate: true, drawingLibraryItemId: true, completedAt: true,
+        drawingLibraryItem: {
+          select: {
+            productTimeProfiles: {
+              where: { status: 'published' },
+              orderBy: { version: 'desc' },
+              take: 1,
+              select: {
+                version: true,
+                entries: { select: { id: true } },
+              },
+            },
+          },
+        },
         progressLogs: {
           select: { id: true, stage: true, remark: true, createdBy: true, createdAt: true },
           orderBy: { createdAt: 'desc' }, take: 8,
@@ -600,6 +707,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 startedAt: true,
                 completedAt: true,
                 remark: true,
+                _count: { select: { executions: true, completions: true } },
                 productTimeEntry: { select: { remark: true } },
                 executions: {
                   where: {
@@ -713,6 +821,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       || [...(workOrder?.processRoute?.steps || [])].reverse().find(step => step.status === 'completed')
       || null;
     const publishedProfile = order.drawingLibraryItem?.productTimeProfiles[0] || null;
+    const productTimeLink = productTimeRouteLink(workOrder, publishedProfile?.version || null);
     const effectiveUnitMilliseconds = batch.unitMillisecondsSnapshot
       || (publishedProfile ? productTimeTotalMilliseconds(publishedProfile.entries) : null)
       || order.planningUnitMilliseconds;
@@ -835,7 +944,10 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       routeVersion: workOrder?.processRoute?.version ?? null,
       routeStatus: (workOrder?.processRoute?.status as ProcessRouteStatus | undefined) || null,
       routeSource: workOrder?.processRoute?.routeSource || null,
-      productTimeProfileVersion: workOrder?.processRoute?.productTimeProfileVersion || batch.productTimeProfileVersion || null,
+      productTimeProfileVersion: workOrder?.processRoute?.productTimeProfileVersion || null,
+      availableProductTimeProfileVersion: publishedProfile?.version || null,
+      availableProductTimeProcessCount: publishedProfile?.entries.length || null,
+      ...productTimeLink,
       productRemark: workOrder?.processRoute?.productTimeProfile?.remark || null,
       orderRemark: workOrder?.remark || order.remark || null,
       drawingLibraryItemId: order.drawingLibraryItemId,
@@ -851,6 +963,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     const targetQuantity = quantitySummary.targetQty;
     const stageClosed = stage === 'completed';
     const dueAt = order.plannedAt?.toISOString() || null;
+    const publishedProfile = order.drawingLibraryItem?.productTimeProfiles[0] || null;
+    const productTimeLink = productTimeRouteLink(order, publishedProfile?.version || null);
     const reportableRoute = order.processRoute?.routeSource === 'product_time_profile'
       && order.processRoute.productTimeProfileVersion !== null
       ? order.processRoute
@@ -894,6 +1008,9 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       routeStatus: (order.processRoute?.status as ProcessRouteStatus | undefined) || null,
       routeSource: order.processRoute?.routeSource || null,
       productTimeProfileVersion: order.processRoute?.productTimeProfileVersion ?? null,
+      availableProductTimeProfileVersion: publishedProfile?.version || null,
+      availableProductTimeProcessCount: publishedProfile?.entries.length || null,
+      ...productTimeLink,
       productRemark: order.processRoute?.productTimeProfile?.remark || null,
       orderRemark: order.remark || null,
       drawingLibraryItemId: order.drawingLibraryItemId,

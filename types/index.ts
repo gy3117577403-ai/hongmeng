@@ -1367,6 +1367,13 @@ export type WorkflowActivityDTO = {
   createdAt: string;
 };
 
+export type ProductTimeRouteLinkState =
+  | 'linked'
+  | 'available'
+  | 'upgrade_available'
+  | 'missing_profile'
+  | 'locked';
+
 export type WorkflowItemDTO = {
   id: string;
   entityId: string;
@@ -1394,6 +1401,10 @@ export type WorkflowItemDTO = {
   routeStatus?: ProcessRouteStatus | null;
   routeSource?: string | null;
   productTimeProfileVersion?: number | null;
+  availableProductTimeProfileVersion?: number | null;
+  availableProductTimeProcessCount?: number | null;
+  productTimeRouteLinkState?: ProductTimeRouteLinkState | null;
+  canApplyProductTimeProfile?: boolean;
   productRemark?: string | null;
   orderRemark?: string | null;
   drawingLibraryItemId?: string | null;

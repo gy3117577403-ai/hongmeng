@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma';
 import { findDrawingLibraryItemForWorkOrder } from '@/lib/drawing-library';
 import { normalizeWorkOrderStage, parseWorkOrderBody, serializeWorkOrder } from '@/lib/work-orders';
 import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
+import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -105,36 +106,39 @@ export async function POST(req: NextRequest) {
     const { data, errors } = parseWorkOrderBody(body);
     if (errors.length) return NextResponse.json({ ok: false, error: errors[0], message: errors[0] }, { status: 400 });
 
-    const createdWorkOrder = await prisma.workOrder.create({
-      data: {
-        code: String(data.code),
-        customerName: data.customerName === null ? null : String(data.customerName || ''),
-        productName: String(data.productName),
-        stage: String(data.stage),
-        priority: String(data.priority),
-        status: String(data.status),
-        progress: Number(data.progress),
-        plannedAt: data.plannedAt instanceof Date ? data.plannedAt : null,
-        remark: data.remark === null ? null : String(data.remark || ''),
-        specification: typeof data.specification === 'string' ? data.specification : null,
-        sourceOrderNo: typeof data.sourceOrderNo === 'string' ? data.sourceOrderNo : null,
-        salesperson: typeof data.salesperson === 'string' ? data.salesperson : null,
-        planType: 'manual',
-        planActive: true,
-        libraryKey: typeof data.libraryKey === 'string' && data.libraryKey ? data.libraryKey : (typeof data.specification === 'string' && data.specification ? data.specification : String(data.code)),
-      },
-      include: {
-        resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } },
-      },
+    const drawingLibraryItem = await findDrawingLibraryItemForWorkOrder({
+      customerName: data.customerName === null ? null : String(data.customerName || ''),
+      specification: typeof data.specification === 'string' ? data.specification : null,
     });
-    const drawingLibraryItem = await findDrawingLibraryItemForWorkOrder(createdWorkOrder);
-    const workOrder = drawingLibraryItem
-      ? await prisma.workOrder.update({
-          where: { id: createdWorkOrder.id },
-          data: { drawingLibraryItemId: drawingLibraryItem.id },
-          include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
-        })
-      : createdWorkOrder;
+    const workOrder = await prisma.$transaction(async tx => {
+      const created = await tx.workOrder.create({
+        data: {
+          code: String(data.code),
+          customerName: data.customerName === null ? null : String(data.customerName || ''),
+          productName: String(data.productName),
+          stage: String(data.stage),
+          priority: String(data.priority),
+          status: String(data.status),
+          progress: Number(data.progress),
+          plannedAt: data.plannedAt instanceof Date ? data.plannedAt : null,
+          remark: data.remark === null ? null : String(data.remark || ''),
+          specification: typeof data.specification === 'string' ? data.specification : null,
+          sourceOrderNo: typeof data.sourceOrderNo === 'string' ? data.sourceOrderNo : null,
+          salesperson: typeof data.salesperson === 'string' ? data.salesperson : null,
+          planType: 'manual',
+          planActive: true,
+          libraryKey: typeof data.libraryKey === 'string' && data.libraryKey
+            ? data.libraryKey
+            : (typeof data.specification === 'string' && data.specification ? data.specification : String(data.code)),
+          drawingLibraryItemId: drawingLibraryItem?.id || null,
+        },
+        include: {
+          resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } },
+        },
+      });
+      await createWorkOrderProcessRoute(tx, { workOrderId: created.id, actorId: user.id });
+      return created;
+    });
 
     await logOp({ userId: user.id, action: 'create_work_order', targetType: 'work_order', targetId: workOrder.id, detail: { code: workOrder.code } });
     await snapshotChange({

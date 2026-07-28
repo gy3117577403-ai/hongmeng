@@ -98,8 +98,8 @@ function formatDate(value?: string | null, includeTime = true): string {
   }).format(date);
 }
 
-async function jsonRequest<T>(url: string): Promise<T> {
-  const response = await fetch(url, { cache: 'no-store' });
+async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, { cache: 'no-store', ...init });
   const data = await response.json().catch(() => ({ ok: false, error: '服务返回格式异常' })) as T & { error?: string };
   if (!response.ok) throw new Error(data.error || '请求失败');
   return data;
@@ -123,6 +123,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     batchId: '', workOrderId: '', stepId: '', fromPlanning: false, fromProduction: false, returnTo: '/production',
   });
   const [deepLinkReady, setDeepLinkReady] = useState(false);
+  const [routeActionPending, setRouteActionPending] = useState(false);
+  const [routeActionMessage, setRouteActionMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -281,6 +283,41 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     return `/workspace/reports?${params.toString()}`;
   }
   const manualReportRoute = selectedProcessStep ? manualReportHref(selectedProcessStep) : null;
+  const availableProductTimeVersion = selected?.availableProductTimeProfileVersion || null;
+  const canApplyProductTime = Boolean(
+    selected?.entityType === 'production'
+    && selected.workOrderId
+    && selected.canApplyProductTimeProfile
+    && availableProductTimeVersion,
+  );
+  const productTimeActionLabel = selected?.productTimeRouteLinkState === 'upgrade_available'
+    ? `升级至 V${availableProductTimeVersion}`
+    : `应用 V${availableProductTimeVersion} 到本工单`;
+
+  async function applyProductTimeToSelectedWorkOrder(): Promise<void> {
+    if (!selected?.workOrderId || !availableProductTimeVersion || routeActionPending) return;
+    const confirmed = window.confirm(
+      `确认将已发布的产品工艺 V${availableProductTimeVersion} 应用到工单 ${selected.code}？\n\n系统只会处理尚未开工且没有报工记录的路线。`,
+    );
+    if (!confirmed) return;
+    setRouteActionPending(true);
+    setRouteActionMessage(null);
+    try {
+      const result = await jsonRequest<{ ok: boolean; message: string }>(
+        `/api/work-orders/${encodeURIComponent(selected.workOrderId)}/process-route/apply-product-time`,
+        { method: 'POST' },
+      );
+      setRouteActionMessage({ tone: 'success', text: result.message });
+      await load();
+    } catch (actionError) {
+      setRouteActionMessage({
+        tone: 'error',
+        text: actionError instanceof Error ? actionError.message : '应用产品工艺失败',
+      });
+    } finally {
+      setRouteActionPending(false);
+    }
+  }
 
   function focusProcessStep(step: WorkflowStepDTO): void {
     setSelectedProcessStepKey(step.key);
@@ -377,6 +414,11 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             {!selected ? <div className="workflow-detail-empty"><Workflow /><h2>选择一条流程查看节点</h2><p>流程中心显示真实业务记录，不生成独立副本。</p></div> : <>
               {selected.entityType !== 'production' && <header className="workflow-detail-header"><div><span>{entityLabels[selected.entityType]}流程 · {selected.code}</span><h2 title={selected.title}>{selected.title}</h2><p>{selected.subtitle}</p></div><div><span className={`workflow-status status-${selected.processStatus}`}>{statusLabels[selected.processStatus]}</span><a href={selected.route}>进入处理<ArrowUpRight size={14} /></a></div></header>}
               <div className="workflow-detail-scroll hm-scroll-region">
+                {routeActionMessage && <div className={`workflow-route-action-message ${routeActionMessage.tone}`}>
+                  {routeActionMessage.tone === 'success' ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                  <span>{routeActionMessage.text}</span>
+                  <button type="button" aria-label="关闭提示" onClick={() => setRouteActionMessage(null)}><X size={13} /></button>
+                </div>}
                 {selected.entityType === 'production' && selected.preparationSteps?.length ? <section className="workflow-preparation-strip" aria-label="生产准备状态">
                   <header>
                     <div><span>开工准备</span><h3>生产条件已联动校验</h3></div>
@@ -398,6 +440,9 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                         <span><PackageCheck size={13} />{(selected.quantity || 0).toLocaleString()} 件</span>
                         <span>R{selected.routeVersion || 1} · {selected.routeStatus ? routeStatusLabels[selected.routeStatus] : '待确认'}</span>
                         <span>{formatDate(selected.weekStartDate, false)} - {formatDate(selected.weekEndDate, false)}</span>
+                        {canApplyProductTime && selected.productTimeRouteLinkState === 'upgrade_available' && <button type="button" disabled={routeActionPending} onClick={() => { void applyProductTimeToSelectedWorkOrder(); }}>
+                          {routeActionPending ? <Loader2 className="spin" size={13} /> : <RefreshCw size={13} />}{productTimeActionLabel}
+                        </button>}
                         {selectedCurrentStep && <button type="button" onClick={() => focusProcessStep(selectedCurrentStep)}><LocateFixed size={13} />定位当前</button>}
                       </div>
                     </header>
@@ -477,11 +522,24 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                     <h3>{selected.currentStep}</h3>
                     <p>{selected.processStatus === 'closed'
                       ? '该历史工单已经完成，不再回放旧版“前端 / 后端”阶段。'
+                      : availableProductTimeVersion && selected.productTimeRouteLinkState === 'available'
+                        ? `产品工序与工时 V${availableProductTimeVersion} 已发布，但当前工单还没有生成路线快照。应用后将按真实工序流转。`
+                        : availableProductTimeVersion && selected.productTimeRouteLinkState === 'locked'
+                          ? `产品工序与工时 V${availableProductTimeVersion} 已发布，但该工单已经产生生产事实，系统不会静默覆盖历史路线。`
                       : selected.steps[0]?.key === 'route-repair-required'
                         ? '该工单已经产生生产事实，系统不会静默改写历史。请先补齐已发布的产品工艺路线，再继续查看和推进工序。'
                         : '尚未找到已发布的产品工艺路线。请先在产品工序与工时中完成配置，生产流程会自动按真实工序显示。'}</p>
+                    {availableProductTimeVersion && <div className="workflow-product-time-facts">
+                      <span>产品标准 V{availableProductTimeVersion}</span>
+                      <span>{selected.availableProductTimeProcessCount || 0} 道工序</span>
+                      <span>{selected.productTimeRouteLinkState === 'locked' ? '工单快照已锁定' : '工单快照待生成'}</span>
+                    </div>}
                   </div>
-                  {selected.processStatus !== 'closed' && <a href={selected.route}>{selected.steps[0]?.key === 'route-repair-required' ? '补齐产品工序' : '配置产品工序'}<ArrowUpRight size={14} /></a>}
+                  {selected.processStatus !== 'closed' && (canApplyProductTime
+                    ? <button type="button" disabled={routeActionPending} onClick={() => { void applyProductTimeToSelectedWorkOrder(); }}>
+                        {routeActionPending ? <Loader2 className="spin" size={14} /> : <PackageCheck size={14} />}{productTimeActionLabel}
+                      </button>
+                    : <a href={selected.route}>{availableProductTimeVersion ? '查看生产工单' : selected.steps[0]?.key === 'route-repair-required' ? '补齐产品工序' : '配置产品工序'}<ArrowUpRight size={14} /></a>)}
                 </section> : <>
                   <section className="workflow-current-state"><div><span>当前节点</span><strong>{selected.currentStep}</strong><p>{selected.nextStep ? `下一节点：${selected.nextStep}` : '流程已到达终态'}</p></div><dl><div><dt>负责人</dt><dd>{selected.owner || '待分派'}</dd></div><div><dt>截止时间</dt><dd className={selected.isOverdue ? 'overdue' : ''}>{formatDate(selected.dueAt)}</dd></div><div><dt>最近更新</dt><dd>{formatDate(selected.updatedAt)}</dd></div></dl></section>
                   <section className="workflow-stepper"><header><h3>流程节点</h3><span>{entityLabels[selected.entityType]}闭环</span></header><ol>{selected.steps.map((step, index) => <li className={step.state} key={step.key}><span>{step.state === 'done' ? <CheckCircle2 size={16} /> : step.state === 'current' ? <CircleDot size={16} /> : index + 1}</span><div><strong>{step.label}</strong><small>{processStepStateLabel(step)}</small></div>{index < selected.steps.length - 1 && <ChevronRight size={15} aria-hidden="true" />}</li>)}</ol></section>

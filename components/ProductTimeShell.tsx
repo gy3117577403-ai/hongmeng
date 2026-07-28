@@ -705,11 +705,16 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         ok?: boolean;
         error?: string;
         profile?: ProductTimeProfileDTO;
-        routeSync?: { updated: number; started: number; skipped: number };
+        routeSync?: { updated: number; created: number; started: number; skipped: number };
       };
       if (!response.ok || !data.profile) throw new Error(data.error || '产品工时发布失败');
-      const synced = data.routeSync?.updated || 0;
-      setMessage(`产品工序与工时 V${data.profile.version} 已发布${synced ? `，已自动同步 ${synced} 张待执行工单` : ''}`);
+      const updated = data.routeSync?.updated || 0;
+      const created = data.routeSync?.created || 0;
+      const syncSummary = [
+        created ? `已生成 ${created} 张工单路线` : '',
+        updated ? `已升级 ${updated} 张待执行路线` : '',
+      ].filter(Boolean).join('，');
+      setMessage(`产品工序与工时 V${data.profile.version} 已发布${syncSummary ? `，${syncSummary}` : ''}`);
       await load(selectedItem.id);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '产品工时发布失败');

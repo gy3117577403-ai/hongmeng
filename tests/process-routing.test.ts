@@ -8,6 +8,7 @@ import {
   canReplaceDraftRouteWithProductTime,
   canResetLegacyDraftRouteToProductTimePending,
   canUpgradeUnstartedConfirmedProductTimeRoute,
+  canMaterializeProductTimeRouteForWorkOrder,
   initialProcessRouteStatus,
   normalizeProcessStageGroup,
   PRODUCT_TIME_PENDING_ROUTE_SOURCE,
@@ -35,6 +36,31 @@ test('旧转序服务入口统一要求使用生产完成账本', async () => {
 test('已发布产品工时自动生成已确认路线，未发布产品只保留待维护占位', () => {
   assert.equal(initialProcessRouteStatus('product_time_profile'), 'confirmed');
   assert.equal(initialProcessRouteStatus(PRODUCT_TIME_PENDING_ROUTE_SOURCE), 'draft');
+});
+
+test('只有尚未开工且没有生产事实的普通工单可以补建产品工艺快照', () => {
+  const safeOrder = {
+    stage: 'not_issued',
+    status: 'pending',
+    startedAt: null,
+    completedAt: null,
+    lastProgressAt: null,
+    progress: 0,
+    completedQty: '0',
+    uncompletedQty: '1,000',
+    productionTargetQty: 1_000,
+    frontendTransferredQty: 0,
+    branchType: null,
+    planActive: true,
+    planClearedAt: null,
+  };
+  assert.equal(canMaterializeProductTimeRouteForWorkOrder(safeOrder), true);
+  assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, stage: 'frontend' }), false);
+  assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, startedAt: new Date() }), false);
+  assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, progress: 1 }), false);
+  assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, completedQty: '1' }), false);
+  assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, branchType: 'defect_rework' }), false);
+  assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, planActive: false }), false);
 });
 
 test('只有完全未开始且没有报工记录的草稿路线可以由产品工时安全接管', () => {

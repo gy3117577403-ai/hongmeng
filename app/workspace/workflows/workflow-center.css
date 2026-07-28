@@ -710,7 +710,8 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
   line-height: 1.6;
 }
 
-.hm-workflow-center .workflow-route-missing > a {
+.hm-workflow-center .workflow-route-missing > a,
+.hm-workflow-center .workflow-route-missing > button {
   min-height: 36px;
   display: inline-flex;
   align-items: center;
@@ -723,6 +724,80 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
   font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.hm-workflow-center .workflow-route-missing > button {
+  border: 0;
+}
+
+.hm-workflow-center .workflow-route-missing > button:hover {
+  background: var(--hm-color-accent-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 7px 16px rgb(229 83 0 / 16%);
+}
+
+.hm-workflow-center .workflow-route-missing > button:disabled {
+  cursor: wait;
+  opacity: .68;
+  transform: none;
+  box-shadow: none;
+}
+
+.hm-workflow-center .workflow-product-time-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 9px;
+}
+
+.hm-workflow-center .workflow-product-time-facts span {
+  min-height: 23px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 7px;
+  border: 1px solid #eadfd6;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 78%);
+  color: #5d6875;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.hm-workflow-center .workflow-route-action-message {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid #acd9bc;
+  border-radius: 7px;
+  background: #f1fbf5;
+  color: #237748;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.hm-workflow-center .workflow-route-action-message.error {
+  border-color: #efc3b0;
+  background: #fff7f3;
+  color: #b5471d;
+}
+
+.hm-workflow-center .workflow-route-action-message span {
+  flex: 1;
+}
+
+.hm-workflow-center .workflow-route-action-message button {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: currentColor;
+  cursor: pointer;
 }
 
 .hm-workflow-center .workflow-route-missing.completed {

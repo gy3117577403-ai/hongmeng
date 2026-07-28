@@ -13,6 +13,7 @@ import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { serializeWorkOrder } from '@/lib/work-orders';
 import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
+import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -86,18 +87,26 @@ export async function POST(req: NextRequest) {
           continue;
         }
         data.code = await nextUniqueCode(data.code, codeExists);
-        const createdWorkOrder = await prisma.workOrder.create({
-          data,
-          include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
+        const drawingLibraryItem = await findDrawingLibraryItemForWorkOrder({
+          customerName: data.customerName,
+          specification: data.specification,
         });
-        const drawingLibraryItem = await findDrawingLibraryItemForWorkOrder(createdWorkOrder);
-        const workOrder = drawingLibraryItem
-          ? await prisma.workOrder.update({
-              where: { id: createdWorkOrder.id },
-              data: { drawingLibraryItemId: drawingLibraryItem.id },
-              include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
-            })
-          : createdWorkOrder;
+        const workOrder = await prisma.$transaction(async tx => {
+          const createdWorkOrder = await tx.workOrder.create({
+            data: {
+              ...data,
+              drawingLibraryItemId: drawingLibraryItem?.id || null,
+            },
+            include: { resourceFiles: { where: { deletedAt: null, status: 'uploaded' }, select: { categoryId: true } } },
+          });
+          if (createdWorkOrder.planActive) {
+            await createWorkOrderProcessRoute(tx, {
+              workOrderId: createdWorkOrder.id,
+              actorId: user.id,
+            });
+          }
+          return createdWorkOrder;
+        });
         created += 1;
         createdOrders.push(serializeWorkOrder(workOrder));
         await snapshotChange({
