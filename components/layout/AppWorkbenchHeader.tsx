@@ -80,7 +80,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/workspace/warehouse', label: '仓库管理', icon: Warehouse },
       { href: '/workspace/procurement', label: '缺料跟进', icon: PackageSearch },
       { href: '/workspace/product-times', label: '产品工序与工时', icon: Clock3 },
-      { href: '/workspace/employees', label: '员工档案', icon: UsersRound },
+      { href: '/workspace/employees', label: '人事管理', icon: UsersRound },
       { href: '/workspace/attendance', label: '考勤与异常', icon: CalendarClock },
       { href: '/workspace/knowledge', label: '知识库', icon: BookOpen },
       { href: '/workspace/reports', label: '报表中心', icon: BarChart3 },
