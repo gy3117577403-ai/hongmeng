@@ -19,6 +19,7 @@ import {
   planBatchSnapshot,
   previewProductionPlanRelease,
   productionPlanTargetWeek,
+  releaseProductionPlanBatch,
   resolveOrCreatePlanningProduct,
 } from '../lib/production-planning';
 import { countWeeklyOrdersMissingPublishedProductTime } from '../lib/weekly-work-orders';
@@ -293,7 +294,7 @@ test('batch labor time overrides product and order defaults', () => {
   assert.equal(effectivePlanningUnitMilliseconds(null, null, null), null);
 });
 
-test('both current and next week releases require a published product process profile', async () => {
+test('missing product process profile can release for warehouse preparation but remains a production warning', async () => {
   const tx = {
     productionPlanBatch: {
       findMany: async () => [{
@@ -328,9 +329,128 @@ test('both current and next week releases require a published product process pr
       target,
       now: new Date('2026-07-20T04:00:00.000Z'),
     });
-    assert.equal(preview.blockers, 1);
-    assert.match(preview.items[0].blockers[0], /产品工序与工时尚未发布/);
+    assert.equal(preview.blockers, 0);
+    assert.equal(preview.items[0].blockers.length, 0);
+    const productTimeWarning = preview.items[0].warnings.find(message => message.includes('产品工序与工时尚未发布'));
+    assert.ok(productTimeWarning);
+    assert.match(productTimeWarning, /可先下达仓库配料/);
+    assert.match(productTimeWarning, /生产启动前必须补齐/);
   }
+});
+
+test('releasing without product time still creates a warehouse task and a pending production route', async () => {
+  let createdWorkOrder: Record<string, unknown> | null = null;
+  let warehouseTask: Record<string, unknown> | null = null;
+  let createdRoute: Record<string, unknown> | null = null;
+  const batch = {
+    id: 'batch-1',
+    batchNo: 1,
+    planOrderId: 'order-1',
+    quantity: 20,
+    releaseState: 'draft',
+    weekStartDate: new Date('2026-07-20T04:00:00.000Z'),
+    weekEndDate: new Date('2026-07-26T04:00:00.000Z'),
+    plannedCompletionDate: new Date('2026-07-24T04:00:00.000Z'),
+    unitMillisecondsSnapshot: null,
+    workOrderId: null,
+    workOrder: null,
+    deletedAt: null,
+    releasedAt: null,
+    releasedById: null,
+    activatedAt: null,
+    activatedById: null,
+    planOrder: {
+      deletedAt: null,
+      drawingLibraryItemId: 'drawing-product-1',
+      sourceOrderNo: 'SO-001',
+      sourceLineNo: 1,
+      customerName: '测试客户',
+      salesperson: '测试业务员',
+      productName: '测试产品',
+      specification: 'TEST-001',
+      priority: 'normal',
+      remark: null,
+      orderDate: new Date('2026-07-18T04:00:00.000Z'),
+      customerDueDate: new Date('2026-07-30T04:00:00.000Z'),
+      planningUnitMilliseconds: null,
+    },
+  };
+  const tx = {
+    productionPlanBatch: {
+      findUnique: async () => batch,
+      update: async () => ({}),
+    },
+    drawingLibraryItem: {
+      findFirst: async () => ({
+        id: 'drawing-product-1',
+        customerName: '测试客户',
+        productName: '测试产品',
+        specification: 'TEST-001',
+        productTimeProfiles: [],
+      }),
+    },
+    workOrder: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        createdWorkOrder = data;
+        return { id: 'work-order-1' };
+      },
+      findUnique: async () => ({
+        id: 'work-order-1',
+        drawingLibraryItemId: 'drawing-product-1',
+        specification: 'TEST-001',
+        stage: 'not_issued',
+        status: 'pending',
+        uncompletedQty: '20',
+        productionTargetQty: 20,
+      }),
+    },
+    warehouseMaterialTask: {
+      upsert: async ({ create }: { create: Record<string, unknown> }) => {
+        warehouseTask = create;
+        return {};
+      },
+    },
+    productTimeProfile: {
+      findFirst: async () => null,
+    },
+    workOrderProcessRoute: {
+      findUnique: async () => null,
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        createdRoute = data;
+        return { id: 'route-1' };
+      },
+    },
+    productionPlanOrder: {
+      findUnique: async () => ({
+        orderQuantity: 20,
+        status: 'pending',
+        batches: [{ quantity: 20, releaseState: 'active' }],
+      }),
+      update: async () => ({}),
+    },
+    productionPlanChange: {
+      create: async () => ({}),
+    },
+    operationLog: {
+      create: async () => ({}),
+    },
+  } as unknown as Parameters<typeof releaseProductionPlanBatch>[0];
+
+  const result = await releaseProductionPlanBatch(tx, {
+    batchId: 'batch-1',
+    target: 'active',
+    actorId: 'user-1',
+    now: new Date('2026-07-20T04:00:00.000Z'),
+  });
+
+  assert.equal(createdWorkOrder?.['planActive'], true);
+  assert.equal(createdWorkOrder?.['unitWorkHours'], null);
+  assert.equal(warehouseTask?.['workOrderId'], 'work-order-1');
+  assert.equal(warehouseTask?.['status'], 'pending');
+  assert.equal(createdRoute?.['routeSource'], 'product_time_pending');
+  assert.equal(createdRoute?.['status'], 'draft');
+  assert.match(result.warnings.join('；'), /仓库可先配料/);
+  assert.match(result.warnings.join('；'), /生产启动前必须发布/);
 });
 
 test('published product process profile satisfies weekly release labor requirement', async () => {
@@ -373,4 +493,5 @@ test('published product process profile satisfies weekly release labor requireme
   });
   assert.equal(preview.blockers, 0);
   assert.equal(preview.items[0].blockers.length, 0);
+  assert.equal(preview.warnings, 0);
 });

@@ -591,8 +591,11 @@ export async function previewProductionPlanRelease(
       );
     }
     if (!refs.drawingLibraryItemId) warnings.push('未匹配图纸资料');
-    if (!refs.productTimeProfileId) blockers.push('产品工序与工时尚未发布，不能下达周计划');
-    else if (!effectiveUnitMilliseconds) blockers.push('已发布产品工时无有效总工时，不能下达周计划');
+    if (!refs.productTimeProfileId) {
+      warnings.push('产品工序与工时尚未发布：可先下达仓库配料，生产启动前必须补齐');
+    } else if (!effectiveUnitMilliseconds) {
+      warnings.push('已发布产品工时暂无有效总工时：可先下达仓库配料，生产启动前必须修正');
+    }
     items.push({
       batchId: batch.id,
       specification: batch.planOrder.specification,
@@ -1233,14 +1236,20 @@ export async function releaseProductionPlanBatch(
   const now = input.now || new Date();
   const alignedWeek = alignProductionPlanBatchWeek(batch, input.target, now);
   const references = await resolvePlanningReferences(tx, batch.planOrder);
-  if (!references.productTimeProfileId) throw new Error('PRODUCT_TIME_PROFILE_REQUIRED');
   const effectiveUnitMilliseconds = effectivePlanningUnitMilliseconds(
     batch.unitMillisecondsSnapshot,
     references.unitMilliseconds,
     batch.planOrder.planningUnitMilliseconds,
   );
-  if (!effectiveUnitMilliseconds) throw new Error('PLAN_UNIT_WORK_TIME_REQUIRED');
   const totalMilliseconds = effectiveUnitMilliseconds ? BigInt(effectiveUnitMilliseconds) * BigInt(batch.quantity) : null;
+  const productTimePending = !references.productTimeProfileId || !effectiveUnitMilliseconds;
+  const warnings: string[] = [];
+  if (!references.drawingLibraryItemId) warnings.push('未匹配图纸资料，工艺需人工核对');
+  if (!references.productTimeProfileId) {
+    warnings.push('产品工序与工时待补充：仓库可先配料，生产启动前必须发布');
+  } else if (!effectiveUnitMilliseconds) {
+    warnings.push('产品工时待修正：仓库可先配料，生产启动前必须补齐有效总工时');
+  }
   const code = workOrderCode(batch.planOrder.sourceOrderNo, batch.planOrder.sourceLineNo, batch.batchNo);
   const planActive = input.target === 'active';
   const data = {
@@ -1306,8 +1315,6 @@ export async function releaseProductionPlanBatch(
     update: {},
   });
 
-  const warnings: string[] = [];
-  if (!references.drawingLibraryItemId) warnings.push('未匹配图纸资料，工艺需人工核对');
   await createWorkOrderProcessRoute(tx, { workOrderId: workOrder.id, actorId: input.actorId });
 
   await tx.productionPlanBatch.update({
@@ -1350,6 +1357,7 @@ export async function releaseProductionPlanBatch(
       },
       impactData: {
         warehouseTaskCreated: true,
+        productTimePending,
         processWarnings: warnings.length,
         weekRealigned: chinaDate(batch.weekStartDate) !== chinaDate(alignedWeek.weekStartDate),
       },
@@ -1362,7 +1370,12 @@ export async function releaseProductionPlanBatch(
       action: input.target === 'active' ? 'release_plan_to_current_week' : 'release_plan_to_next_week',
       targetType: 'production_plan_batch',
       targetId: batch.id,
-      detail: { workOrderId: workOrder.id, warnings: warnings.length },
+      detail: {
+        workOrderId: workOrder.id,
+        warehouseTaskCreated: true,
+        productTimePending,
+        warnings: warnings.length,
+      },
     },
   });
   return { workOrderId: workOrder.id, warnings, created };

@@ -94,8 +94,6 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
         refs.unitMilliseconds,
         existing.planOrder.planningUnitMilliseconds,
       );
-      if (released && !refs.productTimeProfileId) throw new Error('PRODUCT_TIME_PROFILE_REQUIRED');
-      if (released && !effectiveUnitMilliseconds) throw new Error('PLAN_UNIT_WORK_TIME_REQUIRED');
       const quantityChanged = parsed.data.quantity !== existing.quantity;
       if (released && existing.workOrderId && quantityChanged) {
         const processLedger = await loadProcessQuantityLedgerState(tx, existing.workOrderId);
@@ -163,12 +161,6 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {
       return NextResponse.json({ ok: false, error: '排产批次已被其他操作更新，请刷新后重试' }, { status: 409 });
-    }
-    if (error instanceof Error && error.message === 'PLAN_UNIT_WORK_TIME_REQUIRED') {
-      return NextResponse.json({ ok: false, error: '已下达批次必须保留有效单件工时' }, { status: 409 });
-    }
-    if (error instanceof Error && error.message === 'PRODUCT_TIME_PROFILE_REQUIRED') {
-      return NextResponse.json({ ok: false, error: '已下达批次必须关联已发布的产品工序与工时' }, { status: 409 });
     }
     if (error instanceof Error && error.message === 'PROCESS_QUANTITY_LEDGER_LOCKED') {
       return NextResponse.json({
