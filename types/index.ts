@@ -975,6 +975,137 @@ export type EmployeeDTO = {
   updatedAt: string;
 };
 
+export type RecruitmentDemandStatusDTO =
+  | 'DRAFT'
+  | 'PENDING_APPROVAL'
+  | 'RECRUITING'
+  | 'INTERVIEWING'
+  | 'OFFER'
+  | 'CLOSED'
+  | 'CANCELLED';
+
+export type RecruitmentPriorityDTO = 'NORMAL' | 'HIGH' | 'URGENT';
+
+export type RecruitmentCandidateStatusDTO =
+  | 'SCREENING'
+  | 'INTERVIEW'
+  | 'OFFER'
+  | 'HIRED'
+  | 'REJECTED'
+  | 'WITHDRAWN';
+
+export type RecruitmentInterviewStatusDTO = 'SCHEDULED' | 'COMPLETED' | 'CANCELLED';
+
+export type RecruitmentPersonRefDTO = {
+  id: string;
+  employeeNo: string;
+  name: string;
+  department?: string | null;
+  position?: string | null;
+  team?: string | null;
+};
+
+export type RecruitmentInterviewDTO = {
+  id: string;
+  candidateId: string;
+  round: number;
+  scheduledAt: string;
+  durationMinutes: number;
+  interviewer?: RecruitmentPersonRefDTO | null;
+  method: string;
+  location?: string | null;
+  status: RecruitmentInterviewStatusDTO;
+  statusText: string;
+  result: string;
+  resultText: string;
+  feedback?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RecruitmentCandidateDTO = {
+  id: string;
+  sequence: number;
+  code: string;
+  demandId: string;
+  name: string;
+  phone?: string | null;
+  source: string;
+  currentCompany?: string | null;
+  currentPosition?: string | null;
+  experienceYears?: number | null;
+  expectedSalary?: string | null;
+  notes?: string | null;
+  status: RecruitmentCandidateStatusDTO;
+  statusText: string;
+  nextActionAt?: string | null;
+  rejectionReason?: string | null;
+  employee?: RecruitmentPersonRefDTO | null;
+  hiredAt?: string | null;
+  interviews: RecruitmentInterviewDTO[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RecruitmentActivityDTO = {
+  id: string;
+  action: string;
+  actionText: string;
+  fromStatus?: RecruitmentDemandStatusDTO | null;
+  toStatus?: RecruitmentDemandStatusDTO | null;
+  content?: string | null;
+  actor?: IssueUserDTO | null;
+  createdAt: string;
+};
+
+export type RecruitmentDemandDTO = {
+  id: string;
+  code: string;
+  department: string;
+  position: string;
+  team?: string | null;
+  headcount: number;
+  employmentType: string;
+  employmentTypeText: string;
+  priority: RecruitmentPriorityDTO;
+  priorityText: string;
+  reason: string;
+  requirements?: string | null;
+  targetDate?: string | null;
+  status: RecruitmentDemandStatusDTO;
+  statusText: string;
+  requester?: RecruitmentPersonRefDTO | null;
+  coordinator?: RecruitmentPersonRefDTO | null;
+  candidateCount: number;
+  activeCandidateCount: number;
+  interviewCount: number;
+  hiredCount: number;
+  remainingHeadcount: number;
+  overdue: boolean;
+  version: number;
+  approvedAt?: string | null;
+  openedAt?: string | null;
+  closedAt?: string | null;
+  cancelledAt?: string | null;
+  candidates: RecruitmentCandidateDTO[];
+  activities: RecruitmentActivityDTO[];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type RecruitmentSummaryDTO = {
+  demandCount: number;
+  activeDemandCount: number;
+  pendingApprovalCount: number;
+  plannedHeadcount: number;
+  remainingHeadcount: number;
+  candidateCount: number;
+  interviewCount: number;
+  hiredCount: number;
+  overdueCount: number;
+};
+
 export type AttendanceStatus = 'draft' | 'confirmed';
 export type AttendanceType = 'normal' | 'leave' | 'absent' | 'rest';
 export type AttendanceSegmentType = 'regular' | 'overtime';

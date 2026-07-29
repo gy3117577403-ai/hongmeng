@@ -85,6 +85,45 @@ enum MaterialFollowUpStatus {
   @@map("material_follow_up_status")
 }
 
+enum RecruitmentDemandStatus {
+  DRAFT
+  PENDING_APPROVAL
+  RECRUITING
+  INTERVIEWING
+  OFFER
+  CLOSED
+  CANCELLED
+
+  @@map("recruitment_demand_status")
+}
+
+enum RecruitmentPriority {
+  NORMAL
+  HIGH
+  URGENT
+
+  @@map("recruitment_priority")
+}
+
+enum RecruitmentCandidateStatus {
+  SCREENING
+  INTERVIEW
+  OFFER
+  HIRED
+  REJECTED
+  WITHDRAWN
+
+  @@map("recruitment_candidate_status")
+}
+
+enum RecruitmentInterviewStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+
+  @@map("recruitment_interview_status")
+}
+
 model User {
   id                             String                      @id @default(uuid())
   username                       String                      @unique
@@ -110,10 +149,10 @@ model User {
   completedMaterialTasks         WarehouseMaterialTask[]     @relation("WarehouseTaskCompletedBy")
   updatedMaterialTasks           WarehouseMaterialTask[]     @relation("WarehouseTaskUpdatedBy")
   warehouseActivities            WarehouseMaterialActivity[] @relation("WarehouseActivityActor")
-  createdMaterialFollowUps       MaterialFollowUpTask[]       @relation("MaterialFollowUpCreatedBy")
-  ownedMaterialFollowUps         MaterialFollowUpTask[]       @relation("MaterialFollowUpOwner")
-  resolvedMaterialFollowUps      MaterialFollowUpTask[]       @relation("MaterialFollowUpResolvedBy")
-  materialFollowUpActivities     MaterialFollowUpActivity[]   @relation("MaterialFollowUpActivityActor")
+  createdMaterialFollowUps       MaterialFollowUpTask[]      @relation("MaterialFollowUpCreatedBy")
+  ownedMaterialFollowUps         MaterialFollowUpTask[]      @relation("MaterialFollowUpOwner")
+  resolvedMaterialFollowUps      MaterialFollowUpTask[]      @relation("MaterialFollowUpResolvedBy")
+  materialFollowUpActivities     MaterialFollowUpActivity[]  @relation("MaterialFollowUpActivityActor")
   createdProcessTemplates        ProcessTemplate[]           @relation("ProcessTemplateCreatedBy")
   createdProcessTimeStandards    ProcessTimeStandard[]       @relation("ProcessTimeStandardCreatedBy")
   createdProductTimeProfiles     ProductTimeProfile[]        @relation("ProductTimeProfileCreatedBy")
@@ -134,6 +173,14 @@ model User {
   updatedAbnormalTimeEvents      AbnormalTimeEvent[]         @relation("AbnormalTimeEventUpdatedBy")
   qualityConfirmedAbnormalEvents AbnormalTimeEvent[]         @relation("AbnormalTimeEventQualityConfirmedBy")
   resolvedAbnormalTimeEvents     AbnormalTimeEvent[]         @relation("AbnormalTimeEventResolvedBy")
+  createdRecruitmentDemands      RecruitmentDemand[]         @relation("RecruitmentDemandCreatedBy")
+  updatedRecruitmentDemands      RecruitmentDemand[]         @relation("RecruitmentDemandUpdatedBy")
+  approvedRecruitmentDemands     RecruitmentDemand[]         @relation("RecruitmentDemandApprovedBy")
+  createdRecruitmentCandidates   RecruitmentCandidate[]      @relation("RecruitmentCandidateCreatedBy")
+  updatedRecruitmentCandidates   RecruitmentCandidate[]      @relation("RecruitmentCandidateUpdatedBy")
+  createdRecruitmentInterviews   RecruitmentInterview[]      @relation("RecruitmentInterviewCreatedBy")
+  updatedRecruitmentInterviews   RecruitmentInterview[]      @relation("RecruitmentInterviewUpdatedBy")
+  recruitmentActivities          RecruitmentActivity[]       @relation("RecruitmentActivityActor")
   createdProductionPlanOrders    ProductionPlanOrder[]       @relation("ProductionPlanOrderCreatedBy")
   updatedProductionPlanOrders    ProductionPlanOrder[]       @relation("ProductionPlanOrderUpdatedBy")
   releasedProductionPlanBatches  ProductionPlanBatch[]       @relation("ProductionPlanBatchReleasedBy")
@@ -433,22 +480,26 @@ model WorkOrderProcessStep {
 }
 
 model Employee {
-  id                      String                         @id @default(uuid())
-  employeeNo              String                         @unique @map("employee_no")
-  name                    String
-  department              String?
-  position                String?
-  team                    String?
-  isActive                Boolean                        @default(true) @map("is_active")
-  attendanceEnabled       Boolean                        @default(true) @map("attendance_enabled")
-  createdAt               DateTime                       @default(now()) @map("created_at")
-  updatedAt               DateTime                       @updatedAt @map("updated_at")
-  executions              ProcessExecution[]
-  attendanceRecords       AttendanceRecord[]
-  abnormalTimeAllocations AbnormalTimeAllocation[]
-  laborClaims             ProcessLaborClaim[]
-  completionParticipants  ProcessCompletionParticipant[]
-  user                    User?
+  id                            String                         @id @default(uuid())
+  employeeNo                    String                         @unique @map("employee_no")
+  name                          String
+  department                    String?
+  position                      String?
+  team                          String?
+  isActive                      Boolean                        @default(true) @map("is_active")
+  attendanceEnabled             Boolean                        @default(true) @map("attendance_enabled")
+  createdAt                     DateTime                       @default(now()) @map("created_at")
+  updatedAt                     DateTime                       @updatedAt @map("updated_at")
+  executions                    ProcessExecution[]
+  attendanceRecords             AttendanceRecord[]
+  abnormalTimeAllocations       AbnormalTimeAllocation[]
+  laborClaims                   ProcessLaborClaim[]
+  completionParticipants        ProcessCompletionParticipant[]
+  user                          User?
+  requestedRecruitmentDemands   RecruitmentDemand[]            @relation("RecruitmentDemandRequester")
+  coordinatedRecruitmentDemands RecruitmentDemand[]            @relation("RecruitmentDemandCoordinator")
+  recruitmentInterviews         RecruitmentInterview[]         @relation("RecruitmentInterviewInterviewer")
+  recruitmentCandidate          RecruitmentCandidate?          @relation("RecruitmentCandidateEmployee")
 
   @@index([isActive, employeeNo])
   @@index([name])
@@ -457,6 +508,126 @@ model Employee {
   @@index([team])
   @@index([attendanceEnabled, isActive])
   @@map("employees")
+}
+
+model RecruitmentDemand {
+  id             String                  @id @default(uuid())
+  code           String                  @unique
+  department     String
+  position       String
+  team           String?
+  headcount      Int
+  employmentType String                  @default("full_time") @map("employment_type")
+  priority       RecruitmentPriority     @default(NORMAL)
+  reason         String
+  requirements   String?
+  targetDate     DateTime?               @map("target_date") @db.Date
+  status         RecruitmentDemandStatus @default(DRAFT)
+  requesterId    String?                 @map("requester_id")
+  coordinatorId  String?                 @map("coordinator_id")
+  createdById    String?                 @map("created_by_id")
+  updatedById    String?                 @map("updated_by_id")
+  approvedById   String?                 @map("approved_by_id")
+  approvedAt     DateTime?               @map("approved_at")
+  openedAt       DateTime?               @map("opened_at")
+  closedAt       DateTime?               @map("closed_at")
+  cancelledAt    DateTime?               @map("cancelled_at")
+  version        Int                     @default(0)
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
+  requester      Employee?               @relation("RecruitmentDemandRequester", fields: [requesterId], references: [id], onDelete: SetNull)
+  coordinator    Employee?               @relation("RecruitmentDemandCoordinator", fields: [coordinatorId], references: [id], onDelete: SetNull)
+  createdBy      User?                   @relation("RecruitmentDemandCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy      User?                   @relation("RecruitmentDemandUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  approvedBy     User?                   @relation("RecruitmentDemandApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  candidates     RecruitmentCandidate[]
+  activities     RecruitmentActivity[]
+
+  @@index([status, priority, targetDate])
+  @@index([department, status])
+  @@index([requesterId, status])
+  @@index([coordinatorId, status])
+  @@index([createdAt])
+  @@map("recruitment_demands")
+}
+
+model RecruitmentCandidate {
+  id              String                     @id @default(uuid())
+  sequence        Int                        @unique @default(autoincrement())
+  demandId        String                     @map("demand_id")
+  name            String
+  phone           String?
+  source          String
+  currentCompany  String?                    @map("current_company")
+  currentPosition String?                    @map("current_position")
+  experienceYears Int?                       @map("experience_years")
+  expectedSalary  String?                    @map("expected_salary")
+  notes           String?
+  status          RecruitmentCandidateStatus @default(SCREENING)
+  nextActionAt    DateTime?                  @map("next_action_at")
+  rejectionReason String?                    @map("rejection_reason")
+  employeeId      String?                    @unique @map("employee_id")
+  hiredAt         DateTime?                  @map("hired_at")
+  createdById     String?                    @map("created_by_id")
+  updatedById     String?                    @map("updated_by_id")
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+  demand          RecruitmentDemand          @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  employee        Employee?                  @relation("RecruitmentCandidateEmployee", fields: [employeeId], references: [id], onDelete: SetNull)
+  createdBy       User?                      @relation("RecruitmentCandidateCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy       User?                      @relation("RecruitmentCandidateUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  interviews      RecruitmentInterview[]
+
+  @@index([demandId, status, updatedAt])
+  @@index([status, nextActionAt])
+  @@index([name])
+  @@map("recruitment_candidates")
+}
+
+model RecruitmentInterview {
+  id              String                     @id @default(uuid())
+  candidateId     String                     @map("candidate_id")
+  round           Int
+  scheduledAt     DateTime                   @map("scheduled_at")
+  durationMinutes Int                        @default(60) @map("duration_minutes")
+  interviewerId   String?                    @map("interviewer_id")
+  method          String                     @default("onsite")
+  location        String?
+  status          RecruitmentInterviewStatus @default(SCHEDULED)
+  result          String                     @default("pending")
+  feedback        String?
+  completedAt     DateTime?                  @map("completed_at")
+  createdById     String?                    @map("created_by_id")
+  updatedById     String?                    @map("updated_by_id")
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+  candidate       RecruitmentCandidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  interviewer     Employee?                  @relation("RecruitmentInterviewInterviewer", fields: [interviewerId], references: [id], onDelete: SetNull)
+  createdBy       User?                      @relation("RecruitmentInterviewCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy       User?                      @relation("RecruitmentInterviewUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@unique([candidateId, round])
+  @@index([scheduledAt, status])
+  @@index([interviewerId, scheduledAt])
+  @@map("recruitment_interviews")
+}
+
+model RecruitmentActivity {
+  id         String            @id @default(uuid())
+  demandId   String            @map("demand_id")
+  action     String
+  fromStatus String?           @map("from_status")
+  toStatus   String?           @map("to_status")
+  content    String?
+  actorId    String?           @map("actor_id")
+  createdAt  DateTime          @default(now()) @map("created_at")
+  demand     RecruitmentDemand @relation(fields: [demandId], references: [id], onDelete: Cascade)
+  actor      User?             @relation("RecruitmentActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([demandId, createdAt])
+  @@index([actorId])
+  @@index([action])
+  @@map("recruitment_activities")
 }
 
 model ProcessExecution {
@@ -822,23 +993,23 @@ model WarehouseMaterialActivity {
 }
 
 model MaterialFollowUpTask {
-  id              String                    @id @default(uuid())
-  warehouseTaskId String                    @unique @map("warehouse_task_id")
-  status          MaterialFollowUpStatus    @default(PENDING)
-  ownerId         String?                   @map("owner_id")
-  createdById     String?                   @map("created_by_id")
-  resolvedById    String?                   @map("resolved_by_id")
-  latestProgress  String?                   @map("latest_progress")
-  expectedAt      DateTime?                 @map("expected_at")
-  lastFollowedAt  DateTime?                 @map("last_followed_at")
-  resolvedAt      DateTime?                 @map("resolved_at")
-  version         Int                       @default(0)
-  createdAt       DateTime                  @default(now()) @map("created_at")
-  updatedAt       DateTime                  @updatedAt @map("updated_at")
-  warehouseTask   WarehouseMaterialTask     @relation(fields: [warehouseTaskId], references: [id], onDelete: Cascade)
-  owner           User?                     @relation("MaterialFollowUpOwner", fields: [ownerId], references: [id], onDelete: SetNull)
-  createdBy       User?                     @relation("MaterialFollowUpCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  resolvedBy      User?                     @relation("MaterialFollowUpResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  id              String                     @id @default(uuid())
+  warehouseTaskId String                     @unique @map("warehouse_task_id")
+  status          MaterialFollowUpStatus     @default(PENDING)
+  ownerId         String?                    @map("owner_id")
+  createdById     String?                    @map("created_by_id")
+  resolvedById    String?                    @map("resolved_by_id")
+  latestProgress  String?                    @map("latest_progress")
+  expectedAt      DateTime?                  @map("expected_at")
+  lastFollowedAt  DateTime?                  @map("last_followed_at")
+  resolvedAt      DateTime?                  @map("resolved_at")
+  version         Int                        @default(0)
+  createdAt       DateTime                   @default(now()) @map("created_at")
+  updatedAt       DateTime                   @updatedAt @map("updated_at")
+  warehouseTask   WarehouseMaterialTask      @relation(fields: [warehouseTaskId], references: [id], onDelete: Cascade)
+  owner           User?                      @relation("MaterialFollowUpOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  createdBy       User?                      @relation("MaterialFollowUpCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  resolvedBy      User?                      @relation("MaterialFollowUpResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
   activities      MaterialFollowUpActivity[]
 
   @@index([status, expectedAt])

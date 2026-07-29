@@ -11,12 +11,16 @@ import {
   Building2,
   CalendarCheck2,
   CalendarClock,
+  CalendarDays,
+  Check,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
   CircleDollarSign,
   ClipboardCheck,
+  ClipboardList,
   Clock3,
+  ExternalLink,
   FileBarChart,
   FolderTree,
   GraduationCap,
@@ -24,18 +28,25 @@ import {
   Layers3,
   LayoutDashboard,
   Loader2,
+  MapPin,
+  MessageSquareText,
   MoreHorizontal,
   Network,
   PencilLine,
+  Phone,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   Search,
+  Send,
   ShieldCheck,
   Sparkles,
+  UserPlus,
   UserRound,
   UserRoundCheck,
   UsersRound,
+  X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -51,6 +62,10 @@ import type {
   CurrentUserDTO,
   EmployeeAttainmentReportDTO,
   EmployeeDTO,
+  RecruitmentCandidateDTO,
+  RecruitmentDemandDTO,
+  RecruitmentDemandStatusDTO,
+  RecruitmentSummaryDTO,
 } from '@/types';
 
 type HrView =
@@ -121,6 +136,66 @@ type AttainmentResponse = {
   error?: string;
 };
 
+type RecruitmentResponse = {
+  ok: boolean;
+  demands?: RecruitmentDemandDTO[];
+  demand?: RecruitmentDemandDTO;
+  summary?: RecruitmentSummaryDTO;
+  error?: string;
+};
+
+type RecruitmentDemandDraft = {
+  department: string;
+  position: string;
+  team: string;
+  headcount: string;
+  employmentType: string;
+  priority: string;
+  reason: string;
+  requirements: string;
+  targetDate: string;
+  requesterId: string;
+  coordinatorId: string;
+};
+
+type RecruitmentCandidateDraft = {
+  name: string;
+  phone: string;
+  source: string;
+  currentCompany: string;
+  currentPosition: string;
+  experienceYears: string;
+  expectedSalary: string;
+  notes: string;
+  nextActionAt: string;
+};
+
+type RecruitmentInterviewDraft = {
+  scheduledAt: string;
+  durationMinutes: string;
+  interviewerId: string;
+  method: string;
+  location: string;
+  result: string;
+  feedback: string;
+};
+
+type RecruitmentHireDraft = {
+  employeeNo: string;
+  department: string;
+  position: string;
+  team: string;
+  attendanceEnabled: boolean;
+};
+
+type RecruitmentDialog =
+  | 'demand'
+  | 'candidate'
+  | 'interview'
+  | 'interview-result'
+  | 'hire'
+  | null;
+
 type HrNavItem = {
   id: HrView;
   label: string;
@@ -131,7 +206,7 @@ type HrNavItem = {
 const hrNavigation: HrNavItem[] = [
   { id: 'overview', label: '人事首页', description: '人力与协同总览', icon: LayoutDashboard },
   { id: 'directory', label: '员工档案', description: '人员与岗位资料', icon: UserRound },
-  { id: 'recruiting', label: '招聘管理', description: '需求与进度预览', icon: BriefcaseBusiness },
+  { id: 'recruiting', label: '招聘管理', description: '需求、候选与录用闭环', icon: BriefcaseBusiness },
   { id: 'attendance', label: '考勤管理', description: '出勤与异常确认', icon: CalendarCheck2 },
   { id: 'performance', label: '薪酬绩效', description: '工时绩效与待接入薪酬', icon: CircleDollarSign },
   { id: 'training', label: '培训发展', description: '岗位能力与培养计划', icon: GraduationCap },
@@ -177,6 +252,73 @@ const emptyAbnormalSummary: NonNullable<AbnormalResponse['summary']> = {
   incidentMilliseconds: 0,
   affectedPersonMilliseconds: 0,
 };
+
+const emptyRecruitmentSummary: RecruitmentSummaryDTO = {
+  demandCount: 0,
+  activeDemandCount: 0,
+  pendingApprovalCount: 0,
+  plannedHeadcount: 0,
+  remainingHeadcount: 0,
+  candidateCount: 0,
+  interviewCount: 0,
+  hiredCount: 0,
+  overdueCount: 0,
+};
+
+const emptyRecruitmentDemandDraft: RecruitmentDemandDraft = {
+  department: '',
+  position: '',
+  team: '',
+  headcount: '1',
+  employmentType: 'full_time',
+  priority: 'NORMAL',
+  reason: '',
+  requirements: '',
+  targetDate: '',
+  requesterId: '',
+  coordinatorId: '',
+};
+
+const emptyRecruitmentCandidateDraft: RecruitmentCandidateDraft = {
+  name: '',
+  phone: '',
+  source: '',
+  currentCompany: '',
+  currentPosition: '',
+  experienceYears: '',
+  expectedSalary: '',
+  notes: '',
+  nextActionAt: '',
+};
+
+const emptyRecruitmentInterviewDraft: RecruitmentInterviewDraft = {
+  scheduledAt: '',
+  durationMinutes: '60',
+  interviewerId: '',
+  method: 'onsite',
+  location: '',
+  result: 'pass',
+  feedback: '',
+};
+
+const emptyRecruitmentHireDraft: RecruitmentHireDraft = {
+  employeeNo: '',
+  department: '',
+  position: '',
+  team: '',
+  attendanceEnabled: true,
+};
+
+const recruitmentStageOptions: Array<{ value: RecruitmentDemandStatusDTO | ''; label: string }> = [
+  { value: '', label: '全部状态' },
+  { value: 'DRAFT', label: '草稿' },
+  { value: 'PENDING_APPROVAL', label: '待审批' },
+  { value: 'RECRUITING', label: '招聘中' },
+  { value: 'INTERVIEWING', label: '面试中' },
+  { value: 'OFFER', label: '待录用' },
+  { value: 'CLOSED', label: '已完成' },
+  { value: 'CANCELLED', label: '已取消' },
+];
 
 function toDraft(employee: EmployeeDTO): EmployeeDraft {
   return {
@@ -235,6 +377,53 @@ function formatDate(value: string): string {
     month: '2-digit',
     day: '2-digit',
   }).format(new Date(value));
+}
+
+function formatRecruitmentDate(value: string | null | undefined): string {
+  if (!value) return '未设置';
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date(value.length === 10 ? `${value}T00:00:00Z` : value));
+}
+
+function toDateTimeLocal(value: string | null | undefined): string {
+  if (!value) return '';
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function summarizeRecruitmentClient(demands: RecruitmentDemandDTO[]): RecruitmentSummaryDTO {
+  return demands.reduce<RecruitmentSummaryDTO>((summary, demand) => {
+    summary.demandCount += 1;
+    if (!['CLOSED', 'CANCELLED'].includes(demand.status)) summary.activeDemandCount += 1;
+    if (demand.status === 'PENDING_APPROVAL') summary.pendingApprovalCount += 1;
+    summary.plannedHeadcount += demand.headcount;
+    summary.remainingHeadcount += demand.remainingHeadcount;
+    summary.candidateCount += demand.candidateCount;
+    summary.interviewCount += demand.interviewCount;
+    summary.hiredCount += demand.hiredCount;
+    if (demand.overdue) summary.overdueCount += 1;
+    return summary;
+  }, { ...emptyRecruitmentSummary });
+}
+
+function recruitmentStatusTone(status: RecruitmentDemandStatusDTO): string {
+  if (status === 'CLOSED') return 'green';
+  if (status === 'CANCELLED') return 'muted';
+  if (status === 'PENDING_APPROVAL' || status === 'OFFER') return 'orange';
+  if (status === 'INTERVIEWING') return 'violet';
+  return 'blue';
+}
+
+function candidateStatusTone(status: RecruitmentCandidateDTO['status']): string {
+  if (status === 'HIRED') return 'green';
+  if (status === 'REJECTED' || status === 'WITHDRAWN') return 'muted';
+  if (status === 'OFFER') return 'orange';
+  if (status === 'INTERVIEW') return 'violet';
+  return 'blue';
 }
 
 function departmentName(employee: EmployeeDTO): string {
@@ -331,6 +520,21 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   const [selectedTeam, setSelectedTeam] = useState('');
   const [directoryDetailTab, setDirectoryDetailTab] = useState<DirectoryDetailTab>('basic');
   const [recruitingStageFilter, setRecruitingStageFilter] = useState('');
+  const [recruitmentDemands, setRecruitmentDemands] = useState<RecruitmentDemandDTO[]>([]);
+  const [recruitmentSummary, setRecruitmentSummary] = useState<RecruitmentSummaryDTO>(emptyRecruitmentSummary);
+  const [selectedRecruitmentDemandId, setSelectedRecruitmentDemandId] = useState('');
+  const [recruitmentKeyword, setRecruitmentKeyword] = useState('');
+  const [recruitmentDepartmentFilter, setRecruitmentDepartmentFilter] = useState('');
+  const [recruitmentDialog, setRecruitmentDialog] = useState<RecruitmentDialog>(null);
+  const [recruitmentDialogError, setRecruitmentDialogError] = useState('');
+  const [recruitmentSaving, setRecruitmentSaving] = useState(false);
+  const [editingRecruitmentDemand, setEditingRecruitmentDemand] = useState(false);
+  const [recruitmentDemandDraft, setRecruitmentDemandDraft] = useState<RecruitmentDemandDraft>(emptyRecruitmentDemandDraft);
+  const [recruitmentCandidateDraft, setRecruitmentCandidateDraft] = useState<RecruitmentCandidateDraft>(emptyRecruitmentCandidateDraft);
+  const [recruitmentInterviewDraft, setRecruitmentInterviewDraft] = useState<RecruitmentInterviewDraft>(emptyRecruitmentInterviewDraft);
+  const [recruitmentHireDraft, setRecruitmentHireDraft] = useState<RecruitmentHireDraft>(emptyRecruitmentHireDraft);
+  const [selectedRecruitmentCandidateId, setSelectedRecruitmentCandidateId] = useState('');
+  const [selectedRecruitmentInterviewId, setSelectedRecruitmentInterviewId] = useState('');
   const [selectedTrainingPlanIndex, setSelectedTrainingPlanIndex] = useState(0);
   useToastBridge(toast, setToast);
 
@@ -339,11 +543,19 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     const requested = params.get('view') as HrView | null;
     if (requested && hrNavigation.some(item => item.id === requested)) setView(requested);
     if (params.get('detail') === 'collaboration') setDirectoryDetailTab('collaboration');
+    const recruitmentStage = params.get('recruitmentStage');
+    if (recruitmentStage && recruitmentStageOptions.some(item => item.value === recruitmentStage)) {
+      setRecruitingStageFilter(recruitmentStage);
+    }
   }, []);
 
   const selectedEmployee = useMemo(
     () => employees.find(employee => employee.id === selectedEmployeeId) || null,
     [employees, selectedEmployeeId],
+  );
+  const selectedRecruitmentDemand = useMemo(
+    () => recruitmentDemands.find(demand => demand.id === selectedRecruitmentDemandId) || null,
+    [recruitmentDemands, selectedRecruitmentDemandId],
   );
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
 
@@ -352,11 +564,12 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     setError('');
     setAuxiliaryWarning('');
     try {
-      const [employeeResult, attendanceResult, abnormalResult, attainmentResult] = await Promise.allSettled([
+      const [employeeResult, attendanceResult, abnormalResult, attainmentResult, recruitmentResult] = await Promise.allSettled([
         fetch('/api/employees', { cache: 'no-store' }),
         fetch('/api/attendance/records?period=month', { cache: 'no-store' }),
         fetch('/api/abnormal-time-events?period=month', { cache: 'no-store' }),
         fetch('/api/reports/employee-attainment?period=month', { cache: 'no-store' }),
+        fetch('/api/recruitment/demands', { cache: 'no-store' }),
       ]);
 
       if (employeeResult.status !== 'fulfilled') throw new Error('员工档案加载失败');
@@ -412,6 +625,22 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
         }
       } else {
         warnings.push('绩效数据暂不可用');
+      }
+
+      if (recruitmentResult.status === 'fulfilled') {
+        const body = await recruitmentResult.value.json() as RecruitmentResponse;
+        if (recruitmentResult.value.ok) {
+          const nextDemands = body.demands || [];
+          setRecruitmentDemands(nextDemands);
+          setRecruitmentSummary(body.summary || emptyRecruitmentSummary);
+          setSelectedRecruitmentDemandId(current => (
+            nextDemands.some(demand => demand.id === current) ? current : nextDemands[0]?.id || ''
+          ));
+        } else {
+          warnings.push(body.error || '招聘数据暂不可用');
+        }
+      } else {
+        warnings.push('招聘数据暂不可用');
       }
       setAuxiliaryWarning([...new Set(warnings)].join('；'));
     } catch (reason) {
@@ -509,7 +738,9 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   const attendanceCoverage = summary.active
     ? Math.round((summary.attendance / summary.active) * 100)
     : 0;
-  const pendingApprovalCount = attendanceSummary.draftCount + abnormalSummary.pendingCount;
+  const pendingApprovalCount = attendanceSummary.draftCount
+    + abnormalSummary.pendingCount
+    + recruitmentSummary.pendingApprovalCount;
   const recentEmployees = [...employees]
     .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime())
     .slice(0, 5);
@@ -517,6 +748,301 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   const hrWorkItems = responsibilityWorkItems.filter(item => (
     item.ownerId === hrCoordinator?.id || item.participantIds.includes(hrCoordinator?.id || '')
   ));
+
+  function applyRecruitmentDemand(demand: RecruitmentDemandDTO): void {
+    setRecruitmentDemands(current => {
+      const next = current.some(item => item.id === demand.id)
+        ? current.map(item => item.id === demand.id ? demand : item)
+        : [demand, ...current];
+      setRecruitmentSummary(summarizeRecruitmentClient(next));
+      return next;
+    });
+    setSelectedRecruitmentDemandId(demand.id);
+  }
+
+  async function refreshRecruitment(): Promise<void> {
+    setRecruitmentSaving(true);
+    setRecruitmentDialogError('');
+    try {
+      const response = await fetch('/api/recruitment/demands', { cache: 'no-store' });
+      const body = await response.json() as RecruitmentResponse;
+      if (!response.ok) throw new Error(body.error || '招聘数据刷新失败');
+      const nextDemands = body.demands || [];
+      setRecruitmentDemands(nextDemands);
+      setRecruitmentSummary(body.summary || summarizeRecruitmentClient(nextDemands));
+      setSelectedRecruitmentDemandId(current => (
+        nextDemands.some(demand => demand.id === current) ? current : nextDemands[0]?.id || ''
+      ));
+      setToast('招聘数据已刷新');
+    } catch (reason) {
+      setToast(reason instanceof Error ? reason.message : '招聘数据刷新失败');
+    } finally {
+      setRecruitmentSaving(false);
+    }
+  }
+
+  function openRecruitmentDemandDialog(demand?: RecruitmentDemandDTO): void {
+    setEditingRecruitmentDemand(Boolean(demand));
+    setRecruitmentDemandDraft(demand ? {
+      department: demand.department,
+      position: demand.position,
+      team: demand.team || '',
+      headcount: String(demand.headcount),
+      employmentType: demand.employmentType,
+      priority: demand.priority,
+      reason: demand.reason,
+      requirements: demand.requirements || '',
+      targetDate: demand.targetDate || '',
+      requesterId: demand.requester?.id || '',
+      coordinatorId: demand.coordinator?.id || '',
+    } : {
+      ...emptyRecruitmentDemandDraft,
+      coordinatorId: employees.find(employee => employee.name === hrCoordinator?.name)?.id || '',
+    });
+    setRecruitmentDialogError('');
+    setRecruitmentDialog('demand');
+  }
+
+  async function saveRecruitmentDemand(): Promise<void> {
+    setRecruitmentSaving(true);
+    setRecruitmentDialogError('');
+    try {
+      const demand = editingRecruitmentDemand ? selectedRecruitmentDemand : null;
+      const response = await fetch(
+        demand ? `/api/recruitment/demands/${demand.id}` : '/api/recruitment/demands',
+        {
+          method: demand ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...recruitmentDemandDraft,
+            headcount: Number(recruitmentDemandDraft.headcount),
+            ...(demand ? { action: 'update', version: demand.version } : {}),
+          }),
+        },
+      );
+      const body = await response.json() as RecruitmentResponse;
+      if (!response.ok || !body.demand) throw new Error(body.error || '招聘需求保存失败');
+      applyRecruitmentDemand(body.demand);
+      setRecruitmentDialog(null);
+      setToast(demand ? '招聘需求已更新' : '招聘需求已创建，可提交审批');
+    } catch (reason) {
+      setRecruitmentDialogError(reason instanceof Error ? reason.message : '招聘需求保存失败');
+    } finally {
+      setRecruitmentSaving(false);
+    }
+  }
+
+  async function transitionRecruitmentDemand(action: string): Promise<void> {
+    const demand = selectedRecruitmentDemand;
+    if (!demand) return;
+    let note = '';
+    if (action === 'cancel' || action === 'return_draft') {
+      const entered = window.prompt(action === 'cancel' ? '请输入取消招聘的原因' : '请输入退回修改的原因');
+      if (entered === null) return;
+      note = entered.trim();
+      if (!note) {
+        setToast('请填写操作说明');
+        return;
+      }
+    }
+    setRecruitmentSaving(true);
+    try {
+      const response = await fetch(`/api/recruitment/demands/${demand.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, note, version: demand.version }),
+      });
+      const body = await response.json() as RecruitmentResponse;
+      if (!response.ok || !body.demand) throw new Error(body.error || '招聘流程更新失败');
+      applyRecruitmentDemand(body.demand);
+      setToast({
+        submit: '招聘需求已提交审批',
+        approve: '招聘需求已审批并启动',
+        return_draft: '招聘需求已退回',
+        cancel: '招聘需求已取消',
+        reopen: '招聘需求已重新开启',
+        close: '招聘需求已完成',
+      }[action] || '招聘流程已更新');
+    } catch (reason) {
+      setToast(reason instanceof Error ? reason.message : '招聘流程更新失败');
+    } finally {
+      setRecruitmentSaving(false);
+    }
+  }
+
+  function openRecruitmentCandidateDialog(): void {
+    setRecruitmentCandidateDraft(emptyRecruitmentCandidateDraft);
+    setRecruitmentDialogError('');
+    setRecruitmentDialog('candidate');
+  }
+
+  async function saveRecruitmentCandidate(): Promise<void> {
+    if (!selectedRecruitmentDemand) return;
+    setRecruitmentSaving(true);
+    setRecruitmentDialogError('');
+    try {
+      const response = await fetch('/api/recruitment/candidates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          demandId: selectedRecruitmentDemand.id,
+          ...recruitmentCandidateDraft,
+          experienceYears: recruitmentCandidateDraft.experienceYears
+            ? Number(recruitmentCandidateDraft.experienceYears)
+            : null,
+          nextActionAt: recruitmentCandidateDraft.nextActionAt
+            ? new Date(recruitmentCandidateDraft.nextActionAt).toISOString()
+            : null,
+        }),
+      });
+      const body = await response.json() as RecruitmentResponse;
+      if (!response.ok || !body.demand) throw new Error(body.error || '候选人录入失败');
+      applyRecruitmentDemand(body.demand);
+      setRecruitmentDialog(null);
+      setToast('候选人已进入筛选');
+    } catch (reason) {
+      setRecruitmentDialogError(reason instanceof Error ? reason.message : '候选人录入失败');
+    } finally {
+      setRecruitmentSaving(false);
+    }
+  }
+
+  async function updateRecruitmentCandidate(candidate: RecruitmentCandidateDTO, status: string): Promise<void> {
+    let rejectionReason = '';
+    if (status === 'REJECTED') {
+      const entered = window.prompt('请输入未通过原因');
+      if (entered === null) return;
+      rejectionReason = entered.trim();
+      if (!rejectionReason) {
+        setToast('请填写未通过原因');
+        return;
+      }
+    }
+    setRecruitmentSaving(true);
+    try {
+      const response = await fetch(`/api/recruitment/candidates/${candidate.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, rejectionReason }),
+      });
+      const body = await response.json() as RecruitmentResponse;
+      if (!response.ok || !body.demand) throw new Error(body.error || '候选人更新失败');
+      applyRecruitmentDemand(body.demand);
+      setToast('候选人状态已更新');
+    } catch (reason) {
+      setToast(reason instanceof Error ? reason.message : '候选人更新失败');
+    } finally {
+      setRecruitmentSaving(false);
+    }
+  }
+
+  function openRecruitmentInterviewDialog(candidate: RecruitmentCandidateDTO): void {
+    setSelectedRecruitmentCandidateId(candidate.id);
+    setSelectedRecruitmentInterviewId('');
+    setRecruitmentInterviewDraft({
+      ...emptyRecruitmentInterviewDraft,
+      scheduledAt: toDateTimeLocal(candidate.nextActionAt),
+    });
+    setRecruitmentDialogError('');
+    setRecruitmentDialog('interview');
+  }
+
+  function openRecruitmentInterviewResultDialog(candidate: RecruitmentCandidateDTO): void {
+    const interview = [...candidate.interviews]
+      .reverse()
+      .find(item => item.status === 'SCHEDULED');
+    if (!interview) {
+      setToast('该候选人没有待处理面试');
+      return;
+    }
+    setSelectedRecruitmentCandidateId(candidate.id);
+    setSelectedRecruitmentInterviewId(interview.id);
+    setRecruitmentInterviewDraft({
+      ...emptyRecruitmentInterviewDraft,
+      scheduledAt: toDateTimeLocal(interview.scheduledAt),
+      durationMinutes: String(interview.durationMinutes),
+      interviewerId: interview.interviewer?.id || '',
+      method: interview.method,
+      location: interview.location || '',
+    });
+    setRecruitmentDialogError('');
+    setRecruitmentDialog('interview-result');
+  }
+
+  async function saveRecruitmentInterview(): Promise<void> {
+    setRecruitmentSaving(true);
+    setRecruitmentDialogError('');
+    try {
+      const completing = recruitmentDialog === 'interview-result';
+      const response = await fetch(
+        completing
+          ? `/api/recruitment/interviews/${selectedRecruitmentInterviewId}`
+          : '/api/recruitment/interviews',
+        {
+          method: completing ? 'PATCH' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(completing ? {
+            action: 'complete',
+            result: recruitmentInterviewDraft.result,
+            feedback: recruitmentInterviewDraft.feedback,
+          } : {
+            candidateId: selectedRecruitmentCandidateId,
+            scheduledAt: recruitmentInterviewDraft.scheduledAt
+              ? new Date(recruitmentInterviewDraft.scheduledAt).toISOString()
+              : '',
+            durationMinutes: Number(recruitmentInterviewDraft.durationMinutes),
+            interviewerId: recruitmentInterviewDraft.interviewerId,
+            method: recruitmentInterviewDraft.method,
+            location: recruitmentInterviewDraft.location,
+          }),
+        },
+      );
+      const body = await response.json() as RecruitmentResponse;
+      if (!response.ok || !body.demand) throw new Error(body.error || '面试记录保存失败');
+      applyRecruitmentDemand(body.demand);
+      setRecruitmentDialog(null);
+      setToast(completing ? '面试结果已记录' : '面试已安排');
+    } catch (reason) {
+      setRecruitmentDialogError(reason instanceof Error ? reason.message : '面试记录保存失败');
+    } finally {
+      setRecruitmentSaving(false);
+    }
+  }
+
+  function openRecruitmentHireDialog(candidate: RecruitmentCandidateDTO): void {
+    if (!selectedRecruitmentDemand) return;
+    setSelectedRecruitmentCandidateId(candidate.id);
+    setRecruitmentHireDraft({
+      ...emptyRecruitmentHireDraft,
+      department: selectedRecruitmentDemand.department,
+      position: selectedRecruitmentDemand.position,
+      team: selectedRecruitmentDemand.team || '',
+    });
+    setRecruitmentDialogError('');
+    setRecruitmentDialog('hire');
+  }
+
+  async function saveRecruitmentHire(): Promise<void> {
+    setRecruitmentSaving(true);
+    setRecruitmentDialogError('');
+    try {
+      const response = await fetch(`/api/recruitment/candidates/${selectedRecruitmentCandidateId}/hire`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(recruitmentHireDraft),
+      });
+      const body = await response.json() as RecruitmentResponse;
+      if (!response.ok || !body.demand) throw new Error(body.error || '录用入职办理失败');
+      applyRecruitmentDemand(body.demand);
+      setRecruitmentDialog(null);
+      setToast('录用完成，员工档案已自动建立');
+      void loadHumanResources();
+    } catch (reason) {
+      setRecruitmentDialogError(reason instanceof Error ? reason.message : '录用入职办理失败');
+    } finally {
+      setRecruitmentSaving(false);
+    }
+  }
 
   function changeView(nextView: HrView): void {
     if (view === 'directory' && !confirmDiscard()) return;
@@ -1180,71 +1706,388 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   }
 
   function renderRecruiting() {
-    const recruitingItems = [
-      { department: '生产车间', role: '一线操作岗位储备', demand: Math.max(1, Math.ceil(summary.active * 0.05)), stage: '需求确认', tone: 'blue' },
-      { department: '质量管理', role: '质量检验岗位储备', demand: 1, stage: '岗位画像', tone: 'violet' },
-      { department: '仓库', role: '仓库协同岗位储备', demand: 1, stage: '待审批', tone: 'orange' },
+    const departments = [...new Set(recruitmentDemands.map(demand => demand.department))]
+      .sort((left, right) => left.localeCompare(right, 'zh-CN'));
+    const normalized = recruitmentKeyword.trim().toLocaleLowerCase('zh-CN');
+    const visibleDemands = recruitmentDemands.filter(demand => {
+      if (recruitingStageFilter && demand.status !== recruitingStageFilter) return false;
+      if (recruitmentDepartmentFilter && demand.department !== recruitmentDepartmentFilter) return false;
+      if (!normalized) return true;
+      return `${demand.code} ${demand.department} ${demand.position} ${demand.team || ''} ${demand.requester?.name || ''}`
+        .toLocaleLowerCase('zh-CN')
+        .includes(normalized);
+    });
+    const demand = selectedRecruitmentDemand;
+    const recruitmentStages: Array<{ status: RecruitmentDemandStatusDTO; label: string }> = [
+      { status: 'DRAFT', label: '需求建立' },
+      { status: 'PENDING_APPROVAL', label: '需求审批' },
+      { status: 'RECRUITING', label: '人才筛选' },
+      { status: 'INTERVIEWING', label: '面试评估' },
+      { status: 'OFFER', label: '录用办理' },
+      { status: 'CLOSED', label: '完成归档' },
     ];
-    const recruitingStages = ['需求确认', '岗位画像', '候选筛选', '面试安排', '录用入职'];
-    const visibleRecruitingItems = recruitingStageFilter
-      ? recruitingItems.filter(item => item.stage === recruitingStageFilter)
-      : recruitingItems;
+    const stageIndex = demand
+      ? Math.max(0, recruitmentStages.findIndex(stage => stage.status === demand.status))
+      : 0;
+    const selectedCandidate = demand?.candidates.find(candidate => candidate.id === selectedRecruitmentCandidateId) || null;
+    const upcomingInterviews = recruitmentDemands
+      .flatMap(item => item.candidates.flatMap(candidate => (
+        candidate.interviews
+          .filter(interview => interview.status === 'SCHEDULED')
+          .map(interview => ({ demand: item, candidate, interview }))
+      )))
+      .sort((left, right) => new Date(left.interview.scheduledAt).getTime() - new Date(right.interview.scheduledAt).getTime())
+      .slice(0, 4);
     return (
       <div className="hr-view hr-module-view hr-recruiting-view">
-        <section className="hr-module-hero">
-          <div><span className="hr-eyebrow">招聘管理 · 前端工作区</span><h1>人员需求与招聘进度</h1><p>先建立岗位需求、阶段和协同入口；候选人、面试与录用数据将在后续接入。</p></div>
-          <button type="button" className="hr-primary-button" onClick={() => setToast('招聘需求接口已预留，当前版本暂不写入数据')}><Plus size={17} />新建招聘需求</button>
+        <section className="hr-module-hero hr-recruitment-hero">
+          <div>
+            <span className="hr-eyebrow">招聘管理 · 真实业务台账</span>
+            <h1>招聘需求与人才进度</h1>
+            <p>从用人申请、审批、候选筛选、面试到录用建档，全部记录可追踪、可继续处理。</p>
+          </div>
+          <div className="hr-recruitment-hero-actions">
+            <span><BadgeCheck size={15} />数据实时保存</span>
+            <button type="button" className="hr-primary-button" onClick={() => openRecruitmentDemandDialog()}><Plus size={17} />新建招聘需求</button>
+          </div>
         </section>
-        <DataUnavailable message="当前系统尚无招聘台账接口。本页为可交互的前端工作区，不会把规划数据伪装成真实候选人记录。" />
-        <section className="hr-metric-grid compact">
-          <MetricCard icon={BriefcaseBusiness} label="规划岗位" value={recruitingItems.length} note="待与正式编制联动" onClick={() => setRecruitingStageFilter('')} />
-          <MetricCard icon={UsersRound} label="计划补充人数" value={recruitingItems.reduce((sum, item) => sum + item.demand, 0)} note="基于当前组织规模预览" tone="green" />
-          <MetricCard icon={ClipboardCheck} label="待确认需求" value={2} note="需部门主管确认" tone="orange" onClick={() => setRecruitingStageFilter('需求确认')} />
-          <MetricCard icon={UserRoundCheck} label="候选人数据" value="未接入" note="不生成虚假人员信息" tone="violet" />
+        <section className="hr-recruitment-commandbar">
+          <div className="hr-recruitment-kpis">
+            <button type="button" onClick={() => setRecruitingStageFilter('')}>
+              <span className="blue"><BriefcaseBusiness /></span><small>进行中需求</small><strong>{recruitmentSummary.activeDemandCount}</strong>
+            </button>
+            <button type="button" onClick={() => setRecruitingStageFilter('PENDING_APPROVAL')}>
+              <span className="orange"><ClipboardCheck /></span><small>待审批</small><strong>{recruitmentSummary.pendingApprovalCount}</strong>
+            </button>
+            <span><i className="violet"><UsersRound /></i><small>候选人</small><strong>{recruitmentSummary.candidateCount}</strong></span>
+            <span><i className="green"><UserRoundCheck /></i><small>已入职</small><strong>{recruitmentSummary.hiredCount}</strong></span>
+            <span className={recruitmentSummary.overdueCount ? 'attention' : ''}><i><AlertTriangle /></i><small>已超期</small><strong>{recruitmentSummary.overdueCount}</strong></span>
+          </div>
+          <div className="hr-recruitment-filters">
+            <label><Search size={16} /><input value={recruitmentKeyword} onChange={event => setRecruitmentKeyword(event.target.value)} placeholder="搜索需求编号、岗位或负责人" /></label>
+            <select value={recruitmentDepartmentFilter} onChange={event => setRecruitmentDepartmentFilter(event.target.value)} aria-label="筛选部门">
+              <option value="">全部部门</option>
+              {departments.map(item => <option value={item} key={item}>{item}</option>)}
+            </select>
+            <select value={recruitingStageFilter} onChange={event => setRecruitingStageFilter(event.target.value)} aria-label="筛选状态">
+              {recruitmentStageOptions.map(item => <option value={item.value} key={item.value || 'all'}>{item.label}</option>)}
+            </select>
+            <button type="button" className="hr-icon-button" disabled={recruitmentSaving} title="刷新招聘数据" onClick={() => void refreshRecruitment()}>
+              <RefreshCw className={recruitmentSaving ? 'spin' : ''} />
+            </button>
+          </div>
         </section>
-        <div className="hr-module-grid">
-          <section className="hr-main-panel hr-recruiting-board">
-            <header className="hr-section-header">
-              <div><span>需求池</span><h2>岗位招聘规划</h2></div>
-              <div className="hr-section-actions">
-                {recruitingStageFilter && <button type="button" onClick={() => setRecruitingStageFilter('')}>{recruitingStageFilter} ×</button>}
-                <em>人事协调：{hrCoordinator?.name || '待配置'}</em>
-              </div>
-            </header>
+
+        {!recruitmentDemands.length ? (
+          <section className="hr-main-panel hr-recruitment-empty-state">
+            <span><ClipboardList /></span>
             <div>
-              {visibleRecruitingItems.map(item => (
-                <article key={item.role}>
-                  <span className={`hr-module-icon ${item.tone}`}><BriefcaseBusiness /></span>
-                  <div><small>{item.department}</small><strong>{item.role}</strong><p>计划补充 {item.demand} 人 · 部门主管确认后进入招聘流程</p></div>
-                  <em>{item.stage}</em>
-                  <button type="button" onClick={() => setToast(`${item.role}：真实招聘台账接入后可继续维护`)}>查看规划<ChevronRight /></button>
-                </article>
-              ))}
-              {!visibleRecruitingItems.length && (
-                <EmptyPanel
-                  icon={BriefcaseBusiness}
-                  title={`${recruitingStageFilter}阶段暂无岗位`}
-                  description="该阶段将在真实招聘台账接入后显示对应需求。"
-                  action={<button type="button" className="hr-text-button" onClick={() => setRecruitingStageFilter('')}>查看全部规划</button>}
-                />
-              )}
+              <small>招聘台账已就绪</small>
+              <h2>当前还没有招聘需求</h2>
+              <p>从真实用人需求开始建立记录。系统不会再自动生成岗位储备或虚拟候选人。</p>
             </div>
+            <button type="button" className="hr-primary-button" onClick={() => openRecruitmentDemandDialog()}><Plus size={16} />建立第一条需求</button>
           </section>
-          <aside className="hr-main-panel hr-stage-panel">
-            <header className="hr-section-header"><div><span>流程预览</span><h2>招聘协同阶段</h2></div></header>
-            <ol>
-              {recruitingStages.map((label, index) => (
-                <li key={label} className={`${index < 2 ? 'active' : ''}${recruitingStageFilter === label ? ' selected' : ''}`}>
-                  <button type="button" onClick={() => setRecruitingStageFilter(current => current === label ? '' : label)}>
-                    <span>{index + 1}</span>
-                    <div><strong>{label}</strong><small>{index < 2 ? '可进行规划' : '待数据接入'}</small></div>
-                    <ChevronRight />
+        ) : (
+          <div className="hr-recruitment-workspace">
+            <section className="hr-main-panel hr-recruitment-demand-list">
+              <header className="hr-section-header">
+                <div><span>岗位需求</span><h2>招聘需求台账</h2></div>
+                <em>{visibleDemands.length} / {recruitmentDemands.length} 条</em>
+              </header>
+              <div>
+                {visibleDemands.map(item => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    className={`${selectedRecruitmentDemandId === item.id ? 'selected' : ''}${item.overdue ? ' overdue' : ''}`}
+                    onClick={() => setSelectedRecruitmentDemandId(item.id)}
+                  >
+                    <span className={`hr-recruitment-demand-icon ${recruitmentStatusTone(item.status)}`}><BriefcaseBusiness /></span>
+                    <span className="hr-recruitment-demand-copy">
+                      <small>{item.code} · {item.department}</small>
+                      <strong>{item.position}</strong>
+                      <em>{item.requester?.name || '负责人待补充'} · 计划 {item.headcount} 人</em>
+                    </span>
+                    <span className="hr-recruitment-demand-meta">
+                      <b className={recruitmentStatusTone(item.status)}>{item.statusText}</b>
+                      <small>{item.overdue ? '已超期' : `到岗 ${formatRecruitmentDate(item.targetDate)}`}</small>
+                    </span>
                   </button>
-                </li>
-              ))}
-            </ol>
-          </aside>
-        </div>
+                ))}
+                {!visibleDemands.length && (
+                  <EmptyPanel
+                    icon={Search}
+                    title="没有匹配的招聘需求"
+                    description="调整关键词、部门或状态筛选后再试。"
+                    action={<button type="button" className="hr-text-button" onClick={() => { setRecruitmentKeyword(''); setRecruitmentDepartmentFilter(''); setRecruitingStageFilter(''); }}>清除筛选</button>}
+                  />
+                )}
+              </div>
+            </section>
+
+            {demand ? (
+              <section className="hr-main-panel hr-recruitment-detail">
+                <header>
+                  <div className="hr-recruitment-detail-title">
+                    <span>{demand.code} · {demand.department}{demand.team ? ` / ${demand.team}` : ''}</span>
+                    <h2>{demand.position}</h2>
+                    <p>{demand.employmentTypeText} · 需求 {demand.headcount} 人 · 已入职 {demand.hiredCount} 人 · 仍缺 {demand.remainingHeadcount} 人</p>
+                  </div>
+                  <div className="hr-recruitment-detail-actions">
+                    <b className={recruitmentStatusTone(demand.status)}>{demand.statusText}</b>
+                    {demand.status === 'DRAFT' && <>
+                      <button type="button" className="hr-secondary-button" onClick={() => openRecruitmentDemandDialog(demand)}><PencilLine />编辑</button>
+                      <button type="button" className="hr-primary-button" disabled={recruitmentSaving} onClick={() => void transitionRecruitmentDemand('submit')}><Send />提交审批</button>
+                    </>}
+                    {demand.status === 'PENDING_APPROVAL' && <>
+                      <button type="button" className="hr-secondary-button" onClick={() => void transitionRecruitmentDemand('return_draft')}>退回修改</button>
+                      <button type="button" className="hr-primary-button" disabled={recruitmentSaving} onClick={() => void transitionRecruitmentDemand('approve')}><Check />审批并启动</button>
+                    </>}
+                    {['RECRUITING', 'INTERVIEWING', 'OFFER'].includes(demand.status) && <>
+                      <button type="button" className="hr-secondary-button" onClick={() => openRecruitmentDemandDialog(demand)}><PencilLine />调整需求</button>
+                      <button type="button" className="hr-primary-button" onClick={openRecruitmentCandidateDialog}><UserPlus />录入候选人</button>
+                      <button type="button" className="hr-icon-button" title="取消需求" onClick={() => void transitionRecruitmentDemand('cancel')}><X /></button>
+                    </>}
+                    {['CLOSED', 'CANCELLED'].includes(demand.status) && (
+                      <button type="button" className="hr-secondary-button" onClick={() => void transitionRecruitmentDemand('reopen')}><RotateCcw />重新开启</button>
+                    )}
+                  </div>
+                </header>
+
+                <div className={`hr-recruitment-stage-line${demand.status === 'CANCELLED' ? ' cancelled' : ''}`}>
+                  {recruitmentStages.map((stage, index) => (
+                    <span key={stage.status} className={`${index < stageIndex ? 'done' : ''}${index === stageIndex ? 'current' : ''}`}>
+                      <i>{index < stageIndex ? <Check /> : index + 1}</i>
+                      <small>{stage.label}</small>
+                    </span>
+                  ))}
+                </div>
+
+                <div className="hr-recruitment-facts">
+                  <span><small>用人负责人</small><strong>{demand.requester?.name || '待补充'}</strong></span>
+                  <span><small>招聘协调</small><strong>{demand.coordinator?.name || '待补充'}</strong></span>
+                  <span><small>期望到岗</small><strong className={demand.overdue ? 'danger' : ''}>{formatRecruitmentDate(demand.targetDate)}</strong></span>
+                  <span><small>优先级</small><strong>{demand.priorityText}</strong></span>
+                  <span className="wide"><small>招聘原因</small><strong>{demand.reason}</strong></span>
+                </div>
+
+                <section className="hr-recruitment-candidates">
+                  <header>
+                    <div><span className="hr-eyebrow">人才漏斗</span><h3>候选人进展</h3></div>
+                    <em>{demand.candidateCount} 人 · {demand.interviewCount} 场面试</em>
+                  </header>
+                  <div className="hr-recruitment-candidate-head">
+                    <span>候选人</span><span>来源 / 联系方式</span><span>当前阶段</span><span>下一步</span><span>操作</span>
+                  </div>
+                  <div className="hr-recruitment-candidate-list">
+                    {demand.candidates.map(candidate => {
+                      const scheduled = candidate.interviews.find(interview => interview.status === 'SCHEDULED');
+                      return (
+                        <article key={candidate.id}>
+                          <span className="hr-candidate-person"><i>{candidate.name.slice(0, 1)}</i><span><strong>{candidate.name}</strong><small>{candidate.code}</small></span></span>
+                          <span className="hr-candidate-source"><strong>{candidate.source}</strong><small>{candidate.phone || '未留电话'}</small></span>
+                          <span><b className={candidateStatusTone(candidate.status)}>{candidate.statusText}</b></span>
+                          <span className="hr-candidate-next">
+                            <strong>{scheduled ? `第 ${scheduled.round} 轮面试` : candidate.nextActionAt ? '待跟进' : candidate.statusText}</strong>
+                            <small>{scheduled ? formatDateTime(scheduled.scheduledAt) : formatRecruitmentDate(candidate.nextActionAt)}</small>
+                          </span>
+                          <span className="hr-candidate-actions">
+                            {candidate.status === 'SCREENING' && <>
+                              <button type="button" onClick={() => openRecruitmentInterviewDialog(candidate)}>安排面试</button>
+                              <button type="button" className="quiet" onClick={() => void updateRecruitmentCandidate(candidate, 'REJECTED')}>淘汰</button>
+                            </>}
+                            {candidate.status === 'INTERVIEW' && (
+                              scheduled
+                                ? <button type="button" onClick={() => openRecruitmentInterviewResultDialog(candidate)}>填写结果</button>
+                                : <button type="button" onClick={() => openRecruitmentInterviewDialog(candidate)}>安排下一轮</button>
+                            )}
+                            {candidate.status === 'OFFER' && <>
+                              <button type="button" className="orange" onClick={() => openRecruitmentHireDialog(candidate)}>录用入职</button>
+                              <button type="button" className="quiet" onClick={() => void updateRecruitmentCandidate(candidate, 'REJECTED')}>不录用</button>
+                            </>}
+                            {candidate.status === 'HIRED' && candidate.employee && (
+                              <button type="button" onClick={() => {
+                                const employee = employees.find(item => item.id === candidate.employee?.id);
+                                if (employee) chooseEmployee(employee);
+                                changeView('directory');
+                              }}>查看档案<ExternalLink /></button>
+                            )}
+                            {['REJECTED', 'WITHDRAWN'].includes(candidate.status) && (
+                              <button type="button" className="quiet" onClick={() => void updateRecruitmentCandidate(candidate, 'SCREENING')}>重新进入</button>
+                            )}
+                          </span>
+                        </article>
+                      );
+                    })}
+                    {!demand.candidates.length && (
+                      <EmptyPanel
+                        icon={UserPlus}
+                        title={['DRAFT', 'PENDING_APPROVAL'].includes(demand.status) ? '需求通过审批后开始招聘' : '尚未录入候选人'}
+                        description={['DRAFT', 'PENDING_APPROVAL'].includes(demand.status) ? '先完成需求审批，确保招聘岗位和人数已确认。' : '录入真实候选人后，可继续安排面试和办理录用。'}
+                        action={!['DRAFT', 'PENDING_APPROVAL', 'CANCELLED', 'CLOSED'].includes(demand.status)
+                          ? <button type="button" className="hr-primary-button" onClick={openRecruitmentCandidateDialog}><UserPlus />录入候选人</button>
+                          : undefined}
+                      />
+                    )}
+                  </div>
+                </section>
+              </section>
+            ) : (
+              <section className="hr-main-panel hr-recruitment-detail"><EmptyPanel icon={BriefcaseBusiness} title="请选择招聘需求" description="从左侧台账选择一条需求查看完整进度。" /></section>
+            )}
+
+            <aside className="hr-main-panel hr-recruitment-side">
+              <section>
+                <header><div><span className="hr-eyebrow">实时漏斗</span><h3>招聘推进</h3></div><em>{recruitmentSummary.remainingHeadcount} 人待补</em></header>
+                <div className="hr-recruitment-funnel">
+                  {[
+                    { label: '候选筛选', value: recruitmentDemands.reduce((sum, item) => sum + item.candidates.filter(candidate => candidate.status === 'SCREENING').length, 0), tone: 'blue' },
+                    { label: '面试评估', value: recruitmentDemands.reduce((sum, item) => sum + item.candidates.filter(candidate => candidate.status === 'INTERVIEW').length, 0), tone: 'violet' },
+                    { label: '待录用', value: recruitmentDemands.reduce((sum, item) => sum + item.candidates.filter(candidate => candidate.status === 'OFFER').length, 0), tone: 'orange' },
+                    { label: '已入职', value: recruitmentSummary.hiredCount, tone: 'green' },
+                  ].map(item => (
+                    <span key={item.label}><i className={item.tone}><UsersRound /></i><small>{item.label}</small><strong>{item.value}</strong></span>
+                  ))}
+                </div>
+              </section>
+              <section>
+                <header><div><span className="hr-eyebrow">日程</span><h3>近期面试</h3></div><em>{upcomingInterviews.length} 场</em></header>
+                <div className="hr-upcoming-interviews">
+                  {upcomingInterviews.map(item => (
+                    <button type="button" key={item.interview.id} onClick={() => {
+                      setSelectedRecruitmentDemandId(item.demand.id);
+                      openRecruitmentInterviewResultDialog(item.candidate);
+                    }}>
+                      <span><CalendarDays /></span>
+                      <span><strong>{item.candidate.name} · {item.demand.position}</strong><small>{formatDateTime(item.interview.scheduledAt)} · {item.interview.interviewer?.name || '面试官待定'}</small></span>
+                    </button>
+                  ))}
+                  {!upcomingInterviews.length && <p>近期没有待处理面试。</p>}
+                </div>
+              </section>
+              <section className="hr-recruitment-activity">
+                <header><div><span className="hr-eyebrow">操作留痕</span><h3>最近记录</h3></div></header>
+                <div>
+                  {(demand?.activities || []).slice(0, 6).map(activity => (
+                    <span key={activity.id}><i /><strong>{activity.actionText}</strong><small>{activity.actor?.displayName || '系统'} · {formatDateTime(activity.createdAt)}</small></span>
+                  ))}
+                  {!demand?.activities.length && <p>当前需求暂无操作记录。</p>}
+                </div>
+              </section>
+            </aside>
+          </div>
+        )}
+
+        {recruitmentDialog && (
+          <div className="hr-recruitment-dialog-backdrop" role="presentation" onMouseDown={event => {
+            if (event.currentTarget === event.target && !recruitmentSaving) setRecruitmentDialog(null);
+          }}>
+            <section className="hr-recruitment-dialog" role="dialog" aria-modal="true" aria-labelledby="recruitment-dialog-title">
+              <header>
+                <div>
+                  <span className="hr-eyebrow">招聘管理</span>
+                  <h2 id="recruitment-dialog-title">
+                    {recruitmentDialog === 'demand' && (editingRecruitmentDemand ? '调整招聘需求' : '新建招聘需求')}
+                    {recruitmentDialog === 'candidate' && '录入候选人'}
+                    {recruitmentDialog === 'interview' && '安排面试'}
+                    {recruitmentDialog === 'interview-result' && '填写面试结果'}
+                    {recruitmentDialog === 'hire' && '录用并建立员工档案'}
+                  </h2>
+                </div>
+                <button type="button" className="hr-icon-button" disabled={recruitmentSaving} onClick={() => setRecruitmentDialog(null)}><X /></button>
+              </header>
+
+              {recruitmentDialog === 'demand' && (
+                <div className="hr-recruitment-dialog-body">
+                  <div className="hr-recruitment-form-grid">
+                    <label><span>用人部门 *</span><input value={recruitmentDemandDraft.department} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, department: event.target.value }))} placeholder="例如：生产部" /></label>
+                    <label><span>招聘岗位 *</span><input value={recruitmentDemandDraft.position} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, position: event.target.value }))} placeholder="填写正式岗位名称" /></label>
+                    <label><span>班组 / 团队</span><input value={recruitmentDemandDraft.team} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, team: event.target.value }))} placeholder="可选" /></label>
+                    <label><span>招聘人数 *</span><input type="number" min="1" max="999" value={recruitmentDemandDraft.headcount} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, headcount: event.target.value }))} /></label>
+                    <label><span>用工类型</span><select value={recruitmentDemandDraft.employmentType} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, employmentType: event.target.value }))}><option value="full_time">正式员工</option><option value="temporary">临时用工</option><option value="intern">实习</option><option value="contractor">劳务协作</option></select></label>
+                    <label><span>优先级</span><select value={recruitmentDemandDraft.priority} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, priority: event.target.value }))}><option value="NORMAL">常规</option><option value="HIGH">优先</option><option value="URGENT">紧急</option></select></label>
+                    <label><span>期望到岗日期</span><input type="date" value={recruitmentDemandDraft.targetDate} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, targetDate: event.target.value }))} /></label>
+                    <label><span>用人负责人</span><select value={recruitmentDemandDraft.requesterId} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, requesterId: event.target.value }))}><option value="">待指定</option>{employees.filter(item => item.isActive).map(item => <option value={item.id} key={item.id}>{item.name} · {item.position || item.department || '岗位待维护'}</option>)}</select></label>
+                    <label><span>招聘协调人</span><select value={recruitmentDemandDraft.coordinatorId} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, coordinatorId: event.target.value }))}><option value="">待指定</option>{employees.filter(item => item.isActive).map(item => <option value={item.id} key={item.id}>{item.name} · {item.position || item.department || '岗位待维护'}</option>)}</select></label>
+                    <label className="wide"><span>招聘原因 *</span><textarea value={recruitmentDemandDraft.reason} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, reason: event.target.value }))} placeholder="说明新增、替补、产能扩充等真实原因" /></label>
+                    <label className="wide"><span>岗位要求</span><textarea value={recruitmentDemandDraft.requirements} onChange={event => setRecruitmentDemandDraft(current => ({ ...current, requirements: event.target.value }))} placeholder="技能、经验、班次与其他必要条件" /></label>
+                  </div>
+                </div>
+              )}
+
+              {recruitmentDialog === 'candidate' && (
+                <div className="hr-recruitment-dialog-body">
+                  <div className="hr-recruitment-context"><BriefcaseBusiness /><span><small>关联需求</small><strong>{demand?.department} · {demand?.position}</strong></span></div>
+                  <div className="hr-recruitment-form-grid">
+                    <label><span>候选人姓名 *</span><input value={recruitmentCandidateDraft.name} onChange={event => setRecruitmentCandidateDraft(current => ({ ...current, name: event.target.value }))} /></label>
+                    <label><span>联系电话</span><input value={recruitmentCandidateDraft.phone} onChange={event => setRecruitmentCandidateDraft(current => ({ ...current, phone: event.target.value }))} /></label>
+                    <label><span>候选来源 *</span><input value={recruitmentCandidateDraft.source} onChange={event => setRecruitmentCandidateDraft(current => ({ ...current, source: event.target.value }))} placeholder="内推、招聘平台、人才市场等" /></label>
+                    <label><span>工作年限</span><input type="number" min="0" max="80" value={recruitmentCandidateDraft.experienceYears} onChange={event => setRecruitmentCandidateDraft(current => ({ ...current, experienceYears: event.target.value }))} /></label>
+                    <label><span>当前公司</span><input value={recruitmentCandidateDraft.currentCompany} onChange={event => setRecruitmentCandidateDraft(current => ({ ...current, currentCompany: event.target.value }))} /></label>
+                    <label><span>当前岗位</span><input value={recruitmentCandidateDraft.currentPosition} onChange={event => setRecruitmentCandidateDraft(current => ({ ...current, currentPosition: event.target.value }))} /></label>
+                    <label><span>期望薪资</span><input value={recruitmentCandidateDraft.expectedSalary} onChange={event => setRecruitmentCandidateDraft(current => ({ ...current, expectedSalary: event.target.value }))} /></label>
+                    <label><span>下一步跟进时间</span><input type="datetime-local" value={recruitmentCandidateDraft.nextActionAt} onChange={event => setRecruitmentCandidateDraft(current => ({ ...current, nextActionAt: event.target.value }))} /></label>
+                    <label className="wide"><span>候选备注</span><textarea value={recruitmentCandidateDraft.notes} onChange={event => setRecruitmentCandidateDraft(current => ({ ...current, notes: event.target.value }))} placeholder="记录关键经历、沟通结果和关注点" /></label>
+                  </div>
+                </div>
+              )}
+
+              {(recruitmentDialog === 'interview' || recruitmentDialog === 'interview-result') && (
+                <div className="hr-recruitment-dialog-body">
+                  <div className="hr-recruitment-context"><UserRound /><span><small>候选人</small><strong>{selectedCandidate?.name || demand?.candidates.find(item => item.id === selectedRecruitmentCandidateId)?.name}</strong></span></div>
+                  {recruitmentDialog === 'interview' ? (
+                    <div className="hr-recruitment-form-grid">
+                      <label><span>面试时间 *</span><input type="datetime-local" value={recruitmentInterviewDraft.scheduledAt} onChange={event => setRecruitmentInterviewDraft(current => ({ ...current, scheduledAt: event.target.value }))} /></label>
+                      <label><span>时长（分钟）</span><input type="number" min="15" max="480" value={recruitmentInterviewDraft.durationMinutes} onChange={event => setRecruitmentInterviewDraft(current => ({ ...current, durationMinutes: event.target.value }))} /></label>
+                      <label><span>面试官</span><select value={recruitmentInterviewDraft.interviewerId} onChange={event => setRecruitmentInterviewDraft(current => ({ ...current, interviewerId: event.target.value }))}><option value="">待指定</option>{employees.filter(item => item.isActive).map(item => <option value={item.id} key={item.id}>{item.name} · {item.position || item.department || '岗位待维护'}</option>)}</select></label>
+                      <label><span>面试方式</span><select value={recruitmentInterviewDraft.method} onChange={event => setRecruitmentInterviewDraft(current => ({ ...current, method: event.target.value }))}><option value="onsite">现场面试</option><option value="video">视频面试</option><option value="phone">电话沟通</option></select></label>
+                      <label className="wide"><span>地点 / 会议入口</span><input value={recruitmentInterviewDraft.location} onChange={event => setRecruitmentInterviewDraft(current => ({ ...current, location: event.target.value }))} placeholder="会议室、车间或线上会议地址" /></label>
+                    </div>
+                  ) : (
+                    <div className="hr-recruitment-form-grid">
+                      <label><span>面试结果 *</span><select value={recruitmentInterviewDraft.result} onChange={event => setRecruitmentInterviewDraft(current => ({ ...current, result: event.target.value }))}><option value="pass">通过，进入待录用</option><option value="hold">待定，继续评估</option><option value="reject">未通过</option><option value="no_show">未到场</option></select></label>
+                      <label className="wide"><span>面试评价 *</span><textarea value={recruitmentInterviewDraft.feedback} onChange={event => setRecruitmentInterviewDraft(current => ({ ...current, feedback: event.target.value }))} placeholder="记录能力判断、风险点与后续建议" /></label>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {recruitmentDialog === 'hire' && (
+                <div className="hr-recruitment-dialog-body">
+                  <div className="hr-recruitment-hire-note"><BadgeCheck /><span><strong>录用后将自动建立员工档案</strong><small>候选人与招聘需求保留关联，后续档案维护在“员工档案”中进行。</small></span></div>
+                  <div className="hr-recruitment-form-grid">
+                    <label><span>员工编号 *</span><input value={recruitmentHireDraft.employeeNo} onChange={event => setRecruitmentHireDraft(current => ({ ...current, employeeNo: event.target.value }))} placeholder="必须唯一" /></label>
+                    <label><span>员工姓名</span><input value={selectedCandidate?.name || demand?.candidates.find(item => item.id === selectedRecruitmentCandidateId)?.name || ''} disabled /></label>
+                    <label><span>部门</span><input value={recruitmentHireDraft.department} onChange={event => setRecruitmentHireDraft(current => ({ ...current, department: event.target.value }))} /></label>
+                    <label><span>岗位</span><input value={recruitmentHireDraft.position} onChange={event => setRecruitmentHireDraft(current => ({ ...current, position: event.target.value }))} /></label>
+                    <label><span>班组 / 团队</span><input value={recruitmentHireDraft.team} onChange={event => setRecruitmentHireDraft(current => ({ ...current, team: event.target.value }))} /></label>
+                    <label className="hr-recruitment-checkbox"><input type="checkbox" checked={recruitmentHireDraft.attendanceEnabled} onChange={event => setRecruitmentHireDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} /><span><strong>启用考勤</strong><small>入职后进入正常考勤与报工范围</small></span></label>
+                  </div>
+                </div>
+              )}
+
+              {recruitmentDialogError && <div className="hr-recruitment-dialog-error"><AlertTriangle />{recruitmentDialogError}</div>}
+              <footer>
+                <button type="button" className="hr-secondary-button" disabled={recruitmentSaving} onClick={() => setRecruitmentDialog(null)}>取消</button>
+                <button
+                  type="button"
+                  className="hr-primary-button"
+                  disabled={recruitmentSaving}
+                  onClick={() => {
+                    if (recruitmentDialog === 'demand') void saveRecruitmentDemand();
+                    if (recruitmentDialog === 'candidate') void saveRecruitmentCandidate();
+                    if (recruitmentDialog === 'interview' || recruitmentDialog === 'interview-result') void saveRecruitmentInterview();
+                    if (recruitmentDialog === 'hire') void saveRecruitmentHire();
+                  }}
+                >
+                  {recruitmentSaving ? <Loader2 className="spin" /> : recruitmentDialog === 'hire' ? <UserRoundCheck /> : <Save />}
+                  {recruitmentSaving ? '保存中…' : recruitmentDialog === 'hire' ? '确认录用并建档' : '保存'}
+                </button>
+              </footer>
+            </section>
+          </div>
+        )}
       </div>
     );
   }
@@ -1453,6 +2296,15 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
         route: '/workspace/attendance',
         tone: 'danger',
       }] : []),
+      ...(recruitmentSummary.pendingApprovalCount ? [{
+        id: 'recruitment-pending',
+        title: `${recruitmentSummary.pendingApprovalCount} 项招聘需求待审批`,
+        source: '招聘管理',
+        due: '确认岗位、人数与目标到岗日',
+        status: '待审批',
+        route: '/workspace/employees?view=recruiting&recruitmentStage=PENDING_APPROVAL',
+        tone: 'warning',
+      }] : []),
       ...hrWorkItems.map(item => ({
         id: item.id,
         title: item.title,
@@ -1473,7 +2325,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
           <MetricCard icon={ClipboardCheck} label="全部待办" value={approvalItems.length} note="当前可定位事项" />
           <MetricCard icon={CalendarCheck2} label="考勤确认" value={attendanceSummary.draftCount} note="草稿记录" tone="orange" />
           <MetricCard icon={ShieldCheck} label="异常审核" value={abnormalSummary.pendingCount} note="质量待确认" tone="red" />
-          <MetricCard icon={UsersRound} label="人事协同" value={hrWorkItems.length} note={`负责人 ${hrCoordinator?.name || '待配置'}`} tone="violet" />
+          <MetricCard icon={UsersRound} label="招聘审批" value={recruitmentSummary.pendingApprovalCount} note="真实招聘需求" tone="violet" />
         </section>
         <section className="hr-main-panel hr-approval-list">
           <header className="hr-section-header"><div><span>行动入口</span><h2>待处理事项</h2></div><em>点击进入来源模块</em></header>
