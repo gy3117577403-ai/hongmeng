@@ -2431,6 +2431,7 @@ main.hr-workbench.hm-workbench-root.hm-workbench-root {
 .hr-performance-view { grid-template-rows: 88px 44px 84px minmax(0, 1fr); }
 .hr-training-view { grid-template-rows: 88px 44px minmax(0, 1fr); }
 .hr-organization-view { grid-template-rows: 88px minmax(0, 1fr); }
+.hr-responsibilities-view { grid-template-rows: 88px minmax(0, 1fr); }
 .hr-approvals-view { grid-template-rows: 88px 84px minmax(0, 1fr); }
 .hr-analytics-view { grid-template-rows: 88px 84px minmax(0, 1fr); }
 
@@ -2760,6 +2761,7 @@ main.hr-workbench.hm-workbench-root.hm-workbench-root {
   .hr-performance-view,
   .hr-training-view,
   .hr-organization-view,
+  .hr-responsibilities-view,
   .hr-approvals-view,
   .hr-analytics-view { grid-template-rows: none; grid-auto-rows: max-content; }
   .hr-module-grid,

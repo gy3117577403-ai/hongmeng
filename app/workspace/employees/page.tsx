@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import EmployeeManagementShell from '@/components/EmployeeManagementShell';
 import { currentUser } from '@/lib/auth';
 import './employee-workbench.css';
+import '../responsibilities/responsibility-collaboration.css';
 
 export const dynamic = 'force-dynamic';
 

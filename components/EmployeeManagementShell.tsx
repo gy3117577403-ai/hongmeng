@@ -21,6 +21,7 @@ import {
   FolderTree,
   GraduationCap,
   IdCard,
+  Layers3,
   LayoutDashboard,
   Loader2,
   MoreHorizontal,
@@ -39,6 +40,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
+import { ResponsibilityMatrixWorkspace } from '@/components/ResponsibilityMatrixWorkspace';
 import {
   responsibilityPeople,
   responsibilityWorkItems,
@@ -59,6 +61,7 @@ type HrView =
   | 'performance'
   | 'training'
   | 'organization'
+  | 'responsibilities'
   | 'approvals'
   | 'analytics';
 
@@ -133,6 +136,7 @@ const hrNavigation: HrNavItem[] = [
   { id: 'performance', label: '薪酬绩效', description: '工时绩效与待接入薪酬', icon: CircleDollarSign },
   { id: 'training', label: '培训发展', description: '岗位能力与培养计划', icon: GraduationCap },
   { id: 'organization', label: '组织架构', description: '部门与班组分布', icon: Network },
+  { id: 'responsibilities', label: '职责配置', description: '责任矩阵与人员归属', icon: Layers3 },
   { id: 'approvals', label: '审批中心', description: '人事协同待办', icon: ClipboardCheck },
   { id: 'analytics', label: '报表分析', description: '人力数据洞察', icon: FileBarChart },
 ];
@@ -331,8 +335,10 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   useToastBridge(toast, setToast);
 
   useEffect(() => {
-    const requested = new URLSearchParams(window.location.search).get('view') as HrView | null;
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get('view') as HrView | null;
     if (requested && hrNavigation.some(item => item.id === requested)) setView(requested);
+    if (params.get('detail') === 'collaboration') setDirectoryDetailTab('collaboration');
   }, []);
 
   const selectedEmployee = useMemo(
@@ -359,9 +365,16 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       const nextEmployees = sortEmployees(employeeBody.employees || []);
       setEmployees(nextEmployees);
       setSelectedEmployeeId(current => {
-        const requestedId = new URLSearchParams(window.location.search).get('employeeId') || '';
+        const params = new URLSearchParams(window.location.search);
+        const requestedId = params.get('employeeId') || '';
+        const requestedPersonId = params.get('person') || '';
+        const requestedPerson = responsibilityPeople.find(person => person.id === requestedPersonId);
+        const requestedPersonEmployee = requestedPerson
+          ? nextEmployees.find(employee => employee.name === requestedPerson.name)
+          : undefined;
         if (nextEmployees.some(employee => employee.id === current)) return current;
         if (requestedId && nextEmployees.some(employee => employee.id === requestedId)) return requestedId;
+        if (requestedPersonEmployee) return requestedPersonEmployee.id;
         return nextEmployees[0]?.id || '';
       });
 
@@ -1020,7 +1033,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                       <div className="hr-profile-readonly">
                         <span>数据范围</span>
                         <strong>生产员工档案</strong>
-                        <small>账号权限在职责与协同模块另行配置</small>
+                        <small>账号权限在职责配置中另行预览</small>
                       </div>
                     </fieldset>
                   </div>
@@ -1078,13 +1091,13 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
 
               {directoryDetailTab === 'collaboration' && (
                 <section className="hr-profile-section">
-                  <header><div><span className="hr-eyebrow">职责与协同</span><h2>现有职责配置</h2></div><Network /></header>
+                  <header><div><span className="hr-eyebrow">职责配置</span><h2>现有责任归属</h2></div><Network /></header>
                   {profilePerson ? (
                     <>
                       <div className="hr-profile-role-summary">
                         <span className="hr-person-avatar">{profilePerson.initials}</span>
                         <div><strong>{profilePerson.role}</strong><p>{profilePerson.summary}</p></div>
-                        <a href={`/workspace/responsibilities?person=${encodeURIComponent(profilePerson.id)}`}>打开职责档案<ArrowRight /></a>
+                        <a href={`/workspace/employees?view=responsibilities&person=${encodeURIComponent(profilePerson.id)}`}>打开职责配置<ArrowRight /></a>
                       </div>
                       <div className="hr-profile-responsibilities">
                         {profileWorkItems.slice(0, 5).map(item => (
@@ -1097,7 +1110,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                       </div>
                     </>
                   ) : (
-                    <EmptyPanel icon={Network} title="尚未关联职责档案" description="可在“职责与协同”中按真实人员姓名配置责任、审核和交接关系。" action={<a className="hr-text-button" href="/workspace/responsibilities">进入职责与协同</a>} />
+                    <EmptyPanel icon={Network} title="尚未关联职责档案" description="可在“职责配置”中按真实人员姓名配置责任、审核和交接关系。" action={<button type="button" className="hr-text-button" onClick={() => changeView('responsibilities')}>进入职责配置</button>} />
                   )}
                 </section>
               )}
@@ -1127,7 +1140,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                   {profilePerson.coreResponsibilities.slice(0, 3).map((responsibility, index) => <li key={responsibility}><span>{index + 1}</span><p>{responsibility}</p></li>)}
                 </ol>
               ) : (
-                <p className="hr-role-empty">当前人员尚未在“职责与协同”中配置核心职责。</p>
+                <p className="hr-role-empty">当前人员尚未在“职责配置”中维护核心职责。</p>
               )}
             </section>
             <section>
@@ -1404,6 +1417,22 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     );
   }
 
+  function renderResponsibilities() {
+    return (
+      <div className="hr-view hr-module-view hr-responsibilities-view">
+        <section className="hr-module-hero hr-responsibilities-hero">
+          <div>
+            <span className="hr-eyebrow">人事管理 · 责任治理</span>
+            <h1>职责配置与人员归属</h1>
+            <p>集中维护业务事项的主责、协同、审核与知会关系；角色档案和个人事项已归并到员工档案与审批中心。</p>
+          </div>
+          <a className="hr-secondary-button" href="/workspace/workflows">查看业务流程<ArrowRight size={17} /></a>
+        </section>
+        <ResponsibilityMatrixWorkspace user={_user} />
+      </div>
+    );
+  }
+
   function renderApprovals() {
     const approvalItems = [
       ...(attendanceSummary.draftCount ? [{
@@ -1529,6 +1558,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       case 'performance': return renderPerformance();
       case 'training': return renderTraining();
       case 'organization': return renderOrganization();
+      case 'responsibilities': return renderResponsibilities();
       case 'approvals': return renderApprovals();
       case 'analytics': return renderAnalytics();
       default: return renderOverview();
