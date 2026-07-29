@@ -500,6 +500,12 @@ model Employee {
   coordinatedRecruitmentDemands RecruitmentDemand[]            @relation("RecruitmentDemandCoordinator")
   recruitmentInterviews         RecruitmentInterview[]         @relation("RecruitmentInterviewInterviewer")
   recruitmentCandidate          RecruitmentCandidate?          @relation("RecruitmentCandidateEmployee")
+  skillCertifications           EmployeeSkillCertification[]   @relation("SkillCertificationEmployee")
+  skillCertificationsAssessed   EmployeeSkillCertification[]   @relation("SkillCertificationAssessor")
+  skillCertificationsReviewed   EmployeeSkillCertification[]   @relation("SkillCertificationReviewer")
+  skillAssessments              SkillAssessment[]              @relation("SkillAssessmentEmployee")
+  skillAssessmentsAsAssessor    SkillAssessment[]              @relation("SkillAssessmentAssessor")
+  skillAssessmentsAsReviewer    SkillAssessment[]              @relation("SkillAssessmentReviewer")
 
   @@index([isActive, employeeNo])
   @@index([name])
@@ -508,6 +514,197 @@ model Employee {
   @@index([team])
   @@index([attendanceEnabled, isActive])
   @@map("employees")
+}
+
+model SkillDefinition {
+  id                        String                       @id @default(uuid())
+  code                      String                       @unique
+  name                      String
+  category                  String                       @default("PROCESS")
+  description               String?
+  sourceProcessDefinitionId String?                      @unique @map("source_process_definition_id")
+  isCritical                Boolean                      @default(false) @map("is_critical")
+  defaultValidityMonths     Int                          @default(12) @map("default_validity_months")
+  isActive                  Boolean                      @default(true) @map("is_active")
+  sortOrder                 Int                          @default(0) @map("sort_order")
+  createdAt                 DateTime                     @default(now()) @map("created_at")
+  updatedAt                 DateTime                     @updatedAt @map("updated_at")
+  requirements              PositionSkillRequirement[]
+  certifications            EmployeeSkillCertification[]
+  templates                 SkillAssessmentTemplate[]
+  assessments               SkillAssessment[]
+
+  @@index([category, isActive, sortOrder])
+  @@index([name])
+  @@map("skill_definitions")
+}
+
+model PositionSkillRequirement {
+  id          String          @id @default(uuid())
+  scopeKey    String          @map("scope_key")
+  department  String
+  position    String
+  team        String          @default("")
+  skillId     String          @map("skill_id")
+  targetLevel Int             @default(1) @map("target_level")
+  isRequired  Boolean         @default(true) @map("is_required")
+  version     Int             @default(0)
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  skill       SkillDefinition @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([scopeKey, skillId])
+  @@index([department, position, team])
+  @@index([skillId])
+  @@map("position_skill_requirements")
+}
+
+model EmployeeSkillCertification {
+  id            String           @id @default(uuid())
+  employeeId    String           @map("employee_id")
+  skillId       String           @map("skill_id")
+  level         Int
+  status        String           @default("ACTIVE")
+  score         Int?
+  assessmentId  String?          @map("assessment_id")
+  assessorId    String?          @map("assessor_id")
+  reviewerId    String?          @map("reviewer_id")
+  effectiveFrom DateTime         @default(now()) @map("effective_from") @db.Date
+  expiresAt     DateTime?        @map("expires_at") @db.Date
+  note          String?
+  version       Int              @default(0)
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+  employee      Employee         @relation("SkillCertificationEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  assessor      Employee?        @relation("SkillCertificationAssessor", fields: [assessorId], references: [id], onDelete: SetNull)
+  reviewer      Employee?        @relation("SkillCertificationReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  skill         SkillDefinition  @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  assessment    SkillAssessment? @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+
+  @@unique([employeeId, skillId])
+  @@unique([assessmentId])
+  @@index([skillId, status])
+  @@index([expiresAt])
+  @@map("employee_skill_certifications")
+}
+
+model SkillAssessmentTemplate {
+  id             String                @id @default(uuid())
+  code           String                @unique
+  name           String
+  department     String
+  position       String
+  team           String                @default("")
+  skillId        String?               @map("skill_id")
+  version        Int                   @default(1)
+  status         String                @default("ACTIVE")
+  passScore      Int                   @default(80) @map("pass_score")
+  targetLevel    Int                   @default(1) @map("target_level")
+  validityMonths Int                   @default(12) @map("validity_months")
+  instructions   String?
+  createdById    String?               @map("created_by_id")
+  createdAt      DateTime              @default(now()) @map("created_at")
+  updatedAt      DateTime              @updatedAt @map("updated_at")
+  skill          SkillDefinition?      @relation(fields: [skillId], references: [id], onDelete: SetNull)
+  items          SkillAssessmentItem[]
+  assessments    SkillAssessment[]
+
+  @@index([department, position, status])
+  @@index([skillId])
+  @@map("skill_assessment_templates")
+}
+
+model SkillAssessmentItem {
+  id          String                  @id @default(uuid())
+  templateId  String                  @map("template_id")
+  code        String
+  section     String                  @default("岗位实操")
+  title       String
+  description String?
+  weight      Int                     @default(1)
+  maxScore    Int                     @default(100) @map("max_score")
+  isRequired  Boolean                 @default(true) @map("is_required")
+  isCritical  Boolean                 @default(false) @map("is_critical")
+  sortOrder   Int                     @default(0) @map("sort_order")
+  createdAt   DateTime                @default(now()) @map("created_at")
+  updatedAt   DateTime                @updatedAt @map("updated_at")
+  template    SkillAssessmentTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  answers     SkillAssessmentAnswer[]
+
+  @@unique([templateId, code])
+  @@index([templateId, sortOrder])
+  @@map("skill_assessment_items")
+}
+
+model SkillAssessment {
+  id              String                      @id @default(uuid())
+  code            String                      @unique
+  employeeId      String                      @map("employee_id")
+  skillId         String                      @map("skill_id")
+  templateId      String                      @map("template_id")
+  templateVersion Int                         @map("template_version")
+  assessorId      String                      @map("assessor_id")
+  reviewerId      String                      @map("reviewer_id")
+  status          String                      @default("DRAFT")
+  result          String                      @default("PENDING")
+  totalScore      Int?                        @map("total_score")
+  proposedLevel   Int                         @default(1) @map("proposed_level")
+  reviewComment   String?                     @map("review_comment")
+  submittedAt     DateTime?                   @map("submitted_at")
+  reviewedAt      DateTime?                   @map("reviewed_at")
+  validFrom       DateTime?                   @map("valid_from") @db.Date
+  expiresAt       DateTime?                   @map("expires_at") @db.Date
+  version         Int                         @default(0)
+  createdById     String?                     @map("created_by_id")
+  updatedById     String?                     @map("updated_by_id")
+  createdAt       DateTime                    @default(now()) @map("created_at")
+  updatedAt       DateTime                    @updatedAt @map("updated_at")
+  employee        Employee                    @relation("SkillAssessmentEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  assessor        Employee                    @relation("SkillAssessmentAssessor", fields: [assessorId], references: [id], onDelete: Restrict)
+  reviewer        Employee                    @relation("SkillAssessmentReviewer", fields: [reviewerId], references: [id], onDelete: Restrict)
+  skill           SkillDefinition             @relation(fields: [skillId], references: [id], onDelete: Restrict)
+  template        SkillAssessmentTemplate     @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  answers         SkillAssessmentAnswer[]
+  activities      SkillAssessmentActivity[]
+  certification   EmployeeSkillCertification?
+
+  @@index([employeeId, status])
+  @@index([skillId, status])
+  @@index([reviewerId, status])
+  @@index([createdAt])
+  @@map("skill_assessments")
+}
+
+model SkillAssessmentAnswer {
+  id           String              @id @default(uuid())
+  assessmentId String              @map("assessment_id")
+  itemId       String              @map("item_id")
+  score        Int?
+  passed       Boolean?
+  comment      String?
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+  assessment   SkillAssessment     @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  item         SkillAssessmentItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+
+  @@unique([assessmentId, itemId])
+  @@index([itemId])
+  @@map("skill_assessment_answers")
+}
+
+model SkillAssessmentActivity {
+  id           String          @id @default(uuid())
+  assessmentId String          @map("assessment_id")
+  action       String
+  fromStatus   String?         @map("from_status")
+  toStatus     String?         @map("to_status")
+  content      String?
+  actorId      String?         @map("actor_id")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  assessment   SkillAssessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId, createdAt])
+  @@map("skill_assessment_activities")
 }
 
 model RecruitmentDemand {

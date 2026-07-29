@@ -2014,3 +2014,145 @@ export type KnowledgeOverviewDTO = {
   draftCount: number;
   updatedThisWeek: number;
 };
+
+export type SkillCategoryDTO = 'PROCESS' | 'QUALITY' | 'WAREHOUSE' | 'SAFETY' | 'MANAGEMENT' | 'GENERAL';
+export type SkillAssessmentStatusDTO = 'DRAFT' | 'PENDING_REVIEW' | 'RETURNED' | 'APPROVED' | 'CANCELLED';
+export type SkillAssessmentResultDTO = 'PENDING' | 'PASSED' | 'FAILED';
+
+export type SkillDefinitionDTO = {
+  id: string;
+  code: string;
+  name: string;
+  category: SkillCategoryDTO;
+  description?: string | null;
+  sourceProcessDefinitionId?: string | null;
+  isCritical: boolean;
+  defaultValidityMonths: number;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PositionSkillRequirementDTO = {
+  id: string;
+  scopeKey: string;
+  department: string;
+  position: string;
+  team: string;
+  skillId: string;
+  targetLevel: number;
+  isRequired: boolean;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EmployeeSkillCertificationDTO = {
+  id: string;
+  employeeId: string;
+  skillId: string;
+  level: number;
+  status: string;
+  score?: number | null;
+  assessmentId?: string | null;
+  assessorId?: string | null;
+  reviewerId?: string | null;
+  effectiveFrom: string;
+  expiresAt?: string | null;
+  note?: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SkillAssessmentItemDTO = {
+  id: string;
+  templateId: string;
+  code: string;
+  section: string;
+  title: string;
+  description?: string | null;
+  weight: number;
+  maxScore: number;
+  isRequired: boolean;
+  isCritical: boolean;
+  sortOrder: number;
+};
+
+export type SkillAssessmentTemplateDTO = {
+  id: string;
+  code: string;
+  name: string;
+  department: string;
+  position: string;
+  team: string;
+  skillId?: string | null;
+  version: number;
+  status: string;
+  passScore: number;
+  targetLevel: number;
+  validityMonths: number;
+  instructions?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  items: SkillAssessmentItemDTO[];
+};
+
+export type SkillAssessmentAnswerDTO = {
+  id: string;
+  assessmentId: string;
+  itemId: string;
+  score?: number | null;
+  passed?: boolean | null;
+  comment?: string | null;
+};
+
+export type SkillAssessmentActivityDTO = {
+  id: string;
+  action: string;
+  fromStatus?: string | null;
+  toStatus?: string | null;
+  content?: string | null;
+  actorId?: string | null;
+  createdAt: string;
+};
+
+export type SkillAssessmentDTO = {
+  id: string;
+  code: string;
+  employeeId: string;
+  skillId: string;
+  templateId: string;
+  templateVersion: number;
+  assessorId: string;
+  reviewerId: string;
+  status: SkillAssessmentStatusDTO;
+  result: SkillAssessmentResultDTO;
+  totalScore?: number | null;
+  proposedLevel: number;
+  reviewComment?: string | null;
+  submittedAt?: string | null;
+  reviewedAt?: string | null;
+  validFrom?: string | null;
+  expiresAt?: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  employee: EmployeeDTO;
+  skill: SkillDefinitionDTO;
+  template: SkillAssessmentTemplateDTO;
+  assessor?: EmployeeDTO | null;
+  reviewer?: EmployeeDTO | null;
+  answers: SkillAssessmentAnswerDTO[];
+  activities: SkillAssessmentActivityDTO[];
+};
+
+export type SkillWorkbenchSummaryDTO = {
+  skillCount: number;
+  requiredPositionCount: number;
+  certifiedEmployeeCount: number;
+  pendingReviewCount: number;
+  expiringCertificationCount: number;
+  coverageBasisPoints: number | null;
+};

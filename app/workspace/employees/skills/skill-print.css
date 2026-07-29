@@ -1,0 +1,320 @@
+:root {
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #e8edf3;
+  color: #172033;
+  font-family:
+    "Microsoft YaHei",
+    "PingFang SC",
+    "Noto Sans CJK SC",
+    Arial,
+    sans-serif;
+}
+
+.skill-print-toolbar {
+  position: sticky;
+  z-index: 10;
+  top: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px max(20px, calc((100vw - 210mm) / 2));
+  border-bottom: 1px solid #dce3eb;
+  background: rgba(248, 250, 252, .92);
+  backdrop-filter: blur(14px);
+}
+
+.skill-print-toolbar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 16px;
+  border: 1px solid #cfd8e3;
+  border-radius: 10px;
+  background: #fff;
+  color: #334155;
+  font: 600 14px/1 inherit;
+  cursor: pointer;
+}
+
+.skill-print-toolbar button.primary {
+  border-color: #ef6c00;
+  background: #ef6c00;
+  color: #fff;
+  box-shadow: 0 7px 18px rgba(239, 108, 0, .2);
+}
+
+.skill-print-toolbar svg {
+  width: 16px;
+  height: 16px;
+}
+
+.skill-print-page {
+  width: 210mm;
+  min-height: 297mm;
+  margin: 22px auto 44px;
+  padding: 13mm 14mm 12mm;
+  background: #fff;
+  box-shadow: 0 18px 48px rgba(30, 41, 59, .14);
+}
+
+.skill-print-header {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 18px;
+  align-items: start;
+  padding-bottom: 5mm;
+  border-bottom: 2px solid #172033;
+}
+
+.skill-print-brand {
+  margin: 0 0 2mm;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.6px;
+}
+
+.skill-print-header h1 {
+  margin: 0;
+  color: #111827;
+  font-size: 24px;
+  line-height: 1.25;
+}
+
+.skill-print-header p {
+  margin: 2mm 0 0;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.skill-print-code {
+  min-width: 42mm;
+  padding: 3mm 4mm;
+  border: 1px solid #94a3b8;
+  text-align: right;
+}
+
+.skill-print-code small,
+.skill-print-code strong {
+  display: block;
+}
+
+.skill-print-code small {
+  margin-bottom: 1mm;
+  color: #64748b;
+  font-size: 9px;
+}
+
+.skill-print-code strong {
+  font-size: 12px;
+}
+
+.skill-print-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 5mm 0;
+  border-top: 1px solid #475569;
+  border-left: 1px solid #475569;
+}
+
+.skill-print-meta div {
+  min-height: 14mm;
+  padding: 2.5mm 3mm;
+  border-right: 1px solid #475569;
+  border-bottom: 1px solid #475569;
+}
+
+.skill-print-meta small,
+.skill-print-meta strong {
+  display: block;
+}
+
+.skill-print-meta small {
+  margin-bottom: 1.2mm;
+  color: #64748b;
+  font-size: 9px;
+}
+
+.skill-print-meta strong {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.skill-print-section {
+  margin-top: 5mm;
+}
+
+.skill-print-section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 2.5mm;
+}
+
+.skill-print-section-heading h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.skill-print-section-heading span {
+  color: #64748b;
+  font-size: 9px;
+}
+
+.skill-print-instructions {
+  margin: 0 0 4mm;
+  padding: 3mm 4mm;
+  border-left: 3px solid #64748b;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 10px;
+  line-height: 1.65;
+}
+
+.skill-print-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  color: #111827;
+  font-size: 9.5px;
+}
+
+.skill-print-table th,
+.skill-print-table td {
+  min-height: 10mm;
+  padding: 2.3mm 2.5mm;
+  border: 1px solid #475569;
+  vertical-align: top;
+}
+
+.skill-print-table th {
+  background: #f1f5f9;
+  font-weight: 700;
+  text-align: center;
+}
+
+.skill-print-table td.center {
+  text-align: center;
+  vertical-align: middle;
+}
+
+.skill-print-critical {
+  display: inline-block;
+  margin-left: 1.5mm;
+  padding: .5mm 1.5mm;
+  border: 1px solid #111827;
+  border-radius: 99px;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.skill-print-result {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  border-left: 1px solid #475569;
+  border-top: 1px solid #475569;
+}
+
+.skill-print-result div {
+  min-height: 15mm;
+  padding: 3mm;
+  border-right: 1px solid #475569;
+  border-bottom: 1px solid #475569;
+}
+
+.skill-print-result small,
+.skill-print-result strong {
+  display: block;
+}
+
+.skill-print-result small {
+  margin-bottom: 1mm;
+  color: #64748b;
+  font-size: 9px;
+}
+
+.skill-print-result strong {
+  font-size: 13px;
+}
+
+.skill-print-signatures {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9mm;
+  margin-top: 9mm;
+}
+
+.skill-print-signatures div {
+  min-height: 17mm;
+  padding-top: 2mm;
+  border-top: 1px solid #475569;
+  color: #334155;
+  font-size: 10px;
+}
+
+.skill-print-audit {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.skill-print-audit li {
+  display: grid;
+  grid-template-columns: 26mm 1fr 29mm;
+  gap: 3mm;
+  padding: 2mm 0;
+  border-bottom: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 9px;
+}
+
+.skill-print-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 7mm;
+  padding-top: 3mm;
+  border-top: 1px solid #cbd5e1;
+  color: #64748b;
+  font-size: 8px;
+}
+
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+@media print {
+  body {
+    background: #fff !important;
+  }
+
+  .skill-print-toolbar {
+    display: none !important;
+  }
+
+  .skill-print-page {
+    width: 210mm;
+    min-height: 297mm;
+    margin: 0;
+    padding: 13mm 14mm 12mm;
+    box-shadow: none;
+  }
+
+  .skill-print-table tr,
+  .skill-print-meta,
+  .skill-print-result,
+  .skill-print-signatures {
+    break-inside: avoid;
+  }
+}

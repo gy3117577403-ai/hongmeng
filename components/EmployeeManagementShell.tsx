@@ -16,7 +16,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  CircleDollarSign,
   ClipboardCheck,
   ClipboardList,
   Clock3,
@@ -52,6 +51,7 @@ import type { LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 import { ResponsibilityMatrixWorkspace } from '@/components/ResponsibilityMatrixWorkspace';
+import SkillPerformanceWorkbench from '@/components/SkillPerformanceWorkbench';
 import {
   responsibilityPeople,
   responsibilityWorkItems,
@@ -208,7 +208,7 @@ const hrNavigation: HrNavItem[] = [
   { id: 'directory', label: '员工档案', description: '人员与岗位资料', icon: UserRound },
   { id: 'recruiting', label: '招聘管理', description: '需求、候选与录用闭环', icon: BriefcaseBusiness },
   { id: 'attendance', label: '考勤管理', description: '出勤与异常确认', icon: CalendarCheck2 },
-  { id: 'performance', label: '薪酬绩效', description: '工时绩效与待接入薪酬', icon: CircleDollarSign },
+  { id: 'performance', label: '技能绩效', description: '技能矩阵、岗位考核与认证', icon: BadgeCheck },
   { id: 'training', label: '培训发展', description: '岗位能力与培养计划', icon: GraduationCap },
   { id: 'organization', label: '组织架构', description: '部门与班组分布', icon: Network },
   { id: 'responsibilities', label: '职责配置', description: '责任矩阵与人员归属', icon: Layers3 },
@@ -1125,7 +1125,6 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   }
 
   function renderOverview() {
-    const attainment = attainmentReport?.summary.attainmentBasisPoints;
     const primaryTask = hrWorkItems.find(item => item.priority === 'high' || item.priority === 'urgent')
       || hrWorkItems[0];
     const focusOwner = primaryTask
@@ -1169,10 +1168,10 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
             <em>考勤与异常确认</em>
           </button>
           <button type="button" onClick={() => changeView('performance')}>
-            <span><Activity /></span>
-            <small>人员达成率</small>
-            <strong>{formatPercent(attainment)}</strong>
-            <em>本月工时口径</em>
+            <span><BadgeCheck /></span>
+            <small>技能绩效</small>
+            <strong>进入</strong>
+            <em>岗位矩阵与考核认证</em>
           </button>
           <button type="button" className={abnormalSummary.openCount ? 'danger' : ''} onClick={() => changeView('attendance')}>
             <span className={abnormalSummary.openCount ? 'red' : 'green'}><AlertTriangle /></span>
@@ -1295,7 +1294,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
             <div>
               <button type="button" onClick={beginCreate}><span><Plus /></span><strong>新增员工</strong><small>建立人员与岗位档案</small></button>
               <a href="/workspace/attendance"><span className="green"><CalendarCheck2 /></span><strong>考勤确认</strong><small>处理出勤与异常记录</small></a>
-              <button type="button" onClick={() => changeView('performance')}><span className="violet"><BarChart3 /></span><strong>绩效数据</strong><small>{attainmentReport?.rows.length || 0} 人形成月度统计</small></button>
+              <button type="button" onClick={() => changeView('performance')}><span className="violet"><BadgeCheck /></span><strong>技能矩阵</strong><small>维护岗位技能、员工认证与考核</small></button>
               <button type="button" onClick={() => changeView('training')}><span className="orange"><GraduationCap /></span><strong>培训建议</strong><small>{Math.max(1, departmentStats.length)} 个部门可建立计划</small></button>
             </div>
           </section>
@@ -2137,43 +2136,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   }
 
   function renderPerformance() {
-    const rows = [...(attainmentReport?.rows || [])]
-      .sort((left, right) => (right.attainmentBasisPoints || -1) - (left.attainmentBasisPoints || -1));
-    return (
-      <div className="hr-view hr-module-view hr-performance-view">
-        <section className="hr-module-hero">
-          <div><span className="hr-eyebrow">薪酬绩效 · 本月</span><h1>生产工时与人员达成率</h1><p>绩效区使用现有报工、标准工时和考勤数据；薪资结构与核算规则尚未接入。</p></div>
-          <a className="hr-primary-button" href="/workspace/reports">打开报表中心<ArrowRight size={17} /></a>
-        </section>
-        <DataUnavailable message="薪酬数据尚未接入。本页不会展示或推算个人工资，仅呈现现有生产绩效依据。" />
-        <section className="hr-metric-grid compact">
-          <MetricCard icon={UsersRound} label="形成绩效统计" value={attainmentReport?.summary.employeeCount || 0} note="有考勤或报工数据的员工" />
-          <MetricCard icon={Activity} label="人员达成率" value={formatPercent(attainmentReport?.summary.attainmentBasisPoints)} note="标准工时 ÷ 有效出勤" tone="green" />
-          <MetricCard icon={Clock3} label="已认领标准工时" value={formatHours(attainmentReport?.summary.claimedStandardLaborMilliseconds || 0)} note={`认领 ${attainmentReport?.summary.claimQuantity || 0} 件`} tone="violet" />
-          <MetricCard icon={AlertTriangle} label="考勤缺失员工" value={attainmentReport?.summary.attendanceMissingCount || 0} note="需要补充出勤依据" tone={(attainmentReport?.summary.attendanceMissingCount || 0) ? 'orange' : 'green'} />
-        </section>
-        <section className="hr-main-panel hr-performance-table">
-          <header className="hr-section-header"><div><span>真实数据</span><h2>员工绩效明细</h2></div><em>计算口径沿用报表中心</em></header>
-          <div className="hr-data-table">
-            <div className="hr-data-head performance"><span>员工</span><span>标准工时</span><span>有效出勤</span><span>领取数量</span><span>达成率</span><span>考勤依据</span></div>
-            {rows.slice(0, 12).map(row => (
-              <a href={`/workspace/reports?employeeId=${encodeURIComponent(row.employee.id)}`} className="hr-data-row performance" key={row.employee.id}>
-                <span><b className="hr-person-avatar">{row.employee.name.slice(0, 1)}</b><strong>{row.employee.name}<small>{row.employee.position || '岗位待维护'}</small></strong></span>
-                <span>{formatHours(row.standardLaborMilliseconds)}</span>
-                <span>{formatHours(row.effectiveProductionMilliseconds)}</span>
-                <span>{row.claimQuantity.toLocaleString('zh-CN')}</span>
-                <span className="hr-rate-cell">
-                  <strong className="hr-rate">{formatPercent(row.attainmentBasisPoints)}</strong>
-                  <i><b style={{ width: `${clampPercent((row.attainmentBasisPoints || 0) / 100)}%` }} /></i>
-                </span>
-                <span><em className={row.attendanceMissing ? 'warning' : 'success'}>{row.attendanceMissing ? '有缺失' : '已覆盖'}</em></span>
-              </a>
-            ))}
-            {!rows.length && <EmptyPanel icon={BarChart3} title="本月尚未形成绩效数据" description="员工完成报工认领并登记考勤后会自动汇总。" action={<a className="hr-text-button" href="/workspace/reports">查看报表说明</a>} />}
-          </div>
-        </section>
-      </div>
-    );
+    return <SkillPerformanceWorkbench fallbackEmployees={employees} />;
   }
 
   function renderTraining() {
