@@ -326,6 +326,8 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [selectedTeam, setSelectedTeam] = useState('');
   const [directoryDetailTab, setDirectoryDetailTab] = useState<DirectoryDetailTab>('basic');
+  const [recruitingStageFilter, setRecruitingStageFilter] = useState('');
+  const [selectedTrainingPlanIndex, setSelectedTrainingPlanIndex] = useState(0);
   useToastBridge(toast, setToast);
 
   useEffect(() => {
@@ -1170,24 +1172,34 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       { department: '质量管理', role: '质量检验岗位储备', demand: 1, stage: '岗位画像', tone: 'violet' },
       { department: '仓库', role: '仓库协同岗位储备', demand: 1, stage: '待审批', tone: 'orange' },
     ];
+    const recruitingStages = ['需求确认', '岗位画像', '候选筛选', '面试安排', '录用入职'];
+    const visibleRecruitingItems = recruitingStageFilter
+      ? recruitingItems.filter(item => item.stage === recruitingStageFilter)
+      : recruitingItems;
     return (
-      <div className="hr-view hr-module-view">
+      <div className="hr-view hr-module-view hr-recruiting-view">
         <section className="hr-module-hero">
           <div><span className="hr-eyebrow">招聘管理 · 前端工作区</span><h1>人员需求与招聘进度</h1><p>先建立岗位需求、阶段和协同入口；候选人、面试与录用数据将在后续接入。</p></div>
           <button type="button" className="hr-primary-button" onClick={() => setToast('招聘需求接口已预留，当前版本暂不写入数据')}><Plus size={17} />新建招聘需求</button>
         </section>
         <DataUnavailable message="当前系统尚无招聘台账接口。本页为可交互的前端工作区，不会把规划数据伪装成真实候选人记录。" />
         <section className="hr-metric-grid compact">
-          <MetricCard icon={BriefcaseBusiness} label="规划岗位" value={recruitingItems.length} note="待与正式编制联动" />
+          <MetricCard icon={BriefcaseBusiness} label="规划岗位" value={recruitingItems.length} note="待与正式编制联动" onClick={() => setRecruitingStageFilter('')} />
           <MetricCard icon={UsersRound} label="计划补充人数" value={recruitingItems.reduce((sum, item) => sum + item.demand, 0)} note="基于当前组织规模预览" tone="green" />
-          <MetricCard icon={ClipboardCheck} label="待确认需求" value={2} note="需部门主管确认" tone="orange" />
+          <MetricCard icon={ClipboardCheck} label="待确认需求" value={2} note="需部门主管确认" tone="orange" onClick={() => setRecruitingStageFilter('需求确认')} />
           <MetricCard icon={UserRoundCheck} label="候选人数据" value="未接入" note="不生成虚假人员信息" tone="violet" />
         </section>
         <div className="hr-module-grid">
           <section className="hr-main-panel hr-recruiting-board">
-            <header className="hr-section-header"><div><span>需求池</span><h2>岗位招聘规划</h2></div><em>人事协调：{hrCoordinator?.name || '待配置'}</em></header>
+            <header className="hr-section-header">
+              <div><span>需求池</span><h2>岗位招聘规划</h2></div>
+              <div className="hr-section-actions">
+                {recruitingStageFilter && <button type="button" onClick={() => setRecruitingStageFilter('')}>{recruitingStageFilter} ×</button>}
+                <em>人事协调：{hrCoordinator?.name || '待配置'}</em>
+              </div>
+            </header>
             <div>
-              {recruitingItems.map(item => (
+              {visibleRecruitingItems.map(item => (
                 <article key={item.role}>
                   <span className={`hr-module-icon ${item.tone}`}><BriefcaseBusiness /></span>
                   <div><small>{item.department}</small><strong>{item.role}</strong><p>计划补充 {item.demand} 人 · 部门主管确认后进入招聘流程</p></div>
@@ -1195,13 +1207,27 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                   <button type="button" onClick={() => setToast(`${item.role}：真实招聘台账接入后可继续维护`)}>查看规划<ChevronRight /></button>
                 </article>
               ))}
+              {!visibleRecruitingItems.length && (
+                <EmptyPanel
+                  icon={BriefcaseBusiness}
+                  title={`${recruitingStageFilter}阶段暂无岗位`}
+                  description="该阶段将在真实招聘台账接入后显示对应需求。"
+                  action={<button type="button" className="hr-text-button" onClick={() => setRecruitingStageFilter('')}>查看全部规划</button>}
+                />
+              )}
             </div>
           </section>
           <aside className="hr-main-panel hr-stage-panel">
             <header className="hr-section-header"><div><span>流程预览</span><h2>招聘协同阶段</h2></div></header>
             <ol>
-              {['需求确认', '岗位画像', '候选筛选', '面试安排', '录用入职'].map((label, index) => (
-                <li key={label} className={index < 2 ? 'active' : ''}><span>{index + 1}</span><div><strong>{label}</strong><small>{index < 2 ? '可进行规划' : '待数据接入'}</small></div></li>
+              {recruitingStages.map((label, index) => (
+                <li key={label} className={`${index < 2 ? 'active' : ''}${recruitingStageFilter === label ? ' selected' : ''}`}>
+                  <button type="button" onClick={() => setRecruitingStageFilter(current => current === label ? '' : label)}>
+                    <span>{index + 1}</span>
+                    <div><strong>{label}</strong><small>{index < 2 ? '可进行规划' : '待数据接入'}</small></div>
+                    <ChevronRight />
+                  </button>
+                </li>
               ))}
             </ol>
           </aside>
@@ -1212,7 +1238,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
 
   function renderAttendance() {
     return (
-      <div className="hr-view hr-module-view">
+      <div className="hr-view hr-module-view hr-attendance-view">
         <section className="hr-module-hero">
           <div><span className="hr-eyebrow">考勤管理 · 本月</span><h1>出勤、请假与异常确认</h1><p>汇总现有考勤记录和异常工时，具体登记与确认仍在原考勤工作台完成。</p></div>
           <a className="hr-primary-button" href="/workspace/attendance">进入考勤工作台<ArrowRight size={17} /></a>
@@ -1258,7 +1284,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     const rows = [...(attainmentReport?.rows || [])]
       .sort((left, right) => (right.attainmentBasisPoints || -1) - (left.attainmentBasisPoints || -1));
     return (
-      <div className="hr-view hr-module-view">
+      <div className="hr-view hr-module-view hr-performance-view">
         <section className="hr-module-hero">
           <div><span className="hr-eyebrow">薪酬绩效 · 本月</span><h1>生产工时与人员达成率</h1><p>绩效区使用现有报工、标准工时和考勤数据；薪资结构与核算规则尚未接入。</p></div>
           <a className="hr-primary-button" href="/workspace/reports">打开报表中心<ArrowRight size={17} /></a>
@@ -1280,7 +1306,10 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                 <span>{formatHours(row.standardLaborMilliseconds)}</span>
                 <span>{formatHours(row.effectiveProductionMilliseconds)}</span>
                 <span>{row.claimQuantity.toLocaleString('zh-CN')}</span>
-                <span><strong className="hr-rate">{formatPercent(row.attainmentBasisPoints)}</strong></span>
+                <span className="hr-rate-cell">
+                  <strong className="hr-rate">{formatPercent(row.attainmentBasisPoints)}</strong>
+                  <i><b style={{ width: `${clampPercent((row.attainmentBasisPoints || 0) / 100)}%` }} /></i>
+                </span>
                 <span><em className={row.attendanceMissing ? 'warning' : 'success'}>{row.attendanceMissing ? '有缺失' : '已覆盖'}</em></span>
               </a>
             ))}
@@ -1297,8 +1326,9 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       { title: '考勤与报工规范复训', audience: '考勤依据缺失人员', count: attainmentReport?.summary.attendanceMissingCount || 0, owner: hrCoordinator?.name || '人事待配置', status: (attainmentReport?.summary.attendanceMissingCount || 0) ? '需要关注' : '状态正常', icon: CalendarCheck2 },
       { title: '岗位工艺能力提升', audience: '生产与工艺相关岗位', count: departmentStats.find(item => item.name.includes('生产'))?.active || 0, owner: '部门主管待确认', status: '规划中', icon: GraduationCap },
     ];
+    const selectedTrainingPlan = trainingPlans[Math.min(selectedTrainingPlanIndex, trainingPlans.length - 1)];
     return (
-      <div className="hr-view hr-module-view">
+      <div className="hr-view hr-module-view hr-training-view">
         <section className="hr-module-hero">
           <div><span className="hr-eyebrow">培训发展 · 前端工作区</span><h1>岗位能力与培养计划</h1><p>结合员工档案、考勤和绩效风险给出培训建议，正式培训记录将在后续接入。</p></div>
           <button type="button" className="hr-primary-button" onClick={() => setToast('培训计划接口已预留，当前版本暂不写入数据')}><Plus size={17} />新建培训计划</button>
@@ -1308,14 +1338,14 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
           <section className="hr-main-panel hr-training-plans">
             <header className="hr-section-header"><div><span>能力建议</span><h2>培训计划工作区</h2></div><em>{trainingPlans.length} 项建议</em></header>
             <div>
-              {trainingPlans.map(plan => {
+              {trainingPlans.map((plan, index) => {
                 const Icon = plan.icon;
                 return (
-                  <article key={plan.title}>
+                  <article key={plan.title} className={selectedTrainingPlanIndex === index ? 'active' : ''}>
                     <span><Icon /></span>
                     <div><strong>{plan.title}</strong><p>{plan.audience} · 建议覆盖 {plan.count} 人</p><small>协调人：{plan.owner}</small></div>
                     <em>{plan.status}</em>
-                    <button type="button" onClick={() => setToast(`${plan.title}：待培训台账接入后可创建排期`)}>查看建议<ChevronRight /></button>
+                    <button type="button" onClick={() => setSelectedTrainingPlanIndex(index)}>查看详情<ChevronRight /></button>
                   </article>
                 );
               })}
@@ -1323,6 +1353,12 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
           </section>
           <aside className="hr-main-panel hr-competency-panel">
             <header className="hr-section-header"><div><span>档案质量</span><h2>能力数据准备度</h2></div></header>
+            <div className="hr-training-selection">
+              <span>{selectedTrainingPlan.status}</span>
+              <strong>{selectedTrainingPlan.title}</strong>
+              <p>{selectedTrainingPlan.audience} · 建议覆盖 {selectedTrainingPlan.count} 人</p>
+              <small>协调人：{selectedTrainingPlan.owner}</small>
+            </div>
             <div className="hr-readiness-ring"><strong>{archiveCompleteness}%</strong><span>组织资料完整</span></div>
             <ul>
               <li><span>部门信息</span><strong>{employees.filter(item => item.department).length} / {summary.total}</strong></li>
@@ -1337,7 +1373,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
 
   function renderOrganization() {
     return (
-      <div className="hr-view hr-module-view">
+      <div className="hr-view hr-module-view hr-organization-view">
         <section className="hr-module-hero">
           <div><span className="hr-eyebrow">组织架构 · 实时员工档案</span><h1>部门、岗位与班组分布</h1><p>组织视图直接由员工档案生成；点击部门可进入对应人员清单。</p></div>
           <button type="button" className="hr-secondary-button" onClick={() => changeView('directory')}><PencilLine size={17} />维护组织信息</button>
@@ -1399,7 +1435,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       })),
     ];
     return (
-      <div className="hr-view hr-module-view">
+      <div className="hr-view hr-module-view hr-approvals-view">
         <section className="hr-module-hero">
           <div><span className="hr-eyebrow">审批中心 · 协同汇总</span><h1>人事待办与跨模块确认</h1><p>集中展示现有考勤、异常工时和职责协同事项；实际处理仍回到对应业务模块。</p></div>
           <button type="button" className="hr-secondary-button" onClick={() => void loadHumanResources()}><RefreshCw size={17} />刷新待办</button>
@@ -1430,7 +1466,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
 
   function renderAnalytics() {
     return (
-      <div className="hr-view hr-module-view">
+      <div className="hr-view hr-module-view hr-analytics-view">
         <section className="hr-module-hero">
           <div><span className="hr-eyebrow">报表分析 · 本月</span><h1>人力运营数据洞察</h1><p>从员工档案、考勤、异常和生产工时汇总可核验的人事指标。</p></div>
           <a className="hr-primary-button" href="/workspace/reports">打开完整报表<ArrowRight size={17} /></a>
@@ -1507,7 +1543,13 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
             {hrNavigation.map(item => {
               const Icon = item.icon;
               return (
-                <button type="button" key={item.id} className={view === item.id ? 'active' : ''} onClick={() => changeView(item.id)}>
+                <button
+                  type="button"
+                  key={item.id}
+                  className={view === item.id ? 'active' : ''}
+                  aria-current={view === item.id ? 'page' : undefined}
+                  onClick={() => changeView(item.id)}
+                >
                   <Icon aria-hidden="true" />
                   <span>{item.label}</span>
                   {item.id === 'approvals' && pendingApprovalCount > 0 && <em>{pendingApprovalCount}</em>}
