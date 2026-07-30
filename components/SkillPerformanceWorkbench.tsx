@@ -44,7 +44,7 @@ import type {
 } from '@/types';
 
 type SkillView = 'matrix' | 'people' | 'assessments';
-type SkillDialog = 'skill' | 'requirement' | 'template' | 'launch' | 'assessment' | 'legacy' | null;
+type SkillDialog = 'skill' | 'requirement' | 'remove-requirement' | 'template' | 'launch' | 'assessment' | 'legacy' | null;
 
 export type SkillWorkbenchResponse = {
   ok: boolean;
@@ -79,6 +79,12 @@ type LegacySkillDraft = {
   note: string;
   requiresReassessment: boolean;
   formalLocked: boolean;
+};
+
+type RequirementRemovalTarget = {
+  employee: EmployeeDTO;
+  requirement: PositionSkillRequirementDTO;
+  skill: SkillDefinitionDTO;
 };
 
 const levelLabels = ['未认证', 'L1 了解', 'L2 独立', 'L3 熟练', 'L4 专家'];
@@ -194,6 +200,7 @@ export default function SkillPerformanceWorkbench({
     skillId: '',
     targetLevel: '2',
   });
+  const [requirementRemovalTarget, setRequirementRemovalTarget] = useState<RequirementRemovalTarget | null>(null);
   const [templateDraft, setTemplateDraft] = useState({
     name: '',
     department: '',
@@ -345,6 +352,16 @@ export default function SkillPerformanceWorkbench({
     setDialog('requirement');
   }
 
+  function openRequirementRemovalDialog(
+    employee: EmployeeDTO,
+    requirement: PositionSkillRequirementDTO,
+    skill: SkillDefinitionDTO,
+  ): void {
+    setRequirementRemovalTarget({ employee, requirement, skill });
+    setDialogError('');
+    setDialog('remove-requirement');
+  }
+
   function openTemplateDialog(baseTemplate?: SkillAssessmentTemplateDTO): void {
     setTemplateDraft({
       name: baseTemplate?.name || '',
@@ -482,6 +499,24 @@ export default function SkillPerformanceWorkbench({
       });
       setDialog(null);
       setToast('岗位技能要求已保存');
+      await loadWorkbench();
+    });
+  }
+
+  async function removeRequirement(): Promise<void> {
+    if (!requirementRemovalTarget) return;
+    const { requirement, skill } = requirementRemovalTarget;
+    await execute(async () => {
+      await postJson('/api/skills/requirements', {
+        action: 'remove',
+        department: requirement.department,
+        position: requirement.position,
+        team: requirement.team,
+        skillId: requirement.skillId,
+      });
+      setDialog(null);
+      setRequirementRemovalTarget(null);
+      setToast(`已从${requirement.team || requirement.position}移除“${skill.name}”，员工技能档案与考核记录均已保留`);
       await loadWorkbench();
     });
   }
@@ -719,10 +754,23 @@ export default function SkillPerformanceWorkbench({
                           <header>
                             <span><Award /></span>
                             <div><small>{requirement ? `岗位要求 L${requirement.targetLevel}` : '扩展技能'}</small><h3>{skill.name}</h3></div>
-                            <b className={certification?.source === 'LEGACY_ENTRY' ? 'legacy' : ''}>
-                              {expired ? '已过期' : certification ? levelLabels[level] : '待考核'}
-                              {certification && !expired && <small>{certification.source === 'LEGACY_ENTRY' ? '历史登记' : '正式认证'}</small>}
-                            </b>
+                            <div className="skill-card-head-actions">
+                              <b className={certification?.source === 'LEGACY_ENTRY' ? 'legacy' : ''}>
+                                {expired ? '已过期' : certification ? levelLabels[level] : '待考核'}
+                                {certification && !expired && <small>{certification.source === 'LEGACY_ENTRY' ? '历史登记' : '正式认证'}</small>}
+                              </b>
+                              {requirement && (
+                                <button
+                                  type="button"
+                                  className="skill-card-delete"
+                                  title={`从${requirement.team || requirement.position}移除“${skill.name}”`}
+                                  aria-label={`删除岗位技能：${skill.name}`}
+                                  onClick={() => openRequirementRemovalDialog(selectedEmployee, requirement, skill)}
+                                >
+                                  <Trash2 />
+                                </button>
+                              )}
+                            </div>
                           </header>
                           <div className="skill-level-track">
                             {[1, 2, 3, 4].map(value => <i className={value <= level && !expired ? 'active' : ''} key={value}>L{value}</i>)}
@@ -891,13 +939,14 @@ export default function SkillPerformanceWorkbench({
             <header>
               <div>
                 <span className="skill-eyebrow">
-                  {dialog === 'skill' ? '技能目录' : dialog === 'requirement' ? '岗位标准' : dialog === 'template' ? '考核模板' : dialog === 'launch' ? '考核任务' : dialog === 'legacy' ? '老员工技能建档' : '在线考核'}
+                  {dialog === 'skill' ? '技能目录' : dialog === 'requirement' || dialog === 'remove-requirement' ? '岗位标准' : dialog === 'template' ? '考核模板' : dialog === 'launch' ? '考核任务' : dialog === 'legacy' ? '老员工技能建档' : '在线考核'}
                 </span>
                 <h2>
-                  {dialog === 'skill' ? '新增技能' : dialog === 'requirement' ? '配置岗位技能要求' : dialog === 'template' ? `${templateBaseId ? '建立新版' : '新建'}岗位技能考核表` : dialog === 'launch' ? '发起技能考核' : dialog === 'legacy' ? `录入 ${selectedEmployee?.name || ''} 的历史技能` : selectedAssessment?.template.name}
+                  {dialog === 'skill' ? '新增技能' : dialog === 'requirement' ? '配置岗位技能要求' : dialog === 'remove-requirement' ? '删除岗位技能' : dialog === 'template' ? `${templateBaseId ? '建立新版' : '新建'}岗位技能考核表` : dialog === 'launch' ? '发起技能考核' : dialog === 'legacy' ? `录入 ${selectedEmployee?.name || ''} 的历史技能` : selectedAssessment?.template.name}
                 </h2>
                 {dialog === 'assessment' && selectedAssessment && <p>{selectedAssessment.employee.name} · {selectedAssessment.skill.name} · {statusLabels[selectedAssessment.status]}</p>}
                 {dialog === 'legacy' && selectedEmployee && <p>{selectedEmployee.department || '部门待维护'} · {selectedEmployee.position || '岗位待维护'} · 批量建档，不生成考核任务</p>}
+                {dialog === 'remove-requirement' && requirementRemovalTarget && <p>{requirementRemovalTarget.requirement.department} · {requirementRemovalTarget.requirement.position}{requirementRemovalTarget.requirement.team ? ` · ${requirementRemovalTarget.requirement.team}` : ''}</p>}
               </div>
               <button type="button" aria-label="关闭" disabled={saving} onClick={() => setDialog(null)}><X /></button>
             </header>
@@ -921,6 +970,39 @@ export default function SkillPerformanceWorkbench({
                   <label><span>班组（可选）</span><select value={requirementDraft.team} onChange={event => setRequirementDraft(current => ({ ...current, team: event.target.value }))}><option value="">岗位全部人员</option>{[...new Set(activeEmployees.filter(employee => employee.department === requirementDraft.department && employee.position === requirementDraft.position).map(employee => employee.team || '').filter(Boolean))].map(team => <option value={team} key={team}>{team}</option>)}</select></label>
                   <label><span>必备技能 *</span><select value={requirementDraft.skillId} onChange={event => setRequirementDraft(current => ({ ...current, skillId: event.target.value }))}><option value="">请选择</option>{visibleSkills.map(skill => <option value={skill.id} key={skill.id}>{skill.name}</option>)}</select></label>
                   <label className="wide"><span>岗位目标等级 *</span><div className="skill-level-picker">{[1, 2, 3, 4].map(level => <button type="button" className={requirementDraft.targetLevel === String(level) ? 'active' : ''} onClick={() => setRequirementDraft(current => ({ ...current, targetLevel: String(level) }))} key={level}><strong>L{level}</strong><small>{levelLabels[level].replace(`L${level} `, '')}</small></button>)}</div></label>
+                </div>
+              )}
+
+              {dialog === 'remove-requirement' && requirementRemovalTarget && (
+                <div className="skill-delete-confirmation">
+                  <span><Trash2 /></span>
+                  <div>
+                    <small>删除岗位技能配置</small>
+                    <h3>从岗位必备技能中移除“{requirementRemovalTarget.skill.name}”？</h3>
+                    <p>删除后，该技能不再作为此岗位的必备要求，也不会再计入岗位技能覆盖率。</p>
+                  </div>
+                  <dl>
+                    <div><dt>部门</dt><dd>{requirementRemovalTarget.requirement.department}</dd></div>
+                    <div><dt>岗位 / 班组</dt><dd>{requirementRemovalTarget.requirement.position}{requirementRemovalTarget.requirement.team ? ` / ${requirementRemovalTarget.requirement.team}` : ' / 全部人员'}</dd></div>
+                    <div><dt>目标等级</dt><dd>L{requirementRemovalTarget.requirement.targetLevel}</dd></div>
+                    <div>
+                      <dt>影响人员</dt>
+                      <dd>
+                        {activeEmployees.filter(employee => (
+                          employee.department === requirementRemovalTarget.requirement.department
+                          && employee.position === requirementRemovalTarget.requirement.position
+                          && (!requirementRemovalTarget.requirement.team || employee.team === requirementRemovalTarget.requirement.team)
+                        )).length} 人
+                      </dd>
+                    </div>
+                  </dl>
+                  <aside>
+                    <ShieldCheck />
+                    <span>
+                      <strong>只删除岗位要求，不删除员工档案</strong>
+                      <small>历史技能、正式认证、考核任务和留痕记录全部保留；已有认证将继续作为员工扩展技能显示。</small>
+                    </span>
+                  </aside>
                 </div>
               )}
 
@@ -1109,6 +1191,7 @@ export default function SkillPerformanceWorkbench({
               <button type="button" className="skill-secondary-button" disabled={saving} onClick={() => setDialog(null)}>取消</button>
               {dialog === 'skill' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void createSkill()}>{saving ? <Loader2 className="spin" /> : <Save />}保存技能</button>}
               {dialog === 'requirement' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void saveRequirement()}>{saving ? <Loader2 className="spin" /> : <Save />}保存岗位要求</button>}
+              {dialog === 'remove-requirement' && <button type="button" className="skill-return-button" disabled={saving} onClick={() => void removeRequirement()}>{saving ? <Loader2 className="spin" /> : <Trash2 />}确认删除</button>}
               {dialog === 'template' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void createTemplate()}>{saving ? <Loader2 className="spin" /> : <FileCheck2 />}生成并启用考核表</button>}
               {dialog === 'launch' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void launchAssessment()}>{saving ? <Loader2 className="spin" /> : <Plus />}创建考核任务</button>}
               {dialog === 'legacy' && <button type="button" className="skill-primary-button" disabled={saving || selectedLegacyCount === 0} onClick={() => void saveLegacySkills()}>{saving ? <Loader2 className="spin" /> : <History />}保存 {selectedLegacyCount} 项历史技能</button>}

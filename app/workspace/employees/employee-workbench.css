@@ -2602,9 +2602,35 @@ button.skill-matrix-person:hover { background: #f7faff; }
 .skill-person-skills article > header > div { min-width: 0; display: grid; gap: 1px; }
 .skill-person-skills article > header small { color: #8290a2; font-size: 8px; }
 .skill-person-skills article h3 { margin: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.skill-person-skills article > header > b { padding: 5px 7px; display: grid; gap: 1px; border-radius: 9px; background: #eef2f6; color: #66768b; font-size: 8px; text-align: right; }
-.skill-person-skills article > header > b.legacy { background: #eef4ff; color: var(--skill-blue); }
-.skill-person-skills article > header > b small { color: inherit; font-size: 7px; font-weight: 700; opacity: .82; }
+.skill-card-head-actions {
+  min-width: auto !important;
+  display: flex !important;
+  align-items: center;
+  gap: 5px !important;
+}
+.skill-card-head-actions > b { padding: 5px 7px; display: grid; gap: 1px; border-radius: 9px; background: #eef2f6; color: #66768b; font-size: 8px; text-align: right; }
+.skill-card-head-actions > b.legacy { background: #eef4ff; color: var(--skill-blue); }
+.skill-card-head-actions > b small { color: inherit; font-size: 7px; font-weight: 700; opacity: .82; }
+.skill-card-delete {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid #f0ced0;
+  border-radius: 8px;
+  background: #fffafa;
+  color: #c94d55;
+  transition: transform .16s ease, border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
+}
+.skill-card-delete svg { width: 14px; height: 14px; }
+.skill-card-delete:hover {
+  transform: translateY(-2px);
+  border-color: #e99da2;
+  background: #fff2f3;
+  box-shadow: 0 7px 14px rgba(199, 71, 79, .12);
+}
+.skill-card-delete:active { transform: translateY(0); }
 .skill-level-track { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
 .skill-level-track i { height: 24px; display: grid; place-items: center; border-radius: 6px; background: #f1f4f7; color: #a0abb8; font-size: 8px; font-style: normal; font-weight: 800; }
 .skill-level-track i.active { background: linear-gradient(90deg, #55ba90, #1aa873); color: #fff; }
@@ -2821,6 +2847,60 @@ button.skill-matrix-person:hover { background: #f7faff; }
 .skill-dialog > header > button { margin-left: auto; width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid #dce4ed; border-radius: 10px; background: #fff; color: #718198; }
 .skill-dialog-body { min-height: 0; padding: 14px 17px; overflow-y: auto; scrollbar-width: thin; }
 .skill-dialog > footer { min-height: 66px; padding: 11px 17px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; border-top: 1px solid #e7ecf2; background: rgba(250, 252, 254, .98); }
+
+.skill-delete-confirmation {
+  max-width: 590px;
+  margin: 2px auto;
+  padding: 4px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 13px;
+}
+.skill-delete-confirmation > span {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #f0c9cc;
+  border-radius: 14px;
+  background: #fff3f4;
+  color: #c7474f;
+  box-shadow: 0 9px 20px rgba(199, 71, 79, .1);
+}
+.skill-delete-confirmation > span svg { width: 21px; height: 21px; }
+.skill-delete-confirmation > div { min-width: 0; display: grid; align-content: center; gap: 3px; }
+.skill-delete-confirmation > div > small { color: #c7474f; font-size: 9px; font-weight: 850; }
+.skill-delete-confirmation h3 { margin: 0; color: #273a51; font-size: 17px; line-height: 1.35; }
+.skill-delete-confirmation p { margin: 1px 0 0; color: #77869a; font-size: 10px; line-height: 1.55; }
+.skill-delete-confirmation dl {
+  grid-column: 1 / -1;
+  margin: 7px 0 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border: 1px solid #e3e9f0;
+  border-radius: 12px;
+  background: #fbfcfe;
+  overflow: hidden;
+}
+.skill-delete-confirmation dl > div { min-width: 0; padding: 10px 12px; display: grid; gap: 3px; border-right: 1px solid #e8edf3; }
+.skill-delete-confirmation dl > div:last-child { border-right: 0; }
+.skill-delete-confirmation dt { color: #8794a5; font-size: 8px; }
+.skill-delete-confirmation dd { margin: 0; overflow: hidden; color: #31465e; font-size: 11px; font-weight: 820; text-overflow: ellipsis; white-space: nowrap; }
+.skill-delete-confirmation > aside {
+  grid-column: 1 / -1;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #cfe0fb;
+  border-radius: 12px;
+  background: #f3f7ff;
+  color: var(--skill-blue);
+}
+.skill-delete-confirmation > aside > svg { width: 19px; flex: none; }
+.skill-delete-confirmation > aside > span { display: grid; gap: 2px; }
+.skill-delete-confirmation > aside strong { color: #355783; font-size: 10px; }
+.skill-delete-confirmation > aside small { color: #6f83a0; font-size: 9px; line-height: 1.45; }
 
 .skill-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .skill-form-grid > label { min-width: 0; display: grid; align-content: start; gap: 5px; color: #506178; font-size: 10px; font-weight: 800; }
