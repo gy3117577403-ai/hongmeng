@@ -25,14 +25,18 @@ import {
   Save,
   Search,
   Send,
+  Settings2,
   ShieldCheck,
+  Sparkles,
   Trash2,
+  Trophy,
   UserRound,
   UsersRound,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
+import { evaluateSkillReward, skillRewardRuleMatchesEmployee } from '@/lib/skill-rewards';
 import type {
   EmployeeDTO,
   EmployeeSkillCertificationDTO,
@@ -40,11 +44,12 @@ import type {
   SkillAssessmentDTO,
   SkillAssessmentTemplateDTO,
   SkillDefinitionDTO,
+  SkillRewardRuleDTO,
   SkillWorkbenchSummaryDTO,
 } from '@/types';
 
 type SkillView = 'matrix' | 'people' | 'assessments';
-type SkillDialog = 'skill' | 'requirement' | 'remove-requirement' | 'template' | 'launch' | 'assessment' | 'legacy' | null;
+type SkillDialog = 'skill' | 'requirement' | 'remove-requirement' | 'remove-certification' | 'reward-rule' | 'remove-reward-rule' | 'template' | 'launch' | 'assessment' | 'legacy' | null;
 
 export type SkillWorkbenchResponse = {
   ok: boolean;
@@ -52,10 +57,12 @@ export type SkillWorkbenchResponse = {
   skills?: SkillDefinitionDTO[];
   requirements?: PositionSkillRequirementDTO[];
   certifications?: EmployeeSkillCertificationDTO[];
+  rewardRules?: SkillRewardRuleDTO[];
   templates?: SkillAssessmentTemplateDTO[];
   assessments?: SkillAssessmentDTO[];
   summary?: SkillWorkbenchSummaryDTO;
   assessment?: SkillAssessmentDTO;
+  rewardRule?: SkillRewardRuleDTO;
   error?: string;
 };
 
@@ -85,6 +92,28 @@ type RequirementRemovalTarget = {
   employee: EmployeeDTO;
   requirement: PositionSkillRequirementDTO;
   skill: SkillDefinitionDTO;
+};
+
+type CertificationRemovalTarget = {
+  employee: EmployeeDTO;
+  certification: EmployeeSkillCertificationDTO;
+  skill: SkillDefinitionDTO;
+};
+
+type RewardRuleRemovalTarget = {
+  rule: SkillRewardRuleDTO;
+  skill: SkillDefinitionDTO;
+};
+
+type RewardRuleDraft = {
+  jobName: string;
+  jobKeyword: string;
+  skillId: string;
+  minimumLevel: string;
+  rewardName: string;
+  rewardDescription: string;
+  isActive: boolean;
+  sortOrder: string;
 };
 
 const levelLabels = ['未认证', 'L1 了解', 'L2 独立', 'L3 熟练', 'L4 专家'];
@@ -170,6 +199,7 @@ export default function SkillPerformanceWorkbench({
   const [skills, setSkills] = useState<SkillDefinitionDTO[]>(initialData?.skills || []);
   const [requirements, setRequirements] = useState<PositionSkillRequirementDTO[]>(initialData?.requirements || []);
   const [certifications, setCertifications] = useState<EmployeeSkillCertificationDTO[]>(initialData?.certifications || []);
+  const [rewardRules, setRewardRules] = useState<SkillRewardRuleDTO[]>(initialData?.rewardRules || []);
   const [templates, setTemplates] = useState<SkillAssessmentTemplateDTO[]>(initialData?.templates || []);
   const [assessments, setAssessments] = useState<SkillAssessmentDTO[]>(initialData?.assessments || []);
   const [summary, setSummary] = useState<SkillWorkbenchSummaryDTO>(initialData?.summary || emptySummary);
@@ -201,6 +231,19 @@ export default function SkillPerformanceWorkbench({
     targetLevel: '2',
   });
   const [requirementRemovalTarget, setRequirementRemovalTarget] = useState<RequirementRemovalTarget | null>(null);
+  const [certificationRemovalTarget, setCertificationRemovalTarget] = useState<CertificationRemovalTarget | null>(null);
+  const [rewardRuleRemovalTarget, setRewardRuleRemovalTarget] = useState<RewardRuleRemovalTarget | null>(null);
+  const [rewardEditingId, setRewardEditingId] = useState('');
+  const [rewardDraft, setRewardDraft] = useState<RewardRuleDraft>({
+    jobName: '',
+    jobKeyword: '',
+    skillId: '',
+    minimumLevel: '3',
+    rewardName: '关键岗位技能奖励',
+    rewardDescription: '',
+    isActive: true,
+    sortOrder: '100',
+  });
   const [templateDraft, setTemplateDraft] = useState({
     name: '',
     department: '',
@@ -239,6 +282,7 @@ export default function SkillPerformanceWorkbench({
       setSkills(body.skills || []);
       setRequirements(body.requirements || []);
       setCertifications(body.certifications || []);
+      setRewardRules(body.rewardRules || []);
       setTemplates(body.templates || []);
       setAssessments(body.assessments || []);
       setSummary(body.summary || emptySummary);
@@ -301,12 +345,17 @@ export default function SkillPerformanceWorkbench({
     () => selectedEmployee ? requirements.filter(requirement => requirementMatches(requirement, selectedEmployee)) : [],
     [requirements, selectedEmployee],
   );
+  const employeeRewardRules = useMemo(
+    () => selectedEmployee ? rewardRules.filter(rule => skillRewardRuleMatchesEmployee(rule, selectedEmployee)) : [],
+    [rewardRules, selectedEmployee],
+  );
   const employeeSkillIds = useMemo(
     () => new Set([
       ...employeeRequirements.map(requirement => requirement.skillId),
       ...certifications.filter(certification => certification.employeeId === selectedEmployeeId).map(certification => certification.skillId),
+      ...employeeRewardRules.map(rule => rule.skillId),
     ]),
-    [certifications, employeeRequirements, selectedEmployeeId],
+    [certifications, employeeRequirements, employeeRewardRules, selectedEmployeeId],
   );
   const employeeSkills = visibleSkills.filter(skill => employeeSkillIds.has(skill.id));
   const filteredTemplates = templates.filter(template => template.status === 'ACTIVE');
@@ -360,6 +409,73 @@ export default function SkillPerformanceWorkbench({
     setRequirementRemovalTarget({ employee, requirement, skill });
     setDialogError('');
     setDialog('remove-requirement');
+  }
+
+  function openCertificationRemovalDialog(
+    employee: EmployeeDTO,
+    certification: EmployeeSkillCertificationDTO,
+    skill: SkillDefinitionDTO,
+  ): void {
+    setCertificationRemovalTarget({ employee, certification, skill });
+    setDialogError('');
+    setDialog('remove-certification');
+  }
+
+  function resetRewardDraft(): void {
+    setRewardEditingId('');
+    setRewardDraft({
+      jobName: '',
+      jobKeyword: '',
+      skillId: visibleSkills[0]?.id || '',
+      minimumLevel: '3',
+      rewardName: '关键岗位技能奖励',
+      rewardDescription: '',
+      isActive: true,
+      sortOrder: String((rewardRules.length + 1) * 10),
+    });
+  }
+
+  function openRewardRuleDialog(rule?: SkillRewardRuleDTO): void {
+    if (rule) {
+      setRewardEditingId(rule.id);
+      setRewardDraft({
+        jobName: rule.jobName,
+        jobKeyword: rule.jobKeyword,
+        skillId: rule.skillId,
+        minimumLevel: String(rule.minimumLevel),
+        rewardName: rule.rewardName,
+        rewardDescription: rule.rewardDescription || '',
+        isActive: rule.isActive,
+        sortOrder: String(rule.sortOrder),
+      });
+    } else {
+      resetRewardDraft();
+    }
+    setDialogError('');
+    setDialog('reward-rule');
+  }
+
+  function editRewardRule(rule: SkillRewardRuleDTO): void {
+    setRewardEditingId(rule.id);
+    setRewardDraft({
+      jobName: rule.jobName,
+      jobKeyword: rule.jobKeyword,
+      skillId: rule.skillId,
+      minimumLevel: String(rule.minimumLevel),
+      rewardName: rule.rewardName,
+      rewardDescription: rule.rewardDescription || '',
+      isActive: rule.isActive,
+      sortOrder: String(rule.sortOrder),
+    });
+    setDialogError('');
+  }
+
+  function openRewardRuleRemovalDialog(rule: SkillRewardRuleDTO): void {
+    const skill = visibleSkills.find(item => item.id === rule.skillId);
+    if (!skill) return;
+    setRewardRuleRemovalTarget({ rule, skill });
+    setDialogError('');
+    setDialog('remove-reward-rule');
   }
 
   function openTemplateDialog(baseTemplate?: SkillAssessmentTemplateDTO): void {
@@ -517,6 +633,54 @@ export default function SkillPerformanceWorkbench({
       setDialog(null);
       setRequirementRemovalTarget(null);
       setToast(`已从${requirement.team || requirement.position}移除“${skill.name}”，员工技能档案与考核记录均已保留`);
+      await loadWorkbench();
+    });
+  }
+
+  async function removeLegacyCertification(): Promise<void> {
+    if (!certificationRemovalTarget) return;
+    const { certification, employee, skill } = certificationRemovalTarget;
+    await execute(async () => {
+      await postJson('/api/skills/certifications', {
+        certificationId: certification.id,
+        version: certification.version,
+      }, 'DELETE');
+      setDialog(null);
+      setCertificationRemovalTarget(null);
+      setToast(`已删除 ${employee.name} 的“${skill.name}”历史技能；岗位要求、正式考核和其他技能均未受影响`);
+      await loadWorkbench();
+    });
+  }
+
+  async function saveRewardRule(): Promise<void> {
+    const existing = rewardRules.find(rule => rule.id === rewardEditingId);
+    await execute(async () => {
+      await postJson('/api/skills/rewards', {
+        action: 'upsert',
+        id: existing?.id || null,
+        version: existing?.version,
+        ...rewardDraft,
+        minimumLevel: Number(rewardDraft.minimumLevel),
+        sortOrder: Number(rewardDraft.sortOrder),
+      });
+      setToast(existing ? '关键岗位奖励规则已更新' : '关键岗位奖励规则已新增');
+      await loadWorkbench();
+      resetRewardDraft();
+    });
+  }
+
+  async function removeRewardRule(): Promise<void> {
+    if (!rewardRuleRemovalTarget) return;
+    const { rule } = rewardRuleRemovalTarget;
+    await execute(async () => {
+      await postJson('/api/skills/rewards', {
+        action: 'remove',
+        id: rule.id,
+        version: rule.version,
+      });
+      setDialog(null);
+      setRewardRuleRemovalTarget(null);
+      setToast(`已删除“${rule.jobName}”奖励规则，员工技能档案不受影响`);
       await loadWorkbench();
     });
   }
@@ -702,6 +866,14 @@ export default function SkillPerformanceWorkbench({
       const certification = certificationsByPair.get(`${selectedEmployeeId}:${requirement.skillId}`);
       return certification && certification.level >= requirement.targetLevel;
     }).length;
+    const activeRewardRules = rewardRules.filter(rule => rule.isActive);
+    const qualifiedRewardCount = selectedEmployee
+      ? employeeRewardRules.filter(rule => evaluateSkillReward(
+        rule,
+        selectedEmployee,
+        certificationsByPair.get(`${selectedEmployee.id}:${rule.skillId}`),
+      ).qualified).length
+      : 0;
     return (
       <div className="skill-people-layout">
         <aside className="skill-people-list">
@@ -742,32 +914,86 @@ export default function SkillPerformanceWorkbench({
               </header>
               <div className="skill-person-main">
                 <section className="skill-person-skills">
-                  <header><div><span className="skill-eyebrow">能力证据</span><h2>岗位技能与认证</h2></div><button type="button" onClick={() => openRequirementDialog(selectedEmployee)}><Plus />补充岗位技能</button></header>
+                  <header>
+                    <div><span className="skill-eyebrow">能力证据</span><h2>岗位技能与认证</h2></div>
+                    <div className="skill-person-skill-actions">
+                      <button type="button" className="reward" onClick={() => openRewardRuleDialog()}><Settings2 />奖励规则</button>
+                      <button type="button" onClick={() => openRequirementDialog(selectedEmployee)}><Plus />补充岗位技能</button>
+                    </div>
+                  </header>
+                  <section className="skill-reward-strip">
+                    <header>
+                      <span><Trophy /></span>
+                      <div><small>关键岗位奖励</small><strong>{employeeRewardRules.length ? `${qualifiedRewardCount}/${employeeRewardRules.length} 项达标` : '当前岗位暂无匹配规则'}</strong></div>
+                    </header>
+                    <div>
+                      {activeRewardRules.slice(0, 5).map(rule => {
+                        const skill = visibleSkills.find(item => item.id === rule.skillId);
+                        const certification = selectedEmployee ? certificationsByPair.get(`${selectedEmployee.id}:${rule.skillId}`) : undefined;
+                        const evaluation = selectedEmployee ? evaluateSkillReward(rule, selectedEmployee, certification) : null;
+                        return (
+                          <button
+                            type="button"
+                            className={evaluation?.qualified ? 'qualified' : evaluation?.applicable ? 'progress' : ''}
+                            key={rule.id}
+                            title={rule.rewardDescription || rule.rewardName}
+                            onClick={() => openRewardRuleDialog(rule)}
+                          >
+                            <span>{rule.jobName}<small>{skill?.name || '技能待维护'} · L{rule.minimumLevel}+</small></span>
+                            <em>{evaluation?.qualified ? '奖励达标' : evaluation?.applicable ? `当前 L${evaluation.currentLevel}` : '岗位未匹配'}</em>
+                          </button>
+                        );
+                      })}
+                      {!activeRewardRules.length && <p>尚未配置关键岗位奖励规则</p>}
+                    </div>
+                    <button type="button" onClick={() => openRewardRuleDialog()}><Sparkles />新增规则</button>
+                  </section>
                   <div>
                     {employeeSkills.map(skill => {
                       const requirement = employeeRequirements.find(item => item.skillId === skill.id);
                       const certification = certificationsByPair.get(`${selectedEmployee.id}:${skill.id}`);
                       const level = certification?.level || 0;
                       const expired = certification?.expiresAt && new Date(certification.expiresAt).getTime() < Date.now();
+                      const rewardRule = employeeRewardRules.find(rule => rule.skillId === skill.id && rule.isActive);
+                      const rewardEvaluation = rewardRule
+                        ? evaluateSkillReward(rewardRule, selectedEmployee, certification)
+                        : null;
+                      const cardTone = expired ? 'expired' : certification ? 'certified' : 'gap';
                       return (
-                        <article key={skill.id} className={expired ? 'expired' : certification ? 'certified' : 'gap'}>
+                        <article key={skill.id} className={`${cardTone}${rewardEvaluation?.qualified ? ' reward-qualified' : rewardRule ? ' reward-progress' : ''}`}>
                           <header>
                             <span><Award /></span>
                             <div><small>{requirement ? `岗位要求 L${requirement.targetLevel}` : '扩展技能'}</small><h3>{skill.name}</h3></div>
                             <div className="skill-card-head-actions">
+                              {rewardRule && (
+                                <span className={rewardEvaluation?.qualified ? 'skill-reward-badge qualified' : 'skill-reward-badge'}>
+                                  <Trophy />{rewardEvaluation?.qualified ? '奖励达标' : `奖励 L${rewardRule.minimumLevel}+`}
+                                </span>
+                              )}
                               <b className={certification?.source === 'LEGACY_ENTRY' ? 'legacy' : ''}>
                                 {expired ? '已过期' : certification ? levelLabels[level] : '待考核'}
                                 {certification && !expired && <small>{certification.source === 'LEGACY_ENTRY' ? '历史登记' : '正式认证'}</small>}
                               </b>
-                              {requirement && (
+                              {certification?.source === 'LEGACY_ENTRY' && (
                                 <button
                                   type="button"
                                   className="skill-card-delete"
+                                  title={`删除 ${selectedEmployee.name} 的“${skill.name}”历史技能档案`}
+                                  aria-label={`删除历史技能档案：${skill.name}`}
+                                  onClick={() => openCertificationRemovalDialog(selectedEmployee, certification, skill)}
+                                >
+                                  <Trash2 />
+                                </button>
+                              )}
+                              {requirement && (
+                                <button
+                                  type="button"
+                                  className="skill-card-delete requirement"
                                   title={`从${requirement.team || requirement.position}移除“${skill.name}”`}
                                   aria-label={`删除岗位技能：${skill.name}`}
                                   onClick={() => openRequirementRemovalDialog(selectedEmployee, requirement, skill)}
                                 >
-                                  <Trash2 />
+                                  <X />
                                 </button>
                               )}
                             </div>
@@ -939,14 +1165,49 @@ export default function SkillPerformanceWorkbench({
             <header>
               <div>
                 <span className="skill-eyebrow">
-                  {dialog === 'skill' ? '技能目录' : dialog === 'requirement' || dialog === 'remove-requirement' ? '岗位标准' : dialog === 'template' ? '考核模板' : dialog === 'launch' ? '考核任务' : dialog === 'legacy' ? '老员工技能建档' : '在线考核'}
+                  {dialog === 'skill'
+                    ? '技能目录'
+                    : dialog === 'requirement' || dialog === 'remove-requirement'
+                      ? '岗位标准'
+                      : dialog === 'remove-certification'
+                        ? '历史技能档案'
+                        : dialog === 'reward-rule' || dialog === 'remove-reward-rule'
+                          ? '关键岗位奖励'
+                          : dialog === 'template'
+                            ? '考核模板'
+                            : dialog === 'launch'
+                              ? '考核任务'
+                              : dialog === 'legacy'
+                                ? '老员工技能建档'
+                                : '在线考核'}
                 </span>
                 <h2>
-                  {dialog === 'skill' ? '新增技能' : dialog === 'requirement' ? '配置岗位技能要求' : dialog === 'remove-requirement' ? '删除岗位技能' : dialog === 'template' ? `${templateBaseId ? '建立新版' : '新建'}岗位技能考核表` : dialog === 'launch' ? '发起技能考核' : dialog === 'legacy' ? `录入 ${selectedEmployee?.name || ''} 的历史技能` : selectedAssessment?.template.name}
+                  {dialog === 'skill'
+                    ? '新增技能'
+                    : dialog === 'requirement'
+                      ? '配置岗位技能要求'
+                      : dialog === 'remove-requirement'
+                        ? '删除岗位技能'
+                        : dialog === 'remove-certification'
+                          ? '删除历史技能档案'
+                          : dialog === 'reward-rule'
+                            ? '配置技能奖励规则'
+                            : dialog === 'remove-reward-rule'
+                              ? '删除奖励规则'
+                              : dialog === 'template'
+                                ? `${templateBaseId ? '建立新版' : '新建'}岗位技能考核表`
+                                : dialog === 'launch'
+                                  ? '发起技能考核'
+                                  : dialog === 'legacy'
+                                    ? `录入 ${selectedEmployee?.name || ''} 的历史技能`
+                                    : selectedAssessment?.template.name}
                 </h2>
                 {dialog === 'assessment' && selectedAssessment && <p>{selectedAssessment.employee.name} · {selectedAssessment.skill.name} · {statusLabels[selectedAssessment.status]}</p>}
                 {dialog === 'legacy' && selectedEmployee && <p>{selectedEmployee.department || '部门待维护'} · {selectedEmployee.position || '岗位待维护'} · 批量建档，不生成考核任务</p>}
                 {dialog === 'remove-requirement' && requirementRemovalTarget && <p>{requirementRemovalTarget.requirement.department} · {requirementRemovalTarget.requirement.position}{requirementRemovalTarget.requirement.team ? ` · ${requirementRemovalTarget.requirement.team}` : ''}</p>}
+                {dialog === 'remove-certification' && certificationRemovalTarget && <p>{certificationRemovalTarget.employee.name} · {certificationRemovalTarget.skill.name} · 历史登记 L{certificationRemovalTarget.certification.level}</p>}
+                {dialog === 'reward-rule' && <p>默认压接、焊接、调模为 L3 达标；岗位、技能和门槛均可继续维护</p>}
+                {dialog === 'remove-reward-rule' && rewardRuleRemovalTarget && <p>{rewardRuleRemovalTarget.rule.jobName} · {rewardRuleRemovalTarget.skill.name} · L{rewardRuleRemovalTarget.rule.minimumLevel}+</p>}
               </div>
               <button type="button" aria-label="关闭" disabled={saving} onClick={() => setDialog(null)}><X /></button>
             </header>
@@ -1002,6 +1263,105 @@ export default function SkillPerformanceWorkbench({
                       <strong>只删除岗位要求，不删除员工档案</strong>
                       <small>历史技能、正式认证、考核任务和留痕记录全部保留；已有认证将继续作为员工扩展技能显示。</small>
                     </span>
+                  </aside>
+                </div>
+              )}
+
+              {dialog === 'remove-certification' && certificationRemovalTarget && (
+                <div className="skill-delete-confirmation">
+                  <span><Trash2 /></span>
+                  <div>
+                    <small>删除历史录入技能</small>
+                    <h3>删除 {certificationRemovalTarget.employee.name} 的“{certificationRemovalTarget.skill.name}”历史技能？</h3>
+                    <p>删除后，该条历史登记将从员工技能卡、矩阵和覆盖统计中移除。此操作只允许历史录入档案，正式考核认证不会被删除。</p>
+                  </div>
+                  <dl>
+                    <div><dt>员工</dt><dd>{certificationRemovalTarget.employee.name} · {certificationRemovalTarget.employee.employeeNo}</dd></div>
+                    <div><dt>历史等级</dt><dd>L{certificationRemovalTarget.certification.level}</dd></div>
+                    <div><dt>登记依据</dt><dd>{evidenceTypeLabels[certificationRemovalTarget.certification.evidenceType || 'OTHER']}</dd></div>
+                    <div><dt>掌握日期</dt><dd>{formatDate(certificationRemovalTarget.certification.effectiveFrom)}</dd></div>
+                  </dl>
+                  <aside>
+                    <ShieldCheck />
+                    <span>
+                      <strong>岗位要求、考核模板和正式记录全部保留</strong>
+                      <small>如果该技能仍是岗位必备，删除后会恢复为“待考核”状态；操作日志会记录本次删除内容。</small>
+                    </span>
+                  </aside>
+                </div>
+              )}
+
+              {dialog === 'reward-rule' && (
+                <div className="skill-reward-editor">
+                  <aside>
+                    <header>
+                      <div><span className="skill-eyebrow">已配置规则</span><h3>关键岗位奖励</h3></div>
+                      <button type="button" onClick={resetRewardDraft}><Plus />新增</button>
+                    </header>
+                    <div>
+                      {rewardRules.map(rule => {
+                        const skill = visibleSkills.find(item => item.id === rule.skillId);
+                        return (
+                          <article className={rewardEditingId === rule.id ? 'selected' : ''} key={rule.id}>
+                            <button type="button" onClick={() => editRewardRule(rule)}>
+                              <span><Trophy /></span>
+                              <div><strong>{rule.jobName}</strong><small>{skill?.name || '技能已停用'} · L{rule.minimumLevel}+ · {rule.isActive ? '已启用' : '已停用'}</small></div>
+                              <ChevronRight />
+                            </button>
+                            <button type="button" title={`删除${rule.jobName}奖励规则`} onClick={() => openRewardRuleRemovalDialog(rule)}><Trash2 /></button>
+                          </article>
+                        );
+                      })}
+                      {!rewardRules.length && <p>尚未配置规则，可从右侧新建第一条。</p>}
+                    </div>
+                  </aside>
+                  <section>
+                    <header>
+                      <span><Sparkles /></span>
+                      <div><small>{rewardEditingId ? '编辑规则' : '新增规则'}</small><h3>{rewardEditingId ? rewardDraft.jobName || '奖励规则' : '新增关键岗位奖励'}</h3></div>
+                    </header>
+                    <div className="skill-form-grid">
+                      <label><span>岗位显示名称 *</span><input value={rewardDraft.jobName} onChange={event => setRewardDraft(current => ({ ...current, jobName: event.target.value }))} placeholder="例如：压接岗" /></label>
+                      <label>
+                        <span>岗位匹配关键字 *</span>
+                        <input list="skill-reward-job-keywords" value={rewardDraft.jobKeyword} onChange={event => setRewardDraft(current => ({ ...current, jobKeyword: event.target.value }))} placeholder="例如：压接" />
+                        <datalist id="skill-reward-job-keywords">
+                          {[...new Set(activeEmployees.flatMap(employee => [employee.position || '', employee.team || '']).filter(Boolean))].map(value => <option value={value} key={value} />)}
+                        </datalist>
+                        <small>匹配员工岗位或班组名称，输入“压接”可覆盖压接工、压接组长等岗位。</small>
+                      </label>
+                      <label><span>奖励技能 *</span><select value={rewardDraft.skillId} onChange={event => setRewardDraft(current => ({ ...current, skillId: event.target.value }))}><option value="">请选择</option>{visibleSkills.map(skill => <option value={skill.id} key={skill.id}>{skill.name}</option>)}</select></label>
+                      <label><span>排序</span><input type="number" min="0" max="9999" value={rewardDraft.sortOrder} onChange={event => setRewardDraft(current => ({ ...current, sortOrder: event.target.value }))} /></label>
+                      <label className="wide"><span>奖励门槛 *</span><div className="skill-level-picker reward">{[1, 2, 3, 4].map(level => <button type="button" className={rewardDraft.minimumLevel === String(level) ? 'active' : ''} onClick={() => setRewardDraft(current => ({ ...current, minimumLevel: String(level) }))} key={level}><strong>L{level}</strong><small>{levelLabels[level].replace(`L${level} `, '')}</small></button>)}</div></label>
+                      <label><span>奖励名称 *</span><input value={rewardDraft.rewardName} onChange={event => setRewardDraft(current => ({ ...current, rewardName: event.target.value }))} placeholder="例如：压接关键技能奖励" /></label>
+                      <label className="skill-check"><input type="checkbox" checked={rewardDraft.isActive} onChange={event => setRewardDraft(current => ({ ...current, isActive: event.target.checked }))} /><span><strong>启用本规则</strong><small>停用后不再判断达标与奖励</small></span></label>
+                      <label className="wide"><span>奖励说明</span><textarea value={rewardDraft.rewardDescription} onChange={event => setRewardDraft(current => ({ ...current, rewardDescription: event.target.value }))} placeholder="记录适用范围、奖励口径或后续薪酬对接说明" /></label>
+                    </div>
+                    <div className="skill-reward-preview">
+                      <Trophy />
+                      <span><small>达标预览</small><strong>{rewardDraft.jobName || '岗位待填写'} · {visibleSkills.find(skill => skill.id === rewardDraft.skillId)?.name || '技能待选择'}达到 L{rewardDraft.minimumLevel}+</strong><em>{rewardDraft.rewardName || '奖励名称待填写'}</em></span>
+                    </div>
+                  </section>
+                </div>
+              )}
+
+              {dialog === 'remove-reward-rule' && rewardRuleRemovalTarget && (
+                <div className="skill-delete-confirmation">
+                  <span><Trash2 /></span>
+                  <div>
+                    <small>删除岗位奖励规则</small>
+                    <h3>删除“{rewardRuleRemovalTarget.rule.jobName}”奖励规则？</h3>
+                    <p>删除后不再对该岗位的“{rewardRuleRemovalTarget.skill.name}”技能判断奖励达标，但不会删除任何员工技能档案。</p>
+                  </div>
+                  <dl>
+                    <div><dt>岗位</dt><dd>{rewardRuleRemovalTarget.rule.jobName}</dd></div>
+                    <div><dt>匹配关键字</dt><dd>{rewardRuleRemovalTarget.rule.jobKeyword}</dd></div>
+                    <div><dt>奖励技能</dt><dd>{rewardRuleRemovalTarget.skill.name}</dd></div>
+                    <div><dt>达标门槛</dt><dd>L{rewardRuleRemovalTarget.rule.minimumLevel}+</dd></div>
+                  </dl>
+                  <aside>
+                    <ShieldCheck />
+                    <span><strong>员工技能与考核数据不会被删除</strong><small>如需临时停止奖励判断，也可以返回编辑并关闭“启用本规则”。</small></span>
                   </aside>
                 </div>
               )}
@@ -1192,6 +1552,9 @@ export default function SkillPerformanceWorkbench({
               {dialog === 'skill' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void createSkill()}>{saving ? <Loader2 className="spin" /> : <Save />}保存技能</button>}
               {dialog === 'requirement' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void saveRequirement()}>{saving ? <Loader2 className="spin" /> : <Save />}保存岗位要求</button>}
               {dialog === 'remove-requirement' && <button type="button" className="skill-return-button" disabled={saving} onClick={() => void removeRequirement()}>{saving ? <Loader2 className="spin" /> : <Trash2 />}确认删除</button>}
+              {dialog === 'remove-certification' && <button type="button" className="skill-return-button" disabled={saving} onClick={() => void removeLegacyCertification()}>{saving ? <Loader2 className="spin" /> : <Trash2 />}删除历史技能</button>}
+              {dialog === 'reward-rule' && <button type="button" className="skill-primary-button reward" disabled={saving} onClick={() => void saveRewardRule()}>{saving ? <Loader2 className="spin" /> : <Trophy />}{rewardEditingId ? '保存奖励规则' : '新增奖励规则'}</button>}
+              {dialog === 'remove-reward-rule' && <button type="button" className="skill-return-button" disabled={saving} onClick={() => void removeRewardRule()}>{saving ? <Loader2 className="spin" /> : <Trash2 />}确认删除规则</button>}
               {dialog === 'template' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void createTemplate()}>{saving ? <Loader2 className="spin" /> : <FileCheck2 />}生成并启用考核表</button>}
               {dialog === 'launch' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void launchAssessment()}>{saving ? <Loader2 className="spin" /> : <Plus />}创建考核任务</button>}
               {dialog === 'legacy' && <button type="button" className="skill-primary-button" disabled={saving || selectedLegacyCount === 0} onClick={() => void saveLegacySkills()}>{saving ? <Loader2 className="spin" /> : <History />}保存 {selectedLegacyCount} 项历史技能</button>}

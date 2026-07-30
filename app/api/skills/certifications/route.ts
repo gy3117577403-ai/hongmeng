@@ -230,3 +230,64 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: '历史技能档案保存失败' }, { status: 500 });
   }
 }
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const user = await requireUser();
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    const certificationId = cleanSkillText(body.certificationId, 80);
+    const version = Number(body.version);
+    if (!certificationId) throw new SkillInputError('请选择要删除的历史技能');
+    if (!Number.isInteger(version) || version < 0) throw new SkillInputError('历史技能版本无效，请刷新后重试');
+
+    const certification = await prisma.employeeSkillCertification.findUnique({
+      where: { id: certificationId },
+      include: {
+        employee: { select: { employeeNo: true, name: true } },
+        skill: { select: { name: true } },
+      },
+    });
+    if (!certification) throw new SkillInputError('历史技能已删除或不存在', 404);
+    if (certification.source !== 'LEGACY_ENTRY') {
+      throw new SkillInputError('正式考核形成的技能认证不能在此删除，请通过复评或认证流程处理', 409);
+    }
+
+    const deleted = await prisma.employeeSkillCertification.deleteMany({
+      where: {
+        id: certification.id,
+        version,
+        source: 'LEGACY_ENTRY',
+      },
+    });
+    if (deleted.count !== 1) {
+      throw new SkillInputError('历史技能已被其他人更新，请刷新后重试', 409);
+    }
+
+    await logOp({
+      userId: user.id,
+      action: 'delete_legacy_skill_profile',
+      targetType: 'employee_skill_certification',
+      targetId: certification.id,
+      detail: {
+        employeeNo: certification.employee.employeeNo,
+        employeeName: certification.employee.name,
+        skill: certification.skill.name,
+        level: certification.level,
+        evidenceType: certification.evidenceType,
+        effectiveFrom: certification.effectiveFrom.toISOString().slice(0, 10),
+        expiresAt: certification.expiresAt?.toISOString().slice(0, 10) || null,
+        reviewerId: certification.reviewerId,
+        note: certification.note,
+      },
+    });
+
+    return NextResponse.json({ ok: true, removed: true });
+  } catch (error) {
+    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof SkillInputError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: error.statusCode });
+    }
+    console.error('legacy skill profile delete failed', error);
+    return NextResponse.json({ ok: false, error: '历史技能删除失败' }, { status: 500 });
+  }
+}

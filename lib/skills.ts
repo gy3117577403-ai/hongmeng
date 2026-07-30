@@ -6,6 +6,7 @@ import type {
   SkillAssessmentDTO,
   SkillAssessmentTemplateDTO,
   SkillDefinitionDTO,
+  SkillRewardRuleDTO,
   SkillWorkbenchSummaryDTO,
 } from '@/types';
 
@@ -164,6 +165,28 @@ export function serializeCertification(certification: {
     expiresAt: certification.expiresAt?.toISOString() || null,
     createdAt: certification.createdAt.toISOString(),
     updatedAt: certification.updatedAt.toISOString(),
+  };
+}
+
+export function serializeRewardRule(rule: {
+  id: string;
+  code: string;
+  jobName: string;
+  jobKeyword: string;
+  skillId: string;
+  minimumLevel: number;
+  rewardName: string;
+  rewardDescription: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  version: number;
+  createdAt: Date;
+  updatedAt: Date;
+}): SkillRewardRuleDTO {
+  return {
+    ...rule,
+    createdAt: rule.createdAt.toISOString(),
+    updatedAt: rule.updatedAt.toISOString(),
   };
 }
 

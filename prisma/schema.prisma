@@ -533,6 +533,7 @@ model SkillDefinition {
   certifications            EmployeeSkillCertification[]
   templates                 SkillAssessmentTemplate[]
   assessments               SkillAssessment[]
+  rewardRules               SkillRewardRule[]
 
   @@index([category, isActive, sortOrder])
   @@index([name])
@@ -590,6 +591,28 @@ model EmployeeSkillCertification {
   @@index([source, status])
   @@index([expiresAt])
   @@map("employee_skill_certifications")
+}
+
+model SkillRewardRule {
+  id                String          @id @default(uuid())
+  code              String          @unique
+  jobName           String          @map("job_name")
+  jobKeyword        String          @map("job_keyword")
+  skillId           String          @map("skill_id")
+  minimumLevel      Int             @default(3) @map("minimum_level")
+  rewardName        String          @default("关键岗位技能奖励") @map("reward_name")
+  rewardDescription String?         @map("reward_description")
+  isActive          Boolean         @default(true) @map("is_active")
+  sortOrder         Int             @default(0) @map("sort_order")
+  version           Int             @default(0)
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  skill             SkillDefinition @relation(fields: [skillId], references: [id], onDelete: Cascade)
+
+  @@unique([jobKeyword, skillId])
+  @@index([isActive, sortOrder])
+  @@index([skillId])
+  @@map("skill_reward_rules")
 }
 
 model SkillAssessmentTemplate {

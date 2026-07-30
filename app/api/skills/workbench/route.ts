@@ -6,6 +6,7 @@ import {
   serializeCertification,
   serializeEmployee,
   serializeRequirement,
+  serializeRewardRule,
   serializeSkill,
   serializeTemplate,
   skillAssessmentInclude,
@@ -24,6 +25,7 @@ export async function GET() {
       skills,
       requirements,
       certifications,
+      rewardRules,
       templates,
       assessments,
     ] = await Promise.all([
@@ -42,6 +44,10 @@ export async function GET() {
       prisma.employeeSkillCertification.findMany({
         orderBy: [{ updatedAt: 'desc' }],
         take: 5000,
+      }),
+      prisma.skillRewardRule.findMany({
+        orderBy: [{ isActive: 'desc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+        take: 500,
       }),
       prisma.skillAssessmentTemplate.findMany({
         include: skillTemplateInclude,
@@ -73,6 +79,7 @@ export async function GET() {
       skills: skillDtos,
       requirements: requirementDtos,
       certifications: certificationDtos,
+      rewardRules: rewardRules.map(serializeRewardRule),
       templates: templates.map(serializeTemplate),
       assessments: assessmentDtos,
       summary,

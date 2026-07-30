@@ -2069,6 +2069,22 @@ export type EmployeeSkillCertificationDTO = {
   updatedAt: string;
 };
 
+export type SkillRewardRuleDTO = {
+  id: string;
+  code: string;
+  jobName: string;
+  jobKeyword: string;
+  skillId: string;
+  minimumLevel: number;
+  rewardName: string;
+  rewardDescription?: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type SkillAssessmentItemDTO = {
   id: string;
   templateId: string;

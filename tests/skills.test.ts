@@ -5,11 +5,16 @@ import {
   skillScopeKey,
   summarizeSkillWorkbench,
 } from '../lib/skills';
+import {
+  evaluateSkillReward,
+  skillRewardRuleMatchesEmployee,
+} from '../lib/skill-rewards';
 import type {
   EmployeeDTO,
   EmployeeSkillCertificationDTO,
   PositionSkillRequirementDTO,
   SkillDefinitionDTO,
+  SkillRewardRuleDTO,
 } from '../types';
 
 const now = new Date().toISOString();
@@ -168,4 +173,58 @@ test('legacy skill profiles count toward coverage without creating formal certif
   assert.equal(result.legacyProfileEmployeeCount, 1);
   assert.equal(result.pendingReviewCount, 0);
   assert.equal(result.coverageBasisPoints, 10_000);
+});
+
+test('reward rules match both position and team keywords without widening to unrelated jobs', () => {
+  const rule: SkillRewardRuleDTO = {
+    id: 'reward-1',
+    code: 'RR-CRIMP-L3',
+    jobName: '压接岗',
+    jobKeyword: '压接',
+    skillId: skill.id,
+    minimumLevel: 3,
+    rewardName: '压接关键技能奖励',
+    rewardDescription: null,
+    isActive: true,
+    sortOrder: 10,
+    version: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  assert.equal(skillRewardRuleMatchesEmployee(rule, { position: '前端压接组长', team: '一组' }), true);
+  assert.equal(skillRewardRuleMatchesEmployee(rule, { position: '生产操作员', team: '压接二组' }), true);
+  assert.equal(skillRewardRuleMatchesEmployee(rule, { position: '后端装配组长', team: '装配组' }), false);
+});
+
+test('reward eligibility requires an active unexpired certification at the configured level', () => {
+  const rule: SkillRewardRuleDTO = {
+    id: 'reward-1',
+    code: 'RR-CRIMP-L3',
+    jobName: '压接岗',
+    jobKeyword: '压接',
+    skillId: skill.id,
+    minimumLevel: 3,
+    rewardName: '压接关键技能奖励',
+    rewardDescription: null,
+    isActive: true,
+    sortOrder: 10,
+    version: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const rewardEmployee = { position: '压接操作员', team: '前端组' };
+
+  assert.deepEqual(
+    evaluateSkillReward(rule, rewardEmployee, { level: 3, status: 'ACTIVE', expiresAt: null }),
+    { applicable: true, qualified: true, currentLevel: 3, remainingLevels: 0 },
+  );
+  assert.deepEqual(
+    evaluateSkillReward(rule, rewardEmployee, { level: 2, status: 'ACTIVE', expiresAt: null }),
+    { applicable: true, qualified: false, currentLevel: 2, remainingLevels: 1 },
+  );
+  assert.equal(
+    evaluateSkillReward(rule, rewardEmployee, { level: 4, status: 'REVOKED', expiresAt: null }).qualified,
+    false,
+  );
 });
