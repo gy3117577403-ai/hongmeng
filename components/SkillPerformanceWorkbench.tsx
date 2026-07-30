@@ -7,6 +7,7 @@ import {
   BookOpenCheck,
   BriefcaseBusiness,
   CalendarClock,
+  Check,
   CheckCircle2,
   ChevronRight,
   ClipboardCheck,
@@ -16,6 +17,7 @@ import {
   FileText,
   GraduationCap,
   Grid3X3,
+  History,
   Loader2,
   Plus,
   Printer,
@@ -42,7 +44,7 @@ import type {
 } from '@/types';
 
 type SkillView = 'matrix' | 'people' | 'assessments';
-type SkillDialog = 'skill' | 'requirement' | 'template' | 'launch' | 'assessment' | null;
+type SkillDialog = 'skill' | 'requirement' | 'template' | 'launch' | 'assessment' | 'legacy' | null;
 
 export type SkillWorkbenchResponse = {
   ok: boolean;
@@ -66,7 +68,27 @@ type TemplateItemDraft = {
   isCritical: boolean;
 };
 
+type LegacySkillDraft = {
+  skillId: string;
+  selected: boolean;
+  level: string;
+  evidenceType: EmployeeSkillCertificationDTO['evidenceType'];
+  effectiveFrom: string;
+  expiresAt: string;
+  reviewerId: string;
+  note: string;
+  requiresReassessment: boolean;
+  formalLocked: boolean;
+};
+
 const levelLabels = ['未认证', 'L1 了解', 'L2 独立', 'L3 熟练', 'L4 专家'];
+const evidenceTypeLabels: Record<NonNullable<EmployeeSkillCertificationDTO['evidenceType']>, string> = {
+  LONG_TERM_PRACTICE: '长期岗位实践',
+  SUPERVISOR_CONFIRMATION: '主管现场确认',
+  HISTORICAL_CERTIFICATE: '历史证书或记录',
+  TRAINING_RECORD: '既往培训记录',
+  OTHER: '其他可追溯依据',
+};
 const statusLabels: Record<SkillAssessmentDTO['status'], string> = {
   DRAFT: '草稿',
   PENDING_REVIEW: '待审核',
@@ -79,6 +101,8 @@ const emptySummary: SkillWorkbenchSummaryDTO = {
   skillCount: 0,
   requiredPositionCount: 0,
   certifiedEmployeeCount: 0,
+  formalCertifiedEmployeeCount: 0,
+  legacyProfileEmployeeCount: 0,
   pendingReviewCount: 0,
   expiringCertificationCount: 0,
   coverageBasisPoints: null,
@@ -108,6 +132,18 @@ function formatDate(value: string | null | undefined): string {
 function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined) return '待配置';
   return `${(value / 100).toFixed(1)}%`;
+}
+
+function dateInputValue(value?: string | null): string {
+  if (!value) {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Shanghai',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+  }
+  return value.slice(0, 10);
 }
 
 function requirementMatches(requirement: PositionSkillRequirementDTO, employee: EmployeeDTO): boolean {
@@ -177,6 +213,8 @@ export default function SkillPerformanceWorkbench({
     reviewerId: '',
     proposedLevel: '2',
   });
+  const [legacySkillDrafts, setLegacySkillDrafts] = useState<LegacySkillDraft[]>([]);
+  const [legacySkillSearch, setLegacySkillSearch] = useState('');
   const [answerDrafts, setAnswerDrafts] = useState<Record<string, { score: string; passed: boolean; comment: string }>>({});
   const [reviewComment, setReviewComment] = useState('');
   const [proposedLevel, setProposedLevel] = useState('2');
@@ -357,6 +395,49 @@ export default function SkillPerformanceWorkbench({
     setDialog('launch');
   }
 
+  function openLegacyDialog(employeeId = selectedEmployeeId): void {
+    const employee = employees.find(item => item.id === employeeId);
+    if (!employee) return;
+    const matchingRequirements = requirements.filter(requirement => requirementMatches(requirement, employee));
+    const requirementBySkill = new Map(matchingRequirements.map(requirement => [requirement.skillId, requirement]));
+    const existingBySkill = new Map(
+      certifications
+        .filter(certification => certification.employeeId === employee.id)
+        .map(certification => [certification.skillId, certification]),
+    );
+    const defaultReviewer = activeEmployees.find(candidate => (
+      candidate.id !== employee.id
+      && /主管|组长|经理|质量/.test(`${candidate.position || ''}${candidate.team || ''}`)
+    )) || activeEmployees.find(candidate => candidate.id !== employee.id);
+    setSelectedEmployeeId(employee.id);
+    setLegacySkillSearch('');
+    setLegacySkillDrafts(visibleSkills.map(skill => {
+      const existing = existingBySkill.get(skill.id);
+      const requirement = requirementBySkill.get(skill.id);
+      const formalLocked = existing?.source === 'ASSESSMENT';
+      return {
+        skillId: skill.id,
+        selected: !formalLocked && Boolean(requirement || existing?.source === 'LEGACY_ENTRY'),
+        level: String(existing?.level || requirement?.targetLevel || 1),
+        evidenceType: existing?.evidenceType || 'LONG_TERM_PRACTICE',
+        effectiveFrom: dateInputValue(existing?.effectiveFrom),
+        expiresAt: existing?.expiresAt?.slice(0, 10) || '',
+        reviewerId: existing?.reviewerId || defaultReviewer?.id || '',
+        note: existing?.note || '',
+        requiresReassessment: existing?.requiresReassessment || false,
+        formalLocked,
+      };
+    }));
+    setDialogError('');
+    setDialog('legacy');
+  }
+
+  function updateLegacyDraft(skillId: string, patch: Partial<LegacySkillDraft>): void {
+    setLegacySkillDrafts(current => current.map(entry => (
+      entry.skillId === skillId ? { ...entry, ...patch } : entry
+    )));
+  }
+
   function openAssessment(assessment: SkillAssessmentDTO): void {
     setSelectedAssessmentId(assessment.id);
     setAnswerDrafts(Object.fromEntries(assessment.template.items.map(item => {
@@ -438,6 +519,29 @@ export default function SkillPerformanceWorkbench({
     });
   }
 
+  async function saveLegacySkills(): Promise<void> {
+    if (!selectedEmployee) return;
+    const selectedEntries = legacySkillDrafts.filter(entry => entry.selected && !entry.formalLocked);
+    await execute(async () => {
+      await postJson('/api/skills/certifications', {
+        employeeId: selectedEmployee.id,
+        entries: selectedEntries.map(entry => ({
+          skillId: entry.skillId,
+          level: Number(entry.level),
+          evidenceType: entry.evidenceType,
+          effectiveFrom: entry.effectiveFrom,
+          expiresAt: entry.expiresAt || null,
+          reviewerId: entry.reviewerId || null,
+          note: entry.note,
+          requiresReassessment: entry.requiresReassessment,
+        })),
+      });
+      setDialog(null);
+      setToast(`已为 ${selectedEmployee.name} 保存 ${selectedEntries.length} 项历史技能，不生成考核任务`);
+      await loadWorkbench();
+    });
+  }
+
   async function updateAssessment(action: 'save' | 'submit' | 'approve' | 'return' | 'cancel'): Promise<void> {
     if (!selectedAssessment) return;
     await execute(async () => {
@@ -479,12 +583,12 @@ export default function SkillPerformanceWorkbench({
     return (
       <button
         type="button"
-        className={`skill-matrix-cell ${tone}`}
-        title={`${employee.name} · ${skill.name}：${certification ? levelLabels[level] : '尚未认证'}${requirement ? `，岗位要求 L${requirement.targetLevel}` : ''}`}
+        className={`skill-matrix-cell ${tone}${certification?.source === 'LEGACY_ENTRY' ? ' legacy' : ''}`}
+        title={`${employee.name} · ${skill.name}：${certification ? levelLabels[level] : '尚未认证'}${certification?.source === 'LEGACY_ENTRY' ? '（历史登记）' : certification ? '（正式认证）' : ''}${requirement ? `，岗位要求 L${requirement.targetLevel}` : ''}`}
         onClick={() => changeEmployee(employee)}
       >
         <strong>{label}</strong>
-        {requirement && <small>需 L{requirement.targetLevel}</small>}
+        {(requirement || certification?.source === 'LEGACY_ENTRY') && <small>{certification?.source === 'LEGACY_ENTRY' ? '历史' : ''}{certification?.source === 'LEGACY_ENTRY' && requirement ? ' · ' : ''}{requirement ? `需 L${requirement.targetLevel}` : ''}</small>}
       </button>
     );
   }
@@ -593,10 +697,13 @@ export default function SkillPerformanceWorkbench({
                 </div>
                 <div className="skill-person-identity-stats">
                   <span><small>岗位必备</small><strong>{employeeRequirements.length}</strong></span>
-                  <span><small>已认证</small><strong>{currentCertifications.length}</strong></span>
+                  <span><small>技能档案</small><strong>{currentCertifications.length}</strong></span>
                   <span><small>达到要求</small><strong>{qualifiedCount}/{employeeRequirements.length}</strong></span>
                 </div>
-                <button type="button" className="skill-primary-button" onClick={() => openLaunchDialog(selectedEmployee.id)}><ClipboardCheck />发起考核</button>
+                <div className="skill-person-actions">
+                  <button type="button" className="skill-secondary-button" onClick={() => openLegacyDialog(selectedEmployee.id)}><History />录入历史技能</button>
+                  <button type="button" className="skill-primary-button" onClick={() => openLaunchDialog(selectedEmployee.id)}><ClipboardCheck />发起考核</button>
+                </div>
               </header>
               <div className="skill-person-main">
                 <section className="skill-person-skills">
@@ -612,18 +719,21 @@ export default function SkillPerformanceWorkbench({
                           <header>
                             <span><Award /></span>
                             <div><small>{requirement ? `岗位要求 L${requirement.targetLevel}` : '扩展技能'}</small><h3>{skill.name}</h3></div>
-                            <b>{expired ? '已过期' : certification ? levelLabels[level] : '待考核'}</b>
+                            <b className={certification?.source === 'LEGACY_ENTRY' ? 'legacy' : ''}>
+                              {expired ? '已过期' : certification ? levelLabels[level] : '待考核'}
+                              {certification && !expired && <small>{certification.source === 'LEGACY_ENTRY' ? '历史登记' : '正式认证'}</small>}
+                            </b>
                           </header>
                           <div className="skill-level-track">
                             {[1, 2, 3, 4].map(value => <i className={value <= level && !expired ? 'active' : ''} key={value}>L{value}</i>)}
                           </div>
                           <footer>
-                            <span><small>最近得分</small><strong>{certification?.score ?? '—'}</strong></span>
-                            <span><small>有效期至</small><strong>{formatDate(certification?.expiresAt)}</strong></span>
+                            <span><small>{certification?.source === 'LEGACY_ENTRY' ? '登记依据' : '最近得分'}</small><strong>{certification?.source === 'LEGACY_ENTRY' ? evidenceTypeLabels[certification.evidenceType || 'OTHER'] : certification?.score ?? '—'}</strong></span>
+                            <span><small>{certification?.expiresAt ? '有效期至' : certification ? '掌握日期' : '有效期至'}</small><strong>{formatDate(certification?.expiresAt || certification?.effectiveFrom)}</strong></span>
                             <button type="button" onClick={() => {
                               const template = filteredTemplates.find(item => item.skillId === skill.id && item.position === (selectedEmployee.position || ''));
                               openLaunchDialog(selectedEmployee.id, template?.id);
-                            }}>考核 / 复评<ChevronRight /></button>
+                            }}>{certification?.source === 'LEGACY_ENTRY' ? '正式复评' : '考核 / 复评'}<ChevronRight /></button>
                           </footer>
                         </article>
                       );
@@ -644,6 +754,13 @@ export default function SkillPerformanceWorkbench({
                   <section>
                     <header><span className="skill-eyebrow">考核记录</span><h2>最近动态</h2></header>
                     <div className="skill-person-timeline">
+                      {currentCertifications.filter(certification => certification.source === 'LEGACY_ENTRY').slice(0, 3).map(certification => (
+                        <button type="button" key={`legacy-${certification.id}`} onClick={() => openLegacyDialog(selectedEmployee.id)}>
+                          <i className="legacy" />
+                          <span><strong>{visibleSkills.find(skill => skill.id === certification.skillId)?.name || '历史技能'}</strong><small>历史登记 · L{certification.level} · {formatDate(certification.updatedAt)}</small></span>
+                          <ChevronRight />
+                        </button>
+                      ))}
                       {assessments.filter(assessment => assessment.employeeId === selectedEmployee.id).slice(0, 5).map(assessment => (
                         <button type="button" key={assessment.id} onClick={() => openAssessment(assessment)}>
                           <i />
@@ -651,7 +768,7 @@ export default function SkillPerformanceWorkbench({
                           <ChevronRight />
                         </button>
                       ))}
-                      {!assessments.some(assessment => assessment.employeeId === selectedEmployee.id) && <p>尚无考核记录</p>}
+                      {!currentCertifications.some(certification => certification.source === 'LEGACY_ENTRY') && !assessments.some(assessment => assessment.employeeId === selectedEmployee.id) && <p>尚无技能档案记录</p>}
                     </div>
                   </section>
                 </aside>
@@ -729,13 +846,20 @@ export default function SkillPerformanceWorkbench({
   const assessmentReadOnly = selectedAssessment
     ? ['APPROVED', 'CANCELLED'].includes(selectedAssessment.status)
     : true;
+  const selectedLegacyCount = legacySkillDrafts.filter(entry => entry.selected && !entry.formalLocked).length;
+  const visibleLegacyDrafts = legacySkillDrafts.filter(entry => {
+    const skill = visibleSkills.find(item => item.id === entry.skillId);
+    return !legacySkillSearch.trim()
+      || `${skill?.name || ''} ${skill?.category || ''}`.toLocaleLowerCase('zh-CN')
+        .includes(legacySkillSearch.trim().toLocaleLowerCase('zh-CN'));
+  });
 
   return (
     <div className="skill-workbench">
       <section className="skill-health-strip">
         <div><span><Grid3X3 /></span><small>技能目录</small><strong>{summary.skillCount}</strong><em>{summary.requiredPositionCount} 个岗位已配置</em></div>
         <div><span><ShieldCheck /></span><small>岗位技能覆盖</small><strong>{formatPercent(summary.coverageBasisPoints)}</strong><em>按岗位要求与有效认证统计</em></div>
-        <div><span><UsersRound /></span><small>已认证员工</small><strong>{summary.certifiedEmployeeCount}</strong><em>当前有效技能认证</em></div>
+        <div><span><UsersRound /></span><small>已有技能档案</small><strong>{summary.certifiedEmployeeCount}</strong><em>正式 {summary.formalCertifiedEmployeeCount} · 历史 {summary.legacyProfileEmployeeCount}</em></div>
         <div className={summary.pendingReviewCount ? 'attention' : ''}><span><ClipboardCheck /></span><small>待审核考核</small><strong>{summary.pendingReviewCount}</strong><em>审核后才更新技能等级</em></div>
         <div className={summary.expiringCertificationCount ? 'warning' : ''}><span><CalendarClock /></span><small>30 天内到期</small><strong>{summary.expiringCertificationCount}</strong><em>建议安排复评</em></div>
       </section>
@@ -767,12 +891,13 @@ export default function SkillPerformanceWorkbench({
             <header>
               <div>
                 <span className="skill-eyebrow">
-                  {dialog === 'skill' ? '技能目录' : dialog === 'requirement' ? '岗位标准' : dialog === 'template' ? '考核模板' : dialog === 'launch' ? '考核任务' : '在线考核'}
+                  {dialog === 'skill' ? '技能目录' : dialog === 'requirement' ? '岗位标准' : dialog === 'template' ? '考核模板' : dialog === 'launch' ? '考核任务' : dialog === 'legacy' ? '老员工技能建档' : '在线考核'}
                 </span>
                 <h2>
-                  {dialog === 'skill' ? '新增技能' : dialog === 'requirement' ? '配置岗位技能要求' : dialog === 'template' ? `${templateBaseId ? '建立新版' : '新建'}岗位技能考核表` : dialog === 'launch' ? '发起技能考核' : selectedAssessment?.template.name}
+                  {dialog === 'skill' ? '新增技能' : dialog === 'requirement' ? '配置岗位技能要求' : dialog === 'template' ? `${templateBaseId ? '建立新版' : '新建'}岗位技能考核表` : dialog === 'launch' ? '发起技能考核' : dialog === 'legacy' ? `录入 ${selectedEmployee?.name || ''} 的历史技能` : selectedAssessment?.template.name}
                 </h2>
                 {dialog === 'assessment' && selectedAssessment && <p>{selectedAssessment.employee.name} · {selectedAssessment.skill.name} · {statusLabels[selectedAssessment.status]}</p>}
+                {dialog === 'legacy' && selectedEmployee && <p>{selectedEmployee.department || '部门待维护'} · {selectedEmployee.position || '岗位待维护'} · 批量建档，不生成考核任务</p>}
               </div>
               <button type="button" aria-label="关闭" disabled={saving} onClick={() => setDialog(null)}><X /></button>
             </header>
@@ -854,6 +979,92 @@ export default function SkillPerformanceWorkbench({
                 </div>
               )}
 
+              {dialog === 'legacy' && selectedEmployee && (
+                <div className="skill-legacy-editor">
+                  <div className="skill-legacy-notice">
+                    <History />
+                    <span>
+                      <strong>适用于已长期在岗、暂不需要逐项考核的老员工</strong>
+                      <small>保存后直接形成“历史登记”技能档案并进入技能矩阵；不会生成考核任务，也不会增加待审核数量。以后正式考核通过时，以正式认证替换当前等级并保留操作留痕。</small>
+                    </span>
+                  </div>
+                  <section className="skill-legacy-toolbar">
+                    <label><Search /><input value={legacySkillSearch} onChange={event => setLegacySkillSearch(event.target.value)} placeholder="搜索要登记的技能" /></label>
+                    <button type="button" onClick={() => {
+                      const requiredIds = new Set(employeeRequirements.map(requirement => requirement.skillId));
+                      setLegacySkillDrafts(current => current.map(entry => ({
+                        ...entry,
+                        selected: entry.formalLocked ? false : requiredIds.has(entry.skillId) || entry.selected,
+                      })));
+                    }}><Check />带入岗位必备</button>
+                    <button type="button" onClick={() => setLegacySkillDrafts(current => current.map(entry => ({ ...entry, selected: false })))}>清空选择</button>
+                    <em>已选 {selectedLegacyCount} 项</em>
+                  </section>
+                  <section className="skill-legacy-list">
+                    <header>
+                      <span>技能与等级</span>
+                      <span>历史依据</span>
+                      <span>掌握日期 / 有效期</span>
+                      <span>确认人与说明</span>
+                    </header>
+                    <div>
+                      {visibleLegacyDrafts.map(entry => {
+                        const skill = visibleSkills.find(item => item.id === entry.skillId);
+                        const requirement = employeeRequirements.find(item => item.skillId === entry.skillId);
+                        const existing = certificationsByPair.get(`${selectedEmployee.id}:${entry.skillId}`);
+                        return (
+                          <article key={entry.skillId} className={`${entry.selected ? 'selected' : ''}${entry.formalLocked ? ' locked' : ''}`}>
+                            <div className="skill-legacy-name">
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  checked={entry.selected}
+                                  disabled={entry.formalLocked}
+                                  onChange={event => updateLegacyDraft(entry.skillId, { selected: event.target.checked })}
+                                />
+                                <span><strong>{skill?.name || '技能已停用'}</strong><small>{requirement ? `岗位必备 · 目标 L${requirement.targetLevel}` : '扩展技能'}{existing?.source === 'LEGACY_ENTRY' ? ' · 已有历史档案' : ''}</small></span>
+                              </label>
+                              {entry.formalLocked ? (
+                                <em>正式认证已生效</em>
+                              ) : (
+                                <div className="skill-legacy-levels">
+                                  {[1, 2, 3, 4].map(level => (
+                                    <button type="button" disabled={!entry.selected} className={entry.level === String(level) ? 'active' : ''} onClick={() => updateLegacyDraft(entry.skillId, { level: String(level) })} key={level}>L{level}</button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                            <label>
+                              <span>依据类型 *</span>
+                              <select disabled={!entry.selected || entry.formalLocked} value={entry.evidenceType || 'LONG_TERM_PRACTICE'} onChange={event => updateLegacyDraft(entry.skillId, { evidenceType: event.target.value as LegacySkillDraft['evidenceType'] })}>
+                                {Object.entries(evidenceTypeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                              </select>
+                              <span className="skill-legacy-recheck"><input type="checkbox" disabled={!entry.selected || entry.formalLocked} checked={entry.requiresReassessment} onChange={event => updateLegacyDraft(entry.skillId, { requiresReassessment: event.target.checked })} />建议后续复评</span>
+                            </label>
+                            <label>
+                              <span>掌握日期 *</span>
+                              <input type="date" disabled={!entry.selected || entry.formalLocked} value={entry.effectiveFrom} onChange={event => updateLegacyDraft(entry.skillId, { effectiveFrom: event.target.value })} />
+                              <span>有效期（可空）</span>
+                              <input type="date" disabled={!entry.selected || entry.formalLocked} value={entry.expiresAt} onChange={event => updateLegacyDraft(entry.skillId, { expiresAt: event.target.value })} />
+                            </label>
+                            <label>
+                              <span>确认人（可选）</span>
+                              <select disabled={!entry.selected || entry.formalLocked} value={entry.reviewerId} onChange={event => updateLegacyDraft(entry.skillId, { reviewerId: event.target.value })}>
+                                <option value="">仅记录录入账号</option>
+                                {activeEmployees.map(employee => <option value={employee.id} key={employee.id}>{employeeLabel(employee)}</option>)}
+                              </select>
+                              <span>补充说明</span>
+                              <input disabled={!entry.selected || entry.formalLocked} value={entry.note} onChange={event => updateLegacyDraft(entry.skillId, { note: event.target.value })} placeholder="例如：已独立操作 5 年" />
+                            </label>
+                          </article>
+                        );
+                      })}
+                      {!visibleLegacyDrafts.length && <div className="skill-inline-empty"><Search /><strong>没有匹配的技能</strong><p>换一个关键词，或先在技能目录新增技能。</p></div>}
+                    </div>
+                  </section>
+                </div>
+              )}
+
               {dialog === 'assessment' && selectedAssessment && (
                 <div className="skill-online-assessment">
                   <section className="skill-assessment-context">
@@ -900,6 +1111,7 @@ export default function SkillPerformanceWorkbench({
               {dialog === 'requirement' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void saveRequirement()}>{saving ? <Loader2 className="spin" /> : <Save />}保存岗位要求</button>}
               {dialog === 'template' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void createTemplate()}>{saving ? <Loader2 className="spin" /> : <FileCheck2 />}生成并启用考核表</button>}
               {dialog === 'launch' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void launchAssessment()}>{saving ? <Loader2 className="spin" /> : <Plus />}创建考核任务</button>}
+              {dialog === 'legacy' && <button type="button" className="skill-primary-button" disabled={saving || selectedLegacyCount === 0} onClick={() => void saveLegacySkills()}>{saving ? <Loader2 className="spin" /> : <History />}保存 {selectedLegacyCount} 项历史技能</button>}
               {dialog === 'assessment' && selectedAssessment && (
                 <>
                   <button type="button" className="skill-secondary-button" onClick={() => window.open(`/workspace/employees/skills/assessments/${selectedAssessment.id}/print`, '_blank', 'noopener,noreferrer')}><Download />打印 / 导出 PDF</button>

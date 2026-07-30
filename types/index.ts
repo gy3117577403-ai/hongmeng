@@ -2054,12 +2054,15 @@ export type EmployeeSkillCertificationDTO = {
   skillId: string;
   level: number;
   status: string;
+  source: 'ASSESSMENT' | 'LEGACY_ENTRY';
+  evidenceType?: 'LONG_TERM_PRACTICE' | 'SUPERVISOR_CONFIRMATION' | 'HISTORICAL_CERTIFICATE' | 'TRAINING_RECORD' | 'OTHER' | null;
   score?: number | null;
   assessmentId?: string | null;
   assessorId?: string | null;
   reviewerId?: string | null;
   effectiveFrom: string;
   expiresAt?: string | null;
+  requiresReassessment: boolean;
   note?: string | null;
   version: number;
   createdAt: string;
@@ -2152,6 +2155,8 @@ export type SkillWorkbenchSummaryDTO = {
   skillCount: number;
   requiredPositionCount: number;
   certifiedEmployeeCount: number;
+  formalCertifiedEmployeeCount: number;
+  legacyProfileEmployeeCount: number;
   pendingReviewCount: number;
   expiringCertificationCount: number;
   coverageBasisPoints: number | null;

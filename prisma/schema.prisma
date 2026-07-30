@@ -560,30 +560,34 @@ model PositionSkillRequirement {
 }
 
 model EmployeeSkillCertification {
-  id            String           @id @default(uuid())
-  employeeId    String           @map("employee_id")
-  skillId       String           @map("skill_id")
-  level         Int
-  status        String           @default("ACTIVE")
-  score         Int?
-  assessmentId  String?          @map("assessment_id")
-  assessorId    String?          @map("assessor_id")
-  reviewerId    String?          @map("reviewer_id")
-  effectiveFrom DateTime         @default(now()) @map("effective_from") @db.Date
-  expiresAt     DateTime?        @map("expires_at") @db.Date
-  note          String?
-  version       Int              @default(0)
-  createdAt     DateTime         @default(now()) @map("created_at")
-  updatedAt     DateTime         @updatedAt @map("updated_at")
-  employee      Employee         @relation("SkillCertificationEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
-  assessor      Employee?        @relation("SkillCertificationAssessor", fields: [assessorId], references: [id], onDelete: SetNull)
-  reviewer      Employee?        @relation("SkillCertificationReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
-  skill         SkillDefinition  @relation(fields: [skillId], references: [id], onDelete: Cascade)
-  assessment    SkillAssessment? @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
+  id                   String           @id @default(uuid())
+  employeeId           String           @map("employee_id")
+  skillId              String           @map("skill_id")
+  level                Int
+  status               String           @default("ACTIVE")
+  source               String           @default("ASSESSMENT")
+  evidenceType         String?          @map("evidence_type")
+  score                Int?
+  assessmentId         String?          @map("assessment_id")
+  assessorId           String?          @map("assessor_id")
+  reviewerId           String?          @map("reviewer_id")
+  effectiveFrom        DateTime         @default(now()) @map("effective_from") @db.Date
+  expiresAt            DateTime?        @map("expires_at") @db.Date
+  requiresReassessment Boolean          @default(false) @map("requires_reassessment")
+  note                 String?
+  version              Int              @default(0)
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+  employee             Employee         @relation("SkillCertificationEmployee", fields: [employeeId], references: [id], onDelete: Cascade)
+  assessor             Employee?        @relation("SkillCertificationAssessor", fields: [assessorId], references: [id], onDelete: SetNull)
+  reviewer             Employee?        @relation("SkillCertificationReviewer", fields: [reviewerId], references: [id], onDelete: SetNull)
+  skill                SkillDefinition  @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  assessment           SkillAssessment? @relation(fields: [assessmentId], references: [id], onDelete: SetNull)
 
   @@unique([employeeId, skillId])
   @@unique([assessmentId])
   @@index([skillId, status])
+  @@index([source, status])
   @@index([expiresAt])
   @@map("employee_skill_certifications")
 }

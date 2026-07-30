@@ -100,12 +100,15 @@ test('workbench coverage only counts active, sufficient and unexpired certificat
     skillId: skill.id,
     level: 3,
     status: 'ACTIVE',
+    source: 'ASSESSMENT',
+    evidenceType: null,
     score: 92,
     assessmentId: 'assessment-1',
     assessorId: 'employee-2',
     reviewerId: 'employee-3',
     effectiveFrom: now,
     expiresAt,
+    requiresReassessment: false,
     note: null,
     version: 0,
     createdAt: now,
@@ -123,7 +126,46 @@ test('workbench coverage only counts active, sufficient and unexpired certificat
   assert.equal(result.skillCount, 1);
   assert.equal(result.requiredPositionCount, 1);
   assert.equal(result.certifiedEmployeeCount, 1);
+  assert.equal(result.formalCertifiedEmployeeCount, 1);
+  assert.equal(result.legacyProfileEmployeeCount, 0);
   assert.equal(result.pendingReviewCount, 2);
   assert.equal(result.expiringCertificationCount, 1);
+  assert.equal(result.coverageBasisPoints, 10_000);
+});
+
+test('legacy skill profiles count toward coverage without creating formal certification metrics', () => {
+  const certification: EmployeeSkillCertificationDTO = {
+    id: 'legacy-certification-1',
+    employeeId: employee.id,
+    skillId: skill.id,
+    level: 3,
+    status: 'ACTIVE',
+    source: 'LEGACY_ENTRY',
+    evidenceType: 'LONG_TERM_PRACTICE',
+    score: null,
+    assessmentId: null,
+    assessorId: null,
+    reviewerId: 'employee-2',
+    effectiveFrom: now,
+    expiresAt: null,
+    requiresReassessment: true,
+    note: '已独立操作五年',
+    version: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const result = summarizeSkillWorkbench({
+    employees: [employee],
+    skills: [skill],
+    requirements: [requirement],
+    certifications: [certification],
+    pendingReviewCount: 0,
+  });
+
+  assert.equal(result.certifiedEmployeeCount, 1);
+  assert.equal(result.formalCertifiedEmployeeCount, 0);
+  assert.equal(result.legacyProfileEmployeeCount, 1);
+  assert.equal(result.pendingReviewCount, 0);
   assert.equal(result.coverageBasisPoints, 10_000);
 });

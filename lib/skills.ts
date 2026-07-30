@@ -142,12 +142,15 @@ export function serializeCertification(certification: {
   skillId: string;
   level: number;
   status: string;
+  source: string;
+  evidenceType: string | null;
   score: number | null;
   assessmentId: string | null;
   assessorId: string | null;
   reviewerId: string | null;
   effectiveFrom: Date;
   expiresAt: Date | null;
+  requiresReassessment: boolean;
   note: string | null;
   version: number;
   createdAt: Date;
@@ -155,6 +158,8 @@ export function serializeCertification(certification: {
 }): EmployeeSkillCertificationDTO {
   return {
     ...certification,
+    source: certification.source as EmployeeSkillCertificationDTO['source'],
+    evidenceType: certification.evidenceType as EmployeeSkillCertificationDTO['evidenceType'],
     effectiveFrom: certification.effectiveFrom.toISOString(),
     expiresAt: certification.expiresAt?.toISOString() || null,
     createdAt: certification.createdAt.toISOString(),
@@ -324,10 +329,26 @@ export function summarizeSkillWorkbench(input: {
         && (!certification.expiresAt || new Date(certification.expiresAt).getTime() >= now))
       .map(certification => certification.employeeId),
   );
+  const formalCertifiedEmployeeIds = new Set(
+    input.certifications
+      .filter(certification => certification.status === 'ACTIVE'
+        && certification.source === 'ASSESSMENT'
+        && (!certification.expiresAt || new Date(certification.expiresAt).getTime() >= now))
+      .map(certification => certification.employeeId),
+  );
+  const legacyProfileEmployeeIds = new Set(
+    input.certifications
+      .filter(certification => certification.status === 'ACTIVE'
+        && certification.source === 'LEGACY_ENTRY'
+        && (!certification.expiresAt || new Date(certification.expiresAt).getTime() >= now))
+      .map(certification => certification.employeeId),
+  );
   return {
     skillCount: input.skills.filter(skill => skill.isActive).length,
     requiredPositionCount: new Set(input.requirements.map(requirement => requirement.scopeKey)).size,
     certifiedEmployeeCount: certifiedEmployeeIds.size,
+    formalCertifiedEmployeeCount: formalCertifiedEmployeeIds.size,
+    legacyProfileEmployeeCount: legacyProfileEmployeeIds.size,
     pendingReviewCount: input.pendingReviewCount,
     expiringCertificationCount: input.certifications.filter(certification => (
       certification.status === 'ACTIVE'

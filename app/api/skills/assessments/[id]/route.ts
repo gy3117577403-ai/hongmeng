@@ -79,7 +79,7 @@ export async function PATCH(
       };
     });
 
-    const updated = await prisma.$transaction(async tx => {
+    const transactionResult = await prisma.$transaction(async tx => {
       for (const answer of normalizedAnswers) {
         await tx.skillAssessmentAnswer.update({
           where: {
@@ -157,6 +157,16 @@ export async function PATCH(
       if (updateResult.count !== 1) {
         throw new SkillInputError('考核记录已被其他人更新，请刷新后重试', 409);
       }
+      const previousCertification = action === 'approve'
+        ? await tx.employeeSkillCertification.findUnique({
+          where: {
+            employeeId_skillId: {
+              employeeId: current.employeeId,
+              skillId: current.skillId,
+            },
+          },
+        })
+        : null;
       if (action === 'approve') {
         await tx.employeeSkillCertification.upsert({
           where: {
@@ -170,23 +180,29 @@ export async function PATCH(
             skillId: current.skillId,
             level: proposedLevel,
             status: 'ACTIVE',
+            source: 'ASSESSMENT',
+            evidenceType: null,
             score: scoreResult.score,
             assessmentId: current.id,
             assessorId: current.assessorId,
             reviewerId: current.reviewerId,
             effectiveFrom: validFrom!,
             expiresAt,
+            requiresReassessment: false,
             note: reviewComment || null,
           },
           update: {
             level: proposedLevel,
             status: 'ACTIVE',
+            source: 'ASSESSMENT',
+            evidenceType: null,
             score: scoreResult.score,
             assessmentId: current.id,
             assessorId: current.assessorId,
             reviewerId: current.reviewerId,
             effectiveFrom: validFrom!,
             expiresAt,
+            requiresReassessment: false,
             note: reviewComment || null,
             version: { increment: 1 },
           },
@@ -210,11 +226,24 @@ export async function PATCH(
           actorId: user.id,
         },
       });
-      return tx.skillAssessment.findUniqueOrThrow({
+      const assessment = await tx.skillAssessment.findUniqueOrThrow({
         where: { id: current.id },
         include: skillAssessmentInclude,
       });
+      return {
+        assessment,
+        previousCertification: previousCertification
+          ? {
+            id: previousCertification.id,
+            source: previousCertification.source,
+            level: previousCertification.level,
+            evidenceType: previousCertification.evidenceType,
+            effectiveFrom: previousCertification.effectiveFrom.toISOString().slice(0, 10),
+          }
+          : null,
+      };
     });
+    const updated = transactionResult.assessment;
     const personIds = [updated.employeeId, updated.assessorId, updated.reviewerId];
     const people = await prisma.employee.findMany({ where: { id: { in: personIds } } });
     await logOp({
@@ -227,6 +256,7 @@ export async function PATCH(
         status: updated.status,
         score: updated.totalScore,
         proposedLevel: updated.proposedLevel,
+        replacedCertification: transactionResult.previousCertification,
       },
     });
     return NextResponse.json({
