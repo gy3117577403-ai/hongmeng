@@ -16,11 +16,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const employeeNo = body.employeeNo === undefined ? existing.employeeNo : cleanProcessText(body.employeeNo, 40);
     const name = body.name === undefined ? existing.name : cleanProcessText(body.name, 80);
     if (!employeeNo) return NextResponse.json({ ok: false, error: '员工编号不能为空' }, { status: 400 });
+    if (employeeNo !== existing.employeeNo) {
+      return NextResponse.json({
+        ok: false,
+        error: '员工编号由系统永久分配，不能在普通档案编辑中修改',
+      }, { status: 409 });
+    }
     if (!name) return NextResponse.json({ ok: false, error: '员工姓名不能为空' }, { status: 400 });
     const employee = await prisma.employee.update({
       where: { id: existing.id },
       data: {
-        employeeNo,
         name,
         department: body.department === undefined ? existing.department : cleanProcessText(body.department, 80) || null,
         position: body.position === undefined ? existing.position : cleanProcessText(body.position, 80) || null,

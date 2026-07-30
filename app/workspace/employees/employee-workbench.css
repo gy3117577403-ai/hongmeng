@@ -5621,6 +5621,25 @@ button.skill-matrix-person:hover { background: #f7faff; }
 .hr-recruitment-form-grid select:focus,
 .hr-recruitment-form-grid textarea:focus { border-color: #8eb3f8; box-shadow: 0 0 0 3px rgba(47, 115, 246, .09); }
 .hr-recruitment-form-grid input:disabled { background: #f3f5f8; color: #7c8998; }
+.hr-auto-number-control input[readonly] {
+  border-color: #cfe0fb;
+  background: linear-gradient(135deg, #f4f8ff, #fbfdff);
+  color: #2768d8;
+  font-weight: 850;
+  letter-spacing: .05em;
+  cursor: default;
+}
+.hr-auto-number-control input[readonly]:focus {
+  border-color: #cfe0fb;
+  box-shadow: none;
+}
+.hr-auto-number-control > small {
+  color: #7d8da1;
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0;
+  line-height: 1.45;
+}
 .hr-recruitment-context,
 .hr-recruitment-hire-note {
   margin-bottom: 13px;

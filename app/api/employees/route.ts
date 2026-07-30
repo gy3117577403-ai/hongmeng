@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { allocateEmployeeNumber } from '@/lib/employee-number';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
@@ -41,19 +42,20 @@ export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const employeeNo = cleanProcessText(body.employeeNo, 40);
     const name = cleanProcessText(body.name, 80);
-    if (!employeeNo) return NextResponse.json({ ok: false, error: '请填写员工编号' }, { status: 400 });
     if (!name) return NextResponse.json({ ok: false, error: '请填写员工姓名' }, { status: 400 });
-    const employee = await prisma.employee.create({
-      data: {
-        employeeNo,
-        name,
-        department: cleanProcessText(body.department, 80) || null,
-        position: cleanProcessText(body.position, 80) || null,
-        team: cleanProcessText(body.team, 80) || null,
-        attendanceEnabled: body.attendanceEnabled !== false,
-      },
+    const employee = await prisma.$transaction(async tx => {
+      const employeeNo = await allocateEmployeeNumber(tx);
+      return tx.employee.create({
+        data: {
+          employeeNo,
+          name,
+          department: cleanProcessText(body.department, 80) || null,
+          position: cleanProcessText(body.position, 80) || null,
+          team: cleanProcessText(body.team, 80) || null,
+          attendanceEnabled: body.attendanceEnabled !== false,
+        },
+      });
     });
     await logOp({
       userId: user.id,

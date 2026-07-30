@@ -1,6 +1,7 @@
 import { Prisma, RecruitmentCandidateStatus, RecruitmentDemandStatus } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { allocateEmployeeNumber } from '@/lib/employee-number';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import {
@@ -17,8 +18,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const employeeNo = cleanRecruitmentText(body.employeeNo, 40);
-    if (!employeeNo) throw new RecruitmentInputError('请填写员工编号');
     const current = await prisma.recruitmentCandidate.findUnique({
       where: { id: params.id },
       include: { demand: { include: { candidates: { select: { id: true, status: true } } } } },
@@ -28,6 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       throw new RecruitmentInputError('候选人进入待录用阶段后才能办理入职', 409);
     }
     const result = await prisma.$transaction(async tx => {
+      const employeeNo = await allocateEmployeeNumber(tx);
       const employee = await tx.employee.create({
         data: {
           employeeNo,
@@ -76,19 +76,24 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           actorId: user.id,
         },
       });
-      return tx.recruitmentDemand.findUniqueOrThrow({
+      const demand = await tx.recruitmentDemand.findUniqueOrThrow({
         where: { id: current.demandId },
         include: recruitmentDemandInclude,
       });
+      return { demand, employeeNo };
     });
     await logOp({
       userId: user.id,
       action: 'hire_recruitment_candidate',
       targetType: 'recruitment_candidate',
       targetId: current.id,
-      detail: { employeeNo, demandId: current.demandId },
+      detail: { employeeNo: result.employeeNo, demandId: current.demandId },
     });
-    return NextResponse.json({ ok: true, demand: serializeRecruitmentDemand(result) });
+    return NextResponse.json({
+      ok: true,
+      demand: serializeRecruitmentDemand(result.demand),
+      employeeNo: result.employeeNo,
+    });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof RecruitmentInputError) {

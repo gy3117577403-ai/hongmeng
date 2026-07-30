@@ -100,6 +100,12 @@ type EmployeesResponse = {
   error?: string;
 };
 
+type NextEmployeeNumberResponse = {
+  ok: boolean;
+  nextEmployeeNo?: string;
+  error?: string;
+};
+
 type AttendanceResponse = {
   ok: boolean;
   records?: AttendanceRecordDTO[];
@@ -141,6 +147,7 @@ type RecruitmentResponse = {
   demands?: RecruitmentDemandDTO[];
   demand?: RecruitmentDemandDTO;
   summary?: RecruitmentSummaryDTO;
+  employeeNo?: string;
   error?: string;
 };
 
@@ -181,7 +188,6 @@ type RecruitmentInterviewDraft = {
 };
 
 type RecruitmentHireDraft = {
-  employeeNo: string;
   department: string;
   position: string;
   team: string;
@@ -302,7 +308,6 @@ const emptyRecruitmentInterviewDraft: RecruitmentInterviewDraft = {
 };
 
 const emptyRecruitmentHireDraft: RecruitmentHireDraft = {
-  employeeNo: '',
   department: '',
   position: '',
   team: '',
@@ -508,6 +513,8 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   const [draft, setDraft] = useState<EmployeeDraft>(emptyDraft);
   const [baseline, setBaseline] = useState<EmployeeDraft>(emptyDraft);
   const [creating, setCreating] = useState(false);
+  const [nextEmployeeNo, setNextEmployeeNo] = useState('');
+  const [nextEmployeeNoLoading, setNextEmployeeNoLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
   const [filter, setFilter] = useState<EmployeeFilter>('all');
   const [loading, setLoading] = useState(true);
@@ -748,6 +755,20 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   const hrWorkItems = responsibilityWorkItems.filter(item => (
     item.ownerId === hrCoordinator?.id || item.participantIds.includes(hrCoordinator?.id || '')
   ));
+
+  async function loadNextEmployeeNumber(): Promise<void> {
+    setNextEmployeeNo('');
+    setNextEmployeeNoLoading(true);
+    try {
+      const response = await fetch('/api/employees/next-number', { cache: 'no-store' });
+      const body = await response.json() as NextEmployeeNumberResponse;
+      if (response.ok && body.nextEmployeeNo) setNextEmployeeNo(body.nextEmployeeNo);
+    } catch {
+      // The preview is informational only. The server still allocates the final number on save.
+    } finally {
+      setNextEmployeeNoLoading(false);
+    }
+  }
 
   function applyRecruitmentDemand(demand: RecruitmentDemandDTO): void {
     setRecruitmentDemands(current => {
@@ -1020,6 +1041,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     });
     setRecruitmentDialogError('');
     setRecruitmentDialog('hire');
+    void loadNextEmployeeNumber();
   }
 
   async function saveRecruitmentHire(): Promise<void> {
@@ -1035,7 +1057,9 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       if (!response.ok || !body.demand) throw new Error(body.error || '录用入职办理失败');
       applyRecruitmentDemand(body.demand);
       setRecruitmentDialog(null);
-      setToast('录用完成，员工档案已自动建立');
+      setToast(body.employeeNo
+        ? `录用完成，员工编号 ${body.employeeNo} 已自动建立`
+        : '录用完成，员工档案已自动建立');
       void loadHumanResources();
     } catch (reason) {
       setRecruitmentDialogError(reason instanceof Error ? reason.message : '录用入职办理失败');
@@ -1076,14 +1100,11 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     setDraft(emptyDraft);
     setBaseline(emptyDraft);
     setFormError('');
+    void loadNextEmployeeNumber();
     if (view !== 'directory') changeView('directory');
   }
 
   async function saveEmployee(): Promise<void> {
-    if (!draft.employeeNo.trim()) {
-      setFormError('请填写员工编号');
-      return;
-    }
     if (!draft.name.trim()) {
       setFormError('请填写员工姓名');
       return;
@@ -1108,7 +1129,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       const nextDraft = toDraft(savedEmployee);
       setDraft(nextDraft);
       setBaseline(nextDraft);
-      setToast(wasCreating ? '员工档案已创建' : '员工档案已保存');
+      setToast(wasCreating ? `员工档案已创建，员工编号 ${savedEmployee.employeeNo}` : '员工档案已保存');
     } catch (reason) {
       setFormError(reason instanceof Error ? reason.message : '保存员工档案失败');
     } finally {
@@ -1321,7 +1342,14 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     const profileDepartment = draft.department.trim() || '部门待维护';
     const profilePosition = draft.position.trim() || '岗位待维护';
     const profileTeam = draft.team.trim() || '班组待维护';
-    const archiveFields = [draft.employeeNo, draft.name, draft.department, draft.position, draft.team];
+    const profileEmployeeNo = creating
+      ? nextEmployeeNoLoading
+        ? '编号生成中…'
+        : nextEmployeeNo
+          ? `预计 ${nextEmployeeNo}`
+          : '保存时自动编号'
+      : draft.employeeNo;
+    const archiveFields = [creating ? '系统自动编号' : draft.employeeNo, draft.name, draft.department, draft.position, draft.team];
     const profileCompleteness = Math.round((archiveFields.filter(value => value.trim()).length / archiveFields.length) * 100);
     const profileMissingCount = archiveFields.filter(value => !value.trim()).length;
     const profilePerson = responsibilityPeople.find(person => person.name === profileName);
@@ -1494,7 +1522,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
               <div className="hr-profile-identity-copy">
                 <div>
                   <h1>{profileName}</h1>
-                  <strong>{draft.employeeNo || '编号待填写'}</strong>
+                  <strong>{profileEmployeeNo || '编号待生成'}</strong>
                 </div>
                 <p>{profilePosition}</p>
                 <span>
@@ -1544,7 +1572,15 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                   <div className="hr-profile-form-grid">
                     <fieldset>
                       <legend><UserRound />身份信息</legend>
-                      <label><span>员工编号 *</span><input value={draft.employeeNo} maxLength={40} onChange={event => setDraft(current => ({ ...current, employeeNo: event.target.value }))} placeholder="例如 0001" /></label>
+                      <label className="hr-auto-number-control">
+                        <span>员工编号</span>
+                        <input
+                          value={creating ? (nextEmployeeNoLoading ? '正在计算…' : nextEmployeeNo || '保存时自动分配') : draft.employeeNo}
+                          readOnly
+                          aria-readonly="true"
+                        />
+                        <small>{creating ? '创建档案时正式分配，离职后不回收' : '系统唯一编号，普通档案编辑中不可修改'}</small>
+                      </label>
                       <label><span>员工姓名 *</span><input id="hr-employee-name" value={draft.name} maxLength={80} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="填写真实姓名" /></label>
                     </fieldset>
                     <fieldset>
@@ -2056,7 +2092,11 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                 <div className="hr-recruitment-dialog-body">
                   <div className="hr-recruitment-hire-note"><BadgeCheck /><span><strong>录用后将自动建立员工档案</strong><small>候选人与招聘需求保留关联，后续档案维护在“员工档案”中进行。</small></span></div>
                   <div className="hr-recruitment-form-grid">
-                    <label><span>员工编号 *</span><input value={recruitmentHireDraft.employeeNo} onChange={event => setRecruitmentHireDraft(current => ({ ...current, employeeNo: event.target.value }))} placeholder="必须唯一" /></label>
+                    <label className="hr-auto-number-control">
+                      <span>员工编号</span>
+                      <input value={nextEmployeeNoLoading ? '正在计算…' : nextEmployeeNo || '保存时自动分配'} readOnly aria-readonly="true" />
+                      <small>确认录用时正式分配，离职后不回收</small>
+                    </label>
                     <label><span>员工姓名</span><input value={selectedCandidate?.name || demand?.candidates.find(item => item.id === selectedRecruitmentCandidateId)?.name || ''} disabled /></label>
                     <label><span>部门</span><input value={recruitmentHireDraft.department} onChange={event => setRecruitmentHireDraft(current => ({ ...current, department: event.target.value }))} /></label>
                     <label><span>岗位</span><input value={recruitmentHireDraft.position} onChange={event => setRecruitmentHireDraft(current => ({ ...current, position: event.target.value }))} /></label>

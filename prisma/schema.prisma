@@ -516,6 +516,15 @@ model Employee {
   @@map("employees")
 }
 
+model EmployeeNumberSequence {
+  key       String   @id
+  nextValue Int      @map("next_value")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("employee_number_sequences")
+}
+
 model SkillDefinition {
   id                        String                       @id @default(uuid())
   code                      String                       @unique
