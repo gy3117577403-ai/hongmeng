@@ -26,6 +26,13 @@ type TemplateItemInput = {
   isCritical?: unknown;
 };
 
+type TemplateRemovalResult = {
+  archived: boolean;
+  assessmentCount: number;
+  templateId: string;
+  templateName: string;
+};
+
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
@@ -148,5 +155,75 @@ export async function POST(req: NextRequest) {
     }
     console.error('skill assessment template create failed', error);
     return NextResponse.json({ ok: false, error: '岗位技能考核表创建失败' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const user = await requireUser();
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    const templateId = cleanSkillText(body.templateId, 80);
+    if (!templateId) throw new SkillInputError('请选择需要删除的岗位考核表');
+
+    const result = await prisma.$transaction(async tx => {
+      const template = await tx.skillAssessmentTemplate.findUnique({
+        where: { id: templateId },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          status: true,
+          _count: { select: { assessments: true } },
+        },
+      });
+      if (!template || template.status === 'DISABLED') {
+        throw new SkillInputError('岗位考核表不存在或已删除', 404);
+      }
+
+      const assessmentCount = template._count.assessments;
+      if (assessmentCount > 0) {
+        await tx.skillAssessmentTemplate.update({
+          where: { id: template.id },
+          data: { status: 'DISABLED' },
+        });
+      } else {
+        await tx.skillAssessmentTemplate.delete({
+          where: { id: template.id },
+        });
+      }
+
+      return {
+        archived: assessmentCount > 0,
+        assessmentCount,
+        templateId: template.id,
+        templateName: template.name,
+      } satisfies TemplateRemovalResult;
+    });
+
+    await logOp({
+      userId: user.id,
+      action: result.archived ? 'archive_skill_assessment_template' : 'delete_skill_assessment_template',
+      targetType: 'skill_assessment_template',
+      targetId: result.templateId,
+      detail: {
+        name: result.templateName,
+        assessmentCount: result.assessmentCount,
+        historicalAssessmentsRetained: result.archived,
+      },
+    });
+
+    return NextResponse.json({
+      ok: true,
+      removedTemplateId: result.templateId,
+      archived: result.archived,
+      retainedAssessmentCount: result.assessmentCount,
+    });
+  } catch (error) {
+    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof SkillInputError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: error.statusCode });
+    }
+    console.error('skill assessment template delete failed', error);
+    return NextResponse.json({ ok: false, error: '岗位技能考核表删除失败' }, { status: 500 });
   }
 }

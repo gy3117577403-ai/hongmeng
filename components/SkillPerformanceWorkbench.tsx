@@ -49,7 +49,8 @@ import type {
 } from '@/types';
 
 type SkillView = 'matrix' | 'people' | 'assessments';
-type SkillDialog = 'skill' | 'requirement' | 'remove-requirement' | 'remove-certification' | 'reward-rule' | 'remove-reward-rule' | 'template' | 'launch' | 'assessment' | 'legacy' | null;
+type SkillDialog = 'skill' | 'requirement' | 'remove-requirement' | 'remove-certification' | 'reward-rule' | 'remove-reward-rule' | 'template' | 'remove-template' | 'launch' | 'assessment' | 'legacy' | null;
+type AssessmentRecordScope = 'template' | 'all';
 
 export type SkillWorkbenchResponse = {
   ok: boolean;
@@ -63,6 +64,9 @@ export type SkillWorkbenchResponse = {
   summary?: SkillWorkbenchSummaryDTO;
   assessment?: SkillAssessmentDTO;
   rewardRule?: SkillRewardRuleDTO;
+  removedTemplateId?: string;
+  archived?: boolean;
+  retainedAssessmentCount?: number;
   error?: string;
 };
 
@@ -103,6 +107,11 @@ type CertificationRemovalTarget = {
 type RewardRuleRemovalTarget = {
   rule: SkillRewardRuleDTO;
   skill: SkillDefinitionDTO;
+};
+
+type TemplateRemovalTarget = {
+  template: SkillAssessmentTemplateDTO;
+  assessmentCount: number;
 };
 
 type RewardRuleDraft = {
@@ -187,6 +196,34 @@ function requirementMatches(requirement: PositionSkillRequirementDTO, employee: 
     && (!requirement.team || requirement.team === (employee.team || ''));
 }
 
+function calculateDraftAssessment(
+  assessment: SkillAssessmentDTO | null,
+  drafts: Record<string, { score: string; passed: boolean; comment: string }>,
+): { score: number; complete: boolean; criticalFailed: boolean } {
+  if (!assessment) return { score: 0, complete: false, criticalFailed: false };
+  let weightedEarned = 0;
+  let weightedMaximum = 0;
+  let complete = true;
+  let criticalFailed = false;
+
+  assessment.template.items.forEach(item => {
+    const draft = drafts[item.id];
+    const rawScore = draft?.score === '' || draft?.score === undefined ? null : Number(draft.score);
+    if (item.isRequired && (rawScore === null || !Number.isFinite(rawScore))) complete = false;
+    if (rawScore === null || !Number.isFinite(rawScore)) return;
+    const safeScore = Math.max(0, Math.min(item.maxScore, rawScore));
+    weightedEarned += (safeScore / item.maxScore) * item.weight;
+    weightedMaximum += item.weight;
+    if (item.isCritical && draft?.passed === false) criticalFailed = true;
+  });
+
+  return {
+    score: weightedMaximum ? Math.round((weightedEarned / weightedMaximum) * 100) : 0,
+    complete,
+    criticalFailed,
+  };
+}
+
 export default function SkillPerformanceWorkbench({
   fallbackEmployees,
   initialData,
@@ -215,6 +252,7 @@ export default function SkillPerformanceWorkbench({
   const [selectedEmployeeId, setSelectedEmployeeId] = useState(initialData?.employees?.find(employee => employee.isActive)?.id || '');
   const [selectedAssessmentId, setSelectedAssessmentId] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState(initialData?.templates?.[0]?.id || '');
+  const [assessmentRecordScope, setAssessmentRecordScope] = useState<AssessmentRecordScope>('template');
   const [templateBaseId, setTemplateBaseId] = useState('');
   const [skillDraft, setSkillDraft] = useState({
     name: '',
@@ -233,6 +271,7 @@ export default function SkillPerformanceWorkbench({
   const [requirementRemovalTarget, setRequirementRemovalTarget] = useState<RequirementRemovalTarget | null>(null);
   const [certificationRemovalTarget, setCertificationRemovalTarget] = useState<CertificationRemovalTarget | null>(null);
   const [rewardRuleRemovalTarget, setRewardRuleRemovalTarget] = useState<RewardRuleRemovalTarget | null>(null);
+  const [templateRemovalTarget, setTemplateRemovalTarget] = useState<TemplateRemovalTarget | null>(null);
   const [rewardEditingId, setRewardEditingId] = useState('');
   const [rewardDraft, setRewardDraft] = useState<RewardRuleDraft>({
     jobName: '',
@@ -337,6 +376,38 @@ export default function SkillPerformanceWorkbench({
   const selectedEmployee = employees.find(employee => employee.id === selectedEmployeeId) || null;
   const selectedAssessment = assessments.find(assessment => assessment.id === selectedAssessmentId) || null;
   const selectedTemplate = templates.find(template => template.id === selectedTemplateId) || null;
+  const assessmentPreview = useMemo(
+    () => calculateDraftAssessment(selectedAssessment, answerDrafts),
+    [answerDrafts, selectedAssessment],
+  );
+  const templateAssessments = useMemo(
+    () => assessments.filter(assessment => assessment.templateId === selectedTemplateId),
+    [assessments, selectedTemplateId],
+  );
+  const visibleAssessmentRecords = assessmentRecordScope === 'all' ? assessments : templateAssessments;
+
+  useEffect(() => {
+    if (activeView !== 'assessments') return;
+    const visibleIds = new Set(visibleAssessmentRecords.map(assessment => assessment.id));
+    if (selectedAssessmentId && visibleIds.has(selectedAssessmentId)) return;
+    const next = visibleAssessmentRecords[0];
+    if (!next) {
+      setSelectedAssessmentId('');
+      setAnswerDrafts({});
+      return;
+    }
+    setSelectedAssessmentId(next.id);
+    setAnswerDrafts(Object.fromEntries(next.template.items.map(item => {
+      const answer = next.answers.find(candidate => candidate.itemId === item.id);
+      return [item.id, {
+        score: answer?.score === null || answer?.score === undefined ? '' : String(answer.score),
+        passed: answer?.passed ?? true,
+        comment: answer?.comment || '',
+      }];
+    })));
+    setReviewComment(next.reviewComment || '');
+    setProposedLevel(String(next.proposedLevel));
+  }, [activeView, selectedAssessmentId, visibleAssessmentRecords]);
   const certificationsByPair = useMemo(
     () => new Map(certifications.map(certification => [`${certification.employeeId}:${certification.skillId}`, certification])),
     [certifications],
@@ -503,6 +574,15 @@ export default function SkillPerformanceWorkbench({
     setDialog('template');
   }
 
+  function openTemplateRemovalDialog(template: SkillAssessmentTemplateDTO): void {
+    setTemplateRemovalTarget({
+      template,
+      assessmentCount: assessments.filter(assessment => assessment.templateId === template.id).length,
+    });
+    setDialogError('');
+    setDialog('remove-template');
+  }
+
   function openLaunchDialog(employeeId = selectedEmployeeId, templateId = selectedTemplateId): void {
     const employee = employees.find(item => item.id === employeeId);
     const applicable = filteredTemplates.find(template => (
@@ -571,7 +651,7 @@ export default function SkillPerformanceWorkbench({
     )));
   }
 
-  function openAssessment(assessment: SkillAssessmentDTO): void {
+  function openAssessment(assessment: SkillAssessmentDTO, presentation: 'auto' | 'inline' | 'dialog' = 'auto'): void {
     setSelectedAssessmentId(assessment.id);
     setAnswerDrafts(Object.fromEntries(assessment.template.items.map(item => {
       const answer = assessment.answers.find(candidate => candidate.itemId === item.id);
@@ -584,7 +664,9 @@ export default function SkillPerformanceWorkbench({
     setReviewComment(assessment.reviewComment || '');
     setProposedLevel(String(assessment.proposedLevel));
     setDialogError('');
-    setDialog('assessment');
+    const shouldOpenDialog = presentation === 'dialog'
+      || (presentation === 'auto' && activeView !== 'assessments');
+    setDialog(shouldOpenDialog ? 'assessment' : null);
   }
 
   async function syncProcesses(): Promise<void> {
@@ -701,6 +783,23 @@ export default function SkillPerformanceWorkbench({
       });
       setDialog(null);
       setToast(templateBaseId ? '新版考核表已建立，旧版已冻结' : '岗位技能考核表已创建');
+      await loadWorkbench();
+    });
+  }
+
+  async function removeTemplate(): Promise<void> {
+    if (!templateRemovalTarget) return;
+    const { template, assessmentCount } = templateRemovalTarget;
+    await execute(async () => {
+      const body = await postJson('/api/skills/templates', {
+        templateId: template.id,
+      }, 'DELETE');
+      setDialog(null);
+      setTemplateRemovalTarget(null);
+      setSelectedAssessmentId('');
+      setToast(body.archived
+        ? `“${template.name}”已归档，${body.retainedAssessmentCount ?? assessmentCount} 条考核记录完整保留`
+        : `“${template.name}”已删除`);
       await loadWorkbench();
     });
   }
@@ -1056,62 +1155,212 @@ export default function SkillPerformanceWorkbench({
     );
   }
 
-  function renderAssessments() {
+  function renderAssessmentWorkbench() {
     const pending = assessments.filter(assessment => assessment.status === 'PENDING_REVIEW');
     const activeTemplate = templates.find(template => template.id === selectedTemplateId) || null;
+    const selectedRecord = selectedAssessment && (
+      assessmentRecordScope === 'all' || selectedAssessment.templateId === selectedTemplateId
+    ) ? selectedAssessment : null;
+    const documentTemplate = selectedRecord?.template || activeTemplate;
+    const canFill = Boolean(selectedRecord && ['DRAFT', 'RETURNED'].includes(selectedRecord.status));
+    const canReview = selectedRecord?.status === 'PENDING_REVIEW';
+    const liveResult = selectedRecord?.status === 'APPROVED'
+      ? '通过'
+      : selectedRecord?.status === 'CANCELLED'
+        ? '已取消'
+        : !selectedRecord
+          ? '待发起'
+          : !assessmentPreview.complete
+            ? '待填写'
+            : assessmentPreview.score >= selectedRecord.template.passScore && !assessmentPreview.criticalFailed
+              ? '建议通过'
+              : '未通过';
+
     return (
-      <div className="skill-assessment-layout">
-        <aside className="skill-template-list">
-          <header><div><span className="skill-eyebrow">岗位标准</span><h2>考核表</h2></div><button type="button" onClick={() => openTemplateDialog()}><Plus /></button></header>
+      <div className="skill-assessment-layout skill-assessment-layout-v3">
+        <aside className="skill-template-list skill-template-list-v3">
+          <header>
+            <div><span className="skill-eyebrow">岗位标准</span><h2>考核表模板</h2><small>{templates.length} 张可用模板</small></div>
+            <button type="button" title="新建岗位考核表" onClick={() => openTemplateDialog()}><Plus /></button>
+          </header>
           <div>
             {templates.map(template => (
-              <button type="button" className={selectedTemplateId === template.id ? 'selected' : ''} onClick={() => setSelectedTemplateId(template.id)} key={template.id}>
-                <span><FileCheck2 /></span>
-                <div><small>{template.department} · {template.position}</small><strong>{template.name}</strong><em>V{template.version} · {template.items.length} 项 · 合格 {template.passScore} 分</em></div>
-                <b>{template.status === 'ACTIVE' ? '生效中' : '已冻结'}</b>
-              </button>
+              <article className={selectedTemplateId === template.id ? 'selected' : ''} key={template.id}>
+                <button type="button" className="skill-template-select" onClick={() => {
+                  setSelectedTemplateId(template.id);
+                  setAssessmentRecordScope('template');
+                  setDialogError('');
+                }}>
+                  <span><FileCheck2 /></span>
+                  <div>
+                    <small>{template.department} · {template.position}{template.team ? ` · ${template.team}` : ''}</small>
+                    <strong>{template.name}</strong>
+                    <em>V{template.version} · {template.items.length} 项 · 合格 {template.passScore} 分</em>
+                  </div>
+                  <b>{template.status === 'ACTIVE' ? '生效中' : '已冻结'}</b>
+                </button>
+                <button type="button" className="skill-template-delete" title="删除考核表" onClick={() => openTemplateRemovalDialog(template)}><Trash2 /></button>
+              </article>
             ))}
             {!templates.length && <div className="skill-list-empty"><FileText /><strong>暂无岗位考核表</strong><button type="button" onClick={() => openTemplateDialog()}>创建第一张</button></div>}
           </div>
         </aside>
-        <section className="skill-assessment-workspace">
+
+        <section className="skill-assessment-workspace skill-assessment-workspace-v3">
           <header className="skill-assessment-heading">
             <div>
-              <span className="skill-eyebrow">技能考核与审核</span>
-              <h1>{activeTemplate?.name || '岗位技能考核工作台'}</h1>
-              <p>{activeTemplate ? `${activeTemplate.department} · ${activeTemplate.position} · V${activeTemplate.version} · 目标 L${activeTemplate.targetLevel}` : '建立岗位模板后，可在线填报、指定审核人并形成技能认证。'}</p>
+              <span className="skill-eyebrow">岗位技能考核工作台</span>
+              <h1>{documentTemplate?.name || '请选择或新建岗位考核表'}</h1>
+              <p>{documentTemplate ? `${documentTemplate.department} · ${documentTemplate.position}${documentTemplate.team ? ` · ${documentTemplate.team}` : ''} · V${documentTemplate.version} · 目标 L${documentTemplate.targetLevel}` : '模板建立后可在线评分、独立审核、打印归档并形成技能认证。'}</p>
             </div>
             <div>
               {activeTemplate && <button type="button" className="skill-secondary-button" onClick={() => window.open(`/workspace/employees/skills/templates/${activeTemplate.id}/print`, '_blank', 'noopener,noreferrer')}><Printer />空白表打印</button>}
-              {activeTemplate && <button type="button" className="skill-secondary-button" onClick={() => openTemplateDialog(activeTemplate)}><FileText />复制为新版</button>}
+              {activeTemplate && <button type="button" className="skill-secondary-button" onClick={() => openTemplateDialog(activeTemplate)}><FileText />编辑为新版</button>}
               <button type="button" className="skill-primary-button" disabled={!activeTemplate} onClick={() => openLaunchDialog(selectedEmployeeId, activeTemplate?.id)}><Plus />发起考核</button>
             </div>
           </header>
-          <section className="skill-assessment-kpis">
-            <button type="button"><span><ClipboardCheck /></span><small>全部考核</small><strong>{assessments.length}</strong></button>
-            <button type="button" className={pending.length ? 'attention' : ''}><span><Clock3 /></span><small>待我审核</small><strong>{pending.length}</strong></button>
-            <button type="button"><span><CheckCircle2 /></span><small>认证通过</small><strong>{assessments.filter(item => item.status === 'APPROVED').length}</strong></button>
-            <button type="button"><span><AlertTriangle /></span><small>退回修改</small><strong>{assessments.filter(item => item.status === 'RETURNED').length}</strong></button>
-          </section>
-          <section className="skill-assessment-table">
-            <header><span>员工 / 技能</span><span>岗位考核表</span><span>填报与审核</span><span>得分 / 等级</span><span>状态</span><span>操作</span></header>
-            <div>
-              {assessments.map(assessment => (
-                <article className={assessment.status === 'PENDING_REVIEW' ? 'pending' : ''} key={assessment.id}>
-                  <span><b>{assessment.employee.name.slice(0, 1)}</b><strong>{assessment.employee.name}<small>{assessment.skill.name}</small></strong></span>
-                  <span><strong>{assessment.template.name}</strong><small>V{assessment.templateVersion} · {assessment.code}</small></span>
-                  <span><strong>{assessment.assessor?.name || '待确认'} → {assessment.reviewer?.name || '待确认'}</strong><small>更新 {formatDate(assessment.updatedAt)}</small></span>
-                  <span><strong>{assessment.totalScore ?? '—'} 分</strong><small>拟认证 L{assessment.proposedLevel}</small></span>
-                  <span><em className={`status-${assessment.status.toLowerCase()}`}>{statusLabels[assessment.status]}</em></span>
-                  <span>
-                    <button type="button" onClick={() => openAssessment(assessment)}>{assessment.status === 'PENDING_REVIEW' ? '进入审核' : assessment.status === 'DRAFT' || assessment.status === 'RETURNED' ? '继续填报' : '查看记录'}</button>
-                    <button type="button" title="打印或导出 PDF" onClick={() => window.open(`/workspace/employees/skills/assessments/${assessment.id}/print`, '_blank', 'noopener,noreferrer')}><Printer /></button>
-                  </span>
-                </article>
-              ))}
-              {!assessments.length && <div className="skill-inline-empty"><ClipboardCheck /><strong>暂无技能考核任务</strong><p>选择岗位考核表并发起第一项考核。</p></div>}
-            </div>
-          </section>
+
+          <div className="skill-assessment-studio">
+            <main className="skill-assessment-document">
+              {documentTemplate ? (
+                <>
+                  <header className="skill-document-title">
+                    <div>
+                      <span>杭连电子 · 人事管理</span>
+                      <h2>员工岗位技能考核记录表</h2>
+                      <p>{documentTemplate.name}</p>
+                    </div>
+                    <div>
+                      <small>考核编号 / 模板版本</small>
+                      <strong>{selectedRecord?.code || '发起后自动生成'} · V{documentTemplate.version}</strong>
+                      <em className={`status-${selectedRecord?.status.toLowerCase() || 'draft'}`}>{selectedRecord ? statusLabels[selectedRecord.status] : '空白模板'}</em>
+                    </div>
+                  </header>
+
+                  <section className="skill-document-meta">
+                    <div><small>被考核员工</small><strong>{selectedRecord?.employee.name || '待选择'}</strong></div>
+                    <div><small>员工编号</small><strong>{selectedRecord?.employee.employeeNo || '—'}</strong></div>
+                    <div><small>部门 / 班组</small><strong>{selectedRecord ? `${selectedRecord.employee.department || documentTemplate.department}${selectedRecord.employee.team ? ` / ${selectedRecord.employee.team}` : ''}` : documentTemplate.department}</strong></div>
+                    <div><small>岗位</small><strong>{selectedRecord?.employee.position || documentTemplate.position}</strong></div>
+                    <div><small>考核技能</small><strong>{selectedRecord?.skill.name || skills.find(skill => skill.id === documentTemplate.skillId)?.name || '综合岗位技能'}</strong></div>
+                    <div><small>目标等级</small><strong>L{selectedRecord?.proposedLevel || documentTemplate.targetLevel}</strong></div>
+                    <div><small>现场考核人</small><strong>{selectedRecord?.assessor?.name || '待指定'}</strong></div>
+                    <div><small>独立审核人</small><strong>{selectedRecord?.reviewer?.name || '待指定'}</strong></div>
+                  </section>
+
+                  {documentTemplate.instructions && (
+                    <p className="skill-document-instructions"><ShieldCheck />{documentTemplate.instructions}</p>
+                  )}
+                  {selectedRecord?.status === 'RETURNED' && selectedRecord.reviewComment && (
+                    <div className="skill-return-note"><AlertTriangle /><span><strong>审核退回</strong><small>{selectedRecord.reviewComment}</small></span></div>
+                  )}
+
+                  <section className="skill-document-score">
+                    <header>
+                      <span>序号</span><span>考核分区</span><span>考核项目与评分标准</span><span>权重</span><span>满分</span><span>实得分</span><span>红线项</span><span>考核评语</span>
+                    </header>
+                    <div>
+                      {documentTemplate.items.map((item, index) => {
+                        const draftAnswer = selectedRecord
+                          ? (answerDrafts[item.id] || { score: '', passed: true, comment: '' })
+                          : null;
+                        return (
+                          <article className={item.isCritical ? 'critical' : ''} key={item.id}>
+                            <span>{String(index + 1).padStart(2, '0')}</span>
+                            <span><strong>{item.section}</strong><small>{item.isRequired ? '必考项' : '选考项'}</small></span>
+                            <span><strong>{item.title}</strong>{item.description && <small>{item.description}</small>}</span>
+                            <span>{item.weight}%</span>
+                            <span>{item.maxScore}</span>
+                            <span>{selectedRecord ? <input aria-label={`${item.title}实得分`} disabled={!canFill} type="number" min="0" max={item.maxScore} value={draftAnswer?.score || ''} onChange={event => setAnswerDrafts(current => ({ ...current, [item.id]: { ...draftAnswer!, score: event.target.value } }))} /> : <i>—</i>}</span>
+                            <span>
+                              {item.isCritical ? (
+                                <button type="button" disabled={!canFill} className={draftAnswer?.passed !== false ? 'pass' : 'fail'} onClick={() => setAnswerDrafts(current => ({ ...current, [item.id]: { ...draftAnswer!, passed: !draftAnswer!.passed } }))}>
+                                  {draftAnswer?.passed !== false ? <Check /> : <X />}{draftAnswer?.passed !== false ? '通过' : '未通过'}
+                                </button>
+                              ) : <em>非红线</em>}
+                            </span>
+                            <span>{selectedRecord ? <textarea aria-label={`${item.title}考核评语`} disabled={!canFill} rows={1} value={draftAnswer?.comment || ''} onChange={event => setAnswerDrafts(current => ({ ...current, [item.id]: { ...draftAnswer!, comment: event.target.value } }))} placeholder="记录现场表现或改进项" /> : <i>现场填写</i>}</span>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  <section className="skill-document-summary">
+                    <div><small>实时总分</small><strong>{selectedRecord ? assessmentPreview.score : '—'}<em>/ 100</em></strong></div>
+                    <div><small>合格线</small><strong>{documentTemplate.passScore}<em>分</em></strong></div>
+                    <div><small>红线状态</small><strong className={assessmentPreview.criticalFailed ? 'danger' : ''}>{selectedRecord ? (assessmentPreview.criticalFailed ? '未通过' : '正常') : '待填写'}</strong></div>
+                    <div><small>当前结论</small><strong className={liveResult === '未通过' ? 'danger' : ''}>{liveResult}</strong></div>
+                  </section>
+
+                  <section className="skill-document-review">
+                    <label>
+                      <span>拟认证等级</span>
+                      <select disabled={!canFill} value={selectedRecord ? proposedLevel : String(documentTemplate.targetLevel)} onChange={event => setProposedLevel(event.target.value)}>
+                        {[1, 2, 3, 4].map(level => <option value={level} key={level}>{levelLabels[level]}</option>)}
+                      </select>
+                    </label>
+                    <label className="wide">
+                      <span>{canReview ? '审核意见 / 退回原因' : '考核说明 / 改进要求'}</span>
+                      <textarea disabled={!selectedRecord || (!canFill && !canReview)} value={selectedRecord ? reviewComment : ''} onChange={event => setReviewComment(event.target.value)} placeholder={canReview ? '通过可留空；退回时必须填写原因' : '记录考核环境、设备、表现与后续改进要求'} />
+                    </label>
+                  </section>
+
+                  <section className="skill-document-signatures">
+                    <div><small>被考核人</small><strong>{selectedRecord?.employee.name || '签字：____________'}</strong><span>日期：{selectedRecord ? formatDate(selectedRecord.createdAt) : '____年__月__日'}</span></div>
+                    <div><small>现场考核人</small><strong>{selectedRecord?.assessor?.name || '签字：____________'}</strong><span>日期：{selectedRecord ? formatDate(selectedRecord.submittedAt || selectedRecord.updatedAt) : '____年__月__日'}</span></div>
+                    <div><small>独立审核人</small><strong>{selectedRecord?.reviewer?.name || '签字：____________'}</strong><span>日期：{selectedRecord?.reviewedAt ? formatDate(selectedRecord.reviewedAt) : '____年__月__日'}</span></div>
+                  </section>
+
+                  <footer className="skill-document-actions">
+                    <span>{selectedRecord ? `最近更新 ${formatDate(selectedRecord.updatedAt)} · 系统自动保存完整流转记录` : '发起考核后可在线填写，空白版可直接打印'}</span>
+                    <div>
+                      {selectedRecord && <button type="button" className="skill-secondary-button" onClick={() => window.open(`/workspace/employees/skills/assessments/${selectedRecord.id}/print`, '_blank', 'noopener,noreferrer')}><Download />打印 / 导出</button>}
+                      {canFill && <button type="button" className="skill-secondary-button" disabled={saving} onClick={() => void updateAssessment('save')}><Save />保存草稿</button>}
+                      {canFill && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void updateAssessment('submit')}><Send />提交审核</button>}
+                      {canReview && <button type="button" className="skill-return-button" disabled={saving} onClick={() => void updateAssessment('return')}>退回修改</button>}
+                      {canReview && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void updateAssessment('approve')}><BadgeCheck />审核通过</button>}
+                      {!selectedRecord && <button type="button" className="skill-primary-button" onClick={() => openLaunchDialog(selectedEmployeeId, activeTemplate?.id)}><Plus />发起考核并填写</button>}
+                    </div>
+                  </footer>
+                  {dialogError && <div className="skill-inline-form-error"><AlertTriangle />{dialogError}</div>}
+                </>
+              ) : (
+                <div className="skill-inline-empty skill-document-empty">
+                  <ClipboardCheck /><strong>先建立岗位考核表</strong><p>创建模板后即可在线评分、指定审核人并形成正式技能认证。</p>
+                  <button type="button" onClick={() => openTemplateDialog()}><Plus />新建考核表</button>
+                </div>
+              )}
+            </main>
+
+            <aside className="skill-assessment-records">
+              <header>
+                <div><span className="skill-eyebrow">考核记录</span><h2>最近考核</h2></div>
+                <b>{visibleAssessmentRecords.length}</b>
+              </header>
+              <nav>
+                <button type="button" className={assessmentRecordScope === 'template' ? 'active' : ''} onClick={() => setAssessmentRecordScope('template')}>当前模板</button>
+                <button type="button" className={assessmentRecordScope === 'all' ? 'active' : ''} onClick={() => setAssessmentRecordScope('all')}>全部记录</button>
+              </nav>
+              <div>
+                {visibleAssessmentRecords.map(assessment => (
+                  <button type="button" className={`${selectedRecord?.id === assessment.id ? 'selected ' : ''}status-${assessment.status.toLowerCase()}`} onClick={() => openAssessment(assessment, 'inline')} key={assessment.id}>
+                    <span><b>{assessment.employee.name.slice(0, 1)}</b><strong>{assessment.employee.name}<small>{assessment.skill.name}</small></strong><em>{statusLabels[assessment.status]}</em></span>
+                    <strong>{assessment.template.name}</strong>
+                    <small>{assessment.code} · V{assessment.templateVersion}</small>
+                    <footer><span>{assessment.assessor?.name || '待确认'} → {assessment.reviewer?.name || '待确认'}</span><b>{assessment.totalScore ?? '—'} 分</b></footer>
+                  </button>
+                ))}
+                {!visibleAssessmentRecords.length && (
+                  <div className="skill-list-empty"><History /><strong>暂无考核记录</strong><small>{assessmentRecordScope === 'template' ? '当前模板还没有发起考核' : '尚未创建任何考核任务'}</small></div>
+                )}
+              </div>
+              <footer>
+                <span><Clock3 />待审核 <strong>{pending.length}</strong></span>
+                <span><CheckCircle2 />已通过 <strong>{assessments.filter(item => item.status === 'APPROVED').length}</strong></span>
+              </footer>
+            </aside>
+          </div>
         </section>
       </div>
     );
@@ -1151,7 +1400,7 @@ export default function SkillPerformanceWorkbench({
         <div className="skill-view-stage">
           {activeView === 'matrix' && renderMatrix()}
           {activeView === 'people' && renderPeople()}
-          {activeView === 'assessments' && renderAssessments()}
+          {activeView === 'assessments' && renderAssessmentWorkbench()}
         </div>
       )}
 
@@ -1173,7 +1422,7 @@ export default function SkillPerformanceWorkbench({
                         ? '历史技能档案'
                         : dialog === 'reward-rule' || dialog === 'remove-reward-rule'
                           ? '关键岗位奖励'
-                          : dialog === 'template'
+                          : dialog === 'template' || dialog === 'remove-template'
                             ? '考核模板'
                             : dialog === 'launch'
                               ? '考核任务'
@@ -1194,7 +1443,9 @@ export default function SkillPerformanceWorkbench({
                             ? '配置技能奖励规则'
                             : dialog === 'remove-reward-rule'
                               ? '删除奖励规则'
-                              : dialog === 'template'
+                              : dialog === 'remove-template'
+                                ? '删除岗位技能考核表'
+                                : dialog === 'template'
                                 ? `${templateBaseId ? '建立新版' : '新建'}岗位技能考核表`
                                 : dialog === 'launch'
                                   ? '发起技能考核'
@@ -1208,6 +1459,7 @@ export default function SkillPerformanceWorkbench({
                 {dialog === 'remove-certification' && certificationRemovalTarget && <p>{certificationRemovalTarget.employee.name} · {certificationRemovalTarget.skill.name} · 历史登记 L{certificationRemovalTarget.certification.level}</p>}
                 {dialog === 'reward-rule' && <p>默认压接、焊接、调模为 L3 达标；岗位、技能和门槛均可继续维护</p>}
                 {dialog === 'remove-reward-rule' && rewardRuleRemovalTarget && <p>{rewardRuleRemovalTarget.rule.jobName} · {rewardRuleRemovalTarget.skill.name} · L{rewardRuleRemovalTarget.rule.minimumLevel}+</p>}
+                {dialog === 'remove-template' && templateRemovalTarget && <p>{templateRemovalTarget.template.department} · {templateRemovalTarget.template.position} · V{templateRemovalTarget.template.version}</p>}
               </div>
               <button type="button" aria-label="关闭" disabled={saving} onClick={() => setDialog(null)}><X /></button>
             </header>
@@ -1362,6 +1614,34 @@ export default function SkillPerformanceWorkbench({
                   <aside>
                     <ShieldCheck />
                     <span><strong>员工技能与考核数据不会被删除</strong><small>如需临时停止奖励判断，也可以返回编辑并关闭“启用本规则”。</small></span>
+                  </aside>
+                </div>
+              )}
+
+              {dialog === 'remove-template' && templateRemovalTarget && (
+                <div className="skill-delete-confirmation">
+                  <span><Trash2 /></span>
+                  <div>
+                    <small>删除岗位技能考核表</small>
+                    <h3>删除“{templateRemovalTarget.template.name}”？</h3>
+                    <p>
+                      {templateRemovalTarget.assessmentCount > 0
+                        ? `这张考核表已有 ${templateRemovalTarget.assessmentCount} 条考核记录，将从可用模板中归档隐藏，历史记录、评分、审核意见与技能认证全部保留。`
+                        : '这张考核表尚未产生考核记录，确认后将删除模板及评分项目。'}
+                    </p>
+                  </div>
+                  <dl>
+                    <div><dt>适用范围</dt><dd>{templateRemovalTarget.template.department} · {templateRemovalTarget.template.position}{templateRemovalTarget.template.team ? ` · ${templateRemovalTarget.template.team}` : ''}</dd></div>
+                    <div><dt>模板版本</dt><dd>V{templateRemovalTarget.template.version}</dd></div>
+                    <div><dt>评分项目</dt><dd>{templateRemovalTarget.template.items.length} 项</dd></div>
+                    <div><dt>关联记录</dt><dd>{templateRemovalTarget.assessmentCount} 条</dd></div>
+                  </dl>
+                  <aside>
+                    <ShieldCheck />
+                    <span>
+                      <strong>{templateRemovalTarget.assessmentCount > 0 ? '历史考核记录不会被删除' : '仅删除当前空白模板'}</strong>
+                      <small>员工档案、岗位技能要求、正式认证和其他模板均不受影响。</small>
+                    </span>
                   </aside>
                 </div>
               )}
@@ -1555,6 +1835,7 @@ export default function SkillPerformanceWorkbench({
               {dialog === 'remove-certification' && <button type="button" className="skill-return-button" disabled={saving} onClick={() => void removeLegacyCertification()}>{saving ? <Loader2 className="spin" /> : <Trash2 />}删除历史技能</button>}
               {dialog === 'reward-rule' && <button type="button" className="skill-primary-button reward" disabled={saving} onClick={() => void saveRewardRule()}>{saving ? <Loader2 className="spin" /> : <Trophy />}{rewardEditingId ? '保存奖励规则' : '新增奖励规则'}</button>}
               {dialog === 'remove-reward-rule' && <button type="button" className="skill-return-button" disabled={saving} onClick={() => void removeRewardRule()}>{saving ? <Loader2 className="spin" /> : <Trash2 />}确认删除规则</button>}
+              {dialog === 'remove-template' && <button type="button" className="skill-return-button" disabled={saving} onClick={() => void removeTemplate()}>{saving ? <Loader2 className="spin" /> : <Trash2 />}{templateRemovalTarget && templateRemovalTarget.assessmentCount > 0 ? '归档考核表' : '确认删除考核表'}</button>}
               {dialog === 'template' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void createTemplate()}>{saving ? <Loader2 className="spin" /> : <FileCheck2 />}生成并启用考核表</button>}
               {dialog === 'launch' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void launchAssessment()}>{saving ? <Loader2 className="spin" /> : <Plus />}创建考核任务</button>}
               {dialog === 'legacy' && <button type="button" className="skill-primary-button" disabled={saving || selectedLegacyCount === 0} onClick={() => void saveLegacySkills()}>{saving ? <Loader2 className="spin" /> : <History />}保存 {selectedLegacyCount} 项历史技能</button>}

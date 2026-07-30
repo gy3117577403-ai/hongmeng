@@ -42,8 +42,8 @@ export default async function SkillTemplatePrintPage({
         <header className="skill-print-header">
           <div>
             <p className="skill-print-brand">杭连电子 · 人事管理</p>
-            <h1>{template.name}</h1>
-            <p>岗位技能考核表 · 空白现场版</p>
+            <h1>员工岗位技能考核记录表</h1>
+            <p>{template.name} · 空白现场版</p>
           </div>
           <div className="skill-print-code">
             <small>表单编号 / 版本</small>
@@ -77,20 +77,22 @@ export default async function SkillTemplatePrintPage({
               <col style={{ width: '10mm' }} />
               <col style={{ width: '24mm' }} />
               <col />
-              <col style={{ width: '16mm' }} />
-              <col style={{ width: '18mm' }} />
-              <col style={{ width: '18mm' }} />
-              <col style={{ width: '31mm' }} />
+              <col style={{ width: '14mm' }} />
+              <col style={{ width: '14mm' }} />
+              <col style={{ width: '17mm' }} />
+              <col style={{ width: '28mm' }} />
+              <col style={{ width: '58mm' }} />
             </colgroup>
             <thead>
               <tr>
                 <th>序号</th>
                 <th>考核分区</th>
-                <th>考核项目</th>
+                <th>考核项目与评分标准</th>
                 <th>权重</th>
                 <th>满分</th>
-                <th>得分</th>
-                <th>现场记录</th>
+                <th>实得分</th>
+                <th>红线项</th>
+                <th>考核评语</th>
               </tr>
             </thead>
             <tbody>
@@ -100,12 +102,12 @@ export default async function SkillTemplatePrintPage({
                   <td>{item.section}</td>
                   <td>
                     {item.title}
-                    {item.isCritical && <span className="skill-print-critical">红线项</span>}
                     {item.description && <><br /><small>{item.description}</small></>}
                   </td>
                   <td className="center">{item.weight}%</td>
                   <td className="center">{item.maxScore}</td>
                   <td />
+                  <td className="center">{item.isCritical ? '□ 通过　□ 未通过' : '—'}</td>
                   <td />
                 </tr>
               ))}

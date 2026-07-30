@@ -50,6 +50,7 @@ export async function GET() {
         take: 500,
       }),
       prisma.skillAssessmentTemplate.findMany({
+        where: { status: { not: 'DISABLED' } },
         include: skillTemplateInclude,
         orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }],
         take: 500,

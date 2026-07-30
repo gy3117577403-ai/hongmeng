@@ -25,7 +25,7 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  padding: 12px max(20px, calc((100vw - 210mm) / 2));
+  padding: 12px max(20px, calc((100vw - 297mm) / 2));
   border-bottom: 1px solid #dce3eb;
   background: rgba(248, 250, 252, .92);
   backdrop-filter: blur(14px);
@@ -58,10 +58,10 @@ body {
 }
 
 .skill-print-page {
-  width: 210mm;
-  min-height: 297mm;
+  width: 297mm;
+  min-height: 210mm;
   margin: 22px auto 44px;
-  padding: 13mm 14mm 12mm;
+  padding: 10mm 12mm 9mm;
   background: #fff;
   box-shadow: 0 18px 48px rgba(30, 41, 59, .14);
 }
@@ -86,7 +86,7 @@ body {
 .skill-print-header h1 {
   margin: 0;
   color: #111827;
-  font-size: 24px;
+  font-size: 23px;
   line-height: 1.25;
 }
 
@@ -120,15 +120,15 @@ body {
 
 .skill-print-meta {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin: 5mm 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 4mm 0;
   border-top: 1px solid #475569;
   border-left: 1px solid #475569;
 }
 
 .skill-print-meta div {
-  min-height: 14mm;
-  padding: 2.5mm 3mm;
+  min-height: 12mm;
+  padding: 2mm 2.5mm;
   border-right: 1px solid #475569;
   border-bottom: 1px solid #475569;
 }
@@ -150,7 +150,7 @@ body {
 }
 
 .skill-print-section {
-  margin-top: 5mm;
+  margin-top: 4mm;
 }
 
 .skill-print-section-heading {
@@ -172,8 +172,8 @@ body {
 }
 
 .skill-print-instructions {
-  margin: 0 0 4mm;
-  padding: 3mm 4mm;
+  margin: 0 0 3mm;
+  padding: 2.5mm 3mm;
   border-left: 3px solid #64748b;
   background: #f8fafc;
   color: #334155;
@@ -186,13 +186,13 @@ body {
   table-layout: fixed;
   border-collapse: collapse;
   color: #111827;
-  font-size: 9.5px;
+  font-size: 9px;
 }
 
 .skill-print-table th,
 .skill-print-table td {
-  min-height: 10mm;
-  padding: 2.3mm 2.5mm;
+  min-height: 9mm;
+  padding: 2mm 2.2mm;
   border: 1px solid #475569;
   vertical-align: top;
 }
@@ -251,7 +251,7 @@ body {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 9mm;
-  margin-top: 9mm;
+  margin-top: 7mm;
 }
 
 .skill-print-signatures div {
@@ -290,7 +290,7 @@ body {
 }
 
 @page {
-  size: A4 portrait;
+  size: A4 landscape;
   margin: 0;
 }
 
@@ -304,10 +304,10 @@ body {
   }
 
   .skill-print-page {
-    width: 210mm;
-    min-height: 297mm;
+    width: 297mm;
+    min-height: 210mm;
     margin: 0;
-    padding: 13mm 14mm 12mm;
+    padding: 10mm 12mm 9mm;
     box-shadow: none;
   }
 
