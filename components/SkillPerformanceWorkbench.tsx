@@ -24,7 +24,6 @@ import {
   Search,
   Send,
   ShieldCheck,
-  Sparkles,
   Trash2,
   UserRound,
   UsersRound,
@@ -733,18 +732,6 @@ export default function SkillPerformanceWorkbench({
 
   return (
     <div className="skill-workbench">
-      <section className="skill-hero">
-        <div>
-          <span className="skill-eyebrow"><Sparkles />技能绩效 · 人员能力工作台</span>
-          <h1>员工技能、岗位矩阵与考核认证</h1>
-          <p>技能等级只由岗位考核和审核结果形成；生产达成率仍在报表中心独立核算。</p>
-        </div>
-        <div className="skill-hero-actions">
-          <a href="/workspace/reports" className="skill-secondary-button">生产绩效报表<ChevronRight /></a>
-          <button type="button" className="skill-primary-button" onClick={() => openLaunchDialog()}><ClipboardCheck />发起技能考核</button>
-        </div>
-      </section>
-
       <section className="skill-health-strip">
         <div><span><Grid3X3 /></span><small>技能目录</small><strong>{summary.skillCount}</strong><em>{summary.requiredPositionCount} 个岗位已配置</em></div>
         <div><span><ShieldCheck /></span><small>岗位技能覆盖</small><strong>{formatPercent(summary.coverageBasisPoints)}</strong><em>按岗位要求与有效认证统计</em></div>
