@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { cleanDrawingText, serializeDrawingLibraryFile } from '@/lib/drawing-library';
 import { synchronizeDrawingLibraryWorkOrderStatus } from '@/lib/drawing-library-lifecycle';
 import { prisma } from '@/lib/prisma';
+import { assertCommonDrawingFileLifecycleAllowed, SopRequestError } from '@/lib/sop';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,6 +15,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { fileId: st
       where: { id: params.fileId, deletedAt: null, libraryItem: { deletedAt: null } },
     });
     if (!old) return NextResponse.json({ ok: false, error: '图纸资料文件不存在' }, { status: 404 });
+    assertCommonDrawingFileLifecycleAllowed(old, 'update');
     const body = await req.json().catch(() => ({}));
     const data: { displayName?: string | null; remark?: string | null; categoryId?: string } = {};
     if (body.displayName !== undefined) data.displayName = cleanDrawingText(body.displayName, 160);
@@ -55,6 +57,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { fileId: st
     return NextResponse.json({ ok: true, file: serializeDrawingLibraryFile(result.file), sync: result.sync });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof SopRequestError) {
+      return NextResponse.json(
+        { ok: false, error: e.message, message: e.message, code: e.code, detail: e.detail },
+        { status: e.status },
+      );
+    }
     console.error(e);
     return NextResponse.json({ ok: false, error: '图纸资料文件保存失败' }, { status: 500 });
   }
@@ -68,6 +76,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { fileId: 
       include: { category: { select: { code: true } } },
     });
     if (!file) return NextResponse.json({ ok: false, error: '图纸资料文件不存在' }, { status: 404 });
+    assertCommonDrawingFileLifecycleAllowed(file, 'delete');
     const sync = await prisma.$transaction(async tx => {
       await tx.drawingLibraryFile.update({ where: { id: file.id }, data: { deletedAt: new Date() } });
       await tx.drawingLibraryItem.update({ where: { id: file.libraryItemId }, data: { updatedAt: new Date() } });
@@ -86,6 +95,12 @@ export async function DELETE(_req: NextRequest, { params }: { params: { fileId: 
     return NextResponse.json({ ok: true, sync });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof SopRequestError) {
+      return NextResponse.json(
+        { ok: false, error: e.message, message: e.message, code: e.code, detail: e.detail },
+        { status: e.status },
+      );
+    }
     console.error(e);
     return NextResponse.json({ ok: false, error: '图纸资料文件删除失败' }, { status: 500 });
   }

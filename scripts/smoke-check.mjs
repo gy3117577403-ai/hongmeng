@@ -33,6 +33,22 @@ const checks = [
       if (!body.includes('杭连协同平台')) throw new Error('login page content check failed');
     },
   },
+  {
+    name: 'PDF.js packed Chinese CMap',
+    path: '/pdfjs/cmaps/GBK-EUC-H.bcmap',
+    validate: async response => {
+      const body = await response.arrayBuffer();
+      if (body.byteLength === 0) throw new Error('PDF.js Chinese CMap is empty');
+    },
+  },
+  {
+    name: 'PDF.js fallback font',
+    path: '/pdfjs/standard_fonts/LiberationSans-Regular.ttf',
+    validate: async response => {
+      const body = await response.arrayBuffer();
+      if (body.byteLength === 0) throw new Error('PDF.js fallback font is empty');
+    },
+  },
 ];
 
 async function runCheck(check) {

@@ -7,6 +7,7 @@ import type {
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createPdfJsServerAssetOptions } from '@/lib/pdfjs-assets.server';
 import { sanitizeConnectorManualManufacturer } from '@/lib/connector-manual-parser';
 import { normalizeManualToc } from '@/lib/connector-manual-toc';
 import type { ConnectorManualTocItem } from '@/lib/connector-manual-toc';
@@ -153,7 +154,12 @@ export async function inspectPdf(buffer: Buffer): Promise<{ pageCount: number; s
   const workerPath = workerCandidates.find(candidate => existsSync(candidate));
   if (!workerPath) throw new Error('PDF.js worker file is missing');
   pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
-  const loadingTask = pdfjs.getDocument({ data: new Uint8Array(buffer), isEvalSupported: false, useWorkerFetch: false });
+  const loadingTask = pdfjs.getDocument({
+    data: new Uint8Array(buffer),
+    ...createPdfJsServerAssetOptions(),
+    isEvalSupported: false,
+    useWorkerFetch: false,
+  });
   const document = await loadingTask.promise;
   const pages: string[] = [];
   try {

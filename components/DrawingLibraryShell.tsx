@@ -7,6 +7,7 @@ import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawing
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
+import { SopEditor, type SopEditorHandle, type SopWorkspace } from '@/components/sop';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { safeDisplayFilename } from '@/lib/filenames';
@@ -23,6 +24,7 @@ type DrawingLibraryForm = {
 
 type DrawingFilter = 'all' | 'complete' | 'recent' | 'anomaly';
 type DrawingModal = { mode: 'create' | 'edit'; item?: DrawingLibraryItemDTO } | null;
+type SopPaneMode = 'files' | 'editor';
 type DrawingTrashItem = {
   id: string;
   customerName: string;
@@ -145,6 +147,8 @@ export function DrawingLibraryShell({
   const [bulkHelpOpen, setBulkHelpOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [filePanelOpen, setFilePanelOpen] = useState(false);
+  const [sopPaneMode, setSopPaneMode] = useState<SopPaneMode>('files');
+  const [sopTransitioning, setSopTransitioning] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DrawingLibraryFileDTO | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [missingReference, setMissingReference] = useState<MissingDrawingReference | null>(null);
@@ -156,6 +160,8 @@ export function DrawingLibraryShell({
   const [trashLoading, setTrashLoading] = useState(false);
   const [restoringId, setRestoringId] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const sopEditorRef = useRef<SopEditorHandle>(null);
+  const selectedIdRef = useRef(selectedId);
   const filePanelTriggerRef = useRef<HTMLButtonElement>(null);
   const loadControllerRef = useRef<AbortController | null>(null);
   const filePanelRef = useRef<HTMLElement>(null);
@@ -173,6 +179,7 @@ export function DrawingLibraryShell({
   const activeCategory = categories.find(category => category.id === activeCategoryId) || categories[0] || null;
   const activeFiles = selectedItem?.files.filter(file => file.categoryId === activeCategory?.id) || [];
   const selectedFile = activeFiles.find(file => file.id === selectedFileId) || activeFiles[0] || null;
+  const isSopCategory = activeCategory?.code === 'sop';
   const hasActiveFilters = !!keyword.trim() || filter !== 'all' || customer !== '全部客户';
   const activeFilterLabel = filterOptions.find(([key]) => key === filter)?.[1] || '全部';
   const visibleFileCount = useMemo(() => visibleItems.reduce((total, item) => total + item.fileCount, 0), [visibleItems]);
@@ -180,6 +187,10 @@ export function DrawingLibraryShell({
   useEffect(() => {
     if (selectedItem && selectedItem.id !== selectedId) setSelectedId(selectedItem.id);
   }, [selectedItem, selectedId]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -378,6 +389,36 @@ export function DrawingLibraryShell({
       if (loadControllerRef.current === controller) setLoading(false);
     }
   }, [filter, keyword]);
+
+  const handleSopPublished = useCallback(async (workspace: SopWorkspace) => {
+    const itemId = workspace.itemId || workspace.item.id;
+    if (selectedIdRef.current !== itemId) return;
+    const publishedFileId = workspace.publishedVersion?.publishedFile?.id || '';
+    await loadData();
+    if (selectedIdRef.current !== itemId) return;
+    setSelectedFileId(publishedFileId);
+    setSopPaneMode('files');
+    setFilePanelOpen(false);
+    setMsg(publishedFileId
+      ? 'SOP 已发布，已切换到生成的 PDF'
+      : 'SOP 已发布，资料列表已刷新');
+  }, [loadData]);
+
+  const requestSopEditorClose = useCallback(async (): Promise<boolean> => {
+    const editor = sopEditorRef.current;
+    if (!editor) return true;
+    setSopTransitioning(true);
+    try {
+      const closed = await editor.requestClose();
+      if (!closed) setMsg('当前 SOP 尚未保存成功，请处理保存提示后再离开');
+      return closed;
+    } catch {
+      setMsg('SOP 草稿保存失败，已停留在当前页面');
+      return false;
+    } finally {
+      setSopTransitioning(false);
+    }
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadData(); }, 260);
@@ -586,7 +627,11 @@ export function DrawingLibraryShell({
     }
   }
 
-  function chooseItem(item: DrawingLibraryItemDTO) {
+  async function chooseItem(item: DrawingLibraryItemDTO) {
+    if (item.id === selectedItem?.id) return;
+    if (!(await requestSopEditorClose())) return;
+    setSopPaneMode('files');
+    setFilePanelOpen(false);
     setMissingReference(null);
     setReferenceResolving(false);
     setSelectedId(item.id);
@@ -598,7 +643,27 @@ export function DrawingLibraryShell({
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
   }
 
-  function openProductTime(itemId: string) {
+  async function chooseCategory(category: ResourceCategoryDTO) {
+    if (category.id === activeCategoryId) return;
+    if (!(await requestSopEditorClose())) return;
+    setSopPaneMode('files');
+    setFilePanelOpen(false);
+    setActiveCategoryId(category.id);
+    setSelectedFileId('');
+  }
+
+  function openSopEditor() {
+    setFilePanelOpen(false);
+    setSopPaneMode('editor');
+  }
+
+  async function showSopFiles() {
+    if (!(await requestSopEditorClose())) return;
+    setSopPaneMode('files');
+  }
+
+  async function openProductTime(itemId: string) {
+    if (!(await requestSopEditorClose())) return;
     const returnUrl = new URL(window.location.href);
     returnUrl.searchParams.set('itemId', itemId);
     if (selectedFile?.id) returnUrl.searchParams.set('fileId', selectedFile.id);
@@ -608,6 +673,16 @@ export function DrawingLibraryShell({
       from: 'drawing',
       returnTo: `${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`,
     });
+  }
+
+  async function returnToPlanning() {
+    if (!planningReturnContext || !(await requestSopEditorClose())) return;
+    window.location.replace(planningReturnContext.returnTo);
+  }
+
+  async function returnToProduction() {
+    if (!(await requestSopEditorClose())) return;
+    window.location.href = '/production';
   }
 
   return (
@@ -623,7 +698,7 @@ export function DrawingLibraryShell({
             title={`返回计划中心原排单位置${selectedItem?.specification ? `：${selectedItem.specification}` : ''}`}
             onClick={event => {
               event.preventDefault();
-              window.location.replace(planningReturnContext.returnTo);
+              void returnToPlanning();
             }}
           >
             <ArrowLeft size={16} aria-hidden="true" />
@@ -639,8 +714,8 @@ export function DrawingLibraryShell({
         ) : undefined}
         menuItems={[
           planningReturnContext
-            ? { label: '返回计划中心', href: planningReturnContext.returnTo }
-            : { label: '返回生产执行', href: '/production' },
+            ? { label: '返回计划中心', onSelect: () => { void returnToPlanning(); } }
+            : { label: '返回生产执行', onSelect: () => { void returnToProduction(); } },
           { label: '退出登录', onSelect: logout },
         ]}
       />
@@ -699,7 +774,7 @@ export function DrawingLibraryShell({
             </div>
             <div className="drawing-list hm-scroll-region" tabIndex={0} aria-label={`图纸规格结果，共 ${visibleItems.length} 项`}>
               {visibleItems.map(item => (
-                <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" aria-pressed={selectedItem?.id === item.id} onClick={() => chooseItem(item)}>
+                <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" disabled={sopTransitioning} aria-pressed={selectedItem?.id === item.id} onClick={() => { void chooseItem(item); }}>
                   <div className="drawing-spec-title-line">
                     <strong title={item.specification}>{item.specification}</strong>
                     {item.isAnomaly && <span title={item.anomalyReason || '异常数据'}>异常</span>}
@@ -785,11 +860,21 @@ export function DrawingLibraryShell({
                   </p>
                 </div>
                 <div className="drawing-head-actions">
-                  <button className="hm-workbench-button" type="button" onClick={() => openProductTime(selectedItem.id)}><Clock3 size={15} aria-hidden="true" />产品工时</button>
-                  <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}>文件 {activeFiles.length}</button>
-                  <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>
+                  {isSopCategory && (
+                    <div className="drawing-sop-mode-switch" role="group" aria-label="SOP 查看模式">
+                      <button className={sopPaneMode === 'files' ? 'active' : ''} type="button" disabled={sopTransitioning} onClick={() => { void showSopFiles(); }}>文件预览</button>
+                      <button className={sopPaneMode === 'editor' ? 'active' : ''} type="button" disabled={sopTransitioning} onClick={openSopEditor}>在线编辑</button>
+                    </div>
+                  )}
+                  <button className="hm-workbench-button" type="button" disabled={sopTransitioning} onClick={() => { void openProductTime(selectedItem.id); }}><Clock3 size={15} aria-hidden="true" />产品工时</button>
+                  {(!isSopCategory || sopPaneMode === 'files') && (
+                    <>
+                      <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}>文件 {activeFiles.length}</button>
+                      <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>
+                    </>
+                  )}
                   <button className="hm-workbench-button" type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>
-                  {selectedFile && (
+                  {selectedFile && (!isSopCategory || sopPaneMode === 'files') && (
                     <button
                       className="hm-workbench-button danger"
                       type="button"
@@ -808,44 +893,59 @@ export function DrawingLibraryShell({
                   {categories.map(category => {
                     const count = selectedItem.categoryFileCounts[category.id] || 0;
                     return (
-                      <button key={category.id} className={activeCategoryId === category.id ? 'active' : ''} type="button" onClick={() => { setActiveCategoryId(category.id); setSelectedFileId(''); }}>
+                      <button key={category.id} className={activeCategoryId === category.id ? 'active' : ''} type="button" disabled={sopTransitioning} onClick={() => { void chooseCategory(category); }}>
                         <span className={count ? 'dot filled' : 'dot'} />
                         <strong title={category.name}>{categoryShortName(category.name)}</strong>
                         <em>{count}</em>
                       </button>
                     );
                   })}
-                  <button className="drawing-product-time-link" type="button" title="维护当前产品的单位工时表" onClick={() => openProductTime(selectedItem.id)}>
+                  <button className="drawing-product-time-link" type="button" disabled={sopTransitioning} title="维护当前产品的单位工时表" onClick={() => { void openProductTime(selectedItem.id); }}>
                     <Clock3 size={14} aria-hidden="true" />
                     <strong>工时表</strong>
                     <em>进入</em>
                   </button>
                 </nav>
 
-                <div className="drawing-preview">
-                  <div className="drawing-preview-head">
-                    <span><b>{activeCategory?.name || '资料预览'}</b><small>{selectedFile ? `${selectedFile.version || 'V1.0'} · ${bytes(selectedFile.fileSize)}` : '当前分类'}</small></span>
-                    <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>
-                    <input ref={fileInputRef} hidden multiple type="file" accept="application/pdf,.pdf,image/*" onChange={event => uploadFiles(event.target.files)} />
-                  </div>
-
-                  {!selectedFile ? (
-                    <div className="drawing-preview-placeholder" aria-label="当前分类暂无可预览文件">
-                      <span aria-hidden="true">＋</span>
-                      <strong>{activeCategory?.name || '当前分类'}暂无文件</strong>
-                      <p>产品档案已经建立，可直接上传 PDF、JPG、PNG 等资料，上传后会在这里预览。</p>
-                      <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : `上传到${activeCategory?.name || '当前分类'}`}</button>
+                <div className={`drawing-preview${isSopCategory && sopPaneMode === 'editor' ? ' is-sop-editor' : ''}`}>
+                  <input ref={fileInputRef} hidden multiple type="file" accept="application/pdf,.pdf,image/*" onChange={event => uploadFiles(event.target.files)} />
+                  {isSopCategory && sopPaneMode === 'editor' ? (
+                    <div className="drawing-sop-editor-host">
+                      <SopEditor
+                        ref={sopEditorRef}
+                        key={selectedItem.id}
+                        itemId={selectedItem.id}
+                        productLabel={`${selectedItem.specification}${selectedItem.productName ? ` · ${selectedItem.productName}` : ''}`}
+                        onRequestClose={() => { setSopPaneMode('files'); }}
+                        onPublished={workspace => { void handleSopPublished(workspace); }}
+                      />
                     </div>
-                  ) : selectedFile.fileType === 'pdf' ? (
-                    <PdfViewer dashboardMode fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} viewUrl={selectedFile.viewUrl} downloadUrl={selectedFile.downloadUrl} />
-                  ) : selectedFile.fileType === 'image' ? (
-                    <ImageViewer dashboardMode fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} downloadUrl={selectedFile.downloadUrl} />
                   ) : (
-                    <div className="drawing-file-fallback">
-                      <strong title={safeDisplayFilename(selectedFile)}>{safeDisplayFilename(selectedFile)}</strong>
-                      <p>此文件类型暂不支持内嵌预览，可直接下载查看。</p>
-                      <a href={selectedFile.downloadUrl} target="_blank" rel="noreferrer">下载文件</a>
-                    </div>
+                    <>
+                      <div className="drawing-preview-head">
+                        <span><b>{activeCategory?.name || '资料预览'}</b><small>{selectedFile ? `${selectedFile.version || 'V1.0'} · ${bytes(selectedFile.fileSize)}` : '当前分类'}</small></span>
+                        <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>
+                      </div>
+
+                      {!selectedFile ? (
+                        <div className="drawing-preview-placeholder" aria-label="当前分类暂无可预览文件">
+                          <span aria-hidden="true">＋</span>
+                          <strong>{activeCategory?.name || '当前分类'}暂无文件</strong>
+                          <p>产品档案已经建立，可直接上传 PDF、JPG、PNG 等资料，上传后会在这里预览。</p>
+                          <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : `上传到${activeCategory?.name || '当前分类'}`}</button>
+                        </div>
+                      ) : selectedFile.fileType === 'pdf' ? (
+                        <PdfViewer dashboardMode fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} viewUrl={selectedFile.viewUrl} downloadUrl={selectedFile.downloadUrl} />
+                      ) : selectedFile.fileType === 'image' ? (
+                        <ImageViewer dashboardMode fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} downloadUrl={selectedFile.downloadUrl} />
+                      ) : (
+                        <div className="drawing-file-fallback">
+                          <strong title={safeDisplayFilename(selectedFile)}>{safeDisplayFilename(selectedFile)}</strong>
+                          <p>此文件类型暂不支持内嵌预览，可直接下载查看。</p>
+                          <a href={selectedFile.downloadUrl} target="_blank" rel="noreferrer">下载文件</a>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>

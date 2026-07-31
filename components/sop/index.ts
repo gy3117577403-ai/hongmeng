@@ -1,0 +1,13 @@
+export { SopEditor } from './SopEditor';
+export type { SopEditorHandle, SopEditorProps } from './SopEditor';
+export { createSopApiAdapter } from './api';
+export type {
+  PublishSopInput,
+  SaveDraftInput,
+  SopApiAdapter,
+  SopAsset,
+  SopDocument,
+  SopNode,
+  SopVersion,
+  SopWorkspace,
+} from './types';

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { canUseRequestMethod } from '@/lib/request-authorization';
+import { SOP_WRITE_ACCESS } from '@/lib/sop';
 
 test('all active roles can use read requests', () => {
   for (const role of ['ADMIN', 'TEAM_LEAD', 'EMPLOYEE'] as const) {
@@ -26,5 +27,13 @@ test('labor and self-service mutations reach their scoped domain checks', () => 
   for (const role of ['ADMIN', 'TEAM_LEAD', 'EMPLOYEE'] as const) {
     assert.equal(canUseRequestMethod(role, 'POST', 'labor'), true);
     assert.equal(canUseRequestMethod(role, 'POST', 'self'), true);
+  }
+});
+
+test('SOP mutations are available to every authenticated role', () => {
+  for (const role of ['ADMIN', 'TEAM_LEAD', 'EMPLOYEE'] as const) {
+    for (const method of ['POST', 'PATCH', 'DELETE'] as const) {
+      assert.equal(canUseRequestMethod(role, method, SOP_WRITE_ACCESS), true);
+    }
   }
 });

@@ -6,6 +6,7 @@ import type { PDFDocumentLoadingTask, PDFDocumentProxy, PDFPageProxy } from 'pdf
 import { usePreviewGestures } from '@/components/usePreviewGestures';
 import { extractManualPageTitleCandidates, extractManualTocSuggestions } from '@/lib/connector-manual-toc';
 import type { ConnectorManualTocSuggestion } from '@/lib/connector-manual-toc';
+import { createPdfJsAssetOptions } from '@/lib/pdfjs-assets';
 
 declare global {
   interface Window {
@@ -186,11 +187,12 @@ function PdfCanvas({
         ensurePromiseWithResolvers();
         const pdfjs = await loadPdfJs();
         pdfjs.GlobalWorkerOptions.workerSrc = '/api/pdf-worker';
+        const assetOptions = createPdfJsAssetOptions();
         if (isTabletWebView()) {
           const data = await loadPdfArrayBuffer(source);
-          loadingTask = pdfjs.getDocument({ data, useWorkerFetch: false, isEvalSupported: false });
+          loadingTask = pdfjs.getDocument({ data, ...assetOptions, useWorkerFetch: false, isEvalSupported: false });
         } else {
-          loadingTask = pdfjs.getDocument({ url: source, withCredentials: true });
+          loadingTask = pdfjs.getDocument({ url: source, withCredentials: true, ...assetOptions });
         }
         loadedDoc = await loadingTask.promise;
         if (!alive) return;

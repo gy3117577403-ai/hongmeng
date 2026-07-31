@@ -1,5 +1,6 @@
 import { parseConnectorManual } from '@/lib/connector-manual-parser';
 import type { ConnectorManualParserResult } from '@/lib/connector-manual-parser';
+import { createPdfJsAssetOptions } from '@/lib/pdfjs-assets';
 
 export type ClientManualInspection = ConnectorManualParserResult & {
   pageCount: number;
@@ -57,7 +58,12 @@ export async function inspectConnectorManualFile(file: File, relativePath = ''):
   try {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
     pdfjs.GlobalWorkerOptions.workerSrc = '/api/pdf-worker';
-    const pdfDocument = await pdfjs.getDocument({ data: new Uint8Array(buffer), isEvalSupported: false, useWorkerFetch: false }).promise as unknown as PdfDocumentLike;
+    const pdfDocument = await pdfjs.getDocument({
+      data: new Uint8Array(buffer),
+      ...createPdfJsAssetOptions(),
+      isEvalSupported: false,
+      useWorkerFetch: false,
+    }).promise as unknown as PdfDocumentLike;
     document = pdfDocument;
     const firstPageText = pdfDocument.numPages >= 1 ? await pageText(await pdfDocument.getPage(1)) : '';
     const secondPageText = pdfDocument.numPages >= 2 ? await pageText(await pdfDocument.getPage(2)) : '';

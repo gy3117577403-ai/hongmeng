@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { synchronizeDrawingLibraryWorkOrderStatus } from '@/lib/drawing-library-lifecycle';
 import { prisma } from '@/lib/prisma';
+import { assertCommonDrawingFileLifecycleAllowed, SopRequestError } from '@/lib/sop';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,6 +15,7 @@ export async function POST(_req: Request, { params }: { params: { fileId: string
       include: { category: { select: { code: true } } },
     });
     if (!deletedFile) return NextResponse.json({ ok: false, error: '回收站中未找到该文件' }, { status: 404 });
+    assertCommonDrawingFileLifecycleAllowed(deletedFile, 'restore');
     const sync = await prisma.$transaction(async tx => {
       await tx.drawingLibraryFile.update({ where: { id: deletedFile.id }, data: { deletedAt: null } });
       await tx.drawingLibraryItem.update({ where: { id: deletedFile.libraryItemId }, data: { updatedAt: new Date() } });
@@ -32,6 +34,12 @@ export async function POST(_req: Request, { params }: { params: { fileId: string
     return NextResponse.json({ ok: true, sync });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof SopRequestError) {
+      return NextResponse.json(
+        { ok: false, error: e.message, message: e.message, code: e.code, detail: e.detail },
+        { status: e.status },
+      );
+    }
     console.error(e);
     return NextResponse.json({ ok: false, error: '图纸资料文件恢复失败' }, { status: 500 });
   }

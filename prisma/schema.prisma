@@ -190,6 +190,12 @@ model User {
   voidedProcessCompletions       ProcessCompletion[]         @relation("ProcessCompletionVoidedBy")
   claimedProcessLaborClaims      ProcessLaborClaim[]         @relation("ProcessLaborClaimClaimedBy")
   voidedProcessLaborClaims       ProcessLaborClaim[]         @relation("ProcessLaborClaimVoidedBy")
+  createdSopDocuments            SopDocument[]                @relation("SopDocumentCreatedBy")
+  updatedSopDocuments            SopDocument[]                @relation("SopDocumentUpdatedBy")
+  createdSopVersions             SopVersion[]                 @relation("SopVersionCreatedBy")
+  updatedSopVersions             SopVersion[]                 @relation("SopVersionUpdatedBy")
+  publishedSopVersions           SopVersion[]                 @relation("SopVersionPublishedBy")
+  uploadedSopAssets              SopAsset[]                   @relation("SopAssetUploadedBy")
 
   @@map("users")
 }
@@ -1351,6 +1357,7 @@ model DrawingLibraryItem {
   productTimeProfiles  ProductTimeProfile[]
   quotationTimes       ProductQuotationTime[]
   productionPlanOrders ProductionPlanOrder[]
+  sopDocument          SopDocument?
 
   @@index([customerName])
   @@index([customerCode])
@@ -1390,6 +1397,85 @@ model ProductTimeProfile {
   @@index([status, updatedAt])
   @@index([publishedAt])
   @@map("product_time_profiles")
+}
+
+model SopDocument {
+  id                        String             @id @default(uuid())
+  drawingLibraryItemId      String             @unique @map("drawing_library_item_id")
+  title                     String
+  currentPublishedVersionId String?            @unique @map("current_published_version_id")
+  createdById               String?            @map("created_by_id")
+  updatedById               String?            @map("updated_by_id")
+  deletedAt                 DateTime?          @map("deleted_at")
+  createdAt                 DateTime           @default(now()) @map("created_at")
+  updatedAt                 DateTime           @updatedAt @map("updated_at")
+  drawingLibraryItem        DrawingLibraryItem @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Cascade)
+  currentPublishedVersion   SopVersion?        @relation("SopCurrentPublishedVersion", fields: [currentPublishedVersionId], references: [id], onDelete: SetNull)
+  versions                  SopVersion[]       @relation("SopDocumentVersions")
+  assets                    SopAsset[]
+  createdBy                 User?              @relation("SopDocumentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy                 User?              @relation("SopDocumentUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([deletedAt])
+  @@index([updatedAt])
+  @@map("sop_documents")
+}
+
+model SopVersion {
+  id                   String              @id @default(uuid())
+  documentId           String              @map("document_id")
+  version              Int
+  revision             Int                 @default(0)
+  status               String              @default("draft")
+  title                String
+  content              Json
+  contentSchemaVersion Int                 @default(1) @map("content_schema_version")
+  basedOnVersionId     String?             @map("based_on_version_id")
+  createdById          String?             @map("created_by_id")
+  updatedById          String?             @map("updated_by_id")
+  publishedById        String?             @map("published_by_id")
+  publishedAt          DateTime?           @map("published_at")
+  deletedAt            DateTime?           @map("deleted_at")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  document             SopDocument         @relation("SopDocumentVersions", fields: [documentId], references: [id], onDelete: Cascade)
+  currentForDocument   SopDocument?        @relation("SopCurrentPublishedVersion")
+  basedOnVersion       SopVersion?         @relation("SopVersionRestoreSource", fields: [basedOnVersionId], references: [id], onDelete: SetNull)
+  restoredVersions     SopVersion[]        @relation("SopVersionRestoreSource")
+  createdBy            User?               @relation("SopVersionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy            User?               @relation("SopVersionUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  publishedBy          User?               @relation("SopVersionPublishedBy", fields: [publishedById], references: [id], onDelete: SetNull)
+  publishedFile        DrawingLibraryFile? @relation("SopVersionPublishedFile")
+
+  @@unique([documentId, version])
+  @@index([documentId, status, deletedAt])
+  @@index([basedOnVersionId])
+  @@index([publishedAt])
+  @@index([updatedAt])
+  @@map("sop_versions")
+}
+
+model SopAsset {
+  id           String      @id @default(uuid())
+  documentId   String      @map("document_id")
+  originalName String      @map("original_name")
+  displayName  String?     @map("display_name")
+  mimeType     String      @map("mime_type")
+  size         Int
+  objectKey    String      @map("object_key")
+  fileHash     String      @map("file_hash")
+  uploadedById String?     @map("uploaded_by_id")
+  deletedAt    DateTime?   @map("deleted_at")
+  createdAt    DateTime    @default(now()) @map("created_at")
+  updatedAt    DateTime    @updatedAt @map("updated_at")
+  document     SopDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  uploadedBy   User?       @relation("SopAssetUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([documentId, deletedAt])
+  @@index([objectKey])
+  @@index([fileHash])
+  @@index([deletedAt])
+  @@map("sop_assets")
 }
 
 model ProductQuotationTime {
@@ -1547,6 +1633,7 @@ model DrawingLibraryFile {
   objectKey            String             @map("object_key")
   uploadedById         String?            @map("uploaded_by")
   sourceResourceFileId String?            @unique @map("source_resource_file_id")
+  sourceSopVersionId   String?            @unique @map("source_sop_version_id")
   remark               String?
   deletedAt            DateTime?          @map("deleted_at")
   createdAt            DateTime           @default(now()) @map("created_at")
@@ -1555,6 +1642,7 @@ model DrawingLibraryFile {
   category             ResourceCategory   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   uploadedBy           User?              @relation("UploadedDrawingLibraryFiles", fields: [uploadedById], references: [id], onDelete: SetNull)
   sourceResourceFile   ResourceFile?      @relation("DrawingLibraryFileSource", fields: [sourceResourceFileId], references: [id], onDelete: SetNull)
+  sourceSopVersion     SopVersion?        @relation("SopVersionPublishedFile", fields: [sourceSopVersionId], references: [id], onDelete: SetNull)
 
   @@index([libraryItemId])
   @@index([categoryId])

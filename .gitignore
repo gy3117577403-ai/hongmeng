@@ -13,6 +13,7 @@ coverage
 *.tsbuildinfo
 .playwright-cli/
 output/playwright/
+public/pdfjs/
 .vercel
 uploads/
 hongmeng-production.zip
