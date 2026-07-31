@@ -1,34 +1,18 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { commitEmptyDrawingLibraryCleanup, previewEmptyDrawingLibraryCleanup } from '@/lib/drawing-library-cleanup';
-import { logOp } from '@/lib/logs';
+import { DRAWING_LIBRARY_MASTER_IMMUTABLE_CODE } from '@/lib/drawing-library-lifecycle';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(req: NextRequest) {
+export async function POST() {
   try {
-    const user = await requireUser();
-    const body = await req.json().catch(() => ({}));
-    if (String(body.confirmText || '').trim() !== 'CLEAN_EMPTY') {
-      return NextResponse.json({ ok: false, error: '请输入 CLEAN_EMPTY 确认清理空资料记录' }, { status: 400 });
-    }
-    const before = await previewEmptyDrawingLibraryCleanup();
-    const result = await commitEmptyDrawingLibraryCleanup();
-    await logOp({
-      userId: user.id,
-      action: 'cleanup_empty_drawing_library',
-      targetType: 'drawing_library_item',
-      detail: {
-        cleanedCount: result.count,
-        candidateCount: before.candidateCount,
-        retainedCount: before.retainedCount,
-        preservedWorkOrders: before.workOrderCount,
-        preservedConnectorParameters: before.connectorParameterCount,
-        preservedConnectorParameterFiles: before.connectorParameterFileCount,
-      },
-    });
-    return NextResponse.json({ ok: true, summary: { ...before, cleanedCount: result.count } });
+    await requireUser();
+    return NextResponse.json({
+      ok: false,
+      code: DRAWING_LIBRARY_MASTER_IMMUTABLE_CODE,
+      error: '产品资料主档（包括空主档）必须长期保留，空资料清理已停用。',
+    }, { status: 405 });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     console.error(e);

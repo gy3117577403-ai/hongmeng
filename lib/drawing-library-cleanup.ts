@@ -91,14 +91,3 @@ export async function previewEmptyDrawingLibraryCleanup(): Promise<DrawingLibrar
     samples: candidates.slice(0, 20).map(sampleItem),
   };
 }
-
-export async function commitEmptyDrawingLibraryCleanup() {
-  const { items } = await loadCleanupScope();
-  const ids = items.filter(isAutoImportedEmptyDrawingLibraryItem).map(item => item.id);
-  if (!ids.length) return { count: 0 };
-  const result = await prisma.drawingLibraryItem.updateMany({
-    where: { id: { in: ids }, deletedAt: null },
-    data: { deletedAt: new Date() },
-  });
-  return { count: result.count };
-}

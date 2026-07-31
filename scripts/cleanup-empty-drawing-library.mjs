@@ -5,7 +5,6 @@ loadEnvFile();
 
 const prisma = new PrismaClient();
 const execute = process.argv.includes('--execute');
-const confirmed = process.env.CONFIRM_CLEAN_EMPTY_DRAWING_LIBRARY === 'YES';
 
 function loadEnvFile() {
   const envFile = existsSync('.env') ? '.env' : existsSync('.env.example') ? '.env.example' : '';
@@ -86,22 +85,13 @@ async function main() {
 
   if (!execute) {
     console.log('DRY RUN ONLY: no database rows or S3 objects were deleted.');
-    console.log('To execute: set CONFIRM_CLEAN_EMPTY_DRAWING_LIBRARY=YES and run npm run drawing-library:cleanup-empty.');
+    console.log('Product drawing-library masters are permanent. Execute mode is disabled.');
     return;
   }
 
-  if (!confirmed) {
-    console.error('Refusing to clean empty drawing library records. Set CONFIRM_CLEAN_EMPTY_DRAWING_LIBRARY=YES to execute.');
-    process.exitCode = 1;
-    return;
-  }
-
-  const ids = candidates.map(item => item.id);
-  const result = ids.length
-    ? await prisma.drawingLibraryItem.updateMany({ where: { id: { in: ids }, deletedAt: null }, data: { deletedAt: new Date() } })
-    : { count: 0 };
-  console.log(`DrawingLibraryItems soft-deleted: ${result.count}`);
-  console.log('No DrawingLibraryFile, S3 object, WorkOrder, ResourceFile, ConnectorParameter, ConnectorParameterFile or User rows were deleted.');
+  console.error('REFUSED: product drawing-library masters are permanent, including empty masters.');
+  console.error('Delete or replace individual files in the application instead. No database rows or S3 objects were changed.');
+  process.exitCode = 2;
 }
 
 main()

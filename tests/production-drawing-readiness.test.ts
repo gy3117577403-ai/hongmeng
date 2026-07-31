@@ -21,6 +21,15 @@ test('explicit pending and business hold statuses are preserved', () => {
   assert.equal(shouldSynchronizeDrawingReleaseStatus('图纸变更'), false);
 });
 
+test('a stale issued label cannot replace an active original drawing file', () => {
+  assert.equal(hasEffectiveIssuedDrawing('已发', false), false);
+  assert.equal(productionDrawingStageLabel({
+    drawingStatus: '已发',
+    hasOriginalDrawing: false,
+    planActive: true,
+  }), '图纸待补');
+});
+
 test('not-started stage labels keep drawing readiness as a non-blocking risk signal', () => {
   assert.equal(productionDrawingStageLabel({
     drawingStatus: null,

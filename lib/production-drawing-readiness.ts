@@ -7,14 +7,12 @@ export function isExplicitlyUnissuedDrawingStatus(value?: string | null): boolea
 }
 
 export function hasEffectiveIssuedDrawing(
-  drawingStatus: string | null | undefined,
+  _drawingStatus: string | null | undefined,
   hasOriginalDrawing: boolean,
 ): boolean {
-  const status = normalizedDrawingStatus(drawingStatus);
-  if (hasOriginalDrawing) return true;
-  if (!status || status === '-' || status.includes('未设置')) return false;
-  if (isExplicitlyUnissuedDrawingStatus(status)) return false;
-  return true;
+  // A cached work-order label must never advertise a drawing that has been
+  // soft-deleted. The active original file is the cross-module source of truth.
+  return hasOriginalDrawing;
 }
 
 export function shouldSynchronizeDrawingReleaseStatus(value?: string | null): boolean {

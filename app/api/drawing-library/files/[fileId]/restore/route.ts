@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { logOp } from '@/lib/logs';
+import { synchronizeDrawingLibraryWorkOrderStatus } from '@/lib/drawing-library-lifecycle';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
@@ -9,13 +9,27 @@ export const dynamic = 'force-dynamic';
 export async function POST(_req: Request, { params }: { params: { fileId: string } }) {
   try {
     const user = await requireUser();
-    const file = await prisma.drawingLibraryFile.update({
-      where: { id: params.fileId },
-      data: { deletedAt: null },
+    const deletedFile = await prisma.drawingLibraryFile.findFirst({
+      where: { id: params.fileId, deletedAt: { not: null }, libraryItem: { deletedAt: null } },
+      include: { category: { select: { code: true } } },
     });
-    await prisma.drawingLibraryItem.update({ where: { id: file.libraryItemId }, data: { updatedAt: new Date() } });
-    await logOp({ userId: user.id, action: 'restore_drawing_library_file', targetType: 'drawing_library_file', targetId: file.id });
-    return NextResponse.json({ ok: true });
+    if (!deletedFile) return NextResponse.json({ ok: false, error: '回收站中未找到该文件' }, { status: 404 });
+    const sync = await prisma.$transaction(async tx => {
+      await tx.drawingLibraryFile.update({ where: { id: deletedFile.id }, data: { deletedAt: null } });
+      await tx.drawingLibraryItem.update({ where: { id: deletedFile.libraryItemId }, data: { updatedAt: new Date() } });
+      const workOrderSync = await synchronizeDrawingLibraryWorkOrderStatus(tx, deletedFile.libraryItemId);
+      await tx.operationLog.create({
+        data: {
+          userId: user.id,
+          action: 'restore_drawing_library_file',
+          targetType: 'drawing_library_file',
+          targetId: deletedFile.id,
+          detail: { categoryCode: deletedFile.category.code, ...workOrderSync },
+        },
+      });
+      return workOrderSync;
+    });
+    return NextResponse.json({ ok: true, sync });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     console.error(e);

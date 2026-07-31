@@ -1,5 +1,8 @@
 import type { Prisma } from '@prisma/client';
 
+export const DRAWING_LIBRARY_MASTER_IMMUTABLE_CODE = 'DRAWING_LIBRARY_MASTER_IMMUTABLE';
+export const DRAWING_LIBRARY_MASTER_IMMUTABLE_MESSAGE = '产品资料主档为长期业务标识，不允许删除；请删除或替换主档下的具体文件。';
+
 export type DrawingLibraryReferenceImpact = {
   linkedPlanOrders: number;
   activePlanOrders: number;
@@ -112,6 +115,25 @@ export async function refreshRestoredDrawingWorkOrders(
   tx: Pick<Prisma.TransactionClient, 'drawingLibraryFile' | 'workOrder'>,
   drawingLibraryItemId: string,
 ): Promise<number> {
+  const result = await synchronizeDrawingLibraryWorkOrderStatus(tx, drawingLibraryItemId);
+  return result.refreshedWorkOrders;
+}
+
+export type DrawingLibraryWorkOrderSyncResult = {
+  activeOriginalFiles: number;
+  drawingReady: boolean;
+  refreshedWorkOrders: number;
+};
+
+/**
+ * Active original-drawing files are the source of truth for drawing readiness.
+ * Only statuses managed automatically by the drawing library are rewritten;
+ * explicit business holds such as sample/customer/change/rework are preserved.
+ */
+export async function synchronizeDrawingLibraryWorkOrderStatus(
+  tx: Pick<Prisma.TransactionClient, 'drawingLibraryFile' | 'workOrder'>,
+  drawingLibraryItemId: string,
+): Promise<DrawingLibraryWorkOrderSyncResult> {
   const activeOriginalFiles = await tx.drawingLibraryFile.count({
     where: {
       libraryItemId: drawingLibraryItemId,
@@ -119,7 +141,22 @@ export async function refreshRestoredDrawingWorkOrders(
       category: { code: 'drawing' },
     },
   });
-  if (activeOriginalFiles === 0) return 0;
+
+  if (activeOriginalFiles === 0) {
+    const result = await tx.workOrder.updateMany({
+      where: {
+        drawingLibraryItemId,
+        deletedAt: null,
+        drawingStatus: { in: ['已发', '已确认', '已下发'] },
+      },
+      data: { drawingStatus: '待发', drawingIssuedAt: null },
+    });
+    return {
+      activeOriginalFiles,
+      drawingReady: false,
+      refreshedWorkOrders: result.count,
+    };
+  }
 
   const result = await tx.workOrder.updateMany({
     where: {
@@ -137,5 +174,9 @@ export async function refreshRestoredDrawingWorkOrders(
     },
     data: { drawingStatus: '已发', drawingIssuedAt: new Date() },
   });
-  return result.count;
+  return {
+    activeOriginalFiles,
+    drawingReady: true,
+    refreshedWorkOrders: result.count,
+  };
 }

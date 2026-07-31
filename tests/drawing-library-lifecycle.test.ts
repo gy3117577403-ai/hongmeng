@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  DRAWING_LIBRARY_MASTER_IMMUTABLE_CODE,
+  DRAWING_LIBRARY_MASTER_IMMUTABLE_MESSAGE,
   activeDrawingLibraryFileCount,
   drawingLibraryDeletionBlockers,
 } from '../lib/drawing-library-lifecycle';
@@ -29,10 +31,12 @@ test('active planning and production references block parent archive deletion', 
   ]);
 });
 
-test('completed history without active references may enter recycle bin', () => {
+test('an empty impact is diagnostic only and never authorizes master deletion', () => {
   assert.deepEqual(drawingLibraryDeletionBlockers({
     activePlanOrders: 0,
     activePlanBatches: 0,
     activeWorkOrders: 0,
   }), []);
+  assert.equal(DRAWING_LIBRARY_MASTER_IMMUTABLE_CODE, 'DRAWING_LIBRARY_MASTER_IMMUTABLE');
+  assert.match(DRAWING_LIBRARY_MASTER_IMMUTABLE_MESSAGE, /主档.*不允许删除/);
 });

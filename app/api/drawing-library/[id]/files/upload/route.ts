@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { serializeDrawingLibraryFile } from '@/lib/drawing-library';
+import { synchronizeDrawingLibraryWorkOrderStatus } from '@/lib/drawing-library-lifecycle';
 import { logOp } from '@/lib/logs';
 import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
 import { prisma } from '@/lib/prisma';
@@ -52,9 +53,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const key = `drawing-library/${item.id}/${category.code}/${ymd(new Date())}/${crypto.randomUUID()}-${safeFilename(up.name)}`;
     await putObject({ key, body, contentType: up.type || 'application/octet-stream', originalName: up.name });
 
-    let file;
+    let result;
     try {
-      file = await prisma.$transaction(async tx => {
+      result = await prisma.$transaction(async tx => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`drawing-library:${item.id}:${category.id}`}))`;
         const files = await tx.drawingLibraryFile.findMany({
           where: { libraryItemId: item.id, categoryId: category.id },
@@ -81,21 +82,23 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         });
         await tx.drawingLibraryItem.update({ where: { id: item.id }, data: { updatedAt: new Date() } });
         await reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId: item.id });
-        return created;
+        const sync = await synchronizeDrawingLibraryWorkOrderStatus(tx, item.id);
+        return { file: created, sync };
       });
     } catch (error) {
       await deleteObjectsBestEffort([key]);
       throw error;
     }
+    const { file, sync } = result;
     const version = file.version;
     await logOp({
       userId: user.id,
       action: 'upload_drawing_library_file',
       targetType: 'drawing_library_file',
       targetId: file.id,
-      detail: { libraryKey: item.libraryKey, categoryCode: category.code, fileName: up.name, fileSize: up.size, version },
+      detail: { libraryKey: item.libraryKey, categoryCode: category.code, fileName: up.name, fileSize: up.size, version, ...sync },
     });
-    return NextResponse.json({ ok: true, file: serializeDrawingLibraryFile(file) });
+    return NextResponse.json({ ok: true, file: serializeDrawingLibraryFile(file), sync });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     console.error(e);
