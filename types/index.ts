@@ -764,6 +764,20 @@ export type ProductTimeProfileDTO = {
   entries: ProductProcessTimeEntryDTO[];
 };
 
+export type ProductTimeCopySourceDTO = {
+  profileId: string;
+  drawingLibraryItemId: string;
+  version: number;
+  customerName: string;
+  customerCode?: string | null;
+  specification: string;
+  productName?: string | null;
+  processCount: number;
+  totalMillisecondsPerUnit: number;
+  publishedAt?: string | null;
+  updatedAt: string;
+};
+
 export type ProductTimeListItemDTO = {
   id: string;
   customerName: string;

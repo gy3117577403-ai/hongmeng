@@ -11,6 +11,7 @@ import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { safeDisplayFilename } from '@/lib/filenames';
 import { planningReturnContextFromSearch, type PlanningReturnContext } from '@/lib/planning-navigation';
+import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import type { CurrentUserDTO, DrawingLibraryCustomerDTO, DrawingLibraryFileDTO, DrawingLibraryItemDTO, ResourceCategoryDTO } from '@/types';
 
 type DrawingLibraryForm = {
@@ -467,6 +468,18 @@ export function DrawingLibraryShell({
     setSelectedFileId('');
   }
 
+  function openProductTime(itemId: string) {
+    const returnUrl = new URL(window.location.href);
+    returnUrl.searchParams.set('itemId', itemId);
+    if (selectedFile?.id) returnUrl.searchParams.set('fileId', selectedFile.id);
+    else returnUrl.searchParams.delete('fileId');
+
+    window.location.href = productTimeConfigurationRoute(itemId, {
+      from: 'drawing',
+      returnTo: `${returnUrl.pathname}${returnUrl.search}${returnUrl.hash}`,
+    });
+  }
+
   async function previewCleanup() {
     setCleanupLoading(true);
     setCleanupError('');
@@ -651,7 +664,7 @@ export function DrawingLibraryShell({
                   </p>
                 </div>
                 <div className="drawing-head-actions">
-                  <button className="hm-workbench-button" type="button" onClick={() => { location.href = `/workspace/product-times?itemId=${encodeURIComponent(selectedItem.id)}`; }}><Clock3 size={15} aria-hidden="true" />产品工时</button>
+                  <button className="hm-workbench-button" type="button" onClick={() => openProductTime(selectedItem.id)}><Clock3 size={15} aria-hidden="true" />产品工时</button>
                   <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}>文件 {activeFiles.length}</button>
                   <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>
                   <button className="hm-workbench-button" type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>
@@ -671,7 +684,7 @@ export function DrawingLibraryShell({
                       </button>
                     );
                   })}
-                  <button className="drawing-product-time-link" type="button" title="维护当前产品的单位工时表" onClick={() => { location.href = `/workspace/product-times?itemId=${encodeURIComponent(selectedItem.id)}`; }}>
+                  <button className="drawing-product-time-link" type="button" title="维护当前产品的单位工时表" onClick={() => openProductTime(selectedItem.id)}>
                     <Clock3 size={14} aria-hidden="true" />
                     <strong>工时表</strong>
                     <em>进入</em>

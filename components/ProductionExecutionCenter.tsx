@@ -15,6 +15,7 @@ import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
 import { resolveProductionPrimaryAction } from '@/lib/production-primary-action';
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
 import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
+import { productTimeConfigurationRoute, type ProductTimeRouteScope } from '@/lib/workflow-routes';
 import type {
   CurrentUserDTO,
   WorkOrderProcessRouteDTO,
@@ -1642,7 +1643,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         setToast('当前工单尚未关联图纸产品，无法匹配产品工序与工时');
         return;
       }
-      router.push(`/workspace/product-times?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`);
+      openProductTimes(order, displayStage);
       return;
     }
     if (order.processRoute.status === 'completed') return;
@@ -1808,6 +1809,20 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     if (stepId) params.set('stepId', stepId);
     if (weekStart) params.set('weekStart', weekStart);
     router.push(`/workspace/workflows?${params.toString()}`, { scroll: false });
+  }
+
+  function openProductTimes(order: ProductionOrder, focusedStage?: StageKey): void {
+    const returnKey = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const returnTo = captureReturnState(returnKey, order.id, focusedStage);
+    const productTimeScope: ProductTimeRouteScope | undefined = scope === 'afterNext' ? undefined : scope;
+    router.push(productTimeConfigurationRoute(order.drawingLibraryItemId, {
+      scope: productTimeScope,
+      from: 'production',
+      returnTo,
+      returnKey,
+      workOrderId: order.id,
+      weekStartDate: weekStart,
+    }), { scroll: false });
   }
 
   function openProductionIssue(order: ProductionOrder, alertCode: string, focusedStage?: StageKey): void {

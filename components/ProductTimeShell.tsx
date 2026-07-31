@@ -3,6 +3,7 @@
 import {
   AlertTriangle,
   ArrowDown,
+  ArrowLeft,
   ArrowUp,
   BookOpenText,
   CheckCircle2,
@@ -31,12 +32,14 @@ import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
 import { useToast, useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { productTimeReturnContextFromSearch, type ProductTimeReturnContext } from '@/lib/workflow-routes';
 import type {
   CurrentUserDTO,
   DrawingLibraryFileDTO,
   DrawingLibraryItemDTO,
   ProductQuotationTimeDTO,
   ProductProcessTimeEntryDTO,
+  ProductTimeCopySourceDTO,
   ProductTimeListItemDTO,
   ProductTimePlanningScope,
   ProductTimePlanningSummaryDTO,
@@ -66,6 +69,14 @@ type ProductTimePayload = {
     current: { weekStartDate: string; weekEndDate: string };
     next: { weekStartDate: string; weekEndDate: string };
   };
+};
+
+type ProductTimeDetailPayload = {
+  ok?: boolean;
+  error?: string;
+  item?: Pick<ProductTimeListItemDTO, 'id' | 'customerName' | 'customerCode' | 'specification' | 'productName' | 'updatedAt'>;
+  profiles?: ProductTimeProfileDTO[];
+  quotation?: ProductQuotationTimeDTO | null;
 };
 
 type ReferenceCategory = 'drawing' | 'sop' | 'all';
@@ -240,6 +251,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [newProcessStage, setNewProcessStage] = useState<ProcessStageGroup>('backend');
   const [creatingProcess, setCreatingProcess] = useState(false);
   const [copySourceId, setCopySourceId] = useState('');
+  const [copySourceKeyword, setCopySourceKeyword] = useState('');
+  const [copySources, setCopySources] = useState<ProductTimeCopySourceDTO[]>([]);
+  const [copySourcesLoading, setCopySourcesLoading] = useState(false);
+  const [copySourceError, setCopySourceError] = useState('');
+  const [copyingProfile, setCopyingProfile] = useState(false);
+  const [returnContext, setReturnContext] = useState<ProductTimeReturnContext | null>(null);
   const [referenceItem, setReferenceItem] = useState<DrawingLibraryItemDTO | null>(null);
   const [referenceLoading, setReferenceLoading] = useState(false);
   const [referenceError, setReferenceError] = useState('');
@@ -279,6 +296,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const activePublished = selectedItem?.published || null;
   const activeProfile = activeDraft || activePublished;
   const activeQuotation = selectedItem?.quotation || null;
+  const selectedCopySource = copySources.find(source => source.profileId === copySourceId) || null;
   const referenceFiles = useMemo(
     () => referenceItem?.files.filter(file => !file.deletedAt) || [],
     [referenceItem],
@@ -302,14 +320,31 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       const response = await fetch(`/api/product-time-profiles?${params.toString()}`, { cache: 'no-store' });
       const data = await response.json().catch(() => ({})) as ProductTimePayload;
       if (!response.ok) throw new Error(data.error || '产品工时加载失败');
-      const nextItems = data.items || [];
-      setItems(nextItems);
+      let nextItems = data.items || [];
       setDefinitions(data.definitions || []);
       setCustomers(data.customers || []);
       setPlanningSummary(data.planningSummary || null);
       setPeriods(data.periods);
       const urlItemId = new URLSearchParams(window.location.search).get('itemId') || '';
       const requested = preferredItemId || urlItemId || selectedId;
+      if (requested && !nextItems.some(item => item.id === requested)) {
+        const detailResponse = await fetch(`/api/product-time-profiles/${encodeURIComponent(requested)}`, { cache: 'no-store' });
+        const detail = await detailResponse.json().catch(() => ({})) as ProductTimeDetailPayload;
+        if (detailResponse.ok && detail.item) {
+          const profiles = detail.profiles || [];
+          nextItems = [{
+            ...detail.item,
+            draft: profiles.find(profile => profile.status === 'draft') || null,
+            published: profiles.find(profile => profile.status === 'published') || null,
+            quotation: detail.quotation || null,
+            planning: null,
+            planningReference: null,
+          }, ...nextItems];
+        } else if (preferredItemId || urlItemId) {
+          setError(detail.error || '指定产品不存在、已删除或无权访问');
+        }
+      }
+      setItems(nextItems);
       setSelectedId(nextItems.some(item => item.id === requested) ? requested : nextItems[0]?.id || '');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '产品工时加载失败');
@@ -329,10 +364,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }, [dirty, quotationDirty]);
 
   useEffect(() => {
-    const urlScope = new URLSearchParams(window.location.search).get('scope');
+    const search = window.location.search;
+    const urlScope = new URLSearchParams(search).get('scope');
     if (urlScope === 'current' || urlScope === 'next' || urlScope === 'carryover' || urlScope === 'history') {
       setPlanningScope(urlScope);
     }
+    setReturnContext(productTimeReturnContextFromSearch(search));
   }, []);
 
   useEffect(() => {
@@ -374,7 +411,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     setQuotationSourceType(selectedItem?.quotation?.sourceType || 'manual');
     setQuotationSourceRefId(selectedItem?.quotation?.sourceRefId || null);
     setQuotationDirty(false);
-    setError('');
   }, [activeProfile, selectedItem?.id, selectedItem?.quotation]);
 
   useEffect(() => {
@@ -406,6 +442,50 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     return () => {
       cancelled = true;
     };
+  }, [selectedItemId]);
+
+  useEffect(() => {
+    if (!selectedItemId) {
+      setCopySources([]);
+      setCopySourcesLoading(false);
+      setCopySourceError('');
+      return undefined;
+    }
+    setCopySourcesLoading(true);
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setCopySourceError('');
+      try {
+        const params = new URLSearchParams({ excludeItemId: selectedItemId, limit: '40' });
+        if (copySourceKeyword.trim()) params.set('keyword', copySourceKeyword.trim());
+        const response = await fetch(`/api/product-time-profiles/sources?${params.toString()}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        const data = await response.json().catch(() => ({})) as {
+          ok?: boolean;
+          error?: string;
+          sources?: ProductTimeCopySourceDTO[];
+        };
+        if (!response.ok) throw new Error(data.error || '已发布产品路线加载失败');
+        setCopySources(data.sources || []);
+      } catch (reason) {
+        if (controller.signal.aborted) return;
+        setCopySources([]);
+        setCopySourceError(reason instanceof Error ? reason.message : '已发布产品路线加载失败');
+      } finally {
+        if (!controller.signal.aborted) setCopySourcesLoading(false);
+      }
+    }, 220);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [copySourceKeyword, selectedItemId]);
+
+  useEffect(() => {
+    setCopySourceId('');
+    setCopySources([]);
   }, [selectedItemId]);
 
   useEffect(() => {
@@ -475,6 +555,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   function selectProduct(itemId: string): void {
     if (selectedItem?.id === itemId) return;
     if ((dirty || quotationDirty) && !window.confirm('当前产品有未保存修改，切换产品将放弃这些修改，是否继续？')) return;
+    setError('');
     setSelectedId(itemId);
     const url = new URL(window.location.href);
     url.searchParams.set('itemId', itemId);
@@ -602,16 +683,47 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     setDirty(true);
   }
 
-  function copyProfile(): void {
-    const source = items.find(item => item.id === copySourceId)?.published || null;
-    if (!source) {
+  async function copyProfile(): Promise<void> {
+    if (!selectedItem || !selectedCopySource) {
       setError('请选择一个已发布产品作为复制来源');
       return;
     }
-    setEntries(source.entries.map(entryDraft));
-    setRemark(`参考产品工时 V${source.version}`);
-    setDirty(true);
-    setMessage(`已复制 ${source.processCount} 道工序，请检查后保存`);
+    const differs = selectedCopySource.customerName !== selectedItem.customerName
+      || selectedCopySource.specification !== selectedItem.specification;
+    const overwriteText = activeDraft
+      ? '当前草稿会被所选路线完整替换。'
+      : activePublished
+        ? '系统会保留当前已发布版本，并新建一份可调整草稿。'
+        : '系统会为当前产品建立一份可调整草稿。';
+    const mismatchText = differs ? '\n来源与目标的客户或规格不同，请确认其工艺确实可复用。' : '';
+    if (!window.confirm(`确认复制 ${selectedCopySource.customerName} · ${selectedCopySource.specification} · V${selectedCopySource.version}？\n${overwriteText}${mismatchText}`)) return;
+
+    setCopyingProfile(true);
+    setError('');
+    setMessage('');
+    try {
+      const response = await fetch(`/api/product-time-profiles/${selectedItem.id}/copy`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sourceProfileId: selectedCopySource.profileId,
+          expectedTargetRevision: activeDraft?.revision ?? null,
+        }),
+      });
+      const data = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        error?: string;
+        profile?: ProductTimeProfileDTO;
+      };
+      if (!response.ok || !data.profile) throw new Error(data.error || '复制产品路线失败');
+      setDirty(false);
+      setMessage(`已从 ${selectedCopySource.specification} · V${selectedCopySource.version} 复制 ${data.profile.processCount} 道工序，并保存为当前产品草稿`);
+      await load(selectedItem.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '复制产品路线失败');
+    } finally {
+      setCopyingProfile(false);
+    }
   }
 
   async function createProcess(): Promise<void> {
@@ -661,7 +773,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         body: JSON.stringify({
           expectedRevision: activeDraft?.revision ?? null,
           remark,
-          sourceType: copySourceId ? 'copied' : 'manual',
+          sourceType: activeDraft?.sourceType || 'manual',
           entries: entries.map(entry => ({
             processDefinitionId: entry.processDefinitionId,
             timeBasis: entry.timeBasis,
@@ -832,7 +944,6 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const selectedStatus = selectedItem ? statusText(selectedItem) : '未选择产品';
   const isPlanningScope = planningScope !== 'all';
   const invalidEntryCount = entries.filter(invalidEntry).length;
-  const copySources = items.filter(item => item.id !== selectedItem?.id && item.published);
   const planningReference = selectedItem?.planningReference || null;
   const referenceDrawingCount = referenceFiles.filter(file => referenceCategory(file) === 'drawing').length;
   const referenceSopCount = referenceFiles.filter(file => referenceCategory(file) === 'sop').length;
@@ -853,6 +964,15 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
       <div className="product-time-main">
         <section className="product-time-scope-bar" aria-label="按计划周查看产品工时">
+          {returnContext && <a
+            className="product-time-context-return"
+            href={returnContext.returnTo}
+            onClick={event => {
+              if (!hasUnsavedChanges) return;
+              if (window.confirm('当前产品有未保存修改，返回将放弃这些修改，是否继续？')) return;
+              event.preventDefault();
+            }}
+          ><ArrowLeft size={14} aria-hidden="true" />{returnContext.label}</a>}
           <div role="tablist" aria-label="产品工时范围">
             <button type="button" role="tab" aria-selected={planningScope === 'all'} disabled={hasUnsavedChanges} onClick={() => changePlanningScope('all')}>产品总库</button>
             <button type="button" role="tab" aria-selected={planningScope === 'current'} disabled={hasUnsavedChanges} onClick={() => changePlanningScope('current')}>本周计划</button>
@@ -1020,9 +1140,25 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
             <section className="product-time-copy-panel">
               <header><small>快速起草</small><strong>复制相似产品路线</strong></header>
-              <select value={copySourceId} onChange={event => setCopySourceId(event.target.value)} aria-label="选择已发布的相似产品"><option value="">选择已发布产品</option>{copySources.map(item => <option key={item.id} value={item.id}>{item.customerName} · {item.specification}</option>)}</select>
-              <button className="hm-workbench-button" type="button" disabled={!copySourceId} onClick={copyProfile}><Copy size={15} aria-hidden="true" />复制后调整</button>
-              <small>复制只生成当前产品的草稿，不会修改来源产品。</small>
+              <label className="product-time-copy-search"><Search size={14} aria-hidden="true" /><input value={copySourceKeyword} onChange={event => setCopySourceKeyword(event.target.value)} placeholder="搜索客户、规格或品名" aria-label="搜索已发布产品路线" /></label>
+              <div className="product-time-copy-sources hm-scroll-region" role="listbox" aria-label="已发布产品路线">
+                {copySources.map(source => <button
+                  key={source.profileId}
+                  className={source.profileId === copySourceId ? 'active' : ''}
+                  type="button"
+                  role="option"
+                  aria-selected={source.profileId === copySourceId}
+                  onClick={() => setCopySourceId(source.profileId)}
+                >
+                  <span><strong>{source.specification}</strong><small>{source.customerName} · {source.productName || '品名未设置'}</small></span>
+                  <em>V{source.version} · {source.processCount} 道</em>
+                </button>)}
+                {copySourcesLoading && <p>正在检索已发布路线…</p>}
+                {!copySourcesLoading && copySourceError && <p className="error">{copySourceError}</p>}
+                {!copySourcesLoading && !copySourceError && !copySources.length && <p>{copySourceKeyword.trim() ? '没有匹配的已发布路线' : '暂无可复制的已发布路线'}</p>}
+              </div>
+              <button className="hm-workbench-button" type="button" disabled={!selectedCopySource || copySourcesLoading || copyingProfile} onClick={() => void copyProfile()}><Copy size={15} aria-hidden="true" />{copyingProfile ? '复制中' : '复制为当前草稿'}</button>
+              <small>来源目录独立于左侧筛选；复制会记录精确版本，不会修改来源产品。</small>
             </section>
           </aside>
         </section>

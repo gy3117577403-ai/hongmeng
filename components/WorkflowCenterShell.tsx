@@ -58,6 +58,7 @@ type WorkflowDeepLink = {
   fromPlanning: boolean;
   fromProduction: boolean;
   returnTo: string;
+  returnKey: string;
 };
 
 const emptySummary: WorkflowSummaryDTO = {
@@ -132,7 +133,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const [selectedProcessStepKey, setSelectedProcessStepKey] = useState('');
   const [selectedPreparationKey, setSelectedPreparationKey] = useState('');
   const [deepLink, setDeepLink] = useState<WorkflowDeepLink>({
-    batchId: '', workOrderId: '', stepId: '', fromPlanning: false, fromProduction: false, returnTo: '/production',
+    batchId: '', workOrderId: '', stepId: '', fromPlanning: false, fromProduction: false, returnTo: '/production', returnKey: '',
   });
   const [deepLinkReady, setDeepLinkReady] = useState(false);
   const [routeActionPending, setRouteActionPending] = useState(false);
@@ -161,6 +162,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       fromPlanning: params.get('from') === 'planning',
       fromProduction: params.get('from') === 'production',
       returnTo: safeLocalRoute(params.get('returnTo')),
+      returnKey: params.get('returnKey') || '',
     };
     if (next.batchId) selectedIdRef.current = `production-plan:${next.batchId}`;
     if (requestedKeyword) setKeyword(requestedKeyword);
@@ -342,6 +344,38 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     return `/workspace/reports?${params.toString()}`;
   }
   const manualReportRoute = selectedProcessStep ? manualReportHref(selectedProcessStep) : null;
+  const productTimeReturnTo = useMemo(() => {
+    if (!selected?.workOrderId) return '/workspace/workflows';
+    const params = new URLSearchParams({
+      entityType: 'production',
+      workOrderId: selected.workOrderId,
+      weekScope: filters.weekScope,
+    });
+    const stepId = selectedProcessStep?.key || deepLink.stepId;
+    if (stepId) params.set('stepId', stepId);
+    if (filters.weekScope === 'history' && historyWeekStart) params.set('weekStart', historyWeekStart);
+    if (deepLink.fromProduction) {
+      params.set('from', 'production');
+      if (deepLink.returnKey) params.set('returnKey', deepLink.returnKey);
+      params.set('returnTo', deepLink.returnTo);
+    } else if (deepLink.fromPlanning) {
+      params.set('from', 'planning');
+      params.set('returnTo', deepLink.returnTo);
+    }
+    return `/workspace/workflows?${params.toString()}`;
+  }, [deepLink, filters.weekScope, historyWeekStart, selected?.workOrderId, selectedProcessStep?.key]);
+  const productTimeRoute = selected?.drawingLibraryItemId
+    ? productTimeConfigurationRoute(selected.drawingLibraryItemId, {
+        scope: filters.weekScope === 'afterNext' ? undefined : filters.weekScope,
+        from: 'workflow',
+        returnTo: productTimeReturnTo,
+        returnKey: deepLink.returnKey,
+        batchId: selected.batchId,
+        workOrderId: selected.workOrderId,
+        stepId: selectedProcessStep?.key,
+        weekStartDate: filters.weekScope === 'history' ? historyWeekStart : undefined,
+      })
+    : productTimeConfigurationRoute();
   const availableProductTimeVersion = selected?.availableProductTimeProfileVersion || null;
   const canApplyProductTime = Boolean(
     selected?.entityType === 'production'
@@ -509,7 +543,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
           </div>
           <div className="workflow-command-actions">
             {deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回生产执行</a>}
-            {deepLink.fromPlanning && !deepLink.fromProduction && <a href="/weekly-plan-center?restore=1"><ArrowLeft size={14} />返回计划中心</a>}
+            {deepLink.fromPlanning && !deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回计划中心</a>}
             <button type="button" disabled={loading} onClick={() => { void load(); }}>
               <RefreshCw size={14} className={loading ? 'spin' : ''} />刷新
             </button>
@@ -697,9 +731,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                     ? <button type="button" disabled={routeActionPending} onClick={() => { void applyProductTimeToSelectedWorkOrder(); }}>
                         {routeActionPending ? <Loader2 className="spin" size={14} /> : <PackageCheck size={14} />}{productTimeActionLabel}
                       </button>
-                    : <a href={availableProductTimeVersion
-                      ? selected.route
-                      : productTimeConfigurationRoute(selected.drawingLibraryItemId)}>
+                    : <a href={availableProductTimeVersion ? selected.route : productTimeRoute}>
                         {availableProductTimeVersion ? '查看生产工单' : selected.steps[0]?.key === 'route-repair-required' ? '补齐产品工序' : '配置产品工序'}<ArrowUpRight size={14} />
                       </a>)}
                 </section> : <>

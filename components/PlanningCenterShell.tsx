@@ -45,7 +45,8 @@ import {
   type PlanningReadinessFilter,
 } from '@/lib/planning-readiness';
 import { resolvePlanningFlow } from '@/lib/planning-flow';
-import { buildPlanningDrawingLibraryHref } from '@/lib/planning-navigation';
+import { buildPlanningDrawingLibraryHref, buildPlanningReturnPath } from '@/lib/planning-navigation';
+import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
   CurrentUserDTO,
@@ -387,6 +388,7 @@ function workflowCenterParams(
     batchId: batch.id,
     from: 'planning',
     weekScope,
+    returnTo: buildPlanningReturnPath({ batchId: batch.id, weekStartDate: batch.weekStartDate }),
   });
   if (weekScope === 'history') params.set('weekStart', batch.weekStartDate);
   if (batch.workOrderId) params.set('workOrderId', batch.workOrderId);
@@ -423,21 +425,22 @@ async function responseBody<T>(response: Response): Promise<T & { error?: string
   return response.json().catch(() => ({})) as Promise<T & { error?: string; requiresConfirmation?: boolean; requiresProductRestore?: boolean }>;
 }
 
-function productTimeHref(order: ProductionPlanOrderDTO, periods?: PlanningPayload['periods']): string {
-  const params = new URLSearchParams();
-  if (order.drawingLibraryItemId) params.set('itemId', order.drawingLibraryItemId);
-  if (periods) {
-    const hasCurrent = order.batches.some(batch => batch.weekStartDate === periods.current.weekStartDate);
-    const hasNext = order.batches.some(batch => batch.weekStartDate === periods.next.weekStartDate);
-    const hasCarryover = order.batches.some(batch => (
-      batch.weekEndDate < periods.current.weekStartDate && batch.releaseState !== 'archived'
-    ));
-    if (hasCurrent) params.set('scope', 'current');
-    else if (hasNext) params.set('scope', 'next');
-    else if (hasCarryover) params.set('scope', 'carryover');
-  }
-  const query = params.toString();
-  return `/workspace/product-times${query ? `?${query}` : ''}`;
+function productTimeHref(
+  order: ProductionPlanOrderDTO,
+  batch: ProductionPlanBatchDTO,
+  periods?: PlanningPayload['periods'],
+): string {
+  const weekScope = linkedWeekScope(batch, periods);
+  const scope = weekScope === 'afterNext' ? undefined : weekScope;
+  return productTimeConfigurationRoute(order.drawingLibraryItemId, {
+    scope,
+    from: 'planning',
+    returnTo: buildPlanningReturnPath({ batchId: batch.id, weekStartDate: batch.weekStartDate }),
+    batchId: batch.id,
+    workOrderId: batch.workOrderId,
+    weekStartDate: batch.weekStartDate,
+    weekEndDate: batch.weekEndDate,
+  });
 }
 
 export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) {
@@ -1619,7 +1622,12 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
             </div>}
           </div>
           <div className="planning-toolbar-actions">
-            <a className="planning-secondary-action" href="/workspace/product-times" title="维护产品工序与工时"><Clock3 size={16} />产品工时</a>
+            <a
+              className="planning-secondary-action"
+              href={productTimeConfigurationRoute(null, { from: 'planning', returnTo: '/weekly-plan-center?restore=1' })}
+              onClick={rememberPlanningState}
+              title="维护产品工序与工时"
+            ><Clock3 size={16} />产品工时</a>
             <button className="planning-primary-action" type="button" onClick={event => openCreateOrder(event.currentTarget)}><Plus size={17} />新建订单</button>
           </div>
         </section>
@@ -1719,7 +1727,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                     <div><span>订单信息</span><strong>{order.salesperson ? `业务员 ${order.salesperson}` : '业务员未设置'}</strong><small>{order.remark || '无备注'}</small></div>
                     <div><span>流程状态</span><strong>{flow.label}</strong><small>仓库 {batch.warehouseStatus} · 工艺 {batch.processStatus}</small></div>
                     <div><span>数据来源</span><strong>{order.currentProductTimeVersion ? `产品工时 V${order.currentProductTimeVersion}` : order.planningUnitMilliseconds ? '订单计划工时' : '工时待维护'}</strong><small>{order.currentProductTimeVersion ? '正式工序工时' : '计划估算，投产前仍需发布工序工时'}</small></div>
-                    <nav><a href={drawingLibraryHref} onClick={rememberPlanningState}>{order.drawingLibraryItemId ? '进入图纸档案' : '建立图纸档案'}</a><a href="/workspace/warehouse">仓库任务</a><a href={productTimeHref(order, periods)}>工艺与工时</a><a href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState}>查看完整流程</a></nav>
+                    <nav><a href={drawingLibraryHref} onClick={rememberPlanningState}>{order.drawingLibraryItemId ? '进入图纸档案' : '建立图纸档案'}</a><a href="/workspace/warehouse">仓库任务</a><a href={productTimeHref(order, batch, periods)} onClick={rememberPlanningState}>工艺与工时</a><a href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState}>查看完整流程</a></nav>
                   </div></td></tr>}
                 </Fragment>;
                 })}</tbody>
@@ -1736,7 +1744,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
 
         {view === 'preparation' && <section className="planning-preparation-view">
           <header><div><span>下周提前准备</span><h2>{periods ? `${periods.next.weekStartDate} 至 ${periods.next.weekEndDate}` : '下周预备清单'}</h2><p>仓库和工艺可先处理；只有人工启用后，工单才进入生产执行。</p></div><button className="planning-primary-action" type="button" disabled={!preparationRows.length || saving} onClick={event => { void previewActivation(event.currentTarget); }}><Factory size={16} />启用为本周执行</button></header>
-          <div className="planning-preparation-grid"><section><div className="planning-prep-heading"><Warehouse /><span><strong>仓库配料</strong><small>{preparationRows.filter(item => item.batch.warehouseStatus === 'completed').length} / {preparationRows.length} 已完成</small></span><a href="/workspace/warehouse?scope=preparation">进入仓库</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.warehouseStatus}`}><Boxes /></span><div><strong>{order.specification}</strong><small>{order.customerName} · {batch.quantity.toLocaleString()} 件</small></div><em>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '仓库异常' : '待配料'}</em></article>)}</section><section><div className="planning-prep-heading"><Settings2 /><span><strong>工艺准备</strong><small>{preparationRows.filter(item => item.batch.processStatus !== 'not_created' && item.batch.processStatus !== 'draft').length} / {preparationRows.length} 已确认</small></span><a href="/workspace/product-times?scope=next">维护工时</a></div>{preparationRows.map(({ order, batch }) => { const unitMilliseconds = batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order); return <article key={batch.id}><span className={`state-${batch.processStatus}`}><Settings2 /></span><div><strong>{order.specification}</strong><small>{unitMilliseconds ? `单根 ${duration(unitMilliseconds)}${order.currentProductTimeVersion ? '' : ' · 批次计划值'}` : '单根工时待维护'}</small></div><em>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : '待工艺'}</em></article>; })}</section></div>
+          <div className="planning-preparation-grid"><section><div className="planning-prep-heading"><Warehouse /><span><strong>仓库配料</strong><small>{preparationRows.filter(item => item.batch.warehouseStatus === 'completed').length} / {preparationRows.length} 已完成</small></span><a href="/workspace/warehouse?scope=preparation">进入仓库</a></div>{preparationRows.map(({ order, batch }) => <article key={batch.id}><span className={`state-${batch.warehouseStatus}`}><Boxes /></span><div><strong>{order.specification}</strong><small>{order.customerName} · {batch.quantity.toLocaleString()} 件</small></div><em>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '仓库异常' : '待配料'}</em></article>)}</section><section><div className="planning-prep-heading"><Settings2 /><span><strong>工艺准备</strong><small>{preparationRows.filter(item => item.batch.processStatus !== 'not_created' && item.batch.processStatus !== 'draft').length} / {preparationRows.length} 已确认</small></span><a href={productTimeConfigurationRoute(null, { scope: 'next', from: 'planning', returnTo: '/weekly-plan-center?restore=1' })} onClick={rememberPlanningState}>维护工时</a></div>{preparationRows.map(({ order, batch }) => { const unitMilliseconds = batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order); return <article key={batch.id}><span className={`state-${batch.processStatus}`}><Settings2 /></span><div><strong>{order.specification}</strong><small>{unitMilliseconds ? `单根 ${duration(unitMilliseconds)}${order.currentProductTimeVersion ? '' : ' · 批次计划值'}` : '单根工时待维护'}</small></div><em>{batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' || batch.processStatus === 'completed' ? '已确认' : '待工艺'}</em></article>; })}</section></div>
           {!preparationRows.length && <div className="planning-empty"><PackageCheck /><strong>当前没有下周预备任务</strong><span>在计划排程中勾选批次，点击“下达下周预备”。</span></div>}
         </section>}
 

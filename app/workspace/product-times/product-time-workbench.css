@@ -43,6 +43,41 @@ html:has(.hm-product-time-workbench) {
   gap: 12px;
 }
 
+.hm-product-time-workbench .product-time-context-return {
+  height: 32px;
+  padding: 0 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  border: 1px solid #d9e1ea;
+  border-radius: 7px;
+  background: #fff;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  box-shadow: 0 2px 7px rgba(23, 34, 53, .045);
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.hm-product-time-workbench .product-time-context-return:hover {
+  border-color: #9bbbe9;
+  box-shadow: 0 4px 12px rgba(50, 111, 207, .12);
+  transform: translateY(-1px);
+}
+
+.hm-product-time-workbench .product-time-context-return:focus-visible {
+  outline: 2px solid rgba(50, 111, 207, .35);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hm-product-time-workbench .product-time-context-return {
+    transition: none;
+  }
+}
+
 .hm-product-time-workbench .product-time-scope-bar > div {
   padding: 3px;
   display: flex;
@@ -1001,7 +1036,7 @@ html:has(.hm-product-time-workbench) {
 }
 
 .hm-product-time-workbench .product-time-quotation-editor input,
-.hm-product-time-workbench .product-time-copy-panel select {
+.hm-product-time-workbench .product-time-copy-search input {
   height: 33px;
   padding: 0 8px;
   font-size: 10px;
@@ -1071,9 +1106,113 @@ html:has(.hm-product-time-workbench) {
   font-size: 13px;
 }
 
-.hm-product-time-workbench .product-time-copy-panel > select {
-  width: calc(100% - 16px);
+.hm-product-time-workbench .product-time-copy-search {
+  height: 33px;
   margin: 7px 8px 6px;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dfe5ec;
+  border-radius: 7px;
+  background: #fff;
+  color: #758295;
+}
+
+.hm-product-time-workbench .product-time-copy-search:focus-within {
+  border-color: #76a7ec;
+  box-shadow: 0 0 0 2px rgb(54 126 225 / 10%);
+}
+
+.hm-product-time-workbench .product-time-copy-search input {
+  min-width: 0;
+  flex: 1;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.hm-product-time-workbench .product-time-copy-sources {
+  max-height: 142px;
+  margin: 0 8px 6px;
+  display: grid;
+  gap: 4px;
+  overflow: auto;
+}
+
+.hm-product-time-workbench .product-time-copy-sources > button {
+  min-width: 0;
+  min-height: 42px;
+  padding: 6px 7px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border: 1px solid #e4e9ef;
+  border-radius: 7px;
+  background: #fff;
+  color: #243144;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.hm-product-time-workbench .product-time-copy-sources > button:hover {
+  border-color: #a9c7ee;
+  box-shadow: 0 3px 9px rgb(46 78 117 / 8%);
+}
+
+.hm-product-time-workbench .product-time-copy-sources > button.active {
+  border-color: #4d91e8;
+  background: #f1f7ff;
+  box-shadow: inset 3px 0 #377fdc;
+}
+
+.hm-product-time-workbench .product-time-copy-sources span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.hm-product-time-workbench .product-time-copy-sources strong,
+.hm-product-time-workbench .product-time-copy-sources small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-product-time-workbench .product-time-copy-sources strong {
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-copy-sources small,
+.hm-product-time-workbench .product-time-copy-sources em {
+  color: #7d8998;
+  font-size: 8px;
+  font-style: normal;
+}
+
+.hm-product-time-workbench .product-time-copy-sources em {
+  flex: 0 0 auto;
+}
+
+.hm-product-time-workbench .product-time-copy-sources > p {
+  min-height: 44px;
+  margin: 0;
+  padding: 10px 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  background: #f7f9fb;
+  color: #8290a1;
+  font-size: 9px;
+  text-align: center;
+}
+
+.hm-product-time-workbench .product-time-copy-sources > p.error {
+  background: #fff5f3;
+  color: #c2462e;
 }
 
 .hm-product-time-workbench .product-time-copy-panel > small {

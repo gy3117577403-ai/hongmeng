@@ -40,6 +40,7 @@ async function profilePayload(itemId: string) {
       customerCode: item.customerCode,
       specification: item.specification,
       productName: item.productName,
+      updatedAt: item.updatedAt.toISOString(),
     },
     profiles: item.productTimeProfiles.map(serializeProductTimeProfile),
     quotation: item.quotationTimes[0] ? serializeProductQuotationTime(item.quotationTimes[0]) : null,
