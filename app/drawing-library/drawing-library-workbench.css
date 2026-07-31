@@ -1052,6 +1052,261 @@
   }
 }
 
+/* Broken-reference recovery and recycle-bin workflow. */
+.hm-drawing-workbench .drawing-reference-recovery {
+  width: min(720px, calc(100% - 40px));
+  align-self: center;
+  justify-self: center;
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 14px 18px;
+  padding: 26px;
+  border: 1px solid #f0c9ad;
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(255, 252, 249, .98), rgba(255, 247, 239, .92));
+  box-shadow: 0 18px 44px rgba(93, 64, 39, .11);
+  color: var(--hm-color-text);
+}
+
+.hm-drawing-workbench .drawing-reference-recovery.missing {
+  border-color: #d9e1eb;
+  background: rgba(248, 250, 252, .96);
+}
+
+.hm-drawing-workbench .drawing-reference-recovery-icon {
+  grid-row: 1 / span 2;
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #f1c6a9;
+  border-radius: 18px;
+  background: #fff4eb;
+  color: var(--hm-color-accent);
+}
+
+.hm-drawing-workbench .drawing-reference-recovery-icon svg {
+  width: 28px;
+  height: 28px;
+}
+
+.hm-drawing-workbench .drawing-reference-recovery > div > em {
+  color: var(--hm-color-accent);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+  letter-spacing: .04em;
+}
+
+.hm-drawing-workbench .drawing-reference-recovery h2 {
+  margin: 4px 0 3px;
+  font-size: 22px;
+  line-height: 1.25;
+}
+
+.hm-drawing-workbench .drawing-reference-recovery > div > p,
+.hm-drawing-workbench .drawing-reference-recovery-note {
+  margin: 0;
+  color: var(--hm-color-text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.hm-drawing-workbench .drawing-reference-recovery > section {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #eadfd6;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, .72);
+}
+
+.hm-drawing-workbench .drawing-reference-recovery > section span {
+  display: grid;
+  gap: 2px;
+  padding: 12px 14px;
+  border-right: 1px solid #eee4dc;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+}
+
+.hm-drawing-workbench .drawing-reference-recovery > section span:last-child {
+  border-right: 0;
+}
+
+.hm-drawing-workbench .drawing-reference-recovery > section b {
+  color: var(--hm-color-text);
+  font-size: 17px;
+}
+
+.hm-drawing-workbench .drawing-reference-recovery-note,
+.hm-drawing-workbench .drawing-reference-recovery-actions {
+  grid-column: 1 / -1;
+}
+
+.hm-drawing-workbench .drawing-reference-recovery-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.hm-drawing-workbench .drawing-trash-dialog {
+  width: min(920px, calc(100vw - 40px));
+  max-height: min(760px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  overflow: hidden;
+}
+
+.hm-drawing-workbench .drawing-trash-search {
+  min-height: 46px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 0 6px 0 14px;
+  border: 1px solid var(--hm-color-border);
+  border-radius: 12px;
+  background: #f8fafc;
+  color: var(--hm-color-text-muted);
+}
+
+.hm-drawing-workbench .drawing-trash-search input {
+  min-width: 0;
+  height: 42px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--hm-color-text);
+  font-size: 13px;
+}
+
+.hm-drawing-workbench .drawing-trash-dialog > .cleanup-note {
+  margin: 10px 0;
+}
+
+.hm-drawing-workbench .drawing-trash-list {
+  min-height: 220px;
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 2px 4px 2px 2px;
+  overflow: auto;
+}
+
+.hm-drawing-workbench .drawing-trash-list article {
+  display: grid;
+  grid-template-columns: minmax(230px, 1fr) minmax(300px, auto) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 14px;
+  border: 1px solid #e4e9ef;
+  border-radius: 13px;
+  background: #fff;
+  transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.hm-drawing-workbench .drawing-trash-list article:hover,
+.hm-drawing-workbench .drawing-trash-list article.active {
+  border-color: #efb68f;
+  box-shadow: 0 8px 20px rgba(76, 54, 36, .08);
+  transform: translateY(-1px);
+}
+
+.hm-drawing-workbench .drawing-trash-list article strong {
+  display: block;
+  color: var(--hm-color-text);
+  font-size: 14px;
+}
+
+.hm-drawing-workbench .drawing-trash-list article p,
+.hm-drawing-workbench .drawing-trash-list article small {
+  margin: 3px 0 0;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+}
+
+.hm-drawing-workbench .drawing-trash-list article > section {
+  display: flex;
+  gap: 5px;
+}
+
+.hm-drawing-workbench .drawing-trash-list article > section span {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: #f4f7fa;
+  color: var(--hm-color-text-muted);
+  font-size: 10px;
+}
+
+.hm-drawing-workbench .drawing-trash-list article > section b {
+  color: var(--hm-color-text);
+  font-size: 12px;
+}
+
+.hm-drawing-workbench .drawing-trash-empty {
+  min-height: 260px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  color: var(--hm-color-text-muted);
+  text-align: center;
+}
+
+.hm-drawing-workbench .drawing-trash-empty svg {
+  width: 42px;
+  height: 42px;
+  padding: 10px;
+  border-radius: 14px;
+  background: #eef3f8;
+}
+
+.hm-drawing-workbench .drawing-trash-empty strong {
+  color: var(--hm-color-text);
+  font-size: 14px;
+}
+
+.hm-drawing-workbench .drawing-trash-empty p {
+  margin: 0;
+  font-size: 11px;
+}
+
+@media (max-width: 820px) {
+  .hm-drawing-workbench .drawing-reference-recovery {
+    grid-template-columns: 48px minmax(0, 1fr);
+    padding: 18px;
+  }
+
+  .hm-drawing-workbench .drawing-reference-recovery-icon {
+    width: 48px;
+    height: 48px;
+    border-radius: 14px;
+  }
+
+  .hm-drawing-workbench .drawing-reference-recovery > section {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .hm-drawing-workbench .drawing-reference-recovery > section span:nth-child(2) {
+    border-right: 0;
+  }
+
+  .hm-drawing-workbench .drawing-trash-list article {
+    grid-template-columns: 1fr auto;
+  }
+
+  .hm-drawing-workbench .drawing-trash-list article > section {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-height: 820px) {
   .hm-drawing-main {
     gap: 6px;

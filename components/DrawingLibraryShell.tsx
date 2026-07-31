@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, BookOpenText, Clock3, FileImage, MoreHorizontal, Plus, Search, Upload } from 'lucide-react';
+import { ArchiveRestore, ArrowLeft, BookOpenText, Clock3, FileImage, MoreHorizontal, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
@@ -40,6 +40,37 @@ type CleanupSummary = {
   cleanedCount?: number;
   samples: Array<{ id: string; customerName: string; specification: string; productName?: string | null }>;
 };
+type DrawingReferenceImpact = {
+  linkedPlanOrders: number;
+  activePlanOrders: number;
+  activePlanBatches: number;
+  linkedWorkOrders: number;
+  activeWorkOrders: number;
+  activeFiles: number;
+  activeOriginalFiles: number;
+  productTimeProfiles: number;
+  blocked: boolean;
+  blockers: string[];
+};
+type DrawingTrashItem = {
+  id: string;
+  customerName: string;
+  customerCode?: string | null;
+  productName?: string | null;
+  specification: string;
+  libraryKey: string;
+  deletedAt: string | null;
+  updatedAt: string;
+  _count: {
+    files: number;
+    productionPlanOrders: number;
+    workOrders: number;
+    productTimeProfiles: number;
+  };
+};
+type MissingDrawingReference =
+  | { kind: 'deleted'; item: DrawingTrashItem }
+  | { kind: 'missing'; itemId: string };
 
 const emptyForm: DrawingLibraryForm = { customerName: '', productName: '', specification: '', remark: '' };
 const filterOptions: Array<[DrawingFilter, string]> = [
@@ -97,18 +128,21 @@ export function DrawingLibraryShell({
   initialItems,
   initialCustomers,
   categories,
+  requestedItemId,
 }: {
   user: CurrentUserDTO;
   initialItems: DrawingLibraryItemDTO[];
   initialCustomers: DrawingLibraryCustomerDTO[];
   categories: ResourceCategoryDTO[];
+  requestedItemId: string;
 }) {
   const [items, setItems] = useState(initialItems);
   const [customers, setCustomers] = useState(initialCustomers);
   const [keyword, setKeyword] = useState('');
   const [filter, setFilter] = useState<DrawingFilter>('all');
   const [customer, setCustomer] = useState('全部客户');
-  const [selectedId, setSelectedId] = useState(initialItems[0]?.id || '');
+  const requestedActiveItem = initialItems.find(item => item.id === requestedItemId) || null;
+  const [selectedId, setSelectedId] = useState(requestedItemId ? (requestedActiveItem?.id || '') : (initialItems[0]?.id || ''));
   const [selectedFileId, setSelectedFileId] = useState('');
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id || '');
   const [loading, setLoading] = useState(false);
@@ -130,6 +164,13 @@ export function DrawingLibraryShell({
   const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DrawingDeleteTarget | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [missingReference, setMissingReference] = useState<MissingDrawingReference | null>(null);
+  const [referenceResolving, setReferenceResolving] = useState(!!requestedItemId && !requestedActiveItem);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [trashItems, setTrashItems] = useState<DrawingTrashItem[]>([]);
+  const [trashKeyword, setTrashKeyword] = useState('');
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [restoringId, setRestoringId] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const filePanelTriggerRef = useRef<HTMLButtonElement>(null);
   const loadControllerRef = useRef<AbortController | null>(null);
@@ -142,7 +183,9 @@ export function DrawingLibraryShell({
   const visibleItems = useMemo(() => (
     customer === '全部客户' ? items : items.filter(item => item.customerName === customer)
   ), [customer, items]);
-  const selectedItem = visibleItems.find(item => item.id === selectedId) || visibleItems[0] || null;
+  const referenceResolutionPending = !selectedId && (referenceResolving || !!missingReference);
+  const selectedItem = visibleItems.find(item => item.id === selectedId)
+    || (!referenceResolutionPending ? visibleItems[0] : null);
   const activeCategory = categories.find(category => category.id === activeCategoryId) || categories[0] || null;
   const activeFiles = selectedItem?.files.filter(file => file.categoryId === activeCategory?.id) || [];
   const selectedFile = activeFiles.find(file => file.id === selectedFileId) || activeFiles[0] || null;
@@ -183,10 +226,14 @@ export function DrawingLibraryShell({
       }
     }
 
-    if (!targetItemId) return;
+    if (!targetItemId) {
+      setReferenceResolving(false);
+      return;
+    }
     const targetItem = items.find(item => item.id === targetItemId) || null;
     if (!targetItem) {
       if (urlMissingWarnedRef.current || requestedItemLoadingRef.current === targetItemId) return;
+      setReferenceResolving(true);
       requestedItemLoadingRef.current = targetItemId;
       const controller = new AbortController();
       void (async () => {
@@ -197,14 +244,35 @@ export function DrawingLibraryShell({
           });
           const data = await response.json().catch(() => ({}));
           if (!response.ok || !data.item) {
+            if (response.status === 404) {
+              const trashResponse = await fetch(`/api/drawing-library/trash?itemId=${encodeURIComponent(targetItemId)}`, {
+                cache: 'no-store',
+                signal: controller.signal,
+              });
+              const trashData = await trashResponse.json().catch(() => ({}));
+              const deletedItem = Array.isArray(trashData.items) ? trashData.items[0] as DrawingTrashItem | undefined : undefined;
+              setSelectedId('');
+              if (trashResponse.ok && deletedItem) {
+                setMissingReference({ kind: 'deleted', item: deletedItem });
+                setMsg('该图纸资料已移入回收站，可在当前页面恢复并修复业务引用。');
+              } else {
+                setMissingReference({ kind: 'missing', itemId: targetItemId });
+                setMsg('图纸资料记录不存在，可能已被永久清理或引用已失效。');
+              }
+              setReferenceResolving(false);
+              urlMissingWarnedRef.current = true;
+              return;
+            }
             urlMissingWarnedRef.current = true;
-            setMsg(response.status === 404 ? '图纸资料不存在或已删除。' : (data.error || '图纸资料加载失败'));
+            setMsg(data.error || '图纸资料加载失败');
             return;
           }
           const directItem = data.item as DrawingLibraryItemDTO;
+          setMissingReference(null);
           setItems(current => current.some(item => item.id === directItem.id) ? current : [directItem, ...current]);
           setCustomer('全部客户');
           setSelectedId(directItem.id);
+          setReferenceResolving(false);
           setMsg('');
         } catch (reason) {
           if (!(reason instanceof Error && reason.name === 'AbortError')) {
@@ -218,6 +286,8 @@ export function DrawingLibraryShell({
       return () => controller.abort();
     }
 
+    setMissingReference(null);
+    setReferenceResolving(false);
     setCustomer('全部客户');
     setSelectedId(targetItem.id);
     if (targetFileId) {
@@ -241,13 +311,14 @@ export function DrawingLibraryShell({
     function closeTransientLayer(event: KeyboardEvent) {
       if (event.key !== 'Escape') return;
       if (bulkImportOpen) setBulkImportOpen(false);
+      else if (trashOpen) setTrashOpen(false);
       else if (cleanupOpen) setCleanupOpen(false);
       else if (bulkHelpOpen) setBulkHelpOpen(false);
       else if (modal) setModal(null);
     }
     window.addEventListener('keydown', closeTransientLayer);
     return () => window.removeEventListener('keydown', closeTransientLayer);
-  }, [bulkHelpOpen, bulkImportOpen, cleanupOpen, modal]);
+  }, [bulkHelpOpen, bulkImportOpen, cleanupOpen, modal, trashOpen]);
 
   useEffect(() => {
     if (!filePanelOpen) return undefined;
@@ -258,7 +329,7 @@ export function DrawingLibraryShell({
     function keepFilePanelActive(event: KeyboardEvent) {
       const panel = filePanelRef.current;
       if (!panel) return;
-      const blockingLayerOpen = !!(bulkImportOpen || cleanupOpen || bulkHelpOpen || modal);
+      const blockingLayerOpen = !!(bulkImportOpen || cleanupOpen || bulkHelpOpen || modal || trashOpen);
       if (blockingLayerOpen) return;
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -289,7 +360,7 @@ export function DrawingLibraryShell({
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', keepFilePanelActive);
     };
-  }, [bulkHelpOpen, bulkImportOpen, cleanupOpen, filePanelOpen, modal]);
+  }, [bulkHelpOpen, bulkImportOpen, cleanupOpen, filePanelOpen, modal, trashOpen]);
 
   const loadData = useCallback(async () => {
     loadControllerRef.current?.abort();
@@ -313,7 +384,11 @@ export function DrawingLibraryShell({
       setItems(nextItems);
       setCustomers(Array.isArray(data.customers) ? data.customers : []);
       setCustomer(current => current !== '全部客户' && !nextItems.some(item => item.customerName === current) ? '全部客户' : current);
-      setSelectedId(current => nextItems.some(item => item.id === current) ? current : nextItems[0]?.id || '');
+      setSelectedId(current => {
+        if (nextItems.some(item => item.id === current)) return current;
+        if (requestedItemId && !nextItems.some(item => item.id === requestedItemId)) return '';
+        return nextItems[0]?.id || '';
+      });
     } catch (reason) {
       if (!(reason instanceof Error && reason.name === 'AbortError')) setMsg('图纸资料库加载失败，请检查网络');
     } finally {
@@ -338,6 +413,64 @@ export function DrawingLibraryShell({
     setKeyword('');
     setFilter('all');
     setCustomer('全部客户');
+  }
+
+  async function loadTrash(search = trashKeyword) {
+    setTrashLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (search.trim()) params.set('keyword', search.trim());
+      const response = await fetch(`/api/drawing-library/trash?${params.toString()}`, { cache: 'no-store' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setMsg(data.error || '回收站加载失败');
+        return;
+      }
+      setTrashItems(Array.isArray(data.items) ? data.items : []);
+    } catch {
+      setMsg('回收站加载失败，请检查网络');
+    } finally {
+      setTrashLoading(false);
+    }
+  }
+
+  function openTrash() {
+    setTrashOpen(true);
+    void loadTrash();
+  }
+
+  async function restoreItem(item: DrawingTrashItem) {
+    setRestoringId(item.id);
+    try {
+      const response = await fetch(`/api/drawing-library/${encodeURIComponent(item.id)}/restore`, { method: 'POST' });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setMsg(data.error || '图纸资料恢复失败');
+        return;
+      }
+      const url = new URL(window.location.href);
+      url.searchParams.set('itemId', item.id);
+      url.searchParams.delete('fileId');
+      window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+      urlMissingWarnedRef.current = false;
+      requestedItemLoadingRef.current = '';
+      setMissingReference(null);
+      setReferenceResolving(false);
+      setSelectedId(item.id);
+      setSelectedFileId('');
+      const linkedOrders = Number(data.repair?.linkedOrders || 0);
+      const refreshedWorkOrders = Number(data.repair?.refreshedWorkOrders || 0);
+      setMsg(linkedOrders > 0 || refreshedWorkOrders > 0
+        ? `图纸资料已恢复；重连计划 ${linkedOrders} 条，刷新生产工单 ${refreshedWorkOrders} 张。`
+        : '图纸资料已恢复，关联状态已重新校验。');
+      await loadData();
+      setTrashItems(current => current.filter(candidate => candidate.id !== item.id));
+      if (trashOpen) await loadTrash(trashKeyword);
+    } catch {
+      setMsg('图纸资料恢复失败，请检查网络');
+    } finally {
+      setRestoringId('');
+    }
   }
 
   function closeFilePanel() {
@@ -396,9 +529,23 @@ export function DrawingLibraryShell({
     }
   }
 
-  function deleteItem() {
+  async function deleteItem() {
     if (!selectedItem) return;
-    setDeleteTarget({ kind: 'item', item: selectedItem });
+    try {
+      const response = await fetch(`/api/drawing-library/${encodeURIComponent(selectedItem.id)}/impact`, { cache: 'no-store' });
+      const data = await response.json().catch(() => ({})) as { error?: string; impact?: DrawingReferenceImpact };
+      if (!response.ok || !data.impact) {
+        setMsg(data.error || '删除影响检查失败');
+        return;
+      }
+      if (data.impact.blocked) {
+        setMsg(`不能删除：${data.impact.blockers.join('；')}。请先结束或解除这些业务引用。`);
+        return;
+      }
+      setDeleteTarget({ kind: 'item', item: selectedItem });
+    } catch {
+      setMsg('删除影响检查失败，请检查网络');
+    }
   }
 
   async function uploadFiles(fileList: FileList | null) {
@@ -464,8 +611,15 @@ export function DrawingLibraryShell({
   }
 
   function chooseItem(item: DrawingLibraryItemDTO) {
+    setMissingReference(null);
+    setReferenceResolving(false);
     setSelectedId(item.id);
     setSelectedFileId('');
+    urlMissingWarnedRef.current = false;
+    const url = new URL(window.location.href);
+    url.searchParams.set('itemId', item.id);
+    url.searchParams.delete('fileId');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
   }
 
   function openProductTime(itemId: string) {
@@ -601,6 +755,7 @@ export function DrawingLibraryShell({
             <button className="hm-workbench-button" type="button" onClick={() => openModal('create')} title="新增图纸资料"><Plus size={15} aria-hidden="true" /><span>新增</span></button>
             <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)} title="批量导入原图"><Upload size={15} aria-hidden="true" /><span>批量导入</span></button>
             <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}><BookOpenText size={15} aria-hidden="true" /><span>说明</span></button>
+            <button className="hm-workbench-button" type="button" title="查看和恢复已删除图纸资料" onClick={openTrash}><Trash2 size={15} aria-hidden="true" /><span>回收站</span></button>
             <details className="hm-drawing-more-actions">
               <summary className="hm-workbench-button" title="更多图纸资料操作"><MoreHorizontal size={15} aria-hidden="true" /><span>更多</span></summary>
               <div><button className="danger" type="button" onClick={() => { setCleanupOpen(true); if (!cleanupPreview) previewCleanup(); }}>资料治理</button></div>
@@ -642,12 +797,50 @@ export function DrawingLibraryShell({
 
           <section className="drawing-detail" aria-label="资料预览工作区">
           {!selectedItem ? (
-            <div className="drawing-empty-state">
-              <FileImage aria-hidden="true" />
-              <strong>{hasActiveFilters ? '当前筛选下没有可预览资料' : '选择一个规格开始查看'}</strong>
-              <p>{hasActiveFilters ? '左侧结果会随搜索条件更新，清除筛选可返回全部资料。' : '预览区会保持图纸原始比例，并提供版本、下载和资料维护入口。'}</p>
-              <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增图纸资料'}</button>
-            </div>
+            missingReference?.kind === 'deleted' ? (
+              <div className="drawing-reference-recovery" role="status">
+                <span className="drawing-reference-recovery-icon"><ArchiveRestore aria-hidden="true" /></span>
+                <div>
+                  <em>已定位断开的业务引用</em>
+                  <h2>{missingReference.item.specification}</h2>
+                  <p>{missingReference.item.customerName} · {missingReference.item.productName || '未设置品名'}</p>
+                </div>
+                <section aria-label="恢复影响摘要">
+                  <span><b>{missingReference.item._count.files}</b> 个文件</span>
+                  <span><b>{missingReference.item._count.productionPlanOrders}</b> 条计划</span>
+                  <span><b>{missingReference.item._count.workOrders}</b> 张工单</span>
+                  <span><b>{missingReference.item._count.productTimeProfiles}</b> 套工序工时</span>
+                </section>
+                <p className="drawing-reference-recovery-note">恢复会保留原图纸和工序工时，并重新核对计划、生产工单及流程中的图纸引用；不会复制或覆盖文件。</p>
+                <div className="drawing-reference-recovery-actions">
+                  <button className="hm-workbench-button" type="button" onClick={openTrash}>查看回收站</button>
+                  <button className="hm-workbench-button primary" type="button" disabled={restoringId === missingReference.item.id} onClick={() => void restoreItem(missingReference.item)}>
+                    <ArchiveRestore size={15} aria-hidden="true" />
+                    {restoringId === missingReference.item.id ? '恢复并修复中...' : '恢复资料并修复链路'}
+                  </button>
+                </div>
+              </div>
+            ) : missingReference?.kind === 'missing' ? (
+              <div className="drawing-reference-recovery missing" role="status">
+                <span className="drawing-reference-recovery-icon"><FileImage aria-hidden="true" /></span>
+                <div>
+                  <em>引用目标不存在</em>
+                  <h2>未找到对应图纸资料</h2>
+                  <p>记录 ID：{missingReference.itemId}</p>
+                </div>
+                <p className="drawing-reference-recovery-note">这通常表示记录已被永久清理，或旧链接指向了错误 ID。可先在回收站按客户或规格搜索；若仍找不到，需要重新绑定正确资料，而不是新建同名空档案。</p>
+                <div className="drawing-reference-recovery-actions">
+                  <button className="hm-workbench-button primary" type="button" onClick={openTrash}>从回收站查找</button>
+                </div>
+              </div>
+            ) : (
+              <div className="drawing-empty-state">
+                <FileImage aria-hidden="true" />
+                <strong>{hasActiveFilters ? '当前筛选下没有可预览资料' : '选择一个规格开始查看'}</strong>
+                <p>{hasActiveFilters ? '左侧结果会随搜索条件更新，清除筛选可返回全部资料。' : '预览区会保持图纸原始比例，并提供版本、下载和资料维护入口。'}</p>
+                <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增图纸资料'}</button>
+              </div>
+            )
           ) : (
             <>
               <div className="drawing-detail-head">
@@ -830,6 +1023,57 @@ export function DrawingLibraryShell({
               <button className="danger-button" type="button" disabled={cleanupLoading || cleanupConfirm.trim() !== 'CLEAN_EMPTY'} onClick={commitCleanup}>
                 {cleanupLoading ? '清理中...' : '确认清理'}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {trashOpen && (
+        <div className="modal-backdrop" role="presentation">
+          <div className="drawing-dialog drawing-trash-dialog" role="dialog" aria-modal="true" aria-labelledby="drawing-trash-title">
+            <div className="dialog-title">
+              <div>
+                <span>图纸资料回收站</span>
+                <h3 id="drawing-trash-title">恢复档案并自动修复业务引用</h3>
+              </div>
+              <button type="button" aria-label="关闭图纸资料回收站" title="关闭" onClick={() => setTrashOpen(false)}>×</button>
+            </div>
+            <form className="drawing-trash-search" onSubmit={event => { event.preventDefault(); void loadTrash(); }}>
+              <Search size={17} aria-hidden="true" />
+              <input value={trashKeyword} onChange={event => setTrashKeyword(event.target.value)} placeholder="搜索客户、规格或品名" autoFocus />
+              <button className="hm-workbench-button" type="submit" disabled={trashLoading}>{trashLoading ? '查询中...' : '查询'}</button>
+            </form>
+            <p className="cleanup-note">恢复只撤销父档案的软删除，并重新对齐计划、生产工单和流程引用；原文件、工序工时和历史记录不会被复制或覆盖。</p>
+            <div className="drawing-trash-list hm-scroll-region" tabIndex={0} aria-label={`回收站资料，共 ${trashItems.length} 项`}>
+              {trashItems.map(item => (
+                <article key={item.id} className={missingReference?.kind === 'deleted' && item.id === missingReference.item.id ? 'active' : ''}>
+                  <div>
+                    <strong>{item.specification}</strong>
+                    <p>{item.customerName} · {item.productName || '未设置品名'}</p>
+                    <small>删除于 {dt(item.deletedAt)} · 更新于 {dt(item.updatedAt)}</small>
+                  </div>
+                  <section aria-label="关联数据">
+                    <span>文件 <b>{item._count.files}</b></span>
+                    <span>计划 <b>{item._count.productionPlanOrders}</b></span>
+                    <span>工单 <b>{item._count.workOrders}</b></span>
+                    <span>工序工时 <b>{item._count.productTimeProfiles}</b></span>
+                  </section>
+                  <button className="hm-workbench-button primary" type="button" disabled={!!restoringId} onClick={() => void restoreItem(item)}>
+                    <ArchiveRestore size={15} aria-hidden="true" />
+                    {restoringId === item.id ? '恢复中...' : '恢复并重连'}
+                  </button>
+                </article>
+              ))}
+              {!trashLoading && !trashItems.length && (
+                <div className="drawing-trash-empty">
+                  <ArchiveRestore aria-hidden="true" />
+                  <strong>{trashKeyword.trim() ? '没有匹配的已删除资料' : '回收站为空'}</strong>
+                  <p>{trashKeyword.trim() ? '请换用客户名、规格或品名搜索。' : '已删除图纸资料会显示在这里，供安全恢复。'}</p>
+                </div>
+              )}
+            </div>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setTrashOpen(false)}>关闭</button>
             </div>
           </div>
         </div>

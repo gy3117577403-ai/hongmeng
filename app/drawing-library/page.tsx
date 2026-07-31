@@ -70,6 +70,7 @@ export default async function DrawingLibraryPage({ searchParams }: DrawingLibrar
         ...Array.from(customerMap.values()),
       ]}
       categories={categories.map(category => ({ id: category.id, name: category.name, code: category.code, sortOrder: category.sortOrder }))}
+      requestedItemId={requestedItemId || ''}
     />
   );
 }

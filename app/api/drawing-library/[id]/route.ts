@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { cleanDrawingText, drawingLibraryKey, invalidSpecificationReason, parseCustomerCode, serializeDrawingLibraryItem } from '@/lib/drawing-library';
+import { getDrawingLibraryReferenceImpact } from '@/lib/drawing-library-lifecycle';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 
@@ -76,9 +77,30 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     const user = await requireUser();
     const item = await prisma.drawingLibraryItem.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!item) return NextResponse.json({ ok: false, error: '图纸资料记录不存在' }, { status: 404 });
-    await prisma.drawingLibraryItem.update({ where: { id: item.id }, data: { deletedAt: new Date() } });
-    await logOp({ userId: user.id, action: 'delete_drawing_library_item', targetType: 'drawing_library_item', targetId: item.id, detail: { libraryKey: item.libraryKey, softDelete: true } });
-    return NextResponse.json({ ok: true });
+    const result = await prisma.$transaction(async tx => {
+      const impact = await getDrawingLibraryReferenceImpact(tx, item.id);
+      if (impact.blocked) return { deleted: false as const, impact };
+      await tx.drawingLibraryItem.update({ where: { id: item.id }, data: { deletedAt: new Date() } });
+      await tx.operationLog.create({
+        data: {
+          userId: user.id,
+          action: 'delete_drawing_library_item',
+          targetType: 'drawing_library_item',
+          targetId: item.id,
+          detail: { libraryKey: item.libraryKey, softDelete: true, impact },
+        },
+      });
+      return { deleted: true as const, impact };
+    });
+    if (!result.deleted) {
+      return NextResponse.json({
+        ok: false,
+        code: 'DRAWING_LIBRARY_REFERENCES_ACTIVE',
+        error: `当前资料仍被活动业务使用：${result.impact.blockers.join('；')}`,
+        impact: result.impact,
+      }, { status: 409 });
+    }
+    return NextResponse.json({ ok: true, impact: result.impact });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
     console.error(e);

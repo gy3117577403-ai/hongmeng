@@ -5,6 +5,7 @@ import {
   invalidSpecificationReason,
   parseCustomerCode,
 } from '@/lib/drawing-library';
+import { activeDrawingLibraryFileCount } from '@/lib/drawing-library-lifecycle';
 import { shouldSynchronizeDrawingReleaseStatus } from '@/lib/production-drawing-readiness';
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
@@ -21,6 +22,7 @@ export const productionPlanOrderInclude = {
   drawingLibraryItem: {
     select: {
       id: true,
+      deletedAt: true,
       _count: {
         select: {
           files: { where: { deletedAt: null, category: { code: 'drawing' } } },
@@ -1108,7 +1110,8 @@ function batchDto(batch: ProductionPlanOrderRecord['batches'][number]): Producti
 
 export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): ProductionPlanOrderDTO {
   const allocatedQuantity = order.batches.reduce((sum, batch) => sum + batch.quantity, 0);
-  const profile = order.drawingLibraryItem?.productTimeProfiles[0] || null;
+  const activeDrawingLibraryItem = order.drawingLibraryItem?.deletedAt ? null : order.drawingLibraryItem;
+  const profile = activeDrawingLibraryItem?.productTimeProfiles[0] || null;
   const currentUnitMilliseconds = profile ? productTimeTotalMilliseconds(profile.entries) : null;
   const effectiveUnitMilliseconds = currentUnitMilliseconds || order.planningUnitMilliseconds;
   return {
@@ -1120,7 +1123,10 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     productName: order.productName,
     specification: order.specification,
     drawingLibraryItemId: order.drawingLibraryItemId,
-    drawingFileCount: order.drawingLibraryItem?._count.files || 0,
+    drawingFileCount: activeDrawingLibraryFileCount({
+      deletedAt: order.drawingLibraryItem?.deletedAt,
+      drawingFileCount: order.drawingLibraryItem?._count.files || 0,
+    }),
     orderQuantity: order.orderQuantity,
     planningUnitMilliseconds: order.planningUnitMilliseconds,
     effectiveUnitMilliseconds,
