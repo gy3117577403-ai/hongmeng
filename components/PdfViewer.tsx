@@ -111,6 +111,7 @@ function PdfCanvas({
   const shellRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null);
+  const canvasSwapFrameRef = useRef<number | null>(null);
   const [doc, setDoc] = useState<PdfDocument | null>(null);
   const [pageNo, setPageNo] = useState(1);
   const [pageCount, setPageCount] = useState(0);
@@ -120,6 +121,7 @@ function PdfCanvas({
   const [loading, setLoading] = useState(true);
   const [slowLoading, setSlowLoading] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [canvasSwapActive, setCanvasSwapActive] = useState(false);
   const [error, setError] = useState<PdfLoadError | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [tocOpen, setTocOpen] = useState(false);
@@ -273,6 +275,7 @@ function PdfCanvas({
         renderTaskRef.current = task;
         await task.promise;
         if (!alive) return;
+        setCanvasSwapActive(true);
         canvas.width = offscreen.width;
         canvas.height = offscreen.height;
         canvas.style.width = `${Math.floor(viewport.width / dpr)}px`;
@@ -281,6 +284,11 @@ function PdfCanvas({
         if (!context) throw new Error('Canvas unavailable');
         context.drawImage(offscreen, 0, 0);
         setRenderedZoom(gestures.committedZoom);
+        if (canvasSwapFrameRef.current !== null) window.cancelAnimationFrame(canvasSwapFrameRef.current);
+        canvasSwapFrameRef.current = window.requestAnimationFrame(() => {
+          canvasSwapFrameRef.current = null;
+          setCanvasSwapActive(false);
+        });
         const nearby = [pageNo - 1, pageNo + 1].filter(value => value >= 1 && value <= doc.numPages);
         await Promise.all(nearby.map(value => doc.getPage(value).catch(() => null)));
       } catch (e) {
@@ -297,6 +305,10 @@ function PdfCanvas({
       renderTaskRef.current?.cancel();
     };
   }, [boxReady, doc, pageNo, gestures.committedZoom, gestures.rotation, loading]);
+
+  useEffect(() => () => {
+    if (canvasSwapFrameRef.current !== null) window.cancelAnimationFrame(canvasSwapFrameRef.current);
+  }, []);
 
   function goToPage(value: number) {
     if (!pageCount) return;
@@ -407,12 +419,12 @@ function PdfCanvas({
             {rendering && <div className="render-badge">渲染中...</div>}
             {dashboardMode ? (
               <div className="viewer-scroll-surface" style={scrollSurfaceStyle}>
-                <div className={`viewer-gesture-content${gestures.isGestureActive ? ' active' : ''}`} style={{ transform: `translate3d(${gestures.panX}px, ${gestures.panY}px, 0) scale(${displayScale})` }}>
+                <div className={`viewer-gesture-content${gestures.isGestureActive || canvasSwapActive ? ' active' : ''}`} style={{ transform: `translate3d(${gestures.panX}px, ${gestures.panY}px, 0) scale(${displayScale})` }}>
                   <canvas ref={canvasRef} aria-label={title} />
                 </div>
               </div>
             ) : (
-              <div className={`viewer-gesture-content${gestures.isGestureActive ? ' active' : ''}`} style={{ transform: `translate3d(${gestures.panX}px, ${gestures.panY}px, 0) scale(${displayScale})` }}>
+              <div className={`viewer-gesture-content${gestures.isGestureActive || canvasSwapActive ? ' active' : ''}`} style={{ transform: `translate3d(${gestures.panX}px, ${gestures.panY}px, 0) scale(${displayScale})` }}>
                 <canvas ref={canvasRef} aria-label={title} />
               </div>
             )}

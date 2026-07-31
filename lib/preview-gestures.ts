@@ -1,4 +1,7 @@
-export const MIN_PREVIEW_ZOOM = 0.4;
+// Fit modes can legitimately land far below 40% for large technical drawings.
+// Keeping the manual floor equally low prevents the first zoom step from
+// jumping abruptly from a fitted scale to 40%.
+export const MIN_PREVIEW_ZOOM = 0.02;
 export const MAX_PREVIEW_ZOOM = 5;
 export const PREVIEW_EDGE_MARGIN = 48;
 
