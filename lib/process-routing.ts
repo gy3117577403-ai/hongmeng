@@ -343,7 +343,6 @@ export function canMaterializeProductTimeRouteForWorkOrder(
   const stage = normalizeWorkOrderStage(workOrder.stage || workOrder.status) || 'not_issued';
   const quantity = getProductionQuantitySummary(workOrder);
   return stage === 'not_issued'
-    && workOrder.planActive !== false
     && !workOrder.planClearedAt
     && !workOrder.branchType
     && !workOrder.startedAt
@@ -1406,7 +1405,8 @@ export async function syncDraftRoutesFromPublishedProductTime(
   const missingRouteOrders = await tx.workOrder.findMany({
     where: {
       deletedAt: null,
-      planActive: true,
+      planType: { in: ['weekly_plan', 'managed_plan'] },
+      planClearedAt: null,
       branchType: null,
       drawingLibraryItemId: profile.drawingLibraryItemId,
       processRoute: null,
@@ -1443,7 +1443,8 @@ export async function syncDraftRoutesFromPublishedProductTime(
     where: {
       deletedAt: null,
       completedAt: null,
-      planActive: true,
+      planType: { in: ['weekly_plan', 'managed_plan'] },
+      planClearedAt: null,
       branchType: null,
       drawingLibraryItemId: profile.drawingLibraryItemId,
     },

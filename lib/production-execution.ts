@@ -799,7 +799,7 @@ export async function loadProductionExecution(input: {
   const items = filtered.slice((page - 1) * pageSize, page * pageSize).map(order => serializeProductionOrder(order, now));
   return {
     scope: input.week.scope,
-    readOnly: input.week.scope === 'next' || input.week.scope === 'afterNext' || input.week.scope === 'history',
+    readOnly: input.week.scope === 'history',
     weekStartDate: input.week.weekStart ? chinaYmd(input.week.weekStart) : null,
     weekEndDate: input.week.weekEnd ? chinaYmd(input.week.weekEnd) : null,
     stageCounts,
@@ -881,7 +881,7 @@ export async function summarizeProduction(week: ProductionWeek) {
   }
   return {
     scope: week.scope,
-    readOnly: week.scope === 'next' || week.scope === 'afterNext' || week.scope === 'history',
+    readOnly: week.scope === 'history',
     weekStartDate: week.weekStart ? chinaYmd(week.weekStart) : null,
     weekEndDate: week.weekEnd ? chinaYmd(week.weekEnd) : null,
     total: orders.length,

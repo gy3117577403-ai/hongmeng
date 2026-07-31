@@ -14,6 +14,7 @@ import { productionDrawingStageLabel } from '@/lib/production-drawing-readiness'
 import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
 import { resolveProductionPrimaryAction } from '@/lib/production-primary-action';
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
+import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import type {
   CurrentUserDTO,
   WorkOrderProcessRouteDTO,
@@ -26,7 +27,7 @@ type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | '
 type DetailTab = 'production' | 'drawing' | 'progress' | 'source';
 type BatchOperation = 'set_priority' | 'add_remark';
 type DuePreset = '' | 'today' | 'tomorrow' | 'overdue' | 'week' | 'custom';
-type ProductionFlowAction = 'confirm_drawing_issued';
+type ProductionFlowAction = 'start_process_route';
 type DispatchDensity = 'comfortable' | 'compact';
 type DispatchPreset = 'all' | 'today' | 'waiting' | 'exceptions' | 'completed';
 type DispatchTone = 'normal' | 'warning' | 'danger';
@@ -361,7 +362,7 @@ type FilterChip = {
 };
 
 const stages: Array<{ key: StageKey; label: string; step: string; hint: string }> = [
-  { key: 'not_issued', label: '未发图', step: '01', hint: '等待图纸下发' },
+  { key: 'not_issued', label: '待开始', step: '01', hint: '等待启动生产' },
   { key: 'frontend', label: '在前端', step: '02', hint: '前端工序进行中' },
   { key: 'backend', label: '在后端', step: '03', hint: '后端工序进行中' },
   { key: 'completed', label: '已完成', step: '04', hint: '生产完成归档' },
@@ -579,13 +580,24 @@ function daysUntilDelivery(order: ProductionOrder): number | null {
 }
 
 function currentProcessName(order: ProductionOrder): string {
-  return order.processRoute?.currentStep?.processName || (order.stage === 'not_issued'
+  if (order.processRoute?.currentStep?.processName) return order.processRoute.currentStep.processName;
+  if (order.processRoute?.status === 'confirmed') {
+    const executableSteps = order.processRoute.steps.filter(step => step.status !== 'skipped');
+    if (executableSteps.length) {
+      const firstSequenceGroup = Math.min(...executableSteps.map(step => step.sequenceGroup));
+      return executableSteps
+        .filter(step => step.sequenceGroup === firstSequenceGroup)
+        .map(step => step.processName)
+        .join(' / ');
+    }
+  }
+  return order.stage === 'not_issued'
     ? productionDrawingStageLabel({
         drawingStatus: order.drawingStatus,
         hasOriginalDrawing: order.documentCategoryCodes.includes('drawing'),
         planActive: order.planActive,
       })
-    : order.stageText);
+    : order.stageText;
 }
 
 function nextRouteSteps(order: ProductionOrder): WorkOrderProcessRouteDTO['steps'] {
@@ -1337,7 +1349,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   function toggleBatchMode(): void {
     if (board?.readOnly) {
-      setToast('下周预览为只读，启用为本周后才能批量修改');
+      setToast('历史周仅供查看，不能批量修改');
       return;
     }
     setBatchMode(current => {
@@ -1615,14 +1627,15 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   function openNextStep(order: ProductionOrder, displayStage: StageKey): void {
     if (board?.readOnly) {
-      setToast('下周预览为只读，启用为本周后才能流转工单');
+      setToast('历史周仅供查看，不能继续流转工单');
       return;
     }
     setStatusMenuOrder(null);
     setDrawingMenuOrder(null);
-    if (!order.processRoute || order.processRoute.status === 'draft') {
+    const routeReadiness = processRouteExecutionReadiness(order.processRoute?.steps || []);
+    if (!order.processRoute || order.processRoute.status === 'draft' || !routeReadiness.ready) {
       if (!canAdministerProduction) {
-        setToast('当前产品工序与工时尚未发布，请联系管理员维护');
+        setToast('当前产品工序路线或标准工时尚未完整发布，请联系管理员维护');
         return;
       }
       if (!order.drawingLibraryItemId) {
@@ -1633,12 +1646,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       return;
     }
     if (order.processRoute.status === 'completed') return;
-    if (displayStage === 'not_issued') {
-      if (!canAdministerProduction) {
-        setToast('图纸需由管理员确认下发后才能开始生产');
-        return;
-      }
-      setNextStepRequest({ order, displayStage, action: 'confirm_drawing_issued' });
+    if (order.processRoute.status === 'confirmed') {
+      setNextStepRequest({ order, displayStage, action: 'start_process_route' });
       setNextStepError('');
       return;
     }
@@ -1672,7 +1681,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       setNextStepRequest(null);
       productionBoardCache.clear();
       setSummaryRefreshToken(value => value + 1);
-      setToast('图纸已确认下发，工单已进入首道工序');
+      setToast('工艺路线已启动，工单已进入首道工序');
     } catch (reason) {
       const message = reason instanceof Error ? reason.message : '生产数量流转失败';
       if (message === '工单进度已被其他操作更新，请刷新后重试') {
@@ -1816,7 +1825,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   function openBatch(operation: BatchOperation): void {
     if (board?.readOnly) {
-      setToast('历史周和未来周为只读视图；请在本周或跨周遗留中处理');
+      setToast('历史周仅供查看，不能批量修改');
       return;
     }
     setBatchOperation(operation); setBatchValue(''); setBatchRemark(''); setFormError(''); setBatchOpen(true);
@@ -1940,7 +1949,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
               <AlertTriangle size={15} aria-hidden="true" />跨周遗留 <b>{summary?.navigation.carryoverCount ?? 0}</b>
             </button>
             {canAdministerProduction && <a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a>}
-            {canAdministerProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史与未来周为只读视图' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
+            {canAdministerProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
             <button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button>
             <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
             <button className="hm-workbench-button production-fullscreen-trigger" type="button" onClick={() => void toggleFullscreen()}><Expand size={15} aria-hidden="true" />{isFullscreen ? '退出大屏' : '大屏模式'}</button>
@@ -2153,14 +2162,19 @@ function ProductionDispatchRow({
   const routePreviewStart = Math.max(0, Math.min(activeRouteIndex > 0 ? activeRouteIndex - 1 : 0, Math.max(0, routeSteps.length - 4)));
   const routePreview = routeSteps.slice(routePreviewStart, routePreviewStart + 4);
   const unitLabel = route?.currentStep?.unitLabel || route?.steps[0]?.unitLabel || '件';
-  const routeNeedsMaintenance = !route || route.status === 'draft';
+  const routeReadiness = processRouteExecutionReadiness(route?.steps || []);
+  const routeNeedsMaintenance = !route || route.status === 'draft' || !routeReadiness.ready;
   const primaryText = readOnly
     ? '查看记录'
     : lifecycle.aggregateCompleted
       ? '查看记录'
       : lifecycle.awaitingBranchClosure
         ? '查看分支'
-        : '下一步';
+        : routeNeedsMaintenance
+          ? canAdministerProduction ? '配置工序与工时' : '查看记录'
+          : route?.status === 'confirmed'
+            ? '开始生产'
+            : '下一步';
 
   function runPrimaryAction(): void {
     const action = resolveProductionPrimaryAction({
@@ -2169,7 +2183,6 @@ function ProductionDispatchRow({
       awaitingBranchClosure: lifecycle.awaitingBranchClosure,
       canAdministerProduction,
       routeNeedsMaintenance,
-      drawingNotIssued: displayStage === 'not_issued',
     });
     if (action === 'view_detail') {
       openDetail(order);
@@ -2540,7 +2553,12 @@ function NextStepDialog({ request, saving, error, close, confirm }: {
 }) {
   const { order } = request;
   const flow = order.quantityFlow;
-  const title = '确认图纸已下发并进入首道工序';
+  const firstSteps = order.processRoute?.steps.filter(step => step.status !== 'skipped') || [];
+  const firstSequenceGroup = firstSteps.length ? Math.min(...firstSteps.map(step => step.sequenceGroup)) : null;
+  const firstProcessName = firstSequenceGroup === null
+    ? '首道工序'
+    : firstSteps.filter(step => step.sequenceGroup === firstSequenceGroup).map(step => step.processName).join(' / ');
+  const title = `开始生产并进入${firstProcessName}`;
   return <div className="modal-backdrop"><section className="production-dialog production-next-step-dialog" role="dialog" aria-modal="true" aria-label={title}>
     <div className="dialog-title"><div><strong>{title}</strong><small>{order.customerName || '客户待补充'} · {specText(order)}</small></div><button type="button" disabled={saving} onClick={close} aria-label="关闭">×</button></div>
     <div className="production-flow-summary" aria-label="当前生产数量">
@@ -2549,9 +2567,15 @@ function NextStepDialog({ request, saving, error, close, confirm }: {
       <div><span>后端待完成 F-C</span><strong>{formatProductionQuantity(flow.backendRemainingQty)}</strong></div>
       <div><span>累计已完成 C</span><strong>{formatProductionQuantity(flow.completedQty)}</strong></div>
     </div>
-    <p className="production-flow-confirm-copy">确认后，图纸状态将更新为“已发”，工单进入已发布工艺路线的首道工序；目标数量和已有资料不会改变。</p>
+    <section className="production-start-readiness" aria-label="开工条件核对">
+      <div className="ready"><CheckCircle2 size={17} aria-hidden="true" /><span><b>工序与工时</b><small>路线已发布，全部工序标准工时完整</small></span><em>开工条件</em></div>
+      <div><CalendarDays size={17} aria-hidden="true" /><span><b>计划周期</b><small>{order.planActive ? '当前执行周' : `${order.weekStartDate || '预排周'} · 允许提前生产`}</small></span><em>不阻断</em></div>
+      <div><Info size={17} aria-hidden="true" /><span><b>图纸状态</b><small>{order.drawingStatus || (order.documentCategoryCodes.includes('drawing') ? '已有原图' : '待补充')}</small></span><em>风险提醒</em></div>
+      <div><AlertTriangle size={17} aria-hidden="true" /><span><b>配料状态</b><small>{warehouseMaterialText(order)}</small></span><em>风险提醒</em></div>
+    </section>
+    <p className="production-flow-confirm-copy">确认后只启动已发布的工艺路线并进入首道工序，不修改计划周、图纸或配料状态。图纸和材料未齐会继续显示风险提醒，但不会阻止生产流转和报工。</p>
     {error && <div className="form-error" role="alert">{error}</div>}
-    <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={confirm}>{saving ? '提交中...' : '确认下一步'}</button></div>
+    <div className="dialog-actions"><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={confirm}>{saving ? '启动中...' : '确认开始生产'}</button></div>
   </section></div>;
 }
 
@@ -2580,7 +2604,7 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
             ['来源工序', order.originStep?.processName || '-'],
             ['回接工序', order.rejoinStep?.processName || '成品汇总'],
           ] as Array<[string, string]> : []),
-          ['工艺路线', order.processRoute?.statusText || '沿用前后端流程'], ['当前工序', order.processRoute?.currentStep?.processName || (order.processRoute?.status === 'confirmed' ? '等待图纸下发' : '-')], ['工序进度', order.processRoute ? `${order.processRoute.completedStepCount}/${order.processRoute.stepCount}（${order.processRoute.progress}%）` : '-'],
+          ['工艺路线', order.processRoute?.statusText || '沿用前后端流程'], ['当前工序', order.processRoute?.currentStep?.processName || (order.processRoute?.status === 'confirmed' ? '等待开始生产' : '-')], ['工序进度', order.processRoute ? `${order.processRoute.completedStepCount}/${order.processRoute.stepCount}（${order.processRoute.progress}%）` : '-'],
           ['数量来源', quantitySourceText(order)], ['累计进入后端', formatProductionQuantity(order.quantityFlow.frontendTransferredQty)], ['累计完成', formatProductionQuantity(order.quantitySummary.completedQty)], ['整体进度', formatProductionPercentage(order.quantitySummary.percentage)],
           ['交期', deliveryText(order) || '-'], ['图纸', order.drawingStatus || '-'], ['仓库配料', warehouseMaterialText(order)], ['仓库异常', warehouseExceptionDetail(order)], ['开始时间', dateTimeText(order.startedAt)],
           ['完成时间', dateTimeText(order.completedAt)], ['最近更新', dateTimeText(order.lastProgressAt)], ['最近进度', order.latestProgressRemark || '暂无进度备注'],

@@ -9,13 +9,12 @@ export function resolveProductionPrimaryAction(input: {
   awaitingBranchClosure: boolean;
   canAdministerProduction: boolean;
   routeNeedsMaintenance: boolean;
-  drawingNotIssued: boolean;
 }): ProductionPrimaryAction {
   if (input.readOnly) return 'view_detail';
   if (input.aggregateCompleted || input.awaitingBranchClosure) return 'view_workflow';
   if (
     !input.canAdministerProduction
-    && (input.routeNeedsMaintenance || input.drawingNotIssued)
+    && input.routeNeedsMaintenance
   ) {
     return 'view_detail';
   }

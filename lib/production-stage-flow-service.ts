@@ -1,16 +1,22 @@
 import { Prisma, type WorkOrder } from '@prisma/client';
 import { sanitizeSnapshotValue, workOrderSnapshot } from '@/lib/change-snapshots';
 import { prisma } from '@/lib/prisma';
-import { startConfirmedProcessRouteAfterDrawing } from '@/lib/process-route-service';
+import {
+  ProcessRouteServiceError,
+  startConfirmedProcessRoute,
+} from '@/lib/process-route-service';
+import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
+import { normalizeProcessStageGroup, processStageForGroup } from '@/lib/process-routing';
 import {
   compatibleStageForQuantities,
   parseExecutionVersion,
   parsePositiveProductionQuantity,
   resolveEffectiveFrontendTransferredQty,
 } from '@/lib/production-stage-flow';
-import { isActiveProductionWorkOrder, legacyStatusForStage, type WorkOrderStage } from '@/lib/work-orders';
+import { isExecutableProductionWorkOrder, legacyStatusForStage, type WorkOrderStage } from '@/lib/work-orders';
 
 export const PRODUCTION_STAGE_FLOW_ACTIONS = [
+  'start_process_route',
   'confirm_drawing_issued',
   'transfer_to_backend',
   'complete_from_backend',
@@ -77,10 +83,10 @@ function conflict(): ProductionStageFlowServiceError {
   );
 }
 
-function validateActiveWeeklyOrder(order: WorkOrder): void {
-  if (!isActiveProductionWorkOrder(order)) {
+function validateExecutableWeeklyOrder(order: WorkOrder): void {
+  if (!isExecutableProductionWorkOrder(order)) {
     throw new ProductionStageFlowServiceError(
-      '历史周和下周草稿为只读，请在当前启用周更新进度',
+      '已归档或已清除的周计划不能更新生产进度',
       409,
       'WORK_ORDER_READ_ONLY',
     );
@@ -153,6 +159,9 @@ async function logFailedFlow(
 
 function normalizedFlowError(error: unknown): ProductionStageFlowServiceError {
   if (error instanceof ProductionStageFlowServiceError) return error;
+  if (error instanceof ProcessRouteServiceError) {
+    return new ProductionStageFlowServiceError(error.message, error.status, error.code);
+  }
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') return conflict();
   return new ProductionStageFlowServiceError('生产数量流转失败', 500, 'PRODUCTION_STAGE_FLOW_FAILED');
 }
@@ -166,7 +175,7 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
     throw error;
   }
 
-  const parsedQuantity = input.action === 'confirm_drawing_issued'
+  const parsedQuantity = input.action === 'confirm_drawing_issued' || input.action === 'start_process_route'
     ? null
     : parsePositiveProductionQuantity(input.quantity);
   if (parsedQuantity && !parsedQuantity.ok) {
@@ -179,10 +188,28 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
     return await prisma.$transaction(async tx => {
       const old = await tx.workOrder.findFirst({ where: { id: input.workOrderId, deletedAt: null } });
       if (!old) throw new ProductionStageFlowServiceError('工单不存在', 404, 'WORK_ORDER_NOT_FOUND');
-      validateActiveWeeklyOrder(old);
+      validateExecutableWeeklyOrder(old);
       const processRoute = await tx.workOrderProcessRoute.findUnique({
         where: { workOrderId: old.id },
-        select: { id: true, status: true },
+        select: {
+          id: true,
+          status: true,
+          startedAt: true,
+          steps: {
+            orderBy: { position: 'asc' },
+            select: {
+              processName: true,
+              stageGroup: true,
+              sequenceGroup: true,
+              status: true,
+              timeBasis: true,
+              unitLabel: true,
+              standardMillisecondsPerUnit: true,
+              setupMilliseconds: true,
+              unitsPerProduct: true,
+            },
+          },
+        },
       });
       if (!processRoute || processRoute.status === 'draft') {
         throw new ProductionStageFlowServiceError(
@@ -191,7 +218,7 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
           processRoute ? 'PROCESS_ROUTE_NOT_CONFIRMED' : 'PROCESS_ROUTE_REQUIRED',
         );
       }
-      if (input.action !== 'confirm_drawing_issued') {
+      if (input.action !== 'confirm_drawing_issued' && input.action !== 'start_process_route') {
         throw new ProductionStageFlowServiceError(
           '该工单已启用完整工艺路线，请按当前工序推进',
           409,
@@ -209,6 +236,22 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
       });
       if (state.executionVersion !== expectedVersion.value) throw conflict();
 
+      if (processRoute.status !== 'confirmed' || processRoute.startedAt) {
+        throw new ProductionStageFlowServiceError(
+          processRoute.status === 'completed' ? '该工艺路线已经完成' : '该工艺路线已经开始，请按当前工序继续',
+          409,
+          processRoute.status === 'completed' ? 'PROCESS_ROUTE_COMPLETED' : 'PROCESS_ROUTE_ALREADY_STARTED',
+        );
+      }
+      const timeReadiness = processRouteExecutionReadiness(processRoute.steps);
+      if (!timeReadiness.ready) {
+        throw new ProductionStageFlowServiceError(
+          `工序与工时尚未完整发布：${timeReadiness.missingStepNames.join('、')}`,
+          409,
+          'PROCESS_ROUTE_TIME_INCOMPLETE',
+        );
+      }
+
       const now = new Date();
       const quantity = parsedQuantity?.ok ? parsedQuantity.value : 0;
       let transferred = state.frontendTransferredQty;
@@ -220,7 +263,24 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
         lastProgressAt: now,
       };
 
-      if (input.action === 'confirm_drawing_issued') {
+      if (input.action === 'start_process_route') {
+        if (state.overallStage === 'completed') {
+          throw new ProductionStageFlowServiceError('该工单已经完成', 409, 'WORK_ORDER_COMPLETED');
+        }
+        const executableSteps = processRoute.steps.filter(step => step.status !== 'skipped');
+        const first = executableSteps[0];
+        if (!first) {
+          throw new ProductionStageFlowServiceError(
+            '工艺路线没有可执行工序，请重新发布产品工序与工时',
+            409,
+            'PROCESS_ROUTE_EMPTY',
+          );
+        }
+        const firstGroup = executableSteps.filter(step => step.sequenceGroup === first.sequenceGroup);
+        nextStage = processStageForGroup(normalizeProcessStageGroup(first.stageGroup) || 'frontend');
+        progressRemark = `开始 ${firstGroup.map(step => step.processName).join('、')}`;
+        updateData.startedAt = old.startedAt || now;
+      } else if (input.action === 'confirm_drawing_issued') {
         if (state.overallStage !== 'not_issued' || transferred !== 0 || completed !== 0) {
           throw new ProductionStageFlowServiceError('当前工单不处于待下发图纸状态', 409, 'DRAWING_CONFIRMATION_NOT_ALLOWED');
         }
@@ -285,12 +345,13 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
       });
       if (update.count !== 1) throw conflict();
 
-      if (input.action === 'confirm_drawing_issued') {
-        await startConfirmedProcessRouteAfterDrawing(tx, {
+      if (input.action === 'confirm_drawing_issued' || input.action === 'start_process_route') {
+        await startConfirmedProcessRoute(tx, {
           workOrderId: old.id,
           userId: input.userId,
           actor: input.actor,
           now,
+          trigger: input.action === 'confirm_drawing_issued' ? 'drawing_issued' : 'manual_start',
         });
       }
       const changed = await tx.workOrder.findUniqueOrThrow({ where: { id: old.id } });
@@ -332,6 +393,13 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
             quantity,
             before: beforeQuantity,
             after: afterQuantity,
+            ...(input.action === 'start_process_route' ? {
+              planActive: old.planActive,
+              weekStartDate: old.weekStartDate?.toISOString() || null,
+              drawingStatus: old.drawingStatus,
+              materialStatus: old.materialStatus,
+              risksAcknowledged: true,
+            } : {}),
           },
         },
       });

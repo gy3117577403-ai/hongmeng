@@ -487,7 +487,7 @@ export function resolveWorkflowRouteState(
         : currentGroup.length > 0
           ? currentGroup.map(step => step.label).join('、')
           : route.status === 'confirmed' && !route.startedAt
-            ? '等待图纸下发'
+            ? '等待开始生产'
             : '等待工序开始',
     nextStep: lifecycle.awaitingBranchClosure
       ? '处理返工/补产分支'

@@ -21,20 +21,20 @@ test('explicit pending and business hold statuses are preserved', () => {
   assert.equal(shouldSynchronizeDrawingReleaseStatus('图纸变更'), false);
 });
 
-test('not-issued stage labels reflect drawing readiness and plan activation', () => {
+test('not-started stage labels keep drawing readiness as a non-blocking risk signal', () => {
   assert.equal(productionDrawingStageLabel({
     drawingStatus: null,
     hasOriginalDrawing: false,
     planActive: true,
-  }), '等待图纸');
+  }), '图纸待补');
   assert.equal(productionDrawingStageLabel({
     drawingStatus: null,
     hasOriginalDrawing: true,
     planActive: true,
-  }), '待开始首道工序');
+  }), '等待工序配置');
   assert.equal(productionDrawingStageLabel({
     drawingStatus: null,
     hasOriginalDrawing: true,
     planActive: false,
-  }), '图纸已就绪 · 待启用');
+  }), '等待工序配置');
 });

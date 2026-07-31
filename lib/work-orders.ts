@@ -59,6 +59,20 @@ export function isActiveProductionWorkOrder(order: {
     && !order.planClearedAt;
 }
 
+/**
+ * A scheduled production order can be executed before its planning week becomes
+ * active. `planActive` controls which week is presented as the current plan; it
+ * is not a production permission flag. Once a plan has been cleared/archived it
+ * remains read-only.
+ */
+export function isExecutableProductionWorkOrder(order: {
+  planType?: string | null;
+  planClearedAt?: Date | string | null;
+}): boolean {
+  return (order.planType === 'weekly_plan' || order.planType === 'managed_plan')
+    && !order.planClearedAt;
+}
+
 export function displayWorkOrderCode(order: Pick<WorkOrder, 'code' | 'specification'> | { code?: string | null; specification?: string | null }) {
   return order.specification?.trim() || order.code?.trim() || '-';
 }

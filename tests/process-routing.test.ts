@@ -61,7 +61,8 @@ test('只有尚未开工且没有生产事实的普通工单可以补建产品�
   assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, progress: 1 }), false);
   assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, completedQty: '1' }), false);
   assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, branchType: 'defect_rework' }), false);
-  assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, planActive: false }), false);
+  assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, planActive: false }), true);
+  assert.equal(canMaterializeProductTimeRouteForWorkOrder({ ...safeOrder, planClearedAt: new Date() }), false);
 });
 
 test('只有完全未开始且没有报工记录的草稿路线可以由产品工时安全接管', () => {

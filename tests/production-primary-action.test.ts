@@ -9,7 +9,6 @@ test('active production rows always advance the published route', () => {
     awaitingBranchClosure: false,
     canAdministerProduction: true,
     routeNeedsMaintenance: false,
-    drawingNotIssued: false,
   }), 'advance_route');
 });
 
@@ -20,7 +19,6 @@ test('read-only and completed rows remain inspection actions', () => {
     awaitingBranchClosure: false,
     canAdministerProduction: true,
     routeNeedsMaintenance: false,
-    drawingNotIssued: false,
   }), 'view_detail');
   assert.equal(resolveProductionPrimaryAction({
     readOnly: false,
@@ -28,7 +26,6 @@ test('read-only and completed rows remain inspection actions', () => {
     awaitingBranchClosure: false,
     canAdministerProduction: true,
     routeNeedsMaintenance: false,
-    drawingNotIssued: false,
   }), 'view_workflow');
   assert.equal(resolveProductionPrimaryAction({
     readOnly: false,
@@ -36,7 +33,6 @@ test('read-only and completed rows remain inspection actions', () => {
     awaitingBranchClosure: true,
     canAdministerProduction: true,
     routeNeedsMaintenance: false,
-    drawingNotIssued: false,
   }), 'view_workflow');
 });
 
@@ -47,14 +43,15 @@ test('non-administrators inspect unpublished route states instead of mutating th
     awaitingBranchClosure: false,
     canAdministerProduction: false,
     routeNeedsMaintenance: true,
-    drawingNotIssued: false,
   }), 'view_detail');
+});
+
+test('drawing readiness never blocks a published executable route', () => {
   assert.equal(resolveProductionPrimaryAction({
     readOnly: false,
     aggregateCompleted: false,
     awaitingBranchClosure: false,
     canAdministerProduction: false,
     routeNeedsMaintenance: false,
-    drawingNotIssued: true,
-  }), 'view_detail');
+  }), 'advance_route');
 });

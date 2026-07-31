@@ -8,12 +8,13 @@ import {
 } from '@/lib/process-completion-domain';
 import { prisma } from '@/lib/prisma';
 import { normalizeProcessStageGroup, processStageForGroup } from '@/lib/process-routing';
+import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import {
   compatibleStageForQuantities,
   resolveEffectiveFrontendTransferredQty,
 } from '@/lib/production-stage-flow';
 import {
-  isActiveProductionWorkOrder,
+  isExecutableProductionWorkOrder,
   legacyStatusForStage,
   normalizeWorkOrderStage,
 } from '@/lib/work-orders';
@@ -1946,11 +1947,19 @@ async function performProcessCompletion(
       'PROCESS_ROUTE_NOT_FOUND',
     );
   }
-  if (!isActiveProductionWorkOrder(route.workOrder)) {
+  if (!isExecutableProductionWorkOrder(route.workOrder)) {
     throw new ProcessCompletionServiceError(
-      '历史周和未启用计划不能登记生产完成',
+      '已归档或已清除的周计划不能登记生产完成',
       409,
       'WORK_ORDER_READ_ONLY',
+    );
+  }
+  const timeReadiness = processRouteExecutionReadiness(route.steps);
+  if (!timeReadiness.ready) {
+    throw new ProcessCompletionServiceError(
+      `工序与工时尚未完整发布：${timeReadiness.missingStepNames.join('、')}`,
+      409,
+      'PROCESS_ROUTE_TIME_INCOMPLETE',
     );
   }
   if (route.workOrder.branchStatus === 'QUALITY_PENDING') {

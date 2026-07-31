@@ -9,6 +9,7 @@ import {
   validateProcessSteps,
   type ProcessStepInput,
 } from '@/lib/process-routing';
+import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
 import {
   calculateActualLaborMilliseconds,
@@ -22,7 +23,7 @@ import {
   positiveInteger,
 } from '@/lib/process-time';
 import { legacyProcessStandardSnapshot, productTimeProfileInclude, productTimeStandardSnapshot } from '@/lib/product-time';
-import { isActiveProductionWorkOrder, legacyStatusForStage, normalizeWorkOrderStage, type WorkOrderStage } from '@/lib/work-orders';
+import { isExecutableProductionWorkOrder, legacyStatusForStage, normalizeWorkOrderStage, type WorkOrderStage } from '@/lib/work-orders';
 
 export class ProcessRouteServiceError extends Error {
   readonly status: number;
@@ -89,14 +90,13 @@ function conflict(): ProcessRouteServiceError {
   );
 }
 
-function ensureActiveWeeklyOrder(order: {
+function ensureExecutableWeeklyOrder(order: {
   planType: string | null;
-  planActive: boolean;
   planClearedAt: Date | null;
 }): void {
-  if (!isActiveProductionWorkOrder(order)) {
+  if (!isExecutableProductionWorkOrder(order)) {
     throw new ProcessRouteServiceError(
-      '历史周和下周草稿为只读，请在当前启用周维护工艺路线',
+      '已归档或已清除的周计划不能维护工艺路线',
       409,
       'WORK_ORDER_READ_ONLY',
     );
@@ -157,7 +157,7 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
       include: { workOrder: true },
     });
     if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
-    ensureActiveWeeklyOrder(route.workOrder);
+    ensureExecutableWeeklyOrder(route.workOrder);
     if (route.status !== 'draft') {
       throw new ProcessRouteServiceError('已确认或已开始的工艺路线不能重新编排', 409, 'PROCESS_ROUTE_LOCKED');
     }
@@ -272,7 +272,7 @@ async function applyProductTimeProfile(input: ApplyProductTimeProfileCommand): P
       include: { workOrder: true },
     });
     if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
-    ensureActiveWeeklyOrder(route.workOrder);
+    ensureExecutableWeeklyOrder(route.workOrder);
     if (route.status !== 'draft') {
       throw new ProcessRouteServiceError('已确认或已开始的路线不能切换产品工时', 409, 'PROCESS_ROUTE_LOCKED');
     }
@@ -349,7 +349,7 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
       include: { workOrder: true, steps: { orderBy: { position: 'asc' } } },
     });
     if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
-    ensureActiveWeeklyOrder(route.workOrder);
+    ensureExecutableWeeklyOrder(route.workOrder);
     if (route.status !== 'draft') {
       throw new ProcessRouteServiceError('该工艺路线已经确认', 409, 'PROCESS_ROUTE_ALREADY_CONFIRMED');
     }
@@ -373,6 +373,7 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
         })
       : null;
     const productEntryMap = new Map((productProfile?.entries || []).map(entry => [entry.processDefinitionId, entry]));
+    const readinessSteps = [];
     for (const step of route.steps) {
       const productEntry = step.processDefinitionId ? productEntryMap.get(step.processDefinitionId) : null;
       const standard = step.processDefinitionId ? standardMap.get(step.processDefinitionId) : null;
@@ -381,28 +382,40 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
         : !productProfile && standard
           ? legacyProcessStandardSnapshot(standard, step.unitsPerProduct)
           : null;
+      const snapshotData = snapshot || {
+        standardTimeId: null,
+        standardVersion: null,
+        productTimeProfileId: productProfile?.id || null,
+        productTimeEntryId: null,
+        productTimeProfileVersion: productProfile?.version || null,
+        standardSource: 'missing',
+        timeBasis: null,
+        unitLabel: null,
+        standardMillisecondsPerUnit: null,
+        setupMilliseconds: 0,
+        countsForEfficiency: true,
+      };
+      readinessSteps.push({
+        processName: step.processName,
+        status: step.status,
+        unitsPerProduct: step.unitsPerProduct,
+        timeBasis: snapshotData.timeBasis,
+        unitLabel: snapshotData.unitLabel,
+        standardMillisecondsPerUnit: snapshotData.standardMillisecondsPerUnit,
+        setupMilliseconds: snapshotData.setupMilliseconds,
+      });
       await tx.workOrderProcessStep.update({
         where: { id: step.id },
-        data: snapshot || {
-          standardTimeId: null,
-          standardVersion: null,
-          productTimeProfileId: productProfile?.id || null,
-          productTimeEntryId: null,
-          productTimeProfileVersion: productProfile?.version || null,
-          standardSource: 'missing',
-          timeBasis: null,
-          unitLabel: null,
-          standardMillisecondsPerUnit: null,
-          setupMilliseconds: 0,
-          countsForEfficiency: true,
-        },
+        data: snapshotData,
       });
     }
     const stage = normalizeWorkOrderStage(route.workOrder.stage || route.workOrder.status) || 'not_issued';
-    const first = route.steps[0];
+    const executableSteps = route.steps.filter(step => step.status !== 'skipped');
+    const first = executableSteps[0] || route.steps[0];
     const firstSequenceGroup = first.sequenceGroup;
-    const firstSteps = route.steps.filter(step => step.sequenceGroup === firstSequenceGroup);
-    const shouldStart = stage !== 'not_issued';
+    const firstSteps = executableSteps.filter(step => step.sequenceGroup === firstSequenceGroup);
+    const timeReadiness = processRouteExecutionReadiness(readinessSteps);
+    const shouldStart = stage !== 'not_issued' && timeReadiness.ready;
     const firstGroup = normalizeProcessStageGroup(first.stageGroup) || 'frontend';
     const nextStage = shouldStart ? processStageForGroup(firstGroup) : stage;
     const update = await tx.workOrderProcessRoute.updateMany({
@@ -440,7 +453,9 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
         action: 'confirm_process_route',
         content: shouldStart
           ? `确认工艺路线，开始 ${firstSteps.map(step => step.processName).join('、')}`
-          : '确认工艺路线，等待图纸下发后开始首道工序',
+          : stage !== 'not_issued' && !timeReadiness.ready
+            ? `确认工艺路线，等待补齐工时：${timeReadiness.missingStepNames.join('、')}`
+            : '确认工艺路线，等待开始生产',
         actorId: input.userId,
       },
     });
@@ -450,7 +465,13 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
         action: 'confirm_process_route',
         targetType: 'work_order_process_route',
         targetId: route.id,
-        detail: { workOrderId: route.workOrderId, stepCount: route.steps.length, started: shouldStart },
+        detail: {
+          workOrderId: route.workOrderId,
+          stepCount: route.steps.length,
+          started: shouldStart,
+          timeReady: timeReadiness.ready,
+          missingTimeSteps: timeReadiness.missingStepNames,
+        },
       },
     });
     return route.id;
@@ -471,7 +492,7 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
       include: { workOrder: true, steps: { orderBy: { position: 'asc' } } },
     });
     if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
-    ensureActiveWeeklyOrder(route.workOrder);
+    ensureExecutableWeeklyOrder(route.workOrder);
     if (route.status === 'draft') {
       throw new ProcessRouteServiceError('请先由工艺确认路线后再上报生产进度', 409, 'PROCESS_ROUTE_NOT_CONFIRMED');
     }
@@ -891,23 +912,41 @@ export async function updateProcessRoute(command: ProcessRouteCommand): Promise<
   }
 }
 
-export async function startConfirmedProcessRouteAfterDrawing(
+export async function startConfirmedProcessRoute(
   tx: Prisma.TransactionClient,
   input: {
     workOrderId: string;
     userId: string;
     actor: string;
     now: Date;
+    trigger?: 'manual_start' | 'drawing_issued';
   },
-): Promise<void> {
+): Promise<boolean> {
   const route = await tx.workOrderProcessRoute.findUnique({
     where: { workOrderId: input.workOrderId },
     include: { workOrder: true, steps: { orderBy: { position: 'asc' } } },
   });
-  if (!route || route.status !== 'confirmed' || route.startedAt || !route.steps.length) return;
-  const first = route.steps[0];
+  if (!route || route.status !== 'confirmed' || route.startedAt || !route.steps.length) return false;
+  ensureExecutableWeeklyOrder(route.workOrder);
+  const timeReadiness = processRouteExecutionReadiness(route.steps);
+  if (!timeReadiness.ready) {
+    throw new ProcessRouteServiceError(
+      `工序与工时尚未完整发布：${timeReadiness.missingStepNames.join('、')}`,
+      409,
+      'PROCESS_ROUTE_TIME_INCOMPLETE',
+    );
+  }
+  const executableSteps = route.steps.filter(step => step.status !== 'skipped');
+  const first = executableSteps[0];
+  if (!first) {
+    throw new ProcessRouteServiceError(
+      '工艺路线没有可执行工序，请重新发布产品工序与工时',
+      409,
+      'PROCESS_ROUTE_EMPTY',
+    );
+  }
   const firstSequenceGroup = first.sequenceGroup;
-  const firstSteps = route.steps.filter(step => step.sequenceGroup === firstSequenceGroup);
+  const firstSteps = executableSteps.filter(step => step.sequenceGroup === firstSequenceGroup);
   const initialInputQty = targetQuantity(route.workOrder);
   const stageGroup = normalizeProcessStageGroup(first.stageGroup) || 'frontend';
   const nextStage = processStageForGroup(stageGroup);
@@ -928,6 +967,8 @@ export async function startConfirmedProcessRouteAfterDrawing(
     data: {
       stage: nextStage,
       status: legacyStatusForStage(nextStage),
+      startedAt: route.workOrder.startedAt || input.now,
+      lastProgressAt: input.now,
       latestProgressRemark: `当前工序：${firstSteps.map(step => step.processName).join('、')}`,
     },
   });
@@ -936,7 +977,7 @@ export async function startConfirmedProcessRouteAfterDrawing(
       routeId: route.id,
       stepId: first.id,
       action: 'start_process_route',
-      content: `图纸已下发，开始 ${firstSteps.map(step => step.processName).join('、')}`,
+      content: `${input.trigger === 'drawing_issued' ? '确认图纸下发并' : ''}开始 ${firstSteps.map(step => step.processName).join('、')}`,
       actorId: input.userId,
     },
   });
@@ -949,9 +990,28 @@ export async function startConfirmedProcessRouteAfterDrawing(
       detail: {
         workOrderId: input.workOrderId,
         processCode: first.processCode,
+        trigger: input.trigger || 'manual_start',
+        planActive: route.workOrder.planActive,
+        weekStartDate: route.workOrder.weekStartDate?.toISOString() || null,
+        drawingStatus: route.workOrder.drawingStatus,
+        materialStatus: route.workOrder.materialStatus,
       },
     },
   });
+  return true;
+}
+
+/** @deprecated Use the drawing-independent route starter. */
+export async function startConfirmedProcessRouteAfterDrawing(
+  tx: Prisma.TransactionClient,
+  input: {
+    workOrderId: string;
+    userId: string;
+    actor: string;
+    now: Date;
+  },
+): Promise<boolean> {
+  return startConfirmedProcessRoute(tx, { ...input, trigger: 'drawing_issued' });
 }
 
 export function parseProcessRouteAction(value: unknown): ProcessRouteCommand['action'] | null {

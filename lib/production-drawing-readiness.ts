@@ -32,6 +32,6 @@ export function productionDrawingStageLabel(input: {
 }): string {
   const status = normalizedDrawingStatus(input.drawingStatus);
   if (/样品|客户|变更|返工/.test(status)) return status;
-  if (!hasEffectiveIssuedDrawing(status, input.hasOriginalDrawing)) return '等待图纸';
-  return input.planActive ? '待开始首道工序' : '图纸已就绪 · 待启用';
+  if (!hasEffectiveIssuedDrawing(status, input.hasOriginalDrawing)) return '图纸待补';
+  return '等待工序配置';
 }
