@@ -391,6 +391,7 @@ test('releasing without product time still creates a warehouse task and a pendin
         customerName: '测试客户',
         productName: '测试产品',
         specification: 'TEST-001',
+        _count: { files: 1 },
         productTimeProfiles: [],
       }),
     },
@@ -449,6 +450,11 @@ test('releasing without product time still creates a warehouse task and a pendin
   });
 
   assert.equal(createdWorkOrder?.['planActive'], true);
+  assert.equal(createdWorkOrder?.['drawingStatus'], '已发');
+  assert.equal(
+    (createdWorkOrder?.['drawingIssuedAt'] as Date | undefined)?.toISOString(),
+    '2026-07-20T04:00:00.000Z',
+  );
   assert.equal(createdWorkOrder?.['unitWorkHours'], null);
   assert.equal(warehouseTask?.['workOrderId'], 'work-order-1');
   assert.equal(warehouseTask?.['status'], 'pending');

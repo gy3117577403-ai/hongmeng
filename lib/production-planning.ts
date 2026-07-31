@@ -5,6 +5,7 @@ import {
   invalidSpecificationReason,
   parseCustomerCode,
 } from '@/lib/drawing-library';
+import { shouldSynchronizeDrawingReleaseStatus } from '@/lib/production-drawing-readiness';
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
 import type {
@@ -417,6 +418,7 @@ export async function resolvePlanningReferences(
   productTimeProfileId: string | null;
   productTimeProfileVersion: number | null;
   unitMilliseconds: number | null;
+  drawingFileCount: number;
 }> {
   const itemId = text(input.drawingLibraryItemId, 80);
   const key = drawingLibraryKey(input.customerName, input.specification);
@@ -437,6 +439,11 @@ export async function resolvePlanningReferences(
       customerName: true,
       productName: true,
       specification: true,
+      _count: {
+        select: {
+          files: { where: { deletedAt: null, category: { code: 'drawing' } } },
+        },
+      },
       productTimeProfiles: {
         where: { status: 'published' },
         orderBy: { version: 'desc' },
@@ -454,6 +461,7 @@ export async function resolvePlanningReferences(
     productTimeProfileId: profile?.id || null,
     productTimeProfileVersion: profile?.version || null,
     unitMilliseconds: profile ? productTimeTotalMilliseconds(profile.entries) : null,
+    drawingFileCount: drawing?._count?.files || 0,
   };
 }
 
@@ -1226,7 +1234,10 @@ export async function releaseProductionPlanBatch(
 ): Promise<{ workOrderId: string; warnings: string[]; created: boolean }> {
   const batch = await tx.productionPlanBatch.findUnique({
     where: { id: input.batchId },
-    include: { planOrder: true, workOrder: { select: { id: true } } },
+    include: {
+      planOrder: true,
+      workOrder: { select: { id: true, drawingStatus: true, drawingIssuedAt: true } },
+    },
   });
   if (!batch || batch.deletedAt || batch.planOrder.deletedAt) throw new Error('PLAN_BATCH_NOT_FOUND');
   if (batch.releaseState === 'archived') throw new Error('PLAN_BATCH_ARCHIVED');
@@ -1252,6 +1263,7 @@ export async function releaseProductionPlanBatch(
   }
   const code = workOrderCode(batch.planOrder.sourceOrderNo, batch.planOrder.sourceLineNo, batch.batchNo);
   const planActive = input.target === 'active';
+  const hasOriginalDrawing = references.drawingFileCount > 0;
   const data = {
     code,
     customerName: batch.planOrder.customerName,
@@ -1280,6 +1292,8 @@ export async function releaseProductionPlanBatch(
     planClearedBy: null,
     libraryKey: batch.planOrder.specification,
     drawingLibraryItemId: references.drawingLibraryItemId,
+    drawingStatus: hasOriginalDrawing ? '已发' : null,
+    drawingIssuedAt: hasOriginalDrawing ? now : null,
   } satisfies Prisma.WorkOrderUncheckedCreateInput;
   const created = !batch.workOrderId;
   const workOrder = batch.workOrderId
@@ -1304,6 +1318,12 @@ export async function releaseProductionPlanBatch(
           planClearedAt: null,
           planClearedBy: null,
           drawingLibraryItemId: data.drawingLibraryItemId,
+          ...(hasOriginalDrawing && shouldSynchronizeDrawingReleaseStatus(batch.workOrder?.drawingStatus)
+            ? {
+                drawingStatus: '已发',
+                drawingIssuedAt: batch.workOrder?.drawingIssuedAt || now,
+              }
+            : {}),
         },
         select: { id: true },
       })

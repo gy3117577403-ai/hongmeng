@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
 import { getProductionAlerts, isDrawingConfirmationAlert } from '@/lib/production-alerts';
+import { hasEffectiveIssuedDrawing } from '@/lib/production-drawing-readiness';
 import { getProductionQuantitySummary, parsedImportedProductionTarget } from '@/lib/production-quantity';
 import { processRouteSummaryInclude, serializeProcessRoute } from '@/lib/process-routing';
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
@@ -401,6 +402,7 @@ export function productionExceptionCodes(order: ProductionExecutionOrderRecord, 
     specification: order.specification,
     specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
     drawingStatus: order.drawingStatus,
+    hasOriginalDrawing: hasRequiredProductionDocuments(order),
     materialStatus: order.materialStatus,
     warehouseMaterialStatus: order.materialTask?.status,
     warehouseExceptionType: order.materialTask?.exceptionType,
@@ -437,6 +439,7 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     specification: order.specification,
     specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
     drawingStatus: order.drawingStatus,
+    hasOriginalDrawing: hasRequiredProductionDocuments(order),
     materialStatus: order.materialStatus,
     warehouseMaterialStatus: order.materialTask?.status,
     warehouseExceptionType: order.materialTask?.exceptionType,
@@ -559,6 +562,7 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     sourceRowNo: order.sourceRowNo,
     drawingIssuedAt: order.drawingIssuedAt?.toISOString() || null,
     drawingIssueNote: order.drawingIssueNote,
+    planActive: order.planActive,
     unitWorkHours: order.unitWorkHours,
     totalWorkHours: order.totalWorkHours,
     remark: order.remark,
@@ -604,6 +608,9 @@ function dateInput(value?: string) {
 
 function drawingStatusValue(order: ProductionExecutionOrderRecord) {
   const value = text(order.drawingStatus);
+  if ((!value || value === '-' || value.includes('未设置')) && hasEffectiveIssuedDrawing(value, hasRequiredProductionDocuments(order))) {
+    return 'issued';
+  }
   if (!value || value === '-' || value.includes('未设置')) return 'unset';
   if (value.includes('样品') && value.includes('确认')) return 'sample_confirmation';
   if (value.includes('客户') && value.includes('确认')) return 'customer_confirmation';
@@ -672,6 +679,7 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
       specification: order.specification,
       specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
       drawingStatus: order.drawingStatus,
+      hasOriginalDrawing: hasRequiredProductionDocuments(order),
       materialStatus: order.materialStatus,
       warehouseMaterialStatus: order.materialTask?.status,
       warehouseExceptionType: order.materialTask?.exceptionType,
@@ -710,6 +718,7 @@ function drawingConfirmationRequired(order: ProductionExecutionOrderRecord, now:
     stage,
     specification: order.specification,
     drawingStatus: order.drawingStatus,
+    hasOriginalDrawing: hasRequiredProductionDocuments(order),
     materialStatus: order.materialStatus,
     warehouseMaterialStatus: order.materialTask?.status,
     warehouseExceptionType: order.materialTask?.exceptionType,
@@ -853,6 +862,7 @@ export async function summarizeProduction(week: ProductionWeek) {
       specification: order.specification,
       specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
       drawingStatus: order.drawingStatus,
+      hasOriginalDrawing: hasRequiredProductionDocuments(order),
       materialStatus: order.materialStatus,
       warehouseMaterialStatus: order.materialTask?.status,
       warehouseExceptionType: order.materialTask?.exceptionType,

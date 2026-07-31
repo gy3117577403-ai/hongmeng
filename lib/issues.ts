@@ -1,7 +1,12 @@
 import { Prisma } from '@prisma/client';
 import { isInvalidSpecification } from '@/lib/drawing-library';
 import { getProductionAlerts, type ProductionAlert, type ProductionAlertCode } from '@/lib/production-alerts';
-import { loadProductionOrders, resolveProductionWeek, type ProductionExecutionOrderRecord } from '@/lib/production-execution';
+import {
+  hasRequiredProductionDocuments,
+  loadProductionOrders,
+  resolveProductionWeek,
+  type ProductionExecutionOrderRecord,
+} from '@/lib/production-execution';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import { prisma } from '@/lib/prisma';
 import type {
@@ -305,6 +310,7 @@ export function alertsForProductionOrder(order: ProductionExecutionOrderRecord, 
     specification: order.specification,
     specificationInvalid: !String(order.specification || '').trim() || isInvalidSpecification(order.specification || ''),
     drawingStatus: order.drawingStatus,
+    hasOriginalDrawing: hasRequiredProductionDocuments(order),
     materialStatus: order.materialStatus,
     warehouseMaterialStatus: order.materialTask?.status,
     warehouseExceptionType: order.materialTask?.exceptionType,

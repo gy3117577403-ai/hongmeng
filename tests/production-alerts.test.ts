@@ -16,6 +16,41 @@ test('normal drawing and material states do not create alerts', () => {
   assert.deepEqual(explicitIssuedDrawing, []);
 });
 
+test('an active original drawing resolves legacy empty status without overriding explicit holds', () => {
+  const legacyLinkedDrawing = getProductionAlerts({
+    specification: 'F129951528',
+    stage: 'not_issued',
+    drawingStatus: null,
+    hasOriginalDrawing: true,
+    uncompletedQty: '4000',
+    completedQty: '0',
+    plannedAt: '2099-01-01',
+  });
+  assert.equal(legacyLinkedDrawing.some(alert => alert.code === 'DRAWING_NOT_ISSUED'), false);
+
+  const legacyPendingWithOriginal = getProductionAlerts({
+    specification: 'F129951528',
+    stage: 'not_issued',
+    drawingStatus: '待发',
+    hasOriginalDrawing: true,
+    uncompletedQty: '4000',
+    completedQty: '0',
+    plannedAt: '2099-01-01',
+  });
+  assert.equal(legacyPendingWithOriginal.some(alert => alert.code === 'DRAWING_NOT_ISSUED'), false);
+
+  const pendingWithoutOriginal = getProductionAlerts({
+    specification: 'F129951528',
+    stage: 'not_issued',
+    drawingStatus: '待发',
+    hasOriginalDrawing: false,
+    uncompletedQty: '4000',
+    completedQty: '0',
+    plannedAt: '2099-01-01',
+  });
+  assert.equal(pendingWithoutOriginal.some(alert => alert.code === 'DRAWING_NOT_ISSUED'), true);
+});
+
 test('sample confirmation and tail remaining are explicit alerts', () => {
   const drawing = getProductionAlerts({
     specification: 'D019999-9087-V03', stage: 'not_issued', drawingStatus: '待样品确认',

@@ -10,6 +10,7 @@ import { PortalMenu } from '@/components/PortalMenu';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { writeClipboardText } from '@/lib/client-platform';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
+import { productionDrawingStageLabel } from '@/lib/production-drawing-readiness';
 import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
 import { resolveProductionPrimaryAction } from '@/lib/production-primary-action';
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
@@ -152,6 +153,7 @@ type ProductionOrder = {
   sourceRowNo?: number | null;
   drawingIssuedAt?: string | null;
   drawingIssueNote?: string | null;
+  planActive: boolean;
   unitWorkHours?: string | null;
   totalWorkHours?: string | null;
   remark?: string | null;
@@ -577,7 +579,13 @@ function daysUntilDelivery(order: ProductionOrder): number | null {
 }
 
 function currentProcessName(order: ProductionOrder): string {
-  return order.processRoute?.currentStep?.processName || (order.stage === 'not_issued' ? '等待图纸' : order.stageText);
+  return order.processRoute?.currentStep?.processName || (order.stage === 'not_issued'
+    ? productionDrawingStageLabel({
+        drawingStatus: order.drawingStatus,
+        hasOriginalDrawing: order.documentCategoryCodes.includes('drawing'),
+        planActive: order.planActive,
+      })
+    : order.stageText);
 }
 
 function nextRouteSteps(order: ProductionOrder): WorkOrderProcessRouteDTO['steps'] {
@@ -761,6 +769,7 @@ function withProductionDerived(order: ProductionOrder): ProductionOrder {
   const productionAlerts = getProductionAlerts({
     ...order,
     specificationInvalid: order.exceptionCodes.includes('specification_invalid'),
+    hasOriginalDrawing: order.documentCategoryCodes.includes('drawing'),
     warehouseMaterialStatus: order.warehouseMaterial?.status,
     warehouseExceptionType: order.warehouseMaterial?.exceptionType,
     warehouseExceptionNote: order.warehouseMaterial?.exceptionNote,

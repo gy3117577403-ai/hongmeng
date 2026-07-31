@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   normalizePlanningProductText,
   planningProductIdentity,
+  reconcileProductionPlanDrawingLinks,
   selectCanonicalDrawingItem,
   type PlanningProductLinkItem,
 } from '../lib/planning-product-link';
@@ -52,4 +53,52 @@ test('keeps an ambiguous identity unresolved instead of relinking arbitrarily', 
     customerName: '福尔达',
     specification: 'F319951035',
   }, [first, second]), null);
+});
+
+test('reconciliation propagates an uploaded original drawing to an existing released work order', async () => {
+  const workOrderUpdates: Array<{ where: unknown; data: unknown }> = [];
+  const tx = {
+    drawingLibraryItem: {
+      findFirst: async () => ({
+        id: 'drawing-1',
+        customerName: '福尔达',
+        specification: 'F319951035',
+      }),
+      findMany: async () => [{
+        id: 'drawing-1',
+        libraryKey: '福尔达::F319951035',
+        customerName: '福尔达',
+        specification: 'F319951035',
+        _count: { files: 1 },
+      }],
+    },
+    productionPlanOrder: {
+      findMany: async () => [{
+        id: 'plan-order-1',
+        drawingLibraryItemId: 'drawing-1',
+        customerName: '福尔达',
+        specification: 'F319951035',
+      }],
+      update: async () => ({}),
+    },
+    productionPlanBatch: {
+      findMany: async () => [{
+        planOrderId: 'plan-order-1',
+        workOrderId: 'work-order-1',
+      }],
+    },
+    workOrder: {
+      updateMany: async (input: { where: unknown; data: unknown }) => {
+        workOrderUpdates.push(input);
+        return { count: 1 };
+      },
+    },
+  } as unknown as Parameters<typeof reconcileProductionPlanDrawingLinks>[0];
+
+  const result = await reconcileProductionPlanDrawingLinks(tx, { drawingLibraryItemId: 'drawing-1' });
+  assert.equal(result.unchangedOrders, 1);
+  assert.equal(workOrderUpdates.length, 2);
+  assert.deepEqual(workOrderUpdates[0]?.data, { drawingLibraryItemId: 'drawing-1' });
+  assert.equal((workOrderUpdates[1]?.data as { drawingStatus?: string }).drawingStatus, '已发');
+  assert.ok((workOrderUpdates[1]?.data as { drawingIssuedAt?: Date }).drawingIssuedAt instanceof Date);
 });

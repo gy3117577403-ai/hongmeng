@@ -1,4 +1,5 @@
 import { getProductionQuantitySummary, type ProductionQuantityInput } from '@/lib/production-quantity';
+import { hasEffectiveIssuedDrawing } from '@/lib/production-drawing-readiness';
 
 export type ProductionAlertCode =
   | 'DRAWING_NOT_ISSUED'
@@ -21,6 +22,7 @@ export type ProductionAlertInput = ProductionQuantityInput & {
   specification?: string | null;
   specificationInvalid?: boolean;
   drawingStatus?: string | null;
+  hasOriginalDrawing?: boolean;
   materialStatus?: string | null;
   warehouseMaterialStatus?: string | null;
   warehouseExceptionType?: string | null;
@@ -96,7 +98,9 @@ export function getProductionAlerts(input: ProductionAlertInput, now = new Date(
   if (/变更/.test(drawingContext)) alerts.push({ code: 'DRAWING_CHANGE_REQUIRED', label: '图纸需变更', tone: 'red' });
   else if (/样品/.test(drawingContext) && /确认|等待|待/.test(drawingContext)) alerts.push({ code: 'SAMPLE_CONFIRMATION_REQUIRED', label: '待样品确认', tone: 'amber' });
   else if (/客户/.test(drawingContext) && /确认|等待|待/.test(drawingContext)) alerts.push({ code: 'CUSTOMER_CONFIRMATION_REQUIRED', label: '待客户确认', tone: 'amber' });
-  else if (!stageCompleted && (!drawing || /未发|待发|未下发/.test(drawing))) alerts.push({ code: 'DRAWING_NOT_ISSUED', label: '图纸待发', tone: 'orange' });
+  else if (!stageCompleted && !hasEffectiveIssuedDrawing(drawing, Boolean(input.hasOriginalDrawing))) {
+    alerts.push({ code: 'DRAWING_NOT_ISSUED', label: '图纸待发', tone: 'orange' });
+  }
 
   if (!stageCompleted && input.warehouseMaterialStatus === 'exception') {
     const critical = input.warehouseExceptionType === 'wrong_material'

@@ -127,12 +127,14 @@ export async function reconcileProductionPlanDrawingLinks(
   let linkedOrders = 0;
   let unchangedOrders = 0;
   let unresolvedOrders = 0;
+  const canonicalByPlanOrderId = new Map<string, PlanningProductLinkItem>();
   for (const order of orders) {
     const canonical = selectCanonicalDrawingItem(order, items);
     if (!canonical) {
       unresolvedOrders += 1;
       continue;
     }
+    canonicalByPlanOrderId.set(order.id, canonical);
     if (canonical.id === order.drawingLibraryItemId) {
       unchangedOrders += 1;
       continue;
@@ -142,6 +144,56 @@ export async function reconcileProductionPlanDrawingLinks(
       data: { drawingLibraryItemId: canonical.id },
     });
     linkedOrders += 1;
+  }
+
+  const matchedPlanOrderIds = [...canonicalByPlanOrderId.keys()];
+  if (matchedPlanOrderIds.length > 0) {
+    const batches = await tx.productionPlanBatch.findMany({
+      where: {
+        deletedAt: null,
+        planOrderId: { in: matchedPlanOrderIds },
+        workOrderId: { not: null },
+      },
+      select: { planOrderId: true, workOrderId: true },
+      take: 10_000,
+    });
+    const workOrderIdsByDrawingItemId = new Map<string, Set<string>>();
+    for (const batch of batches) {
+      if (!batch.workOrderId) continue;
+      const canonical = canonicalByPlanOrderId.get(batch.planOrderId);
+      if (!canonical) continue;
+      const workOrderIds = workOrderIdsByDrawingItemId.get(canonical.id) || new Set<string>();
+      workOrderIds.add(batch.workOrderId);
+      workOrderIdsByDrawingItemId.set(canonical.id, workOrderIds);
+    }
+
+    const now = new Date();
+    for (const [drawingLibraryItemId, workOrderIdSet] of workOrderIdsByDrawingItemId) {
+      const workOrderIds = [...workOrderIdSet];
+      if (!workOrderIds.length) continue;
+      await tx.workOrder.updateMany({
+        where: { id: { in: workOrderIds }, deletedAt: null },
+        data: { drawingLibraryItemId },
+      });
+      const canonical = items.find(item => item.id === drawingLibraryItemId);
+      if (!canonical?.drawingFileCount) continue;
+      await tx.workOrder.updateMany({
+        where: {
+          id: { in: workOrderIds },
+          deletedAt: null,
+          OR: [
+            { drawingStatus: null },
+            { drawingStatus: '' },
+            { drawingStatus: '-' },
+            { drawingStatus: { contains: '未设置' } },
+            { drawingStatus: { contains: '未发' } },
+            { drawingStatus: { contains: '待发' } },
+            { drawingStatus: { contains: '未下发' } },
+          ],
+        },
+        data: { drawingStatus: '已发', drawingIssuedAt: now },
+      });
+    }
   }
 
   return { checkedOrders: orders.length, linkedOrders, unchangedOrders, unresolvedOrders };

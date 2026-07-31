@@ -15,6 +15,7 @@ import {
   canUpgradeUnstartedConfirmedProductTimeRoute,
 } from '@/lib/process-routing';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
+import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import type {
   ChangeStatus,
@@ -1108,7 +1109,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       targetRoute = productionRoute;
     } else if (flow.status === 'missing_drawing') targetRoute = drawingRoute;
     else if (flow.status === 'missing_time' || flow.status === 'pending_process') {
-      targetRoute = `/workspace/product-times${order.drawingLibraryItemId ? `?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : ''}`;
+      targetRoute = productTimeConfigurationRoute(order.drawingLibraryItemId);
     } else if (flow.status === 'material_exception' || flow.status === 'pending_material') {
       targetRoute = `/workspace/warehouse${workOrder?.id ? `?workOrderId=${encodeURIComponent(workOrder.id)}` : ''}`;
     } else if (flow.status === 'production' || flow.status === 'pending_archive' || flow.status === 'completed') {
@@ -1237,7 +1238,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     });
     const productionRoute = productionExecutionRouteForWeek(order.id, order.weekStartDate, nowDate);
     const targetRoute = order.processRoute?.routeSource === 'product_time_pending' && !referenceRoute
-      ? `/workspace/product-times${order.drawingLibraryItemId ? `?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : ''}`
+      ? productTimeConfigurationRoute(order.drawingLibraryItemId)
       : productionRoute;
     items.push({
       id: `production:${order.id}`, entityId: order.id, entityType: 'production', workOrderId: order.id, code: order.specification || order.code,

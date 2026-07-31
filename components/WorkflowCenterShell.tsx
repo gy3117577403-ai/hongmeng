@@ -25,6 +25,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import type {
   CurrentUserDTO,
   WorkflowEntityType,
@@ -696,7 +697,11 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                     ? <button type="button" disabled={routeActionPending} onClick={() => { void applyProductTimeToSelectedWorkOrder(); }}>
                         {routeActionPending ? <Loader2 className="spin" size={14} /> : <PackageCheck size={14} />}{productTimeActionLabel}
                       </button>
-                    : <a href={selected.route}>{availableProductTimeVersion ? '查看生产工单' : selected.steps[0]?.key === 'route-repair-required' ? '补齐产品工序' : '配置产品工序'}<ArrowUpRight size={14} /></a>)}
+                    : <a href={availableProductTimeVersion
+                      ? selected.route
+                      : productTimeConfigurationRoute(selected.drawingLibraryItemId)}>
+                        {availableProductTimeVersion ? '查看生产工单' : selected.steps[0]?.key === 'route-repair-required' ? '补齐产品工序' : '配置产品工序'}<ArrowUpRight size={14} />
+                      </a>)}
                 </section> : <>
                   <section className="workflow-current-state"><div><span>当前节点</span><strong>{selected.currentStep}</strong><p>{selected.nextStep ? `下一节点：${selected.nextStep}` : '流程已到达终态'}</p></div><dl><div><dt>负责人</dt><dd>{selected.owner || '待分派'}</dd></div><div><dt>截止时间</dt><dd className={selected.isOverdue ? 'overdue' : ''}>{formatDate(selected.dueAt)}</dd></div><div><dt>最近更新</dt><dd>{formatDate(selected.updatedAt)}</dd></div></dl></section>
                   <section className="workflow-stepper"><header><h3>流程节点</h3><span>{entityLabels[selected.entityType]}闭环</span></header><ol>{selected.steps.map((step, index) => <li className={step.state} key={step.key}><span>{step.state === 'done' ? <CheckCircle2 size={16} /> : step.state === 'current' ? <CircleDot size={16} /> : index + 1}</span><div><strong>{step.label}</strong><small>{processStepStateLabel(step)}</small></div>{index < selected.steps.length - 1 && <ChevronRight size={15} aria-hidden="true" />}</li>)}</ol></section>
