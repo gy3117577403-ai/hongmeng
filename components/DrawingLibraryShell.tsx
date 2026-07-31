@@ -789,6 +789,17 @@ export function DrawingLibraryShell({
                   <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}>文件 {activeFiles.length}</button>
                   <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>
                   <button className="hm-workbench-button" type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>
+                  {selectedFile && (
+                    <button
+                      className="hm-workbench-button danger"
+                      type="button"
+                      title={`删除当前文件：${safeDisplayFilename(selectedFile)}`}
+                      onClick={() => deleteFile(selectedFile)}
+                    >
+                      <Trash2 size={15} aria-hidden="true" />
+                      删除当前文件
+                    </button>
+                  )}
                 </div>
               </div>
 
