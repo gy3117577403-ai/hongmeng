@@ -1,6 +1,6 @@
 'use client';
 
-import { BookOpenText, Clock3, FileImage, MoreHorizontal, Plus, Search, Upload } from 'lucide-react';
+import { ArrowLeft, BookOpenText, Clock3, FileImage, MoreHorizontal, Plus, Search, Upload } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
@@ -10,6 +10,7 @@ import { PdfViewer } from '@/components/PdfViewer';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { safeDisplayFilename } from '@/lib/filenames';
+import { planningReturnContextFromSearch, type PlanningReturnContext } from '@/lib/planning-navigation';
 import type { CurrentUserDTO, DrawingLibraryCustomerDTO, DrawingLibraryFileDTO, DrawingLibraryItemDTO, ResourceCategoryDTO } from '@/types';
 
 type DrawingLibraryForm = {
@@ -111,6 +112,7 @@ export function DrawingLibraryShell({
   const [activeCategoryId, setActiveCategoryId] = useState(categories[0]?.id || '');
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState('');
+  const [planningReturnContext, setPlanningReturnContext] = useState<PlanningReturnContext | null>(null);
   useToastBridge(msg, setMsg);
   const [modal, setModal] = useState<DrawingModal>(null);
   const [form, setForm] = useState<DrawingLibraryForm>(emptyForm);
@@ -163,6 +165,7 @@ export function DrawingLibraryShell({
 
     if (!initialUrlAppliedRef.current) {
       initialUrlAppliedRef.current = true;
+      setPlanningReturnContext(planningReturnContextFromSearch(window.location.search));
       if (targetKeyword && keyword !== targetKeyword) {
         setKeyword(targetKeyword);
         return;
@@ -514,8 +517,31 @@ export function DrawingLibraryShell({
         user={user}
         activeHref="/drawing-library"
         subtitle="客户、规格与图纸预览"
+        utilityActions={planningReturnContext ? (
+          <a
+            className="hm-drawing-planning-return"
+            href={planningReturnContext.returnTo}
+            title={`返回计划中心原排单位置${selectedItem?.specification ? `：${selectedItem.specification}` : ''}`}
+            onClick={event => {
+              event.preventDefault();
+              window.location.replace(planningReturnContext.returnTo);
+            }}
+          >
+            <ArrowLeft size={16} aria-hidden="true" />
+            <span>
+              <strong>返回计划中心</strong>
+              <small>
+                {planningReturnContext.weekStartDate && planningReturnContext.weekEndDate
+                  ? `${planningReturnContext.weekStartDate.slice(5)} - ${planningReturnContext.weekEndDate.slice(5)}`
+                  : '恢复原排单位置'}
+              </small>
+            </span>
+          </a>
+        ) : undefined}
         menuItems={[
-          { label: '返回生产执行', href: '/production' },
+          planningReturnContext
+            ? { label: '返回计划中心', href: planningReturnContext.returnTo }
+            : { label: '返回生产执行', href: '/production' },
           { label: '退出登录', onSelect: logout },
         ]}
       />

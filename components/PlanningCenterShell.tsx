@@ -45,6 +45,7 @@ import {
   type PlanningReadinessFilter,
 } from '@/lib/planning-readiness';
 import { resolvePlanningFlow } from '@/lib/planning-flow';
+import { buildPlanningDrawingLibraryHref } from '@/lib/planning-navigation';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
   CurrentUserDTO,
@@ -1690,6 +1691,15 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                   const processFinishedAt = batch.processCompletedAt || batch.processConfirmedAt;
                   const flowFinishedAt = batch.workOrderCompletedAt;
                   const workflowParams = workflowCenterParams(batch, periods);
+                  const drawingLibraryHref = buildPlanningDrawingLibraryHref({
+                    drawingLibraryItemId: order.drawingLibraryItemId,
+                    customerName: order.customerName,
+                    specification: order.specification,
+                    productName: order.productName,
+                    batchId: batch.id,
+                    weekStartDate: batch.weekStartDate,
+                    weekEndDate: batch.weekEndDate,
+                  });
                   return <Fragment key={batch.id}>
                   <tr data-batch-id={batch.id} className={`state-${batch.releaseState} ${expandedOrderId === batch.id ? 'expanded' : ''}`}>
                     <td className="select-cell"><input type="checkbox" aria-label={`选择 ${order.specification} 第 ${batch.batchNo} 批`} checked={selectedBatchIds.includes(batch.id)} disabled={batch.releaseState === 'archived'} onChange={() => toggleBatch(batch.id)} /></td>
@@ -1709,7 +1719,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                     <div><span>订单信息</span><strong>{order.salesperson ? `业务员 ${order.salesperson}` : '业务员未设置'}</strong><small>{order.remark || '无备注'}</small></div>
                     <div><span>流程状态</span><strong>{flow.label}</strong><small>仓库 {batch.warehouseStatus} · 工艺 {batch.processStatus}</small></div>
                     <div><span>数据来源</span><strong>{order.currentProductTimeVersion ? `产品工时 V${order.currentProductTimeVersion}` : order.planningUnitMilliseconds ? '订单计划工时' : '工时待维护'}</strong><small>{order.currentProductTimeVersion ? '正式工序工时' : '计划估算，投产前仍需发布工序工时'}</small></div>
-                    <nav><a href={order.drawingLibraryItemId ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}` : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`}>{order.drawingLibraryItemId ? '进入图纸档案' : '建立图纸档案'}</a><a href="/workspace/warehouse">仓库任务</a><a href={productTimeHref(order, periods)}>工艺与工时</a><a href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState}>查看完整流程</a></nav>
+                    <nav><a href={drawingLibraryHref} onClick={rememberPlanningState}>{order.drawingLibraryItemId ? '进入图纸档案' : '建立图纸档案'}</a><a href="/workspace/warehouse">仓库任务</a><a href={productTimeHref(order, periods)}>工艺与工时</a><a href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState}>查看完整流程</a></nav>
                   </div></td></tr>}
                 </Fragment>;
                 })}</tbody>
