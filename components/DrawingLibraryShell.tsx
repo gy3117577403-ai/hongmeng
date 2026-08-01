@@ -7,7 +7,13 @@ import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawing
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
-import { SopEditor, type SopEditorHandle, type SopWorkspace } from '@/components/sop';
+import {
+  PdfOverlayEditorModal,
+  type PdfOverlayDocument,
+  type PdfOverlayPersistenceResult,
+  type PdfOverlayPublishPayload,
+  type PdfOverlayUploadedImage,
+} from '@/components/sop';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { safeDisplayFilename } from '@/lib/filenames';
@@ -24,7 +30,12 @@ type DrawingLibraryForm = {
 
 type DrawingFilter = 'all' | 'complete' | 'recent' | 'anomaly';
 type DrawingModal = { mode: 'create' | 'edit'; item?: DrawingLibraryItemDTO } | null;
-type SopPaneMode = 'files' | 'editor';
+type PdfOverlayEditorSession = {
+  itemId: string;
+  versionId: string;
+  sourceFile: DrawingLibraryFileDTO;
+  initialDocument: PdfOverlayDocument;
+};
 type DrawingTrashItem = {
   id: string;
   customerName: string;
@@ -147,8 +158,8 @@ export function DrawingLibraryShell({
   const [bulkHelpOpen, setBulkHelpOpen] = useState(false);
   const [bulkImportOpen, setBulkImportOpen] = useState(false);
   const [filePanelOpen, setFilePanelOpen] = useState(false);
-  const [sopPaneMode, setSopPaneMode] = useState<SopPaneMode>('files');
-  const [sopTransitioning, setSopTransitioning] = useState(false);
+  const [pdfOverlaySession, setPdfOverlaySession] = useState<PdfOverlayEditorSession | null>(null);
+  const [pdfOverlayOpening, setPdfOverlayOpening] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<DrawingLibraryFileDTO | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [missingReference, setMissingReference] = useState<MissingDrawingReference | null>(null);
@@ -160,7 +171,6 @@ export function DrawingLibraryShell({
   const [trashLoading, setTrashLoading] = useState(false);
   const [restoringId, setRestoringId] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const sopEditorRef = useRef<SopEditorHandle>(null);
   const selectedIdRef = useRef(selectedId);
   const filePanelTriggerRef = useRef<HTMLButtonElement>(null);
   const loadControllerRef = useRef<AbortController | null>(null);
@@ -390,35 +400,107 @@ export function DrawingLibraryShell({
     }
   }, [filter, keyword]);
 
-  const handleSopPublished = useCallback(async (workspace: SopWorkspace) => {
-    const itemId = workspace.itemId || workspace.item.id;
-    if (selectedIdRef.current !== itemId) return;
-    const publishedFileId = workspace.publishedVersion?.publishedFile?.id || '';
-    await loadData();
-    if (selectedIdRef.current !== itemId) return;
-    setSelectedFileId(publishedFileId);
-    setSopPaneMode('files');
-    setFilePanelOpen(false);
-    setMsg(publishedFileId
-      ? 'SOP 已发布，已切换到生成的 PDF'
-      : 'SOP 已发布，资料列表已刷新');
-  }, [loadData]);
-
-  const requestSopEditorClose = useCallback(async (): Promise<boolean> => {
-    const editor = sopEditorRef.current;
-    if (!editor) return true;
-    setSopTransitioning(true);
-    try {
-      const closed = await editor.requestClose();
-      if (!closed) setMsg('当前 SOP 尚未保存成功，请处理保存提示后再离开');
-      return closed;
-    } catch {
-      setMsg('SOP 草稿保存失败，已停留在当前页面');
-      return false;
-    } finally {
-      setSopTransitioning(false);
+  const openPdfOverlayEditor = useCallback(async () => {
+    if (!selectedItem || !selectedFile || activeCategory?.code !== 'sop') {
+      setMsg('请先在 SOP 分类中选择一份 PDF 文件');
+      return;
     }
-  }, []);
+    if (selectedFile.fileType !== 'pdf') {
+      setMsg('在线编辑当前仅支持 PDF 文件');
+      return;
+    }
+    setFilePanelOpen(false);
+    setPdfOverlayOpening(true);
+    try {
+      const res = await fetch(`/api/drawing-library/${selectedItem.id}/sop/pdf-overlay`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseFileId: selectedFile.id }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || '无法打开在线编辑器');
+      if (!data.versionId) throw new Error('编辑版本创建失败，请刷新后重试');
+      const sourceFile = (data.sourceFile || selectedFile) as DrawingLibraryFileDTO;
+      const initialDocument = {
+        ...(data.content || {}),
+        sourceId: selectedItem.id,
+        baseFileId: sourceFile.id,
+        sourceFileName: safeDisplayFilename(sourceFile),
+        revision: Number(data.revision || 0),
+      } as PdfOverlayDocument;
+      setPdfOverlaySession({
+        itemId: selectedItem.id,
+        versionId: String(data.versionId || ''),
+        sourceFile,
+        initialDocument,
+      });
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : '无法打开在线编辑器');
+    } finally {
+      setPdfOverlayOpening(false);
+    }
+  }, [activeCategory?.code, selectedFile, selectedItem]);
+
+  const savePdfOverlay = useCallback(async (document: PdfOverlayDocument): Promise<PdfOverlayPersistenceResult> => {
+    const session = pdfOverlaySession;
+    if (!session) throw new Error('编辑会话已关闭，请重新打开');
+    const res = await fetch(`/api/drawing-library/${session.itemId}/sop/pdf-overlay/versions/${session.versionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        expectedRevision: document.revision ?? session.initialDocument.revision ?? 0,
+        document,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '保存编辑草稿失败');
+    return { revision: Number(data.revision), updatedAt: data.updatedAt };
+  }, [pdfOverlaySession]);
+
+  const uploadPdfOverlayImage = useCallback(async (file: File): Promise<PdfOverlayUploadedImage> => {
+    const session = pdfOverlaySession;
+    if (!session) throw new Error('编辑会话已关闭，请重新打开');
+    const form = new FormData();
+    form.set('versionId', session.versionId);
+    form.set('file', file);
+    const res = await fetch(`/api/drawing-library/${session.itemId}/sop/pdf-overlay/assets/upload`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '插入图片失败');
+    return { url: String(data.url || ''), assetId: data.assetId ? String(data.assetId) : undefined };
+  }, [pdfOverlaySession]);
+
+  const publishPdfOverlay = useCallback(async (payload: PdfOverlayPublishPayload): Promise<PdfOverlayPersistenceResult> => {
+    const session = pdfOverlaySession;
+    if (!session) throw new Error('编辑会话已关闭，请重新打开');
+    const form = new FormData();
+    form.set('expectedRevision', String(payload.document.revision ?? session.initialDocument.revision ?? 0));
+    form.set('document', JSON.stringify(payload.document));
+    const manifest = payload.overlays.map(overlay => ({
+      page: overlay.page,
+      width: overlay.width,
+      height: overlay.height,
+      field: `overlay_${overlay.page}`,
+    }));
+    form.set('manifest', JSON.stringify(manifest));
+    for (const overlay of payload.overlays) {
+      const blob = await (await fetch(overlay.pngDataUrl)).blob();
+      form.set(`overlay_${overlay.page}`, blob, `overlay-${overlay.page}.png`);
+    }
+    const res = await fetch(`/api/drawing-library/${session.itemId}/sop/pdf-overlay/versions/${session.versionId}/publish`, {
+      method: 'POST',
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '发布 PDF 新版本失败');
+    setPdfOverlaySession(null);
+    await loadData();
+    if (selectedIdRef.current === session.itemId && data.file?.id) setSelectedFileId(String(data.file.id));
+    setMsg('SOP 修订版已发布，原始文件已保留，当前预览已切换到新版本');
+    return { revision: Number(data.revision), updatedAt: data.updatedAt };
+  }, [loadData, pdfOverlaySession]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadData(); }, 260);
@@ -629,8 +711,6 @@ export function DrawingLibraryShell({
 
   async function chooseItem(item: DrawingLibraryItemDTO) {
     if (item.id === selectedItem?.id) return;
-    if (!(await requestSopEditorClose())) return;
-    setSopPaneMode('files');
     setFilePanelOpen(false);
     setMissingReference(null);
     setReferenceResolving(false);
@@ -645,25 +725,12 @@ export function DrawingLibraryShell({
 
   async function chooseCategory(category: ResourceCategoryDTO) {
     if (category.id === activeCategoryId) return;
-    if (!(await requestSopEditorClose())) return;
-    setSopPaneMode('files');
     setFilePanelOpen(false);
     setActiveCategoryId(category.id);
     setSelectedFileId('');
   }
 
-  function openSopEditor() {
-    setFilePanelOpen(false);
-    setSopPaneMode('editor');
-  }
-
-  async function showSopFiles() {
-    if (!(await requestSopEditorClose())) return;
-    setSopPaneMode('files');
-  }
-
   async function openProductTime(itemId: string) {
-    if (!(await requestSopEditorClose())) return;
     const returnUrl = new URL(window.location.href);
     returnUrl.searchParams.set('itemId', itemId);
     if (selectedFile?.id) returnUrl.searchParams.set('fileId', selectedFile.id);
@@ -676,12 +743,11 @@ export function DrawingLibraryShell({
   }
 
   async function returnToPlanning() {
-    if (!planningReturnContext || !(await requestSopEditorClose())) return;
+    if (!planningReturnContext) return;
     window.location.replace(planningReturnContext.returnTo);
   }
 
   async function returnToProduction() {
-    if (!(await requestSopEditorClose())) return;
     window.location.href = '/production';
   }
 
@@ -774,7 +840,7 @@ export function DrawingLibraryShell({
             </div>
             <div className="drawing-list hm-scroll-region" tabIndex={0} aria-label={`图纸规格结果，共 ${visibleItems.length} 项`}>
               {visibleItems.map(item => (
-                <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" disabled={sopTransitioning} aria-pressed={selectedItem?.id === item.id} onClick={() => { void chooseItem(item); }}>
+                <button key={item.id} className={selectedItem?.id === item.id ? 'drawing-spec-card active' : 'drawing-spec-card'} type="button" aria-pressed={selectedItem?.id === item.id} onClick={() => { void chooseItem(item); }}>
                   <div className="drawing-spec-title-line">
                     <strong title={item.specification}>{item.specification}</strong>
                     {item.isAnomaly && <span title={item.anomalyReason || '异常数据'}>异常</span>}
@@ -862,19 +928,17 @@ export function DrawingLibraryShell({
                 <div className="drawing-head-actions">
                   {isSopCategory && (
                     <div className="drawing-sop-mode-switch" role="group" aria-label="SOP 查看模式">
-                      <button className={sopPaneMode === 'files' ? 'active' : ''} type="button" disabled={sopTransitioning} onClick={() => { void showSopFiles(); }}>文件预览</button>
-                      <button className={sopPaneMode === 'editor' ? 'active' : ''} type="button" disabled={sopTransitioning} onClick={openSopEditor}>在线编辑</button>
+                      <button className="active" type="button" aria-pressed="true">文件预览</button>
+                      <button type="button" disabled={pdfOverlayOpening || selectedFile?.fileType !== 'pdf'} onClick={() => { void openPdfOverlayEditor(); }}>
+                        {pdfOverlayOpening ? '正在打开...' : '在线编辑'}
+                      </button>
                     </div>
                   )}
-                  <button className="hm-workbench-button" type="button" disabled={sopTransitioning} onClick={() => { void openProductTime(selectedItem.id); }}><Clock3 size={15} aria-hidden="true" />产品工时</button>
-                  {(!isSopCategory || sopPaneMode === 'files') && (
-                    <>
-                      <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}>文件 {activeFiles.length}</button>
-                      <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>
-                    </>
-                  )}
+                  <button className="hm-workbench-button" type="button" onClick={() => { void openProductTime(selectedItem.id); }}><Clock3 size={15} aria-hidden="true" />产品工时</button>
+                  <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}>文件 {activeFiles.length}</button>
+                  <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>
                   <button className="hm-workbench-button" type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>
-                  {selectedFile && (!isSopCategory || sopPaneMode === 'files') && (
+                  {selectedFile && (
                     <button
                       className="hm-workbench-button danger"
                       type="button"
@@ -893,35 +957,23 @@ export function DrawingLibraryShell({
                   {categories.map(category => {
                     const count = selectedItem.categoryFileCounts[category.id] || 0;
                     return (
-                      <button key={category.id} className={activeCategoryId === category.id ? 'active' : ''} type="button" disabled={sopTransitioning} onClick={() => { void chooseCategory(category); }}>
+                      <button key={category.id} className={activeCategoryId === category.id ? 'active' : ''} type="button" onClick={() => { void chooseCategory(category); }}>
                         <span className={count ? 'dot filled' : 'dot'} />
                         <strong title={category.name}>{categoryShortName(category.name)}</strong>
                         <em>{count}</em>
                       </button>
                     );
                   })}
-                  <button className="drawing-product-time-link" type="button" disabled={sopTransitioning} title="维护当前产品的单位工时表" onClick={() => { void openProductTime(selectedItem.id); }}>
+                  <button className="drawing-product-time-link" type="button" title="维护当前产品的单位工时表" onClick={() => { void openProductTime(selectedItem.id); }}>
                     <Clock3 size={14} aria-hidden="true" />
                     <strong>工时表</strong>
                     <em>进入</em>
                   </button>
                 </nav>
 
-                <div className={`drawing-preview${isSopCategory && sopPaneMode === 'editor' ? ' is-sop-editor' : ''}`}>
+                <div className="drawing-preview">
                   <input ref={fileInputRef} hidden multiple type="file" accept="application/pdf,.pdf,image/*" onChange={event => uploadFiles(event.target.files)} />
-                  {isSopCategory && sopPaneMode === 'editor' ? (
-                    <div className="drawing-sop-editor-host">
-                      <SopEditor
-                        ref={sopEditorRef}
-                        key={selectedItem.id}
-                        itemId={selectedItem.id}
-                        productLabel={`${selectedItem.specification}${selectedItem.productName ? ` · ${selectedItem.productName}` : ''}`}
-                        onRequestClose={() => { setSopPaneMode('files'); }}
-                        onPublished={workspace => { void handleSopPublished(workspace); }}
-                      />
-                    </div>
-                  ) : (
-                    <>
+                  <>
                       <div className="drawing-preview-head">
                         <span><b>{activeCategory?.name || '资料预览'}</b><small>{selectedFile ? `${selectedFile.version || 'V1.0'} · ${bytes(selectedFile.fileSize)}` : '当前分类'}</small></span>
                         <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>
@@ -945,8 +997,7 @@ export function DrawingLibraryShell({
                           <a href={selectedFile.downloadUrl} target="_blank" rel="noreferrer">下载文件</a>
                         </div>
                       )}
-                    </>
-                  )}
+                  </>
                 </div>
               </div>
             </>
@@ -1137,6 +1188,25 @@ export function DrawingLibraryShell({
             </div>
           </div>
         </div>
+      )}
+
+      {pdfOverlaySession && (
+        <PdfOverlayEditorModal
+          key={`${pdfOverlaySession.itemId}:${pdfOverlaySession.sourceFile.id}:${pdfOverlaySession.versionId}`}
+          open
+          sourceUrl={pdfOverlaySession.sourceFile.contentUrl}
+          sourceId={pdfOverlaySession.itemId}
+          baseFileId={pdfOverlaySession.sourceFile.id}
+          fileName={safeDisplayFilename(pdfOverlaySession.sourceFile)}
+          title={`修订 ${safeDisplayFilename(pdfOverlaySession.sourceFile)}`}
+          versionLabel={pdfOverlaySession.sourceFile.version || '当前版本'}
+          initialDocument={pdfOverlaySession.initialDocument}
+          autoSaveDelayMs={1500}
+          onClose={() => setPdfOverlaySession(null)}
+          onSave={savePdfOverlay}
+          onPublish={publishPdfOverlay}
+          onUploadImage={uploadPdfOverlayImage}
+        />
       )}
 
       <BulkOriginalDrawingImportModal

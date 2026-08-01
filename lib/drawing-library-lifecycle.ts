@@ -82,12 +82,13 @@ export async function getDrawingLibraryReferenceImpact(
       },
     }),
     tx.drawingLibraryFile.count({
-      where: { libraryItemId: drawingLibraryItemId, deletedAt: null },
+      where: { libraryItemId: drawingLibraryItemId, deletedAt: null, isCurrent: true },
     }),
     tx.drawingLibraryFile.count({
       where: {
         libraryItemId: drawingLibraryItemId,
         deletedAt: null,
+        isCurrent: true,
         category: { code: 'drawing' },
       },
     }),
@@ -138,6 +139,7 @@ export async function synchronizeDrawingLibraryWorkOrderStatus(
     where: {
       libraryItemId: drawingLibraryItemId,
       deletedAt: null,
+      isCurrent: true,
       category: { code: 'drawing' },
     },
   });

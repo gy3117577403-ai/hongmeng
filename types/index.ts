@@ -107,6 +107,9 @@ export type DrawingLibraryFileDTO = {
   createdAt: string;
   updatedAt: string;
   deletedAt?: string | null;
+  sourcePdfOverlayVersionId?: string | null;
+  supersedesFileId?: string | null;
+  isCurrent: boolean;
   contentUrl: string;
   viewUrl: string;
   downloadUrl: string;

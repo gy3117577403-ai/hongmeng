@@ -108,7 +108,7 @@ export async function reconcileProductionPlanDrawingLinks(
         _count: {
           select: {
             files: {
-              where: { deletedAt: null, category: { code: 'drawing' } },
+              where: { deletedAt: null, isCurrent: true, category: { code: 'drawing' } },
             },
           },
         },

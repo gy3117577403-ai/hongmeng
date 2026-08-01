@@ -168,6 +168,9 @@ export function serializeDrawingLibraryFile(file: DrawingLibraryFileWithMeta) {
     createdAt: file.createdAt.toISOString(),
     updatedAt: file.updatedAt.toISOString(),
     deletedAt: file.deletedAt?.toISOString() || null,
+    sourcePdfOverlayVersionId: file.sourcePdfOverlayVersionId,
+    supersedesFileId: file.supersedesFileId,
+    isCurrent: file.isCurrent,
     contentUrl: `/api/drawing-library/files/${file.id}/content`,
     viewUrl: `/api/drawing-library/files/${file.id}/content`,
     downloadUrl: `/api/drawing-library/files/${file.id}/download`,
@@ -175,7 +178,7 @@ export function serializeDrawingLibraryFile(file: DrawingLibraryFileWithMeta) {
 }
 
 export function drawingLibraryCompleteness(files: DrawingLibraryFileWithMeta[] = [], categories: Pick<ResourceCategory, 'id' | 'code'>[] = []) {
-  const activeFiles = files.filter(file => !file.deletedAt);
+  const activeFiles = files.filter(file => !file.deletedAt && file.isCurrent);
   const counts: Record<string, number> = {};
   for (const file of activeFiles) counts[file.categoryId] = (counts[file.categoryId] || 0) + 1;
   const totalCategories = Math.max(categories.length, 5);
@@ -193,7 +196,7 @@ export function drawingLibraryCompleteness(files: DrawingLibraryFileWithMeta[] =
 }
 
 export function serializeDrawingLibraryItem(item: DrawingLibraryItemWithFiles, categories: Pick<ResourceCategory, 'id' | 'name' | 'code' | 'sortOrder'>[] = []) {
-  const files = (item.files || []).filter(file => !file.deletedAt);
+  const files = (item.files || []).filter(file => !file.deletedAt && file.isCurrent);
   const completeness = drawingLibraryCompleteness(files, categories);
   const anomalyReason = drawingLibraryItemAnomalyReason({ ...item, files });
   return {
