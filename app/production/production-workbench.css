@@ -3545,7 +3545,7 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   flex: 0 0 82px;
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -3603,6 +3603,12 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   background: var(--production-dispatch-orange-soft);
   color: var(--production-dispatch-orange);
   box-shadow: inset 0 0 0 1px rgba(240, 90, 0, .08);
+}
+
+.hm-production-workbench .production-dispatch-metrics > button.pending > span > svg {
+  background: #f2f4f7;
+  color: #66758a;
+  box-shadow: inset 0 0 0 1px rgba(102, 117, 138, .1);
 }
 
 .hm-production-workbench .production-dispatch-metrics > button.warning > span > svg {

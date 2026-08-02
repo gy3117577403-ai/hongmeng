@@ -919,7 +919,7 @@ export async function startConfirmedProcessRoute(
     userId: string;
     actor: string;
     now: Date;
-    trigger?: 'manual_start' | 'drawing_issued';
+    trigger?: 'manual_start' | 'drawing_issued' | 'automatic_plan_release' | 'automatic_plan_reconciliation';
   },
 ): Promise<boolean> {
   const route = await tx.workOrderProcessRoute.findUnique({
@@ -950,14 +950,15 @@ export async function startConfirmedProcessRoute(
   const initialInputQty = targetQuantity(route.workOrder);
   const stageGroup = normalizeProcessStageGroup(first.stageGroup) || 'frontend';
   const nextStage = processStageForGroup(stageGroup);
-  await tx.workOrderProcessRoute.update({
-    where: { id: route.id },
+  const routeUpdate = await tx.workOrderProcessRoute.updateMany({
+    where: { id: route.id, status: 'confirmed', startedAt: null },
     data: {
       status: 'in_progress',
       startedAt: input.now,
       version: { increment: 1 },
     },
   });
+  if (routeUpdate.count !== 1) return false;
   await tx.workOrderProcessStep.updateMany({
     where: { routeId: route.id, sequenceGroup: firstSequenceGroup, status: 'pending' },
     data: { status: 'current', startedAt: input.now, inputQty: initialInputQty, quantityVersion: { increment: 1 } },
@@ -977,7 +978,11 @@ export async function startConfirmedProcessRoute(
       routeId: route.id,
       stepId: first.id,
       action: 'start_process_route',
-      content: `${input.trigger === 'drawing_issued' ? '确认图纸下发并' : ''}开始 ${firstSteps.map(step => step.processName).join('、')}`,
+      content: `${input.trigger === 'drawing_issued'
+        ? '确认图纸下发并'
+        : input.trigger === 'automatic_plan_release' || input.trigger === 'automatic_plan_reconciliation'
+          ? '计划自动启动并'
+          : ''}开始 ${firstSteps.map(step => step.processName).join('、')}`,
       actorId: input.userId,
     },
   });

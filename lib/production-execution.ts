@@ -132,7 +132,7 @@ const validQuickFilters = new Set([
   'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed',
   'due_today', 'updated_today', 'completed_today', 'delivery_missing',
   'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining',
-  'due_soon', 'has_next_process', 'waiting_transfer',
+  'due_soon', 'in_production', 'not_started', 'has_next_process', 'waiting_transfer',
 ]);
 const validStages = new Set(['not_issued', 'frontend', 'backend', 'completed']);
 const validPriorities = new Set(['urgent', 'high', 'normal']);
@@ -730,6 +730,8 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
     if (item === 'drawing_confirmation' && !productionAlerts.some(alert => isDrawingConfirmationAlert(alert.code))) return false;
     if (item === 'tail_remaining' && !productionAlerts.some(alert => alert.code === 'TAIL_REMAINING')) return false;
     if (item === 'due_soon' && !isProductionDueSoon(order, now)) return false;
+    if (item === 'in_production' && normalizedStage !== 'frontend' && normalizedStage !== 'backend') return false;
+    if (item === 'not_started' && normalizedStage !== 'not_issued') return false;
     if ((item === 'has_next_process' || item === 'waiting_transfer') && !hasNextProductionProcess(order)) return false;
   }
   return true;
@@ -857,6 +859,7 @@ export async function summarizeProduction(week: ProductionWeek) {
   let completed = 0;
   let exceptions = 0;
   let dispatchInProduction = 0;
+  let dispatchNotStarted = 0;
   let dispatchWithNextProcess = 0;
   let dispatchDueSoon = 0;
   let dispatchCompleted = 0;
@@ -909,6 +912,7 @@ export async function summarizeProduction(week: ProductionWeek) {
     if (segments.some(segment => segment.stage === 'completed')) completed += 1;
     if (productionExceptionCodes(order, now).length > 0) exceptions += 1;
     if (stage === 'frontend' || stage === 'backend') dispatchInProduction += 1;
+    if (stage === 'not_issued') dispatchNotStarted += 1;
     if (hasNextProductionProcess(order)) dispatchWithNextProcess += 1;
     if (isProductionDueSoon(order, now)) dispatchDueSoon += 1;
     if (stage === 'completed') dispatchCompleted += 1;
@@ -933,6 +937,7 @@ export async function summarizeProduction(week: ProductionWeek) {
     stageQuantityTotals,
     dispatchMetrics: {
       inProduction: dispatchInProduction,
+      notStarted: dispatchNotStarted,
       withNextProcess: dispatchWithNextProcess,
       dueSoon: dispatchDueSoon,
       completed: dispatchCompleted,

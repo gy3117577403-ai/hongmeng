@@ -30,6 +30,51 @@ test(
           const nextEnd = new Date('2026-08-16T04:00:00.000Z');
           const orderDate = new Date('2026-08-01T04:00:00.000Z');
           const customerDueDate = new Date('2026-08-20T04:00:00.000Z');
+          const processDefinition = await tx.processDefinition.create({
+            data: {
+              code: `plan-auto-cut-${actor.id}`,
+              name: '自动裁线',
+              stageGroup: 'frontend',
+            },
+          });
+          const currentDrawing = await tx.drawingLibraryItem.create({
+            data: {
+              customerName: 'Integration customer',
+              productName: 'Current week product',
+              specification: 'AUTO-CURRENT-SPEC',
+              libraryKey: `plan-auto-current-${actor.id}`,
+            },
+          });
+          const nextDrawing = await tx.drawingLibraryItem.create({
+            data: {
+              customerName: 'Integration customer',
+              productName: 'Next week product',
+              specification: 'AUTO-NEXT-SPEC',
+              libraryKey: `plan-auto-next-${actor.id}`,
+            },
+          });
+          await tx.productTimeProfile.create({
+            data: {
+              drawingLibraryItemId: currentDrawing.id,
+              version: 1,
+              status: 'published',
+              publishedAt: currentStart,
+              createdById: actor.id,
+              updatedById: actor.id,
+              publishedById: actor.id,
+              entries: {
+                create: {
+                  processDefinitionId: processDefinition.id,
+                  position: 1,
+                  sequenceGroup: 1,
+                  timeBasis: 'per_unit',
+                  unitMilliseconds: 12_000,
+                  setupMilliseconds: 0,
+                  unitLabel: '件',
+                },
+              },
+            },
+          });
 
           const currentOrder = await tx.productionPlanOrder.create({
             data: {
@@ -38,6 +83,7 @@ test(
               customerName: 'Integration customer',
               productName: 'Current week product',
               specification: 'AUTO-CURRENT-SPEC',
+              drawingLibraryItemId: currentDrawing.id,
               orderQuantity: 10,
               orderDate,
               customerDueDate,
@@ -61,6 +107,7 @@ test(
               customerName: 'Integration customer',
               productName: 'Next week product',
               specification: 'AUTO-NEXT-SPEC',
+              drawingLibraryItemId: nextDrawing.id,
               orderQuantity: 12,
               orderDate,
               customerDueDate,
@@ -84,17 +131,17 @@ test(
               now: currentStart,
             });
           assert.deepEqual(
-            { active: first.active, preparation: first.preparation },
-            { active: 1, preparation: 1 },
+            { active: first.active, preparation: first.preparation, started: first.started },
+            { active: 1, preparation: 1, started: 1 },
           );
-          assert.ok(first.warningCount >= 2);
+          assert.equal(first.warningCount, 1);
 
           const [currentBatch, nextBatch] = await Promise.all([
             tx.productionPlanBatch.findFirstOrThrow({
               where: { planOrderId: currentOrder.id },
               include: {
                 workOrder: {
-                  include: { materialTask: true, processRoute: true },
+                  include: { materialTask: true, processRoute: { include: { steps: true } } },
                 },
               },
             }),
@@ -102,25 +149,26 @@ test(
               where: { planOrderId: nextOrder.id },
               include: {
                 workOrder: {
-                  include: { materialTask: true, processRoute: true },
+                  include: { materialTask: true, processRoute: { include: { steps: true } } },
                 },
               },
             }),
           ]);
           assert.equal(currentBatch.releaseState, 'active');
           assert.equal(currentBatch.workOrder?.planActive, true);
+          assert.equal(currentBatch.workOrder?.stage, 'frontend');
+          assert.ok(currentBatch.workOrder?.startedAt);
+          assert.equal(currentBatch.workOrder?.processRoute?.status, 'in_progress');
+          assert.ok(currentBatch.workOrder?.processRoute?.startedAt);
+          assert.equal(currentBatch.workOrder?.processRoute?.steps[0]?.status, 'current');
           assert.equal(nextBatch.releaseState, 'preparation');
           assert.equal(nextBatch.workOrder?.planActive, false);
-          for (const batch of [currentBatch, nextBatch]) {
-            assert.ok(batch.workOrder);
-            assert.equal(batch.workOrder.startedAt, null);
-            assert.equal(batch.workOrder.materialTask?.status, 'pending');
-            assert.equal(batch.workOrder.processRoute?.status, 'draft');
-            assert.equal(
-              batch.workOrder.processRoute?.routeSource,
-              'product_time_pending',
-            );
-          }
+          assert.equal(currentBatch.workOrder?.materialTask?.status, 'pending');
+          assert.ok(nextBatch.workOrder);
+          assert.equal(nextBatch.workOrder.startedAt, null);
+          assert.equal(nextBatch.workOrder.materialTask?.status, 'pending');
+          assert.equal(nextBatch.workOrder.processRoute?.status, 'draft');
+          assert.equal(nextBatch.workOrder.processRoute?.routeSource, 'product_time_pending');
 
           const [visibleCurrent, visibleNext] = await Promise.all([
             tx.workOrder.count({
@@ -141,14 +189,53 @@ test(
           assert.equal(visibleCurrent, 1);
           assert.equal(visibleNext, 1);
 
+          await tx.productTimeProfile.create({
+            data: {
+              drawingLibraryItemId: nextDrawing.id,
+              version: 1,
+              status: 'published',
+              publishedAt: currentStart,
+              createdById: actor.id,
+              updatedById: actor.id,
+              publishedById: actor.id,
+              entries: {
+                create: {
+                  processDefinitionId: processDefinition.id,
+                  position: 1,
+                  sequenceGroup: 1,
+                  timeBasis: 'per_unit',
+                  unitMilliseconds: 15_000,
+                  setupMilliseconds: 0,
+                  unitLabel: '件',
+                },
+              },
+            },
+          });
+          const backfill = await reconcileAutomaticallyReleasedProductionPlanBatches(tx, {
+            actorId: actor.id,
+            now: currentStart,
+          });
+          assert.deepEqual(
+            { active: backfill.active, preparation: backfill.preparation, started: backfill.started },
+            { active: 0, preparation: 0, started: 1 },
+          );
+          const startedNext = await tx.productionPlanBatch.findFirstOrThrow({
+            where: { planOrderId: nextOrder.id },
+            include: { workOrder: { include: { processRoute: { include: { steps: true } } } } },
+          });
+          assert.equal(startedNext.workOrder?.stage, 'frontend');
+          assert.ok(startedNext.workOrder?.startedAt);
+          assert.equal(startedNext.workOrder?.processRoute?.status, 'in_progress');
+          assert.equal(startedNext.workOrder?.processRoute?.steps[0]?.status, 'current');
+
           const rollover =
             await reconcileAutomaticallyReleasedProductionPlanBatches(tx, {
               actorId: actor.id,
               now: nextStart,
             });
           assert.deepEqual(
-            { active: rollover.active, preparation: rollover.preparation },
-            { active: 1, preparation: 0 },
+            { active: rollover.active, preparation: rollover.preparation, started: rollover.started },
+            { active: 1, preparation: 0, started: 0 },
           );
           const rolledOver = await tx.productionPlanBatch.findFirstOrThrow({
             where: { planOrderId: nextOrder.id },
@@ -156,7 +243,7 @@ test(
           });
           assert.equal(rolledOver.releaseState, 'active');
           assert.equal(rolledOver.workOrder?.planActive, true);
-          assert.equal(rolledOver.workOrder?.startedAt, null);
+          assert.ok(rolledOver.workOrder?.startedAt);
           assert.equal(
             await tx.workOrder.count({
               where: productionWeekWhere({

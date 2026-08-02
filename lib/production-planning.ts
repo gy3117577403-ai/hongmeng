@@ -6,9 +6,12 @@ import {
   parseCustomerCode,
 } from '@/lib/drawing-library';
 import { activeDrawingLibraryFileCount } from '@/lib/drawing-library-lifecycle';
+import { startConfirmedProcessRoute } from '@/lib/process-route-service';
+import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import { shouldSynchronizeDrawingReleaseStatus } from '@/lib/production-drawing-readiness';
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
+import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import type {
   ProductionPlanBatchDTO,
   ProductionPlanChangeDTO,
@@ -1260,6 +1263,61 @@ function workHours(milliseconds: number | null): string | null {
   return milliseconds ? (milliseconds / 3_600_000).toFixed(4).replace(/0+$/, '').replace(/\.$/, '') : null;
 }
 
+async function startReadyScheduledWorkOrder(
+  tx: Prisma.TransactionClient,
+  input: {
+    workOrderId: string;
+    actorId: string;
+    now: Date;
+    trigger: 'automatic_plan_release' | 'automatic_plan_reconciliation';
+  },
+): Promise<boolean> {
+  const route = await tx.workOrderProcessRoute.findUnique({
+    where: { workOrderId: input.workOrderId },
+    select: {
+      status: true,
+      startedAt: true,
+      workOrder: {
+        select: {
+          stage: true,
+          status: true,
+          startedAt: true,
+          completedAt: true,
+        },
+      },
+      steps: {
+        orderBy: { position: 'asc' },
+        select: {
+          processName: true,
+          status: true,
+          timeBasis: true,
+          unitLabel: true,
+          standardMillisecondsPerUnit: true,
+          setupMilliseconds: true,
+          unitsPerProduct: true,
+        },
+      },
+    },
+  });
+  const stage = normalizeWorkOrderStage(route?.workOrder.stage || route?.workOrder.status) || 'not_issued';
+  if (
+    !route
+    || route.status !== 'confirmed'
+    || route.startedAt
+    || stage !== 'not_issued'
+    || route.workOrder.startedAt
+    || route.workOrder.completedAt
+    || !processRouteExecutionReadiness(route.steps).ready
+  ) return false;
+  return startConfirmedProcessRoute(tx, {
+    workOrderId: input.workOrderId,
+    userId: input.actorId,
+    actor: '系统自动调度',
+    now: input.now,
+    trigger: input.trigger,
+  });
+}
+
 export async function releaseProductionPlanBatch(
   tx: Prisma.TransactionClient,
   input: {
@@ -1269,7 +1327,7 @@ export async function releaseProductionPlanBatch(
     now?: Date;
     trigger?: 'manual' | 'automatic_schedule' | 'automatic_reconciliation';
   },
-): Promise<{ workOrderId: string; warnings: string[]; created: boolean }> {
+): Promise<{ workOrderId: string; warnings: string[]; created: boolean; started: boolean }> {
   const batch = await tx.productionPlanBatch.findUnique({
     where: { id: input.batchId },
     include: {
@@ -1374,6 +1432,14 @@ export async function releaseProductionPlanBatch(
   });
 
   await createWorkOrderProcessRoute(tx, { workOrderId: workOrder.id, actorId: input.actorId });
+  const started = await startReadyScheduledWorkOrder(tx, {
+    workOrderId: workOrder.id,
+    actorId: input.actorId,
+    now,
+    trigger: input.trigger === 'automatic_reconciliation'
+      ? 'automatic_plan_reconciliation'
+      : 'automatic_plan_release',
+  });
 
   await tx.productionPlanBatch.update({
     where: { id: batch.id },
@@ -1417,6 +1483,7 @@ export async function releaseProductionPlanBatch(
         warehouseTaskCreated: true,
         productTimePending,
         processWarnings: warnings.length,
+        automaticallyStarted: started,
         weekRealigned: chinaDate(batch.weekStartDate) !== chinaDate(alignedWeek.weekStartDate),
         trigger: input.trigger || 'manual',
       },
@@ -1439,11 +1506,12 @@ export async function releaseProductionPlanBatch(
         warehouseTaskCreated: true,
         productTimePending,
         warnings: warnings.length,
+        automaticallyStarted: started,
         trigger: input.trigger || 'manual',
       },
     },
   });
-  return { workOrderId: workOrder.id, warnings, created };
+  return { workOrderId: workOrder.id, warnings, created, started };
 }
 
 export async function automaticallyReleaseProductionPlanBatch(
@@ -1482,7 +1550,7 @@ export async function automaticallyReleaseProductionPlanBatch(
 export async function reconcileAutomaticallyReleasedProductionPlanBatches(
   tx: Prisma.TransactionClient,
   input: { actorId: string; now?: Date },
-): Promise<{ active: number; preparation: number; warningCount: number }> {
+): Promise<{ active: number; preparation: number; warningCount: number; started: number }> {
   const now = input.now || new Date();
   const currentWeek = productionPlanTargetWeek('active', now);
   const nextWeek = productionPlanTargetWeek('preparation', now);
@@ -1502,23 +1570,50 @@ export async function reconcileAutomaticallyReleasedProductionPlanBatches(
       weekStartDate: true,
       releaseState: true,
       workOrderId: true,
+      workOrder: {
+        select: {
+          id: true,
+          stage: true,
+          status: true,
+          startedAt: true,
+          completedAt: true,
+        },
+      },
     },
     orderBy: [{ weekStartDate: 'asc' }, { createdAt: 'asc' }],
     take: 5000,
   });
-  const result = { active: 0, preparation: 0, warningCount: 0 };
+  const result = { active: 0, preparation: 0, warningCount: 0, started: 0 };
   for (const batch of batches) {
     const target = automaticProductionPlanReleaseTarget(batch, now);
-    if (!target) continue;
-    const released = await releaseProductionPlanBatch(tx, {
-      batchId: batch.id,
-      target,
+    if (target) {
+      const released = await releaseProductionPlanBatch(tx, {
+        batchId: batch.id,
+        target,
+        actorId: input.actorId,
+        now,
+        trigger: 'automatic_reconciliation',
+      });
+      result[target] += 1;
+      result.warningCount += released.warnings.length;
+      if (released.started) result.started += 1;
+      continue;
+    }
+    const workOrderStage = normalizeWorkOrderStage(batch.workOrder?.stage || batch.workOrder?.status) || 'not_issued';
+    if (
+      !batch.workOrderId
+      || !batch.workOrder
+      || workOrderStage !== 'not_issued'
+      || batch.workOrder.startedAt
+      || batch.workOrder.completedAt
+    ) continue;
+    await createWorkOrderProcessRoute(tx, { workOrderId: batch.workOrderId, actorId: input.actorId });
+    if (await startReadyScheduledWorkOrder(tx, {
+      workOrderId: batch.workOrderId,
       actorId: input.actorId,
       now,
-      trigger: 'automatic_reconciliation',
-    });
-    result[target] += 1;
-    result.warningCount += released.warnings.length;
+      trigger: 'automatic_plan_reconciliation',
+    })) result.started += 1;
   }
   return result;
 }

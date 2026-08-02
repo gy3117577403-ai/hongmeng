@@ -126,11 +126,11 @@ test('production execution accepts an exact work-order deep-link target', () => 
   assert.equal(filters.keyword, 'ignored only when it does not match the target');
 });
 
-test('production execution accepts exact due-soon and next-process quick filters', () => {
+test('production execution accepts exact dispatch metric quick filters', () => {
   const filters = productionFiltersFromSearchParams(new URLSearchParams({
-    quick: 'due_soon,has_next_process,waiting_transfer,not-a-filter',
+    quick: 'in_production,not_started,due_soon,has_next_process,waiting_transfer,not-a-filter',
   }));
-  assert.deepEqual(filters.quick, ['due_soon', 'has_next_process', 'waiting_transfer']);
+  assert.deepEqual(filters.quick, ['in_production', 'not_started', 'due_soon', 'has_next_process', 'waiting_transfer']);
 });
 
 test('due-soon uses the customer delivery day and a stable China-time 0-2 day window', () => {
