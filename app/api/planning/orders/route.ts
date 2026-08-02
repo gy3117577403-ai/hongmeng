@@ -10,6 +10,7 @@ import {
   parseProductionPlanOrderInput,
   planOrderSnapshot,
   productionPlanOrderInclude,
+  reconcileAutomaticallyReleasedProductionPlanBatches,
   reconcileLegacyDeletedPlanQuantities,
   reconcileFutureActiveProductionPlanWeeks,
   resolveOrCreatePlanningProduct,
@@ -49,8 +50,9 @@ export async function GET(req: NextRequest) {
     await prisma.$transaction(async tx => {
       await reconcileLegacyDeletedPlanQuantities(tx, { actorId: user.id });
       await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
+      await reconcileAutomaticallyReleasedProductionPlanBatches(tx, { actorId: user.id });
       await reconcileProductionPlanDrawingLinks(tx);
-    });
+    }, { maxWait: 10_000, timeout: 180_000 });
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim().slice(0, 160);
     const status = String(req.nextUrl.searchParams.get('status') || '').trim();
     const customer = String(req.nextUrl.searchParams.get('customer') || '').trim().slice(0, 120);

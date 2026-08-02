@@ -46,6 +46,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:daily-plan-integration
+      - name: Production plan auto-release PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npm run test:planning-integration
       - name: Type check
         run: npx tsc --noEmit
       - name: Lint

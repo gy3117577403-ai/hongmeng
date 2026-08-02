@@ -7,6 +7,7 @@ import {
   processQuantityLedgerIsLocked,
 } from '@/lib/process-quantity-ledger-guard';
 import {
+  automaticallyReleaseProductionPlanBatch,
   deleteProductionPlanBatches,
   effectivePlanningUnitMilliseconds,
   parseProductionPlanBatchInput,
@@ -153,10 +154,27 @@ export async function PATCH(req: NextRequest, context: { params: { id: string } 
       await tx.operationLog.create({
         data: { userId: user.id, action: 'update_production_plan_batch', targetType: 'production_plan_batch', targetId: existing.id },
       });
-      return tx.productionPlanOrder.findUniqueOrThrow({ where: { id: existing.planOrderId }, include: productionPlanOrderInclude });
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      const automaticRelease = await automaticallyReleaseProductionPlanBatch(tx, {
+        batchId: existing.id,
+        actorId: user.id,
+        trigger: 'automatic_schedule',
+      });
+      const record = await tx.productionPlanOrder.findUniqueOrThrow({
+        where: { id: existing.planOrderId },
+        include: productionPlanOrderInclude,
+      });
+      return { record, automaticReleaseTarget: automaticRelease?.target || null };
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 10_000,
+      timeout: 30_000,
+    });
     if (updated instanceof NextResponse) return updated;
-    return NextResponse.json({ ok: true, order: serializeProductionPlanOrder(updated) });
+    return NextResponse.json({
+      ok: true,
+      order: serializeProductionPlanOrder(updated.record),
+      automaticReleaseTarget: updated.automaticReleaseTarget,
+    });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') {

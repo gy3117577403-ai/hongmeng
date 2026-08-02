@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
+  automaticallyReleaseProductionPlanBatch,
   chinaDate,
   editableProductionPlanningWeek,
   effectivePlanningUnitMilliseconds,
@@ -93,6 +94,8 @@ export async function POST(req: NextRequest) {
     let created = 0;
     let skipped = 0;
     let failed = 0;
+    let automaticallyActive = 0;
+    let automaticallyPrepared = 0;
 
     for (const row of rows) {
       const rowNo = Number(row.rowNo || 0) || results.length + 1;
@@ -167,7 +170,13 @@ export async function POST(req: NextRequest) {
             throw new Error('PLAN_IMPORT_ORDER_CLOSED');
           }
           if (activeBatches.some(batch => chinaDate(batch.weekStartDate) === targetWeekStartDate)) {
-            return { duplicate: true, restored: false, planOrderId: existing!.id, batchId: null };
+            return {
+              duplicate: true,
+              restored: false,
+              planOrderId: existing!.id,
+              batchId: null,
+              automaticReleaseTarget: null,
+            };
           }
 
           const references = await resolvePlanningReferences(tx, {
@@ -271,13 +280,23 @@ export async function POST(req: NextRequest) {
               actorId: user.id,
             },
           });
+          const automaticRelease = await automaticallyReleaseProductionPlanBatch(tx, {
+            batchId: batch.id,
+            actorId: user.id,
+            trigger: 'automatic_schedule',
+          });
           return {
             duplicate: false,
             restored: restoringDeletedOrder,
             planOrderId: planOrder.id,
             batchId: batch.id,
+            automaticReleaseTarget: automaticRelease?.target || null,
           };
-        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        }, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 10_000,
+          timeout: 30_000,
+        });
 
         if (outcome.duplicate) {
           skipped += 1;
@@ -289,11 +308,19 @@ export async function POST(req: NextRequest) {
           });
         } else {
           created += 1;
+          if (outcome.automaticReleaseTarget === 'active') automaticallyActive += 1;
+          if (outcome.automaticReleaseTarget === 'preparation') automaticallyPrepared += 1;
           results.push({
             row: rowNo,
             specification,
             status: 'created',
-            message: outcome.restored ? '已恢复该计划并加入目标周排单清单' : '已加入目标周排单清单',
+            message: outcome.automaticReleaseTarget === 'active'
+              ? '已加入目标周并自动进入本周生产执行'
+              : outcome.automaticReleaseTarget === 'preparation'
+                ? '已加入目标周并自动进入下周生产执行'
+                : outcome.restored
+                  ? '已恢复该计划并加入目标周排单清单'
+                  : '已加入目标周排单清单',
           });
         }
       } catch (error) {
@@ -323,6 +350,8 @@ export async function POST(req: NextRequest) {
           created,
           skipped,
           failed,
+          automaticallyActive,
+          automaticallyPrepared,
           total: rows.length,
         },
       },
@@ -332,7 +361,14 @@ export async function POST(req: NextRequest) {
       ok: true,
       targetWeekStartDate,
       targetWeekEndDate,
-      summary: { created, skipped, failed, total: rows.length },
+      summary: {
+        created,
+        skipped,
+        failed,
+        automaticallyActive,
+        automaticallyPrepared,
+        total: rows.length,
+      },
       results,
     });
   } catch (error) {

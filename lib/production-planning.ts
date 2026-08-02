@@ -273,6 +273,32 @@ export function productionPlanTargetWeek(
   return { start: addPlanningDays(current.start, 7), end: addPlanningDays(current.end, 7) };
 }
 
+export type AutomaticProductionPlanReleaseTarget = 'preparation' | 'active';
+
+export function automaticProductionPlanReleaseTarget(
+  batch: {
+    weekStartDate: Date;
+    releaseState: string;
+    workOrderId?: string | null;
+  },
+  now = new Date(),
+): AutomaticProductionPlanReleaseTarget | null {
+  if (batch.releaseState === 'archived') return null;
+  const weekStartDate = chinaDate(batch.weekStartDate);
+  const currentWeekStartDate = chinaDate(productionPlanTargetWeek('active', now).start);
+  if (weekStartDate === currentWeekStartDate) {
+    if (batch.releaseState === 'draft' || batch.releaseState === 'preparation') return 'active';
+    if (batch.releaseState === 'active' && !batch.workOrderId) return 'active';
+    return null;
+  }
+  const nextWeekStartDate = chinaDate(productionPlanTargetWeek('preparation', now).start);
+  if (weekStartDate === nextWeekStartDate) {
+    if (batch.releaseState === 'draft') return 'preparation';
+    if (batch.releaseState === 'preparation' && !batch.workOrderId) return 'preparation';
+  }
+  return null;
+}
+
 export function alignProductionPlanBatchWeek(
   batch: Pick<ParsedPlanBatch, 'weekStartDate' | 'plannedCompletionDate'>,
   target: 'preparation' | 'active',
@@ -1236,7 +1262,13 @@ function workHours(milliseconds: number | null): string | null {
 
 export async function releaseProductionPlanBatch(
   tx: Prisma.TransactionClient,
-  input: { batchId: string; target: 'preparation' | 'active'; actorId: string; now?: Date },
+  input: {
+    batchId: string;
+    target: 'preparation' | 'active';
+    actorId: string;
+    now?: Date;
+    trigger?: 'manual' | 'automatic_schedule' | 'automatic_reconciliation';
+  },
 ): Promise<{ workOrderId: string; warnings: string[]; created: boolean }> {
   const batch = await tx.productionPlanBatch.findUnique({
     where: { id: input.batchId },
@@ -1386,7 +1418,13 @@ export async function releaseProductionPlanBatch(
         productTimePending,
         processWarnings: warnings.length,
         weekRealigned: chinaDate(batch.weekStartDate) !== chinaDate(alignedWeek.weekStartDate),
+        trigger: input.trigger || 'manual',
       },
+      reason: input.trigger === 'automatic_schedule'
+        ? '排入本周或下周后自动进入生产执行'
+        : input.trigger === 'automatic_reconciliation'
+          ? '自动纠正生产周与下达状态不一致'
+          : null,
       actorId: input.actorId,
     },
   });
@@ -1401,10 +1439,88 @@ export async function releaseProductionPlanBatch(
         warehouseTaskCreated: true,
         productTimePending,
         warnings: warnings.length,
+        trigger: input.trigger || 'manual',
       },
     },
   });
   return { workOrderId: workOrder.id, warnings, created };
+}
+
+export async function automaticallyReleaseProductionPlanBatch(
+  tx: Prisma.TransactionClient,
+  input: {
+    batchId: string;
+    actorId: string;
+    now?: Date;
+    trigger?: 'automatic_schedule' | 'automatic_reconciliation';
+  },
+): Promise<({ target: AutomaticProductionPlanReleaseTarget } & Awaited<ReturnType<typeof releaseProductionPlanBatch>>) | null> {
+  const batch = await tx.productionPlanBatch.findUnique({
+    where: { id: input.batchId },
+    select: {
+      id: true,
+      weekStartDate: true,
+      releaseState: true,
+      workOrderId: true,
+      deletedAt: true,
+      planOrder: { select: { deletedAt: true } },
+    },
+  });
+  if (!batch || batch.deletedAt || batch.planOrder.deletedAt) return null;
+  const target = automaticProductionPlanReleaseTarget(batch, input.now);
+  if (!target) return null;
+  const released = await releaseProductionPlanBatch(tx, {
+    batchId: batch.id,
+    target,
+    actorId: input.actorId,
+    now: input.now,
+    trigger: input.trigger || 'automatic_schedule',
+  });
+  return { target, ...released };
+}
+
+export async function reconcileAutomaticallyReleasedProductionPlanBatches(
+  tx: Prisma.TransactionClient,
+  input: { actorId: string; now?: Date },
+): Promise<{ active: number; preparation: number; warningCount: number }> {
+  const now = input.now || new Date();
+  const currentWeek = productionPlanTargetWeek('active', now);
+  const nextWeek = productionPlanTargetWeek('preparation', now);
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'production-plan-auto-release'}))`;
+  const batches = await tx.productionPlanBatch.findMany({
+    where: {
+      deletedAt: null,
+      planOrder: { deletedAt: null },
+      releaseState: { in: ['draft', 'preparation', 'active'] },
+      weekStartDate: {
+        gte: addPlanningDays(currentWeek.start, -1),
+        lt: addPlanningDays(nextWeek.start, 2),
+      },
+    },
+    select: {
+      id: true,
+      weekStartDate: true,
+      releaseState: true,
+      workOrderId: true,
+    },
+    orderBy: [{ weekStartDate: 'asc' }, { createdAt: 'asc' }],
+    take: 5000,
+  });
+  const result = { active: 0, preparation: 0, warningCount: 0 };
+  for (const batch of batches) {
+    const target = automaticProductionPlanReleaseTarget(batch, now);
+    if (!target) continue;
+    const released = await releaseProductionPlanBatch(tx, {
+      batchId: batch.id,
+      target,
+      actorId: input.actorId,
+      now,
+      trigger: 'automatic_reconciliation',
+    });
+    result[target] += 1;
+    result.warningCount += released.warnings.length;
+  }
+  return result;
 }
 
 export async function reconcileFutureActiveProductionPlanWeeks(

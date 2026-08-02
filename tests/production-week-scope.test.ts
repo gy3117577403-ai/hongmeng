@@ -11,6 +11,7 @@ import {
 } from '../lib/production-execution';
 import {
   alignProductionPlanBatchWeek,
+  automaticProductionPlanReleaseTarget,
   buildPlanningDrawingLibraryItemData,
   chinaDate,
   effectivePlanningUnitMilliseconds,
@@ -28,6 +29,59 @@ test('natural production week is Monday through Sunday in China time', () => {
   const week = naturalProductionWeek(new Date('2026-07-20T04:00:00.000Z'));
   assert.equal(chinaDateKey(week.start), '2026-07-20');
   assert.equal(chinaDateKey(week.end), '2026-07-26');
+});
+
+test('current and next week scheduling automatically enters the matching production view', () => {
+  const now = new Date('2026-08-03T04:00:00.000Z');
+  const currentWeek = new Date('2026-08-03T04:00:00.000Z');
+  const nextWeek = new Date('2026-08-10T04:00:00.000Z');
+  const afterNextWeek = new Date('2026-08-17T04:00:00.000Z');
+
+  assert.equal(automaticProductionPlanReleaseTarget({
+    weekStartDate: currentWeek,
+    releaseState: 'draft',
+    workOrderId: null,
+  }, now), 'active');
+  assert.equal(automaticProductionPlanReleaseTarget({
+    weekStartDate: currentWeek,
+    releaseState: 'preparation',
+    workOrderId: 'work-order-1',
+  }, now), 'active');
+  assert.equal(automaticProductionPlanReleaseTarget({
+    weekStartDate: currentWeek,
+    releaseState: 'active',
+    workOrderId: 'work-order-1',
+  }, now), null);
+  assert.equal(automaticProductionPlanReleaseTarget({
+    weekStartDate: currentWeek,
+    releaseState: 'active',
+    workOrderId: null,
+  }, now), 'active');
+  assert.equal(automaticProductionPlanReleaseTarget({
+    weekStartDate: nextWeek,
+    releaseState: 'draft',
+    workOrderId: null,
+  }, now), 'preparation');
+  assert.equal(automaticProductionPlanReleaseTarget({
+    weekStartDate: nextWeek,
+    releaseState: 'preparation',
+    workOrderId: 'work-order-2',
+  }, now), null);
+  assert.equal(automaticProductionPlanReleaseTarget({
+    weekStartDate: nextWeek,
+    releaseState: 'preparation',
+    workOrderId: null,
+  }, now), 'preparation');
+  assert.equal(automaticProductionPlanReleaseTarget({
+    weekStartDate: afterNextWeek,
+    releaseState: 'draft',
+    workOrderId: null,
+  }, now), null);
+  assert.equal(automaticProductionPlanReleaseTarget({
+    weekStartDate: currentWeek,
+    releaseState: 'archived',
+    workOrderId: null,
+  }, now), null);
 });
 
 test('production week scopes keep canonical current, future, and carryover queries separate', () => {

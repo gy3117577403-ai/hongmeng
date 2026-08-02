@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { prisma } from '@/lib/prisma';
+import {
+  reconcileAutomaticallyReleasedProductionPlanBatches,
+  reconcileFutureActiveProductionPlanWeeks,
+} from '@/lib/production-planning';
 import { loadProductionWeekNavigation, resolveProductionWeek, summarizeProduction } from '@/lib/production-execution';
 
 export const runtime = 'nodejs';
@@ -7,7 +12,11 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
+    await prisma.$transaction(async tx => {
+      await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
+      await reconcileAutomaticallyReleasedProductionPlanBatches(tx, { actorId: user.id });
+    }, { maxWait: 10_000, timeout: 180_000 });
     const week = await resolveProductionWeek(
       req.nextUrl.searchParams.get('weekStart'),
       req.nextUrl.searchParams.get('weekEnd'),

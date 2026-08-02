@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
+  automaticallyReleaseProductionPlanBatch,
   effectivePlanningUnitMilliseconds,
   parseProductionPlanBatchInput,
   planBatchSnapshot,
@@ -82,9 +83,22 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
           detail: { planOrderId: order.id, batchNo, quantity: batch.quantity },
         },
       });
-      return tx.productionPlanOrder.findUniqueOrThrow({ where: { id: order.id }, include: productionPlanOrderInclude });
-    });
-    return NextResponse.json({ ok: true, order: serializeProductionPlanOrder(updated) }, { status: 201 });
+      const automaticRelease = await automaticallyReleaseProductionPlanBatch(tx, {
+        batchId: batch.id,
+        actorId: user.id,
+        trigger: 'automatic_schedule',
+      });
+      const record = await tx.productionPlanOrder.findUniqueOrThrow({
+        where: { id: order.id },
+        include: productionPlanOrderInclude,
+      });
+      return { record, automaticReleaseTarget: automaticRelease?.target || null };
+    }, { maxWait: 10_000, timeout: 30_000 });
+    return NextResponse.json({
+      ok: true,
+      order: serializeProductionPlanOrder(updated.record),
+      automaticReleaseTarget: updated.automaticReleaseTarget,
+    }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     console.error('create planning batch failed', error);

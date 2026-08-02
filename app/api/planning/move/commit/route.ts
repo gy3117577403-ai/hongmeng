@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
+  automaticallyReleaseProductionPlanBatch,
   chinaDate,
   editableProductionPlanningWeek,
   moveProductionPlanBatchToWeek,
@@ -73,6 +74,17 @@ export async function POST(req: NextRequest) {
           },
         });
       }
+      let automaticallyActive = 0;
+      let automaticallyPrepared = 0;
+      for (const batch of batches) {
+        const automaticRelease = await automaticallyReleaseProductionPlanBatch(tx, {
+          batchId: batch.id,
+          actorId: user.id,
+          trigger: 'automatic_schedule',
+        });
+        if (automaticRelease?.target === 'active') automaticallyActive += 1;
+        if (automaticRelease?.target === 'preparation') automaticallyPrepared += 1;
+      }
       await tx.operationLog.create({
         data: {
           userId: user.id,
@@ -84,6 +96,8 @@ export async function POST(req: NextRequest) {
             batchCount: batches.length,
             targetWeekStartDate: targetStart,
             targetWeekEndDate: chinaDate(targetWeek.end),
+            automaticallyActive,
+            automaticallyPrepared,
           },
         },
       });
@@ -91,8 +105,14 @@ export async function POST(req: NextRequest) {
         movedCount: batches.length,
         targetWeekStartDate: targetStart,
         targetWeekEndDate: chinaDate(targetWeek.end),
+        automaticallyActive,
+        automaticallyPrepared,
       };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 10_000,
+      timeout: 180_000,
+    });
     return NextResponse.json({ ok: true, result });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
