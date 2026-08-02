@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Prisma } from '@prisma/client';
+import { DailyProcessTaskStatus, Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { productTimeProfileInclude, serializeProductTimeProfile } from '@/lib/product-time';
@@ -52,7 +52,75 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
         profileId: draft.id,
         actorId: user.id,
       });
-      return { profileId: draft.id, routeSync };
+      const unfinishedDailyTasks = await tx.dailyProcessTask.findMany({
+        where: {
+          workOrder: { drawingLibraryItemId: params.itemId },
+          status: {
+            notIn: [
+              DailyProcessTaskStatus.COMPLETED,
+              DailyProcessTaskStatus.CARRIED_OVER,
+              DailyProcessTaskStatus.CANCELLED,
+              DailyProcessTaskStatus.NEEDS_REVIEW,
+            ],
+          },
+          OR: [
+            { productTimeProfileId: { not: draft.id } },
+            { productTimeProfileVersion: { not: draft.version } },
+            { productTimeProfileId: null },
+            { productTimeProfileVersion: null },
+          ],
+        },
+        select: {
+          id: true,
+          planId: true,
+          status: true,
+          version: true,
+          productTimeProfileId: true,
+          productTimeProfileVersion: true,
+          routeVersion: true,
+        },
+      });
+      let dailyTaskReviewRequired = 0;
+      for (const task of unfinishedDailyTasks) {
+        const updatedTask = await tx.dailyProcessTask.updateMany({
+          where: {
+            id: task.id,
+            version: task.version,
+            status: {
+              notIn: [
+                DailyProcessTaskStatus.COMPLETED,
+                DailyProcessTaskStatus.CARRIED_OVER,
+                DailyProcessTaskStatus.CANCELLED,
+                DailyProcessTaskStatus.NEEDS_REVIEW,
+              ],
+            },
+          },
+          data: { status: DailyProcessTaskStatus.NEEDS_REVIEW, version: { increment: 1 } },
+        });
+        if (updatedTask.count !== 1) continue;
+        dailyTaskReviewRequired += 1;
+        await tx.dailyPlanRevision.create({
+          data: {
+            planId: task.planId,
+            taskId: task.id,
+            action: 'PRODUCT_TIME_REPUBLISHED_REVIEW_REQUIRED',
+            beforeData: {
+              status: task.status,
+              productTimeProfileId: task.productTimeProfileId,
+              productTimeProfileVersion: task.productTimeProfileVersion,
+              routeVersion: task.routeVersion,
+            },
+            afterData: {
+              status: DailyProcessTaskStatus.NEEDS_REVIEW,
+              publishedProductTimeProfileId: draft.id,
+              publishedProductTimeProfileVersion: draft.version,
+            },
+            reason: '产品工序与工时版本已重新发布，请复核未完成日任务',
+            actorId: user.id,
+          },
+        });
+      }
+      return { profileId: draft.id, routeSync, dailyTaskReviewRequired };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
     const profile = await prisma.productTimeProfile.findUnique({
       where: { id: result.profileId },
@@ -62,6 +130,7 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
       ok: true,
       profile: profile ? serializeProductTimeProfile(profile) : null,
       routeSync: result.routeSync,
+      dailyTaskReviewRequired: result.dailyTaskReviewRequired,
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

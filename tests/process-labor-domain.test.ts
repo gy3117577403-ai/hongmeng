@@ -2,12 +2,38 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   calculateClaimStandardLaborMilliseconds,
+  deriveBatchClaimIdempotencyKey,
+  parseBatchClaimAllocations,
   parseClaimQuantity,
   parseExpectedPoolVersion,
   parseIdempotencyKey,
   pendingPerBatchResolutionIsSafe,
   poolStatusAfterClaim,
 } from '../lib/process-labor-service';
+
+test('batch labor claims are normalized deterministically without duplicate employees', () => {
+  assert.deepEqual(parseBatchClaimAllocations([
+    { employeeId: 'employee-b', quantity: '200' },
+    { employeeId: 'employee-a', quantity: 800 },
+  ]), [
+    { employeeId: 'employee-a', quantity: 800 },
+    { employeeId: 'employee-b', quantity: 200 },
+  ]);
+  assert.throws(() => parseBatchClaimAllocations([
+    { employeeId: 'employee-a', quantity: 1 },
+    { employeeId: 'employee-a', quantity: 2 },
+  ]), /不能重复/);
+  assert.throws(() => parseBatchClaimAllocations([]), /至少包含一名员工/);
+});
+
+test('batch labor child idempotency keys are stable and allocation-specific', () => {
+  const first = deriveBatchClaimIdempotencyKey('daily-plan-completion-0001', 0);
+  const replay = deriveBatchClaimIdempotencyKey('daily-plan-completion-0001', 0);
+  const second = deriveBatchClaimIdempotencyKey('daily-plan-completion-0001', 1);
+  assert.equal(first, replay);
+  assert.notEqual(first, second);
+  assert.match(first, /^batch:[a-f0-9]{48}$/);
+});
 
 test('800 and 200 quantity claims conserve the complete pool standard labor', () => {
   const total = 1_000_003n;

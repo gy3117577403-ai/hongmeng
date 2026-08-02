@@ -148,6 +148,7 @@ export type DrawingLibraryCustomerDTO = {
 };
 
 export type LaborAccessRoleDTO = 'ADMIN' | 'TEAM_LEAD' | 'EMPLOYEE';
+export type DailyPlanningRoleDTO = 'WORKSHOP_SUPERVISOR' | 'TEAM_LEADER' | 'MEMBER';
 
 export type CurrentUserDTO = {
   id: string;
@@ -162,6 +163,10 @@ export type CurrentUserDTO = {
     team: string | null;
     isActive: boolean;
   } | null;
+  dailyPlanningRoles: DailyPlanningRoleDTO[];
+  dailyPlanningTeamIds: string[];
+  canAccessDailyPlans: boolean;
+  canManageDailyPlanningOrganization: boolean;
 };
 
 export type OperationLogDTO = {

@@ -3,6 +3,7 @@ import {
   ProcessLaborClaimStatus,
   ProcessLaborPoolStatus,
 } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { prisma } from '@/lib/prisma';
 import { dateKeyFromDatabase, parseWorkDate } from '@/lib/attendance';
 import {
@@ -648,7 +649,7 @@ export async function resolveProcessLaborPoolStandard(command: {
   }
 }
 
-type ClaimCommand = {
+export type ClaimCommand = {
   poolId: string;
   employeeId: unknown;
   quantity: unknown;
@@ -656,6 +657,82 @@ type ClaimCommand = {
   idempotencyKey: unknown;
   userId: string;
 };
+
+export type BatchClaimAllocationCommand = {
+  employeeId: unknown;
+  quantity: unknown;
+};
+
+export type BatchClaimCommand = {
+  poolId: string;
+  allocations: unknown;
+  expectedVersion: unknown;
+  idempotencyKey: unknown;
+  userId: string;
+};
+
+export type ParsedBatchClaimAllocation = {
+  employeeId: string;
+  quantity: number;
+};
+
+export function parseBatchClaimAllocations(value: unknown): ParsedBatchClaimAllocation[] {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) {
+    throw new ProcessLaborServiceError(
+      '实际工时领取明细至少包含一名员工，且最多 100 人',
+      400,
+      'PROCESS_LABOR_BATCH_ALLOCATIONS_INVALID',
+    );
+  }
+  const seen = new Set<string>();
+  const allocations = value.map((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new ProcessLaborServiceError(
+        `第 ${index + 1} 条实际工时领取明细无效`,
+        400,
+        'PROCESS_LABOR_BATCH_ALLOCATION_INVALID',
+      );
+    }
+    const input = raw as BatchClaimAllocationCommand;
+    const employeeId = cleanProcessText(input.employeeId, 80);
+    if (!employeeId) {
+      throw new ProcessLaborServiceError(
+        `第 ${index + 1} 条明细缺少员工`,
+        400,
+        'PROCESS_LABOR_EMPLOYEE_REQUIRED',
+      );
+    }
+    if (seen.has(employeeId)) {
+      throw new ProcessLaborServiceError(
+        '同一批实际工时中不能重复选择员工',
+        400,
+        'PROCESS_LABOR_BATCH_EMPLOYEE_DUPLICATE',
+      );
+    }
+    seen.add(employeeId);
+    return { employeeId, quantity: parseClaimQuantity(input.quantity) };
+  });
+  const totalQuantity = allocations.reduce((total, item) => total + item.quantity, 0);
+  if (!Number.isSafeInteger(totalQuantity)) {
+    throw new ProcessLaborServiceError(
+      '实际工时领取总数量超出支持范围',
+      400,
+      'PROCESS_LABOR_BATCH_QUANTITY_INVALID',
+    );
+  }
+  return allocations.sort((left, right) => left.employeeId.localeCompare(right.employeeId));
+}
+
+export function deriveBatchClaimIdempotencyKey(parentKey: string, index: number): string {
+  // A child key must be deterministic, allocation-specific and bounded by the
+  // ProcessLaborClaim.idempotencyKey column. Keeping the index inside the hash
+  // also avoids leaking batch cardinality into persisted identifiers.
+  const digest = createHash('sha256')
+    .update(`process-labor-batch\u0000${parentKey}\u0000${index}`)
+    .digest('hex')
+    .slice(0, 48);
+  return `batch:${digest}`;
+}
 
 function normalizeTransactionError(error: unknown): ProcessLaborServiceError {
   if (error instanceof ProcessLaborServiceError) return error;
@@ -875,6 +952,341 @@ export async function claimProcessLaborPool(command: ClaimCommand): Promise<{
           quantity,
           userId: command.userId,
         });
+      }
+    }
+    throw normalizeTransactionError(error);
+  }
+}
+
+type BatchDuplicateClaim = {
+  id: string;
+  poolId: string;
+  employeeId: string;
+  quantity: number;
+  status: ProcessLaborClaimStatus;
+  claimedById: string | null;
+  idempotencyKey: string;
+};
+
+function validateBatchDuplicateClaims(input: {
+  duplicates: BatchDuplicateClaim[];
+  poolId: string;
+  allocations: ParsedBatchClaimAllocation[];
+  itemKeys: string[];
+  userId: string;
+}): void {
+  if (input.duplicates.length !== input.allocations.length) {
+    throw new ProcessLaborServiceError(
+      '该批次请求标识只完成了部分记录，请更换请求标识后重试',
+      409,
+      'PROCESS_LABOR_IDEMPOTENCY_CONFLICT',
+    );
+  }
+  const duplicateByKey = new Map(input.duplicates.map(claim => [claim.idempotencyKey, claim]));
+  input.allocations.forEach((allocation, index) => {
+    const duplicate = duplicateByKey.get(input.itemKeys[index]);
+    if (!duplicate
+      || duplicate.poolId !== input.poolId
+      || duplicate.employeeId !== allocation.employeeId
+      || duplicate.quantity !== allocation.quantity
+      || duplicate.status !== ProcessLaborClaimStatus.ACTIVE
+      || duplicate.claimedById !== input.userId) {
+      throw new ProcessLaborServiceError(
+        '该批次请求标识已用于其他实际工时领取',
+        409,
+        'PROCESS_LABOR_IDEMPOTENCY_CONFLICT',
+      );
+    }
+  });
+}
+
+async function loadBatchClaimResult(input: {
+  claimIds: string[];
+  poolId: string;
+  userId: string;
+}): Promise<{
+  claims: ProcessLaborClaimDTO[];
+  pool: ProcessLaborPoolDTO;
+}> {
+  const [claims, pool, access] = await Promise.all([
+    Promise.all(input.claimIds.map(loadClaim)),
+    loadPool(input.poolId),
+    loadLaborAccessProfileForUser(input.userId),
+  ]);
+  return {
+    claims: claims.map(serializeProcessLaborClaim),
+    pool: serializeProcessLaborPoolForAccess(pool, access),
+  };
+}
+
+/**
+ * Atomically claims actual completed process quantities for multiple employees.
+ * This endpoint intentionally consumes only ProcessLaborPool facts; daily-plan
+ * assignments are never converted to actual employee labor by this function.
+ */
+export async function claimProcessLaborPoolBatch(command: BatchClaimCommand): Promise<{
+  claims: ProcessLaborClaimDTO[];
+  pool: ProcessLaborPoolDTO;
+}> {
+  const poolId = cleanProcessText(command.poolId, 80);
+  if (!poolId) {
+    throw new ProcessLaborServiceError(
+      '缺少工时池标识',
+      400,
+      'PROCESS_LABOR_POOL_REQUIRED',
+    );
+  }
+  const allocations = parseBatchClaimAllocations(command.allocations);
+  const expectedVersion = parseExpectedPoolVersion(command.expectedVersion);
+  const parentKey = parseIdempotencyKey(command.idempotencyKey);
+  const itemKeys = allocations.map((_, index) => deriveBatchClaimIdempotencyKey(parentKey, index));
+  const totalQuantity = allocations.reduce((total, item) => total + item.quantity, 0);
+
+  const loadDuplicates = async (): Promise<BatchDuplicateClaim[]> => (
+    prisma.processLaborClaim.findMany({
+      where: { idempotencyKey: { in: itemKeys } },
+      select: {
+        id: true,
+        poolId: true,
+        employeeId: true,
+        quantity: true,
+        status: true,
+        claimedById: true,
+        idempotencyKey: true,
+      },
+    })
+  );
+
+  try {
+    const result = await prisma.$transaction(async tx => {
+      const [actor, employees, duplicates] = await Promise.all([
+        tx.user.findUnique({
+          where: { id: command.userId },
+          select: laborActorSelect,
+        }),
+        tx.employee.findMany({
+          where: { id: { in: allocations.map(item => item.employeeId) } },
+        }),
+        tx.processLaborClaim.findMany({
+          where: { idempotencyKey: { in: itemKeys } },
+          select: {
+            id: true,
+            poolId: true,
+            employeeId: true,
+            quantity: true,
+            status: true,
+            claimedById: true,
+            idempotencyKey: true,
+          },
+        }),
+      ]);
+      if (!actor?.isActive) missingLaborActor();
+      if (employees.length !== allocations.length) {
+        throw new ProcessLaborServiceError(
+          '实际工时领取包含不存在的员工',
+          400,
+          'PROCESS_LABOR_EMPLOYEE_REQUIRED',
+        );
+      }
+      const employeeById = new Map(employees.map(employee => [employee.id, employee]));
+      allocations.forEach(allocation => {
+        const employee = employeeById.get(allocation.employeeId);
+        if (!employee) {
+          throw new ProcessLaborServiceError(
+            '实际工时领取包含不存在的员工',
+            400,
+            'PROCESS_LABOR_EMPLOYEE_REQUIRED',
+          );
+        }
+        authorizeLaborClaim(authorizationActor(actor), employee);
+      });
+
+      if (duplicates.length > 0) {
+        validateBatchDuplicateClaims({
+          duplicates,
+          poolId,
+          allocations,
+          itemKeys,
+          userId: command.userId,
+        });
+        const claimIds = itemKeys.map(key => {
+          const duplicate = duplicates.find(claim => claim.idempotencyKey === key);
+          if (!duplicate) {
+            throw new ProcessLaborServiceError(
+              '该批次请求标识状态不完整',
+              409,
+              'PROCESS_LABOR_IDEMPOTENCY_CONFLICT',
+            );
+          }
+          return duplicate.id;
+        });
+        return { kind: 'duplicate' as const, claimIds };
+      }
+
+      const pool = await tx.processLaborPool.findUnique({ where: { id: poolId } });
+      if (!pool) {
+        throw new ProcessLaborServiceError(
+          '工时池不存在',
+          404,
+          'PROCESS_LABOR_POOL_NOT_FOUND',
+        );
+      }
+      if (pool.version !== expectedVersion) {
+        throw new ProcessLaborServiceError(
+          '工时池已更新，请刷新后重试',
+          409,
+          'PROCESS_LABOR_VERSION_CONFLICT',
+        );
+      }
+      if (
+        pool.status === ProcessLaborPoolStatus.LOCKED
+        && pool.standardSource === 'pending_standard'
+      ) {
+        throw new ProcessLaborServiceError(
+          '该工时池尚未补录标准工时，暂不能领取',
+          409,
+          'PROCESS_LABOR_STANDARD_PENDING',
+        );
+      }
+      if (pool.lockedAt
+        || pool.status === ProcessLaborPoolStatus.LOCKED
+        || pool.status === ProcessLaborPoolStatus.VOIDED) {
+        throw new ProcessLaborServiceError(
+          '工时池已锁定或作废，不能继续领取',
+          409,
+          'PROCESS_LABOR_POOL_LOCKED',
+        );
+      }
+      if (pool.status === ProcessLaborPoolStatus.EXHAUSTED || pool.remainingQty <= 0) {
+        throw new ProcessLaborServiceError(
+          '该工时池已领取完',
+          409,
+          'PROCESS_LABOR_POOL_EXHAUSTED',
+        );
+      }
+      if (totalQuantity > pool.remainingQty) {
+        throw new ProcessLaborServiceError(
+          '多人领取总数量不能超过工时池剩余数量',
+          409,
+          'PROCESS_LABOR_CLAIM_EXCEEDS_REMAINING',
+        );
+      }
+
+      let claimedQty = pool.claimedQty;
+      let claimedLabor = pool.claimedStandardLaborMilliseconds;
+      const planned = allocations.map(allocation => {
+        const standardLaborMilliseconds = calculateClaimStandardLaborMilliseconds({
+          eligibleQty: pool.eligibleQty,
+          claimedQty,
+          requestedQty: allocation.quantity,
+          totalStandardLaborMilliseconds: pool.totalStandardLaborMilliseconds,
+          claimedStandardLaborMilliseconds: claimedLabor,
+        });
+        claimedQty += allocation.quantity;
+        claimedLabor += standardLaborMilliseconds;
+        return { ...allocation, standardLaborMilliseconds };
+      });
+      const totalLabor = planned.reduce(
+        (total, item) => total + item.standardLaborMilliseconds,
+        0n,
+      );
+      const status = poolStatusAfterClaim(pool.eligibleQty, pool.claimedQty + totalQuantity);
+      const updated = await tx.processLaborPool.updateMany({
+        where: {
+          id: pool.id,
+          version: expectedVersion,
+          lockedAt: null,
+          remainingQty: { gte: totalQuantity },
+          remainingStandardLaborMilliseconds: { gte: totalLabor },
+          status: { in: [ProcessLaborPoolStatus.OPEN, ProcessLaborPoolStatus.PARTIAL] },
+        },
+        data: {
+          claimedQty: { increment: totalQuantity },
+          remainingQty: { decrement: totalQuantity },
+          claimedStandardLaborMilliseconds: { increment: totalLabor },
+          remainingStandardLaborMilliseconds: { decrement: totalLabor },
+          status,
+          version: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ProcessLaborServiceError(
+          '工时池刚被其他人领取，请刷新后重试',
+          409,
+          'PROCESS_LABOR_VERSION_CONFLICT',
+        );
+      }
+
+      const claimIds: string[] = [];
+      for (let index = 0; index < planned.length; index += 1) {
+        const allocation = planned[index];
+        const claim = await tx.processLaborClaim.create({
+          data: {
+            poolId: pool.id,
+            employeeId: allocation.employeeId,
+            quantity: allocation.quantity,
+            standardLaborMilliseconds: allocation.standardLaborMilliseconds,
+            workDate: pool.workDate,
+            status: ProcessLaborClaimStatus.ACTIVE,
+            idempotencyKey: itemKeys[index],
+            claimedById: command.userId,
+          },
+          select: { id: true },
+        });
+        claimIds.push(claim.id);
+      }
+      await tx.operationLog.create({
+        data: {
+          userId: command.userId,
+          action: 'claim_process_labor_batch',
+          targetType: 'process_labor_pool',
+          targetId: pool.id,
+          detail: {
+            batchIdempotencyKey: parentKey,
+            expectedVersion,
+            totalQuantity,
+            totalStandardLaborMilliseconds: totalLabor.toString(),
+            claims: planned.map((allocation, index) => ({
+              claimId: claimIds[index],
+              employeeId: allocation.employeeId,
+              quantity: allocation.quantity,
+              standardLaborMilliseconds: allocation.standardLaborMilliseconds.toString(),
+            })),
+          },
+        },
+      });
+      return { kind: 'created' as const, claimIds };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
+    return loadBatchClaimResult({
+      claimIds: result.claimIds,
+      poolId,
+      userId: command.userId,
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError
+      && (error.code === 'P2002' || error.code === 'P2034')) {
+      const duplicates = await loadDuplicates();
+      if (duplicates.length > 0) {
+        validateBatchDuplicateClaims({
+          duplicates,
+          poolId,
+          allocations,
+          itemKeys,
+          userId: command.userId,
+        });
+        const claimIds = itemKeys.map(key => {
+          const duplicate = duplicates.find(claim => claim.idempotencyKey === key);
+          if (!duplicate) {
+            throw new ProcessLaborServiceError(
+              '该批次请求标识状态不完整',
+              409,
+              'PROCESS_LABOR_IDEMPOTENCY_CONFLICT',
+            );
+          }
+          return duplicate.id;
+        });
+        return loadBatchClaimResult({ claimIds, poolId, userId: command.userId });
       }
     }
     throw normalizeTransactionError(error);

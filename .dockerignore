@@ -9,6 +9,8 @@ windows-import-helper
 android-webview-app
 reports
 tmp
+.codex-artifacts
+output
 config/*.local.json
 *.zip
 *.bundle

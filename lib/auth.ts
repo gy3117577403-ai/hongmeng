@@ -2,7 +2,9 @@ import crypto from 'node:crypto';
 import {cookies, headers} from 'next/headers';
 import {NextResponse} from 'next/server';
 import {SESSION_COOKIE} from '@/lib/constants';
+import {dailyPlanEnabled} from '@/lib/daily-plan-feature';
 import {prisma} from '@/lib/prisma';
+import {productionPlanningDateBoundary} from '@/lib/production-planning-date';
 import {
   canUseRequestMethod,
   type WriteAccessMode,
@@ -15,7 +17,62 @@ function sign(p:string){return crypto.createHmac('sha256',secret()).update(p).di
 export function createToken(u:{userId:string;username:string}){const p=Buffer.from(JSON.stringify({userId:u.userId,username:u.username,exp:Math.floor(Date.now()/1000)+604800})).toString('base64url'); return `${p}.${sign(p)}`}
 export function verifyToken(t?:string|null):Session|null{if(!t)return null; const [p,s]=t.split('.'); if(!p||!s)return null; const e=sign(p); if(s.length!==e.length||!crypto.timingSafeEqual(Buffer.from(s),Buffer.from(e)))return null; try{const v=JSON.parse(Buffer.from(p,'base64url').toString()) as Session; return v.exp>Math.floor(Date.now()/1000)?v:null}catch{return null}}
 export function cookieOptions(){return{httpOnly:true,sameSite:'lax' as const,secure:process.env.NODE_ENV==='production',path:'/',maxAge:604800}}
-export async function currentUser(){const s=verifyToken(cookies().get(SESSION_COOKIE)?.value); if(!s)return null; const u=await prisma.user.findUnique({where:{id:s.userId},select:{id:true,username:true,displayName:true,isActive:true,laborRole:true,employeeId:true,employee:{select:{id:true,employeeNo:true,name:true,team:true,isActive:true}}}}); return u&&u.isActive?{id:u.id,username:u.username,displayName:u.displayName,laborRole:u.laborRole,employeeId:u.employeeId,employee:u.employee}:null}
+export async function currentUser(){
+  const s=verifyToken(cookies().get(SESSION_COOKIE)?.value);
+  if(!s)return null;
+  const membershipDate=productionPlanningDateBoundary();
+  const u=await prisma.user.findUnique({
+    where:{id:s.userId},
+    select:{
+      id:true,
+      username:true,
+      displayName:true,
+      isActive:true,
+      laborRole:true,
+      employeeId:true,
+      employee:{
+        select:{
+          id:true,
+          employeeNo:true,
+          name:true,
+          team:true,
+          isActive:true,
+          productionPlanningMemberships:{
+            where:{
+              isActive:true,
+              effectiveFrom:{lte:membershipDate},
+              OR:[{effectiveTo:null},{effectiveTo:{gte:membershipDate}}],
+            },
+            select:{role:true,teamId:true},
+          },
+        },
+      },
+    },
+  });
+  if(!u||!u.isActive)return null;
+  const memberships=u.employee?.productionPlanningMemberships??[];
+  const dailyPlanningRoles=[...new Set(memberships.map(item=>item.role))];
+  const dailyPlanningTeamIds=[...new Set(memberships.map(item=>item.teamId).filter((teamId):teamId is string=>Boolean(teamId)))];
+  const explicitlyConfigured=dailyPlanningRoles.some(role=>role==='WORKSHOP_SUPERVISOR'||role==='TEAM_LEADER');
+  return{
+    id:u.id,
+    username:u.username,
+    displayName:u.displayName,
+    laborRole:u.laborRole,
+    employeeId:u.employeeId,
+    employee:u.employee?{
+      id:u.employee.id,
+      employeeNo:u.employee.employeeNo,
+      name:u.employee.name,
+      team:u.employee.team,
+      isActive:u.employee.isActive,
+    }:null,
+    dailyPlanningRoles,
+    dailyPlanningTeamIds,
+    canAccessDailyPlans:dailyPlanEnabled()&&(u.laborRole==='ADMIN'||explicitlyConfigured),
+    canManageDailyPlanningOrganization:u.laborRole==='ADMIN',
+  };
+}
 export async function requireUser(options?:{write?:WriteAccessMode}){
   const u=await currentUser();
   if(!u)throw new UnauthorizedError();

@@ -9,6 +9,23 @@ permissions:
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hongmeng_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d hongmeng_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/hongmeng_ci?schema=public
+      DAILY_PLAN_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -17,8 +34,18 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Validate Prisma schema
+        run: npx prisma validate
       - name: Generate Prisma client
         run: npx prisma generate
+      - name: Apply Prisma migrations
+        run: npx prisma migrate deploy
+      - name: Verify Prisma migration status
+        run: npx prisma migrate status
+      - name: Daily plan PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npm run test:daily-plan-integration
       - name: Type check
         run: npx tsc --noEmit
       - name: Lint
@@ -42,7 +69,7 @@ jobs:
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.17.0
+            APP_VERSION=v1.18.0
             APP_REVISION=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

@@ -1,5 +1,6 @@
-import { Prisma } from '@prisma/client';
+import { DailyProcessTaskStatus, Prisma } from '@prisma/client';
 import { dateKeyFromDatabase, parseWorkDate } from '@/lib/attendance';
+import { resolveDailyTaskProgress } from '@/lib/daily-plan-domain';
 import {
   calculateCompletionLaborSnapshot,
   calculateParallelGroupReleaseDelta,
@@ -1642,6 +1643,105 @@ async function updateCompletionWorkOrders(
   return changed;
 }
 
+/**
+ * Projects the authoritative process-step quantities into same-day planning tasks.
+ * ProcessCompletion remains the only production fact: this function only updates
+ * the daily-plan status/availability cache and its audit trail in the same
+ * serializable transaction as the completion.
+ */
+async function syncDailyProcessTasksAfterCompletion(
+  tx: Prisma.TransactionClient,
+  input: {
+    completionId: string;
+    routeId: string;
+    workDate: Date;
+    steps: QuantityStep[];
+    actorId: string;
+  },
+): Promise<void> {
+  const tasks = await tx.dailyProcessTask.findMany({
+    where: {
+      routeId: input.routeId,
+      plan: { workDate: input.workDate },
+      status: {
+        notIn: [
+          DailyProcessTaskStatus.COMPLETED,
+          DailyProcessTaskStatus.CARRIED_OVER,
+          DailyProcessTaskStatus.CANCELLED,
+          DailyProcessTaskStatus.NEEDS_REVIEW,
+        ],
+      },
+    },
+    select: {
+      id: true,
+      planId: true,
+      stepId: true,
+      status: true,
+      availableQty: true,
+      plannedQty: true,
+      version: true,
+    },
+  });
+  if (!tasks.length) return;
+
+  const stepsById = new Map(input.steps.map(step => [step.id, step]));
+  for (const task of tasks) {
+    const step = stepsById.get(task.stepId);
+    if (!step) continue;
+    const next = resolveDailyTaskProgress({
+      currentStatus: task.status,
+      currentAvailableQty: task.availableQty,
+      plannedQty: task.plannedQty,
+      inputQty: step.inputQty,
+      processedQty: step.processedQty,
+      stepStatus: step.status,
+    });
+    if (next.status === task.status && next.availableQty === task.availableQty) continue;
+
+    const updated = await tx.dailyProcessTask.updateMany({
+      where: {
+        id: task.id,
+        version: task.version,
+        status: task.status,
+      },
+      data: {
+        status: next.status as DailyProcessTaskStatus,
+        availableQty: next.availableQty,
+        version: { increment: 1 },
+      },
+    });
+    if (updated.count !== 1) {
+      throw new ProcessCompletionServiceError(
+        '日计划任务已被其他操作更新，请刷新后重试',
+        409,
+        'DAILY_PLAN_VERSION_CONFLICT',
+      );
+    }
+
+    await tx.dailyPlanRevision.create({
+      data: {
+        planId: task.planId,
+        taskId: task.id,
+        action: 'PROCESS_COMPLETION_SYNC',
+        beforeData: {
+          status: task.status,
+          availableQty: task.availableQty,
+          stepId: task.stepId,
+        },
+        afterData: {
+          status: next.status,
+          availableQty: next.availableQty,
+          stepId: task.stepId,
+          completionId: input.completionId,
+        },
+        reason: '生产工序完工同步日计划任务状态与可执行数量',
+        actorId: input.actorId,
+        idempotencyKey: `process-completion:${input.completionId}:daily-task:${task.id}`,
+      },
+    });
+  }
+}
+
 async function returnReworkOutputToParent(
   tx: Prisma.TransactionClient,
   input: {
@@ -2317,6 +2417,13 @@ async function performProcessCompletion(
     actor: input.actor,
     now,
     propagateFinishedToAncestors: route.workOrder.branchType !== 'REWORK',
+  });
+  await syncDailyProcessTasksAfterCompletion(tx, {
+    completionId: completion.id,
+    routeId: route.id,
+    workDate: input.workDate,
+    steps: route.steps as QuantityStep[],
+    actorId: input.userId,
   });
   if (
     route.workOrder.branchType === 'REWORK'

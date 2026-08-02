@@ -74,6 +74,57 @@ enum LaborAccessRole {
   @@map("labor_access_role")
 }
 
+enum ProductionPlanningRole {
+  WORKSHOP_SUPERVISOR
+  TEAM_LEADER
+  MEMBER
+
+  @@map("production_planning_role")
+}
+
+enum DailyProductionPlanStatus {
+  DRAFT
+  NEEDS_REVIEW
+  CONFIRMED
+  IN_PROGRESS
+  ARCHIVED
+  CANCELLED
+
+  @@map("daily_production_plan_status")
+}
+
+enum DailyProcessTaskStatus {
+  UNPLANNED
+  WAITING_UPSTREAM
+  READY
+  IN_PROGRESS
+  COMPLETED
+  PENDING_CARRY_OVER
+  CARRIED_OVER
+  NEEDS_REVIEW
+  CANCELLED
+
+  @@map("daily_process_task_status")
+}
+
+enum DailyTaskAssignmentStatus {
+  PLANNED
+  ACTIVE
+  COMPLETED
+  CANCELLED
+
+  @@map("daily_task_assignment_status")
+}
+
+enum DailyCrossTeamRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+
+  @@map("daily_cross_team_request_status")
+}
+
 enum MaterialFollowUpStatus {
   PENDING
   IN_PROGRESS
@@ -202,6 +253,14 @@ model User {
   updatedPdfOverlayVersions      PdfOverlayVersion[]         @relation("PdfOverlayVersionUpdatedBy")
   publishedPdfOverlayVersions    PdfOverlayVersion[]         @relation("PdfOverlayVersionPublishedBy")
   uploadedPdfOverlayAssets       PdfOverlayAsset[]           @relation("PdfOverlayAssetUploadedBy")
+  createdDailyProductionPlans    DailyProductionPlan[]       @relation("DailyPlanCreatedBy")
+  updatedDailyProductionPlans    DailyProductionPlan[]       @relation("DailyPlanUpdatedBy")
+  confirmedDailyProductionPlans  DailyProductionPlan[]       @relation("DailyPlanConfirmedBy")
+  assignedDailyTaskAssignments   DailyTaskAssignment[]       @relation("DailyAssignmentAssignedBy")
+  setDailyCapacityOverrides      DailyCapacityOverride[]     @relation("DailyCapacityOverrideSetBy")
+  dailyPlanRevisions             DailyPlanRevision[]         @relation("DailyPlanRevisionActor")
+  requestedDailyCrossTeam        DailyCrossTeamRequest[]     @relation("DailyCrossTeamRequestedBy")
+  reviewedDailyCrossTeam         DailyCrossTeamRequest[]     @relation("DailyCrossTeamReviewedBy")
 
   @@map("users")
 }
@@ -284,6 +343,7 @@ model WorkOrder {
   quantityMovements       ProcessQuantityMovement[] @relation("MovementWorkOrder")
   branchQuantityMovements ProcessQuantityMovement[] @relation("MovementBranchWorkOrder")
   processLaborPools       ProcessLaborPool[]
+  dailyProcessTasks       DailyProcessTask[]
 
   @@unique([parentWorkOrderId, branchSequence])
   @@index([code])
@@ -421,6 +481,7 @@ model WorkOrderProcessRoute {
   steps                     WorkOrderProcessStep[]
   activities                ProcessRouteActivity[]
   completions               ProcessCompletion[]
+  dailyProcessTasks         DailyProcessTask[]
 
   @@index([status])
   @@index([templateId])
@@ -476,6 +537,7 @@ model WorkOrderProcessStep {
   sourceQuantityMovements     ProcessQuantityMovement[] @relation("MovementSourceStep")
   targetQuantityMovements     ProcessQuantityMovement[] @relation("MovementTargetStep")
   processLaborPools           ProcessLaborPool[]
+  dailyProcessTasks           DailyProcessTask[]
   originatedBranchWorkOrders  WorkOrder[]               @relation("WorkOrderBranchOriginStep")
   rejoiningBranchWorkOrders   WorkOrder[]               @relation("WorkOrderBranchRejoinStep")
 
@@ -518,6 +580,10 @@ model Employee {
   skillAssessments              SkillAssessment[]              @relation("SkillAssessmentEmployee")
   skillAssessmentsAsAssessor    SkillAssessment[]              @relation("SkillAssessmentAssessor")
   skillAssessmentsAsReviewer    SkillAssessment[]              @relation("SkillAssessmentReviewer")
+  productionPlanningMemberships ProductionPlanningMembership[]
+  dailyTaskAssignments          DailyTaskAssignment[]
+  dailyCapacityOverrides        DailyCapacityOverride[]
+  dailyCrossTeamRequests        DailyCrossTeamRequest[]
 
   @@index([isActive, employeeNo])
   @@index([name])
@@ -526,6 +592,266 @@ model Employee {
   @@index([team])
   @@index([attendanceEnabled, isActive])
   @@map("employees")
+}
+
+model ProductionTeam {
+  id                          String                         @id @default(uuid())
+  code                        String                         @unique
+  name                        String                         @unique
+  legacyTeamName              String?                        @unique @map("legacy_team_name")
+  isActive                    Boolean                        @default(true) @map("is_active")
+  sortOrder                   Int                            @default(0) @map("sort_order")
+  version                     Int                            @default(0)
+  createdAt                   DateTime                       @default(now()) @map("created_at")
+  updatedAt                   DateTime                       @updatedAt @map("updated_at")
+  memberships                 ProductionPlanningMembership[]
+  dailyPlans                  DailyProductionPlan[]
+  dailyTaskAssignments        DailyTaskAssignment[]
+  requestingCrossTeamRequests DailyCrossTeamRequest[]        @relation("DailyCrossTeamRequestingTeam")
+  targetCrossTeamRequests     DailyCrossTeamRequest[]        @relation("DailyCrossTeamTargetTeam")
+
+  @@index([isActive, sortOrder])
+  @@map("production_teams")
+}
+
+model ProductionPlanningMembership {
+  id            String                 @id @default(uuid())
+  employeeId    String                 @map("employee_id")
+  teamId        String?                @map("team_id")
+  role          ProductionPlanningRole
+  scopeKey      String                 @map("scope_key")
+  isActive      Boolean                @default(true) @map("is_active")
+  effectiveFrom DateTime               @default(dbgenerated("CURRENT_DATE")) @map("effective_from") @db.Date
+  effectiveTo   DateTime?              @map("effective_to") @db.Date
+  version       Int                    @default(0)
+  createdAt     DateTime               @default(now()) @map("created_at")
+  updatedAt     DateTime               @updatedAt @map("updated_at")
+  employee      Employee               @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  team          ProductionTeam?        @relation(fields: [teamId], references: [id], onDelete: Restrict)
+
+  @@unique([employeeId, role, scopeKey])
+  @@index([teamId, role, isActive])
+  @@index([employeeId, isActive])
+  @@index([effectiveFrom, effectiveTo])
+  @@map("production_planning_memberships")
+}
+
+model DailyOrganizationMutation {
+  id             String   @id @default(uuid())
+  idempotencyKey String   @unique @map("idempotency_key")
+  payloadHash    String   @map("payload_hash")
+  actorId        String   @map("actor_id")
+  action         String
+  targetType     String   @map("target_type")
+  targetId       String   @map("target_id")
+  resultVersion  Int      @map("result_version")
+  resultData     Json     @map("result_data")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([targetType, targetId, createdAt], map: "daily_org_mutations_target_created_idx")
+  @@index([actorId, createdAt])
+  @@map("daily_organization_mutations")
+}
+
+model DailyProductionPlan {
+  id                String                    @id @default(uuid())
+  workDate          DateTime                  @map("work_date") @db.Date
+  shiftCode         String                    @default("DAY") @map("shift_code")
+  teamId            String                    @map("team_id")
+  status            DailyProductionPlanStatus @default(DRAFT)
+  version           Int                       @default(0)
+  idempotencyKey    String?                   @unique @map("idempotency_key")
+  confirmedAt       DateTime?                 @map("confirmed_at")
+  confirmedById     String?                   @map("confirmed_by_id")
+  createdById       String                    @map("created_by_id")
+  updatedById       String                    @map("updated_by_id")
+  createdAt         DateTime                  @default(now()) @map("created_at")
+  updatedAt         DateTime                  @updatedAt @map("updated_at")
+  team              ProductionTeam            @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  confirmedBy       User?                     @relation("DailyPlanConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  createdBy         User                      @relation("DailyPlanCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy         User                      @relation("DailyPlanUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  tasks             DailyProcessTask[]
+  capacityOverrides DailyCapacityOverride[]
+  revisions         DailyPlanRevision[]
+
+  @@unique([workDate, shiftCode, teamId])
+  @@index([workDate, status])
+  @@index([teamId, workDate])
+  @@index([confirmedById])
+  @@map("daily_production_plans")
+}
+
+model DailyProcessTask {
+  id                          String                  @id @default(uuid())
+  planId                      String                  @map("plan_id")
+  workDate                    DateTime                @map("work_date") @db.Date
+  shiftCode                   String                  @map("shift_code")
+  productionPlanBatchId       String?                 @map("production_plan_batch_id")
+  workOrderId                 String                  @map("work_order_id")
+  routeId                     String                  @map("route_id")
+  stepId                      String                  @map("step_id")
+  routeVersion                Int                     @map("route_version")
+  processCode                 String                  @map("process_code")
+  processName                 String                  @map("process_name")
+  stageGroup                  String                  @map("stage_group")
+  position                    Int
+  sequenceGroup               Int                     @map("sequence_group")
+  standardSource              String                  @map("standard_source")
+  timeBasis                   String                  @map("time_basis")
+  unitLabel                   String                  @map("unit_label")
+  standardMillisecondsPerUnit Int                     @map("standard_milliseconds_per_unit")
+  setupMilliseconds           Int                     @default(0) @map("setup_milliseconds")
+  unitsPerProduct             Int                     @default(1) @map("units_per_product")
+  countsForEfficiency         Boolean                 @default(true) @map("counts_for_efficiency")
+  productTimeProfileId        String?                 @map("product_time_profile_id")
+  productTimeProfileVersion   Int?                    @map("product_time_profile_version")
+  plannedQty                  Int                     @map("planned_qty")
+  availableQty                Int                     @default(0) @map("available_qty")
+  priority                    Int                     @default(0)
+  priorityReason              String?                 @map("priority_reason")
+  riskWarnings                Json?                   @map("risk_warnings")
+  status                      DailyProcessTaskStatus  @default(UNPLANNED)
+  sortOrder                   Int                     @default(0) @map("sort_order")
+  version                     Int                     @default(0)
+  carryOverFromTaskId         String?                 @map("carry_over_from_task_id")
+  createdAt                   DateTime                @default(now()) @map("created_at")
+  updatedAt                   DateTime                @updatedAt @map("updated_at")
+  plan                        DailyProductionPlan     @relation(fields: [planId], references: [id], onDelete: Restrict)
+  productionPlanBatch         ProductionPlanBatch?    @relation(fields: [productionPlanBatchId], references: [id], onDelete: SetNull)
+  workOrder                   WorkOrder               @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  route                       WorkOrderProcessRoute   @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  step                        WorkOrderProcessStep    @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  carryOverFromTask           DailyProcessTask?       @relation("DailyTaskCarryOver", fields: [carryOverFromTaskId], references: [id], onDelete: SetNull)
+  carriedOverTasks            DailyProcessTask[]      @relation("DailyTaskCarryOver")
+  assignments                 DailyTaskAssignment[]
+  revisions                   DailyPlanRevision[]
+  crossTeamRequests           DailyCrossTeamRequest[]
+
+  @@unique([planId, stepId])
+  @@index([workDate, shiftCode, status])
+  @@index([planId, status, sortOrder])
+  @@index([workOrderId, status])
+  @@index([routeId, routeVersion])
+  @@index([stepId])
+  @@index([productionPlanBatchId])
+  @@index([carryOverFromTaskId])
+  @@map("daily_process_tasks")
+}
+
+model DailyTaskAssignment {
+  id                          String                    @id @default(uuid())
+  taskId                      String                    @map("task_id")
+  employeeId                  String                    @map("employee_id")
+  assignedTeamId              String                    @map("assigned_team_id")
+  quantity                    Int
+  plannedStandardMilliseconds BigInt                    @map("planned_standard_milliseconds")
+  sortOrder                   Int                       @default(0) @map("sort_order")
+  regularStartAt              DateTime?                 @map("regular_start_at")
+  regularEndAt                DateTime?                 @map("regular_end_at")
+  overtimeStartAt             DateTime?                 @map("overtime_start_at")
+  overtimeEndAt               DateTime?                 @map("overtime_end_at")
+  status                      DailyTaskAssignmentStatus @default(PLANNED)
+  version                     Int                       @default(0)
+  idempotencyKey              String                    @unique @map("idempotency_key")
+  assignedById                String                    @map("assigned_by_id")
+  cancelledAt                 DateTime?                 @map("cancelled_at")
+  createdAt                   DateTime                  @default(now()) @map("created_at")
+  updatedAt                   DateTime                  @updatedAt @map("updated_at")
+  task                        DailyProcessTask          @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  employee                    Employee                  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  assignedTeam                ProductionTeam            @relation(fields: [assignedTeamId], references: [id], onDelete: Restrict)
+  assignedBy                  User                      @relation("DailyAssignmentAssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
+  revisions                   DailyPlanRevision[]
+
+  @@index([taskId, status])
+  @@index([employeeId, status])
+  @@index([assignedTeamId, status])
+  @@index([assignedById])
+  @@map("daily_task_assignments")
+}
+
+model DailyCapacityOverride {
+  id                   String              @id @default(uuid())
+  planId               String              @map("plan_id")
+  employeeId           String              @map("employee_id")
+  regularMilliseconds  Int                 @default(28800000) @map("regular_milliseconds")
+  overtimeStartAt      DateTime?           @map("overtime_start_at")
+  overtimeEndAt        DateTime?           @map("overtime_end_at")
+  overtimeMilliseconds Int                 @default(0) @map("overtime_milliseconds")
+  reason               String?
+  version              Int                 @default(0)
+  setById              String              @map("set_by_id")
+  createdAt            DateTime            @default(now()) @map("created_at")
+  updatedAt            DateTime            @updatedAt @map("updated_at")
+  plan                 DailyProductionPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  employee             Employee            @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  setBy                User                @relation("DailyCapacityOverrideSetBy", fields: [setById], references: [id], onDelete: Restrict)
+
+  @@unique([planId, employeeId])
+  @@index([employeeId])
+  @@index([setById])
+  @@map("daily_capacity_overrides")
+}
+
+model DailyPlanRevision {
+  id               String               @id @default(uuid())
+  planId           String               @map("plan_id")
+  taskId           String?              @map("task_id")
+  assignmentId     String?              @map("assignment_id")
+  action           String
+  beforeData       Json?                @map("before_data")
+  afterData        Json?                @map("after_data")
+  reason           String?
+  actorId          String               @map("actor_id")
+  idempotencyKey   String?              @unique @map("idempotency_key")
+  idempotencyScope String?              @map("idempotency_scope")
+  requestHash      String?              @map("request_hash")
+  createdAt        DateTime             @default(now()) @map("created_at")
+  plan             DailyProductionPlan  @relation(fields: [planId], references: [id], onDelete: Restrict)
+  task             DailyProcessTask?    @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  assignment       DailyTaskAssignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+  actor            User                 @relation("DailyPlanRevisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([planId, createdAt])
+  @@index([taskId, createdAt])
+  @@index([assignmentId])
+  @@index([actorId])
+  @@index([action, createdAt])
+  @@map("daily_plan_revisions")
+}
+
+model DailyCrossTeamRequest {
+  id               String                      @id @default(uuid())
+  taskId           String                      @map("task_id")
+  requestingTeamId String                      @map("requesting_team_id")
+  targetTeamId     String                      @map("target_team_id")
+  employeeId       String?                     @map("employee_id")
+  quantity         Int
+  reason           String
+  status           DailyCrossTeamRequestStatus @default(PENDING)
+  requestedById    String                      @map("requested_by_id")
+  reviewedById     String?                     @map("reviewed_by_id")
+  reviewedAt       DateTime?                   @map("reviewed_at")
+  reviewNote       String?                     @map("review_note")
+  version          Int                         @default(0)
+  idempotencyKey   String                      @unique @map("idempotency_key")
+  createdAt        DateTime                    @default(now()) @map("created_at")
+  updatedAt        DateTime                    @updatedAt @map("updated_at")
+  task             DailyProcessTask            @relation(fields: [taskId], references: [id], onDelete: Restrict)
+  requestingTeam   ProductionTeam              @relation("DailyCrossTeamRequestingTeam", fields: [requestingTeamId], references: [id], onDelete: Restrict)
+  targetTeam       ProductionTeam              @relation("DailyCrossTeamTargetTeam", fields: [targetTeamId], references: [id], onDelete: Restrict)
+  employee         Employee?                   @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  requestedBy      User                        @relation("DailyCrossTeamRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  reviewedBy       User?                       @relation("DailyCrossTeamReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([taskId, status])
+  @@index([requestingTeamId, status])
+  @@index([targetTeamId, status])
+  @@index([employeeId])
+  @@index([requestedById])
+  @@index([reviewedById])
+  @@map("daily_cross_team_requests")
 }
 
 model EmployeeNumberSequence {
@@ -1661,6 +1987,7 @@ model ProductionPlanBatch {
   releasedBy                User?                  @relation("ProductionPlanBatchReleasedBy", fields: [releasedById], references: [id], onDelete: SetNull)
   activatedBy               User?                  @relation("ProductionPlanBatchActivatedBy", fields: [activatedById], references: [id], onDelete: SetNull)
   changes                   ProductionPlanChange[]
+  dailyProcessTasks         DailyProcessTask[]
 
   @@unique([planOrderId, batchNo])
   @@index([weekStartDate, releaseState])

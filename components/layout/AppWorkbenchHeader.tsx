@@ -64,6 +64,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
     items: [
       { href: '/production', label: '生产执行', icon: LayoutDashboard },
       { href: '/weekly-plan-center', label: '计划中心', icon: CalendarDays },
+      { href: '/workspace/daily-plans', label: '日计划中心', icon: CalendarClock },
       { href: '/drawing-library', label: '图纸资料库', icon: FolderKanban },
       { href: '/connector-assembly-manuals', label: '组装说明书', icon: BookOpen },
       { href: '/connector-parameters', label: '连接器参数', icon: Boxes },
@@ -94,13 +95,20 @@ const teamLeadNavigation = new Set([
   '/workspace/reports',
 ]);
 
-function navigationForRole(
-  role: CurrentUserDTO['laborRole'],
+function navigationForUser(
+  user: CurrentUserDTO,
 ): Array<{ label: string; items: SideNavigationItem[] }> {
-  if (role === 'ADMIN') return sideNavigation;
-  const allowed = role === 'TEAM_LEAD'
-    ? teamLeadNavigation
+  if (user.laborRole === 'ADMIN') {
+    if (user.canAccessDailyPlans) return sideNavigation;
+    return sideNavigation.map(group => ({
+      ...group,
+      items: group.items.filter(item => item.href !== '/workspace/daily-plans'),
+    }));
+  }
+  const allowed = user.laborRole === 'TEAM_LEAD'
+    ? new Set(teamLeadNavigation)
     : new Set(['/workspace/employees', '/workspace/reports']);
+  if (user.canAccessDailyPlans) allowed.add('/workspace/daily-plans');
   return sideNavigation
     .map(group => ({
       ...group,
@@ -147,7 +155,7 @@ export function AppWorkbenchHeader({
   const displayName = user.displayName || user.username;
   const moduleName = activeModuleName(activeHref);
   const isHome = isActiveRoute(activeHref, '/home');
-  const visibleNavigation = navigationForRole(user.laborRole);
+  const visibleNavigation = navigationForUser(user);
   const landingHref = user.laborRole === 'EMPLOYEE' ? '/workspace/reports' : '/home';
   const visibleMenuItems = user.laborRole === 'ADMIN'
     ? menuItems

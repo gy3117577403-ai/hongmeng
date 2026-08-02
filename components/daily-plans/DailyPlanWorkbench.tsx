@@ -1,0 +1,714 @@
+'use client';
+
+import {
+  AlertTriangle,
+  ArrowDown,
+  ArrowRight,
+  ArrowUp,
+  CalendarCheck2,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  CircleGauge,
+  ClipboardCheck,
+  Clock3,
+  Download,
+  GripVertical,
+  LoaderCircle,
+  Menu,
+  Minus,
+  MoveRight,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+  Plus,
+  Printer,
+  RefreshCw,
+  Route,
+  Search,
+  ShieldAlert,
+  Sparkles,
+  Split,
+  TimerReset,
+  Undo2,
+  UserRoundCog,
+  UsersRound,
+  X,
+} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import {
+  AssignmentMutationDialog,
+  CrossTeamReviewPanel,
+  LaborClaimDialog,
+  OrganizationManager,
+} from '@/components/daily-plans/DailyPlanAdvancedPanels';
+import { useModalLayer } from '@/components/useModalLayer';
+import {
+  createIdempotencyKey,
+  dailyPlanClient,
+  formatMinutes,
+  assignmentStatusLabel,
+  taskStatusLabel,
+  type DailyPlanAssignment,
+  type DailyPlanAssignmentStatus,
+  type DailyPlanCrossTeamRequest,
+  type DailyPlanEmployee,
+  type DailyPlanLaborPoolList,
+  type DailyPlanOrganization,
+  type DailyPlanOrganizationMutation,
+  type DailyPlanRisk,
+  type DailyPlanSuggestionPreview,
+  type DailyPlanTask,
+  type DailyPlanWorkbench as DailyPlanWorkbenchDTO,
+  type DailyTaskStatus,
+} from '@/lib/daily-plan-client';
+import type { CurrentUserDTO, ProcessLaborPoolDTO } from '@/types';
+import { chinaDateKey } from '@/lib/china-date';
+
+type WorkbenchTab = 'people' | 'processes' | 'reconciliation' | 'organization';
+type ModalKind = 'suggestions' | 'assign' | 'overtime' | 'crossTeam' | 'carryOver' | 'confirm' | 'print' | null;
+type AssignmentDraft = { employeeId: string; quantity: string; order: number };
+type AssignmentMutationState = {
+  mode: 'adjust' | 'withdraw';
+  task: DailyPlanTask;
+  assignment: DailyPlanAssignment;
+};
+
+const statusTone: Record<DailyTaskStatus, string> = {
+  UNPLANNED: 'neutral',
+  WAITING_UPSTREAM: 'warning',
+  READY: 'ready',
+  IN_PROGRESS: 'active',
+  COMPLETED: 'success',
+  PENDING_CARRY_OVER: 'warning',
+  CARRIED_OVER: 'neutral',
+  NEEDS_REVIEW: 'danger',
+  CANCELLED: 'neutral',
+};
+
+function todayValue(): string {
+  return chinaDateKey(new Date());
+}
+
+function isDateKey(value: string | null): value is string {
+  return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
+}
+
+function nextDateValue(date: string): string {
+  const parsed = new Date(`${date}T12:00:00`);
+  parsed.setDate(parsed.getDate() + 1);
+  return parsed.toISOString().slice(0, 10);
+}
+
+function displayDate(date: string): string {
+  if (!date) return '—';
+  const parsed = new Date(`${date}T12:00:00`);
+  return `${date.slice(5).replace('-', '/')} 周${'日一二三四五六'[parsed.getDay()]}`;
+}
+
+function numeric(value: number): string {
+  return new Intl.NumberFormat('zh-CN').format(Math.round(value || 0));
+}
+
+function priorityText(task: DailyPlanTask): string {
+  if (task.priorityLabel) return task.priorityLabel;
+  if (task.priority >= 90) return '紧急';
+  if (task.priority >= 70) return '高';
+  if (task.priority >= 40) return '正常';
+  return '低';
+}
+
+function EmptyState({ icon = 'calendar', title, description, action }: { icon?: 'calendar' | 'people' | 'route' | 'check'; title: string; description: string; action?: ReactNode }) {
+  const Icon = icon === 'people' ? UsersRound : icon === 'route' ? Route : icon === 'check' ? ClipboardCheck : CalendarDays;
+  return <div className="daily-empty-state"><span><Icon size={28} aria-hidden="true" /></span><strong>{title}</strong><p>{description}</p>{action}</div>;
+}
+
+function CapacityBar({ assigned, capacity }: { assigned: number; capacity: number }) {
+  const percent = capacity > 0 ? Math.round((assigned / capacity) * 100) : assigned > 0 ? 100 : 0;
+  const capped = Math.min(100, Math.max(0, percent));
+  return <div className={`daily-capacity ${percent > 100 ? 'over' : ''}`} aria-label={`已安排 ${formatMinutes(assigned)}，容量 ${formatMinutes(capacity)}`}>
+    <div><span style={{ width: `${capped}%` }} /></div><b>{percent}%</b>
+  </div>;
+}
+
+function TaskStatusBadge({ status }: { status: DailyTaskStatus }) {
+  return <span className={`daily-status ${statusTone[status]}`}>{taskStatusLabel(status)}</span>;
+}
+
+const assignmentTone: Record<DailyPlanAssignmentStatus, string> = {
+  PLANNED: 'neutral',
+  ACTIVE: 'active',
+  COMPLETED: 'success',
+  CANCELLED: 'danger',
+};
+
+function AssignmentStatusBadge({ status }: { status: DailyPlanAssignmentStatus }) {
+  return <span className={`daily-status ${assignmentTone[status]}`}>{assignmentStatusLabel(status)}</span>;
+}
+
+function TaskWarning({ task }: { task: DailyPlanTask }) {
+  if (task.hardBlocked) return <div className="daily-task-blocker"><ShieldAlert size={15} aria-hidden="true" /><span><b>工艺硬阻断</b>{task.hardBlockReason || '没有有效且已发布的工序与工时版本'}</span></div>;
+  if (!task.warnings.length) return null;
+  return <div className="daily-task-warning"><AlertTriangle size={14} aria-hidden="true" /><span>{task.warnings.slice(0, 2).join('；')}{task.warnings.length > 2 ? `；另 ${task.warnings.length - 2} 项` : ''}</span></div>;
+}
+
+function TaskPoolCard({ task, onAssign, onCrossTeam, onCarryOver }: {
+  task: DailyPlanTask;
+  onAssign: (task: DailyPlanTask) => void;
+  onCrossTeam: (task: DailyPlanTask) => void;
+  onCarryOver: (task: DailyPlanTask) => void;
+}) {
+  return <article className={`daily-pool-card ${task.hardBlocked ? 'blocked' : ''}`}>
+    <header><div><span>{task.customerName || '生产工单'}</span><strong>{task.workOrderCode}</strong><small>{task.productName}</small></div><TaskStatusBadge status={task.status} /></header>
+    <div className="daily-pool-route"><span>{task.processSequence.toString().padStart(2, '0')}</span><b>{task.processName}</b><ArrowRight size={15} aria-hidden="true" /><small>{task.upstreamProcessName ? `上游：${task.upstreamProcessName}` : `顺序组 ${task.sequenceGroup}`}</small></div>
+    <dl><div><dt>剩余数量</dt><dd>{numeric(task.remainingQuantity)}</dd></div><div><dt>可执行</dt><dd>{numeric(task.availableQuantity)}</dd></div><div><dt>计划工时</dt><dd>{formatMinutes(task.plannedMinutes)}</dd></div></dl>
+    <TaskWarning task={task} />
+    <footer><button type="button" className="daily-link-button" onClick={() => onCrossTeam(task)}>跨组</button><button type="button" className="daily-link-button" onClick={() => onCarryOver(task)}>顺延</button><button type="button" className="daily-primary-button compact" disabled={task.hardBlocked} onClick={() => onAssign(task)}><Split size={15} />领取并分配</button></footer>
+  </article>;
+}
+
+function RiskRail({ risks, collapsed, onToggle, onOpenTask }: { risks: DailyPlanRisk[]; collapsed: boolean; onToggle: () => void; onOpenTask: (taskId: string) => void }) {
+  return <aside className={`daily-risk-rail ${collapsed ? 'collapsed' : ''}`} aria-label="排程风险">
+    <header><div><span>实时协同</span><strong>风险与提醒</strong></div><button type="button" onClick={onToggle} aria-label={collapsed ? '展开风险栏' : '收起风险栏'}>{collapsed ? <PanelRightOpen size={18} /> : <PanelRightClose size={18} />}</button></header>
+    {!collapsed && <div className="daily-risk-list hm-scroll-region">
+      {!risks.length && <EmptyState icon="check" title="当前没有风险" description="当前筛选范围内没有待处理提醒。" />}
+      {risks.map(risk => <article className={`level-${risk.level.toLowerCase()}`} key={risk.id}><span><AlertTriangle size={17} aria-hidden="true" /></span><div><b>{risk.title}</b><p>{risk.description}</p>{risk.workOrderCode && <small>{risk.workOrderCode}</small>}</div>{risk.taskId && <button type="button" onClick={() => onOpenTask(risk.taskId!)}>{risk.actionLabel || '查看'}<ChevronRight size={14} /></button>}</article>)}
+    </div>}
+  </aside>;
+}
+
+function KpiStrip({ workbench }: { workbench: DailyPlanWorkbenchDTO | null }) {
+  const entries = [
+    ['计划工时', formatMinutes(workbench?.summary.plannedMinutes || 0), 'blue'],
+    ['已分配', formatMinutes(workbench?.summary.assignedMinutes || 0), 'green'],
+    ['未分配', formatMinutes(workbench?.summary.unassignedMinutes || 0), 'orange'],
+    ['临期', `${workbench?.summary.urgentTaskCount || 0} 项`, 'red'],
+    ['超负荷', `${workbench?.summary.overloadedEmployeeCount || 0} 人`, 'red'],
+    ['待顺延', `${workbench?.summary.carryOverTaskCount || 0} 项`, 'purple'],
+  ] as const;
+  return <section className="daily-kpi-strip" aria-label="日计划指标">{entries.map(([label, value, tone]) => <article key={label} className={tone}><span>{label}</span><strong>{value}</strong></article>)}</section>;
+}
+
+function PeopleWorkbench({ employees, tasks, onAssign, onOvertime, onReorder, onAdjust, onWithdraw }: {
+  employees: DailyPlanEmployee[];
+  tasks: DailyPlanTask[];
+  onAssign: (task: DailyPlanTask, employee?: DailyPlanEmployee) => void;
+  onOvertime: (employee: DailyPlanEmployee) => void;
+  onReorder: (employee: DailyPlanEmployee, assignmentId: string, targetIndex: number) => void;
+  onAdjust: (task: DailyPlanTask, assignment: DailyPlanAssignment) => void;
+  onWithdraw: (task: DailyPlanTask, assignment: DailyPlanAssignment) => void;
+}) {
+  const taskMap = useMemo(() => new Map(tasks.map(task => [task.id, task])), [tasks]);
+  if (!employees.length) return <EmptyState icon="people" title="没有可排程人员" description="请先在生产组织设置中维护主管、组长和在岗生产人员。" />;
+  return <div className="daily-people-grid">
+    {employees.map(employee => {
+      const capacity = employee.capacityMinutes + employee.overtimeMinutes;
+      return <article className="daily-person-card" key={employee.id}>
+        <header><div className="daily-avatar">{employee.name.slice(0, 1)}</div><div><strong>{employee.name}<small>{employee.employeeNo}</small></strong><span>{employee.teamName}{employee.position ? ` · ${employee.position}` : ''}</span></div><button type="button" onClick={() => onOvertime(employee)}><Clock3 size={15} />容量</button></header>
+        <section className="daily-person-capacity"><div><span>计划负荷</span><strong>{formatMinutes(employee.assignedMinutes)} / {formatMinutes(capacity)}</strong></div><CapacityBar assigned={employee.assignedMinutes} capacity={capacity} /><small>{employee.attendanceSource === 'DEFAULT_8H' ? '暂无考勤，排程暂按 8 小时' : employee.attendanceSource === 'OVERRIDE' ? '已使用当日容量调整' : '容量来自有效出勤'}{employee.overtimeMinutes > 0 ? ` · 加班 ${formatMinutes(employee.overtimeMinutes)}` : ''}</small></section>
+        <div className="daily-assignment-list">
+          {!employee.assignments.length && <button className="daily-inline-empty" type="button" onClick={() => {
+            const available = tasks.find(task => !task.hardBlocked && task.assignedQuantity < task.remainingQuantity);
+            if (available) onAssign(available, employee);
+          }}><Plus size={16} />为该员工安排首项任务</button>}
+          {employee.assignments.slice().sort((a, b) => a.order - b.order).map((assignment, index, list) => {
+            const task = taskMap.get(assignment.taskId);
+            return <div className="daily-assignment" key={assignment.id} draggable onDragStart={event => event.dataTransfer.setData('text/daily-assignment', assignment.id)} onDragOver={event => event.preventDefault()} onDrop={event => {
+              event.preventDefault();
+              const sourceId = event.dataTransfer.getData('text/daily-assignment');
+              if (!sourceId || sourceId === assignment.id) return;
+              const sourceIndex = list.findIndex(item => item.id === sourceId);
+              if (sourceIndex < 0) return;
+              onReorder(employee, sourceId, index);
+            }}>
+              <span className="daily-drag-handle" title="拖拽排序"><GripVertical size={16} /></span>
+              <div><b>{task?.processName || '工序任务'}<small>{task?.workOrderCode || assignment.taskId}</small></b><span>{numeric(assignment.quantity)} 件 · {formatMinutes(assignment.plannedMinutes)}</span></div>
+              <AssignmentStatusBadge status={assignment.status} />
+              <div className="daily-order-actions"><button type="button" disabled={index === 0} aria-label="上移任务" onClick={() => onReorder(employee, assignment.id, index - 1)}><ArrowUp size={14} /></button><button type="button" disabled={index === list.length - 1} aria-label="下移任务" onClick={() => onReorder(employee, assignment.id, index + 1)}><ArrowDown size={14} /></button></div>
+              {task && assignment.status !== 'COMPLETED' && assignment.status !== 'CANCELLED' && <div className="daily-assignment-actions"><button type="button" onClick={() => onAdjust(task, assignment)}>调整</button><button type="button" className="danger" onClick={() => onWithdraw(task, assignment)}>撤回</button></div>}
+            </div>;
+          })}
+        </div>
+      </article>;
+    })}
+  </div>;
+}
+
+function ProcessWorkbench({ tasks, onAssign, onCrossTeam, onCarryOver }: { tasks: DailyPlanTask[]; onAssign: (task: DailyPlanTask) => void; onCrossTeam: (task: DailyPlanTask) => void; onCarryOver: (task: DailyPlanTask) => void }) {
+  const orders = useMemo(() => {
+    const grouped = new Map<string, DailyPlanTask[]>();
+    tasks.forEach(task => grouped.set(task.workOrderId, [...(grouped.get(task.workOrderId) || []), task]));
+    return [...grouped.values()].map(group => group.sort((a, b) => a.sequenceGroup - b.sequenceGroup || a.processSequence - b.processSequence));
+  }, [tasks]);
+  if (!orders.length) return <EmptyState icon="route" title="没有工序推进任务" description="生成日计划建议后，这里会按真实工艺路线展示当日推进情况。" />;
+  return <div className="daily-route-groups">{orders.map(group => <article className="daily-route-group" key={group[0].workOrderId}>
+    <header><div><span>{group[0].customerName || '生产工单'}</span><strong>{group[0].workOrderCode}</strong><small>{group[0].productName}</small></div><b>{group.filter(task => task.status === 'COMPLETED').length}/{group.length} 工序</b></header>
+    <div className="daily-route-line hm-scroll-region">{group.map((task, index) => <div className={`daily-route-node ${statusTone[task.status]}`} key={task.id}>
+      <span>{index + 1}</span><div><small>顺序组 {task.sequenceGroup}</small><strong>{task.processName}</strong><p>{numeric(task.assignedQuantity)} / {numeric(task.remainingQuantity)} 件</p><TaskStatusBadge status={task.status} /></div><button type="button" disabled={task.hardBlocked || task.status === 'COMPLETED'} onClick={() => onAssign(task)}>{task.assignments.length ? '调整' : '分配'}</button>
+      {index < group.length - 1 && <i aria-hidden="true"><MoveRight size={19} /></i>}
+    </div>)}</div>
+    <footer>{group.flatMap(task => task.warnings.map(message => `${task.processName}：${message}`)).slice(0, 2).map(message => <span key={message}><AlertTriangle size={13} />{message}</span>)}</footer>
+  </article>)}</div>;
+}
+
+function ReconciliationWorkbench({ tasks, laborPools, loading, onClaim }: { tasks: DailyPlanTask[]; laborPools: ProcessLaborPoolDTO[]; loading: boolean; onClaim: (pool: ProcessLaborPoolDTO) => void }) {
+  const rows = useMemo(() => tasks.flatMap(task => task.assignments.map(assignment => ({ task, assignment }))), [tasks]);
+  if (!rows.length && !laborPools.length && !loading) return <EmptyState icon="check" title="暂无对账记录" description="班前分配不会产生实际工时；工序完工并进入工时池后，这里会显示计划、完成和领取差异。" />;
+  return <div className="daily-reconciliation-layout">
+    <section className="daily-labor-pool-panel"><header><div><span>真实完工</span><strong>待领取工时池</strong></div><b>{laborPools.length}</b></header>{loading && <div className="daily-dialog-loading"><LoaderCircle className="spin" />正在同步工时池…</div>}{!loading && !laborPools.length && <p className="daily-muted-empty">当前日期暂无待领取实际工时。</p>}<div className="daily-labor-pool-cards">{laborPools.map(pool => <article key={pool.id}><div><b>{pool.workOrder.code}</b><span>{pool.step.processName}</span><small>{pool.remainingQty} {pool.unitLabel} · {formatMinutes(pool.remainingStandardLaborMilliseconds / 60_000)}</small></div><button type="button" className="daily-primary-button compact" onClick={() => onClaim(pool)}>分配实际工时</button></article>)}</div></section>
+    <div className="daily-reconciliation-table hm-scroll-region" role="region" aria-label="工时对账表" tabIndex={0}>
+    <table><thead><tr><th>员工 / 班组</th><th>工单 / 工序</th><th>计划分配</th><th>实际完成</th><th>工时池</th><th>已领取工时</th><th>差异</th><th>状态</th></tr></thead><tbody>{rows.map(({ task, assignment }) => {
+      const difference = assignment.plannedMinutes - (assignment.actualClaimedMinutes || 0);
+      return <tr key={assignment.id}><td><b>{assignment.employeeName}</b><small>{assignment.teamName}</small></td><td><b>{task.workOrderCode}</b><small>{task.processName}</small></td><td>{numeric(assignment.quantity)} 件<small>{formatMinutes(assignment.plannedMinutes)}</small></td><td>{numeric(assignment.actualCompletedQuantity || 0)} 件</td><td>{numeric(assignment.laborPoolQuantity || 0)} 件</td><td>{formatMinutes(assignment.actualClaimedMinutes || 0)}</td><td className={difference > 0 ? 'warning' : 'success'}>{difference > 0 ? `待领取 ${formatMinutes(difference)}` : '已对齐'}</td><td><AssignmentStatusBadge status={assignment.status} /></td></tr>;
+    })}</tbody></table>
+    </div>
+  </div>;
+}
+
+function OrganizationWorkbench({ workbench, onOvertime }: { workbench: DailyPlanWorkbenchDTO; onOvertime: (employee: DailyPlanEmployee) => void }) {
+  return <div className="daily-organization-layout">
+    <section className="daily-organization-summary"><header><div><span>生产排程组织</span><strong>主管、组长与班组成员</strong></div>{workbench.scope.canManageOrganization && <button type="button" className="daily-secondary-button"><UserRoundCog size={16} />维护组织关系</button>}</header><p>这里只维护日计划的排程范围，不改变现有登录角色、实际工时领取权限或人事档案。</p></section>
+    <div className="daily-team-grid">{workbench.teams.map(team => {
+      const members = workbench.employees.filter(employee => employee.teamId === team.id);
+      return <article className="daily-team-card" key={team.id}><header><div><span>{team.code || '生产班组'}</span><strong>{team.name}</strong></div><b>{team.memberCount} 人</b></header><dl><div><dt>组长</dt><dd>{team.leaderName || '待配置'}</dd></div><div><dt>今日已排</dt><dd>{formatMinutes(members.reduce((sum, member) => sum + member.assignedMinutes, 0))}</dd></div></dl><div>{members.map(member => <button type="button" key={member.id} onClick={() => onOvertime(member)}><span>{member.name.slice(0, 1)}</span><b>{member.name}<small>{member.position || member.employeeNo}</small></b><CapacityBar assigned={member.assignedMinutes} capacity={member.capacityMinutes + member.overtimeMinutes} /></button>)}</div></article>;
+    })}</div>
+  </div>;
+}
+
+function WorkbenchDialog({ modal, workbench, task, employee, assignmentCandidates, suggestion, suggestionLoading, busy, error, assignmentRows, backgroundRef, onRowsChange, onClose, onPreviewSuggestions, onCreateSuggestion, onAssign, onUpdateCapacity, onCrossTeam, onCarryOver, onConfirm, onPrint }: {
+  modal: Exclude<ModalKind, null>;
+  workbench: DailyPlanWorkbenchDTO;
+  task: DailyPlanTask | null;
+  employee: DailyPlanEmployee | null;
+  assignmentCandidates: DailyPlanEmployee[];
+  suggestion: DailyPlanSuggestionPreview | null;
+  suggestionLoading: boolean;
+  busy: boolean;
+  error: string;
+  assignmentRows: AssignmentDraft[];
+  backgroundRef: RefObject<HTMLElement | null>;
+  onRowsChange: (rows: AssignmentDraft[]) => void;
+  onClose: () => void;
+  onPreviewSuggestions: () => void;
+  onCreateSuggestion: () => void;
+  onAssign: () => void;
+  onUpdateCapacity: (input: { employeeId: string; overtimeStart: string; overtimeEnd: string; capacityMinutes: number; reason: string }) => void;
+  onCrossTeam: (input: Record<string, unknown>) => void;
+  onCarryOver: (input: Record<string, unknown>) => void;
+  onConfirm: () => void;
+  onPrint: (mode: 'team' | 'employee', employeeId?: string) => void;
+}) {
+  const layerRef = useRef<HTMLDivElement>(null);
+  const initialFocusRef = useRef<HTMLButtonElement>(null);
+  const [overtimeStart, setOvertimeStart] = useState('17:30');
+  const [overtimeEnd, setOvertimeEnd] = useState('20:00');
+  const [capacityMinutes, setCapacityMinutes] = useState(String(employee?.capacityMinutes || 480));
+  const [reason, setReason] = useState('');
+  const [targetTeamId, setTargetTeamId] = useState('');
+  const [targetEmployeeId, setTargetEmployeeId] = useState('');
+  const [quantity, setQuantity] = useState(task ? String(Math.max(0, task.remainingQuantity - task.assignedQuantity)) : '');
+  const [targetDate, setTargetDate] = useState(nextDateValue(workbench.workDate));
+  const [printMode, setPrintMode] = useState<'team' | 'employee'>('team');
+  const [printEmployeeId, setPrintEmployeeId] = useState(workbench.employees[0]?.id || '');
+  const capacityValue = Number(capacityMinutes);
+  const crossTeamQuantity = Number(quantity);
+  const availableTaskQuantity = task ? Math.max(0, task.remainingQuantity - task.assignedQuantity) : 0;
+  const invalidCapacity = !Number.isInteger(capacityValue) || capacityValue < 0 || !reason.trim() || Boolean(overtimeStart && overtimeEnd && overtimeEnd <= overtimeStart);
+  const invalidCrossTeam = !targetTeamId || !reason.trim() || !Number.isInteger(crossTeamQuantity) || crossTeamQuantity <= 0 || crossTeamQuantity > availableTaskQuantity;
+  const invalidCarryOver = !reason.trim() || !targetDate || targetDate <= workbench.workDate;
+
+  useModalLayer({ open: true, layerRef, initialFocusRef, backgroundRef, onClose, lockScroll: true });
+
+  const modalCopy = {
+    suggestions: ['智能排程', '生成建议预览'],
+    assign: ['班前安排', task ? `领取并分配 · ${task.processName}` : '领取并分配'],
+    overtime: ['容量调整', employee ? `${employee.name} · 加班与容量` : '加班与容量'],
+    crossTeam: ['跨组协同', '发起跨组借调'],
+    carryOver: ['生产调整', '顺延未完成任务'],
+    confirm: ['每日确认', '确认当日日计划'],
+    print: ['服务端快照', '打印日计划'],
+  }[modal];
+
+  return <div className="daily-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+    <div ref={layerRef} className={`daily-dialog daily-dialog-${modal}`} role="dialog" aria-modal="true" aria-labelledby="daily-dialog-title" tabIndex={-1}>
+      <header><div><span>{modalCopy[0]}</span><h2 id="daily-dialog-title">{modalCopy[1]}</h2></div><button ref={initialFocusRef} type="button" disabled={busy} aria-label="关闭弹窗" onClick={onClose}><X size={21} /></button></header>
+      <div className="daily-dialog-body hm-scroll-region">
+        {modal === 'suggestions' && <>
+          <div className="daily-dialog-callout"><Sparkles size={20} /><span><b>系统只给建议，不会直接覆盖当前计划</b><small>先按交期、可执行性、人员容量和技能匹配计算，由主管检查后确认。</small></span></div>
+          {!suggestion && !suggestionLoading && <EmptyState icon="calendar" title="准备生成建议" description={`${workbench.workDate} · ${workbench.shift.label} · ${workbench.teams.length ? '按当前班组范围' : '全部班组'}`} action={<button type="button" className="daily-primary-button" onClick={onPreviewSuggestions}><Sparkles size={16} />开始计算</button>} />}
+          {suggestionLoading && <div className="daily-dialog-loading"><LoaderCircle className="spin" />正在计算排程建议…</div>}
+          {suggestion && <><section className="daily-preview-metrics"><div><span>工序任务</span><strong>{suggestion.taskCount}</strong></div><div><span>建议分配</span><strong>{suggestion.assignmentCount}</strong></div><div><span>已排工时</span><strong>{formatMinutes(suggestion.assignedMinutes)}</strong></div><div><span>未排工时</span><strong>{formatMinutes(suggestion.unassignedMinutes)}</strong></div><div><span>超负荷</span><strong>{suggestion.overloadedEmployeeCount}</strong></div></section>
+            {suggestion.warnings.length > 0 && <div className="daily-dialog-warning-list">{suggestion.warnings.map(item => <span key={item}><AlertTriangle size={14} />{item}</span>)}</div>}
+            <div className="daily-preview-list">{suggestion.assignments.map((item, index) => <article key={`${item.taskId}-${item.employeeId}-${index}`}><b>{item.employeeName}<small>{item.teamName}</small></b><span>{numeric(item.quantity)} 件</span><span>{formatMinutes(item.plannedMinutes)}</span><p>{item.reason}</p></article>)}</div></>}
+        </>}
+        {modal === 'assign' && task && <>
+          <div className="daily-task-dialog-summary"><div><span>{task.workOrderCode}</span><strong>{task.productName}</strong></div><div><span>当前工序</span><strong>{task.processName}</strong></div><div><span>剩余 / 可执行</span><strong>{numeric(task.remainingQuantity - task.assignedQuantity)} / {numeric(task.availableQuantity)}</strong></div><div><span>标准工时</span><strong>{task.unitStandardSeconds} 秒/件</strong></div></div>
+          <TaskWarning task={task} />
+          <div className="daily-assignment-editor"><header><div><span>多人拆分</span><strong>组长领取与员工分配在同一事务完成</strong></div><button type="button" onClick={() => onRowsChange([...assignmentRows, { employeeId: '', quantity: '', order: assignmentRows.length + 1 }])}><Plus size={15} />增加人员</button></header>
+            {assignmentRows.map((row, index) => <div className="daily-assignment-row" key={index}><span>{index + 1}</span><label>员工<select value={row.employeeId} onChange={event => onRowsChange(assignmentRows.map((item, itemIndex) => itemIndex === index ? { ...item, employeeId: event.target.value } : item))}><option value="">选择员工</option>{assignmentCandidates.map(item => <option value={item.id} key={item.id} disabled={assignmentRows.some((other, otherIndex) => otherIndex !== index && other.employeeId === item.id)}>{item.name} · {item.teamName} · 剩余 {formatMinutes(Math.max(0, item.capacityMinutes + item.overtimeMinutes - item.assignedMinutes))}</option>)}</select></label><label>数量<input type="number" min="1" step="1" max={Math.max(0, task.remainingQuantity - task.assignedQuantity)} value={row.quantity} onChange={event => onRowsChange(assignmentRows.map((item, itemIndex) => itemIndex === index ? { ...item, quantity: event.target.value } : item))} /></label><button type="button" disabled={assignmentRows.length === 1} aria-label="移除人员" onClick={() => onRowsChange(assignmentRows.filter((_, itemIndex) => itemIndex !== index).map((item, itemIndex) => ({ ...item, order: itemIndex + 1 })))}><Minus size={16} /></button></div>)}
+            <footer><span>分配合计</span><strong>{numeric(assignmentRows.reduce((sum, row) => sum + (Number(row.quantity) || 0), 0))} / {numeric(Math.max(0, task.remainingQuantity - task.assignedQuantity))} 件</strong></footer>
+          </div>
+          <div className="daily-dialog-callout neutral"><Clock3 size={19} /><span><b>班前领取不产生员工实际工时</b><small>实际工时只在工序完工进入工时池后，由有权限人员按实际完成数量领取。</small></span></div>
+        </>}
+        {modal === 'overtime' && employee && <><div className="daily-person-dialog-head"><div className="daily-avatar">{employee.name.slice(0, 1)}</div><span><b>{employee.name}</b><small>{employee.teamName} · 当前容量 {formatMinutes(employee.capacityMinutes + employee.overtimeMinutes)}</small></span></div><div className="daily-form-grid"><label>排程容量（分钟）<input type="number" min="0" value={capacityMinutes} onChange={event => setCapacityMinutes(event.target.value)} /></label><label>加班开始<input type="time" value={overtimeStart} onChange={event => setOvertimeStart(event.target.value)} /></label><label>加班结束<input type="time" value={overtimeEnd} onChange={event => setOvertimeEnd(event.target.value)} /></label><label className="wide">调整原因<textarea value={reason} onChange={event => setReason(event.target.value)} placeholder="例如：17:00 连班完成临期工序" /></label></div><div className="daily-dialog-callout neutral"><TimerReset size={19} /><span><b>容量只服务排程</b><small>没有考勤时默认 8 小时，不会反写考勤；加班也不会自动生成实际工时。</small></span></div></>}
+        {modal === 'crossTeam' && task && <><div className="daily-task-dialog-summary"><div><span>工单</span><strong>{task.workOrderCode}</strong></div><div><span>工序</span><strong>{task.processName}</strong></div><div><span>当前班组</span><strong>{task.teamName || '未分组'}</strong></div><div><span>可分配数量</span><strong>{numeric(task.remainingQuantity - task.assignedQuantity)}</strong></div></div><div className="daily-form-grid"><label>目标班组<select value={targetTeamId} onChange={event => { setTargetTeamId(event.target.value); setTargetEmployeeId(''); }}><option value="">选择班组</option>{workbench.teams.filter(item => item.id !== task.teamId).map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>目标员工<select value={targetEmployeeId} onChange={event => setTargetEmployeeId(event.target.value)}><option value="">可暂不指定</option>{workbench.employees.filter(item => item.teamId === targetTeamId).map(item => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label>借调数量<input type="number" min="1" max={Math.max(0, task.remainingQuantity - task.assignedQuantity)} value={quantity} onChange={event => setQuantity(event.target.value)} /></label><label className="wide">借调原因<textarea value={reason} onChange={event => setReason(event.target.value)} placeholder="说明负荷、交期或技能原因" /></label></div><div className="daily-dialog-callout"><ShieldAlert size={19} /><span><b>跨组安排需要主管确认</b><small>系统将记录原班组、目标班组、人员、任务、数量、原因和操作人，不放宽实际工时领取权限。</small></span></div></>}
+        {modal === 'carryOver' && task && <><div className="daily-task-dialog-summary"><div><span>工单</span><strong>{task.workOrderCode}</strong></div><div><span>工序</span><strong>{task.processName}</strong></div><div><span>待顺延数量</span><strong>{numeric(Math.max(0, task.remainingQuantity - task.assignedQuantity))}</strong></div><div><span>当前状态</span><strong>{taskStatusLabel(task.status)}</strong></div></div><div className="daily-form-grid"><label>顺延至<input type="date" min={nextDateValue(workbench.workDate)} value={targetDate} onChange={event => setTargetDate(event.target.value)} /></label><label className="wide">顺延原因<textarea value={reason} onChange={event => setReason(event.target.value)} placeholder="说明未完成原因和下一日安排" /></label></div></>}
+        {modal === 'confirm' && <><div className="daily-confirm-hero"><CheckCircle2 size={32} /><span><b>确认 {displayDate(workbench.workDate)} 日计划</b><small>确认后仍可调整，但每次领取、拆分、转派、撤回和顺延都会保留修订记录。</small></span></div><section className="daily-preview-metrics"><div><span>计划工时</span><strong>{formatMinutes(workbench.summary.plannedMinutes)}</strong></div><div><span>已分配</span><strong>{formatMinutes(workbench.summary.assignedMinutes)}</strong></div><div><span>未分配</span><strong>{formatMinutes(workbench.summary.unassignedMinutes)}</strong></div><div><span>临期任务</span><strong>{workbench.summary.urgentTaskCount}</strong></div><div><span>超负荷</span><strong>{workbench.summary.overloadedEmployeeCount}</strong></div></section>{workbench.summary.unassignedMinutes > 0 && <div className="daily-dialog-callout"><AlertTriangle size={19} /><span><b>仍有未分配任务</b><small>当前版本不启用硬冻结，可确认后继续调整；未分配项仍会保留在工序池。</small></span></div>}</>}
+        {modal === 'print' && <><div className="daily-dialog-callout neutral"><Printer size={20} /><span><b>打印来自服务端计划快照</b><small>不会截取当前页面或虚拟列表，确保长列表、分页和历史版本完整。</small></span></div><div className="daily-print-options"><label className={printMode === 'team' ? 'selected' : ''}><input type="radio" name="printMode" checked={printMode === 'team'} onChange={() => setPrintMode('team')} /><span><Printer size={24} /><b>班组日计划总表</b><small>A4 横向 · 全班组任务与容量</small></span></label><label className={printMode === 'employee' ? 'selected' : ''}><input type="radio" name="printMode" checked={printMode === 'employee'} onChange={() => setPrintMode('employee')} /><span><UsersRound size={24} /><b>员工个人任务单</b><small>A4 纵向 · 有序任务与签字栏</small></span></label></div>{printMode === 'employee' && <label className="daily-print-employee">选择员工<select value={printEmployeeId} onChange={event => setPrintEmployeeId(event.target.value)}>{workbench.employees.map(item => <option key={item.id} value={item.id}>{item.name} · {item.teamName}</option>)}</select></label>}</>}
+        {error && <div className="daily-dialog-error" role="alert"><AlertTriangle size={16} />{error}</div>}
+      </div>
+      <footer><button type="button" className="daily-secondary-button" disabled={busy} onClick={onClose}>取消</button>
+        {modal === 'suggestions' && suggestion && <button type="button" className="daily-primary-button" disabled={busy} onClick={onCreateSuggestion}>{busy ? <LoaderCircle className="spin" /> : <Check size={16} />}{busy ? '生成中…' : '采用建议并生成计划'}</button>}
+        {modal === 'assign' && <button type="button" className="daily-primary-button" disabled={busy || task?.hardBlocked} onClick={onAssign}>{busy ? <LoaderCircle className="spin" /> : <Split size={16} />}{busy ? '分配中…' : '确认领取并分配'}</button>}
+        {modal === 'overtime' && employee && <button type="button" className="daily-primary-button" disabled={busy || invalidCapacity} onClick={() => onUpdateCapacity({ employeeId: employee.id, overtimeStart, overtimeEnd, capacityMinutes: capacityValue, reason: reason.trim() })}>{busy ? '保存中…' : '保存当日容量'}</button>}
+        {modal === 'crossTeam' && task && <button type="button" className="daily-primary-button" disabled={busy || invalidCrossTeam} onClick={() => onCrossTeam({ expectedVersion: task.version, targetTeamId, employeeId: targetEmployeeId || undefined, quantity: crossTeamQuantity, reason: reason.trim() })}>{busy ? '提交中…' : '提交主管确认'}</button>}
+        {modal === 'carryOver' && task && <button type="button" className="daily-primary-button" disabled={busy || invalidCarryOver} onClick={() => onCarryOver({ expectedVersion: task.version, targetDate, reason: reason.trim() })}>{busy ? '顺延中…' : '确认顺延'}</button>}
+        {modal === 'confirm' && <button type="button" className="daily-primary-button" disabled={busy} onClick={onConfirm}>{busy ? '确认中…' : '确认当日计划'}</button>}
+        {modal === 'print' && <button type="button" className="daily-primary-button" disabled={printMode === 'employee' && !printEmployeeId} onClick={() => onPrint(printMode, printMode === 'employee' ? printEmployeeId : undefined)}><Printer size={16} />打开打印快照</button>}
+      </footer>
+    </div>
+  </div>;
+}
+
+export default function DailyPlanWorkbench({ user }: { user: CurrentUserDTO }) {
+  const [activeTab, setActiveTab] = useState<WorkbenchTab>('people');
+  const [workDate, setWorkDate] = useState(todayValue);
+  const [teamId, setTeamId] = useState('');
+  const [urlStateReady, setUrlStateReady] = useState(false);
+  const [workbench, setWorkbench] = useState<DailyPlanWorkbenchDTO | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [riskCollapsed, setRiskCollapsed] = useState(false);
+  const [poolOpen, setPoolOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [modal, setModal] = useState<ModalKind>(null);
+  const [modalTask, setModalTask] = useState<DailyPlanTask | null>(null);
+  const [modalEmployee, setModalEmployee] = useState<DailyPlanEmployee | null>(null);
+  const [modalBusy, setModalBusy] = useState(false);
+  const [modalError, setModalError] = useState('');
+  const [suggestion, setSuggestion] = useState<DailyPlanSuggestionPreview | null>(null);
+  const [suggestionLoading, setSuggestionLoading] = useState(false);
+  const [assignmentRows, setAssignmentRows] = useState<AssignmentDraft[]>([{ employeeId: '', quantity: '', order: 1 }]);
+  const [assignmentMutation, setAssignmentMutation] = useState<AssignmentMutationState | null>(null);
+  const [laborData, setLaborData] = useState<DailyPlanLaborPoolList | null>(null);
+  const [laborLoading, setLaborLoading] = useState(false);
+  const [laborPool, setLaborPool] = useState<ProcessLaborPoolDTO | null>(null);
+  const [crossTeamRequests, setCrossTeamRequests] = useState<DailyPlanCrossTeamRequest[]>([]);
+  const [crossBusyId, setCrossBusyId] = useState('');
+  const [organization, setOrganization] = useState<DailyPlanOrganization | null>(null);
+  const [organizationBusy, setOrganizationBusy] = useState(false);
+  const [organizationError, setOrganizationError] = useState('');
+  const mainRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const query = new URLSearchParams(window.location.search);
+    const queryDate = query.get('workDate') || query.get('date');
+    const queryTeamId = query.get('teamId');
+    if (isDateKey(queryDate)) setWorkDate(queryDate);
+    if (queryTeamId) setTeamId(queryTeamId);
+    setUrlStateReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!urlStateReady) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('workDate', workDate);
+    if (teamId) url.searchParams.set('teamId', teamId);
+    else url.searchParams.delete('teamId');
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [teamId, urlStateReady, workDate]);
+
+  const loadWorkbench = useCallback((signal?: AbortSignal) => {
+    setLoading(true);
+    setError('');
+    return dailyPlanClient.getWorkbench(workDate, teamId, signal).then(data => {
+      setWorkbench(data);
+      if (teamId && !data.teams.some(team => team.id === teamId)) setTeamId('');
+    }).catch(reason => {
+      if ((reason as Error).name !== 'AbortError') setError(reason instanceof Error ? reason.message : '日计划加载失败');
+    }).finally(() => setLoading(false));
+  }, [teamId, workDate]);
+
+  useEffect(() => {
+    if (!urlStateReady) return;
+    const controller = new AbortController();
+    void loadWorkbench(controller.signal);
+    return () => controller.abort();
+  }, [loadWorkbench, refreshToken, urlStateReady]);
+
+  useEffect(() => {
+    if (activeTab !== 'reconciliation') return;
+    const controller = new AbortController();
+    setLaborLoading(true);
+    void dailyPlanClient.listLaborPools(workDate, controller.signal).then(setLaborData).catch(reason => {
+      if ((reason as Error).name !== 'AbortError') setError(reason instanceof Error ? reason.message : '实际工时池加载失败');
+    }).finally(() => setLaborLoading(false));
+    return () => controller.abort();
+  }, [activeTab, refreshToken, workDate]);
+
+  useEffect(() => {
+    if (!workbench?.scope.canConfirm) {
+      setCrossTeamRequests([]);
+      return;
+    }
+    const controller = new AbortController();
+    void dailyPlanClient.listCrossTeamRequests(controller.signal).then(data => setCrossTeamRequests(data.requests)).catch(reason => {
+      if ((reason as Error).name !== 'AbortError') setError(reason instanceof Error ? reason.message : '跨组借调请求加载失败');
+    });
+    return () => controller.abort();
+  }, [refreshToken, workbench?.scope.canConfirm]);
+
+  useEffect(() => {
+    if (activeTab !== 'organization') return;
+    const controller = new AbortController();
+    setOrganizationError('');
+    void dailyPlanClient.getOrganization(controller.signal).then(setOrganization).catch(reason => {
+      if ((reason as Error).name !== 'AbortError') setOrganizationError(reason instanceof Error ? reason.message : '生产组织加载失败');
+    });
+    return () => controller.abort();
+  }, [activeTab, refreshToken]);
+
+  const filteredTasks = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase('zh-CN');
+    const source = workbench?.tasks || [];
+    if (!query) return source;
+    return source.filter(task => [task.workOrderCode, task.productCode, task.productName, task.customerName, task.processName].some(value => value?.toLocaleLowerCase('zh-CN').includes(query)));
+  }, [search, workbench?.tasks]);
+
+  const visibleEmployees = useMemo(() => {
+    if (!workbench) return [];
+    return workbench.employees.filter(employee => !teamId || employee.teamId === teamId);
+  }, [teamId, workbench]);
+
+  const assignmentCandidates = useMemo(() => {
+    if (!workbench) return [];
+    if (workbench.scope.role === 'ADMIN' || workbench.scope.role === 'WORKSHOP_SUPERVISOR') return workbench.employees;
+    const teamIds = new Set(workbench.scope.teamIds);
+    return workbench.employees.filter(employee => teamIds.has(employee.teamId));
+  }, [workbench]);
+
+  const visiblePool = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase('zh-CN');
+    return (workbench?.unassignedTasks || []).filter(task => (!teamId || task.teamId === teamId || !task.teamId) && (!query || [task.workOrderCode, task.productCode, task.productName, task.processName].some(value => value?.toLocaleLowerCase('zh-CN').includes(query))));
+  }, [search, teamId, workbench?.unassignedTasks]);
+
+  function openModal(kind: Exclude<ModalKind, null>, task?: DailyPlanTask, employee?: DailyPlanEmployee): void {
+    setModalError('');
+    setSuggestion(null);
+    setModalTask(task || null);
+    setModalEmployee(employee || null);
+    if (kind === 'assign') {
+      const remaining = task ? Math.max(0, task.remainingQuantity - task.assignedQuantity) : 0;
+      setAssignmentRows([{ employeeId: employee?.id || '', quantity: remaining ? String(remaining) : '', order: 1 }]);
+    }
+    setModal(kind);
+  }
+
+  function closeModal(): void {
+    if (modalBusy) return;
+    setModal(null);
+    setModalTask(null);
+    setModalEmployee(null);
+    setModalError('');
+  }
+
+  async function previewSuggestions(): Promise<void> {
+    if (!workbench) return;
+    setSuggestionLoading(true);
+    setModalError('');
+    try {
+      setSuggestion(await dailyPlanClient.previewSuggestions({ workDate, shiftCode: workbench.shift.code, ...(teamId ? { teamId } : {}) }));
+    } catch (reason) {
+      setModalError(reason instanceof Error ? reason.message : '排程建议生成失败');
+    } finally {
+      setSuggestionLoading(false);
+    }
+  }
+
+  async function execute(action: () => Promise<unknown>, successClose = true): Promise<void> {
+    setModalBusy(true);
+    setModalError('');
+    try {
+      await action();
+      if (successClose) {
+        setModal(null);
+        setModalTask(null);
+        setModalEmployee(null);
+        setAssignmentMutation(null);
+        setLaborPool(null);
+        setModalError('');
+      }
+      setRefreshToken(value => value + 1);
+    } catch (reason) {
+      setModalError(reason instanceof Error ? reason.message : '操作失败');
+    } finally {
+      setModalBusy(false);
+    }
+  }
+
+  function createSuggestion(): void {
+    if (!workbench || !suggestion) return;
+    void execute(() => dailyPlanClient.createFromSuggestion({ workDate, shiftCode: workbench.shift.code, ...(teamId ? { teamId } : {}), suggestionKey: suggestion.suggestionKey }, createIdempotencyKey('daily-create')));
+  }
+
+  function assignTask(): void {
+    if (!workbench?.plan.id || !modalTask) return setModalError('请先生成日计划，再领取并分配任务');
+    const rows = assignmentRows.map(row => ({ employeeId: row.employeeId, quantity: Number(row.quantity), sortOrder: row.order }));
+    if (!rows.length || rows.some(row => !row.employeeId || !Number.isInteger(row.quantity) || row.quantity <= 0)) return setModalError('请为每一行选择员工，并填写大于 0 的整数数量');
+    const uniqueEmployeeIds = new Set(rows.map(row => row.employeeId));
+    if (uniqueEmployeeIds.size !== rows.length) return setModalError('同一员工不能在一次拆分中重复出现，请合并该员工数量');
+    const total = rows.reduce((sum, row) => sum + row.quantity, 0);
+    const remaining = Math.max(0, modalTask.remainingQuantity - modalTask.assignedQuantity);
+    if (total > remaining) return setModalError(`分配数量不能超过剩余 ${numeric(remaining)} 件`);
+    void execute(() => dailyPlanClient.assignTask(modalTask.id, { expectedVersion: modalTask.version, assignments: rows }, createIdempotencyKey('daily-assign')));
+  }
+
+  function updateCapacity(input: { employeeId: string; overtimeStart: string; overtimeEnd: string; capacityMinutes: number; reason: string }): void {
+    if (!workbench?.plan.id) return setModalError('请先生成日计划');
+    void execute(() => dailyPlanClient.updatePlan(workbench.plan.id!, { action: 'UPDATE_CAPACITY', ...input }, workbench.plan.version, createIdempotencyKey('daily-capacity')));
+  }
+
+  function requestCrossTeam(input: Record<string, unknown>): void {
+    if (!modalTask) return;
+    void execute(() => dailyPlanClient.requestCrossTeam(modalTask.id, input, createIdempotencyKey('daily-cross-team')));
+  }
+
+  function carryOver(input: Record<string, unknown>): void {
+    if (!modalTask) return;
+    void execute(() => dailyPlanClient.carryOverTask(modalTask.id, input, createIdempotencyKey('daily-carry-over')));
+  }
+
+  function confirmPlan(): void {
+    if (!workbench?.plan.id) return setModalError('请先生成日计划');
+    void execute(() => dailyPlanClient.updatePlan(workbench.plan.id!, { action: 'CONFIRM' }, workbench.plan.version, createIdempotencyKey('daily-confirm')));
+  }
+
+  function openPrint(mode: 'team' | 'employee', employeeId?: string): void {
+    if (!workbench?.plan.id) return setModalError('请先生成日计划');
+    window.open(dailyPlanClient.printUrl(workbench.plan.id, mode, employeeId), '_blank', 'noopener,noreferrer');
+  }
+
+  function reorder(employee: DailyPlanEmployee, assignmentId: string, targetIndex: number): void {
+    if (!workbench?.plan.id) return;
+    const sorted = employee.assignments.slice().sort((a, b) => a.order - b.order);
+    const index = sorted.findIndex(item => item.id === assignmentId);
+    if (index < 0 || targetIndex < 0 || targetIndex >= sorted.length || targetIndex === index) return;
+    const [moving] = sorted.splice(index, 1);
+    sorted.splice(targetIndex, 0, moving);
+    const task = workbench.tasks.find(item => item.assignments.some(assignment => assignment.id === assignmentId));
+    if (!task) return;
+    void dailyPlanClient.mutateAssignments(task.id, {
+      action: 'reorder',
+      expectedVersion: task.version,
+      reason: '调整员工当日任务顺序',
+      assignments: sorted.map((assignment, sortIndex) => ({ assignmentId: assignment.id, expectedVersion: assignment.version, sortOrder: sortIndex + 1 })),
+    }, createIdempotencyKey('daily-reorder')).then(() => setRefreshToken(value => value + 1)).catch(reason => setError(reason instanceof Error ? reason.message : '任务排序失败'));
+  }
+
+  function mutateAssignment(input: { employeeId?: string; quantity?: number; reason: string }): void {
+    if (!assignmentMutation) return;
+    const { mode, task, assignment } = assignmentMutation;
+    void execute(() => dailyPlanClient.mutateAssignments(task.id, {
+      action: mode,
+      expectedVersion: task.version,
+      reason: input.reason,
+      assignments: [{
+        assignmentId: assignment.id,
+        expectedVersion: assignment.version,
+        ...(mode === 'adjust' ? { employeeId: input.employeeId, quantity: input.quantity } : {}),
+      }],
+    }, createIdempotencyKey(`daily-${mode}`)));
+  }
+
+  function claimLaborPool(allocations: Array<{ employeeId: string; quantity: number }>): void {
+    if (!laborPool) return;
+    void execute(() => dailyPlanClient.batchClaimLaborPool(laborPool.id, {
+      expectedVersion: laborPool.version,
+      allocations,
+    }, createIdempotencyKey('daily-labor-claim')));
+  }
+
+  function reviewCrossTeam(request: DailyPlanCrossTeamRequest, decision: 'APPROVE' | 'REJECT'): void {
+    setCrossBusyId(request.id);
+    setError('');
+    void dailyPlanClient.reviewCrossTeamRequest(request.id, {
+      decision,
+      expectedVersion: request.version,
+      reviewNote: decision === 'APPROVE' ? '车间主管确认跨组借调' : '车间主管驳回跨组借调',
+    }, createIdempotencyKey('daily-cross-review')).then(() => {
+      setCrossTeamRequests(current => current.filter(item => item.id !== request.id));
+      setRefreshToken(value => value + 1);
+    }).catch(reason => setError(reason instanceof Error ? reason.message : '跨组借调审批失败')).finally(() => setCrossBusyId(''));
+  }
+
+  function saveOrganization(input: DailyPlanOrganizationMutation): void {
+    setOrganizationBusy(true);
+    setOrganizationError('');
+    void dailyPlanClient.updateOrganization(input, createIdempotencyKey('daily-organization')).then(data => {
+      setOrganization(data);
+      setRefreshToken(value => value + 1);
+    }).catch(reason => setOrganizationError(reason instanceof Error ? reason.message : '生产组织保存失败')).finally(() => setOrganizationBusy(false));
+  }
+
+  function openRiskTask(taskId: string): void {
+    const task = workbench?.tasks.find(item => item.id === taskId);
+    if (task) openModal('assign', task);
+  }
+
+  const tabs: Array<{ id: WorkbenchTab; label: string; icon: typeof UsersRound }> = [
+    { id: 'people', label: '人员排程', icon: UsersRound },
+    { id: 'processes', label: '工序推进', icon: Route },
+    { id: 'reconciliation', label: '工时对账', icon: ClipboardCheck },
+    { id: 'organization', label: '生产组织设置', icon: UserRoundCog },
+  ];
+
+  return <>
+    <main ref={mainRef} className="daily-plan-shell hm-workbench-root hm-workbench-navigation-overlay">
+      <AppWorkbenchHeader user={user} activeHref="/workspace/daily-plans" subtitle="工序拆分、人员安排与工时对账" menuItems={[]} hideHeader sidebarTriggerTargetId="daily-plan-navigation-trigger" />
+      <div className="daily-plan-main">
+        <header className="daily-plan-titlebar">
+          <div id="daily-plan-navigation-trigger" className="daily-plan-navigation-trigger" aria-label="平台导航入口" />
+          <div className="daily-plan-title-copy"><span>生产计划</span><h1>日计划中心</h1><p>周计划工序拆分、组长领取与员工安排</p></div>
+          <div className="daily-plan-status"><span className={`status-${workbench?.plan.status.toLowerCase() || 'draft'}`}>{workbench?.plan.status === 'CONFIRMED' ? <CheckCircle2 size={15} /> : <Clock3 size={15} />}{workbench?.plan.status === 'CONFIRMED' ? '今日已确认' : workbench?.plan.id ? '计划调整中' : '尚未生成计划'}</span>{workbench?.plan.confirmedByName && <small>{workbench.plan.confirmedByName}</small>}</div>
+        </header>
+
+        <section className="daily-plan-toolbar">
+          <label><CalendarDays size={17} /><span>生产日期</span><input type="date" value={workDate} onChange={event => setWorkDate(event.target.value)} /></label>
+          <div className="daily-shift-pill"><Clock3 size={16} /><span><small>班次</small><b>{workbench?.shift.label || '白班'}</b></span><strong>{workbench ? `${workbench.shift.startTime}–${workbench.shift.endTime}` : '08:00–17:00'}</strong></div>
+          <label><UsersRound size={17} /><span>班组</span><select value={teamId} onChange={event => setTeamId(event.target.value)}><option value="">全部班组</option>{workbench?.teams.map(team => <option value={team.id} key={team.id}>{team.name}</option>)}</select></label>
+          <div className="daily-toolbar-actions"><button type="button" className="daily-secondary-button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={16} className={loading ? 'spin' : ''} />刷新</button><button type="button" className="daily-secondary-button" disabled={!workbench} onClick={() => openModal('print')}><Printer size={16} />打印</button><button type="button" className="daily-secondary-button accent" disabled={!workbench} onClick={() => openModal('suggestions')}><Sparkles size={16} />生成建议</button><button type="button" className="daily-primary-button" disabled={!workbench?.scope.canConfirm || !workbench.plan.id} onClick={() => openModal('confirm')}><CalendarCheck2 size={16} />每日确认</button></div>
+        </section>
+
+        <KpiStrip workbench={workbench} />
+
+        <section className="daily-view-toolbar"><nav aria-label="日计划视图">{tabs.map(tab => { const Icon = tab.icon; return <button type="button" className={activeTab === tab.id ? 'active' : ''} key={tab.id} onClick={() => setActiveTab(tab.id)}><Icon size={17} />{tab.label}</button>; })}</nav><div><label><Search size={16} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索工单、产品或工序" /></label><button type="button" className="daily-pool-trigger" onClick={() => setPoolOpen(true)}><PanelLeftOpen size={16} />未分配工序<b>{visiblePool.length}</b></button><button type="button" className="daily-risk-trigger" onClick={() => setRiskCollapsed(value => !value)}><ShieldAlert size={16} />风险<b>{workbench?.risks.length || 0}</b></button></div></section>
+
+        {error && <div className="daily-page-error" role="alert"><AlertTriangle size={18} /><span><b>日计划加载失败</b>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重试</button></div>}
+
+        <div className={`daily-workspace-grid ${riskCollapsed ? 'risk-collapsed' : ''}`}>
+          <aside className="daily-pool-panel"><header><div><span>工序池</span><strong>未分配任务</strong></div><b>{visiblePool.length}</b></header><div className="hm-scroll-region">{!visiblePool.length && <EmptyState icon="check" title="没有未分配任务" description="当前筛选范围内的工序已分配或尚未生成建议。" />}{visiblePool.map(task => <TaskPoolCard key={task.id} task={task} onAssign={taskItem => openModal('assign', taskItem)} onCrossTeam={taskItem => openModal('crossTeam', taskItem)} onCarryOver={taskItem => openModal('carryOver', taskItem)} />)}</div></aside>
+          <section className="daily-main-workbench" aria-busy={loading}>
+            {loading && !workbench && <div className="daily-page-loading"><LoaderCircle className="spin" /><b>正在加载日计划…</b></div>}
+            {workbench && activeTab === 'people' && <div className="daily-tab-stack">
+              {workbench.scope.canConfirm && <CrossTeamReviewPanel requests={crossTeamRequests} busyId={crossBusyId} onReview={reviewCrossTeam} />}
+              <PeopleWorkbench employees={visibleEmployees} tasks={filteredTasks} onAssign={(task, employee) => openModal('assign', task, employee)} onOvertime={employee => openModal('overtime', undefined, employee)} onReorder={reorder} onAdjust={(task, assignment) => setAssignmentMutation({ mode: 'adjust', task, assignment })} onWithdraw={(task, assignment) => setAssignmentMutation({ mode: 'withdraw', task, assignment })} />
+            </div>}
+            {workbench && activeTab === 'processes' && <ProcessWorkbench tasks={filteredTasks} onAssign={task => openModal('assign', task)} onCrossTeam={task => openModal('crossTeam', task)} onCarryOver={task => openModal('carryOver', task)} />}
+            {workbench && activeTab === 'reconciliation' && <ReconciliationWorkbench tasks={filteredTasks} laborPools={laborData?.pools || []} loading={laborLoading} onClaim={setLaborPool} />}
+            {workbench && activeTab === 'organization' && <OrganizationManager organization={organization} busy={organizationBusy} error={organizationError} canManage={workbench.scope.canManageOrganization} onSave={saveOrganization} />}
+          </section>
+          <RiskRail risks={workbench?.risks || []} collapsed={riskCollapsed} onToggle={() => setRiskCollapsed(value => !value)} onOpenTask={openRiskTask} />
+        </div>
+      </div>
+
+      <div className={`daily-pool-drawer ${poolOpen ? 'open' : ''}`} aria-hidden={!poolOpen}><button type="button" className="daily-drawer-scrim" tabIndex={poolOpen ? 0 : -1} aria-label="关闭未分配工序池" onClick={() => setPoolOpen(false)} /><aside><header><div><span>工序池</span><strong>未分配任务</strong></div><button type="button" aria-label="关闭" onClick={() => setPoolOpen(false)}><X size={20} /></button></header><div className="hm-scroll-region">{!visiblePool.length && <EmptyState icon="check" title="没有未分配任务" description="当前筛选范围内没有待分配工序。" />}{visiblePool.map(task => <TaskPoolCard key={task.id} task={task} onAssign={taskItem => { setPoolOpen(false); openModal('assign', taskItem); }} onCrossTeam={taskItem => { setPoolOpen(false); openModal('crossTeam', taskItem); }} onCarryOver={taskItem => { setPoolOpen(false); openModal('carryOver', taskItem); }} />)}</div></aside></div>
+    </main>
+
+    {modal && workbench && <WorkbenchDialog modal={modal} workbench={workbench} task={modalTask} employee={modalEmployee} assignmentCandidates={assignmentCandidates} suggestion={suggestion} suggestionLoading={suggestionLoading} busy={modalBusy} error={modalError} assignmentRows={assignmentRows} backgroundRef={mainRef} onRowsChange={setAssignmentRows} onClose={closeModal} onPreviewSuggestions={() => { void previewSuggestions(); }} onCreateSuggestion={createSuggestion} onAssign={assignTask} onUpdateCapacity={updateCapacity} onCrossTeam={requestCrossTeam} onCarryOver={carryOver} onConfirm={confirmPlan} onPrint={openPrint} />}
+    {assignmentMutation && <AssignmentMutationDialog mode={assignmentMutation.mode} task={assignmentMutation.task} assignment={assignmentMutation.assignment} candidates={assignmentCandidates} busy={modalBusy} error={modalError} backgroundRef={mainRef} onClose={() => { if (!modalBusy) { setAssignmentMutation(null); setModalError(''); } }} onSubmit={mutateAssignment} />}
+    {laborPool && <LaborClaimDialog pool={laborPool} employees={laborData?.employees || []} busy={modalBusy} error={modalError} backgroundRef={mainRef} onClose={() => { if (!modalBusy) { setLaborPool(null); setModalError(''); } }} onSubmit={claimLaborPool} />}
+  </>;
+}
