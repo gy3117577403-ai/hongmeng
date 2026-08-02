@@ -24,13 +24,13 @@ import type {
 type StageKey = 'not_issued' | 'frontend' | 'backend' | 'completed';
 type ViewKey = 'board' | 'today' | 'exceptions';
 type WeekScope = 'current' | 'carryover' | 'next' | 'afterNext' | 'history';
-type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing' | 'waiting_transfer';
+type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'due_soon' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing' | 'has_next_process' | 'waiting_transfer';
 type DetailTab = 'production' | 'drawing' | 'progress' | 'source';
 type BatchOperation = 'set_priority' | 'add_remark';
 type DuePreset = '' | 'today' | 'tomorrow' | 'overdue' | 'week' | 'custom';
 type ProductionFlowAction = 'start_process_route';
 type DispatchDensity = 'comfortable' | 'compact';
-type DispatchPreset = 'all' | 'today' | 'waiting' | 'exceptions' | 'completed';
+type DispatchPreset = 'all' | 'today' | 'next_process' | 'due_soon' | 'exceptions' | 'completed';
 type DispatchTone = 'normal' | 'warning' | 'danger';
 
 type DispatchRisk = {
@@ -182,6 +182,12 @@ type ProductionSummary = {
   exceptions: number;
   stageCounts: Record<StageKey, number>;
   stageQuantityTotals: Record<StageKey, number>;
+  dispatchMetrics: {
+    inProduction: number;
+    withNextProcess: number;
+    dueSoon: number;
+    completed: number;
+  };
   quantityTotals: {
     targetQty: number;
     completedQty: number;
@@ -413,7 +419,8 @@ const emptyAdvanced: AdvancedFilters = {
 const productionBoardCache = new Map<string, BoardPayload>();
 const validQuickFilters = new Set<QuickFilter>([
   'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed', 'due_today', 'updated_today', 'completed_today',
-  'delivery_missing', 'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining', 'waiting_transfer',
+  'delivery_missing', 'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining',
+  'due_soon', 'has_next_process', 'waiting_transfer',
 ]);
 
 function cloneAdvanced(value: AdvancedFilters): AdvancedFilters {
@@ -1239,26 +1246,24 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   }, [board]);
 
   const dispatchMetric = useMemo(() => ({
-    inProduction: (summary?.stageCounts.frontend || 0) + (summary?.stageCounts.backend || 0),
-    waitingTransfer: (board?.items || []).filter(order => order.stage !== 'completed' && Boolean(order.processRoute?.nextStep)).length,
-    dueSoon: (board?.items || []).filter(order => {
-      if (order.stage === 'completed') return false;
-      const days = daysUntilDelivery(order);
-      return days !== null && days >= 0 && days <= 2;
-    }).length,
-    completed: summary?.completed || 0,
+    inProduction: summary?.dispatchMetrics.inProduction || 0,
+    withNextProcess: summary?.dispatchMetrics.withNextProcess || 0,
+    dueSoon: summary?.dispatchMetrics.dueSoon || 0,
+    completed: summary?.dispatchMetrics.completed || 0,
     percentage: summary?.quantityTotals.percentage ?? null,
-  }), [board, summary]);
+  }), [summary]);
 
   const dispatchPreset: DispatchPreset = view === 'today'
     ? 'today'
     : view === 'exceptions'
       ? 'exceptions'
-      : quick.includes('waiting_transfer')
-        ? 'waiting'
-      : advanced.stage === 'completed'
-        ? 'completed'
-        : 'all';
+      : quick.includes('due_soon')
+        ? 'due_soon'
+        : quick.includes('has_next_process') || quick.includes('waiting_transfer')
+          ? 'next_process'
+          : advanced.stage === 'completed'
+            ? 'completed'
+            : 'all';
 
   function changeView(next: ViewKey): void {
     setTargetWorkOrderId('');
@@ -1284,7 +1289,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       return;
     }
     setView('board');
-    if (preset === 'waiting') setQuick(['waiting_transfer']);
+    if (preset === 'next_process') setQuick(['has_next_process']);
+    if (preset === 'due_soon') setQuick(['due_soon']);
     setAdvanced(preset === 'completed' ? { ...emptyAdvanced, stage: 'completed' } : emptyAdvanced);
   }
 
@@ -1979,8 +1985,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
         <section className="production-dispatch-metrics" aria-label="生产调度指标">
           <button type="button" className={dispatchPreset === 'all' ? 'active' : ''} onClick={() => applyDispatchPreset('all')}><span><CheckCircle2 size={18} aria-hidden="true" />生产中</span><strong>{dispatchMetric.inProduction}</strong><small>{weekScopeTitle} · {summary?.total || 0} 单</small></button>
-          <button type="button" className={dispatchPreset === 'waiting' ? 'active waiting' : 'waiting'} onClick={() => applyDispatchPreset('waiting')}><span><ArrowRight size={18} aria-hidden="true" />待转序</span><strong>{dispatchMetric.waitingTransfer}</strong><small>已有下一工序待衔接</small></button>
-          <button type="button" className={dispatchPreset === 'exceptions' ? 'active warning' : 'warning'} onClick={() => applyDispatchPreset('exceptions')}><span><Clock3 size={18} aria-hidden="true" />即将超时</span><strong>{dispatchMetric.dueSoon}</strong><small>交期在未来 0-2 天</small></button>
+          <button type="button" className={dispatchPreset === 'next_process' ? 'active waiting' : 'waiting'} onClick={() => applyDispatchPreset('next_process')}><span><ArrowRight size={18} aria-hidden="true" />有后续工序</span><strong>{dispatchMetric.withNextProcess}</strong><small>工艺路线存在下一道工序</small></button>
+          <button type="button" className={dispatchPreset === 'due_soon' ? 'active warning' : 'warning'} onClick={() => applyDispatchPreset('due_soon')}><span><Clock3 size={18} aria-hidden="true" />即将超时</span><strong>{dispatchMetric.dueSoon}</strong><small>客户交期在未来 0-2 天</small></button>
           <button type="button" className={dispatchPreset === 'completed' ? 'active completed' : 'completed'} onClick={() => applyDispatchPreset('completed')}><span><CheckCircle2 size={18} aria-hidden="true" />已完成</span><strong>{dispatchMetric.completed}</strong><small>当前周完成归档</small></button>
           <div className="production-dispatch-metric-rate"><span><BarChart3 size={18} aria-hidden="true" />数量达成率</span><strong>{formatProductionPercentage(dispatchMetric.percentage)}</strong><small>按已完成数量统计</small></div>
         </section>
@@ -1990,7 +1996,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           <div className="production-dispatch-presets" aria-label="调度视图">
             <button className={dispatchPreset === 'all' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'all'} onClick={() => applyDispatchPreset('all')}>全部</button>
             <button className={dispatchPreset === 'today' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'today'} onClick={() => applyDispatchPreset('today')}>今日交付</button>
-            <button className={dispatchPreset === 'waiting' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'waiting'} onClick={() => applyDispatchPreset('waiting')}>待转序</button>
+            <button className={dispatchPreset === 'next_process' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'next_process'} onClick={() => applyDispatchPreset('next_process')}>有后续工序</button>
+            <button className={dispatchPreset === 'due_soon' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'due_soon'} onClick={() => applyDispatchPreset('due_soon')}>即将超时</button>
             <button className={dispatchPreset === 'exceptions' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'exceptions'} onClick={() => applyDispatchPreset('exceptions')}>异常</button>
             <button className={dispatchPreset === 'completed' ? 'active' : ''} type="button" aria-pressed={dispatchPreset === 'completed'} onClick={() => applyDispatchPreset('completed')}>已完成</button>
           </div>

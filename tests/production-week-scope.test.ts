@@ -3,6 +3,7 @@ import test from 'node:test';
 import { chinaDateKey } from '../lib/china-date';
 import {
   hasRequiredProductionDocuments,
+  isProductionDueSoon,
   isRootProductionOrder,
   naturalProductionWeek,
   productionFiltersFromSearchParams,
@@ -123,6 +124,30 @@ test('production execution accepts an exact work-order deep-link target', () => 
   }));
   assert.equal(filters.workOrderId, 'work-order-branch-1');
   assert.equal(filters.keyword, 'ignored only when it does not match the target');
+});
+
+test('production execution accepts exact due-soon and next-process quick filters', () => {
+  const filters = productionFiltersFromSearchParams(new URLSearchParams({
+    quick: 'due_soon,has_next_process,waiting_transfer,not-a-filter',
+  }));
+  assert.deepEqual(filters.quick, ['due_soon', 'has_next_process', 'waiting_transfer']);
+});
+
+test('due-soon uses the customer delivery day and a stable China-time 0-2 day window', () => {
+  const now = new Date('2026-08-03T04:00:00.000Z');
+  const order = (deliveryDay: string | null, stage = 'frontend', plannedAt = new Date('2026-08-20T04:00:00.000Z')) => ({
+    stage,
+    status: 'active',
+    deliveryDay,
+    plannedAt,
+  }) as Parameters<typeof isProductionDueSoon>[0];
+
+  assert.equal(isProductionDueSoon(order('2026-08-03'), now), true);
+  assert.equal(isProductionDueSoon(order('2026-08-05'), now), true);
+  assert.equal(isProductionDueSoon(order('2026-08-06'), now), false);
+  assert.equal(isProductionDueSoon(order('2026-08-02'), now), false);
+  assert.equal(isProductionDueSoon(order('2026-08-05', 'completed'), now), false);
+  assert.equal(isProductionDueSoon(order(null, 'frontend', new Date('2026-08-04T04:00:00.000Z')), now), true);
 });
 
 test('production documents require an original drawing but not every optional category', () => {

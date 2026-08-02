@@ -131,7 +131,8 @@ const exceptionLabels: Record<ProductionExceptionCode, string> = {
 const validQuickFilters = new Set([
   'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed',
   'due_today', 'updated_today', 'completed_today', 'delivery_missing',
-  'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining', 'waiting_transfer',
+  'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining',
+  'due_soon', 'has_next_process', 'waiting_transfer',
 ]);
 const validStages = new Set(['not_issued', 'frontend', 'backend', 'completed']);
 const validPriorities = new Set(['urgent', 'high', 'normal']);
@@ -592,6 +593,30 @@ function isOverdue(order: ProductionExecutionOrderRecord, now = new Date()) {
   return stage !== 'completed' && !!order.plannedAt && order.plannedAt < chinaDayBounds(now).start;
 }
 
+function productionDeliveryDate(order: Pick<ProductionExecutionOrderRecord, 'deliveryDay' | 'plannedAt'>): Date | null {
+  const deliveryDay = text(order.deliveryDay).match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+  return (deliveryDay ? parseWeek(deliveryDay) : null) || order.plannedAt || null;
+}
+
+export function isProductionDueSoon(
+  order: Pick<ProductionExecutionOrderRecord, 'stage' | 'status' | 'deliveryDay' | 'plannedAt'>,
+  now = new Date(),
+): boolean {
+  const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+  if (stage === 'completed') return false;
+  const delivery = productionDeliveryDate(order);
+  if (!delivery) return false;
+  const { start } = chinaDayBounds(now);
+  return delivery >= start && delivery < addDays(start, 3);
+}
+
+export function hasNextProductionProcess(
+  order: Pick<ProductionExecutionOrderRecord, 'stage' | 'status' | 'processRoute'>,
+): boolean {
+  const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
+  return stage !== 'completed' && Boolean(order.processRoute && serializeProcessRoute(order.processRoute).nextStep);
+}
+
 function isTodayTask(order: ProductionExecutionOrderRecord, now = new Date()) {
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   return isDueToday(order, now)
@@ -704,7 +729,8 @@ function matchesFilters(order: ProductionExecutionOrderRecord, filters: Producti
     if (item === 'customer_missing' && text(order.customerName)) return false;
     if (item === 'drawing_confirmation' && !productionAlerts.some(alert => isDrawingConfirmationAlert(alert.code))) return false;
     if (item === 'tail_remaining' && !productionAlerts.some(alert => alert.code === 'TAIL_REMAINING')) return false;
-    if (item === 'waiting_transfer' && (!order.processRoute || !serializeProcessRoute(order.processRoute).nextStep)) return false;
+    if (item === 'due_soon' && !isProductionDueSoon(order, now)) return false;
+    if ((item === 'has_next_process' || item === 'waiting_transfer') && !hasNextProductionProcess(order)) return false;
   }
   return true;
 }
@@ -830,6 +856,10 @@ export async function summarizeProduction(week: ProductionWeek) {
   let urgent = 0;
   let completed = 0;
   let exceptions = 0;
+  let dispatchInProduction = 0;
+  let dispatchWithNextProcess = 0;
+  let dispatchDueSoon = 0;
+  let dispatchCompleted = 0;
   for (const order of orders) {
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
     const flowResolution = resolveEffectiveFrontendTransferredQty(order);
@@ -878,6 +908,10 @@ export async function summarizeProduction(week: ProductionWeek) {
     if (order.priority === 'urgent') urgent += 1;
     if (segments.some(segment => segment.stage === 'completed')) completed += 1;
     if (productionExceptionCodes(order, now).length > 0) exceptions += 1;
+    if (stage === 'frontend' || stage === 'backend') dispatchInProduction += 1;
+    if (hasNextProductionProcess(order)) dispatchWithNextProcess += 1;
+    if (isProductionDueSoon(order, now)) dispatchDueSoon += 1;
+    if (stage === 'completed') dispatchCompleted += 1;
   }
   return {
     scope: week.scope,
@@ -897,6 +931,12 @@ export async function summarizeProduction(week: ProductionWeek) {
     exceptions,
     stageCounts,
     stageQuantityTotals,
+    dispatchMetrics: {
+      inProduction: dispatchInProduction,
+      withNextProcess: dispatchWithNextProcess,
+      dueSoon: dispatchDueSoon,
+      completed: dispatchCompleted,
+    },
     quantityTotals: {
       targetQty: targetQuantity,
       completedQty: completedQuantity,
