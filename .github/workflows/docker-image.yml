@@ -58,6 +58,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/process-completion-withdrawal-integration.test.ts tests/product-time-active-sync-integration.test.ts
+      - name: Advance reporting and automatic labor PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/advance-reporting-integration.test.ts
       - name: Type check
         run: npx tsc --noEmit
       - name: Lint

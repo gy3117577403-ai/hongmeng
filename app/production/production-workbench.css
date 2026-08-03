@@ -5656,6 +5656,48 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-size: 10px;
 }
 
+.hm-production-workbench .process-completion-advance-note {
+  min-height: 58px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #f6c37d;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fff8ec 0%, #fffdf8 100%);
+  color: #b45309;
+  box-shadow: 0 6px 18px rgba(219, 112, 20, .08);
+}
+
+.hm-production-workbench .process-completion-advance-note > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-production-workbench .process-completion-advance-note strong {
+  color: #8f3f09;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.hm-production-workbench .process-completion-advance-note small {
+  color: #9a5a2c;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.hm-production-workbench .process-completion-advance-note > span {
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: #f97316;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
 .hm-production-workbench .process-completion-route dt {
   color: #7a8597;
 }
@@ -5713,6 +5755,28 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-weight: 750;
 }
 
+.hm-production-workbench .process-completion-quantity-panel > header > label.process-completion-work-date {
+  min-width: 196px;
+  padding: 7px 9px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 9px;
+  border: 1px solid #f3b06e;
+  border-radius: 11px;
+  background: #fff8ef;
+  box-shadow: 0 4px 12px rgba(234, 88, 12, .08);
+}
+
+.hm-production-workbench .process-completion-work-date > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #c4540b;
+  font-size: 11px;
+  font-weight: 850;
+}
+
 .hm-production-workbench .process-completion-quantity-panel > header input {
   width: 142px;
   height: 34px;
@@ -5725,6 +5789,17 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font: inherit;
   font-size: 11px;
   font-weight: 750;
+}
+
+.hm-production-workbench .process-completion-quantity-panel > header .process-completion-work-date input {
+  width: 100%;
+  height: 38px;
+  padding: 0 9px;
+  border-color: #ef9b4a;
+  background: #fff;
+  color: #172033;
+  font-size: 14px;
+  font-weight: 900;
 }
 
 .hm-production-workbench .process-completion-quantity-grid {
@@ -6097,6 +6172,17 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   color: #3b7a61;
   font-size: 10px;
   font-style: normal;
+}
+
+.hm-production-workbench .process-completion-summary-hero.pending {
+  border-color: #f6c37d;
+  background: #fff8ed;
+}
+
+.hm-production-workbench .process-completion-summary-hero.pending > span,
+.hm-production-workbench .process-completion-summary-hero.pending > strong,
+.hm-production-workbench .process-completion-summary-hero.pending > em {
+  color: #b45309;
 }
 
 .hm-production-workbench .process-completion-summary > dl {

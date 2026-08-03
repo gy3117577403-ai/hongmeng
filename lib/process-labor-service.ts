@@ -21,6 +21,7 @@ import {
   planLaborClaim,
   ProcessCompletionDomainError,
 } from '@/lib/process-completion-domain';
+import { autoAssignCompletionLaborPool } from '@/lib/process-completion-service';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
 import type {
   ProcessLaborClaimDTO,
@@ -242,6 +243,7 @@ function serializeProcessLaborClaim(claim: ProcessLaborClaimRecord): ProcessLabo
     standardLaborMilliseconds: safeLaborMilliseconds(claim.standardLaborMilliseconds),
     workDate: dateKeyFromDatabase(claim.workDate),
     status: claim.status,
+    source: claim.source,
     claimedBy: claim.claimedBy,
     claimedAt: claim.claimedAt.toISOString(),
     voidedAt: claim.voidedAt?.toISOString() || null,
@@ -480,7 +482,14 @@ export async function resolveProcessLaborPoolStandard(command: {
         tx.processLaborPool.findUnique({
           where: { id: poolId },
           include: {
-            completion: true,
+            completion: {
+              include: {
+                participants: {
+                  select: { employeeId: true },
+                  orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+                },
+              },
+            },
             step: {
               select: {
                 routeId: true,
@@ -623,6 +632,15 @@ export async function resolveProcessLaborPoolStandard(command: {
         where: { id: pool.step.routeId },
         data: { version: { increment: 1 } },
       });
+      const automatic = pool.completion.autoAssignLabor
+        ? await autoAssignCompletionLaborPool(tx, {
+          poolId: pool.id,
+          completionId: pool.completionId,
+          employeeIds: pool.completion.participants.map(participant => participant.employeeId),
+          userId: command.userId,
+          now: new Date(),
+        })
+        : { employeeCount: 0, standardLaborMilliseconds: 0 };
       await tx.operationLog.create({
         data: {
           userId: command.userId,
@@ -639,6 +657,8 @@ export async function resolveProcessLaborPoolStandard(command: {
             unitsPerProduct,
             countsForEfficiency: command.countsForEfficiency !== false,
             reason,
+            autoAssignedEmployeeCount: automatic.employeeCount,
+            autoAssignedLaborMilliseconds: automatic.standardLaborMilliseconds,
           },
         },
       });

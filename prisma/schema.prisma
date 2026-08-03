@@ -66,6 +66,22 @@ enum ProcessLaborClaimStatus {
   @@map("process_labor_claim_status")
 }
 
+enum ProcessCompletionReportMode {
+  SEQUENTIAL
+  ADVANCE
+
+  @@map("process_completion_report_mode")
+}
+
+enum ProcessCompletionCoverageStatus {
+  PENDING
+  PARTIAL
+  COVERED
+  VOIDED
+
+  @@map("process_completion_coverage_status")
+}
+
 enum LaborAccessRole {
   ADMIN
   TEAM_LEAD
@@ -1320,6 +1336,13 @@ model ProcessCompletion {
   processedQty                Int                            @map("processed_qty")
   goodQty                     Int                            @map("good_qty")
   defectQty                   Int                            @map("defect_qty")
+  reportMode                  ProcessCompletionReportMode    @default(SEQUENTIAL) @map("report_mode")
+  coverageStatus              ProcessCompletionCoverageStatus @default(COVERED) @map("coverage_status")
+  coveredQty                  Int                            @default(0) @map("covered_qty")
+  coveredGoodQty              Int                            @default(0) @map("covered_good_qty")
+  coveredDefectQty            Int                            @default(0) @map("covered_defect_qty")
+  coverageUpdatedAt           DateTime?                      @map("coverage_updated_at")
+  autoAssignLabor             Boolean                        @default(false) @map("auto_assign_labor")
   defectDisposition           ProcessDefectDisposition?      @map("defect_disposition")
   routeVersion                Int                            @map("route_version")
   idempotencyKey              String                         @unique @map("idempotency_key")
@@ -1350,10 +1373,13 @@ model ProcessCompletion {
   laborPool                   ProcessLaborPool?
   branchWorkOrder             WorkOrder?                     @relation("CompletionBranchWorkOrder")
   participants                ProcessCompletionParticipant[]
+  coverageAllocations         ProcessCompletionCoverage[]    @relation("CoveredProcessCompletion")
+  triggeredCoverageAllocations ProcessCompletionCoverage[]   @relation("CoverageTriggerCompletion")
 
   @@index([workOrderId, workDate])
   @@index([routeId, completedAt])
   @@index([stepId, completedAt])
+  @@index([stepId, coverageStatus, completedAt])
   @@index([voidedAt])
   @@index([createdById])
   @@index([voidedById])
@@ -1372,6 +1398,25 @@ model ProcessCompletionParticipant {
   @@unique([completionId, employeeId])
   @@index([employeeId, createdAt])
   @@map("process_completion_participants")
+}
+
+model ProcessCompletionCoverage {
+  id                  String            @id @default(uuid())
+  reportCompletionId  String            @map("report_completion_id")
+  triggerCompletionId String            @map("trigger_completion_id")
+  quantity            Int
+  goodQty             Int               @map("good_qty")
+  defectQty           Int               @map("defect_qty")
+  idempotencyKey      String            @unique @map("idempotency_key")
+  createdAt           DateTime          @default(now()) @map("created_at")
+  voidedAt            DateTime?         @map("voided_at")
+  reportCompletion    ProcessCompletion @relation("CoveredProcessCompletion", fields: [reportCompletionId], references: [id], onDelete: Cascade)
+  triggerCompletion   ProcessCompletion @relation("CoverageTriggerCompletion", fields: [triggerCompletionId], references: [id], onDelete: Cascade)
+
+  @@index([reportCompletionId, createdAt])
+  @@index([triggerCompletionId, createdAt])
+  @@index([voidedAt])
+  @@map("process_completion_coverages")
 }
 
 model ProcessQuantityMovement {
@@ -1451,6 +1496,7 @@ model ProcessLaborClaim {
   standardLaborMilliseconds BigInt                  @map("standard_labor_milliseconds")
   workDate                  DateTime                @map("work_date") @db.Date
   status                    ProcessLaborClaimStatus @default(ACTIVE)
+  source                    String                  @default("manual")
   idempotencyKey            String                  @unique @map("idempotency_key")
   claimedById               String?                 @map("claimed_by_id")
   claimedAt                 DateTime                @default(now()) @map("claimed_at")

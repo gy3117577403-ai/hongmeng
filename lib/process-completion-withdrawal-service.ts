@@ -3,6 +3,7 @@ import {
   Prisma,
   ProcessLaborClaimStatus,
   ProcessLaborPoolStatus,
+  ProcessCompletionCoverageStatus,
   ProcessMovementType,
 } from '@prisma/client';
 import { dateKeyFromDatabase } from '@/lib/attendance';
@@ -56,6 +57,8 @@ export type ProcessCompletionWithdrawalPreview = {
     processedQty: number;
     goodQty: number;
     defectQty: number;
+    coveredQty: number;
+    pendingCoverageQty: number;
     voidedAt: string | null;
   };
   canWithdraw: boolean;
@@ -304,7 +307,7 @@ function previewFromState(
   );
   const targetSteps = nextGroupSteps(state);
   const newGoodQuantities = groupSteps.map(step => (
-    step.id === state.stepId ? step.goodOutputQty - state.goodQty : step.goodOutputQty
+    step.id === state.stepId ? step.goodOutputQty - state.coveredGoodQty : step.goodOutputQty
   ));
   const currentReleased = groupSteps.length
     ? Math.min(...groupSteps.map(step => step.releasedGoodQty))
@@ -316,9 +319,9 @@ function previewFromState(
     blockers.push({ code: 'PROCESS_COMPLETION_ALREADY_WITHDRAWN', message: '该完工记录已经撤回' });
   }
   if (
-    state.processedQty > state.step.processedQty
-    || state.goodQty > state.step.goodOutputQty
-    || state.defectQty > state.step.defectOutputQty
+    state.coveredQty > state.step.processedQty
+    || state.coveredGoodQty > state.step.goodOutputQty
+    || state.coveredDefectQty > state.step.defectOutputQty
   ) {
     blockers.push({
       code: 'PROCESS_COMPLETION_QUANTITY_STATE_INVALID',
@@ -333,7 +336,7 @@ function previewFromState(
     || movement.type === ProcessMovementType.REWORK_RETURN
     || movement.type === ProcessMovementType.SCRAP
   ));
-  if (state.defectQty > 0 || state.branchWorkOrder || branchMovement) {
+  if (state.coveredDefectQty > 0 || state.branchWorkOrder || branchMovement) {
     blockers.push({
       code: 'PROCESS_COMPLETION_BRANCH_EFFECT_EXISTS',
       message: '本次完工已产生不良或分支流转，不能直接撤回，需进入流程异常处理',
@@ -412,13 +415,15 @@ function previewFromState(
       processedQty: state.processedQty,
       goodQty: state.goodQty,
       defectQty: state.defectQty,
+      coveredQty: state.coveredQty,
+      pendingCoverageQty: Math.max(0, state.processedQty - state.coveredQty),
       voidedAt: state.voidedAt?.toISOString() || null,
     },
     canWithdraw: blockers.length === 0,
     blockers,
     impact: {
-      processedQty: state.processedQty,
-      goodQty: state.goodQty,
+      processedQty: state.coveredQty,
+      goodQty: state.coveredGoodQty,
       releaseReductionQty,
       affectedTargetStepCount: targetSteps.length,
       laborPoolId: state.laborPool?.id || null,
@@ -568,7 +573,13 @@ async function applyWithdrawal(
 
   const changedCompletion = await tx.processCompletion.updateMany({
     where: { id: state.id, voidedAt: null },
-    data: { voidedAt: now, voidedById: input.userId, voidReason: input.reason },
+    data: {
+      voidedAt: now,
+      voidedById: input.userId,
+      voidReason: input.reason,
+      coverageStatus: ProcessCompletionCoverageStatus.VOIDED,
+      coverageUpdatedAt: now,
+    },
   });
   if (changedCompletion.count !== 1) {
     throw new ProcessCompletionWithdrawalError(
@@ -578,9 +589,14 @@ async function applyWithdrawal(
     );
   }
 
-  state.step.processedQty -= state.processedQty;
-  state.step.goodOutputQty -= state.goodQty;
-  state.step.defectOutputQty -= state.defectQty;
+  await tx.processCompletionCoverage.updateMany({
+    where: { reportCompletionId: state.id, voidedAt: null },
+    data: { voidedAt: now },
+  });
+
+  state.step.processedQty -= state.coveredQty;
+  state.step.goodOutputQty -= state.coveredGoodQty;
+  state.step.defectOutputQty -= state.coveredDefectQty;
   const routeSourceStep = groupSteps.find(step => step.id === state.stepId);
   if (!routeSourceStep) {
     throw new ProcessCompletionWithdrawalError(
@@ -589,9 +605,9 @@ async function applyWithdrawal(
       'PROCESS_COMPLETION_STEP_MISSING',
     );
   }
-  routeSourceStep.processedQty -= state.processedQty;
-  routeSourceStep.goodOutputQty -= state.goodQty;
-  routeSourceStep.defectOutputQty -= state.defectQty;
+  routeSourceStep.processedQty -= state.coveredQty;
+  routeSourceStep.goodOutputQty -= state.coveredGoodQty;
+  routeSourceStep.defectOutputQty -= state.coveredDefectQty;
   const nextReleased = Math.max(0, groupSteps[0].releasedGoodQty - releaseReductionQty);
   for (const step of groupSteps) step.releasedGoodQty = nextReleased;
   for (const targetStep of targetSteps) targetStep.inputQty -= releaseReductionQty;
@@ -600,14 +616,14 @@ async function applyWithdrawal(
     where: {
       id: state.step.id,
       quantityVersion: state.step.quantityVersion,
-      processedQty: { gte: state.processedQty },
-      goodOutputQty: { gte: state.goodQty },
-      defectOutputQty: { gte: state.defectQty },
+      processedQty: { gte: state.coveredQty },
+      goodOutputQty: { gte: state.coveredGoodQty },
+      defectOutputQty: { gte: state.coveredDefectQty },
     },
     data: {
-      processedQty: { decrement: state.processedQty },
-      goodOutputQty: { decrement: state.goodQty },
-      defectOutputQty: { decrement: state.defectQty },
+      processedQty: { decrement: state.coveredQty },
+      goodOutputQty: { decrement: state.coveredGoodQty },
+      defectOutputQty: { decrement: state.coveredDefectQty },
       releasedGoodQty: nextReleased,
       quantityVersion: { increment: 1 },
     },
@@ -707,6 +723,7 @@ async function applyWithdrawal(
           standardLaborMilliseconds: -claim.standardLaborMilliseconds,
           workDate: claim.workDate,
           status: ProcessLaborClaimStatus.REVERSAL,
+          source: 'completion_auto_reversal',
           idempotencyKey: `${input.idempotencyKey}:labor:${index}`.slice(0, 120),
           claimedById: input.userId,
           claimedAt: now,

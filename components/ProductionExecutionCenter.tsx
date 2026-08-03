@@ -268,10 +268,27 @@ type ProcessCompletionContext = {
   step: {
     id: string;
     processName: string;
+    position: number;
     sequenceGroup: number;
     status: string;
     startedAt: string | null;
   };
+  routeSteps: Array<{
+    id: string;
+    processName: string;
+    position: number;
+    sequenceGroup: number;
+    status: string;
+    unitLabel: string | null;
+    inputQty: number;
+    processedQty: number;
+    reportedQty: number;
+    coveredReportedQty: number;
+    pendingCoverageQty: number;
+    reportableQty: number;
+    availableCoverageQty: number;
+  }>;
+  targetQty: number;
   nextSteps: Array<{
     id: string;
     processName: string;
@@ -282,6 +299,10 @@ type ProcessCompletionContext = {
   remainingInputQty: number;
   goodQty: number;
   defectQty: number;
+  reportedQty: number;
+  coveredReportedQty: number;
+  pendingCoverageQty: number;
+  reportableQty: number;
   employees: Array<{
     id: string;
     employeeNo: string;
@@ -295,6 +316,10 @@ type ProcessCompletionContext = {
     processedQty: number;
     goodQty: number;
     defectQty: number;
+    reportMode: 'sequential' | 'advance';
+    coverageStatus: 'pending' | 'partial' | 'covered';
+    coveredQty: number;
+    pendingCoverageQty: number;
     defectDisposition?: string | null;
     workDate: string;
     completedAt: string;
@@ -1415,14 +1440,9 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   async function loadProcessCompletionContext(order: ProductionOrder, stepId: string): Promise<void> {
     const route = order.processRoute;
-    const activeSteps = route?.currentSteps.length
-      ? route.currentSteps
-      : route?.currentStep
-        ? [route.currentStep]
-        : [];
-    const step = activeSteps.find(item => item.id === stepId);
+    const step = route?.steps.find(item => item.id === stepId);
     if (!route || !step) {
-      setCompletionError('所选工序已不在执行中，请刷新调度中心后重试');
+      setCompletionError('所选工序已不在该生产路线中，请刷新调度中心后重试');
       return;
     }
     const requestId = completionRequestRef.current + 1;
@@ -1453,7 +1473,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           : [];
       setCompletionContext(context);
       setCompletionForm({
-        processedQty: context.remainingInputQty > 0 ? String(context.remainingInputQty) : '',
+        processedQty: context.reportableQty > 0 ? String(context.reportableQty) : '',
         defectQty: '0',
         defectDisposition,
         workDate,
@@ -1495,8 +1515,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     }
     const processedQty = Number(processedText);
     const defectQty = Number(defectText);
-    if (processedQty > completionContext.remainingInputQty) {
-      setCompletionError(`本次数量不能超过当前可处理数量 ${formatProductionQuantity(completionContext.remainingInputQty)}`);
+    if (processedQty > completionContext.reportableQty) {
+      setCompletionError(`本次报工不能超过该工序剩余可报数量 ${formatProductionQuantity(completionContext.reportableQty)}`);
       return;
     }
     if (defectQty > processedQty) {
@@ -1547,17 +1567,23 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       const completedStep = completionOrder.processRoute?.steps.find(
         step => step.id === completionContext.step.id,
       ) || completionOrder.processRoute?.currentStep;
+      const autoAssignedEmployeeCount = Math.max(0, Number(body.data.autoAssignedEmployeeCount) || 0);
+      const pendingCoverageQty = Math.max(0, Number(body.data.pendingCoverageQty) || 0);
       const laborMessage = body.data.laborPoolPendingStandard
         ? '，工时已记入待补标准清单'
+        : autoAssignedEmployeeCount > 0
+        ? `，标准工时已自动记入 ${autoAssignedEmployeeCount} 名作业员工`
         : body.data.laborPoolId
-        ? '，工时已进入待领取池'
+        ? '，标准工时已自动建账'
         : completedStep?.timeBasis === 'per_batch'
-          ? '，本批工时将在上下游闭环后自动进入待领取池'
+          ? '，本批标准工时将在上下游闭环后自动记入作业员工'
           : !completedStep?.standardMillisecondsPerUnit
             ? '，未生成工时池，请维护该工序标准工时'
-            : '，本次未生成待领取工时';
+            : '，本次未生成标准工时';
       const unitLabel = completedStep?.unitLabel || '件';
-      const transferMessage = goodTransferredQty > 0
+      const transferMessage = pendingCoverageQty > 0
+        ? `${formatProductionQuantity(processedQty)} ${unitLabel}已报工，${formatProductionQuantity(pendingCoverageQty)} ${unitLabel}等待前序数量自动核销`
+        : goodTransferredQty > 0
         ? `${formatProductionQuantity(goodTransferredQty)} ${unitLabel}良品已流转${goodWaitingForGroupQty > 0 ? `，${formatProductionQuantity(goodWaitingForGroupQty)} ${unitLabel}等待同组工序齐套` : ''}`
         : goodQty > 0
           ? `${formatProductionQuantity(goodQty)} ${unitLabel}良品已登记，等待同组工序齐套后转序`
@@ -2056,11 +2082,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       />}
       {completionOrder && <ProcessCompletionDialog
         order={completionOrder}
-        activeSteps={completionOrder.processRoute?.currentSteps.length
-          ? completionOrder.processRoute.currentSteps
-          : completionOrder.processRoute?.currentStep
-            ? [completionOrder.processRoute.currentStep]
-            : []}
+        activeSteps={completionOrder.processRoute?.steps || []}
         selectedStepId={completionStepId}
         selectStep={stepId => void loadProcessCompletionContext(completionOrder, stepId)}
         context={completionContext}
@@ -2233,7 +2255,7 @@ function ProductionDispatchRow({
 
 function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectStep, context, value, setValue, loading, saving, error, close, save }: {
   order: ProductionOrder;
-  activeSteps: WorkOrderProcessRouteDTO['currentSteps'];
+  activeSteps: WorkOrderProcessRouteDTO['steps'];
   selectedStepId: string;
   selectStep: (stepId: string) => void;
   context: ProcessCompletionContext | null;
@@ -2304,8 +2326,15 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
   const setupMilliseconds = stepSnapshot?.setupMilliseconds || 0;
   const unitsPerProduct = stepSnapshot?.unitsPerProduct || 1;
   const isPerBatch = stepSnapshot?.timeBasis === 'per_batch';
+  const estimatedPendingCoverageQty = context
+    ? Math.max(0, context.pendingCoverageQty + processedQty - context.remainingInputQty)
+    : 0;
+  const advanceReporting = !!context && (
+    context.step.status !== 'current'
+    || estimatedPendingCoverageQty > 0
+  );
   const laborEligibleQty = isPerBatch
-    ? (context && processedQty === context.remainingInputQty ? context.goodQty + goodQty : 0)
+    ? (context && processedQty === context.reportableQty && !advanceReporting ? context.goodQty + goodQty : 0)
     : goodQty;
   const appliedSetupMilliseconds = isPerBatch || (context?.goodQty || 0) === 0
     ? setupMilliseconds
@@ -2318,9 +2347,9 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
   const laborSummary = standardMillisecondsPerUnit <= 0
     ? '待补标准工时'
     : isPerBatch && laborEligibleQty <= 0
-      ? '齐套后生成'
+      ? '闭环后自动记工'
       : standardLaborMilliseconds > 0
-        ? durationText(standardLaborMilliseconds)
+        ? `自动记入 ${durationText(standardLaborMilliseconds)}`
         : '本次不生成';
   const nextProcessText = context?.nextSteps.length
     ? context.nextSteps.map(step => step.processName).join(' / ')
@@ -2329,18 +2358,18 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
     || activeSteps[0]
     || order.processRoute?.currentStep;
   const completionTitle = context
-    ? `完成 ${context.step.processName}`
+    ? `报工 ${context.step.processName}`
     : selectedStep
-      ? `完成 ${selectedStep.processName}`
-      : '完成当前工序';
-  const submitText = context?.nextSteps.length
-    ? `确认完成并进入 ${nextProcessText}`
-    : '确认完成生产';
+      ? `报工 ${selectedStep.processName}`
+      : '登记工序报工';
+  const submitText = '确认报工并自动记工';
   const waitsForParallelGroup = !!context
     && (order.processRoute?.steps.filter(step => step.sequenceGroup === context.step.sequenceGroup).length || 0) > 1;
-  const goodDestinationHint = waitsForParallelGroup
-    ? `同组齐套后进入 ${nextProcessText}`
-    : `立即进入 ${nextProcessText}`;
+  const goodDestinationHint = advanceReporting
+    ? `先记录报工，前序补齐后自动进入 ${nextProcessText}`
+    : waitsForParallelGroup
+      ? `同组齐套后进入 ${nextProcessText}`
+      : `立即进入 ${nextProcessText}`;
   const selectedEmployees = context && value
     ? context.employees.filter(employee => value.employeeIds.includes(employee.id))
     : [];
@@ -2359,14 +2388,14 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
     || defectQty < 0
     || defectQty > processedQty
     || !context
-    || processedQty > context.remainingInputQty
+    || processedQty > context.reportableQty
     || !value.employeeIds.length;
 
   return <div className="modal-backdrop process-completion-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
     <section ref={dialogRef} tabIndex={-1} className="production-dialog process-completion-dialog" role="dialog" aria-modal="true" aria-labelledby="process-completion-title" aria-describedby="process-completion-order">
       <header className="process-completion-header">
         <div className="process-completion-heading">
-          <span>工序完工确认</span>
+          <span>工序自由报工</span>
           <strong id="process-completion-title">{completionTitle}</strong>
           <small id="process-completion-order">{order.customerName || '客户待补充'} · {specText(order)} · {order.code}</small>
         </div>
@@ -2376,14 +2405,20 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
 
       <div className="process-completion-scroll">
 
-      {activeSteps.length > 1 && <section className="process-completion-step-picker" aria-label="选择本次完成工序">
+      {activeSteps.length > 1 && <section className="process-completion-step-picker" aria-label="选择本次报工工序">
         <label htmlFor="process-completion-step">
-          <span>本次完成工序</span>
+          <span>本次报工工序</span>
           <select id="process-completion-step" value={selectedStepId} disabled={saving} aria-busy={loading} onChange={event => selectStep(event.target.value)}>
             {activeSteps.map(step => {
-              const remainingQty = Math.max(0, (step.inputQty || 0) - (step.processedQty || 0));
-              const quantityHint = step.inputQty === undefined ? '' : ` · 剩余 ${formatProductionQuantity(remainingQty)} ${step.unitLabel || '件'}`;
-              return <option value={step.id} key={step.id}>第 {step.sequenceGroup} 组 · {step.processName}{quantityHint}</option>;
+              const routeStep = context?.routeSteps.find(item => item.id === step.id);
+              const reportable = routeStep?.reportableQty;
+              const pending = routeStep?.pendingCoverageQty || 0;
+              const statusHint = reportable === 0
+                ? ' · 已报完'
+                : reportable === undefined
+                  ? ''
+                  : ` · 可报 ${formatProductionQuantity(reportable)} ${routeStep?.unitLabel || step.unitLabel || '件'}${pending > 0 ? ` · 待核销 ${formatProductionQuantity(pending)}` : ''}`;
+              return <option disabled={reportable === 0} value={step.id} key={step.id}>第 {step.position} 道 · {step.processName}{statusHint}</option>;
             })}
           </select>
         </label>
@@ -2397,26 +2432,31 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
 
       {context && value && <div className="process-completion-layout">
         <div className="process-completion-main">
+          {advanceReporting && <section className="process-completion-advance-note" role="status">
+            <AlertTriangle size={20} aria-hidden="true" />
+            <div><strong>自由报工 · 待前序自动核销</strong><small>本次可先登记中间或后道工序；物料数量始终保持非负，前序报工补齐后系统会按工艺顺序自动核销并流转。</small></div>
+            <span>预计待核销 {formatProductionQuantity(estimatedPendingCoverageQty)} {unitLabel}</span>
+          </section>}
           <section className="process-completion-route" aria-label="本次工序流转">
-            <div><span>当前工序</span><strong>{context.step.processName}</strong><small>第 {context.step.sequenceGroup} 顺序组</small></div>
+            <div><span>报工工序</span><strong>{context.step.processName}</strong><small>第 {context.step.position} 道 · 第 {context.step.sequenceGroup} 顺序组</small></div>
             <ArrowRight size={20} aria-hidden="true" />
             <div><span>良品进入</span><strong>{nextProcessText}</strong><small>{context.nextSteps.length > 1 ? `${context.nextSteps.length} 道并行工序` : context.nextSteps.length ? '下一道工序' : '成品入库'}</small></div>
             <dl>
-              <div><dt>累计已处理</dt><dd>{formatProductionQuantity(context.processedQty)} {unitLabel}</dd></div>
-              <div><dt>本次前剩余</dt><dd>{formatProductionQuantity(context.remainingInputQty)} {unitLabel}</dd></div>
+              <div><dt>累计已报</dt><dd>{formatProductionQuantity(context.reportedQty)} {unitLabel}</dd></div>
+              <div><dt>累计已核销</dt><dd>{formatProductionQuantity(context.coveredReportedQty)} {unitLabel}</dd></div>
             </dl>
           </section>
 
           <section className="process-completion-quantity-panel" aria-label="本次完成数量">
-            <header><div><strong>本次完成数量</strong><small>本工序最多可处理 {formatProductionQuantity(context.remainingInputQty)} {unitLabel}</small></div><label><span>生产日期</span><input type="date" value={value.workDate} disabled={saving} onChange={event => setValue({ ...value, workDate: event.target.value })} /></label></header>
+            <header><div><strong>本次报工数量</strong><small>剩余可报 {formatProductionQuantity(context.reportableQty)} {unitLabel}；当前已到料可核销 {formatProductionQuantity(context.remainingInputQty)} {unitLabel}</small></div><label className="process-completion-work-date"><span><CalendarDays size={16} aria-hidden="true" />生产日期</span><input type="date" value={value.workDate} disabled={saving} onChange={event => setValue({ ...value, workDate: event.target.value })} /></label></header>
             <div className="process-completion-quantity-grid">
               <label>
-                <span>实际处理</span>
-                <div><input autoFocus inputMode="numeric" pattern="[0-9]*" min="1" max={context.remainingInputQty} step="1" value={value.processedQty} disabled={saving} onChange={event => setValue({ ...value, processedQty: event.target.value })} /><em>{unitLabel}</em></div>
+                <span>实际报工</span>
+                <div><input autoFocus inputMode="numeric" pattern="[0-9]*" min="1" max={context.reportableQty} step="1" value={value.processedQty} disabled={saving} onChange={event => setValue({ ...value, processedQty: event.target.value })} /><em>{unitLabel}</em></div>
               </label>
               <label>
                 <span>不良品</span>
-                <div><input inputMode="numeric" pattern="[0-9]*" min="0" max={processedQty || context.remainingInputQty} step="1" value={value.defectQty} disabled={saving} onChange={event => setValue({ ...value, defectQty: event.target.value })} /><em>{unitLabel}</em></div>
+                <div><input inputMode="numeric" pattern="[0-9]*" min="0" max={processedQty || context.reportableQty} step="1" value={value.defectQty} disabled={saving} onChange={event => setValue({ ...value, defectQty: event.target.value })} /><em>{unitLabel}</em></div>
               </label>
               <div className="process-completion-good" aria-live="polite"><span>本次良品</span><strong>{formatProductionQuantity(goodQty)} <small>{unitLabel}</small></strong><em>{goodDestinationHint}</em></div>
             </div>
@@ -2429,7 +2469,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
           </fieldset>}
 
           <section className="process-completion-work-session" aria-label="本次现场作业记录">
-            <header><div><strong>作业人员</strong><small>用于现场追溯和手动报工推荐</small></div><span className={value.employeeIds.length ? 'selected' : ''}>{value.employeeIds.length} 人</span></header>
+            <header><div><strong>作业人员</strong><small>报工提交后，标准工时会直接按人数与数量自动分摊到员工达成率</small></div><span className={value.employeeIds.length ? 'selected' : ''}>{value.employeeIds.length} 人</span></header>
             {!!selectedEmployees.length && <div className="process-completion-selected-employees">
               {selectedEmployees.map(employee => <span key={employee.id}>{employee.name}<button type="button" disabled={saving} aria-label={`移除${employee.name}`} onClick={() => setValue({ ...value, employeeIds: value.employeeIds.filter(id => id !== employee.id) })}><X size={13} aria-hidden="true" /></button></span>)}
             </div>}
@@ -2471,10 +2511,10 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
 
         <aside className="process-completion-summary" aria-label="确认结果">
           <header><CheckCircle2 size={20} aria-hidden="true" /><div><strong>确认结果</strong><small>提交前请核对</small></div></header>
-          <div className="process-completion-summary-hero"><span>本次良品</span><strong>{formatProductionQuantity(goodQty)} <small>{unitLabel}</small></strong><em>{waitsForParallelGroup ? `齐套后进入 ${nextProcessText}` : `进入 ${nextProcessText}`}</em></div>
+          <div className={`process-completion-summary-hero${advanceReporting ? ' pending' : ''}`}><span>{advanceReporting ? '本次先报工' : '本次良品'}</span><strong>{formatProductionQuantity(goodQty)} <small>{unitLabel}</small></strong><em>{advanceReporting ? `前序补齐后自动核销至 ${nextProcessText}` : waitsForParallelGroup ? `齐套后进入 ${nextProcessText}` : `进入 ${nextProcessText}`}</em></div>
           <dl>
             <div><dt>不良品</dt><dd className={defectQty > 0 ? 'danger' : ''}>{formatProductionQuantity(defectQty)} {unitLabel}</dd></div>
-            <div><dt>待领取工时</dt><dd>{laborSummary}</dd></div>
+            <div><dt>自动记工</dt><dd>{laborSummary}</dd></div>
             <div><dt>作业人员</dt><dd className={!selectedEmployees.length ? 'warning' : ''}>{selectedEmployees.length ? `${selectedEmployees.length} 人` : '未选择'}</dd></div>
             <div><dt>生产日期</dt><dd>{dateText(value.workDate)}</dd></div>
           </dl>
@@ -2485,7 +2525,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
               {context.recentCompletions.slice(0, 4).map(item => <article key={item.id}>
                 <time>{dateText(item.workDate)}</time>
                 <strong>良品 {formatProductionQuantity(item.goodQty)} / 不良 {formatProductionQuantity(item.defectQty)}</strong>
-                <small>{item.participants.length ? item.participants.map(participant => participant.name).join('、') : item.branchWorkOrder ? item.branchWorkOrder.code : '正常流转'}</small>
+                <small>{item.pendingCoverageQty > 0 ? `待前序核销 ${formatProductionQuantity(item.pendingCoverageQty)} ${unitLabel}` : item.participants.length ? `已自动记工：${item.participants.map(participant => participant.name).join('、')}` : item.branchWorkOrder ? item.branchWorkOrder.code : '已核销流转'}</small>
               </article>)}
             </div>
           </details>}
@@ -2495,9 +2535,9 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       {error && context && <div className="form-error" role="alert">{error}</div>}
       </div>
       <footer className="dialog-actions">
-        <span className={!invalid ? 'ready' : ''}>{!context || !value || loading ? '正在核对工序数据' : !value.employeeIds.length ? '请选择作业人员后提交' : `将流转 ${formatProductionQuantity(goodQty)} ${unitLabel}良品`}</span>
+        <span className={!invalid ? 'ready' : ''}>{!context || !value || loading ? '正在核对工序数据' : !value.employeeIds.length ? '请选择作业人员后提交' : advanceReporting ? `将先登记 ${formatProductionQuantity(processedQty)} ${unitLabel}，待前序自动核销` : `将报工并自动记入 ${selectedEmployees.length} 人工时`}</span>
         <button type="button" disabled={saving} onClick={close}>取消</button>
-        <button className="primary-button" type="button" disabled={loading || saving || invalid} onClick={save}>{saving ? '正在流转...' : submitText}</button>
+        <button className="primary-button" type="button" disabled={loading || saving || invalid} onClick={save}>{saving ? '正在报工...' : submitText}</button>
       </footer>
     </section>
   </div>;

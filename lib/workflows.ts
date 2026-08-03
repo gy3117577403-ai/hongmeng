@@ -262,6 +262,9 @@ type WorkflowRouteStepRecord = {
     processedQty: number;
     goodQty: number;
     defectQty: number;
+    reportMode: string;
+    coverageStatus: string;
+    coveredQty: number;
     standardMillisecondsPerUnit: number | null;
     standardSource: string;
     participants: Array<{ employee: { name: string } }>;
@@ -382,6 +385,12 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
         processedQty: completion.processedQty,
         goodQty: completion.goodQty,
         defectQty: completion.defectQty,
+        reportMode: completion.reportMode === 'ADVANCE' ? 'advance' : 'sequential',
+        coverageStatus: completion.coverageStatus === 'PENDING'
+          ? 'pending'
+          : completion.coverageStatus === 'PARTIAL' ? 'partial' : 'covered',
+        coveredQty: completion.coveredQty,
+        pendingCoverageQty: Math.max(0, completion.processedQty - completion.coveredQty),
         participantNames: completion.participants.map(item => item.employee.name),
         laborPoolId: completion.laborPool?.id || null,
         laborClaimedQty: completion.laborPool?.claimedQty || 0,
@@ -841,6 +850,9 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                         processedQty: true,
                         goodQty: true,
                         defectQty: true,
+                        reportMode: true,
+                        coverageStatus: true,
+                        coveredQty: true,
                         standardMillisecondsPerUnit: true,
                         standardSource: true,
                         participants: {
@@ -989,6 +1001,9 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     processedQty: true,
                     goodQty: true,
                     defectQty: true,
+                    reportMode: true,
+                    coverageStatus: true,
+                    coveredQty: true,
                     standardMillisecondsPerUnit: true,
                     standardSource: true,
                     participants: {

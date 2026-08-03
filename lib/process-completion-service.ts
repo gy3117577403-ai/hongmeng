@@ -1,15 +1,22 @@
-import { DailyProcessTaskStatus, Prisma } from '@prisma/client';
+import {
+  DailyProcessTaskStatus,
+  Prisma,
+  ProcessCompletionCoverageStatus,
+  ProcessCompletionReportMode,
+  ProcessLaborClaimStatus,
+  ProcessLaborPoolStatus,
+} from '@prisma/client';
 import { dateKeyFromDatabase, parseWorkDate } from '@/lib/attendance';
 import { resolveDailyTaskProgress } from '@/lib/daily-plan-domain';
 import {
   calculateCompletionLaborSnapshot,
   calculateParallelGroupReleaseDelta,
+  planLaborClaim,
   ProcessCompletionDomainError,
   resolveCompletionQuantities,
 } from '@/lib/process-completion-domain';
 import { prisma } from '@/lib/prisma';
 import { normalizeProcessStageGroup, processStageForGroup } from '@/lib/process-routing';
-import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import {
   compatibleStageForQuantities,
   resolveEffectiveFrontendTransferredQty,
@@ -54,6 +61,8 @@ export type CompleteProcessStepCommand = {
   workstation?: unknown;
   remark?: unknown;
   requireParticipants?: boolean;
+  allowAdvanceReporting?: boolean;
+  autoAssignLabor?: boolean;
   idempotencyKey: unknown;
   expectedRouteVersion: unknown;
   userId: string;
@@ -70,6 +79,10 @@ export type ProcessCompletionResult = {
   goodTransferredQty: number;
   remainingInputQty: number;
   routeCompleted: boolean;
+  coverageStatus: 'pending' | 'partial' | 'covered';
+  pendingCoverageQty: number;
+  autoAssignedEmployeeCount: number;
+  autoAssignedLaborMilliseconds: number;
 };
 
 export type ProcessCompletionContext = {
@@ -78,10 +91,27 @@ export type ProcessCompletionContext = {
   step: {
     id: string;
     processName: string;
+    position: number;
     sequenceGroup: number;
     status: string;
     startedAt: string | null;
   };
+  routeSteps: Array<{
+    id: string;
+    processName: string;
+    position: number;
+    sequenceGroup: number;
+    status: string;
+    unitLabel: string | null;
+    inputQty: number;
+    processedQty: number;
+    reportedQty: number;
+    coveredReportedQty: number;
+    pendingCoverageQty: number;
+    reportableQty: number;
+    availableCoverageQty: number;
+  }>;
+  targetQty: number;
   nextSteps: Array<{
     id: string;
     processName: string;
@@ -92,6 +122,10 @@ export type ProcessCompletionContext = {
   remainingInputQty: number;
   goodQty: number;
   defectQty: number;
+  reportedQty: number;
+  coveredReportedQty: number;
+  pendingCoverageQty: number;
+  reportableQty: number;
   employees: Array<{
     id: string;
     employeeNo: string;
@@ -105,6 +139,10 @@ export type ProcessCompletionContext = {
     processedQty: number;
     goodQty: number;
     defectQty: number;
+    reportMode: 'sequential' | 'advance';
+    coverageStatus: 'pending' | 'partial' | 'covered';
+    coveredQty: number;
+    pendingCoverageQty: number;
     defectDisposition: ProcessDefectDispositionInput | null;
     workDate: string;
     completedAt: string;
@@ -143,6 +181,8 @@ type ParsedCompletionCommand = {
   team: string | null;
   workstation: string | null;
   remark: string | null;
+  allowAdvanceReporting: boolean;
+  autoAssignLabor: boolean;
   idempotencyKey: string;
   expectedRouteVersion: number;
   userId: string;
@@ -195,7 +235,18 @@ type CompletionRouteRecord = Prisma.WorkOrderProcessRouteGetPayload<{
 }>;
 
 const replayCompletionInclude = Prisma.validator<Prisma.ProcessCompletionInclude>()({
-  laborPool: { select: { id: true, status: true, standardSource: true } },
+  laborPool: {
+    select: {
+      id: true,
+      status: true,
+      standardSource: true,
+      claimedStandardLaborMilliseconds: true,
+      claims: {
+        where: { status: ProcessLaborClaimStatus.ACTIVE, source: 'completion_auto' },
+        select: { employeeId: true },
+      },
+    },
+  },
   branchWorkOrder: { select: { id: true, code: true } },
   participants: {
     select: { employeeId: true, position: true },
@@ -343,6 +394,87 @@ export function calculateCappedParallelGroupRelease(input: {
     releasableGoodQty,
     alreadyReleasedQty: uncapped.alreadyReleasedQty,
     releaseDeltaQty: releasableGoodQty - uncapped.alreadyReleasedQty,
+  };
+}
+
+export type CompletionCoveragePlan = {
+  deltaQty: number;
+  deltaGoodQty: number;
+  deltaDefectQty: number;
+  coveredQty: number;
+  coveredGoodQty: number;
+  coveredDefectQty: number;
+  pendingQty: number;
+  status: 'PENDING' | 'PARTIAL' | 'COVERED';
+};
+
+/**
+ * Covers an out-of-order report with material that has actually arrived.
+ * Good quantity is covered first. Defect quantity is deliberately kept as
+ * one indivisible tail so its branch is created exactly once when enough
+ * upstream material exists.
+ */
+export function planCompletionCoverage(input: {
+  processedQty: number;
+  goodQty: number;
+  defectQty: number;
+  coveredQty?: number;
+  coveredGoodQty?: number;
+  coveredDefectQty?: number;
+  availableQty: number;
+}): CompletionCoveragePlan {
+  const values = [
+    input.processedQty,
+    input.goodQty,
+    input.defectQty,
+    input.coveredQty || 0,
+    input.coveredGoodQty || 0,
+    input.coveredDefectQty || 0,
+    input.availableQty,
+  ];
+  if (!values.every(value => Number.isSafeInteger(value) && value >= 0)) {
+    throw new ProcessCompletionServiceError(
+      '待核销报工数量状态不正确',
+      409,
+      'PROCESS_COMPLETION_COVERAGE_INVALID',
+    );
+  }
+  const coveredQty = input.coveredQty || 0;
+  const coveredGoodQty = input.coveredGoodQty || 0;
+  const coveredDefectQty = input.coveredDefectQty || 0;
+  if (
+    input.goodQty + input.defectQty !== input.processedQty
+    || coveredGoodQty + coveredDefectQty !== coveredQty
+    || coveredQty > input.processedQty
+    || coveredGoodQty > input.goodQty
+    || coveredDefectQty > input.defectQty
+  ) {
+    throw new ProcessCompletionServiceError(
+      '待核销报工数量关系不正确',
+      409,
+      'PROCESS_COMPLETION_COVERAGE_MISMATCH',
+    );
+  }
+  let capacity = Math.min(input.availableQty, input.processedQty - coveredQty);
+  const remainingGoodQty = input.goodQty - coveredGoodQty;
+  const remainingDefectQty = input.defectQty - coveredDefectQty;
+  const deltaGoodQty = Math.min(remainingGoodQty, capacity);
+  capacity -= deltaGoodQty;
+  const deltaDefectQty = remainingDefectQty > 0 && capacity >= remainingDefectQty
+    ? remainingDefectQty
+    : 0;
+  const deltaQty = deltaGoodQty + deltaDefectQty;
+  const nextCoveredQty = coveredQty + deltaQty;
+  const pendingQty = input.processedQty - nextCoveredQty;
+  return {
+    deltaQty,
+    deltaGoodQty,
+    deltaDefectQty,
+    coveredQty: nextCoveredQty,
+    coveredGoodQty: coveredGoodQty + deltaGoodQty,
+    coveredDefectQty: coveredDefectQty + deltaDefectQty,
+    pendingQty,
+    status: pendingQty === 0 ? 'COVERED' : nextCoveredQty === 0 ? 'PENDING' : 'PARTIAL',
   };
 }
 
@@ -519,6 +651,8 @@ export function parseProcessCompletionCommand(
     team: cleanText(command.team, 80) || null,
     workstation: cleanText(command.workstation, 80) || null,
     remark: cleanText(command.remark, 500) || null,
+    allowAdvanceReporting: command.allowAdvanceReporting === true,
+    autoAssignLabor: command.autoAssignLabor === true,
     idempotencyKey: parseIdempotencyKey(command.idempotencyKey),
     expectedRouteVersion: parseExpectedRouteVersion(command.expectedRouteVersion),
     userId,
@@ -596,6 +730,20 @@ function lowercaseDisposition(value: string | null): ProcessDefectDispositionInp
   return null;
 }
 
+function lowercaseCoverageStatus(
+  value: ProcessCompletionCoverageStatus,
+): 'pending' | 'partial' | 'covered' {
+  if (value === ProcessCompletionCoverageStatus.PENDING) return 'pending';
+  if (value === ProcessCompletionCoverageStatus.PARTIAL) return 'partial';
+  return 'covered';
+}
+
+function lowercaseReportMode(
+  value: ProcessCompletionReportMode,
+): 'sequential' | 'advance' {
+  return value === ProcessCompletionReportMode.ADVANCE ? 'advance' : 'sequential';
+}
+
 function detailRecord(value: Prisma.JsonValue | null): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -618,6 +766,12 @@ function resultFromActivityDetail(
   ) return null;
   const laborPoolId = typeof record.laborPoolId === 'string' ? record.laborPoolId : null;
   const laborPoolPendingStandard = record.laborPoolPendingStandard === true;
+  const coverageStatus = record.coverageStatus === 'pending' || record.coverageStatus === 'partial'
+    ? record.coverageStatus
+    : 'covered';
+  const pendingCoverageQty = Number(record.pendingCoverageQty ?? 0);
+  const autoAssignedEmployeeCount = Number(record.autoAssignedEmployeeCount ?? 0);
+  const autoAssignedLaborMilliseconds = Number(record.autoAssignedLaborMilliseconds ?? 0);
   const branchWorkOrderId = typeof record.branchWorkOrderId === 'string'
     ? record.branchWorkOrderId
     : undefined;
@@ -634,6 +788,18 @@ function resultFromActivityDetail(
     goodTransferredQty,
     remainingInputQty,
     routeCompleted: record.routeCompleted === true,
+    coverageStatus,
+    pendingCoverageQty: Number.isSafeInteger(pendingCoverageQty) && pendingCoverageQty >= 0
+      ? pendingCoverageQty
+      : 0,
+    autoAssignedEmployeeCount: Number.isSafeInteger(autoAssignedEmployeeCount)
+      && autoAssignedEmployeeCount >= 0
+      ? autoAssignedEmployeeCount
+      : 0,
+    autoAssignedLaborMilliseconds: Number.isSafeInteger(autoAssignedLaborMilliseconds)
+      && autoAssignedLaborMilliseconds >= 0
+      ? autoAssignedLaborMilliseconds
+      : 0,
   };
 }
 
@@ -677,6 +843,14 @@ async function resultForExistingCompletion(
     goodTransferredQty: normalMovementQuantities.length ? Math.max(...normalMovementQuantities) : 0,
     remainingInputQty: Math.max(0, completion.step.inputQty - completion.step.processedQty),
     routeCompleted: completion.route.status === 'completed',
+    coverageStatus: lowercaseCoverageStatus(completion.coverageStatus),
+    pendingCoverageQty: Math.max(0, completion.processedQty - completion.coveredQty),
+    autoAssignedEmployeeCount: new Set(
+      completion.laborPool?.claims.map(claim => claim.employeeId) || [],
+    ).size,
+    autoAssignedLaborMilliseconds: Number(
+      completion.laborPool?.claimedStandardLaborMilliseconds || 0n,
+    ),
   };
 }
 
@@ -739,10 +913,11 @@ function normalizeServiceError(error: unknown): ProcessCompletionServiceError {
 export async function loadProcessCompletionContext(
   routeIdInput: string,
   stepIdInput?: string | null,
+  options: { allowAdvanceReporting?: boolean } = {},
 ): Promise<ProcessCompletionContext> {
   const routeId = cleanText(routeIdInput, 80);
   const stepId = cleanText(stepIdInput, 80);
-  const [route, employees] = await Promise.all([
+  const [route, employees, completionTotals] = await Promise.all([
     prisma.workOrderProcessRoute.findUnique({
       where: { id: routeId },
       include: {
@@ -785,6 +960,11 @@ export async function loadProcessCompletionContext(
         team: true,
       },
     }),
+    prisma.processCompletion.groupBy({
+      by: ['stepId'],
+      where: { routeId, voidedAt: null },
+      _sum: { processedQty: true, coveredQty: true },
+    }),
   ]);
   if (!route) {
     throw new ProcessCompletionServiceError(
@@ -800,9 +980,20 @@ export async function loadProcessCompletionContext(
       'PROCESS_ROUTE_STEPS_REQUIRED',
     );
   }
+  const target = targetQuantity(route.workOrder);
+  const totalByStep = new Map(completionTotals.map(total => [
+    total.stepId,
+    {
+      reportedQty: total._sum.processedQty || 0,
+      coveredReportedQty: total._sum.coveredQty || 0,
+    },
+  ]));
   const selected = stepId
     ? route.steps.find(step => step.id === stepId)
-    : route.steps.find(step => step.status === 'current');
+    : route.steps.find(step => step.status === 'current')
+      || (options.allowAdvanceReporting
+        ? route.steps.find(step => (totalByStep.get(step.id)?.reportedQty || 0) < target)
+        : undefined);
   if (!selected) {
     throw new ProcessCompletionServiceError(
       stepId ? '当前工序不属于该工艺路线' : '当前没有可完成的生产工序',
@@ -810,16 +1001,27 @@ export async function loadProcessCompletionContext(
       stepId ? 'PROCESS_STEP_NOT_FOUND' : 'PROCESS_CURRENT_STEP_REQUIRED',
     );
   }
-  if (selected.status !== 'current') {
+  if (!options.allowAdvanceReporting && selected.status !== 'current') {
     throw new ProcessCompletionServiceError(
       '该工序已不是当前可完成工序，请刷新后重试',
       409,
       'PROCESS_STEP_NOT_CURRENT',
     );
   }
-  const target = targetQuantity(route.workOrder);
   const firstGroup = firstSequenceGroup(route.steps);
   const availableInputQty = effectiveInputQuantity(selected, firstGroup, target);
+  const selectedTotals = totalByStep.get(selected.id) || {
+    reportedQty: 0,
+    coveredReportedQty: 0,
+  };
+  const reportableQty = Math.max(0, target - selectedTotals.reportedQty);
+  if (options.allowAdvanceReporting && reportableQty <= 0) {
+    throw new ProcessCompletionServiceError(
+      '该工序的累计报工数量已达到生产目标',
+      409,
+      'PROCESS_STEP_REPORT_TARGET_REACHED',
+    );
+  }
   const nextSteps = nextSequenceGroupSteps(route.steps, selected.sequenceGroup);
   return {
     routeId: route.id,
@@ -827,10 +1029,31 @@ export async function loadProcessCompletionContext(
     step: {
       id: selected.id,
       processName: selected.processName,
+      position: selected.position,
       sequenceGroup: selected.sequenceGroup,
       status: selected.status,
       startedAt: selected.startedAt?.toISOString() || null,
     },
+    routeSteps: route.steps.map(step => {
+      const totals = totalByStep.get(step.id) || { reportedQty: 0, coveredReportedQty: 0 };
+      const stepAvailableInput = effectiveInputQuantity(step, firstGroup, target);
+      return {
+        id: step.id,
+        processName: step.processName,
+        position: step.position,
+        sequenceGroup: step.sequenceGroup,
+        status: step.status,
+        unitLabel: step.unitLabel,
+        inputQty: stepAvailableInput,
+        processedQty: step.processedQty,
+        reportedQty: totals.reportedQty,
+        coveredReportedQty: totals.coveredReportedQty,
+        pendingCoverageQty: Math.max(0, totals.reportedQty - totals.coveredReportedQty),
+        reportableQty: Math.max(0, target - totals.reportedQty),
+        availableCoverageQty: Math.max(0, stepAvailableInput - step.processedQty),
+      };
+    }),
+    targetQty: target,
     nextSteps: nextSteps.map(step => ({
       id: step.id,
       processName: step.processName,
@@ -841,12 +1064,20 @@ export async function loadProcessCompletionContext(
     remainingInputQty: Math.max(0, availableInputQty - selected.processedQty),
     goodQty: selected.goodOutputQty,
     defectQty: selected.defectOutputQty,
+    reportedQty: selectedTotals.reportedQty,
+    coveredReportedQty: selectedTotals.coveredReportedQty,
+    pendingCoverageQty: Math.max(0, selectedTotals.reportedQty - selectedTotals.coveredReportedQty),
+    reportableQty,
     employees,
     recentCompletions: selected.completions.map(completion => ({
       id: completion.id,
       processedQty: completion.processedQty,
       goodQty: completion.goodQty,
       defectQty: completion.defectQty,
+      reportMode: lowercaseReportMode(completion.reportMode),
+      coverageStatus: lowercaseCoverageStatus(completion.coverageStatus),
+      coveredQty: completion.coveredQty,
+      pendingCoverageQty: Math.max(0, completion.processedQty - completion.coveredQty),
       defectDisposition: lowercaseDisposition(completion.defectDisposition),
       workDate: dateKeyFromDatabase(completion.workDate),
       completedAt: completion.completedAt.toISOString(),
@@ -1286,6 +1517,114 @@ async function createCompletionLaborPool(
   return { id: pool.id, pendingStandard: false };
 }
 
+export async function autoAssignCompletionLaborPool(
+  tx: Prisma.TransactionClient,
+  input: {
+    poolId: string;
+    completionId: string;
+    employeeIds: string[];
+    userId: string;
+    now: Date;
+  },
+): Promise<{ employeeCount: number; standardLaborMilliseconds: number }> {
+  if (!input.employeeIds.length) {
+    return { employeeCount: 0, standardLaborMilliseconds: 0 };
+  }
+  const pool = await tx.processLaborPool.findUnique({
+    where: { id: input.poolId },
+    select: {
+      id: true,
+      workDate: true,
+      eligibleQty: true,
+      claimedQty: true,
+      remainingQty: true,
+      totalStandardLaborMilliseconds: true,
+      claimedStandardLaborMilliseconds: true,
+      status: true,
+      standardSource: true,
+      version: true,
+    },
+  });
+  if (
+    !pool
+    || pool.remainingQty <= 0
+    || pool.status === ProcessLaborPoolStatus.LOCKED
+    || pool.standardSource === 'pending_standard'
+  ) {
+    return { employeeCount: 0, standardLaborMilliseconds: 0 };
+  }
+
+  const participants = [...new Set(input.employeeIds)];
+  const baseQty = Math.floor(pool.remainingQty / participants.length);
+  const remainder = pool.remainingQty % participants.length;
+  let claimedQty = pool.claimedQty;
+  let claimedLabor = pool.claimedStandardLaborMilliseconds;
+  let assignedLabor = 0n;
+  let assignedEmployeeCount = 0;
+
+  for (let index = 0; index < participants.length; index += 1) {
+    const claimQty = baseQty + (index < remainder ? 1 : 0);
+    if (claimQty <= 0) continue;
+    const plan = planLaborClaim({
+      eligibleQty: pool.eligibleQty,
+      claimedQty,
+      claimQty,
+      totalStandardLaborMilliseconds: pool.totalStandardLaborMilliseconds,
+      claimedStandardLaborMilliseconds: claimedLabor,
+    });
+    await tx.processLaborClaim.create({
+      data: {
+        poolId: pool.id,
+        employeeId: participants[index],
+        quantity: claimQty,
+        standardLaborMilliseconds: plan.claimStandardLaborMilliseconds,
+        workDate: pool.workDate,
+        status: ProcessLaborClaimStatus.ACTIVE,
+        source: 'completion_auto',
+        idempotencyKey: `completion-auto:${input.completionId}:${participants[index]}`,
+        claimedById: input.userId,
+        claimedAt: input.now,
+      },
+    });
+    claimedQty = plan.nextClaimedQty;
+    claimedLabor = plan.nextClaimedStandardLaborMilliseconds;
+    assignedLabor += plan.claimStandardLaborMilliseconds;
+    assignedEmployeeCount += 1;
+  }
+
+  const remainingQty = pool.eligibleQty - claimedQty;
+  const remainingLabor = pool.totalStandardLaborMilliseconds - claimedLabor;
+  const updated = await tx.processLaborPool.updateMany({
+    where: { id: pool.id, version: pool.version },
+    data: {
+      claimedQty,
+      remainingQty,
+      claimedStandardLaborMilliseconds: claimedLabor,
+      remainingStandardLaborMilliseconds: remainingLabor,
+      status: remainingQty === 0
+        ? ProcessLaborPoolStatus.EXHAUSTED
+        : ProcessLaborPoolStatus.PARTIAL,
+      version: { increment: 1 },
+    },
+  });
+  if (updated.count !== 1) {
+    throw new ProcessCompletionServiceError(
+      '自动记工状态已变化，请刷新后重试',
+      409,
+      'PROCESS_LABOR_POOL_VERSION_CONFLICT',
+    );
+  }
+  const standardLaborMilliseconds = Number(assignedLabor);
+  if (!Number.isSafeInteger(standardLaborMilliseconds)) {
+    throw new ProcessCompletionServiceError(
+      '自动记工数值超过系统可处理范围',
+      409,
+      'PROCESS_LABOR_DURATION_OVERFLOW',
+    );
+  }
+  return { employeeCount: assignedEmployeeCount, standardLaborMilliseconds };
+}
+
 async function createDeferredPerBatchLaborPools(
   tx: Prisma.TransactionClient,
   route: CompletionRouteRecord,
@@ -1332,6 +1671,7 @@ async function createDeferredPerBatchLaborPools(
         select: {
           id: true,
           workDate: true,
+          autoAssignLabor: true,
           timeBasis: true,
           standardMillisecondsPerUnit: true,
           setupMilliseconds: true,
@@ -1339,6 +1679,10 @@ async function createDeferredPerBatchLaborPools(
           countsForEfficiency: true,
           standardSource: true,
           productTimeProfileVersion: true,
+          participants: {
+            select: { employeeId: true, position: true },
+            orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+          },
         },
       }),
       tx.processCompletion.aggregate({
@@ -1373,6 +1717,15 @@ async function createDeferredPerBatchLaborPools(
       productTimeProfileVersion: completion.productTimeProfileVersion,
     });
     createdPoolIds.push(pool.id);
+    const automatic = completion.autoAssignLabor
+      ? await autoAssignCompletionLaborPool(tx, {
+          poolId: pool.id,
+          completionId: completion.id,
+          employeeIds: completion.participants.map(participant => participant.employeeId),
+          userId: input.userId,
+          now: input.now,
+        })
+      : { employeeCount: 0, standardLaborMilliseconds: 0 };
     await tx.processRouteActivity.create({
       data: {
         routeId: route.id,
@@ -1380,12 +1733,16 @@ async function createDeferredPerBatchLaborPools(
         action: 'create_deferred_per_batch_labor_pool',
         content: pool.pendingStandard
           ? `${step.processName} 上下游已闭环，补建 ${directCompletedGoodQty} 件待补标准工时`
-          : `${step.processName} 上下游已闭环，补建 ${directCompletedGoodQty} 件待领取工时`,
+          : automatic.employeeCount > 0
+            ? `${step.processName} 上下游已闭环，${directCompletedGoodQty} 件标准工时已自动记入 ${automatic.employeeCount} 人`
+            : `${step.processName} 上下游已闭环，补建 ${directCompletedGoodQty} 件标准工时`,
         actorId: input.userId,
         detail: {
           completionId: completion.id,
           laborPoolId: pool.id,
           laborPoolPendingStandard: pool.pendingStandard,
+          autoAssignedEmployeeCount: automatic.employeeCount,
+          autoAssignedLaborMilliseconds: automatic.standardLaborMilliseconds,
           eligibleQty: directCompletedGoodQty,
           reason: 'upstream_closed_without_release_delta',
         },
@@ -2016,6 +2373,353 @@ async function returnReworkOutputToParent(
   });
 }
 
+type CoverageApplicationSummary = {
+  goodTransferredQty: number;
+  frontendTransferDelta: number;
+  finishedGoodDelta: number;
+  branchWorkOrderId?: string;
+  branchWorkOrderCode?: string;
+  reworkReturn?: {
+    completionId: string;
+    sourceStepId: string;
+    recoveredQty: number;
+  };
+};
+
+async function applyCompletionCoverage(
+  tx: Prisma.TransactionClient,
+  input: {
+    route: CompletionRouteRecord;
+    completion: {
+      id: string;
+      stepId: string;
+      processedQty: number;
+      goodQty: number;
+      defectQty: number;
+      coveredQty: number;
+      coveredGoodQty: number;
+      coveredDefectQty: number;
+      defectDisposition: string | null;
+    };
+    triggerCompletionId: string;
+    targetQty: number;
+    userId: string;
+    actor: string;
+    now: Date;
+  },
+): Promise<CoverageApplicationSummary> {
+  const current = input.route.steps.find(step => step.id === input.completion.stepId);
+  if (!current) {
+    throw new ProcessCompletionServiceError(
+      '待核销报工对应的工序不存在',
+      409,
+      'PROCESS_COVERAGE_STEP_NOT_FOUND',
+    );
+  }
+  const availableQty = Math.max(0, current.inputQty - current.processedQty);
+  const plan = planCompletionCoverage({
+    processedQty: input.completion.processedQty,
+    goodQty: input.completion.goodQty,
+    defectQty: input.completion.defectQty,
+    coveredQty: input.completion.coveredQty,
+    coveredGoodQty: input.completion.coveredGoodQty,
+    coveredDefectQty: input.completion.coveredDefectQty,
+    availableQty,
+  });
+  if (plan.deltaQty <= 0) {
+    return {
+      goodTransferredQty: 0,
+      frontendTransferDelta: 0,
+      finishedGoodDelta: 0,
+    };
+  }
+
+  const completionUpdate = await tx.processCompletion.updateMany({
+    where: {
+      id: input.completion.id,
+      voidedAt: null,
+      coveredQty: input.completion.coveredQty,
+      coveredGoodQty: input.completion.coveredGoodQty,
+      coveredDefectQty: input.completion.coveredDefectQty,
+    },
+    data: {
+      coveredQty: plan.coveredQty,
+      coveredGoodQty: plan.coveredGoodQty,
+      coveredDefectQty: plan.coveredDefectQty,
+      coverageStatus: plan.status,
+      coverageUpdatedAt: input.now,
+    },
+  });
+  if (completionUpdate.count !== 1) {
+    throw new ProcessCompletionServiceError(
+      '待核销报工已被其他操作更新，请刷新后重试',
+      409,
+      'PROCESS_COMPLETION_COVERAGE_CONFLICT',
+    );
+  }
+  await tx.processCompletionCoverage.create({
+    data: {
+      reportCompletionId: input.completion.id,
+      triggerCompletionId: input.triggerCompletionId,
+      quantity: plan.deltaQty,
+      goodQty: plan.deltaGoodQty,
+      defectQty: plan.deltaDefectQty,
+      idempotencyKey: `coverage:${input.completion.id}:${input.completion.coveredQty}:${plan.coveredQty}`,
+    },
+  });
+  input.completion.coveredQty = plan.coveredQty;
+  input.completion.coveredGoodQty = plan.coveredGoodQty;
+  input.completion.coveredDefectQty = plan.coveredDefectQty;
+
+  const stepUpdate = await tx.workOrderProcessStep.updateMany({
+    where: {
+      id: current.id,
+      quantityVersion: current.quantityVersion,
+      processedQty: current.processedQty,
+      inputQty: current.inputQty,
+    },
+    data: {
+      processedQty: { increment: plan.deltaQty },
+      goodOutputQty: { increment: plan.deltaGoodQty },
+      defectOutputQty: { increment: plan.deltaDefectQty },
+      quantityVersion: { increment: 1 },
+    },
+  });
+  if (stepUpdate.count !== 1) {
+    throw new ProcessCompletionServiceError(
+      '工序核销数量已变化，请刷新后重试',
+      409,
+      'PROCESS_STEP_QUANTITY_CONFLICT',
+    );
+  }
+  current.processedQty += plan.deltaQty;
+  current.goodOutputQty += plan.deltaGoodQty;
+  current.defectOutputQty += plan.deltaDefectQty;
+  current.quantityVersion += 1;
+
+  const groupSteps = input.route.steps.filter(step => step.sequenceGroup === current.sequenceGroup);
+  const alreadyReleasedQty = Math.min(...groupSteps.map(step => step.releasedGoodQty));
+  const directRouteCap = await loadDirectRouteReleaseCap(tx, {
+    workOrderId: input.route.workOrderId,
+    targetQty: input.targetQty,
+    currentSequenceGroup: current.sequenceGroup,
+    alreadyReleasedQty: Math.max(...groupSteps.map(step => step.releasedGoodQty)),
+    pendingScrapReservationQty: input.completion.defectDisposition === 'SCRAP_REPLENISH'
+      ? plan.deltaDefectQty
+      : 0,
+  });
+  const release = calculateCappedParallelGroupRelease({
+    stepGoodOutputQuantities: groupSteps.map(step => step.goodOutputQty),
+    alreadyReleasedQty,
+    directRouteCap,
+  });
+  const targetSteps = nextSequenceGroupSteps(input.route.steps, current.sequenceGroup);
+  let frontendTransferDelta = 0;
+  if (release.releaseDeltaQty > 0) {
+    if (targetSteps.length) {
+      await tx.processQuantityMovement.createMany({
+        data: targetSteps.map(targetStep => ({
+          completionId: input.completion.id,
+          workOrderId: input.route.workOrderId,
+          sourceStepId: current.id,
+          targetStepId: targetStep.id,
+          type: 'GOOD_TRANSFER',
+          quantity: release.releaseDeltaQty,
+          sourceSequenceGroup: current.sequenceGroup,
+          targetSequenceGroup: targetStep.sequenceGroup,
+          idempotencyKey: `${input.completion.id}:coverage:${plan.coveredQty}:good:${targetStep.id}`,
+        })),
+      });
+      for (const targetStep of targetSteps) {
+        await tx.workOrderProcessStep.update({
+          where: { id: targetStep.id },
+          data: {
+            inputQty: { increment: release.releaseDeltaQty },
+            quantityVersion: { increment: 1 },
+            status: targetStep.status === 'pending' ? 'current' : targetStep.status,
+            startedAt: targetStep.startedAt || input.now,
+          },
+        });
+        targetStep.inputQty += release.releaseDeltaQty;
+        targetStep.quantityVersion += 1;
+        if (targetStep.status === 'pending') targetStep.status = 'current';
+        targetStep.startedAt = targetStep.startedAt || input.now;
+      }
+      const sourceStageGroup = normalizeProcessStageGroup(current.stageGroup);
+      const targetStageGroup = normalizeProcessStageGroup(targetSteps[0].stageGroup);
+      if (sourceStageGroup === 'frontend' && targetStageGroup && targetStageGroup !== 'frontend') {
+        frontendTransferDelta = release.releaseDeltaQty;
+      }
+    } else if (input.route.workOrder.branchType !== 'REWORK') {
+      await tx.processQuantityMovement.create({
+        data: {
+          completionId: input.completion.id,
+          workOrderId: input.route.workOrderId,
+          sourceStepId: current.id,
+          targetStepId: null,
+          type: 'FINISHED_GOOD',
+          quantity: release.releaseDeltaQty,
+          sourceSequenceGroup: current.sequenceGroup,
+          targetSequenceGroup: null,
+          idempotencyKey: `${input.completion.id}:coverage:${plan.coveredQty}:finished`,
+        },
+      });
+    }
+    for (const groupStep of groupSteps) {
+      await tx.workOrderProcessStep.update({
+        where: { id: groupStep.id },
+        data: {
+          releasedGoodQty: release.releasableGoodQty,
+          quantityVersion: { increment: 1 },
+        },
+      });
+      groupStep.releasedGoodQty = release.releasableGoodQty;
+      groupStep.quantityVersion += 1;
+    }
+  }
+
+  let branchWorkOrderId: string | undefined;
+  let branchWorkOrderCode: string | undefined;
+  if (plan.deltaDefectQty > 0) {
+    const disposition = lowercaseDisposition(input.completion.defectDisposition);
+    if (!disposition) {
+      throw new ProcessCompletionServiceError(
+        '待核销不良品缺少处置方式',
+        409,
+        'PROCESS_DEFECT_DISPOSITION_REQUIRED',
+      );
+    }
+    const branch = await createDefectBranch(tx, {
+      route: input.route,
+      completionId: input.completion.id,
+      currentStepId: current.id,
+      defectQty: plan.deltaDefectQty,
+      disposition,
+      userId: input.userId,
+      actor: input.actor,
+      now: input.now,
+    });
+    branchWorkOrderId = branch.workOrderId;
+    branchWorkOrderCode = branch.workOrderCode;
+    await tx.processQuantityMovement.create({
+      data: {
+        completionId: input.completion.id,
+        workOrderId: input.route.workOrderId,
+        sourceStepId: current.id,
+        targetStepId: branch.firstStepId,
+        branchWorkOrderId: branch.workOrderId,
+        type: branch.movementType,
+        quantity: plan.deltaDefectQty,
+        sourceSequenceGroup: current.sequenceGroup,
+        targetSequenceGroup: branch.firstSequenceGroup,
+        idempotencyKey: `${input.completion.id}:coverage:${plan.coveredQty}:defect`,
+      },
+    });
+  }
+
+  return {
+    goodTransferredQty: release.releaseDeltaQty,
+    frontendTransferDelta,
+    finishedGoodDelta: targetSteps.length ? 0 : release.releaseDeltaQty,
+    ...(branchWorkOrderId ? { branchWorkOrderId } : {}),
+    ...(branchWorkOrderCode ? { branchWorkOrderCode } : {}),
+    ...(input.route.workOrder.branchType === 'REWORK'
+      && !targetSteps.length
+      && release.releaseDeltaQty > 0
+      ? {
+          reworkReturn: {
+            completionId: input.completion.id,
+            sourceStepId: current.id,
+            recoveredQty: release.releaseDeltaQty,
+          },
+        }
+      : {}),
+  };
+}
+
+async function reconcilePendingCompletionCoverage(
+  tx: Prisma.TransactionClient,
+  input: {
+    route: CompletionRouteRecord;
+    triggerCompletionId: string;
+    targetQty: number;
+    userId: string;
+    actor: string;
+    now: Date;
+  },
+): Promise<{
+  goodTransferredQty: number;
+  frontendTransferDelta: number;
+  finishedGoodDelta: number;
+  branchWorkOrderId?: string;
+  branchWorkOrderCode?: string;
+  reworkReturns: Array<{ completionId: string; sourceStepId: string; recoveredQty: number }>;
+}> {
+  let goodTransferredQty = 0;
+  let frontendTransferDelta = 0;
+  let finishedGoodDelta = 0;
+  let branchWorkOrderId: string | undefined;
+  let branchWorkOrderCode: string | undefined;
+  const reworkReturns: Array<{ completionId: string; sourceStepId: string; recoveredQty: number }> = [];
+  const orderedSteps = [...input.route.steps].sort((left, right) => (
+    left.sequenceGroup - right.sequenceGroup || left.position - right.position
+  ));
+
+  for (const step of orderedSteps) {
+    while (step.inputQty > step.processedQty) {
+      const report = await tx.processCompletion.findFirst({
+        where: {
+          routeId: input.route.id,
+          stepId: step.id,
+          voidedAt: null,
+          coverageStatus: { in: [
+            ProcessCompletionCoverageStatus.PENDING,
+            ProcessCompletionCoverageStatus.PARTIAL,
+          ] },
+        },
+        orderBy: [{ completedAt: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          stepId: true,
+          processedQty: true,
+          goodQty: true,
+          defectQty: true,
+          coveredQty: true,
+          coveredGoodQty: true,
+          coveredDefectQty: true,
+          defectDisposition: true,
+        },
+      });
+      if (!report) break;
+      const beforeCoveredQty = report.coveredQty;
+      const applied = await applyCompletionCoverage(tx, {
+        route: input.route,
+        completion: report,
+        triggerCompletionId: input.triggerCompletionId,
+        targetQty: input.targetQty,
+        userId: input.userId,
+        actor: input.actor,
+        now: input.now,
+      });
+      if (report.coveredQty === beforeCoveredQty) break;
+      goodTransferredQty += applied.goodTransferredQty;
+      frontendTransferDelta += applied.frontendTransferDelta;
+      finishedGoodDelta += applied.finishedGoodDelta;
+      branchWorkOrderId = branchWorkOrderId || applied.branchWorkOrderId;
+      branchWorkOrderCode = branchWorkOrderCode || applied.branchWorkOrderCode;
+      if (applied.reworkReturn) reworkReturns.push(applied.reworkReturn);
+    }
+  }
+  return {
+    goodTransferredQty,
+    frontendTransferDelta,
+    finishedGoodDelta,
+    ...(branchWorkOrderId ? { branchWorkOrderId } : {}),
+    ...(branchWorkOrderCode ? { branchWorkOrderCode } : {}),
+    reworkReturns,
+  };
+}
+
 async function performProcessCompletion(
   tx: Prisma.TransactionClient,
   input: ParsedCompletionCommand,
@@ -2045,14 +2749,6 @@ async function performProcessCompletion(
       '已归档或已清除的周计划不能登记生产完成',
       409,
       'WORK_ORDER_READ_ONLY',
-    );
-  }
-  const timeReadiness = processRouteExecutionReadiness(route.steps);
-  if (!timeReadiness.ready) {
-    throw new ProcessCompletionServiceError(
-      `工序与工时尚未完整发布：${timeReadiness.missingStepNames.join('、')}`,
-      409,
-      'PROCESS_ROUTE_TIME_INCOMPLETE',
     );
   }
   if (route.workOrder.branchStatus === 'QUALITY_PENDING') {
@@ -2135,37 +2831,46 @@ async function performProcessCompletion(
   const current = route.steps.find(step => step.id === input.stepId);
   if (!current) {
     throw new ProcessCompletionServiceError(
-      '当前工序不属于该工艺路线',
+      '所选工序不属于该工艺路线',
       404,
       'PROCESS_STEP_NOT_FOUND',
     );
   }
-  if (current.status !== 'current') {
+  if (!input.allowAdvanceReporting && current.status !== 'current') {
     throw new ProcessCompletionServiceError(
       '该工序已不是当前可完成工序，请刷新后重试',
       409,
       'PROCESS_STEP_NOT_CURRENT',
     );
   }
+  const reported = await tx.processCompletion.aggregate({
+    where: { routeId: route.id, stepId: current.id, voidedAt: null },
+    _sum: { processedQty: true },
+  });
+  const reportedQty = reported._sum.processedQty || 0;
+  const reportableQty = Math.max(0, targetQty - reportedQty);
+  if (input.processedQty > reportableQty) {
+    throw new ProcessCompletionServiceError(
+      `本次报工不能超过该工序剩余可报数量 ${reportableQty}`,
+      409,
+      'PROCESS_REPORTED_QTY_EXCEEDS_TARGET',
+    );
+  }
   const availableInputQty = Math.max(0, current.inputQty - current.processedQty);
-  const quantity = resolveCompletionQuantities({
-    availableInputQty,
-    processedQty: input.processedQty,
-    defectQty: input.defectQty,
-  });
-  const groupSteps = route.steps.filter(step => step.sequenceGroup === current.sequenceGroup);
-  const alreadyReleasedQty = Math.min(...groupSteps.map(step => step.releasedGoodQty));
-  const directRouteCap = await loadDirectRouteReleaseCap(tx, {
-    workOrderId: route.workOrderId,
-    targetQty,
-    currentSequenceGroup: current.sequenceGroup,
-    alreadyReleasedQty: Math.max(...groupSteps.map(step => step.releasedGoodQty)),
-    pendingScrapReservationQty: input.defectDisposition === 'scrap_replenish'
-      ? quantity.defectQty
-      : 0,
-  });
+  if (!input.allowAdvanceReporting) {
+    resolveCompletionQuantities({
+      availableInputQty,
+      processedQty: input.processedQty,
+      defectQty: input.defectQty,
+    });
+  }
+  const goodQty = input.processedQty - input.defectQty;
+  const reportMode = current.status === 'current' && input.processedQty <= availableInputQty
+    ? ProcessCompletionReportMode.SEQUENTIAL
+    : ProcessCompletionReportMode.ADVANCE;
   const now = new Date();
   const nextRouteVersion = route.version + 1;
+  const goodOutputBeforeCompletion = current.goodOutputQty;
   const completion = await tx.processCompletion.create({
     data: {
       workOrderId: route.workOrderId,
@@ -2178,9 +2883,15 @@ async function performProcessCompletion(
       team: input.team,
       workstation: input.workstation,
       remark: input.remark,
-      processedQty: quantity.processedQty,
-      goodQty: quantity.goodQty,
-      defectQty: quantity.defectQty,
+      processedQty: input.processedQty,
+      goodQty,
+      defectQty: input.defectQty,
+      reportMode,
+      coverageStatus: ProcessCompletionCoverageStatus.PENDING,
+      coveredQty: 0,
+      coveredGoodQty: 0,
+      coveredDefectQty: 0,
+      autoAssignLabor: input.autoAssignLabor,
       defectDisposition: input.databaseDefectDisposition,
       routeVersion: nextRouteVersion,
       idempotencyKey: input.idempotencyKey,
@@ -2199,159 +2910,48 @@ async function performProcessCompletion(
       createdById: input.userId,
       ...(input.employeeIds.length ? {
         participants: {
-          create: input.employeeIds.map((employeeId, position) => ({
-            employeeId,
-            position,
-          })),
+          create: input.employeeIds.map((employeeId, position) => ({ employeeId, position })),
         },
       } : {}),
     },
   });
-  const goodOutputBeforeCompletion = current.goodOutputQty;
-  const stepUpdate = await tx.workOrderProcessStep.updateMany({
-    where: {
-      id: current.id,
-      status: 'current',
-      quantityVersion: current.quantityVersion,
-      processedQty: current.processedQty,
-      inputQty: current.inputQty,
-    },
-    data: {
-      processedQty: { increment: quantity.processedQty },
-      goodOutputQty: { increment: quantity.goodQty },
-      defectOutputQty: { increment: quantity.defectQty },
-      quantityVersion: { increment: 1 },
+  const coverage = await reconcilePendingCompletionCoverage(tx, {
+    route,
+    triggerCompletionId: completion.id,
+    targetQty,
+    userId: input.userId,
+    actor: input.actor,
+    now,
+  });
+  const coveredCompletion = await tx.processCompletion.findUniqueOrThrow({
+    where: { id: completion.id },
+    select: {
+      coverageStatus: true,
+      coveredQty: true,
+      coveredGoodQty: true,
+      coveredDefectQty: true,
+      branchWorkOrder: { select: { id: true, code: true } },
     },
   });
-  if (stepUpdate.count !== 1) {
-    throw new ProcessCompletionServiceError(
-      '当前工序数量已变化，请刷新后重试',
-      409,
-      'PROCESS_STEP_QUANTITY_CONFLICT',
-    );
-  }
-  current.processedQty += quantity.processedQty;
-  current.goodOutputQty += quantity.goodQty;
-  current.defectOutputQty += quantity.defectQty;
-  current.quantityVersion += 1;
-
-  const release = calculateCappedParallelGroupRelease({
-    stepGoodOutputQuantities: groupSteps.map(step => step.goodOutputQty),
-    alreadyReleasedQty,
-    directRouteCap,
-  });
-  const targetSteps = nextSequenceGroupSteps(route.steps, current.sequenceGroup);
-  let frontendTransferDelta = 0;
-  if (release.releaseDeltaQty > 0) {
-    if (targetSteps.length) {
-      await tx.processQuantityMovement.createMany({
-        data: targetSteps.map(targetStep => ({
-          completionId: completion.id,
-          workOrderId: route.workOrderId,
-          sourceStepId: current.id,
-          targetStepId: targetStep.id,
-          type: 'GOOD_TRANSFER',
-          quantity: release.releaseDeltaQty,
-          sourceSequenceGroup: current.sequenceGroup,
-          targetSequenceGroup: targetStep.sequenceGroup,
-          idempotencyKey: `${completion.id}:good:${targetStep.id}`,
-        })),
-      });
-      for (const targetStep of targetSteps) {
-        await tx.workOrderProcessStep.update({
-          where: { id: targetStep.id },
-          data: {
-            inputQty: { increment: release.releaseDeltaQty },
-            quantityVersion: { increment: 1 },
-            status: targetStep.status === 'pending' ? 'current' : targetStep.status,
-            startedAt: targetStep.startedAt || now,
-          },
-        });
-        targetStep.inputQty += release.releaseDeltaQty;
-        targetStep.quantityVersion += 1;
-        if (targetStep.status === 'pending') targetStep.status = 'current';
-        targetStep.startedAt = targetStep.startedAt || now;
-      }
-      const sourceStageGroup = normalizeProcessStageGroup(current.stageGroup);
-      const targetStageGroup = normalizeProcessStageGroup(targetSteps[0].stageGroup);
-      if (sourceStageGroup === 'frontend' && targetStageGroup && targetStageGroup !== 'frontend') {
-        frontendTransferDelta = release.releaseDeltaQty;
-      }
-    } else if (route.workOrder.branchType !== 'REWORK') {
-      await tx.processQuantityMovement.create({
-        data: {
-          completionId: completion.id,
-          workOrderId: route.workOrderId,
-          sourceStepId: current.id,
-          targetStepId: null,
-          type: 'FINISHED_GOOD',
-          quantity: release.releaseDeltaQty,
-          sourceSequenceGroup: current.sequenceGroup,
-          targetSequenceGroup: null,
-          idempotencyKey: `${completion.id}:finished`,
-        },
-      });
-    }
-    for (const groupStep of groupSteps) {
-      await tx.workOrderProcessStep.update({
-        where: { id: groupStep.id },
-        data: {
-          releasedGoodQty: release.releasableGoodQty,
-          quantityVersion: { increment: 1 },
-        },
-      });
-      groupStep.releasedGoodQty = release.releasableGoodQty;
-      groupStep.quantityVersion += 1;
-    }
-  }
-
-  let branchWorkOrderId: string | undefined;
-  let branchWorkOrderCode: string | undefined;
-  if (quantity.defectQty > 0 && input.defectDisposition) {
-    const branch = await createDefectBranch(tx, {
-      route,
-      completionId: completion.id,
-      currentStepId: current.id,
-      defectQty: quantity.defectQty,
-      disposition: input.defectDisposition,
-      userId: input.userId,
-      actor: input.actor,
-      now,
-    });
-    branchWorkOrderId = branch.workOrderId;
-    branchWorkOrderCode = branch.workOrderCode;
-    await tx.processQuantityMovement.create({
-      data: {
-        completionId: completion.id,
-        workOrderId: route.workOrderId,
-        sourceStepId: current.id,
-        targetStepId: branch.firstStepId,
-        branchWorkOrderId: branch.workOrderId,
-        type: branch.movementType,
-        quantity: quantity.defectQty,
-        sourceSequenceGroup: current.sequenceGroup,
-        targetSequenceGroup: branch.firstSequenceGroup,
-        idempotencyKey: `${completion.id}:defect`,
-      },
-    });
-  }
 
   let laborPoolId: string | null = null;
   let laborPoolPendingStandard = false;
+  let autoAssignedEmployeeCount = 0;
+  let autoAssignedLaborMilliseconds = 0;
   const upstreamPermanentlyClosed = route.steps
     .filter(step => step.sequenceGroup < current.sequenceGroup)
-    .every(step => step.status === 'completed' || step.status === 'skipped');
+    .every(step => step.inputQty <= step.processedQty);
   const perBatchInputStable = current.timeBasis !== 'per_batch'
     || !await hasActiveUpstreamReworkBranch(tx, route, current.sequenceGroup);
   const laborPoolEligibleQty = current.timeBasis === 'per_batch'
     ? (
-        quantity.completesInput
+        current.processedQty >= current.inputQty
         && upstreamPermanentlyClosed
         && perBatchInputStable
           ? current.goodOutputQty
           : 0
       )
-    : quantity.goodQty;
+    : goodQty;
   if (laborPoolEligibleQty > 0) {
     const pool = await createCompletionLaborPool(tx, {
       completionId: completion.id,
@@ -2371,6 +2971,17 @@ async function performProcessCompletion(
     });
     laborPoolId = pool.id;
     laborPoolPendingStandard = pool.pendingStandard;
+    if (input.autoAssignLabor && !pool.pendingStandard) {
+      const automatic = await autoAssignCompletionLaborPool(tx, {
+        poolId: pool.id,
+        completionId: completion.id,
+        employeeIds: input.employeeIds,
+        userId: input.userId,
+        now,
+      });
+      autoAssignedEmployeeCount = automatic.employeeCount;
+      autoAssignedLaborMilliseconds = automatic.standardLaborMilliseconds;
+    }
   }
 
   const routeCompleted = await reconcileQuantityStepStatuses(
@@ -2404,8 +3015,8 @@ async function performProcessCompletion(
   await updateCompletionWorkOrders(tx, {
     route,
     targetQty,
-    finishedGoodDelta: targetSteps.length ? 0 : release.releaseDeltaQty,
-    frontendTransferDelta,
+    finishedGoodDelta: coverage.finishedGoodDelta,
+    frontendTransferDelta: coverage.frontendTransferDelta,
     routeCompleted,
     actor: input.actor,
     now,
@@ -2418,36 +3029,43 @@ async function performProcessCompletion(
     steps: route.steps as QuantityStep[],
     actorId: input.userId,
   });
-  if (
-    route.workOrder.branchType === 'REWORK'
-    && !targetSteps.length
-    && release.releaseDeltaQty > 0
-  ) {
+  for (const reworkReturn of coverage.reworkReturns) {
     await returnReworkOutputToParent(tx, {
-      completionId: completion.id,
+      completionId: reworkReturn.completionId,
       sourceRoute: route,
-      sourceStepId: current.id,
-      recoveredQty: release.releaseDeltaQty,
+      sourceStepId: reworkReturn.sourceStepId,
+      recoveredQty: reworkReturn.recoveredQty,
       userId: input.userId,
       actor: input.actor,
       now,
     });
   }
 
+  const pendingCoverageQty = Math.max(0, input.processedQty - coveredCompletion.coveredQty);
   const result: ProcessCompletionResult = {
     completionId: completion.id,
     routeVersion: nextRouteVersion,
     laborPoolId,
     laborPoolPendingStandard,
-    ...(branchWorkOrderId ? { branchWorkOrderId } : {}),
-    ...(branchWorkOrderCode ? { branchWorkOrderCode } : {}),
-    goodTransferredQty: release.releaseDeltaQty,
-    remainingInputQty: quantity.remainingInputQty,
+    ...(coveredCompletion.branchWorkOrder?.id
+      ? { branchWorkOrderId: coveredCompletion.branchWorkOrder.id }
+      : coverage.branchWorkOrderId ? { branchWorkOrderId: coverage.branchWorkOrderId } : {}),
+    ...(coveredCompletion.branchWorkOrder?.code
+      ? { branchWorkOrderCode: coveredCompletion.branchWorkOrder.code }
+      : coverage.branchWorkOrderCode ? { branchWorkOrderCode: coverage.branchWorkOrderCode } : {}),
+    goodTransferredQty: coverage.goodTransferredQty,
+    remainingInputQty: Math.max(0, current.inputQty - current.processedQty),
     routeCompleted,
+    coverageStatus: lowercaseCoverageStatus(coveredCompletion.coverageStatus),
+    pendingCoverageQty,
+    autoAssignedEmployeeCount,
+    autoAssignedLaborMilliseconds,
   };
-  const content = quantity.defectQty > 0
-    ? `${current.processName}完成 ${quantity.processedQty}，良品 ${quantity.goodQty}，不良 ${quantity.defectQty}`
-    : `${current.processName}完成 ${quantity.processedQty}，良品已转序`;
+  const content = pendingCoverageQty > 0
+    ? `${current.processName}报工 ${input.processedQty}，已核销 ${coveredCompletion.coveredQty}，待前序核销 ${pendingCoverageQty}`
+    : input.defectQty > 0
+      ? `${current.processName}报工 ${input.processedQty}，良品 ${goodQty}，不良 ${input.defectQty}`
+      : `${current.processName}报工 ${input.processedQty}，已自动核销转序`;
   await tx.processRouteActivity.create({
     data: {
       routeId: route.id,
@@ -2478,9 +3096,9 @@ async function performProcessCompletion(
         workOrderId: route.workOrderId,
         routeId: route.id,
         stepId: current.id,
-        processedQty: quantity.processedQty,
-        goodQty: quantity.goodQty,
-        defectQty: quantity.defectQty,
+        processedQty: input.processedQty,
+        goodQty,
+        defectQty: input.defectQty,
         defectDisposition: input.databaseDefectDisposition,
         workDate: input.workDateKey,
         workStartedAt: input.workStartedAt?.toISOString() || null,
@@ -2491,8 +3109,14 @@ async function performProcessCompletion(
         remark: input.remark,
         laborPoolId,
         laborPoolPendingStandard,
-        branchWorkOrderId: branchWorkOrderId || null,
-        goodTransferredQty: release.releaseDeltaQty,
+        branchWorkOrderId: result.branchWorkOrderId || null,
+        goodTransferredQty: coverage.goodTransferredQty,
+        reportMode,
+        coverageStatus: coveredCompletion.coverageStatus,
+        coveredQty: coveredCompletion.coveredQty,
+        pendingCoverageQty,
+        autoAssignedEmployeeCount,
+        autoAssignedLaborMilliseconds,
         routeVersion: nextRouteVersion,
       },
     },

@@ -158,7 +158,7 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
           <div>
             <span>报表中心</span>
             <h1 id="employee-attainment-title">员工效率与异常工时</h1>
-            <p>领取工时进入员工个人明细，达成率按标准完成工时 ÷〔（确认出勤－品质确认免责异常）× 95%〕计算。</p>
+            <p>报工后标准工时直接记入现场作业员工，达成率按标准完成工时 ÷〔（确认出勤－品质确认免责异常）× 95%〕计算。</p>
           </div>
           <nav aria-label="报表关联入口">
             {user.laborRole !== 'EMPLOYEE' && <a className="hm-workbench-button" href="/workspace/attendance"><CalendarClock size={15} />考勤与异常</a>}
@@ -180,7 +180,7 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
           <div className="employee-report-view" role="tablist" aria-label="报表视图">
             <button className={view === 'employee' ? 'active' : ''} type="button" role="tab" aria-selected={view === 'employee'} onClick={() => setView('employee')}><Gauge size={15} />员工达成率</button>
             <button className={view === 'abnormal' ? 'active' : ''} type="button" role="tab" aria-selected={view === 'abnormal'} onClick={() => setView('abnormal')}><AlertTriangle size={15} />异常汇总</button>
-            <button className={view === 'labor' ? 'active' : ''} type="button" role="tab" aria-selected={view === 'labor'} onClick={() => setView('labor')}><ClipboardCheck size={15} />今日工时领取</button>
+            <button className={view === 'labor' ? 'active' : ''} type="button" role="tab" aria-selected={view === 'labor'} onClick={() => setView('labor')}><ClipboardCheck size={15} />自动记工明细</button>
           </div>
           {view !== 'labor' && <>
             <div className="employee-report-period" role="group" aria-label="报表周期">
@@ -189,7 +189,7 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
             <label className="employee-report-date"><span>统计日期</span><input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
             <label className="employee-report-search"><Search size={16} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={view === 'employee' ? '搜索员工编号、姓名、岗位或班组' : '搜索异常、员工或分类'} /></label>
           </>}
-          {view === 'labor' && <p className="employee-report-manual-hint">员工领取本人、班组长分配本组、管理员处理全量；领取不会再次推进生产路线。</p>}
+          {view === 'labor' && <p className="employee-report-manual-hint">无需员工逐笔领取；生产报工提交后，标准工时会自动分摊并进入员工达成率。</p>}
         </section>
 
         {error && view !== 'labor' && <div className="employee-report-error" role="alert">{error}</div>}
@@ -199,7 +199,7 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
           <div className="employee-report-scroll hm-scroll-region" tabIndex={0}>
             <div className="employee-report-head" aria-hidden="true"><span>员工</span><span>确认出勤</span><span>免责异常</span><span>标准工时</span><span>工序效率</span><span>出勤达成率</span><span /></div>
             {rows.map(row => <EmployeeReportRow row={row} expanded={expandedEmployeeId === row.employee.id} key={row.employee.id} onToggle={() => setExpandedEmployeeId(current => current === row.employee.id ? '' : row.employee.id)} />)}
-            {!loading && !rows.length && <div className="employee-report-empty"><Gauge /><strong>暂无符合条件的员工记录</strong><span>先登记并确认考勤，再从生产调度完成工序并转序后领取工时。</span></div>}
+            {!loading && !rows.length && <div className="employee-report-empty"><Gauge /><strong>暂无符合条件的员工记录</strong><span>先登记并确认考勤，再从生产调度选择作业员工完成报工，系统会自动记入标准工时。</span></div>}
             {loading && <div className="employee-report-empty"><RefreshCw className="spin" /><strong>正在加载报表</strong></div>}
           </div>
         </section> : view === 'abnormal' ? <section className="employee-report-table abnormal-report-table" aria-labelledby="abnormal-report-list-title">
@@ -215,10 +215,80 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
             </article>)}</div>
             {!loading && !abnormalEvents.length && <div className="employee-report-empty"><ShieldCheck /><strong>当前周期没有异常工时</strong><span>已登记的异常会同时显示事件时长和受影响员工人时。</span></div>}
           </div>
-        </section> : <ProcessLaborPoolPanel onCommitted={() => setRefreshToken(value => value + 1)} />}
+        </section> : <AutomaticLaborLedgerPanel />}
       </div>
     </main>
   );
+}
+
+function AutomaticLaborLedgerPanel() {
+  const [workDate, setWorkDate] = useState(todayKey);
+  const [pools, setPools] = useState<ProcessLaborPoolDTO[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [reloadToken, setReloadToken] = useState(0);
+
+  useEffect(() => {
+    const requestedDate = new URLSearchParams(window.location.search).get('workDate') || '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) setWorkDate(requestedDate);
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setError('');
+    const params = new URLSearchParams({ workDate, includeExhausted: 'true' });
+    fetch(`/api/process-labor-pools?${params}`, { cache: 'no-store', signal: controller.signal })
+      .then(async response => {
+        const body = await response.json() as LaborPoolResponse;
+        if (!response.ok || !body.ok) throw new Error(body.error || '自动记工明细加载失败');
+        setPools(body.pools || []);
+      })
+      .catch(reason => {
+        if ((reason as { name?: string }).name === 'AbortError') return;
+        setPools([]);
+        setError(reason instanceof Error ? reason.message : '自动记工明细加载失败');
+      })
+      .finally(() => setLoading(false));
+    return () => controller.abort();
+  }, [reloadToken, workDate]);
+
+  const claims = pools.flatMap(pool => pool.claims.map(claim => ({ pool, claim })));
+  const assignedLabor = claims.reduce((sum, item) => sum + item.claim.standardLaborMilliseconds, 0);
+  const pendingStandards = pools.filter(pool => pool.pendingStandard).length;
+
+  return <section className="automatic-labor-ledger" aria-labelledby="automatic-labor-title">
+    <header>
+      <div><span>标准工时自动入账</span><h2 id="automatic-labor-title">作业员工自动记工明细</h2><p>数据来源于生产报工所选作业员工；多人作业按报工数量自动分摊，总标准工时保持不变。</p></div>
+      <div className="automatic-labor-actions">
+        <label><span>生产日期</span><input type="date" value={workDate} onChange={event => setWorkDate(event.target.value)} /></label>
+        <button type="button" disabled={loading} onClick={() => setReloadToken(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} size={15} />刷新</button>
+      </div>
+    </header>
+    <div className="automatic-labor-summary">
+      <article><ClipboardCheck /><span>自动记工笔数<small>已直接进入员工达成率</small></span><strong>{claims.length}</strong></article>
+      <article><Clock3 /><span>已记标准工时<small>按作业员工自动分摊</small></span><strong>{formatProcessDuration(assignedLabor)}</strong></article>
+      <article className={pendingStandards ? 'watch' : 'good'}><AlertTriangle /><span>待补标准<small>补齐标准后自动入账</small></span><strong>{pendingStandards}</strong></article>
+    </div>
+    {error && <div className="employee-report-error" role="alert">{error}</div>}
+    <div className="automatic-labor-list hm-scroll-region" tabIndex={0}>
+      {claims.map(({ pool, claim }) => <article key={claim.id}>
+        <div className="automatic-labor-order"><span>{pool.workOrder.code}</span><strong>{pool.step.processName}</strong><small>{pool.workOrder.specification || pool.workOrder.productName}</small></div>
+        <div><span>作业员工</span><strong>{claim.employee.name}</strong><small>{claim.employee.employeeNo}{claim.employee.team ? ` · ${claim.employee.team}` : ''}</small></div>
+        <div><span>报工数量</span><strong>{claim.quantity} {pool.unitLabel}</strong><small>系统自动分摊</small></div>
+        <div><span>标准工时</span><strong>{formatProcessDuration(claim.standardLaborMilliseconds)}</strong><small>{pool.standardMillisecondsPerUnit > 0 ? `标准 ${formatProcessDuration(pool.standardMillisecondsPerUnit)} / ${pool.unitLabel}` : '标准待补'}</small></div>
+        <div><span>入账时间</span><strong>{dateTime(claim.claimedAt)}</strong><small>已计入员工报表</small></div>
+        <em>自动记工</em>
+      </article>)}
+      {pendingStandards > 0 && pools.filter(pool => pool.pendingStandard).map(pool => <article className="pending-standard" key={`pending-${pool.id}`}>
+        <div className="automatic-labor-order"><span>{pool.workOrder.code}</span><strong>{pool.step.processName}</strong><small>{pool.workOrder.specification || pool.workOrder.productName}</small></div>
+        <div><span>待处理</span><strong>缺少标准工时</strong><small>生产事实与作业人员已保留</small></div>
+        <em>待补标准</em>
+      </article>)}
+      {!loading && !claims.length && !pendingStandards && <div className="employee-report-empty large"><ClipboardCheck /><strong>当日暂无自动记工</strong><span>在生产执行中完成报工并选择作业员工后，这里会自动生成工时明细。</span></div>}
+      {loading && <div className="employee-report-empty large"><Loader2 className="spin" /><strong>正在加载自动记工明细</strong></div>}
+    </div>
+  </section>;
 }
 
 function poolStatusLabel(pool: ProcessLaborPoolDTO): string {
@@ -646,9 +716,9 @@ function EmployeeReportRow({ row, expanded, onToggle }: { row: EmployeeAttainmen
       </div>)}
       {row.claimDetails.map(detail => <div className="employee-report-claim-detail" key={`claim-${detail.id}`}>
         <span><strong>{detail.processName}</strong><small>{detail.customerName || '客户未设置'} · {detail.specification || detail.workOrderCode}</small></span>
-        <span><small>工时来源</small><b>{detail.workDate} 完工池领取{detail.corrected ? ' · 已校正' : ''}</b></span>
+        <span><small>工时来源</small><b>{detail.workDate} 报工自动记入{detail.corrected ? ' · 已校正' : ''}</b></span>
         <span><small>标准工时</small><b>{formatProcessDuration(detail.standardLaborMilliseconds)}</b></span>
-        <span><small>领取数量</small><b>{detail.quantity} {detail.unitLabel}</b></span>
+        <span><small>报工数量</small><b>{detail.quantity} {detail.unitLabel}</b></span>
         <em className={detail.attendanceMatched ? 'good' : 'watch'}>{detail.attendanceMatched ? detail.corrected ? '校正后计入' : '已计入' : '缺考勤待匹配'}</em>
       </div>)}
       {!row.details.length && !row.claimDetails.length && <p>该员工在当前周期暂无生产工时，考勤仍会保留并显示。</p>}

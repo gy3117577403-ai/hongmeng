@@ -25,6 +25,7 @@ export async function GET(
     const data = await loadProcessCompletionContext(
       params.id,
       req.nextUrl.searchParams.get('stepId'),
+      { allowAdvanceReporting: true },
     );
     return NextResponse.json({ ok: true, data });
   } catch (error) {
@@ -69,6 +70,8 @@ export async function POST(
       workstation: body.workstation,
       remark: body.remark,
       requireParticipants: true,
+      allowAdvanceReporting: true,
+      autoAssignLabor: true,
       idempotencyKey: body.idempotencyKey,
       expectedRouteVersion: body.expectedRouteVersion,
       userId: user.id,

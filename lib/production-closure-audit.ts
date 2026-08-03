@@ -63,6 +63,10 @@ export type AuditCompletion = {
   processedQty: number;
   goodQty: number;
   defectQty: number;
+  coverageStatus?: string;
+  coveredQty?: number;
+  coveredGoodQty?: number;
+  coveredDefectQty?: number;
   defectDisposition: string | null;
   routeVersion: number;
   timeBasis: string | null;
@@ -600,9 +604,9 @@ export function auditProductionClosure(
     }
 
     const directCompletions = activeCompletionsByStepId.get(step.id) || [];
-    const directProcessedQty = sumNumbers(directCompletions.map(completion => completion.processedQty));
-    const directGoodQty = sumNumbers(directCompletions.map(completion => completion.goodQty));
-    const directDefectQty = sumNumbers(directCompletions.map(completion => completion.defectQty));
+    const directProcessedQty = sumNumbers(directCompletions.map(completion => completion.coveredQty ?? completion.processedQty));
+    const directGoodQty = sumNumbers(directCompletions.map(completion => completion.coveredGoodQty ?? completion.goodQty));
+    const directDefectQty = sumNumbers(directCompletions.map(completion => completion.coveredDefectQty ?? completion.defectQty));
     const returnedQty = activeReworkReturnsByTargetStepId.get(step.id) || 0;
     if (step.processedQty !== directProcessedQty) {
       add({
@@ -636,7 +640,6 @@ export function auditProductionClosure(
         },
       });
     }
-
     const firstSequenceGroup = Math.min(...route.steps.map(candidate => candidate.sequenceGroup));
     const expectedInputQty = step.sequenceGroup === firstSequenceGroup
       ? order.targetQty
@@ -698,6 +701,50 @@ export function auditProductionClosure(
         },
       });
     }
+    const coverageStatus = completion.coverageStatus || 'COVERED';
+    const coveredQty = completion.coveredQty ?? completion.processedQty;
+    const coveredGoodQty = completion.coveredGoodQty ?? completion.goodQty;
+    const coveredDefectQty = completion.coveredDefectQty ?? completion.defectQty;
+    if (
+      !isNonnegativeSafeInteger(coveredQty)
+      || !isNonnegativeSafeInteger(coveredGoodQty)
+      || !isNonnegativeSafeInteger(coveredDefectQty)
+      || coveredQty !== coveredGoodQty + coveredDefectQty
+      || coveredQty > completion.processedQty
+      || coveredGoodQty > completion.goodQty
+      || coveredDefectQty > completion.defectQty
+      || (coverageStatus === 'COVERED' && coveredQty !== completion.processedQty)
+      || (coverageStatus === 'PENDING' && coveredQty !== 0)
+      || (coverageStatus === 'PARTIAL' && (coveredQty <= 0 || coveredQty >= completion.processedQty))
+    ) {
+      add({
+        severity: 'error',
+        domain: 'quantity',
+        code: 'COMPLETION_COVERAGE_INVALID',
+        entityType: 'completion',
+        entityId: completion.id,
+        workOrderId: completion.workOrderId,
+        message: '报工数量与前序核销数量状态不一致',
+        detail: {
+          coverageStatus,
+          processedQty: completion.processedQty,
+          coveredQty,
+          coveredGoodQty,
+          coveredDefectQty,
+        },
+      });
+    }
+    if (!completion.voidedAt && coveredQty < completion.processedQty && route?.status === 'completed') {
+      add({
+        severity: 'error',
+        domain: 'route',
+        code: 'ROUTE_COMPLETED_WITH_PENDING_COVERAGE',
+        entityType: 'completion',
+        entityId: completion.id,
+        workOrderId: completion.workOrderId,
+        message: '路线已完成但仍存在待前序核销报工',
+      });
+    }
     if (
       (completion.defectQty > 0 && !completion.defectDisposition)
       || (completion.defectQty === 0 && Boolean(completion.defectDisposition))
@@ -718,7 +765,7 @@ export function auditProductionClosure(
     }
     if (!completion.voidedAt) {
       const branch = branchByOriginCompletionId.get(completion.id);
-      if (completion.defectQty > 0 && !branch) {
+      if (coveredDefectQty > 0 && !branch) {
         add({
           severity: 'error',
           domain: 'branch',
@@ -729,7 +776,7 @@ export function auditProductionClosure(
           message: '含不良品的完成记录没有建立后续分支工单',
         });
       }
-      if (completion.defectQty === 0 && branch) {
+      if (coveredDefectQty === 0 && branch) {
         add({
           severity: 'error',
           domain: 'branch',

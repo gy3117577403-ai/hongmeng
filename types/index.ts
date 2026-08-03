@@ -1287,6 +1287,7 @@ export type ProcessLaborClaimDTO = {
   standardLaborMilliseconds: number;
   workDate: string;
   status: ProcessLaborClaimStatus;
+  source: string;
   claimedBy?: { id: string; username: string; displayName: string } | null;
   claimedAt: string;
   voidedAt?: string | null;
@@ -1561,6 +1562,10 @@ export type WorkflowStepDTO = {
     processedQty: number;
     goodQty: number;
     defectQty: number;
+    reportMode: 'sequential' | 'advance';
+    coverageStatus: 'pending' | 'partial' | 'covered';
+    coveredQty: number;
+    pendingCoverageQty: number;
     participantNames: string[];
     laborPoolId: string | null;
     laborClaimedQty: number;

@@ -840,7 +840,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                       : step.hasLaborPool
                                         ? (step.laborRemainingQuantity || 0) > 0
                                           ? `${step.latestEmployeeName ? `${step.latestEmployeeName} · ` : ''}待领 ${(step.laborRemainingQuantity || 0).toLocaleString()} ${unitLabel}`
-                                          : step.latestEmployeeName || '工时已领取'
+                                          : step.latestEmployeeName || '工时已自动记入'
                                         : '工时尚未生成';
                                     return <button
                                       type="button"
@@ -890,8 +890,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                       {selectedProcessStep.completionRecords?.map(completion => <article key={completion.id}>
                         <div className="workflow-completion-record-main">
                           <span>{formatDate(completion.completedAt)} · {completion.workDate}</span>
-                          <strong>完工 {completion.processedQty.toLocaleString()}，良品 {completion.goodQty.toLocaleString()}{completion.defectQty ? `，不良 ${completion.defectQty.toLocaleString()}` : ''}</strong>
-                          <small>{completion.participantNames.length ? completion.participantNames.join('、') : '未记录作业人员'} · {completion.laborClaimedQty > 0 ? `已领取 ${completion.laborClaimedQty}` : '工时未领取'}</small>
+                          <strong>报工 {completion.processedQty.toLocaleString()}，已核销 {completion.coveredQty.toLocaleString()}{completion.defectQty ? `，不良 ${completion.defectQty.toLocaleString()}` : ''}</strong>
+                          <small>{completion.pendingCoverageQty > 0 ? `待前序核销 ${completion.pendingCoverageQty.toLocaleString()} · ` : ''}{completion.participantNames.length ? completion.participantNames.join('、') : '未记录作业人员'} · {completion.laborClaimedQty > 0 ? `已自动记工 ${completion.laborClaimedQty}` : '暂无标准工时'}</small>
                         </div>
                         {canCorrectProduction && <div className="workflow-completion-record-actions">
                           <button type="button" disabled={routeActionPending} onClick={() => openCompletionCorrection(selectedProcessStep, completion)}><Wrench size={13} />校正工序/工时</button>
@@ -944,7 +944,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                 </section>
               </div>
               <footer className="workflow-detail-actions">
-                {manualReportRoute && <a href={manualReportRoute}>工时领取<ArrowUpRight size={14} /></a>}
+                {manualReportRoute && <a href={manualReportRoute}>自动记工明细<ArrowUpRight size={14} /></a>}
                 <a className={manualReportRoute ? 'secondary' : ''} href={selected.route}>{selected.entityType === 'production' ? '打开生产执行' : '打开来源业务'}<ArrowUpRight size={14} /></a>
                 {selected.sourceRoute && <a className="secondary" href={selected.sourceRoute}>查看关联资料</a>}
               </footer>
@@ -966,7 +966,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
               {withdrawalPreview.canWithdraw ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
               <span>
                 <strong>{withdrawalPreview.canWithdraw ? '可直接撤回并同步冲销' : '检测到下游影响，将转为流程异常'}</strong>
-                <small>撤回完工 {withdrawalPreview.impact.processedQty}，回收转序 {withdrawalPreview.impact.releaseReductionQty}，冲销工时领取 {withdrawalPreview.impact.laborClaimCount} 笔</small>
+                <small>撤回已核销 {withdrawalPreview.impact.processedQty}，回收转序 {withdrawalPreview.impact.releaseReductionQty}，冲销自动记工 {withdrawalPreview.impact.laborClaimCount} 笔</small>
               </span>
             </div>
             {!!withdrawalPreview.blockers.length && <ul className="workflow-withdrawal-blockers">
@@ -975,11 +975,11 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             <div className="workflow-correction-facts">
               <span><small>本次良品</small><strong>{withdrawalPreview.impact.goodQty.toLocaleString()}</strong></span>
               <span><small>影响下道</small><strong>{withdrawalPreview.impact.affectedTargetStepCount} 道</strong></span>
-              <span><small>已领工时数量</small><strong>{withdrawalPreview.impact.laborClaimedQty.toLocaleString()}</strong></span>
+              <span><small>已自动记工数量</small><strong>{withdrawalPreview.impact.laborClaimedQty.toLocaleString()}</strong></span>
               <span><small>涉及员工</small><strong>{withdrawalPreview.impact.employeeNames.length || 0} 人</strong></span>
             </div>
             <label><span>纠错类型</span><select value={withdrawalCategory} onChange={event => setWithdrawalCategory(event.target.value as 'REPORTING_ERROR' | 'PROCESS_EXCEPTION')}><option value="REPORTING_ERROR">报工错误</option><option value="PROCESS_EXCEPTION">流程异常</option></select></label>
-            <p className="workflow-correction-note">系统会依据纠错类型、完工数量、转序影响和冲销结果自动生成审计记录；原完工、原领取和冲销历史均保留。</p>
+            <p className="workflow-correction-note">系统会依据纠错类型、报工数量、核销影响和冲销结果自动生成审计记录；原报工、原自动记工和冲销历史均保留。</p>
           </>}
           <footer>
             <button type="button" disabled={routeActionPending} onClick={() => setWithdrawalTarget(null)}>取消</button>
@@ -999,7 +999,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             <div><small>主管纠错 · 员工报表同步</small><h2 id="workflow-standard-correction-title">校正工序与标准工时</h2></div>
             <button type="button" disabled={routeActionPending} aria-label="关闭工时校正" onClick={() => setCorrectionTarget(null)}><X size={18} /></button>
           </header>
-          <div className="workflow-standard-correction-summary"><Wrench size={19} /><span><strong>{correctionTarget.completion.workDate} · 完工 {correctionTarget.completion.processedQty.toLocaleString()}</strong><small>已领取 {correctionTarget.completion.laborClaimedQty.toLocaleString()}，保存后将自动作废旧领取并生成新标准记录。</small></span></div>
+          <div className="workflow-standard-correction-summary"><Wrench size={19} /><span><strong>{correctionTarget.completion.workDate} · 报工 {correctionTarget.completion.processedQty.toLocaleString()}</strong><small>已自动记工 {correctionTarget.completion.laborClaimedQty.toLocaleString()}，保存后将自动作废旧记录并按新标准重新入账。</small></span></div>
           <label><span>工序名称</span><input maxLength={80} value={correctionProcessName} onChange={event => setCorrectionProcessName(event.target.value)} /></label>
           <label><span>单位标准工时（秒/{correctionTarget.step.unitLabel || '件'}）</span><input inputMode="decimal" min="0.001" step="0.001" value={correctionSeconds} onChange={event => setCorrectionSeconds(event.target.value)} /></label>
           <p className="workflow-correction-note">系统会自动记录校正前后工序、标准工时、完工数量和员工工时冲销结果；不会静默改写产品主数据的已发布版本。</p>

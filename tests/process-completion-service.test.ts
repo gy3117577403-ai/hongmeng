@@ -3,10 +3,77 @@ import test from 'node:test';
 import {
   calculateCappedParallelGroupRelease,
   parseProcessCompletionCommand,
+  planCompletionCoverage,
   planDefectBranchRoute,
   ProcessCompletionServiceError,
   resolveCompletedQuantityDelta,
 } from '../lib/process-completion-service';
+
+test('advance reporting uses nonnegative pending coverage until upstream material arrives', () => {
+  const pending = planCompletionCoverage({
+    processedQty: 100,
+    goodQty: 100,
+    defectQty: 0,
+    availableQty: 0,
+  });
+  assert.deepEqual(pending, {
+    deltaQty: 0,
+    deltaGoodQty: 0,
+    deltaDefectQty: 0,
+    coveredQty: 0,
+    coveredGoodQty: 0,
+    coveredDefectQty: 0,
+    pendingQty: 100,
+    status: 'PENDING',
+  });
+  const partial = planCompletionCoverage({
+    processedQty: 100,
+    goodQty: 100,
+    defectQty: 0,
+    coveredQty: pending.coveredQty,
+    coveredGoodQty: pending.coveredGoodQty,
+    coveredDefectQty: pending.coveredDefectQty,
+    availableQty: 40,
+  });
+  assert.equal(partial.coveredQty, 40);
+  assert.equal(partial.pendingQty, 60);
+  assert.equal(partial.status, 'PARTIAL');
+  const covered = planCompletionCoverage({
+    processedQty: 100,
+    goodQty: 100,
+    defectQty: 0,
+    coveredQty: partial.coveredQty,
+    coveredGoodQty: partial.coveredGoodQty,
+    coveredDefectQty: partial.coveredDefectQty,
+    availableQty: 60,
+  });
+  assert.equal(covered.coveredQty, 100);
+  assert.equal(covered.pendingQty, 0);
+  assert.equal(covered.status, 'COVERED');
+});
+
+test('advance defect quantity waits for a single auditable branch allocation', () => {
+  const partial = planCompletionCoverage({
+    processedQty: 100,
+    goodQty: 90,
+    defectQty: 10,
+    availableQty: 95,
+  });
+  assert.equal(partial.deltaGoodQty, 90);
+  assert.equal(partial.deltaDefectQty, 0);
+  assert.equal(partial.pendingQty, 10);
+  const final = planCompletionCoverage({
+    processedQty: 100,
+    goodQty: 90,
+    defectQty: 10,
+    coveredQty: partial.coveredQty,
+    coveredGoodQty: partial.coveredGoodQty,
+    coveredDefectQty: partial.coveredDefectQty,
+    availableQty: 10,
+  });
+  assert.equal(final.deltaDefectQty, 10);
+  assert.equal(final.status, 'COVERED');
+});
 
 function command(overrides: Record<string, unknown> = {}) {
   return {
