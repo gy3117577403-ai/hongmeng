@@ -1,5 +1,3 @@
-import { getDailyPlanWorkbench } from '@/lib/daily-plan-service';
-
 type UnknownRecord = Record<string, unknown>;
 
 export function asRecord(value: unknown): UnknownRecord {
@@ -34,22 +32,11 @@ export async function resolveDailyPlanTeamId(input: {
   teamId?: string;
 }): Promise<string> {
   if (input.teamId) return input.teamId;
-  const workbench = await getDailyPlanWorkbench({
-    actorUserId: input.actorUserId,
-    workDate: input.workDate,
-    shiftCode: input.shiftCode,
-  }) as UnknownRecord;
-  const teams = Array.isArray(workbench.teams) ? workbench.teams : [];
-  const firstTeam = asRecord(teams[0]);
-  const teamId = asString(firstTeam.id);
-  if (!teamId) {
-    const error = new Error('当前账号尚未配置可管理的生产班组') as Error & {
-      status?: number;
-      code?: string;
-    };
-    error.status = 409;
-    error.code = 'DAILY_PLAN_TEAM_REQUIRED';
-    throw error;
-  }
-  return teamId;
+  const error = new Error('请先选择具体生产班组，再生成或确认日计划') as Error & {
+    status?: number;
+    code?: string;
+  };
+  error.status = 409;
+  error.code = 'DAILY_PLAN_TEAM_REQUIRED';
+  throw error;
 }

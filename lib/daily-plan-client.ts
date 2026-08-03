@@ -97,6 +97,26 @@ export type DailyPlanEmployee = {
   assignments: DailyPlanAssignment[];
 };
 
+export type DailyPlanEmployeeOption = {
+  id: string;
+  employeeNo: string;
+  name: string;
+  teamId: string;
+  teamName: string;
+};
+
+export type DailyPlanMaintenanceItem = {
+  id: string;
+  workOrderId: string;
+  workOrderCode: string;
+  productName: string;
+  customerName?: string | null;
+  reason: string;
+  message: string;
+  missingStepNames: string[];
+  actionHref: string;
+};
+
 export type DailyPlanRisk = {
   id: string;
   level: DailyPlanRiskLevel;
@@ -105,6 +125,7 @@ export type DailyPlanRisk = {
   taskId?: string | null;
   workOrderCode?: string | null;
   actionLabel?: string | null;
+  actionHref?: string | null;
 };
 
 export type DailyPlanSummary = {
@@ -141,13 +162,21 @@ export type DailyPlanWorkbench = {
     version: number;
     confirmedAt?: string | null;
     confirmedByName?: string | null;
+    isAggregate: boolean;
+    teamCount: number;
+    generatedTeamCount: number;
+    confirmedTeamCount: number;
   };
+  selectedTeamId?: string | null;
   scope: DailyPlanScope;
   summary: DailyPlanSummary;
+  teamOptions: DailyPlanTeam[];
   teams: DailyPlanTeam[];
+  employeeOptions: DailyPlanEmployeeOption[];
   employees: DailyPlanEmployee[];
   tasks: DailyPlanTask[];
   unassignedTasks: DailyPlanTask[];
+  maintenanceItems: DailyPlanMaintenanceItem[];
   risks: DailyPlanRisk[];
 };
 
@@ -289,11 +318,11 @@ export const dailyPlanClient = {
     return request(`/api/daily-plans/workbench?${query.toString()}`, { signal });
   },
 
-  previewSuggestions(input: { workDate: string; shiftCode: string; teamId?: string }): Promise<DailyPlanSuggestionPreview> {
+  previewSuggestions(input: { workDate: string; shiftCode: string; teamId: string }): Promise<DailyPlanSuggestionPreview> {
     return request('/api/daily-plans/suggestions/preview', { method: 'POST', body: JSON.stringify(input) });
   },
 
-  createFromSuggestion(input: { workDate: string; shiftCode: string; teamId?: string; suggestionKey: string }, idempotencyKey: string): Promise<{ planId: string; version: number }> {
+  createFromSuggestion(input: { workDate: string; shiftCode: string; teamId: string; suggestionKey: string }, idempotencyKey: string): Promise<{ planId: string; version: number }> {
     return request('/api/daily-plans', { method: 'POST', headers: { 'Idempotency-Key': idempotencyKey }, body: JSON.stringify(input) });
   },
 

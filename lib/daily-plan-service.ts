@@ -619,12 +619,34 @@ export async function previewDailyPlanSuggestions(input: {
     const route = workOrder?.processRoute;
     const readiness = processRouteExecutionReadiness(route?.steps);
     if (!workOrder || !route || !ACTIVE_ROUTE_STATUSES.has(route.status) || !readiness.ready) {
+      const activeSteps = route?.steps.filter(step => step.status !== 'skipped') || [];
+      const reason = !workOrder
+        ? 'WORK_ORDER_NOT_READY'
+        : !route
+          ? 'MISSING_PROCESS_ROUTE'
+          : !ACTIVE_ROUTE_STATUSES.has(route.status)
+            ? 'PROCESS_ROUTE_NOT_PUBLISHED'
+            : activeSteps.length === 0
+              ? 'EMPTY_PROCESS_ROUTE'
+              : 'MISSING_PROCESS_TIME';
+      const message = reason === 'WORK_ORDER_NOT_READY'
+        ? '生产工单尚未准备完成'
+        : reason === 'MISSING_PROCESS_ROUTE'
+          ? '尚未生成已发布的产品工艺路线'
+          : reason === 'PROCESS_ROUTE_NOT_PUBLISHED'
+            ? '产品工艺路线尚未发布或未进入可执行状态'
+            : reason === 'EMPTY_PROCESS_ROUTE'
+              ? '产品工艺路线没有有效工序'
+              : `以下工序缺少有效标准工时：${readiness.missingStepNames.join('、')}`;
       blocked.push({
         productionPlanBatchId: batch.id,
         workOrderId: batch.workOrderId,
         workOrderCode: workOrder?.code || batch.planOrder.specification,
-        reason: 'MISSING_PUBLISHED_PROCESS_ROUTE',
-        message: '缺少有效且已发布的工序与工时版本',
+        productName: batch.planOrder.productName,
+        customerName: batch.planOrder.customerName,
+        drawingLibraryItemId: workOrder?.drawingLibraryItemId || null,
+        reason,
+        message,
         missingStepNames: readiness.missingStepNames,
       });
       continue;
@@ -2101,13 +2123,9 @@ export async function getDailyPlanWorkbench(input: {
   const permittedTeamIds = scope.isAdmin || scope.isSupervisor ? null : scope.leaderTeamIds;
   const teamWhere: Prisma.ProductionTeamWhereInput = {
     isActive: true,
-    ...(input.teamId
-      ? { id: input.teamId }
-      : permittedTeamIds
-        ? { id: { in: permittedTeamIds } }
-        : {}),
+    ...(permittedTeamIds ? { id: { in: permittedTeamIds } } : {}),
   };
-  const teams = await prisma.productionTeam.findMany({
+  const teamOptions = await prisma.productionTeam.findMany({
     where: teamWhere,
     include: {
       memberships: {
@@ -2121,6 +2139,12 @@ export async function getDailyPlanWorkbench(input: {
     },
     orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
   });
+  const teams = input.teamId
+    ? teamOptions.filter(team => team.id === input.teamId)
+    : teamOptions;
+  if (input.teamId && teams.length === 0) {
+    throw new DailyPlanServiceError('生产班组不存在、已停用或不在当前账号的排程范围内', 'DAILY_PLAN_TEAM_NOT_FOUND', 404);
+  }
   const plans = await prisma.dailyProductionPlan.findMany({
     where: {
       workDate,
@@ -2171,6 +2195,8 @@ export async function getDailyPlanWorkbench(input: {
       isSupervisor: scope.isSupervisor,
       teamIds: scope.leaderTeamIds,
     },
+    selectedTeamId: input.teamId || null,
+    teamOptions,
     teams,
     plans,
     capacity,

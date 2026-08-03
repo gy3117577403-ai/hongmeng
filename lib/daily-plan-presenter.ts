@@ -54,12 +54,31 @@ function taskView(value: unknown, fallbackPlanId?: string | null) {
   };
 }
 
+function teamView(value: unknown) {
+  const team = asRecord(value);
+  const memberships = asArray(team.memberships);
+  const leader = memberships.find(item => item.role === 'TEAM_LEADER');
+  const leaderEmployee = asRecord(leader?.employee);
+  return {
+    id: asText(team.id),
+    name: asText(team.name),
+    code: team.code || null,
+    leaderId: leaderEmployee.id || null,
+    leaderName: leaderEmployee.name || null,
+    memberCount: memberships.filter(item => item.role !== 'WORKSHOP_SUPERVISOR').length,
+  };
+}
+
 export function presentDailyPlanWorkbench(value: unknown) {
   const raw = asRecord(value);
   const scopeRaw = asRecord(raw.scope);
   const teamsRaw = asArray(raw.teams);
+  const teamOptionsRaw = asArray(raw.teamOptions);
   const plans = asArray(raw.plans);
-  const selectedPlan = plans[0] || {};
+  const selectedTeamId = asText(raw.selectedTeamId) || null;
+  const selectedPlan = selectedTeamId
+    ? plans.find(plan => asText(plan.teamId) === selectedTeamId) || plans[0] || {}
+    : {};
   const capacities = new Map(asArray(raw.capacity).map(item => [asText(item.employeeId), item]));
   const tasks = plans.flatMap(plan => asArray(plan.tasks).map(task => taskView(task, asText(plan.id))));
   const unplannedTasks = asArray(raw.unplannedSuggestions).map(task => taskView(task, null));
@@ -76,36 +95,105 @@ export function presentDailyPlanWorkbench(value: unknown) {
       completedMinutes: assignments.filter(a => a.status === 'COMPLETED').reduce((s, a) => s + a.plannedMinutes, 0), assignments,
     };
   }));
-  const plannedMinutes = tasks.reduce((sum, task) => sum + task.plannedMinutes, 0) + unplannedTasks.reduce((sum, task) => sum + task.plannedMinutes, 0);
+  const employeeOptions = [...new Map(teamOptionsRaw.flatMap(team => asArray(team.memberships).map(membership => {
+    const employee = asRecord(membership.employee);
+    return [asText(employee.id), {
+      id: asText(employee.id),
+      employeeNo: asText(employee.employeeNo),
+      name: asText(employee.name),
+      teamId: asText(team.id),
+      teamName: asText(team.name),
+    }] as const;
+  }))).values()];
+  const plannedMinutes = tasks.reduce((sum, task) => sum + task.plannedMinutes, 0);
   const assignedMinutes = tasks.flatMap(task => task.assignments).reduce((sum, assignment) => sum + assignment.plannedMinutes, 0);
   const blocked = asArray(raw.blocked);
+  const maintenanceItems = blocked.map((item, index) => {
+    const drawingLibraryItemId = asText(item.drawingLibraryItemId);
+    return {
+      id: asText(item.productionPlanBatchId, `blocked:${index}`),
+      workOrderId: asText(item.workOrderId),
+      workOrderCode: asText(item.workOrderCode),
+      productName: asText(item.productName),
+      customerName: asText(item.customerName),
+      reason: asText(item.reason, 'MISSING_PROCESS_TIME'),
+      message: asText(item.message, '缺少有效且已发布的工序与工时版本'),
+      missingStepNames: Array.isArray(item.missingStepNames) ? item.missingStepNames.map(name => asText(name)).filter(Boolean) : [],
+      actionHref: drawingLibraryItemId
+        ? `/workspace/product-times?itemId=${encodeURIComponent(drawingLibraryItemId)}`
+        : '/workspace/product-times',
+    };
+  });
   const risks = [
-    ...blocked.map((item, index) => ({ id: `blocked:${index}`, level: 'CRITICAL', title: '工序与工时未发布', description: asText(item.message), workOrderCode: asText(item.workOrderCode), actionLabel: '配置工序与工时' })),
+    ...maintenanceItems.map(item => ({ id: `blocked:${item.id}`, level: 'CRITICAL', title: '工序与工时待维护', description: item.message, workOrderCode: item.workOrderCode, actionLabel: '配置工序与工时', actionHref: item.actionHref })),
     ...tasks.filter(task => task.warnings.length).map(task => ({ id: `task:${task.id}`, level: task.riskLevel, title: task.workOrderCode, description: task.warnings.join('、'), taskId: task.id, workOrderCode: task.workOrderCode, actionLabel: '查看任务' })),
   ];
   const isAdmin = Boolean(scopeRaw.isAdmin);
   const isSupervisor = Boolean(scopeRaw.isSupervisor);
+  const confirmedStatuses = new Set(['CONFIRMED', 'IN_PROGRESS', 'ARCHIVED']);
+  const generatedTeamCount = plans.length;
+  const confirmedTeamCount = plans.filter(plan => confirmedStatuses.has(asText(plan.status))).length;
+  const teamCount = teamOptionsRaw.length;
   return {
     generatedAt: new Date().toISOString(), workDate: asText(raw.workDate),
     shift: { code: asText(raw.shiftCode, 'DAY'), label: '白班', startTime: '08:00', endTime: '17:00', lunchStartTime: '12:00', lunchEndTime: '13:00' },
-    plan: { id: selectedPlan.id || null, status: asText(selectedPlan.status, 'DRAFT'), version: asNumber(selectedPlan.version), confirmedAt: selectedPlan.confirmedAt || null, confirmedByName: null },
+    plan: {
+      id: selectedTeamId ? selectedPlan.id || null : null,
+      status: asText(selectedPlan.status, 'DRAFT'),
+      version: selectedTeamId ? asNumber(selectedPlan.version) : 0,
+      confirmedAt: selectedTeamId ? selectedPlan.confirmedAt || null : null,
+      confirmedByName: null,
+      isAggregate: !selectedTeamId,
+      teamCount,
+      generatedTeamCount,
+      confirmedTeamCount,
+    },
+    selectedTeamId,
     scope: { role: isAdmin ? 'ADMIN' : isSupervisor ? 'WORKSHOP_SUPERVISOR' : 'TEAM_LEADER', teamIds: Array.isArray(scopeRaw.teamIds) ? scopeRaw.teamIds : [], canConfirm: isAdmin || isSupervisor, canManageOrganization: isAdmin, canRequestCrossTeam: true },
     summary: { plannedMinutes, assignedMinutes, unassignedMinutes: Math.max(0, plannedMinutes - assignedMinutes), urgentTaskCount: tasks.filter(task => task.riskLevel === 'HIGH' || task.riskLevel === 'CRITICAL').length, overloadedEmployeeCount: employees.filter(employee => employee.assignedMinutes > employee.capacityMinutes + employee.overtimeMinutes).length, carryOverTaskCount: tasks.filter(task => task.status === 'PENDING_CARRY_OVER').length },
-    teams: teamsRaw.map(team => { const leader = asArray(team.memberships).find(item => item.role === 'TEAM_LEADER'); const leaderEmployee = asRecord(leader?.employee); return { id: asText(team.id), name: asText(team.name), code: team.code || null, leaderId: leaderEmployee.id || null, leaderName: leaderEmployee.name || null, memberCount: asArray(team.memberships).filter(item => item.role !== 'WORKSHOP_SUPERVISOR').length }; }),
-    employees, tasks, unassignedTasks: unplannedTasks, risks,
+    teamOptions: teamOptionsRaw.map(teamView),
+    teams: teamsRaw.map(teamView),
+    employeeOptions,
+    employees,
+    tasks,
+    unassignedTasks: unplannedTasks,
+    maintenanceItems,
+    risks,
   };
 }
 
 export function presentDailyPlanSuggestion(value: unknown) {
   const raw = asRecord(value);
   const candidates = asArray(raw.candidates).map(task => taskView(task, null));
-  const assignedMinutes = 0;
+  const candidateByStep = new Map(candidates.map(task => [task.processStepId, task]));
+  const team = asRecord(raw.team);
+  const assignments = asArray(raw.employeeSuggestions).map(item => {
+    const task = candidateByStep.get(asText(item.stepId));
+    const skillMatched = Boolean(item.skillMatched);
+    return {
+      taskId: task?.id || `suggestion:${asText(item.stepId)}`,
+      employeeId: asText(item.employeeId),
+      employeeName: asText(item.employeeName),
+      teamName: asText(team.name),
+      quantity: task?.plannedQuantity || 0,
+      plannedMinutes: minutes(item.plannedStandardMilliseconds),
+      reason: skillMatched ? '技能匹配且当日容量可用' : '按剩余容量推荐，技能匹配待确认',
+    };
+  });
+  const assignedMinutes = assignments.reduce((sum, item) => sum + item.plannedMinutes, 0);
+  const totalMinutes = candidates.reduce((sum, task) => sum + task.plannedMinutes, 0);
+  const blockedWarnings = asArray(raw.blocked).map(item => asText(item.message || item.reason)).filter(Boolean);
+  const unschedulableCount = asArray(raw.unschedulable).length;
+  const warnings = [...new Set([
+    ...blockedWarnings,
+    ...(unschedulableCount ? [`${unschedulableCount} 道工序暂无剩余人员容量，生成后需人工安排`] : []),
+  ])];
   return {
     suggestionKey: createHash('sha256').update(JSON.stringify({ workDate: raw.workDate, shiftCode: raw.shiftCode, team: asRecord(raw.team).id, tasks: candidates.map(task => [task.workOrderId, task.processStepId, task.plannedQuantity]) })).digest('hex'),
     workDate: asText(raw.workDate), shiftCode: asText(raw.shiftCode, 'DAY'), teamId: asRecord(raw.team).id || null,
-    taskCount: candidates.length, assignmentCount: 0, assignedMinutes,
-    unassignedMinutes: candidates.reduce((sum, task) => sum + task.plannedMinutes, 0), overloadedEmployeeCount: 0,
-    warnings: asArray(raw.blocked).map(item => asText(item.message || item.reason)), assignments: [],
+    taskCount: candidates.length, assignmentCount: assignments.length, assignedMinutes,
+    unassignedMinutes: Math.max(0, totalMinutes - assignedMinutes), overloadedEmployeeCount: 0,
+    warnings, assignments,
   };
 }
 
