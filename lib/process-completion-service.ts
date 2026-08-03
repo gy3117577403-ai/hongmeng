@@ -26,6 +26,7 @@ import {
   legacyStatusForStage,
   normalizeWorkOrderStage,
 } from '@/lib/work-orders';
+import { loadWeeklyProcessWorkerPresetForStep } from '@/lib/weekly-process-worker-preset-service';
 
 export class ProcessCompletionServiceError extends Error {
   readonly status: number;
@@ -134,6 +135,19 @@ export type ProcessCompletionContext = {
     position: string | null;
     team: string | null;
   }>;
+  workerPreset: {
+    weekStartDate: string;
+    scope: 'PROCESS' | 'STEP';
+    version: number;
+    employees: Array<{
+      id: string;
+      employeeNo: string;
+      name: string;
+      team: string | null;
+      position: string | null;
+      priority: number;
+    }>;
+  } | null;
   recentCompletions: Array<{
     id: string;
     processedQty: number;
@@ -921,7 +935,14 @@ export async function loadProcessCompletionContext(
     prisma.workOrderProcessRoute.findUnique({
       where: { id: routeId },
       include: {
-        workOrder: true,
+        workOrder: {
+          include: {
+            productionPlanBatch: true,
+            rootWorkOrder: {
+              include: { productionPlanBatch: true },
+            },
+          },
+        },
         steps: {
           orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }],
           include: {
@@ -1023,6 +1044,18 @@ export async function loadProcessCompletionContext(
     );
   }
   const nextSteps = nextSequenceGroupSteps(route.steps, selected.sequenceGroup);
+  const presetWeekDate = route.workOrder.productionPlanBatch?.weekStartDate
+    || route.workOrder.weekStartDate
+    || route.workOrder.rootWorkOrder?.productionPlanBatch?.weekStartDate
+    || route.workOrder.rootWorkOrder?.weekStartDate
+    || null;
+  const workerPreset = await loadWeeklyProcessWorkerPresetForStep({
+    weekDate: presetWeekDate,
+    processDefinitionId: selected.processDefinitionId,
+    processCode: selected.processCode,
+    processName: selected.processName,
+    stepId: selected.id,
+  });
   return {
     routeId: route.id,
     routeVersion: route.version,
@@ -1069,6 +1102,21 @@ export async function loadProcessCompletionContext(
     pendingCoverageQty: Math.max(0, selectedTotals.reportedQty - selectedTotals.coveredReportedQty),
     reportableQty,
     employees,
+    workerPreset: workerPreset ? {
+      weekStartDate: workerPreset.weekStartDate,
+      scope: workerPreset.scope,
+      version: workerPreset.version,
+      employees: workerPreset.employees
+        .filter(employee => employee.isActive)
+        .map(employee => ({
+          id: employee.id,
+          employeeNo: employee.employeeNo,
+          name: employee.name,
+          team: employee.team,
+          position: employee.position,
+          priority: employee.priority,
+        })),
+    } : null,
     recentCompletions: selected.completions.map(completion => ({
       id: completion.id,
       processedQty: completion.processedQty,

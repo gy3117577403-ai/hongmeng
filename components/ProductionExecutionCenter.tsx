@@ -311,6 +311,19 @@ type ProcessCompletionContext = {
     position?: string | null;
     team?: string | null;
   }>;
+  workerPreset: {
+    weekStartDate: string;
+    scope: 'PROCESS' | 'STEP';
+    version: number;
+    employees: Array<{
+      id: string;
+      employeeNo: string;
+      name: string;
+      team?: string | null;
+      position?: string | null;
+      priority: number;
+    }>;
+  } | null;
   recentCompletions: Array<{
     id: string;
     processedQty: number;
@@ -1466,9 +1479,12 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       const previousEmployeeIds = previousForm?.employeeIds.filter(id => (
         context.employees.some(employee => employee.id === id)
       )) || [];
+      const preferredEmployeeIds = new Set(context.workerPreset?.employees.map(employee => employee.id) || []);
       const defaultEmployeeIds = previousEmployeeIds.length
         ? previousEmployeeIds
-        : user.employeeId && context.employees.some(employee => employee.id === user.employeeId)
+        : user.employeeId
+          && context.employees.some(employee => employee.id === user.employeeId)
+          && (!context.workerPreset || preferredEmployeeIds.has(user.employeeId))
           ? [user.employeeId]
           : [];
       setCompletionContext(context);
@@ -2272,6 +2288,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
   const savingRef = useRef(saving);
   const [employeeSearch, setEmployeeSearch] = useState('');
   const [showAllEmployees, setShowAllEmployees] = useState(false);
+  const [workerExceptionConfirmed, setWorkerExceptionConfirmed] = useState(false);
   closeRef.current = close;
   savingRef.current = saving;
 
@@ -2316,6 +2333,12 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       window.requestAnimationFrame(() => previousFocus?.isConnected && previousFocus.focus());
     };
   }, []);
+
+  const selectedEmployeeKey = value?.employeeIds.join('|') || '';
+
+  useEffect(() => {
+    setWorkerExceptionConfirmed(false);
+  }, [context?.step.id, selectedEmployeeKey]);
 
   const processedQty = value && /^\d+$/.test(value.processedQty.trim()) ? Number(value.processedQty) : 0;
   const defectQty = value && /^\d+$/.test(value.defectQty.trim()) ? Number(value.defectQty) : 0;
@@ -2373,6 +2396,10 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
   const selectedEmployees = context && value
     ? context.employees.filter(employee => value.employeeIds.includes(employee.id))
     : [];
+  const preferredEmployeeIds = new Set(context?.workerPreset?.employees.map(employee => employee.id) || []);
+  const preferredPriority = new Map(
+    context?.workerPreset?.employees.map(employee => [employee.id, employee.priority] as const) || [],
+  );
   const employeeKeyword = employeeSearch.trim().toLocaleLowerCase();
   const filteredEmployees = context?.employees.filter(employee => (
     !employeeKeyword
@@ -2380,16 +2407,28 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       .toLocaleLowerCase()
       .includes(employeeKeyword)
   )) || [];
-  const visibleEmployees = employeeKeyword || showAllEmployees
-    ? filteredEmployees
-    : filteredEmployees.slice(0, 6);
+  const filteredPreferredEmployees = filteredEmployees
+    .filter(employee => preferredEmployeeIds.has(employee.id))
+    .sort((left, right) => (
+      (preferredPriority.get(left.id) || 0) - (preferredPriority.get(right.id) || 0)
+      || left.employeeNo.localeCompare(right.employeeNo)
+    ));
+  const filteredOtherEmployees = filteredEmployees.filter(employee => !preferredEmployeeIds.has(employee.id));
+  const visibleOtherEmployees = employeeKeyword || showAllEmployees
+    ? filteredOtherEmployees
+    : filteredOtherEmployees.slice(0, Math.max(0, 6 - filteredPreferredEmployees.length));
+  const selectedNonPreferredEmployees = context?.workerPreset && value
+    ? selectedEmployees.filter(employee => !preferredEmployeeIds.has(employee.id))
+    : [];
+  const needsWorkerExceptionConfirmation = selectedNonPreferredEmployees.length > 0;
   const invalid = !value
     || processedQty <= 0
     || defectQty < 0
     || defectQty > processedQty
     || !context
     || processedQty > context.reportableQty
-    || !value.employeeIds.length;
+    || !value.employeeIds.length
+    || (needsWorkerExceptionConfirmation && !workerExceptionConfirmed);
 
   return <div className="modal-backdrop process-completion-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
     <section ref={dialogRef} tabIndex={-1} className="production-dialog process-completion-dialog" role="dialog" aria-modal="true" aria-labelledby="process-completion-title" aria-describedby="process-completion-order">
@@ -2470,13 +2509,36 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
 
           <section className="process-completion-work-session" aria-label="本次现场作业记录">
             <header><div><strong>作业人员</strong><small>报工提交后，标准工时会直接按人数与数量自动分摊到员工达成率</small></div><span className={value.employeeIds.length ? 'selected' : ''}>{value.employeeIds.length} 人</span></header>
+            {context.workerPreset && <div className="process-completion-worker-preset">
+              <div><Users size={17} aria-hidden="true" /><span><strong>本周预选人员</strong><small>{context.workerPreset.scope === 'STEP' ? '当前工单工序专属配置' : `${context.workerPreset.weekStartDate} 当周工序配置`} · {context.workerPreset.employees.length} 人</small></span></div>
+              <button type="button" disabled={saving || !context.workerPreset.employees.length} onClick={() => setValue({ ...value, employeeIds: context.workerPreset!.employees.map(employee => employee.id) })}>一键选中预选</button>
+            </div>}
             {!!selectedEmployees.length && <div className="process-completion-selected-employees">
-              {selectedEmployees.map(employee => <span key={employee.id}>{employee.name}<button type="button" disabled={saving} aria-label={`移除${employee.name}`} onClick={() => setValue({ ...value, employeeIds: value.employeeIds.filter(id => id !== employee.id) })}><X size={13} aria-hidden="true" /></button></span>)}
+              {selectedEmployees.map(employee => <span className={preferredEmployeeIds.has(employee.id) ? 'preferred' : ''} key={employee.id}>{employee.name}{preferredEmployeeIds.has(employee.id) && <em>预选</em>}<button type="button" disabled={saving} aria-label={`移除${employee.name}`} onClick={() => setValue({ ...value, employeeIds: value.employeeIds.filter(id => id !== employee.id) })}><X size={13} aria-hidden="true" /></button></span>)}
             </div>}
             <div className="process-completion-employee-picker">
               <label><Search size={16} aria-hidden="true" /><input value={employeeSearch} disabled={saving} onChange={event => setEmployeeSearch(event.target.value)} placeholder="搜索姓名、工号或班组" /></label>
               <div className="process-completion-employee-list">
-                {visibleEmployees.map(employee => {
+                {!!filteredPreferredEmployees.length && <p className="process-completion-employee-group-label"><span>本周预选</span><b>{filteredPreferredEmployees.length} 人</b></p>}
+                {filteredPreferredEmployees.map(employee => {
+                  const checked = value.employeeIds.includes(employee.id);
+                  return <label className={`${checked ? 'selected ' : ''}preferred`} key={employee.id}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={saving}
+                      onChange={() => setValue({
+                        ...value,
+                        employeeIds: checked
+                          ? value.employeeIds.filter(id => id !== employee.id)
+                          : [...value.employeeIds, employee.id],
+                      })}
+                    />
+                    <span><strong>{employee.name}<em>预选</em></strong><small>{employee.employeeNo}{employee.team ? ` · ${employee.team}` : ''}</small></span>
+                  </label>;
+                })}
+                {!!visibleOtherEmployees.length && <p className="process-completion-employee-group-label"><span>{context.workerPreset ? '其他在职员工' : '在职员工'}</span><b>{filteredOtherEmployees.length} 人</b></p>}
+                {visibleOtherEmployees.map(employee => {
                   const checked = value.employeeIds.includes(employee.id);
                   return <label className={checked ? 'selected' : ''} key={employee.id}>
                     <input
@@ -2493,10 +2555,16 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
                     <span><strong>{employee.name}</strong><small>{employee.employeeNo}{employee.team ? ` · ${employee.team}` : ''}</small></span>
                   </label>;
                 })}
-                {!visibleEmployees.length && <p>没有匹配的员工</p>}
+                {!filteredEmployees.length && <p>没有匹配的员工</p>}
               </div>
               {!employeeKeyword && filteredEmployees.length > 6 && <button className="process-completion-show-employees" type="button" disabled={saving} onClick={() => setShowAllEmployees(current => !current)}>{showAllEmployees ? '收起人员列表' : `查看全部 ${filteredEmployees.length} 人`}</button>}
             </div>
+            {needsWorkerExceptionConfirmation && <label className="process-completion-worker-warning">
+              <input type="checkbox" checked={workerExceptionConfirmed} disabled={saving} onChange={event => setWorkerExceptionConfirmed(event.target.checked)} />
+              <AlertTriangle size={17} aria-hidden="true" />
+              <span><strong>包含 {selectedNonPreferredEmployees.length} 名非预选人员</strong><small>允许报工并会正常同步员工工时，请确认他们确实参与了本次作业。</small></span>
+              <b>已核对</b>
+            </label>}
             <details className="process-completion-more">
               <summary>更多现场信息 <span>班组、工位、备注</span></summary>
               <div>
@@ -2535,7 +2603,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       {error && context && <div className="form-error" role="alert">{error}</div>}
       </div>
       <footer className="dialog-actions">
-        <span className={!invalid ? 'ready' : ''}>{!context || !value || loading ? '正在核对工序数据' : !value.employeeIds.length ? '请选择作业人员后提交' : advanceReporting ? `将先登记 ${formatProductionQuantity(processedQty)} ${unitLabel}，待前序自动核销` : `将报工并自动记入 ${selectedEmployees.length} 人工时`}</span>
+        <span className={!invalid ? 'ready' : ''}>{!context || !value || loading ? '正在核对工序数据' : !value.employeeIds.length ? '请选择作业人员后提交' : needsWorkerExceptionConfirmation && !workerExceptionConfirmed ? '请确认本次非预选作业人员' : advanceReporting ? `将先登记 ${formatProductionQuantity(processedQty)} ${unitLabel}，待前序自动核销` : `将报工并自动记入 ${selectedEmployees.length} 人工时`}</span>
         <button type="button" disabled={saving} onClick={close}>取消</button>
         <button className="primary-button" type="button" disabled={loading || saving || invalid} onClick={save}>{saving ? '正在报工...' : submitText}</button>
       </footer>

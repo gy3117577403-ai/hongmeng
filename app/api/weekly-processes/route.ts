@@ -22,6 +22,9 @@ export async function GET(request: NextRequest) {
       teamId: request.nextUrl.searchParams.get('teamId') || undefined,
       search: request.nextUrl.searchParams.get('search') || undefined,
       state: request.nextUrl.searchParams.get('state') || undefined,
+      processKey: request.nextUrl.searchParams.get('processKey') || undefined,
+      completion: request.nextUrl.searchParams.get('completion') || undefined,
+      sort: request.nextUrl.searchParams.get('sort') || undefined,
     });
     return dailyPlanSuccess(result);
   } catch (error) {

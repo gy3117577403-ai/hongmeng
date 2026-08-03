@@ -5922,6 +5922,22 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-weight: 750;
 }
 
+.hm-production-workbench .process-completion-selected-employees > span.preferred {
+  border-color: #9bcdb7;
+  background: #edf9f3;
+  color: #13704e;
+}
+
+.hm-production-workbench .process-completion-selected-employees > span > em {
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #d8f0e4;
+  color: #11704d;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 850;
+}
+
 .hm-production-workbench .process-completion-selected-employees button {
   width: 20px;
   height: 20px;
@@ -5940,6 +5956,56 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   border: 1px solid #e1e6ed;
   border-radius: 10px;
   background: #f8fafc;
+}
+
+.hm-production-workbench .process-completion-worker-preset {
+  min-height: 48px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #a9d5c1;
+  border-radius: 10px;
+  background: #eef9f4;
+}
+
+.hm-production-workbench .process-completion-worker-preset > div {
+  min-width: 0;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  color: #197252;
+}
+
+.hm-production-workbench .process-completion-worker-preset > div > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hm-production-workbench .process-completion-worker-preset strong {
+  font-size: 11px;
+}
+
+.hm-production-workbench .process-completion-worker-preset small {
+  overflow: hidden;
+  color: #5e8272;
+  font-size: 9px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hm-production-workbench .process-completion-worker-preset > button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid #82bea4;
+  border-radius: 8px;
+  background: #fff;
+  color: #13704e;
+  font-size: 9px;
+  font-weight: 850;
+  white-space: nowrap;
 }
 
 .hm-production-workbench .process-completion-employee-picker > label {
@@ -5986,8 +6052,28 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   box-shadow: none;
 }
 
+.hm-production-workbench .process-completion-employee-list > label.preferred {
+  border-color: #b5dcc9;
+  background: #f5fbf8;
+}
+
+.hm-production-workbench .process-completion-employee-list > label.preferred.selected {
+  border-color: #6eb492;
+  background: #e9f8f0;
+}
+
 .hm-production-workbench .process-completion-employee-list strong {
   font-size: 11px;
+}
+
+.hm-production-workbench .process-completion-employee-list strong > em {
+  margin-left: 5px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: #14704f;
+  background: #d8f0e4;
+  font-size: 8px;
+  font-style: normal;
 }
 
 .hm-production-workbench .process-completion-employee-list small {
@@ -6001,6 +6087,51 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-size: 11px;
   text-align: center;
 }
+
+.hm-production-workbench .process-completion-employee-list > p.process-completion-employee-group-label {
+  min-height: 24px;
+  margin: 2px 0 0;
+  padding: 0 4px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #5f6d80;
+  text-align: left;
+  font-size: 9px;
+  font-weight: 850;
+}
+
+.hm-production-workbench .process-completion-employee-list > p.process-completion-employee-group-label b {
+  color: #7a8798;
+  font-size: 8px;
+}
+
+.hm-production-workbench .process-completion-worker-warning {
+  min-height: 48px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #edc084;
+  border-radius: 10px;
+  color: #9d550d;
+  background: #fff8ed;
+}
+
+.hm-production-workbench .process-completion-worker-warning > input {
+  accent-color: #e87516;
+}
+
+.hm-production-workbench .process-completion-worker-warning > span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.hm-production-workbench .process-completion-worker-warning strong { font-size: 10px; }
+.hm-production-workbench .process-completion-worker-warning small { color: #8a755f; font-size: 9px; }
+.hm-production-workbench .process-completion-worker-warning > b { font-size: 9px; }
 
 .hm-production-workbench .process-completion-show-employees {
   justify-self: center;
