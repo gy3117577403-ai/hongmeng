@@ -58,6 +58,10 @@ import {
   responsibilityPeople,
   responsibilityWorkItems,
 } from '@/lib/responsibility-collaboration';
+import {
+  isProductionDepartment,
+  isProductionWorkforceEmployee,
+} from '@/lib/production-workforce';
 import type {
   AbnormalTimeEventDTO,
   AttendanceRecordDTO,
@@ -1122,6 +1126,18 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       setFormError('请填写员工姓名');
       return;
     }
+    const disablingEmployee = !creating && baseline.isActive && !draft.isActive;
+    if (disablingEmployee) {
+      const confirmed = window.confirm([
+        `确认将“${draft.name.trim()}（${draft.employeeNo}）”标记为已停用？`,
+        '停用后，该员工会退出在职名单、考勤生成、招聘负责人选择和全部生产任务人员名单。',
+        '如果只是非生产人员，请选择“取消”：系统已经按照所属部门自动排除生产报工，无需停用员工。',
+      ].join('\n\n'));
+      if (!confirmed) {
+        setToast('已取消停用；非生产人员保持在职也不会进入生产报工名单');
+        return;
+      }
+    }
     setSaving(true);
     setFormError('');
     try {
@@ -1129,7 +1145,10 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       const response = await fetch(wasCreating ? '/api/employees' : `/api/employees/${selectedEmployeeId}`, {
         method: wasCreating ? 'POST' : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
+        body: JSON.stringify({
+          ...draft,
+          ...(disablingEmployee ? { confirmDisable: true } : {}),
+        }),
       });
       const body = await response.json() as EmployeesResponse;
       if (!response.ok || !body.employee) throw new Error(body.error || '保存员工档案失败');
@@ -1355,6 +1374,17 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     const profileDepartment = draft.department.trim() || '部门待维护';
     const profilePosition = draft.position.trim() || '岗位待维护';
     const profileTeam = draft.team.trim() || '班组待维护';
+    const productionDepartment = isProductionDepartment(draft.department);
+    const productionReportingEligible = isProductionWorkforceEmployee(draft);
+    const productionReportingDescription = !draft.isActive && !productionDepartment
+      ? `该员工当前已停用。如果此前只是为了关闭报工，请重新勾选“员工当前在职”；“${profileDepartment}”本来就会被系统自动排除。`
+      : !productionDepartment
+        ? `当前归属“${profileDepartment}”，系统自动排除生产报工；保持在职不会进入生产名单。`
+        : !draft.isActive
+          ? '当前员工已停用，不进入生产报工；只有确认离职或停用档案时才应关闭在职状态。'
+          : !draft.attendanceEnabled
+            ? '当前属于生产部，但尚未启用考勤；启用考勤后才会进入生产报工与达成率。'
+            : '当前属于生产部、在职且已启用考勤，系统会自动加入生产报工与达成率。';
     const profileEmployeeNo = creating
       ? nextEmployeeNoLoading
         ? '编号生成中…'
@@ -1608,8 +1638,8 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                       <label><span>岗位</span><input value={draft.position} maxLength={80} onChange={event => setDraft(current => ({ ...current, position: event.target.value }))} placeholder="例如 压接操作员" /></label>
                       <div className="hr-profile-readonly">
                         <span>数据范围</span>
-                        <strong>生产员工档案</strong>
-                        <small>账号权限在职责配置中另行预览</small>
+                        <strong>{productionDepartment ? '生产员工档案' : '非生产员工档案'}</strong>
+                        <small>{productionReportingEligible ? '自动进入生产报工范围' : '不进入生产报工范围'}</small>
                       </div>
                     </fieldset>
                   </div>
@@ -1630,16 +1660,16 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                   <div className="hr-editor-switches">
                     <label>
                       <input type="checkbox" checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
-                      <span><strong>启用员工考勤</strong><small>启用后可登记出勤、加班和请假；仅生产部员工参与生产报工与达成率。</small></span>
+                      <span><strong>启用员工考勤</strong><small>所有部门均可登记出勤；生产部进入达成率，其他部门仅统计出勤。</small></span>
                     </label>
                     {!creating && (
                       <label>
-                        <input type="checkbox" checked={draft.isActive} onChange={event => setDraft(current => ({ ...current, isActive: event.target.checked }))} />
-                        <span><strong>允许选择该员工报工</strong><small>停用不会删除历史考勤、工时和生产记录。</small></span>
+                        <input type="checkbox" aria-label="员工当前在职" checked={draft.isActive} onChange={event => setDraft(current => ({ ...current, isActive: event.target.checked }))} />
+                        <span><strong>员工当前在职</strong><small>仅在员工离职或档案停用时取消；报工资格由所属部门自动判断。</small></span>
                       </label>
                     )}
                   </div>
-                  <div className="hr-editor-note"><ShieldCheck /><div><strong>档案与登录账号分开管理</strong><span>员工无需拥有登录账号；组织归属和岗位变化不会影响既有历史业务记录。</span></div></div>
+                  <div className={`hr-editor-note ${!draft.isActive && !productionDepartment ? 'warning' : ''}`.trim()}><ShieldCheck /><div><strong>生产报工资格由人事档案自动判断</strong><span>{productionReportingDescription}</span></div></div>
                 </section>
               )}
 
@@ -1731,7 +1761,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
               <div className="hr-role-status">
                 <span className={draft.isActive ? 'ok' : ''}><CheckCircle2 />{draft.isActive ? '在职' : '已停用'}</span>
                 <span className={draft.attendanceEnabled ? 'ok' : ''}><CalendarCheck2 />{draft.attendanceEnabled ? '考勤启用' : '考勤未启用'}</span>
-                <span className={draft.isActive ? 'ok' : ''}><UserRoundCheck />{draft.isActive ? '可参与报工' : '不可参与报工'}</span>
+                <span className={productionReportingEligible ? 'ok' : ''}><UserRoundCheck />{productionReportingEligible ? '生产报工范围' : '非生产报工范围'}</span>
               </div>
             </section>
             <section className="hr-role-team">

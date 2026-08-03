@@ -604,6 +604,10 @@ button.hr-metric-card { cursor: pointer; }
 .hr-editor-note div { display: grid; gap: 2px; }
 .hr-editor-note strong { font-size: 9px; }
 .hr-editor-note span { color: #8492a4; font-size: 7px; }
+.hr-editor-note.warning { border-color: #fed7aa; background: #fff7ed; }
+.hr-editor-note.warning > svg { color: #ea580c; }
+.hr-editor-note.warning strong { color: #9a3412; }
+.hr-editor-note.warning span { color: #b45309; }
 .hr-editor-error { min-height: 36px; padding: 8px 10px; display: flex; align-items: center; gap: 7px; border: 1px solid #fecaca; border-radius: 10px; background: var(--hr-red-soft); color: #c9434c; font-size: 8px; font-weight: 750; }
 .hr-employee-editor > footer { min-height: 56px; padding: 8px 13px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; border-top: 1px solid #eef1f5; background: #fafbfd; }
 .hr-employee-editor > footer > span { margin-right: auto; color: #8a97a7; font-size: 7px; }

@@ -5,6 +5,10 @@ import { prisma } from '@/lib/prisma';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
 import { normalizeEmployeeDepartment } from '@/lib/production-workforce';
 import {
+  EmployeeStatusChangeError,
+  resolveEmployeeActiveStatus,
+} from '@/lib/employee-status';
+import {
   employeeHireDateToDate,
   EmployeeHireDateError,
   normalizeEmployeeHireDateInput,
@@ -29,6 +33,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       }, { status: 409 });
     }
     if (!name) return NextResponse.json({ ok: false, error: '员工姓名不能为空' }, { status: 400 });
+    const nextIsActive = resolveEmployeeActiveStatus({
+      currentIsActive: existing.isActive,
+      requestedIsActive: body.isActive,
+      confirmDisable: body.confirmDisable,
+    });
     const employee = await prisma.employee.update({
       where: { id: existing.id },
       data: {
@@ -41,7 +50,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         ...(body.hireDate === undefined
           ? {}
           : { hireDate: employeeHireDateToDate(normalizeEmployeeHireDateInput(body.hireDate) ?? null) }),
-        isActive: body.isActive === undefined ? existing.isActive : body.isActive === true,
+        isActive: nextIsActive,
         attendanceEnabled: body.attendanceEnabled === undefined
           ? existing.attendanceEnabled
           : body.attendanceEnabled === true,
@@ -57,6 +66,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ ok: true, employee: serializeEmployee(employee) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof EmployeeStatusChangeError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof EmployeeHireDateError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     }
