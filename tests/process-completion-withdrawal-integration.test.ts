@@ -19,11 +19,15 @@ test(
   { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
   async () => {
     const prefix = `IT-WITHDRAW-${Date.now()}-${randomUUID().slice(0, 8)}`;
-    const actor = await prisma.user.findFirst({
-      where: { laborRole: 'ADMIN', isActive: true },
+    const actor = await prisma.user.create({
+      data: {
+        username: `${prefix}-ADMIN`,
+        passwordHash: 'integration-test-not-a-login-hash',
+        displayName: `${prefix} administrator`,
+        laborRole: 'ADMIN',
+      },
       select: { id: true, displayName: true, username: true },
     });
-    assert.ok(actor, 'database integration requires an active ADMIN user');
     const employee = await prisma.employee.create({
       data: {
         employeeNo: `${prefix}-E`,
@@ -229,6 +233,7 @@ test(
         await prisma.workOrder.deleteMany({ where: { id: orderId } });
       }
       await prisma.employee.deleteMany({ where: { id: employee.id } });
+      await prisma.user.deleteMany({ where: { id: actor.id } });
     }
   },
 );
@@ -238,11 +243,15 @@ test(
   { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
   async () => {
     const prefix = `IT-WITHDRAW-BLOCK-${Date.now()}-${randomUUID().slice(0, 8)}`;
-    const actor = await prisma.user.findFirst({
-      where: { laborRole: 'ADMIN', isActive: true },
+    const actor = await prisma.user.create({
+      data: {
+        username: `${prefix}-ADMIN`,
+        passwordHash: 'integration-test-not-a-login-hash',
+        displayName: `${prefix} administrator`,
+        laborRole: 'ADMIN',
+      },
       select: { id: true, displayName: true, username: true },
     });
-    assert.ok(actor);
     let orderId = '';
     let routeId = '';
     let completionId = '';
@@ -368,6 +377,7 @@ test(
         await prisma.operationLog.deleteMany({ where: { targetId: completionId } });
       }
       if (orderId) await prisma.workOrder.deleteMany({ where: { id: orderId } });
+      await prisma.user.deleteMany({ where: { id: actor.id } });
     }
   },
 );
