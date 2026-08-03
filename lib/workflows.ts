@@ -256,7 +256,19 @@ type WorkflowRouteStepRecord = {
     employee: { name: string };
   }>;
   completions: Array<{
+    id: string;
+    workDate: Date;
     completedAt: Date;
+    processedQty: number;
+    goodQty: number;
+    defectQty: number;
+    standardMillisecondsPerUnit: number | null;
+    standardSource: string;
+    participants: Array<{ employee: { name: string } }>;
+    laborPool: {
+      id: string;
+      claimedQty: number;
+    } | null;
   }>;
   processLaborPools: Array<{
     id: string;
@@ -363,6 +375,19 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
       productRemark: step.productTimeEntry?.remark || route.productTimeProfile?.remark || null,
       latestEmployeeName: laborClaimantNames.join('、') || latestExecution?.employee.name || null,
       latestReportedAt: latestReportedAt?.toISOString() || null,
+      completionRecords: step.completions.map(completion => ({
+        id: completion.id,
+        workDate: dateKeyFromDatabase(completion.workDate),
+        completedAt: completion.completedAt.toISOString(),
+        processedQty: completion.processedQty,
+        goodQty: completion.goodQty,
+        defectQty: completion.defectQty,
+        participantNames: completion.participants.map(item => item.employee.name),
+        laborPoolId: completion.laborPool?.id || null,
+        laborClaimedQty: completion.laborPool?.claimedQty || 0,
+        standardMillisecondsPerUnit: completion.standardMillisecondsPerUnit,
+        standardSource: completion.standardSource,
+      })),
     };
   });
 }
@@ -809,7 +834,21 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     },
                     completions: {
                       where: { voidedAt: null },
-                      select: { completedAt: true },
+                      select: {
+                        id: true,
+                        workDate: true,
+                        completedAt: true,
+                        processedQty: true,
+                        goodQty: true,
+                        defectQty: true,
+                        standardMillisecondsPerUnit: true,
+                        standardSource: true,
+                        participants: {
+                          select: { employee: { select: { name: true } } },
+                          orderBy: { position: 'asc' },
+                        },
+                        laborPool: { select: { id: true, claimedQty: true } },
+                      },
                       orderBy: { completedAt: 'desc' },
                     },
                     processLaborPools: {
@@ -943,7 +982,21 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 },
                 completions: {
                   where: { voidedAt: null },
-                  select: { completedAt: true },
+                  select: {
+                    id: true,
+                    workDate: true,
+                    completedAt: true,
+                    processedQty: true,
+                    goodQty: true,
+                    defectQty: true,
+                    standardMillisecondsPerUnit: true,
+                    standardSource: true,
+                    participants: {
+                      select: { employee: { select: { name: true } } },
+                      orderBy: { position: 'asc' },
+                    },
+                    laborPool: { select: { id: true, claimedQty: true } },
+                  },
                   orderBy: { completedAt: 'desc' },
                 },
                 processLaborPools: {

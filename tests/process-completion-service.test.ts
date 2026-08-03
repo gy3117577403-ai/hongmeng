@@ -93,7 +93,7 @@ test('completion command rejects impossible quantities, stale-shaped dates, and 
   );
 });
 
-test('external completion submissions require workers and a valid work interval', () => {
+test('external completion submissions require workers but no longer require manual work timestamps', () => {
   assert.throws(
     () => parseProcessCompletionCommand(command({
       employeeIds: [],
@@ -102,6 +102,13 @@ test('external completion submissions require workers and a valid work interval'
     (error: unknown) => error instanceof ProcessCompletionServiceError
       && error.code === 'PROCESS_COMPLETION_EMPLOYEE_REQUIRED',
   );
+  const withoutManualTimes = parseProcessCompletionCommand(command({
+    workStartedAt: undefined,
+    workEndedAt: undefined,
+    requireParticipants: true,
+  }));
+  assert.equal(withoutManualTimes.workStartedAt, null);
+  assert.equal(withoutManualTimes.workEndedAt, null);
   assert.throws(
     () => parseProcessCompletionCommand(command({
       workStartedAt: '2026-07-23T03:00:00.000Z',

@@ -105,6 +105,7 @@ export async function loadProductionClosureAuditSnapshot(
         sourceSequenceGroup: true,
         targetSequenceGroup: true,
         voidedAt: true,
+        reversalOfId: true,
       },
       orderBy: { createdAt: 'asc' },
     }),

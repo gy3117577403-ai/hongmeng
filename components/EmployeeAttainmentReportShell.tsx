@@ -646,10 +646,10 @@ function EmployeeReportRow({ row, expanded, onToggle }: { row: EmployeeAttainmen
       </div>)}
       {row.claimDetails.map(detail => <div className="employee-report-claim-detail" key={`claim-${detail.id}`}>
         <span><strong>{detail.processName}</strong><small>{detail.customerName || '客户未设置'} · {detail.specification || detail.workOrderCode}</small></span>
-        <span><small>工时来源</small><b>{detail.workDate} 完工池领取</b></span>
+        <span><small>工时来源</small><b>{detail.workDate} 完工池领取{detail.corrected ? ' · 已校正' : ''}</b></span>
         <span><small>标准工时</small><b>{formatProcessDuration(detail.standardLaborMilliseconds)}</b></span>
         <span><small>领取数量</small><b>{detail.quantity} {detail.unitLabel}</b></span>
-        <em className={detail.attendanceMatched ? 'good' : 'watch'}>{detail.attendanceMatched ? '已计入' : '缺考勤待匹配'}</em>
+        <em className={detail.attendanceMatched ? 'good' : 'watch'}>{detail.attendanceMatched ? detail.corrected ? '校正后计入' : '已计入' : '缺考勤待匹配'}</em>
       </div>)}
       {!row.details.length && !row.claimDetails.length && <p>该员工在当前周期暂无生产工时，考勤仍会保留并显示。</p>}
     </div>}

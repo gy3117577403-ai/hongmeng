@@ -1387,6 +1387,7 @@ export type EmployeeLaborClaimDetailDTO = {
   attendanceMatched: boolean;
   standardSource: string;
   productTimeProfileVersion?: number | null;
+  corrected?: boolean;
 };
 
 export type EmployeeAttainmentRowDTO = {
@@ -1553,6 +1554,19 @@ export type WorkflowStepDTO = {
   productRemark?: string | null;
   latestEmployeeName?: string | null;
   latestReportedAt?: string | null;
+  completionRecords?: Array<{
+    id: string;
+    workDate: string;
+    completedAt: string;
+    processedQty: number;
+    goodQty: number;
+    defectQty: number;
+    participantNames: string[];
+    laborPoolId: string | null;
+    laborClaimedQty: number;
+    standardMillisecondsPerUnit: number | null;
+    standardSource: string;
+  }>;
 };
 
 export type WorkflowActivityDTO = {

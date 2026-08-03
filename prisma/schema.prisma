@@ -1375,24 +1375,27 @@ model ProcessCompletionParticipant {
 }
 
 model ProcessQuantityMovement {
-  id                  String                @id @default(uuid())
-  completionId        String                @map("completion_id")
-  workOrderId         String                @map("work_order_id")
-  sourceStepId        String                @map("source_step_id")
-  targetStepId        String?               @map("target_step_id")
-  branchWorkOrderId   String?               @map("branch_work_order_id")
+  id                  String                    @id @default(uuid())
+  completionId        String                    @map("completion_id")
+  workOrderId         String                    @map("work_order_id")
+  sourceStepId        String                    @map("source_step_id")
+  targetStepId        String?                   @map("target_step_id")
+  branchWorkOrderId   String?                   @map("branch_work_order_id")
   type                ProcessMovementType
   quantity            Int
-  sourceSequenceGroup Int                   @map("source_sequence_group")
-  targetSequenceGroup Int?                  @map("target_sequence_group")
-  idempotencyKey      String                @unique @map("idempotency_key")
-  createdAt           DateTime              @default(now()) @map("created_at")
-  voidedAt            DateTime?             @map("voided_at")
-  completion          ProcessCompletion     @relation(fields: [completionId], references: [id], onDelete: Restrict)
-  workOrder           WorkOrder             @relation("MovementWorkOrder", fields: [workOrderId], references: [id], onDelete: Restrict)
-  sourceStep          WorkOrderProcessStep  @relation("MovementSourceStep", fields: [sourceStepId], references: [id], onDelete: Restrict)
-  targetStep          WorkOrderProcessStep? @relation("MovementTargetStep", fields: [targetStepId], references: [id], onDelete: Restrict)
-  branchWorkOrder     WorkOrder?            @relation("MovementBranchWorkOrder", fields: [branchWorkOrderId], references: [id], onDelete: SetNull)
+  sourceSequenceGroup Int                       @map("source_sequence_group")
+  targetSequenceGroup Int?                      @map("target_sequence_group")
+  idempotencyKey      String                    @unique @map("idempotency_key")
+  createdAt           DateTime                  @default(now()) @map("created_at")
+  voidedAt            DateTime?                 @map("voided_at")
+  reversalOfId        String?                   @map("reversal_of_id")
+  completion          ProcessCompletion         @relation(fields: [completionId], references: [id], onDelete: Restrict)
+  workOrder           WorkOrder                 @relation("MovementWorkOrder", fields: [workOrderId], references: [id], onDelete: Restrict)
+  sourceStep          WorkOrderProcessStep      @relation("MovementSourceStep", fields: [sourceStepId], references: [id], onDelete: Restrict)
+  targetStep          WorkOrderProcessStep?     @relation("MovementTargetStep", fields: [targetStepId], references: [id], onDelete: Restrict)
+  branchWorkOrder     WorkOrder?                @relation("MovementBranchWorkOrder", fields: [branchWorkOrderId], references: [id], onDelete: SetNull)
+  reversalOf          ProcessQuantityMovement?  @relation("ProcessQuantityMovementReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversals           ProcessQuantityMovement[] @relation("ProcessQuantityMovementReversal")
 
   @@index([completionId])
   @@index([workOrderId, createdAt])
@@ -1401,6 +1404,7 @@ model ProcessQuantityMovement {
   @@index([branchWorkOrderId])
   @@index([type, createdAt])
   @@index([voidedAt])
+  @@index([reversalOfId])
   @@map("process_quantity_movements")
 }
 

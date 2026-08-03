@@ -2368,3 +2368,159 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
     transition-duration: .01ms !important;
   }
 }
+
+.hm-workflow-center .workflow-process-inspector {
+  margin: 12px 14px 0;
+  overflow: hidden;
+  border: 1px solid #e3e8ee;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.hm-workflow-center .workflow-process-inspector > header {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #edf0f3;
+  background: linear-gradient(90deg, #fff9f4, #fff);
+}
+
+.hm-workflow-center .workflow-process-inspector > header span,
+.hm-workflow-center .workflow-process-inspector > header h3 { display: block; margin: 0; }
+.hm-workflow-center .workflow-process-inspector > header > div:first-child span { color: var(--hm-color-accent); font-size: 10px; font-weight: 700; }
+.hm-workflow-center .workflow-process-inspector > header h3 { margin-top: 2px; color: #263548; font-size: 15px; }
+
+.hm-workflow-center .workflow-process-inspector-summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.hm-workflow-center .workflow-process-inspector-summary span {
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: #f3f6f8;
+  color: #657487;
+  font-size: 10px;
+}
+
+.hm-workflow-center .workflow-completion-records { padding: 6px 12px; }
+.hm-workflow-center .workflow-completion-records article {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 2px;
+  border-bottom: 1px solid #eef1f4;
+}
+.hm-workflow-center .workflow-completion-records article:last-child { border-bottom: 0; }
+.hm-workflow-center .workflow-completion-record-main { min-width: 0; }
+.hm-workflow-center .workflow-completion-record-main span,
+.hm-workflow-center .workflow-completion-record-main strong,
+.hm-workflow-center .workflow-completion-record-main small { display: block; }
+.hm-workflow-center .workflow-completion-record-main span { color: #8793a1; font-size: 9px; }
+.hm-workflow-center .workflow-completion-record-main strong { margin-top: 3px; color: #27374b; font-size: 12px; }
+.hm-workflow-center .workflow-completion-record-main small { margin-top: 2px; color: #758295; font-size: 9px; }
+.hm-workflow-center .workflow-completion-record-actions { display: flex; flex: none; gap: 6px; }
+.hm-workflow-center .workflow-completion-record-actions button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px;
+  border: 1px solid #dce3e9;
+  border-radius: 7px;
+  background: #fff;
+  color: #526174;
+  font-size: 10px;
+  font-weight: 700;
+}
+.hm-workflow-center .workflow-completion-record-actions button:hover { border-color: #f2a66f; color: #b84d08; }
+.hm-workflow-center .workflow-completion-record-actions button.danger { border-color: #ffd6cf; background: #fff7f5; color: #c54532; }
+.hm-workflow-center .workflow-completion-record-empty { min-height: 54px; display: flex; align-items: center; justify-content: center; gap: 7px; color: #8b97a5; font-size: 11px; }
+.hm-workflow-center .workflow-process-inspector-permission { margin: 0; padding: 7px 14px; border-top: 1px solid #edf0f3; background: #f8fafb; color: #7b8796; font-size: 9px; }
+
+.hm-workflow-center .workflow-correction-backdrop {
+  position: fixed;
+  z-index: 1500;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(13, 28, 45, .42);
+  backdrop-filter: blur(2px);
+}
+
+.hm-workflow-center .workflow-correction-dialog {
+  width: min(620px, calc(100vw - 40px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid rgba(255,255,255,.85);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 72px rgba(13, 29, 47, .24);
+}
+.hm-workflow-center .workflow-correction-dialog.compact { width: min(540px, calc(100vw - 40px)); }
+.hm-workflow-center .workflow-correction-dialog > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 17px 20px;
+  border-bottom: 1px solid #edf0f3;
+}
+.hm-workflow-center .workflow-correction-dialog > header small { color: var(--hm-color-accent); font-size: 10px; font-weight: 800; }
+.hm-workflow-center .workflow-correction-dialog > header h2 { margin: 3px 0 0; color: #213044; font-size: 19px; }
+.hm-workflow-center .workflow-correction-dialog > header button { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #dce3e9; border-radius: 9px; background: #fff; color: #697789; }
+.hm-workflow-center .workflow-correction-loading { min-height: 180px; display: flex; align-items: center; justify-content: center; gap: 9px; color: #6d7b8b; font-size: 12px; }
+.hm-workflow-center .workflow-withdrawal-impact,
+.hm-workflow-center .workflow-standard-correction-summary {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 14px 20px 0;
+  padding: 12px 14px;
+  border: 1px solid #d9eee1;
+  border-radius: 10px;
+  background: #f3fbf6;
+  color: #287b48;
+}
+.hm-workflow-center .workflow-withdrawal-impact.blocked { border-color: #ffd6cf; background: #fff6f4; color: #bc4634; }
+.hm-workflow-center .workflow-withdrawal-impact span,
+.hm-workflow-center .workflow-standard-correction-summary span,
+.hm-workflow-center .workflow-withdrawal-impact strong,
+.hm-workflow-center .workflow-standard-correction-summary strong,
+.hm-workflow-center .workflow-withdrawal-impact small,
+.hm-workflow-center .workflow-standard-correction-summary small { display: block; }
+.hm-workflow-center .workflow-withdrawal-impact strong,
+.hm-workflow-center .workflow-standard-correction-summary strong { font-size: 12px; }
+.hm-workflow-center .workflow-withdrawal-impact small,
+.hm-workflow-center .workflow-standard-correction-summary small { margin-top: 3px; color: #718092; font-size: 9px; }
+.hm-workflow-center .workflow-withdrawal-blockers { margin: 9px 20px 0; padding: 0; list-style: none; }
+.hm-workflow-center .workflow-withdrawal-blockers li { display: flex; align-items: flex-start; gap: 6px; padding: 5px 0; color: #b44535; font-size: 10px; }
+.hm-workflow-center .workflow-correction-facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; margin: 12px 20px 0; }
+.hm-workflow-center .workflow-correction-facts span { padding: 8px; border-radius: 8px; background: #f5f7f9; }
+.hm-workflow-center .workflow-correction-facts small,
+.hm-workflow-center .workflow-correction-facts strong { display: block; }
+.hm-workflow-center .workflow-correction-facts small { color: #8793a2; font-size: 9px; }
+.hm-workflow-center .workflow-correction-facts strong { margin-top: 3px; color: #2a394d; font-size: 12px; }
+.hm-workflow-center .workflow-correction-dialog > label { display: block; margin: 12px 20px 0; }
+.hm-workflow-center .workflow-correction-dialog > label > span { display: block; margin-bottom: 5px; color: #46566a; font-size: 10px; font-weight: 800; }
+.hm-workflow-center .workflow-correction-dialog input,
+.hm-workflow-center .workflow-correction-dialog select,
+.hm-workflow-center .workflow-correction-dialog textarea { width: 100%; border: 1px solid #d8e0e7; border-radius: 8px; background: #fff; color: #263649; font: inherit; font-size: 12px; outline: none; }
+.hm-workflow-center .workflow-correction-dialog input,
+.hm-workflow-center .workflow-correction-dialog select { height: 38px; padding: 0 10px; }
+.hm-workflow-center .workflow-correction-dialog textarea { min-height: 74px; padding: 9px 10px; resize: vertical; }
+.hm-workflow-center .workflow-correction-dialog input:focus,
+.hm-workflow-center .workflow-correction-dialog select:focus,
+.hm-workflow-center .workflow-correction-dialog textarea:focus { border-color: #f09655; box-shadow: 0 0 0 3px rgba(222, 91, 0, .09); }
+.hm-workflow-center .workflow-correction-note { margin: 10px 20px 0; padding: 8px 10px; border-radius: 8px; background: #f6f8fa; color: #748193; font-size: 9px; line-height: 1.55; }
+.hm-workflow-center .workflow-correction-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px; padding: 13px 20px; border-top: 1px solid #edf0f3; }
+.hm-workflow-center .workflow-correction-dialog > footer button { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; border: 1px solid #d9e0e6; border-radius: 8px; background: #fff; color: #536175; font-size: 11px; font-weight: 800; }
+.hm-workflow-center .workflow-correction-dialog > footer button.primary { border-color: var(--hm-color-accent); background: var(--hm-color-accent); color: #fff; }
+.hm-workflow-center .workflow-correction-dialog > footer button.danger { border-color: #cf4b38; background: #cf4b38; color: #fff; }
+.hm-workflow-center .workflow-correction-dialog > footer button:disabled { cursor: not-allowed; opacity: .5; }

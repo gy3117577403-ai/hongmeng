@@ -490,13 +490,6 @@ export function parseProcessCompletionCommand(
       'PROCESS_COMPLETION_EMPLOYEE_REQUIRED',
     );
   }
-  if (command.requireParticipants && (!workStartedAt || !workEndedAt)) {
-    throw new ProcessCompletionServiceError(
-      '请填写作业开始时间和结束时间',
-      400,
-      'PROCESS_COMPLETION_TIME_REQUIRED',
-    );
-  }
   let parsedWorkDate: ReturnType<typeof parseWorkDate>;
   try {
     parsedWorkDate = parseWorkDate(command.workDate);

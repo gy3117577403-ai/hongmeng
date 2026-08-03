@@ -18,7 +18,9 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Undo2,
   UserRound,
+  Wrench,
   Workflow,
   X,
 } from 'lucide-react';
@@ -59,6 +61,21 @@ type WorkflowDeepLink = {
   fromProduction: boolean;
   returnTo: string;
   returnKey: string;
+};
+type WorkflowCompletionRecord = NonNullable<WorkflowStepDTO['completionRecords']>[number];
+type WithdrawalPreview = {
+  routeVersion: number;
+  canWithdraw: boolean;
+  blockers: Array<{ code: string; message: string }>;
+  impact: {
+    processedQty: number;
+    goodQty: number;
+    releaseReductionQty: number;
+    affectedTargetStepCount: number;
+    laborClaimCount: number;
+    laborClaimedQty: number;
+    employeeNames: string[];
+  };
 };
 
 const emptySummary: WorkflowSummaryDTO = {
@@ -139,6 +156,21 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
   const [routeActionPending, setRouteActionPending] = useState(false);
   const [routeActionMessage, setRouteActionMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [historyRepairOpen, setHistoryRepairOpen] = useState(false);
+  const [withdrawalTarget, setWithdrawalTarget] = useState<{
+    step: WorkflowStepDTO;
+    completion: WorkflowCompletionRecord;
+  } | null>(null);
+  const [withdrawalPreview, setWithdrawalPreview] = useState<WithdrawalPreview | null>(null);
+  const [withdrawalLoading, setWithdrawalLoading] = useState(false);
+  const [withdrawalCategory, setWithdrawalCategory] = useState<'REPORTING_ERROR' | 'PROCESS_EXCEPTION'>('REPORTING_ERROR');
+  const [withdrawalReason, setWithdrawalReason] = useState('');
+  const [correctionTarget, setCorrectionTarget] = useState<{
+    step: WorkflowStepDTO;
+    completion: WorkflowCompletionRecord;
+  } | null>(null);
+  const [correctionProcessName, setCorrectionProcessName] = useState('');
+  const [correctionSeconds, setCorrectionSeconds] = useState('');
+  const [correctionReason, setCorrectionReason] = useState('');
   const [historyRepairStepKey, setHistoryRepairStepKey] = useState('');
   const [historyRepairQuantity, setHistoryRepairQuantity] = useState('0');
 
@@ -307,6 +339,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       || selected.steps[0]
       || null;
   }, [selected, selectedCurrentStep, selectedProcessStepKey]);
+  const canCorrectProduction = user.laborRole === 'ADMIN'
+    || user.dailyPlanningRoles.includes('WORKSHOP_SUPERVISOR');
   const activityVersions = useMemo(() => {
     if (!selected) return { current: [], historical: [] };
     const repairIndex = selected.activities.findIndex(item => item.action === 'repair_historical_product_time_route');
@@ -406,6 +440,152 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       setRouteActionMessage({
         tone: 'error',
         text: actionError instanceof Error ? actionError.message : '应用产品工艺失败',
+      });
+    } finally {
+      setRouteActionPending(false);
+    }
+  }
+
+  async function openCompletionWithdrawal(
+    step: WorkflowStepDTO,
+    completion: WorkflowCompletionRecord,
+  ): Promise<void> {
+    if (!selected?.processRouteId || !canCorrectProduction) return;
+    setWithdrawalTarget({ step, completion });
+    setWithdrawalPreview(null);
+    setWithdrawalCategory('REPORTING_ERROR');
+    setWithdrawalReason('');
+    setWithdrawalLoading(true);
+    setRouteActionMessage(null);
+    try {
+      const result = await jsonRequest<{ ok: boolean; data: WithdrawalPreview }>(
+        `/api/process-management/routes/${encodeURIComponent(selected.processRouteId)}/completions/${encodeURIComponent(completion.id)}/withdraw`,
+      );
+      setWithdrawalPreview(result.data);
+    } catch (actionError) {
+      setRouteActionMessage({
+        tone: 'error',
+        text: actionError instanceof Error ? actionError.message : '撤回影响预览失败',
+      });
+      setWithdrawalTarget(null);
+    } finally {
+      setWithdrawalLoading(false);
+    }
+  }
+
+  async function submitCompletionWithdrawal(): Promise<void> {
+    if (
+      !selected?.processRouteId
+      || !withdrawalTarget
+      || !withdrawalPreview
+      || routeActionPending
+    ) return;
+    if (withdrawalReason.trim().length < 4) {
+      setRouteActionMessage({ tone: 'error', text: '撤回原因至少填写 4 个字符' });
+      return;
+    }
+    setRouteActionPending(true);
+    setRouteActionMessage(null);
+    try {
+      const result = await jsonRequest<{
+        ok: boolean;
+        data: { status: 'WITHDRAWN' | 'BLOCKED'; issue: { code: string } | null };
+      }>(
+        `/api/process-management/routes/${encodeURIComponent(selected.processRouteId)}/completions/${encodeURIComponent(withdrawalTarget.completion.id)}/withdraw`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            expectedRouteVersion: withdrawalPreview.routeVersion,
+            category: withdrawalCategory,
+            reason: withdrawalReason,
+            idempotencyKey: globalThis.crypto?.randomUUID?.() || `withdraw-${Date.now()}`,
+          }),
+        },
+      );
+      setWithdrawalTarget(null);
+      setWithdrawalPreview(null);
+      setRouteActionMessage(result.data.status === 'WITHDRAWN'
+        ? { tone: 'success', text: '完工已撤回，生产执行、日计划和员工工时已同步冲销' }
+        : {
+            tone: 'error',
+            text: `自动撤回已安全阻止，已创建流程异常 ${result.data.issue?.code || ''}`.trim(),
+          });
+      await load();
+    } catch (actionError) {
+      setRouteActionMessage({
+        tone: 'error',
+        text: actionError instanceof Error ? actionError.message : '完工撤回失败',
+      });
+    } finally {
+      setRouteActionPending(false);
+    }
+  }
+
+  function openCompletionCorrection(
+    step: WorkflowStepDTO,
+    completion: WorkflowCompletionRecord,
+  ): void {
+    setCorrectionTarget({ step, completion });
+    setCorrectionProcessName(step.label);
+    const milliseconds = completion.standardMillisecondsPerUnit
+      || step.standardMillisecondsPerUnit
+      || 0;
+    setCorrectionSeconds(milliseconds > 0 ? String(milliseconds / 1000) : '');
+    setCorrectionReason('');
+    setRouteActionMessage(null);
+  }
+
+  async function submitCompletionCorrection(): Promise<void> {
+    if (
+      !selected?.processRouteId
+      || selected.routeVersion === null
+      || selected.routeVersion === undefined
+      || !correctionTarget
+      || routeActionPending
+    ) return;
+    const seconds = Number(correctionSeconds);
+    const milliseconds = Math.round(seconds * 1000);
+    if (!Number.isFinite(seconds) || seconds <= 0 || milliseconds <= 0) {
+      setRouteActionMessage({ tone: 'error', text: '请输入大于 0 的单位标准工时' });
+      return;
+    }
+    if (correctionProcessName.trim().length < 2 || correctionReason.trim().length < 4) {
+      setRouteActionMessage({ tone: 'error', text: '请填写有效工序名称，校正原因至少 4 个字符' });
+      return;
+    }
+    setRouteActionPending(true);
+    setRouteActionMessage(null);
+    try {
+      const result = await jsonRequest<{
+        ok: boolean;
+        data: { replacedClaimCount: number; affectedEmployeeNames: string[] };
+      }>(
+        `/api/process-management/routes/${encodeURIComponent(selected.processRouteId)}/completions/${encodeURIComponent(correctionTarget.completion.id)}/correct-standard`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            expectedRouteVersion: selected.routeVersion,
+            processName: correctionProcessName,
+            standardMillisecondsPerUnit: milliseconds,
+            reason: correctionReason,
+            idempotencyKey: globalThis.crypto?.randomUUID?.() || `correct-${Date.now()}`,
+          }),
+        },
+      );
+      setCorrectionTarget(null);
+      setRouteActionMessage({
+        tone: 'success',
+        text: result.data.replacedClaimCount
+          ? `工序与工时已校正，并重算 ${result.data.replacedClaimCount} 笔员工工时`
+          : '工序与标准工时已校正，后续员工报表将使用新标准',
+      });
+      await load();
+    } catch (actionError) {
+      setRouteActionMessage({
+        tone: 'error',
+        text: actionError instanceof Error ? actionError.message : '工序与标准工时校正失败',
       });
     } finally {
       setRouteActionPending(false);
@@ -707,6 +887,31 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                       </div>
                     </div>
                   </section>
+                  {selectedProcessStep && <section className="workflow-process-inspector" aria-label="选中工序完工与纠错记录">
+                    <header>
+                      <div><span>工序核对</span><h3>{selectedProcessStep.label}</h3></div>
+                      <div className="workflow-process-inspector-summary">
+                        <span>已处理 {(selectedProcessStep.processedQuantity || 0).toLocaleString()} {selectedProcessStep.unitLabel || '件'}</span>
+                        <span>{formatDuration(selectedProcessStep.standardMillisecondsPerUnit)}</span>
+                        <span>{selectedProcessStep.completionRecords?.length || 0} 笔完工</span>
+                      </div>
+                    </header>
+                    <div className="workflow-completion-records">
+                      {selectedProcessStep.completionRecords?.map(completion => <article key={completion.id}>
+                        <div className="workflow-completion-record-main">
+                          <span>{formatDate(completion.completedAt)} · {completion.workDate}</span>
+                          <strong>完工 {completion.processedQty.toLocaleString()}，良品 {completion.goodQty.toLocaleString()}{completion.defectQty ? `，不良 ${completion.defectQty.toLocaleString()}` : ''}</strong>
+                          <small>{completion.participantNames.length ? completion.participantNames.join('、') : '未记录作业人员'} · {completion.laborClaimedQty > 0 ? `已领取 ${completion.laborClaimedQty}` : '工时未领取'}</small>
+                        </div>
+                        {canCorrectProduction && <div className="workflow-completion-record-actions">
+                          <button type="button" disabled={routeActionPending} onClick={() => openCompletionCorrection(selectedProcessStep, completion)}><Wrench size={13} />校正工序/工时</button>
+                          <button className="danger" type="button" disabled={routeActionPending} onClick={() => { void openCompletionWithdrawal(selectedProcessStep, completion); }}><Undo2 size={13} />撤回本次完工</button>
+                        </div>}
+                      </article>)}
+                      {!selectedProcessStep.completionRecords?.length && <div className="workflow-completion-record-empty"><CircleDot size={18} /><span>该工序暂无有效完工记录</span></div>}
+                    </div>
+                    {!canCorrectProduction && <p className="workflow-process-inspector-permission">完工纠错仅由生产主管或管理员执行，其他人员可在问题中心提交报工错误。</p>}
+                  </section>}
                 </> : selected.entityType === 'production' ? <section className={`workflow-route-missing ${selected.processStatus === 'closed' ? 'completed' : ''}`}>
                   <span>{selected.processStatus === 'closed' ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}</span>
                   <div>
@@ -757,6 +962,67 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
           </section>
         </div>
       </div>
+
+      {withdrawalTarget && <div className="workflow-correction-backdrop" role="presentation" onMouseDown={event => {
+        if (event.currentTarget === event.target && !routeActionPending) setWithdrawalTarget(null);
+      }}>
+        <section className="workflow-correction-dialog" role="dialog" aria-modal="true" aria-labelledby="workflow-withdrawal-title">
+          <header>
+            <div><small>主管纠错 · 可逆审计</small><h2 id="workflow-withdrawal-title">撤回 {withdrawalTarget.step.label} 本次完工</h2></div>
+            <button type="button" disabled={routeActionPending} aria-label="关闭完工撤回" onClick={() => setWithdrawalTarget(null)}><X size={18} /></button>
+          </header>
+          {withdrawalLoading || !withdrawalPreview ? <div className="workflow-correction-loading"><Loader2 className="spin" /><span>正在核对下道数量和员工工时影响...</span></div> : <>
+            <div className={`workflow-withdrawal-impact ${withdrawalPreview.canWithdraw ? 'safe' : 'blocked'}`}>
+              {withdrawalPreview.canWithdraw ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
+              <span>
+                <strong>{withdrawalPreview.canWithdraw ? '可直接撤回并同步冲销' : '检测到下游影响，将转为流程异常'}</strong>
+                <small>撤回完工 {withdrawalPreview.impact.processedQty}，回收转序 {withdrawalPreview.impact.releaseReductionQty}，冲销工时领取 {withdrawalPreview.impact.laborClaimCount} 笔</small>
+              </span>
+            </div>
+            {!!withdrawalPreview.blockers.length && <ul className="workflow-withdrawal-blockers">
+              {withdrawalPreview.blockers.map(blocker => <li key={blocker.code}><AlertTriangle size={14} /><span>{blocker.message}</span></li>)}
+            </ul>}
+            <div className="workflow-correction-facts">
+              <span><small>本次良品</small><strong>{withdrawalPreview.impact.goodQty.toLocaleString()}</strong></span>
+              <span><small>影响下道</small><strong>{withdrawalPreview.impact.affectedTargetStepCount} 道</strong></span>
+              <span><small>已领工时数量</small><strong>{withdrawalPreview.impact.laborClaimedQty.toLocaleString()}</strong></span>
+              <span><small>涉及员工</small><strong>{withdrawalPreview.impact.employeeNames.length || 0} 人</strong></span>
+            </div>
+            <label><span>纠错类型</span><select value={withdrawalCategory} onChange={event => setWithdrawalCategory(event.target.value as 'REPORTING_ERROR' | 'PROCESS_EXCEPTION')}><option value="REPORTING_ERROR">报工错误</option><option value="PROCESS_EXCEPTION">流程异常</option></select></label>
+            <label><span>撤回原因</span><textarea rows={3} maxLength={500} value={withdrawalReason} onChange={event => setWithdrawalReason(event.target.value)} placeholder="说明误操作、实际完成情况及核对依据（必填）" /></label>
+            <p className="workflow-correction-note">系统保留原完工、原领取和冲销记录，不删除历史；生产执行、日计划与员工报表使用冲销后的有效数据。</p>
+          </>}
+          <footer>
+            <button type="button" disabled={routeActionPending} onClick={() => setWithdrawalTarget(null)}>取消</button>
+            <button className={withdrawalPreview?.canWithdraw ? 'danger' : 'primary'} type="button" disabled={withdrawalLoading || !withdrawalPreview || routeActionPending || withdrawalReason.trim().length < 4} onClick={() => { void submitCompletionWithdrawal(); }}>
+              {routeActionPending ? <Loader2 className="spin" size={15} /> : withdrawalPreview?.canWithdraw ? <Undo2 size={15} /> : <AlertTriangle size={15} />}
+              {withdrawalPreview?.canWithdraw ? '确认撤回并同步冲销' : '建立流程异常'}
+            </button>
+          </footer>
+        </section>
+      </div>}
+
+      {correctionTarget && <div className="workflow-correction-backdrop" role="presentation" onMouseDown={event => {
+        if (event.currentTarget === event.target && !routeActionPending) setCorrectionTarget(null);
+      }}>
+        <section className="workflow-correction-dialog compact" role="dialog" aria-modal="true" aria-labelledby="workflow-standard-correction-title">
+          <header>
+            <div><small>主管纠错 · 员工报表同步</small><h2 id="workflow-standard-correction-title">校正工序与标准工时</h2></div>
+            <button type="button" disabled={routeActionPending} aria-label="关闭工时校正" onClick={() => setCorrectionTarget(null)}><X size={18} /></button>
+          </header>
+          <div className="workflow-standard-correction-summary"><Wrench size={19} /><span><strong>{correctionTarget.completion.workDate} · 完工 {correctionTarget.completion.processedQty.toLocaleString()}</strong><small>已领取 {correctionTarget.completion.laborClaimedQty.toLocaleString()}，保存后将自动作废旧领取并生成新标准记录。</small></span></div>
+          <label><span>工序名称</span><input maxLength={80} value={correctionProcessName} onChange={event => setCorrectionProcessName(event.target.value)} /></label>
+          <label><span>单位标准工时（秒/{correctionTarget.step.unitLabel || '件'}）</span><input inputMode="decimal" min="0.001" step="0.001" value={correctionSeconds} onChange={event => setCorrectionSeconds(event.target.value)} /></label>
+          <label><span>校正原因</span><textarea rows={3} maxLength={500} value={correctionReason} onChange={event => setCorrectionReason(event.target.value)} placeholder="说明原工序/工时错误及核对依据（必填）" /></label>
+          <p className="workflow-correction-note">本次校正同时更新工单工序快照、完工工时池和员工报表；不会静默改写产品主数据的已发布版本。</p>
+          <footer>
+            <button type="button" disabled={routeActionPending} onClick={() => setCorrectionTarget(null)}>取消</button>
+            <button className="primary" type="button" disabled={routeActionPending || correctionProcessName.trim().length < 2 || correctionReason.trim().length < 4 || Number(correctionSeconds) <= 0} onClick={() => { void submitCompletionCorrection(); }}>
+              {routeActionPending ? <Loader2 className="spin" size={15} /> : <Wrench size={15} />}确认校正并同步报表
+            </button>
+          </footer>
+        </section>
+      </div>}
 
       {historyRepairOpen && selected?.historicalRouteRepair && <div className="workflow-history-repair-backdrop" role="presentation" onMouseDown={event => {
         if (event.currentTarget === event.target && !routeActionPending) setHistoryRepairOpen(false);

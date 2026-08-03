@@ -54,6 +54,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:planning-integration
+      - name: Process completion withdrawal PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/process-completion-withdrawal-integration.test.ts
       - name: Type check
         run: npx tsc --noEmit
       - name: Lint

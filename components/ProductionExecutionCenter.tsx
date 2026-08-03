@@ -323,8 +323,6 @@ type ProcessCompletionForm = {
   defectQty: string;
   defectDisposition: DefectDisposition;
   workDate: string;
-  workStartedAt: string;
-  workEndedAt: string;
   employeeIds: string[];
   team: string;
   workstation: string;
@@ -442,43 +440,6 @@ function dateTimeText(value?: string | null): string {
   return new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(date);
-}
-
-function dateTimeLocalValue(value?: string | Date | null): string {
-  const date = value instanceof Date ? value : new Date(value || '');
-  if (Number.isNaN(date.getTime())) return '';
-  const parts = new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(date);
-  const valueFor = (type: Intl.DateTimeFormatPartTypes): string => (
-    parts.find(part => part.type === type)?.value || ''
-  );
-  const hour = valueFor('hour') === '24' ? '00' : valueFor('hour');
-  return `${valueFor('year')}-${valueFor('month')}-${valueFor('day')}T${hour}:${valueFor('minute')}`;
-}
-
-function defaultCompletionWorkWindow(startedAt?: string | null): {
-  workStartedAt: string;
-  workEndedAt: string;
-} {
-  const endedAt = new Date();
-  const candidate = startedAt ? new Date(startedAt) : null;
-  const duration = candidate && !Number.isNaN(candidate.getTime())
-    ? endedAt.getTime() - candidate.getTime()
-    : 0;
-  const safeStartedAt = candidate && duration > 0 && duration <= 72 * 60 * 60 * 1000
-    ? candidate
-    : new Date(endedAt.getTime() - 60 * 60 * 1000);
-  return {
-    workStartedAt: dateTimeLocalValue(safeStartedAt),
-    workEndedAt: dateTimeLocalValue(endedAt),
-  };
 }
 
 function priorityText(priority: string): string {
@@ -1482,7 +1443,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       if (!response.ok || !body.data) throw new Error(body.error || '工序可完成数量加载失败');
       if (completionRequestRef.current !== requestId) return;
       const context = body.data as ProcessCompletionContext;
-      const workWindow = defaultCompletionWorkWindow(context.step.startedAt);
       const previousEmployeeIds = previousForm?.employeeIds.filter(id => (
         context.employees.some(employee => employee.id === id)
       )) || [];
@@ -1497,8 +1457,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         defectQty: '0',
         defectDisposition,
         workDate,
-        workStartedAt: previousForm?.workStartedAt || workWindow.workStartedAt,
-        workEndedAt: previousForm?.workEndedAt || workWindow.workEndedAt,
         employeeIds: defaultEmployeeIds,
         team: previousForm?.team || user.employee?.team || '',
         workstation: previousForm?.workstation || '',
@@ -1553,22 +1511,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       setCompletionError('请选择至少一名本次作业员工');
       return;
     }
-    if (!completionForm.workStartedAt || !completionForm.workEndedAt) {
-      setCompletionError('请填写作业开始时间和结束时间');
-      return;
-    }
-    const workStartedAt = new Date(completionForm.workStartedAt);
-    const workEndedAt = new Date(completionForm.workEndedAt);
-    const workDuration = workEndedAt.getTime() - workStartedAt.getTime();
-    if (Number.isNaN(workDuration) || workDuration <= 0) {
-      setCompletionError('作业结束时间必须晚于开始时间');
-      return;
-    }
-    if (workDuration > 72 * 60 * 60 * 1000) {
-      setCompletionError('单次作业时间不能超过 72 小时');
-      return;
-    }
-
     setCompletionSaving(true);
     setCompletionError('');
     try {
@@ -1581,8 +1523,6 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           defectQty,
           defectDisposition: defectQty > 0 ? completionForm.defectDisposition : undefined,
           workDate: completionForm.workDate,
-          workStartedAt: workStartedAt.toISOString(),
-          workEndedAt: workEndedAt.toISOString(),
           employeeIds: completionForm.employeeIds,
           team: completionForm.team,
           workstation: completionForm.workstation,
@@ -2401,12 +2341,6 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
   const goodDestinationHint = waitsForParallelGroup
     ? `同组齐套后进入 ${nextProcessText}`
     : `立即进入 ${nextProcessText}`;
-  const workStartedAt = value?.workStartedAt ? new Date(value.workStartedAt) : null;
-  const workEndedAt = value?.workEndedAt ? new Date(value.workEndedAt) : null;
-  const workDuration = workStartedAt && workEndedAt
-    ? workEndedAt.getTime() - workStartedAt.getTime()
-    : 0;
-  const workRangeValid = workDuration > 0 && workDuration <= 72 * 60 * 60 * 1000;
   const selectedEmployees = context && value
     ? context.employees.filter(employee => value.employeeIds.includes(employee.id))
     : [];
@@ -2426,8 +2360,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
     || defectQty > processedQty
     || !context
     || processedQty > context.remainingInputQty
-    || !value.employeeIds.length
-    || !workRangeValid;
+    || !value.employeeIds.length;
 
   return <div className="modal-backdrop process-completion-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) close(); }}>
     <section ref={dialogRef} tabIndex={-1} className="production-dialog process-completion-dialog" role="dialog" aria-modal="true" aria-labelledby="process-completion-title" aria-describedby="process-completion-order">
@@ -2524,10 +2457,6 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
               </div>
               {!employeeKeyword && filteredEmployees.length > 6 && <button className="process-completion-show-employees" type="button" disabled={saving} onClick={() => setShowAllEmployees(current => !current)}>{showAllEmployees ? '收起人员列表' : `查看全部 ${filteredEmployees.length} 人`}</button>}
             </div>
-            <div className="process-completion-work-grid">
-              <label><span>开始时间</span><input type="datetime-local" value={value.workStartedAt} disabled={saving} onChange={event => setValue({ ...value, workStartedAt: event.target.value })} /></label>
-              <label><span>结束时间</span><input type="datetime-local" value={value.workEndedAt} disabled={saving} onChange={event => setValue({ ...value, workEndedAt: event.target.value })} /></label>
-            </div>
             <details className="process-completion-more">
               <summary>更多现场信息 <span>班组、工位、备注</span></summary>
               <div>
@@ -2550,7 +2479,6 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
             <div><dt>生产日期</dt><dd>{dateText(value.workDate)}</dd></div>
           </dl>
           <section className="process-completion-summary-people"><Users size={16} aria-hidden="true" /><span>{selectedEmployees.length ? selectedEmployees.map(employee => employee.name).join('、') : '请选择本次作业人员'}</span></section>
-          {!workRangeValid && <section className="process-completion-summary-warning"><AlertTriangle size={16} aria-hidden="true" /><span>请检查作业起止时间，单次不能超过 72 小时</span></section>}
           {!!context.recentCompletions.length && <details className="process-completion-history">
             <summary>最近转序记录 <span>{context.recentCompletions.length} 条</span></summary>
             <div>
@@ -2567,7 +2495,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
       {error && context && <div className="form-error" role="alert">{error}</div>}
       </div>
       <footer className="dialog-actions">
-        <span className={!invalid ? 'ready' : ''}>{!context || !value || loading ? '正在核对工序数据' : !value.employeeIds.length ? '请选择作业人员后提交' : !workRangeValid ? '请检查作业起止时间' : `将流转 ${formatProductionQuantity(goodQty)} ${unitLabel}良品`}</span>
+        <span className={!invalid ? 'ready' : ''}>{!context || !value || loading ? '正在核对工序数据' : !value.employeeIds.length ? '请选择作业人员后提交' : `将流转 ${formatProductionQuantity(goodQty)} ${unitLabel}良品`}</span>
         <button type="button" disabled={saving} onClick={close}>取消</button>
         <button className="primary-button" type="button" disabled={loading || saving || invalid} onClick={save}>{saving ? '正在流转...' : submitText}</button>
       </footer>

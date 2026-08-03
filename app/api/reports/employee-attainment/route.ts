@@ -313,6 +313,7 @@ export async function GET(req: NextRequest) {
         attendanceMatched: claimDaily.attendanceConfirmed,
         standardSource: claim.pool.standardSource,
         productTimeProfileVersion: claim.pool.productTimeProfileVersion,
+        corrected: claim.pool.standardSource === 'supervisor_correction',
       });
       groups.set(claim.employeeId, row);
     }

@@ -81,6 +81,7 @@ export type AuditMovement = {
   sourceSequenceGroup: number;
   targetSequenceGroup: number | null;
   voidedAt: string | null;
+  reversalOfId?: string | null;
 };
 
 export type AuditLaborClaim = {
@@ -221,7 +222,26 @@ export function auditProductionClosure(
   const stepsById = new Map(steps.map(step => [step.id, step]));
   const completionsById = new Map(snapshot.completions.map(completion => [completion.id, completion]));
   const activeCompletions = snapshot.completions.filter(completion => !completion.voidedAt);
-  const activeMovements = snapshot.movements.filter(movement => !movement.voidedAt);
+  const liveMovements = snapshot.movements.filter(movement => !movement.voidedAt);
+  const movementById = new Map(snapshot.movements.map(movement => [movement.id, movement]));
+  const reversalQuantityByMovementId = new Map<string, number>();
+  for (const movement of liveMovements) {
+    if (movement.type !== 'REVERSAL' || !movement.reversalOfId) continue;
+    reversalQuantityByMovementId.set(
+      movement.reversalOfId,
+      (reversalQuantityByMovementId.get(movement.reversalOfId) || 0) + movement.quantity,
+    );
+  }
+  const activeMovements = liveMovements
+    .filter(movement => movement.type !== 'REVERSAL')
+    .map(movement => ({
+      ...movement,
+      quantity: Math.max(
+        0,
+        movement.quantity - (reversalQuantityByMovementId.get(movement.id) || 0),
+      ),
+    }))
+    .filter(movement => movement.quantity > 0);
   const branchByOriginCompletionId = new Map<string, AuditWorkOrder>();
 
   function add(
@@ -751,6 +771,32 @@ export function auditProductionClosure(
         detail: { quantity: movement.quantity },
       });
     }
+    if (!movement.voidedAt && movement.type === 'REVERSAL') {
+      const original = movement.reversalOfId
+        ? movementById.get(movement.reversalOfId)
+        : undefined;
+      const reversalTotal = movement.reversalOfId
+        ? reversalQuantityByMovementId.get(movement.reversalOfId) || 0
+        : 0;
+      if (
+        !original
+        || original.type === 'REVERSAL'
+        || original.workOrderId !== movement.workOrderId
+        || original.targetStepId !== movement.targetStepId
+        || reversalTotal > original.quantity
+      ) {
+        add({
+          severity: 'error',
+          domain: 'quantity',
+          code: 'MOVEMENT_REVERSAL_INVALID',
+          entityType: 'movement',
+          entityId: movement.id,
+          workOrderId: movement.workOrderId,
+          message: '数量冲销没有正确关联原移动记录，或累计冲销超过原数量',
+          detail: { reversalOfId: movement.reversalOfId || null, reversalTotal },
+        });
+      }
+    }
     if (
       !movement.voidedAt
       && (
@@ -1017,7 +1063,7 @@ export function auditProductionClosure(
       }
     }
 
-    if (completion) {
+    if (completion && pool.status !== 'VOIDED') {
       const expectedEligibleQty = completion.timeBasis === 'per_batch'
         ? sumNumbers(activeCompletions
             .filter(record => record.stepId === pool.stepId)
