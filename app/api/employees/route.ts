@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { allocateEmployeeNumber } from '@/lib/employee-number';
+import {
+  employeeHireDateToDate,
+  EmployeeHireDateError,
+  normalizeEmployeeHireDateInput,
+} from '@/lib/employee-date';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
@@ -44,6 +49,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const name = cleanProcessText(body.name, 80);
     if (!name) return NextResponse.json({ ok: false, error: '请填写员工姓名' }, { status: 400 });
+    const hireDate = normalizeEmployeeHireDateInput(body.hireDate) ?? null;
     const employee = await prisma.$transaction(async tx => {
       const employeeNo = await allocateEmployeeNumber(tx);
       return tx.employee.create({
@@ -53,6 +59,7 @@ export async function POST(req: NextRequest) {
           department: cleanProcessText(body.department, 80) || null,
           position: cleanProcessText(body.position, 80) || null,
           team: cleanProcessText(body.team, 80) || null,
+          hireDate: employeeHireDateToDate(hireDate),
           attendanceEnabled: body.attendanceEnabled !== false,
         },
       });
@@ -67,6 +74,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, employee: serializeEmployee(employee) }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof EmployeeHireDateError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+    }
     if ((error as { code?: string }).code === 'P2002') {
       return NextResponse.json({ ok: false, error: '员工编号已经存在' }, { status: 409 });
     }

@@ -561,6 +561,7 @@ model Employee {
   department                    String?
   position                      String?
   team                          String?
+  hireDate                      DateTime?                      @map("hire_date") @db.Date
   isActive                      Boolean                        @default(true) @map("is_active")
   attendanceEnabled             Boolean                        @default(true) @map("attendance_enabled")
   createdAt                     DateTime                       @default(now()) @map("created_at")

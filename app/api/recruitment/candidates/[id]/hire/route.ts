@@ -1,6 +1,8 @@
 import { Prisma, RecruitmentCandidateStatus, RecruitmentDemandStatus } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { chinaDateKey } from '@/lib/china-date';
+import { employeeHireDateToDate } from '@/lib/employee-date';
 import { allocateEmployeeNumber } from '@/lib/employee-number';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
@@ -35,6 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           department: cleanRecruitmentText(body.department, 80) || current.demand.department,
           position: cleanRecruitmentText(body.position, 80) || current.demand.position,
           team: cleanRecruitmentText(body.team, 80) || current.demand.team,
+          hireDate: employeeHireDateToDate(chinaDateKey(new Date())),
           attendanceEnabled: body.attendanceEnabled !== false,
         },
       });

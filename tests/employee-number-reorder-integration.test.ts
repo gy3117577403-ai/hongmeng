@@ -49,9 +49,9 @@ test('real PostgreSQL employee renumbering swaps safely, rejects stale previews,
     });
 
     const items = [
-      { kind: 'EXISTING', employeeId: employeeB.id },
-      { kind: 'NEW', clientKey: `${prefix}-new`, name: `${prefix}-员工丙`, department: '工程部', position: '工程师', team: '工程' },
-      { kind: 'EXISTING', employeeId: employeeA.id },
+      { kind: 'EXISTING', employeeId: employeeB.id, targetEmployeeNo: '0055', hireDate: '2020-05-06' },
+      { kind: 'NEW', clientKey: `${prefix}-new`, name: `${prefix}-员工丙`, department: '工程部', position: '工程师', team: '工程', targetEmployeeNo: '0002', hireDate: '2026-08-03' },
+      { kind: 'EXISTING', employeeId: employeeA.id, targetEmployeeNo: '0001', hireDate: '2019-02-20' },
     ];
     const stalePreview = await previewEmployeeNumberReorder(items);
     await prisma.employee.update({ where: { id: employeeA.id }, data: { name: `${prefix}-员工甲修订` } });
@@ -81,12 +81,17 @@ test('real PostgreSQL employee renumbering swaps safely, rejects stale previews,
     });
     assert.equal(committed.replayed, false);
     assert.deepEqual(committed.batch.items.map(item => [item.name, item.oldEmployeeNo, item.newEmployeeNo]), [
-      [`${prefix}-员工乙`, '0002', '0001'],
+      [`${prefix}-员工乙`, '0002', '0055'],
       [`${prefix}-员工丙`, null, '0002'],
-      [`${prefix}-员工甲修订`, '0001', '0003'],
+      [`${prefix}-员工甲修订`, '0001', '0001'],
     ]);
+    const preservedEmployeeB = await prisma.employee.findUniqueOrThrow({ where: { id: employeeB.id } });
+    assert.equal(preservedEmployeeB.department, '生产部');
+    assert.equal(preservedEmployeeB.position, '班组长');
+    assert.equal(preservedEmployeeB.team, '压接');
+    assert.equal(preservedEmployeeB.hireDate?.toISOString().slice(0, 10), '2020-05-06');
     assert.equal((await prisma.user.findUnique({ where: { id: boundUser.id } }))?.employeeId, employeeA.id);
-    assert.equal((await prisma.employeeNumberSequence.findUnique({ where: { key: 'employee' } }))?.nextValue, 4);
+    assert.equal((await prisma.employeeNumberSequence.findUnique({ where: { key: 'employee' } }))?.nextValue, 56);
 
     const replay = await commitEmployeeNumberReorder({
       actorUserId: actor.id,
@@ -102,8 +107,8 @@ test('real PostgreSQL employee renumbering swaps safely, rejects stale previews,
       const employeeNo = await allocateEmployeeNumber(tx);
       return tx.employee.create({ data: { employeeNo, name: `${prefix}-后续入职员工` } });
     });
-    assert.equal(nextEmployee.employeeNo, '0004');
-    assert.equal((await prisma.employeeNumberSequence.findUnique({ where: { key: 'employee' } }))?.nextValue, 5);
+    assert.equal(nextEmployee.employeeNo, '0056');
+    assert.equal((await prisma.employeeNumberSequence.findUnique({ where: { key: 'employee' } }))?.nextValue, 57);
   } finally {
     await prisma.operationLog.deleteMany({ where: { targetType: 'employee_number_reorder_batch' } });
     await prisma.employeeNumberReorderBatch.deleteMany();

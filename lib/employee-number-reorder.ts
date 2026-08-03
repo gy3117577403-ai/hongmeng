@@ -5,6 +5,11 @@ import {
   EMPLOYEE_NUMBER_SEQUENCE_KEY,
   formatEmployeeNumber,
 } from '@/lib/employee-number';
+import {
+  employeeHireDateToDate,
+  formatEmployeeHireDate,
+  normalizeEmployeeHireDateInput,
+} from '@/lib/employee-date';
 import { prisma } from '@/lib/prisma';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
 
@@ -15,6 +20,8 @@ type UnknownRecord = Record<string, unknown>;
 export type EmployeeNumberReorderExistingInput = {
   kind: 'EXISTING';
   employeeId: string;
+  targetEmployeeNo?: string;
+  hireDate?: string | null;
 };
 
 export type EmployeeNumberReorderNewInput = {
@@ -26,6 +33,8 @@ export type EmployeeNumberReorderNewInput = {
   team: string | null;
   isActive: boolean;
   attendanceEnabled: boolean;
+  targetEmployeeNo?: string;
+  hireDate?: string | null;
 };
 
 export type EmployeeNumberReorderInput =
@@ -44,6 +53,9 @@ export type EmployeeNumberReorderPreviewRow = {
   team: string | null;
   isActive: boolean;
   attendanceEnabled: boolean;
+  oldHireDate: string | null;
+  hireDate: string | null;
+  hireDateChanged: boolean;
   changed: boolean;
 };
 
@@ -106,9 +118,47 @@ export function parseEmployeeNumberReorderItems(value: unknown): EmployeeNumberR
 
   const existingIds = new Set<string>();
   const newKeys = new Set<string>();
+  const targetEmployeeNumbers = new Set<string>();
   return value.map((item, index) => {
     const record = asRecord(item);
     const kind = String(record.kind || '').trim().toUpperCase();
+    const rawTargetEmployeeNo = limitedText(record.targetEmployeeNo, 20);
+    let targetEmployeeNo: string | undefined;
+    if (rawTargetEmployeeNo) {
+      if (!/^\d+$/.test(rawTargetEmployeeNo)) {
+        throw new EmployeeNumberReorderError(
+          `第 ${index + 1} 行目标工号必须是正整数`,
+          'EMPLOYEE_REORDER_TARGET_NUMBER_INVALID',
+        );
+      }
+      const numeric = Number(rawTargetEmployeeNo);
+      if (!Number.isSafeInteger(numeric) || numeric < 1 || numeric > 999_999_999) {
+        throw new EmployeeNumberReorderError(
+          `第 ${index + 1} 行目标工号超出允许范围`,
+          'EMPLOYEE_REORDER_TARGET_NUMBER_INVALID',
+        );
+      }
+      targetEmployeeNo = formatEmployeeNumber(numeric);
+      if (targetEmployeeNumbers.has(targetEmployeeNo)) {
+        throw new EmployeeNumberReorderError(
+          `目标工号 ${targetEmployeeNo} 在名单中重复`,
+          'EMPLOYEE_REORDER_DUPLICATE_TARGET_NUMBER',
+        );
+      }
+      targetEmployeeNumbers.add(targetEmployeeNo);
+    }
+    const hasHireDate = Object.prototype.hasOwnProperty.call(record, 'hireDate');
+    let hireDate: string | null | undefined;
+    if (hasHireDate) {
+      try {
+        hireDate = normalizeEmployeeHireDateInput(record.hireDate);
+      } catch {
+        throw new EmployeeNumberReorderError(
+          `第 ${index + 1} 行入职日期无效，请使用 YYYY-MM-DD`,
+          'EMPLOYEE_REORDER_HIRE_DATE_INVALID',
+        );
+      }
+    }
     if (kind === 'EXISTING') {
       const employeeId = limitedText(record.employeeId, 80);
       if (!employeeId) {
@@ -124,7 +174,12 @@ export function parseEmployeeNumberReorderItems(value: unknown): EmployeeNumberR
         );
       }
       existingIds.add(employeeId);
-      return { kind: 'EXISTING', employeeId };
+      return {
+        kind: 'EXISTING',
+        employeeId,
+        ...(targetEmployeeNo ? { targetEmployeeNo } : {}),
+        ...(hasHireDate ? { hireDate: hireDate ?? null } : {}),
+      };
     }
     if (kind !== 'NEW') {
       throw new EmployeeNumberReorderError(
@@ -157,6 +212,8 @@ export function parseEmployeeNumberReorderItems(value: unknown): EmployeeNumberR
       team: limitedText(record.team, 80) || null,
       isActive: record.isActive !== false,
       attendanceEnabled: record.attendanceEnabled !== false,
+      ...(targetEmployeeNo ? { targetEmployeeNo } : {}),
+      ...(hasHireDate ? { hireDate: hireDate ?? null } : {}),
     };
   });
 }
@@ -207,10 +264,26 @@ export function buildEmployeeNumberReorderPreview(input: {
     );
   }
 
+  const reservedTargetNumbers = new Set(
+    input.items.flatMap(item => item.targetEmployeeNo ? [item.targetEmployeeNo] : []),
+  );
+  let automaticNumber = 1;
+  const resolvedTargetNumbers = input.items.map(item => {
+    if (item.targetEmployeeNo) return item.targetEmployeeNo;
+    while (reservedTargetNumbers.has(formatEmployeeNumber(automaticNumber))) automaticNumber += 1;
+    const employeeNo = formatEmployeeNumber(automaticNumber);
+    reservedTargetNumbers.add(employeeNo);
+    automaticNumber += 1;
+    return employeeNo;
+  });
+
   const rows = input.items.map<EmployeeNumberReorderPreviewRow>((item, index) => {
-    const newEmployeeNo = formatEmployeeNumber(index + 1);
+    const newEmployeeNo = resolvedTargetNumbers[index];
     if (item.kind === 'EXISTING') {
       const employee = employeeById.get(item.employeeId)!;
+      const oldHireDate = formatEmployeeHireDate(employee.hireDate);
+      const hireDate = item.hireDate === undefined ? oldHireDate : item.hireDate;
+      const hireDateChanged = oldHireDate !== hireDate;
       return {
         key: `existing:${employee.id}`,
         kind: 'EXISTING',
@@ -223,7 +296,10 @@ export function buildEmployeeNumberReorderPreview(input: {
         team: employee.team,
         isActive: employee.isActive,
         attendanceEnabled: employee.attendanceEnabled,
-        changed: employee.employeeNo !== newEmployeeNo,
+        oldHireDate,
+        hireDate,
+        hireDateChanged,
+        changed: employee.employeeNo !== newEmployeeNo || hireDateChanged,
       };
     }
     return {
@@ -238,6 +314,9 @@ export function buildEmployeeNumberReorderPreview(input: {
       team: item.team,
       isActive: item.isActive,
       attendanceEnabled: item.attendanceEnabled,
+      oldHireDate: null,
+      hireDate: item.hireDate ?? null,
+      hireDateChanged: Boolean(item.hireDate),
       changed: true,
     };
   });
@@ -246,9 +325,15 @@ export function buildEmployeeNumberReorderPreview(input: {
   const existingCount = rows.length - createdCount;
   const changedCount = rows.filter(row => row.changed).length;
   const inactiveCount = rows.filter(row => !row.isActive).length;
+  const hireDateChangedCount = rows.filter(row => row.hireDateChanged).length;
+  const nextValue = Math.max(
+    ...rows.map(row => Number(row.newEmployeeNo)).filter(Number.isSafeInteger),
+    0,
+  ) + 1;
   const warnings = [
     ...(inactiveCount > 0 ? [`名单包含 ${inactiveCount} 名停用员工；保留在批次中可以避免历史编号被静默复用。`] : []),
     ...(createdCount > 0 ? [`提交时将同时新建 ${createdCount} 份补录员工档案。`] : []),
+    ...(hireDateChangedCount > 0 ? [`将写入或更新 ${hireDateChangedCount} 人的真实入职日期。`] : []),
     '员工、考勤、生产、日计划和账号的内部 UUID 关联不会改变。',
   ];
 
@@ -261,7 +346,7 @@ export function buildEmployeeNumberReorderPreview(input: {
     changedCount,
     inactiveCount,
     hasChanges: changedCount > 0,
-    nextEmployeeNo: formatEmployeeNumber(rows.length + 1),
+    nextEmployeeNo: formatEmployeeNumber(nextValue),
     confirmationText: `确认重排${rows.length}人`,
     warnings,
     preservedLinks: input.preservedLinks || emptyLinkSummary(),
@@ -344,6 +429,7 @@ function serializeBatch(batch: {
         department: item.employee.department,
         position: item.employee.position,
         team: item.employee.team,
+        hireDate: formatEmployeeHireDate(item.employee.hireDate),
       })),
   };
 }
@@ -476,7 +562,12 @@ export async function commitEmployeeNumberReorder(input: {
         const employee = row.kind === 'EXISTING'
           ? await tx.employee.update({
             where: { id: row.employeeId! },
-            data: { employeeNo: row.newEmployeeNo },
+            data: {
+              employeeNo: row.newEmployeeNo,
+              ...(source.hireDate !== undefined
+                ? { hireDate: employeeHireDateToDate(source.hireDate) }
+                : {}),
+            },
           })
           : await tx.employee.create({
             data: {
@@ -485,6 +576,7 @@ export async function commitEmployeeNumberReorder(input: {
               department: row.department,
               position: row.position,
               team: row.team,
+              hireDate: employeeHireDateToDate(source.kind === 'NEW' ? source.hireDate ?? null : null),
               isActive: source.kind === 'NEW' ? source.isActive : true,
               attendanceEnabled: source.kind === 'NEW' ? source.attendanceEnabled : true,
             },
@@ -500,13 +592,14 @@ export async function commitEmployeeNumberReorder(input: {
             department: employee.department,
             position: employee.position,
             team: employee.team,
+            hireDate: formatEmployeeHireDate(employee.hireDate),
             isActive: employee.isActive,
             attendanceEnabled: employee.attendanceEnabled,
           } as Prisma.InputJsonValue,
         });
       }
 
-      const nextValue = preview.rows.length + 1;
+      const nextValue = Number(preview.nextEmployeeNo);
       await tx.employeeNumberSequence.update({
         where: { key: EMPLOYEE_NUMBER_SEQUENCE_KEY },
         data: { nextValue },

@@ -3,6 +3,11 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
+import {
+  employeeHireDateToDate,
+  EmployeeHireDateError,
+  normalizeEmployeeHireDateInput,
+} from '@/lib/employee-date';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +35,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         department: body.department === undefined ? existing.department : cleanProcessText(body.department, 80) || null,
         position: body.position === undefined ? existing.position : cleanProcessText(body.position, 80) || null,
         team: body.team === undefined ? existing.team : cleanProcessText(body.team, 80) || null,
+        ...(body.hireDate === undefined
+          ? {}
+          : { hireDate: employeeHireDateToDate(normalizeEmployeeHireDateInput(body.hireDate) ?? null) }),
         isActive: body.isActive === undefined ? existing.isActive : body.isActive === true,
         attendanceEnabled: body.attendanceEnabled === undefined
           ? existing.attendanceEnabled
@@ -46,6 +54,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ ok: true, employee: serializeEmployee(employee) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof EmployeeHireDateError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
+    }
     if ((error as { code?: string }).code === 'P2002') {
       return NextResponse.json({ ok: false, error: '员工编号已经存在' }, { status: 409 });
     }

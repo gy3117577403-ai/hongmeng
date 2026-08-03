@@ -16,6 +16,7 @@ function employee(id: string, employeeNo: string, name: string, active = true): 
     department: '生产部',
     position: '操作员',
     team: '装配',
+    hireDate: null,
     isActive: active,
     attendanceEnabled: true,
     createdAt: new Date('2026-08-01T00:00:00.000Z'),
@@ -69,6 +70,32 @@ test('employee number reorder rejects duplicate existing employees and blank sup
   assert.throws(
     () => parseEmployeeNumberReorderItems([{ kind: 'NEW', clientKey: 'new-a', name: '  ' }]),
     /缺少姓名/,
+  );
+});
+
+test('employee number reorder honors explicit target numbers and real hire dates', () => {
+  const employees = [employee('employee-a', '0008', '员工甲')];
+  const items = parseEmployeeNumberReorderItems([{
+    kind: 'EXISTING',
+    employeeId: 'employee-a',
+    targetEmployeeNo: '55',
+    hireDate: '2020-05-06',
+  }]);
+  const preview = buildEmployeeNumberReorderPreview({ employees, items });
+
+  assert.equal(preview.rows[0].newEmployeeNo, '0055');
+  assert.equal(preview.rows[0].hireDate, '2020-05-06');
+  assert.equal(preview.rows[0].hireDateChanged, true);
+  assert.equal(preview.nextEmployeeNo, '0056');
+});
+
+test('employee number reorder rejects duplicate explicit target numbers', () => {
+  assert.throws(
+    () => parseEmployeeNumberReorderItems([
+      { kind: 'EXISTING', employeeId: 'employee-a', targetEmployeeNo: '1' },
+      { kind: 'EXISTING', employeeId: 'employee-b', targetEmployeeNo: '0001' },
+    ]),
+    /目标工号 0001.*重复/,
   );
 });
 

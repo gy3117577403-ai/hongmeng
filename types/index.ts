@@ -991,6 +991,7 @@ export type EmployeeDTO = {
   department?: string | null;
   position?: string | null;
   team?: string | null;
+  hireDate: string | null;
   isActive: boolean;
   attendanceEnabled: boolean;
   createdAt: string;

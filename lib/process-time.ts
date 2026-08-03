@@ -150,6 +150,7 @@ export function serializeEmployee(employee: Employee): EmployeeDTO {
     department: employee.department,
     position: employee.position,
     team: employee.team,
+    hireDate: employee.hireDate ? employee.hireDate.toISOString().slice(0, 10) : null,
     isActive: employee.isActive,
     attendanceEnabled: employee.attendanceEnabled,
     createdAt: employee.createdAt.toISOString(),

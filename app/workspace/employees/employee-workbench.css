@@ -5784,6 +5784,33 @@ button.skill-matrix-person:hover { background: #f7faff; }
 .hr-reorder-body { min-height: 0; padding: 16px 20px 20px; overflow: auto; background: #f7f9fc; }
 .hr-reorder-body > section + section { margin-top: 12px; }
 
+.hr-reorder-import,
+.hr-reorder-import-summary {
+  min-height: 78px;
+  padding: 13px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #b8cffb;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #edf4ff, #fff 70%);
+  box-shadow: 0 8px 22px rgba(47, 115, 246, .07);
+}
+.hr-reorder-import > span,
+.hr-reorder-import-summary > svg { width: 42px; height: 42px; flex: none; display: grid; place-items: center; border-radius: 12px; background: #fff; color: var(--hr-blue); box-shadow: 0 5px 16px rgba(47, 115, 246, .1); }
+.hr-reorder-import > span svg { width: 22px; }
+.hr-reorder-import > div,
+.hr-reorder-import-summary > div { min-width: 0; flex: 1; display: grid; gap: 4px; }
+.hr-reorder-import strong,
+.hr-reorder-import-summary b { color: #1e3e69; font-size: 13px; }
+.hr-reorder-import p,
+.hr-reorder-import-summary p { margin: 0; color: #657a97; font-size: 10px; line-height: 1.5; }
+.hr-reorder-import button { min-height: 40px; flex: none; font-size: 10px; }
+.hr-reorder-import button svg { width: 16px; }
+.hr-reorder-import-summary { min-height: 64px; border-color: #c6e8da; background: linear-gradient(135deg, var(--hr-green-soft), #fff 72%); }
+.hr-reorder-import-summary > svg { width: 34px; height: 34px; padding: 8px; color: var(--hr-green); }
+.hr-reorder-import-summary > span { padding: 6px 9px; border-radius: 8px; background: #fff; color: #21775b; font-size: 10px; font-weight: 850; white-space: nowrap; }
+
 .hr-reorder-guard,
 .hr-reorder-link-proof {
   min-height: 64px;
@@ -5835,7 +5862,7 @@ button.skill-matrix-person:hover { background: #f7faff; }
 .hr-reorder-table > header,
 .hr-reorder-table article {
   display: grid;
-  grid-template-columns: 100px 105px minmax(140px, 1.25fr) minmax(100px, 1fr) minmax(100px, 1fr) minmax(90px, .9fr) 106px;
+  grid-template-columns: 100px 105px minmax(140px, 1.2fr) 110px minmax(95px, .9fr) minmax(95px, .9fr) minmax(85px, .8fr) 106px;
   align-items: center;
   gap: 8px;
 }
@@ -5931,7 +5958,7 @@ button.skill-matrix-person:hover { background: #f7faff; }
   .hr-reorder-dialog { width: calc(100vw - 20px); height: calc(100dvh - 20px); }
   .hr-reorder-table { overflow-x: auto; }
   .hr-reorder-table > header,
-  .hr-reorder-table article { min-width: 900px; }
+  .hr-reorder-table article { min-width: 980px; }
   .hr-reorder-preview-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
@@ -5943,6 +5970,10 @@ button.skill-matrix-person:hover { background: #f7faff; }
   .hr-reorder-steps > span > i { width: 24px; height: 24px; }
   .hr-reorder-body { padding: 12px; }
   .hr-reorder-guard { align-items: flex-start; flex-wrap: wrap; }
+  .hr-reorder-import,
+  .hr-reorder-import-summary { align-items: flex-start; flex-wrap: wrap; }
+  .hr-reorder-import > div,
+  .hr-reorder-import-summary > div { flex-basis: calc(100% - 60px); }
   .hr-reorder-toolbar { align-items: flex-start; flex-direction: column; }
   .hr-reorder-bulk { grid-template-columns: 1fr; }
   .hr-reorder-preview-list { overflow-x: auto; }

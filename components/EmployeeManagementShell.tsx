@@ -91,6 +91,7 @@ type EmployeeDraft = {
   department: string;
   position: string;
   team: string;
+  hireDate: string;
   isActive: boolean;
   attendanceEnabled: boolean;
 };
@@ -237,6 +238,7 @@ const emptyDraft: EmployeeDraft = {
   department: '',
   position: '',
   team: '',
+  hireDate: '',
   isActive: true,
   attendanceEnabled: true,
 };
@@ -334,6 +336,7 @@ function toDraft(employee: EmployeeDTO): EmployeeDraft {
     department: employee.department || '',
     position: employee.position || '',
     team: employee.team || '',
+    hireDate: employee.hireDate || '',
     isActive: employee.isActive,
     attendanceEnabled: employee.attendanceEnabled,
   };
@@ -687,7 +690,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     active: employees.filter(employee => employee.isActive).length,
     attendance: employees.filter(employee => employee.isActive && employee.attendanceEnabled).length,
     inactive: employees.filter(employee => !employee.isActive).length,
-    newThisMonth: employees.filter(employee => isThisMonth(employee.createdAt)).length,
+    newThisMonth: employees.filter(employee => employee.hireDate && isThisMonth(employee.hireDate)).length,
   }), [employees]);
 
   const filteredEmployees = useMemo(() => {
@@ -739,11 +742,11 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   const maxDepartmentCount = Math.max(...departmentStats.map(item => item.active), 1);
   const archiveCompleteness = summary.active
     ? Math.round((employees.filter(employee => (
-      employee.isActive && employee.department && employee.position && employee.team
+      employee.isActive && employee.department && employee.position && employee.team && employee.hireDate
     )).length / summary.active) * 100)
     : 0;
   const archiveCompleteCount = employees.filter(employee => (
-    employee.isActive && employee.department && employee.position && employee.team
+    employee.isActive && employee.department && employee.position && employee.team && employee.hireDate
   )).length;
   const archiveMissingCount = Math.max(0, summary.active - archiveCompleteCount);
   const attendanceCoverage = summary.active
@@ -1359,7 +1362,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
           ? `预计 ${nextEmployeeNo}`
           : '保存时自动编号'
       : draft.employeeNo;
-    const archiveFields = [creating ? '系统自动编号' : draft.employeeNo, draft.name, draft.department, draft.position, draft.team];
+    const archiveFields = [creating ? '系统自动编号' : draft.employeeNo, draft.name, draft.hireDate, draft.department, draft.position, draft.team];
     const profileCompleteness = Math.round((archiveFields.filter(value => value.trim()).length / archiveFields.length) * 100);
     const profileMissingCount = archiveFields.filter(value => !value.trim()).length;
     const profilePerson = responsibilityPeople.find(person => person.name === profileName);
@@ -1540,7 +1543,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                   <em className={draft.isActive ? 'ok' : ''}>{draft.isActive ? '在职' : '已停用'}</em>
                   <em className={draft.attendanceEnabled ? 'ok' : ''}>{draft.attendanceEnabled ? '考勤启用' : '未启用考勤'}</em>
                 </span>
-                <small><Building2 />{profileDepartment} · {profileTeam}{profileEmployee ? ` · 入职档案 ${formatDate(profileEmployee.createdAt)}` : ''}</small>
+                <small><Building2 />{profileDepartment} · {profileTeam} · {draft.hireDate ? `入职 ${formatDate(draft.hireDate)}` : '入职日期待维护'}</small>
               </div>
               <div className="hr-profile-actions">
                 <button
@@ -1593,6 +1596,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                         <small>{creating ? '创建档案时正式分配，离职后不回收' : '系统唯一编号，普通档案编辑中不可修改'}</small>
                       </label>
                       <label><span>员工姓名 *</span><input id="hr-employee-name" value={draft.name} maxLength={80} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="填写真实姓名" /></label>
+                      <label><span>入职时间</span><input type="date" value={draft.hireDate} onChange={event => setDraft(current => ({ ...current, hireDate: event.target.value }))} /></label>
                     </fieldset>
                     <fieldset>
                       <legend><Building2 />组织归属</legend>
@@ -1621,7 +1625,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                     <article><small>所属部门</small><strong>{profileDepartment}</strong><span>组织归属</span></article>
                     <article><small>当前岗位</small><strong>{profilePosition}</strong><span>岗位配置</span></article>
                     <article><small>所在班组</small><strong>{profileTeam}</strong><span>{profileTeamMembers.length} 名在岗成员</span></article>
-                    <article><small>档案建立</small><strong>{profileEmployee ? formatDate(profileEmployee.createdAt) : '创建后生成'}</strong><span>{profileEmployee ? `更新于 ${formatDateTime(profileEmployee.updatedAt)}` : '待保存'}</span></article>
+                    <article><small>入职日期</small><strong>{draft.hireDate ? formatDate(draft.hireDate) : '待维护'}</strong><span>{profileEmployee ? `档案建立 ${formatDate(profileEmployee.createdAt)}` : '保存后建立档案'}</span></article>
                   </div>
                   <div className="hr-editor-switches">
                     <label>

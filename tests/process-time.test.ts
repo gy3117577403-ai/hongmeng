@@ -73,6 +73,7 @@ test('employee serialization keeps position and team as separate profile fields'
     department: '生产',
     position: '压接操作员',
     team: '前端一组',
+    hireDate: new Date('2020-05-06T00:00:00.000Z'),
     isActive: true,
     attendanceEnabled: true,
     createdAt: now,
@@ -81,6 +82,7 @@ test('employee serialization keeps position and team as separate profile fields'
 
   assert.equal(employee.position, '压接操作员');
   assert.equal(employee.team, '前端一组');
+  assert.equal(employee.hireDate, '2020-05-06');
 });
 
 test('product time stores one aggregate per-set duration for each process', () => {

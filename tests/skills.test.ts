@@ -26,6 +26,7 @@ const employee: EmployeeDTO = {
   department: '生产部',
   position: '生产主管',
   team: '主管',
+  hireDate: null,
   isActive: true,
   attendanceEnabled: true,
   createdAt: now,
