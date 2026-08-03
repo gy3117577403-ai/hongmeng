@@ -12,8 +12,13 @@ test(
   { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
   async () => {
     const prefix = `ITAR-${Date.now()}-${randomUUID().slice(0, 8)}`;
-    const actor = await prisma.user.findFirstOrThrow({
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    const actor = await prisma.user.create({
+      data: {
+        username: `${prefix}-ADMIN`,
+        passwordHash: 'integration-test-not-a-login-hash',
+        displayName: `${prefix} administrator`,
+        laborRole: 'ADMIN',
+      },
       select: { id: true, username: true, displayName: true },
     });
     const employee = await prisma.employee.create({
@@ -183,6 +188,7 @@ test(
       await prisma.workOrderProcessRoute.delete({ where: { id: order.processRoute.id } });
       await prisma.workOrder.delete({ where: { id: order.id } });
       await prisma.employee.delete({ where: { id: employee.id } });
+      await prisma.user.delete({ where: { id: actor.id } });
     }
   },
 );
@@ -192,9 +198,13 @@ test(
   { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
   async () => {
     const prefix = `ITAS-${Date.now()}-${randomUUID().slice(0, 8)}`;
-    const actor = await prisma.user.findFirstOrThrow({
-      where: { laborRole: 'ADMIN' },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    const actor = await prisma.user.create({
+      data: {
+        username: `${prefix}-ADMIN`,
+        passwordHash: 'integration-test-not-a-login-hash',
+        displayName: `${prefix} administrator`,
+        laborRole: 'ADMIN',
+      },
       select: { id: true, username: true, displayName: true },
     });
     const employee = await prisma.employee.create({
@@ -335,6 +345,7 @@ test(
       await prisma.workOrderProcessRoute.delete({ where: { id: order.processRoute.id } });
       await prisma.workOrder.delete({ where: { id: order.id } });
       await prisma.employee.delete({ where: { id: employee.id } });
+      await prisma.user.delete({ where: { id: actor.id } });
     }
   },
 );
