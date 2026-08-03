@@ -46,6 +46,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:daily-plan-integration
+      - name: Employee number reorder PostgreSQL integration
+        env:
+          RUN_EMPLOYEE_REORDER_INTEGRATION: "1"
+        run: npm run test:employee-number-integration
       - name: Production plan auto-release PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"

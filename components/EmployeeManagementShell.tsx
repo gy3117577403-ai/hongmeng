@@ -26,6 +26,7 @@ import {
   IdCard,
   Layers3,
   LayoutDashboard,
+  ListOrdered,
   Loader2,
   MapPin,
   MessageSquareText,
@@ -48,7 +49,8 @@ import {
   X,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import EmployeeNumberReorderDialog from '@/components/EmployeeNumberReorderDialog';
 import { useToastBridge } from '@/components/ToastProvider';
 import { ResponsibilityMatrixWorkspace } from '@/components/ResponsibilityMatrixWorkspace';
 import SkillPerformanceWorkbench from '@/components/SkillPerformanceWorkbench';
@@ -543,6 +545,8 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   const [selectedRecruitmentCandidateId, setSelectedRecruitmentCandidateId] = useState('');
   const [selectedRecruitmentInterviewId, setSelectedRecruitmentInterviewId] = useState('');
   const [selectedTrainingPlanIndex, setSelectedTrainingPlanIndex] = useState(0);
+  const [numberReorderOpen, setNumberReorderOpen] = useState(false);
+  const workbenchRef = useRef<HTMLElement>(null);
   useToastBridge(toast, setToast);
 
   useEffect(() => {
@@ -1104,6 +1108,12 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     if (view !== 'directory') changeView('directory');
   }
 
+  function beginNumberReorder(): void {
+    if (!confirmDiscard()) return;
+    if (dirty) setDraft(baseline);
+    setNumberReorderOpen(true);
+  }
+
   async function saveEmployee(): Promise<void> {
     if (!draft.name.trim()) {
       setFormError('请填写员工姓名');
@@ -1428,6 +1438,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
               </button>
             )}
             <button type="button" className="hr-icon-button" title="刷新员工档案" onClick={() => void loadHumanResources()}><RefreshCw size={17} /></button>
+            <button type="button" className="hr-secondary-button hr-reorder-trigger" onClick={beginNumberReorder}><ListOrdered size={17} />编号重排</button>
             <button type="button" className="hr-primary-button" onClick={beginCreate}><Plus size={17} />新增员工</button>
           </div>
         </section>
@@ -2420,8 +2431,8 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     }
   }
 
-  return (
-    <main className="hr-workbench hm-workbench-root">
+  return (<>
+    <main ref={workbenchRef} className="hr-workbench hm-workbench-root">
       <div className="hr-shell">
         <nav className="hr-module-tabs" aria-label="人事管理功能导航">
           <div className="hr-module-tab-list">
@@ -2459,5 +2470,21 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
 
       {loading && <div className="hr-loading"><Loader2 className="spin" size={17} />正在汇总人事数据</div>}
     </main>
-  );
+    {numberReorderOpen && <EmployeeNumberReorderDialog
+      employees={employees}
+      backgroundRef={workbenchRef}
+      onClose={() => setNumberReorderOpen(false)}
+      onApplied={nextEmployees => {
+        const sorted = sortEmployees(nextEmployees);
+        const nextSelected = sorted.find(employee => employee.id === selectedEmployeeId) || sorted[0] || null;
+        setEmployees(sorted);
+        setSelectedEmployeeId(nextSelected?.id || '');
+        setCreating(false);
+        const nextDraft = nextSelected ? toDraft(nextSelected) : emptyDraft;
+        setDraft(nextDraft);
+        setBaseline(nextDraft);
+        setToast('员工编号重排已完成，后续新员工将从下一编号继续');
+      }}
+    />}
+  </>);
 }

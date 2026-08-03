@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 
 export const EMPLOYEE_NUMBER_SEQUENCE_KEY = 'employee';
+export const EMPLOYEE_NUMBER_LOCK_KEY = 'hongmeng:employee-number-reorder';
 export const EMPLOYEE_NUMBER_MINIMUM_WIDTH = 4;
 
 export function formatEmployeeNumber(value: number): string {
@@ -11,6 +12,12 @@ export function formatEmployeeNumber(value: number): string {
 }
 
 export async function allocateEmployeeNumber(tx: Prisma.TransactionClient): Promise<string> {
+  // Serialize ordinary hires with the one-time reorder transaction. This makes
+  // sure a hire that starts during a reorder sees the committed final roster,
+  // instead of calculating against temporary or pre-reorder employee numbers.
+  await tx.$queryRaw<Array<{ locked: string }>>`
+    SELECT pg_advisory_xact_lock(hashtext(${EMPLOYEE_NUMBER_LOCK_KEY}))::text AS "locked"
+  `;
   const rows = await tx.$queryRaw<Array<{ allocatedNumber: number }>>`
     WITH "current_employee_number" AS (
       SELECT COALESCE(
