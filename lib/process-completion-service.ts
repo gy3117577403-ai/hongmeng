@@ -27,6 +27,7 @@ import {
   normalizeWorkOrderStage,
 } from '@/lib/work-orders';
 import { loadWeeklyProcessWorkerPresetForStep } from '@/lib/weekly-process-worker-preset-service';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
 
 export class ProcessCompletionServiceError extends Error {
   readonly status: number;
@@ -970,7 +971,7 @@ export async function loadProcessCompletionContext(
       },
     }),
     prisma.employee.findMany({
-      where: { isActive: true },
+      where: productionEmployeeWhere(),
       orderBy: [{ employeeNo: 'asc' }, { name: 'asc' }],
       select: {
         id: true,
@@ -2838,13 +2839,13 @@ async function performProcessCompletion(
     const activeEmployees = await tx.employee.findMany({
       where: {
         id: { in: input.employeeIds },
-        isActive: true,
+        ...productionEmployeeWhere(),
       },
       select: { id: true },
     });
     if (activeEmployees.length !== input.employeeIds.length) {
       throw new ProcessCompletionServiceError(
-        '所选作业员工不存在或已停用，请刷新后重新选择',
+        '所选作业员工不属于生产部、未启用考勤或已停用，请刷新后重新选择',
         400,
         'PROCESS_COMPLETION_EMPLOYEE_INVALID',
       );

@@ -1144,6 +1144,7 @@ export type AttendanceRecordDTO = {
   id: string;
   employeeId: string;
   employee: EmployeeDTO;
+  departmentSnapshot?: string | null;
   workDate: string;
   status: AttendanceStatus;
   attendanceType: AttendanceType;
@@ -1423,6 +1424,8 @@ export type EmployeeAttainmentRowDTO = {
 export type EmployeeAttainmentReportDTO = {
   period: 'today' | 'week' | 'month';
   date: string;
+  workforceScope?: 'PRODUCTION';
+  workforceLabel?: string;
   rangeStart: string;
   rangeEnd: string;
   summary: {

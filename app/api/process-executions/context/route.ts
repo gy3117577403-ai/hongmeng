@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { serializeEmployee } from '@/lib/process-time';
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
         },
       }),
       prisma.employee.findMany({
-        where: { isActive: true },
+        where: productionEmployeeWhere(),
         orderBy: [{ employeeNo: 'asc' }],
       }),
     ]);

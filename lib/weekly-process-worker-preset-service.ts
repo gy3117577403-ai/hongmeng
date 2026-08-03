@@ -5,6 +5,10 @@ import {
   weeklyProcessKey,
   weeklyProcessPresetScopeKey,
 } from '@/lib/weekly-process-domain';
+import {
+  isProductionWorkforceEmployee,
+  productionEmployeeWhere,
+} from '@/lib/production-workforce';
 
 export class WeeklyProcessWorkerPresetError extends Error {
   readonly status: number;
@@ -59,7 +63,9 @@ function serializePreset(preset: PresetRecord): WeeklyProcessWorkerPresetDTO {
     processDefinitionId: preset.processDefinitionId,
     stepId: preset.stepId,
     version: preset.version,
-    employees: preset.members.map(member => ({
+    employees: preset.members
+      .filter(member => isProductionWorkforceEmployee(member.employee))
+      .map(member => ({
       id: member.employee.id,
       employeeNo: member.employee.employeeNo,
       name: member.employee.name,
@@ -68,7 +74,7 @@ function serializePreset(preset: PresetRecord): WeeklyProcessWorkerPresetDTO {
       team: member.employee.team,
       isActive: member.employee.isActive,
       priority: member.position,
-    })),
+      })),
     updatedAt: preset.updatedAt.toISOString(),
   };
 }
@@ -240,13 +246,13 @@ export async function saveWeeklyProcessWorkerPreset(input: {
   const target = await validatePresetTarget({ processKey, stepId });
   const employees = employeeIds.length
     ? await prisma.employee.findMany({
-        where: { id: { in: employeeIds }, isActive: true },
+        where: { id: { in: employeeIds }, ...productionEmployeeWhere() },
         select: { id: true },
       })
     : [];
   if (employees.length !== employeeIds.length) {
     throw new WeeklyProcessWorkerPresetError(
-      '部分预选员工已离职或停用，请刷新后重新选择',
+      '部分预选员工不属于生产部、未启用考勤或已停用，请刷新后重新选择',
       400,
       'WEEKLY_PROCESS_PRESET_EMPLOYEE_INACTIVE',
     );

@@ -12,6 +12,7 @@ import {
 } from '@/lib/employee-date';
 import { prisma } from '@/lib/prisma';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
+import { normalizeEmployeeDepartment } from '@/lib/production-workforce';
 
 const MAX_REORDER_EMPLOYEES = 2_000;
 
@@ -207,7 +208,7 @@ export function parseEmployeeNumberReorderItems(value: unknown): EmployeeNumberR
       kind: 'NEW',
       clientKey,
       name,
-      department: limitedText(record.department, 80) || null,
+      department: normalizeEmployeeDepartment(limitedText(record.department, 80)),
       position: limitedText(record.position, 80) || null,
       team: limitedText(record.team, 80) || null,
       isActive: record.isActive !== false,

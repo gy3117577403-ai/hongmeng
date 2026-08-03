@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
+import { normalizeEmployeeDepartment } from '@/lib/production-workforce';
 import {
   employeeHireDateToDate,
   EmployeeHireDateError,
@@ -32,7 +33,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       where: { id: existing.id },
       data: {
         name,
-        department: body.department === undefined ? existing.department : cleanProcessText(body.department, 80) || null,
+        department: body.department === undefined
+          ? existing.department
+          : normalizeEmployeeDepartment(cleanProcessText(body.department, 80)),
         position: body.position === undefined ? existing.position : cleanProcessText(body.position, 80) || null,
         team: body.team === undefined ? existing.team : cleanProcessText(body.team, 80) || null,
         ...(body.hireDate === undefined

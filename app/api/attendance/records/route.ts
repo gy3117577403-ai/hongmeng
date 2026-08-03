@@ -14,6 +14,13 @@ import {
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import {
+  attendanceEmployeeWhere,
+  attendanceRecordScopeWhere,
+  normalizeEmployeeDepartment,
+  parseAttendanceWorkforceScope,
+  type AttendanceWorkforceScope,
+} from '@/lib/production-workforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -35,28 +42,37 @@ export async function GET(req: NextRequest) {
     const start = parseWorkDate(range.start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const end = parseWorkDate(range.end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const employeeId = cleanProcessText(req.nextUrl.searchParams.get('employeeId'), 80);
-    const [records, employees] = await Promise.all([
+    const requestedScope = req.nextUrl.searchParams.get('scope');
+    const scope: AttendanceWorkforceScope = requestedScope
+      ? parseAttendanceWorkforceScope(requestedScope)
+      : 'ALL';
+    const [records, employees, productionCount, otherCount, allCount] = await Promise.all([
       prisma.attendanceRecord.findMany({
         where: {
           workDate: { gte: start, lt: end },
           ...(employeeId ? { employeeId } : {}),
+          ...attendanceRecordScopeWhere(scope),
         },
         include,
         orderBy: [{ workDate: 'desc' }, { employee: { employeeNo: 'asc' } }],
       }),
       prisma.employee.findMany({
         where: {
-          isActive: true,
-          attendanceEnabled: true,
+          ...attendanceEmployeeWhere(scope),
           ...(employeeId ? { id: employeeId } : {}),
         },
         orderBy: { employeeNo: 'asc' },
       }),
+      prisma.employee.count({ where: attendanceEmployeeWhere('PRODUCTION') }),
+      prisma.employee.count({ where: attendanceEmployeeWhere('OTHER') }),
+      prisma.employee.count({ where: attendanceEmployeeWhere('ALL') }),
     ]);
     const confirmed = records.filter(item => item.status === 'confirmed');
     return NextResponse.json({
       ok: true,
       period,
+      scope,
+      scopeCounts: { production: productionCount, other: otherCount, all: allCount },
       date: range.date,
       rangeStart: range.start.toISOString(),
       rangeEnd: range.end.toISOString(),
@@ -102,6 +118,7 @@ export async function POST(req: NextRequest) {
       where: { employeeId_workDate: { employeeId, workDate: workDate.value } },
       create: {
         employeeId,
+        departmentSnapshot: normalizeEmployeeDepartment(employee.department) || '',
         workDate: workDate.value,
         status: confirm ? 'confirmed' : 'draft',
         attendanceType,

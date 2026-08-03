@@ -23,6 +23,7 @@ import {
 } from '@/lib/process-completion-domain';
 import { autoAssignCompletionLaborPool } from '@/lib/process-completion-service';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
 import type {
   ProcessLaborClaimDTO,
   ProcessLaborAccessDTO,
@@ -422,7 +423,7 @@ export async function listProcessLaborPools(input: {
       ],
     }),
     prisma.employee.findMany({
-      where: { isActive: true, ...employeeScope },
+      where: { ...productionEmployeeWhere(), ...employeeScope },
       orderBy: [{ employeeNo: 'asc' }],
     }),
   ]);
@@ -824,12 +825,12 @@ export async function claimProcessLaborPool(command: ClaimCommand): Promise<{
           where: { id: command.userId },
           select: laborActorSelect,
         }),
-        tx.employee.findUnique({ where: { id: employeeId } }),
+        tx.employee.findFirst({ where: { id: employeeId, ...productionEmployeeWhere() } }),
       ]);
       if (!actor?.isActive) missingLaborActor();
       if (!employee) {
         throw new ProcessLaborServiceError(
-          '请选择有效员工',
+          '请选择生产部且已启用考勤的在职员工',
           400,
           'PROCESS_LABOR_EMPLOYEE_REQUIRED',
         );
@@ -1085,7 +1086,10 @@ export async function claimProcessLaborPoolBatch(command: BatchClaimCommand): Pr
           select: laborActorSelect,
         }),
         tx.employee.findMany({
-          where: { id: { in: allocations.map(item => item.employeeId) } },
+          where: {
+            id: { in: allocations.map(item => item.employeeId) },
+            ...productionEmployeeWhere(),
+          },
         }),
         tx.processLaborClaim.findMany({
           where: { idempotencyKey: { in: itemKeys } },
@@ -1103,7 +1107,7 @@ export async function claimProcessLaborPoolBatch(command: BatchClaimCommand): Pr
       if (!actor?.isActive) missingLaborActor();
       if (employees.length !== allocations.length) {
         throw new ProcessLaborServiceError(
-          '实际工时领取包含不存在的员工',
+          '实际工时分配包含非生产部、未启用考勤或已停用员工',
           400,
           'PROCESS_LABOR_EMPLOYEE_REQUIRED',
         );
@@ -1113,7 +1117,7 @@ export async function claimProcessLaborPoolBatch(command: BatchClaimCommand): Pr
         const employee = employeeById.get(allocation.employeeId);
         if (!employee) {
           throw new ProcessLaborServiceError(
-            '实际工时领取包含不存在的员工',
+            '实际工时分配包含非生产部、未启用考勤或已停用员工',
             400,
             'PROCESS_LABOR_EMPLOYEE_REQUIRED',
           );

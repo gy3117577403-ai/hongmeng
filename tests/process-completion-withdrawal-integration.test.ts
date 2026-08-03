@@ -32,7 +32,7 @@ test(
       data: {
         employeeNo: `${prefix}-E`,
         name: `${prefix} employee`,
-        department: 'integration-test',
+        department: '生产部',
         team: `${prefix}-TEAM`,
       },
     });

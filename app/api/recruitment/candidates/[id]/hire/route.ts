@@ -12,6 +12,7 @@ import {
   recruitmentDemandInclude,
   serializeRecruitmentDemand,
 } from '@/lib/recruitment';
+import { normalizeEmployeeDepartment } from '@/lib/production-workforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,7 +35,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         data: {
           employeeNo,
           name: current.name,
-          department: cleanRecruitmentText(body.department, 80) || current.demand.department,
+          department: normalizeEmployeeDepartment(
+            cleanRecruitmentText(body.department, 80) || current.demand.department,
+          ),
           position: cleanRecruitmentText(body.position, 80) || current.demand.position,
           team: cleanRecruitmentText(body.team, 80) || current.demand.team,
           hireDate: employeeHireDateToDate(chinaDateKey(new Date())),

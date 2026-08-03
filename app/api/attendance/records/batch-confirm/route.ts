@@ -3,6 +3,11 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { parseWorkDate } from '@/lib/attendance';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import {
+  attendanceRecordScopeWhere,
+  parseAttendanceWorkforceScope,
+  type AttendanceWorkforceScope,
+} from '@/lib/production-workforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,12 +17,16 @@ export async function POST(req: NextRequest) {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const workDate = parseWorkDate(body.workDate);
+    const scope: AttendanceWorkforceScope = body.scope
+      ? parseAttendanceWorkforceScope(body.scope)
+      : 'ALL';
     const now = new Date();
     const result = await prisma.attendanceRecord.updateMany({
       where: {
         workDate: workDate.value,
         status: 'draft',
         employee: { isActive: true, attendanceEnabled: true },
+        ...attendanceRecordScopeWhere(scope),
       },
       data: {
         status: 'confirmed',
@@ -30,7 +39,7 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       action: 'batch_confirm_attendance',
       targetType: 'attendance_record',
-      detail: { workDate: workDate.key, confirmedCount: result.count },
+      detail: { workDate: workDate.key, scope, confirmedCount: result.count },
     });
     return NextResponse.json({ ok: true, confirmedCount: result.count });
   } catch (error) {

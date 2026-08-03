@@ -65,7 +65,7 @@ test(
           data: {
             employeeNo: `${prefix}-A`,
             name: `${prefix} employee A`,
-            department: 'integration-test',
+            department: '生产部',
             team: `${prefix}-TEAM-A`,
           },
         }),
@@ -73,7 +73,7 @@ test(
           data: {
             employeeNo: `${prefix}-B`,
             name: `${prefix} employee B`,
-            department: 'integration-test',
+            department: '生产部',
             team: `${prefix}-TEAM-B`,
           },
         }),
@@ -81,7 +81,7 @@ test(
           data: {
             employeeNo: `${prefix}-LEAD`,
             name: `${prefix} team lead`,
-            department: 'integration-test',
+            department: '生产部',
             team: `${prefix}-TEAM-A`,
           },
         }),

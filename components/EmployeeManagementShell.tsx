@@ -1630,7 +1630,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                   <div className="hr-editor-switches">
                     <label>
                       <input type="checkbox" checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
-                      <span><strong>纳入考勤与个人达成率</strong><small>启用后可登记出勤、加班、请假和异常工时。</small></span>
+                      <span><strong>启用员工考勤</strong><small>启用后可登记出勤、加班和请假；仅生产部员工参与生产报工与达成率。</small></span>
                     </label>
                     {!creating && (
                       <label>

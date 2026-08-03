@@ -26,8 +26,15 @@
 .attendance-ledger > header > div, .abnormal-ledger > header > div { display: grid; gap: 1px; }
 .attendance-ledger > header span, .abnormal-ledger > header span { color: #d95600; font-size: 9px; font-weight: 850; }
 .attendance-ledger h1, .abnormal-ledger h1 { margin: 0; font-size: 17px; }
-.attendance-ledger > header label { width: min(360px, 42%); height: 36px; padding: 0 10px; border: 1px solid var(--hm-color-border); border-radius: 8px; background: #fff; }
+.attendance-ledger > header > div:first-child > small { color: #7a8796; font-size: 9px; font-weight: 600; white-space: nowrap; }
+.attendance-ledger > header label { width: min(310px, 32%); height: 36px; padding: 0 10px; border: 1px solid var(--hm-color-border); border-radius: 8px; background: #fff; }
 .attendance-ledger > header input { width: 100%; height: 100%; border: 0; outline: 0; background: transparent; font: inherit; }
+.attendance-workforce-switch { min-width: 340px; padding: 3px; display: grid !important; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px !important; border: 1px solid #e5e9ed; border-radius: 9px; background: #f4f6f8; }
+.attendance-workforce-switch button { min-height: 34px; padding: 0 9px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 7px; background: transparent; color: #66717e; font-size: 10px; cursor: pointer; }
+.attendance-workforce-switch button strong { font: inherit; white-space: nowrap; }
+.attendance-workforce-switch button em { min-width: 19px; height: 19px; padding: 0 5px; display: grid; place-items: center; border-radius: 999px; background: #e8edf2; color: #556271; font-size: 8px; font-style: normal; font-weight: 850; }
+.attendance-workforce-switch button.active { background: #fff; color: #c2410c; box-shadow: 0 1px 5px rgba(31, 41, 51, .12); }
+.attendance-workforce-switch button.active em { background: #fff0e6; color: #c2410c; }
 .abnormal-ledger > header p { max-width: 520px; margin: 0; color: #7a8796; font-size: 10px; text-align: right; }
 .attendance-table-wrap, .abnormal-list { min-height: 0; overflow: auto; }
 .attendance-table-wrap { padding: 0 9px 12px; }
@@ -112,6 +119,9 @@
   .attendance-summary article > svg { width: 30px; height: 30px; padding: 7px; }
   .attendance-summary article small { display: none; }
   .attendance-tabs button { padding-inline: 9px; }
+  .attendance-ledger > header > div:first-child > small { display: none; }
+  .attendance-workforce-switch { min-width: 300px; }
+  .attendance-workforce-switch button { padding-inline: 6px; }
   .abnormal-list { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {

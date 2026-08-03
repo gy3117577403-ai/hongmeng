@@ -1569,6 +1569,7 @@ model ProcessLaborClaim {
 model AttendanceRecord {
   id                   String    @id @default(uuid())
   employeeId           String    @map("employee_id")
+  departmentSnapshot   String?   @map("department_snapshot")
   workDate             DateTime  @map("work_date") @db.Date
   status               String    @default("draft")
   attendanceType       String    @default("normal") @map("attendance_type")
@@ -1592,6 +1593,7 @@ model AttendanceRecord {
 
   @@unique([employeeId, workDate])
   @@index([workDate, status])
+  @@index([workDate, departmentSnapshot, status])
   @@index([employeeId, status])
   @@index([confirmedById])
   @@map("attendance_records")

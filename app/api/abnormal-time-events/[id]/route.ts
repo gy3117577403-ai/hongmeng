@@ -10,6 +10,7 @@ import {
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,9 +42,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       : parseEmployeeIds(body.employeeIds);
     const title = body.title === undefined ? existing.title : cleanProcessText(body.title, 160);
     if (!title) return NextResponse.json({ ok: false, error: '请填写异常标题' }, { status: 400 });
-    const employees = await prisma.employee.count({ where: { id: { in: employeeIds }, isActive: true } });
+    const employees = await prisma.employee.count({
+      where: { id: { in: employeeIds }, ...productionEmployeeWhere() },
+    });
     if (employees !== employeeIds.length) {
-      return NextResponse.json({ ok: false, error: '部分员工不存在或已停用，请重新选择' }, { status: 400 });
+      return NextResponse.json({ ok: false, error: '异常工时仅可选择生产部且已启用考勤的在职员工' }, { status: 400 });
     }
     const expectedResolvedRaw = body.expectedResolvedAt === undefined
       ? existing.expectedResolvedAt?.toISOString() || ''

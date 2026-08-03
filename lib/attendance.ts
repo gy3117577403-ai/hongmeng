@@ -203,6 +203,7 @@ export function serializeAttendanceRecord(record: AttendanceWithRelations): Atte
     id: record.id,
     employeeId: record.employeeId,
     employee: serializeEmployee(record.employee),
+    departmentSnapshot: record.departmentSnapshot || null,
     workDate: dateKeyFromDatabase(record.workDate),
     status: record.status === 'confirmed' ? 'confirmed' : 'draft',
     attendanceType: parseAttendanceType(record.attendanceType),

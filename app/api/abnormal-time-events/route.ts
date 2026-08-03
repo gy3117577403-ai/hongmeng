@@ -12,6 +12,7 @@ import {
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -88,11 +89,11 @@ export async function POST(req: NextRequest) {
     });
     const employeeIds = parseEmployeeIds(body.employeeIds);
     const employees = await prisma.employee.findMany({
-      where: { id: { in: employeeIds }, isActive: true },
+      where: { id: { in: employeeIds }, ...productionEmployeeWhere() },
       select: { id: true },
     });
     if (employees.length !== employeeIds.length) {
-      return NextResponse.json({ ok: false, error: '部分员工不存在或已停用，请重新选择' }, { status: 400 });
+      return NextResponse.json({ ok: false, error: '异常工时仅可选择生产部且已启用考勤的在职员工' }, { status: 400 });
     }
     const expectedResolvedRaw = cleanProcessText(body.expectedResolvedAt, 80);
     const expectedResolvedAt = expectedResolvedRaw ? new Date(expectedResolvedRaw) : null;

@@ -23,6 +23,10 @@ import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { ABNORMAL_TIME_CATEGORIES } from '@/lib/attendance';
 import { formatProcessDuration } from '@/lib/process-time';
+import {
+  isProductionDepartment,
+  type AttendanceWorkforceScope,
+} from '@/lib/production-workforce';
 import type {
   AbnormalTimeCategory,
   AbnormalTimeEventDTO,
@@ -38,6 +42,8 @@ type EmployeesResponse = { ok: boolean; employees?: EmployeeDTO[]; error?: strin
 type AttendanceResponse = {
   ok: boolean;
   records?: AttendanceRecordDTO[];
+  scope?: AttendanceWorkforceScope;
+  scopeCounts?: { production: number; other: number; all: number };
   summary?: {
     enabledEmployeeCount: number;
     recordCount: number;
@@ -158,7 +164,9 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   const [tab, setTab] = useState<TabKey>('attendance');
   const [date, setDate] = useState(todayKey);
   const [period, setPeriod] = useState<Period>('today');
-  const [employees, setEmployees] = useState<EmployeeDTO[]>([]);
+  const [workforceScope, setWorkforceScope] = useState<AttendanceWorkforceScope>('PRODUCTION');
+  const [employeeDirectory, setEmployeeDirectory] = useState<EmployeeDTO[]>([]);
+  const [scopeCounts, setScopeCounts] = useState({ production: 0, other: 0, all: 0 });
   const [records, setRecords] = useState<AttendanceRecordDTO[]>([]);
   const [events, setEvents] = useState<AbnormalTimeEventDTO[]>([]);
   const [attendanceSummary, setAttendanceSummary] = useState(emptyAttendanceSummary);
@@ -197,7 +205,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     try {
       const [employeeResponse, attendanceResponse, eventResponse] = await Promise.all([
         fetch('/api/employees?active=true', { cache: 'no-store', signal }),
-        fetch(`/api/attendance/records?period=today&date=${encodeURIComponent(date)}`, { cache: 'no-store', signal }),
+        fetch(`/api/attendance/records?period=today&date=${encodeURIComponent(date)}&scope=${workforceScope}`, { cache: 'no-store', signal }),
         fetch(`/api/abnormal-time-events?period=${period}&date=${encodeURIComponent(date)}`, { cache: 'no-store', signal }),
       ]);
       const employeeBody = await employeeResponse.json() as EmployeesResponse;
@@ -206,8 +214,9 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       if (!employeeResponse.ok) throw new Error(employeeBody.error || '员工档案加载失败');
       if (!attendanceResponse.ok) throw new Error(attendanceBody.error || '考勤记录加载失败');
       if (!eventResponse.ok) throw new Error(eventBody.error || '异常工时加载失败');
-      setEmployees((employeeBody.employees || []).filter(item => item.attendanceEnabled));
+      setEmployeeDirectory((employeeBody.employees || []).filter(item => item.attendanceEnabled));
       setRecords(attendanceBody.records || []);
+      setScopeCounts(attendanceBody.scopeCounts || { production: 0, other: 0, all: 0 });
       setEvents(eventBody.events || []);
       setAttendanceSummary(attendanceBody.summary || emptyAttendanceSummary);
       setEventSummary(eventBody.summary || emptyEventSummary);
@@ -218,7 +227,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     } finally {
       setLoading(false);
     }
-  }, [date, period]);
+  }, [date, period, workforceScope]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -237,6 +246,25 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     return () => window.removeEventListener('keydown', close);
   }, [attendanceDraft, abnormalDraft]);
 
+  const productionEmployees = useMemo(
+    () => employeeDirectory.filter(item => isProductionDepartment(item.department)),
+    [employeeDirectory],
+  );
+  const employees = useMemo(() => {
+    if (workforceScope === 'ALL') return employeeDirectory;
+    if (workforceScope === 'PRODUCTION') return productionEmployees;
+    return employeeDirectory.filter(item => !isProductionDepartment(item.department));
+  }, [employeeDirectory, productionEmployees, workforceScope]);
+  const workforceLabel = workforceScope === 'PRODUCTION'
+    ? '生产考勤'
+    : workforceScope === 'OTHER'
+      ? '其他人员'
+      : '全部人员';
+  const workforceNote = workforceScope === 'PRODUCTION'
+    ? '用于生产报工、日计划与员工达成率'
+    : workforceScope === 'OTHER'
+      ? '仅统计出勤，不参与生产报工与达成率'
+      : '汇总全员出勤；生产达成率仍只读取生产考勤';
   const recordByEmployee = useMemo(() => new Map(records.map(item => [item.employeeId, item])), [records]);
   const filteredEmployees = useMemo(() => {
     const normalized = keyword.trim().toLocaleLowerCase('zh-CN');
@@ -274,7 +302,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     setError('');
     try {
       const response = await fetch('/api/attendance/records/batch-default', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workDate: date }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workDate: date, scope: workforceScope }),
       });
       const body = await response.json() as { ok: boolean; createdCount?: number; skippedCount?: number; error?: string };
       if (!response.ok) throw new Error(body.error || '生成失败');
@@ -288,12 +316,12 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   }
 
   async function batchConfirm(): Promise<void> {
-    if (!window.confirm(`确认 ${date} 的全部考勤草稿？请先修改请假、缺勤和加班例外。`)) return;
+    if (!window.confirm(`确认 ${date} 的${workforceLabel}草稿？请先修改请假、缺勤和加班例外。`)) return;
     setSaving(true);
     setError('');
     try {
       const response = await fetch('/api/attendance/records/batch-confirm', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workDate: date }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workDate: date, scope: workforceScope }),
       });
       const body = await response.json() as { ok: boolean; confirmedCount?: number; error?: string };
       if (!response.ok) throw new Error(body.error || '批量确认失败');
@@ -462,7 +490,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       />
       <div className="attendance-frame">
         <section className="attendance-summary" aria-label="考勤与异常概览">
-          <article><UsersRound /><span>考勤员工<small>已启用考勤的在用员工</small></span><strong>{attendanceSummary.enabledEmployeeCount}</strong></article>
+          <article><UsersRound /><span>{workforceLabel}<small>{workforceNote}</small></span><strong>{attendanceSummary.enabledEmployeeCount}</strong></article>
           <article><UserRoundCheck /><span>已确认考勤<small>{date} 日记录</small></span><strong>{attendanceSummary.confirmedCount}</strong></article>
           <article><Clock3 /><span>有效出勤<small>请假不计入</small></span><strong>{formatProcessDuration(attendanceSummary.actualMilliseconds)}</strong></article>
           <article><AlertTriangle /><span>异常事件<small>{periodLabel(period)}汇总</small></span><strong>{eventSummary.eventCount}</strong></article>
@@ -488,7 +516,15 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
 
         {tab === 'attendance' ? (
           <section className="attendance-ledger">
-            <header><div><span>手工考勤</span><h1>{date} 出勤登记</h1></div><label><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、姓名、岗位或班组" /></label></header>
+            <header>
+              <div><span>手工考勤 · {workforceLabel}</span><h1>{date} 出勤登记</h1><small>{workforceNote}</small></div>
+              <div className="attendance-workforce-switch" role="tablist" aria-label="考勤人员范围">
+                <button className={workforceScope === 'PRODUCTION' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'PRODUCTION'} onClick={() => { setWorkforceScope('PRODUCTION'); setAttendanceDraft(null); }}><strong>生产考勤</strong><em>{scopeCounts.production}</em></button>
+                <button className={workforceScope === 'OTHER' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'OTHER'} onClick={() => { setWorkforceScope('OTHER'); setAttendanceDraft(null); }}><strong>其他人员</strong><em>{scopeCounts.other}</em></button>
+                <button className={workforceScope === 'ALL' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'ALL'} onClick={() => { setWorkforceScope('ALL'); setAttendanceDraft(null); }}><strong>全部人员</strong><em>{scopeCounts.all}</em></button>
+              </div>
+              <label><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、姓名、岗位或班组" /></label>
+            </header>
             <div className="attendance-table-wrap hm-scroll-region" tabIndex={0}>
               <div className="attendance-table-head"><span>员工</span><span>状态</span><span>有效出勤</span><span>加班</span><span>请假</span><span>确认</span><span>操作</span></div>
               {filteredEmployees.map(employee => {
@@ -503,7 +539,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
                   <button type="button" onClick={() => openAttendance(employee)}><Pencil size={15} />{record ? '编辑' : '登记'}</button>
                 </div>;
               })}
-              {!loading && !filteredEmployees.length && <div className="attendance-empty"><UsersRound /><strong>没有可登记考勤的员工</strong><span>请先在人事管理中启用考勤。</span><a href="/workspace/employees?view=directory">打开人事管理</a></div>}
+              {!loading && !filteredEmployees.length && <div className="attendance-empty"><UsersRound /><strong>当前范围没有可登记考勤的员工</strong><span>人员范围直接读取人事档案中的部门与考勤启用状态。</span><a href="/workspace/employees?view=directory">打开人事管理</a></div>}
             </div>
           </section>
         ) : (
@@ -543,7 +579,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
 
       {attendanceDraft && <div className="attendance-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setAttendanceDraft(null); }}>
         <section className="attendance-dialog" role="dialog" aria-modal="true" aria-labelledby="attendance-dialog-title">
-          <header><div><span>员工考勤</span><h2 id="attendance-dialog-title">{employees.find(item => item.id === attendanceDraft.employeeId)?.name} · {date}</h2></div><button type="button" aria-label="关闭" title="关闭" onClick={() => setAttendanceDraft(null)}><X size={18} /></button></header>
+          <header><div><span>{workforceLabel}</span><h2 id="attendance-dialog-title">{employees.find(item => item.id === attendanceDraft.employeeId)?.name} · {date}</h2></div><button type="button" aria-label="关闭" title="关闭" onClick={() => setAttendanceDraft(null)}><X size={18} /></button></header>
           <div className="attendance-dialog-body">
             <label><span>出勤类型</span><select value={attendanceDraft.attendanceType} onChange={event => setAttendanceDraft({ ...attendanceDraft, attendanceType: event.target.value as AttendanceType })}><option value="normal">正常出勤</option><option value="leave">全天请假</option><option value="absent">缺勤</option><option value="rest">休息日</option></select></label>
             {attendanceDraft.attendanceType === 'normal' && <>
@@ -566,7 +602,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
             <label><span>结束时间</span><input type="datetime-local" value={abnormalDraft.endedAt} onChange={event => setAbnormalDraft({ ...abnormalDraft, endedAt: event.target.value })} /></label>
             <label><span>责任部门</span><input maxLength={100} value={abnormalDraft.responsibilityDepartment} onChange={event => setAbnormalDraft({ ...abnormalDraft, responsibilityDepartment: event.target.value })} placeholder="可选" /></label>
             <label><span>预计恢复时间</span><input type="datetime-local" value={abnormalDraft.expectedResolvedAt} onChange={event => setAbnormalDraft({ ...abnormalDraft, expectedResolvedAt: event.target.value })} /></label>
-            <fieldset className="employee-picker"><legend>受影响员工（可多选）</legend>{employees.map(employee => <label key={employee.id}><input type="checkbox" checked={abnormalDraft.employeeIds.includes(employee.id)} onChange={change => setAbnormalDraft({ ...abnormalDraft, employeeIds: change.target.checked ? [...abnormalDraft.employeeIds, employee.id] : abnormalDraft.employeeIds.filter(id => id !== employee.id) })} /><span><strong>{employee.name}</strong><small>{employee.employeeNo} · {employee.position || '岗位未设置'}</small></span></label>)}</fieldset>
+            <fieldset className="employee-picker"><legend>受影响生产员工（可多选）</legend>{productionEmployees.map(employee => <label key={employee.id}><input type="checkbox" checked={abnormalDraft.employeeIds.includes(employee.id)} onChange={change => setAbnormalDraft({ ...abnormalDraft, employeeIds: change.target.checked ? [...abnormalDraft.employeeIds, employee.id] : abnormalDraft.employeeIds.filter(id => id !== employee.id) })} /><span><strong>{employee.name}</strong><small>{employee.employeeNo} · {employee.position || '岗位未设置'}</small></span></label>)}</fieldset>
             <label className="attendance-exempt"><input type="checkbox" checked={abnormalDraft.employeeExempt} onChange={event => setAbnormalDraft({ ...abnormalDraft, employeeExempt: event.target.checked })} /><span><strong>申请员工达成率免责</strong><small>品质确认后，此时段才会从个人有效生产时段中扣除；管理端仍统计异常损失。</small></span></label>
             <label className="wide"><span>异常原因与现场说明</span><textarea maxLength={1000} rows={3} value={abnormalDraft.reason} onChange={event => setAbnormalDraft({ ...abnormalDraft, reason: event.target.value })} /></label>
           </div>

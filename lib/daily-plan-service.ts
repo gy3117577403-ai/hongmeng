@@ -31,6 +31,10 @@ import {
   summarizeWeeklyProcessAllocation,
   weeklyProcessTeamEligible,
 } from '@/lib/weekly-process-allocation';
+import {
+  isProductionWorkforceEmployee,
+  productionEmployeeWhere,
+} from '@/lib/production-workforce';
 
 const DEFAULT_SHIFT_CODE = 'DAY';
 const ACTIVE_ROUTE_STATUSES = new Set(['confirmed', 'in_progress', 'completed']);
@@ -510,11 +514,11 @@ async function activeEmployeeMembership(
 ) {
   const employee = await client.employee.findUnique({
     where: { id: employeeId },
-    select: { id: true, isActive: true },
+    select: { id: true, department: true, isActive: true, attendanceEnabled: true },
   });
-  if (!employee?.isActive) {
+  if (!isProductionWorkforceEmployee(employee)) {
     throw new DailyPlanServiceError(
-      '员工不存在或已停用，不能分配日计划',
+      '员工不属于生产部、未启用考勤或已停用，不能分配日计划',
       'DAILY_PLAN_EMPLOYEE_INACTIVE',
       409,
     );
@@ -829,7 +833,7 @@ export async function previewDailyPlanSuggestions(input: {
       teamId,
       role: { in: [ProductionPlanningRole.TEAM_LEADER, ProductionPlanningRole.MEMBER] },
       ...activeMembershipWhere(workDate),
-      employee: { is: { isActive: true } },
+      employee: { is: productionEmployeeWhere() },
     },
     include: {
       employee: {
@@ -1994,7 +1998,15 @@ export async function listProductionPlanningOrganization(input: {
         orderBy: [{ priority: 'desc' }, { processDefinition: { sortOrder: 'asc' } }],
       },
       memberships: {
-        where: input.includeInactive ? {} : activeMembershipWhere(workDate),
+        where: {
+          ...(input.includeInactive ? {} : activeMembershipWhere(workDate)),
+          employee: {
+            is: productionEmployeeWhere({
+              requireActive: !input.includeInactive,
+              requireAttendance: !input.includeInactive,
+            }),
+          },
+        },
         include: { employee: true },
         orderBy: [{ role: 'asc' }, { employee: { employeeNo: 'asc' } }],
       },
@@ -2003,11 +2015,15 @@ export async function listProductionPlanningOrganization(input: {
   });
   const assignedIds = new Set(teams.flatMap(team => team.memberships.map(item => item.employeeId)));
   const unassignedEmployees = await prisma.employee.findMany({
-    where: { isActive: true, id: { notIn: [...assignedIds] } },
+    where: { ...productionEmployeeWhere(), id: { notIn: [...assignedIds] } },
     orderBy: { employeeNo: 'asc' },
   });
   const supervisors = await prisma.productionPlanningMembership.findMany({
-    where: { role: ProductionPlanningRole.WORKSHOP_SUPERVISOR, ...activeMembershipWhere(workDate) },
+    where: {
+      role: ProductionPlanningRole.WORKSHOP_SUPERVISOR,
+      ...activeMembershipWhere(workDate),
+      employee: { is: productionEmployeeWhere() },
+    },
     include: { employee: true },
   });
   const processDefinitions = await prisma.processDefinition.findMany({
@@ -2165,8 +2181,14 @@ export async function upsertProductionPlanningMembership(input: {
     });
     if (replay) return replay;
 
-    const employee = await tx.employee.findFirst({ where: { id: employeeId, isActive: true } });
-    if (!employee) throw new DailyPlanServiceError('员工不存在或已停用', 'DAILY_PLAN_EMPLOYEE_NOT_FOUND', 404);
+    const employee = await tx.employee.findFirst({ where: { id: employeeId, ...productionEmployeeWhere() } });
+    if (!employee) {
+      throw new DailyPlanServiceError(
+        '员工不属于生产部、未启用考勤或已停用',
+        'DAILY_PLAN_EMPLOYEE_NOT_FOUND',
+        404,
+      );
+    }
     if (teamId) {
       const team = await tx.productionTeam.findFirst({ where: { id: teamId, isActive: true } });
       if (!team) throw new DailyPlanServiceError('生产班组不存在或已停用', 'DAILY_PLAN_TEAM_NOT_FOUND', 404);
@@ -2332,7 +2354,7 @@ export async function getDailyPlanWorkbench(input: {
       memberships: {
         where: {
           ...activeMembershipWhere(workDate),
-          employee: { is: { isActive: true } },
+          employee: { is: productionEmployeeWhere() },
         },
         include: { employee: true },
         orderBy: [{ role: 'asc' }, { employee: { employeeNo: 'asc' } }],

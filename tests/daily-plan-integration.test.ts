@@ -289,11 +289,11 @@ test(
         prisma.productionTeam.create({ data: { code: `${prefix}-C`, name: `${prefix} Team C` } }),
       ]);
       const [leaderEmployee, workerA1, workerA2, workerA3, workerB] = await Promise.all([
-        prisma.employee.create({ data: { employeeNo: `${prefix}-LEAD-A`, name: `${prefix} leader A`, team: teamA.name } }),
-        prisma.employee.create({ data: { employeeNo: `${prefix}-A1`, name: `${prefix} worker A1`, team: teamA.name } }),
-        prisma.employee.create({ data: { employeeNo: `${prefix}-A2`, name: `${prefix} worker A2`, team: teamA.name } }),
-        prisma.employee.create({ data: { employeeNo: `${prefix}-A3`, name: `${prefix} worker A3`, team: teamA.name } }),
-        prisma.employee.create({ data: { employeeNo: `${prefix}-B1`, name: `${prefix} worker B1`, team: teamB.name } }),
+        prisma.employee.create({ data: { employeeNo: `${prefix}-LEAD-A`, name: `${prefix} leader A`, department: '生产部', team: teamA.name } }),
+        prisma.employee.create({ data: { employeeNo: `${prefix}-A1`, name: `${prefix} worker A1`, department: '生产部', team: teamA.name } }),
+        prisma.employee.create({ data: { employeeNo: `${prefix}-A2`, name: `${prefix} worker A2`, department: '生产部', team: teamA.name } }),
+        prisma.employee.create({ data: { employeeNo: `${prefix}-A3`, name: `${prefix} worker A3`, department: '生产部', team: teamA.name } }),
+        prisma.employee.create({ data: { employeeNo: `${prefix}-B1`, name: `${prefix} worker B1`, department: '生产部', team: teamB.name } }),
       ]);
       const [admin, leaderA] = await Promise.all([
         prisma.user.create({

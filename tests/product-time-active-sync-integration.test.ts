@@ -304,7 +304,7 @@ test(
       });
       teamId = team.id;
       const employee = await prisma.employee.create({
-        data: { employeeNo: `${prefix}-EMPLOYEE`, name: `${prefix} employee`, team: team.name },
+        data: { employeeNo: `${prefix}-EMPLOYEE`, name: `${prefix} employee`, department: '生产部', team: team.name },
       });
       employeeId = employee.id;
       const dailyPlan = await prisma.dailyProductionPlan.create({

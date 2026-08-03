@@ -25,7 +25,7 @@ test(
       data: {
         employeeNo: `${prefix}-E`,
         name: `${prefix} operator`,
-        department: 'integration-test',
+        department: '生产部',
         team: `${prefix}-TEAM`,
       },
     });
@@ -211,7 +211,7 @@ test(
       data: {
         employeeNo: `${prefix}-E`,
         name: `${prefix} operator`,
-        department: 'integration-test',
+        department: '生产部',
         team: `${prefix}-TEAM`,
       },
     });

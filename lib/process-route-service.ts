@@ -24,6 +24,7 @@ import {
 } from '@/lib/process-time';
 import { legacyProcessStandardSnapshot, productTimeProfileInclude, productTimeStandardSnapshot } from '@/lib/product-time';
 import { isExecutableProductionWorkOrder, legacyStatusForStage, normalizeWorkOrderStage, type WorkOrderStage } from '@/lib/work-orders';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
 
 export class ProcessRouteServiceError extends Error {
   readonly status: number;
@@ -607,10 +608,10 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
       }
       const employeeId = cleanProcessText(submittedExecution.employeeId, 80);
       const employee = employeeId
-        ? await tx.employee.findFirst({ where: { id: employeeId, isActive: true } })
+        ? await tx.employee.findFirst({ where: { id: employeeId, ...productionEmployeeWhere() } })
         : null;
       if (!employee) {
-        throw new ProcessRouteServiceError('请选择有效员工', 400, 'PROCESS_EMPLOYEE_REQUIRED');
+        throw new ProcessRouteServiceError('请选择生产部且已启用考勤的在职员工', 400, 'PROCESS_EMPLOYEE_REQUIRED');
       }
       const startedAt = parseExecutionDate(submittedExecution.startedAt, '开始时间');
       const endedAt = parseExecutionDate(submittedExecution.endedAt, '结束时间');

@@ -30,6 +30,7 @@ import {
   listWeeklyProcessWorkerPresets,
   resolveWeeklyProcessWorkerPreset,
 } from '@/lib/weekly-process-worker-preset-service';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
 
 export type WeeklyProcessState = 'READY' | 'REVIEW' | 'WAITING' | 'BLOCKED' | 'PARTIAL' | 'PLANNED' | 'COMPLETED';
 
@@ -217,7 +218,7 @@ export async function getWeeklyProcessOverview(input: {
     }),
     listWeeklyProcessWorkerPresets(input.weekDate),
     prisma.employee.findMany({
-      where: { isActive: true },
+      where: productionEmployeeWhere(),
       orderBy: [{ employeeNo: 'asc' }, { name: 'asc' }],
       select: {
         id: true,

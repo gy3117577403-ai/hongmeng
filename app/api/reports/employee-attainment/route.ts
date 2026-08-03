@@ -13,6 +13,11 @@ import {
 } from '@/lib/employee-attainment-daily';
 import { safeLaborMilliseconds } from '@/lib/process-labor-service';
 import { employeeReportRange, serializeEmployee } from '@/lib/process-time';
+import {
+  attendanceRecordScopeWhere,
+  isProductionWorkforceEmployee,
+  productionEmployeeWhere,
+} from '@/lib/production-workforce';
 import type { EmployeeAttainmentRowDTO, ProcessExecutionDTO } from '@/types';
 
 export const runtime = 'nodejs';
@@ -83,13 +88,16 @@ export async function GET(req: NextRequest) {
     const requestedEmployeeId = String(req.nextUrl.searchParams.get('employeeId') || '').trim();
     let scopedEmployeeIds: string[] | null = null;
     if (actor.laborRole === 'EMPLOYEE') {
-      if (!actor.employee?.isActive) return forbidden('账号未绑定在职员工档案，无法查看达成率');
-      scopedEmployeeIds = [actor.employee.id];
+      const actorEmployee = actor.employee;
+      if (!actorEmployee || !isProductionWorkforceEmployee(actorEmployee)) {
+        return forbidden('账号未绑定生产部且已启用考勤的在职员工档案，无法查看生产达成率');
+      }
+      scopedEmployeeIds = [actorEmployee.id];
     } else if (actor.laborRole === 'TEAM_LEAD') {
       const team = actor.employee?.isActive ? String(actor.employee.team || '').trim() : '';
       if (!team) return forbidden('班组长账号未绑定有效班组，无法查看达成率');
       scopedEmployeeIds = (await prisma.employee.findMany({
-        where: { isActive: true, team },
+        where: { ...productionEmployeeWhere(), team },
         select: { id: true },
       })).map(employee => employee.id);
     }
@@ -104,6 +112,11 @@ export async function GET(req: NextRequest) {
       || (scopedEmployeeIds ? { in: scopedEmployeeIds } : undefined);
     const startDate = parseWorkDate(start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const endDate = parseWorkDate(end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
+    const productionAttendanceWhere = {
+      status: 'confirmed',
+      workDate: { gte: startDate, lt: endDate },
+      ...attendanceRecordScopeWhere('PRODUCTION'),
+    };
     const [executions, laborClaims, employees, attendanceRecords, abnormalAllocations] = await Promise.all([
       prisma.processExecution.findMany({
         where: {
@@ -173,16 +186,24 @@ export async function GET(req: NextRequest) {
       prisma.employee.findMany({
         where: {
           ...(employeeIdConstraint ? { id: employeeIdConstraint } : {}),
+          OR: [
+            productionEmployeeWhere(),
+            { attendanceRecords: { some: productionAttendanceWhere } },
+          ],
         },
         orderBy: [{ employeeNo: 'asc' }],
       }),
       prisma.attendanceRecord.findMany({
         where: {
-          status: 'confirmed',
-          workDate: { gte: startDate, lt: endDate },
+          ...productionAttendanceWhere,
           ...(employeeIdConstraint ? { employeeId: employeeIdConstraint } : {}),
         },
-        select: { employeeId: true, workDate: true, actualMilliseconds: true },
+        select: {
+          employeeId: true,
+          departmentSnapshot: true,
+          workDate: true,
+          actualMilliseconds: true,
+        },
       }),
       prisma.abnormalTimeAllocation.findMany({
         where: {
@@ -193,6 +214,13 @@ export async function GET(req: NextRequest) {
         select: { employeeId: true, workDate: true, durationMilliseconds: true },
       }),
     ]);
+    const productionEmployeeIds = new Set(employees.map(employee => employee.id));
+    if (requestedEmployeeId && !productionEmployeeIds.has(requestedEmployeeId)) {
+      return NextResponse.json({
+        ok: false,
+        error: '该员工不在生产部考勤统计范围内',
+      }, { status: 400 });
+    }
     const groups = new Map<string, EmployeeAttainmentRowDTO>();
     for (const employee of employees) groups.set(employee.id, emptyRow(employee));
     const dailyGroups = new Map<string, Map<string, DailyAttainment>>();
@@ -211,6 +239,7 @@ export async function GET(req: NextRequest) {
       return daily;
     };
     for (const attendance of attendanceRecords) {
+      if (!productionEmployeeIds.has(attendance.employeeId)) continue;
       const row = groups.get(attendance.employeeId);
       if (!row) continue;
       activityEmployeeIds.add(attendance.employeeId);
@@ -223,6 +252,7 @@ export async function GET(req: NextRequest) {
       }
     }
     for (const allocation of abnormalAllocations) {
+      if (!productionEmployeeIds.has(allocation.employeeId)) continue;
       const row = groups.get(allocation.employeeId);
       if (row) {
         activityEmployeeIds.add(allocation.employeeId);
@@ -234,6 +264,7 @@ export async function GET(req: NextRequest) {
       }
     }
     for (const execution of executions) {
+      if (!productionEmployeeIds.has(execution.employeeId)) continue;
       const workOrder = execution.step.route.workOrder;
       const detail: ProcessExecutionDTO = {
         id: execution.id,
@@ -284,6 +315,7 @@ export async function GET(req: NextRequest) {
       groups.set(execution.employeeId, row);
     }
     for (const claim of laborClaims) {
+      if (!productionEmployeeIds.has(claim.employeeId)) continue;
       const standardLaborMilliseconds = safeLaborMilliseconds(claim.standardLaborMilliseconds);
       const row = groups.get(claim.employeeId) || emptyRow(claim.employee);
       activityEmployeeIds.add(claim.employeeId);
@@ -414,7 +446,16 @@ export async function GET(req: NextRequest) {
     );
     return NextResponse.json({
       ok: true,
-      report: { period, date, rangeStart: start.toISOString(), rangeEnd: end.toISOString(), summary, rows },
+      report: {
+        period,
+        date,
+        workforceScope: 'PRODUCTION',
+        workforceLabel: '生产部',
+        rangeStart: start.toISOString(),
+        rangeEnd: end.toISOString(),
+        summary,
+        rows,
+      },
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

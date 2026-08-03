@@ -150,15 +150,15 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/reports"
-        subtitle="出勤达成率、工序效率与异常损失"
+        subtitle="生产部出勤达成率、工序效率与异常损失"
         menuItems={[{ label: '系统设置', href: '/dashboard?openSettings=1' }, { label: '退出登录', onSelect: () => void logout() }]}
       />
       <div className="employee-report-frame">
         <section className="employee-report-command" aria-labelledby="employee-attainment-title">
           <div>
             <span>报表中心</span>
-            <h1 id="employee-attainment-title">员工效率与异常工时</h1>
-            <p>报工后标准工时直接记入现场作业员工，达成率按标准完成工时 ÷〔（确认出勤－品质确认免责异常）× 95%〕计算。</p>
+            <h1 id="employee-attainment-title">生产部效率与异常工时</h1>
+            <p>仅统计人事档案归属生产部且启用考勤的员工；报工后标准工时直接记入作业人员，达成率按标准完成工时 ÷〔（确认出勤－品质确认免责异常）× 95%〕计算。</p>
           </div>
           <nav aria-label="报表关联入口">
             {user.laborRole !== 'EMPLOYEE' && <a className="hm-workbench-button" href="/workspace/attendance"><CalendarClock size={15} />考勤与异常</a>}
@@ -168,7 +168,7 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
         </section>
 
         <section className="employee-report-summary" aria-label="达成率与异常概览">
-          <article><UsersRound /><span>参与员工<small>{periodLabel(period)}在用员工</small></span><strong>{summary?.employeeCount || 0}</strong></article>
+          <article><UsersRound /><span>生产员工<small>{periodLabel(period)}生产部口径</small></span><strong>{summary?.employeeCount || 0}</strong></article>
           <article><CalendarClock /><span>确认出勤<small>{summary?.attendanceConfirmedDays || 0} 人日，缺 {summary?.attendanceMissingDays || 0} 个生产日 / {summary?.attendanceMissingCount || 0} 人</small></span><strong>{formatProcessDuration(summary?.attendanceMilliseconds || 0)}</strong></article>
           <article><TimerOff /><span>免责异常<small>品质确认后扣除个人基数</small></span><strong>{formatProcessDuration(summary?.exemptAbnormalMilliseconds || 0)}</strong></article>
           <article><Clock3 /><span>标准完成工时<small>已匹配考勤；待匹配 {formatProcessDuration(summary?.unmatchedStandardLaborMilliseconds || 0)}</small></span><strong>{formatProcessDuration(summary?.standardLaborMilliseconds || 0)}</strong></article>

@@ -9,6 +9,7 @@ import {
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
+import { normalizeEmployeeDepartment } from '@/lib/production-workforce';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -56,7 +57,7 @@ export async function POST(req: NextRequest) {
         data: {
           employeeNo,
           name,
-          department: cleanProcessText(body.department, 80) || null,
+          department: normalizeEmployeeDepartment(cleanProcessText(body.department, 80)),
           position: cleanProcessText(body.position, 80) || null,
           team: cleanProcessText(body.team, 80) || null,
           hireDate: employeeHireDateToDate(hireDate),
