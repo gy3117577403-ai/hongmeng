@@ -260,6 +260,20 @@ async function loadState(
       'PROCESS_COMPLETION_NOT_FOUND',
     );
   }
+  // The coverage columns were added after the original completion ledger.
+  // A fully covered legacy/direct completion can therefore carry the new
+  // COVERED default with zero snapshots. Treat that exact shape as the
+  // historical full-coverage record; true advance reports use PENDING/PARTIAL
+  // and must keep their uncovered quantity at zero here.
+  if (
+    state.coverageStatus === ProcessCompletionCoverageStatus.COVERED
+    && state.coveredQty === 0
+    && state.processedQty > 0
+  ) {
+    state.coveredQty = state.processedQty;
+    state.coveredGoodQty = state.goodQty;
+    state.coveredDefectQty = state.defectQty;
+  }
   const releaseMovements = await db.processQuantityMovement.findMany({
     where: {
       workOrderId: state.workOrderId,
