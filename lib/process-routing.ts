@@ -184,10 +184,18 @@ const draftRouteSyncInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclu
       stageGroup: true,
       position: true,
       sequenceGroup: true,
+      standardTimeId: true,
+      standardVersion: true,
       productTimeProfileId: true,
       productTimeEntryId: true,
       productTimeProfileVersion: true,
+      standardSource: true,
+      timeBasis: true,
+      unitLabel: true,
       standardMillisecondsPerUnit: true,
+      setupMilliseconds: true,
+      unitsPerProduct: true,
+      countsForEfficiency: true,
       status: true,
       startedAt: true,
       completedAt: true,
@@ -196,6 +204,7 @@ const draftRouteSyncInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclu
       goodOutputQty: true,
       defectOutputQty: true,
       releasedGoodQty: true,
+      remark: true,
       _count: {
         select: {
           executions: true,
@@ -681,6 +690,17 @@ async function applyPublishedProductTimeToUnstartedRoute(
 
   const now = new Date();
   const shouldStart = activation.shouldStart;
+  const routeAlreadyMatches = upgradesConfirmed
+    && !shouldStart
+    && input.route.productTimeProfileId === input.profile.id
+    && input.route.productTimeProfileVersion === input.profile.version
+    && input.route.templateVersion === input.profile.version
+    && input.route.steps.length === input.profile.entries.length
+    && input.profile.entries.every(entry => {
+      const step = input.route.steps.find(candidate => candidate.processDefinitionId === entry.processDefinitionId);
+      return step ? productTimeStepSnapshotMatches(step, input.profile, entry, true) : false;
+    });
+  if (routeAlreadyMatches) return { updated: false, started: false };
   const initialInputQty = getProductionQuantitySummary(input.route.workOrder).targetQty || 0;
   const firstSequenceGroup = input.profile.entries[0].sequenceGroup;
   const firstGroupEntries = input.profile.entries.filter(entry => entry.sequenceGroup === firstSequenceGroup);
@@ -1416,6 +1436,43 @@ function activeRouteStepHasBlockingReferences(step: DraftRouteSyncRecord['steps'
     || step._count.targetQuantityMovements > 0;
 }
 
+function productTimeStepSnapshotMatches(
+  step: DraftRouteSyncRecord['steps'][number],
+  profile: ProductTimeProfileRecord,
+  entry: ProductTimeProfileRecord['entries'][number],
+  includeStructure = false,
+): boolean {
+  const snapshot = productTimeStandardSnapshot(profile, entry);
+  return step.processDefinitionId === entry.processDefinitionId
+    && step.processCode === entry.processDefinition.code
+    && step.processName === entry.processDefinition.name
+    && step.stageGroup === (normalizeProcessStageGroup(entry.processDefinition.stageGroup) || 'frontend')
+    && (!includeStructure || (step.position === entry.position && step.sequenceGroup === entry.sequenceGroup))
+    && step.standardTimeId === snapshot.standardTimeId
+    && step.standardVersion === snapshot.standardVersion
+    && step.productTimeProfileId === snapshot.productTimeProfileId
+    && step.productTimeEntryId === snapshot.productTimeEntryId
+    && step.productTimeProfileVersion === snapshot.productTimeProfileVersion
+    && step.standardSource === snapshot.standardSource
+    && step.timeBasis === snapshot.timeBasis
+    && step.unitLabel === snapshot.unitLabel
+    && step.standardMillisecondsPerUnit === snapshot.standardMillisecondsPerUnit
+    && step.setupMilliseconds === snapshot.setupMilliseconds
+    && step.unitsPerProduct === snapshot.unitsPerProduct
+    && step.countsForEfficiency === snapshot.countsForEfficiency
+    && step.remark === entry.remark;
+}
+
+function routeProductTimeMetadataMatches(
+  route: DraftRouteSyncRecord,
+  profile: ProductTimeProfileRecord,
+): boolean {
+  return route.routeSource === 'product_time_profile'
+    && route.productTimeProfileId === profile.id
+    && route.productTimeProfileVersion === profile.version
+    && route.templateVersion === profile.version;
+}
+
 async function synchronizeStartedFactFreeProductTimeRoute(
   tx: Prisma.TransactionClient,
   input: {
@@ -1425,6 +1482,14 @@ async function synchronizeStartedFactFreeProductTimeRoute(
   },
 ): Promise<ActiveProductTimeRouteSyncResult> {
   if (!canSynchronizeStartedFactFreeProductTimeRoute(input.route)) return activeRouteSyncSkipped();
+
+  const alreadySynchronized = routeProductTimeMetadataMatches(input.route, input.profile)
+    && input.route.steps.length === input.profile.entries.length
+    && input.profile.entries.every(entry => {
+      const step = input.route.steps.find(candidate => candidate.processDefinitionId === entry.processDefinitionId);
+      return step ? productTimeStepSnapshotMatches(step, input.profile, entry, true) : false;
+    });
+  if (alreadySynchronized) return activeRouteSyncSkipped();
 
   const entriesByDefinition = new Map(
     input.profile.entries.map(entry => [entry.processDefinitionId, entry] as const),
@@ -1594,6 +1659,9 @@ async function synchronizeRemainingActiveProductTimeStandards(
     step.position !== entry.position || step.sequenceGroup !== entry.sequenceGroup
   ));
   const reviewRequired = profileHasNewSteps || unfinishedHasRemovedSteps || sequenceChanged;
+  const alreadySynchronized = routeProductTimeMetadataMatches(input.route, input.profile)
+    && matchedSteps.every(({ step, entry }) => productTimeStepSnapshotMatches(step, input.profile, entry));
+  if (alreadySynchronized) return activeRouteSyncSkipped(reviewRequired);
 
   const routeUpdate = await tx.workOrderProcessRoute.updateMany({
     where: {
@@ -1686,6 +1754,105 @@ async function synchronizeRemainingActiveProductTimeStandards(
   };
 }
 
+type PublishedProductTimeRouteApplyResult = {
+  updated: boolean;
+  activeUpdated: boolean;
+  partiallyUpdated: boolean;
+  started: boolean;
+  reviewRequired: boolean;
+};
+
+async function applyPublishedProductTimeToRoute(
+  tx: Prisma.TransactionClient,
+  input: {
+    route: DraftRouteSyncRecord;
+    profile: ProductTimeProfileRecord;
+    actorId: string;
+  },
+): Promise<PublishedProductTimeRouteApplyResult> {
+  const unstarted = await applyPublishedProductTimeToUnstartedRoute(tx, {
+    route: input.route,
+    profile: input.profile,
+    actorId: input.actorId,
+    activityContent: input.route.status === 'confirmed'
+      ? `产品工序与工时 V${input.profile.version} 已发布，自动升级完全未开工路线`
+      : `产品工序与工时 V${input.profile.version} 已发布，自动替换旧草稿并确认`,
+  });
+  if (unstarted.updated) {
+    return {
+      updated: true,
+      activeUpdated: false,
+      partiallyUpdated: false,
+      started: unstarted.started,
+      reviewRequired: false,
+    };
+  }
+
+  const factFree = await synchronizeStartedFactFreeProductTimeRoute(tx, input);
+  if (factFree.updated) {
+    return {
+      updated: true,
+      activeUpdated: true,
+      partiallyUpdated: false,
+      started: false,
+      reviewRequired: factFree.reviewRequired,
+    };
+  }
+
+  const remaining = await synchronizeRemainingActiveProductTimeStandards(tx, input);
+  if (remaining.updated) {
+    return {
+      updated: true,
+      activeUpdated: true,
+      partiallyUpdated: !remaining.fullySynchronized,
+      started: false,
+      reviewRequired: remaining.reviewRequired,
+    };
+  }
+  return {
+    updated: false,
+    activeUpdated: false,
+    partiallyUpdated: false,
+    started: false,
+    reviewRequired: factFree.reviewRequired || remaining.reviewRequired,
+  };
+}
+
+export async function syncProductTimeRouteFromPublishedProductTime(
+  tx: Prisma.TransactionClient,
+  input: { routeId: string; profileId: string; actorId: string },
+): Promise<PublishedProductTimeRouteApplyResult & { routeVersion: number | null }> {
+  const [profile, route] = await Promise.all([
+    tx.productTimeProfile.findUnique({
+      where: { id: input.profileId },
+      include: productTimeProfileInclude,
+    }),
+    tx.workOrderProcessRoute.findUnique({
+      where: { id: input.routeId },
+      include: draftRouteSyncInclude,
+    }),
+  ]);
+  if (!profile || profile.status !== 'published' || !route) {
+    return {
+      updated: false,
+      activeUpdated: false,
+      partiallyUpdated: false,
+      started: false,
+      reviewRequired: false,
+      routeVersion: route?.version ?? null,
+    };
+  }
+  const result = await applyPublishedProductTimeToRoute(tx, {
+    route,
+    profile,
+    actorId: input.actorId,
+  });
+  const current = result.updated
+    ? await tx.workOrderProcessRoute.findUnique({ where: { id: route.id }, select: { version: true } })
+    : { version: route.version };
+  return { ...result, routeVersion: current?.version ?? null };
+}
+
 export async function syncDraftRoutesFromPublishedProductTime(
   tx: Prisma.TransactionClient,
   input: { profileId: string; actorId: string },
@@ -1741,44 +1908,20 @@ export async function syncDraftRoutesFromPublishedProductTime(
   let activeReviewRequired = 0;
 
   for (const route of routes) {
-    const result = await applyPublishedProductTimeToUnstartedRoute(tx, {
+    const result = await applyPublishedProductTimeToRoute(tx, {
       route,
       profile,
       actorId: input.actorId,
-      activityContent: route.status === 'confirmed'
-        ? `产品工序与工时 V${profile.version} 已发布，自动升级完全未开工路线`
-        : `产品工序与工时 V${profile.version} 已发布，自动替换旧草稿并确认`,
     });
     if (result.updated) {
       updated += 1;
       if (result.started) started += 1;
+      if (result.activeUpdated) activeUpdated += 1;
+      if (result.partiallyUpdated) partiallyUpdated += 1;
+      if (result.reviewRequired) activeReviewRequired += 1;
       continue;
     }
-
-    const factFreeSync = await synchronizeStartedFactFreeProductTimeRoute(tx, {
-      route,
-      profile,
-      actorId: input.actorId,
-    });
-    if (factFreeSync.updated) {
-      updated += 1;
-      activeUpdated += 1;
-      continue;
-    }
-
-    const remainingSync = await synchronizeRemainingActiveProductTimeStandards(tx, {
-      route,
-      profile,
-      actorId: input.actorId,
-    });
-    if (remainingSync.updated) {
-      updated += 1;
-      activeUpdated += 1;
-      if (!remainingSync.fullySynchronized) partiallyUpdated += 1;
-      if (remainingSync.reviewRequired) activeReviewRequired += 1;
-      continue;
-    }
-    if (factFreeSync.reviewRequired || remainingSync.reviewRequired) activeReviewRequired += 1;
+    if (result.reviewRequired) activeReviewRequired += 1;
     skipped += 1;
   }
 

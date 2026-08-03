@@ -236,6 +236,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [routeSyncReview, setRouteSyncReview] = useState<{
@@ -810,7 +811,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setError('当前内容尚未保存，请先保存草稿再发布');
       return;
     }
-    if (!window.confirm(`确认发布 ${selectedItem.specification} 产品工时 V${activeDraft.version}？完全未开工且没有生产事实的待执行路线会自动升级；已开工路线继续保留原版本快照。`)) return;
+    if (!window.confirm(`确认发布 ${selectedItem.specification} 产品工时 V${activeDraft.version}？系统会同步待执行路线和在制路线的未完工工序；已完工记录继续保留当时的版本快照。`)) return;
     setPublishing(true);
     setError('');
     try {
@@ -869,6 +870,71 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setError(reason instanceof Error ? reason.message : '产品工时发布失败');
     } finally {
       setPublishing(false);
+    }
+  }
+
+  async function reconcilePublished(): Promise<void> {
+    if (!selectedItem || !activePublished) {
+      setError('当前产品没有可校准的正式工时版本');
+      return;
+    }
+    if (!window.confirm(`确认使用当前正式版本 V${activePublished.version} 校准 ${selectedItem.specification} 的待执行及在制流程？该操作不会新建产品工时版本，已完工历史快照不会被覆盖。`)) return;
+    setReconciling(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/product-time-profiles/${selectedItem.id}/reconcile`, {
+        method: 'POST',
+      });
+      const data = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        error?: string;
+        profileVersion?: number;
+        routeSync?: {
+          updated: number;
+          activeUpdated: number;
+          partiallyUpdated: number;
+          created: number;
+          started: number;
+          skipped: number;
+          reviewRequired: number;
+        };
+        dailyTaskSynchronized?: number;
+        dailyTaskReviewRequired?: number;
+      };
+      if (!response.ok || !data.ok) throw new Error(data.error || '在制流程工时校准失败');
+      const version = data.profileVersion || activePublished.version;
+      const updated = data.routeSync?.updated || 0;
+      const created = data.routeSync?.created || 0;
+      const daily = data.dailyTaskSynchronized || 0;
+      const reviewRequired = (data.routeSync?.reviewRequired || 0) + (data.dailyTaskReviewRequired || 0);
+      const summary = [
+        updated ? `同步 ${updated} 张路线` : '',
+        created ? `补建 ${created} 张路线` : '',
+        daily ? `更新 ${daily} 项日任务及人员计划工时` : '',
+      ].filter(Boolean).join('，');
+      setMessage(summary
+        ? `正式版本 V${version} 校准完成：${summary}`
+        : `正式版本 V${version} 已核对，当前流程无需更新`);
+      if (reviewRequired > 0) {
+        setRouteSyncReview({
+          itemId: selectedItem.id,
+          specification: selectedItem.specification,
+          version,
+          count: reviewRequired,
+        });
+        showToast(`${reviewRequired} 项结构变化需要主管核对，系统未覆盖已有生产事实`, {
+          tone: 'warning',
+          duration: 6500,
+          dedupeKey: `product-time-reconcile-review:${selectedItem.id}:${version}`,
+        });
+      } else {
+        setRouteSyncReview(null);
+      }
+      await load(selectedItem.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '在制流程工时校准失败');
+    } finally {
+      setReconciling(false);
     }
   }
 
@@ -1129,11 +1195,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <footer className="product-time-route-actions">
                 <span className="product-time-route-status">
                   {hasUnsavedChanges && <b><AlertTriangle size={13} aria-hidden="true" />未保存</b>}
-                  <em>{invalidEntryCount ? `${invalidEntryCount} 道工序工时无效` : activePublished ? '新版本会自动同步零报工在制路线；已有完工的路线只更新未完工工序，并保留历史工时快照。' : '保存草稿后检查无误，再发布为生产可用版本。'}</em>
+                  <em>{invalidEntryCount ? `${invalidEntryCount} 道工序工时无效` : activePublished ? '正式版本会同步在制路线的未完工工序；完工撤回后，重新打开的工序会自动追平当前正式工时。' : '保存草稿后检查无误，再发布为生产可用版本。'}</em>
                 </span>
                 <div>
                   <button className="hm-workbench-button" type="button" disabled={!dirty || saving} onClick={resetChanges}><RotateCcw size={15} aria-hidden="true" />放弃</button>
                   <button className="hm-workbench-button" type="button" disabled={saving || !dirty || invalidEntryCount > 0 || entries.length === 0} onClick={() => void saveDraft()}><Save size={15} aria-hidden="true" />{saving ? '保存中' : '保存草稿'}</button>
+                  <button className="hm-workbench-button" type="button" disabled={reconciling || publishing || !activePublished} onClick={() => void reconcilePublished()} title="不新建版本，将当前正式工时重新同步到待执行、在制路线、日任务和人员计划工时"><RefreshCw size={15} aria-hidden="true" />{reconciling ? '校准中' : '同步在制流程'}</button>
                   <button className="hm-workbench-button primary" type="button" disabled={publishing || dirty || !activeDraft || invalidEntryCount > 0} onClick={() => void publish()}><CheckCircle2 size={15} aria-hidden="true" />{publishing ? '发布中' : '发布生产版本'}</button>
                 </div>
               </footer>

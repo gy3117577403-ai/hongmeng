@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { Prisma } from '@prisma/client';
+import { DailyProcessTaskStatus, DailyProductionPlanStatus, Prisma } from '@prisma/client';
 import { prisma } from '../lib/prisma';
+import { withdrawProcessCompletion } from '../lib/process-completion-withdrawal-service';
 import { syncDraftRoutesFromPublishedProductTime } from '../lib/process-routing';
 
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
@@ -27,6 +28,11 @@ test(
     let progressedOrderId = '';
     let progressedRouteId = '';
     let progressedCompletionId = '';
+    let teamId = '';
+    let employeeId = '';
+    let dailyPlanId = '';
+    let dailyTaskId = '';
+    let dailyAssignmentId = '';
     const definitionIds: string[] = [];
     try {
       const [automatic, wrapping] = await Promise.all([
@@ -293,6 +299,68 @@ test(
         },
       });
       progressedCompletionId = historicalCompletion.id;
+      const team = await prisma.productionTeam.create({
+        data: { code: `${prefix}-TEAM`, name: `${prefix} Team` },
+      });
+      teamId = team.id;
+      const employee = await prisma.employee.create({
+        data: { employeeNo: `${prefix}-EMPLOYEE`, name: `${prefix} employee`, team: team.name },
+      });
+      employeeId = employee.id;
+      const dailyPlan = await prisma.dailyProductionPlan.create({
+        data: {
+          workDate: new Date('2026-08-03T00:00:00.000Z'),
+          shiftCode: 'DAY',
+          teamId: team.id,
+          status: DailyProductionPlanStatus.CONFIRMED,
+          confirmedAt: startedAt,
+          confirmedById: actor.id,
+          createdById: actor.id,
+          updatedById: actor.id,
+        },
+      });
+      dailyPlanId = dailyPlan.id;
+      const dailyTask = await prisma.dailyProcessTask.create({
+        data: {
+          planId: dailyPlan.id,
+          workDate: dailyPlan.workDate,
+          shiftCode: dailyPlan.shiftCode,
+          workOrderId: progressedOrder.id,
+          routeId: progressedRouteId,
+          stepId: progressedOrder.processRoute.steps[0].id,
+          routeVersion: 0,
+          processCode: automatic.code,
+          processName: automatic.name,
+          stageGroup: automatic.stageGroup,
+          position: 1,
+          sequenceGroup: 1,
+          standardSource: 'product_profile',
+          timeBasis: 'per_unit',
+          unitLabel: '套',
+          standardMillisecondsPerUnit: 3_000,
+          setupMilliseconds: 0,
+          unitsPerProduct: 1,
+          countsForEfficiency: true,
+          productTimeProfileId: oldProfile.id,
+          productTimeProfileVersion: 1,
+          plannedQty: 1_000,
+          availableQty: 0,
+          status: DailyProcessTaskStatus.COMPLETED,
+        },
+      });
+      dailyTaskId = dailyTask.id;
+      const dailyAssignment = await prisma.dailyTaskAssignment.create({
+        data: {
+          taskId: dailyTask.id,
+          employeeId: employee.id,
+          assignedTeamId: team.id,
+          quantity: 1_000,
+          plannedStandardMilliseconds: 3_000_000n,
+          idempotencyKey: `${prefix}-ASSIGNMENT`,
+          assignedById: actor.id,
+        },
+      });
+      dailyAssignmentId = dailyAssignment.id;
 
       const result = await prisma.$transaction(
         tx => syncDraftRoutesFromPublishedProductTime(tx, {
@@ -341,9 +409,76 @@ test(
       assert.equal(progressedRoute.steps[1].productTimeProfileVersion, 2);
       assert.equal(progressedRoute.completions[0].standardMillisecondsPerUnit, 3_000);
       assert.equal(progressedRoute.completions[0].productTimeProfileVersion, 1);
+
+      const withdrawn = await withdrawProcessCompletion({
+        routeId: progressedRouteId,
+        completionId: historicalCompletion.id,
+        expectedRouteVersion: progressedRoute.version,
+        category: 'REPORTING_ERROR',
+        idempotencyKey: `${prefix}-WITHDRAW-COMPLETION`,
+        userId: actor.id,
+        actor: actor.displayName,
+      });
+      assert.equal(withdrawn.status, 'WITHDRAWN');
+      assert.equal(withdrawn.routeVersion, 3);
+
+      const reopenedRoute = await prisma.workOrderProcessRoute.findUniqueOrThrow({
+        where: { id: progressedRouteId },
+        include: {
+          steps: { orderBy: { position: 'asc' } },
+          completions: true,
+        },
+      });
+      assert.equal(reopenedRoute.version, 3);
+      assert.equal(reopenedRoute.productTimeProfileId, newProfile.id);
+      assert.equal(reopenedRoute.productTimeProfileVersion, 2);
+      assert.equal(reopenedRoute.steps[0].status, 'current');
+      assert.equal(reopenedRoute.steps[0].standardMillisecondsPerUnit, 6_000);
+      assert.equal(reopenedRoute.steps[0].productTimeEntryId, newProfile.entries[0].id);
+      assert.equal(reopenedRoute.steps[0].productTimeProfileVersion, 2);
+      assert.equal(reopenedRoute.steps[1].status, 'pending');
+      assert.equal(reopenedRoute.steps[1].standardMillisecondsPerUnit, 45_000);
+      assert.ok(reopenedRoute.completions[0].voidedAt);
+      assert.equal(reopenedRoute.completions[0].standardMillisecondsPerUnit, 3_000);
+      assert.equal(reopenedRoute.completions[0].productTimeProfileVersion, 1);
+      const [synchronizedTask, synchronizedAssignment] = await Promise.all([
+        prisma.dailyProcessTask.findUniqueOrThrow({ where: { id: dailyTask.id } }),
+        prisma.dailyTaskAssignment.findUniqueOrThrow({ where: { id: dailyAssignment.id } }),
+      ]);
+      assert.equal(synchronizedTask.status, DailyProcessTaskStatus.READY);
+      assert.equal(synchronizedTask.routeVersion, 3);
+      assert.equal(synchronizedTask.standardMillisecondsPerUnit, 6_000);
+      assert.equal(synchronizedTask.productTimeProfileId, newProfile.id);
+      assert.equal(synchronizedTask.productTimeProfileVersion, 2);
+      assert.equal(synchronizedAssignment.plannedStandardMilliseconds, 6_000_000n);
+
+      const replay = await prisma.$transaction(
+        tx => syncDraftRoutesFromPublishedProductTime(tx, {
+          profileId: newProfile.id,
+          actorId: actor.id,
+        }),
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+      );
+      assert.equal(replay.activeUpdated, 0);
+      const replayedRoute = await prisma.workOrderProcessRoute.findUniqueOrThrow({
+        where: { id: progressedRouteId },
+        select: { version: true },
+      });
+      assert.equal(replayedRoute.version, 3);
     } finally {
       const routeIds = [routeId, progressedRouteId].filter(Boolean);
       const orderIds = [orderId, progressedOrderId].filter(Boolean);
+      if (dailyTaskId) {
+        await prisma.dailyPlanRevision.deleteMany({ where: { taskId: dailyTaskId } });
+      }
+      if (dailyAssignmentId) {
+        await prisma.dailyTaskAssignment.deleteMany({ where: { id: dailyAssignmentId } });
+      }
+      if (dailyTaskId) await prisma.dailyProcessTask.deleteMany({ where: { id: dailyTaskId } });
+      if (dailyPlanId) {
+        await prisma.dailyPlanRevision.deleteMany({ where: { planId: dailyPlanId } });
+        await prisma.dailyProductionPlan.deleteMany({ where: { id: dailyPlanId } });
+      }
       if (progressedCompletionId) {
         await prisma.processCompletion.deleteMany({ where: { id: progressedCompletionId } });
       }
@@ -357,6 +492,8 @@ test(
       }
       if (drawingItemId) await prisma.drawingLibraryItem.deleteMany({ where: { id: drawingItemId } });
       if (definitionIds.length) await prisma.processDefinition.deleteMany({ where: { id: { in: definitionIds } } });
+      if (employeeId) await prisma.employee.deleteMany({ where: { id: employeeId } });
+      if (teamId) await prisma.productionTeam.deleteMany({ where: { id: teamId } });
       await prisma.user.deleteMany({ where: { id: actor.id } });
     }
   },

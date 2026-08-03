@@ -8,6 +8,8 @@ import {
 import { dateKeyFromDatabase } from '@/lib/attendance';
 import { issueCode } from '@/lib/issues';
 import { prisma } from '@/lib/prisma';
+import { syncProductTimeRouteFromPublishedProductTime } from '@/lib/process-routing';
+import { syncUnfinishedDailyTasksFromPublishedProductTime } from '@/lib/product-time-task-sync';
 import { legacyStatusForStage, type WorkOrderStage } from '@/lib/work-orders';
 
 export class ProcessCompletionWithdrawalError extends Error {
@@ -726,7 +728,7 @@ async function applyWithdrawal(
     });
   }
 
-  const nextRouteVersion = state.route.version + 1;
+  let nextRouteVersion = state.route.version + 1;
   const routeUpdate = await tx.workOrderProcessRoute.updateMany({
     where: { id: state.routeId, version: state.route.version },
     data: { version: { increment: 1 }, status: 'in_progress', completedAt: null },
@@ -737,6 +739,28 @@ async function applyWithdrawal(
       409,
       'PROCESS_ROUTE_VERSION_CONFLICT',
     );
+  }
+
+  const latestPublishedProfile = state.route.routeSource === 'product_time_profile'
+    && state.route.workOrder.drawingLibraryItemId
+    ? await tx.productTimeProfile.findFirst({
+        where: {
+          drawingLibraryItemId: state.route.workOrder.drawingLibraryItemId,
+          status: 'published',
+        },
+        orderBy: [{ version: 'desc' }, { publishedAt: 'desc' }],
+        select: { id: true, version: true, drawingLibraryItemId: true },
+      })
+    : null;
+  const productTimeRouteSync = latestPublishedProfile
+    ? await syncProductTimeRouteFromPublishedProductTime(tx, {
+        routeId: state.routeId,
+        profileId: latestPublishedProfile.id,
+        actorId: input.userId,
+      })
+    : null;
+  if (productTimeRouteSync?.routeVersion !== null && productTimeRouteSync?.routeVersion !== undefined) {
+    nextRouteVersion = productTimeRouteSync.routeVersion;
   }
 
   const order = state.route.workOrder;
@@ -823,12 +847,23 @@ async function applyWithdrawal(
     });
   }
 
+  const productTimeTaskSync = latestPublishedProfile
+    ? await syncUnfinishedDailyTasksFromPublishedProductTime(tx, {
+        drawingLibraryItemId: latestPublishedProfile.drawingLibraryItemId,
+        profileId: latestPublishedProfile.id,
+        profileVersion: latestPublishedProfile.version,
+        actorId: input.userId,
+        routeId: state.routeId,
+        reason: `完工撤回后自动追平产品工序与工时 V${latestPublishedProfile.version}，同步日任务及人员计划工时`,
+      })
+    : null;
+
   await tx.processRouteActivity.create({
     data: {
       routeId: state.routeId,
       stepId: state.stepId,
       action: 'withdraw_process_completion',
-      content: `${state.step.processName}完工已撤回，数量、工时及日计划已同步`,
+      content: `${state.step.processName}完工已撤回，数量、工时及日计划已同步${productTimeRouteSync?.updated ? `，重新打开的工序已追平产品工时 V${latestPublishedProfile?.version}` : ''}`,
       actorId: input.userId,
       detail: {
         idempotencyKey: input.idempotencyKey,
@@ -837,6 +872,15 @@ async function applyWithdrawal(
         reason: input.reason,
         routeVersion: nextRouteVersion,
         impact: preview.impact,
+        productTimeSync: latestPublishedProfile ? {
+          profileId: latestPublishedProfile.id,
+          profileVersion: latestPublishedProfile.version,
+          routeUpdated: productTimeRouteSync?.updated || false,
+          partiallyUpdated: productTimeRouteSync?.partiallyUpdated || false,
+          reviewRequired: productTimeRouteSync?.reviewRequired || false,
+          dailyTaskSynchronized: productTimeTaskSync?.synchronized || 0,
+          dailyTaskReviewRequired: productTimeTaskSync?.reviewRequired || 0,
+        } : null,
       },
     },
   });
@@ -854,6 +898,10 @@ async function applyWithdrawal(
         reason: input.reason,
         routeVersion: nextRouteVersion,
         impact: preview.impact,
+        productTimeProfileId: latestPublishedProfile?.id || null,
+        productTimeProfileVersion: latestPublishedProfile?.version || null,
+        productTimeRouteUpdated: productTimeRouteSync?.updated || false,
+        dailyTaskSynchronized: productTimeTaskSync?.synchronized || 0,
       },
     },
   });
