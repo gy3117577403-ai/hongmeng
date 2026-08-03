@@ -66,7 +66,7 @@ export type WithdrawProcessCompletionCommand = {
   completionId: string;
   expectedRouteVersion: unknown;
   category: unknown;
-  reason: unknown;
+  reason?: unknown;
   idempotencyKey: unknown;
   userId: string;
   actor: string;
@@ -163,6 +163,21 @@ function parseCategory(value: unknown): CompletionCorrectionCategory {
     400,
     'PROCESS_COMPLETION_CORRECTION_CATEGORY_REQUIRED',
   );
+}
+
+function automaticWithdrawalAuditReason(
+  category: CompletionCorrectionCategory,
+  state: WithdrawalState,
+  preview: ProcessCompletionWithdrawalPreview,
+): string {
+  const categoryLabel = category === 'REPORTING_ERROR' ? '报工错误' : '流程异常';
+  return [
+    `主管完工撤回（${categoryLabel}）`,
+    `工序：${state.step.processName}`,
+    `完工数量：${preview.impact.processedQty}`,
+    `回收转序：${preview.impact.releaseReductionQty}`,
+    `冲销领取：${preview.impact.laborClaimedQty}`,
+  ].join('；').slice(0, 500);
 }
 
 function parseIdempotencyKey(value: unknown): string {
@@ -859,7 +874,6 @@ export async function withdrawProcessCompletion(
 ): Promise<WithdrawProcessCompletionResult> {
   const routeId = text(command.routeId, 80);
   const completionId = text(command.completionId, 80);
-  const reason = text(command.reason, 500);
   const category = parseCategory(command.category);
   const idempotencyKey = parseIdempotencyKey(command.idempotencyKey);
   const expectedRouteVersion = parseExpectedRouteVersion(command.expectedRouteVersion);
@@ -870,14 +884,6 @@ export async function withdrawProcessCompletion(
       'PROCESS_COMPLETION_WITHDRAWAL_TARGET_REQUIRED',
     );
   }
-  if (reason.length < 4) {
-    throw new ProcessCompletionWithdrawalError(
-      '撤回原因至少填写 4 个字符',
-      400,
-      'PROCESS_COMPLETION_WITHDRAWAL_REASON_REQUIRED',
-    );
-  }
-
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       return await prisma.$transaction(async tx => {
@@ -934,6 +940,7 @@ export async function withdrawProcessCompletion(
           );
         }
         const preview = previewFromState(state, releaseMovements);
+        const reason = automaticWithdrawalAuditReason(category, state, preview);
         if (!preview.canWithdraw) {
           const issue = await createBlockedIssue(tx, {
             state,

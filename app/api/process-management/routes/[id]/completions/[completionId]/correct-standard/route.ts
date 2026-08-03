@@ -20,7 +20,6 @@ export async function POST(
       expectedRouteVersion?: unknown;
       processName?: unknown;
       standardMillisecondsPerUnit?: unknown;
-      reason?: unknown;
       idempotencyKey?: unknown;
     };
     const data = await correctProcessCompletionStandard({
@@ -29,7 +28,6 @@ export async function POST(
       expectedRouteVersion: body.expectedRouteVersion,
       processName: body.processName,
       standardMillisecondsPerUnit: body.standardMillisecondsPerUnit,
-      reason: body.reason,
       idempotencyKey: body.idempotencyKey,
       userId: user.id,
       actor: user.displayName || user.username,

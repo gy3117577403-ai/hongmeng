@@ -48,7 +48,6 @@ export async function POST(
     const body = await req.json().catch(() => ({})) as {
       expectedRouteVersion?: unknown;
       category?: unknown;
-      reason?: unknown;
       idempotencyKey?: unknown;
     };
     const data = await withdrawProcessCompletion({
@@ -56,7 +55,6 @@ export async function POST(
       completionId: params.completionId,
       expectedRouteVersion: body.expectedRouteVersion,
       category: body.category,
-      reason: body.reason,
       idempotencyKey: body.idempotencyKey,
       userId: user.id,
       actor: user.displayName || user.username,

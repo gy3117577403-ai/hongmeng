@@ -823,26 +823,42 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         ok?: boolean;
         error?: string;
         profile?: ProductTimeProfileDTO;
-        routeSync?: { updated: number; created: number; started: number; skipped: number; reviewRequired: number };
+        routeSync?: {
+          updated: number;
+          activeUpdated: number;
+          partiallyUpdated: number;
+          created: number;
+          started: number;
+          skipped: number;
+          reviewRequired: number;
+        };
+        dailyTaskSynchronized?: number;
+        dailyTaskReviewRequired?: number;
       };
       if (!response.ok || !data.profile) throw new Error(data.error || '产品工时发布失败');
       const updated = data.routeSync?.updated || 0;
+      const activeUpdated = data.routeSync?.activeUpdated || 0;
+      const partiallyUpdated = data.routeSync?.partiallyUpdated || 0;
       const created = data.routeSync?.created || 0;
       const reviewRequired = data.routeSync?.reviewRequired || 0;
+      const totalReviewRequired = reviewRequired + (data.dailyTaskReviewRequired || 0);
       const syncSummary = [
         created ? `已生成 ${created} 张工单路线` : '',
-        updated ? `已升级 ${updated} 张待执行路线` : '',
+        updated ? `已同步 ${updated} 张工单路线` : '',
+        activeUpdated ? `其中在制 ${activeUpdated} 张` : '',
+        partiallyUpdated ? `${partiallyUpdated} 张仅同步未完工工序` : '',
+        data.dailyTaskSynchronized ? `已同步 ${data.dailyTaskSynchronized} 项日任务` : '',
       ].filter(Boolean).join('，');
       setMessage(`产品工序与工时 V${data.profile.version} 已发布${syncSummary ? `，${syncSummary}` : ''}`);
-      if (reviewRequired > 0) {
+      if (totalReviewRequired > 0) {
         setRouteSyncReview({
           itemId: selectedItem.id,
           specification: selectedItem.specification,
           version: data.profile.version,
-          count: reviewRequired,
+          count: totalReviewRequired,
         });
         showToast(
-          `${reviewRequired} 张已有历史生产事实的工单需要核对当前工序，旧数量和旧记录不会被覆盖`,
+          `${totalReviewRequired} 项工单或日任务存在结构变化，需要核对；历史数量和旧记录不会被覆盖`,
           { tone: 'warning', duration: 6500, dedupeKey: `product-time-route-review:${selectedItem.id}:${data.profile.version}` },
         );
       } else {
@@ -1067,8 +1083,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
                 {routeSyncReview?.itemId === selectedItem.id && <div className="product-time-route-review">
                   <AlertTriangle size={17} aria-hidden="true" />
-                  <span><strong>{routeSyncReview.count} 张历史工单等待核对</strong><small>V{routeSyncReview.version} 已同步到流程中心作为工艺预览；确认实际所在工序后才会接入执行，历史数量与记录保持不变。</small></span>
-                  <a href={`/workspace/workflows?weekScope=history&entityType=production&keyword=${encodeURIComponent(routeSyncReview.specification)}`}>去历史周核对<ExternalLink size={13} /></a>
+                  <span><strong>{routeSyncReview.count} 张工单存在结构变化待核对</strong><small>V{routeSyncReview.version} 的新工时已同步到可安全更新的工序；已有完工、转序或任务关联的结构不会被强制覆盖。</small></span>
+                  <a href={`/workspace/workflows?entityType=production&keyword=${encodeURIComponent(routeSyncReview.specification)}`}>去流程中心核对<ExternalLink size={13} /></a>
                   <button type="button" aria-label="关闭历史工单核对提示" onClick={() => setRouteSyncReview(null)}><X size={14} /></button>
                 </div>}
               </div>
@@ -1113,7 +1129,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <footer className="product-time-route-actions">
                 <span className="product-time-route-status">
                   {hasUnsavedChanges && <b><AlertTriangle size={13} aria-hidden="true" />未保存</b>}
-                  <em>{invalidEntryCount ? `${invalidEntryCount} 道工序工时无效` : activePublished ? '新发布版本只升级完全未开工且没有生产事实的路线；已开工路线保留原版本快照。' : '保存草稿后检查无误，再发布为生产可用版本。'}</em>
+                  <em>{invalidEntryCount ? `${invalidEntryCount} 道工序工时无效` : activePublished ? '新版本会自动同步零报工在制路线；已有完工的路线只更新未完工工序，并保留历史工时快照。' : '保存草稿后检查无误，再发布为生产可用版本。'}</em>
                 </span>
                 <div>
                   <button className="hm-workbench-button" type="button" disabled={!dirty || saving} onClick={resetChanges}><RotateCcw size={15} aria-hidden="true" />放弃</button>

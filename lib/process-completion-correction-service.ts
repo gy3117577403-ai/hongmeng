@@ -14,7 +14,7 @@ export type CorrectProcessCompletionStandardCommand = {
   expectedRouteVersion: unknown;
   processName: unknown;
   standardMillisecondsPerUnit: unknown;
-  reason: unknown;
+  reason?: unknown;
   idempotencyKey: unknown;
   userId: string;
   actor: string;
@@ -150,7 +150,6 @@ export async function correctProcessCompletionStandard(
     expectedRouteVersion: routeVersion(command.expectedRouteVersion),
     processName: clean(command.processName, 80),
     standardMillisecondsPerUnit: positiveMilliseconds(command.standardMillisecondsPerUnit),
-    reason: clean(command.reason, 500),
     idempotencyKey: idempotencyKey(command.idempotencyKey),
   };
   if (!parsed.routeId || !parsed.completionId) {
@@ -167,14 +166,6 @@ export async function correctProcessCompletionStandard(
       'PROCESS_COMPLETION_PROCESS_NAME_REQUIRED',
     );
   }
-  if (parsed.reason.length < 4) {
-    throw new ProcessCompletionWithdrawalError(
-      '校正原因至少填写 4 个字符',
-      400,
-      'PROCESS_COMPLETION_CORRECTION_REASON_REQUIRED',
-    );
-  }
-
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       return await prisma.$transaction(async tx => {
@@ -230,6 +221,12 @@ export async function correctProcessCompletionStandard(
           standardSource: state.standardSource,
           routeVersion: state.route.version,
         };
+        const auditReason = [
+          '主管校正工序与标准工时',
+          `工序：${before.processName}→${parsed.processName}`,
+          `标准工时：${before.standardMillisecondsPerUnit || 0}→${parsed.standardMillisecondsPerUnit}毫秒/单位`,
+          `完工数量：${state.processedQty}`,
+        ].join('；').slice(0, 500);
         await tx.workOrderProcessStep.update({
           where: { id: state.stepId },
           data: {
@@ -283,7 +280,7 @@ export async function correctProcessCompletionStandard(
                 status: ProcessLaborClaimStatus.VOIDED,
                 voidedAt: now,
                 voidedById: command.userId,
-                voidReason: parsed.reason,
+                voidReason: auditReason,
               },
             });
             await tx.processLaborClaim.create({
@@ -372,7 +369,7 @@ export async function correctProcessCompletionStandard(
             detail: {
               ...result,
               idempotencyKey: parsed.idempotencyKey,
-              reason: parsed.reason,
+              reason: auditReason,
               before,
             },
           },
@@ -387,7 +384,7 @@ export async function correctProcessCompletionStandard(
               workOrderId: state.workOrderId,
               routeId: state.routeId,
               stepId: state.stepId,
-              reason: parsed.reason,
+              reason: auditReason,
               before,
               after: result,
             },

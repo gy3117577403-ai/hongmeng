@@ -143,7 +143,6 @@ test(
         expectedRouteVersion: 1,
         processName: '精确裁线',
         standardMillisecondsPerUnit: 2_000,
-        reason: '测试标准工时校正',
         idempotencyKey: `${prefix}-correct`,
         userId: actor.id,
         actor: actor.displayName || actor.username,
@@ -165,7 +164,6 @@ test(
         completionId,
         expectedRouteVersion: preview.routeVersion,
         category: 'REPORTING_ERROR',
-        reason: '测试误报完工撤回',
         idempotencyKey: key,
         userId: actor.id,
         actor: actor.displayName || actor.username,
@@ -176,7 +174,6 @@ test(
         completionId,
         expectedRouteVersion: preview.routeVersion,
         category: 'REPORTING_ERROR',
-        reason: '测试误报完工撤回',
         idempotencyKey: key,
         userId: actor.id,
         actor: actor.displayName || actor.username,
@@ -193,6 +190,7 @@ test(
         prisma.processQuantityMovement.findMany({ where: { completionId, type: 'REVERSAL' } }),
       ]);
       assert.ok(storedCompletion.voidedAt);
+      assert.match(storedCompletion.voidReason || '', /主管完工撤回（报工错误）/);
       assert.equal(storedRoute.status, 'in_progress');
       assert.equal(steps[0].processedQty, 0);
       assert.equal(steps[0].goodOutputQty, 0);
@@ -342,7 +340,6 @@ test(
         completionId,
         expectedRouteVersion: 0,
         category: 'PROCESS_EXCEPTION',
-        reason: '下道已有报工需要异常处理',
         idempotencyKey: key,
         userId: actor.id,
         actor: actor.displayName || actor.username,
@@ -355,7 +352,6 @@ test(
         completionId,
         expectedRouteVersion: 0,
         category: 'PROCESS_EXCEPTION',
-        reason: '下道已有报工需要异常处理',
         idempotencyKey: key,
         userId: actor.id,
         actor: actor.displayName || actor.username,

@@ -8,6 +8,7 @@ import {
   canReplaceDraftRouteWithProductTime,
   canRepairHistoricalProductTimeRoute,
   canResetLegacyDraftRouteToProductTimePending,
+  canSynchronizeStartedFactFreeProductTimeRoute,
   canUpgradeUnstartedConfirmedProductTimeRoute,
   canMaterializeProductTimeRouteForWorkOrder,
   initialProcessRouteStatus,
@@ -236,6 +237,43 @@ test('已确认产品路线只有在完全未开工且没有生产事实时才�
       steps: [{ ...pendingStep, [field]: 1 }],
     }), false, `${field} 已有生产事实时必须冻结快照`);
   }
+});
+
+test('系统自动启动但尚无生产事实的在制路线仍可随产品工时新版本完整同步', () => {
+  const currentStep = {
+    status: 'current',
+    startedAt: new Date('2026-08-03T00:00:00.000Z'),
+    completedAt: null,
+    inputQty: 4_000,
+    processedQty: 0,
+    goodOutputQty: 0,
+    defectOutputQty: 0,
+    releasedGoodQty: 0,
+    _count: { executions: 0, completions: 0 },
+  };
+  const route = {
+    status: 'in_progress',
+    routeSource: 'product_time_profile',
+    startedAt: new Date('2026-08-03T00:00:00.000Z'),
+    steps: [currentStep],
+  };
+  assert.equal(canSynchronizeStartedFactFreeProductTimeRoute(route), true);
+  assert.equal(canSynchronizeStartedFactFreeProductTimeRoute({
+    ...route,
+    routeSource: 'process_template',
+  }), false);
+  assert.equal(canSynchronizeStartedFactFreeProductTimeRoute({
+    ...route,
+    steps: [{ ...currentStep, processedQty: 1 }],
+  }), false);
+  assert.equal(canSynchronizeStartedFactFreeProductTimeRoute({
+    ...route,
+    steps: [{ ...currentStep, _count: { executions: 0, completions: 1 } }],
+  }), false);
+  assert.equal(canSynchronizeStartedFactFreeProductTimeRoute({
+    ...route,
+    steps: [{ ...currentStep, releasedGoodQty: 1 }],
+  }), false);
 });
 
 test('旧模板只在未发图阶段转换为产品工序待发布，已进入生产的路线保持冻结', () => {

@@ -178,6 +178,16 @@ const draftRouteSyncInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclu
     orderBy: { position: 'asc' },
     select: {
       id: true,
+      processDefinitionId: true,
+      processCode: true,
+      processName: true,
+      stageGroup: true,
+      position: true,
+      sequenceGroup: true,
+      productTimeProfileId: true,
+      productTimeEntryId: true,
+      productTimeProfileVersion: true,
+      standardMillisecondsPerUnit: true,
       status: true,
       startedAt: true,
       completedAt: true,
@@ -186,7 +196,16 @@ const draftRouteSyncInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclu
       goodOutputQty: true,
       defectOutputQty: true,
       releasedGoodQty: true,
-      _count: { select: { executions: true, completions: true } },
+      _count: {
+        select: {
+          executions: true,
+          completions: true,
+          dailyProcessTasks: true,
+          processLaborPools: true,
+          sourceQuantityMovements: true,
+          targetQuantityMovements: true,
+        },
+      },
     },
   },
 });
@@ -335,6 +354,31 @@ export function canUpgradeUnstartedConfirmedProductTimeRoute(
       && Number(step.defectOutputQty || 0) === 0
       && Number(step.releasedGoodQty || 0) === 0
   ));
+}
+
+/**
+ * A route may already be marked as started because production release opens the
+ * first process automatically.  That timestamp is not a production fact by
+ * itself.  When no quantity, execution, completion, or downstream release has
+ * been recorded, the published product-time route can still be upgraded safely.
+ */
+export function canSynchronizeStartedFactFreeProductTimeRoute(
+  route: DraftRouteReplacementCheck,
+): boolean {
+  return route.status === 'in_progress'
+    && route.routeSource === 'product_time_profile'
+    && Boolean(route.startedAt)
+    && route.steps.length > 0
+    && route.steps.every(step => (
+      (step.status === 'current' || step.status === 'pending')
+      && !step.completedAt
+      && step._count.executions === 0
+      && step._count.completions === 0
+      && Number(step.processedQty || 0) === 0
+      && Number(step.goodOutputQty || 0) === 0
+      && Number(step.defectOutputQty || 0) === 0
+      && Number(step.releasedGoodQty || 0) === 0
+    ));
 }
 
 export function canMaterializeProductTimeRouteForWorkOrder(
@@ -1354,16 +1398,320 @@ export async function repairHistoricalProductTimeRoute(
   };
 }
 
+type ActiveProductTimeRouteSyncResult = {
+  updated: boolean;
+  fullySynchronized: boolean;
+  reviewRequired: boolean;
+  changedStepCount: number;
+};
+
+function activeRouteSyncSkipped(reviewRequired = false): ActiveProductTimeRouteSyncResult {
+  return { updated: false, fullySynchronized: false, reviewRequired, changedStepCount: 0 };
+}
+
+function activeRouteStepHasBlockingReferences(step: DraftRouteSyncRecord['steps'][number]): boolean {
+  return step._count.dailyProcessTasks > 0
+    || step._count.processLaborPools > 0
+    || step._count.sourceQuantityMovements > 0
+    || step._count.targetQuantityMovements > 0;
+}
+
+async function synchronizeStartedFactFreeProductTimeRoute(
+  tx: Prisma.TransactionClient,
+  input: {
+    route: DraftRouteSyncRecord;
+    profile: ProductTimeProfileRecord;
+    actorId: string;
+  },
+): Promise<ActiveProductTimeRouteSyncResult> {
+  if (!canSynchronizeStartedFactFreeProductTimeRoute(input.route)) return activeRouteSyncSkipped();
+
+  const entriesByDefinition = new Map(
+    input.profile.entries.map(entry => [entry.processDefinitionId, entry] as const),
+  );
+  const existingByDefinition = new Map(
+    input.route.steps
+      .filter(step => Boolean(step.processDefinitionId))
+      .map(step => [step.processDefinitionId as string, step] as const),
+  );
+  const removedSteps = input.route.steps.filter(step => (
+    !step.processDefinitionId || !entriesByDefinition.has(step.processDefinitionId)
+  ));
+  if (removedSteps.some(activeRouteStepHasBlockingReferences)) {
+    return activeRouteSyncSkipped(true);
+  }
+
+  const routeUpdate = await tx.workOrderProcessRoute.updateMany({
+    where: {
+      id: input.route.id,
+      version: input.route.version,
+      status: 'in_progress',
+      routeSource: 'product_time_profile',
+    },
+    data: {
+      templateId: null,
+      templateName: `${input.route.workOrder.specification || '当前产品'} 产品工时`,
+      templateVersion: input.profile.version,
+      productTimeProfileId: input.profile.id,
+      productTimeProfileVersion: input.profile.version,
+      routeSource: 'product_time_profile',
+      version: { increment: 1 },
+    },
+  });
+  if (routeUpdate.count !== 1) return activeRouteSyncSkipped(true);
+
+  // Move existing positions out of the final range first so reordering never
+  // collides with the per-route unique position constraint.
+  if (input.route.steps.length > 0) {
+    await tx.workOrderProcessStep.updateMany({
+      where: { routeId: input.route.id },
+      data: { position: { increment: 1_000 } },
+    });
+  }
+
+  const firstSequenceGroup = input.profile.entries[0]?.sequenceGroup;
+  const initialInputQty = getProductionQuantitySummary(input.route.workOrder).targetQty || 0;
+  const startedAt = input.route.startedAt || new Date();
+  for (const entry of input.profile.entries) {
+    const current = existingByDefinition.get(entry.processDefinitionId);
+    const isCurrentGroup = entry.sequenceGroup === firstSequenceGroup;
+    const data = {
+      processDefinitionId: entry.processDefinitionId,
+      processCode: entry.processDefinition.code,
+      processName: entry.processDefinition.name,
+      stageGroup: normalizeProcessStageGroup(entry.processDefinition.stageGroup) || 'frontend',
+      position: entry.position,
+      sequenceGroup: entry.sequenceGroup,
+      ...productTimeStandardSnapshot(input.profile, entry),
+      inputQty: isCurrentGroup ? initialInputQty : 0,
+      processedQty: 0,
+      goodOutputQty: 0,
+      defectOutputQty: 0,
+      releasedGoodQty: 0,
+      status: isCurrentGroup ? 'current' : 'pending',
+      startedAt: isCurrentGroup ? startedAt : null,
+      completedAt: null,
+      completedById: null,
+      remark: entry.remark,
+      quantityVersion: { increment: 1 },
+    } as const;
+    if (current) {
+      await tx.workOrderProcessStep.update({ where: { id: current.id }, data });
+    } else {
+      const { quantityVersion: _quantityVersion, ...createData } = data;
+      await tx.workOrderProcessStep.create({
+        data: {
+          routeId: input.route.id,
+          ...createData,
+        },
+      });
+    }
+  }
+  if (removedSteps.length > 0) {
+    await tx.workOrderProcessStep.deleteMany({
+      where: { id: { in: removedSteps.map(step => step.id) } },
+    });
+  }
+
+  const currentNames = input.profile.entries
+    .filter(entry => entry.sequenceGroup === firstSequenceGroup)
+    .map(entry => entry.processDefinition.name)
+    .join('、');
+  await tx.workOrder.update({
+    where: { id: input.route.workOrderId },
+    data: { latestProgressRemark: `当前工序：${currentNames}` },
+  });
+  await tx.processRouteActivity.create({
+    data: {
+      routeId: input.route.id,
+      action: 'sync_active_product_time_route',
+      content: `产品工序与工时 V${input.profile.version} 已自动同步到零报工在制路线`,
+      actorId: input.actorId,
+      detail: {
+        previousProductTimeProfileId: input.route.productTimeProfileId,
+        previousProductTimeProfileVersion: input.route.productTimeProfileVersion,
+        productTimeProfileId: input.profile.id,
+        productTimeProfileVersion: input.profile.version,
+        changedStepCount: input.profile.entries.length,
+        addedStepCount: input.profile.entries.filter(entry => !existingByDefinition.has(entry.processDefinitionId)).length,
+        removedStepCount: removedSteps.length,
+        routeVersion: input.route.version + 1,
+      },
+    },
+  });
+  await tx.operationLog.create({
+    data: {
+      userId: input.actorId,
+      action: 'sync_active_product_time_route',
+      targetType: 'work_order_process_route',
+      targetId: input.route.id,
+      detail: {
+        workOrderId: input.route.workOrderId,
+        previousProductTimeProfileId: input.route.productTimeProfileId,
+        previousProductTimeProfileVersion: input.route.productTimeProfileVersion,
+        productTimeProfileId: input.profile.id,
+        productTimeProfileVersion: input.profile.version,
+        mode: 'fact_free_full_sync',
+        routeVersion: input.route.version + 1,
+      },
+    },
+  });
+  return {
+    updated: true,
+    fullySynchronized: true,
+    reviewRequired: false,
+    changedStepCount: input.profile.entries.length,
+  };
+}
+
+async function synchronizeRemainingActiveProductTimeStandards(
+  tx: Prisma.TransactionClient,
+  input: {
+    route: DraftRouteSyncRecord;
+    profile: ProductTimeProfileRecord;
+    actorId: string;
+  },
+): Promise<ActiveProductTimeRouteSyncResult> {
+  if (input.route.status !== 'in_progress' || input.route.routeSource !== 'product_time_profile') {
+    return activeRouteSyncSkipped();
+  }
+  const entriesByDefinition = new Map(
+    input.profile.entries.map(entry => [entry.processDefinitionId, entry] as const),
+  );
+  const unfinishedSteps = input.route.steps.filter(step => step.status !== 'completed' && step.status !== 'skipped');
+  const matchedSteps = unfinishedSteps.flatMap(step => {
+    const entry = step.processDefinitionId ? entriesByDefinition.get(step.processDefinitionId) : null;
+    return entry ? [{ step, entry }] : [];
+  });
+  if (matchedSteps.length === 0) return activeRouteSyncSkipped(true);
+
+  const routeDefinitionIds = new Set(input.route.steps.map(step => step.processDefinitionId).filter(Boolean));
+  const profileHasNewSteps = input.profile.entries.some(entry => !routeDefinitionIds.has(entry.processDefinitionId));
+  const unfinishedHasRemovedSteps = unfinishedSteps.some(step => (
+    !step.processDefinitionId || !entriesByDefinition.has(step.processDefinitionId)
+  ));
+  const sequenceChanged = matchedSteps.some(({ step, entry }) => (
+    step.position !== entry.position || step.sequenceGroup !== entry.sequenceGroup
+  ));
+  const reviewRequired = profileHasNewSteps || unfinishedHasRemovedSteps || sequenceChanged;
+
+  const routeUpdate = await tx.workOrderProcessRoute.updateMany({
+    where: {
+      id: input.route.id,
+      version: input.route.version,
+      status: 'in_progress',
+      routeSource: 'product_time_profile',
+    },
+    data: {
+      templateId: null,
+      templateName: `${input.route.workOrder.specification || '当前产品'} 产品工时`,
+      templateVersion: input.profile.version,
+      productTimeProfileId: input.profile.id,
+      productTimeProfileVersion: input.profile.version,
+      version: { increment: 1 },
+    },
+  });
+  if (routeUpdate.count !== 1) return activeRouteSyncSkipped(true);
+
+  for (const { step, entry } of matchedSteps) {
+    await tx.workOrderProcessStep.update({
+      where: { id: step.id },
+      data: {
+        processDefinitionId: entry.processDefinitionId,
+        processCode: entry.processDefinition.code,
+        processName: entry.processDefinition.name,
+        stageGroup: normalizeProcessStageGroup(entry.processDefinition.stageGroup) || 'frontend',
+        ...productTimeStandardSnapshot(input.profile, entry),
+        remark: entry.remark,
+      },
+    });
+  }
+
+  const currentNames = matchedSteps
+    .filter(({ step }) => step.status === 'current')
+    .map(({ entry }) => entry.processDefinition.name)
+    .join('、');
+  if (currentNames) {
+    await tx.workOrder.update({
+      where: { id: input.route.workOrderId },
+      data: { latestProgressRemark: `当前工序：${currentNames}` },
+    });
+  }
+  await tx.processRouteActivity.create({
+    data: {
+      routeId: input.route.id,
+      action: 'sync_active_product_time_route',
+      content: reviewRequired
+        ? `产品工序与工时 V${input.profile.version} 已同步到未完工工序，结构变化等待主管复核`
+        : `产品工序与工时 V${input.profile.version} 已同步到未完工工序，历史完工保留原快照`,
+      actorId: input.actorId,
+      detail: {
+        previousProductTimeProfileId: input.route.productTimeProfileId,
+        previousProductTimeProfileVersion: input.route.productTimeProfileVersion,
+        productTimeProfileId: input.profile.id,
+        productTimeProfileVersion: input.profile.version,
+        changedStepCount: matchedSteps.length,
+        reviewRequired,
+        routeVersion: input.route.version + 1,
+      },
+    },
+  });
+  await tx.operationLog.create({
+    data: {
+      userId: input.actorId,
+      action: 'sync_active_product_time_route',
+      targetType: 'work_order_process_route',
+      targetId: input.route.id,
+      detail: {
+        workOrderId: input.route.workOrderId,
+        previousProductTimeProfileId: input.route.productTimeProfileId,
+        previousProductTimeProfileVersion: input.route.productTimeProfileVersion,
+        productTimeProfileId: input.profile.id,
+        productTimeProfileVersion: input.profile.version,
+        mode: 'remaining_steps_sync',
+        changedStepCount: matchedSteps.length,
+        reviewRequired,
+        routeVersion: input.route.version + 1,
+      },
+    },
+  });
+  return {
+    updated: true,
+    // A route with production facts deliberately keeps completed process
+    // snapshots unchanged.  Even without a structural conflict this is a
+    // partial (remaining-steps-only) synchronization, not a full rewrite.
+    fullySynchronized: false,
+    reviewRequired,
+    changedStepCount: matchedSteps.length,
+  };
+}
+
 export async function syncDraftRoutesFromPublishedProductTime(
   tx: Prisma.TransactionClient,
   input: { profileId: string; actorId: string },
-): Promise<{ updated: number; created: number; started: number; skipped: number; reviewRequired: number }> {
+): Promise<{
+  updated: number;
+  activeUpdated: number;
+  partiallyUpdated: number;
+  created: number;
+  started: number;
+  skipped: number;
+  reviewRequired: number;
+}> {
   const profile = await tx.productTimeProfile.findUnique({
     where: { id: input.profileId },
     include: productTimeProfileInclude,
   });
   if (!profile || profile.status !== 'published') {
-    return { updated: 0, created: 0, started: 0, skipped: 0, reviewRequired: 0 };
+    return {
+      updated: 0,
+      activeUpdated: 0,
+      partiallyUpdated: 0,
+      created: 0,
+      started: 0,
+      skipped: 0,
+      reviewRequired: 0,
+    };
   }
 
   const routes = await tx.workOrderProcessRoute.findMany({
@@ -1376,6 +1724,10 @@ export async function syncDraftRoutesFromPublishedProductTime(
           startedAt: null,
           routeSource: { in: [...AUTO_UPGRADE_PRODUCT_TIME_ROUTE_SOURCES] },
         },
+        {
+          status: 'in_progress',
+          routeSource: 'product_time_profile',
+        },
       ],
     },
     include: draftRouteSyncInclude,
@@ -1384,6 +1736,9 @@ export async function syncDraftRoutesFromPublishedProductTime(
   let created = 0;
   let started = 0;
   let skipped = 0;
+  let activeUpdated = 0;
+  let partiallyUpdated = 0;
+  let activeReviewRequired = 0;
 
   for (const route of routes) {
     const result = await applyPublishedProductTimeToUnstartedRoute(tx, {
@@ -1394,12 +1749,37 @@ export async function syncDraftRoutesFromPublishedProductTime(
         ? `产品工序与工时 V${profile.version} 已发布，自动升级完全未开工路线`
         : `产品工序与工时 V${profile.version} 已发布，自动替换旧草稿并确认`,
     });
-    if (!result.updated) {
-      skipped += 1;
+    if (result.updated) {
+      updated += 1;
+      if (result.started) started += 1;
       continue;
     }
-    updated += 1;
-    if (result.started) started += 1;
+
+    const factFreeSync = await synchronizeStartedFactFreeProductTimeRoute(tx, {
+      route,
+      profile,
+      actorId: input.actorId,
+    });
+    if (factFreeSync.updated) {
+      updated += 1;
+      activeUpdated += 1;
+      continue;
+    }
+
+    const remainingSync = await synchronizeRemainingActiveProductTimeStandards(tx, {
+      route,
+      profile,
+      actorId: input.actorId,
+    });
+    if (remainingSync.updated) {
+      updated += 1;
+      activeUpdated += 1;
+      if (!remainingSync.fullySynchronized) partiallyUpdated += 1;
+      if (remainingSync.reviewRequired) activeReviewRequired += 1;
+      continue;
+    }
+    if (factFreeSync.reviewRequired || remainingSync.reviewRequired) activeReviewRequired += 1;
+    skipped += 1;
   }
 
   const missingRouteOrders = await tx.workOrder.findMany({
@@ -1484,13 +1864,21 @@ export async function syncDraftRoutesFromPublishedProductTime(
       },
     },
   });
-  const reviewRequired = reviewCandidates.filter(workOrder => (
+  const historicalReviewRequired = reviewCandidates.filter(workOrder => (
     canRepairHistoricalProductTimeRoute({
       workOrder,
       route: workOrder.processRoute,
     })
   )).length;
-  return { updated, created, started, skipped, reviewRequired };
+  return {
+    updated,
+    activeUpdated,
+    partiallyUpdated,
+    created,
+    started,
+    skipped,
+    reviewRequired: historicalReviewRequired + activeReviewRequired,
+  };
 }
 
 export function processTemplateStepInput(step: ProcessTemplateStepDTO): ValidatedProcessStep {
