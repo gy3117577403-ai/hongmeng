@@ -119,13 +119,68 @@ export function OrganizationManager({ organization, busy, error, canManage, onSa
   const [employeeId, setEmployeeId] = useState('');
   const [role, setRole] = useState<'WORKSHOP_SUPERVISOR' | 'TEAM_LEADER' | 'MEMBER'>('MEMBER');
   const [memberTeamId, setMemberTeamId] = useState('');
+  const [capabilityTeamId, setCapabilityTeamId] = useState('');
+  const [processDefinitionId, setProcessDefinitionId] = useState('');
   const activeTeams = useMemo(() => organization?.teams.filter(team => team.isActive) || [], [organization]);
-  useEffect(() => { if (!memberTeamId && activeTeams[0]) setMemberTeamId(activeTeams[0].id); }, [activeTeams, memberTeamId]);
+  useEffect(() => {
+    if (!activeTeams.some(team => team.id === memberTeamId)) setMemberTeamId(activeTeams[0]?.id || '');
+    if (!activeTeams.some(team => team.id === capabilityTeamId)) setCapabilityTeamId(activeTeams[0]?.id || '');
+  }, [activeTeams, capabilityTeamId, memberTeamId]);
+  useEffect(() => {
+    if (!processDefinitionId && organization?.processDefinitions[0]) {
+      setProcessDefinitionId(organization.processDefinitions[0].id);
+    }
+  }, [organization, processDefinitionId]);
   if (!organization) return <div className="daily-page-loading"><LoaderCircle className="spin" /><b>正在加载生产组织…</b></div>;
+  const activeCapabilityCount = organization.teams.reduce((total, team) => total + team.capabilities.filter(capability => capability.isActive).length, 0);
   return <div className="daily-organization-manager">
-    <section className="daily-organization-hero"><div><span>独立排程范围</span><h2>主管、组长与生产班组</h2><p>只用于日计划领取与分配，不改变登录权限、人事岗位或实际工时领取权限。</p></div><div><strong>{activeTeams.length}</strong><span>在用班组</span></div><div><strong>{organization.teams.flatMap(team => team.members).filter(member => member.isActive !== false).length}</strong><span>有效成员关系</span></div></section>
+    <section className="daily-organization-hero"><div><span>独立排程范围</span><h2>班组、人员与工序归属</h2><p>工序归属决定“哪个班组可在日计划领取哪些工序”，不会改变登录权限、人事岗位或实际工时领取权限。</p></div><div><strong>{activeTeams.length}</strong><span>在用班组</span></div><div><strong>{activeCapabilityCount}</strong><span>有效工序归属</span></div></section>
     {error && <div className="daily-page-error" role="alert"><AlertTriangle size={17} /><span>{error}</span></div>}
-    {canManage && <section className="daily-organization-editor"><header><UserRoundCog size={19} /><div><strong>组织维护</strong><span>管理员可新增班组、设置主管/组长/成员并保留生效时间。</span></div></header><div className="daily-org-forms"><form onSubmit={event => { event.preventDefault(); if (!teamName.trim()) return; onSave({ action: 'upsertTeam', ...(teamId ? { teamId } : {}), code: teamCode.trim(), name: teamName.trim(), isActive: true, expectedVersion: teamId ? organization.teams.find(item => item.id === teamId)?.version : undefined }); setTeamId(''); setTeamCode(''); setTeamName(''); }}><b>{teamId ? '编辑班组' : '新增班组'}</b><label>班组编码<input value={teamCode} onChange={event => setTeamCode(event.target.value)} placeholder="例如 FRONT-A" /></label><label>班组名称<input value={teamName} onChange={event => setTeamName(event.target.value)} placeholder="例如 前端一组" required /></label><button type="submit" className="daily-primary-button compact" disabled={busy}>{busy ? '保存中…' : '保存班组'}</button></form><form onSubmit={event => { event.preventDefault(); if (!employeeId || (role !== 'WORKSHOP_SUPERVISOR' && !memberTeamId)) return; onSave({ action: 'upsertMembership', employeeId, ...(role === 'WORKSHOP_SUPERVISOR' ? {} : { teamId: memberTeamId }), role, isActive: true, effectiveFrom: chinaDateKey(new Date()) }); }}><b>配置人员关系</b><label>人员<select value={employeeId} onChange={event => setEmployeeId(event.target.value)} required><option value="">选择在岗员工</option>{organization.availableEmployees.filter(employee => employee.isActive).map(employee => <option value={employee.id} key={employee.id}>{employee.name} · {employee.employeeNo}</option>)}</select></label><label>排程角色<select value={role} onChange={event => setRole(event.target.value as typeof role)}><option value="WORKSHOP_SUPERVISOR">车间主管</option><option value="TEAM_LEADER">班组长</option><option value="MEMBER">生产成员</option></select></label>{role !== 'WORKSHOP_SUPERVISOR' && <label>所属班组<select value={memberTeamId} onChange={event => setMemberTeamId(event.target.value)}>{activeTeams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>}<button type="submit" className="daily-primary-button compact" disabled={busy}>{busy ? '保存中…' : '保存关系'}</button></form></div></section>}
-    <div className="daily-team-grid">{organization.teams.map(team => <article className={`daily-team-card ${team.isActive ? '' : 'inactive'}`} key={team.id}><header><div><span>{team.code || '生产班组'}</span><strong>{team.name}</strong></div><b>{team.members.length} 人</b></header><div className="daily-org-member-list">{!team.members.length && <p>尚未配置组长或成员</p>}{team.members.map(member => <div key={member.id || `${team.id}-${member.employeeId}-${member.planningRole}`}><span>{member.employeeName.slice(0, 1)}</span><b>{member.employeeName}<small>{member.position || member.employeeNo}</small></b><em>{member.planningRole === 'TEAM_LEADER' ? '组长' : member.planningRole === 'WORKSHOP_SUPERVISOR' ? '主管' : '成员'}</em></div>)}</div>{canManage && <footer><button type="button" onClick={() => { setTeamId(team.id); setTeamCode(team.code || ''); setTeamName(team.name); }}>编辑</button><button type="button" className={team.isActive ? 'danger' : ''} disabled={busy} onClick={() => onSave({ action: 'upsertTeam', teamId: team.id, code: team.code || '', name: team.name, isActive: !team.isActive, expectedVersion: team.version })}>{team.isActive ? '停用' : '启用'}</button></footer>}</article>)}</div>
+    {canManage && <section className="daily-organization-editor">
+      <header><UserRoundCog size={19} /><div><strong>生产组织维护</strong><span>依次配置班组、人员关系和班组可领取工序；每次修改都有审计记录。</span></div></header>
+      <div className="daily-org-forms">
+        <form onSubmit={event => {
+          event.preventDefault();
+          if (!teamName.trim()) return;
+          onSave({ action: 'upsertTeam', ...(teamId ? { teamId } : {}), code: teamCode.trim(), name: teamName.trim(), isActive: true, expectedVersion: teamId ? organization.teams.find(item => item.id === teamId)?.version : undefined });
+          setTeamId(''); setTeamCode(''); setTeamName('');
+        }}>
+          <b>{teamId ? '编辑班组' : '新增班组'}</b>
+          <label>班组名称<input value={teamName} onChange={event => setTeamName(event.target.value)} placeholder="例如 压裁组" required /></label>
+          <label>班组编码（可选）<input value={teamCode} onChange={event => setTeamCode(event.target.value)} placeholder="留空由系统管理" /></label>
+          <button type="submit" className="daily-primary-button compact" disabled={busy}>{busy ? '保存中…' : '保存班组'}</button>
+        </form>
+        <form onSubmit={event => {
+          event.preventDefault();
+          if (!employeeId || (role !== 'WORKSHOP_SUPERVISOR' && !memberTeamId)) return;
+          onSave({ action: 'upsertMembership', employeeId, ...(role === 'WORKSHOP_SUPERVISOR' ? {} : { teamId: memberTeamId }), role, isActive: true, effectiveFrom: chinaDateKey(new Date()) });
+          setEmployeeId('');
+        }}>
+          <b>配置人员关系</b>
+          <label>人员<select value={employeeId} onChange={event => setEmployeeId(event.target.value)} required><option value="">选择在岗员工</option>{organization.availableEmployees.filter(employee => employee.isActive).map(employee => <option value={employee.id} key={employee.id}>{employee.name} · {employee.employeeNo}</option>)}</select></label>
+          <label>排程角色<select value={role} onChange={event => setRole(event.target.value as typeof role)}><option value="WORKSHOP_SUPERVISOR">车间主管</option><option value="TEAM_LEADER">班组长</option><option value="MEMBER">生产成员</option></select></label>
+          {role !== 'WORKSHOP_SUPERVISOR' && <label>所属班组<select value={memberTeamId} onChange={event => setMemberTeamId(event.target.value)}>{activeTeams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>}
+          <button type="submit" className="daily-primary-button compact" disabled={busy}>{busy ? '保存中…' : '保存关系'}</button>
+        </form>
+        <form onSubmit={event => {
+          event.preventDefault();
+          if (!capabilityTeamId || !processDefinitionId) return;
+          const team = organization.teams.find(item => item.id === capabilityTeamId);
+          const existing = team?.capabilities.find(capability => capability.processDefinitionId === processDefinitionId);
+          onSave({ action: 'upsertCapability', ...(existing ? { capabilityId: existing.id, expectedVersion: existing.version } : {}), teamId: capabilityTeamId, processDefinitionId, isActive: true });
+        }}>
+          <b>配置班组—工序归属</b>
+          <label>生产班组<select value={capabilityTeamId} onChange={event => setCapabilityTeamId(event.target.value)}>{activeTeams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>
+          <label>可领取工序<select value={processDefinitionId} onChange={event => setProcessDefinitionId(event.target.value)}>{organization.processDefinitions.map(process => <option key={process.id} value={process.id}>{process.name}{process.stageGroup ? ` · ${process.stageGroup}` : ''}</option>)}</select></label>
+          <button type="submit" className="daily-primary-button compact" disabled={busy || !capabilityTeamId || !processDefinitionId}><Plus size={14} />添加归属</button>
+        </form>
+      </div>
+    </section>}
+    <div className="daily-team-grid">{organization.teams.map(team => <article className={`daily-team-card ${team.isActive ? '' : 'inactive'}`} key={team.id}>
+      <header><div><span>{team.code || '生产班组'}</span><strong>{team.name}</strong></div><b>{team.members.length} 人 · {team.capabilities.filter(capability => capability.isActive).length} 工序</b></header>
+      <section className="daily-team-capabilities"><strong>可领取工序</strong><div>{!team.capabilities.some(capability => capability.isActive) && <p>尚未配置工序归属</p>}{team.capabilities.filter(capability => capability.isActive).map(capability => <span key={capability.id}>{capability.processName}{canManage && <button type="button" aria-label={`移除${capability.processName}归属`} disabled={busy} onClick={() => onSave({ action: 'upsertCapability', capabilityId: capability.id, teamId: team.id, processDefinitionId: capability.processDefinitionId, isActive: false, expectedVersion: capability.version })}><X size={12} /></button>}</span>)}</div></section>
+      <div className="daily-org-member-list">{!team.members.length && <p>尚未配置组长或成员</p>}{team.members.map(member => <div key={member.id || `${team.id}-${member.employeeId}-${member.planningRole}`}><span>{member.employeeName.slice(0, 1)}</span><b>{member.employeeName}<small>{member.position || member.employeeNo}</small></b><em>{member.planningRole === 'TEAM_LEADER' ? '组长' : member.planningRole === 'WORKSHOP_SUPERVISOR' ? '主管' : '成员'}</em></div>)}</div>
+      {canManage && <footer><button type="button" onClick={() => { setTeamId(team.id); setTeamCode(team.code || ''); setTeamName(team.name); }}>编辑</button><button type="button" className={team.isActive ? 'danger' : ''} disabled={busy} onClick={() => onSave({ action: 'upsertTeam', teamId: team.id, code: team.code || '', name: team.name, isActive: !team.isActive, expectedVersion: team.version })}>{team.isActive ? '停用' : '启用'}</button></footer>}
+    </article>)}</div>
   </div>;
 }

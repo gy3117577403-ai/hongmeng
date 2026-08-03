@@ -76,6 +76,7 @@ export type DailyPlanTask = {
   routeVersionLabel?: string | null;
   hardBlocked: boolean;
   hardBlockReason?: string | null;
+  warningCodes: string[];
   warnings: string[];
   upstreamProcessName?: string | null;
   assignments: DailyPlanAssignment[];
@@ -170,6 +171,14 @@ export type DailyPlanWorkbench = {
   selectedTeamId?: string | null;
   scope: DailyPlanScope;
   summary: DailyPlanSummary;
+  weeklyPool: {
+    weekStartDate: string;
+    weekEndDate: string;
+    availableTaskCount: number;
+    alreadyPlannedTaskCount: number;
+    processOwnershipConfigured: boolean;
+    teamCapabilityCount: number;
+  };
   teamOptions: DailyPlanTeam[];
   teams: DailyPlanTeam[];
   employeeOptions: DailyPlanEmployeeOption[];
@@ -245,18 +254,29 @@ export type DailyPlanOrganizationTeam = {
   legacyTeamName?: string | null;
   sortOrder?: number;
   isActive: boolean;
+  capabilities: Array<{
+    id: string;
+    version: number;
+    processDefinitionId: string;
+    processCode: string;
+    processName: string;
+    priority: number;
+    isActive: boolean;
+  }>;
   members: DailyPlanOrganizationMember[];
 };
 
 export type DailyPlanOrganization = {
   version: number;
   availableEmployees: EmployeeDTO[];
+  processDefinitions: Array<{ id: string; code: string; name: string; stageGroup: string }>;
   teams: DailyPlanOrganizationTeam[];
 };
 
 export type DailyPlanOrganizationMutation =
   | { action: 'upsertTeam'; teamId?: string; code: string; name: string; legacyTeamName?: string; isActive?: boolean; sortOrder?: number; expectedVersion?: number }
-  | { action: 'upsertMembership'; membershipId?: string; employeeId: string; teamId?: string; role: 'WORKSHOP_SUPERVISOR' | 'TEAM_LEADER' | 'MEMBER'; isActive?: boolean; effectiveFrom: string; effectiveTo?: string; expectedVersion?: number };
+  | { action: 'upsertMembership'; membershipId?: string; employeeId: string; teamId?: string; role: 'WORKSHOP_SUPERVISOR' | 'TEAM_LEADER' | 'MEMBER'; isActive?: boolean; effectiveFrom: string; effectiveTo?: string; expectedVersion?: number }
+  | { action: 'upsertCapability'; capabilityId?: string; teamId: string; processDefinitionId: string; priority?: number; isActive?: boolean; expectedVersion?: number };
 
 export type DailyPlanLaborPoolList = {
   pools: ProcessLaborPoolDTO[];

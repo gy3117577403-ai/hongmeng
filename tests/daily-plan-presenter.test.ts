@@ -68,6 +68,42 @@ test('planned KPI excludes unpersisted suggestions and exposes maintenance reaso
   assert.equal(result.maintenanceItems[0].actionHref, '/workspace/product-times?itemId=drawing-c');
 });
 
+test('drawing readiness is a Chinese review warning without hiding or hard-blocking the task', () => {
+  const result = presentDailyPlanWorkbench({
+    workDate: '2026-08-03',
+    shiftCode: 'DAY',
+    selectedTeamId: 'team-a',
+    scope: { isAdmin: true, isSupervisor: false, teamIds: [] },
+    teamOptions: [team('team-a', '一组')],
+    teams: [team('team-a', '一组')],
+    plans: [{
+      id: 'plan-a',
+      teamId: 'team-a',
+      status: 'DRAFT',
+      version: 1,
+      capacityOverrides: [],
+      tasks: [{
+        id: 'task-drawing',
+        stepId: 'step-drawing',
+        workOrderId: 'wo-drawing',
+        status: 'READY',
+        plannedQty: 10,
+        estimatedStandardMilliseconds: 600_000,
+        assignments: [],
+        riskWarnings: ['DRAWING_NOT_READY'],
+      }],
+    }],
+    capacity: [],
+    unplannedSuggestions: [],
+    blocked: [],
+  });
+
+  assert.equal(result.tasks[0].status, 'NEEDS_REVIEW');
+  assert.equal(result.tasks[0].hardBlocked, false);
+  assert.deepEqual(result.tasks[0].warnings, ['图纸尚未下发或确认']);
+  assert.equal(result.maintenanceItems.length, 0);
+});
+
 test('suggestion presenter returns computed employee recommendations instead of zeros', () => {
   const result = presentDailyPlanSuggestion({
     workDate: '2026-08-03',

@@ -378,18 +378,19 @@ model WorkOrder {
 }
 
 model ProcessDefinition {
-  id                 String                    @id @default(uuid())
-  code               String                    @unique
+  id                 String                            @id @default(uuid())
+  code               String                            @unique
   name               String
-  stageGroup         String                    @map("stage_group")
-  isActive           Boolean                   @default(true) @map("is_active")
-  sortOrder          Int                       @default(0) @map("sort_order")
-  createdAt          DateTime                  @default(now()) @map("created_at")
-  updatedAt          DateTime                  @updatedAt @map("updated_at")
+  stageGroup         String                            @map("stage_group")
+  isActive           Boolean                           @default(true) @map("is_active")
+  sortOrder          Int                               @default(0) @map("sort_order")
+  createdAt          DateTime                          @default(now()) @map("created_at")
+  updatedAt          DateTime                          @updatedAt @map("updated_at")
   templateSteps      ProcessTemplateStep[]
   routeSteps         WorkOrderProcessStep[]
   timeStandards      ProcessTimeStandard[]
   productTimeEntries ProductProcessTimeEntry[]
+  teamCapabilities   ProductionTeamProcessCapability[]
 
   @@index([isActive, sortOrder])
   @@index([stageGroup])
@@ -598,23 +599,42 @@ model Employee {
 }
 
 model ProductionTeam {
-  id                          String                         @id @default(uuid())
-  code                        String                         @unique
-  name                        String                         @unique
-  legacyTeamName              String?                        @unique @map("legacy_team_name")
-  isActive                    Boolean                        @default(true) @map("is_active")
-  sortOrder                   Int                            @default(0) @map("sort_order")
-  version                     Int                            @default(0)
-  createdAt                   DateTime                       @default(now()) @map("created_at")
-  updatedAt                   DateTime                       @updatedAt @map("updated_at")
+  id                          String                            @id @default(uuid())
+  code                        String                            @unique
+  name                        String                            @unique
+  legacyTeamName              String?                           @unique @map("legacy_team_name")
+  isActive                    Boolean                           @default(true) @map("is_active")
+  sortOrder                   Int                               @default(0) @map("sort_order")
+  version                     Int                               @default(0)
+  createdAt                   DateTime                          @default(now()) @map("created_at")
+  updatedAt                   DateTime                          @updatedAt @map("updated_at")
   memberships                 ProductionPlanningMembership[]
   dailyPlans                  DailyProductionPlan[]
   dailyTaskAssignments        DailyTaskAssignment[]
-  requestingCrossTeamRequests DailyCrossTeamRequest[]        @relation("DailyCrossTeamRequestingTeam")
-  targetCrossTeamRequests     DailyCrossTeamRequest[]        @relation("DailyCrossTeamTargetTeam")
+  requestingCrossTeamRequests DailyCrossTeamRequest[]           @relation("DailyCrossTeamRequestingTeam")
+  targetCrossTeamRequests     DailyCrossTeamRequest[]           @relation("DailyCrossTeamTargetTeam")
+  processCapabilities         ProductionTeamProcessCapability[]
 
   @@index([isActive, sortOrder])
   @@map("production_teams")
+}
+
+model ProductionTeamProcessCapability {
+  id                  String            @id @default(uuid())
+  teamId              String            @map("team_id")
+  processDefinitionId String            @map("process_definition_id")
+  priority            Int               @default(0)
+  isActive            Boolean           @default(true) @map("is_active")
+  version             Int               @default(0)
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  team                ProductionTeam    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  processDefinition   ProcessDefinition @relation(fields: [processDefinitionId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, processDefinitionId])
+  @@index([processDefinitionId, isActive])
+  @@index([teamId, isActive, priority])
+  @@map("production_team_process_capabilities")
 }
 
 model ProductionPlanningMembership {
@@ -738,6 +758,7 @@ model DailyProcessTask {
   @@index([routeId, routeVersion])
   @@index([stepId])
   @@index([productionPlanBatchId])
+  @@index([productionPlanBatchId, stepId, workDate, status], map: "daily_process_tasks_week_allocation_idx")
   @@index([carryOverFromTaskId])
   @@map("daily_process_tasks")
 }

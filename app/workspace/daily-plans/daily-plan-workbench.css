@@ -1,4 +1,4 @@
-.daily-plan-shell {
+main.daily-plan-shell.hm-workbench-root.hm-workbench-root {
   --daily-bg: #f2f5f9;
   --daily-surface: rgba(255, 255, 255, 0.94);
   --daily-surface-solid: #ffffff;
@@ -165,6 +165,8 @@
 }
 
 .daily-plan-toolbar {
+  position: relative;
+  z-index: 30;
   min-height: 64px;
   display: grid;
   grid-template-columns: 44px minmax(430px, 1fr) auto auto;
@@ -403,8 +405,8 @@
 .daily-more-menu > summary::-webkit-details-marker { display: none; }
 .daily-more-menu[open] > summary { border-color: #a8c3e8; color: #1f63c8; background: var(--daily-blue-soft); }
 .daily-more-menu > div { position: absolute; z-index: 70; top: calc(100% + 7px); right: 0; min-width: 152px; padding: 6px; border: 1px solid var(--daily-line); border-radius: 10px; background: #fff; box-shadow: 0 16px 38px rgba(20, 42, 70, 0.17); }
-.daily-more-menu > div button { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 7px; border: 0; border-radius: 7px; padding: 0 9px; background: transparent; font-size: 11px; font-weight: 800; text-align: left; }
-.daily-more-menu > div button:not(:disabled):hover { color: #1f63c8; background: var(--daily-blue-soft); }
+.daily-more-menu > div :is(button, a) { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 7px; border: 0; border-radius: 7px; padding: 0 9px; color: inherit; background: transparent; font-size: 11px; font-weight: 800; text-align: left; text-decoration: none; }
+.daily-more-menu > div :is(button:not(:disabled), a):hover { color: #1f63c8; background: var(--daily-blue-soft); }
 
 .daily-primary-button,
 .daily-secondary-button,
@@ -478,6 +480,8 @@
 }
 
 .daily-kpi-strip {
+  position: relative;
+  z-index: 1;
   min-height: 68px;
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
@@ -585,7 +589,8 @@
 
 .daily-pool-trigger,
 .daily-risk-trigger,
-.daily-maintenance-trigger {
+.daily-maintenance-trigger,
+.daily-weekly-pool-link {
   min-height: 38px;
   display: inline-flex;
   align-items: center;
@@ -601,7 +606,8 @@
 
 .daily-pool-trigger b,
 .daily-risk-trigger b,
-.daily-maintenance-trigger b {
+.daily-maintenance-trigger b,
+.daily-weekly-pool-link b {
   min-width: 20px;
   height: 20px;
   display: inline-grid;
@@ -614,6 +620,7 @@
 
 .daily-maintenance-trigger { border-color: #efc8a6; color: #a94a09; background: #fff9f3; }
 .daily-maintenance-trigger b { color: #b84c00; background: #ffe7d3; }
+.daily-weekly-pool-link { color: #1e62c7; border-color: #bfd2ed; background: #f2f7ff; text-decoration: none; }
 
 .daily-pool-trigger { display: none; }
 
@@ -630,6 +637,11 @@
 
 .daily-workspace-grid.risk-collapsed {
   grid-template-columns: 314px minmax(0, 1fr) 54px;
+}
+
+.daily-workspace-grid.wide,
+.daily-workspace-grid.wide.risk-collapsed {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .daily-pool-panel,
@@ -1275,7 +1287,7 @@
 .daily-organization-editor > header { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border-bottom: 1px solid var(--daily-line); }
 .daily-organization-editor > header svg { color: var(--daily-blue); }
 .daily-organization-editor > header span { display: block; color: var(--daily-muted); }
-.daily-org-forms { display: grid; grid-template-columns: 1fr 1.25fr; gap: 10px; padding: 10px; }
+.daily-org-forms { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; padding: 10px; }
 .daily-org-forms form { display: grid; grid-template-columns: 1fr 1fr; align-items: end; gap: 8px; padding: 11px; border: 1px solid #e2e8f0; border-radius: 10px; background: #f9fbfd; }
 .daily-org-forms form > b { grid-column: 1 / -1; }
 .daily-org-forms label { display: flex; flex-direction: column; gap: 4px; color: #586980; font-size: 10px; font-weight: 800; }
@@ -1286,6 +1298,13 @@
 .daily-org-member-list b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .daily-org-member-list small { display: block; color: var(--daily-muted); font-size: 10px; font-weight: 500; }
 .daily-org-member-list em { border-radius: 999px; padding: 4px 7px; color: #4d617a; background: #eef2f7; font-size: 10px; font-style: normal; font-weight: 800; }
+.daily-team-capabilities { padding: 9px 11px; border-bottom: 1px solid #edf1f5; background: #fafcff; }
+.daily-team-capabilities > strong { display: block; margin-bottom: 6px; color: #617188; font-size: 10px; }
+.daily-team-capabilities > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.daily-team-capabilities p { margin: 2px 0; color: #8a96a7; font-size: 11px; }
+.daily-team-capabilities span { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 5px 7px; color: #1f62bd; background: #edf4ff; font-size: 10px; font-weight: 800; }
+.daily-team-capabilities span button { width: 18px; height: 18px; display: grid; place-items: center; border: 0; border-radius: 50%; padding: 0; color: #6f7f93; background: rgba(255,255,255,.85); }
+.daily-team-capabilities span button:hover { color: #c33838; background: #fff0f0; }
 
 .spin { animation: daily-spin 900ms linear infinite; }
 
@@ -1300,7 +1319,7 @@
   .daily-workspace-grid.risk-collapsed { grid-template-columns: minmax(0, 1fr) 54px; }
   .daily-pool-panel { display: none; }
   .daily-pool-trigger { display: inline-flex; }
-  .daily-plan-toolbar { grid-template-columns: 44px minmax(400px, 1fr) auto auto; }
+  .daily-plan-toolbar { grid-template-columns: 44px minmax(390px, 1fr) auto auto; }
   .daily-toolbar-context .daily-shift-pill strong { display: none; }
   .daily-toolbar-context .daily-plan-status small { display: none; }
   .daily-toolbar-context .daily-plan-status { max-width: 126px; }
@@ -1309,6 +1328,8 @@
   .daily-primary-button,
   .daily-secondary-button { padding-inline: 10px; }
   .daily-people-grid { grid-template-columns: repeat(auto-fill, minmax(285px, 1fr)); }
+  .daily-view-toolbar nav button { padding-inline: 9px; }
+  .daily-weekly-pool-link { padding-inline: 8px; }
 }
 
 @media (max-width: 1180px) {
@@ -1326,6 +1347,8 @@
   .daily-view-toolbar label { width: 220px; }
   .daily-reconciliation-layout { grid-template-columns: 1fr; }
   .daily-labor-pool-cards { max-height: 260px; }
+  .daily-org-forms { grid-template-columns: 1fr 1fr; }
+  .daily-org-forms form:last-child { grid-column: 1 / -1; }
 }
 
 @media (max-width: 1040px) {
@@ -1351,6 +1374,8 @@
   .daily-main-workbench { min-height: 0; }
   .daily-organization-hero { grid-template-columns: 1fr 120px; }
   .daily-organization-hero > div:last-child { display: none; }
+  .daily-org-forms { grid-template-columns: 1fr; }
+  .daily-org-forms form:last-child { grid-column: auto; }
 }
 
 @media (max-width: 760px) {

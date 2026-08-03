@@ -22,6 +22,15 @@ import {
 } from '@/lib/daily-plan-domain';
 import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import { productionPlanningDateBoundary } from '@/lib/production-planning-date';
+import { drawingReady } from '@/lib/daily-plan-readiness';
+import {
+  productionBatchWeekStartWindow,
+  productionWeekDateBounds,
+} from '@/lib/production-week';
+import {
+  summarizeWeeklyProcessAllocation,
+  weeklyProcessTeamEligible,
+} from '@/lib/weekly-process-allocation';
 
 const DEFAULT_SHIFT_CODE = 'DAY';
 const ACTIVE_ROUTE_STATUSES = new Set(['confirmed', 'in_progress', 'completed']);
@@ -56,6 +65,8 @@ type SuggestionCandidate = {
   productionPlanBatchId: string;
   workOrderId: string;
   workOrderCode: string;
+  batchQuantity: number;
+  processedQuantity: number;
   productName: string;
   customerName: string;
   dueDate: string;
@@ -69,7 +80,7 @@ type SuggestionCandidate = {
   position: number;
   sequenceGroup: number;
   standardSource: string;
-  timeBasis: string;
+  timeBasis: DailyPlanTimeSnapshot['timeBasis'];
   unitLabel: string;
   standardMillisecondsPerUnit: number;
   setupMilliseconds: number;
@@ -156,8 +167,8 @@ async function findDailyMutationReplay(client: MutationClient, input: {
   requestPayload: unknown;
 }) {
   const requestHash = dailyMutationPayloadHash(input.requestPayload);
-  if ('$queryRaw' in client) {
-    await client.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${`daily-plan:${input.idempotencyKey}`}))`;
+  if ('$executeRaw' in client) {
+    await client.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`daily-plan:${input.idempotencyKey}`}))`;
   }
   const existing = await client.dailyPlanRevision.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
   if (!existing) return { existing: null, requestHash };
@@ -305,8 +316,11 @@ async function readCommitted<T>(operation: (tx: TransactionClient) => Promise<T>
   }
 }
 
-type OrganizationMutationAction = 'UPSERT_TEAM' | 'UPSERT_MEMBERSHIP';
-type OrganizationMutationTarget = 'PRODUCTION_TEAM' | 'PRODUCTION_PLANNING_MEMBERSHIP';
+type OrganizationMutationAction = 'UPSERT_TEAM' | 'UPSERT_MEMBERSHIP' | 'UPSERT_PROCESS_CAPABILITY';
+type OrganizationMutationTarget =
+  | 'PRODUCTION_TEAM'
+  | 'PRODUCTION_PLANNING_MEMBERSHIP'
+  | 'PRODUCTION_TEAM_PROCESS_CAPABILITY';
 
 function organizationMutationPayloadHash(payload: unknown): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
@@ -588,16 +602,33 @@ export async function previewDailyPlanSuggestions(input: {
   assertVisible(scope);
   const teamId = requiredText(input.teamId, '生产班组');
   assertTeamMutation(scope, teamId);
-  const team = await prisma.productionTeam.findFirst({ where: { id: teamId, isActive: true } });
+  const batchWeek = productionBatchWeekStartWindow(workDate);
+  const taskWeek = productionWeekDateBounds(workDate);
+  const [team, activeCapabilities] = await Promise.all([
+    prisma.productionTeam.findFirst({
+      where: { id: teamId, isActive: true },
+      include: {
+        processCapabilities: {
+          where: { isActive: true, processDefinition: { isActive: true } },
+          select: { processDefinitionId: true },
+        },
+      },
+    }),
+    prisma.productionTeamProcessCapability.findMany({
+      where: { isActive: true, team: { isActive: true }, processDefinition: { isActive: true } },
+      select: { processDefinitionId: true },
+    }),
+  ]);
   if (!team) throw new DailyPlanServiceError('生产班组不存在或已停用', 'DAILY_PLAN_TEAM_NOT_FOUND', 404);
+  const globallyOwnedProcessDefinitionIds = new Set(activeCapabilities.map(item => item.processDefinitionId));
+  const ownedProcessDefinitionIds = new Set(team.processCapabilities.map(item => item.processDefinitionId));
   const workOrderIds = [...new Set((input.workOrderIds || []).map(item => String(item).trim()).filter(Boolean))];
   const batches = await prisma.productionPlanBatch.findMany({
     where: {
       deletedAt: null,
       releaseState: { in: ACTIVE_BATCH_STATES },
       workOrderId: { not: null, ...(workOrderIds.length ? { in: workOrderIds } : {}) },
-      weekStartDate: { lte: workDate },
-      weekEndDate: { gte: workDate },
+      weekStartDate: { gte: batchWeek.gte, lt: batchWeek.lt },
       planOrder: { deletedAt: null },
       workOrder: { is: { deletedAt: null } },
     },
@@ -652,6 +683,11 @@ export async function previewDailyPlanSuggestions(input: {
       continue;
     }
     for (const step of route.steps.filter(item => item.status !== 'skipped' && item.status !== 'completed')) {
+      if (!weeklyProcessTeamEligible({
+        processDefinitionId: step.processDefinitionId,
+        teamProcessDefinitionIds: ownedProcessDefinitionIds,
+        globallyOwnedProcessDefinitionIds,
+      })) continue;
       const availability = resolveDailyTaskAvailability({
         sequenceGroup: step.sequenceGroup,
         inputQty: step.inputQty,
@@ -676,15 +712,15 @@ export async function previewDailyPlanSuggestions(input: {
       const estimated = allocateIncrementalTaskLabor({ snapshot, alreadyAssignedQuantity: 0, quantities: [plannedQty] })[0];
       const riskWarnings: string[] = [];
       if (availability.status === 'WAITING_UPSTREAM') riskWarnings.push('WAITING_UPSTREAM');
-      if (!workOrder.drawingLibraryItemId || !['issued', 'confirmed', 'completed', 'ready'].includes(String(workOrder.drawingStatus || '').toLowerCase())) {
-        riskWarnings.push('DRAWING_NOT_READY');
-      }
+      if (!drawingReady(workOrder)) riskWarnings.push('DRAWING_NOT_READY');
       if (workOrder.materialTask?.status !== 'completed') riskWarnings.push('MATERIAL_NOT_READY');
       if (workOrder.materialTask?.exceptionType || workOrder.materialTask?.status === 'exception') riskWarnings.push('WAREHOUSE_EXCEPTION');
       candidates.push({
         productionPlanBatchId: batch.id,
         workOrderId: workOrder.id,
         workOrderCode: workOrder.code,
+        batchQuantity: batch.quantity,
+        processedQuantity: step.processedQty,
         productName: batch.planOrder.productName,
         customerName: batch.planOrder.customerName,
         dueDate: batch.plannedCompletionDate.toISOString(),
@@ -720,29 +756,67 @@ export async function previewDailyPlanSuggestions(input: {
   const activeTasks = candidates.length
     ? await prisma.dailyProcessTask.findMany({
         where: {
-          workDate,
-          shiftCode,
+          workDate: { gte: taskWeek.startDate, lt: taskWeek.endExclusiveDate },
+          productionPlanBatchId: { in: [...new Set(candidates.map(item => item.productionPlanBatchId))] },
           stepId: { in: candidates.map(item => item.stepId) },
-          status: { not: DailyProcessTaskStatus.CANCELLED },
+          status: { notIn: [DailyProcessTaskStatus.CANCELLED, DailyProcessTaskStatus.CARRIED_OVER] },
         },
-        select: { stepId: true, planId: true, id: true },
+        select: {
+          id: true,
+          planId: true,
+          productionPlanBatchId: true,
+          stepId: true,
+          plannedQty: true,
+          workDate: true,
+          shiftCode: true,
+        },
       })
     : [];
-  const activeTaskByStep = new Map(activeTasks.map(item => [item.stepId, item] as const));
+  const activeTasksByPoolItem = activeTasks.reduce((map, item) => {
+    const key = `${item.productionPlanBatchId || ''}:${item.stepId}`;
+    map.set(key, [...(map.get(key) || []), item]);
+    return map;
+  }, new Map<string, typeof activeTasks>());
   const availableCandidates = candidates.filter(candidate => {
-    const existing = activeTaskByStep.get(candidate.stepId);
-    if (!existing) return true;
-    blocked.push({
-      productionPlanBatchId: candidate.productionPlanBatchId,
-      workOrderId: candidate.workOrderId,
-      workOrderCode: candidate.workOrderCode,
-      stepId: candidate.stepId,
-      reason: 'ALREADY_PLANNED',
-      message: 'The process step already has an active task for this date and shift.',
-      dailyProcessTaskId: existing.id,
-      dailyProductionPlanId: existing.planId,
+    const key = `${candidate.productionPlanBatchId}:${candidate.stepId}`;
+    const existing = activeTasksByPoolItem.get(key) || [];
+    const allocation = summarizeWeeklyProcessAllocation({
+      batchQuantity: candidate.batchQuantity,
+      processedQuantity: candidate.processedQuantity,
+      plannedQuantities: existing.map(item => item.plannedQty),
     });
-    return false;
+    const allocatedQuantity = allocation.allocatedQuantity;
+    const remainingQuantity = allocation.remainingQuantity;
+    if (remainingQuantity <= 0) {
+      const first = existing[0];
+      blocked.push({
+        productionPlanBatchId: candidate.productionPlanBatchId,
+        workOrderId: candidate.workOrderId,
+        workOrderCode: candidate.workOrderCode,
+        stepId: candidate.stepId,
+        reason: 'ALREADY_PLANNED',
+        message: first
+          ? `本周已安排至 ${formatWorkDate(first.workDate)}，不再重复生成`
+          : '本周工序数量已经完成',
+        dailyProcessTaskId: first?.id || null,
+        dailyProductionPlanId: first?.planId || null,
+        nonMaintenance: true,
+      });
+      return false;
+    }
+    candidate.plannedQty = remainingQuantity;
+    candidate.availableQty = Math.min(candidate.availableQty, remainingQuantity);
+    candidate.estimatedStandardMilliseconds = allocateIncrementalTaskLabor({
+      snapshot: {
+        timeBasis: candidate.timeBasis,
+        standardMillisecondsPerUnit: candidate.standardMillisecondsPerUnit,
+        setupMilliseconds: candidate.setupMilliseconds,
+        unitsPerProduct: candidate.unitsPerProduct,
+      },
+      alreadyAssignedQuantity: Math.max(candidate.processedQuantity, allocatedQuantity),
+      quantities: [remainingQuantity],
+    })[0].toString();
+    return true;
   });
   availableCandidates.sort((left, right) => right.priority - left.priority
     || left.sequenceGroup - right.sequenceGroup
@@ -862,8 +936,12 @@ export async function previewDailyPlanSuggestions(input: {
   };
   return serializeDailyPlanValue({
     workDate: formatWorkDate(workDate),
+    weekStartDate: taskWeek.startKey,
+    weekEndDate: taskWeek.endKey,
     shiftCode,
     team,
+    processOwnershipConfigured: activeCapabilities.length > 0,
+    teamCapabilityCount: ownedProcessDefinitionIds.size,
     candidates: availableCandidates,
     blocked,
     employeeSuggestions,
@@ -886,6 +964,7 @@ export async function createDailyProductionPlan(input: {
   const shiftCode = normalizeShiftCode(input.shiftCode);
   const teamId = requiredText(input.teamId, '生产班组');
   const idempotencyKey = requiredText(input.idempotencyKey, '幂等键', 200);
+  const taskWeek = productionWeekDateBounds(workDate);
   const scope = await resolveActorScope(input.actorUserId, workDate);
   assertTeamMutation(scope, teamId);
   const preview = await previewDailyPlanSuggestions({ ...input, workDate, shiftCode, teamId });
@@ -929,18 +1008,31 @@ export async function createDailyProductionPlan(input: {
       });
     }
     assertPlanCanAppendTasks(plan.status);
+    const targetPlanId = plan.id;
     let createdTaskCount = 0;
     for (const candidate of candidates) {
-      const existing = await tx.dailyProcessTask.findFirst({
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`weekly-process:${candidate.productionPlanBatchId}:${candidate.stepId}`}))`;
+      const existing = await tx.dailyProcessTask.findMany({
         where: {
+          productionPlanBatchId: candidate.productionPlanBatchId,
           stepId: candidate.stepId,
-          workDate,
-          shiftCode,
-          status: { not: DailyProcessTaskStatus.CANCELLED },
+          workDate: { gte: taskWeek.startDate, lt: taskWeek.endExclusiveDate },
+          status: { notIn: [DailyProcessTaskStatus.CANCELLED, DailyProcessTaskStatus.CARRIED_OVER] },
         },
-        select: { id: true },
+        select: { id: true, planId: true, plannedQty: true },
       });
-      if (existing) continue;
+      if (existing.some(task => task.planId === targetPlanId)) continue;
+      const currentStep = await tx.workOrderProcessStep.findUnique({
+        where: { id: candidate.stepId },
+        select: { processedQty: true },
+      });
+      const remainingQuantity = summarizeWeeklyProcessAllocation({
+        batchQuantity: candidate.batchQuantity,
+        processedQuantity: currentStep?.processedQty || candidate.processedQuantity,
+        plannedQuantities: existing.map(task => task.plannedQty),
+      }).remainingQuantity;
+      if (remainingQuantity <= 0) continue;
+      const plannedQty = Math.min(candidate.plannedQty, remainingQuantity);
       await tx.dailyProcessTask.create({
         data: {
           planId: plan.id,
@@ -965,8 +1057,8 @@ export async function createDailyProductionPlan(input: {
           countsForEfficiency: candidate.countsForEfficiency,
           productTimeProfileId: candidate.productTimeProfileId,
           productTimeProfileVersion: candidate.productTimeProfileVersion,
-          plannedQty: candidate.plannedQty,
-          availableQty: candidate.availableQty,
+          plannedQty,
+          availableQty: Math.min(candidate.availableQty, plannedQty),
           priority: candidate.priority,
           priorityReason: candidate.priorityReason,
           riskWarnings: candidate.riskWarnings,
@@ -1896,6 +1988,11 @@ export async function listProductionPlanningOrganization(input: {
   const teams = await prisma.productionTeam.findMany({
     where: input.includeInactive ? {} : { isActive: true },
     include: {
+      processCapabilities: {
+        where: input.includeInactive ? {} : { isActive: true },
+        include: { processDefinition: true },
+        orderBy: [{ priority: 'desc' }, { processDefinition: { sortOrder: 'asc' } }],
+      },
       memberships: {
         where: input.includeInactive ? {} : activeMembershipWhere(workDate),
         include: { employee: true },
@@ -1913,7 +2010,11 @@ export async function listProductionPlanningOrganization(input: {
     where: { role: ProductionPlanningRole.WORKSHOP_SUPERVISOR, ...activeMembershipWhere(workDate) },
     include: { employee: true },
   });
-  return serializeDailyPlanValue({ workDate: formatWorkDate(workDate), teams, supervisors, unassignedEmployees });
+  const processDefinitions = await prisma.processDefinition.findMany({
+    where: { isActive: true },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+  });
+  return serializeDailyPlanValue({ workDate: formatWorkDate(workDate), teams, supervisors, unassignedEmployees, processDefinitions });
 }
 
 export async function upsertProductionTeam(input: {
@@ -1931,8 +2032,10 @@ export async function upsertProductionTeam(input: {
   assertAdmin(scope);
   const idempotencyKey = requiredText(input.idempotencyKey, '幂等键', 200);
   const teamId = input.teamId ? requiredText(input.teamId, '生产班组') : null;
-  const code = requiredText(input.code, '班组编码', 64);
   const name = requiredText(input.name, '班组名称', 100);
+  const codeInput = String(input.code || '').trim();
+  const code = codeInput || `TEAM-${createHash('sha256').update(name).digest('hex').slice(0, 8).toUpperCase()}`;
+  if (code.length > 64) throw new DailyPlanServiceError('班组编码不能超过 64 个字符', 'DAILY_PLAN_TEXT_TOO_LONG');
   const legacyTeamName = input.legacyTeamName?.trim() || null;
   const sortOrder = input.sortOrder === undefined ? null : nonNegativeInteger(input.sortOrder, '排序号');
   const normalizedExpectedVersion = input.expectedVersion === undefined
@@ -2109,6 +2212,99 @@ export async function upsertProductionPlanningMembership(input: {
   return serializeDailyPlanValue(membership);
 }
 
+export async function upsertProductionTeamProcessCapability(input: {
+  actorUserId: string;
+  capabilityId?: string;
+  teamId: string;
+  processDefinitionId: string;
+  priority?: number;
+  isActive?: boolean;
+  expectedVersion?: number;
+  idempotencyKey: string;
+}) {
+  const scope = await resolveActorScope(input.actorUserId);
+  assertAdmin(scope);
+  const idempotencyKey = requiredText(input.idempotencyKey, '幂等键', 200);
+  const capabilityId = input.capabilityId ? requiredText(input.capabilityId, '工序归属关系') : null;
+  const teamId = requiredText(input.teamId, '生产班组');
+  const processDefinitionId = requiredText(input.processDefinitionId, '标准工序');
+  const priority = input.priority === undefined ? 0 : nonNegativeInteger(input.priority, '归属优先级');
+  const normalizedExpectedVersion = input.expectedVersion === undefined
+    ? null
+    : expectedVersion(input.expectedVersion);
+  const payloadHash = organizationMutationPayloadHash({
+    capabilityId,
+    teamId,
+    processDefinitionId,
+    priority,
+    isActive: input.isActive ?? true,
+    expectedVersion: normalizedExpectedVersion,
+  });
+  const capability = await readCommitted(async tx => {
+    const replay = await readOrganizationMutationReplay(tx, {
+      idempotencyKey,
+      payloadHash,
+      actorId: scope.userId,
+      action: 'UPSERT_PROCESS_CAPABILITY',
+      targetType: 'PRODUCTION_TEAM_PROCESS_CAPABILITY',
+    });
+    if (replay) return replay;
+
+    const [team, processDefinition] = await Promise.all([
+      tx.productionTeam.findFirst({ where: { id: teamId, isActive: true } }),
+      tx.processDefinition.findFirst({ where: { id: processDefinitionId, isActive: true } }),
+    ]);
+    if (!team) throw new DailyPlanServiceError('生产班组不存在或已停用', 'DAILY_PLAN_TEAM_NOT_FOUND', 404);
+    if (!processDefinition) throw new DailyPlanServiceError('标准工序不存在或已停用', 'DAILY_PLAN_PROCESS_NOT_FOUND', 404);
+
+    const current = capabilityId
+      ? await tx.productionTeamProcessCapability.findUnique({ where: { id: capabilityId } })
+      : await tx.productionTeamProcessCapability.findUnique({
+          where: { teamId_processDefinitionId: { teamId, processDefinitionId } },
+        });
+    let result;
+    if (!current) {
+      result = await tx.productionTeamProcessCapability.create({
+        data: { teamId, processDefinitionId, priority, isActive: input.isActive ?? true },
+        include: { processDefinition: true, team: true },
+      });
+    } else {
+      if (normalizedExpectedVersion !== null && normalizedExpectedVersion !== current.version) {
+        throw new DailyPlanServiceError('工序归属关系已被其他人更新', 'DAILY_PLAN_VERSION_CONFLICT', 409);
+      }
+      const updated = await tx.productionTeamProcessCapability.updateMany({
+        where: { id: current.id, version: current.version },
+        data: {
+          teamId,
+          processDefinitionId,
+          priority,
+          isActive: input.isActive ?? true,
+          version: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1) {
+        throw new DailyPlanServiceError('工序归属关系已被其他人更新', 'DAILY_PLAN_VERSION_CONFLICT', 409);
+      }
+      result = await tx.productionTeamProcessCapability.findUniqueOrThrow({
+        where: { id: current.id },
+        include: { processDefinition: true, team: true },
+      });
+    }
+    await writeOrganizationMutation(tx, {
+      idempotencyKey,
+      payloadHash,
+      actorId: scope.userId,
+      action: 'UPSERT_PROCESS_CAPABILITY',
+      targetType: 'PRODUCTION_TEAM_PROCESS_CAPABILITY',
+      targetId: result.id,
+      resultVersion: result.version,
+      resultData: result,
+    });
+    return result;
+  });
+  return serializeDailyPlanValue(capability);
+}
+
 export async function getDailyPlanWorkbench(input: {
   actorUserId: string;
   workDate: string | Date;
@@ -2116,6 +2312,7 @@ export async function getDailyPlanWorkbench(input: {
   teamId?: string;
 }) {
   const workDate = normalizeWorkDate(input.workDate);
+  const taskWeek = productionWeekDateBounds(workDate);
   const shiftCode = normalizeShiftCode(input.shiftCode);
   const scope = await resolveActorScope(input.actorUserId, workDate);
   assertVisible(scope);
@@ -2128,6 +2325,10 @@ export async function getDailyPlanWorkbench(input: {
   const teamOptions = await prisma.productionTeam.findMany({
     where: teamWhere,
     include: {
+      processCapabilities: {
+        where: { isActive: true, processDefinition: { isActive: true } },
+        select: { id: true, processDefinitionId: true },
+      },
       memberships: {
         where: {
           ...activeMembershipWhere(workDate),
@@ -2202,6 +2403,19 @@ export async function getDailyPlanWorkbench(input: {
     capacity,
     unplannedSuggestions: suggestionPreview?.candidates || [],
     blocked: suggestionPreview?.blocked || [],
+    weeklyPool: {
+      weekStartDate: taskWeek.startKey,
+      weekEndDate: taskWeek.endKey,
+      availableTaskCount: suggestionPreview?.candidates.length || 0,
+      alreadyPlannedTaskCount: suggestionPreview?.blocked.filter(item => item.reason === 'ALREADY_PLANNED').length || 0,
+      processOwnershipConfigured: Boolean(
+        suggestionPreview?.processOwnershipConfigured
+        || teamOptions.some(team => team.processCapabilities.length > 0),
+      ),
+      teamCapabilityCount: input.teamId
+        ? teamOptions.find(team => team.id === input.teamId)?.processCapabilities.length || 0
+        : teamOptions.reduce((sum, team) => sum + team.processCapabilities.length, 0),
+    },
   });
 }
 

@@ -15,11 +15,14 @@ import { productionPlanningDateBoundary } from '../lib/production-planning-date'
 import {
   assignDailyProcessTask,
   carryOverDailyProcessTask,
+  createDailyProductionPlan,
   DailyPlanServiceError,
   listDailyCrossTeamRequests,
+  previewDailyPlanSuggestions,
   requestDailyCrossTeamAssignment,
   reviewDailyCrossTeamRequest,
   upsertProductionTeam,
+  upsertProductionTeamProcessCapability,
 } from '../lib/daily-plan-service';
 import { completeProcessStep } from '../lib/process-completion-service';
 
@@ -146,11 +149,13 @@ async function createDailyTask(input: {
 }
 
 async function cleanup(prefix: string): Promise<void> {
-  const [teams, users, employees, workOrders] = await Promise.all([
+  const [teams, users, employees, workOrders, processDefinitions, planOrders] = await Promise.all([
     prisma.productionTeam.findMany({ where: { code: { startsWith: prefix } }, select: { id: true } }),
     prisma.user.findMany({ where: { username: { startsWith: prefix } }, select: { id: true } }),
     prisma.employee.findMany({ where: { employeeNo: { startsWith: prefix } }, select: { id: true } }),
     prisma.workOrder.findMany({ where: { code: { startsWith: prefix } }, select: { id: true } }),
+    prisma.processDefinition.findMany({ where: { code: { startsWith: prefix } }, select: { id: true } }),
+    prisma.productionPlanOrder.findMany({ where: { sourceOrderNo: { startsWith: prefix } }, select: { id: true } }),
   ]);
   const teamIds = teams.map(item => item.id);
   const userIds = users.map(item => item.id);
@@ -211,6 +216,9 @@ async function cleanup(prefix: string): Promise<void> {
   if (completionIds.length) {
     await prisma.processCompletion.deleteMany({ where: { id: { in: completionIds } } });
   }
+  if (planOrders.length) {
+    await prisma.productionPlanOrder.deleteMany({ where: { id: { in: planOrders.map(item => item.id) } } });
+  }
   if (workOrderIds.length) {
     await prisma.workOrderProcessRoute.deleteMany({ where: { workOrderId: { in: workOrderIds } } });
     await prisma.workOrder.deleteMany({ where: { id: { in: workOrderIds } } });
@@ -236,6 +244,9 @@ async function cleanup(prefix: string): Promise<void> {
   }
   if (teamIds.length) {
     await prisma.productionTeam.deleteMany({ where: { id: { in: teamIds } } });
+  }
+  if (processDefinitions.length) {
+    await prisma.processDefinition.deleteMany({ where: { id: { in: processDefinitions.map(item => item.id) } } });
   }
 }
 
@@ -371,6 +382,60 @@ test(
       let requestAtoBId = '';
       let requestAtoCId = '';
       let requestBtoCId = '';
+      await t.test('legacy Monday-noon plan batches appear on Monday and every later day of the same week', async () => {
+        const route = await createRouteFixture(prefix, 'WEEK-BOUNDARY', admin.id);
+        const planOrder = await prisma.productionPlanOrder.create({
+          data: {
+            sourceOrderNo: `${prefix}-WEEK-BOUNDARY`,
+            sourceLineNo: 1,
+            customerName: 'weekly boundary customer',
+            productName: 'weekly boundary product',
+            specification: 'weekly-boundary-specification',
+            orderQuantity: 10,
+            orderDate: new Date('2099-01-01T04:00:00.000Z'),
+            customerDueDate: new Date('2099-01-10T04:00:00.000Z'),
+            status: 'scheduled',
+          },
+        });
+        await prisma.productionPlanBatch.create({
+          data: {
+            planOrderId: planOrder.id,
+            batchNo: 1,
+            quantity: 10,
+            weekStartDate: new Date('2099-01-05T04:00:00.000Z'),
+            weekEndDate: new Date('2099-01-11T04:00:00.000Z'),
+            plannedCompletionDate: new Date('2099-01-10T04:00:00.000Z'),
+            releaseState: 'active',
+            workOrderId: route.workOrderId,
+          },
+        });
+
+        const [monday, tuesday] = await Promise.all([
+          previewDailyPlanSuggestions({ actorUserId: admin.id, workDate: '2099-01-05', shiftCode: 'DAY', teamId: teamA.id }),
+          previewDailyPlanSuggestions({ actorUserId: admin.id, workDate: '2099-01-06', shiftCode: 'DAY', teamId: teamA.id }),
+        ]);
+        assert.deepEqual(monday.candidates.map(candidate => candidate.stepId), [route.step.id]);
+        assert.deepEqual(tuesday.candidates.map(candidate => candidate.stepId), [route.step.id]);
+
+        const created = await createDailyProductionPlan({
+          actorUserId: admin.id,
+          workDate: '2099-01-05',
+          shiftCode: 'DAY',
+          teamId: teamA.id,
+          workOrderIds: [route.workOrderId],
+          idempotencyKey: integrationKey(prefix, 'week-boundary-create'),
+        });
+        assert.equal(Number(created.createdTaskCount), 1);
+        const tuesdayAfterPlanning = await previewDailyPlanSuggestions({
+          actorUserId: admin.id,
+          workDate: '2099-01-06',
+          shiftCode: 'DAY',
+          teamId: teamA.id,
+        });
+        assert.equal(tuesdayAfterPlanning.candidates.some(candidate => candidate.stepId === route.step.id), false);
+        assert.equal(tuesdayAfterPlanning.blocked.some(item => item.stepId === route.step.id && item.reason === 'ALREADY_PLANNED'), true);
+      });
+
       await t.test('replaying the same cross-team request is idempotent', async () => {
         const input = {
           actorUserId: admin.id,
@@ -649,6 +714,38 @@ test(
         const stored = await prisma.productionTeam.findUniqueOrThrow({ where: { id: teamA.id } });
         assert.equal(stored.version, 1);
         assert.equal(stored.name, input.name);
+      });
+
+      await t.test('team process ownership replays safely and keeps optimistic versions', async () => {
+        const processDefinition = await prisma.processDefinition.create({
+          data: {
+            code: `${prefix}-CAPABILITY`,
+            name: `${prefix} capability process`,
+            stageGroup: 'frontend',
+          },
+        });
+        const input = {
+          actorUserId: admin.id,
+          teamId: teamA.id,
+          processDefinitionId: processDefinition.id,
+          idempotencyKey: integrationKey(prefix, 'capability-create'),
+        };
+        const first = await upsertProductionTeamProcessCapability(input) as { id: string; version: number; isActive: boolean };
+        const replay = await upsertProductionTeamProcessCapability(input) as { id: string; version: number; isActive: boolean };
+        assert.equal(replay.id, first.id);
+        assert.equal(replay.version, first.version);
+        assert.equal(await prisma.productionTeamProcessCapability.count({ where: { teamId: teamA.id, processDefinitionId: processDefinition.id } }), 1);
+
+        const disabled = await upsertProductionTeamProcessCapability({
+          ...input,
+          capabilityId: first.id,
+          isActive: false,
+          expectedVersion: first.version,
+          idempotencyKey: integrationKey(prefix, 'capability-disable'),
+        }) as { id: string; version: number; isActive: boolean };
+        assert.equal(disabled.id, first.id);
+        assert.equal(disabled.version, first.version + 1);
+        assert.equal(disabled.isActive, false);
       });
 
       await t.test('process completion updates the same-day task and records the completion link', async () => {

@@ -13,6 +13,7 @@ import {
   listProductionPlanningOrganization,
   upsertProductionPlanningMembership,
   upsertProductionTeam,
+  upsertProductionTeamProcessCapability,
 } from '@/lib/daily-plan-service';
 
 export const runtime = 'nodejs';
@@ -71,6 +72,17 @@ export async function PUT(request: NextRequest) {
         isActive: body.isActive === undefined ? undefined : Boolean(body.isActive),
         effectiveFrom: asString(body.effectiveFrom),
         effectiveTo: asOptionalString(body.effectiveTo) || null,
+        expectedVersion,
+        idempotencyKey,
+      });
+    } else if (action === 'upsertCapability') {
+      await upsertProductionTeamProcessCapability({
+        actorUserId: user.id,
+        capabilityId: asOptionalString(body.capabilityId),
+        teamId: asString(body.teamId),
+        processDefinitionId: asString(body.processDefinitionId),
+        priority: body.priority === undefined ? undefined : asNumber(body.priority),
+        isActive: body.isActive === undefined ? undefined : Boolean(body.isActive),
         expectedVersion,
         idempotencyKey,
       });

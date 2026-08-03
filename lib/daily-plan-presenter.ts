@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import {
+  dailyPlanWarningTexts,
+  displayTeamCode,
+} from '@/lib/daily-plan-readiness';
 
 type AnyRecord = Record<string, any>;
 
@@ -31,17 +35,23 @@ function taskView(value: unknown, fallbackPlanId?: string | null) {
   const assignedQuantity = assignments.reduce((sum, item) => sum + item.quantity, 0);
   const plannedMs = asNumber(task.estimatedStandardMilliseconds)
     || asNumber(task.setupMilliseconds) + plannedQuantity * asNumber(task.standardMillisecondsPerUnit);
-  const warnings = Array.isArray(task.riskWarnings) ? task.riskWarnings.map((value) => asText(value)) : [];
+  const warningView = dailyPlanWarningTexts(task.riskWarnings);
+  const warnings = warningView.labels;
   const dueDate = task.dueDate || null;
   const priority = asNumber(task.priority);
   const hardBlocked = Boolean(task.hardBlocked || task.reason === 'MISSING_PUBLISHED_PROCESS_ROUTE');
+  const needsReview = warningView.codes.includes('DRAWING_NOT_READY');
+  const rawStatus = asText(task.status, hardBlocked ? 'NEEDS_REVIEW' : 'READY');
+  const status = (hardBlocked || needsReview) && rawStatus !== 'COMPLETED' && rawStatus !== 'CANCELLED'
+    ? 'NEEDS_REVIEW'
+    : rawStatus;
   return {
     id: asText(task.id || `suggestion:${task.stepId}`), planId: task.planId || fallbackPlanId || null,
     workOrderId: asText(task.workOrderId || order.id), workOrderCode: asText(task.workOrderCode || order.code),
     productCode: asText(order.code || task.workOrderCode), productName: asText(task.productName || order.productName),
     customerName: task.customerName || order.customerName || null, processStepId: asText(task.stepId),
     processName: asText(task.processName), processSequence: asNumber(task.position), sequenceGroup: asNumber(task.sequenceGroup),
-    status: asText(task.status, hardBlocked ? 'UNPLANNED' : 'READY'), version: asNumber(task.version),
+    status, version: asNumber(task.version),
     plannedQuantity, remainingQuantity: Math.max(0, plannedQuantity - assignedQuantity),
     availableQuantity: asNumber(task.availableQty), assignedQuantity,
     unitStandardSeconds: asNumber(task.standardMillisecondsPerUnit) / 1000, plannedMinutes: minutes(plannedMs),
@@ -50,7 +60,7 @@ function taskView(value: unknown, fallbackPlanId?: string | null) {
     teamId: task.teamId || null, teamName: task.teamName || null, routeVersion: asNumber(task.routeVersion),
     routeVersionLabel: task.routeVersion ? `V${task.routeVersion}` : null, hardBlocked,
     hardBlockReason: hardBlocked ? asText(task.message || task.reason, '缺少有效且已发布的工序与工时版本') : null,
-    warnings, upstreamProcessName: task.upstreamProcessName || null, assignments,
+    warningCodes: warningView.codes, warnings, upstreamProcessName: task.upstreamProcessName || null, assignments,
   };
 }
 
@@ -62,7 +72,7 @@ function teamView(value: unknown) {
   return {
     id: asText(team.id),
     name: asText(team.name),
-    code: team.code || null,
+    code: displayTeamCode(team.code),
     leaderId: leaderEmployee.id || null,
     leaderName: leaderEmployee.name || null,
     memberCount: memberships.filter(item => item.role !== 'WORKSHOP_SUPERVISOR').length,
@@ -71,6 +81,7 @@ function teamView(value: unknown) {
 
 export function presentDailyPlanWorkbench(value: unknown) {
   const raw = asRecord(value);
+  const weeklyPoolRaw = asRecord(raw.weeklyPool);
   const scopeRaw = asRecord(raw.scope);
   const teamsRaw = asArray(raw.teams);
   const teamOptionsRaw = asArray(raw.teamOptions);
@@ -108,7 +119,7 @@ export function presentDailyPlanWorkbench(value: unknown) {
   const plannedMinutes = tasks.reduce((sum, task) => sum + task.plannedMinutes, 0);
   const assignedMinutes = tasks.flatMap(task => task.assignments).reduce((sum, assignment) => sum + assignment.plannedMinutes, 0);
   const blocked = asArray(raw.blocked);
-  const maintenanceItems = blocked.map((item, index) => {
+  const maintenanceItems = blocked.filter(item => !item.nonMaintenance).map((item, index) => {
     const drawingLibraryItemId = asText(item.drawingLibraryItemId);
     return {
       id: asText(item.productionPlanBatchId, `blocked:${index}`),
@@ -119,9 +130,13 @@ export function presentDailyPlanWorkbench(value: unknown) {
       reason: asText(item.reason, 'MISSING_PROCESS_TIME'),
       message: asText(item.message, '缺少有效且已发布的工序与工时版本'),
       missingStepNames: Array.isArray(item.missingStepNames) ? item.missingStepNames.map(name => asText(name)).filter(Boolean) : [],
-      actionHref: drawingLibraryItemId
-        ? `/workspace/product-times?itemId=${encodeURIComponent(drawingLibraryItemId)}`
-        : '/workspace/product-times',
+      actionHref: asText(item.reason) === 'DRAWING_NOT_READY'
+        ? drawingLibraryItemId
+          ? `/drawing-library?itemId=${encodeURIComponent(drawingLibraryItemId)}`
+          : '/drawing-library'
+        : drawingLibraryItemId
+          ? `/workspace/product-times?itemId=${encodeURIComponent(drawingLibraryItemId)}`
+          : '/workspace/product-times',
     };
   });
   const risks = [
@@ -151,6 +166,14 @@ export function presentDailyPlanWorkbench(value: unknown) {
     selectedTeamId,
     scope: { role: isAdmin ? 'ADMIN' : isSupervisor ? 'WORKSHOP_SUPERVISOR' : 'TEAM_LEADER', teamIds: Array.isArray(scopeRaw.teamIds) ? scopeRaw.teamIds : [], canConfirm: isAdmin || isSupervisor, canManageOrganization: isAdmin, canRequestCrossTeam: true },
     summary: { plannedMinutes, assignedMinutes, unassignedMinutes: Math.max(0, plannedMinutes - assignedMinutes), urgentTaskCount: tasks.filter(task => task.riskLevel === 'HIGH' || task.riskLevel === 'CRITICAL').length, overloadedEmployeeCount: employees.filter(employee => employee.assignedMinutes > employee.capacityMinutes + employee.overtimeMinutes).length, carryOverTaskCount: tasks.filter(task => task.status === 'PENDING_CARRY_OVER').length },
+    weeklyPool: {
+      weekStartDate: asText(weeklyPoolRaw.weekStartDate),
+      weekEndDate: asText(weeklyPoolRaw.weekEndDate),
+      availableTaskCount: asNumber(weeklyPoolRaw.availableTaskCount),
+      alreadyPlannedTaskCount: asNumber(weeklyPoolRaw.alreadyPlannedTaskCount),
+      processOwnershipConfigured: Boolean(weeklyPoolRaw.processOwnershipConfigured),
+      teamCapabilityCount: asNumber(weeklyPoolRaw.teamCapabilityCount),
+    },
     teamOptions: teamOptionsRaw.map(teamView),
     teams: teamsRaw.map(teamView),
     employeeOptions,
@@ -182,7 +205,9 @@ export function presentDailyPlanSuggestion(value: unknown) {
   });
   const assignedMinutes = assignments.reduce((sum, item) => sum + item.plannedMinutes, 0);
   const totalMinutes = candidates.reduce((sum, task) => sum + task.plannedMinutes, 0);
-  const blockedWarnings = asArray(raw.blocked).map(item => asText(item.message || item.reason)).filter(Boolean);
+  const blockedWarnings = asArray(raw.blocked)
+    .filter(item => !item.nonMaintenance)
+    .map(item => asText(item.message || item.reason)).filter(Boolean);
   const unschedulableCount = asArray(raw.unschedulable).length;
   const warnings = [...new Set([
     ...blockedWarnings,
@@ -206,6 +231,30 @@ export function presentCrossTeamRequests(value: unknown) {
 
 export function presentOrganization(value: unknown) {
   const raw = asRecord(value);
-  const teams = asArray(raw.teams).map(team => ({ id: asText(team.id), version: asNumber(team.version), code: team.code || null, name: asText(team.name), legacyTeamName: team.legacyTeamName || null, sortOrder: asNumber(team.sortOrder), isActive: Boolean(team.isActive), members: asArray(team.memberships).map(member => { const employee = asRecord(member.employee); return { id: asText(member.id), version: asNumber(member.version), employeeId: asText(member.employeeId), employeeNo: asText(employee.employeeNo), employeeName: asText(employee.name), position: employee.position || null, planningRole: asText(member.role), teamId: member.teamId || null, isActive: Boolean(member.isActive), effectiveFrom: member.effectiveFrom || null, effectiveTo: member.effectiveTo || null }; }) }));
-  return { version: Math.max(0, ...teams.map(team => team.sortOrder || 0)), availableEmployees: raw.unassignedEmployees || [], teams };
+  const teams = asArray(raw.teams).map(team => ({
+    id: asText(team.id),
+    version: asNumber(team.version),
+    code: displayTeamCode(team.code),
+    name: asText(team.name),
+    legacyTeamName: team.legacyTeamName || null,
+    sortOrder: asNumber(team.sortOrder),
+    isActive: Boolean(team.isActive),
+    capabilities: asArray(team.processCapabilities).map(capability => ({
+      id: asText(capability.id),
+      version: asNumber(capability.version),
+      processDefinitionId: asText(capability.processDefinitionId),
+      processCode: asText(asRecord(capability.processDefinition).code),
+      processName: asText(asRecord(capability.processDefinition).name),
+      priority: asNumber(capability.priority),
+      isActive: Boolean(capability.isActive),
+    })),
+    members: asArray(team.memberships).map(member => { const employee = asRecord(member.employee); return { id: asText(member.id), version: asNumber(member.version), employeeId: asText(member.employeeId), employeeNo: asText(employee.employeeNo), employeeName: asText(employee.name), position: employee.position || null, planningRole: asText(member.role), teamId: member.teamId || null, isActive: Boolean(member.isActive), effectiveFrom: member.effectiveFrom || null, effectiveTo: member.effectiveTo || null }; }),
+  }));
+  const processDefinitions = asArray(raw.processDefinitions).map(process => ({
+    id: asText(process.id),
+    code: asText(process.code),
+    name: asText(process.name),
+    stageGroup: asText(process.stageGroup),
+  }));
+  return { version: Math.max(0, ...teams.map(team => team.sortOrder || 0)), availableEmployees: raw.unassignedEmployees || [], processDefinitions, teams };
 }

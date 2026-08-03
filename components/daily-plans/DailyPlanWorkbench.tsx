@@ -454,8 +454,10 @@ export default function DailyPlanWorkbench({ user }: { user: CurrentUserDTO }) {
     const query = new URLSearchParams(window.location.search);
     const queryDate = query.get('workDate') || query.get('date');
     const queryTeamId = query.get('teamId');
+    const queryTab = query.get('tab');
     if (isDateKey(queryDate)) setWorkDate(queryDate);
     if (queryTeamId) setTeamId(queryTeamId);
+    if (queryTab === 'people' || queryTab === 'processes' || queryTab === 'reconciliation' || queryTab === 'organization') setActiveTab(queryTab);
     setUrlStateReady(true);
   }, []);
 
@@ -465,8 +467,10 @@ export default function DailyPlanWorkbench({ user }: { user: CurrentUserDTO }) {
     url.searchParams.set('workDate', workDate);
     if (teamId) url.searchParams.set('teamId', teamId);
     else url.searchParams.delete('teamId');
+    if (activeTab === 'people') url.searchParams.delete('tab');
+    else url.searchParams.set('tab', activeTab);
     window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`);
-  }, [teamId, urlStateReady, workDate]);
+  }, [activeTab, teamId, urlStateReady, workDate]);
 
   useEffect(() => {
     if (!historyOpen) return undefined;
@@ -748,10 +752,11 @@ export default function DailyPlanWorkbench({ user }: { user: CurrentUserDTO }) {
     : maintenanceCount > 0
       ? { title: '本日没有可执行工序', description: `有 ${maintenanceCount} 个工单因工序或标准工时未就绪而未进入日计划，请先处理待维护项。` }
       : !workbench?.plan.id
-        ? { title: '尚未生成日计划', description: '点击“生成工序任务”，系统会从本周计划中提取具备工艺与标准工时的可执行工序。' }
+        ? { title: '尚未生成日计划', description: workbench?.weeklyPool.processOwnershipConfigured ? `本周尚有 ${workbench.weeklyPool.availableTaskCount} 项可安排工序；点击“生成工序任务”领取当前班组归属的工序。` : '请先在“生产组织设置”配置班组—工序归属，再从本周工序池生成当日任务。' }
         : { title: '没有工序推进任务', description: '当前班组本日没有待推进工序，或所有工序均已完成。' };
   const aggregateConfirmed = Boolean(workbench?.plan.isAggregate && workbench.plan.teamCount > 0 && workbench.plan.confirmedTeamCount === workbench.plan.teamCount);
   const statusConfirmed = workbench?.plan.status === 'CONFIRMED' || aggregateConfirmed;
+  const wideTab = activeTab === 'organization' || activeTab === 'reconciliation';
 
   return <>
     <main ref={mainRef} className="daily-plan-shell hm-workbench-root hm-workbench-navigation-overlay">
@@ -774,18 +779,18 @@ export default function DailyPlanWorkbench({ user }: { user: CurrentUserDTO }) {
           <div className="daily-toolbar-actions">
             <button type="button" className="daily-secondary-button accent" title={teamId ? '预览并生成可执行工序任务' : '请先选择具体班组'} disabled={!workbench || !teamId} onClick={() => openModal('suggestions')}><Sparkles size={16} />生成工序任务</button>
             <button type="button" className="daily-primary-button" title={teamId ? '确认当前班组当日日计划' : '请先选择具体班组'} disabled={!teamId || !workbench?.scope.canConfirm || !workbench.plan.id} onClick={() => openModal('confirm')}><CalendarCheck2 size={16} />每日确认</button>
-            <details className="daily-more-menu"><summary aria-label="更多日计划操作"><Menu size={17} />更多</summary><div><button type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新数据</button><button type="button" disabled={!teamId || !workbench?.plan.id} onClick={() => openModal('print')}><Printer size={15} />打印计划</button></div></details>
+            <details className="daily-more-menu"><summary aria-label="更多日计划操作"><Menu size={17} />更多</summary><div><a href={`/workspace/weekly-processes?date=${encodeURIComponent(workDate)}`}><CalendarDays size={15} />周工序总览</a><button type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新数据</button><button type="button" disabled={!teamId || !workbench?.plan.id} onClick={() => openModal('print')}><Printer size={15} />打印计划</button></div></details>
           </div>
         </section>
 
         <KpiStrip workbench={workbench} />
 
-        <section className="daily-view-toolbar"><nav aria-label="日计划视图">{tabs.map(tab => { const Icon = tab.icon; return <button type="button" className={activeTab === tab.id ? 'active' : ''} key={tab.id} onClick={() => setActiveTab(tab.id)}><Icon size={17} />{tab.label}</button>; })}</nav><div><label><Search size={16} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索工单、产品或工序" /></label><button type="button" className="daily-maintenance-trigger" disabled={!maintenanceCount} onClick={() => openModal('maintenance')}><Wrench size={16} />待维护<b>{maintenanceCount}</b></button><button type="button" className="daily-pool-trigger" onClick={() => setPoolOpen(true)}><PanelLeftOpen size={16} />未分配工序<b>{visiblePool.length}</b></button><button type="button" className="daily-risk-trigger" onClick={() => setRiskCollapsed(value => !value)}><ShieldAlert size={16} />风险<b>{workbench?.risks.length || 0}</b></button></div></section>
+        <section className="daily-view-toolbar"><nav aria-label="日计划视图">{tabs.map(tab => { const Icon = tab.icon; return <button type="button" className={activeTab === tab.id ? 'active' : ''} key={tab.id} onClick={() => setActiveTab(tab.id)}><Icon size={17} />{tab.label}</button>; })}</nav>{activeTab !== 'organization' && <div><label><Search size={16} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索工单、产品或工序" /></label>{!wideTab && <><a className="daily-weekly-pool-link" href={`/workspace/weekly-processes?date=${encodeURIComponent(workDate)}`}><CalendarDays size={16} />本周工序<b>{workbench?.weeklyPool.availableTaskCount || 0}</b></a><button type="button" className="daily-maintenance-trigger" disabled={!maintenanceCount} onClick={() => openModal('maintenance')}><Wrench size={16} />待维护<b>{maintenanceCount}</b></button><button type="button" className="daily-pool-trigger" onClick={() => setPoolOpen(true)}><PanelLeftOpen size={16} />未分配工序<b>{visiblePool.length}</b></button><button type="button" className="daily-risk-trigger" onClick={() => setRiskCollapsed(value => !value)}><ShieldAlert size={16} />风险<b>{workbench?.risks.length || 0}</b></button></>}</div>}</section>
 
         {error && <div className="daily-page-error" role="alert"><AlertTriangle size={18} /><span><b>日计划加载失败</b>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重试</button></div>}
 
-        <div className={`daily-workspace-grid ${riskCollapsed ? 'risk-collapsed' : ''}`}>
-          <aside className="daily-pool-panel"><header><div><span>工序池</span><strong>未分配任务</strong></div><b>{visiblePool.length}</b></header><div className="hm-scroll-region">{!visiblePool.length && <EmptyState icon="check" title={aggregateReadOnly ? '请选择具体班组' : '没有未分配任务'} description={aggregateReadOnly ? '全部班组只用于汇总查看，选择班组后才能生成和分配工序任务。' : maintenanceCount ? `有 ${maintenanceCount} 个工单等待补齐工序或标准工时。` : '当前班组没有待分配工序。'} />}{visiblePool.map(task => <TaskPoolCard key={task.id} task={task} readOnly={aggregateReadOnly} onAssign={taskItem => openModal('assign', taskItem)} onCrossTeam={taskItem => openModal('crossTeam', taskItem)} onCarryOver={taskItem => openModal('carryOver', taskItem)} />)}</div></aside>
+        <div className={`daily-workspace-grid ${riskCollapsed ? 'risk-collapsed' : ''} ${wideTab ? 'wide' : ''}`}>
+          {!wideTab && <aside className="daily-pool-panel"><header><div><span>当日工序池</span><strong>未分配任务</strong></div><b>{visiblePool.length}</b></header><div className="hm-scroll-region">{!visiblePool.length && <EmptyState icon="check" title={aggregateReadOnly ? '请选择具体班组' : '没有未分配任务'} description={aggregateReadOnly ? '全部班组只用于汇总查看，选择班组后才能从本周工序池领取并分配任务。' : maintenanceCount ? `有 ${maintenanceCount} 个工单等待补齐工序或标准工时。` : workbench?.weeklyPool.processOwnershipConfigured ? `当前班组本日没有未分配任务，本周尚有 ${workbench.weeklyPool.availableTaskCount} 项可安排工序。未配置归属的工序仍按兼容模式开放。` : '尚未启用工序归属配置，当前按兼容模式展示全部工序。'} />}{visiblePool.map(task => <TaskPoolCard key={task.id} task={task} readOnly={aggregateReadOnly} onAssign={taskItem => openModal('assign', taskItem)} onCrossTeam={taskItem => openModal('crossTeam', taskItem)} onCarryOver={taskItem => openModal('carryOver', taskItem)} />)}</div></aside>}
           <section className="daily-main-workbench" aria-busy={loading}>
             {loading && !workbench && <div className="daily-page-loading"><LoaderCircle className="spin" /><b>正在加载日计划…</b></div>}
             {workbench && activeTab === 'people' && <div className="daily-tab-stack">
@@ -796,7 +801,7 @@ export default function DailyPlanWorkbench({ user }: { user: CurrentUserDTO }) {
             {workbench && activeTab === 'reconciliation' && <ReconciliationWorkbench tasks={filteredTasks} laborPools={laborData?.pools || []} loading={laborLoading} onClaim={setLaborPool} />}
             {workbench && activeTab === 'organization' && <OrganizationManager organization={organization} busy={organizationBusy} error={organizationError} canManage={workbench.scope.canManageOrganization} onSave={saveOrganization} />}
           </section>
-          <RiskRail risks={workbench?.risks || []} collapsed={riskCollapsed} onToggle={() => setRiskCollapsed(value => !value)} onOpenTask={openRiskTask} />
+          {!wideTab && <RiskRail risks={workbench?.risks || []} collapsed={riskCollapsed} onToggle={() => setRiskCollapsed(value => !value)} onOpenTask={openRiskTask} />}
         </div>
       </div>
 
