@@ -3,6 +3,7 @@ import {
   Prisma,
   ProcessCompletionCoverageStatus,
   ProcessCompletionReportMode,
+  ProcessCompletionSource,
   ProcessLaborClaimStatus,
   ProcessLaborPoolStatus,
 } from '@prisma/client';
@@ -65,6 +66,7 @@ export type CompleteProcessStepCommand = {
   requireParticipants?: boolean;
   allowAdvanceReporting?: boolean;
   autoAssignLabor?: boolean;
+  reportSource?: ProcessCompletionSource;
   idempotencyKey: unknown;
   expectedRouteVersion: unknown;
   userId: string;
@@ -198,6 +200,7 @@ type ParsedCompletionCommand = {
   remark: string | null;
   allowAdvanceReporting: boolean;
   autoAssignLabor: boolean;
+  reportSource: ProcessCompletionSource;
   idempotencyKey: string;
   expectedRouteVersion: number;
   userId: string;
@@ -668,6 +671,9 @@ export function parseProcessCompletionCommand(
     remark: cleanText(command.remark, 500) || null,
     allowAdvanceReporting: command.allowAdvanceReporting === true,
     autoAssignLabor: command.autoAssignLabor === true,
+    reportSource: command.reportSource === ProcessCompletionSource.QR_MOBILE
+      ? ProcessCompletionSource.QR_MOBILE
+      : ProcessCompletionSource.DESKTOP,
     idempotencyKey: parseIdempotencyKey(command.idempotencyKey),
     expectedRouteVersion: parseExpectedRouteVersion(command.expectedRouteVersion),
     userId,
@@ -886,6 +892,7 @@ function assertIdempotentPayload(
     && completion.team === input.team
     && completion.workstation === input.workstation
     && completion.remark === input.remark
+    && completion.reportSource === input.reportSource
     && storedEmployeeIds.length === inputEmployeeIds.length
     && storedEmployeeIds.every((id, index) => id === inputEmployeeIds[index]);
   if (!matches) {
@@ -1012,10 +1019,12 @@ export async function loadProcessCompletionContext(
   ]));
   const selected = stepId
     ? route.steps.find(step => step.id === stepId)
-    : route.steps.find(step => step.status === 'current')
-      || (options.allowAdvanceReporting
-        ? route.steps.find(step => (totalByStep.get(step.id)?.reportedQty || 0) < target)
-        : undefined);
+    : options.allowAdvanceReporting
+      ? route.steps.find(step => (
+          step.status === 'current'
+          && (totalByStep.get(step.id)?.reportedQty || 0) < target
+        )) || route.steps.find(step => (totalByStep.get(step.id)?.reportedQty || 0) < target)
+      : route.steps.find(step => step.status === 'current');
   if (!selected) {
     throw new ProcessCompletionServiceError(
       stepId ? '当前工序不属于该工艺路线' : '当前没有可完成的生产工序',
@@ -2936,6 +2945,7 @@ async function performProcessCompletion(
       goodQty,
       defectQty: input.defectQty,
       reportMode,
+      reportSource: input.reportSource,
       coverageStatus: ProcessCompletionCoverageStatus.PENDING,
       coveredQty: 0,
       coveredGoodQty: 0,
@@ -3161,6 +3171,7 @@ async function performProcessCompletion(
         branchWorkOrderId: result.branchWorkOrderId || null,
         goodTransferredQty: coverage.goodTransferredQty,
         reportMode,
+        reportSource: input.reportSource,
         coverageStatus: coveredCompletion.coverageStatus,
         coveredQty: coveredCompletion.coveredQty,
         pendingCoverageQty,

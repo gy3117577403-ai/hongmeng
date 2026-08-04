@@ -246,6 +246,44 @@ input:focus-visible {
   box-shadow: 0 0 0 4px var(--orange-soft);
 }
 
+.login-employee-identity {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid #b7e5ce;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f0fdf4, #ecfdf5);
+  color: #166534;
+}
+
+.login-employee-identity span {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.login-employee-identity strong {
+  font-size: 17px;
+  color: #14532d;
+}
+
+.login-employee-identity small,
+.login-identity-hint {
+  font-size: 12px;
+  color: #4b5563;
+}
+
+.login-identity-hint {
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.login-identity-hint.warning {
+  color: #9a3412;
+  background: #fff7ed;
+}
+
 .tablet-shell {
   width: 100%;
   min-height: 100vh;

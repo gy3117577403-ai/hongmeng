@@ -82,6 +82,20 @@ enum ProcessCompletionCoverageStatus {
   @@map("process_completion_coverage_status")
 }
 
+enum ProcessCompletionSource {
+  DESKTOP
+  QR_MOBILE
+
+  @@map("process_completion_source")
+}
+
+enum WorkOrderQrTicketStatus {
+  ACTIVE
+  REVOKED
+
+  @@map("work_order_qr_ticket_status")
+}
+
 enum LaborAccessRole {
   ADMIN
   TEAM_LEAD
@@ -280,6 +294,8 @@ model User {
   reviewedDailyCrossTeam         DailyCrossTeamRequest[]      @relation("DailyCrossTeamReviewedBy")
   createdWeeklyWorkerPresets     WeeklyProcessWorkerPreset[]  @relation("WeeklyProcessWorkerPresetCreatedBy")
   updatedWeeklyWorkerPresets     WeeklyProcessWorkerPreset[]  @relation("WeeklyProcessWorkerPresetUpdatedBy")
+  createdWorkOrderQrTickets      WorkOrderQrTicket[]          @relation("WorkOrderQrTicketCreatedBy")
+  printedWorkOrderQrPrints       WorkOrderQrPrint[]           @relation("WorkOrderQrPrintPrintedBy")
 
   @@map("users")
 }
@@ -363,6 +379,7 @@ model WorkOrder {
   branchQuantityMovements ProcessQuantityMovement[] @relation("MovementBranchWorkOrder")
   processLaborPools       ProcessLaborPool[]
   dailyProcessTasks       DailyProcessTask[]
+  qrTicket                WorkOrderQrTicket?
 
   @@unique([parentWorkOrderId, branchSequence])
   @@index([code])
@@ -503,6 +520,7 @@ model WorkOrderProcessRoute {
   activities                ProcessRouteActivity[]
   completions               ProcessCompletion[]
   dailyProcessTasks         DailyProcessTask[]
+  qrPrints                  WorkOrderQrPrint[]
 
   @@index([status])
   @@index([templateId])
@@ -573,6 +591,45 @@ model WorkOrderProcessStep {
   @@index([completedById])
   @@index([quantityVersion])
   @@map("work_order_process_steps")
+}
+
+model WorkOrderQrTicket {
+  id            String                  @id @default(uuid())
+  workOrderId   String                  @unique @map("work_order_id")
+  publicCode    String                  @unique @map("public_code")
+  status        WorkOrderQrTicketStatus @default(ACTIVE)
+  createdById   String?                 @map("created_by_id")
+  lastScannedAt DateTime?               @map("last_scanned_at")
+  scanCount     Int                     @default(0) @map("scan_count")
+  revokedAt     DateTime?               @map("revoked_at")
+  createdAt     DateTime                @default(now()) @map("created_at")
+  updatedAt     DateTime                @updatedAt @map("updated_at")
+  workOrder     WorkOrder               @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  createdBy     User?                   @relation("WorkOrderQrTicketCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  prints        WorkOrderQrPrint[]
+
+  @@index([status])
+  @@index([createdById])
+  @@index([lastScannedAt])
+  @@map("work_order_qr_tickets")
+}
+
+model WorkOrderQrPrint {
+  id           String                @id @default(uuid())
+  ticketId     String                @map("ticket_id")
+  routeId      String                @map("route_id")
+  routeVersion Int                   @map("route_version")
+  snapshot     Json
+  printedById  String?               @map("printed_by_id")
+  printedAt    DateTime              @default(now()) @map("printed_at")
+  ticket       WorkOrderQrTicket     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  route        WorkOrderProcessRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  printedBy    User?                 @relation("WorkOrderQrPrintPrintedBy", fields: [printedById], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, printedAt])
+  @@index([routeId, routeVersion])
+  @@index([printedById])
+  @@map("work_order_qr_prints")
 }
 
 model Employee {
@@ -1382,6 +1439,7 @@ model ProcessCompletion {
   goodQty                      Int                             @map("good_qty")
   defectQty                    Int                             @map("defect_qty")
   reportMode                   ProcessCompletionReportMode     @default(SEQUENTIAL) @map("report_mode")
+  reportSource                 ProcessCompletionSource         @default(DESKTOP) @map("report_source")
   coverageStatus               ProcessCompletionCoverageStatus @default(COVERED) @map("coverage_status")
   coveredQty                   Int                             @default(0) @map("covered_qty")
   coveredGoodQty               Int                             @default(0) @map("covered_good_qty")

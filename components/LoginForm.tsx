@@ -2,12 +2,22 @@
 
 import { useEffect, useState } from 'react';
 
+type EmployeeIdentity = {
+  employeeNo: string;
+  name: string;
+  department: string | null;
+  position: string | null;
+  team: string | null;
+};
+
 export default function LoginForm({ nextPath = '/home' }: { nextPath?: string }) {
-  const [username, setUsername] = useState('admin');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [identity, setIdentity] = useState<EmployeeIdentity | null>(null);
+  const [identityState, setIdentityState] = useState<'idle' | 'loading' | 'missing'>('idle');
 
   useEffect(() => {
     const message = sessionStorage.getItem('hm-login-notice') || '';
@@ -15,6 +25,38 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
     sessionStorage.removeItem('hm-login-notice');
     setNotice(message);
   }, []);
+
+  useEffect(() => {
+    const employeeNo = username.trim();
+    setIdentity(null);
+    if (!/^\d{2,12}$/.test(employeeNo)) {
+      setIdentityState('idle');
+      return undefined;
+    }
+    setIdentityState('loading');
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/auth/employee-identity?employeeNo=${encodeURIComponent(employeeNo)}`, {
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body.found) {
+          setIdentityState('missing');
+          return;
+        }
+        setIdentity(body.employee as EmployeeIdentity);
+        setIdentityState('idle');
+      } catch (reason) {
+        if ((reason as { name?: string }).name !== 'AbortError') setIdentityState('missing');
+      }
+    }, 320);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [username]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -60,11 +102,18 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
           <span>账号登录</span>
           <strong>欢迎回来</strong>
         </div>
-        <label>账号<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label>
+        <label>员工编号 / 管理账号<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" inputMode="numeric" placeholder="生产员工请输入员工编号" autoFocus /></label>
+        {identity && <div className="login-employee-identity" role="status">
+          <span>身份已识别</span>
+          <strong>{identity.employeeNo} · {identity.name}</strong>
+          <small>{[identity.department, identity.team || identity.position].filter(Boolean).join(' · ') || '员工档案已关联'}</small>
+        </div>}
+        {identityState === 'loading' && <div className="login-identity-hint">正在核对员工姓名...</div>}
+        {identityState === 'missing' && <div className="login-identity-hint warning">未找到已开通的员工账号，请核对编号或联系管理员</div>}
         <label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></label>
         {notice && <div className="form-success" role="status">{notice}</div>}
         {error && <div className="form-error">{error}</div>}
-        <button className="primary-button" disabled={loading}>{loading ? '登录中...' : '登录'}</button>
+        <button className="primary-button" disabled={loading || !username.trim() || !password}>{loading ? '登录中...' : identity ? `以 ${identity.name} 身份登录` : '登录'}</button>
       </form>
     </main>
   );
