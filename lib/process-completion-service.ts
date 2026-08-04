@@ -29,6 +29,7 @@ import {
 } from '@/lib/work-orders';
 import { loadWeeklyProcessWorkerPresetForStep } from '@/lib/weekly-process-worker-preset-service';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
+import { branchBusinessWorkOrderCode } from '@/lib/work-order-business-code';
 
 export class ProcessCompletionServiceError extends Error {
   readonly status: number;
@@ -87,6 +88,31 @@ export type ProcessCompletionResult = {
   pendingCoverageQty: number;
   autoAssignedEmployeeCount: number;
   autoAssignedLaborMilliseconds: number;
+};
+
+export type CompleteProcessStepsBatchCommand = Omit<CompleteProcessStepCommand,
+  'stepId' | 'processedQty' | 'defectQty' | 'defectDisposition'> & {
+  items: Array<{
+    stepId: unknown;
+    processedQty: unknown;
+    defectQty?: unknown;
+    defectDisposition?: unknown;
+  }>;
+};
+
+export type ProcessCompletionBatchResult = {
+  batchId: string;
+  routeVersion: number;
+  completionCount: number;
+  pendingCoverageQty: number;
+  autoAssignedLaborMilliseconds: number;
+  autoAssignedEmployeeCount: number;
+  items: Array<{
+    stepId: string;
+    processName: string;
+    position: number;
+    result: ProcessCompletionResult;
+  }>;
 };
 
 export type ProcessCompletionContext = {
@@ -177,6 +203,7 @@ export type ProcessCompletionContext = {
     branchWorkOrder?: {
       id: string;
       code: string;
+      businessCode: string | null;
       branchType: string | null;
       branchStatus: string | null;
     };
@@ -265,7 +292,7 @@ const replayCompletionInclude = Prisma.validator<Prisma.ProcessCompletionInclude
       },
     },
   },
-  branchWorkOrder: { select: { id: true, code: true } },
+  branchWorkOrder: { select: { id: true, code: true, businessCode: true } },
   participants: {
     select: { employeeId: true, position: true },
     orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
@@ -860,7 +887,7 @@ async function resultForExistingCompletion(
     laborPoolPendingStandard: completion.laborPool?.status === 'LOCKED'
       && completion.laborPool.standardSource === 'pending_standard',
     ...(completion.branchWorkOrder?.id ? { branchWorkOrderId: completion.branchWorkOrder.id } : {}),
-    ...(completion.branchWorkOrder?.code ? { branchWorkOrderCode: completion.branchWorkOrder.code } : {}),
+    ...(completion.branchWorkOrder?.code ? { branchWorkOrderCode: completion.branchWorkOrder.businessCode || completion.branchWorkOrder.code } : {}),
     goodTransferredQty: normalMovementQuantities.length ? Math.max(...normalMovementQuantities) : 0,
     remainingInputQty: Math.max(0, completion.step.inputQty - completion.step.processedQty),
     routeCompleted: completion.route.status === 'completed',
@@ -963,6 +990,7 @@ export async function loadProcessCompletionContext(
                   select: {
                     id: true,
                     code: true,
+                    businessCode: true,
                     branchType: true,
                     branchStatus: true,
                   },
@@ -1154,6 +1182,7 @@ export async function loadProcessCompletionContext(
         branchWorkOrder: {
           id: completion.branchWorkOrder.id,
           code: completion.branchWorkOrder.code,
+          businessCode: completion.branchWorkOrder.businessCode,
           branchType: completion.branchWorkOrder.branchType?.toLowerCase() || null,
           branchStatus: completion.branchWorkOrder.branchStatus?.toLowerCase() || null,
         },
@@ -1252,6 +1281,12 @@ async function createDefectBranch(
   const branchOrder = await tx.workOrder.create({
     data: {
       code: branchCode(input.route.workOrder.code, configuration.codeTag, branchSequence),
+      businessCode: branchBusinessWorkOrderCode(
+        input.route.workOrder.businessCode,
+        input.route.workOrder,
+        configuration.codeTag,
+        branchSequence,
+      ),
       customerName: input.route.workOrder.customerName,
       productName: input.route.workOrder.productName,
       stage: firstStage,
@@ -1375,7 +1410,7 @@ async function createDefectBranch(
   });
   return {
     workOrderId: branchOrder.id,
-    workOrderCode: branchOrder.code,
+    workOrderCode: branchOrder.businessCode || branchOrder.code,
     firstStepId: branchRoute.steps[0].id,
     firstSequenceGroup: branchRoute.steps[0].sequenceGroup,
     movementType: configuration.movementType,
@@ -2989,7 +3024,7 @@ async function performProcessCompletion(
       coveredQty: true,
       coveredGoodQty: true,
       coveredDefectQty: true,
-      branchWorkOrder: { select: { id: true, code: true } },
+      branchWorkOrder: { select: { id: true, code: true, businessCode: true } },
     },
   });
 
@@ -3110,7 +3145,7 @@ async function performProcessCompletion(
       ? { branchWorkOrderId: coveredCompletion.branchWorkOrder.id }
       : coverage.branchWorkOrderId ? { branchWorkOrderId: coverage.branchWorkOrderId } : {}),
     ...(coveredCompletion.branchWorkOrder?.code
-      ? { branchWorkOrderCode: coveredCompletion.branchWorkOrder.code }
+      ? { branchWorkOrderCode: coveredCompletion.branchWorkOrder.businessCode || coveredCompletion.branchWorkOrder.code }
       : coverage.branchWorkOrderCode ? { branchWorkOrderCode: coverage.branchWorkOrderCode } : {}),
     goodTransferredQty: coverage.goodTransferredQty,
     remainingInputQty: Math.max(0, current.inputQty - current.processedQty),
@@ -3209,6 +3244,99 @@ export async function completeProcessStep(
         return resultForExistingCompletion(prisma, existing);
       }
     }
+    throw normalizeServiceError(error);
+  }
+}
+
+export async function completeProcessStepsBatch(
+  command: CompleteProcessStepsBatchCommand,
+): Promise<ProcessCompletionBatchResult> {
+  if (!Array.isArray(command.items) || command.items.length < 2) {
+    throw new ProcessCompletionServiceError(
+      '批量报工请至少选择两道工序',
+      400,
+      'PROCESS_COMPLETION_BATCH_ITEMS_REQUIRED',
+    );
+  }
+  if (command.items.length > 20) {
+    throw new ProcessCompletionServiceError(
+      '一次最多批量报工 20 道工序',
+      400,
+      'PROCESS_COMPLETION_BATCH_ITEMS_LIMIT',
+    );
+  }
+  const batchKey = parseIdempotencyKey(command.idempotencyKey);
+  const routeId = cleanText(command.routeId, 80);
+  const expectedRouteVersion = parseExpectedRouteVersion(command.expectedRouteVersion);
+  const itemByStepId = new Map<string, CompleteProcessStepsBatchCommand['items'][number]>();
+  for (const item of command.items) {
+    const stepId = cleanText(item.stepId, 80);
+    if (!stepId) {
+      throw new ProcessCompletionServiceError('批量报工包含无效工序', 400, 'PROCESS_STEP_REQUIRED');
+    }
+    if (itemByStepId.has(stepId)) {
+      throw new ProcessCompletionServiceError('同一道工序不能重复选择', 400, 'PROCESS_COMPLETION_BATCH_STEP_DUPLICATE');
+    }
+    itemByStepId.set(stepId, item);
+  }
+
+  try {
+    return await prisma.$transaction(async tx => {
+      const route = await tx.workOrderProcessRoute.findUnique({
+        where: { id: routeId },
+        select: {
+          id: true,
+          steps: {
+            where: { id: { in: [...itemByStepId.keys()] } },
+            orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }],
+            select: { id: true, processName: true, position: true },
+          },
+        },
+      });
+      if (!route || route.steps.length !== itemByStepId.size) {
+        throw new ProcessCompletionServiceError(
+          '部分所选工序不属于当前工艺路线，请刷新后重试',
+          404,
+          'PROCESS_STEP_NOT_FOUND',
+        );
+      }
+      let nextExpectedVersion = expectedRouteVersion;
+      const results: ProcessCompletionBatchResult['items'] = [];
+      for (const [index, step] of route.steps.entries()) {
+        const item = itemByStepId.get(step.id)!;
+        const input = parseProcessCompletionCommand({
+          ...command,
+          stepId: step.id,
+          processedQty: item.processedQty,
+          defectQty: item.defectQty,
+          defectDisposition: item.defectDisposition,
+          idempotencyKey: `${batchKey.slice(0, 88)}:${index + 1}:${step.id.slice(0, 8)}`,
+          expectedRouteVersion: nextExpectedVersion,
+        });
+        const result = await performProcessCompletion(tx, input);
+        nextExpectedVersion = result.routeVersion;
+        results.push({
+          stepId: step.id,
+          processName: step.processName,
+          position: step.position,
+          result,
+        });
+      }
+      return {
+        batchId: `BR-${batchKey.replace(/[^A-Za-z0-9]/g, '').slice(-10).toUpperCase()}`,
+        routeVersion: nextExpectedVersion,
+        completionCount: results.length,
+        pendingCoverageQty: results.reduce((sum, item) => sum + item.result.pendingCoverageQty, 0),
+        autoAssignedLaborMilliseconds: results.reduce((sum, item) => sum + item.result.autoAssignedLaborMilliseconds, 0),
+        autoAssignedEmployeeCount: Math.max(0, ...results.map(item => item.result.autoAssignedEmployeeCount)),
+        items: results,
+      };
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 8_000,
+      timeout: 30_000,
+    });
+  } catch (error) {
     throw normalizeServiceError(error);
   }
 }

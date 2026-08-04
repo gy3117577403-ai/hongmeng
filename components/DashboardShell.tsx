@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, ClipboardList, ListFilter, Plus, Search } from 'lucide-react';
+import { ArrowLeft, ClipboardList, Download, HelpCircle, History, ListFilter, LogOut, MonitorDown, Plus, RefreshCw, Search, Settings2, ShieldCheck, Trash2, UserRoundCog, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
@@ -4066,7 +4066,7 @@ function QrDialog({
   );
 }
 
-function SystemSettings({
+function LegacySystemSettings({
   userName,
   now,
   status,
@@ -4426,6 +4426,152 @@ function SystemSettings({
             <button type="button" onClick={logout}>退出登录</button>
           </div>
         </section>
+      </section>
+    </div>
+  );
+}
+
+type SystemSettingsTab = 'common' | 'data' | 'account';
+
+function SystemSettings({
+  userName,
+  now,
+  status,
+  loading,
+  exporting,
+  canInstall,
+  close,
+  refreshStatus,
+  refreshData,
+  openLogs,
+  openSnapshots,
+  openAccounts,
+  canManageAccounts,
+  openTrash,
+  openHelp,
+  logout,
+  installApp,
+  exportWorkOrders,
+  exportResourceFiles,
+}: Parameters<typeof LegacySystemSettings>[0]) {
+  const [activeTab, setActiveTab] = useState<SystemSettingsTab>('common');
+  const version = status?.app.version || APP_VERSION;
+  const healthy = Boolean(status?.ok && status?.database.ok && status?.storage.ok);
+  const healthLabel = loading ? '正在检查' : healthy ? '运行正常' : '需要检查';
+
+  return (
+    <div className="modal-backdrop system-settings-backdrop" role="presentation">
+      <section className="system-dialog settings-shell" role="dialog" aria-modal="true" aria-label="系统设置">
+        <header className="settings-header">
+          <div className="settings-header-mark" aria-hidden="true"><Settings2 size={24} /></div>
+          <div className="settings-header-copy">
+            <strong>系统设置</strong>
+            <span>管理常用选项、数据与账号</span>
+          </div>
+          <span className={`settings-health ${healthy ? 'ok' : loading ? 'loading' : 'warning'}`}>
+            <i />{healthLabel}
+          </span>
+          <button className="settings-close" type="button" onClick={close} aria-label="关闭系统设置"><X size={22} /></button>
+        </header>
+
+        <nav className="settings-tabs" aria-label="设置分类">
+          <button className={activeTab === 'common' ? 'active' : ''} type="button" onClick={() => setActiveTab('common')}><Settings2 size={17} />常用设置</button>
+          <button className={activeTab === 'data' ? 'active' : ''} type="button" onClick={() => setActiveTab('data')}><Download size={17} />数据管理</button>
+          <button className={activeTab === 'account' ? 'active' : ''} type="button" onClick={() => setActiveTab('account')}><UserRoundCog size={17} />账号与安全</button>
+        </nav>
+
+        <div className="settings-content">
+          {activeTab === 'common' && (
+            <div className="settings-panel" data-settings-panel="common">
+              <section className="settings-overview">
+                <div className="settings-app-badge" aria-hidden="true">杭</div>
+                <div>
+                  <small>当前应用</small>
+                  <h3>杭连电子协同平台</h3>
+                  <p>版本 {version} · 当前用户 {userName}</p>
+                </div>
+                <div className="settings-overview-time">
+                  <small>当前时间</small>
+                  <strong>{now ? dt(now.toISOString()) : '刚刚'}</strong>
+                </div>
+              </section>
+
+              <div className="settings-section-title">
+                <div><strong>快捷操作</strong><span>常用操作集中在这里</span></div>
+              </div>
+              <div className="settings-action-grid">
+                <button type="button" onClick={refreshData}>
+                  <span className="blue"><RefreshCw size={20} /></span>
+                  <b>刷新业务数据</b><small>重新获取当前页面的最新内容</small>
+                </button>
+                <button type="button" onClick={refreshStatus} disabled={loading}>
+                  <span className="green"><ShieldCheck size={20} /></span>
+                  <b>{loading ? '正在检查…' : '检查运行状态'}</b><small>确认系统与文件服务可以正常使用</small>
+                </button>
+                <button type="button" onClick={installApp}>
+                  <span className="orange"><MonitorDown size={20} /></span>
+                  <b>{canInstall ? '安装到桌面' : '桌面使用说明'}</b><small>全屏打开，减少浏览器地址栏干扰</small>
+                </button>
+                <button type="button" onClick={openHelp}>
+                  <span className="violet"><HelpCircle size={20} /></span>
+                  <b>使用帮助</b><small>查看功能说明与常见问题</small>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'data' && (
+            <div className="settings-panel" data-settings-panel="data">
+              <section className="settings-data-summary">
+                <div><small>生产工单</small><strong>{status?.counts?.workOrders ?? '—'}</strong><span>条</span></div>
+                <div><small>资料文件</small><strong>{status?.counts?.resourceFiles ?? '—'}</strong><span>份</span></div>
+                <div><small>近期操作</small><strong>{status?.counts?.operationLogsRecent ?? '—'}</strong><span>条</span></div>
+              </section>
+
+              <div className="settings-section-title">
+                <div><strong>导出数据</strong><span>下载常用清单，不改变系统中的原始数据</span></div>
+              </div>
+              <div className="settings-export-row">
+                <button type="button" disabled={!!exporting} onClick={exportWorkOrders}><Download size={18} /><span><b>导出工单清单</b><small>表格文件</small></span></button>
+                <button type="button" disabled={!!exporting} onClick={exportResourceFiles}><Download size={18} /><span><b>导出资料清单</b><small>表格文件</small></span></button>
+              </div>
+              {exporting && <div className="settings-inline-progress"><i /><span>{exporting}，请稍候…</span></div>}
+
+              <div className="settings-section-title">
+                <div><strong>记录与清理</strong><span>查看历史记录或恢复误删内容</span></div>
+              </div>
+              <div className="settings-list-actions">
+                <button type="button" onClick={openSnapshots}><History size={19} /><span><b>变更记录</b><small>查看关键数据的修改历史</small></span><em>查看</em></button>
+                <button type="button" onClick={openLogs}><ShieldCheck size={19} /><span><b>操作记录</b><small>追溯系统内的重要操作</small></span><em>查看</em></button>
+                <button type="button" onClick={openTrash}><Trash2 size={19} /><span><b>回收站</b><small>恢复或清理已删除内容</small></span><em>打开</em></button>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'account' && (
+            <div className="settings-panel" data-settings-panel="account">
+              <section className="settings-account-card">
+                <div className="settings-avatar" aria-hidden="true">{userName.trim().slice(0, 1) || '杭'}</div>
+                <div><small>当前登录账号</small><h3>{userName}</h3><p>账号已登录，业务数据会在已登录设备之间保持一致。</p></div>
+                <span><ShieldCheck size={16} />已登录</span>
+              </section>
+
+              <div className="settings-section-title">
+                <div><strong>账号操作</strong><span>管理登录账号或安全退出</span></div>
+              </div>
+              <div className="settings-list-actions">
+                {canManageAccounts && <button type="button" onClick={openAccounts}><UserRoundCog size={19} /><span><b>账号管理</b><small>新增、停用或维护登录账号</small></span><em>打开</em></button>}
+                <button type="button" onClick={openHelp}><HelpCircle size={19} /><span><b>需要帮助</b><small>查看账号和登录相关说明</small></span><em>查看</em></button>
+                <button className="danger" type="button" onClick={logout}><LogOut size={19} /><span><b>退出登录</b><small>退出当前账号并返回登录页</small></span><em>退出</em></button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <footer className="settings-footer">
+          <span>设置仅影响当前操作，不会删除生产数据。</span>
+          <button type="button" onClick={close}>完成</button>
+        </footer>
       </section>
     </div>
   );

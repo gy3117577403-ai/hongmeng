@@ -22,10 +22,11 @@
 .traveler-order-main > span { color: #c2410c; font-size: 3mm; font-weight: 800; text-transform: uppercase; }
 .traveler-order-main > strong { display: block; margin-top: 1mm; font-size: 7mm; line-height: 1.18; }
 .traveler-order-main > small { display: block; margin-top: 1.5mm; color: #64748b; font-size: 3.3mm; }
-.traveler-order-main dl { display: grid; grid-template-columns: 1fr 1fr; gap: 2mm 4mm; margin: 4mm 0 0; }
+.traveler-order-main dl { display: grid; grid-template-columns: 1.35fr .85fr .85fr; gap: 2mm 4mm; margin: 4mm 0 0; }
 .traveler-order-main dl div { display: grid; grid-template-columns: 18mm 1fr; gap: 2mm; align-items: baseline; padding-bottom: 1.5mm; border-bottom: 1px solid #e2e8f0; }
 .traveler-order-main dt { color: #64748b; font-size: 2.8mm; }
 .traveler-order-main dd { margin: 0; font-size: 3.5mm; font-weight: 750; }
+.traveler-order-main .traveler-business-code { grid-template-columns: 18mm minmax(0,1fr); }.traveler-order-main .traveler-business-code dd { overflow-wrap: anywhere; }
 .traveler-qr { display: grid; justify-items: center; align-content: start; }
 .traveler-qr img, .traveler-qr > span { width: 38mm; height: 38mm; }
 .traveler-qr > span { display: grid; place-items: center; color: #64748b; font-size: 3mm; }
@@ -40,6 +41,7 @@
 .traveler-process-table td { height: 8mm; padding: .8mm 1.2mm; border: 1px solid #cbd5e1; text-align: center; }
 .traveler-process-table th:nth-child(1) { width: 10mm; }.traveler-process-table th:nth-child(2) { width: 36mm; }.traveler-process-table th:nth-child(3) { width: 15mm; }.traveler-process-table th:nth-child(4) { width: 28mm; }.traveler-process-table th:nth-child(5) { width: 28mm; }.traveler-process-table th:nth-child(6) { width: 20mm; }
 .traveler-process-table td:nth-child(2) { text-align: left; }.traveler-process-table td strong { display: block; }.traveler-process-table td small { display: block; margin-top: .5mm; color: #94a3b8; font-size: 2.2mm; }
+.traveler-first-piece-box { display: inline-block; width: 5mm; height: 5mm; border: .55mm solid #334155; border-radius: .8mm; background: #fff; }
 .traveler-sheet.dense .traveler-process-table { font-size: 2.55mm; }.traveler-sheet.dense .traveler-process-table th, .traveler-sheet.dense .traveler-process-table td { height: 6.5mm; }
 .traveler-sheet-foot { margin-top: auto; padding-top: 4mm; }
 .traveler-sheet-foot > div { display: inline-grid; grid-template-columns: 18mm 32mm; gap: 2mm; margin-right: 5mm; font-size: 3mm; }.traveler-sheet-foot > div b { border-bottom: 1px solid #475569; }

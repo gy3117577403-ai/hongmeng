@@ -3,6 +3,7 @@ import { Prisma, WorkOrderQrTicketStatus } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { isExecutableProductionWorkOrder } from '@/lib/work-orders';
+import { businessWorkOrderCodeBase } from '@/lib/work-order-business-code';
 
 const MAX_PRINT_BATCH = 30;
 const REPORT_CODE_PATTERN = /^[A-Za-z0-9_-]{20,80}$/;
@@ -22,6 +23,7 @@ export class WorkOrderQrServiceError extends Error {
 export type WorkOrderTravelerSnapshot = {
   workOrderId: string;
   workOrderCode: string;
+  businessWorkOrderCode?: string;
   customerName: string | null;
   productName: string;
   specification: string | null;
@@ -67,6 +69,7 @@ export type FieldReportTicketView = {
   workOrder: {
     id: string;
     code: string;
+    businessCode: string;
     customerName: string | null;
     productName: string;
     specification: string | null;
@@ -138,6 +141,7 @@ function createSnapshot(order: TravelerOrder): WorkOrderTravelerSnapshot {
   return {
     workOrderId: order.id,
     workOrderCode: order.code,
+    businessWorkOrderCode: order.businessCode || businessWorkOrderCodeBase(order),
     customerName: order.customerName,
     productName: order.productName,
     specification: order.specification,
@@ -329,6 +333,7 @@ export async function loadFieldReportTicket(
     workOrder: {
       id: order.id,
       code: order.code,
+      businessCode: order.businessCode || businessWorkOrderCodeBase(order),
       customerName: order.customerName,
       productName: order.productName,
       specification: order.specification,

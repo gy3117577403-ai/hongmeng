@@ -300,6 +300,7 @@ export function serializeWorkOrder(order: WorkOrder & { resourceFiles?: { catego
   return {
     id: order.id,
     code: order.code,
+    businessCode: order.businessCode,
     displayCode: displayWorkOrderCode(order),
     customerName: order.customerName,
     productName: order.productName,

@@ -4,6 +4,7 @@ export type WorkOrderBranchStatus = 'OPEN' | 'RELEASED' | 'IN_PROGRESS' | 'QUALI
 export type WorkOrderDTO = {
   id: string;
   code: string;
+  businessCode?: string | null;
   displayCode?: string;
   customerName?: string | null;
   productName: string;

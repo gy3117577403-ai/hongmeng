@@ -82,6 +82,7 @@ type ProductionQuantityFlow = {
 type ProductionOrder = {
   id: string;
   code: string;
+  businessCode?: string | null;
   specification?: string | null;
   customerName?: string | null;
   productName: string;
@@ -104,6 +105,7 @@ type ProductionOrder = {
   branchWorkOrders?: Array<{
     id: string;
     code: string;
+    businessCode?: string | null;
     branchType?: 'REWORK' | 'SCRAP_REPLENISH' | 'QUALITY_PENDING' | null;
     branchStatus?: 'OPEN' | 'RELEASED' | 'IN_PROGRESS' | 'QUALITY_PENDING' | 'RESOLVED' | 'CANCELLED' | null;
     productionTargetQty?: number | null;
@@ -350,6 +352,7 @@ type ProcessCompletionContext = {
     branchWorkOrder?: {
       id: string;
       code: string;
+      businessCode?: string | null;
       branchType?: string | null;
       branchStatus?: string | null;
     } | null;
@@ -2242,7 +2245,7 @@ function ProductionDispatchRow({
       <div className="production-dispatch-product">
         <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b>{order.branchType ? <em className="branch">{branchTypeText(order.branchType)}</em> : <em className={order.priority}>{priorityText(order.priority)}</em>}</span>
         <button type="button" title={`${specText(order)}；进入图纸资料库`} onClick={() => openDrawingLibrary(order, displayStage)}>{specText(order)}</button>
-        <small title={`${order.productName || '品名待补充'} · ${order.code}`}>{order.productName || '品名待补充'} · {order.code}{order.parentWorkOrder ? ` · 主单 ${order.parentWorkOrder.code}` : ''}</small>
+        <small title={`${order.productName || '品名待补充'}${order.businessCode ? ` · ${order.businessCode}` : ''}`}>{order.productName || '品名待补充'}{order.businessCode ? ` · ${order.businessCode}` : ''}</small>
         <div className="production-dispatch-product-quantity"><span>数量</span><b>{targetQuantity > 0 ? formatProductionQuantity(targetQuantity) : '待补充'} {unitLabel}</b></div>
       </div>
       <div className="production-dispatch-row-icon-actions">
@@ -2463,7 +2466,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
         <div className="process-completion-heading">
           <span>工序自由报工</span>
           <strong id="process-completion-title">{completionTitle}</strong>
-          <small id="process-completion-order">{order.customerName || '客户待补充'} · {specText(order)} · {order.code}</small>
+          <small id="process-completion-order">{order.customerName || '客户待补充'} · {specText(order)}{order.businessCode ? ` · ${order.businessCode}` : ''}</small>
         </div>
         {!loading && context && <div className="process-completion-next-badge"><span>下一步</span><strong>{nextProcessText}</strong></div>}
         <button type="button" disabled={saving} aria-label="关闭转序弹窗" onClick={close}><X size={20} aria-hidden="true" /></button>
@@ -2620,7 +2623,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
               {context.recentCompletions.slice(0, 4).map(item => <article key={item.id}>
                 <time>{dateText(item.workDate)}</time>
                 <strong>良品 {formatProductionQuantity(item.goodQty)} / 不良 {formatProductionQuantity(item.defectQty)}</strong>
-                <small>{item.pendingCoverageQty > 0 ? `待前序核销 ${formatProductionQuantity(item.pendingCoverageQty)} ${unitLabel}` : item.participants.length ? `已自动记工：${item.participants.map(participant => participant.name).join('、')}` : item.branchWorkOrder ? item.branchWorkOrder.code : '已核销流转'}</small>
+                <small>{item.pendingCoverageQty > 0 ? `待前序核销 ${formatProductionQuantity(item.pendingCoverageQty)} ${unitLabel}` : item.participants.length ? `已自动记工：${item.participants.map(participant => participant.name).join('、')}` : item.branchWorkOrder ? (item.branchWorkOrder.businessCode || '不良分支工单') : '已核销流转'}</small>
               </article>)}
             </div>
           </details>}
@@ -2707,7 +2710,7 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
         {!!order.branchWorkOrders?.length && <section className="production-branch-list" aria-label="关联不良品分支">
           <header><strong>关联不良品分支</strong><span>{order.branchWorkOrders.length} 单</span></header>
           <div>{order.branchWorkOrders.map(branch => <article key={branch.id}>
-            <span><b>{branch.code}</b><small>{branchTypeText(branch.branchType)} · {branch.productionTargetQty || 0} {branch.unitLabel || '件'}</small></span>
+            <span><b>{branch.businessCode || '不良分支工单'}</b><small>{branchTypeText(branch.branchType)} · {branch.productionTargetQty || 0} {branch.unitLabel || '件'}</small></span>
             <span><b>{branch.currentProcessName || (branch.routeStatus === 'completed' ? '路线已完成' : '工序待确认')}</b><small>{branchStatusText(branch.branchStatus)}</small></span>
             <a href={`/workspace/workflows?workOrderId=${encodeURIComponent(branch.id)}&from=production&returnTo=${encodeURIComponent('/production')}`}>查看分支流程</a>
           </article>)}</div>
@@ -2715,8 +2718,8 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
         {tab === 'drawing' && <div className="production-drawing-detail"><div className="production-drawing-score"><span>工单资料完整度</span><strong>{order.documentFilledCount}/{order.documentTotalCount || 5}</strong></div><div className="production-category-status">{categoryLabels.map(category => <span className={order.documentCategoryCodes.includes(category.code) ? 'ready' : 'missing'} key={category.code}><i />{category.label}<b>{order.documentCategoryCodes.includes(category.code) ? '已有资料' : '待补充'}</b></span>)}</div><div className="production-drawing-actions"><button className="primary-button" type="button" onClick={resources}>打开工单资料</button><button type="button" onClick={drawingLibrary}>查看图纸资料库</button></div></div>}
         {tab === 'progress' && <div className="production-progress-list">{progressLoading && <div className="production-loading">进度记录加载中...</div>}{progressLogs.map(log => <article key={log.id}><time>{dateTimeText(log.createdAt)}</time><strong>{log.createdBy || '操作人未记录'}</strong><span>状态：{log.previousStageText && log.previousStage !== log.stage ? `${log.previousStageText} → ` : ''}{log.stageText}</span>{log.completedQty && <span>完成：{log.completedQty}</span>}{(log.productionOwner || log.workstation) && <span>历史记录：{log.productionOwner || ''}{log.productionOwner && log.workstation ? ' · ' : ''}{log.workstation || ''}</span>}<p>{log.remark || '未填写备注'}</p></article>)}{!progressLoading && !progressLogs.length && <div className="production-task-empty">暂无进度记录</div>}</div>}
         {tab === 'source' && <InfoGrid items={[
-          ['订单日期', dateText(order.orderDate) || '-'], ['业务员', order.salesperson || '-'], ['客户等级', order.customerLevel || '-'], ['来源订单号', order.sourceOrderNo || '-'],
-          ['导入批次', order.importBatchId || '-'], ['来源工作表', order.sourceSheetName || '-'], ['来源行号', order.sourceRowNo ? String(order.sourceRowNo) : '-'], ['内部编号', order.code],
+          ['订单日期', dateText(order.orderDate) || '-'], ['业务员', order.salesperson || '-'], ['客户等级', order.customerLevel || '-'],
+          ['导入批次', order.importBatchId || '-'], ['来源工作表', order.sourceSheetName || '-'], ['来源行号', order.sourceRowNo ? String(order.sourceRowNo) : '-'], ['内部工单', order.businessCode || '-'],
           ['工序', order.processName || '-'], ['单位工时', order.unitWorkHours || '-'], ['总工时', order.totalWorkHours || '-'], ['图纸说明', order.drawingIssueNote || '-'],
         ]} />}
       </div>

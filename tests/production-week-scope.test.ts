@@ -475,6 +475,7 @@ test('releasing without product time still creates a warehouse task and a pendin
       }),
     },
     workOrder: {
+      findMany: async () => [],
       create: async ({ data }: { data: Record<string, unknown> }) => {
         createdWorkOrder = data;
         return { id: 'work-order-1' };

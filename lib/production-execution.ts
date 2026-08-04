@@ -49,6 +49,7 @@ export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclu
     select: {
       id: true,
       code: true,
+      businessCode: true,
       branchType: true,
       branchStatus: true,
       productionTargetQty: true,
@@ -490,6 +491,7 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
   return {
     id: order.id,
     code: order.code,
+    businessCode: order.businessCode,
     specification: order.specification,
     customerName: order.customerName,
     productName: order.productName,
@@ -512,6 +514,7 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     branchWorkOrders: order.branchWorkOrders.map(branch => ({
       id: branch.id,
       code: branch.code,
+      businessCode: branch.businessCode,
       branchType: branch.branchType,
       branchStatus: branch.branchStatus,
       productionTargetQty: branch.productionTargetQty,

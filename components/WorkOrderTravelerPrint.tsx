@@ -85,8 +85,7 @@ export default function WorkOrderTravelerPrint({ records }: { records: WorkOrder
               <strong>{snapshot.specification || snapshot.productName}</strong>
               <small>{snapshot.customerName || '客户待维护'} · {snapshot.productName}</small>
               <dl>
-                <div><dt>内部工单</dt><dd>{snapshot.workOrderCode}</dd></div>
-                <div><dt>订单号</dt><dd>{snapshot.sourceOrderNo || '—'}</dd></div>
+                <div className="traveler-business-code"><dt>内部工单</dt><dd>{snapshot.businessWorkOrderCode || '待生成'}</dd></div>
                 <div><dt>生产数量</dt><dd>{snapshot.targetQty.toLocaleString()} {snapshot.unitLabel}</dd></div>
                 <div><dt>计划交期</dt><dd>{deliveryText(snapshot.deliveryDay)}</dd></div>
               </dl>
@@ -101,21 +100,21 @@ export default function WorkOrderTravelerPrint({ records }: { records: WorkOrder
               <small>短码 {record.shortCode}</small>
             </div>
           </section>
-          <section className="traveler-route-title"><span>工艺路线</span><strong>{snapshot.routeName}</strong><small>共 {snapshot.steps.length} 道工序 · 可按现场进度扫码选择工序报工</small></section>
+          <section className="traveler-route-title"><span>工艺路线</span><strong>共 {snapshot.steps.length} 道工序</strong><small>扫码可单选或批量报工</small></section>
           <table className="traveler-process-table">
-            <thead><tr><th>序号</th><th>工序名称</th><th>顺序组</th><th>标准工时</th><th>作业人员</th><th>数量</th><th>日期 / 确认</th></tr></thead>
+            <thead><tr><th>序号</th><th>工序名称</th><th>顺序组</th><th>标准工时</th><th>首件确认</th><th>数量</th><th>日期 / 确认</th></tr></thead>
             <tbody>{snapshot.steps.map(step => <tr key={step.id}>
               <td>{String(step.position).padStart(2, '0')}</td>
-              <td><strong>{step.processName}</strong><small>{step.processCode}</small></td>
+              <td><strong>{step.processName}</strong></td>
               <td>{step.sequenceGroup}</td>
               <td>{standardTimeText(step.standardMillisecondsPerUnit, step.timeBasis, step.unitsPerProduct)}</td>
-              <td />
+              <td><span className="traveler-first-piece-box" aria-label="首件确认方框" /></td>
               <td />
               <td />
             </tr>)}</tbody>
           </table>
           <footer className="traveler-sheet-foot">
-            <div><span>首件确认</span><b /></div><div><span>质量异常</span><b /></div><div><span>最终包装</span><b /></div>
+            <div><span>质量异常</span><b /></div><div><span>最终包装</span><b /></div>
             <p>二维码仅用于定位工单，提交报工前必须使用员工编号登录并核对姓名。纸面版本与系统不一致时，以手机端最新工艺为准并重新打印。</p>
           </footer>
         </article>;

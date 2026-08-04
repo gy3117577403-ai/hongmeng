@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   completeProcessStep,
+  completeProcessStepsBatch,
   ProcessCompletionServiceError,
 } from '@/lib/process-completion-service';
 import { prisma } from '@/lib/prisma';
@@ -53,14 +54,11 @@ export async function POST(
       remark?: unknown;
       idempotencyKey?: unknown;
       expectedRouteVersion?: unknown;
+      items?: unknown;
     };
     const employeeIds = ensureFieldReportParticipants(currentEmployee.id, body.employeeIds);
-    const data = await completeProcessStep({
+    const common = {
       routeId: ticket.route.id,
-      stepId: body.stepId,
-      processedQty: body.processedQty,
-      defectQty: body.defectQty,
-      defectDisposition: body.defectDisposition,
       workDate: body.workDate,
       employeeIds,
       team: body.team,
@@ -74,7 +72,24 @@ export async function POST(
       expectedRouteVersion: body.expectedRouteVersion,
       userId: user.id,
       actor: `${currentEmployee.employeeNo} · ${currentEmployee.name}`,
-    });
+    };
+    const data = Array.isArray(body.items)
+      ? await completeProcessStepsBatch({
+          ...common,
+          items: body.items as Array<{
+            stepId: unknown;
+            processedQty: unknown;
+            defectQty?: unknown;
+            defectDisposition?: unknown;
+          }>,
+        })
+      : await completeProcessStep({
+          ...common,
+          stepId: body.stepId,
+          processedQty: body.processedQty,
+          defectQty: body.defectQty,
+          defectDisposition: body.defectDisposition,
+        });
     return NextResponse.json({ ok: true, data });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

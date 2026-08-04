@@ -7,6 +7,7 @@ import { findDrawingLibraryItemForWorkOrder } from '@/lib/drawing-library';
 import { normalizeWorkOrderStage, parseWorkOrderBody, serializeWorkOrder } from '@/lib/work-orders';
 import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
+import { allocateBusinessWorkOrderCode } from '@/lib/work-order-business-code';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -111,9 +112,15 @@ export async function POST(req: NextRequest) {
       specification: typeof data.specification === 'string' ? data.specification : null,
     });
     const workOrder = await prisma.$transaction(async tx => {
+      const businessCode = await allocateBusinessWorkOrderCode(tx, {
+        specification: typeof data.specification === 'string' ? data.specification : null,
+        productName: String(data.productName),
+        plannedAt: data.plannedAt instanceof Date ? data.plannedAt : null,
+      });
       const created = await tx.workOrder.create({
         data: {
           code: String(data.code),
+          businessCode,
           customerName: data.customerName === null ? null : String(data.customerName || ''),
           productName: String(data.productName),
           stage: String(data.stage),

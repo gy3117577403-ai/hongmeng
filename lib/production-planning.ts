@@ -10,6 +10,7 @@ import { startConfirmedProcessRoute } from '@/lib/process-route-service';
 import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import { shouldSynchronizeDrawingReleaseStatus } from '@/lib/production-drawing-readiness';
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
+import { allocateBusinessWorkOrderCode } from '@/lib/work-order-business-code';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import type {
@@ -1392,6 +1393,15 @@ export async function releaseProductionPlanBatch(
     drawingIssuedAt: hasOriginalDrawing ? now : null,
   } satisfies Prisma.WorkOrderUncheckedCreateInput;
   const created = !batch.workOrderId;
+  const businessCode = created
+    ? await allocateBusinessWorkOrderCode(tx, {
+        specification: data.specification,
+        productName: data.productName,
+        plannedAt: data.plannedAt,
+        orderDate: data.orderDate,
+        createdAt: now,
+      })
+    : null;
   const workOrder = batch.workOrderId
     ? await tx.workOrder.update({
         where: { id: batch.workOrderId },
@@ -1423,7 +1433,7 @@ export async function releaseProductionPlanBatch(
         },
         select: { id: true },
       })
-    : await tx.workOrder.create({ data, select: { id: true } });
+    : await tx.workOrder.create({ data: { ...data, businessCode }, select: { id: true } });
 
   await tx.warehouseMaterialTask.upsert({
     where: { workOrderId: workOrder.id },
