@@ -73,12 +73,14 @@ test('pending material task can be completed without changing production stage',
   assert.equal(warehouseLegacyMaterialStatus(result.next), '已配料');
 });
 
-test('shortage requires an expected arrival date', () => {
+test('shortage can be reported while the expected arrival date is unknown', () => {
   const result = prepareWarehouseTaskTransition(state(), {
     action: 'report_exception', exceptionType: 'shortage', exceptionNote: '端子不足',
   }, new Date('2026-07-16T04:00:00.000Z'));
-  assert.equal(result.ok, false);
-  if (!result.ok) assert.match(result.error, /预计到料时间/);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.next.status, 'exception');
+  assert.equal(result.next.expectedAt, null);
 });
 
 test('warehouse exception records type, note and expected date', () => {
@@ -90,6 +92,21 @@ test('warehouse exception records type, note and expected date', () => {
   assert.equal(result.next.status, 'exception');
   assert.equal(result.next.exceptionType, 'shortage');
   assert.match(warehouseLegacyMaterialStatus(result.next), /^缺料/);
+});
+
+test('an exception update can clear a previously estimated arrival date', () => {
+  const current: WarehouseTaskTransitionState = {
+    status: 'exception',
+    exceptionType: 'shortage',
+    exceptionNote: '端子不足 500 套',
+    expectedAt: new Date('2026-07-18T04:00:00.000Z'),
+    completedAt: null,
+  };
+  const result = prepareWarehouseTaskTransition(current, {
+    action: 'update_exception', exceptionType: 'shortage', exceptionNote: '采购暂未确认交期', expectedAt: '',
+  }, new Date('2026-07-16T04:00:00.000Z'));
+  assert.equal(result.ok, true);
+  if (result.ok) assert.equal(result.next.expectedAt, null);
 });
 
 test('exception resolution requires a traceable note', () => {

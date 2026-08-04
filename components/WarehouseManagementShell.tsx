@@ -55,6 +55,8 @@ type ExceptionForm = {
   reopenNote: string;
 };
 
+type ExceptionModalPanel = 'update' | 'resolve';
+
 const emptySummary: WarehouseMaterialSummaryDTO = { total: 0, pending: 0, completed: 0, exception: 0, expectedOverdue: 0 };
 const exceptionOptions: Array<{ value: WarehouseExceptionType; label: string }> = [
   { value: 'shortage', label: '缺料' },
@@ -117,8 +119,16 @@ function quantityText(task: WarehouseMaterialTaskDTO): string {
   return task.workOrder.uncompletedQty?.trim() || '待补充';
 }
 
-function exceptionNeedsExpectedAt(type: WarehouseExceptionType): boolean {
+function isArrivalException(type: WarehouseExceptionType): boolean {
   return type === 'shortage' || type === 'insufficient_quantity';
+}
+
+function chinaDateKey(value = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(value);
+  const part = (type: Intl.DateTimeFormatPartTypes): string => parts.find(item => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
 }
 
 function taskFlowIndex(task: WarehouseMaterialTaskDTO): number {
@@ -143,6 +153,8 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   const [drawerTask, setDrawerTask] = useState<WarehouseMaterialTaskDTO | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [form, setForm] = useState<ExceptionForm>(() => emptyExceptionForm());
+  const [formBaseline, setFormBaseline] = useState<ExceptionForm>(() => emptyExceptionForm());
+  const [modalPanel, setModalPanel] = useState<ExceptionModalPanel>('update');
   const [formError, setFormError] = useState('');
   const [toast, setToast] = useState('');
   useToastBridge(toast, setToast);
@@ -176,7 +188,8 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
       })
       .then(task => {
         setDrawerTask(task);
-        setForm(emptyExceptionForm(task));
+        hydrateTaskForm(task);
+        setModalPanel('update');
       })
       .catch(reason => setError(reason instanceof Error ? reason.message : '配料任务加载失败'))
       .finally(() => setDrawerLoading(false));
@@ -233,6 +246,8 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   const selectedFlowProgress = selectedTask
     ? Math.round((selectedFlowIndex / (warehouseFlowStages.length - 1)) * 100)
     : 0;
+  const formDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(formBaseline), [form, formBaseline]);
+  const todayDate = useMemo(() => chinaDateKey(), []);
   const selectedWeekOption = useMemo(() => {
     const weekStartDate = selectedWeek || payload?.selectedWeekStart || '';
     if (!weekStartDate) return undefined;
@@ -259,10 +274,17 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
     setPage(1);
   }
 
+  function hydrateTaskForm(task: WarehouseMaterialTaskDTO): void {
+    const nextForm = emptyExceptionForm(task);
+    setForm(nextForm);
+    setFormBaseline(nextForm);
+  }
+
   async function openDrawer(task: WarehouseMaterialTaskDTO, trigger: HTMLElement): Promise<void> {
     triggerRef.current = trigger;
     setDrawerTask(task);
-    setForm(emptyExceptionForm(task));
+    hydrateTaskForm(task);
+    setModalPanel('update');
     setFormError('');
     setDrawerLoading(true);
     try {
@@ -270,7 +292,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
       const body = await response.json().catch(() => ({})) as { ok?: boolean; task?: WarehouseMaterialTaskDTO; error?: string };
       if (!response.ok || !body.task) throw new Error(body.error || '详情加载失败');
       setDrawerTask(body.task);
-      setForm(emptyExceptionForm(body.task));
+      hydrateTaskForm(body.task);
     } catch (reason) {
       setFormError(reason instanceof Error ? reason.message : '详情加载失败');
     } finally {
@@ -279,8 +301,11 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
   }
 
   function closeDrawer(): void {
+    if (savingId) return;
+    if (formDirty && !window.confirm('当前异常信息尚未保存，确认放弃本次修改并关闭吗？')) return;
     setDrawerTask(null);
     setFormError('');
+    setModalPanel('update');
     window.requestAnimationFrame(() => triggerRef.current?.focus());
   }
 
@@ -298,7 +323,8 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
       if (!response.ok || !result.task) throw new Error(result.error || '配料任务更新失败');
       const updatedTask = result.task;
       setDrawerTask(current => current?.id === updatedTask.id ? updatedTask : current);
-      setForm(emptyExceptionForm(updatedTask));
+      hydrateTaskForm(updatedTask);
+      if (updatedTask.status !== 'exception') setModalPanel('update');
       setRefreshToken(value => value + 1);
       return updatedTask;
     } catch (reason) {
@@ -566,27 +592,88 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
     </main>
 
     {drawerTask && <>
-      <button className="warehouse-drawer-scrim" type="button" aria-label="关闭仓库任务详情" onClick={closeDrawer} />
-      <aside ref={drawerRef} className="warehouse-task-drawer" role="dialog" aria-modal="true" aria-labelledby="warehouse-drawer-title">
-        <header><div><span>{drawerTask.workOrder.customerName || '客户未设置'}</span><h2 id="warehouse-drawer-title" title={drawerTask.workOrder.specification || drawerTask.workOrder.code}>{drawerTask.workOrder.specification || drawerTask.workOrder.code}</h2><small>{drawerTask.workOrder.productName}</small></div><button type="button" aria-label="关闭仓库任务详情" title="关闭" onClick={closeDrawer}><X aria-hidden="true" /></button></header>
-        <div className="warehouse-drawer-body hm-scroll-region">
-          <section className="warehouse-drawer-summary"><div><span>当前状态</span><strong className={drawerTask.status}>{drawerTask.statusText}</strong></div><div><span>计划数量</span><strong>{quantityText(drawerTask)}</strong></div><div><span>计划交期</span><strong>{drawerTask.workOrder.deliveryDay || dateText(drawerTask.workOrder.plannedAt)}</strong></div><div><span>内部编号</span><strong>{drawerTask.workOrder.code}</strong></div></section>
-          {drawerLoading && <div className="warehouse-loading">正在加载处理记录...</div>}
+      <button className="warehouse-modal-scrim" type="button" aria-label="关闭仓库任务详情" onClick={closeDrawer} />
+      <aside ref={drawerRef} className="warehouse-task-modal" role="dialog" aria-modal="true" aria-labelledby="warehouse-modal-title">
+        <header className="warehouse-modal-header">
+          <div className="warehouse-modal-title">
+            <span>{drawerTask.workOrder.customerName || '客户未设置'}</span>
+            <div><h2 id="warehouse-modal-title" title={drawerTask.workOrder.specification || drawerTask.workOrder.code}>{drawerTask.workOrder.specification || drawerTask.workOrder.code}</h2><em className={drawerTask.status}>{drawerTask.statusText}</em></div>
+            <small>{drawerTask.workOrder.productName} · {drawerTask.workOrder.code}</small>
+          </div>
+          <button className="warehouse-modal-close" type="button" aria-label="关闭仓库任务详情" title="关闭" disabled={savingId === drawerTask.id} onClick={closeDrawer}><X aria-hidden="true" /></button>
+        </header>
 
-          {drawerTask.status === 'pending' && <section className="warehouse-drawer-action warehouse-complete-action"><div><PackageCheck aria-hidden="true" /><span><strong>物料已经配齐</strong><small>确认后只更新仓库状态，不会自动推进生产阶段。</small></span></div><button className="primary-button" type="button" disabled={savingId === drawerTask.id} onClick={() => { void markCompleted(drawerTask); }}>{savingId === drawerTask.id ? '保存中...' : '标记已配料'}</button></section>}
+        <div className="warehouse-modal-body">
+          <div className="warehouse-modal-main hm-scroll-region">
+            {drawerTask.status === 'exception' && <div className="warehouse-modal-switch" role="tablist" aria-label="异常处理方式">
+              <button className={modalPanel === 'update' ? 'active' : ''} type="button" role="tab" aria-selected={modalPanel === 'update'} onClick={() => { setModalPanel('update'); setFormError(''); }}><AlertTriangle aria-hidden="true" />更新异常</button>
+              <button className={modalPanel === 'resolve' ? 'active' : ''} type="button" role="tab" aria-selected={modalPanel === 'resolve'} onClick={() => { setModalPanel('resolve'); setFormError(''); }}><CheckCircle2 aria-hidden="true" />解决异常</button>
+            </div>}
 
-          {drawerTask.status !== 'completed' && <section className="warehouse-exception-form"><div className="warehouse-section-heading"><AlertTriangle aria-hidden="true" /><span><strong>{drawerTask.status === 'exception' ? '更新仓库异常' : '报告仓库异常'}</strong><small>异常会显示在生产执行工单卡片；正常状态不显示。</small></span></div><label><span>异常类型</span><select value={form.exceptionType} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, exceptionType: event.target.value as WarehouseExceptionType }))}>{exceptionOptions.map(item => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label><label><span>异常说明</span><textarea rows={4} maxLength={400} value={form.exceptionNote} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, exceptionNote: event.target.value }))} placeholder="例如：端子库存不足 500 套，已通知采购" /></label><label><span>{exceptionNeedsExpectedAt(form.exceptionType) ? '预计到料时间（必填）' : '预计解决时间（可选）'}</span><input type="date" value={form.expectedAt} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, expectedAt: event.target.value }))} /></label><button className="warehouse-save-exception" type="button" disabled={savingId === drawerTask.id || !form.exceptionNote.trim() || (exceptionNeedsExpectedAt(form.exceptionType) && !form.expectedAt)} onClick={() => { void saveException(drawerTask); }}>{savingId === drawerTask.id ? '保存中...' : drawerTask.status === 'exception' ? '保存异常更新' : '登记仓库异常'}</button></section>}
+            {drawerTask.status !== 'completed' && modalPanel === 'update' && <section className="warehouse-modal-form">
+              <div className="warehouse-modal-section-heading"><span className="warehouse-modal-icon warning"><AlertTriangle aria-hidden="true" /></span><span><strong>{drawerTask.status === 'exception' ? '更新仓库异常' : '登记仓库异常'}</strong><small>异常会同步显示在生产执行；缺料与数量不足会同时生成采购跟进任务。</small></span></div>
+              <fieldset disabled={savingId === drawerTask.id}>
+                <legend>异常类型</legend>
+                <div className="warehouse-exception-types">
+                  {exceptionOptions.map(item => <button className={form.exceptionType === item.value ? 'active' : ''} type="button" aria-pressed={form.exceptionType === item.value} key={item.value} onClick={() => setForm(current => ({ ...current, exceptionType: item.value }))}>{item.label}</button>)}
+                </div>
+              </fieldset>
+              <label className="warehouse-modal-field"><span>异常说明 <b>必填</b><em>{form.exceptionNote.length}/400</em></span><textarea rows={5} maxLength={400} value={form.exceptionNote} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, exceptionNote: event.target.value }))} placeholder="请说明缺少的物料、数量、已采取的措施或核对依据" /></label>
+              <div className="warehouse-date-panel">
+                <div className="warehouse-modal-field-heading"><span><CalendarDays aria-hidden="true" />{isArrivalException(form.exceptionType) ? '预计到料时间' : '预计解决时间'} <b>选填</b></span><small>暂时无法确认时可以留空，不影响登记异常。</small></div>
+                <input type="date" min={todayDate} value={form.expectedAt} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, expectedAt: event.target.value }))} />
+                <div className="warehouse-date-quick" aria-label="快捷设置预计时间">
+                  <button type="button" disabled={savingId === drawerTask.id} onClick={() => setForm(current => ({ ...current, expectedAt: todayDate }))}>今天</button>
+                  <button type="button" disabled={savingId === drawerTask.id} onClick={() => setForm(current => ({ ...current, expectedAt: addDaysText(todayDate, 1) }))}>明天</button>
+                  <button type="button" disabled={savingId === drawerTask.id} onClick={() => setForm(current => ({ ...current, expectedAt: addDaysText(todayDate, 2) }))}>后天</button>
+                  <button className={!form.expectedAt ? 'active' : ''} type="button" disabled={savingId === drawerTask.id} onClick={() => setForm(current => ({ ...current, expectedAt: '' }))}>时间待确认</button>
+                </div>
+              </div>
+            </section>}
 
-          {drawerTask.status === 'exception' && <section className="warehouse-resolution-form"><div className="warehouse-section-heading"><CheckCircle2 aria-hidden="true" /><span><strong>确认异常已解决</strong><small>处理记录会永久保留，当前异常字段将在解决后清空。</small></span></div><label><span>解决说明</span><textarea rows={3} maxLength={300} value={form.resolutionNote} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, resolutionNote: event.target.value }))} placeholder="例如：物料已于今日到仓并复核数量" /></label><div><button type="button" disabled={savingId === drawerTask.id || !form.resolutionNote.trim()} onClick={() => { void resolveException(drawerTask, 'pending'); }}>解决后继续配料</button><button className="primary-button" type="button" disabled={savingId === drawerTask.id || !form.resolutionNote.trim()} onClick={() => { void resolveException(drawerTask, 'completed'); }}>解决并完成配料</button></div></section>}
+            {drawerTask.status === 'exception' && modalPanel === 'resolve' && <section className="warehouse-modal-form resolved">
+              <div className="warehouse-modal-section-heading"><span className="warehouse-modal-icon success"><CheckCircle2 aria-hidden="true" /></span><span><strong>确认异常已经解决</strong><small>处理记录会永久保留，当前异常标记将在提交后清除。</small></span></div>
+              <label className="warehouse-modal-field"><span>解决说明 <b>必填</b><em>{form.resolutionNote.length}/300</em></span><textarea rows={7} maxLength={300} value={form.resolutionNote} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, resolutionNote: event.target.value }))} placeholder="例如：物料已于今日到仓，型号与数量复核无误" /></label>
+              <div className="warehouse-resolution-guide"><ShieldCheck aria-hidden="true" /><span><strong>提交前请完成复核</strong><small>“继续配料”会回到待配料；“完成配料”会直接标记为已配料。</small></span></div>
+            </section>}
 
-          {drawerTask.followUpTask && <section className="warehouse-follow-up-card"><div><ClipboardList aria-hidden="true" /><span><strong>缺料反馈正在跟进</strong><small>{drawerTask.followUpTask.owner?.displayName || drawerTask.followUpTask.owner?.username || '等待负责人接收'} · {drawerTask.followUpTask.statusText}</small></span></div><p>{drawerTask.followUpTask.latestProgress || drawerTask.exceptionNote || '等待跟进进度'}</p><a href={`/workspace/procurement?taskId=${encodeURIComponent(drawerTask.followUpTask.id)}`}>打开跟进任务<ArrowUpRight size={14} /></a></section>}
+            {drawerTask.status === 'completed' && <section className="warehouse-modal-form reopen">
+              <div className="warehouse-modal-section-heading"><span className="warehouse-modal-icon danger"><RotateCcw aria-hidden="true" /></span><span><strong>取消已配料</strong><small>仅在误操作或物料复核不通过时使用，历史完成记录不会被删除。</small></span></div>
+              <label className="warehouse-modal-field"><span>取消原因 <b>必填</b><em>{form.reopenNote.length}/300</em></span><textarea rows={7} maxLength={300} value={form.reopenNote} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, reopenNote: event.target.value }))} placeholder="例如：复核发现端子型号不符，退回待配料" /></label>
+            </section>}
 
-          {drawerTask.status === 'completed' && <section className="warehouse-reopen-form"><div className="warehouse-section-heading"><RotateCcw aria-hidden="true" /><span><strong>取消已配料</strong><small>仅在误勾选或物料复核不通过时使用，必须填写原因。</small></span></div><label><span>取消原因</span><textarea rows={3} maxLength={300} value={form.reopenNote} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, reopenNote: event.target.value }))} placeholder="例如：复核发现端子型号不符，退回待配料" /></label><button type="button" disabled={savingId === drawerTask.id || !form.reopenNote.trim()} onClick={() => { void reopenTask(drawerTask); }}>确认取消已配料</button></section>}
+            {formError && <div className="warehouse-form-error" role="alert"><AlertTriangle aria-hidden="true" />{formError}</div>}
+          </div>
 
-          {formError && <div className="warehouse-form-error" role="alert">{formError}</div>}
+          <aside className="warehouse-modal-side hm-scroll-region">
+            <section className="warehouse-modal-summary">
+              <div><span>当前状态</span><strong className={drawerTask.status}>{drawerTask.statusText}</strong></div>
+              <div><span>计划数量</span><strong>{quantityText(drawerTask)}</strong></div>
+              <div><span>计划交期</span><strong>{drawerTask.workOrder.deliveryDay || dateText(drawerTask.workOrder.plannedAt)}</strong></div>
+              <div><span>内部编号</span><strong title={drawerTask.workOrder.code}>{drawerTask.workOrder.code}</strong></div>
+            </section>
 
-          <section className="warehouse-activity-section"><div className="warehouse-section-heading"><Clock3 aria-hidden="true" /><span><strong>处理记录</strong><small>最近 40 条仓库操作</small></span></div><div className="warehouse-activity-list">{drawerTask.activities?.map(activity => <article key={activity.id}><i /><div><strong>{activity.content || activity.action}</strong><span>{activity.actor?.displayName || activity.actor?.username || '系统'} · {dateTimeText(activity.createdAt)}</span></div></article>)}{!drawerLoading && !drawerTask.activities?.length && <p>暂无人工处理记录</p>}</div></section>
+            <section className={`warehouse-impact-card ${isArrivalException(form.exceptionType) ? 'linked' : ''}`}>
+              <div><span className="warehouse-modal-icon"><Activity aria-hidden="true" /></span><span><strong>异常同步影响</strong><small>{isArrivalException(form.exceptionType) ? '生产执行 + 采购跟进' : '同步至生产执行'}</small></span></div>
+              <p>{isArrivalException(form.exceptionType) ? '登记后自动创建或更新缺料跟进。预计到料时间可由仓库暂留空，采购确认后再补充。' : '该异常会显示在生产执行工单卡片中，解决后自动清除当前异常提示。'}</p>
+            </section>
+
+            {drawerTask.followUpTask && <section className="warehouse-follow-up-card"><div><ClipboardList aria-hidden="true" /><span><strong>缺料反馈正在跟进</strong><small>{drawerTask.followUpTask.owner?.displayName || drawerTask.followUpTask.owner?.username || '等待负责人接收'} · {drawerTask.followUpTask.statusText}</small></span></div><p>{drawerTask.followUpTask.latestProgress || drawerTask.exceptionNote || '等待跟进进度'}</p><span className="warehouse-follow-up-date"><Truck aria-hidden="true" />{drawerTask.followUpTask.expectedAt ? `预计 ${dateText(drawerTask.followUpTask.expectedAt)} 到料` : '预计到料时间待确认'}</span><a href={`/workspace/procurement?taskId=${encodeURIComponent(drawerTask.followUpTask.id)}`}>打开跟进任务<ArrowUpRight size={14} /></a></section>}
+
+            <section className="warehouse-activity-section"><div className="warehouse-modal-section-heading"><span className="warehouse-modal-icon"><Clock3 aria-hidden="true" /></span><span><strong>处理记录</strong><small>最近 40 条仓库操作</small></span></div>{drawerLoading && <div className="warehouse-loading">正在加载处理记录...</div>}<div className="warehouse-activity-list">{drawerTask.activities?.map(activity => <article key={activity.id}><i /><div><strong>{activity.content || activity.action}</strong><span>{activity.actor?.displayName || activity.actor?.username || '系统'} · {dateTimeText(activity.createdAt)}</span></div></article>)}{!drawerLoading && !drawerTask.activities?.length && <p>暂无人工处理记录</p>}</div></section>
+          </aside>
         </div>
+
+        <footer className="warehouse-modal-footer">
+          <span>{savingId === drawerTask.id ? <><RefreshCw className="spin" aria-hidden="true" />正在保存，请稍候...</> : formDirty ? '当前有尚未保存的修改' : drawerTask.status === 'completed' ? '该任务已经完成配料' : '请核对信息后提交'}</span>
+          <div>
+            <button className="warehouse-modal-secondary" type="button" disabled={savingId === drawerTask.id} onClick={closeDrawer}>关闭</button>
+            {drawerTask.status === 'pending' && <button className="warehouse-modal-success" type="button" disabled={savingId === drawerTask.id} onClick={() => { void markCompleted(drawerTask); }}><PackageCheck aria-hidden="true" />物料已配齐</button>}
+            {drawerTask.status !== 'completed' && modalPanel === 'update' && <button className="warehouse-modal-primary" type="button" disabled={savingId === drawerTask.id || !form.exceptionNote.trim()} onClick={() => { void saveException(drawerTask); }}><AlertTriangle aria-hidden="true" />{savingId === drawerTask.id ? '保存中...' : drawerTask.status === 'exception' ? '保存异常更新' : '登记仓库异常'}</button>}
+            {drawerTask.status === 'exception' && modalPanel === 'resolve' && <><button className="warehouse-modal-secondary" type="button" disabled={savingId === drawerTask.id || !form.resolutionNote.trim()} onClick={() => { void resolveException(drawerTask, 'pending'); }}>解决后继续配料</button><button className="warehouse-modal-primary" type="button" disabled={savingId === drawerTask.id || !form.resolutionNote.trim()} onClick={() => { void resolveException(drawerTask, 'completed'); }}><CheckCircle2 aria-hidden="true" />解决并完成配料</button></>}
+            {drawerTask.status === 'completed' && <button className="warehouse-modal-danger" type="button" disabled={savingId === drawerTask.id || !form.reopenNote.trim()} onClick={() => { void reopenTask(drawerTask); }}><RotateCcw aria-hidden="true" />确认取消已配料</button>}
+          </div>
+        </footer>
       </aside>
     </>}
 

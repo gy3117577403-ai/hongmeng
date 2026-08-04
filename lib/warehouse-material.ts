@@ -197,9 +197,6 @@ function exceptionInput(input: WarehouseTaskTransitionInput, now: Date): Warehou
   if (!exceptionNote) return { ok: false, statusCode: 400, error: '请填写异常说明' };
   const expectedAt = parseExpectedAt(input.expectedAt);
   if (input.expectedAt && !expectedAt) return { ok: false, statusCode: 400, error: '预计解决时间格式不正确' };
-  if ((exceptionType === 'shortage' || exceptionType === 'insufficient_quantity') && !expectedAt) {
-    return { ok: false, statusCode: 400, error: '缺料或数量不足必须填写预计到料时间' };
-  }
   if (expectedAt && expectedAt < chinaDayStart(now)) {
     return { ok: false, statusCode: 400, error: '预计解决时间不能早于今天' };
   }
