@@ -34,9 +34,9 @@ export async function POST(req: NextRequest) {
     const alert = alertsForProductionOrder(order).find(item => item.code === alertCode);
     if (!alert) return NextResponse.json({ ok: false, error: '该生产异常已不存在，请刷新后重试' }, { status: 409 });
 
-    const assigneeId = optionalText(body.assigneeId, 80);
-    if (assigneeId) {
-      const exists = await prisma.user.findFirst({ where: { id: assigneeId, isActive: true }, select: { id: true } });
+    const assigneeEmployeeId = optionalText(body.assigneeEmployeeId ?? body.assigneeId, 80);
+    if (assigneeEmployeeId) {
+      const exists = await prisma.employee.findFirst({ where: { id: assigneeEmployeeId, isActive: true }, select: { id: true } });
       if (!exists) return NextResponse.json({ ok: false, error: '负责人不存在或已停用' }, { status: 404 });
     }
     let dueAt: Date | null = null;
@@ -67,7 +67,8 @@ export async function POST(req: NextRequest) {
               priority: priorityForAlert(alert),
               status: 'pending',
               description: `${customer} · ${order.productName}\n系统检测到：${alert.label}`,
-              assigneeId,
+              assigneeId: null,
+              assigneeEmployeeId,
               dueAt,
               reporterId: user.id,
               sourceRoute,
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest) {
             sourceFingerprint: fingerprint,
             workOrderId: order.id,
             reporterId: user.id,
-            assigneeId,
+            assigneeEmployeeId,
             dueAt,
           },
         });

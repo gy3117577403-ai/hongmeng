@@ -33,15 +33,16 @@ import { useSearchParams } from 'next/navigation';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
+import { EmployeeMultiPicker, EmployeePicker, WorkOrderPicker } from '@/components/issues/IssuePickers';
 import type {
   CurrentUserDTO,
   DetectedIssueDTO,
+  EmployeeDTO,
   IssueDTO,
   IssuePriority,
   IssueStatus,
   IssueSummaryDTO,
   IssueType,
-  UserDTO,
   WorkOrderDTO,
 } from '@/types';
 
@@ -49,9 +50,10 @@ type IssueManagementShellProps = { user: CurrentUserDTO };
 type QueueMode = 'issues' | 'detected';
 type IssueListResponse = { ok: boolean; issues: IssueDTO[]; summary: IssueSummaryDTO; pagination: { page: number; pageSize: number; total: number; totalPages: number }; error?: string };
 type DetectedResponse = { ok: boolean; detected: DetectedIssueDTO[]; pendingCount: number; error?: string };
-type UsersResponse = { ok: boolean; users: UserDTO[]; error?: string };
+type EmployeesResponse = { ok: boolean; employees: EmployeeDTO[]; error?: string };
 type WorkOrdersResponse = { workOrders?: WorkOrderDTO[]; error?: string; message?: string };
-type IssueMutationResponse = { ok: boolean; issue?: IssueDTO; error?: string; created?: boolean };
+type DuplicateIssue = { id: string; code: string; title: string; status: IssueStatus };
+type IssueMutationResponse = { ok: boolean; issue?: IssueDTO; error?: string; created?: boolean; duplicateIssue?: DuplicateIssue };
 
 type Filters = {
   status: 'all' | IssueStatus;
@@ -68,8 +70,12 @@ type IssueFormState = {
   priority: IssuePriority;
   description: string;
   workOrderId: string;
-  assigneeId: string;
+  assigneeEmployeeId: string;
+  collaboratorEmployeeIds: string[];
   dueAt: string;
+  processName: string;
+  affectedQuantity: string;
+  temporaryMeasure: string;
   rootCause: string;
   solution: string;
   verificationResult: string;
@@ -80,7 +86,7 @@ type AttachmentDeleteState = { id: string; name: string };
 
 const statusLabels: Record<IssueStatus, string> = { pending: '待受理', processing: '处理中', verifying: '待验证', closed: '已关闭' };
 const priorityLabels: Record<IssuePriority, string> = { urgent: '紧急', high: '高', normal: '一般' };
-const typeLabels: Record<IssueType, string> = { production: '生产问题', planning: '计划问题', technical: '技术问题', quality: '质量问题', material: '物料问题', equipment: '设备问题', other: '其他' };
+const typeLabels: Record<IssueType, string> = { production: '生产问题', planning: '计划问题', technical: '技术问题', process: '工艺问题', quality: '质量问题', material: '物料问题', equipment: '设备问题', other: '其他' };
 const activityLabels: Record<string, string> = {
   create: '创建问题', create_from_source: '由生产异常转入', restore_from_source: '从来源恢复',
   update: '更新问题信息', assign: '更新负责人', transition: '状态流转', comment: '处理记录',
@@ -88,7 +94,11 @@ const activityLabels: Record<string, string> = {
 };
 const emptySummary: IssueSummaryDTO = { total: 0, pending: 0, processing: 0, verifying: 0, closed: 0, overdue: 0, unassigned: 0 };
 const emptyFilters: Filters = { status: 'all', type: 'all', priority: 'all', assigneeId: '', overdue: false, unassigned: false };
-const emptyForm: IssueFormState = { title: '', type: 'production', priority: 'normal', description: '', workOrderId: '', assigneeId: '', dueAt: '', rootCause: '', solution: '', verificationResult: '' };
+const emptyForm: IssueFormState = {
+  title: '', type: 'production', priority: 'normal', description: '', workOrderId: '',
+  assigneeEmployeeId: '', collaboratorEmployeeIds: [], dueAt: '', processName: '',
+  affectedQuantity: '', temporaryMeasure: '', rootCause: '', solution: '', verificationResult: '',
+};
 
 function formatDate(value?: string | null, includeTime = true): string {
   if (!value) return '未设置';
@@ -120,10 +130,22 @@ function sourceLabel(issue: IssueDTO): string {
   return issue.sourceType || '人工创建';
 }
 
+class ApiRequestError extends Error {
+  status: number;
+  data: Record<string, unknown>;
+
+  constructor(message: string, status: number, data: Record<string, unknown>) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.status = status;
+    this.data = data;
+  }
+}
+
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: 'no-store', ...init });
   const data = await response.json().catch(() => ({ ok: false, error: '服务返回格式异常' })) as T & { error?: string; message?: string };
-  if (!response.ok) throw new Error(data.error || data.message || '请求失败');
+  if (!response.ok) throw new ApiRequestError(data.error || data.message || '请求失败', response.status, data as Record<string, unknown>);
   return data;
 }
 
@@ -135,8 +157,12 @@ function issueFormFrom(issue?: IssueDTO | null): IssueFormState {
     priority: issue.priority,
     description: issue.description || '',
     workOrderId: issue.workOrderId || '',
-    assigneeId: issue.assignee?.id || '',
+    assigneeEmployeeId: issue.assignee?.id || '',
+    collaboratorEmployeeIds: issue.collaborators.map(item => item.id),
     dueAt: localDateTime(issue.dueAt),
+    processName: issue.processName || '',
+    affectedQuantity: issue.affectedQuantity === null || issue.affectedQuantity === undefined ? '' : String(issue.affectedQuantity),
+    temporaryMeasure: issue.temporaryMeasure || '',
     rootCause: issue.rootCause || '',
     solution: issue.solution || '',
     verificationResult: issue.verificationResult || '',
@@ -157,7 +183,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [summary, setSummary] = useState<IssueSummaryDTO>(emptySummary);
   const [detected, setDetected] = useState<DetectedIssueDTO[]>([]);
   const [pendingDetected, setPendingDetected] = useState(0);
-  const [users, setUsers] = useState<UserDTO[]>([]);
+  const [employees, setEmployees] = useState<EmployeeDTO[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrderDTO[]>([]);
   const [selected, setSelected] = useState<IssueDTO | null>(null);
   const [loading, setLoading] = useState(true);
@@ -171,21 +197,26 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [editingIssue, setEditingIssue] = useState<IssueDTO | null>(null);
   const [form, setForm] = useState<IssueFormState>(emptyForm);
   const [formError, setFormError] = useState('');
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [duplicateIssue, setDuplicateIssue] = useState<DuplicateIssue | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [transition, setTransition] = useState<TransitionState | null>(null);
   const [comment, setComment] = useState('');
   const [contextOpen, setContextOpen] = useState(false);
   const [compactContext, setCompactContext] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<IssueDTO | null>(null);
   const [confirmAttachmentDelete, setConfirmAttachmentDelete] = useState<AttachmentDeleteState | null>(null);
-  const [contextForm, setContextForm] = useState({ assigneeId: '', dueAt: '', priority: 'normal' as IssuePriority });
+  const [contextForm, setContextForm] = useState({ assigneeEmployeeId: '', collaboratorEmployeeIds: [] as string[], dueAt: '', priority: 'normal' as IssuePriority });
   const queueRef = useRef<HTMLDivElement>(null);
   const contextRef = useRef<HTMLElement>(null);
   const contextTriggerRef = useRef<HTMLButtonElement>(null);
   const contextReturnFocusRef = useRef<HTMLElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingFileInputRef = useRef<HTMLInputElement>(null);
   const modalReturnFocusRef = useRef<HTMLElement | null>(null);
   const modalWasOpenRef = useRef(false);
   const handledDirectAlertRef = useRef('');
+  const formBaselineRef = useRef(JSON.stringify(emptyForm));
 
   const updateIssue = useCallback((issue: IssueDTO): void => {
     setIssues(current => current.some(item => item.id === issue.id)
@@ -258,12 +289,12 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   useEffect(() => {
     void loadDetected();
     Promise.all([
-      jsonRequest<UsersResponse>('/api/users'),
+      jsonRequest<EmployeesResponse>('/api/employees?active=true'),
       jsonRequest<WorkOrdersResponse>('/api/work-orders'),
-    ]).then(([userData, orderData]) => {
-      setUsers(userData.users || []);
+    ]).then(([employeeData, orderData]) => {
+      setEmployees(employeeData.employees || []);
       setWorkOrders(orderData.workOrders || []);
-    }).catch(() => setToast('负责人或工单选项加载失败'));
+    }).catch(() => setToast('员工档案或工单选项加载失败'));
   }, [loadDetected]);
 
   useEffect(() => {
@@ -274,7 +305,12 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   useEffect(() => {
     if (!selected) return;
     sessionStorage.setItem('hm-issue-selected', selected.id);
-    setContextForm({ assigneeId: selected.assignee?.id || '', dueAt: localDateTime(selected.dueAt), priority: selected.priority });
+    setContextForm({
+      assigneeEmployeeId: selected.assignee?.id || '',
+      collaboratorEmployeeIds: selected.collaborators.map(item => item.id),
+      dueAt: localDateTime(selected.dueAt),
+      priority: selected.priority,
+    });
     const params = new URLSearchParams(window.location.search);
     params.set('issueId', selected.id);
     window.history.replaceState(window.history.state, '', `${window.location.pathname}?${params.toString()}`);
@@ -333,7 +369,28 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     else panel.removeAttribute('inert');
   }, [compactContext, contextOpen]);
 
-  const modalOpen = formOpen || !!transition || !!confirmDelete || !!confirmAttachmentDelete;
+  const closeFormNow = useCallback((): void => {
+    setFormOpen(false);
+    setEditingIssue(null);
+    setForm({ ...emptyForm });
+    setPendingFiles([]);
+    setFormError('');
+    setDuplicateIssue(null);
+    setConfirmDiscard(false);
+    formBaselineRef.current = JSON.stringify(emptyForm);
+  }, []);
+
+  const formIsDirty = useCallback((): boolean => (
+    JSON.stringify(form) !== formBaselineRef.current || pendingFiles.length > 0
+  ), [form, pendingFiles.length]);
+
+  const requestCloseForm = useCallback((): void => {
+    if (saving) return;
+    if (formIsDirty()) setConfirmDiscard(true);
+    else closeFormNow();
+  }, [closeFormNow, formIsDirty, saving]);
+
+  const modalOpen = formOpen || !!transition || !!confirmDelete || !!confirmAttachmentDelete || !!duplicateIssue || confirmDiscard;
   useEffect(() => {
     if (!modalOpen) {
       if (modalWasOpenRef.current) window.requestAnimationFrame(() => modalReturnFocusRef.current?.focus());
@@ -343,17 +400,20 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     modalWasOpenRef.current = true;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    const dialog = document.querySelector<HTMLElement>('.hm-issue-workbench .issue-modal-backdrop [role="dialog"], .hm-issue-workbench .issue-modal-backdrop [role="alertdialog"]');
+    const dialogs = document.querySelectorAll<HTMLElement>('.hm-issue-workbench .issue-modal-backdrop [role="dialog"], .hm-issue-workbench .issue-modal-backdrop [role="alertdialog"]');
+    const dialog = dialogs.item(dialogs.length - 1);
     const focusable = (): HTMLElement[] => dialog ? Array.from(dialog.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled])')) : [];
     window.requestAnimationFrame(() => {
       if (!(dialog?.contains(document.activeElement))) focusable()[0]?.focus();
     });
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key === 'Escape' && !saving) {
-        if (confirmAttachmentDelete) setConfirmAttachmentDelete(null);
+        if (duplicateIssue) setDuplicateIssue(null);
+        else if (confirmDiscard) setConfirmDiscard(false);
+        else if (confirmAttachmentDelete) setConfirmAttachmentDelete(null);
         else if (confirmDelete) setConfirmDelete(null);
         else if (transition) setTransition(null);
-        else if (formOpen) setFormOpen(false);
+        else if (formOpen) requestCloseForm();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -369,7 +429,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', onKeyDown);
     };
-  }, [confirmAttachmentDelete, confirmDelete, formOpen, modalOpen, saving, transition]);
+  }, [confirmAttachmentDelete, confirmDelete, confirmDiscard, duplicateIssue, formOpen, modalOpen, requestCloseForm, saving, transition]);
 
   async function logout(): Promise<void> {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -378,38 +438,91 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
 
   function openCreate(): void {
     modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const nextForm = { ...emptyForm, collaboratorEmployeeIds: [] };
     setEditingIssue(null);
-    setForm({ ...emptyForm });
+    setForm(nextForm);
+    setPendingFiles([]);
     setFormError('');
+    setDuplicateIssue(null);
+    formBaselineRef.current = JSON.stringify(nextForm);
     setFormOpen(true);
   }
 
   function openEdit(issue: IssueDTO): void {
     modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const nextForm = issueFormFrom(issue);
     setEditingIssue(issue);
-    setForm(issueFormFrom(issue));
+    setForm(nextForm);
+    setPendingFiles([]);
     setFormError('');
+    setDuplicateIssue(null);
+    formBaselineRef.current = JSON.stringify(nextForm);
     setFormOpen(true);
   }
 
-  async function saveForm(event: React.FormEvent<HTMLFormElement>): Promise<void> {
-    event.preventDefault();
+  function queueAttachments(event: React.ChangeEvent<HTMLInputElement>): void {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!files.length) return;
+    const next = [...pendingFiles];
+    files.forEach(file => {
+      if (!next.some(existing => existing.name === file.name && existing.size === file.size)) next.push(file);
+    });
+    if (next.length > 8) setToast('一次最多添加 8 个附件，已保留前 8 个');
+    setPendingFiles(next.slice(0, 8));
+  }
+
+  async function persistForm(allowDuplicate = false): Promise<void> {
     if (!form.title.trim()) { setFormError('请填写问题标题'); return; }
+    if (form.type === 'process' && !form.processName.trim()) { setFormError('工艺问题请填写关联工序'); return; }
     setSaving(true);
     setFormError('');
     try {
-      const payload = { ...form, workOrderId: form.workOrderId || null, assigneeId: form.assigneeId || null, dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : null };
+      const payload = {
+        ...form,
+        workOrderId: form.workOrderId || null,
+        assigneeEmployeeId: form.assigneeEmployeeId || null,
+        collaboratorEmployeeIds: form.collaboratorEmployeeIds.filter(id => id !== form.assigneeEmployeeId),
+        dueAt: form.dueAt ? new Date(form.dueAt).toISOString() : null,
+        processName: form.type === 'process' ? form.processName.trim() || null : null,
+        affectedQuantity: form.type === 'process' && form.affectedQuantity !== '' ? Number(form.affectedQuantity) : null,
+        temporaryMeasure: form.type === 'process' ? form.temporaryMeasure.trim() || null : null,
+        allowDuplicate,
+      };
       const data = await jsonRequest<IssueMutationResponse>(editingIssue ? `/api/issues/${editingIssue.id}` : '/api/issues', {
         method: editingIssue ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
       });
       if (!data.issue) throw new Error('问题保存结果为空');
-      updateIssue(data.issue);
-      setFormOpen(false);
-      setToast(editingIssue ? '问题信息已更新' : '问题已创建');
-      await loadIssues(data.issue.id);
+      let savedIssue = data.issue;
+      let uploadFailures = 0;
+      for (const file of pendingFiles) {
+        try {
+          const uploadBody = new FormData();
+          uploadBody.append('file', file);
+          const uploaded = await jsonRequest<IssueMutationResponse>(`/api/issues/${savedIssue.id}/attachments/upload`, { method: 'POST', body: uploadBody });
+          if (uploaded.issue) savedIssue = uploaded.issue;
+        } catch {
+          uploadFailures += 1;
+        }
+      }
+      updateIssue(savedIssue);
+      closeFormNow();
+      setToast(uploadFailures
+        ? `问题已保存，${uploadFailures} 个附件上传失败，可在右侧附件区重试`
+        : editingIssue ? '问题信息已更新' : pendingFiles.length ? '问题已创建，附件已同步上传' : '问题已创建');
+      await loadIssues(savedIssue.id);
     } catch (saveError) {
+      if (saveError instanceof ApiRequestError && saveError.status === 409 && saveError.data.duplicateIssue) {
+        setDuplicateIssue(saveError.data.duplicateIssue as DuplicateIssue);
+        return;
+      }
       setFormError(saveError instanceof Error ? saveError.message : '问题保存失败');
     } finally { setSaving(false); }
+  }
+
+  async function saveForm(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    await persistForm(false);
   }
 
   async function saveContext(): Promise<void> {
@@ -418,7 +531,8 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     try {
       const data = await jsonRequest<IssueMutationResponse>(`/api/issues/${selected.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          assigneeId: contextForm.assigneeId || null,
+          assigneeEmployeeId: contextForm.assigneeEmployeeId || null,
+          collaboratorEmployeeIds: contextForm.collaboratorEmployeeIds.filter(id => id !== contextForm.assigneeEmployeeId),
           dueAt: contextForm.dueAt ? new Date(contextForm.dueAt).toISOString() : null,
           priority: contextForm.priority,
         }),
@@ -558,7 +672,14 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
 
   const sourceWorkOrderId = initialParams.get('sourceWorkOrderId') || '';
   const activeDetected = detected.filter(item => !item.existingIssueId).sort((first, second) => Number(second.workOrderId === sourceWorkOrderId) - Number(first.workOrderId === sourceWorkOrderId));
-  const workOrderOptions = useMemo(() => workOrders.slice().sort((a, b) => (a.specification || a.code).localeCompare(b.specification || b.code, 'zh-CN')), [workOrders]);
+  const employeeGroups = useMemo(() => {
+    const grouped = new Map<string, EmployeeDTO[]>();
+    employees.filter(item => item.isActive).forEach(employee => {
+      const department = employee.department?.trim() || '未设置部门';
+      grouped.set(department, [...(grouped.get(department) || []), employee]);
+    });
+    return Array.from(grouped.entries()).sort(([first], [second]) => first.localeCompare(second, 'zh-CN'));
+  }, [employees]);
 
   return (
     <main className="hm-issue-workbench hm-workbench-root">
@@ -610,7 +731,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
         <section className="issue-filter-bar" aria-label="问题筛选">
           <select value={filters.type} aria-label="问题类型" onChange={event => { setFilters(current => ({ ...current, type: event.target.value as Filters['type'] })); setPage(1); }}><option value="all">全部类型</option>{Object.entries(typeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
           <select value={filters.priority} aria-label="优先级" onChange={event => { setFilters(current => ({ ...current, priority: event.target.value as Filters['priority'] })); setPage(1); }}><option value="all">全部优先级</option>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
-          <select value={filters.assigneeId} aria-label="负责人" onChange={event => { setFilters(current => ({ ...current, assigneeId: event.target.value, unassigned: false })); setPage(1); }}><option value="">全部负责人</option>{users.filter(item => item.isActive).map(item => <option value={item.id} key={item.id}>{item.displayName || item.username}</option>)}</select>
+          <select value={filters.assigneeId} aria-label="负责人" onChange={event => { setFilters(current => ({ ...current, assigneeId: event.target.value, unassigned: false })); setPage(1); }}><option value="">全部负责人</option>{employeeGroups.map(([department, list]) => <optgroup label={department} key={department}>{list.map(item => <option value={item.id} key={item.id}>{item.name} · {item.employeeNo}</option>)}</optgroup>)}</select>
           <button className={filters.unassigned ? 'active' : ''} type="button" aria-pressed={filters.unassigned} onClick={() => setFilters(current => ({ ...current, unassigned: !current.unassigned, assigneeId: '' }))}>未分派 {summary.unassigned}</button>
           <button type="button" onClick={() => { setFilters({ ...emptyFilters }); setKeyword(''); setPage(1); }}>清除筛选</button>
           <span>{queueMode === 'issues' ? `当前 ${issues.length} 条` : `待转 ${activeDetected.length} 条`}</span>
@@ -631,7 +752,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                   <span className={`issue-status status-${issue.status}`}>{statusLabels[issue.status]}</span><em className={`priority-${issue.priority}`}>{priorityLabels[issue.priority]}</em>
                   <strong title={issue.title}>{issue.title}</strong>
                   <p title={`${issue.workOrder?.customerName || '未关联客户'} · ${issue.workOrder?.specification || issue.sourceCode || issue.code}`}>{issue.workOrder?.customerName || '未关联客户'} · {issue.workOrder?.specification || issue.sourceCode || issue.code}</p>
-                  <footer><span>{issue.code}</span><span>{issue.assignee?.displayName || issue.assignee?.username || '未分派'}</span><time className={issue.isOverdue ? 'overdue' : ''}>{issue.dueAt ? formatDate(issue.dueAt, false) : '无截止时间'}</time></footer>
+                  <footer><span>{issue.code}</span><span>{issue.assignee?.name || '未分派'}{issue.collaborators.length ? ` +${issue.collaborators.length}` : ''}</span><time className={issue.isOverdue ? 'overdue' : ''}>{issue.dueAt ? formatDate(issue.dueAt, false) : '无截止时间'}</time></footer>
                 </button>
               ))}
               {queueMode === 'detected' && !activeDetected.length && <div className="issue-empty"><CheckCircle2 /><strong>没有待转异常</strong><p>当前生产异常已转为问题，或暂时没有命中异常规则。</p></div>}
@@ -655,7 +776,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
               </header>
 
               <div className="issue-detail-scroll hm-scroll-region">
-                <section className="issue-description"><h3>问题描述</h3><p>{selected.description || '尚未填写问题描述。'}</p></section>
+                <section className="issue-description"><h3>问题描述</h3><p>{selected.description || '尚未填写问题描述。'}</p>{selected.type === 'process' && <dl className="issue-process-summary"><div><dt>关联工序</dt><dd>{selected.processName || '未填写'}</dd></div><div><dt>影响数量</dt><dd>{selected.affectedQuantity ?? '未填写'}</dd></div><div><dt>临时措施</dt><dd>{selected.temporaryMeasure || '未填写'}</dd></div></dl>}</section>
                 <div className="issue-resolution-grid">
                   <section><h3>原因分析</h3><p>{selected.rootCause || '处理中填写原因分析。'}</p></section>
                   <section><h3>处理方案</h3><p>{selected.solution || '提交验证前需要填写处理方案。'}</p></section>
@@ -690,7 +811,14 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           <aside ref={contextRef} className={`issue-context ${contextOpen ? 'open' : ''}`} aria-label="问题责任与来源" aria-hidden={compactContext && !contextOpen}>
             <header><div><span>问题上下文</span><strong>{selected?.code || '未选择问题'}</strong></div><button type="button" aria-label="关闭责任与来源面板" title="关闭" onClick={closeContext}><X size={18} /></button></header>
             {!selected ? <div className="issue-context-empty">选择问题后查看责任、来源和附件。</div> : <div className="issue-context-scroll hm-scroll-region">
-              <section className="context-section responsibility"><h3><UserRound size={15} />责任信息</h3><label>负责人<select value={contextForm.assigneeId} onChange={event => setContextForm(current => ({ ...current, assigneeId: event.target.value }))}><option value="">未分派</option>{users.filter(item => item.isActive).map(item => <option value={item.id} key={item.id}>{item.displayName || item.username}</option>)}</select></label><label>优先级<select value={contextForm.priority} onChange={event => setContextForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>截止时间<input type="datetime-local" value={contextForm.dueAt} onChange={event => setContextForm(current => ({ ...current, dueAt: event.target.value }))} /></label><button className="primary" type="button" disabled={saving} onClick={() => { void saveContext(); }}>保存责任信息</button></section>
+              <section className="context-section responsibility">
+                <h3><UserRound size={15} />责任信息</h3>
+                <div className="context-picker-field"><span>负责人</span><EmployeePicker employees={employees} value={contextForm.assigneeEmployeeId} onChange={value => setContextForm(current => ({ ...current, assigneeEmployeeId: value, collaboratorEmployeeIds: current.collaboratorEmployeeIds.filter(id => id !== value) }))} /></div>
+                <div className="context-picker-field collaborators"><span>协同人</span><EmployeeMultiPicker employees={employees} values={contextForm.collaboratorEmployeeIds} excludeIds={contextForm.assigneeEmployeeId ? [contextForm.assigneeEmployeeId] : []} onChange={values => setContextForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
+                <label>优先级<select value={contextForm.priority} onChange={event => setContextForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                <label>截止时间<input type="datetime-local" value={contextForm.dueAt} onChange={event => setContextForm(current => ({ ...current, dueAt: event.target.value }))} /></label>
+                <button className="primary" type="button" disabled={saving} onClick={() => { void saveContext(); }}>保存责任信息</button>
+              </section>
               <section className="context-section source"><h3><ArrowLeftRight size={15} />来源信息</h3><dl><div><dt>来源</dt><dd>{sourceLabel(selected)}</dd></div><div><dt>报告人</dt><dd>{selected.reporter?.displayName || selected.reporter?.username || '系统'}</dd></div><div><dt>来源标识</dt><dd title={selected.sourceCode || ''}>{selected.sourceCode || '无'}</dd></div></dl>{selected.sourceRoute && <a href={selected.sourceRoute}>返回来源位置 <ExternalLink size={14} /></a>}</section>
               {selected.workOrder && <section className="context-section work-order"><h3><FileText size={15} />关联工单</h3><strong title={selected.workOrder.specification || selected.workOrder.code}>{selected.workOrder.specification || selected.workOrder.code}</strong><p>{selected.workOrder.customerName || '客户未设置'} · {selected.workOrder.productName}</p><dl><div><dt>图纸</dt><dd>{selected.workOrder.drawingStatus || '未设置'}</dd></div><div><dt>配料</dt><dd>{selected.workOrder.materialStatus || '未设置'}</dd></div><div><dt>计划</dt><dd>{formatDate(selected.workOrder.plannedAt, false)}</dd></div></dl><a href={`/production?workOrderId=${encodeURIComponent(selected.workOrder.id)}`}>打开生产执行 <ExternalLink size={14} /></a></section>}
               <section className="context-section attachments"><header><h3><Paperclip size={15} />附件 <em>{selected.attachmentCount}</em></h3><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></header>
@@ -701,17 +829,60 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
         </div>
       </div>
 
-      {formOpen && <div className="issue-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setFormOpen(false); }}><form className="issue-modal" role="dialog" aria-modal="true" aria-labelledby="issue-form-title" onSubmit={saveForm}><header><div><span>{editingIssue ? '编辑问题' : '新建问题'}</span><h2 id="issue-form-title">{editingIssue ? editingIssue.code : '记录需要协同处理的问题'}</h2></div><button type="button" aria-label="关闭" title="关闭" disabled={saving} onClick={() => setFormOpen(false)}><X size={19} /></button></header><div className="issue-modal-body hm-scroll-region">
-        <label className="wide">问题标题<input value={form.title} maxLength={160} autoFocus onChange={event => setForm(current => ({ ...current, title: event.target.value }))} placeholder="一句话说明问题及影响" /></label>
-        <label>问题类型<select value={form.type} onChange={event => setForm(current => ({ ...current, type: event.target.value as IssueType }))}>{Object.entries(typeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-        <label>优先级<select value={form.priority} onChange={event => setForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-        <label>关联工单<select value={form.workOrderId} onChange={event => setForm(current => ({ ...current, workOrderId: event.target.value }))}><option value="">不关联工单</option>{workOrderOptions.map(order => <option value={order.id} key={order.id}>{order.specification || order.code} · {order.customerName || '客户未设置'}</option>)}</select></label>
-        <label>负责人<select value={form.assigneeId} onChange={event => setForm(current => ({ ...current, assigneeId: event.target.value }))}><option value="">暂不分派</option>{users.filter(item => item.isActive).map(item => <option value={item.id} key={item.id}>{item.displayName || item.username}</option>)}</select></label>
-        <label>截止时间<input type="datetime-local" value={form.dueAt} onChange={event => setForm(current => ({ ...current, dueAt: event.target.value }))} /></label>
-        <label className="wide">问题描述<textarea rows={4} value={form.description} maxLength={4000} onChange={event => setForm(current => ({ ...current, description: event.target.value }))} placeholder="说明现象、影响范围和需要协同的事项" /></label>
-        {editingIssue && <><label className="wide">原因分析<textarea rows={3} value={form.rootCause} maxLength={4000} onChange={event => setForm(current => ({ ...current, rootCause: event.target.value }))} /></label><label className="wide">处理方案<textarea rows={3} value={form.solution} maxLength={4000} onChange={event => setForm(current => ({ ...current, solution: event.target.value }))} /></label><label className="wide">验证结果<textarea rows={3} value={form.verificationResult} maxLength={4000} onChange={event => setForm(current => ({ ...current, verificationResult: event.target.value }))} /></label></>}
-        {formError && <p className="issue-form-error" role="alert">{formError}</p>}
-      </div><footer><button type="button" disabled={saving} onClick={() => setFormOpen(false)}>取消</button><button className="primary" type="submit" disabled={saving}>{saving && <Loader2 className="spin" size={15} />}{editingIssue ? '保存修改' : '创建问题'}</button></footer></form></div>}
+      {formOpen && <div className="issue-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) requestCloseForm(); }}><form className="issue-modal issue-modal-large" role="dialog" aria-modal="true" aria-labelledby="issue-form-title" onSubmit={saveForm}>
+        <header><div><span>{editingIssue ? '编辑问题 · 协同闭环' : '新建问题 · 协同闭环'}</span><h2 id="issue-form-title">{editingIssue ? `${editingIssue.code} · 更新问题信息` : '记录需要协同处理的问题'}</h2><p>关联工单、明确责任人并保留处理凭证，后续状态和操作全程留痕。</p></div><button type="button" aria-label="关闭" title="关闭" disabled={saving} onClick={requestCloseForm}><X size={19} /></button></header>
+        <div className="issue-modal-body hm-scroll-region">
+          <section className="issue-form-section overview">
+            <header><div><strong>问题概况</strong><span>先说明发生了什么以及影响程度</span></div><em>01</em></header>
+            <div className="issue-form-grid">
+              <label className="wide">问题标题<input value={form.title} maxLength={160} autoFocus onChange={event => setForm(current => ({ ...current, title: event.target.value }))} placeholder="一句话说明问题及影响" /></label>
+              <label>问题类型<select value={form.type} onChange={event => setForm(current => ({ ...current, type: event.target.value as IssueType }))}>{Object.entries(typeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+              <label>优先级<select value={form.priority} onChange={event => setForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+              <label>截止时间<input type="datetime-local" value={form.dueAt} onChange={event => setForm(current => ({ ...current, dueAt: event.target.value }))} /></label>
+            </div>
+          </section>
+
+          <section className="issue-form-section relation">
+            <header><div><strong>关联与责任</strong><span>可搜索、复制工单编号，员工直接同步人事档案</span></div><em>02</em></header>
+            <div className="issue-form-grid">
+              <div className="issue-form-field wide"><span>关联工单</span><WorkOrderPicker orders={workOrders} value={form.workOrderId} disabled={saving} onCopied={setToast} onChange={value => setForm(current => ({ ...current, workOrderId: value }))} /></div>
+              <div className="issue-form-field"><span>主负责人</span><EmployeePicker employees={employees} value={form.assigneeEmployeeId} disabled={saving} onChange={value => setForm(current => ({ ...current, assigneeEmployeeId: value, collaboratorEmployeeIds: current.collaboratorEmployeeIds.filter(id => id !== value) }))} /></div>
+              <div className="issue-form-field"><span>协同人员（可多选）</span><EmployeeMultiPicker employees={employees} values={form.collaboratorEmployeeIds} excludeIds={form.assigneeEmployeeId ? [form.assigneeEmployeeId] : []} disabled={saving} onChange={values => setForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
+            </div>
+          </section>
+
+          {form.type === 'process' && <section className="issue-form-section process-fields">
+            <header><div><strong>工艺问题信息</strong><span>用于定位具体工序、影响数量和现场临时措施</span></div><em>03</em></header>
+            <div className="issue-form-grid">
+              <label>关联工序<input value={form.processName} maxLength={120} onChange={event => setForm(current => ({ ...current, processName: event.target.value }))} placeholder="例如：裁线、压接、热缩" /></label>
+              <label>影响数量（选填）<input type="number" min="0" step="1" value={form.affectedQuantity} onChange={event => setForm(current => ({ ...current, affectedQuantity: event.target.value }))} placeholder="0" /></label>
+              <label className="wide">临时措施（选填）<textarea rows={3} value={form.temporaryMeasure} maxLength={2000} onChange={event => setForm(current => ({ ...current, temporaryMeasure: event.target.value }))} placeholder="说明现场临时控制、隔离或替代处理方式" /></label>
+            </div>
+          </section>}
+
+          <section className="issue-form-section detail-fields">
+            <header><div><strong>问题说明与凭证</strong><span>描述现象、影响范围，并可在创建前添加附件</span></div><em>{form.type === 'process' ? '04' : '03'}</em></header>
+            <div className="issue-form-grid">
+              <label className="wide">问题描述<textarea rows={4} value={form.description} maxLength={4000} onChange={event => setForm(current => ({ ...current, description: event.target.value }))} placeholder="说明现象、影响范围、已知事实和需要协同的事项" /></label>
+              <div className="issue-form-field wide pending-attachments">
+                <div className="pending-attachment-head"><span>附件（选填）</span><button type="button" disabled={saving || pendingFiles.length >= 8} onClick={() => pendingFileInputRef.current?.click()}><Plus size={14} />添加凭证</button><input ref={pendingFileInputRef} type="file" multiple hidden accept="application/pdf,image/jpeg,image/png,image/webp" onChange={queueAttachments} /></div>
+                <p>支持 PDF、JPG、PNG、WEBP；创建成功后直接上传到对象存储，不会永久保存在本机。</p>
+                {!!pendingFiles.length && <div className="pending-file-list">{pendingFiles.map((file, index) => <article key={`${file.name}-${file.size}`}><span>{file.type === 'application/pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.name}>{file.name}</strong><small>{formatBytes(file.size)}</small></div><button type="button" aria-label={`移除附件 ${file.name}`} title="移除附件" onClick={() => setPendingFiles(current => current.filter((_, itemIndex) => itemIndex !== index))}><Trash2 /></button></article>)}</div>}
+              </div>
+            </div>
+          </section>
+
+          {editingIssue && <section className="issue-form-section resolution-fields">
+            <header><div><strong>处理结论</strong><span>编辑已有问题时可补充原因、方案和验证结果</span></div><em>{form.type === 'process' ? '05' : '04'}</em></header>
+            <div className="issue-form-grid"><label className="wide">原因分析<textarea rows={3} value={form.rootCause} maxLength={4000} onChange={event => setForm(current => ({ ...current, rootCause: event.target.value }))} /></label><label className="wide">处理方案<textarea rows={3} value={form.solution} maxLength={4000} onChange={event => setForm(current => ({ ...current, solution: event.target.value }))} /></label><label className="wide">验证结果<textarea rows={3} value={form.verificationResult} maxLength={4000} onChange={event => setForm(current => ({ ...current, verificationResult: event.target.value }))} /></label></div>
+          </section>}
+          {formError && <p className="issue-form-error" role="alert">{formError}</p>}
+        </div>
+        <footer><span>{form.assigneeEmployeeId ? '已明确主负责人' : '负责人可稍后补充'} · {form.collaboratorEmployeeIds.length} 名协同人 · {pendingFiles.length} 个待上传附件</span><div><button type="button" disabled={saving} onClick={requestCloseForm}>取消</button><button className="primary" type="submit" disabled={saving}>{saving && <Loader2 className="spin" size={15} />}{editingIssue ? '保存修改' : '创建问题'}</button></div></footer>
+      </form></div>}
+
+      {duplicateIssue && <div className="issue-modal-backdrop"><section className="issue-confirm duplicate-warning" role="alertdialog" aria-modal="true" aria-labelledby="issue-duplicate-title"><AlertTriangle /><h2 id="issue-duplicate-title">发现可能重复的问题</h2><p>{duplicateIssue.code} · {duplicateIssue.title}</p><span>同一工单下已有相同标题或工序的未关闭问题。建议先打开核对，确有不同再继续创建。</span><footer><button type="button" disabled={saving} onClick={() => { setDuplicateIssue(null); closeFormNow(); setQueueMode('issues'); void loadIssues(duplicateIssue.id); }}>打开已有问题</button><button className="danger" type="button" disabled={saving} onClick={() => { setDuplicateIssue(null); void persistForm(true); }}>仍然创建</button></footer></section></div>}
+      {confirmDiscard && <div className="issue-modal-backdrop"><section className="issue-confirm discard-warning" role="alertdialog" aria-modal="true" aria-labelledby="issue-discard-title"><AlertTriangle /><h2 id="issue-discard-title">放弃未保存的修改？</h2><p>表单内容或待上传附件尚未保存</p><span>关闭后这些修改不会保留，已经存在的问题和附件不会受到影响。</span><footer><button type="button" onClick={() => setConfirmDiscard(false)}>继续编辑</button><button className="danger" type="button" onClick={closeFormNow}>放弃修改</button></footer></section></div>}
 
       {transition && selected && <div className="issue-modal-backdrop"><form className="issue-modal transition-modal" role="dialog" aria-modal="true" aria-labelledby="issue-transition-title" onSubmit={submitTransition}><header><div><span>状态流转</span><h2 id="issue-transition-title">{statusLabels[selected.status]} → {statusLabels[transition.target]}</h2></div><button type="button" aria-label="关闭" title="关闭" disabled={saving} onClick={() => setTransition(null)}><X size={19} /></button></header><div className="issue-modal-body">
         {transition.target === 'verifying' && <label className="wide">处理方案<textarea autoFocus required rows={5} value={transition.solution} onChange={event => setTransition(current => current ? { ...current, solution: event.target.value } : current)} placeholder="说明已经采取的处理措施" /></label>}

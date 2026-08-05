@@ -5,6 +5,7 @@ import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
   ISSUE_TYPES,
+  issueCode,
   issueDetailInclude,
   parseIssueInput,
   serializeIssue,
@@ -52,10 +53,13 @@ export async function GET(req: NextRequest) {
     if (status && status !== 'all') where.status = status;
     if (type && type !== 'all') where.type = type;
     if (priority && priority !== 'all') where.priority = priority;
-    if (assigneeId) where.assigneeId = assigneeId;
+    if (assigneeId) where.assigneeEmployeeId = assigneeId;
     if (workOrderId) where.workOrderId = workOrderId;
     if (sourceType) where.sourceType = sourceType;
-    if (unassignedOnly) where.assigneeId = null;
+    if (unassignedOnly) {
+      where.assigneeId = null;
+      where.assigneeEmployeeId = null;
+    }
     if (overdueOnly) {
       where.status = { not: 'closed' };
       where.dueAt = { lt: new Date() };
@@ -67,9 +71,13 @@ export async function GET(req: NextRequest) {
         { sourceCode: { contains: keyword, mode: 'insensitive' } },
         { rootCause: { contains: keyword, mode: 'insensitive' } },
         { solution: { contains: keyword, mode: 'insensitive' } },
+        { processName: { contains: keyword, mode: 'insensitive' } },
         { workOrder: { code: { contains: keyword, mode: 'insensitive' } } },
+        { workOrder: { businessCode: { contains: keyword, mode: 'insensitive' } } },
         { workOrder: { specification: { contains: keyword, mode: 'insensitive' } } },
         { workOrder: { customerName: { contains: keyword, mode: 'insensitive' } } },
+        { assigneeEmployee: { name: { contains: keyword, mode: 'insensitive' } } },
+        { assigneeEmployee: { employeeNo: { contains: keyword, mode: 'insensitive' } } },
       ];
       const sequence = Number(keyword.replace(/^ISS-/i, ''));
       if (Number.isInteger(sequence) && sequence > 0) where.OR.push({ sequence });
@@ -112,9 +120,40 @@ export async function POST(req: NextRequest) {
       const exists = await prisma.workOrder.findFirst({ where: { id: data.workOrderId, deletedAt: null }, select: { id: true } });
       if (!exists) return NextResponse.json({ ok: false, error: '关联工单不存在' }, { status: 404 });
     }
-    if (data.assigneeId) {
-      const exists = await prisma.user.findFirst({ where: { id: data.assigneeId, isActive: true }, select: { id: true } });
-      if (!exists) return NextResponse.json({ ok: false, error: '负责人不存在或已停用' }, { status: 404 });
+    const collaboratorEmployeeIds = (data.collaboratorEmployeeIds || [])
+      .filter(id => id !== data.assigneeEmployeeId);
+    const employeeIds = Array.from(new Set([
+      ...(data.assigneeEmployeeId ? [data.assigneeEmployeeId] : []),
+      ...collaboratorEmployeeIds,
+    ]));
+    if (employeeIds.length) {
+      const employees = await prisma.employee.count({ where: { id: { in: employeeIds }, isActive: true } });
+      if (employees !== employeeIds.length) return NextResponse.json({ ok: false, error: '负责人或协同人员不存在、已离职或已停用' }, { status: 404 });
+    }
+
+    if (body.allowDuplicate !== true && data.workOrderId) {
+      const duplicateSignals: Prisma.IssueWhereInput[] = [
+        { title: { equals: data.title as string, mode: 'insensitive' } },
+      ];
+      if (data.processName) duplicateSignals.push({ processName: { equals: data.processName, mode: 'insensitive' } });
+      const duplicate = await prisma.issue.findFirst({
+        where: {
+          deletedAt: null,
+          status: { not: 'closed' },
+          workOrderId: data.workOrderId,
+          type: data.type || 'production',
+          OR: duplicateSignals,
+        },
+        select: { id: true, sequence: true, title: true, status: true },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (duplicate) {
+        return NextResponse.json({
+          ok: false,
+          error: '检测到同一工单下可能重复的问题，请先核对',
+          duplicateIssue: { id: duplicate.id, code: issueCode(duplicate.sequence), title: duplicate.title, status: duplicate.status },
+        }, { status: 409 });
+      }
     }
 
     const issue = await prisma.$transaction(async tx => {
@@ -125,7 +164,10 @@ export async function POST(req: NextRequest) {
           priority: data.priority || 'normal',
           description: data.description,
           workOrderId: data.workOrderId,
-          assigneeId: data.assigneeId,
+          assigneeEmployeeId: data.assigneeEmployeeId,
+          processName: data.processName,
+          affectedQuantity: data.affectedQuantity,
+          temporaryMeasure: data.temporaryMeasure,
           dueAt: data.dueAt,
           rootCause: data.rootCause,
           solution: data.solution,
@@ -133,10 +175,19 @@ export async function POST(req: NextRequest) {
           sourceType: 'manual',
           sourceId: data.workOrderId,
           sourceRoute: data.workOrderId ? `/dashboard?workOrderId=${encodeURIComponent(data.workOrderId)}` : '/workspace/issues',
+          collaborators: collaboratorEmployeeIds.length
+            ? { create: collaboratorEmployeeIds.map(employeeId => ({ employeeId })) }
+            : undefined,
         },
       });
       await tx.issueActivity.create({
-        data: { issueId: created.id, action: 'create', content: '创建问题', actorId: user.id },
+        data: {
+          issueId: created.id,
+          action: 'create',
+          content: '创建问题',
+          actorId: user.id,
+          detail: { assigneeEmployeeId: data.assigneeEmployeeId || null, collaboratorCount: collaboratorEmployeeIds.length },
+        },
       });
       return tx.issue.findUniqueOrThrow({ where: { id: created.id }, include: issueDetailInclude });
     });

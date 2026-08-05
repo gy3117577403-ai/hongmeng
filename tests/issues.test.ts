@@ -19,6 +19,33 @@ test('manual issue input uses safe defaults and validates title', () => {
   assert.equal(invalid.errors.length, 3);
 });
 
+test('process issues preserve HR responsibility and collaboration fields', () => {
+  const parsed = parseIssueInput({
+    title: '压接工艺参数需要复核',
+    type: 'process',
+    assigneeEmployeeId: 'employee-001',
+    collaboratorEmployeeIds: ['employee-002', 'employee-002', 'employee-003'],
+    processName: '压接',
+    affectedQuantity: '120',
+    temporaryMeasure: '暂停该批次并复核首件',
+  });
+  assert.deepEqual(parsed.errors, []);
+  assert.equal(parsed.data.type, 'process');
+  assert.equal(parsed.data.assigneeEmployeeId, 'employee-001');
+  assert.deepEqual(parsed.data.collaboratorEmployeeIds, ['employee-002', 'employee-003']);
+  assert.equal(parsed.data.processName, '压接');
+  assert.equal(parsed.data.affectedQuantity, 120);
+});
+
+test('issue input rejects invalid affected quantities and collaborator payloads', () => {
+  const parsed = parseIssueInput({
+    title: '现场问题',
+    affectedQuantity: -1,
+    collaboratorEmployeeIds: 'employee-002',
+  });
+  assert.deepEqual(parsed.errors, ['协同人员格式不正确', '影响数量必须是非负整数']);
+});
+
 test('issue codes and production fingerprints are stable', () => {
   assert.equal(issueCode(7), 'ISS-000007');
   assert.equal(issueFingerprint('work-order-1', 'MATERIAL_NOT_READY'), 'production_alert:work-order-1:MATERIAL_NOT_READY');

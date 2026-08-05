@@ -662,6 +662,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       select: {
         id: true, sequence: true, title: true, type: true, priority: true, status: true, dueAt: true, updatedAt: true,
         assignee: { select: { username: true, displayName: true } },
+        assigneeEmployee: { select: { employeeNo: true, name: true } },
         workOrder: { select: { code: true, specification: true, customerName: true } },
         activities: {
           select: { id: true, action: true, content: true, toStatus: true, createdAt: true, actor: { select: { username: true, displayName: true } } },
@@ -1076,7 +1077,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       id: `issue:${issue.id}`, entityId: issue.id, entityType: 'issue', code: issueCode(issue.sequence), title: issue.title,
       subtitle: `${issueTypeLabels[issue.type as IssueType]} · ${issue.workOrder?.specification || issue.workOrder?.code || '未关联工单'}`,
       processStatus: processStatus(status, 'issue'), currentStep: issueStatusLabels[status], nextStep: nextLabel(issueLabels, index),
-      priority: issue.priority as WorkflowItemDTO['priority'], owner: issue.assignee?.displayName || issue.assignee?.username || null,
+      priority: issue.priority as WorkflowItemDTO['priority'], owner: issue.assigneeEmployee?.name || issue.assignee?.displayName || issue.assignee?.username || null,
       dueAt, updatedAt: issue.updatedAt.toISOString(), route: `/workspace/issues?issueId=${encodeURIComponent(issue.id)}`,
       sourceRoute: null, isOverdue: !closed && !!issue.dueAt && issue.dueAt.getTime() < now,
       steps: steps(issueLabels, index, closed),

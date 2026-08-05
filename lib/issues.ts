@@ -20,7 +20,7 @@ import type {
 
 export const ISSUE_STATUSES: IssueStatus[] = ['pending', 'processing', 'verifying', 'closed'];
 export const ISSUE_PRIORITIES: IssuePriority[] = ['urgent', 'high', 'normal'];
-export const ISSUE_TYPES: IssueType[] = ['production', 'planning', 'technical', 'quality', 'material', 'equipment', 'other'];
+export const ISSUE_TYPES: IssueType[] = ['production', 'planning', 'technical', 'process', 'quality', 'material', 'equipment', 'other'];
 
 export const issueStatusLabels: Record<IssueStatus, string> = {
   pending: '待受理',
@@ -39,6 +39,7 @@ export const issueTypeLabels: Record<IssueType, string> = {
   production: '生产问题',
   planning: '计划问题',
   technical: '技术问题',
+  process: '工艺问题',
   quality: '质量问题',
   material: '物料问题',
   equipment: '设备问题',
@@ -51,9 +52,30 @@ const issueUserSelect = Prisma.validator<Prisma.UserSelect>()({
   displayName: true,
 });
 
+const issueEmployeeSelect = Prisma.validator<Prisma.EmployeeSelect>()({
+  id: true,
+  employeeNo: true,
+  name: true,
+  department: true,
+  position: true,
+  team: true,
+  isActive: true,
+});
+
+const issueLegacyAssigneeSelect = Prisma.validator<Prisma.UserSelect>()({
+  ...issueUserSelect,
+  isActive: true,
+  employee: { select: issueEmployeeSelect },
+});
+
 export const issueDetailInclude = Prisma.validator<Prisma.IssueInclude>()({
   reporter: { select: issueUserSelect },
-  assignee: { select: issueUserSelect },
+  assignee: { select: issueLegacyAssigneeSelect },
+  assigneeEmployee: { select: issueEmployeeSelect },
+  collaborators: {
+    include: { employee: { select: issueEmployeeSelect } },
+    orderBy: { createdAt: 'asc' },
+  },
   workOrder: {
     select: {
       id: true,
@@ -86,8 +108,12 @@ export type IssueInput = {
   priority?: IssuePriority;
   description?: string | null;
   workOrderId?: string | null;
-  assigneeId?: string | null;
+  assigneeEmployeeId?: string | null;
+  collaboratorEmployeeIds?: string[];
   dueAt?: Date | null;
+  processName?: string | null;
+  affectedQuantity?: number | null;
+  temporaryMeasure?: string | null;
   rootCause?: string | null;
   solution?: string | null;
   verificationResult?: string | null;
@@ -108,6 +134,12 @@ function dateValue(value: unknown): Date | null | 'invalid' {
   if (typeof value !== 'string') return 'invalid';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? 'invalid' : date;
+}
+
+function nonNegativeInteger(value: unknown): number | null | 'invalid' {
+  if (value === null || value === '') return null;
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 1_000_000_000 ? parsed : 'invalid';
 }
 
 export function parseIssueInput(body: Record<string, unknown>, partial = false): { data: IssueInput; errors: string[] } {
@@ -134,7 +166,25 @@ export function parseIssueInput(body: Record<string, unknown>, partial = false):
   if (body.solution !== undefined) data.solution = text(body.solution, 4000);
   if (body.verificationResult !== undefined) data.verificationResult = text(body.verificationResult, 4000);
   if (body.workOrderId !== undefined) data.workOrderId = text(body.workOrderId, 80);
-  if (body.assigneeId !== undefined) data.assigneeId = text(body.assigneeId, 80);
+  const assigneeEmployeeId = body.assigneeEmployeeId !== undefined ? body.assigneeEmployeeId : body.assigneeId;
+  if (assigneeEmployeeId !== undefined) data.assigneeEmployeeId = text(assigneeEmployeeId, 80);
+  if (body.collaboratorEmployeeIds !== undefined) {
+    if (!Array.isArray(body.collaboratorEmployeeIds)) errors.push('协同人员格式不正确');
+    else {
+      const ids = Array.from(new Set(body.collaboratorEmployeeIds
+        .map(value => text(value, 80))
+        .filter((value): value is string => !!value)));
+      if (ids.length > 20) errors.push('协同人员最多选择 20 人');
+      else data.collaboratorEmployeeIds = ids;
+    }
+  }
+  if (body.processName !== undefined) data.processName = text(body.processName, 120);
+  if (body.temporaryMeasure !== undefined) data.temporaryMeasure = text(body.temporaryMeasure, 2000);
+  if (body.affectedQuantity !== undefined) {
+    const affectedQuantity = nonNegativeInteger(body.affectedQuantity);
+    if (affectedQuantity === 'invalid') errors.push('影响数量必须是非负整数');
+    else data.affectedQuantity = affectedQuantity;
+  }
   if (body.dueAt !== undefined) {
     const dueAt = dateValue(body.dueAt);
     if (dueAt === 'invalid') errors.push('截止时间格式不正确');
@@ -159,6 +209,32 @@ export function issueCode(sequence: number): string {
 
 export function serializeIssue(issue: IssueDetailRecord): IssueDTO {
   const now = Date.now();
+  const assigneeEmployee = issue.assigneeEmployee || issue.assignee?.employee || null;
+  const assignee = assigneeEmployee
+    ? {
+        id: assigneeEmployee.id,
+        employeeNo: assigneeEmployee.employeeNo,
+        name: assigneeEmployee.name,
+        displayName: assigneeEmployee.name,
+        username: assigneeEmployee.employeeNo,
+        department: assigneeEmployee.department,
+        position: assigneeEmployee.position,
+        team: assigneeEmployee.team,
+        isActive: assigneeEmployee.isActive,
+      }
+    : issue.assignee
+      ? {
+          id: issue.assignee.id,
+          employeeNo: issue.assignee.username,
+          name: issue.assignee.displayName,
+          displayName: issue.assignee.displayName,
+          username: issue.assignee.username,
+          department: null,
+          position: null,
+          team: null,
+          isActive: issue.assignee.isActive,
+        }
+      : null;
   return {
     id: issue.id,
     sequence: issue.sequence,
@@ -175,12 +251,26 @@ export function serializeIssue(issue: IssueDetailRecord): IssueDTO {
     sourceAlertCode: issue.sourceAlertCode,
     workOrderId: issue.workOrderId,
     reporter: issue.reporter,
-    assignee: issue.assignee,
+    assignee,
+    collaborators: issue.collaborators.map(({ employee }) => ({
+      id: employee.id,
+      employeeNo: employee.employeeNo,
+      name: employee.name,
+      displayName: employee.name,
+      username: employee.employeeNo,
+      department: employee.department,
+      position: employee.position,
+      team: employee.team,
+      isActive: employee.isActive,
+    })),
     workOrder: issue.workOrder ? {
       ...issue.workOrder,
       plannedAt: issue.workOrder.plannedAt?.toISOString() || null,
     } : null,
     dueAt: issue.dueAt?.toISOString() || null,
+    processName: issue.processName,
+    affectedQuantity: issue.affectedQuantity,
+    temporaryMeasure: issue.temporaryMeasure,
     rootCause: issue.rootCause,
     solution: issue.solution,
     verificationResult: issue.verificationResult,
@@ -272,7 +362,7 @@ export async function summarizeIssues(): Promise<IssueSummaryDTO> {
   const [groups, overdue, unassigned] = await Promise.all([
     prisma.issue.groupBy({ by: ['status'], where: { deletedAt: null }, _count: { _all: true } }),
     prisma.issue.count({ where: { deletedAt: null, status: { not: 'closed' }, dueAt: { lt: new Date() } } }),
-    prisma.issue.count({ where: { deletedAt: null, status: { not: 'closed' }, assigneeId: null } }),
+    prisma.issue.count({ where: { deletedAt: null, status: { not: 'closed' }, assigneeId: null, assigneeEmployeeId: null } }),
   ]);
   const counts: IssueSummaryDTO = { total: 0, pending: 0, processing: 0, verifying: 0, closed: 0, overdue, unassigned };
   for (const group of groups) {

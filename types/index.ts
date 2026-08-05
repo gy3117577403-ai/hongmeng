@@ -221,12 +221,24 @@ export type TrashDTO = {
 
 export type IssueStatus = 'pending' | 'processing' | 'verifying' | 'closed';
 export type IssuePriority = 'urgent' | 'high' | 'normal';
-export type IssueType = 'production' | 'planning' | 'technical' | 'quality' | 'material' | 'equipment' | 'other';
+export type IssueType = 'production' | 'planning' | 'technical' | 'process' | 'quality' | 'material' | 'equipment' | 'other';
 
 export type IssueUserDTO = {
   id: string;
   username: string;
   displayName: string;
+};
+
+export type IssueEmployeeDTO = {
+  id: string;
+  employeeNo: string;
+  name: string;
+  displayName: string;
+  username: string;
+  department?: string | null;
+  position?: string | null;
+  team?: string | null;
+  isActive: boolean;
 };
 
 export type IssueWorkOrderDTO = {
@@ -282,9 +294,13 @@ export type IssueDTO = {
   sourceAlertCode?: string | null;
   workOrderId?: string | null;
   reporter?: IssueUserDTO | null;
-  assignee?: IssueUserDTO | null;
+  assignee?: IssueEmployeeDTO | null;
+  collaborators: IssueEmployeeDTO[];
   workOrder?: IssueWorkOrderDTO | null;
   dueAt?: string | null;
+  processName?: string | null;
+  affectedQuantity?: number | null;
+  temporaryMeasure?: string | null;
   rootCause?: string | null;
   solution?: string | null;
   verificationResult?: string | null;

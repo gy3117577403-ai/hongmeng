@@ -24,7 +24,10 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const current = await prisma.issue.findFirst({ where: { id: params.id, deletedAt: null } });
+    const current = await prisma.issue.findFirst({
+      where: { id: params.id, deletedAt: null },
+      include: { collaborators: { select: { employeeId: true } } },
+    });
     if (!current) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const parsed = parseIssueInput(body, true);
@@ -35,9 +38,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       const exists = await prisma.workOrder.findFirst({ where: { id: values.workOrderId, deletedAt: null }, select: { id: true } });
       if (!exists) return NextResponse.json({ ok: false, error: '关联工单不存在' }, { status: 404 });
     }
-    if (values.assigneeId) {
-      const exists = await prisma.user.findFirst({ where: { id: values.assigneeId, isActive: true }, select: { id: true } });
-      if (!exists) return NextResponse.json({ ok: false, error: '负责人不存在或已停用' }, { status: 404 });
+    const effectiveAssigneeEmployeeId = values.assigneeEmployeeId !== undefined
+      ? values.assigneeEmployeeId
+      : current.assigneeEmployeeId;
+    const collaboratorEmployeeIds = values.collaboratorEmployeeIds
+      ?.filter(id => id !== effectiveAssigneeEmployeeId) || undefined;
+    const employeeIds = Array.from(new Set([
+      ...(values.assigneeEmployeeId ? [values.assigneeEmployeeId] : []),
+      ...(collaboratorEmployeeIds || []),
+    ]));
+    if (employeeIds.length) {
+      const employees = await prisma.employee.count({ where: { id: { in: employeeIds }, isActive: true } });
+      if (employees !== employeeIds.length) return NextResponse.json({ ok: false, error: '负责人或协同人员不存在、已离职或已停用' }, { status: 404 });
     }
 
     const data: Prisma.IssueUncheckedUpdateInput = {};
@@ -46,17 +58,37 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (values.priority !== undefined) data.priority = values.priority;
     if (values.description !== undefined) data.description = values.description;
     if (values.workOrderId !== undefined) data.workOrderId = values.workOrderId;
-    if (values.assigneeId !== undefined) data.assigneeId = values.assigneeId;
+    if (values.assigneeEmployeeId !== undefined) {
+      data.assigneeEmployeeId = values.assigneeEmployeeId;
+      data.assigneeId = null;
+    }
     if (values.dueAt !== undefined) data.dueAt = values.dueAt;
+    if (values.processName !== undefined) data.processName = values.processName;
+    if (values.affectedQuantity !== undefined) data.affectedQuantity = values.affectedQuantity;
+    if (values.temporaryMeasure !== undefined) data.temporaryMeasure = values.temporaryMeasure;
     if (values.rootCause !== undefined) data.rootCause = values.rootCause;
     if (values.solution !== undefined) data.solution = values.solution;
     if (values.verificationResult !== undefined) data.verificationResult = values.verificationResult;
-    if (!Object.keys(data).length) return NextResponse.json({ ok: false, error: '没有可更新字段' }, { status: 400 });
+    if (!Object.keys(data).length && collaboratorEmployeeIds === undefined) return NextResponse.json({ ok: false, error: '没有可更新字段' }, { status: 400 });
 
     const changed = Object.keys(data);
-    const action = values.assigneeId !== undefined && values.assigneeId !== current.assigneeId ? 'assign' : 'update';
+    if (collaboratorEmployeeIds !== undefined) changed.push('collaboratorEmployeeIds');
+    const currentCollaborators = current.collaborators.map(item => item.employeeId).sort().join(',');
+    const nextCollaborators = collaboratorEmployeeIds?.slice().sort().join(',');
+    const assignmentChanged = (values.assigneeEmployeeId !== undefined && values.assigneeEmployeeId !== current.assigneeEmployeeId)
+      || (nextCollaborators !== undefined && nextCollaborators !== currentCollaborators);
+    const action = assignmentChanged ? 'assign' : 'update';
     const issue = await prisma.$transaction(async tx => {
-      await tx.issue.update({ where: { id: current.id }, data });
+      if (Object.keys(data).length) await tx.issue.update({ where: { id: current.id }, data });
+      if (collaboratorEmployeeIds !== undefined) {
+        await tx.issueCollaborator.deleteMany({ where: { issueId: current.id } });
+        if (collaboratorEmployeeIds.length) {
+          await tx.issueCollaborator.createMany({
+            data: collaboratorEmployeeIds.map(employeeId => ({ issueId: current.id, employeeId })),
+            skipDuplicates: true,
+          });
+        }
+      }
       await tx.issueActivity.create({
         data: {
           issueId: current.id,

@@ -668,6 +668,8 @@ model Employee {
   dailyCrossTeamRequests           DailyCrossTeamRequest[]
   numberReorderItems               EmployeeNumberReorderItem[]
   weeklyProcessWorkerPresetMembers WeeklyProcessWorkerPresetMember[]
+  assignedIssues                   Issue[]                           @relation("IssueEmployeeAssignee")
+  issueCollaborations              IssueCollaborator[]
 
   @@index([isActive, employeeNo])
   @@index([name])
@@ -2327,35 +2329,41 @@ model OperationLog {
 }
 
 model Issue {
-  id                 String            @id @default(uuid())
-  sequence           Int               @unique @default(autoincrement())
+  id                 String              @id @default(uuid())
+  sequence           Int                 @unique @default(autoincrement())
   title              String
-  type               String            @default("production")
-  priority           String            @default("normal")
-  status             String            @default("pending")
+  type               String              @default("production")
+  priority           String              @default("normal")
+  status             String              @default("pending")
   description        String?
-  sourceType         String?           @map("source_type")
-  sourceId           String?           @map("source_id")
-  sourceCode         String?           @map("source_code")
-  sourceRoute        String?           @map("source_route")
-  sourceAlertCode    String?           @map("source_alert_code")
-  sourceFingerprint  String?           @unique @map("source_fingerprint")
-  workOrderId        String?           @map("work_order_id")
-  reporterId         String?           @map("reporter_id")
-  assigneeId         String?           @map("assignee_id")
-  dueAt              DateTime?         @map("due_at")
-  rootCause          String?           @map("root_cause")
+  sourceType         String?             @map("source_type")
+  sourceId           String?             @map("source_id")
+  sourceCode         String?             @map("source_code")
+  sourceRoute        String?             @map("source_route")
+  sourceAlertCode    String?             @map("source_alert_code")
+  sourceFingerprint  String?             @unique @map("source_fingerprint")
+  workOrderId        String?             @map("work_order_id")
+  reporterId         String?             @map("reporter_id")
+  assigneeId         String?             @map("assignee_id")
+  assigneeEmployeeId String?             @map("assignee_employee_id")
+  dueAt              DateTime?           @map("due_at")
+  processName        String?             @map("process_name")
+  affectedQuantity   Int?                @map("affected_quantity")
+  temporaryMeasure   String?             @map("temporary_measure")
+  rootCause          String?             @map("root_cause")
   solution           String?
-  verificationResult String?           @map("verification_result")
-  resolvedAt         DateTime?         @map("resolved_at")
-  verifiedAt         DateTime?         @map("verified_at")
-  closedAt           DateTime?         @map("closed_at")
-  createdAt          DateTime          @default(now()) @map("created_at")
-  updatedAt          DateTime          @updatedAt @map("updated_at")
-  deletedAt          DateTime?         @map("deleted_at")
-  workOrder          WorkOrder?        @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
-  reporter           User?             @relation("IssueReporter", fields: [reporterId], references: [id], onDelete: SetNull)
-  assignee           User?             @relation("IssueAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  verificationResult String?             @map("verification_result")
+  resolvedAt         DateTime?           @map("resolved_at")
+  verifiedAt         DateTime?           @map("verified_at")
+  closedAt           DateTime?           @map("closed_at")
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+  deletedAt          DateTime?           @map("deleted_at")
+  workOrder          WorkOrder?          @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  reporter           User?               @relation("IssueReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  assignee           User?               @relation("IssueAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assigneeEmployee   Employee?           @relation("IssueEmployeeAssignee", fields: [assigneeEmployeeId], references: [id], onDelete: SetNull)
+  collaborators      IssueCollaborator[]
   activities         IssueActivity[]
   attachments        IssueAttachment[]
   changeRequests     ChangeRequest[]
@@ -2364,6 +2372,7 @@ model Issue {
   @@index([priority])
   @@index([type])
   @@index([assigneeId])
+  @@index([assigneeEmployeeId])
   @@index([reporterId])
   @@index([workOrderId])
   @@index([sourceType, sourceId])
@@ -2371,6 +2380,19 @@ model Issue {
   @@index([updatedAt])
   @@index([deletedAt])
   @@map("issues")
+}
+
+model IssueCollaborator {
+  id         String   @id @default(uuid())
+  issueId    String   @map("issue_id")
+  employeeId String   @map("employee_id")
+  createdAt  DateTime @default(now()) @map("created_at")
+  issue      Issue    @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([issueId, employeeId])
+  @@index([employeeId])
+  @@map("issue_collaborators")
 }
 
 model IssueActivity {
