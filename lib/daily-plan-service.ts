@@ -35,6 +35,7 @@ import {
   isProductionWorkforceEmployee,
   productionEmployeeWhere,
 } from '@/lib/production-workforce';
+import { splitProductionArrangementQuantity } from '@/lib/production-arrangement-domain';
 
 const DEFAULT_SHIFT_CODE = 'DAY';
 const ACTIVE_ROUTE_STATUSES = new Set(['confirmed', 'in_progress', 'completed']);
@@ -67,6 +68,8 @@ type ActorScope = {
 
 type SuggestionCandidate = {
   productionPlanBatchId: string;
+  batchWeekStartDate: string;
+  batchWeekEndDate: string;
   workOrderId: string;
   workOrderCode: string;
   batchQuantity: number;
@@ -599,6 +602,8 @@ export async function previewDailyPlanSuggestions(input: {
   teamId: string;
   workOrderIds?: string[];
   includeWaitingUpstream?: boolean;
+  allowCrossWeekWorkOrders?: boolean;
+  allocationScope?: 'week' | 'all_active';
 }) {
   const workDate = normalizeWorkDate(input.workDate);
   const shiftCode = normalizeShiftCode(input.shiftCode);
@@ -627,12 +632,13 @@ export async function previewDailyPlanSuggestions(input: {
   const globallyOwnedProcessDefinitionIds = new Set(activeCapabilities.map(item => item.processDefinitionId));
   const ownedProcessDefinitionIds = new Set(team.processCapabilities.map(item => item.processDefinitionId));
   const workOrderIds = [...new Set((input.workOrderIds || []).map(item => String(item).trim()).filter(Boolean))];
+  const allowCrossWeekWorkOrders = input.allowCrossWeekWorkOrders === true && workOrderIds.length > 0;
   const batches = await prisma.productionPlanBatch.findMany({
     where: {
       deletedAt: null,
       releaseState: { in: ACTIVE_BATCH_STATES },
       workOrderId: { not: null, ...(workOrderIds.length ? { in: workOrderIds } : {}) },
-      weekStartDate: { gte: batchWeek.gte, lt: batchWeek.lt },
+      ...(allowCrossWeekWorkOrders ? {} : { weekStartDate: { gte: batchWeek.gte, lt: batchWeek.lt } }),
       planOrder: { deletedAt: null },
       workOrder: { is: { deletedAt: null } },
     },
@@ -721,6 +727,8 @@ export async function previewDailyPlanSuggestions(input: {
       if (workOrder.materialTask?.exceptionType || workOrder.materialTask?.status === 'exception') riskWarnings.push('WAREHOUSE_EXCEPTION');
       candidates.push({
         productionPlanBatchId: batch.id,
+        batchWeekStartDate: formatWorkDate(batch.weekStartDate),
+        batchWeekEndDate: formatWorkDate(batch.weekEndDate),
         workOrderId: workOrder.id,
         workOrderCode: workOrder.code,
         batchQuantity: batch.quantity,
@@ -760,7 +768,9 @@ export async function previewDailyPlanSuggestions(input: {
   const activeTasks = candidates.length
     ? await prisma.dailyProcessTask.findMany({
         where: {
-          workDate: { gte: taskWeek.startDate, lt: taskWeek.endExclusiveDate },
+          ...(input.allocationScope === 'all_active'
+            ? {}
+            : { workDate: { gte: taskWeek.startDate, lt: taskWeek.endExclusiveDate } }),
           productionPlanBatchId: { in: [...new Set(candidates.map(item => item.productionPlanBatchId))] },
           stepId: { in: candidates.map(item => item.stepId) },
           status: { notIn: [DailyProcessTaskStatus.CANCELLED, DailyProcessTaskStatus.CARRIED_OVER] },
@@ -887,11 +897,17 @@ export async function previewDailyPlanSuggestions(input: {
       employeeId: membership.employeeId,
       employeeNo: membership.employee.employeeNo,
       employeeName: membership.employee.name,
+      department: membership.employee.department,
+      position: membership.employee.position,
+      team: membership.employee.team,
       role: membership.role,
       capacityMilliseconds: BigInt(capacity.totalMilliseconds),
       assignedMilliseconds: assigned,
       remainingMilliseconds: BigInt(capacity.totalMilliseconds) > assigned ? BigInt(capacity.totalMilliseconds) - assigned : 0n,
       source: capacity.source,
+      attendanceStatus: record?.status || null,
+      attendanceType: record?.attendanceType || null,
+      leaveMilliseconds: record?.leaveMilliseconds || 0,
       certifications: membership.employee.skillCertifications,
     };
   });
@@ -1129,6 +1145,689 @@ export async function confirmDailyProductionPlan(input: {
     return { planId: plan.id };
   });
   return serializeDailyPlanValue(await loadPlan(prisma, result.planId));
+}
+
+type ProductionArrangementCapacityRow = {
+  employeeId: string;
+  employeeNo: string;
+  employeeName: string;
+  remainingMilliseconds: string | bigint;
+  leaveMilliseconds?: number;
+};
+
+type ProductionArrangementWarning = {
+  code: 'EMPLOYEE_OVERLOAD' | 'EMPLOYEE_LEAVE' | 'CROSS_WEEK';
+  message: string;
+  employeeId?: string;
+  workOrderId?: string;
+  stepId?: string;
+};
+
+function uniqueRequiredIds(value: unknown, label: string, maximum = 100): string[] {
+  if (!Array.isArray(value)) throw new DailyPlanServiceError(`${label}格式不正确`, 'DAILY_PLAN_BODY_INVALID');
+  const ids = [...new Set(value.map(item => String(item || '').trim()).filter(Boolean))];
+  if (!ids.length) throw new DailyPlanServiceError(`${label}不能为空`, 'DAILY_PLAN_REQUIRED');
+  if (ids.length > maximum) throw new DailyPlanServiceError(`${label}一次最多选择 ${maximum} 项`, 'DAILY_PLAN_TOO_MANY_ITEMS');
+  return ids;
+}
+
+function arrangementCapacityWarnings(input: {
+  candidates: SuggestionCandidate[];
+  employeeIds: string[];
+  capacityRows: ProductionArrangementCapacityRow[];
+  workDate: string;
+}): ProductionArrangementWarning[] {
+  const warnings: ProductionArrangementWarning[] = [];
+  const plannedByEmployee = new Map<string, bigint>();
+  input.candidates.forEach((candidate, candidateIndex) => {
+    const split = splitProductionArrangementQuantity(candidate.plannedQty, input.employeeIds, candidateIndex);
+    const labor = allocateIncrementalTaskLabor({
+      snapshot: snapshotForTask(candidate),
+      alreadyAssignedQuantity: 0,
+      quantities: split.map(item => item.quantity),
+    });
+    split.forEach((item, index) => {
+      plannedByEmployee.set(item.employeeId, (plannedByEmployee.get(item.employeeId) || 0n) + labor[index]);
+    });
+    if (input.workDate < candidate.batchWeekStartDate || input.workDate > candidate.batchWeekEndDate) {
+      warnings.push({
+        code: 'CROSS_WEEK',
+        message: `${candidate.workOrderCode} 的安排日期超出原生产周`,
+        workOrderId: candidate.workOrderId,
+        stepId: candidate.stepId,
+      });
+    }
+  });
+  const capacityByEmployee = new Map(input.capacityRows.map(item => [item.employeeId, item] as const));
+  for (const employeeId of input.employeeIds) {
+    const capacity = capacityByEmployee.get(employeeId);
+    if (!capacity) continue;
+    if ((capacity.leaveMilliseconds || 0) > 0) {
+      warnings.push({
+        code: 'EMPLOYEE_LEAVE',
+        message: `${capacity.employeeName} 当日存在请假记录`,
+        employeeId,
+      });
+    }
+    const planned = plannedByEmployee.get(employeeId) || 0n;
+    const remaining = BigInt(capacity.remainingMilliseconds || 0);
+    if (planned > remaining) {
+      warnings.push({
+        code: 'EMPLOYEE_OVERLOAD',
+        message: `${capacity.employeeName} 预计超负荷 ${Math.ceil(Number(planned - remaining) / 3_600_000)} 小时`,
+        employeeId,
+      });
+    }
+  }
+  return warnings;
+}
+
+export async function getProductionArrangementContext(input: {
+  actorUserId: string;
+  workOrderIds: string[];
+  workDate: string | Date;
+  shiftCode?: string;
+  teamId?: string | null;
+  includeWaitingUpstream?: boolean;
+}) {
+  const workDate = normalizeWorkDate(input.workDate);
+  const shiftCode = normalizeShiftCode(input.shiftCode);
+  const workOrderIds = uniqueRequiredIds(input.workOrderIds, '生产工单', 50);
+  const scope = await resolveActorScope(input.actorUserId, workDate);
+  assertVisible(scope);
+  const visibleTeamIds = scope.isAdmin || scope.isSupervisor ? null : scope.leaderTeamIds;
+  const teams = await prisma.productionTeam.findMany({
+    where: {
+      isActive: true,
+      ...(visibleTeamIds ? { id: { in: visibleTeamIds } } : {}),
+    },
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    select: { id: true, code: true, name: true, legacyTeamName: true },
+  });
+  if (!teams.length) {
+    throw new DailyPlanServiceError('尚未配置可用生产班组', 'DAILY_PLAN_TEAM_NOT_FOUND', 409);
+  }
+  const requestedTeamId = String(input.teamId || '').trim();
+  const teamId = teams.some(team => team.id === requestedTeamId)
+    ? requestedTeamId
+    : teams.find(team => scope.leaderTeamIds.includes(team.id))?.id || teams[0].id;
+  const preview = await previewDailyPlanSuggestions({
+    actorUserId: input.actorUserId,
+    workDate,
+    shiftCode,
+    teamId,
+    workOrderIds,
+    includeWaitingUpstream: input.includeWaitingUpstream !== false,
+    allowCrossWeekWorkOrders: true,
+    allocationScope: 'all_active',
+  });
+  const candidates = preview.candidates as SuggestionCandidate[];
+  const taskWeek = productionWeekDateBounds(workDate);
+  const processDefinitionIds = [...new Set(candidates.map(item => item.processDefinitionId).filter((id): id is string => Boolean(id)))];
+  const stepIds = [...new Set(candidates.map(item => item.stepId))];
+  const presets = stepIds.length || processDefinitionIds.length
+    ? await prisma.weeklyProcessWorkerPreset.findMany({
+        where: {
+          weekStartDate: taskWeek.startDate,
+          OR: [
+            ...(stepIds.length ? [{ stepId: { in: stepIds } }] : []),
+            ...(processDefinitionIds.length ? [{ processDefinitionId: { in: processDefinitionIds } }] : []),
+          ],
+        },
+        include: {
+          members: {
+            where: { employee: { is: productionEmployeeWhere() } },
+            orderBy: { position: 'asc' },
+            include: { employee: { select: { id: true, employeeNo: true, name: true } } },
+          },
+        },
+        orderBy: { updatedAt: 'desc' },
+      })
+    : [];
+  const recommendedEmployeeIds = [...new Set(presets.flatMap(preset => preset.members.map(member => member.employeeId)))];
+  return serializeDailyPlanValue({
+    ...preview,
+    teams,
+    selectedTeamId: teamId,
+    canSchedule: scope.isAdmin || scope.isSupervisor,
+    recommendedEmployeeIds,
+    presets: presets.map(preset => ({
+      id: preset.id,
+      stepId: preset.stepId,
+      processDefinitionId: preset.processDefinitionId,
+      employees: preset.members.map(member => member.employee),
+    })),
+  });
+}
+
+export async function scheduleProductionArrangements(input: {
+  actorUserId: string;
+  workDate: string | Date;
+  shiftCode?: string;
+  teamId: string;
+  workOrderIds: string[];
+  employeeIds: string[];
+  stepIds?: string[];
+  includeWaitingUpstream?: boolean;
+  reason?: string;
+  idempotencyKey: string;
+}) {
+  const workDate = normalizeWorkDate(input.workDate);
+  const workDateKey = formatWorkDate(workDate);
+  const shiftCode = normalizeShiftCode(input.shiftCode);
+  const teamId = requiredText(input.teamId, '生产班组');
+  const workOrderIds = uniqueRequiredIds(input.workOrderIds, '生产工单', 50);
+  const employeeIds = uniqueRequiredIds(input.employeeIds, '安排人员', 50);
+  const stepIds = Array.isArray(input.stepIds)
+    ? [...new Set(input.stepIds.map(item => String(item || '').trim()).filter(Boolean))]
+    : [];
+  const idempotencyKey = requiredText(input.idempotencyKey, '幂等键', 200);
+  const reason = String(input.reason || '').trim() || '生产执行主管快捷安排';
+  const scope = await resolveActorScope(input.actorUserId, workDate);
+  assertSupervisor(scope);
+  assertTeamMutation(scope, teamId);
+  const requestPayload = {
+    workDate: workDateKey,
+    shiftCode,
+    teamId,
+    workOrderIds: [...workOrderIds].sort(),
+    employeeIds: [...employeeIds].sort(),
+    stepIds: [...stepIds].sort(),
+    includeWaitingUpstream: input.includeWaitingUpstream !== false,
+    reason,
+  };
+  const revisionKey = `${idempotencyKey}:quick-schedule`;
+  const previousReplay = await findDailyMutationReplay(prisma, {
+    idempotencyKey: revisionKey,
+    actorId: scope.userId,
+    action: 'QUICK_SCHEDULE',
+    target: `${workDateKey}:${shiftCode}:${teamId}`,
+    requestPayload,
+  });
+  if (previousReplay.existing) {
+    const afterData = previousReplay.existing.afterData as Record<string, unknown> | null;
+    return serializeDailyPlanValue({
+      plan: await loadPlan(prisma, previousReplay.existing.planId),
+      taskIds: Array.isArray(afterData?.taskIds) ? afterData.taskIds.map(String) : [],
+      warnings: Array.isArray(afterData?.warnings) ? afterData.warnings : [],
+    });
+  }
+  const preview = await previewDailyPlanSuggestions({
+    actorUserId: input.actorUserId,
+    workDate,
+    shiftCode,
+    teamId,
+    workOrderIds,
+    includeWaitingUpstream: input.includeWaitingUpstream !== false,
+    allowCrossWeekWorkOrders: true,
+    allocationScope: 'all_active',
+  });
+  const allCandidates = preview.candidates as SuggestionCandidate[];
+  const candidates = stepIds.length ? allCandidates.filter(candidate => stepIds.includes(candidate.stepId)) : allCandidates;
+  const candidateWorkOrderIds = new Set(candidates.map(candidate => candidate.workOrderId));
+  const missingWorkOrderIds = workOrderIds.filter(workOrderId => !candidateWorkOrderIds.has(workOrderId));
+  if (missingWorkOrderIds.length) {
+    const blocked = preview.blocked as Array<{ workOrderId?: string; message?: string }>;
+    const messages = missingWorkOrderIds.map(workOrderId => blocked.find(item => item.workOrderId === workOrderId)?.message || '没有可安排的未完成工序');
+    throw new DailyPlanServiceError(`部分工单无法安排：${[...new Set(messages)].join('；')}`, 'DAILY_PLAN_QUICK_SCHEDULE_BLOCKED', 409);
+  }
+  const capacityRows = preview.employeeCapacity as ProductionArrangementCapacityRow[];
+  const employeeCapacityIds = new Set(capacityRows.map(item => item.employeeId));
+  const invalidEmployeeIds = employeeIds.filter(employeeId => !employeeCapacityIds.has(employeeId));
+  if (invalidEmployeeIds.length) {
+    throw new DailyPlanServiceError('所选人员不属于当前生产班组或当天不可用', 'DAILY_PLAN_EMPLOYEE_UNMAPPED', 409);
+  }
+  const warnings = arrangementCapacityWarnings({ candidates, employeeIds, capacityRows, workDate: workDateKey });
+  const result = await serializable(async tx => {
+    const replay = await findDailyMutationReplay(tx, {
+      idempotencyKey: revisionKey,
+      actorId: scope.userId,
+      action: 'QUICK_SCHEDULE',
+      target: `${workDateKey}:${shiftCode}:${teamId}`,
+      requestPayload,
+    });
+    if (replay.existing) {
+      const afterData = replay.existing.afterData as Record<string, unknown> | null;
+      return {
+        planId: replay.existing.planId,
+        taskIds: Array.isArray(afterData?.taskIds) ? afterData.taskIds.map(String) : [],
+      };
+    }
+    let plan = await tx.dailyProductionPlan.findUnique({
+      where: { workDate_shiftCode_teamId: { workDate, shiftCode, teamId } },
+    });
+    if (!plan) {
+      plan = await tx.dailyProductionPlan.create({
+        data: {
+          workDate,
+          shiftCode,
+          teamId,
+          status: DailyProductionPlanStatus.CONFIRMED,
+          confirmedAt: new Date(),
+          confirmedById: scope.userId,
+          createdById: scope.userId,
+          updatedById: scope.userId,
+        },
+      });
+    } else {
+      assertPlanCanAppendTasks(plan.status);
+      if (plan.status === DailyProductionPlanStatus.DRAFT || plan.status === DailyProductionPlanStatus.NEEDS_REVIEW) {
+        plan = await tx.dailyProductionPlan.update({
+          where: { id: plan.id },
+          data: {
+            status: DailyProductionPlanStatus.CONFIRMED,
+            confirmedAt: new Date(),
+            confirmedById: scope.userId,
+            updatedById: scope.userId,
+            version: { increment: 1 },
+          },
+        });
+      } else {
+        assertPlanAllowsAssignments(plan.status);
+      }
+    }
+
+    const poolKeys = [...new Set(candidates.map(candidate => `${candidate.productionPlanBatchId}:${candidate.stepId}`))];
+    for (const poolKey of poolKeys) {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`production-arrangement:${poolKey}`}))`;
+    }
+    const batchIds = [...new Set(candidates.map(candidate => candidate.productionPlanBatchId))];
+    const candidateStepIds = [...new Set(candidates.map(candidate => candidate.stepId))];
+    const [activeTasks, batches, steps] = await Promise.all([
+      tx.dailyProcessTask.findMany({
+        where: {
+          productionPlanBatchId: { in: batchIds },
+          stepId: { in: candidateStepIds },
+          status: { notIn: [DailyProcessTaskStatus.CANCELLED, DailyProcessTaskStatus.CARRIED_OVER] },
+        },
+        select: { id: true, productionPlanBatchId: true, stepId: true, workDate: true },
+      }),
+      tx.productionPlanBatch.findMany({ where: { id: { in: batchIds }, deletedAt: null }, select: { id: true, quantity: true } }),
+      tx.workOrderProcessStep.findMany({
+        where: { id: { in: candidateStepIds } },
+        select: { id: true, inputQty: true, processedQty: true, status: true },
+      }),
+    ]);
+    const activeByPool = new Map(activeTasks.map(task => [`${task.productionPlanBatchId || ''}:${task.stepId}`, task] as const));
+    const conflicting = candidates.find(candidate => activeByPool.has(`${candidate.productionPlanBatchId}:${candidate.stepId}`));
+    if (conflicting) {
+      const conflict = activeByPool.get(`${conflicting.productionPlanBatchId}:${conflicting.stepId}`)!;
+      throw new DailyPlanServiceError(
+        `${conflicting.workOrderCode} 的${conflicting.processName}已安排在 ${formatWorkDate(conflict.workDate)}，请使用续排`,
+        'DAILY_PLAN_ALREADY_SCHEDULED',
+        409,
+      );
+    }
+    const batchById = new Map(batches.map(batch => [batch.id, batch] as const));
+    const stepById = new Map(steps.map(step => [step.id, step] as const));
+    const maxSortOrder = await tx.dailyProcessTask.aggregate({ where: { planId: plan.id }, _max: { sortOrder: true } });
+    const taskIds: string[] = [];
+    for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+      const candidate = candidates[candidateIndex];
+      const batch = batchById.get(candidate.productionPlanBatchId);
+      const step = stepById.get(candidate.stepId);
+      if (!batch || !step) throw new DailyPlanServiceError('生产工序数据已变化，请刷新后重试', 'DAILY_PLAN_SOURCE_CHANGED', 409);
+      const plannedQty = Math.max(0, batch.quantity - step.processedQty);
+      if (plannedQty <= 0) continue;
+      const availability = resolveDailyTaskAvailability({
+        sequenceGroup: candidate.sequenceGroup,
+        inputQty: step.inputQty,
+        processedQty: step.processedQty,
+      });
+      const task = await tx.dailyProcessTask.create({
+        data: {
+          planId: plan.id,
+          workDate,
+          shiftCode,
+          productionPlanBatchId: candidate.productionPlanBatchId,
+          workOrderId: candidate.workOrderId,
+          routeId: candidate.routeId,
+          stepId: candidate.stepId,
+          routeVersion: candidate.routeVersion,
+          processCode: candidate.processCode,
+          processName: candidate.processName,
+          stageGroup: candidate.stageGroup,
+          position: candidate.position,
+          sequenceGroup: candidate.sequenceGroup,
+          standardSource: candidate.standardSource,
+          timeBasis: candidate.timeBasis,
+          unitLabel: candidate.unitLabel,
+          standardMillisecondsPerUnit: candidate.standardMillisecondsPerUnit,
+          setupMilliseconds: candidate.setupMilliseconds,
+          unitsPerProduct: candidate.unitsPerProduct,
+          countsForEfficiency: candidate.countsForEfficiency,
+          productTimeProfileId: candidate.productTimeProfileId,
+          productTimeProfileVersion: candidate.productTimeProfileVersion,
+          plannedQty,
+          availableQty: Math.min(availability.availableQty, plannedQty),
+          priority: candidate.priority,
+          priorityReason: candidate.priorityReason,
+          riskWarnings: candidate.riskWarnings,
+          status: availability.status,
+          sortOrder: (maxSortOrder._max.sortOrder || 0) + candidateIndex + 1,
+        },
+      });
+      const split = splitProductionArrangementQuantity(plannedQty, employeeIds, candidateIndex);
+      const labor = allocateIncrementalTaskLabor({
+        snapshot: snapshotForTask(candidate),
+        alreadyAssignedQuantity: 0,
+        quantities: split.map(item => item.quantity),
+      });
+      for (let assignmentIndex = 0; assignmentIndex < split.length; assignmentIndex += 1) {
+        const assignment = split[assignmentIndex];
+        const membership = await assertEmployeeCanBeAssigned({
+          client: tx,
+          taskId: task.id,
+          taskTeamId: teamId,
+          workDate,
+          employeeId: assignment.employeeId,
+          quantity: assignment.quantity,
+        });
+        await tx.dailyTaskAssignment.create({
+          data: {
+            taskId: task.id,
+            employeeId: assignment.employeeId,
+            assignedTeamId: membership.assignedTeamId,
+            quantity: assignment.quantity,
+            plannedStandardMilliseconds: labor[assignmentIndex],
+            sortOrder: assignmentIndex,
+            idempotencyKey: `${idempotencyKey}:${task.id}:${assignmentIndex}`,
+            assignedById: scope.userId,
+          },
+        });
+      }
+      taskIds.push(task.id);
+    }
+    if (!taskIds.length) {
+      throw new DailyPlanServiceError('所选工单已无剩余可安排数量', 'DAILY_PLAN_NOTHING_TO_SCHEDULE', 409);
+    }
+    await tx.dailyProductionPlan.update({
+      where: { id: plan.id },
+      data: { updatedById: scope.userId, version: { increment: 1 } },
+    });
+    await writeRevision(tx, {
+      planId: plan.id,
+      taskId: taskIds[0],
+      action: 'QUICK_SCHEDULE',
+      afterData: { taskIds, warnings, ...requestPayload },
+      reason,
+      actorId: scope.userId,
+      idempotencyKey: revisionKey,
+      idempotencyScope: `${workDateKey}:${shiftCode}:${teamId}`,
+      requestPayload,
+    });
+    return { planId: plan.id, taskIds };
+  });
+  return serializeDailyPlanValue({
+    plan: await loadPlan(prisma, result.planId),
+    taskIds: result.taskIds,
+    warnings,
+  });
+}
+
+export async function continueProductionArrangement(input: {
+  actorUserId: string;
+  sourceTaskIds: string[];
+  targetDate: string | Date;
+  shiftCode?: string;
+  employeeIds: string[];
+  reason?: string;
+  idempotencyKey: string;
+}) {
+  const sourceTaskIds = uniqueRequiredIds(input.sourceTaskIds, '待续排任务', 100);
+  const employeeIds = uniqueRequiredIds(input.employeeIds, '安排人员', 50);
+  const targetDate = normalizeWorkDate(input.targetDate);
+  const targetDateKey = formatWorkDate(targetDate);
+  const shiftCode = normalizeShiftCode(input.shiftCode);
+  const reason = String(input.reason || '').trim() || '生产执行未完成续排';
+  const idempotencyKey = requiredText(input.idempotencyKey, '幂等键', 200);
+  const scope = await resolveActorScope(input.actorUserId, targetDate);
+  assertSupervisor(scope);
+  const requestPayload = {
+    sourceTaskIds: [...sourceTaskIds].sort(),
+    targetDate: targetDateKey,
+    shiftCode,
+    employeeIds: [...employeeIds].sort(),
+    reason,
+  };
+  const revisionKey = `${idempotencyKey}:continue-arrangement`;
+  const result = await serializable(async tx => {
+    const sources = await tx.dailyProcessTask.findMany({
+      where: { id: { in: sourceTaskIds } },
+      include: {
+        plan: true,
+        step: { select: { inputQty: true, processedQty: true, status: true } },
+      },
+      orderBy: [{ workDate: 'asc' }, { position: 'asc' }],
+    });
+    if (sources.length !== sourceTaskIds.length) {
+      throw new DailyPlanServiceError('部分待续排任务不存在', 'DAILY_PLAN_TASK_NOT_FOUND', 404);
+    }
+    const teamIds = new Set(sources.map(source => source.plan.teamId));
+    if (teamIds.size !== 1) {
+      throw new DailyPlanServiceError('一次只能续排同一班组的任务', 'DAILY_PLAN_CARRY_TEAM_MISMATCH', 409);
+    }
+    const teamId = sources[0].plan.teamId;
+    assertTeamMutation(scope, teamId);
+    const replay = await findDailyMutationReplay(tx, {
+      idempotencyKey: revisionKey,
+      actorId: scope.userId,
+      action: 'CONTINUE_ARRANGEMENT',
+      target: `${targetDateKey}:${teamId}:${sourceTaskIds.sort().join(',')}`,
+      requestPayload,
+    });
+    if (replay.existing) {
+      const afterData = replay.existing.afterData as Record<string, unknown> | null;
+      return {
+        planId: replay.existing.planId,
+        taskIds: Array.isArray(afterData?.taskIds) ? afterData.taskIds.map(String) : [],
+      };
+    }
+    for (const source of sources) {
+      assertPlanAllowsAssignments(source.plan.status);
+      if (targetDate <= source.workDate) {
+        throw new DailyPlanServiceError('续排日期必须晚于原生产日期', 'DAILY_PLAN_CARRY_DATE_INVALID');
+      }
+      if (
+        source.status === DailyProcessTaskStatus.COMPLETED
+        || source.status === DailyProcessTaskStatus.CARRIED_OVER
+        || source.status === DailyProcessTaskStatus.CANCELLED
+      ) {
+        throw new DailyPlanServiceError('已完成、已续排或已取消的任务不能再次续排', 'DAILY_PLAN_STATUS_INVALID', 409);
+      }
+    }
+    const completions = await tx.processCompletion.findMany({
+      where: {
+        voidedAt: null,
+        OR: sources.map(source => ({
+          workOrderId: source.workOrderId,
+          stepId: source.stepId,
+          workDate: source.workDate,
+        })),
+      },
+      select: { workOrderId: true, stepId: true, workDate: true, goodQty: true },
+    });
+    const completedBySource = completions.reduce((map, completion) => {
+      const key = `${completion.workOrderId}:${completion.stepId}:${formatWorkDate(completion.workDate)}`;
+      map.set(key, (map.get(key) || 0) + completion.goodQty);
+      return map;
+    }, new Map<string, number>());
+    const remainingSources = sources.map(source => {
+      const key = `${source.workOrderId}:${source.stepId}:${formatWorkDate(source.workDate)}`;
+      const completedQty = Math.min(source.plannedQty, completedBySource.get(key) || 0);
+      return { source, completedQty, remainingQty: Math.max(0, source.plannedQty - completedQty) };
+    });
+    let targetPlan = await tx.dailyProductionPlan.findUnique({
+      where: { workDate_shiftCode_teamId: { workDate: targetDate, shiftCode, teamId } },
+    });
+    if (!targetPlan) {
+      targetPlan = await tx.dailyProductionPlan.create({
+        data: {
+          workDate: targetDate,
+          shiftCode,
+          teamId,
+          status: DailyProductionPlanStatus.CONFIRMED,
+          confirmedAt: new Date(),
+          confirmedById: scope.userId,
+          createdById: scope.userId,
+          updatedById: scope.userId,
+        },
+      });
+    } else {
+      assertPlanCanAppendTasks(targetPlan.status);
+      if (targetPlan.status === DailyProductionPlanStatus.DRAFT || targetPlan.status === DailyProductionPlanStatus.NEEDS_REVIEW) {
+        targetPlan = await tx.dailyProductionPlan.update({
+          where: { id: targetPlan.id },
+          data: {
+            status: DailyProductionPlanStatus.CONFIRMED,
+            confirmedAt: new Date(),
+            confirmedById: scope.userId,
+            updatedById: scope.userId,
+            version: { increment: 1 },
+          },
+        });
+      } else {
+        assertPlanAllowsAssignments(targetPlan.status);
+      }
+    }
+    const taskIds: string[] = [];
+    for (let sourceIndex = 0; sourceIndex < remainingSources.length; sourceIndex += 1) {
+      const { source, remainingQty } = remainingSources[sourceIndex];
+      if (remainingQty <= 0) {
+        await tx.dailyProcessTask.update({
+          where: { id: source.id },
+          data: { status: DailyProcessTaskStatus.COMPLETED, availableQty: 0, version: { increment: 1 } },
+        });
+        continue;
+      }
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`production-arrangement:${source.productionPlanBatchId || source.workOrderId}:${source.stepId}`}))`;
+      const conflict = await tx.dailyProcessTask.findFirst({
+        where: {
+          id: { not: source.id },
+          productionPlanBatchId: source.productionPlanBatchId,
+          stepId: source.stepId,
+          status: { notIn: [DailyProcessTaskStatus.CANCELLED, DailyProcessTaskStatus.CARRIED_OVER] },
+        },
+        select: { workDate: true },
+      });
+      if (conflict) {
+        throw new DailyPlanServiceError(
+          `${source.processName}已在 ${formatWorkDate(conflict.workDate)} 存在有效安排`,
+          'DAILY_PLAN_ALREADY_SCHEDULED',
+          409,
+        );
+      }
+      const existingTarget = await tx.dailyProcessTask.findUnique({
+        where: { planId_stepId: { planId: targetPlan.id, stepId: source.stepId } },
+      });
+      if (existingTarget) {
+        throw new DailyPlanServiceError(`${source.processName}在目标日期已存在安排`, 'DAILY_PLAN_ALREADY_SCHEDULED', 409);
+      }
+      const availability = resolveDailyTaskAvailability({
+        sequenceGroup: source.sequenceGroup,
+        inputQty: source.step.inputQty,
+        processedQty: source.step.processedQty,
+      });
+      const targetTask = await tx.dailyProcessTask.create({
+        data: {
+          planId: targetPlan.id,
+          workDate: targetDate,
+          shiftCode,
+          productionPlanBatchId: source.productionPlanBatchId,
+          workOrderId: source.workOrderId,
+          routeId: source.routeId,
+          stepId: source.stepId,
+          routeVersion: source.routeVersion,
+          processCode: source.processCode,
+          processName: source.processName,
+          stageGroup: source.stageGroup,
+          position: source.position,
+          sequenceGroup: source.sequenceGroup,
+          standardSource: source.standardSource,
+          timeBasis: source.timeBasis,
+          unitLabel: source.unitLabel,
+          standardMillisecondsPerUnit: source.standardMillisecondsPerUnit,
+          setupMilliseconds: source.setupMilliseconds,
+          unitsPerProduct: source.unitsPerProduct,
+          countsForEfficiency: source.countsForEfficiency,
+          productTimeProfileId: source.productTimeProfileId,
+          productTimeProfileVersion: source.productTimeProfileVersion,
+          plannedQty: remainingQty,
+          availableQty: Math.min(availability.availableQty, remainingQty),
+          priority: source.priority,
+          priorityReason: source.priorityReason,
+          riskWarnings: source.riskWarnings === null ? Prisma.JsonNull : source.riskWarnings,
+          status: availability.status,
+          sortOrder: source.sortOrder,
+          carryOverFromTaskId: source.id,
+        },
+      });
+      const split = splitProductionArrangementQuantity(remainingQty, employeeIds, sourceIndex);
+      const labor = allocateIncrementalTaskLabor({
+        snapshot: snapshotForTask(source),
+        alreadyAssignedQuantity: 0,
+        quantities: split.map(item => item.quantity),
+      });
+      for (let assignmentIndex = 0; assignmentIndex < split.length; assignmentIndex += 1) {
+        const assignment = split[assignmentIndex];
+        const membership = await assertEmployeeCanBeAssigned({
+          client: tx,
+          taskId: targetTask.id,
+          taskTeamId: teamId,
+          workDate: targetDate,
+          employeeId: assignment.employeeId,
+          quantity: assignment.quantity,
+        });
+        await tx.dailyTaskAssignment.create({
+          data: {
+            taskId: targetTask.id,
+            employeeId: assignment.employeeId,
+            assignedTeamId: membership.assignedTeamId,
+            quantity: assignment.quantity,
+            plannedStandardMilliseconds: labor[assignmentIndex],
+            sortOrder: assignmentIndex,
+            idempotencyKey: `${idempotencyKey}:${targetTask.id}:${assignmentIndex}`,
+            assignedById: scope.userId,
+          },
+        });
+      }
+      await tx.dailyProcessTask.update({
+        where: { id: source.id },
+        data: { status: DailyProcessTaskStatus.CARRIED_OVER, version: { increment: 1 } },
+      });
+      await tx.dailyTaskAssignment.updateMany({
+        where: { taskId: source.id, status: { not: DailyTaskAssignmentStatus.CANCELLED } },
+        data: { status: DailyTaskAssignmentStatus.CANCELLED, cancelledAt: new Date(), version: { increment: 1 } },
+      });
+      taskIds.push(targetTask.id);
+    }
+    await tx.dailyProductionPlan.update({
+      where: { id: targetPlan.id },
+      data: { updatedById: scope.userId, version: { increment: 1 } },
+    });
+    await writeRevision(tx, {
+      planId: targetPlan.id,
+      taskId: sourceTaskIds[0],
+      action: 'CONTINUE_ARRANGEMENT',
+      beforeData: remainingSources.map(item => ({
+        taskId: item.source.id,
+        workDate: item.source.workDate,
+        plannedQty: item.source.plannedQty,
+        completedQty: item.completedQty,
+      })),
+      afterData: { taskIds, ...requestPayload },
+      reason,
+      actorId: scope.userId,
+      idempotencyKey: revisionKey,
+      idempotencyScope: `${targetDateKey}:${teamId}:${sourceTaskIds.sort().join(',')}`,
+      requestPayload,
+    });
+    return { planId: targetPlan.id, taskIds };
+  });
+  return serializeDailyPlanValue({
+    plan: await loadPlan(prisma, result.planId),
+    taskIds: result.taskIds,
+  });
 }
 
 type AssignmentInput = {

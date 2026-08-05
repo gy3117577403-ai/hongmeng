@@ -7549,3 +7549,967 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
     font-size: 10px;
   }
 }
+
+/* Supervisor production arrangements */
+.hm-production-workbench .production-arrangement-filters {
+  min-height: 38px;
+  flex: 0 0 38px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  overflow-x: auto;
+  border: 1px solid rgba(197, 207, 219, .92);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 2px 7px rgba(20, 34, 56, .045);
+  scrollbar-width: thin;
+}
+
+.hm-production-workbench .production-arrangement-filters > span {
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding-right: 9px;
+  border-right: 1px solid #e4e9ef;
+  color: #59687b;
+  font-size: 11px;
+  font-weight: 780;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-arrangement-filters > span svg {
+  color: var(--production-dispatch-orange);
+}
+
+.hm-production-workbench .production-arrangement-filters > button {
+  min-height: 28px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dce3eb;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #fff, #f7f9fb);
+  color: #66758a;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 730;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.hm-production-workbench .production-arrangement-filters > button b {
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #edf2f7;
+  color: #536176;
+  font-size: 9px;
+  text-align: center;
+}
+
+.hm-production-workbench .production-arrangement-filters > button:hover,
+.hm-production-workbench .production-arrangement-filters > button.active {
+  border-color: #f0a06c;
+  background: #fff4eb;
+  color: #c84d04;
+}
+
+.hm-production-workbench .production-arrangement-filters > button.active b {
+  background: #ffdfca;
+  color: #b54100;
+}
+
+.hm-production-workbench .production-arrangement-filters > button.danger b {
+  background: #fee2e2;
+  color: #b42323;
+}
+
+.hm-production-workbench .production-arrangement-filters > button.warning b {
+  background: #ffedd5;
+  color: #a95100;
+}
+
+.hm-production-workbench .production-dispatch-list-head,
+.hm-production-workbench .production-dispatch-row {
+  min-width: 1090px;
+  grid-template-columns: minmax(190px, 1.15fr) minmax(220px, 1.3fr) minmax(112px, .66fr) minmax(148px, .86fr) minmax(100px, .58fr) minmax(112px, .64fr) minmax(96px, .55fr);
+  gap: 8px;
+}
+
+.hm-production-workbench .production-dispatch-row {
+  min-height: 132px;
+}
+
+.hm-production-workbench .production-dispatch-load-more {
+  min-width: 1090px;
+}
+
+.hm-production-workbench .production-dispatch-process-flow {
+  min-width: 0;
+  min-height: 104px;
+  padding: 7px 5px;
+  display: grid;
+  align-content: center;
+  gap: 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--production-dispatch-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hm-production-workbench .production-dispatch-process-flow:hover {
+  background: #f5f8fb;
+}
+
+.hm-production-workbench .production-dispatch-process-flow-head {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, .95fr);
+  align-items: center;
+  gap: 6px;
+}
+
+.hm-production-workbench .production-dispatch-process-flow-head > span:first-child,
+.hm-production-workbench .production-dispatch-process-next {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-production-workbench .production-dispatch-process-flow-head > span:first-child b {
+  width: fit-content;
+  max-width: 100%;
+  padding: 3px 7px;
+  overflow: hidden;
+  border: 1px solid #8db9f7;
+  border-radius: 999px;
+  background: #f4f9ff;
+  color: var(--production-dispatch-blue);
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-dispatch-process-flow-head small {
+  overflow: hidden;
+  color: #8491a3;
+  font-size: 9px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-dispatch-process-flow-head > em {
+  color: #7f8da0;
+  font-size: 9px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-dispatch-process-next {
+  position: relative;
+  padding-left: 16px;
+}
+
+.hm-production-workbench .production-dispatch-process-next > svg {
+  position: absolute;
+  top: 3px;
+  left: 0;
+  color: var(--production-dispatch-orange);
+}
+
+.hm-production-workbench .production-dispatch-process-next b {
+  overflow: hidden;
+  color: var(--production-dispatch-orange);
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-dispatch-process-flow-bar {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e5ebf2;
+}
+
+.hm-production-workbench .production-dispatch-process-flow-bar > span {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1768e5, #2d8cff);
+}
+
+.hm-production-workbench .production-dispatch-process-flow > .production-dispatch-route-track {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 0;
+}
+
+.hm-production-workbench .production-arrangement-date-cell,
+.hm-production-workbench .production-arrangement-worker-cell {
+  min-width: 0;
+  min-height: 104px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+
+.hm-production-workbench .production-arrangement-record,
+.hm-production-workbench .production-arrangement-worker-record {
+  min-width: 0;
+  min-height: 34px;
+  padding: 4px 6px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  overflow: hidden;
+  border-left: 2px solid #5992e6;
+  border-radius: 4px;
+  background: #f3f7fd;
+}
+
+.hm-production-workbench .production-arrangement-record > span,
+.hm-production-workbench .production-arrangement-worker-record > span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+}
+
+.hm-production-workbench .production-arrangement-record b,
+.hm-production-workbench .production-arrangement-worker-record b {
+  min-width: 0;
+  overflow: hidden;
+  color: #243247;
+  font-size: 10px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-arrangement-record em,
+.hm-production-workbench .production-arrangement-worker-record em {
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: #ffedd5;
+  color: #a64c00;
+  font-size: 8px;
+  font-style: normal;
+}
+
+.hm-production-workbench .production-arrangement-record small,
+.hm-production-workbench .production-arrangement-worker-record small,
+.hm-production-workbench .production-arrangement-history {
+  overflow: hidden;
+  color: #7b899b;
+  font-size: 8px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-arrangement-record.status-today,
+.hm-production-workbench .production-arrangement-worker-record.status-today,
+.hm-production-workbench .production-arrangement-record.status-completed,
+.hm-production-workbench .production-arrangement-worker-record.status-completed {
+  border-left-color: #15965c;
+  background: #eff9f3;
+}
+
+.hm-production-workbench .production-arrangement-record.status-partial,
+.hm-production-workbench .production-arrangement-worker-record.status-partial,
+.hm-production-workbench .production-arrangement-record.status-needs_review,
+.hm-production-workbench .production-arrangement-worker-record.status-needs_review {
+  border-left-color: #e78a15;
+  background: #fff7e9;
+}
+
+.hm-production-workbench .production-arrangement-record.status-overdue,
+.hm-production-workbench .production-arrangement-worker-record.status-overdue {
+  border-left-color: #dc3d3d;
+  background: #fff1f1;
+}
+
+.hm-production-workbench .production-arrangement-record.status-carried_over,
+.hm-production-workbench .production-arrangement-worker-record.status-carried_over {
+  border-left-color: #8b78c8;
+  background: #f6f2ff;
+  opacity: .82;
+}
+
+.hm-production-workbench .production-arrangement-empty {
+  color: #9aa5b3;
+  font-size: 10px;
+  text-align: center;
+}
+
+.hm-production-workbench .production-arrangement-add {
+  min-height: 28px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px dashed #e8894b;
+  border-radius: 5px;
+  background: #fff7f1;
+  color: #ca5007;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 780;
+  cursor: pointer;
+}
+
+.hm-production-workbench .production-arrangement-add:hover {
+  border-style: solid;
+  background: #ffeadc;
+}
+
+.hm-production-workbench .production-batch-bar button.primary {
+  border-color: var(--production-dispatch-orange);
+  background: var(--production-dispatch-orange);
+  color: #fff;
+}
+
+.hm-production-workbench.production-dispatch-density-compact .production-dispatch-row {
+  min-height: 112px;
+}
+
+.hm-production-workbench.production-dispatch-density-compact .production-dispatch-process-flow,
+.hm-production-workbench.production-dispatch-density-compact .production-arrangement-date-cell,
+.hm-production-workbench.production-dispatch-density-compact .production-arrangement-worker-cell {
+  min-height: 92px;
+}
+
+.production-arrangement-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 140;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(18, 31, 50, .42);
+  backdrop-filter: blur(5px);
+}
+
+.production-arrangement-dialog {
+  width: min(1160px, calc(100vw - 40px));
+  max-height: calc(100dvh - 40px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid rgba(225, 231, 239, .95);
+  border-radius: 16px;
+  background: #f7f9fc;
+  box-shadow: 0 28px 80px rgba(15, 29, 49, .28), 0 4px 15px rgba(15, 29, 49, .12);
+  color: #1c2b40;
+  outline: none;
+}
+
+.production-arrangement-dialog > header {
+  min-height: 92px;
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  border-bottom: 1px solid #e3e8ef;
+  background: linear-gradient(125deg, #fff 0 65%, #fff2e8 100%);
+}
+
+.production-arrangement-dialog > header > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.production-arrangement-dialog > header span {
+  color: #dc5a09;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.production-arrangement-dialog > header h2 {
+  margin: 0;
+  font-size: 23px;
+  line-height: 1.15;
+}
+
+.production-arrangement-dialog > header p {
+  max-width: 800px;
+  margin: 0;
+  overflow: hidden;
+  color: #738196;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.production-arrangement-dialog > header > button {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dce3eb;
+  border-radius: 10px;
+  background: #fff;
+  color: #617086;
+  cursor: pointer;
+}
+
+.production-arrangement-dialog-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 14px;
+  padding: 14px;
+  overflow: hidden;
+}
+
+.production-arrangement-config,
+.production-arrangement-advice {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  border: 1px solid #e1e7ee;
+  border-radius: 12px;
+  background: #fff;
+  scrollbar-width: thin;
+}
+
+.production-arrangement-config {
+  padding: 15px;
+}
+
+.production-arrangement-fields {
+  display: grid;
+  grid-template-columns: 1.25fr .8fr 1.4fr;
+  gap: 10px;
+}
+
+.production-arrangement-fields label {
+  display: grid;
+  gap: 6px;
+  color: #526177;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.production-arrangement-fields input,
+.production-arrangement-fields select,
+.production-arrangement-employee-search {
+  min-height: 42px;
+  border: 1px solid #d7dfe9;
+  border-radius: 8px;
+  background: #fff;
+  color: #1e2f45;
+  font: inherit;
+}
+
+.production-arrangement-fields input,
+.production-arrangement-fields select {
+  width: 100%;
+  padding: 0 11px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.production-arrangement-scope-toggle {
+  margin-top: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  border: 1px solid #f3d1ba;
+  border-radius: 9px;
+  background: #fff8f2;
+  cursor: pointer;
+}
+
+.production-arrangement-scope-toggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #ef620a;
+}
+
+.production-arrangement-scope-toggle span {
+  display: grid;
+  gap: 2px;
+}
+
+.production-arrangement-scope-toggle b {
+  font-size: 12px;
+}
+
+.production-arrangement-scope-toggle small {
+  color: #7b8798;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.production-arrangement-overview {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.production-arrangement-overview > div {
+  min-height: 68px;
+  padding: 9px 10px;
+  display: grid;
+  align-content: center;
+  grid-template-columns: auto 1fr;
+  border: 1px solid #e3e8ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.production-arrangement-overview span {
+  grid-column: 1 / -1;
+  color: #7a8798;
+  font-size: 10px;
+}
+
+.production-arrangement-overview strong {
+  font-size: 21px;
+}
+
+.production-arrangement-overview small {
+  align-self: end;
+  margin: 0 0 3px 4px;
+  color: #7c8999;
+  font-size: 9px;
+}
+
+.production-arrangement-processes {
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid #e3e8ef;
+  border-radius: 9px;
+}
+
+.production-arrangement-processes > div,
+.production-arrangement-workers-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.production-arrangement-processes > div strong,
+.production-arrangement-workers-head strong {
+  font-size: 13px;
+}
+
+.production-arrangement-processes > div small,
+.production-arrangement-workers-head small {
+  color: #7a8798;
+  font-size: 10px;
+}
+
+.production-arrangement-processes > span {
+  margin-top: 9px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.production-arrangement-processes > span b {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: #eef5ff;
+  color: #2767ba;
+  font-size: 9px;
+}
+
+.production-arrangement-processes > p,
+.production-arrangement-employee-grid > p {
+  margin: 9px 0 0;
+  color: #9a5b24;
+  font-size: 10px;
+}
+
+.production-arrangement-workers-head {
+  margin-top: 14px;
+}
+
+.production-arrangement-workers-head > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.production-arrangement-workers-head > div:last-child {
+  display: flex;
+  gap: 5px;
+}
+
+.production-arrangement-workers-head button {
+  min-height: 28px;
+  padding: 0 8px;
+  border: 1px solid #d8e0e9;
+  border-radius: 6px;
+  background: #fff;
+  color: #53647a;
+  font: inherit;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.production-arrangement-employee-search {
+  margin-top: 9px;
+  padding: 0 11px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #8090a3;
+}
+
+.production-arrangement-employee-search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  font: inherit;
+  font-size: 11px;
+}
+
+.production-arrangement-employee-grid {
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.production-arrangement-employee-grid > button {
+  min-width: 0;
+  min-height: 58px;
+  padding: 7px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #dfe5ed;
+  border-radius: 8px;
+  background: #fff;
+  color: #24344a;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.production-arrangement-employee-grid > button > span {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #edf4ff;
+  color: #2f6fca;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.production-arrangement-employee-grid > button > b {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  overflow: hidden;
+  font-size: 11px;
+}
+
+.production-arrangement-employee-grid > button > b small {
+  overflow: hidden;
+  color: #7c899a;
+  font-size: 8px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.production-arrangement-employee-grid > button > em {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  color: #66768a;
+  font-size: 8px;
+  font-style: normal;
+}
+
+.production-arrangement-employee-grid > button > em i {
+  padding: 1px 4px;
+  border-radius: 999px;
+  background: #e6f6ed;
+  color: #118253;
+  font-style: normal;
+}
+
+.production-arrangement-employee-grid > button.selected {
+  border-color: #f27a31;
+  background: #fff5ed;
+  box-shadow: inset 0 0 0 1px rgba(240, 90, 0, .12);
+}
+
+.production-arrangement-employee-grid > button.selected > span {
+  background: #f1640d;
+  color: #fff;
+}
+
+.production-arrangement-employee-grid > button.leave,
+.production-arrangement-employee-grid > button.overload {
+  border-color: #efc4a7;
+}
+
+.production-arrangement-employee-grid > button.overload {
+  box-shadow: inset 0 -3px 0 #de4848;
+}
+
+.production-arrangement-employee-skeleton {
+  min-height: 58px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, #f0f3f6, #fafbfc, #f0f3f6);
+  background-size: 200% 100%;
+  animation: production-arrangement-pulse 1.4s ease-in-out infinite;
+}
+
+.production-arrangement-advice {
+  padding: 14px;
+}
+
+.production-arrangement-advice-title {
+  padding: 11px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #fff2e7, #fff8f2);
+  color: #d45609;
+}
+
+.production-arrangement-advice-title span {
+  display: grid;
+  gap: 2px;
+}
+
+.production-arrangement-advice-title small {
+  font-size: 9px;
+}
+
+.production-arrangement-advice-title strong {
+  color: #2a394e;
+  font-size: 13px;
+}
+
+.production-arrangement-advice dl {
+  margin: 12px 0 0;
+}
+
+.production-arrangement-advice dl > div {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid #e8ecf1;
+}
+
+.production-arrangement-advice dt {
+  color: #748196;
+  font-size: 10px;
+}
+
+.production-arrangement-advice dd {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.production-arrangement-warnings,
+.production-arrangement-ready,
+.production-arrangement-history-card,
+.production-arrangement-error {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid #ead8c9;
+  border-radius: 9px;
+  background: #fff9f4;
+}
+
+.production-arrangement-warnings > strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #ad510d;
+  font-size: 11px;
+}
+
+.production-arrangement-warnings p {
+  margin: 7px 0 0;
+  padding-top: 7px;
+  border-top: 1px solid #f0e0d2;
+  color: #7e5b3e;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.production-arrangement-warnings p.danger {
+  color: #b02c2c;
+}
+
+.production-arrangement-warnings p.warning {
+  color: #9a590f;
+}
+
+.production-arrangement-ready,
+.production-arrangement-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.production-arrangement-ready {
+  border-color: #cce9d9;
+  background: #f0faf5;
+  color: #168456;
+}
+
+.production-arrangement-ready span,
+.production-arrangement-error span,
+.production-arrangement-history-card {
+  display: grid;
+  gap: 3px;
+}
+
+.production-arrangement-ready strong,
+.production-arrangement-error strong,
+.production-arrangement-history-card strong {
+  color: #26364b;
+  font-size: 11px;
+}
+
+.production-arrangement-ready small,
+.production-arrangement-error small,
+.production-arrangement-history-card small {
+  color: #768498;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.production-arrangement-history-card > span {
+  color: #7a68b2;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.production-arrangement-error {
+  border-color: #f0c3c3;
+  background: #fff2f2;
+  color: #c73434;
+}
+
+.production-arrangement-dialog > footer {
+  min-height: 68px;
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid #e1e7ee;
+  background: #fff;
+}
+
+.production-arrangement-dialog > footer > span {
+  color: #738196;
+  font-size: 10px;
+}
+
+.production-arrangement-dialog > footer > div {
+  display: flex;
+  gap: 8px;
+}
+
+.production-arrangement-dialog > footer button {
+  min-height: 40px;
+  padding: 0 18px;
+  border: 1px solid #d8e0e9;
+  border-radius: 8px;
+  background: #fff;
+  color: #516178;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 780;
+  cursor: pointer;
+}
+
+.production-arrangement-dialog > footer button.primary {
+  min-width: 190px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-color: #ef620a;
+  background: linear-gradient(180deg, #ff751b, #e85800);
+  color: #fff;
+  box-shadow: 0 7px 16px rgba(231, 87, 0, .2);
+}
+
+.production-arrangement-dialog button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.production-arrangement-dialog button:focus-visible,
+.production-arrangement-dialog input:focus-visible,
+.production-arrangement-dialog select:focus-visible {
+  outline: 3px solid rgba(240, 90, 0, .28);
+  outline-offset: 2px;
+}
+
+@keyframes production-arrangement-pulse {
+  50% { background-position: 100% 0; }
+}
+
+@media (max-width: 900px) {
+  .production-arrangement-backdrop {
+    padding: 8px;
+  }
+
+  .production-arrangement-dialog {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+  }
+
+  .production-arrangement-dialog-body {
+    display: block;
+    overflow-y: auto;
+  }
+
+  .production-arrangement-config,
+  .production-arrangement-advice {
+    overflow: visible;
+  }
+
+  .production-arrangement-advice {
+    margin-top: 12px;
+  }
+
+  .production-arrangement-fields,
+  .production-arrangement-overview,
+  .production-arrangement-employee-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}

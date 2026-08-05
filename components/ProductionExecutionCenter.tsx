@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Printer, RefreshCw, Rows3, Search, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, Users, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
@@ -24,7 +24,7 @@ import type {
 type StageKey = 'not_issued' | 'frontend' | 'backend' | 'completed';
 type ViewKey = 'board' | 'today' | 'exceptions';
 type WeekScope = 'current' | 'carryover' | 'next' | 'afterNext' | 'history';
-type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'due_soon' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing' | 'in_production' | 'not_started' | 'has_next_process' | 'waiting_transfer';
+type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'due_soon' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing' | 'in_production' | 'not_started' | 'has_next_process' | 'waiting_transfer' | 'arrangement_unassigned' | 'arrangement_scheduled' | 'arrangement_today' | 'arrangement_overdue' | 'arrangement_partial';
 type DetailTab = 'production' | 'drawing' | 'progress' | 'source';
 type BatchOperation = 'set_priority' | 'add_remark';
 type DuePreset = '' | 'today' | 'tomorrow' | 'overdue' | 'week' | 'custom';
@@ -77,6 +77,114 @@ type ProductionQuantityFlow = {
   materialized: boolean;
   segments: ProductionStageSegment[];
   error: { code: string; field: string; message: string } | null;
+};
+
+type ProductionArrangementStatus = 'planned' | 'today' | 'partial' | 'completed' | 'overdue' | 'carried_over' | 'needs_review';
+
+type ProductionArrangementWorker = {
+  employeeId: string;
+  employeeNo: string;
+  name: string;
+  quantity: number;
+  plannedStandardMilliseconds: string;
+};
+
+type ProductionArrangement = {
+  id: string;
+  planId: string;
+  workDate: string;
+  shiftCode: string;
+  teamId: string;
+  teamName: string;
+  planStatus: string;
+  status: ProductionArrangementStatus;
+  plannedQty: number;
+  completedQty: number;
+  defectQty: number;
+  remainingQty: number;
+  completedTaskCount: number;
+  totalTaskCount: number;
+  partial: boolean;
+  overdue: boolean;
+  crossWeek: boolean;
+  continuable: boolean;
+  taskIds: string[];
+  sourceTaskIds: string[];
+  processNames: string[];
+  employees: ProductionArrangementWorker[];
+};
+
+type ProductionArrangementMetrics = {
+  unassigned: number;
+  scheduled: number;
+  today: number;
+  overdue: number;
+  partial: number;
+};
+
+type ProductionArrangementContext = {
+  workDate: string;
+  weekStartDate: string;
+  weekEndDate: string;
+  shiftCode: string;
+  teams: Array<{ id: string; code: string; name: string; legacyTeamName?: string | null }>;
+  selectedTeamId: string;
+  canSchedule: boolean;
+  candidates: Array<{
+    workOrderId: string;
+    workOrderCode: string;
+    productName: string;
+    customerName: string;
+    stepId: string;
+    processName: string;
+    sequenceGroup: number;
+    status: string;
+    plannedQty: number;
+    availableQty: number;
+    estimatedStandardMilliseconds: string;
+    batchWeekStartDate: string;
+    batchWeekEndDate: string;
+    riskWarnings: string[];
+  }>;
+  blocked: Array<{ workOrderId?: string; workOrderCode?: string; stepId?: string; reason: string; message: string }>;
+  employeeCapacity: Array<{
+    employeeId: string;
+    employeeNo: string;
+    employeeName: string;
+    department?: string | null;
+    position?: string | null;
+    team?: string | null;
+    capacityMilliseconds: string | number;
+    assignedMilliseconds: string | number;
+    remainingMilliseconds: string | number;
+    source: string;
+    attendanceStatus?: string | null;
+    attendanceType?: string | null;
+    leaveMilliseconds?: string | number | null;
+  }>;
+  recommendedEmployeeIds: string[];
+  summary: {
+    workOrderCount: number;
+    taskCount: number;
+    readyCount: number;
+    waitingUpstreamCount: number;
+    blockedCount: number;
+    estimatedStandardMilliseconds: string;
+  };
+};
+
+type ProductionArrangementRequest = {
+  orders: ProductionOrder[];
+  mode: 'schedule' | 'continue';
+  sourceArrangement?: ProductionArrangement;
+};
+
+type ProductionArrangementForm = {
+  workDate: string;
+  shiftCode: string;
+  teamId: string;
+  employeeIds: string[];
+  includeWaitingUpstream: boolean;
 };
 
 type ProductionOrder = {
@@ -164,6 +272,7 @@ type ProductionOrder = {
   weekStartDate?: string | null;
   weekEndDate?: string | null;
   updatedAt: string;
+  arrangements: ProductionArrangement[];
 };
 
 type ProductionSummary = {
@@ -191,6 +300,7 @@ type ProductionSummary = {
     dueSoon: number;
     completed: number;
   };
+  arrangementMetrics: ProductionArrangementMetrics;
   quantityTotals: {
     targetQty: number;
     completedQty: number;
@@ -214,6 +324,7 @@ type BoardPayload = {
   weekEndDate?: string | null;
   stageCounts: Record<StageKey, number>;
   items: ProductionOrder[];
+  arrangementMetrics: ProductionArrangementMetrics;
   filterOptions: { customers: string[] };
   pagination: { page: number; pageSize: number; total: number; totalPages: number };
 };
@@ -461,6 +572,11 @@ const validQuickFilters = new Set<QuickFilter>([
   'overdue', 'urgent', 'drawing', 'material', 'documents', 'completed', 'due_today', 'updated_today', 'completed_today',
   'delivery_missing', 'specification_invalid', 'customer_missing', 'drawing_confirmation', 'tail_remaining',
   'due_soon', 'in_production', 'not_started', 'has_next_process', 'waiting_transfer',
+  'arrangement_unassigned', 'arrangement_scheduled', 'arrangement_today', 'arrangement_overdue', 'arrangement_partial',
+]);
+
+const arrangementQuickFilters = new Set<QuickFilter>([
+  'arrangement_unassigned', 'arrangement_scheduled', 'arrangement_today', 'arrangement_overdue', 'arrangement_partial',
 ]);
 
 function cloneAdvanced(value: AdvancedFilters): AdvancedFilters {
@@ -473,6 +589,46 @@ function dateText(value?: string | null): string {
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit' }).format(date);
 }
+
+function chinaDateKey(value = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(value);
+}
+
+function addDateKeyDays(value: string, days: number): string {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return value;
+  const date = new Date(Date.UTC(year, month - 1, day + days, 12));
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(date);
+}
+
+function compactDateText(value: string): string {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return value;
+  return `${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`;
+}
+
+function durationHours(value: string | number | bigint | null | undefined): number {
+  try {
+    const milliseconds = typeof value === 'bigint' ? value : BigInt(String(value || 0));
+    return Number(milliseconds) / 3_600_000;
+  } catch {
+    return 0;
+  }
+}
+
+const arrangementStatusText: Record<ProductionArrangementStatus, string> = {
+  planned: '已安排',
+  today: '今日生产',
+  partial: '部分完成',
+  completed: '已完成',
+  overdue: '逾期未完',
+  carried_over: '已续排',
+  needs_review: '待复核',
+};
 
 function dateTimeText(value?: string | null): string {
   if (!value) return '-';
@@ -804,6 +960,9 @@ function withProductionDerived(order: ProductionOrder): ProductionOrder {
 export default function ProductionExecutionCenter({ user }: { user: CurrentUserDTO }) {
   const router = useRouter();
   const canAdministerProduction = user.laborRole === 'ADMIN';
+  const canScheduleProduction = user.canAccessDailyPlans
+    && (user.laborRole === 'ADMIN' || user.dailyPlanningRoles.includes('WORKSHOP_SUPERVISOR'));
+  const canSelectProduction = canAdministerProduction || canScheduleProduction;
   const canPrintTravelers = user.laborRole === 'ADMIN' || user.laborRole === 'TEAM_LEAD';
   const [summary, setSummary] = useState<ProductionSummary | null>(null);
   const [board, setBoard] = useState<BoardPayload | null>(null);
@@ -852,6 +1011,15 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [completionError, setCompletionError] = useState('');
   const [completionStepId, setCompletionStepId] = useState('');
   const [completionIdempotencyKey, setCompletionIdempotencyKey] = useState('');
+  const [arrangementRequest, setArrangementRequest] = useState<ProductionArrangementRequest | null>(null);
+  const [arrangementForm, setArrangementForm] = useState<ProductionArrangementForm>({
+    workDate: chinaDateKey(), shiftCode: 'DAY', teamId: '', employeeIds: [], includeWaitingUpstream: true,
+  });
+  const [arrangementContext, setArrangementContext] = useState<ProductionArrangementContext | null>(null);
+  const [arrangementLoading, setArrangementLoading] = useState(false);
+  const [arrangementSaving, setArrangementSaving] = useState(false);
+  const [arrangementError, setArrangementError] = useState('');
+  const [arrangementSearch, setArrangementSearch] = useState('');
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [density, setDensity] = useState<DispatchDensity>('comfortable');
@@ -864,6 +1032,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const statusButtonRef = useRef<HTMLButtonElement | null>(null);
   const drawingButtonRef = useRef<HTMLButtonElement | null>(null);
   const completionRequestRef = useRef(0);
+  const arrangementRequestRef = useRef(0);
+  const arrangementAutoSelectionRef = useRef('');
   const boardShellRef = useRef<HTMLDivElement | null>(null);
   const dispatchLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const pendingRestoreRef = useRef<ProductionExecutionViewState | null>(null);
@@ -949,11 +1119,11 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     const restoredPageSize = restored?.pageSize || Number(sourceParams.get('displaySize')) || 12;
     setDispatchPageSize(restoredPageSize === 8 || restoredPageSize === 16 ? restoredPageSize : 12);
     if (restored) {
-      setBatchMode(canAdministerProduction && restored.batchMode);
-      setSelected(canAdministerProduction && Array.isArray(restored.selectedIds) ? restored.selectedIds : []);
+      setBatchMode(canSelectProduction && restored.batchMode);
+      setSelected(canSelectProduction && Array.isArray(restored.selectedIds) ? restored.selectedIds : []);
     }
     setStateReady(true);
-  }, [canAdministerProduction]);
+  }, [canSelectProduction]);
 
   useEffect(() => {
     if (!stateReady) return undefined;
@@ -1107,6 +1277,57 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     const timer = window.setInterval(refresh, 30_000);
     return () => window.clearInterval(timer);
   }, [autoRefresh]);
+
+  useEffect(() => {
+    if (!arrangementRequest) return undefined;
+    const requestId = arrangementRequestRef.current + 1;
+    arrangementRequestRef.current = requestId;
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      workDate: arrangementForm.workDate,
+      shiftCode: arrangementForm.shiftCode,
+      includeWaitingUpstream: arrangementForm.includeWaitingUpstream ? '1' : '0',
+    });
+    arrangementRequest.orders.forEach(order => params.append('workOrderId', order.id));
+    if (arrangementForm.teamId) params.set('teamId', arrangementForm.teamId);
+    setArrangementLoading(true);
+    setArrangementError('');
+    fetch(`/api/production/arrangements/context?${params.toString()}`, { cache: 'no-store', signal: controller.signal })
+      .then(async response => {
+        const body = await response.json().catch(() => ({}));
+        if (response.status === 401) location.href = '/login';
+        if (!response.ok || !body.data) throw new Error(body.error || '生产安排信息加载失败');
+        return body.data as ProductionArrangementContext;
+      })
+      .then(data => {
+        if (requestId !== arrangementRequestRef.current) return;
+        setArrangementContext(data);
+        setArrangementForm(current => {
+          const nextTeamId = current.teamId || data.selectedTeamId;
+          const selectionKey = `${arrangementRequest.mode}:${arrangementRequest.orders.map(order => order.id).join(',')}:${data.workDate}:${nextTeamId}`;
+          const previousEmployees = arrangementRequest.sourceArrangement?.employees.map(employee => employee.employeeId) || [];
+          const defaultEmployees = previousEmployees.length ? previousEmployees : data.recommendedEmployeeIds;
+          const shouldAutoSelect = current.employeeIds.length === 0
+            && defaultEmployees.length > 0
+            && arrangementAutoSelectionRef.current !== selectionKey;
+          if (shouldAutoSelect) arrangementAutoSelectionRef.current = selectionKey;
+          return {
+            ...current,
+            teamId: nextTeamId,
+            employeeIds: shouldAutoSelect ? defaultEmployees : current.employeeIds,
+          };
+        });
+      })
+      .catch(reason => {
+        if (reason instanceof DOMException && reason.name === 'AbortError') return;
+        if (requestId === arrangementRequestRef.current) {
+          setArrangementContext(null);
+          setArrangementError(reason instanceof Error ? reason.message : '生产安排信息加载失败');
+        }
+      })
+      .finally(() => { if (requestId === arrangementRequestRef.current) setArrangementLoading(false); });
+    return () => controller.abort();
+  }, [arrangementForm.includeWaitingUpstream, arrangementForm.shiftCode, arrangementForm.teamId, arrangementForm.workDate, arrangementRequest]);
 
   useEffect(() => {
     if (!insightsOpen) return undefined;
@@ -1364,6 +1585,132 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
   function toggleSelected(id: string): void {
     setSelected(current => current.includes(id) ? current.filter(item => item !== id) : [...current, id]);
+  }
+
+  function toggleArrangementQuickFilter(key: QuickFilter): void {
+    setTargetWorkOrderId('');
+    setView('board');
+    setSelected([]);
+    setQuick(current => {
+      const withoutArrangement = current.filter(item => !arrangementQuickFilters.has(item));
+      return current.includes(key) ? withoutArrangement : [...withoutArrangement, key];
+    });
+    setPage(1);
+  }
+
+  function openProductionArrangement(orders: ProductionOrder[], sourceArrangement?: ProductionArrangement): void {
+    if (!canScheduleProduction) {
+      setToast('仅车间主管或管理员可以安排生产日期和人员');
+      return;
+    }
+    if (board?.readOnly) {
+      setToast('历史周仅供查看，不能安排生产');
+      return;
+    }
+    const uniqueOrders = [...new Map(orders.map(order => [order.id, order] as const)).values()];
+    if (!uniqueOrders.length) return;
+    if (uniqueOrders.length > 50) {
+      setToast('一次最多批量安排 50 个工单');
+      return;
+    }
+    const today = chinaDateKey();
+    const sourceNextDay = sourceArrangement ? addDateKeyDays(sourceArrangement.workDate, 1) : today;
+    const workDate = sourceArrangement && sourceNextDay > today ? sourceNextDay : today;
+    setArrangementRequest({
+      orders: uniqueOrders,
+      mode: sourceArrangement ? 'continue' : 'schedule',
+      sourceArrangement,
+    });
+    setArrangementForm({
+      workDate,
+      shiftCode: sourceArrangement?.shiftCode || 'DAY',
+      teamId: sourceArrangement?.teamId || '',
+      employeeIds: sourceArrangement?.employees.map(employee => employee.employeeId) || [],
+      includeWaitingUpstream: true,
+    });
+    arrangementAutoSelectionRef.current = '';
+    setArrangementContext(null);
+    setArrangementSearch('');
+    setArrangementError('');
+  }
+
+  function closeProductionArrangement(force = false): void {
+    if (arrangementSaving && !force) return;
+    arrangementRequestRef.current += 1;
+    setArrangementRequest(null);
+    setArrangementContext(null);
+    setArrangementSearch('');
+    setArrangementError('');
+  }
+
+  async function saveProductionArrangement(): Promise<void> {
+    if (!arrangementRequest || arrangementSaving) return;
+    if (!arrangementForm.workDate) {
+      setArrangementError('请选择生产日期');
+      return;
+    }
+    if (!arrangementForm.employeeIds.length) {
+      setArrangementError('请至少选择 1 名作业员工');
+      return;
+    }
+    if (arrangementRequest.mode === 'schedule' && !arrangementForm.teamId) {
+      setArrangementError('请选择生产班组');
+      return;
+    }
+    const source = arrangementRequest.sourceArrangement;
+    if (arrangementRequest.mode === 'continue' && (!source?.sourceTaskIds.length || arrangementForm.workDate <= source.workDate)) {
+      setArrangementError(`续排日期必须晚于原安排 ${source?.workDate || ''}`.trim());
+      return;
+    }
+    const idempotencyKey = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `production-arrangement-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setArrangementSaving(true);
+    setArrangementError('');
+    try {
+      const response = await fetch('/api/production/arrangements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+        body: JSON.stringify(arrangementRequest.mode === 'continue'
+          ? {
+              action: 'continue',
+              workDate: arrangementForm.workDate,
+              shiftCode: arrangementForm.shiftCode,
+              sourceTaskIds: source?.sourceTaskIds || [],
+              employeeIds: arrangementForm.employeeIds,
+              reason: '生产执行未完成续排',
+              idempotencyKey,
+            }
+          : {
+              action: 'schedule',
+              workDate: arrangementForm.workDate,
+              shiftCode: arrangementForm.shiftCode,
+              teamId: arrangementForm.teamId,
+              workOrderIds: arrangementRequest.orders.map(order => order.id),
+              employeeIds: arrangementForm.employeeIds,
+              includeWaitingUpstream: arrangementForm.includeWaitingUpstream,
+              reason: arrangementRequest.orders.length > 1 ? '生产执行批量前置安排' : '生产执行主管前置安排',
+              idempotencyKey,
+            }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 401) location.href = '/login';
+      if (!response.ok) throw new Error(body.error || '生产安排保存失败');
+      const count = arrangementRequest.orders.length;
+      closeProductionArrangement(true);
+      setSelected([]);
+      setBatchMode(false);
+      productionBoardCache.clear();
+      setRefreshToken(value => value + 1);
+      setSummaryRefreshToken(value => value + 1);
+      setToast(arrangementRequest.mode === 'continue'
+        ? '续排已保存，原安排记录已保留'
+        : `已安排 ${count} 个工单的生产日期和人员`);
+    } catch (reason) {
+      setArrangementError(reason instanceof Error ? reason.message : '生产安排保存失败');
+    } finally {
+      setArrangementSaving(false);
+    }
   }
 
   function toggleBatchMode(): void {
@@ -1989,8 +2336,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             >
               <AlertTriangle size={15} aria-hidden="true" />跨周遗留 <b>{summary?.navigation.carryoverCount ?? 0}</b>
             </button>
-            {canAdministerProduction && <a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a>}
-            {canAdministerProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
+            {(canAdministerProduction || canScheduleProduction) && <a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a>}
+            {canSelectProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
             <button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button>
             <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
             <button className="hm-workbench-button production-fullscreen-trigger" type="button" onClick={() => void toggleFullscreen()}><Expand size={15} aria-hidden="true" />{isFullscreen ? '退出大屏' : '大屏模式'}</button>
@@ -2036,6 +2383,16 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
           <span className="production-dispatch-result">{board?.pagination.total || 0} 项</span>
         </section>
         {!!filterChips.length && <div className="production-filter-chips production-dispatch-filter-chips" aria-label="已应用筛选">{filterChips.map(chip => <button key={chip.key} type="button" onClick={() => { chip.remove(); setPage(1); }} title={`移除${chip.label}`}>{chip.label}<span>×</span></button>)}<button className="clear" type="button" onClick={() => { setTargetWorkOrderId(''); setAdvanced(emptyAdvanced); setQuick([]); setKeyword(''); setPage(1); }}>清空全部</button></div>}
+        <section className="production-arrangement-filters" aria-label="生产安排筛选">
+          <span><CalendarDays size={15} aria-hidden="true" />主管安排</span>
+          {([
+            ['arrangement_unassigned', '未安排', summary?.arrangementMetrics?.unassigned || 0],
+            ['arrangement_scheduled', '已安排', summary?.arrangementMetrics?.scheduled || 0],
+            ['arrangement_today', '今日安排', summary?.arrangementMetrics?.today || 0],
+            ['arrangement_overdue', '逾期未完', summary?.arrangementMetrics?.overdue || 0],
+            ['arrangement_partial', '部分完成', summary?.arrangementMetrics?.partial || 0],
+          ] as Array<[QuickFilter, string, number]>).map(([key, label, count]) => <button className={`${quick.includes(key) ? 'active' : ''} ${key.includes('overdue') ? 'danger' : key.includes('partial') ? 'warning' : ''}`.trim()} type="button" aria-pressed={quick.includes(key)} key={key} onClick={() => toggleArrangementQuickFilter(key)}>{label}<b>{count}</b></button>)}
+        </section>
 
         {error && <div className="production-error"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
         {scope === 'current' && summary?.total === 0 && !loading && <div className="production-empty-week"><strong>本周暂无已启用生产工单</strong><span>历史遗留工单可从“跨周遗留”继续处理；新计划请在计划中心下达。</span><a href={weeklyPlanHref}>进入计划中心</a></div>}
@@ -2043,7 +2400,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         <div className={`production-dispatch-layout ${insightsOpen ? 'rail-open' : ''}`.trim()}>
           <section className="production-dispatch-list-panel" aria-label="生产工单调度列表">
             <header className="production-dispatch-list-head">
-              <span>产品信息</span><span>当前工序</span><span>工艺路线</span><span>完成进度</span><span>交期 / 风险</span><span>现场操作</span>
+              <span>产品信息</span><span>工序进度</span><span>生产日期</span><span>安排人员</span><span>完成进度</span><span>交期 / 风险</span><span>现场操作</span>
             </header>
             <div ref={boardShellRef} className="production-dispatch-list hm-scroll-region" tabIndex={0} aria-label={`生产工单列表，共 ${board?.pagination.total || 0} 项`}>
               {dispatchItems.map(item => <ProductionDispatchRow
@@ -2051,6 +2408,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
                 item={item}
                 readOnly={board?.readOnly || (scope === 'history' && item.order.stage === 'completed')}
                 canAdministerProduction={canAdministerProduction}
+                canSelectProduction={canSelectProduction}
+                canScheduleProduction={canScheduleProduction}
                 batchMode={batchMode}
                 selected={selected}
                 saving={saving}
@@ -2061,6 +2420,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
                 openWorkflow={openWorkflow}
                 openIssue={openProductionIssue}
                 copySpecification={copySpecification}
+                openArrangement={(order, sourceArrangement) => openProductionArrangement([order], sourceArrangement)}
               />)}
               {loading && <DispatchRowSkeleton count={dispatchPageSize} />}
               {!loading && !board?.items.length && <div className="production-dispatch-empty"><Rows3 size={28} aria-hidden="true" /><strong>当前没有匹配工单</strong><span>调整周范围或筛选条件后重试。</span></div>}
@@ -2101,7 +2461,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         </div>
       </div>
 
-      {canAdministerProduction && batchMode && !board?.readOnly && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong><button type="button" disabled={!selected.length || travelerPrinting} onClick={() => void printTravelers(selected)}><Printer size={15} />{travelerPrinting ? '生成中...' : '打印流转单'}</button><button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button><button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button><button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
+      {canSelectProduction && batchMode && !board?.readOnly && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong>{canScheduleProduction && <button className="primary" type="button" disabled={!selected.length} onClick={() => openProductionArrangement((board?.items || []).filter(order => selected.includes(order.id)))}><CalendarDays size={15} />批量安排日期与人员</button>}{canPrintTravelers && <button type="button" disabled={!selected.length || travelerPrinting} onClick={() => void printTravelers(selected)}><Printer size={15} />{travelerPrinting ? '生成中...' : '打印流转单'}</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button>}<button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
 
       <PortalMenu open={canAdministerProduction && !!statusMenuOrder} anchorRef={statusButtonRef} className="production-status-menu hm-production-menu hm-production-status-menu" width={164} onClose={() => setStatusMenuOrder(null)} closeOnSelect={false}>
         {statusMenuOrder && stageMenuItems(statusMenuOrder).map(stage => <button type="button" disabled={saving} key={stage.key} onClick={() => requestStageChange(statusMenuOrder, stage.key)}>{stage.label}</button>)}
@@ -2126,6 +2486,19 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         }}
         confirm={() => void saveNextStep()}
       />}
+      {canScheduleProduction && arrangementRequest && <ProductionArrangementDialog
+        request={arrangementRequest}
+        context={arrangementContext}
+        value={arrangementForm}
+        setValue={setArrangementForm}
+        search={arrangementSearch}
+        setSearch={setArrangementSearch}
+        loading={arrangementLoading}
+        saving={arrangementSaving}
+        error={arrangementError}
+        close={() => closeProductionArrangement()}
+        save={() => void saveProductionArrangement()}
+      />}
       {completionOrder && <ProcessCompletionDialog
         order={completionOrder}
         activeSteps={completionOrder.processRoute?.steps || []}
@@ -2148,6 +2521,8 @@ type ProductionDispatchRowProps = {
   item: ProductionCardView;
   readOnly: boolean;
   canAdministerProduction: boolean;
+  canSelectProduction: boolean;
+  canScheduleProduction: boolean;
   batchMode: boolean;
   selected: string[];
   saving: boolean;
@@ -2158,11 +2533,12 @@ type ProductionDispatchRowProps = {
   openWorkflow: (order: ProductionOrder, focusedStage?: StageKey) => void;
   openIssue: (order: ProductionOrder, alertCode: string, focusedStage?: StageKey) => void;
   copySpecification: (order: ProductionOrder) => Promise<void>;
+  openArrangement: (order: ProductionOrder, sourceArrangement?: ProductionArrangement) => void;
 };
 
 function DispatchRowSkeleton({ count }: { count: number }) {
   return <>{Array.from({ length: count }, (_, index) => <div className="production-dispatch-row production-dispatch-row-skeleton" aria-hidden="true" key={index}>
-    <span /><span /><span /><span /><span /><span />
+    <span /><span /><span /><span /><span /><span /><span />
   </div>)}</>;
 }
 
@@ -2170,6 +2546,8 @@ function ProductionDispatchRow({
   item,
   readOnly,
   canAdministerProduction,
+  canSelectProduction,
+  canScheduleProduction,
   batchMode,
   selected,
   saving,
@@ -2180,6 +2558,7 @@ function ProductionDispatchRow({
   openWorkflow,
   openIssue,
   copySpecification,
+  openArrangement,
 }: ProductionDispatchRowProps) {
   const { order, displayStage, stageQuantity } = item;
   const route = order.processRoute;
@@ -2201,6 +2580,12 @@ function ProductionDispatchRow({
   const activeRouteIndex = routeSteps.findIndex(step => step.status === 'current');
   const routePreviewStart = Math.max(0, Math.min(activeRouteIndex > 0 ? activeRouteIndex - 1 : 0, Math.max(0, routeSteps.length - 4)));
   const routePreview = routeSteps.slice(routePreviewStart, routePreviewStart + 4);
+  const arrangements = [...(order.arrangements || [])].sort((left, right) => right.workDate.localeCompare(left.workDate) || right.id.localeCompare(left.id));
+  const visibleArrangements = arrangements.slice(0, 2);
+  const activeArrangements = arrangements.filter(arrangement => arrangement.status !== 'completed' && arrangement.status !== 'carried_over');
+  const continuableArrangement = arrangements.find(arrangement => arrangement.continuable);
+  const canCreateArrangement = !readOnly && canScheduleProduction && displayStage !== 'completed'
+    && (Boolean(continuableArrangement) || activeArrangements.length === 0);
   const unitLabel = route?.currentStep?.unitLabel || route?.steps[0]?.unitLabel || '件';
   const routeReadiness = processRouteExecutionReadiness(route?.steps || []);
   const routeNeedsMaintenance = !route || route.status === 'draft' || !routeReadiness.ready;
@@ -2238,7 +2623,7 @@ function ProductionDispatchRow({
   return <article className={`production-dispatch-row stage-${displayStage} risk-${risk.tone} ${selectedRow ? 'selected' : ''}`.trim()} data-production-order-id={order.id} data-production-stage={displayStage}>
     <div className="production-dispatch-row-identity">
       <div className="production-dispatch-row-select">
-        {canAdministerProduction && batchMode && !readOnly
+        {canSelectProduction && batchMode && !readOnly
           ? <input type="checkbox" checked={selectedRow} aria-label={`选择 ${specText(order)}`} onChange={() => toggleSelected(order.id)} />
           : <span className="production-dispatch-stage-dot" aria-hidden="true" />}
       </div>
@@ -2254,30 +2639,37 @@ function ProductionDispatchRow({
       </div>
     </div>
 
-    <button className="production-dispatch-process current" type="button" title="进入流程中心查看当前工序" onClick={() => openWorkflow(order, displayStage)}>
-      <span><b>{routeNeedsMaintenance ? '工序待维护' : currentProcess}</b><small>{lifecycle.awaitingBranchClosure ? '等待返工/补产分支闭环' : route?.statusText || order.stageText}</small></span>
-      <i><span style={{ width: `${routeProgress}%` }} /></i>
-      <em>{route ? `${route.completedStepCount}/${route.stepCount}` : '未建路线'}</em>
-    </button>
-
-    <button className="production-dispatch-process next" type="button" title="进入流程中心查看下一工序" onClick={() => openWorkflow(order, displayStage)}>
-      <span className="production-dispatch-route-summary"><b><ArrowRight size={13} aria-hidden="true" />{nextProcess}</b><small>{upcomingSteps.length
-        ? `${upcomingSteps.length} 道待衔接`
-        : routeNeedsMaintenance
-          ? '等待工序发布'
-          : lifecycle.aggregateCompleted
-            ? '生产已结束'
-            : lifecycle.awaitingBranchClosure
-              ? '等待分支闭环'
-              : route?.currentStep
-                ? '当前为末道工序'
-                : '等待当前工序开始'}</small></span>
+    <button className="production-dispatch-process-flow" type="button" title="进入流程中心查看完整工序进度" onClick={() => openWorkflow(order, displayStage)}>
+      <span className="production-dispatch-process-flow-head">
+        <span><b>{routeNeedsMaintenance ? '工序待维护' : currentProcess}</b><small>{lifecycle.awaitingBranchClosure ? '等待返工/补产分支闭环' : route?.statusText || order.stageText}</small></span>
+        <em>{route ? `${route.completedStepCount}/${route.stepCount}` : '未建路线'}</em>
+        <span className="production-dispatch-process-next"><ArrowRight size={13} aria-hidden="true" /><b>{nextProcess}</b><small>{upcomingSteps.length ? `${upcomingSteps.length} 道待衔接` : lifecycle.aggregateCompleted ? '生产已结束' : routeNeedsMaintenance ? '等待发布' : '末道工序'}</small></span>
+      </span>
+      <i className="production-dispatch-process-flow-bar"><span style={{ width: `${routeProgress}%` }} /></i>
       <span className="production-dispatch-route-track" aria-label={routePreview.length ? `工艺路线：${routePreview.map(step => step.processName).join('、')}` : '工艺路线待维护'}>
         {routePreview.length
           ? routePreview.map(step => <i className={`state-${step.status}`} title={`${step.processName} · ${step.status === 'completed' ? '已完成' : step.status === 'current' ? '当前工序' : '待处理'}`} key={step.id}><span /><em>{step.processName}</em></i>)
           : <i className="state-pending"><span /><em>待维护</em></i>}
       </span>
     </button>
+
+    <div className="production-arrangement-date-cell">
+      {visibleArrangements.map(arrangement => <div className={`production-arrangement-record status-${arrangement.status}`} key={arrangement.id}>
+        <span><b>{compactDateText(arrangement.workDate)}</b>{arrangement.crossWeek && <em>跨周</em>}</span>
+        <small>{arrangementStatusText[arrangement.status]} · {arrangement.completedTaskCount}/{arrangement.totalTaskCount} 工序</small>
+      </div>)}
+      {!visibleArrangements.length && <span className="production-arrangement-empty">未安排</span>}
+      {arrangements.length > visibleArrangements.length && <small className="production-arrangement-history">另有 {arrangements.length - visibleArrangements.length} 条历史</small>}
+      {canCreateArrangement && <button className="production-arrangement-add" type="button" onClick={() => openArrangement(order, continuableArrangement)}><Plus size={13} aria-hidden="true" />{continuableArrangement ? '续排' : '安排'}</button>}
+    </div>
+
+    <div className="production-arrangement-worker-cell">
+      {visibleArrangements.map(arrangement => <div className={`production-arrangement-worker-record status-${arrangement.status}`} key={arrangement.id}>
+        <span>{arrangement.employees.slice(0, 3).map(employee => <b title={`${employee.employeeNo} · ${employee.name}`} key={employee.employeeId}>{employee.name}</b>)}{arrangement.employees.length > 3 && <em>+{arrangement.employees.length - 3}</em>}</span>
+        <small>{arrangement.teamName || '生产班组'}{arrangement.remainingQty > 0 ? ` · 余 ${formatProductionQuantity(arrangement.remainingQty)}` : ' · 已完成'}</small>
+      </div>)}
+      {!visibleArrangements.length && <span className="production-arrangement-empty">待主管安排</span>}
+    </div>
 
     <div className="production-dispatch-progress" title="工单累计完成进度">
       <span><b>{formatProductionPercentage(quantityPercentage)}</b><small>{formatProductionQuantity(completedQuantity)} / {targetQuantity > 0 ? formatProductionQuantity(targetQuantity) : '待补充'}</small></span>
@@ -2297,6 +2689,142 @@ function ProductionDispatchRow({
       <button className="primary" type="button" disabled={saving} onClick={runPrimaryAction}>{primaryText}</button>
     </div>
   </article>;
+}
+
+function ProductionArrangementDialog({ request, context, value, setValue, search, setSearch, loading, saving, error, close, save }: {
+  request: ProductionArrangementRequest;
+  context: ProductionArrangementContext | null;
+  value: ProductionArrangementForm;
+  setValue: (value: ProductionArrangementForm) => void;
+  search: string;
+  setSearch: (value: string) => void;
+  loading: boolean;
+  saving: boolean;
+  error: string;
+  close: () => void;
+  save: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const closeRef = useRef(close);
+  const savingRef = useRef(saving);
+  closeRef.current = close;
+  savingRef.current = saving;
+  const normalizedSearch = search.trim().toLocaleLowerCase('zh-CN');
+  const recommendedIds = new Set(context?.recommendedEmployeeIds || []);
+  const employees = [...(context?.employeeCapacity || [])]
+    .filter(employee => !normalizedSearch
+      || `${employee.employeeNo} ${employee.employeeName} ${employee.position || ''} ${employee.team || ''}`.toLocaleLowerCase('zh-CN').includes(normalizedSearch))
+    .sort((left, right) => Number(recommendedIds.has(right.employeeId)) - Number(recommendedIds.has(left.employeeId))
+      || durationHours(right.remainingMilliseconds) - durationHours(left.remainingMilliseconds)
+      || left.employeeNo.localeCompare(right.employeeNo, 'zh-CN'));
+  const sourceEstimatedMilliseconds = request.sourceArrangement?.employees.reduce(
+    (sum, employee) => sum + durationHours(employee.plannedStandardMilliseconds) * 3_600_000,
+    0,
+  ) || 0;
+  const estimatedHours = durationHours(context?.summary.estimatedStandardMilliseconds || sourceEstimatedMilliseconds);
+  const selectedCapacity = (context?.employeeCapacity || []).filter(employee => value.employeeIds.includes(employee.employeeId));
+  const perPersonHours = value.employeeIds.length ? estimatedHours / value.employeeIds.length : estimatedHours;
+  const overloadEmployees = selectedCapacity.filter(employee => durationHours(employee.remainingMilliseconds) + 0.001 < perPersonHours);
+  const leaveEmployees = selectedCapacity.filter(employee => durationHours(employee.leaveMilliseconds) > 0 || employee.attendanceStatus === 'LEAVE');
+  const crossWeekCount = context?.candidates.filter(candidate => value.workDate < candidate.batchWeekStartDate || value.workDate > candidate.batchWeekEndDate).length || 0;
+  const processNames = [...new Set((context?.candidates || []).map(candidate => candidate.processName))];
+  const blockedMessages = [...new Set((context?.blocked || []).map(item => item.message).filter(Boolean))];
+  const selectedTeam = context?.teams.find(team => team.id === value.teamId);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = 'hidden';
+    const frame = window.requestAnimationFrame(() => dialogRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !savingRef.current) {
+        event.preventDefault();
+        closeRef.current();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus({ preventScroll: true });
+    };
+  }, []);
+
+  function toggleEmployee(employeeId: string): void {
+    setValue({
+      ...value,
+      employeeIds: value.employeeIds.includes(employeeId)
+        ? value.employeeIds.filter(id => id !== employeeId)
+        : [...value.employeeIds, employeeId],
+    });
+  }
+
+  return <div className="production-arrangement-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) close(); }}>
+    <section ref={dialogRef} className="production-arrangement-dialog" role="dialog" aria-modal="true" aria-labelledby="production-arrangement-title" tabIndex={-1}>
+      <header>
+        <div><span>主管排产 · {request.mode === 'continue' ? '保留历史续排' : request.orders.length > 1 ? '批量前置安排' : '前置安排'}</span><h2 id="production-arrangement-title">{request.mode === 'continue' ? '续排生产日期与人员' : `安排生产日期与人员${request.orders.length > 1 ? `（${request.orders.length} 单）` : ''}`}</h2><p>{request.orders.length === 1 ? `${specText(request.orders[0])} · ${request.orders[0].productName}` : `已选择 ${request.orders.length} 个生产工单，保存后同步到日计划与报工人员推荐。`}</p></div>
+        <button type="button" aria-label="关闭生产安排" disabled={saving} onClick={close}><X size={20} aria-hidden="true" /></button>
+      </header>
+
+      <div className="production-arrangement-dialog-body">
+        <section className="production-arrangement-config">
+          <div className="production-arrangement-fields">
+            <label><span>生产日期</span><input type="date" value={value.workDate} min={request.mode === 'continue' && request.sourceArrangement ? addDateKeyDays(request.sourceArrangement.workDate, 1) : undefined} onChange={event => setValue({ ...value, workDate: event.target.value })} /></label>
+            <label><span>班次</span><select value={value.shiftCode} onChange={event => setValue({ ...value, shiftCode: event.target.value })}><option value="DAY">白班</option><option value="NIGHT">夜班</option></select></label>
+            <label><span>生产班组</span><select value={value.teamId} disabled={request.mode === 'continue'} onChange={event => setValue({ ...value, teamId: event.target.value, employeeIds: [] })}><option value="">选择班组</option>{context?.teams.map(team => <option value={team.id} key={team.id}>{team.name}</option>)}</select></label>
+          </div>
+
+          {request.mode === 'schedule' && <label className="production-arrangement-scope-toggle"><input type="checkbox" checked={value.includeWaitingUpstream} onChange={event => setValue({ ...value, includeWaitingUpstream: event.target.checked })} /><span><b>安排全部未完成工序</b><small>包含等待上道的后续工序，适合小批次前置安排；关闭后只安排当前可执行工序。</small></span></label>}
+
+          <div className="production-arrangement-overview">
+            <div><span>工单</span><strong>{request.orders.length}</strong><small>个</small></div>
+            <div><span>计划工序</span><strong>{request.mode === 'continue' ? request.sourceArrangement?.sourceTaskIds.length || 0 : context?.summary.taskCount || 0}</strong><small>道</small></div>
+            <div><span>预计标准工时</span><strong>{estimatedHours.toFixed(1)}</strong><small>小时</small></div>
+            <div><span>已选人员</span><strong>{value.employeeIds.length}</strong><small>人</small></div>
+          </div>
+
+          <div className="production-arrangement-processes">
+            <div><strong>本次工序范围</strong><small>{selectedTeam?.name || '请选择生产班组'} · {compactDateText(value.workDate)}</small></div>
+            <span>{(request.mode === 'continue' ? request.sourceArrangement?.processNames || [] : processNames).slice(0, 16).map(name => <b key={name}>{name}</b>)}</span>
+            {!loading && request.mode === 'schedule' && !processNames.length && <p>当前选择下没有可新安排工序，请检查是否已安排或工序资料是否完整。</p>}
+          </div>
+
+          <div className="production-arrangement-workers-head">
+            <div><strong>选择作业员工</strong><small>支持单人或多人；周工序预选人员会优先显示。</small></div>
+            <div><button type="button" disabled={!context?.recommendedEmployeeIds.length} onClick={() => setValue({ ...value, employeeIds: [...(context?.recommendedEmployeeIds || [])] })}>选择推荐</button><button type="button" disabled={!value.employeeIds.length} onClick={() => setValue({ ...value, employeeIds: [] })}>清空</button></div>
+          </div>
+          <label className="production-arrangement-employee-search"><Search size={16} aria-hidden="true" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索姓名、工号、岗位或班组" /></label>
+
+          <div className="production-arrangement-employee-grid">
+            {employees.map(employee => {
+              const selected = value.employeeIds.includes(employee.employeeId);
+              const remainingHours = durationHours(employee.remainingMilliseconds);
+              const leave = durationHours(employee.leaveMilliseconds) > 0 || employee.attendanceStatus === 'LEAVE';
+              const overload = selected && remainingHours + 0.001 < perPersonHours;
+              return <button className={`${selected ? 'selected' : ''} ${leave ? 'leave' : ''} ${overload ? 'overload' : ''}`.trim()} type="button" aria-pressed={selected} onClick={() => toggleEmployee(employee.employeeId)} key={employee.employeeId}>
+                <span>{employee.employeeName.slice(0, 1)}</span><b>{employee.employeeName}<small>{employee.employeeNo} · {employee.position || employee.team || '生产员工'}</small></b><em>{recommendedIds.has(employee.employeeId) && <i>推荐</i>}{leave ? '请假' : `余 ${remainingHours.toFixed(1)}h`}</em>
+              </button>;
+            })}
+            {!loading && !employees.length && <p>当前班组没有匹配的生产员工。</p>}
+            {loading && Array.from({ length: 6 }, (_, index) => <span className="production-arrangement-employee-skeleton" key={index} />)}
+          </div>
+        </section>
+
+        <aside className="production-arrangement-advice">
+          <div className="production-arrangement-advice-title"><CalendarDays size={18} aria-hidden="true" /><span><small>安排预览</small><strong>{compactDateText(value.workDate)} · {selectedTeam?.name || '待选班组'}</strong></span></div>
+          <dl><div><dt>工单数量</dt><dd>{request.orders.length} 单</dd></div><div><dt>工序数量</dt><dd>{request.mode === 'continue' ? request.sourceArrangement?.sourceTaskIds.length || 0 : context?.summary.taskCount || 0} 道</dd></div><div><dt>人均预计工时</dt><dd>{perPersonHours.toFixed(1)} 小时</dd></div><div><dt>安排方式</dt><dd>{value.employeeIds.length > 1 ? `${value.employeeIds.length} 人分摊` : value.employeeIds.length ? '单人负责' : '待选人员'}</dd></div></dl>
+
+          {(overloadEmployees.length > 0 || leaveEmployees.length > 0 || crossWeekCount > 0 || blockedMessages.length > 0) && <div className="production-arrangement-warnings"><strong><AlertTriangle size={16} aria-hidden="true" />排产提醒</strong>{overloadEmployees.length > 0 && <p className="danger">{overloadEmployees.map(employee => employee.employeeName).join('、')} 的当日剩余产能不足，仍可保存但建议增员或改期。</p>}{leaveEmployees.length > 0 && <p className="warning">{leaveEmployees.map(employee => employee.employeeName).join('、')} 当日存在请假记录，请确认实际到岗。</p>}{crossWeekCount > 0 && <p className="warning">有 {crossWeekCount} 道工序安排跨越原计划周，保存后会显示“跨周”标签。</p>}{blockedMessages.slice(0, 3).map(message => <p key={message}>{message}</p>)}</div>}
+          {!loading && !error && !overloadEmployees.length && !leaveEmployees.length && !crossWeekCount && !blockedMessages.length && <div className="production-arrangement-ready"><CheckCircle2 size={18} aria-hidden="true" /><span><strong>当前安排可保存</strong><small>日期、班组与人员容量未发现明显冲突。</small></span></div>}
+          {request.mode === 'continue' && request.sourceArrangement && <div className="production-arrangement-history-card"><span>原安排保留</span><strong>{compactDateText(request.sourceArrangement.workDate)} · {request.sourceArrangement.employees.map(employee => employee.name).join('、') || '未指定'}</strong><small>原记录标记“已续排”，新安排作为下一条历史记录显示。</small></div>}
+          {error && <div className="production-arrangement-error"><AlertTriangle size={17} aria-hidden="true" /><span><strong>无法保存</strong><small>{error}</small></span></div>}
+        </aside>
+      </div>
+
+      <footer><span>{loading ? '正在核对工序与人员容量…' : `已选择 ${value.employeeIds.length} 人${crossWeekCount ? ` · ${crossWeekCount} 道跨周` : ''}`}</span><div><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary" type="button" disabled={loading || saving || !context?.canSchedule || !value.employeeIds.length || !value.teamId} onClick={save}>{saving ? <><Loader2 size={16} aria-hidden="true" />保存中…</> : request.mode === 'continue' ? '确认续排并保留历史' : request.orders.length > 1 ? `确认批量安排 ${request.orders.length} 单` : '确认安排'}</button></div></footer>
+    </section>
+  </div>;
 }
 
 function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectStep, context, value, setValue, loading, saving, error, close, save }: {

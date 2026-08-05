@@ -15,12 +15,15 @@ import { productionPlanningDateBoundary } from '../lib/production-planning-date'
 import {
   assignDailyProcessTask,
   carryOverDailyProcessTask,
+  continueProductionArrangement,
   createDailyProductionPlan,
   DailyPlanServiceError,
+  getProductionArrangementContext,
   listDailyCrossTeamRequests,
   previewDailyPlanSuggestions,
   requestDailyCrossTeamAssignment,
   reviewDailyCrossTeamRequest,
+  scheduleProductionArrangements,
   upsertProductionTeam,
   upsertProductionTeamProcessCapability,
 } from '../lib/daily-plan-service';
@@ -434,6 +437,120 @@ test(
         });
         assert.equal(tuesdayAfterPlanning.candidates.some(candidate => candidate.stepId === route.step.id), false);
         assert.equal(tuesdayAfterPlanning.blocked.some(item => item.stepId === route.step.id && item.reason === 'ALREADY_PLANNED'), true);
+      });
+
+      await t.test('supervisor arrangements split labor without duplicating quantity and preserve history on continuation', async () => {
+        const route = await createRouteFixture(prefix, 'ARRANGEMENT', admin.id);
+        const planOrder = await prisma.productionPlanOrder.create({
+          data: {
+            sourceOrderNo: `${prefix}-ARRANGEMENT`,
+            sourceLineNo: 1,
+            customerName: 'arrangement integration customer',
+            productName: 'arrangement integration product',
+            specification: 'arrangement-integration-specification',
+            orderQuantity: 10,
+            orderDate: new Date('2099-01-01T04:00:00.000Z'),
+            customerDueDate: new Date('2099-01-10T04:00:00.000Z'),
+            status: 'scheduled',
+          },
+        });
+        await prisma.productionPlanBatch.create({
+          data: {
+            planOrderId: planOrder.id,
+            batchNo: 1,
+            quantity: 10,
+            weekStartDate: new Date('2099-01-05T04:00:00.000Z'),
+            weekEndDate: new Date('2099-01-11T04:00:00.000Z'),
+            plannedCompletionDate: new Date('2099-01-10T04:00:00.000Z'),
+            releaseState: 'active',
+            workOrderId: route.workOrderId,
+          },
+        });
+
+        const context = await getProductionArrangementContext({
+          actorUserId: admin.id,
+          workOrderIds: [route.workOrderId],
+          workDate: '2099-01-12',
+          shiftCode: 'DAY',
+          teamId: teamA.id,
+          includeWaitingUpstream: true,
+        });
+        assert.equal(context.canSchedule, true);
+        assert.equal(context.candidates.length, 1);
+        assert.equal(context.candidates[0].stepId, route.step.id);
+
+        const scheduleInput = {
+          actorUserId: admin.id,
+          workDate: '2099-01-12',
+          shiftCode: 'DAY',
+          teamId: teamA.id,
+          workOrderIds: [route.workOrderId],
+          employeeIds: [workerA1.id, workerA2.id],
+          includeWaitingUpstream: true,
+          idempotencyKey: integrationKey(prefix, 'arrangement-schedule'),
+        };
+        const scheduled = await scheduleProductionArrangements(scheduleInput);
+        const scheduledReplay = await scheduleProductionArrangements(scheduleInput);
+        assert.deepEqual(scheduledReplay.taskIds, scheduled.taskIds);
+        assert.equal(scheduled.taskIds.length, 1);
+        assert.equal(scheduled.warnings.some(item => item.code === 'CROSS_WEEK'), true);
+        const scheduledTask = await prisma.dailyProcessTask.findUniqueOrThrow({
+          where: { id: scheduled.taskIds[0] },
+          include: { assignments: { where: { status: { not: DailyTaskAssignmentStatus.CANCELLED } } } },
+        });
+        assert.equal(scheduledTask.plannedQty, 10);
+        assert.equal(scheduledTask.assignments.length, 2);
+        assert.equal(scheduledTask.assignments.reduce((sum, assignment) => sum + assignment.quantity, 0), 10);
+
+        await completeProcessStep({
+          routeId: route.routeId,
+          stepId: route.step.id,
+          processedQty: 4,
+          defectQty: 0,
+          workDate: '2099-01-12',
+          workStartedAt: '2099-01-12T00:00:00.000Z',
+          workEndedAt: '2099-01-12T01:00:00.000Z',
+          employeeIds: [workerA1.id],
+          requireParticipants: true,
+          idempotencyKey: integrationKey(prefix, 'arrangement-partial-completion'),
+          expectedRouteVersion: 0,
+          userId: admin.id,
+          actor: admin.displayName,
+        });
+
+        const continueInput = {
+          actorUserId: admin.id,
+          sourceTaskIds: scheduled.taskIds,
+          targetDate: '2099-01-13',
+          shiftCode: 'DAY',
+          employeeIds: [workerA2.id, workerA3.id],
+          reason: 'integration continuation',
+          idempotencyKey: integrationKey(prefix, 'arrangement-continue'),
+        };
+        const continued = await continueProductionArrangement(continueInput);
+        const continuedReplay = await continueProductionArrangement(continueInput);
+        assert.deepEqual(continuedReplay.taskIds, continued.taskIds);
+        assert.equal(continued.taskIds.length, 1);
+        const [sourceAfter, targetAfter, activeSourceAssignments] = await Promise.all([
+          prisma.dailyProcessTask.findUniqueOrThrow({ where: { id: scheduled.taskIds[0] } }),
+          prisma.dailyProcessTask.findUniqueOrThrow({
+            where: { id: continued.taskIds[0] },
+            include: { plan: true, assignments: { where: { status: { not: DailyTaskAssignmentStatus.CANCELLED } } } },
+          }),
+          prisma.dailyTaskAssignment.count({
+            where: { taskId: scheduled.taskIds[0], status: { not: DailyTaskAssignmentStatus.CANCELLED } },
+          }),
+        ]);
+        assert.equal(sourceAfter.status, DailyProcessTaskStatus.CARRIED_OVER);
+        assert.equal(activeSourceAssignments, 0);
+        assert.equal(targetAfter.carryOverFromTaskId, scheduled.taskIds[0]);
+        assert.equal(formatWorkDate(targetAfter.plan.workDate), '2099-01-13');
+        assert.equal(targetAfter.plannedQty, 6);
+        assert.equal(targetAfter.assignments.reduce((sum, assignment) => sum + assignment.quantity, 0), 6);
+        assert.equal(
+          await prisma.dailyProcessTask.count({ where: { carryOverFromTaskId: scheduled.taskIds[0] } }),
+          1,
+        );
       });
 
       await t.test('replaying the same cross-team request is idempotent', async () => {
