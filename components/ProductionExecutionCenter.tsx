@@ -127,8 +127,9 @@ type ProductionArrangementContext = {
   weekStartDate: string;
   weekEndDate: string;
   shiftCode: string;
-  teams: Array<{ id: string; code: string; name: string; legacyTeamName?: string | null }>;
   selectedTeamId: string;
+  personnelSource: 'HR_PRODUCTION_DEPARTMENT';
+  productionEmployeeCount: number;
   canSchedule: boolean;
   candidates: Array<{
     workOrderId: string;
@@ -154,6 +155,7 @@ type ProductionArrangementContext = {
     department?: string | null;
     position?: string | null;
     team?: string | null;
+    attendanceEnabled?: boolean;
     capacityMilliseconds: string | number;
     assignedMilliseconds: string | number;
     remainingMilliseconds: string | number;
@@ -1654,7 +1656,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       return;
     }
     if (arrangementRequest.mode === 'schedule' && !arrangementForm.teamId) {
-      setArrangementError('请选择生产班组');
+      setArrangementError('生产人员名单尚未加载完成，请稍后重试');
       return;
     }
     const source = arrangementRequest.sourceArrangement;
@@ -2666,7 +2668,7 @@ function ProductionDispatchRow({
     <div className="production-arrangement-worker-cell">
       {visibleArrangements.map(arrangement => <div className={`production-arrangement-worker-record status-${arrangement.status}`} key={arrangement.id}>
         <span>{arrangement.employees.slice(0, 3).map(employee => <b title={`${employee.employeeNo} · ${employee.name}`} key={employee.employeeId}>{employee.name}</b>)}{arrangement.employees.length > 3 && <em>+{arrangement.employees.length - 3}</em>}</span>
-        <small>{arrangement.teamName || '生产班组'}{arrangement.remainingQty > 0 ? ` · 余 ${formatProductionQuantity(arrangement.remainingQty)}` : ' · 已完成'}</small>
+        <small>{arrangement.shiftCode === 'NIGHT' ? '夜班' : '白班'}{arrangement.remainingQty > 0 ? ` · 余 ${formatProductionQuantity(arrangement.remainingQty)}` : ' · 已完成'}</small>
       </div>)}
       {!visibleArrangements.length && <span className="production-arrangement-empty">待主管安排</span>}
     </div>
@@ -2713,7 +2715,7 @@ function ProductionArrangementDialog({ request, context, value, setValue, search
   const recommendedIds = new Set(context?.recommendedEmployeeIds || []);
   const employees = [...(context?.employeeCapacity || [])]
     .filter(employee => !normalizedSearch
-      || `${employee.employeeNo} ${employee.employeeName} ${employee.position || ''} ${employee.team || ''}`.toLocaleLowerCase('zh-CN').includes(normalizedSearch))
+      || `${employee.employeeNo} ${employee.employeeName} ${employee.position || ''}`.toLocaleLowerCase('zh-CN').includes(normalizedSearch))
     .sort((left, right) => Number(recommendedIds.has(right.employeeId)) - Number(recommendedIds.has(left.employeeId))
       || durationHours(right.remainingMilliseconds) - durationHours(left.remainingMilliseconds)
       || left.employeeNo.localeCompare(right.employeeNo, 'zh-CN'));
@@ -2729,7 +2731,6 @@ function ProductionArrangementDialog({ request, context, value, setValue, search
   const crossWeekCount = context?.candidates.filter(candidate => value.workDate < candidate.batchWeekStartDate || value.workDate > candidate.batchWeekEndDate).length || 0;
   const processNames = [...new Set((context?.candidates || []).map(candidate => candidate.processName))];
   const blockedMessages = [...new Set((context?.blocked || []).map(item => item.message).filter(Boolean))];
-  const selectedTeam = context?.teams.find(team => team.id === value.teamId);
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -2772,7 +2773,6 @@ function ProductionArrangementDialog({ request, context, value, setValue, search
           <div className="production-arrangement-fields">
             <label><span>生产日期</span><input type="date" value={value.workDate} min={request.mode === 'continue' && request.sourceArrangement ? addDateKeyDays(request.sourceArrangement.workDate, 1) : undefined} onChange={event => setValue({ ...value, workDate: event.target.value })} /></label>
             <label><span>班次</span><select value={value.shiftCode} onChange={event => setValue({ ...value, shiftCode: event.target.value })}><option value="DAY">白班</option><option value="NIGHT">夜班</option></select></label>
-            <label><span>生产班组</span><select value={value.teamId} disabled={request.mode === 'continue'} onChange={event => setValue({ ...value, teamId: event.target.value, employeeIds: [] })}><option value="">选择班组</option>{context?.teams.map(team => <option value={team.id} key={team.id}>{team.name}</option>)}</select></label>
           </div>
 
           {request.mode === 'schedule' && <label className="production-arrangement-scope-toggle"><input type="checkbox" checked={value.includeWaitingUpstream} onChange={event => setValue({ ...value, includeWaitingUpstream: event.target.checked })} /><span><b>安排全部未完成工序</b><small>包含等待上道的后续工序，适合小批次前置安排；关闭后只安排当前可执行工序。</small></span></label>}
@@ -2785,16 +2785,16 @@ function ProductionArrangementDialog({ request, context, value, setValue, search
           </div>
 
           <div className="production-arrangement-processes">
-            <div><strong>本次工序范围</strong><small>{selectedTeam?.name || '请选择生产班组'} · {compactDateText(value.workDate)}</small></div>
+            <div><strong>本次工序范围</strong><small>全部生产人员 · {compactDateText(value.workDate)}</small></div>
             <span>{(request.mode === 'continue' ? request.sourceArrangement?.processNames || [] : processNames).slice(0, 16).map(name => <b key={name}>{name}</b>)}</span>
             {!loading && request.mode === 'schedule' && !processNames.length && <p>当前选择下没有可新安排工序，请检查是否已安排或工序资料是否完整。</p>}
           </div>
 
           <div className="production-arrangement-workers-head">
-            <div><strong>选择作业员工</strong><small>支持单人或多人；周工序预选人员会优先显示。</small></div>
+            <div><strong>选择作业员工</strong><small>实时同步人事档案中的生产部在职人员，共 {context?.productionEmployeeCount || 0} 人。</small></div>
             <div><button type="button" disabled={!context?.recommendedEmployeeIds.length} onClick={() => setValue({ ...value, employeeIds: [...(context?.recommendedEmployeeIds || [])] })}>选择推荐</button><button type="button" disabled={!value.employeeIds.length} onClick={() => setValue({ ...value, employeeIds: [] })}>清空</button></div>
           </div>
-          <label className="production-arrangement-employee-search"><Search size={16} aria-hidden="true" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索姓名、工号、岗位或班组" /></label>
+          <label className="production-arrangement-employee-search"><Search size={16} aria-hidden="true" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="输入员工编号或姓名搜索" /></label>
 
           <div className="production-arrangement-employee-grid">
             {employees.map(employee => {
@@ -2803,20 +2803,20 @@ function ProductionArrangementDialog({ request, context, value, setValue, search
               const leave = durationHours(employee.leaveMilliseconds) > 0 || employee.attendanceStatus === 'LEAVE';
               const overload = selected && remainingHours + 0.001 < perPersonHours;
               return <button className={`${selected ? 'selected' : ''} ${leave ? 'leave' : ''} ${overload ? 'overload' : ''}`.trim()} type="button" aria-pressed={selected} onClick={() => toggleEmployee(employee.employeeId)} key={employee.employeeId}>
-                <span>{employee.employeeName.slice(0, 1)}</span><b>{employee.employeeName}<small>{employee.employeeNo} · {employee.position || employee.team || '生产员工'}</small></b><em>{recommendedIds.has(employee.employeeId) && <i>推荐</i>}{leave ? '请假' : `余 ${remainingHours.toFixed(1)}h`}</em>
+                <span>{employee.employeeName.slice(0, 1)}</span><b>{employee.employeeName}<small>{employee.employeeNo} · {employee.position || '生产员工'}</small></b><em>{recommendedIds.has(employee.employeeId) && <i>推荐</i>}{leave ? '请假' : `余 ${remainingHours.toFixed(1)}h`}</em>
               </button>;
             })}
-            {!loading && !employees.length && <p>当前班组没有匹配的生产员工。</p>}
+            {!loading && !employees.length && <p>没有匹配的生产部在职员工，请核对工号或人事档案。</p>}
             {loading && Array.from({ length: 6 }, (_, index) => <span className="production-arrangement-employee-skeleton" key={index} />)}
           </div>
         </section>
 
         <aside className="production-arrangement-advice">
-          <div className="production-arrangement-advice-title"><CalendarDays size={18} aria-hidden="true" /><span><small>安排预览</small><strong>{compactDateText(value.workDate)} · {selectedTeam?.name || '待选班组'}</strong></span></div>
+          <div className="production-arrangement-advice-title"><CalendarDays size={18} aria-hidden="true" /><span><small>安排预览</small><strong>{compactDateText(value.workDate)} · 生产全员</strong></span></div>
           <dl><div><dt>工单数量</dt><dd>{request.orders.length} 单</dd></div><div><dt>工序数量</dt><dd>{request.mode === 'continue' ? request.sourceArrangement?.sourceTaskIds.length || 0 : context?.summary.taskCount || 0} 道</dd></div><div><dt>人均预计工时</dt><dd>{perPersonHours.toFixed(1)} 小时</dd></div><div><dt>安排方式</dt><dd>{value.employeeIds.length > 1 ? `${value.employeeIds.length} 人分摊` : value.employeeIds.length ? '单人负责' : '待选人员'}</dd></div></dl>
 
           {(overloadEmployees.length > 0 || leaveEmployees.length > 0 || crossWeekCount > 0 || blockedMessages.length > 0) && <div className="production-arrangement-warnings"><strong><AlertTriangle size={16} aria-hidden="true" />排产提醒</strong>{overloadEmployees.length > 0 && <p className="danger">{overloadEmployees.map(employee => employee.employeeName).join('、')} 的当日剩余产能不足，仍可保存但建议增员或改期。</p>}{leaveEmployees.length > 0 && <p className="warning">{leaveEmployees.map(employee => employee.employeeName).join('、')} 当日存在请假记录，请确认实际到岗。</p>}{crossWeekCount > 0 && <p className="warning">有 {crossWeekCount} 道工序安排跨越原计划周，保存后会显示“跨周”标签。</p>}{blockedMessages.slice(0, 3).map(message => <p key={message}>{message}</p>)}</div>}
-          {!loading && !error && !overloadEmployees.length && !leaveEmployees.length && !crossWeekCount && !blockedMessages.length && <div className="production-arrangement-ready"><CheckCircle2 size={18} aria-hidden="true" /><span><strong>当前安排可保存</strong><small>日期、班组与人员容量未发现明显冲突。</small></span></div>}
+          {!loading && !error && !overloadEmployees.length && !leaveEmployees.length && !crossWeekCount && !blockedMessages.length && <div className="production-arrangement-ready"><CheckCircle2 size={18} aria-hidden="true" /><span><strong>当前安排可保存</strong><small>日期与人员容量未发现明显冲突，人员资料来自人事档案。</small></span></div>}
           {request.mode === 'continue' && request.sourceArrangement && <div className="production-arrangement-history-card"><span>原安排保留</span><strong>{compactDateText(request.sourceArrangement.workDate)} · {request.sourceArrangement.employees.map(employee => employee.name).join('、') || '未指定'}</strong><small>原记录标记“已续排”，新安排作为下一条历史记录显示。</small></div>}
           {error && <div className="production-arrangement-error"><AlertTriangle size={17} aria-hidden="true" /><span><strong>无法保存</strong><small>{error}</small></span></div>}
         </aside>

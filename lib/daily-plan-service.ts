@@ -532,6 +532,27 @@ async function activeEmployeeMembership(
   });
 }
 
+async function assertProductionEmployeesCanBeScheduled(
+  client: MutationClient,
+  employeeIds: string[],
+) {
+  const employees = await client.employee.findMany({
+    where: {
+      id: { in: employeeIds },
+      ...productionEmployeeWhere({ requireAttendance: false }),
+    },
+    select: { id: true, employeeNo: true, name: true },
+  });
+  if (employees.length !== employeeIds.length) {
+    throw new DailyPlanServiceError(
+      '所选人员已离职、已转出生产部或人事档案不存在，请刷新人员名单后重试',
+      'DAILY_PLAN_EMPLOYEE_INACTIVE',
+      409,
+    );
+  }
+  return employees;
+}
+
 async function assertEmployeeCanBeAssigned(input: {
   client: MutationClient;
   taskId: string;
@@ -604,6 +625,7 @@ export async function previewDailyPlanSuggestions(input: {
   includeWaitingUpstream?: boolean;
   allowCrossWeekWorkOrders?: boolean;
   allocationScope?: 'week' | 'all_active';
+  productionWide?: boolean;
 }) {
   const workDate = normalizeWorkDate(input.workDate);
   const shiftCode = normalizeShiftCode(input.shiftCode);
@@ -693,7 +715,7 @@ export async function previewDailyPlanSuggestions(input: {
       continue;
     }
     for (const step of route.steps.filter(item => item.status !== 'skipped' && item.status !== 'completed')) {
-      if (!weeklyProcessTeamEligible({
+      if (!input.productionWide && !weeklyProcessTeamEligible({
         processDefinitionId: step.processDefinitionId,
         teamProcessDefinitionIds: ownedProcessDefinitionIds,
         globallyOwnedProcessDefinitionIds,
@@ -838,30 +860,37 @@ export async function previewDailyPlanSuggestions(input: {
     || left.workOrderCode.localeCompare(right.workOrderCode, 'zh-CN'));
   availableCandidates.forEach((item, index) => { item.sortOrder = index; });
 
-  const memberships = await prisma.productionPlanningMembership.findMany({
+  const certificationInclude = {
     where: {
-      teamId,
-      role: { in: [ProductionPlanningRole.TEAM_LEADER, ProductionPlanningRole.MEMBER] },
-      ...activeMembershipWhere(workDate),
-      employee: { is: productionEmployeeWhere() },
+      status: 'ACTIVE',
+      effectiveFrom: { lte: workDate },
+      OR: [{ expiresAt: null }, { expiresAt: { gte: workDate } }],
+      skill: { is: { isActive: true } },
     },
-    include: {
-      employee: {
-        include: {
-          skillCertifications: {
-            where: {
-              status: 'ACTIVE',
-              effectiveFrom: { lte: workDate },
-              OR: [{ expiresAt: null }, { expiresAt: { gte: workDate } }],
-              skill: { is: { isActive: true } },
-            },
-            include: { skill: true },
-          },
+    include: { skill: true },
+  } satisfies Prisma.EmployeeSkillCertificationFindManyArgs;
+  const workforce = input.productionWide
+    ? (await prisma.employee.findMany({
+        where: productionEmployeeWhere({ requireAttendance: false }),
+        include: { skillCertifications: certificationInclude },
+        orderBy: [{ employeeNo: 'asc' }, { name: 'asc' }],
+      })).map(employee => ({
+        employeeId: employee.id,
+        role: ProductionPlanningRole.MEMBER,
+        employee,
+      }))
+    : await prisma.productionPlanningMembership.findMany({
+        where: {
+          teamId,
+          role: { in: [ProductionPlanningRole.TEAM_LEADER, ProductionPlanningRole.MEMBER] },
+          ...activeMembershipWhere(workDate),
+          employee: { is: productionEmployeeWhere() },
         },
-      },
-    },
-  });
-  const employeeIds = memberships.map(item => item.employeeId);
+        include: {
+          employee: { include: { skillCertifications: certificationInclude } },
+        },
+      });
+  const employeeIds = workforce.map(item => item.employeeId);
   const [attendance, existingAssignments, dailyPlan] = await Promise.all([
     employeeIds.length ? prisma.attendanceRecord.findMany({ where: { workDate, employeeId: { in: employeeIds } } }) : [],
     employeeIds.length ? prisma.dailyTaskAssignment.findMany({
@@ -883,24 +912,25 @@ export async function previewDailyPlanSuggestions(input: {
     map.set(item.employeeId, (map.get(item.employeeId) || 0n) + item.plannedStandardMilliseconds);
     return map;
   }, new Map<string, bigint>());
-  const employeeCapacity = memberships.map(membership => {
-    const record = attendanceByEmployee.get(membership.employeeId);
-    const override = overrideByEmployee.get(membership.employeeId);
+  const employeeCapacity = workforce.map(member => {
+    const record = attendanceByEmployee.get(member.employeeId);
+    const override = overrideByEmployee.get(member.employeeId);
     const capacity = resolveEffectiveCapacity({
       attendanceActualMilliseconds: record?.actualMilliseconds,
       attendanceOvertimeMilliseconds: record?.overtimeMilliseconds,
       overrideRegularMilliseconds: override?.regularMilliseconds,
       overrideOvertimeMilliseconds: override?.overtimeMilliseconds,
     });
-    const assigned = assignedByEmployee.get(membership.employeeId) || 0n;
+    const assigned = assignedByEmployee.get(member.employeeId) || 0n;
     return {
-      employeeId: membership.employeeId,
-      employeeNo: membership.employee.employeeNo,
-      employeeName: membership.employee.name,
-      department: membership.employee.department,
-      position: membership.employee.position,
-      team: membership.employee.team,
-      role: membership.role,
+      employeeId: member.employeeId,
+      employeeNo: member.employee.employeeNo,
+      employeeName: member.employee.name,
+      department: member.employee.department,
+      position: member.employee.position,
+      team: member.employee.team,
+      role: member.role,
+      attendanceEnabled: member.employee.attendanceEnabled,
       capacityMilliseconds: BigInt(capacity.totalMilliseconds),
       assignedMilliseconds: assigned,
       remainingMilliseconds: BigInt(capacity.totalMilliseconds) > assigned ? BigInt(capacity.totalMilliseconds) - assigned : 0n,
@@ -908,7 +938,7 @@ export async function previewDailyPlanSuggestions(input: {
       attendanceStatus: record?.status || null,
       attendanceType: record?.attendanceType || null,
       leaveMilliseconds: record?.leaveMilliseconds || 0,
-      certifications: membership.employee.skillCertifications,
+      certifications: member.employee.skillCertifications,
     };
   });
   const remainingByEmployee = new Map(employeeCapacity.map(item => [item.employeeId, item.remainingMilliseconds] as const));
@@ -1245,7 +1275,7 @@ export async function getProductionArrangementContext(input: {
     select: { id: true, code: true, name: true, legacyTeamName: true },
   });
   if (!teams.length) {
-    throw new DailyPlanServiceError('尚未配置可用生产班组', 'DAILY_PLAN_TEAM_NOT_FOUND', 409);
+    throw new DailyPlanServiceError('生产排产基础数据尚未初始化', 'DAILY_PLAN_TEAM_NOT_FOUND', 409);
   }
   const requestedTeamId = String(input.teamId || '').trim();
   const teamId = teams.some(team => team.id === requestedTeamId)
@@ -1260,6 +1290,7 @@ export async function getProductionArrangementContext(input: {
     includeWaitingUpstream: input.includeWaitingUpstream !== false,
     allowCrossWeekWorkOrders: true,
     allocationScope: 'all_active',
+    productionWide: true,
   });
   const candidates = preview.candidates as SuggestionCandidate[];
   const taskWeek = productionWeekDateBounds(workDate);
@@ -1276,7 +1307,7 @@ export async function getProductionArrangementContext(input: {
         },
         include: {
           members: {
-            where: { employee: { is: productionEmployeeWhere() } },
+            where: { employee: { is: productionEmployeeWhere({ requireAttendance: false }) } },
             orderBy: { position: 'asc' },
             include: { employee: { select: { id: true, employeeNo: true, name: true } } },
           },
@@ -1287,8 +1318,9 @@ export async function getProductionArrangementContext(input: {
   const recommendedEmployeeIds = [...new Set(presets.flatMap(preset => preset.members.map(member => member.employeeId)))];
   return serializeDailyPlanValue({
     ...preview,
-    teams,
     selectedTeamId: teamId,
+    personnelSource: 'HR_PRODUCTION_DEPARTMENT',
+    productionEmployeeCount: preview.employeeCapacity.length,
     canSchedule: scope.isAdmin || scope.isSupervisor,
     recommendedEmployeeIds,
     presets: presets.map(preset => ({
@@ -1361,6 +1393,7 @@ export async function scheduleProductionArrangements(input: {
     includeWaitingUpstream: input.includeWaitingUpstream !== false,
     allowCrossWeekWorkOrders: true,
     allocationScope: 'all_active',
+    productionWide: true,
   });
   const allCandidates = preview.candidates as SuggestionCandidate[];
   const candidates = stepIds.length ? allCandidates.filter(candidate => stepIds.includes(candidate.stepId)) : allCandidates;
@@ -1375,7 +1408,7 @@ export async function scheduleProductionArrangements(input: {
   const employeeCapacityIds = new Set(capacityRows.map(item => item.employeeId));
   const invalidEmployeeIds = employeeIds.filter(employeeId => !employeeCapacityIds.has(employeeId));
   if (invalidEmployeeIds.length) {
-    throw new DailyPlanServiceError('所选人员不属于当前生产班组或当天不可用', 'DAILY_PLAN_EMPLOYEE_UNMAPPED', 409);
+    throw new DailyPlanServiceError('所选人员已不在人事档案的生产部在职名单中', 'DAILY_PLAN_EMPLOYEE_UNMAPPED', 409);
   }
   const warnings = arrangementCapacityWarnings({ candidates, employeeIds, capacityRows, workDate: workDateKey });
   const result = await serializable(async tx => {
@@ -1393,6 +1426,7 @@ export async function scheduleProductionArrangements(input: {
         taskIds: Array.isArray(afterData?.taskIds) ? afterData.taskIds.map(String) : [],
       };
     }
+    await assertProductionEmployeesCanBeScheduled(tx, employeeIds);
     let plan = await tx.dailyProductionPlan.findUnique({
       where: { workDate_shiftCode_teamId: { workDate, shiftCode, teamId } },
     });
@@ -1515,19 +1549,11 @@ export async function scheduleProductionArrangements(input: {
       });
       for (let assignmentIndex = 0; assignmentIndex < split.length; assignmentIndex += 1) {
         const assignment = split[assignmentIndex];
-        const membership = await assertEmployeeCanBeAssigned({
-          client: tx,
-          taskId: task.id,
-          taskTeamId: teamId,
-          workDate,
-          employeeId: assignment.employeeId,
-          quantity: assignment.quantity,
-        });
         await tx.dailyTaskAssignment.create({
           data: {
             taskId: task.id,
             employeeId: assignment.employeeId,
-            assignedTeamId: membership.assignedTeamId,
+            assignedTeamId: teamId,
             quantity: assignment.quantity,
             plannedStandardMilliseconds: labor[assignmentIndex],
             sortOrder: assignmentIndex,
@@ -1623,6 +1649,7 @@ export async function continueProductionArrangement(input: {
         taskIds: Array.isArray(afterData?.taskIds) ? afterData.taskIds.map(String) : [],
       };
     }
+    await assertProductionEmployeesCanBeScheduled(tx, employeeIds);
     for (const source of sources) {
       assertPlanAllowsAssignments(source.plan.status);
       if (targetDate <= source.workDate) {
@@ -1770,19 +1797,11 @@ export async function continueProductionArrangement(input: {
       });
       for (let assignmentIndex = 0; assignmentIndex < split.length; assignmentIndex += 1) {
         const assignment = split[assignmentIndex];
-        const membership = await assertEmployeeCanBeAssigned({
-          client: tx,
-          taskId: targetTask.id,
-          taskTeamId: teamId,
-          workDate: targetDate,
-          employeeId: assignment.employeeId,
-          quantity: assignment.quantity,
-        });
         await tx.dailyTaskAssignment.create({
           data: {
             taskId: targetTask.id,
             employeeId: assignment.employeeId,
-            assignedTeamId: membership.assignedTeamId,
+            assignedTeamId: teamId,
             quantity: assignment.quantity,
             plannedStandardMilliseconds: labor[assignmentIndex],
             sortOrder: assignmentIndex,

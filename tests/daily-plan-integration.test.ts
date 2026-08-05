@@ -298,6 +298,26 @@ test(
         prisma.employee.create({ data: { employeeNo: `${prefix}-A3`, name: `${prefix} worker A3`, department: '生产部', team: teamA.name } }),
         prisma.employee.create({ data: { employeeNo: `${prefix}-B1`, name: `${prefix} worker B1`, department: '生产部', team: teamB.name } }),
       ]);
+      const [hrOnlyWorker, nonProductionEmployee] = await Promise.all([
+        prisma.employee.create({
+          data: {
+            employeeNo: `${prefix}-HR-ONLY`,
+            name: `${prefix} HR-only production worker`,
+            department: '生产部',
+            position: '装配',
+            team: '装配',
+            attendanceEnabled: false,
+          },
+        }),
+        prisma.employee.create({
+          data: {
+            employeeNo: `${prefix}-QUALITY`,
+            name: `${prefix} quality employee`,
+            department: '质量部',
+            position: '质检',
+          },
+        }),
+      ]);
       const [admin, leaderA] = await Promise.all([
         prisma.user.create({
           data: {
@@ -478,6 +498,13 @@ test(
         assert.equal(context.canSchedule, true);
         assert.equal(context.candidates.length, 1);
         assert.equal(context.candidates[0].stepId, route.step.id);
+        assert.equal(context.personnelSource, 'HR_PRODUCTION_DEPARTMENT');
+        assert.equal(context.productionEmployeeCount, context.employeeCapacity.length);
+        assert.equal(context.productionEmployeeCount >= 6, true);
+        assert.equal(context.employeeCapacity.some(employee => employee.employeeId === workerB.id), true);
+        assert.equal(context.employeeCapacity.some(employee => employee.employeeId === hrOnlyWorker.id), true);
+        assert.equal(context.employeeCapacity.some(employee => employee.employeeId === nonProductionEmployee.id), false);
+        assert.equal('teams' in context, false);
 
         const scheduleInput = {
           actorUserId: admin.id,
@@ -485,7 +512,7 @@ test(
           shiftCode: 'DAY',
           teamId: teamA.id,
           workOrderIds: [route.workOrderId],
-          employeeIds: [workerA1.id, workerA2.id],
+          employeeIds: [workerA1.id, hrOnlyWorker.id],
           includeWaitingUpstream: true,
           idempotencyKey: integrationKey(prefix, 'arrangement-schedule'),
         };
