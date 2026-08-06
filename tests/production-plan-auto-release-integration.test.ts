@@ -54,8 +54,16 @@ test(
             },
           });
           const [drawingCategory, sopCategory] = await Promise.all([
-            tx.resourceCategory.findUniqueOrThrow({ where: { code: 'drawing' } }),
-            tx.resourceCategory.findUniqueOrThrow({ where: { code: 'sop' } }),
+            tx.resourceCategory.upsert({
+              where: { code: 'drawing' },
+              update: {},
+              create: { code: 'drawing', name: '图纸', sortOrder: 10 },
+            }),
+            tx.resourceCategory.upsert({
+              where: { code: 'sop' },
+              update: {},
+              create: { code: 'sop', name: 'SOP', sortOrder: 20 },
+            }),
           ]);
           await tx.drawingLibraryFile.createMany({
             data: [currentDrawing, nextDrawing].flatMap(item => ([
