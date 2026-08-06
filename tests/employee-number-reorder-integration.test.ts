@@ -113,6 +113,9 @@ test('real PostgreSQL employee renumbering swaps safely, rejects stale previews,
     await prisma.operationLog.deleteMany({ where: { targetType: 'employee_number_reorder_batch' } });
     await prisma.employeeNumberReorderBatch.deleteMany();
     if (boundUserId) await prisma.user.deleteMany({ where: { id: boundUserId } });
+    await prisma.employeeEmploymentEvent.deleteMany({
+      where: { employee: { name: { startsWith: prefix } } },
+    });
     await prisma.employee.deleteMany({ where: { name: { startsWith: prefix } } });
     if (actorId) await prisma.user.deleteMany({ where: { id: actorId } });
     await prisma.employeeNumberSequence.upsert({
