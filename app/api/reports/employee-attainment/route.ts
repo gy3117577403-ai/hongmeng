@@ -176,6 +176,7 @@ export async function GET(req: NextRequest) {
               completion: {
                 select: {
                   unitLabel: true,
+                  completedAt: true,
                 },
               },
             },
@@ -342,6 +343,7 @@ export async function GET(req: NextRequest) {
         unitLabel: claim.pool.completion.unitLabel || claim.pool.step.unitLabel || '件',
         standardLaborMilliseconds,
         claimedAt: claim.claimedAt.toISOString(),
+        reportedAt: claim.pool.completion.completedAt.toISOString(),
         attendanceMatched: claimDaily.attendanceConfirmed,
         standardSource: claim.pool.standardSource,
         productTimeProfileVersion: claim.pool.productTimeProfileVersion,

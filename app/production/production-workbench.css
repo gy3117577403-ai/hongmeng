@@ -7199,6 +7199,31 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   transform: translateX(-110%);
 }
 
+.hm-production-workbench .production-dispatch-progress.incomplete > i > span {
+  background: linear-gradient(90deg, #f59e0b, #f97316);
+}
+
+.hm-production-workbench .production-dispatch-progress > .production-dispatch-progress-summary {
+  display: grid;
+  overflow: visible;
+  gap: 1px;
+  white-space: normal;
+}
+
+.hm-production-workbench .production-dispatch-progress-summary > span {
+  display: block;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-dispatch-progress .production-dispatch-progress-warning {
+  color: #b45309;
+  font-weight: 750;
+}
+
 .hm-production-workbench .production-dispatch-risk {
   min-height: 74px;
   padding: 7px;

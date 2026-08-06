@@ -79,11 +79,21 @@ export const processRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRoute
       completedBy: { select: { id: true, username: true, displayName: true } },
       executions: {
         where: { voidedAt: null },
-        select: { goodQty: true },
+        select: { goodQty: true, standardLaborMilliseconds: true },
       },
       completions: {
         where: { voidedAt: null },
-        select: { processedQty: true, goodQty: true, defectQty: true },
+        select: {
+          processedQty: true,
+          goodQty: true,
+          defectQty: true,
+          laborPool: {
+            select: {
+              status: true,
+              totalStandardLaborMilliseconds: true,
+            },
+          },
+        },
       },
       _count: { select: { executions: true, completions: true } },
     },
@@ -101,11 +111,21 @@ export const processRouteSummaryInclude = Prisma.validator<Prisma.WorkOrderProce
     include: {
       executions: {
         where: { voidedAt: null },
-        select: { goodQty: true },
+        select: { goodQty: true, standardLaborMilliseconds: true },
       },
       completions: {
         where: { voidedAt: null },
-        select: { processedQty: true, goodQty: true, defectQty: true },
+        select: {
+          processedQty: true,
+          goodQty: true,
+          defectQty: true,
+          laborPool: {
+            select: {
+              status: true,
+              totalStandardLaborMilliseconds: true,
+            },
+          },
+        },
       },
       _count: { select: { executions: true, completions: true } },
     },

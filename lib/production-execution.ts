@@ -3,6 +3,7 @@ import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
 import { getProductionAlerts, isDrawingConfirmationAlert } from '@/lib/production-alerts';
 import { hasEffectiveIssuedDrawing } from '@/lib/production-drawing-readiness';
+import { calculateProductionLaborProgress, serializeProductionLaborProgress } from '@/lib/production-labor-progress';
 import { getProductionQuantitySummary, parsedImportedProductionTarget } from '@/lib/production-quantity';
 import { processRouteSummaryInclude, serializeProcessRoute } from '@/lib/process-routing';
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
@@ -661,6 +662,10 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     completedQty: order.completedQty,
     stage,
   });
+  const standardLaborProgress = serializeProductionLaborProgress(calculateProductionLaborProgress({
+    targetQuantity: quantitySummary.targetQty,
+    steps: order.processRoute?.steps || [],
+  }));
   const productionAlerts = getProductionAlerts({
     uncompletedQty: order.uncompletedQty,
     productionTargetQty: order.productionTargetQty,
@@ -783,6 +788,7 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     exceptionCodes,
     exceptionLabels: exceptionCodes.map(code => exceptionLabels[code]),
     quantitySummary,
+    standardLaborProgress,
     productionAlerts,
     processName: order.processName,
     orderDate: order.orderDate?.toISOString() || null,

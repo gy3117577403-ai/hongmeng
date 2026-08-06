@@ -15,6 +15,7 @@ import { productionDrawingStageLabel } from '@/lib/production-drawing-readiness'
 import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
 import { resolveProductionPrimaryAction } from '@/lib/production-primary-action';
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
+import { formatProcessDuration } from '@/lib/process-time';
 import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import { productTimeConfigurationRoute, type ProductTimeRouteScope } from '@/lib/workflow-routes';
 import type {
@@ -257,6 +258,17 @@ type ProductionOrder = {
   exceptionCodes: string[];
   exceptionLabels: string[];
   quantitySummary: ProductionQuantitySummary;
+  standardLaborProgress: {
+    totalStandardMilliseconds: string;
+    completedStandardMilliseconds: string;
+    remainingStandardMilliseconds: string;
+    percentage: number | null;
+    stepCount: number;
+    configuredStepCount: number;
+    missingStandardStepCount: number;
+    pendingCompletionStandardCount: number;
+    targetQuantityMissing: boolean;
+  };
   productionAlerts: ProductionAlert[];
   processName?: string | null;
   orderDate?: string | null;
@@ -2384,7 +2396,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         <div className={`production-dispatch-layout ${insightsOpen ? 'rail-open' : ''}`.trim()}>
           <section className="production-dispatch-list-panel" aria-label="生产工单调度列表">
             <header className="production-dispatch-list-head">
-              <span>产品信息</span><span>工序进度</span><span>生产日期</span><span>安排人员</span><span>完成进度</span><span>交期 / 风险</span><span>现场操作</span>
+              <span>产品信息</span><span>工序进度</span><span>生产日期</span><span>安排人员</span><span>工时完成进度</span><span>交期 / 风险</span><span>现场操作</span>
             </header>
             <div ref={boardShellRef} className="production-dispatch-list hm-scroll-region" tabIndex={0} aria-label={`生产工单列表，共 ${board?.pagination.total || 0} 项`}>
               {dispatchItems.map(item => <ProductionDispatchRow
@@ -2545,12 +2557,24 @@ function ProductionDispatchRow({
   copySpecification,
   openArrangement,
 }: ProductionDispatchRowProps) {
-  const { order, displayStage, stageQuantity } = item;
+  const { order, displayStage } = item;
   const route = order.processRoute;
   const targetQuantity = dispatchTargetQuantity(order);
-  const completedQuantity = dispatchCompletedQuantity(order);
-  const quantityPercentage = order.quantitySummary.percentage ?? (targetQuantity > 0 ? Math.round((completedQuantity / targetQuantity) * 1000) / 10 : 0);
-  const progressPercentage = Math.max(0, Math.min(quantityPercentage, 100));
+  const laborProgress = order.standardLaborProgress;
+  const laborPercentage = laborProgress.percentage;
+  const progressPercentage = Math.max(0, Math.min(laborPercentage ?? 0, 100));
+  const completedLaborText = formatProcessDuration(Number(laborProgress.completedStandardMilliseconds));
+  const totalLaborText = formatProcessDuration(Number(laborProgress.totalStandardMilliseconds));
+  const remainingLaborText = formatProcessDuration(Number(laborProgress.remainingStandardMilliseconds));
+  const laborWarning = laborProgress.stepCount === 0
+    ? '工艺路线待建立'
+    : laborProgress.targetQuantityMissing
+      ? '计划数量待补充'
+      : laborProgress.missingStandardStepCount > 0
+        ? `${laborProgress.missingStandardStepCount} 道工序缺标准工时`
+        : laborProgress.pendingCompletionStandardCount > 0
+          ? `${laborProgress.pendingCompletionStandardCount} 笔报工待补标准工时`
+          : '';
   const risk = dispatchRisk(order);
   const selectedRow = selected.includes(order.id);
   const lifecycle = resolveProductionLifecycle({
@@ -2656,10 +2680,14 @@ function ProductionDispatchRow({
       {!visibleArrangements.length && <span className="production-arrangement-empty">待主管安排</span>}
     </div>
 
-    <div className="production-dispatch-progress" title="工单累计完成进度">
-      <span><b>{formatProductionPercentage(quantityPercentage)}</b><small>{formatProductionQuantity(completedQuantity)} / {targetQuantity > 0 ? formatProductionQuantity(targetQuantity) : '待补充'}</small></span>
+    <div className={`production-dispatch-progress ${laborWarning ? 'incomplete' : ''}`.trim()} title={laborWarning || `总标准工时 ${totalLaborText}`}>
+      <span><b>{laborPercentage === null ? '待维护' : formatProductionPercentage(laborPercentage)}</b><small>已完成 {completedLaborText}</small></span>
       <i><span style={{ width: `${progressPercentage}%` }} /></i>
-      <em>本阶段 {stageQuantity === null ? '待补充' : formatProductionQuantity(stageQuantity)}</em>
+      <em className="production-dispatch-progress-summary">
+        <span>剩余 {remainingLaborText}</span>
+        <span>总计 {totalLaborText}</span>
+      </em>
+      {laborWarning && <small className="production-dispatch-progress-warning">{laborWarning}</small>}
     </div>
 
     <div className={`production-dispatch-risk ${risk.tone}`}>

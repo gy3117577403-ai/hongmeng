@@ -1422,6 +1422,7 @@ export type EmployeeLaborClaimDetailDTO = {
   unitLabel: string;
   standardLaborMilliseconds: number;
   claimedAt: string;
+  reportedAt: string;
   attendanceMatched: boolean;
   standardSource: string;
   productTimeProfileVersion?: number | null;

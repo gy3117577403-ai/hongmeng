@@ -70,6 +70,15 @@ function dateTime(value: string): string {
   }).format(new Date(value));
 }
 
+function fullDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(date).replaceAll('/', '-');
+}
+
 function periodLabel(period: Period): string {
   return period === 'month' ? '本月' : period === 'week' ? '本周' : '当日';
 }
@@ -716,7 +725,7 @@ function EmployeeReportRow({ row, expanded, onToggle }: { row: EmployeeAttainmen
       </div>)}
       {row.claimDetails.map(detail => <div className="employee-report-claim-detail" key={`claim-${detail.id}`}>
         <span><strong>{detail.processName}</strong><small>{detail.customerName || '客户未设置'} · {detail.specification || detail.workOrderCode}</small></span>
-        <span><small>工时来源</small><b>{detail.workDate} 报工自动记入{detail.corrected ? ' · 已校正' : ''}</b></span>
+        <span><small>生产日期</small><b>{detail.workDate}{detail.corrected ? ' · 已校正' : ''}</b><small>报工时间 {fullDateTime(detail.reportedAt)}</small></span>
         <span><small>标准工时</small><b>{formatProcessDuration(detail.standardLaborMilliseconds)}</b></span>
         <span><small>报工数量</small><b>{detail.quantity} {detail.unitLabel}</b></span>
         <em className={detail.attendanceMatched ? 'good' : 'watch'}>{detail.attendanceMatched ? detail.corrected ? '校正后计入' : '已计入' : '缺考勤待匹配'}</em>

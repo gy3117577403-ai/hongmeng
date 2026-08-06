@@ -2,7 +2,7 @@
 
 1. 创建 PostgreSQL：库名 `workorder_resource`。
 2. 创建对象存储 Bucket：`workorder-resources`，private。
-3. App Deploy 使用镜像：`ghcr.io/gy3117577403-ai/hongmeng:v1.21.0`（固定版本，避免 `latest` 缓存到旧镜像）。
+3. App Deploy 使用镜像：`ghcr.io/gy3117577403-ai/hongmeng:v1.22.0`（固定版本，避免 `latest` 缓存到旧镜像）。
 4. 端口：`3000`。
 5. 环境变量：
 ```env

@@ -79,7 +79,7 @@
 .traveler-process-table { width: 100%; margin-top: 3mm; border-collapse: collapse; table-layout: fixed; font-size: 3mm; }
 .traveler-process-table th { height: 8mm; padding: 1mm; border: 1px solid #cbd5e1; background: #f1f5f9; color: #334155; }
 .traveler-process-table td { height: 8mm; padding: .8mm 1.2mm; border: 1px solid #cbd5e1; text-align: center; }
-.traveler-process-table th:nth-child(1) { width: 10mm; }.traveler-process-table th:nth-child(2) { width: 36mm; }.traveler-process-table th:nth-child(3) { width: 15mm; }.traveler-process-table th:nth-child(4) { width: 28mm; }.traveler-process-table th:nth-child(5) { width: 28mm; }.traveler-process-table th:nth-child(6) { width: 20mm; }
+.traveler-process-table th:nth-child(1) { width: 10mm; }.traveler-process-table th:nth-child(2) { width: 34mm; }.traveler-process-table th:nth-child(3) { width: 25mm; }.traveler-process-table th:nth-child(4) { width: 34mm; }.traveler-process-table th:nth-child(5) { width: 24mm; }.traveler-process-table th:nth-child(6) { width: 18mm; }
 .traveler-process-table td:nth-child(2) { text-align: left; }.traveler-process-table td strong { display: block; }.traveler-process-table td small { display: block; margin-top: .5mm; color: #94a3b8; font-size: 2.2mm; }
 .traveler-first-piece-box { display: inline-block; width: 5mm; height: 5mm; border: .55mm solid #334155; border-radius: .8mm; background: #fff; }
 .traveler-sheet.dense .traveler-process-table { font-size: 2.55mm; }.traveler-sheet.dense .traveler-process-table th, .traveler-sheet.dense .traveler-process-table td { height: 6.5mm; }

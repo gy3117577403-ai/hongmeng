@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { calculateStandardHourlyCapacity } from '@/lib/process-capacity';
 import { workOrderPrintReturnLabel } from '@/lib/work-order-print-navigation';
 import type { WorkOrderTravelerPrintRecord } from '@/lib/work-order-qr-service';
 
@@ -50,6 +51,18 @@ function standardTimeText(milliseconds: number | null, timeBasis: string | null,
   const seconds = milliseconds / 1000;
   const value = Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1);
   return timeBasis === 'per_batch' ? `${value} 秒/批` : `${value} 秒 × ${Math.max(1, units)}`;
+}
+
+function hourlyCapacityText(input: {
+  timeBasis: string | null;
+  standardMillisecondsPerUnit: number | null;
+  unitsPerProduct: number;
+  unitLabel: string;
+}): string {
+  const capacity = calculateStandardHourlyCapacity(input);
+  if (capacity.kind === 'per_batch') return '按批计时';
+  if (capacity.kind === 'missing') return '待维护';
+  return `${capacity.quantityPerHour.toLocaleString('zh-CN', { maximumFractionDigits: 1 })} ${input.unitLabel}/小时`;
 }
 
 function modeText(mode: WorkOrderTravelerPrintRecord['mode']): string {
@@ -320,7 +333,7 @@ export default function WorkOrderTravelerPrint({
           : <span><LoaderCircle className="spin" size={28} />生成中</span>}<strong>手机扫码报工</strong><small>短码 {record.shortCode}</small></div>
       </section>
       <section className="traveler-route-title"><span>工艺路线</span><strong>共 {snapshot.steps.length} 道工序</strong><small>扫码可单选或批量报工</small></section>
-      <table className="traveler-process-table"><thead><tr><th>序号</th><th>工序名称</th><th>顺序组</th><th>标准工时</th><th>首件确认</th><th>数量</th><th>日期 / 确认</th></tr></thead><tbody>{snapshot.steps.map(step => <tr key={step.id}><td>{String(step.position).padStart(2, '0')}</td><td><strong>{step.processName}</strong></td><td>{step.sequenceGroup}</td><td>{standardTimeText(step.standardMillisecondsPerUnit, step.timeBasis, step.unitsPerProduct)}</td><td><span className="traveler-first-piece-box" aria-label="首件确认方框" /></td><td /><td /></tr>)}</tbody></table>
+      <table className="traveler-process-table"><thead><tr><th>序号</th><th>工序名称</th><th>标准工时</th><th>标准小时产能</th><th>首件确认</th><th>数量</th><th>日期 / 确认</th></tr></thead><tbody>{snapshot.steps.map(step => <tr key={step.id}><td>{String(step.position).padStart(2, '0')}</td><td><strong>{step.processName}</strong><small>第 {step.sequenceGroup} 顺序组</small></td><td>{standardTimeText(step.standardMillisecondsPerUnit, step.timeBasis, step.unitsPerProduct)}</td><td><strong>{hourlyCapacityText({ timeBasis: step.timeBasis, standardMillisecondsPerUnit: step.standardMillisecondsPerUnit, unitsPerProduct: step.unitsPerProduct, unitLabel: step.unitLabel || snapshot.unitLabel })}</strong><small>{step.timeBasis === 'per_unit' ? '理论值' : '批量待现场确认'}</small></td><td><span className="traveler-first-piece-box" aria-label="首件确认方框" /></td><td /><td /></tr>)}</tbody></table>
       <footer className="traveler-sheet-foot"><div><span>质量异常</span><b /></div><div><span>最终包装</span><b /></div><p>二维码仅用于定位工单，提交报工前必须使用员工编号登录并核对姓名。纸面版本与系统不一致时，以手机端最新工艺为准并重新打印。</p></footer>
     </article>;
   }
