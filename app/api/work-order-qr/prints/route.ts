@@ -4,6 +4,7 @@ import {
   createWorkOrderTravelerPrints,
   WorkOrderQrServiceError,
 } from '@/lib/work-order-qr-service';
+import { sanitizeWorkOrderPrintReturnTo } from '@/lib/work-order-print-navigation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
       materials?: unknown;
       materialCopies?: unknown;
       reprintReason?: unknown;
+      returnTo?: unknown;
     };
     const prints = await createWorkOrderTravelerPrints({
       workOrderIds: body.workOrderIds,
@@ -29,7 +31,10 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       actor: user.displayName || user.username,
     });
-    const query = new URLSearchParams({ printIds: prints.map(print => print.printId).join(',') });
+    const query = new URLSearchParams({
+      printIds: prints.map(print => print.printId).join(','),
+      returnTo: sanitizeWorkOrderPrintReturnTo(body.returnTo),
+    });
     return NextResponse.json({
       ok: true,
       data: {

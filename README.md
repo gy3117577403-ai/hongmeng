@@ -4,7 +4,7 @@
 
 ## 生产部署状态
 
-- 当前生产版本：v1.12.0
+- 当前生产版本：v1.21.0
 - 上线地址：https://qdowqencjyph.sealoshzh.site
 - 部署平台：Sealos
 - 镜像：`ghcr.io/gy3117577403-ai/hongmeng`
@@ -58,10 +58,10 @@ docker compose up --build
 推送到 GitHub main 后，工作流会构建：
 
 ```text
-ghcr.io/gy3117577403-ai/hongmeng:latest
+ghcr.io/gy3117577403-ai/hongmeng:v1.21.0
 ```
 
-Sealos App Deploy 端口填 `3000`。
+Sealos App Deploy 端口填 `3000`。生产环境优先使用固定版本 `v1.21.0`；`latest` 仅用于跟随最新构建。
 
 ## 平板交付方式
 

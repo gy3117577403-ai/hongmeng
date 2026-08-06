@@ -70,6 +70,21 @@ export function TravelerPrintDialog({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const dialogRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
+
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      setMode('TRAVELER_ONLY');
+      setCopies(1);
+      setAdvancedOpen(false);
+      setCustomMaterials(['TRAVELER']);
+      setMaterialCopies({ TRAVELER: 1, SOP: 1, DRAWING: 1 });
+      setReprintReason('');
+      setSaving(false);
+      setError('');
+    }
+    wasOpenRef.current = open;
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -98,10 +113,11 @@ export function TravelerPrintDialog({
 
   async function submit() {
     if (!workOrderIds.length || saving) return;
-    const printWindow = window.open('about:blank', '_blank');
     setSaving(true);
     setError('');
+    let navigating = false;
     try {
+      const returnTo = `${window.location.pathname}${window.location.search}`;
       const response = await fetch('/api/work-order-qr/prints', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -112,21 +128,21 @@ export function TravelerPrintDialog({
           materials: mode === 'CUSTOM' ? customMaterials : undefined,
           materialCopies: mode === 'CUSTOM' ? materialCopies : undefined,
           reprintReason,
+          returnTo,
         }),
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.error || '打印任务生成失败');
       const url = String(body.data?.url || '');
-      if (!url.startsWith('/production/qr-print?')) throw new Error('打印地址生成失败');
-      if (printWindow) printWindow.location.href = url;
-      else window.location.href = url;
+      const parsed = new URL(url, window.location.origin);
+      if (parsed.origin !== window.location.origin || parsed.pathname !== '/production/qr-print') throw new Error('打印地址生成失败');
       onSuccess?.(`已生成 ${body.data?.count || workOrderIds.length} 张流转单，请打印后确认`);
-      onClose();
+      navigating = true;
+      window.location.assign(`${parsed.pathname}${parsed.search}`);
     } catch (reason) {
-      printWindow?.close();
       setError(reason instanceof Error ? reason.message : '打印任务生成失败');
     } finally {
-      setSaving(false);
+      if (!navigating) setSaving(false);
     }
   }
 

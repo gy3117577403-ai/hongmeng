@@ -9,10 +9,12 @@
 .traveler-print-toolbar > div span { color: #64748b; font-size: 12px; }
 .traveler-print-toolbar .traveler-print-toolbar-actions { display: flex; justify-self: end; justify-content: flex-end; align-items: center; gap: 8px; }
 .traveler-print-toolbar .traveler-print-toolbar-actions button { justify-self: auto; min-height: 38px; padding: 0 14px; }
+.traveler-print-toolbar .traveler-print-toolbar-actions .traveler-print-primary { min-height: 38px; padding: 0 14px; border-color: #f97316; background: linear-gradient(135deg,#f97316,#ea580c); color: #fff; }
 .traveler-print-toolbar .traveler-print-toolbar-actions button.confirm { border-color: #b8d9c5; color: #147a45; background: #effaf4; box-shadow: none; }
 .traveler-print-confirmed { min-height: 38px; display: inline-flex !important; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid #b8d9c5; border-radius: 11px; color: #147a45 !important; background: #effaf4; font-size: 12px !important; font-weight: 800; }
-.traveler-print-instruction { max-width: 210mm; display: flex; align-items: center; gap: 9px; margin: 0 auto 12px; padding: 10px 14px; border: 1px solid #f4d2ae; border-radius: 12px; color: #8a4c12; background: #fff8ef; font-size: 12px; }
-.traveler-print-warning { max-width: 210mm; margin: 0 auto 12px; padding: 10px 14px; border: 1px solid #fecaca; border-radius: 12px; background: #fff1f2; color: #b91c1c; }
+.traveler-print-instruction { max-width: 1120px; display: flex; align-items: center; gap: 10px; margin: 0 auto 12px; padding: 11px 14px; border: 1px solid #f4d2ae; border-radius: 12px; color: #8a4c12; background: #fff8ef; font-size: 12px; }
+.traveler-print-instruction > svg { flex: 0 0 auto; color: #e9630a; }.traveler-print-instruction span { line-height: 1.55; }.traveler-print-instruction strong { margin-right: 7px; color: #713a0b; }
+.traveler-print-warning { max-width: 1120px; margin: 0 auto 12px; padding: 10px 14px; border: 1px solid #fecaca; border-radius: 12px; background: #fff1f2; color: #b91c1c; }
 .traveler-drawing-jobs { max-width: 1120px; margin: 0 auto 16px; overflow: hidden; border: 1px solid #d9e1eb; border-radius: 16px; background: #fff; box-shadow: 0 12px 34px rgba(15,23,42,.08); }
 .traveler-drawing-jobs > header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 16px; border-bottom: 1px solid #e6ebf1; background: linear-gradient(135deg,#fff 60%,#fff7ee); }
 .traveler-drawing-jobs > header span { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 9px; }
@@ -38,8 +40,16 @@
 .traveler-print-external-only { max-width: 760px; min-height: 280px; display: grid; place-content: center; justify-items: center; gap: 8px; margin: 44px auto; border: 1px dashed #cbd5e1; border-radius: 20px; color: #66758a; background: rgba(255,255,255,.72); }
 .traveler-print-external-only svg { color: #e9650b; }
 .traveler-print-external-only strong { color: #26364d; font-size: 20px; }
-.traveler-print-pages { display: grid; gap: 22px; justify-content: center; }
-.traveler-sheet { width: 210mm; min-height: 297mm; box-sizing: border-box; display: flex; flex-direction: column; padding: 10mm; background: #fff; box-shadow: 0 18px 50px rgba(15,23,42,.16); overflow: hidden; }
+.traveler-packet-card { max-width: 1120px; margin: 0 auto 16px; overflow: hidden; border: 1px solid #d9e1eb; border-radius: 18px; background: #fff; box-shadow: 0 16px 42px rgba(15,23,42,.1); }
+.traveler-packet-card > header { min-height: 74px; display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 12px 16px; border-bottom: 1px solid #e1e7ef; background: linear-gradient(135deg,#fff 58%,#fff5e9); }
+.traveler-packet-card > header > div { display: grid; gap: 2px; }.traveler-packet-card > header > div span { color: #e9630a; font-size: 10px; font-weight: 850; }.traveler-packet-card > header > div strong { color: #1e2c42; font-size: 16px; }.traveler-packet-card > header > div small { color: #6d7b8f; font-size: 11px; }
+.traveler-packet-card nav { display: flex; gap: 7px; }.traveler-packet-card nav button { min-height: 36px; padding: 0 12px; border: 1px solid #d8e0ea; border-radius: 10px; color: #59677b; background: #fff; cursor: pointer; font-size: 11px; font-weight: 750; }.traveler-packet-card nav button.active { border-color: #f5a56d; color: #c75508; background: #fff6ee; box-shadow: 0 0 0 2px rgba(249,115,22,.08); }
+.traveler-packet-preview { height: min(76vh, 900px); min-height: 640px; background: #dfe5ec; }
+.traveler-packet-preview iframe { width: 100%; height: 100%; display: block; border: 0; background: #fff; }
+.traveler-packet-loading, .traveler-packet-error { height: 100%; display: grid; place-content: center; justify-items: center; gap: 9px; padding: 30px; color: #718096; text-align: center; }.traveler-packet-loading svg { color: #ef690d; }.traveler-packet-loading strong, .traveler-packet-error strong { color: #26364d; font-size: 20px; }.traveler-packet-loading span, .traveler-packet-error span { max-width: 560px; line-height: 1.65; }.traveler-packet-error { background: #fffaf5; }.traveler-packet-error svg { color: #e9680d; }.traveler-packet-error small { color: #9a632f; }
+.traveler-packet-card > footer { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 15px; border-top: 1px solid #e1e7ef; background: #fff; }.traveler-packet-card > footer span { display: inline-flex; align-items: center; gap: 7px; color: #147a45; font-size: 11px; font-weight: 750; }.traveler-packet-card > footer small { color: #718096; font-size: 10px; }
+.traveler-packet-sources { width: 210mm; position: fixed; top: 0; left: -12000px; z-index: -100; pointer-events: none; }
+.traveler-sheet { width: 210mm; height: 297mm; min-height: 297mm; box-sizing: border-box; display: flex; flex-direction: column; padding: 10mm; background: #fff; box-shadow: none; overflow: hidden; }
 .traveler-sheet-head { display: flex; align-items: center; justify-content: space-between; padding-bottom: 4mm; border-bottom: 2px solid #f97316; }
 .traveler-brand { display: flex; align-items: center; gap: 3mm; }
 .traveler-brand > b { display: grid; place-items: center; width: 12mm; height: 12mm; border-radius: 3mm; background: linear-gradient(145deg,#fb923c,#ea580c); color: #fff; font-size: 7mm; }
@@ -76,11 +86,6 @@
 .traveler-sheet-foot { margin-top: auto; padding-top: 4mm; }
 .traveler-sheet-foot > div { display: inline-grid; grid-template-columns: 18mm 32mm; gap: 2mm; margin-right: 5mm; font-size: 3mm; }.traveler-sheet-foot > div b { border-bottom: 1px solid #475569; }
 .traveler-sheet-foot p { margin: 4mm 0 0; padding: 2.5mm 3mm; border-radius: 2mm; background: #f8fafc; color: #475569; font-size: 2.45mm; line-height: 1.5; }
-.traveler-sop-sheet,
-.traveler-blank-page { width: 210mm; height: 297mm; box-sizing: border-box; background: #fff; box-shadow: 0 18px 50px rgba(15,23,42,.16); overflow: hidden; }
-.traveler-sop-sheet { display: grid; place-items: center; }
-.traveler-sop-sheet img { width: 100%; height: 100%; object-fit: contain; }
-.traveler-blank-page { display: grid; place-items: center; color: #cbd5e1; font-size: 12px; }
 .traveler-print-confirm-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgba(16, 28, 45, .52); backdrop-filter: blur(5px); }
 .traveler-print-confirm-backdrop > section { width: min(480px, 94vw); position: relative; display: grid; justify-items: center; gap: 8px; padding: 28px; border-radius: 20px; color: #1d2b41; background: #fff; box-shadow: 0 28px 78px rgba(15, 23, 42, .28); }
 .traveler-print-confirm-backdrop > section > svg { color: #168652; }
@@ -94,19 +99,12 @@
 .traveler-print-confirm-backdrop footer .primary { color: #fff; border-color: #ff6a00; background: linear-gradient(180deg,#ff7b24,#ef6000); }
 .traveler-print-error { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 12px; background: #f8fafc; color: #1e293b; }.traveler-print-error strong { font-size: 26px; }.traveler-print-error p { color: #64748b; }.traveler-print-error a { padding: 11px 18px; border-radius: 12px; background: #f97316; color: #fff; text-decoration: none; }
 .spin { animation: traveler-spin .8s linear infinite; } @keyframes traveler-spin { to { transform: rotate(360deg); } }
-@media print {
-  .traveler-print-screen { padding: 0; background: #fff; }
-  .traveler-print-toolbar, .traveler-print-warning, .traveler-print-instruction, .traveler-print-confirm-backdrop, .traveler-drawing-jobs, .traveler-print-external-only { display: none !important; }
-  .traveler-print-pages { display: block; }
-  .traveler-sheet, .traveler-sop-sheet, .traveler-blank-page { width: 210mm; height: 297mm; min-height: 297mm; box-shadow: none; break-after: page; page-break-after: always; }
-  .traveler-sheet { padding: 10mm; }
-  .traveler-blank-page span { display: none; }
-  .traveler-print-screen[data-print-target="traveler"] .traveler-print-kind-sop { display: none !important; }
-  .traveler-print-screen[data-print-target="sop"] .traveler-print-kind-traveler { display: none !important; }
-}
-@page { size: A4 portrait; margin: 0; }
 @media (max-width: 900px) {
   .traveler-print-screen { padding-inline: 8px; overflow-x: auto; }
   .traveler-print-toolbar { grid-template-columns: auto 1fr auto; padding: 0 10px; }
   .traveler-print-toolbar > div span { display: none; }
+  .traveler-print-toolbar .traveler-print-toolbar-actions .confirm, .traveler-print-confirmed { display: none; }
+  .traveler-packet-preview { min-height: 560px; }
+  .traveler-packet-card > header { align-items: flex-start; flex-direction: column; }
+  .traveler-packet-card > footer { align-items: flex-start; flex-direction: column; }
 }
