@@ -296,6 +296,7 @@ model User {
   updatedWeeklyWorkerPresets     WeeklyProcessWorkerPreset[]  @relation("WeeklyProcessWorkerPresetUpdatedBy")
   createdWorkOrderQrTickets      WorkOrderQrTicket[]          @relation("WorkOrderQrTicketCreatedBy")
   printedWorkOrderQrPrints       WorkOrderQrPrint[]           @relation("WorkOrderQrPrintPrintedBy")
+  employeeEmploymentEvents       EmployeeEmploymentEvent[]    @relation("EmployeeEmploymentEventActor")
 
   @@map("users")
 }
@@ -642,8 +643,14 @@ model Employee {
   position                         String?
   team                             String?
   hireDate                         DateTime?                         @map("hire_date") @db.Date
+  mobile                           String?                           @unique
+  wecomUserId                      String?                           @unique @map("wecom_user_id")
+  notificationEnabled              Boolean                           @default(true) @map("notification_enabled")
   isActive                         Boolean                           @default(true) @map("is_active")
   attendanceEnabled                Boolean                           @default(true) @map("attendance_enabled")
+  resignedAt                       DateTime?                         @map("resigned_at") @db.Date
+  resignationReason                String?                           @map("resignation_reason")
+  resignationNote                  String?                           @map("resignation_note")
   createdAt                        DateTime                          @default(now()) @map("created_at")
   updatedAt                        DateTime                          @updatedAt @map("updated_at")
   executions                       ProcessExecution[]
@@ -670,14 +677,34 @@ model Employee {
   weeklyProcessWorkerPresetMembers WeeklyProcessWorkerPresetMember[]
   assignedIssues                   Issue[]                           @relation("IssueEmployeeAssignee")
   issueCollaborations              IssueCollaborator[]
+  employmentEvents                 EmployeeEmploymentEvent[]
 
   @@index([isActive, employeeNo])
   @@index([name])
   @@index([department])
   @@index([position])
   @@index([team])
+  @@index([isActive, resignedAt])
   @@index([attendanceEnabled, isActive])
   @@map("employees")
+}
+
+model EmployeeEmploymentEvent {
+  id            String   @id @default(uuid())
+  employeeId    String   @map("employee_id")
+  eventType     String   @map("event_type")
+  effectiveDate DateTime @map("effective_date") @db.Date
+  reason        String?
+  note          String?
+  actorId       String?  @map("actor_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  actor         User?    @relation("EmployeeEmploymentEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([employeeId, createdAt])
+  @@index([eventType, effectiveDate])
+  @@index([actorId])
+  @@map("employee_employment_events")
 }
 
 model ProductionTeam {

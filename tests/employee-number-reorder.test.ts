@@ -17,8 +17,14 @@ function employee(id: string, employeeNo: string, name: string, active = true): 
     position: '操作员',
     team: '装配',
     hireDate: null,
+    mobile: null,
+    wecomUserId: null,
+    notificationEnabled: true,
     isActive: active,
     attendanceEnabled: true,
+    resignedAt: null,
+    resignationReason: null,
+    resignationNote: null,
     createdAt: new Date('2026-08-01T00:00:00.000Z'),
     updatedAt: new Date(id.endsWith('a')
       ? '2026-08-01T00:00:01.000Z'

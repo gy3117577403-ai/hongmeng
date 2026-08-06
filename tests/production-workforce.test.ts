@@ -21,6 +21,7 @@ test('production department aliases normalize to the existing HR department', ()
 
 test('production workforce requires active attendance-enabled production employees', () => {
   assert.equal(isProductionWorkforceEmployee({ department: '生产部', isActive: true, attendanceEnabled: true }), true);
+  assert.equal(isProductionWorkforceEmployee({ department: '生产部', isActive: false, attendanceEnabled: true }), false);
   assert.equal(isProductionWorkforceEmployee({ department: '生产', isActive: true, attendanceEnabled: false }), false);
   assert.equal(isProductionWorkforceEmployee({ department: '总经办', isActive: true, attendanceEnabled: true }), false);
 });

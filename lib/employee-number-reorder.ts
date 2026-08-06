@@ -582,6 +582,17 @@ export async function commitEmployeeNumberReorder(input: {
               attendanceEnabled: source.kind === 'NEW' ? source.attendanceEnabled : true,
             },
           });
+        if (row.kind === 'NEW') {
+          await tx.employeeEmploymentEvent.create({
+            data: {
+              employeeId: employee.id,
+              eventType: 'HIRED',
+              effectiveDate: employee.hireDate || new Date(),
+              reason: '名单补录入职',
+              actorId: input.actorUserId,
+            },
+          });
+        }
         appliedItems.push({
           employeeId: employee.id,
           sequence: index + 1,

@@ -1009,8 +1009,14 @@ export type EmployeeDTO = {
   position?: string | null;
   team?: string | null;
   hireDate: string | null;
+  mobile: string | null;
+  wecomUserId: string | null;
+  notificationEnabled: boolean;
   isActive: boolean;
   attendanceEnabled: boolean;
+  resignedAt: string | null;
+  resignationReason: string | null;
+  resignationNote: string | null;
   createdAt: string;
   updatedAt: string;
 };

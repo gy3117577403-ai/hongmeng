@@ -96,6 +96,8 @@ type EmployeeDraft = {
   position: string;
   team: string;
   hireDate: string;
+  mobile: string;
+  notificationEnabled: boolean;
   isActive: boolean;
   attendanceEnabled: boolean;
 };
@@ -105,6 +107,48 @@ type EmployeesResponse = {
   employees?: EmployeeDTO[];
   employee?: EmployeeDTO;
   error?: string;
+};
+
+type EmploymentImpact = {
+  activeAssignments: number;
+  plannedAssignments: number;
+  activeMemberships: number;
+  pendingCrossTeamRequests: number;
+  weeklyPresets: number;
+  futureCapacityOverrides: number;
+  futureAttendanceRecords: number;
+  openIssues: number;
+  linkedLogin: boolean;
+  linkedLoginActive: boolean;
+};
+
+type EmploymentActionResponse = {
+  ok: boolean;
+  employee?: EmployeeDTO;
+  impact?: EmploymentImpact;
+  blocked?: boolean;
+  blockerMessage?: string | null;
+  history?: Array<{
+    id: string;
+    eventType: string;
+    effectiveDate: string;
+    reason: string | null;
+    note: string | null;
+    actorName: string;
+    createdAt: string;
+  }>;
+  error?: string;
+  code?: string;
+};
+
+type EmploymentDialogMode = 'offboard' | 'reinstate' | null;
+
+type EmploymentActionDraft = {
+  effectiveDate: string;
+  reason: string;
+  note: string;
+  restoreLogin: boolean;
+  attendanceEnabled: boolean;
 };
 
 type NextEmployeeNumberResponse = {
@@ -243,6 +287,8 @@ const emptyDraft: EmployeeDraft = {
   position: '',
   team: '',
   hireDate: '',
+  mobile: '',
+  notificationEnabled: true,
   isActive: true,
   attendanceEnabled: true,
 };
@@ -341,6 +387,8 @@ function toDraft(employee: EmployeeDTO): EmployeeDraft {
     position: employee.position || '',
     team: employee.team || '',
     hireDate: employee.hireDate || '',
+    mobile: employee.mobile || '',
+    notificationEnabled: employee.notificationEnabled,
     isActive: employee.isActive,
     attendanceEnabled: employee.attendanceEnabled,
   };
@@ -445,8 +493,17 @@ function departmentName(employee: EmployeeDTO): string {
 }
 
 function statusLabel(employee: EmployeeDTO): string {
-  if (!employee.isActive) return '已停用';
+  if (!employee.isActive) return employee.resignedAt ? `已离职 · ${employee.resignedAt}` : '离职档案';
   return employee.attendanceEnabled ? '在岗 · 考勤中' : '在岗';
+}
+
+function todayDateKey(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
 }
 
 function MetricCard({
@@ -553,7 +610,20 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
   const [selectedRecruitmentInterviewId, setSelectedRecruitmentInterviewId] = useState('');
   const [selectedTrainingPlanIndex, setSelectedTrainingPlanIndex] = useState(0);
   const [numberReorderOpen, setNumberReorderOpen] = useState(false);
+  const [employmentDialog, setEmploymentDialog] = useState<EmploymentDialogMode>(null);
+  const [employmentPreview, setEmploymentPreview] = useState<EmploymentActionResponse | null>(null);
+  const [employmentPreviewLoading, setEmploymentPreviewLoading] = useState(false);
+  const [employmentSaving, setEmploymentSaving] = useState(false);
+  const [employmentError, setEmploymentError] = useState('');
+  const [employmentDraft, setEmploymentDraft] = useState<EmploymentActionDraft>({
+    effectiveDate: todayDateKey(),
+    reason: '主动离职',
+    note: '',
+    restoreLogin: true,
+    attendanceEnabled: true,
+  });
   const workbenchRef = useRef<HTMLElement>(null);
+  const employmentDialogRef = useRef<HTMLElement>(null);
   useToastBridge(toast, setToast);
 
   useEffect(() => {
@@ -689,6 +759,26 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     return () => window.removeEventListener('beforeunload', warnBeforeLeave);
   }, [dirty]);
 
+  useEffect(() => {
+    if (!employmentDialog) return;
+    const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const firstButton = employmentDialogRef.current?.querySelector<HTMLButtonElement>('button');
+    firstButton?.focus();
+
+    function dismissWithKeyboard(event: KeyboardEvent): void {
+      if (event.key !== 'Escape' || employmentSaving) return;
+      setEmploymentDialog(null);
+      setEmploymentPreview(null);
+      setEmploymentError('');
+    }
+
+    document.addEventListener('keydown', dismissWithKeyboard);
+    return () => {
+      document.removeEventListener('keydown', dismissWithKeyboard);
+      previouslyFocused?.focus();
+    };
+  }, [employmentDialog, employmentSaving]);
+
   const summary = useMemo(() => ({
     total: employees.length,
     active: employees.filter(employee => employee.isActive).length,
@@ -706,7 +796,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       if (selectedDepartment && departmentName(employee) !== selectedDepartment) return false;
       if (selectedTeam && (employee.team?.trim() || '班组待维护') !== selectedTeam) return false;
       if (!normalized) return true;
-      return `${employee.employeeNo} ${employee.name} ${employee.department || ''} ${employee.position || ''} ${employee.team || ''}`
+      return `${employee.employeeNo} ${employee.name} ${employee.department || ''} ${employee.position || ''} ${employee.team || ''} ${employee.mobile || ''}`
         .toLocaleLowerCase('zh-CN')
         .includes(normalized);
     });
@@ -1126,18 +1216,6 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       setFormError('请填写员工姓名');
       return;
     }
-    const disablingEmployee = !creating && baseline.isActive && !draft.isActive;
-    if (disablingEmployee) {
-      const confirmed = window.confirm([
-        `确认将“${draft.name.trim()}（${draft.employeeNo}）”标记为已停用？`,
-        '停用后，该员工会退出在职名单、考勤生成、招聘负责人选择和全部生产任务人员名单。',
-        '如果只是非生产人员，请选择“取消”：系统已经按照所属部门自动排除生产报工，无需停用员工。',
-      ].join('\n\n'));
-      if (!confirmed) {
-        setToast('已取消停用；非生产人员保持在职也不会进入生产报工名单');
-        return;
-      }
-    }
     setSaving(true);
     setFormError('');
     try {
@@ -1145,10 +1223,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       const response = await fetch(wasCreating ? '/api/employees' : `/api/employees/${selectedEmployeeId}`, {
         method: wasCreating ? 'POST' : 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...draft,
-          ...(disablingEmployee ? { confirmDisable: true } : {}),
-        }),
+        body: JSON.stringify(draft),
       });
       const body = await response.json() as EmployeesResponse;
       if (!response.ok || !body.employee) throw new Error(body.error || '保存员工档案失败');
@@ -1166,6 +1241,104 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       setFormError(reason instanceof Error ? reason.message : '保存员工档案失败');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function loadEmploymentPreview(employeeId: string, effectiveDate: string): Promise<void> {
+    setEmploymentPreviewLoading(true);
+    setEmploymentError('');
+    try {
+      const response = await fetch(
+        `/api/employees/${employeeId}/offboarding?effectiveDate=${encodeURIComponent(effectiveDate)}`,
+        { cache: 'no-store' },
+      );
+      const body = await response.json() as EmploymentActionResponse;
+      if (!response.ok) throw new Error(body.error || '离职影响检查失败');
+      setEmploymentPreview(body);
+      setEmploymentDraft(current => ({
+        ...current,
+        restoreLogin: body.impact?.linkedLogin ? true : current.restoreLogin,
+      }));
+    } catch (reason) {
+      setEmploymentPreview(null);
+      setEmploymentError(reason instanceof Error ? reason.message : '离职影响检查失败');
+    } finally {
+      setEmploymentPreviewLoading(false);
+    }
+  }
+
+  function openEmploymentAction(mode: Exclude<EmploymentDialogMode, null>): void {
+    if (!selectedEmployee) return;
+    if (dirty) {
+      setFormError('请先保存或放弃当前档案修改，再办理员工状态变更');
+      return;
+    }
+    const effectiveDate = todayDateKey();
+    setEmploymentDraft({
+      effectiveDate,
+      reason: '主动离职',
+      note: '',
+      restoreLogin: true,
+      attendanceEnabled: true,
+    });
+    setEmploymentPreview(null);
+    setEmploymentError('');
+    setEmploymentDialog(mode);
+    void loadEmploymentPreview(selectedEmployee.id, effectiveDate);
+  }
+
+  function closeEmploymentAction(): void {
+    if (employmentSaving) return;
+    setEmploymentDialog(null);
+    setEmploymentPreview(null);
+    setEmploymentError('');
+  }
+
+  async function submitEmploymentAction(): Promise<void> {
+    if (!selectedEmployee || !employmentDialog) return;
+    setEmploymentSaving(true);
+    setEmploymentError('');
+    try {
+      const endpoint = employmentDialog === 'offboard'
+        ? `/api/employees/${selectedEmployee.id}/offboarding`
+        : `/api/employees/${selectedEmployee.id}/reinstate`;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(employmentDialog === 'offboard' ? {
+          effectiveDate: employmentDraft.effectiveDate,
+          reason: employmentDraft.reason,
+          note: employmentDraft.note,
+        } : {
+          effectiveDate: employmentDraft.effectiveDate,
+          note: employmentDraft.note,
+          restoreLogin: employmentDraft.restoreLogin,
+          attendanceEnabled: employmentDraft.attendanceEnabled,
+          notificationEnabled: true,
+        }),
+      });
+      const body = await response.json() as EmploymentActionResponse;
+      if (!response.ok || !body.employee) throw new Error(body.error || '员工状态变更失败');
+      const savedEmployee = body.employee;
+      setEmployees(current => sortEmployees(current.map(employee => (
+        employee.id === savedEmployee.id ? savedEmployee : employee
+      ))));
+      const nextDraft = toDraft(savedEmployee);
+      setDraft(nextDraft);
+      setBaseline(nextDraft);
+      setEmploymentDialog(null);
+      setEmploymentPreview(null);
+      // Employment changes affect attendance coverage, attainment, login and
+      // workforce pools. Refresh the operational summaries immediately so a
+      // just-offboarded employee cannot remain visible in a stale HR metric.
+      await loadHumanResources();
+      setToast(employmentDialog === 'offboard'
+        ? `${savedEmployee.name} 已办理离职，工号 ${savedEmployee.employeeNo} 永久保留`
+        : `${savedEmployee.name} 已恢复在职，继续使用原工号 ${savedEmployee.employeeNo}`);
+    } catch (reason) {
+      setEmploymentError(reason instanceof Error ? reason.message : '员工状态变更失败');
+    } finally {
+      setEmploymentSaving(false);
     }
   }
 
@@ -1333,7 +1506,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                 <button type="button" key={employee.id} onClick={() => { chooseEmployee(employee); changeView('directory'); }}>
                   <span className="hr-person-avatar">{employee.name.slice(0, 1)}</span>
                   <span><strong>{employee.name}</strong><small>{employee.department || '部门待维护'} · {employee.position || '岗位待维护'}</small></span>
-                  <span><em className={employee.isActive ? 'ok' : ''}>{employee.isActive ? '在岗' : '停用'}</em><small>{formatDateTime(employee.updatedAt)}</small></span>
+                  <span><em className={employee.isActive ? 'ok' : ''}>{employee.isActive ? '在岗' : '离职'}</em><small>{formatDateTime(employee.updatedAt)}</small></span>
                 </button>
               ))}
               {!recentEmployees.length && <EmptyPanel icon={UserRound} title="暂无人员档案" description="创建员工后会在这里显示最近变化。" />}
@@ -1377,11 +1550,11 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     const productionDepartment = isProductionDepartment(draft.department);
     const productionReportingEligible = isProductionWorkforceEmployee(draft);
     const productionReportingDescription = !draft.isActive && !productionDepartment
-      ? `该员工当前已停用。如果此前只是为了关闭报工，请重新勾选“员工当前在职”；“${profileDepartment}”本来就会被系统自动排除。`
+      ? `该员工已离职，历史记录继续保留；“${profileDepartment}”原本也不会进入生产报工名单。`
       : !productionDepartment
         ? `当前归属“${profileDepartment}”，系统自动排除生产报工；保持在职不会进入生产名单。`
         : !draft.isActive
-          ? '当前员工已停用，不进入生产报工；只有确认离职或停用档案时才应关闭在职状态。'
+          ? '当前员工已办理离职，不再进入派工、报工、考勤和员工登录名单。'
           : !draft.attendanceEnabled
             ? '当前属于生产部，但尚未启用考勤；启用考勤后才会进入生产报工与达成率。'
             : '当前属于生产部、在职且已启用考勤，系统会自动加入生产报工与达成率。';
@@ -1451,12 +1624,12 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
             </article>
           </div>
           <div className="hr-directory-tools">
-            <label><Search size={17} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、姓名、部门、岗位或班组" /></label>
+            <label><Search size={17} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、姓名、手机号、部门、岗位或班组" /></label>
             <select aria-label="员工状态" value={filter} onChange={event => setFilter(event.target.value as EmployeeFilter)}>
               <option value="all">全部员工</option>
               <option value="active">在岗员工</option>
               <option value="attendance">启用考勤</option>
-              <option value="inactive">已停用</option>
+              <option value="inactive">离职档案</option>
             </select>
             {(selectedDepartment || selectedTeam) && (
               <button
@@ -1570,7 +1743,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                 </div>
                 <p>{profilePosition}</p>
                 <span>
-                  <em className={draft.isActive ? 'ok' : ''}>{draft.isActive ? '在职' : '已停用'}</em>
+                  <em className={draft.isActive ? 'ok' : ''}>{draft.isActive ? '在职' : '已离职'}</em>
                   <em className={draft.attendanceEnabled ? 'ok' : ''}>{draft.attendanceEnabled ? '考勤启用' : '未启用考勤'}</em>
                 </span>
                 <small><Building2 />{profileDepartment} · {profileTeam} · {draft.hireDate ? `入职 ${formatDate(draft.hireDate)}` : '入职日期待维护'}</small>
@@ -1587,7 +1760,16 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                   <PencilLine />编辑档案
                 </button>
                 {profileEmployee && <a href={`/workspace/attendance?employeeId=${encodeURIComponent(profileEmployee.id)}`}><CalendarClock />考勤记录</a>}
-                <button type="button" className="hr-icon-button" title="更多档案操作"><MoreHorizontal /></button>
+                {profileEmployee && (
+                  <button
+                    type="button"
+                    className="hr-icon-button"
+                    title={profileEmployee.isActive ? '办理离职' : '办理复职'}
+                    onClick={() => openEmploymentAction(profileEmployee.isActive ? 'offboard' : 'reinstate')}
+                  >
+                    {profileEmployee.isActive ? <MoreHorizontal /> : <RotateCcw />}
+                  </button>
+                )}
               </div>
             </header>
 
@@ -1641,9 +1823,26 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                         <strong>{productionDepartment ? '生产员工档案' : '非生产员工档案'}</strong>
                         <small>{productionReportingEligible ? '自动进入生产报工范围' : '不进入生产报工范围'}</small>
                       </div>
+                      <label className="hr-contact-control">
+                        <span>手机号（选填）</span>
+                        <input
+                          type="tel"
+                          inputMode="tel"
+                          autoComplete="tel"
+                          value={draft.mobile}
+                          maxLength={24}
+                          onChange={event => setDraft(current => ({ ...current, mobile: event.target.value }))}
+                          placeholder="用于后续企业微信通知"
+                        />
+                        <small><Phone />仅用于业务通知，不在人员列表公开完整号码</small>
+                      </label>
+                      <div className="hr-contact-status">
+                        <span className={profileEmployee?.wecomUserId ? 'bound' : ''}><MessageSquareText />企业微信 {profileEmployee?.wecomUserId ? '已绑定' : '待接入'}</span>
+                        <span className={draft.isActive && draft.notificationEnabled ? 'ready' : ''}><Send />{draft.isActive && draft.notificationEnabled ? '通知可用' : '通知暂停'}</span>
+                      </div>
                     </fieldset>
                   </div>
-                  <div className="hr-editor-note"><BadgeCheck /><div><strong>本期仅维护现有真实字段</strong><span>联系方式、证件与紧急联系人尚未进入当前数据结构，本页面不会生成虚假信息。</span></div></div>
+                  <div className="hr-editor-note"><BadgeCheck /><div><strong>手机号已纳入员工主档案</strong><span>后续接入企业微信应用时，将继续使用同一员工编号匹配人员；系统日志不会记录完整手机号。</span></div></div>
                   {formError && <div className="hr-editor-error" role="alert"><AlertTriangle size={16} />{formError}</div>}
                 </section>
               )}
@@ -1659,14 +1858,22 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                   </div>
                   <div className="hr-editor-switches">
                     <label>
-                      <input type="checkbox" checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
+                      <input type="checkbox" disabled={!draft.isActive} checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
                       <span><strong>启用员工考勤</strong><small>所有部门均可登记出勤；生产部进入达成率，其他部门仅统计出勤。</small></span>
                     </label>
-                    {!creating && (
-                      <label>
-                        <input type="checkbox" aria-label="员工当前在职" checked={draft.isActive} onChange={event => setDraft(current => ({ ...current, isActive: event.target.checked }))} />
-                        <span><strong>员工当前在职</strong><small>仅在员工离职或档案停用时取消；报工资格由所属部门自动判断。</small></span>
-                      </label>
+                    {!creating && profileEmployee && (
+                      <div className={`hr-employment-state ${profileEmployee.isActive ? 'active' : 'resigned'}`}>
+                        <span>{profileEmployee.isActive ? <UserRoundCheck /> : <RotateCcw />}</span>
+                        <div>
+                          <strong>{profileEmployee.isActive ? '当前在职' : '已办理离职'}</strong>
+                          <small>{profileEmployee.isActive
+                            ? '离职必须通过影响检查，不能直接关闭状态'
+                            : `${profileEmployee.resignedAt || '日期待核对'} · ${profileEmployee.resignationReason || '原因待核对'}`}</small>
+                        </div>
+                        <button type="button" onClick={() => openEmploymentAction(profileEmployee.isActive ? 'offboard' : 'reinstate')}>
+                          {profileEmployee.isActive ? '办理离职' : '办理复职'}
+                        </button>
+                      </div>
                     )}
                   </div>
                   <div className={`hr-editor-note ${!draft.isActive && !productionDepartment ? 'warning' : ''}`.trim()}><ShieldCheck /><div><strong>生产报工资格由人事档案自动判断</strong><span>{productionReportingDescription}</span></div></div>
@@ -1759,7 +1966,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
             <section>
               <h3>人员状态</h3>
               <div className="hr-role-status">
-                <span className={draft.isActive ? 'ok' : ''}><CheckCircle2 />{draft.isActive ? '在职' : '已停用'}</span>
+                <span className={draft.isActive ? 'ok' : ''}><CheckCircle2 />{draft.isActive ? '在职' : '已离职'}</span>
                 <span className={draft.attendanceEnabled ? 'ok' : ''}><CalendarCheck2 />{draft.attendanceEnabled ? '考勤启用' : '考勤未启用'}</span>
                 <span className={productionReportingEligible ? 'ok' : ''}><UserRoundCheck />{productionReportingEligible ? '生产报工范围' : '非生产报工范围'}</span>
               </div>
@@ -2401,7 +2608,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
           <a className="hr-primary-button" href="/workspace/reports">打开完整报表<ArrowRight size={17} /></a>
         </section>
         <section className="hr-metric-grid compact">
-          <MetricCard icon={UsersRound} label="在岗人数" value={summary.active} note={`停用 ${summary.inactive} 人`} />
+          <MetricCard icon={UsersRound} label="在岗人数" value={summary.active} note={`离职档案 ${summary.inactive} 人`} />
           <MetricCard icon={CalendarCheck2} label="考勤覆盖率" value={`${attendanceCoverage}%`} note={`${summary.attendance} 人启用`} tone="green" />
           <MetricCard icon={Activity} label="人员达成率" value={formatPercent(attainmentReport?.summary.attainmentBasisPoints)} note="标准工时 ÷ 有效出勤" tone="violet" />
           <MetricCard icon={AlertTriangle} label="异常闭环率" value={abnormalSummary.eventCount ? `${Math.round(((abnormalSummary.eventCount - abnormalSummary.openCount) / abnormalSummary.eventCount) * 100)}%` : '100%'} note={`${abnormalSummary.openCount} 项未闭环`} tone={abnormalSummary.openCount ? 'orange' : 'green'} />
@@ -2504,6 +2711,123 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
 
       {loading && <div className="hr-loading"><Loader2 className="spin" size={17} />正在汇总人事数据</div>}
     </main>
+    {employmentDialog && selectedEmployee && (
+      <div className="hr-employment-dialog-backdrop" role="presentation">
+        <section ref={employmentDialogRef} className={`hr-employment-dialog ${employmentDialog}`} role="dialog" aria-modal="true" aria-labelledby="hr-employment-dialog-title">
+          <header>
+            <div>
+              <span>{employmentDialog === 'offboard' ? '人员异动 · 离职检查' : '人员异动 · 恢复任职'}</span>
+              <h2 id="hr-employment-dialog-title">{employmentDialog === 'offboard' ? '办理员工离职' : '办理员工复职'}</h2>
+              <p>{selectedEmployee.name} · {selectedEmployee.employeeNo} · {selectedEmployee.department || '部门待维护'}</p>
+            </div>
+            <button type="button" aria-label="关闭" disabled={employmentSaving} onClick={closeEmploymentAction}><X /></button>
+          </header>
+
+          <div className="hr-employment-dialog-body hm-scroll-region">
+            <section className="hr-employment-summary-card">
+              <span className={employmentDialog === 'offboard' ? 'warning' : 'success'}>
+                {employmentDialog === 'offboard' ? <AlertTriangle /> : <RotateCcw />}
+              </span>
+              <div>
+                <strong>{employmentDialog === 'offboard' ? '工号与全部历史记录永久保留' : '继续使用原员工编号与历史档案'}</strong>
+                <p>{employmentDialog === 'offboard'
+                  ? '生效后退出派工、报工、考勤和员工登录名单；已完成记录不会删除或改名。'
+                  : '复职不会恢复旧派工或旧班组权限，主管可按当前岗位重新安排。'}</p>
+              </div>
+            </section>
+
+            <div className="hr-employment-form-grid">
+              <label>
+                <span>{employmentDialog === 'offboard' ? '离职生效日期' : '复职生效日期'}</span>
+                <input
+                  type="date"
+                  required
+                  max={todayDateKey()}
+                  value={employmentDraft.effectiveDate}
+                  onChange={event => {
+                    const effectiveDate = event.target.value;
+                    setEmploymentDraft(current => ({ ...current, effectiveDate }));
+                    if (effectiveDate) void loadEmploymentPreview(selectedEmployee.id, effectiveDate);
+                  }}
+                />
+                <small>未来日期暂不自动生效，请在生效当天办理</small>
+              </label>
+              {employmentDialog === 'offboard' ? (
+                <label>
+                  <span>离职原因</span>
+                  <select value={employmentDraft.reason} onChange={event => setEmploymentDraft(current => ({ ...current, reason: event.target.value }))}>
+                    <option>主动离职</option>
+                    <option>协商解除</option>
+                    <option>合同到期</option>
+                    <option>公司解除</option>
+                    <option>退休</option>
+                    <option>其他</option>
+                  </select>
+                </label>
+              ) : (
+                <div className="hr-employment-reinstate-options">
+                  <label><input type="checkbox" checked={employmentDraft.attendanceEnabled} onChange={event => setEmploymentDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} /><span>恢复考勤</span></label>
+                  <label><input type="checkbox" checked={employmentDraft.restoreLogin} onChange={event => setEmploymentDraft(current => ({ ...current, restoreLogin: event.target.checked }))} /><span>恢复关联登录账号</span></label>
+                </div>
+              )}
+            </div>
+
+            <label className="hr-employment-note">
+              <span>{employmentDialog === 'offboard' ? '交接备注（选填）' : '复职说明（选填）'}</span>
+              <textarea maxLength={500} value={employmentDraft.note} onChange={event => setEmploymentDraft(current => ({ ...current, note: event.target.value }))} placeholder="填写交接事项、资料归还或复职说明" />
+            </label>
+
+            {employmentPreviewLoading ? (
+              <div className="hr-employment-loading"><Loader2 className="spin" />正在核对派工、考勤和登录影响…</div>
+            ) : employmentPreview?.impact && employmentDialog === 'offboard' ? (
+              <section className="hr-employment-impact">
+                <header><div><span>离职影响检查</span><h3>系统处理与人工确认</h3></div><em>{employmentPreview.blocked ? '存在阻塞' : '可以办理'}</em></header>
+                {employmentPreview.blocked && <div className="hr-employment-blocker"><AlertTriangle />{employmentPreview.blockerMessage}</div>}
+                <div>
+                  <article className={employmentPreview.impact.activeAssignments ? 'danger' : ''}><strong>{employmentPreview.impact.activeAssignments}</strong><span>正在执行派工</span><small>必须先完成或转派</small></article>
+                  <article><strong>{employmentPreview.impact.plannedAssignments}</strong><span>未开始派工</span><small>离职时自动取消</small></article>
+                  <article><strong>{employmentPreview.impact.activeMemberships}</strong><span>计划组织身份</span><small>离职时自动停用</small></article>
+                  <article><strong>{employmentPreview.impact.pendingCrossTeamRequests}</strong><span>跨组待办</span><small>离职时自动取消</small></article>
+                  <article><strong>{employmentPreview.impact.futureCapacityOverrides}</strong><span>后续排班容量</span><small>离职时自动移除</small></article>
+                  <article><strong>{employmentPreview.impact.futureAttendanceRecords}</strong><span>生效日起考勤</span><small>保留历史，不再新增</small></article>
+                  <article className={employmentPreview.impact.openIssues ? 'attention' : ''}><strong>{employmentPreview.impact.openIssues}</strong><span>未关闭问题</span><small>建议办理后转交责任人</small></article>
+                </div>
+                {employmentPreview.impact.linkedLogin && <p><ShieldCheck />关联员工登录账号将同步停用，无法继续扫码报工。</p>}
+              </section>
+            ) : null}
+
+            {employmentPreview?.history?.length ? (
+              <section className="hr-employment-history">
+                <header><span>任职履历</span><small>只新增记录，不覆盖历史</small></header>
+                <div>{employmentPreview.history.map(item => (
+                  <article key={item.id}>
+                    <i />
+                    <div><strong>{item.eventType === 'RESIGNED' ? '离职' : item.eventType === 'REINSTATED' ? '复职' : item.eventType === 'HIRED' ? '入职' : '历史档案'}</strong><span>{item.effectiveDate} · {item.reason || '未填写原因'}</span></div>
+                    <small>{item.actorName}</small>
+                  </article>
+                ))}</div>
+              </section>
+            ) : null}
+
+            {employmentError && <div className="hr-editor-error" role="alert"><AlertTriangle />{employmentError}</div>}
+          </div>
+
+          <footer>
+            <span>{employmentDialog === 'offboard' ? '历史报工、工时与考勤不会删除' : '旧派工不会自动恢复'}</span>
+            <button type="button" className="hr-secondary-button" disabled={employmentSaving} onClick={closeEmploymentAction}>取消</button>
+            <button
+              type="button"
+              className="hr-primary-button"
+              disabled={!employmentDraft.effectiveDate || employmentSaving || employmentPreviewLoading || (employmentDialog === 'offboard' && (employmentPreview?.blocked || !employmentPreview))}
+              onClick={() => void submitEmploymentAction()}
+            >
+              {employmentSaving ? <Loader2 className="spin" /> : employmentDialog === 'offboard' ? <CheckCircle2 /> : <RotateCcw />}
+              {employmentSaving ? '处理中…' : employmentDialog === 'offboard' ? '确认办理离职' : '确认恢复在职'}
+            </button>
+          </footer>
+        </section>
+      </div>
+    )}
     {numberReorderOpen && <EmployeeNumberReorderDialog
       employees={employees}
       backgroundRef={workbenchRef}

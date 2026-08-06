@@ -44,6 +44,15 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           attendanceEnabled: body.attendanceEnabled !== false,
         },
       });
+      await tx.employeeEmploymentEvent.create({
+        data: {
+          employeeId: employee.id,
+          eventType: 'HIRED',
+          effectiveDate: employee.hireDate!,
+          reason: '招聘录用入职',
+          actorId: user.id,
+        },
+      });
       await tx.recruitmentCandidate.update({
         where: { id: current.id },
         data: {

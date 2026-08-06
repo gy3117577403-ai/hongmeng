@@ -101,6 +101,9 @@ export async function POST(req: NextRequest) {
     const employeeId = cleanProcessText(body.employeeId, 80);
     if (!employeeId) return NextResponse.json({ ok: false, error: '请选择员工' }, { status: 400 });
     const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
+    if (employee && !employee.isActive) {
+      return NextResponse.json({ ok: false, error: '离职员工不能新增或修改考勤记录' }, { status: 409 });
+    }
     if (!employee) return NextResponse.json({ ok: false, error: '员工档案不存在' }, { status: 404 });
     if (!employee.attendanceEnabled) return NextResponse.json({ ok: false, error: '该员工未启用考勤' }, { status: 400 });
     const workDate = parseWorkDate(body.workDate);

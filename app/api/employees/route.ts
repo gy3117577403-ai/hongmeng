@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { allocateEmployeeNumber } from '@/lib/employee-number';
+import { normalizeEmployeeMobile, EmployeeContactError } from '@/lib/employee-contact';
 import {
   employeeHireDateToDate,
   EmployeeHireDateError,
@@ -10,6 +11,7 @@ import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
 import { normalizeEmployeeDepartment } from '@/lib/production-workforce';
+import { chinaDateKey } from '@/lib/china-date';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +32,7 @@ export async function GET(req: NextRequest) {
                 { department: { contains: keyword, mode: 'insensitive' } },
                 { position: { contains: keyword, mode: 'insensitive' } },
                 { team: { contains: keyword, mode: 'insensitive' } },
+                { mobile: { contains: keyword, mode: 'insensitive' } },
               ],
             }
           : {}),
@@ -51,9 +54,14 @@ export async function POST(req: NextRequest) {
     const name = cleanProcessText(body.name, 80);
     if (!name) return NextResponse.json({ ok: false, error: '请填写员工姓名' }, { status: 400 });
     const hireDate = normalizeEmployeeHireDateInput(body.hireDate) ?? null;
+    const mobile = normalizeEmployeeMobile(body.mobile);
     const employee = await prisma.$transaction(async tx => {
+      if (mobile) {
+        const duplicate = await tx.employee.findFirst({ where: { mobile }, select: { id: true } });
+        if (duplicate) throw new EmployeeContactError('该手机号已绑定其他员工档案');
+      }
       const employeeNo = await allocateEmployeeNumber(tx);
-      return tx.employee.create({
+      const created = await tx.employee.create({
         data: {
           employeeNo,
           name,
@@ -61,9 +69,21 @@ export async function POST(req: NextRequest) {
           position: cleanProcessText(body.position, 80) || null,
           team: cleanProcessText(body.team, 80) || null,
           hireDate: employeeHireDateToDate(hireDate),
+          mobile,
+          notificationEnabled: body.notificationEnabled !== false,
           attendanceEnabled: body.attendanceEnabled !== false,
         },
       });
+      await tx.employeeEmploymentEvent.create({
+        data: {
+          employeeId: created.id,
+          eventType: 'HIRED',
+          effectiveDate: employeeHireDateToDate(hireDate || chinaDateKey(new Date()))!,
+          reason: '入职建档',
+          actorId: user.id,
+        },
+      });
+      return created;
     });
     await logOp({
       userId: user.id,
@@ -78,8 +98,11 @@ export async function POST(req: NextRequest) {
     if (error instanceof EmployeeHireDateError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     }
+    if (error instanceof EmployeeContactError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+    }
     if ((error as { code?: string }).code === 'P2002') {
-      return NextResponse.json({ ok: false, error: '员工编号已经存在' }, { status: 409 });
+      return NextResponse.json({ ok: false, error: '员工编号、手机号或企业微信账号已被其他档案使用' }, { status: 409 });
     }
     console.error('create employee failed', error);
     return NextResponse.json({ ok: false, error: '新增员工失败' }, { status: 500 });
