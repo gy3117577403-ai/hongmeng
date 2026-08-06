@@ -1,10 +1,13 @@
 node_modules
 .next
 .git
-.env
+.env*
+!.env.example
 *.log
 coverage
 .DS_Store
+artifacts
+.playwright-cli
 windows-import-helper
 android-webview-app
 reports
