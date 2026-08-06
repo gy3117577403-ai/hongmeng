@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, ClipboardList, Download, HelpCircle, History, ListFilter, LogOut, MonitorDown, Plus, RefreshCw, Search, Settings2, ShieldCheck, Trash2, UserRoundCog, X } from 'lucide-react';
+import { ArrowLeft, BellRing, ClipboardList, Download, HelpCircle, History, ListFilter, LogOut, MonitorDown, Plus, RefreshCw, Search, Settings2, ShieldCheck, Trash2, UserRoundCog, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
@@ -11,6 +11,7 @@ import { PdfViewer } from '@/components/PdfViewer';
 import { PortalMenu } from '@/components/PortalMenu';
 import { useToastBridge } from '@/components/ToastProvider';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
+import { WeComRobotSettingsCard } from '@/components/WeComRobotSettingsCard';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { useHiddenLayerInert, useModalLayer } from '@/components/useModalLayer';
 import { APP_VERSION } from '@/lib/app-info';
@@ -4431,7 +4432,7 @@ function LegacySystemSettings({
   );
 }
 
-type SystemSettingsTab = 'common' | 'data' | 'account';
+type SystemSettingsTab = 'common' | 'wecom' | 'data' | 'account';
 
 function SystemSettings({
   userName,
@@ -4476,6 +4477,7 @@ function SystemSettings({
 
         <nav className="settings-tabs" aria-label="设置分类">
           <button className={activeTab === 'common' ? 'active' : ''} type="button" onClick={() => setActiveTab('common')}><Settings2 size={17} />常用设置</button>
+          <button className={activeTab === 'wecom' ? 'active' : ''} type="button" onClick={() => setActiveTab('wecom')}><BellRing size={17} />企业微信</button>
           <button className={activeTab === 'data' ? 'active' : ''} type="button" onClick={() => setActiveTab('data')}><Download size={17} />数据管理</button>
           <button className={activeTab === 'account' ? 'active' : ''} type="button" onClick={() => setActiveTab('account')}><UserRoundCog size={17} />账号与安全</button>
         </nav>
@@ -4545,6 +4547,12 @@ function SystemSettings({
                 <button type="button" onClick={openLogs}><ShieldCheck size={19} /><span><b>操作记录</b><small>追溯系统内的重要操作</small></span><em>查看</em></button>
                 <button type="button" onClick={openTrash}><Trash2 size={19} /><span><b>回收站</b><small>恢复或清理已删除内容</small></span><em>打开</em></button>
               </div>
+            </div>
+          )}
+
+          {activeTab === 'wecom' && (
+            <div className="settings-panel" data-settings-panel="wecom">
+              <WeComRobotSettingsCard canSend={canManageAccounts} />
             </div>
           )}
 
