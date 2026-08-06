@@ -79,6 +79,7 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
+            type=raw,value=v1.19.0
             type=raw,value=latest
             type=sha
       - uses: docker/build-push-action@v6
