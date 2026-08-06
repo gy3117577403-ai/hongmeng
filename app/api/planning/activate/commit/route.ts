@@ -35,6 +35,10 @@ export async function POST(req: NextRequest) {
             planningUnitMilliseconds: true,
             drawingLibraryItem: {
               select: {
+                files: {
+                  where: { deletedAt: null, isCurrent: true, category: { code: { in: ['drawing', 'sop'] } } },
+                  select: { category: { select: { code: true } } },
+                },
                 productTimeProfiles: {
                   where: { status: 'published' },
                   orderBy: { version: 'desc' },
@@ -61,6 +65,22 @@ export async function POST(req: NextRequest) {
         batch.planOrder.planningUnitMilliseconds,
       )] as const;
     }));
+    const missingDrawingBatches = batches.filter(batch => !batch.planOrder.drawingLibraryItem?.files.some(file => file.category.code === 'drawing'));
+    if (missingDrawingBatches.length) {
+      return NextResponse.json({
+        ok: false,
+        error: `有 ${missingDrawingBatches.length} 个批次尚未上传原图，不能启用生产`,
+        blockerCount: missingDrawingBatches.length,
+      }, { status: 409 });
+    }
+    const missingSopBatches = batches.filter(batch => !batch.planOrder.drawingLibraryItem?.files.some(file => file.category.code === 'sop'));
+    if (missingSopBatches.length) {
+      return NextResponse.json({
+        ok: false,
+        error: `有 ${missingSopBatches.length} 个批次尚未上传SOP作业指导书，不能启用生产`,
+        blockerCount: missingSopBatches.length,
+      }, { status: 409 });
+    }
     const missingProfileBatches = batches.filter(batch => !profileByBatch.get(batch.id));
     if (missingProfileBatches.length) {
       return NextResponse.json({

@@ -15539,3 +15539,72 @@ body:has(.qr-dialog) .modal-backdrop {
     grid-column: 1 / -1;
   }
 }
+/* Production traveler printing */
+.traveler-print-dialog-backdrop { z-index: 1200; padding: 24px; }
+.traveler-print-dialog {
+  width: min(820px, calc(100vw - 32px));
+  max-height: min(860px, calc(100vh - 40px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid #e3e9f1;
+  border-radius: 20px;
+  background: #fff;
+  box-shadow: 0 28px 80px rgba(18, 31, 49, .26);
+}
+.traveler-print-dialog:focus { outline: none; }
+.traveler-print-dialog > header {
+  min-height: 96px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px 22px 18px;
+  border-bottom: 1px solid #e8edf4;
+  background: linear-gradient(135deg, #fff 58%, #fff5ec);
+}
+.traveler-print-dialog > header span { color: #ed6509; font-size: 12px; font-weight: 800; letter-spacing: .04em; }
+.traveler-print-dialog > header h2 { margin: 4px 0 2px; color: #17243a; font-size: 23px; line-height: 1.2; }
+.traveler-print-dialog > header p { margin: 0; color: #738197; font-size: 12px; }
+.traveler-print-dialog > header > button {
+  width: 40px; height: 40px; display: grid; place-items: center; flex: 0 0 auto;
+  border: 1px solid #dce4ee; border-radius: 11px; color: #64748b; background: #fff; cursor: pointer;
+}
+.traveler-print-dialog-body { min-height: 0; overflow: auto; padding: 20px 22px; }
+.traveler-print-mode-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.traveler-print-mode-grid > button {
+  min-height: 138px; position: relative; display: grid; grid-template-rows: auto 1fr; gap: 10px;
+  padding: 16px; text-align: left; border: 1px solid #dce4ee; border-radius: 15px; color: #223149; background: #fff; cursor: pointer;
+  transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+.traveler-print-mode-grid > button:hover { transform: translateY(-1px); border-color: #f3b181; box-shadow: 0 10px 24px rgba(26, 41, 62, .08); }
+.traveler-print-mode-grid > button.selected { border-color: #ff7416; background: linear-gradient(145deg, #fffaf6, #fff1e5); box-shadow: 0 0 0 3px rgba(255, 106, 0, .09); }
+.traveler-print-mode-grid i { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: #2f73e8; background: #edf4ff; }
+.traveler-print-mode-grid button.selected i { color: #e95f00; background: #ffe8d5; }
+.traveler-print-mode-grid span { display: grid; align-content: start; gap: 6px; }
+.traveler-print-mode-grid strong { font-size: 14px; line-height: 1.35; }
+.traveler-print-mode-grid small { color: #758398; font-size: 11px; line-height: 1.55; }
+.traveler-print-mode-grid em { width: 24px; height: 24px; position: absolute; top: 12px; right: 12px; display: grid; place-items: center; border-radius: 50%; color: #fff; background: #ff6a00; }
+.traveler-print-hint,
+.traveler-print-confirm-note { display: flex; align-items: flex-start; gap: 10px; margin-top: 16px; padding: 12px 14px; border-radius: 12px; }
+.traveler-print-hint { color: #205fae; background: #eef5ff; border: 1px solid #d8e7fb; }
+.traveler-print-hint span { display: grid; gap: 3px; }
+.traveler-print-hint strong { font-size: 12px; }
+.traveler-print-hint small { color: #657b98; font-size: 11px; line-height: 1.5; }
+.traveler-print-form-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; margin-top: 17px; }
+.traveler-print-form-row label { display: grid; gap: 7px; }
+.traveler-print-form-row label > span { color: #4f5f75; font-size: 12px; font-weight: 700; }
+.traveler-print-form-row input { min-height: 44px; width: 100%; padding: 0 12px; border: 1px solid #d6dfeb; border-radius: 10px; color: #18263c; background: #fff; font: inherit; }
+.traveler-print-form-row input:focus { outline: 3px solid rgba(47, 115, 232, .11); border-color: #75a5ee; }
+.traveler-print-confirm-note { color: #8b4d13; background: #fff8ed; border: 1px solid #f5dfbd; font-size: 11px; line-height: 1.55; }
+.traveler-print-dialog-error { margin-top: 14px; padding: 11px 13px; border-radius: 10px; color: #b4232d; background: #fff0f1; border: 1px solid #f2c9cd; font-size: 12px; font-weight: 700; }
+.traveler-print-dialog > footer { min-height: 72px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 22px; border-top: 1px solid #e8edf4; background: #fbfcfe; }
+.traveler-print-dialog > footer button { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 18px; border: 1px solid #d7e0eb; border-radius: 10px; color: #536176; background: #fff; cursor: pointer; font-weight: 750; }
+.traveler-print-dialog > footer .primary-button { min-width: 168px; color: #fff; border-color: #ff6a00; background: linear-gradient(180deg, #ff7b24, #ef6000); box-shadow: 0 8px 18px rgba(239, 96, 0, .2); }
+.traveler-print-dialog button:disabled { opacity: .58; cursor: not-allowed; }
+@media (max-width: 760px) {
+  .traveler-print-dialog-backdrop { padding: 10px; }
+  .traveler-print-mode-grid { grid-template-columns: 1fr; }
+  .traveler-print-mode-grid > button { min-height: 104px; grid-template-columns: auto 1fr; grid-template-rows: 1fr; }
+  .traveler-print-form-row { grid-template-columns: 1fr; }
+}

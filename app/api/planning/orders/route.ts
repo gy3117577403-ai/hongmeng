@@ -131,6 +131,7 @@ export async function GET(req: NextRequest) {
       preparationBatchCount: batches.filter(batch => batch.releaseState === 'preparation' && batch.weekStartDate === nextStart).length,
       activeBatchCount: batches.filter(batch => batch.releaseState === 'active' && batch.weekStartDate === currentStart).length,
       missingDrawingCount: all.filter(order => order.drawingFileCount === 0).length,
+      missingSopCount: all.filter(order => order.sopFileCount === 0).length,
       missingProductTimeCount: all.filter(order => !order.effectiveUnitMilliseconds).length,
       warehouseExceptionCount: batches.filter(batch => batch.warehouseStatus === 'exception').length,
       processPendingCount: batches.filter(batch => batch.releaseState !== 'draft' && (batch.processStatus === 'not_created' || batch.processStatus === 'draft')).length,

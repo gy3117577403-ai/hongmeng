@@ -85,7 +85,7 @@ jobs:
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.18.0
+            APP_VERSION=v1.19.0
             APP_REVISION=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

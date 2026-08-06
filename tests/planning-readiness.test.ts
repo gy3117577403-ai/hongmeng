@@ -18,6 +18,7 @@ function order(overrides: Partial<ProductionPlanOrderDTO> = {}): ProductionPlanO
     specification: 'SPEC-001',
     drawingLibraryItemId: 'drawing-1',
     drawingFileCount: 0,
+    sopFileCount: 0,
     orderQuantity: 100,
     planningUnitMilliseconds: null,
     effectiveUnitMilliseconds: null,
@@ -67,9 +68,10 @@ test('identifies missing drawing and time before preparation is ready', () => {
   const missing = planningReadinessState(order());
   assert.equal(missing.missing_time, true);
   assert.equal(missing.missing_drawing, true);
+  assert.equal(missing.missing_sop, true);
   assert.equal(missing.ready_preparation, false);
 
-  const ready = planningReadinessState(order({ drawingFileCount: 1, planningUnitMilliseconds: 30_000 }));
+  const ready = planningReadinessState(order({ drawingFileCount: 1, sopFileCount: 1, planningUnitMilliseconds: 30_000 }));
   assert.equal(ready.missing_time, false);
   assert.equal(ready.missing_drawing, false);
   assert.equal(ready.ready_preparation, true);
@@ -77,7 +79,7 @@ test('identifies missing drawing and time before preparation is ready', () => {
 
 test('accepts a frozen batch time snapshot as effective planning time', () => {
   const state = planningReadinessState(
-    order({ drawingFileCount: 1 }),
+    order({ drawingFileCount: 1, sopFileCount: 1 }),
     batch({ unitMillisecondsSnapshot: 18_000 }),
   );
   assert.equal(state.missing_time, false);
@@ -101,7 +103,7 @@ test('treats only confirmed or started process routes as arranged', () => {
 });
 
 test('marks production ready only when all preparation departments are ready', () => {
-  const preparedOrder = order({ drawingFileCount: 1, currentUnitMilliseconds: 20_000 });
+  const preparedOrder = order({ drawingFileCount: 1, sopFileCount: 1, currentUnitMilliseconds: 20_000 });
   const ready = planningReadinessState(preparedOrder, batch({ warehouseStatus: 'completed', processStatus: 'confirmed' }));
   assert.equal(ready.ready_production, true);
 
@@ -110,16 +112,22 @@ test('marks production ready only when all preparation departments are ready', (
 });
 
 test('combines deficiency filters with OR matching', () => {
-  const drawingMissing = order({ drawingFileCount: 0, planningUnitMilliseconds: 20_000 });
+  const drawingMissing = order({ drawingFileCount: 0, sopFileCount: 1, planningUnitMilliseconds: 20_000 });
   assert.equal(matchesPlanningReadiness(drawingMissing, undefined, ['missing_time', 'missing_drawing']), true);
 
-  const prepared = order({ drawingFileCount: 1, planningUnitMilliseconds: 20_000 });
+  const prepared = order({ drawingFileCount: 1, sopFileCount: 1, planningUnitMilliseconds: 20_000 });
   assert.equal(matchesPlanningReadiness(prepared, undefined, ['missing_time', 'missing_drawing']), false);
 });
 
 test('limits order-pool readiness filters to order-level information', () => {
   assert.deepEqual(
-    orderLevelReadinessFilters(['missing_time', 'missing_material', 'missing_process', 'ready_preparation']),
-    ['missing_time', 'ready_preparation'],
+    orderLevelReadinessFilters(['missing_time', 'missing_sop', 'missing_material', 'missing_process', 'ready_preparation']),
+    ['missing_time', 'missing_sop', 'ready_preparation'],
   );
+});
+
+test('tracks physical print confirmation separately from preview generation', () => {
+  assert.equal(planningReadinessState(order(), batch({ travelerPrintStatus: 'generated' })).print_not_confirmed, true);
+  assert.equal(planningReadinessState(order(), batch({ travelerPrintStatus: 'printed' })).print_confirmed, true);
+  assert.equal(planningReadinessState(order(), batch({ travelerPrintStatus: 'needs_reprint' })).print_needs_reprint, true);
 });

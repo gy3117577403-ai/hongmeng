@@ -3,11 +3,15 @@ import type { ProductionPlanBatchDTO, ProductionPlanOrderDTO } from '@/types';
 export const PLANNING_READINESS_FILTERS = [
   'missing_time',
   'missing_drawing',
+  'missing_sop',
   'missing_material',
   'material_exception',
   'missing_process',
   'ready_preparation',
   'ready_production',
+  'print_not_confirmed',
+  'print_confirmed',
+  'print_needs_reprint',
 ] as const;
 
 export type PlanningReadinessFilter = typeof PLANNING_READINESS_FILTERS[number];
@@ -17,6 +21,7 @@ export type PlanningReadinessState = Record<PlanningReadinessFilter, boolean>;
 const ORDER_LEVEL_FILTERS: ReadonlySet<PlanningReadinessFilter> = new Set([
   'missing_time',
   'missing_drawing',
+  'missing_sop',
   'ready_preparation',
 ]);
 
@@ -33,6 +38,10 @@ function hasOriginalDrawing(order: ProductionPlanOrderDTO): boolean {
   return order.drawingFileCount > 0;
 }
 
+function hasSop(order: ProductionPlanOrderDTO): boolean {
+  return order.sopFileCount > 0;
+}
+
 function hasConfirmedProcess(batch?: ProductionPlanBatchDTO): boolean {
   return batch?.processStatus === 'confirmed'
     || batch?.processStatus === 'in_progress'
@@ -45,7 +54,8 @@ export function planningReadinessState(
 ): PlanningReadinessState {
   const unitTimeReady = hasUnitTime(order, batch);
   const drawingReady = hasOriginalDrawing(order);
-  const preparationReady = unitTimeReady && drawingReady;
+  const sopReady = hasSop(order);
+  const preparationReady = unitTimeReady && drawingReady && sopReady;
   const materialException = batch?.warehouseStatus === 'exception';
   const materialReady = batch?.warehouseStatus === 'completed';
   const processReady = hasConfirmedProcess(batch);
@@ -53,11 +63,20 @@ export function planningReadinessState(
   return {
     missing_time: !unitTimeReady,
     missing_drawing: !drawingReady,
+    missing_sop: !sopReady,
     missing_material: Boolean(batch) && !materialReady && !materialException,
     material_exception: Boolean(batch) && materialException,
     missing_process: Boolean(batch) && !processReady,
     ready_preparation: preparationReady,
     ready_production: Boolean(batch) && preparationReady && materialReady && processReady,
+    print_not_confirmed: Boolean(batch) && (
+      !batch?.travelerPrintStatus
+      || batch.travelerPrintStatus === 'not_printed'
+      || batch.travelerPrintStatus === 'generated'
+      || batch.travelerPrintStatus === 'legacy_unverified'
+    ),
+    print_confirmed: batch?.travelerPrintStatus === 'printed',
+    print_needs_reprint: batch?.travelerPrintStatus === 'needs_reprint',
   };
 }
 

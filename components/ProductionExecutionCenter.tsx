@@ -7,6 +7,7 @@ import { useToastBridge } from '@/components/ToastProvider';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { PortalMenu } from '@/components/PortalMenu';
+import { TravelerPrintDialog } from '@/components/TravelerPrintDialog';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { writeClipboardText } from '@/lib/client-platform';
 import { getProductionAlerts, isDrawingConfirmationAlert, type ProductionAlert } from '@/lib/production-alerts';
@@ -555,7 +556,7 @@ const quickByView: Record<ViewKey, Array<{ key: QuickFilter; label: string }>> =
   ],
   exceptions: [
     { key: 'drawing_confirmation', label: '图纸待确认' }, { key: 'material', label: '仓库异常' }, { key: 'tail_remaining', label: '尾数未清' },
-    { key: 'documents', label: '原图缺失' },
+    { key: 'documents', label: '原图/SOP缺失' },
     { key: 'delivery_missing', label: '交期缺失' }, { key: 'specification_invalid', label: '规格异常' }, { key: 'customer_missing', label: '客户缺失' },
   ],
 };
@@ -994,7 +995,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [progressLogs, setProgressLogs] = useState<ProgressLog[]>([]);
   const [progressLoading, setProgressLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [travelerPrinting, setTravelerPrinting] = useState(false);
+  const [travelerPrintIds, setTravelerPrintIds] = useState<string[]>([]);
   const [formError, setFormError] = useState('');
   const [batchOpen, setBatchOpen] = useState(false);
   const [batchOperation, setBatchOperation] = useState<BatchOperation>('set_priority');
@@ -2218,29 +2219,10 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     }
   }
 
-  async function printTravelers(workOrderIds: string[]): Promise<void> {
-    if (!workOrderIds.length || travelerPrinting) return;
-    const printWindow = window.open('about:blank', '_blank');
-    setTravelerPrinting(true);
-    try {
-      const response = await fetch('/api/work-order-qr/prints', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workOrderIds }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || '流转单生成失败');
-      const url = String(body.data?.url || '');
-      if (!url.startsWith('/production/qr-print?')) throw new Error('打印地址生成失败');
-      if (printWindow) printWindow.location.href = url;
-      else window.location.href = url;
-      setToast(`已生成 ${body.data?.count || workOrderIds.length} 张工单流转单`);
-    } catch (reason) {
-      printWindow?.close();
-      setToast(reason instanceof Error ? reason.message : '流转单生成失败');
-    } finally {
-      setTravelerPrinting(false);
-    }
+  function printTravelers(workOrderIds: string[]): void {
+    const cleanIds = [...new Set(workOrderIds.filter(Boolean))];
+    if (!cleanIds.length) return;
+    setTravelerPrintIds(cleanIds);
   }
 
   function exportCsv(): void {
@@ -2463,7 +2445,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         </div>
       </div>
 
-      {canSelectProduction && batchMode && !board?.readOnly && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong>{canScheduleProduction && <button className="primary" type="button" disabled={!selected.length} onClick={() => openProductionArrangement((board?.items || []).filter(order => selected.includes(order.id)))}><CalendarDays size={15} />批量安排日期与人员</button>}{canPrintTravelers && <button type="button" disabled={!selected.length || travelerPrinting} onClick={() => void printTravelers(selected)}><Printer size={15} />{travelerPrinting ? '生成中...' : '打印流转单'}</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button>}<button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
+      {canSelectProduction && batchMode && !board?.readOnly && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong>{canScheduleProduction && <button className="primary" type="button" disabled={!selected.length} onClick={() => openProductionArrangement((board?.items || []).filter(order => selected.includes(order.id)))}><CalendarDays size={15} />批量安排日期与人员</button>}{canPrintTravelers && <button type="button" disabled={!selected.length} onClick={() => printTravelers(selected)}><Printer size={15} />打印流转单 / SOP</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button>}<button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
 
       <PortalMenu open={canAdministerProduction && !!statusMenuOrder} anchorRef={statusButtonRef} className="production-status-menu hm-production-menu hm-production-status-menu" width={164} onClose={() => setStatusMenuOrder(null)} closeOnSelect={false}>
         {statusMenuOrder && stageMenuItems(statusMenuOrder).map(stage => <button type="button" disabled={saving} key={stage.key} onClick={() => requestStageChange(statusMenuOrder, stage.key)}>{stage.label}</button>)}
@@ -2473,7 +2455,8 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         {drawingMenuOrder && drawingStatuses.map(status => <button className={drawingMenuOrder.drawingStatus === status ? 'active' : ''} type="button" disabled={saving} key={status} onClick={() => void saveDrawingStatus(drawingMenuOrder, status)}>{status}</button>)}
       </PortalMenu>
 
-      {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} canPrintTraveler={canPrintTravelers} travelerPrinting={travelerPrinting} printTraveler={() => void printTravelers([detailOrder.id])} />}
+      {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} canPrintTraveler={canPrintTravelers} travelerPrinting={false} printTraveler={() => printTravelers([detailOrder.id])} />}
+      <TravelerPrintDialog open={travelerPrintIds.length > 0} workOrderIds={travelerPrintIds} onClose={() => setTravelerPrintIds([])} onSuccess={message => { setToast(message); setSelected([]); }} />
       {canAdministerProduction && batchOpen && <BatchDialog count={selected.length} operation={batchOperation} value={batchValue} remark={batchRemark} saving={saving} error={formError} setValue={setBatchValue} setRemark={setBatchRemark} close={() => { if (!saving) setBatchOpen(false); }} save={saveBatch} />}
       {canAdministerProduction && stageChangeRequest && <StageChangeDialog request={stageChangeRequest} saving={saving} close={() => { if (!saving) setStageChangeRequest(null); }} confirm={() => void saveStageChange(stageChangeRequest.order, stageChangeRequest.stage)} />}
       {canAdministerProduction && nextStepRequest && <NextStepDialog

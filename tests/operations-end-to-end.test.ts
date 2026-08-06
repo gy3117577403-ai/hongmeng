@@ -33,6 +33,7 @@ function order(): ProductionPlanOrderDTO {
     specification: 'A-001',
     drawingLibraryItemId: 'drawing-001',
     drawingFileCount: 1,
+    sopFileCount: 1,
     orderQuantity: 1_000,
     planningUnitMilliseconds: 27_360,
     effectiveUnitMilliseconds: 27_360,

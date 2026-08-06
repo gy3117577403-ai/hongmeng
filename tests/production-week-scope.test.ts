@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chinaDateKey } from '../lib/china-date';
 import {
+  hasOriginalProductionDrawing,
+  hasProductionSop,
   hasRequiredProductionDocuments,
   isProductionDueSoon,
   isRootProductionOrder,
@@ -25,6 +27,21 @@ import {
   resolveOrCreatePlanningProduct,
 } from '../lib/production-planning';
 import { countWeeklyOrdersMissingPublishedProductTime } from '../lib/weekly-work-orders';
+
+const requiredProductionResourceFiles = [
+  {
+    id: 'drawing-file-1',
+    version: 'V1',
+    updatedAt: new Date('2026-07-19T04:00:00.000Z'),
+    category: { code: 'drawing' },
+  },
+  {
+    id: 'sop-file-1',
+    version: 'V1',
+    updatedAt: new Date('2026-07-19T04:00:00.000Z'),
+    category: { code: 'sop' },
+  },
+];
 
 test('natural production week is Monday through Sunday in China time', () => {
   const week = naturalProductionWeek(new Date('2026-07-20T04:00:00.000Z'));
@@ -150,7 +167,7 @@ test('due-soon uses the customer delivery day and a stable China-time 0-2 day wi
   assert.equal(isProductionDueSoon(order(null, 'frontend', new Date('2026-08-04T04:00:00.000Z')), now), true);
 });
 
-test('production documents require an original drawing but not every optional category', () => {
+test('production documents require both an original drawing and an SOP', () => {
   type Input = Parameters<typeof hasRequiredProductionDocuments>[0];
   const originalOnly = {
     drawingLibraryItem: { files: [{ category: { code: 'drawing' } }] },
@@ -158,8 +175,16 @@ test('production documents require an original drawing but not every optional ca
   const sopOnly = {
     drawingLibraryItem: { files: [{ category: { code: 'sop' } }] },
   } as Input;
-  assert.equal(hasRequiredProductionDocuments(originalOnly), true);
+  const drawingAndSop = {
+    drawingLibraryItem: { files: [{ category: { code: 'drawing' } }, { category: { code: 'sop' } }] },
+  } as Input;
+  assert.equal(hasOriginalProductionDrawing(originalOnly), true);
+  assert.equal(hasProductionSop(originalOnly), false);
+  assert.equal(hasOriginalProductionDrawing(sopOnly), false);
+  assert.equal(hasProductionSop(sopOnly), true);
+  assert.equal(hasRequiredProductionDocuments(originalOnly), false);
   assert.equal(hasRequiredProductionDocuments(sopOnly), false);
+  assert.equal(hasRequiredProductionDocuments(drawingAndSop), true);
 });
 
 test('weekly activation blocks orders without a non-empty published product time profile', () => {
@@ -402,6 +427,7 @@ test('missing product process profile can release for warehouse preparation but 
         customerName: '测试客户',
         productName: '测试产品',
         specification: 'TEST-001',
+        files: requiredProductionResourceFiles,
         productTimeProfiles: [],
       }),
     },
@@ -471,6 +497,7 @@ test('releasing without product time still creates a warehouse task and a pendin
         productName: '测试产品',
         specification: 'TEST-001',
         _count: { files: 1 },
+        files: requiredProductionResourceFiles,
         productTimeProfiles: [],
       }),
     },
@@ -568,6 +595,7 @@ test('published product process profile satisfies weekly release labor requireme
         customerName: '测试客户',
         productName: '测试产品',
         specification: 'TEST-001',
+        files: requiredProductionResourceFiles,
         productTimeProfiles: [{
           id: 'profile-1',
           version: 1,

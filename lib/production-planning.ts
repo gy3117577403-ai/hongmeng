@@ -5,7 +5,6 @@ import {
   invalidSpecificationReason,
   parseCustomerCode,
 } from '@/lib/drawing-library';
-import { activeDrawingLibraryFileCount } from '@/lib/drawing-library-lifecycle';
 import { startConfirmedProcessRoute } from '@/lib/process-route-service';
 import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
 import { shouldSynchronizeDrawingReleaseStatus } from '@/lib/production-drawing-readiness';
@@ -27,9 +26,14 @@ export const productionPlanOrderInclude = {
     select: {
       id: true,
       deletedAt: true,
-      _count: {
+      files: {
+        where: { deletedAt: null, isCurrent: true, category: { code: { in: ['drawing', 'sop'] } } },
+        orderBy: { createdAt: 'desc' as const },
         select: {
-          files: { where: { deletedAt: null, category: { code: 'drawing' } } },
+          id: true,
+          version: true,
+          updatedAt: true,
+          category: { select: { code: true } },
         },
       },
       productTimeProfiles: {
@@ -61,6 +65,8 @@ export const productionPlanOrderInclude = {
           },
           processRoute: {
             select: {
+              id: true,
+              version: true,
               status: true,
               confirmedAt: true,
               startedAt: true,
@@ -72,6 +78,27 @@ export const productionPlanOrderInclude = {
                   status: true,
                   startedAt: true,
                   completedAt: true,
+                },
+              },
+            },
+          },
+          qrTicket: {
+            select: {
+              prints: {
+                orderBy: { printedAt: 'desc' as const },
+                take: 1,
+                select: {
+                  id: true,
+                  status: true,
+                  mode: true,
+                  routeVersion: true,
+                  drawingFileId: true,
+                  drawingFileVersion: true,
+                  sopFileId: true,
+                  sopFileVersion: true,
+                  snapshot: true,
+                  printedAt: true,
+                  confirmedAt: true,
                 },
               },
             },
@@ -451,6 +478,11 @@ export async function resolvePlanningReferences(
   productTimeProfileVersion: number | null;
   unitMilliseconds: number | null;
   drawingFileCount: number;
+  sopFileCount: number;
+  drawingFileId: string | null;
+  drawingFileVersion: string | null;
+  sopFileId: string | null;
+  sopFileVersion: string | null;
 }> {
   const itemId = text(input.drawingLibraryItemId, 80);
   const key = drawingLibraryKey(input.customerName, input.specification);
@@ -471,9 +503,13 @@ export async function resolvePlanningReferences(
       customerName: true,
       productName: true,
       specification: true,
-      _count: {
+      files: {
+        where: { deletedAt: null, isCurrent: true, category: { code: { in: ['drawing', 'sop'] } } },
+        orderBy: { createdAt: 'desc' },
         select: {
-          files: { where: { deletedAt: null, category: { code: 'drawing' } } },
+          id: true,
+          version: true,
+          category: { select: { code: true } },
         },
       },
       productTimeProfiles: {
@@ -485,6 +521,11 @@ export async function resolvePlanningReferences(
     },
   });
   const profile = drawing?.productTimeProfiles[0] || null;
+  const resourceFiles = drawing?.files || [];
+  const drawingFiles = resourceFiles.filter(file => file.category.code === 'drawing');
+  const sopFiles = resourceFiles.filter(file => file.category.code === 'sop');
+  const currentDrawing = drawingFiles[0] || null;
+  const currentSop = sopFiles[0] || null;
   return {
     drawingLibraryItemId: drawing?.id || null,
     customerName: drawing?.customerName || null,
@@ -493,7 +534,12 @@ export async function resolvePlanningReferences(
     productTimeProfileId: profile?.id || null,
     productTimeProfileVersion: profile?.version || null,
     unitMilliseconds: profile ? productTimeTotalMilliseconds(profile.entries) : null,
-    drawingFileCount: drawing?._count?.files || 0,
+    drawingFileCount: drawingFiles.length,
+    sopFileCount: sopFiles.length,
+    drawingFileId: currentDrawing?.id || null,
+    drawingFileVersion: currentDrawing?.version || null,
+    sopFileId: currentSop?.id || null,
+    sopFileVersion: currentSop?.version || null,
   };
 }
 
@@ -630,7 +676,11 @@ export async function previewProductionPlanRelease(
         `生产周将调整为${input.target === 'active' ? '本周' : '下周'} ${chinaDate(targetWeek.start)} 至 ${chinaDate(targetWeek.end)}`,
       );
     }
-    if (!refs.drawingLibraryItemId) warnings.push('未匹配图纸资料');
+    if (!refs.drawingLibraryItemId) warnings.push('未匹配产品资料档案：工单可先进入配料，但生产启动前必须补齐原图和 SOP');
+    else {
+      if (!refs.drawingFileCount) warnings.push('原图尚未上传：工单可先进入配料，但生产启动前必须补齐');
+      if (!refs.sopFileCount) warnings.push('SOP作业指导书尚未上传：工单可先进入配料，但生产启动前必须补齐');
+    }
     if (!refs.productTimeProfileId) {
       warnings.push('产品工序与工时尚未发布：可先下达仓库配料，生产启动前必须补齐');
     } else if (!effectiveUnitMilliseconds) {
@@ -1100,13 +1150,82 @@ export async function reconcileLegacyDeletedPlanQuantities(
   return { adjustedOrderCount, deletedOrderCount };
 }
 
-function batchDto(batch: ProductionPlanOrderRecord['batches'][number]): ProductionPlanBatchDTO {
+type PlanningResourceFile = {
+  id: string;
+  version: string;
+  updatedAt: Date;
+  category: { code: string };
+};
+
+function planningResourceSummary(item: { files: PlanningResourceFile[] } | null | undefined) {
+  const files = item?.files || [];
+  const drawings = files.filter(file => file.category.code === 'drawing');
+  const sops = files.filter(file => file.category.code === 'sop');
+  return {
+    drawingFileCount: drawings.length,
+    sopFileCount: sops.length,
+    drawing: drawings[0] || null,
+    sop: sops[0] || null,
+  };
+}
+
+function printSnapshotTargetQty(value: Prisma.JsonValue): number | null {
+  if (!value || Array.isArray(value) || typeof value !== 'object') return null;
+  const quantity = (value as Prisma.JsonObject).targetQty;
+  return typeof quantity === 'number' && Number.isFinite(quantity) ? quantity : null;
+}
+
+function batchTravelerPrint(
+  batch: ProductionPlanOrderRecord['batches'][number],
+  resources: ReturnType<typeof planningResourceSummary>,
+): Pick<ProductionPlanBatchDTO,
+  'travelerPrintStatus' | 'travelerPrintMode' | 'travelerPrintId' | 'travelerPrintGeneratedAt' | 'travelerPrintConfirmedAt'> {
+  const latest = batch.workOrder?.qrTicket?.prints[0] || null;
+  if (!latest) {
+    return {
+      travelerPrintStatus: 'not_printed',
+      travelerPrintMode: null,
+      travelerPrintId: null,
+      travelerPrintGeneratedAt: null,
+      travelerPrintConfirmedAt: null,
+    };
+  }
+  const route = batch.workOrder?.processRoute;
+  const stale = (
+    latest.routeVersion !== route?.version
+    || latest.drawingFileId !== resources.drawing?.id
+    || latest.drawingFileVersion !== resources.drawing?.version
+    || latest.sopFileId !== resources.sop?.id
+    || latest.sopFileVersion !== resources.sop?.version
+    || printSnapshotTargetQty(latest.snapshot) !== batch.quantity
+  );
+  const status: ProductionPlanBatchDTO['travelerPrintStatus'] = stale
+    ? 'needs_reprint'
+    : latest.status === 'CONFIRMED'
+      ? 'printed'
+      : latest.status === 'LEGACY_UNVERIFIED'
+        ? 'legacy_unverified'
+        : 'generated';
+  return {
+    travelerPrintStatus: status,
+    travelerPrintMode: latest.mode,
+    travelerPrintId: latest.id,
+    travelerPrintGeneratedAt: latest.printedAt.toISOString(),
+    travelerPrintConfirmedAt: latest.confirmedAt?.toISOString() || null,
+  };
+}
+
+function batchDto(
+  batch: ProductionPlanOrderRecord['batches'][number],
+  resources: ReturnType<typeof planningResourceSummary>,
+): ProductionPlanBatchDTO {
   const state = batch.releaseState as ProductionPlanReleaseState;
   const route = batch.workOrder?.processRoute;
   const currentStep = route?.steps.find(step => step.status === 'current')
     || route?.steps.find(step => step.status === 'pending')
     || [...(route?.steps || [])].reverse().find(step => step.status === 'completed')
     || null;
+  const print = batchTravelerPrint(batch, resources);
   return {
     id: batch.id,
     planOrderId: batch.planOrderId,
@@ -1131,6 +1250,7 @@ function batchDto(batch: ProductionPlanOrderRecord['batches'][number]): Producti
     workOrderCompletedAt: batch.workOrder?.completedAt?.toISOString() || null,
     currentProcessName: currentStep?.processName || null,
     currentProcessStartedAt: currentStep?.startedAt?.toISOString() || null,
+    ...print,
     releasedAt: batch.releasedAt?.toISOString() || null,
     activatedAt: batch.activatedAt?.toISOString() || null,
     createdAt: batch.createdAt.toISOString(),
@@ -1141,6 +1261,7 @@ function batchDto(batch: ProductionPlanOrderRecord['batches'][number]): Producti
 export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): ProductionPlanOrderDTO {
   const allocatedQuantity = order.batches.reduce((sum, batch) => sum + batch.quantity, 0);
   const activeDrawingLibraryItem = order.drawingLibraryItem?.deletedAt ? null : order.drawingLibraryItem;
+  const resources = planningResourceSummary(activeDrawingLibraryItem);
   const profile = activeDrawingLibraryItem?.productTimeProfiles[0] || null;
   const currentUnitMilliseconds = profile ? productTimeTotalMilliseconds(profile.entries) : null;
   const effectiveUnitMilliseconds = currentUnitMilliseconds || order.planningUnitMilliseconds;
@@ -1153,10 +1274,8 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     productName: order.productName,
     specification: order.specification,
     drawingLibraryItemId: order.drawingLibraryItemId,
-    drawingFileCount: activeDrawingLibraryFileCount({
-      deletedAt: order.drawingLibraryItem?.deletedAt,
-      drawingFileCount: order.drawingLibraryItem?._count.files || 0,
-    }),
+    drawingFileCount: resources.drawingFileCount,
+    sopFileCount: resources.sopFileCount,
     orderQuantity: order.orderQuantity,
     planningUnitMilliseconds: order.planningUnitMilliseconds,
     effectiveUnitMilliseconds,
@@ -1172,7 +1291,7 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     remark: order.remark,
     currentUnitMilliseconds,
     currentProductTimeVersion: profile?.version || null,
-    batches: order.batches.map(batchDto),
+    batches: order.batches.map(batch => batchDto(batch, resources)),
     createdAt: order.createdAt.toISOString(),
     updatedAt: order.updatedAt.toISOString(),
   };
@@ -1284,6 +1403,14 @@ async function startReadyScheduledWorkOrder(
           status: true,
           startedAt: true,
           completedAt: true,
+          drawingLibraryItem: {
+            select: {
+              files: {
+                where: { deletedAt: null, isCurrent: true, category: { code: { in: ['drawing', 'sop'] } } },
+                select: { category: { select: { code: true } } },
+              },
+            },
+          },
         },
       },
       steps: {
@@ -1301,6 +1428,7 @@ async function startReadyScheduledWorkOrder(
     },
   });
   const stage = normalizeWorkOrderStage(route?.workOrder.stage || route?.workOrder.status) || 'not_issued';
+  const resourceCodes = new Set(route?.workOrder.drawingLibraryItem?.files.map(file => file.category.code) || []);
   if (
     !route
     || route.status !== 'confirmed'
@@ -1308,6 +1436,8 @@ async function startReadyScheduledWorkOrder(
     || stage !== 'not_issued'
     || route.workOrder.startedAt
     || route.workOrder.completedAt
+    || !resourceCodes.has('drawing')
+    || !resourceCodes.has('sop')
     || !processRouteExecutionReadiness(route.steps).ready
   ) return false;
   return startConfirmedProcessRoute(tx, {
@@ -1352,7 +1482,12 @@ export async function releaseProductionPlanBatch(
   const totalMilliseconds = effectiveUnitMilliseconds ? BigInt(effectiveUnitMilliseconds) * BigInt(batch.quantity) : null;
   const productTimePending = !references.productTimeProfileId || !effectiveUnitMilliseconds;
   const warnings: string[] = [];
-  if (!references.drawingLibraryItemId) warnings.push('未匹配图纸资料，工艺需人工核对');
+  if (!references.drawingLibraryItemId) {
+    warnings.push('产品资料档案待匹配：仓库可先配料，生产启动前必须补齐原图和 SOP');
+  } else {
+    if (!references.drawingFileCount) warnings.push('原图待上传：仓库可先配料，生产启动前必须补齐');
+    if (!references.sopFileCount) warnings.push('SOP作业指导书待上传：仓库可先配料，生产启动前必须补齐');
+  }
   if (!references.productTimeProfileId) {
     warnings.push('产品工序与工时待补充：仓库可先配料，生产启动前必须发布');
   } else if (!effectiveUnitMilliseconds) {
@@ -1547,6 +1682,12 @@ export async function automaticallyReleaseProductionPlanBatch(
   if (!batch || batch.deletedAt || batch.planOrder.deletedAt) return null;
   const target = automaticProductionPlanReleaseTarget(batch, input.now);
   if (!target) return null;
+  const preview = await previewProductionPlanRelease(tx, {
+    batchIds: [batch.id],
+    target,
+    now: input.now,
+  });
+  if (preview.blockers > 0) return null;
   const released = await releaseProductionPlanBatch(tx, {
     batchId: batch.id,
     target,
@@ -1597,6 +1738,12 @@ export async function reconcileAutomaticallyReleasedProductionPlanBatches(
   for (const batch of batches) {
     const target = automaticProductionPlanReleaseTarget(batch, now);
     if (target) {
+      const preview = await previewProductionPlanRelease(tx, {
+        batchIds: [batch.id],
+        target,
+        now,
+      });
+      if (preview.blockers > 0) continue;
       const released = await releaseProductionPlanBatch(tx, {
         batchId: batch.id,
         target,

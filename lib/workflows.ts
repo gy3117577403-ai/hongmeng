@@ -716,10 +716,9 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
             remark: true,
             drawingLibraryItem: {
               select: {
-                _count: {
-                  select: {
-                    files: { where: { deletedAt: null, category: { code: 'drawing' } } },
-                  },
+                files: {
+                  where: { deletedAt: null, isCurrent: true, category: { code: { in: ['drawing', 'sop'] } } },
+                  select: { category: { select: { code: true } } },
                 },
                 productTimeProfiles: {
                   where: { status: 'published' },
@@ -1116,9 +1115,11 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     const effectiveUnitMilliseconds = batch.unitMillisecondsSnapshot
       || (publishedProfile ? productTimeTotalMilliseconds(publishedProfile.entries) : null)
       || order.planningUnitMilliseconds;
+    const resourceCodes = new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || []);
     const facts = {
       releaseState: batch.releaseState as ProductionPlanReleaseState,
-      drawingReady: (order.drawingLibraryItem?._count.files || 0) > 0,
+      drawingReady: resourceCodes.has('drawing'),
+      sopReady: resourceCodes.has('sop'),
       timeReady: Boolean(effectiveUnitMilliseconds),
       warehouseStatus,
       processStatus: processRouteStatus,
@@ -1150,7 +1151,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       : null;
     const displayedRouteState = actualRouteState || referenceRouteState;
     const preparationSteps = planningFlowStepStates(facts)
-      .slice(0, 6)
+      .slice(0, 7)
       .map((state, index): WorkflowStepDTO => ({
         key: `preparation-${index}`,
         label: PLANNING_FLOW_STEPS[index],
@@ -1176,7 +1177,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     let targetRoute = `/weekly-plan-center?batchId=${encodeURIComponent(batch.id)}&week=${encodeURIComponent(chinaDateKey(batch.weekStartDate))}`;
     if ((actualRouteState || referenceRoute) && workOrder?.id) {
       targetRoute = productionRoute;
-    } else if (flow.status === 'missing_drawing') targetRoute = drawingRoute;
+    } else if (flow.status === 'missing_drawing' || flow.status === 'missing_sop') targetRoute = drawingRoute;
     else if (flow.status === 'missing_time' || flow.status === 'pending_process') {
       targetRoute = productTimeConfigurationRoute(order.drawingLibraryItemId);
     } else if (flow.status === 'material_exception' || flow.status === 'pending_material') {

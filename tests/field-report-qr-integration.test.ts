@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { prisma } from '../lib/prisma';
 import {
+  confirmWorkOrderTravelerPrints,
   createWorkOrderTravelerPrints,
   loadFieldReportTicket,
   loadWorkOrderTravelerPrints,
@@ -105,6 +106,15 @@ test(
       const oldPrint = await loadWorkOrderTravelerPrints([first[0].printId]);
       assert.equal(oldPrint[0].snapshot.routeVersion, 1);
       assert.equal(oldPrint[0].snapshot.steps[0].standardMillisecondsPerUnit, 3_000);
+
+      const generatedTicket = await loadFieldReportTicket(first[0].publicCode, { recordScan: false });
+      assert.equal(generatedTicket.route?.printedVersion, null);
+      const confirmation = await confirmWorkOrderTravelerPrints({
+        printIds: [second[0].printId],
+        userId: actor.id,
+        actor: actor.displayName || actor.username,
+      });
+      assert.equal(confirmation.confirmedCount, 1);
 
       const ticket = await loadFieldReportTicket(first[0].publicCode, { recordScan: true });
       assert.equal(ticket.route?.version, 2);

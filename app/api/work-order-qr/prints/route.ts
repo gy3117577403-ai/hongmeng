@@ -11,9 +11,17 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser({ write: 'production' });
-    const body = await req.json().catch(() => ({})) as { workOrderIds?: unknown };
+    const body = await req.json().catch(() => ({})) as {
+      workOrderIds?: unknown;
+      mode?: unknown;
+      copies?: unknown;
+      reprintReason?: unknown;
+    };
     const prints = await createWorkOrderTravelerPrints({
       workOrderIds: body.workOrderIds,
+      mode: body.mode,
+      copies: body.copies,
+      reprintReason: body.reprintReason,
       userId: user.id,
       actor: user.displayName || user.username,
     });
@@ -23,6 +31,7 @@ export async function POST(req: NextRequest) {
       data: {
         count: prints.length,
         printIds: prints.map(print => print.printId),
+        mode: prints[0]?.mode || 'TRAVELER_ONLY',
         url: `/production/qr-print?${query.toString()}`,
       },
     });

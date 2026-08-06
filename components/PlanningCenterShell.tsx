@@ -22,6 +22,7 @@ import {
   PackageCheck,
   Pencil,
   Plus,
+  Printer,
   RefreshCw,
   Search,
   Send,
@@ -34,6 +35,7 @@ import {
 } from 'lucide-react';
 import { Fragment, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
+import { TravelerPrintDialog } from '@/components/TravelerPrintDialog';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import {
@@ -85,11 +87,15 @@ const readinessOptions: Array<{
 }> = [
   { id: 'missing_time', label: '工时未维护', description: '没有有效单套工时' },
   { id: 'missing_drawing', label: '图纸未下发', description: '没有有效原图文件' },
+  { id: 'missing_sop', label: 'SOP 未下发', description: '没有有效 SOP 文件' },
   { id: 'missing_material', label: '材料未配', description: '仓库未下达或配料未完成' },
   { id: 'material_exception', label: '材料异常', description: '缺料、错料或到料异常' },
   { id: 'missing_process', label: '工艺未编排', description: '工艺路线未生成或未确认' },
-  { id: 'ready_preparation', label: '可下达预备', description: '图纸和工时均已就绪' },
-  { id: 'ready_production', label: '可启用生产', description: '图纸、工时、配料和工艺均就绪' },
+  { id: 'print_not_confirmed', label: '未确认打印', description: '未生成或仅打开过打印预览' },
+  { id: 'print_needs_reprint', label: '需要重打', description: '工艺、数量、图纸或 SOP 已变更' },
+  { id: 'print_confirmed', label: '已确认打印', description: '实体纸张已打印并人工确认' },
+  { id: 'ready_preparation', label: '可下达预备', description: '图纸、SOP 和工时均已就绪' },
+  { id: 'ready_production', label: '可启用生产', description: '生产资料、工时、配料和工艺均就绪' },
 ];
 
 const readyFilters = new Set<PlanningReadinessFilter>(['ready_preparation', 'ready_production']);
@@ -240,6 +246,7 @@ const emptySummary: ProductionPlanningSummaryDTO = {
   preparationBatchCount: 0,
   activeBatchCount: 0,
   missingDrawingCount: 0,
+  missingSopCount: 0,
   missingProductTimeCount: 0,
   warehouseExceptionCount: 0,
   processPendingCount: 0,
@@ -399,6 +406,7 @@ function planningFlow(order: ProductionPlanOrderDTO, batch: ProductionPlanBatchD
   return resolvePlanningFlow({
     releaseState: batch.releaseState,
     drawingReady: order.drawingFileCount > 0,
+    sopReady: order.sopFileCount > 0,
     timeReady: Boolean(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order)),
     warehouseStatus: batch.warehouseStatus,
     processStatus: batch.processStatus,
@@ -407,6 +415,15 @@ function planningFlow(order: ProductionPlanOrderDTO, batch: ProductionPlanBatchD
     workOrderCompletedAt: batch.workOrderCompletedAt,
     processCompletedAt: batch.processCompletedAt,
   });
+}
+
+function travelerPrintStatus(batch: ProductionPlanBatchDTO): { label: string; tone: string; time: string | null } {
+  const status = batch.travelerPrintStatus || 'not_printed';
+  if (status === 'printed') return { label: '已打印', tone: 'ready', time: batch.travelerPrintConfirmedAt || null };
+  if (status === 'needs_reprint') return { label: '待重打', tone: 'danger', time: batch.travelerPrintConfirmedAt || batch.travelerPrintGeneratedAt || null };
+  if (status === 'generated') return { label: '待确认', tone: 'warning', time: batch.travelerPrintGeneratedAt || null };
+  if (status === 'legacy_unverified') return { label: '待核验', tone: 'warning', time: batch.travelerPrintGeneratedAt || null };
+  return { label: '未打印', tone: 'muted', time: null };
 }
 
 function changeActionText(action: string): string {
@@ -468,6 +485,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const [refreshToken, setRefreshToken] = useState(0);
   const [expandedOrderId, setExpandedOrderId] = useState('');
   const [selectedBatchIds, setSelectedBatchIds] = useState<string[]>([]);
+  const [travelerPrintIds, setTravelerPrintIds] = useState<string[]>([]);
   const [orderDialog, setOrderDialog] = useState<{ mode: 'create' | 'edit'; orderId?: string } | null>(null);
   const [orderDraft, setOrderDraft] = useState<OrderForm>(emptyOrderForm);
   const [productKeyword, setProductKeyword] = useState('');
@@ -1551,6 +1569,9 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   }
 
   const selectedQuantity = allBatches.filter(item => selectedBatchIds.includes(item.batch.id)).reduce((sum, item) => sum + item.batch.quantity, 0);
+  const selectedPrintableWorkOrderIds = [...new Set(allBatches
+    .filter(item => selectedBatchIds.includes(item.batch.id) && item.batch.workOrderId)
+    .map(item => item.batch.workOrderId as string))];
   const views: Array<{ id: PlanningView; label: string; icon: typeof ClipboardList; count?: number }> = [
     { id: 'schedule', label: '计划排程', icon: CalendarCheck2, count: summary.scheduledOrderCount },
     { id: 'orders', label: '订单池', icon: ClipboardList, count: summary.pendingOrderCount },
@@ -1587,7 +1608,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           <article className="current"><div><CalendarCheck2 aria-hidden="true" /><span><small>本周执行</small><strong>{periods ? `${periods.current.weekStartDate.slice(5)} - ${periods.current.weekEndDate.slice(5)}` : '加载中'}</strong></span></div><b>{summary.activeBatchCount}<small>批已进入生产</small></b><a href="/production?scope=current">进入生产<ChevronRight size={14} /></a></article>
           <div className="planning-period-link"><span>提前准备</span><ArrowRight aria-hidden="true" /></div>
           <article className="next"><div><CalendarClock aria-hidden="true" /><span><small>下周生产</small><strong>{periods ? `${periods.next.weekStartDate.slice(5)} - ${periods.next.weekEndDate.slice(5)}` : '加载中'}</strong></span></div><b>{summary.preparationBatchCount}<small>批已进入生产</small></b><a href="/production?scope=next">进入生产<ChevronRight size={14} /></a></article>
-          <div className="planning-readiness"><span><Warehouse size={15} />仓库异常 <b>{summary.warehouseExceptionCount}</b></span><span><Settings2 size={15} />待工艺 <b>{summary.processPendingCount}</b></span><span><ShieldAlert size={15} />缺工时 <b>{summary.missingProductTimeCount}</b></span></div>
+          <div className="planning-readiness"><span><Warehouse size={15} />仓库异常 <b>{summary.warehouseExceptionCount}</b></span><span><Settings2 size={15} />待工艺 <b>{summary.processPendingCount}</b></span><span><ShieldAlert size={15} />缺工时 <b>{summary.missingProductTimeCount}</b></span><span><FilePenLine size={15} />缺 SOP <b>{summary.missingSopCount}</b></span></div>
         </section>
 
         <section className="planning-week-switcher" aria-label="周排单工作区">
@@ -1729,12 +1750,13 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
             </section>
             <div ref={scheduleScrollRef} className="planning-table-scroll hm-scroll-region" tabIndex={0}>
               <table className="planning-table">
-                <thead><tr><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>单件 / 总工时</th><th>图纸</th><th>仓库</th><th>工艺</th><th>流程状态</th><th>操作</th></tr></thead>
+                <thead><tr><th className="select-cell">选择</th><th>订单 / 产品</th><th>排产数量</th><th>生产周</th><th>内部完成</th><th>客户交期</th><th>单件 / 总工时</th><th>生产资料</th><th>仓库</th><th>工艺</th><th>流程状态</th><th>打印</th><th>操作</th></tr></thead>
                 <tbody>{scheduleRows.map(({ order, batch }) => {
                   const flow = planningFlow(order, batch);
                   const processFinishedAt = batch.processCompletedAt || batch.processConfirmedAt;
                   const flowFinishedAt = batch.workOrderCompletedAt;
                   const workflowParams = workflowCenterParams(batch, periods);
+                  const printState = travelerPrintStatus(batch);
                   const drawingLibraryHref = buildPlanningDrawingLibraryHref({
                     drawingLibraryItemId: order.drawingLibraryItemId,
                     customerName: order.customerName,
@@ -1753,13 +1775,14 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                     <td><strong>{batch.plannedCompletionDate.slice(5)}</strong></td>
                     <td><strong className={batch.plannedCompletionDate > order.customerDueDate ? 'danger-text' : ''}>{order.customerDueDate.slice(5)}</strong></td>
                     <td><strong>{duration(batch.unitMillisecondsSnapshot || planningUnitMilliseconds(order))}</strong><small>{totalDuration(batchTotalMilliseconds(order, batch))}</small></td>
-                    <td><span className={`planning-status ${order.drawingFileCount ? 'ready' : 'warning'}`}>{order.drawingFileCount ? `${order.drawingFileCount} 文件` : order.drawingLibraryItemId ? '待上传' : '未建档'}</span></td>
+                    <td><div className="planning-document-status"><span className={order.drawingFileCount ? 'ready' : 'warning'}>图纸 {order.drawingFileCount || '缺'}</span><span className={order.sopFileCount ? 'ready' : 'warning'}>SOP {order.sopFileCount || '缺'}</span></div></td>
                     <td><span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span></td>
                     <td><span className={`planning-status status-${batch.processStatus}`}><strong>{batch.processStatus === 'completed' ? '已完成' : batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' ? '已确认' : batch.processStatus === 'not_created' ? '待生成' : '待编排'}</strong>{processFinishedAt && <small>{flowTime(processFinishedAt)}</small>}</span></td>
                     <td><a className={`planning-flow-link tone-${flow.tone}`} href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState} title="查看该批次完整流程"><strong>{flow.label}</strong>{flowFinishedAt && <small>{flowTime(flowFinishedAt)}</small>}</a></td>
+                    <td><div className={`planning-print-status ${printState.tone}`}><span><strong>{printState.label}</strong>{printState.time && <small>{flowTime(printState.time)}</small>}</span>{batch.workOrderId && <button type="button" title="打印流转单与 SOP" aria-label={`打印 ${order.specification} 流转单与 SOP`} onClick={() => setTravelerPrintIds([batch.workOrderId!])}><Printer size={15} /></button>}</div></td>
                     <td><div className="planning-row-actions"><button type="button" title="调整批次" aria-label="调整批次" onClick={event => openBatch(order, event.currentTarget, batch)}><Pencil size={15} /></button>{batch.releaseState === 'draft' && <button className="danger" type="button" title="删除批次" aria-label="删除批次" onClick={() => { void deleteBatch(batch); }}><Trash2 size={15} /></button>}<button type="button" title="展开详情" aria-label="展开详情" onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><ChevronDown size={15} /></button></div></td>
                   </tr>
-                  {expandedOrderId === batch.id && <tr className="planning-inspector-row" key={`${batch.id}-detail`}><td colSpan={12}><div className="planning-inline-inspector">
+                  {expandedOrderId === batch.id && <tr className="planning-inspector-row" key={`${batch.id}-detail`}><td colSpan={13}><div className="planning-inline-inspector">
                     <div><span>订单信息</span><strong>{order.salesperson ? `业务员 ${order.salesperson}` : '业务员未设置'}</strong><small>{order.remark || '无备注'}</small></div>
                     <div><span>流程状态</span><strong>{flow.label}</strong><small>仓库 {batch.warehouseStatus} · 工艺 {batch.processStatus}</small></div>
                     <div><span>数据来源</span><strong>{order.currentProductTimeVersion ? `产品工时 V${order.currentProductTimeVersion}` : order.planningUnitMilliseconds ? '订单计划工时' : '工时待维护'}</strong><small>{order.currentProductTimeVersion ? '正式工序工时' : '计划估算，投产前仍需发布工序工时'}</small></div>
@@ -1832,6 +1855,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           <div><CheckCircle2 /><span><strong>已选 {selectedBatchIds.length} 个批次</strong><small>合计 {selectedQuantity.toLocaleString()} 件 · {editableWeekLabel(selectedWeekKey)}</small></span></div>
           <label className="planning-move-control"><span>调配到</span><select value={moveTargetWeekStartDate} onChange={event => setMoveTargetWeekStartDate(event.target.value)}>{moveTargetWeeks.map(week => <option key={week.key} value={week.weekStartDate}>{editableWeekLabel(week.key)} {week.weekStartDate.slice(5)} - {week.weekEndDate.slice(5)}</option>)}</select></label>
           <button type="button" className="move-action" disabled={saving || !moveTargetWeekStartDate} onClick={event => { void previewMove(moveTargetWeekStartDate, event.currentTarget); }}><MoveRight size={16} />调配周次</button>
+          <button type="button" className="secondary" disabled={!selectedPrintableWorkOrderIds.length} title={selectedPrintableWorkOrderIds.length ? '选择流转单与 SOP 打印方式' : '所选批次尚未下达生产，暂无生产工单'} onClick={() => setTravelerPrintIds(selectedPrintableWorkOrderIds)}><Printer size={16} />打印所选</button>
           <button type="button" className="danger-action" disabled={saving} onClick={event => { void previewDeletion(event.currentTarget); }}><Trash2 size={16} />删除计划</button>
           {selectedWeekKey === 'next' && <button type="button" className="secondary" disabled={saving} onClick={event => { void previewRelease('preparation', event.currentTarget); }}><PackageCheck size={16} />下达下周预备</button>}
           {selectedWeekKey === 'current' && <button type="button" className="primary" disabled={saving} onClick={event => { void previewRelease('active', event.currentTarget); }}><Send size={16} />下达本周执行</button>}
@@ -1839,6 +1863,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         </div>}
       </div>
     </main>
+
+    <TravelerPrintDialog open={travelerPrintIds.length > 0} workOrderIds={travelerPrintIds} onClose={() => setTravelerPrintIds([])} onSuccess={message => { setToast(message); setRefreshToken(value => value + 1); }} />
 
     {activeDialog && <button className="planning-dialog-scrim" type="button" aria-label="关闭弹窗" onClick={closeDialog} />}
 

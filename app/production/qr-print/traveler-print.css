@@ -7,6 +7,11 @@
 .traveler-print-toolbar > div { display: grid; justify-items: center; gap: 2px; }
 .traveler-print-toolbar > div strong { font-size: 16px; }
 .traveler-print-toolbar > div span { color: #64748b; font-size: 12px; }
+.traveler-print-toolbar .traveler-print-toolbar-actions { display: flex; justify-self: end; justify-content: flex-end; align-items: center; gap: 8px; }
+.traveler-print-toolbar .traveler-print-toolbar-actions button { justify-self: auto; min-height: 38px; padding: 0 14px; }
+.traveler-print-toolbar .traveler-print-toolbar-actions button.confirm { border-color: #b8d9c5; color: #147a45; background: #effaf4; box-shadow: none; }
+.traveler-print-confirmed { min-height: 38px; display: inline-flex !important; align-items: center; gap: 6px; padding: 0 12px; border: 1px solid #b8d9c5; border-radius: 11px; color: #147a45 !important; background: #effaf4; font-size: 12px !important; font-weight: 800; }
+.traveler-print-instruction { max-width: 210mm; display: flex; align-items: center; gap: 9px; margin: 0 auto 12px; padding: 10px 14px; border: 1px solid #f4d2ae; border-radius: 12px; color: #8a4c12; background: #fff8ef; font-size: 12px; }
 .traveler-print-warning { max-width: 210mm; margin: 0 auto 12px; padding: 10px 14px; border: 1px solid #fecaca; border-radius: 12px; background: #fff1f2; color: #b91c1c; }
 .traveler-print-pages { display: grid; gap: 22px; justify-content: center; }
 .traveler-sheet { width: 210mm; min-height: 297mm; box-sizing: border-box; display: flex; flex-direction: column; padding: 10mm; background: #fff; box-shadow: 0 18px 50px rgba(15,23,42,.16); overflow: hidden; }
@@ -46,14 +51,33 @@
 .traveler-sheet-foot { margin-top: auto; padding-top: 4mm; }
 .traveler-sheet-foot > div { display: inline-grid; grid-template-columns: 18mm 32mm; gap: 2mm; margin-right: 5mm; font-size: 3mm; }.traveler-sheet-foot > div b { border-bottom: 1px solid #475569; }
 .traveler-sheet-foot p { margin: 4mm 0 0; padding: 2.5mm 3mm; border-radius: 2mm; background: #f8fafc; color: #475569; font-size: 2.45mm; line-height: 1.5; }
+.traveler-sop-sheet,
+.traveler-blank-page { width: 210mm; height: 297mm; box-sizing: border-box; background: #fff; box-shadow: 0 18px 50px rgba(15,23,42,.16); overflow: hidden; }
+.traveler-sop-sheet { display: grid; place-items: center; }
+.traveler-sop-sheet img { width: 100%; height: 100%; object-fit: contain; }
+.traveler-blank-page { display: grid; place-items: center; color: #cbd5e1; font-size: 12px; }
+.traveler-print-confirm-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgba(16, 28, 45, .52); backdrop-filter: blur(5px); }
+.traveler-print-confirm-backdrop > section { width: min(480px, 94vw); position: relative; display: grid; justify-items: center; gap: 8px; padding: 28px; border-radius: 20px; color: #1d2b41; background: #fff; box-shadow: 0 28px 78px rgba(15, 23, 42, .28); }
+.traveler-print-confirm-backdrop > section > svg { color: #168652; }
+.traveler-print-confirm-backdrop > section > span { color: #168652; font-size: 12px; font-weight: 800; }
+.traveler-print-confirm-backdrop h2 { margin: 0; font-size: 22px; }
+.traveler-print-confirm-backdrop p { margin: 2px 0 8px; color: #65748a; font-size: 13px; line-height: 1.7; text-align: center; }
+.traveler-print-confirm-backdrop section > div { width: 100%; padding: 10px 12px; border-radius: 10px; color: #b4232d; background: #fff0f1; font-size: 12px; }
+.traveler-print-confirm-backdrop .close { width: 36px; height: 36px; position: absolute; top: 14px; right: 14px; display: grid; place-items: center; border: 1px solid #dde5ef; border-radius: 10px; color: #64748b; background: #fff; cursor: pointer; }
+.traveler-print-confirm-backdrop footer { width: 100%; display: flex; justify-content: flex-end; gap: 9px; margin-top: 5px; }
+.traveler-print-confirm-backdrop footer button { min-height: 42px; padding: 0 16px; border: 1px solid #d8e1ec; border-radius: 10px; color: #536176; background: #fff; cursor: pointer; font-weight: 750; }
+.traveler-print-confirm-backdrop footer .primary { color: #fff; border-color: #ff6a00; background: linear-gradient(180deg,#ff7b24,#ef6000); }
 .traveler-print-error { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 12px; background: #f8fafc; color: #1e293b; }.traveler-print-error strong { font-size: 26px; }.traveler-print-error p { color: #64748b; }.traveler-print-error a { padding: 11px 18px; border-radius: 12px; background: #f97316; color: #fff; text-decoration: none; }
 .spin { animation: traveler-spin .8s linear infinite; } @keyframes traveler-spin { to { transform: rotate(360deg); } }
 @media print {
   .traveler-print-screen { padding: 0; background: #fff; }
-  .traveler-print-toolbar, .traveler-print-warning { display: none !important; }
+  .traveler-print-toolbar, .traveler-print-warning, .traveler-print-instruction, .traveler-print-confirm-backdrop { display: none !important; }
   .traveler-print-pages { display: block; }
-  .traveler-sheet { width: 210mm; height: 297mm; min-height: 297mm; padding: 10mm; box-shadow: none; break-after: page; page-break-after: always; }
-  .traveler-sheet:last-child { break-after: auto; page-break-after: auto; }
+  .traveler-sheet, .traveler-sop-sheet, .traveler-blank-page { width: 210mm; height: 297mm; min-height: 297mm; box-shadow: none; break-after: page; page-break-after: always; }
+  .traveler-sheet { padding: 10mm; }
+  .traveler-blank-page span { display: none; }
+  .traveler-print-screen[data-print-target="traveler"] .traveler-print-kind-sop { display: none !important; }
+  .traveler-print-screen[data-print-target="sop"] .traveler-print-kind-traveler { display: none !important; }
 }
 @page { size: A4 portrait; margin: 0; }
 @media (max-width: 900px) {

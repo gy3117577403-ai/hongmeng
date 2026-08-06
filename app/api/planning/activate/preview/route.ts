@@ -37,6 +37,10 @@ export async function POST(req: NextRequest) {
             planningUnitMilliseconds: true,
             drawingLibraryItem: {
               select: {
+                files: {
+                  where: { deletedAt: null, isCurrent: true, category: { code: { in: ['drawing', 'sop'] } } },
+                  select: { category: { select: { code: true } } },
+                },
                 productTimeProfiles: {
                   where: { status: 'published' },
                   orderBy: { version: 'desc' },
@@ -69,6 +73,9 @@ export async function POST(req: NextRequest) {
         productTimeProfile ? productTimeTotalMilliseconds(productTimeProfile.entries) : null,
         batch.planOrder.planningUnitMilliseconds,
       );
+      const resourceCodes = new Set(batch.planOrder.drawingLibraryItem?.files.map(file => file.category.code) || []);
+      if (!resourceCodes.has('drawing')) blockers.push('原图尚未上传，不能启用生产');
+      if (!resourceCodes.has('sop')) blockers.push('SOP作业指导书尚未上传，不能启用生产');
       if (!productTimeProfile) blockers.push('产品工序与工时尚未发布，不能启用生产');
       else if (!effectiveUnitMilliseconds) blockers.push('已发布产品工时无有效总工时，不能启用生产');
       if (warehouse !== 'completed') warnings.push(warehouse === 'exception' ? '仓库存在异常' : '仓库尚未完成配料');

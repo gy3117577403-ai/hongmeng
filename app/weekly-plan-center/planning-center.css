@@ -646,6 +646,8 @@ main.planning-center-shell.hm-workbench-root {
 }
 
 .planning-center-shell .planning-readiness-options {
+  max-height: min(450px, calc(100vh - 245px));
+  overflow: auto;
   padding: 5px 0 3px;
   display: grid;
   gap: 2px;
@@ -1270,7 +1272,7 @@ main.planning-center-shell.hm-workbench-root {
 
 .planning-center-shell .planning-table {
   width: 100%;
-  min-width: 1280px;
+  min-width: 1420px;
   border-collapse: separate;
   border-spacing: 0;
   color: #28364b;
@@ -1429,6 +1431,70 @@ main.planning-center-shell.hm-workbench-root {
   background: #fff1f0;
   color: #b42318;
 }
+
+.planning-center-shell .planning-document-status {
+  min-width: 90px;
+  display: grid;
+  grid-template-columns: repeat(2, max-content);
+  gap: 4px;
+}
+
+.planning-center-shell .planning-document-status span {
+  min-height: 23px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.planning-center-shell .planning-document-status .ready {
+  color: #287a45;
+  background: #edf8f0;
+}
+
+.planning-center-shell .planning-document-status .warning {
+  color: #a15c05;
+  background: #fff3dd;
+}
+
+.planning-center-shell .planning-print-status {
+  min-width: 106px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.planning-center-shell .planning-print-status > span {
+  min-width: 61px;
+  display: grid;
+  gap: 2px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  color: #667386;
+  background: #f0f3f6;
+}
+
+.planning-center-shell .planning-print-status > span strong { font-size: 9px; }
+.planning-center-shell .planning-print-status > span small { margin: 0; color: inherit; font-size: 8px; opacity: .76; }
+.planning-center-shell .planning-print-status.ready > span { color: #287a45; background: #edf8f0; }
+.planning-center-shell .planning-print-status.warning > span { color: #9a5b08; background: #fff7e6; }
+.planning-center-shell .planning-print-status.danger > span { color: #b42318; background: #fff1f0; }
+.planning-center-shell .planning-print-status > button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #f1c6a8;
+  border-radius: 8px;
+  color: #d95600;
+  background: #fff8f2;
+  cursor: pointer;
+}
+
+.planning-center-shell .planning-print-status > button:hover { color: #fff; background: #e9660e; }
 
 .planning-center-shell .planning-flow-link {
   width: fit-content;

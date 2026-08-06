@@ -572,6 +572,7 @@ export type ProductionPlanReleaseState = 'draft' | 'preparation' | 'active' | 'a
 export type PlanningFlowStatus =
   | 'material_exception'
   | 'missing_drawing'
+  | 'missing_sop'
   | 'missing_time'
   | 'pending_material'
   | 'pending_process'
@@ -620,6 +621,11 @@ export type ProductionPlanBatchDTO = {
   workOrderCompletedAt?: string | null;
   currentProcessName?: string | null;
   currentProcessStartedAt?: string | null;
+  travelerPrintStatus?: 'not_printed' | 'generated' | 'printed' | 'needs_reprint' | 'legacy_unverified';
+  travelerPrintMode?: 'TRAVELER_ONLY' | 'TRAVELER_SOP_DUPLEX' | 'TRAVELER_SOP_SEPARATE' | null;
+  travelerPrintId?: string | null;
+  travelerPrintGeneratedAt?: string | null;
+  travelerPrintConfirmedAt?: string | null;
   releasedAt?: string | null;
   activatedAt?: string | null;
   createdAt: string;
@@ -636,6 +642,7 @@ export type ProductionPlanOrderDTO = {
   specification: string;
   drawingLibraryItemId?: string | null;
   drawingFileCount: number;
+  sopFileCount: number;
   orderQuantity: number;
   planningUnitMilliseconds?: number | null;
   effectiveUnitMilliseconds?: number | null;
@@ -691,6 +698,7 @@ export type ProductionPlanningSummaryDTO = {
   preparationBatchCount: number;
   activeBatchCount: number;
   missingDrawingCount: number;
+  missingSopCount: number;
   missingProductTimeCount: number;
   warehouseExceptionCount: number;
   processPendingCount: number;

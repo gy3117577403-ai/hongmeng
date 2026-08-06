@@ -96,6 +96,22 @@ enum WorkOrderQrTicketStatus {
   @@map("work_order_qr_ticket_status")
 }
 
+enum WorkOrderQrPrintStatus {
+  GENERATED
+  CONFIRMED
+  LEGACY_UNVERIFIED
+
+  @@map("work_order_qr_print_status")
+}
+
+enum WorkOrderQrPrintMode {
+  TRAVELER_ONLY
+  TRAVELER_SOP_DUPLEX
+  TRAVELER_SOP_SEPARATE
+
+  @@map("work_order_qr_print_mode")
+}
+
 enum LaborAccessRole {
   ADMIN
   TEAM_LEAD
@@ -296,6 +312,7 @@ model User {
   updatedWeeklyWorkerPresets     WeeklyProcessWorkerPreset[]  @relation("WeeklyProcessWorkerPresetUpdatedBy")
   createdWorkOrderQrTickets      WorkOrderQrTicket[]          @relation("WorkOrderQrTicketCreatedBy")
   printedWorkOrderQrPrints       WorkOrderQrPrint[]           @relation("WorkOrderQrPrintPrintedBy")
+  confirmedWorkOrderQrPrints     WorkOrderQrPrint[]           @relation("WorkOrderQrPrintConfirmedBy")
   employeeEmploymentEvents       EmployeeEmploymentEvent[]    @relation("EmployeeEmploymentEventActor")
 
   @@map("users")
@@ -618,20 +635,36 @@ model WorkOrderQrTicket {
 }
 
 model WorkOrderQrPrint {
-  id           String                @id @default(uuid())
-  ticketId     String                @map("ticket_id")
-  routeId      String                @map("route_id")
-  routeVersion Int                   @map("route_version")
-  snapshot     Json
-  printedById  String?               @map("printed_by_id")
-  printedAt    DateTime              @default(now()) @map("printed_at")
-  ticket       WorkOrderQrTicket     @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  route        WorkOrderProcessRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  printedBy    User?                 @relation("WorkOrderQrPrintPrintedBy", fields: [printedById], references: [id], onDelete: SetNull)
+  id                 String                 @id @default(uuid())
+  ticketId           String                 @map("ticket_id")
+  routeId            String                 @map("route_id")
+  routeVersion       Int                    @map("route_version")
+  snapshot           Json
+  status             WorkOrderQrPrintStatus @default(GENERATED)
+  mode               WorkOrderQrPrintMode   @default(TRAVELER_ONLY)
+  copies             Int                    @default(1)
+  drawingFileId      String?                @map("drawing_file_id")
+  drawingFileVersion String?                @map("drawing_file_version")
+  sopFileId          String?                @map("sop_file_id")
+  sopFileVersion     String?                @map("sop_file_version")
+  packetHash         String?                @map("packet_hash")
+  reprintReason      String?                @map("reprint_reason")
+  printedById        String?                @map("printed_by_id")
+  printedAt          DateTime               @default(now()) @map("printed_at")
+  confirmedById      String?                @map("confirmed_by_id")
+  confirmedAt        DateTime?              @map("confirmed_at")
+  ticket             WorkOrderQrTicket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  route              WorkOrderProcessRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  printedBy          User?                  @relation("WorkOrderQrPrintPrintedBy", fields: [printedById], references: [id], onDelete: SetNull)
+  confirmedBy        User?                  @relation("WorkOrderQrPrintConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
 
   @@index([ticketId, printedAt])
+  @@index([ticketId, status, confirmedAt])
   @@index([routeId, routeVersion])
   @@index([printedById])
+  @@index([confirmedById])
+  @@index([drawingFileId])
+  @@index([sopFileId])
   @@map("work_order_qr_prints")
 }
 

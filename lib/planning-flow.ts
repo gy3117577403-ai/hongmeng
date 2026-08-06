@@ -10,6 +10,7 @@ import { resolveProductionLifecycle } from '@/lib/production-lifecycle';
 export type PlanningFlowFacts = {
   releaseState: ProductionPlanReleaseState;
   drawingReady: boolean;
+  sopReady: boolean;
   timeReady: boolean;
   warehouseStatus?: WarehouseMaterialStatus | 'not_created';
   processStatus?: ProcessRouteStatus | 'not_created';
@@ -30,6 +31,7 @@ export type PlanningFlowState = {
 export const PLANNING_FLOW_STEPS = [
   '计划排程',
   '图纸资料',
+  'SOP资料',
   '仓库配料',
   '产品工时',
   '工艺确认',
@@ -55,6 +57,9 @@ export function resolvePlanningFlow(facts: PlanningFlowFacts): PlanningFlowState
   }
   if (!facts.drawingReady) {
     return { status: 'missing_drawing', label: '图纸待上传', tone: 'warning', workflowStatus: 'waiting', nextStep: '上传图纸资料' };
+  }
+  if (!facts.sopReady) {
+    return { status: 'missing_sop', label: 'SOP待上传', tone: 'warning', workflowStatus: 'waiting', nextStep: '上传SOP作业指导书' };
   }
   if (!facts.timeReady) {
     return { status: 'missing_time', label: '工时待维护', tone: 'warning', workflowStatus: 'waiting', nextStep: '发布产品工时' };
@@ -97,6 +102,7 @@ export function planningFlowStepStates(facts: PlanningFlowFacts): Array<'done' |
   const done = [
     true,
     facts.drawingReady,
+    facts.sopReady,
     facts.warehouseStatus === 'completed',
     facts.timeReady,
     processReady,
@@ -105,16 +111,17 @@ export function planningFlowStepStates(facts: PlanningFlowFacts): Array<'done' |
     completed,
   ];
   const currentByStatus: Record<PlanningFlowStatus, number> = {
-    material_exception: 2,
+    material_exception: 3,
     missing_drawing: 1,
-    missing_time: 3,
-    pending_material: 2,
-    pending_process: 4,
-    ready_release: 5,
-    next_preparation: 6,
-    current_execution: 6,
-    production: 6,
-    pending_archive: 7,
+    missing_sop: 2,
+    missing_time: 4,
+    pending_material: 3,
+    pending_process: 5,
+    ready_release: 6,
+    next_preparation: 7,
+    current_execution: 7,
+    production: 7,
+    pending_archive: 8,
     completed: -1,
   };
   const currentIndex = currentByStatus[flow.status];

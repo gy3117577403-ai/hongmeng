@@ -128,7 +128,7 @@ const exceptionLabels: Record<ProductionExceptionCode, string> = {
   overdue: '已逾期',
   drawing_not_issued: '未发图',
   material_not_ready: '仓库异常',
-  documents_incomplete: '原图缺失',
+  documents_incomplete: '原图或SOP缺失',
   delivery_missing: '交期缺失',
   specification_invalid: '规格异常',
   customer_missing: '客户缺失',
@@ -606,8 +606,18 @@ export function executionCompleteness(order: ProductionExecutionOrderRecord) {
   };
 }
 
+export function hasOriginalProductionDrawing(order: Pick<ProductionExecutionOrderRecord, 'drawingLibraryItem'>): boolean {
+  const codes = new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || []);
+  return codes.has('drawing');
+}
+
+export function hasProductionSop(order: Pick<ProductionExecutionOrderRecord, 'drawingLibraryItem'>): boolean {
+  const codes = new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || []);
+  return codes.has('sop');
+}
+
 export function hasRequiredProductionDocuments(order: Pick<ProductionExecutionOrderRecord, 'drawingLibraryItem'>): boolean {
-  return Boolean(order.drawingLibraryItem?.files.some(file => file.category.code === 'drawing'));
+  return hasOriginalProductionDrawing(order) && hasProductionSop(order);
 }
 
 export function productionExceptionCodes(order: ProductionExecutionOrderRecord, now = new Date()): ProductionExceptionCode[] {
@@ -622,7 +632,7 @@ export function productionExceptionCodes(order: ProductionExecutionOrderRecord, 
     specification: order.specification,
     specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
     drawingStatus: order.drawingStatus,
-    hasOriginalDrawing: hasRequiredProductionDocuments(order),
+    hasOriginalDrawing: hasOriginalProductionDrawing(order),
     materialStatus: order.materialStatus,
     warehouseMaterialStatus: order.materialTask?.status,
     warehouseExceptionType: order.materialTask?.exceptionType,
@@ -659,7 +669,7 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     specification: order.specification,
     specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
     drawingStatus: order.drawingStatus,
-    hasOriginalDrawing: hasRequiredProductionDocuments(order),
+    hasOriginalDrawing: hasOriginalProductionDrawing(order),
     materialStatus: order.materialStatus,
     warehouseMaterialStatus: order.materialTask?.status,
     warehouseExceptionType: order.materialTask?.exceptionType,
@@ -854,7 +864,7 @@ function dateInput(value?: string) {
 
 function drawingStatusValue(order: ProductionExecutionOrderRecord) {
   const value = text(order.drawingStatus);
-  if ((!value || value === '-' || value.includes('未设置')) && hasEffectiveIssuedDrawing(value, hasRequiredProductionDocuments(order))) {
+  if ((!value || value === '-' || value.includes('未设置')) && hasEffectiveIssuedDrawing(value, hasOriginalProductionDrawing(order))) {
     return 'issued';
   }
   if (!value || value === '-' || value.includes('未设置')) return 'unset';
@@ -931,7 +941,7 @@ function matchesFilters(
       specification: order.specification,
       specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
       drawingStatus: order.drawingStatus,
-      hasOriginalDrawing: hasRequiredProductionDocuments(order),
+      hasOriginalDrawing: hasOriginalProductionDrawing(order),
       materialStatus: order.materialStatus,
       warehouseMaterialStatus: order.materialTask?.status,
       warehouseExceptionType: order.materialTask?.exceptionType,
@@ -979,7 +989,7 @@ function drawingConfirmationRequired(order: ProductionExecutionOrderRecord, now:
     stage,
     specification: order.specification,
     drawingStatus: order.drawingStatus,
-    hasOriginalDrawing: hasRequiredProductionDocuments(order),
+    hasOriginalDrawing: hasOriginalProductionDrawing(order),
     materialStatus: order.materialStatus,
     warehouseMaterialStatus: order.materialTask?.status,
     warehouseExceptionType: order.materialTask?.exceptionType,
@@ -1134,7 +1144,7 @@ export async function summarizeProduction(week: ProductionWeek) {
       specification: order.specification,
       specificationInvalid: !text(order.specification) || isInvalidSpecification(order.specification || ''),
       drawingStatus: order.drawingStatus,
-      hasOriginalDrawing: hasRequiredProductionDocuments(order),
+      hasOriginalDrawing: hasOriginalProductionDrawing(order),
       materialStatus: order.materialStatus,
       warehouseMaterialStatus: order.materialTask?.status,
       warehouseExceptionType: order.materialTask?.exceptionType,

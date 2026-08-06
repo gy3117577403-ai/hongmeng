@@ -53,6 +53,32 @@ test(
               libraryKey: `plan-auto-next-${actor.id}`,
             },
           });
+          const [drawingCategory, sopCategory] = await Promise.all([
+            tx.resourceCategory.findUniqueOrThrow({ where: { code: 'drawing' } }),
+            tx.resourceCategory.findUniqueOrThrow({ where: { code: 'sop' } }),
+          ]);
+          await tx.drawingLibraryFile.createMany({
+            data: [currentDrawing, nextDrawing].flatMap(item => ([
+              {
+                libraryItemId: item.id,
+                categoryId: drawingCategory.id,
+                originalName: `${item.specification}-drawing.pdf`,
+                mimeType: 'application/pdf',
+                size: 128,
+                version: 'V1',
+                objectKey: `integration/${actor.id}/${item.id}/drawing.pdf`,
+              },
+              {
+                libraryItemId: item.id,
+                categoryId: sopCategory.id,
+                originalName: `${item.specification}-sop.pdf`,
+                mimeType: 'application/pdf',
+                size: 128,
+                version: 'V1',
+                objectKey: `integration/${actor.id}/${item.id}/sop.pdf`,
+              },
+            ])),
+          });
           await tx.productTimeProfile.create({
             data: {
               drawingLibraryItemId: currentDrawing.id,

@@ -11,3 +11,19 @@
 - 交互验收：工单搜索命中 3 条、复制提示可见、8 名员工跨 5 个部门完整显示、工号搜索可收敛到单人、重复问题会拦截并提示。
 
 final result: passed
+
+# SOP 准备度与流转单打印视觉验收
+
+- 参考来源：`C:\Windows\TEMP\codex-clipboard-c9bd94af-aaa6-45f0-9247-61a5fd79813e.png`，原图尺寸 2438 × 1335。
+- 主要验收视口：1366 × 1024 横向平板；另以参考图等效宽屏状态复核全部表格列。
+- 验收状态：本地完整 Docker 环境、PostgreSQL/MinIO 正常、管理员登录、真实计划批次含 1 份图纸与 1 份 SOP。
+- 计划中心截图：`artifacts/sop-print-qa-20260806/plan-center-1366x1024.png`。
+- 打印方式弹窗：`artifacts/sop-print-qa-20260806/print-mode-dialog-1366x1024.png`。
+- 宽屏复核截图：`artifacts/sop-print-qa-20260806/plan-center-reference-size-2438x1335.png`。
+- 同屏对照：`artifacts/sop-print-qa-20260806/comparison-reference-vs-implementation.png`。
+- 第一次对照：确认原“图纸”单列已扩展为紧凑的“生产资料”，同一行显示“图纸 1 / SOP 1”；增加独立“打印”列，状态和打印入口未破坏原有计划表结构。
+- 第二次对照：在 1366 × 1024 检查表格滚动、弹窗留白、卡片高度、按钮层级与橙色主题；未发现裁切、重叠、乱码或不可操作控件。
+- 交互验收：准备状态菜单包含“SOP 未下发、未确认打印、需要重打、已确认打印”；打印弹窗的三种模式可切换，份数可输入 1–10，重打原因可填写，并明确提示“打开预览不等于已打印”。
+- 控制台验收：页面无 error/warning 日志。
+
+final result: passed

@@ -7,6 +7,7 @@ function facts(overrides: Partial<PlanningFlowFacts> = {}): PlanningFlowFacts {
   return {
     releaseState: 'draft',
     drawingReady: true,
+    sopReady: true,
     timeReady: true,
     warehouseStatus: 'completed',
     processStatus: 'confirmed',
@@ -17,6 +18,7 @@ function facts(overrides: Partial<PlanningFlowFacts> = {}): PlanningFlowFacts {
 test('planning flow prioritizes preparation blockers in business order', () => {
   assert.equal(resolvePlanningFlow(facts({ warehouseStatus: 'exception', drawingReady: false })).status, 'material_exception');
   assert.equal(resolvePlanningFlow(facts({ drawingReady: false, timeReady: false })).status, 'missing_drawing');
+  assert.equal(resolvePlanningFlow(facts({ sopReady: false, timeReady: false })).status, 'missing_sop');
   assert.equal(resolvePlanningFlow(facts({ timeReady: false, warehouseStatus: 'pending' })).status, 'missing_time');
   assert.equal(resolvePlanningFlow(facts({ warehouseStatus: 'pending', processStatus: 'draft' })).status, 'pending_material');
   assert.equal(resolvePlanningFlow(facts({ processStatus: 'draft' })).status, 'pending_process');
@@ -46,8 +48,8 @@ test('planning flow stepper exposes one current node until completion', () => {
   assert.equal(blocked.filter(state => state === 'current').length, 1);
 
   const active = planningFlowStepStates(facts({ releaseState: 'active', currentProcessName: '组装' }));
-  assert.equal(active[6], 'current');
-  assert.equal(active[7], 'pending');
+  assert.equal(active[7], 'current');
+  assert.equal(active[8], 'pending');
 
   const completed = planningFlowStepStates(facts({ releaseState: 'archived', workOrderCompletedAt: new Date() }));
   assert.equal(completed.every(state => state === 'done'), true);

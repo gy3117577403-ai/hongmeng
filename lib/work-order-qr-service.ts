@@ -1,11 +1,18 @@
 import crypto from 'node:crypto';
-import { Prisma, WorkOrderQrTicketStatus } from '@prisma/client';
+import {
+  Prisma,
+  WorkOrderQrPrintMode,
+  WorkOrderQrPrintStatus,
+  WorkOrderQrTicketStatus,
+} from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { isExecutableProductionWorkOrder } from '@/lib/work-orders';
 import { businessWorkOrderCodeBase } from '@/lib/work-order-business-code';
 
 const MAX_PRINT_BATCH = 30;
+const MAX_SOP_PRINT_BATCH = 10;
+const MAX_PRINT_COPIES = 10;
 const REPORT_CODE_PATTERN = /^[A-Za-z0-9_-]{20,80}$/;
 
 export class WorkOrderQrServiceError extends Error {
@@ -36,6 +43,12 @@ export type WorkOrderTravelerSnapshot = {
   routeVersion: number;
   routeStatus: string;
   routeName: string;
+  drawingFileId: string | null;
+  drawingFileVersion: string | null;
+  sopFileId: string | null;
+  sopFileVersion: string | null;
+  sopFileName: string | null;
+  sopMimeType: string | null;
   steps: Array<{
     id: string;
     position: number;
@@ -58,6 +71,12 @@ export type WorkOrderTravelerPrintRecord = {
   publicCode: string;
   shortCode: string;
   printedAt: string;
+  generatedAt: string;
+  status: WorkOrderQrPrintStatus;
+  mode: WorkOrderQrPrintMode;
+  copies: number;
+  confirmedAt: string | null;
+  reprintReason: string | null;
   printedBy: string;
   snapshot: WorkOrderTravelerSnapshot;
 };
@@ -101,8 +120,15 @@ export type FieldReportTicketView = {
 type TravelerOrder = Prisma.WorkOrderGetPayload<{
   include: {
     processRoute: { include: { steps: true } };
+    drawingLibraryItem: {
+      include: {
+        files: { include: { category: true } };
+      };
+    };
   };
 }>;
+
+type TravelerSourceFile = NonNullable<TravelerOrder['drawingLibraryItem']>['files'][number];
 
 function cleanIds(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
@@ -115,6 +141,28 @@ function publicCode(): string {
 
 function shortCode(code: string): string {
   return code.slice(0, 8).toUpperCase();
+}
+
+function cleanPrintMode(value: unknown): WorkOrderQrPrintMode {
+  const mode = String(value || '').trim().toUpperCase();
+  if (mode === WorkOrderQrPrintMode.TRAVELER_SOP_DUPLEX) return WorkOrderQrPrintMode.TRAVELER_SOP_DUPLEX;
+  if (mode === WorkOrderQrPrintMode.TRAVELER_SOP_SEPARATE) return WorkOrderQrPrintMode.TRAVELER_SOP_SEPARATE;
+  return WorkOrderQrPrintMode.TRAVELER_ONLY;
+}
+
+function cleanCopies(value: unknown): number {
+  const copies = Number(value);
+  if (!Number.isInteger(copies) || copies < 1 || copies > MAX_PRINT_COPIES) {
+    throw new WorkOrderQrServiceError(`打印份数必须为 1-${MAX_PRINT_COPIES} 份`, 400, 'QR_PRINT_COPIES_INVALID');
+  }
+  return copies;
+}
+
+function latestSourceFile(order: TravelerOrder, categoryCode: 'drawing' | 'sop'): TravelerSourceFile | null {
+  const files = order.drawingLibraryItem?.files || [];
+  return [...files]
+    .filter(file => file.deletedAt === null && file.isCurrent && file.category.code === categoryCode)
+    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0] || null;
 }
 
 function targetQuantity(order: Pick<TravelerOrder, 'productionTargetQty' | 'uncompletedQty' | 'completedQty' | 'stage'>): number {
@@ -138,6 +186,8 @@ function createSnapshot(order: TravelerOrder): WorkOrderTravelerSnapshot {
     throw new WorkOrderQrServiceError('该工单生产数量未确认，不能打印流转单', 409, 'QR_TARGET_QTY_REQUIRED');
   }
   const firstUnit = route.steps.find(step => step.unitLabel)?.unitLabel || '件';
+  const drawingFile = latestSourceFile(order, 'drawing');
+  const sopFile = latestSourceFile(order, 'sop');
   return {
     workOrderId: order.id,
     workOrderCode: order.code,
@@ -154,6 +204,12 @@ function createSnapshot(order: TravelerOrder): WorkOrderTravelerSnapshot {
     routeVersion: route.version,
     routeStatus: route.status,
     routeName: route.templateName,
+    drawingFileId: drawingFile?.id || null,
+    drawingFileVersion: drawingFile?.version || null,
+    sopFileId: sopFile?.id || null,
+    sopFileVersion: sopFile?.version || null,
+    sopFileName: sopFile?.displayName || sopFile?.originalName || null,
+    sopMimeType: sopFile?.mimeType || null,
     steps: [...route.steps]
       .sort((left, right) => left.position - right.position)
       .map(step => ({
@@ -176,21 +232,39 @@ function createSnapshot(order: TravelerOrder): WorkOrderTravelerSnapshot {
 
 export async function createWorkOrderTravelerPrints(input: {
   workOrderIds: unknown;
+  mode?: unknown;
+  copies?: unknown;
+  reprintReason?: unknown;
   userId: string;
   actor: string;
 }): Promise<WorkOrderTravelerPrintRecord[]> {
   const workOrderIds = cleanIds(input.workOrderIds);
+  const mode = cleanPrintMode(input.mode);
+  const copies = cleanCopies(input.copies ?? 1);
+  const reprintReason = String(input.reprintReason || '').trim().slice(0, 500) || null;
   if (!workOrderIds.length) {
     throw new WorkOrderQrServiceError('请至少选择一张生产工单', 400, 'QR_WORK_ORDER_REQUIRED');
   }
   if (workOrderIds.length > MAX_PRINT_BATCH) {
     throw new WorkOrderQrServiceError(`每次最多打印 ${MAX_PRINT_BATCH} 张流转单`, 400, 'QR_PRINT_BATCH_TOO_LARGE');
   }
+  if (mode !== WorkOrderQrPrintMode.TRAVELER_ONLY && workOrderIds.length > MAX_SOP_PRINT_BATCH) {
+    throw new WorkOrderQrServiceError(`含 SOP 的打印任务每次最多选择 ${MAX_SOP_PRINT_BATCH} 张工单`, 400, 'QR_SOP_PRINT_BATCH_TOO_LARGE');
+  }
   const orders = await prisma.workOrder.findMany({
     where: { id: { in: workOrderIds }, deletedAt: null },
     include: {
       processRoute: {
         include: { steps: { orderBy: [{ position: 'asc' }] } },
+      },
+      drawingLibraryItem: {
+        include: {
+          files: {
+            where: { deletedAt: null, isCurrent: true, category: { code: { in: ['drawing', 'sop'] } } },
+            include: { category: true },
+            orderBy: [{ updatedAt: 'desc' }],
+          },
+        },
       },
     },
   });
@@ -199,6 +273,16 @@ export async function createWorkOrderTravelerPrints(input: {
   }
   const orderById = new Map(orders.map(order => [order.id, order]));
   const snapshots = workOrderIds.map(id => createSnapshot(orderById.get(id)!));
+  if (mode !== WorkOrderQrPrintMode.TRAVELER_ONLY) {
+    const missingSop = snapshots.find(snapshot => !snapshot.sopFileId);
+    if (missingSop) {
+      throw new WorkOrderQrServiceError(`${missingSop.businessWorkOrderCode || missingSop.workOrderCode} 尚未上传 SOP，不能合并打印`, 409, 'QR_SOP_REQUIRED');
+    }
+    const nonPdfSop = snapshots.find(snapshot => snapshot.sopMimeType !== 'application/pdf' && !snapshot.sopFileName?.toLowerCase().endsWith('.pdf'));
+    if (nonPdfSop) {
+      throw new WorkOrderQrServiceError(`${nonPdfSop.businessWorkOrderCode || nonPdfSop.workOrderCode} 的 SOP 不是 PDF，请先转换后再合并打印`, 409, 'QR_SOP_PDF_REQUIRED');
+    }
+  }
 
   return prisma.$transaction(async tx => {
     const records: WorkOrderTravelerPrintRecord[] = [];
@@ -221,6 +305,23 @@ export async function createWorkOrderTravelerPrints(input: {
           routeId: snapshot.routeId,
           routeVersion: snapshot.routeVersion,
           snapshot: snapshot as unknown as Prisma.InputJsonValue,
+          status: WorkOrderQrPrintStatus.GENERATED,
+          mode,
+          copies,
+          drawingFileId: snapshot.drawingFileId,
+          drawingFileVersion: snapshot.drawingFileVersion,
+          sopFileId: snapshot.sopFileId,
+          sopFileVersion: snapshot.sopFileVersion,
+          packetHash: crypto.createHash('sha256').update(JSON.stringify({
+            routeId: snapshot.routeId,
+            routeVersion: snapshot.routeVersion,
+            targetQty: snapshot.targetQty,
+            drawingFileId: snapshot.drawingFileId,
+            drawingFileVersion: snapshot.drawingFileVersion,
+            sopFileId: snapshot.sopFileId,
+            sopFileVersion: snapshot.sopFileVersion,
+          })).digest('hex'),
+          reprintReason,
           printedById: input.userId,
         },
       });
@@ -229,6 +330,12 @@ export async function createWorkOrderTravelerPrints(input: {
         publicCode: ticket.publicCode,
         shortCode: shortCode(ticket.publicCode),
         printedAt: print.printedAt.toISOString(),
+        generatedAt: print.printedAt.toISOString(),
+        status: print.status,
+        mode: print.mode,
+        copies: print.copies,
+        confirmedAt: print.confirmedAt?.toISOString() || null,
+        reprintReason: print.reprintReason,
         printedBy: input.actor,
         snapshot,
       });
@@ -247,6 +354,7 @@ export async function loadWorkOrderTravelerPrints(printIdsInput: unknown): Promi
     include: {
       ticket: { select: { publicCode: true } },
       printedBy: { select: { displayName: true, username: true } },
+      confirmedBy: { select: { displayName: true, username: true } },
     },
   });
   if (prints.length !== printIds.length) {
@@ -260,8 +368,63 @@ export async function loadWorkOrderTravelerPrints(printIdsInput: unknown): Promi
       publicCode: print.ticket.publicCode,
       shortCode: shortCode(print.ticket.publicCode),
       printedAt: print.printedAt.toISOString(),
+      generatedAt: print.printedAt.toISOString(),
+      status: print.status,
+      mode: print.mode,
+      copies: print.copies,
+      confirmedAt: print.confirmedAt?.toISOString() || null,
+      reprintReason: print.reprintReason,
       printedBy: print.printedBy?.displayName || print.printedBy?.username || '系统用户',
       snapshot: print.snapshot as unknown as WorkOrderTravelerSnapshot,
+    };
+  });
+}
+
+export async function confirmWorkOrderTravelerPrints(input: {
+  printIds: unknown;
+  userId: string;
+  actor: string;
+}): Promise<{ confirmedCount: number; alreadyConfirmedCount: number }> {
+  const printIds = cleanIds(input.printIds);
+  if (!printIds.length || printIds.length > MAX_PRINT_BATCH) {
+    throw new WorkOrderQrServiceError('请选择需要确认的打印任务', 400, 'QR_PRINT_IDS_INVALID');
+  }
+  return prisma.$transaction(async tx => {
+    const prints = await tx.workOrderQrPrint.findMany({
+      where: { id: { in: printIds } },
+      select: { id: true, status: true },
+    });
+    if (prints.length !== printIds.length) {
+      throw new WorkOrderQrServiceError('部分打印记录不存在，请重新生成', 404, 'QR_PRINT_NOT_FOUND');
+    }
+    const generatedIds = prints.filter(print => print.status === WorkOrderQrPrintStatus.GENERATED).map(print => print.id);
+    const confirmedAt = new Date();
+    if (generatedIds.length) {
+      await tx.workOrderQrPrint.updateMany({
+        where: { id: { in: generatedIds }, status: WorkOrderQrPrintStatus.GENERATED },
+        data: {
+          status: WorkOrderQrPrintStatus.CONFIRMED,
+          confirmedAt,
+          confirmedById: input.userId,
+        },
+      });
+      await tx.operationLog.create({
+        data: {
+          userId: input.userId,
+          action: 'confirm_work_order_traveler_print',
+          targetType: 'work_order_qr_print',
+          targetId: generatedIds[0],
+          detail: {
+            printIds: generatedIds,
+            confirmedCount: generatedIds.length,
+            actor: input.actor,
+          },
+        },
+      });
+    }
+    return {
+      confirmedCount: generatedIds.length,
+      alreadyConfirmedCount: prints.length - generatedIds.length,
     };
   });
 }
@@ -300,7 +463,12 @@ export async function loadFieldReportTicket(
   const ticket = await prisma.workOrderQrTicket.findUnique({
     where: { publicCode: code },
     include: {
-      prints: { orderBy: [{ printedAt: 'desc' }], take: 1, select: { routeVersion: true } },
+      prints: {
+        where: { status: WorkOrderQrPrintStatus.CONFIRMED },
+        orderBy: [{ confirmedAt: 'desc' }, { printedAt: 'desc' }],
+        take: 1,
+        select: { routeVersion: true },
+      },
       workOrder: {
         include: {
           processRoute: {
