@@ -73,6 +73,7 @@ export function planningReadinessState(
       !batch?.travelerPrintStatus
       || batch.travelerPrintStatus === 'not_printed'
       || batch.travelerPrintStatus === 'generated'
+      || batch.travelerPrintStatus === 'partial'
       || batch.travelerPrintStatus === 'legacy_unverified'
     ),
     print_confirmed: batch?.travelerPrintStatus === 'printed',

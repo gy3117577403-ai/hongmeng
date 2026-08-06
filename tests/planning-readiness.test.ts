@@ -128,6 +128,7 @@ test('limits order-pool readiness filters to order-level information', () => {
 
 test('tracks physical print confirmation separately from preview generation', () => {
   assert.equal(planningReadinessState(order(), batch({ travelerPrintStatus: 'generated' })).print_not_confirmed, true);
+  assert.equal(planningReadinessState(order(), batch({ travelerPrintStatus: 'partial' })).print_not_confirmed, true);
   assert.equal(planningReadinessState(order(), batch({ travelerPrintStatus: 'printed' })).print_confirmed, true);
   assert.equal(planningReadinessState(order(), batch({ travelerPrintStatus: 'needs_reprint' })).print_needs_reprint, true);
 });

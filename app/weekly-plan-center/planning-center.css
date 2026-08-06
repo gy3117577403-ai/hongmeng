@@ -1479,6 +1479,11 @@ main.planning-center-shell.hm-workbench-root {
 
 .planning-center-shell .planning-print-status > span strong { font-size: 9px; }
 .planning-center-shell .planning-print-status > span small { margin: 0; color: inherit; font-size: 8px; opacity: .76; }
+.planning-center-shell .planning-print-materials { display: flex; gap: 2px; margin-top: 2px; }
+.planning-center-shell .planning-print-materials em { min-width: 20px; padding: 1px 3px; border-radius: 4px; color: #6c7889; background: rgba(255,255,255,.72); font-size: 7px; font-style: normal; text-align: center; }
+.planning-center-shell .planning-print-materials em.printed { color: #287a45; background: #daf0df; }
+.planning-center-shell .planning-print-materials em.needs_reprint { color: #b42318; background: #ffe0dd; }
+.planning-center-shell .planning-print-materials em.legacy_unverified { color: #8a5a12; background: #f8e8c8; }
 .planning-center-shell .planning-print-status.ready > span { color: #287a45; background: #edf8f0; }
 .planning-center-shell .planning-print-status.warning > span { color: #9a5b08; background: #fff7e6; }
 .planning-center-shell .planning-print-status.danger > span { color: #b42318; background: #fff1f0; }

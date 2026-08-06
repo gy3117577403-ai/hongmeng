@@ -421,6 +421,7 @@ function travelerPrintStatus(batch: ProductionPlanBatchDTO): { label: string; to
   const status = batch.travelerPrintStatus || 'not_printed';
   if (status === 'printed') return { label: '已打印', tone: 'ready', time: batch.travelerPrintConfirmedAt || null };
   if (status === 'needs_reprint') return { label: '待重打', tone: 'danger', time: batch.travelerPrintConfirmedAt || batch.travelerPrintGeneratedAt || null };
+  if (status === 'partial') return { label: '部分完成', tone: 'warning', time: batch.travelerPrintGeneratedAt || null };
   if (status === 'generated') return { label: '待确认', tone: 'warning', time: batch.travelerPrintGeneratedAt || null };
   if (status === 'legacy_unverified') return { label: '待核验', tone: 'warning', time: batch.travelerPrintGeneratedAt || null };
   return { label: '未打印', tone: 'muted', time: null };
@@ -1779,7 +1780,12 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                     <td><span className={`planning-status status-${batch.warehouseStatus}`}><strong>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : batch.warehouseStatus === 'not_created' ? '未下达' : '待配料'}</strong>{batch.warehouseCompletedAt && <small>{flowTime(batch.warehouseCompletedAt)}</small>}</span></td>
                     <td><span className={`planning-status status-${batch.processStatus}`}><strong>{batch.processStatus === 'completed' ? '已完成' : batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' ? '已确认' : batch.processStatus === 'not_created' ? '待生成' : '待编排'}</strong>{processFinishedAt && <small>{flowTime(processFinishedAt)}</small>}</span></td>
                     <td><a className={`planning-flow-link tone-${flow.tone}`} href={`/workspace/workflows?${workflowParams.toString()}`} onClick={rememberPlanningState} title="查看该批次完整流程"><strong>{flow.label}</strong>{flowFinishedAt && <small>{flowTime(flowFinishedAt)}</small>}</a></td>
-                    <td><div className={`planning-print-status ${printState.tone}`}><span><strong>{printState.label}</strong>{printState.time && <small>{flowTime(printState.time)}</small>}</span>{batch.workOrderId && <button type="button" title="打印流转单与 SOP" aria-label={`打印 ${order.specification} 流转单与 SOP`} onClick={() => setTravelerPrintIds([batch.workOrderId!])}><Printer size={15} /></button>}</div></td>
+                    <td><div className={`planning-print-status ${printState.tone}`}><span><strong>{printState.label}</strong>{printState.time && <small>{flowTime(printState.time)}</small>}{batch.travelerPrintMaterials && <span className="planning-print-materials">{(['TRAVELER', 'SOP', 'DRAWING'] as const).map(material => {
+                      const item = batch.travelerPrintMaterials?.[material];
+                      if (!item) return null;
+                      const label = material === 'TRAVELER' ? '码' : material === 'SOP' ? 'SOP' : '图';
+                      return <em key={material} className={item.status} title={`${material === 'TRAVELER' ? '二维码流转单' : material === 'SOP' ? 'SOP' : '原图'}：${item.status === 'printed' ? '已打印' : item.status === 'needs_reprint' ? '待重打' : item.status === 'legacy_unverified' ? '待核验' : '待确认'}`}>{label}</em>;
+                    })}</span>}</span>{batch.workOrderId && <button type="button" title="打印生产资料" aria-label={`打印 ${order.specification} 生产资料`} onClick={() => setTravelerPrintIds([batch.workOrderId!])}><Printer size={15} /></button>}</div></td>
                     <td><div className="planning-row-actions"><button type="button" title="调整批次" aria-label="调整批次" onClick={event => openBatch(order, event.currentTarget, batch)}><Pencil size={15} /></button>{batch.releaseState === 'draft' && <button className="danger" type="button" title="删除批次" aria-label="删除批次" onClick={() => { void deleteBatch(batch); }}><Trash2 size={15} /></button>}<button type="button" title="展开详情" aria-label="展开详情" onClick={() => setExpandedOrderId(current => current === batch.id ? '' : batch.id)}><ChevronDown size={15} /></button></div></td>
                   </tr>
                   {expandedOrderId === batch.id && <tr className="planning-inspector-row" key={`${batch.id}-detail`}><td colSpan={13}><div className="planning-inline-inspector">

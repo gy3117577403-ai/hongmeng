@@ -108,8 +108,19 @@ enum WorkOrderQrPrintMode {
   TRAVELER_ONLY
   TRAVELER_SOP_DUPLEX
   TRAVELER_SOP_SEPARATE
+  DRAWING_SOP_TRAVELER_SEPARATE
+  DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX
+  CUSTOM
 
   @@map("work_order_qr_print_mode")
+}
+
+enum WorkOrderQrPrintMaterial {
+  TRAVELER
+  SOP
+  DRAWING
+
+  @@map("work_order_qr_print_material")
 }
 
 enum LaborAccessRole {
@@ -313,6 +324,7 @@ model User {
   createdWorkOrderQrTickets      WorkOrderQrTicket[]          @relation("WorkOrderQrTicketCreatedBy")
   printedWorkOrderQrPrints       WorkOrderQrPrint[]           @relation("WorkOrderQrPrintPrintedBy")
   confirmedWorkOrderQrPrints     WorkOrderQrPrint[]           @relation("WorkOrderQrPrintConfirmedBy")
+  confirmedWorkOrderQrPrintItems WorkOrderQrPrintItem[]       @relation("WorkOrderQrPrintItemConfirmedBy")
   employeeEmploymentEvents       EmployeeEmploymentEvent[]    @relation("EmployeeEmploymentEventActor")
 
   @@map("users")
@@ -657,6 +669,7 @@ model WorkOrderQrPrint {
   route              WorkOrderProcessRoute  @relation(fields: [routeId], references: [id], onDelete: Cascade)
   printedBy          User?                  @relation("WorkOrderQrPrintPrintedBy", fields: [printedById], references: [id], onDelete: SetNull)
   confirmedBy        User?                  @relation("WorkOrderQrPrintConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  items              WorkOrderQrPrintItem[]
 
   @@index([ticketId, printedAt])
   @@index([ticketId, status, confirmedAt])
@@ -666,6 +679,31 @@ model WorkOrderQrPrint {
   @@index([drawingFileId])
   @@index([sopFileId])
   @@map("work_order_qr_prints")
+}
+
+model WorkOrderQrPrintItem {
+  id              String                   @id @default(uuid())
+  printId         String                   @map("print_id")
+  material        WorkOrderQrPrintMaterial
+  status          WorkOrderQrPrintStatus   @default(GENERATED)
+  copies          Int                      @default(1)
+  fileId          String?                  @map("file_id")
+  fileVersion     String?                  @map("file_version")
+  fileName        String?                  @map("file_name")
+  mimeType        String?                  @map("mime_type")
+  confirmedById   String?                  @map("confirmed_by_id")
+  confirmedAt     DateTime?                @map("confirmed_at")
+  createdAt       DateTime                 @default(now()) @map("created_at")
+  updatedAt       DateTime                 @updatedAt @map("updated_at")
+  print           WorkOrderQrPrint         @relation(fields: [printId], references: [id], onDelete: Cascade)
+  confirmedBy     User?                    @relation("WorkOrderQrPrintItemConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+
+  @@unique([printId, material])
+  @@index([printId, status])
+  @@index([material, status])
+  @@index([confirmedById])
+  @@index([fileId])
+  @@map("work_order_qr_print_items")
 }
 
 model Employee {

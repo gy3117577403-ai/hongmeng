@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {
   Prisma,
+  WorkOrderQrPrintMaterial,
   WorkOrderQrPrintMode,
   WorkOrderQrPrintStatus,
   WorkOrderQrTicketStatus,
@@ -45,6 +46,8 @@ export type WorkOrderTravelerSnapshot = {
   routeName: string;
   drawingFileId: string | null;
   drawingFileVersion: string | null;
+  drawingFileName: string | null;
+  drawingMimeType: string | null;
   sopFileId: string | null;
   sopFileVersion: string | null;
   sopFileName: string | null;
@@ -78,6 +81,17 @@ export type WorkOrderTravelerPrintRecord = {
   confirmedAt: string | null;
   reprintReason: string | null;
   printedBy: string;
+  items: Array<{
+    id: string;
+    material: WorkOrderQrPrintMaterial;
+    status: WorkOrderQrPrintStatus;
+    copies: number;
+    fileId: string | null;
+    fileVersion: string | null;
+    fileName: string | null;
+    mimeType: string | null;
+    confirmedAt: string | null;
+  }>;
   snapshot: WorkOrderTravelerSnapshot;
 };
 
@@ -147,7 +161,39 @@ function cleanPrintMode(value: unknown): WorkOrderQrPrintMode {
   const mode = String(value || '').trim().toUpperCase();
   if (mode === WorkOrderQrPrintMode.TRAVELER_SOP_DUPLEX) return WorkOrderQrPrintMode.TRAVELER_SOP_DUPLEX;
   if (mode === WorkOrderQrPrintMode.TRAVELER_SOP_SEPARATE) return WorkOrderQrPrintMode.TRAVELER_SOP_SEPARATE;
+  if (mode === WorkOrderQrPrintMode.DRAWING_SOP_TRAVELER_SEPARATE) return WorkOrderQrPrintMode.DRAWING_SOP_TRAVELER_SEPARATE;
+  if (mode === WorkOrderQrPrintMode.DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX) return WorkOrderQrPrintMode.DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX;
+  if (mode === WorkOrderQrPrintMode.CUSTOM) return WorkOrderQrPrintMode.CUSTOM;
   return WorkOrderQrPrintMode.TRAVELER_ONLY;
+}
+
+const PRINT_MATERIAL_ORDER = [
+  WorkOrderQrPrintMaterial.TRAVELER,
+  WorkOrderQrPrintMaterial.SOP,
+  WorkOrderQrPrintMaterial.DRAWING,
+] as const;
+
+export function resolveWorkOrderQrPrintMaterials(mode: WorkOrderQrPrintMode, values?: unknown): WorkOrderQrPrintMaterial[] {
+  if (mode === WorkOrderQrPrintMode.TRAVELER_ONLY) return [WorkOrderQrPrintMaterial.TRAVELER];
+  if (mode === WorkOrderQrPrintMode.TRAVELER_SOP_DUPLEX || mode === WorkOrderQrPrintMode.TRAVELER_SOP_SEPARATE) {
+    return [WorkOrderQrPrintMaterial.TRAVELER, WorkOrderQrPrintMaterial.SOP];
+  }
+  if (mode === WorkOrderQrPrintMode.DRAWING_SOP_TRAVELER_SEPARATE || mode === WorkOrderQrPrintMode.DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX) {
+    return [...PRINT_MATERIAL_ORDER];
+  }
+  const requested = Array.isArray(values)
+    ? new Set(values.map(value => String(value || '').trim().toUpperCase()))
+    : new Set<string>();
+  const materials = PRINT_MATERIAL_ORDER.filter(material => requested.has(material));
+  if (!materials.length) {
+    throw new WorkOrderQrServiceError('自定义补打请至少选择一种资料', 400, 'QR_PRINT_MATERIAL_REQUIRED');
+  }
+  return materials;
+}
+
+function cleanMaterialCopies(value: unknown, materials: readonly WorkOrderQrPrintMaterial[], fallback: number) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return Object.fromEntries(materials.map(material => [material, cleanCopies(source[material] ?? fallback)])) as Record<WorkOrderQrPrintMaterial, number>;
 }
 
 function cleanCopies(value: unknown): number {
@@ -206,6 +252,8 @@ function createSnapshot(order: TravelerOrder): WorkOrderTravelerSnapshot {
     routeName: route.templateName,
     drawingFileId: drawingFile?.id || null,
     drawingFileVersion: drawingFile?.version || null,
+    drawingFileName: drawingFile?.displayName || drawingFile?.originalName || null,
+    drawingMimeType: drawingFile?.mimeType || null,
     sopFileId: sopFile?.id || null,
     sopFileVersion: sopFile?.version || null,
     sopFileName: sopFile?.displayName || sopFile?.originalName || null,
@@ -234,6 +282,8 @@ export async function createWorkOrderTravelerPrints(input: {
   workOrderIds: unknown;
   mode?: unknown;
   copies?: unknown;
+  materials?: unknown;
+  materialCopies?: unknown;
   reprintReason?: unknown;
   userId: string;
   actor: string;
@@ -241,6 +291,10 @@ export async function createWorkOrderTravelerPrints(input: {
   const workOrderIds = cleanIds(input.workOrderIds);
   const mode = cleanPrintMode(input.mode);
   const copies = cleanCopies(input.copies ?? 1);
+  const materials = resolveWorkOrderQrPrintMaterials(mode, input.materials);
+  const materialCopies = cleanMaterialCopies(input.materialCopies, materials, copies);
+  const requiresSop = materials.includes(WorkOrderQrPrintMaterial.SOP);
+  const requiresDrawing = materials.includes(WorkOrderQrPrintMaterial.DRAWING);
   const reprintReason = String(input.reprintReason || '').trim().slice(0, 500) || null;
   if (!workOrderIds.length) {
     throw new WorkOrderQrServiceError('请至少选择一张生产工单', 400, 'QR_WORK_ORDER_REQUIRED');
@@ -248,8 +302,8 @@ export async function createWorkOrderTravelerPrints(input: {
   if (workOrderIds.length > MAX_PRINT_BATCH) {
     throw new WorkOrderQrServiceError(`每次最多打印 ${MAX_PRINT_BATCH} 张流转单`, 400, 'QR_PRINT_BATCH_TOO_LARGE');
   }
-  if (mode !== WorkOrderQrPrintMode.TRAVELER_ONLY && workOrderIds.length > MAX_SOP_PRINT_BATCH) {
-    throw new WorkOrderQrServiceError(`含 SOP 的打印任务每次最多选择 ${MAX_SOP_PRINT_BATCH} 张工单`, 400, 'QR_SOP_PRINT_BATCH_TOO_LARGE');
+  if ((requiresSop || requiresDrawing) && workOrderIds.length > MAX_SOP_PRINT_BATCH) {
+    throw new WorkOrderQrServiceError(`含生产资料的打印任务每次最多选择 ${MAX_SOP_PRINT_BATCH} 张工单`, 400, 'QR_RESOURCE_PRINT_BATCH_TOO_LARGE');
   }
   const orders = await prisma.workOrder.findMany({
     where: { id: { in: workOrderIds }, deletedAt: null },
@@ -273,7 +327,7 @@ export async function createWorkOrderTravelerPrints(input: {
   }
   const orderById = new Map(orders.map(order => [order.id, order]));
   const snapshots = workOrderIds.map(id => createSnapshot(orderById.get(id)!));
-  if (mode !== WorkOrderQrPrintMode.TRAVELER_ONLY) {
+  if (requiresSop) {
     const missingSop = snapshots.find(snapshot => !snapshot.sopFileId);
     if (missingSop) {
       throw new WorkOrderQrServiceError(`${missingSop.businessWorkOrderCode || missingSop.workOrderCode} 尚未上传 SOP，不能合并打印`, 409, 'QR_SOP_REQUIRED');
@@ -281,6 +335,16 @@ export async function createWorkOrderTravelerPrints(input: {
     const nonPdfSop = snapshots.find(snapshot => snapshot.sopMimeType !== 'application/pdf' && !snapshot.sopFileName?.toLowerCase().endsWith('.pdf'));
     if (nonPdfSop) {
       throw new WorkOrderQrServiceError(`${nonPdfSop.businessWorkOrderCode || nonPdfSop.workOrderCode} 的 SOP 不是 PDF，请先转换后再合并打印`, 409, 'QR_SOP_PDF_REQUIRED');
+    }
+  }
+  if (requiresDrawing) {
+    const missingDrawing = snapshots.find(snapshot => !snapshot.drawingFileId);
+    if (missingDrawing) {
+      throw new WorkOrderQrServiceError(`${missingDrawing.businessWorkOrderCode || missingDrawing.workOrderCode} 尚未上传原图，不能生成原图打印任务`, 409, 'QR_DRAWING_REQUIRED');
+    }
+    const nonPdfDrawing = snapshots.find(snapshot => snapshot.drawingMimeType !== 'application/pdf' && !snapshot.drawingFileName?.toLowerCase().endsWith('.pdf'));
+    if (nonPdfDrawing) {
+      throw new WorkOrderQrServiceError(`${nonPdfDrawing.businessWorkOrderCode || nonPdfDrawing.workOrderCode} 的原图不是 PDF；为保留 A3/A4 原始纸张尺寸，请先上传 PDF`, 409, 'QR_DRAWING_PDF_REQUIRED');
     }
   }
 
@@ -299,6 +363,30 @@ export async function createWorkOrderTravelerPrints(input: {
           createdById: input.userId,
         },
       });
+      const itemData = materials.map(material => ({
+        material,
+        copies: materialCopies[material],
+        fileId: material === WorkOrderQrPrintMaterial.DRAWING
+          ? snapshot.drawingFileId
+          : material === WorkOrderQrPrintMaterial.SOP
+            ? snapshot.sopFileId
+            : null,
+        fileVersion: material === WorkOrderQrPrintMaterial.DRAWING
+          ? snapshot.drawingFileVersion
+          : material === WorkOrderQrPrintMaterial.SOP
+            ? snapshot.sopFileVersion
+            : null,
+        fileName: material === WorkOrderQrPrintMaterial.DRAWING
+          ? snapshot.drawingFileName
+          : material === WorkOrderQrPrintMaterial.SOP
+            ? snapshot.sopFileName
+            : null,
+        mimeType: material === WorkOrderQrPrintMaterial.DRAWING
+          ? snapshot.drawingMimeType
+          : material === WorkOrderQrPrintMaterial.SOP
+            ? snapshot.sopMimeType
+            : null,
+      }));
       const print = await tx.workOrderQrPrint.create({
         data: {
           ticketId: ticket.id,
@@ -323,7 +411,9 @@ export async function createWorkOrderTravelerPrints(input: {
           })).digest('hex'),
           reprintReason,
           printedById: input.userId,
+          items: { create: itemData },
         },
+        include: { items: true },
       });
       records.push({
         printId: print.id,
@@ -337,6 +427,17 @@ export async function createWorkOrderTravelerPrints(input: {
         confirmedAt: print.confirmedAt?.toISOString() || null,
         reprintReason: print.reprintReason,
         printedBy: input.actor,
+        items: print.items.map(item => ({
+          id: item.id,
+          material: item.material,
+          status: item.status,
+          copies: item.copies,
+          fileId: item.fileId,
+          fileVersion: item.fileVersion,
+          fileName: item.fileName,
+          mimeType: item.mimeType,
+          confirmedAt: item.confirmedAt?.toISOString() || null,
+        })),
         snapshot,
       });
     }
@@ -355,6 +456,7 @@ export async function loadWorkOrderTravelerPrints(printIdsInput: unknown): Promi
       ticket: { select: { publicCode: true } },
       printedBy: { select: { displayName: true, username: true } },
       confirmedBy: { select: { displayName: true, username: true } },
+      items: { orderBy: { createdAt: 'asc' } },
     },
   });
   if (prints.length !== printIds.length) {
@@ -375,6 +477,17 @@ export async function loadWorkOrderTravelerPrints(printIdsInput: unknown): Promi
       confirmedAt: print.confirmedAt?.toISOString() || null,
       reprintReason: print.reprintReason,
       printedBy: print.printedBy?.displayName || print.printedBy?.username || '系统用户',
+      items: print.items.map(item => ({
+        id: item.id,
+        material: item.material,
+        status: item.status,
+        copies: item.copies,
+        fileId: item.fileId,
+        fileVersion: item.fileVersion,
+        fileName: item.fileName,
+        mimeType: item.mimeType,
+        confirmedAt: item.confirmedAt?.toISOString() || null,
+      })),
       snapshot: print.snapshot as unknown as WorkOrderTravelerSnapshot,
     };
   });
@@ -382,6 +495,7 @@ export async function loadWorkOrderTravelerPrints(printIdsInput: unknown): Promi
 
 export async function confirmWorkOrderTravelerPrints(input: {
   printIds: unknown;
+  materials?: unknown;
   userId: string;
   actor: string;
 }): Promise<{ confirmedCount: number; alreadyConfirmedCount: number }> {
@@ -389,18 +503,32 @@ export async function confirmWorkOrderTravelerPrints(input: {
   if (!printIds.length || printIds.length > MAX_PRINT_BATCH) {
     throw new WorkOrderQrServiceError('请选择需要确认的打印任务', 400, 'QR_PRINT_IDS_INVALID');
   }
+  const requestedMaterials = Array.isArray(input.materials)
+    ? [...new Set(input.materials.map(value => String(value || '').trim().toUpperCase()))]
+        .filter((value): value is WorkOrderQrPrintMaterial => PRINT_MATERIAL_ORDER.includes(value as WorkOrderQrPrintMaterial))
+    : [];
   return prisma.$transaction(async tx => {
     const prints = await tx.workOrderQrPrint.findMany({
       where: { id: { in: printIds } },
-      select: { id: true, status: true },
+      select: { id: true },
     });
     if (prints.length !== printIds.length) {
       throw new WorkOrderQrServiceError('部分打印记录不存在，请重新生成', 404, 'QR_PRINT_NOT_FOUND');
     }
-    const generatedIds = prints.filter(print => print.status === WorkOrderQrPrintStatus.GENERATED).map(print => print.id);
+    const items = await tx.workOrderQrPrintItem.findMany({
+      where: {
+        printId: { in: printIds },
+        ...(requestedMaterials.length ? { material: { in: requestedMaterials } } : {}),
+      },
+      select: { id: true, printId: true, material: true, status: true },
+    });
+    if (!items.length) {
+      throw new WorkOrderQrServiceError('所选打印任务不包含需要确认的资料', 400, 'QR_PRINT_MATERIAL_NOT_FOUND');
+    }
+    const generatedIds = items.filter(item => item.status === WorkOrderQrPrintStatus.GENERATED).map(item => item.id);
     const confirmedAt = new Date();
     if (generatedIds.length) {
-      await tx.workOrderQrPrint.updateMany({
+      await tx.workOrderQrPrintItem.updateMany({
         where: { id: { in: generatedIds }, status: WorkOrderQrPrintStatus.GENERATED },
         data: {
           status: WorkOrderQrPrintStatus.CONFIRMED,
@@ -408,14 +536,31 @@ export async function confirmWorkOrderTravelerPrints(input: {
           confirmedById: input.userId,
         },
       });
+    }
+    for (const printId of printIds) {
+      const currentItems = await tx.workOrderQrPrintItem.findMany({
+        where: { printId },
+        select: { status: true },
+      });
+      const fullyConfirmed = currentItems.length > 0 && currentItems.every(item => item.status === WorkOrderQrPrintStatus.CONFIRMED);
+      await tx.workOrderQrPrint.update({
+        where: { id: printId },
+        data: fullyConfirmed
+          ? { status: WorkOrderQrPrintStatus.CONFIRMED, confirmedAt, confirmedById: input.userId }
+          : { status: WorkOrderQrPrintStatus.GENERATED, confirmedAt: null, confirmedById: null },
+      });
+    }
+    if (generatedIds.length) {
       await tx.operationLog.create({
         data: {
           userId: input.userId,
-          action: 'confirm_work_order_traveler_print',
-          targetType: 'work_order_qr_print',
+          action: 'confirm_work_order_print_material',
+          targetType: 'work_order_qr_print_item',
           targetId: generatedIds[0],
           detail: {
-            printIds: generatedIds,
+            itemIds: generatedIds,
+            printIds,
+            materials: requestedMaterials.length ? requestedMaterials : 'ALL',
             confirmedCount: generatedIds.length,
             actor: input.actor,
           },
@@ -424,7 +569,7 @@ export async function confirmWorkOrderTravelerPrints(input: {
     }
     return {
       confirmedCount: generatedIds.length,
-      alreadyConfirmedCount: prints.length - generatedIds.length,
+      alreadyConfirmedCount: items.length - generatedIds.length,
     };
   });
 }
@@ -464,8 +609,19 @@ export async function loadFieldReportTicket(
     where: { publicCode: code },
     include: {
       prints: {
-        where: { status: WorkOrderQrPrintStatus.CONFIRMED },
-        orderBy: [{ confirmedAt: 'desc' }, { printedAt: 'desc' }],
+        where: {
+          items: {
+            some: {
+              material: WorkOrderQrPrintMaterial.TRAVELER,
+              status: WorkOrderQrPrintStatus.CONFIRMED,
+            },
+          },
+        },
+        // A production ticket becomes usable as soon as its traveler sheet is
+        // physically confirmed, even when SOP or drawing confirmation remains
+        // pending. Parent confirmedAt is intentionally null in that partial
+        // state, so printedAt is the stable newest-confirmed-traveler order.
+        orderBy: { printedAt: 'desc' },
         take: 1,
         select: { routeVersion: true },
       },

@@ -15,12 +15,16 @@ export async function POST(req: NextRequest) {
       workOrderIds?: unknown;
       mode?: unknown;
       copies?: unknown;
+      materials?: unknown;
+      materialCopies?: unknown;
       reprintReason?: unknown;
     };
     const prints = await createWorkOrderTravelerPrints({
       workOrderIds: body.workOrderIds,
       mode: body.mode,
       copies: body.copies,
+      materials: body.materials,
+      materialCopies: body.materialCopies,
       reprintReason: body.reprintReason,
       userId: user.id,
       actor: user.displayName || user.username,

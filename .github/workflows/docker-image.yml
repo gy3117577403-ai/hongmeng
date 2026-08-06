@@ -79,14 +79,14 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=v1.19.0
+            type=raw,value=v1.20.0
             type=raw,value=latest
             type=sha
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.19.0
+            APP_VERSION=v1.20.0
             APP_REVISION=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

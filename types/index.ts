@@ -621,8 +621,13 @@ export type ProductionPlanBatchDTO = {
   workOrderCompletedAt?: string | null;
   currentProcessName?: string | null;
   currentProcessStartedAt?: string | null;
-  travelerPrintStatus?: 'not_printed' | 'generated' | 'printed' | 'needs_reprint' | 'legacy_unverified';
-  travelerPrintMode?: 'TRAVELER_ONLY' | 'TRAVELER_SOP_DUPLEX' | 'TRAVELER_SOP_SEPARATE' | null;
+  travelerPrintStatus?: 'not_printed' | 'generated' | 'partial' | 'printed' | 'needs_reprint' | 'legacy_unverified';
+  travelerPrintMode?: 'TRAVELER_ONLY' | 'TRAVELER_SOP_DUPLEX' | 'TRAVELER_SOP_SEPARATE' | 'DRAWING_SOP_TRAVELER_SEPARATE' | 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX' | 'CUSTOM' | null;
+  travelerPrintMaterials?: Partial<Record<'TRAVELER' | 'SOP' | 'DRAWING', {
+    status: 'generated' | 'printed' | 'needs_reprint' | 'legacy_unverified';
+    copies: number;
+    confirmedAt: string | null;
+  }>> | null;
   travelerPrintId?: string | null;
   travelerPrintGeneratedAt?: string | null;
   travelerPrintConfirmedAt?: string | null;

@@ -11,9 +11,10 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser({ write: 'production' });
-    const body = await req.json().catch(() => ({})) as { printIds?: unknown };
+    const body = await req.json().catch(() => ({})) as { printIds?: unknown; materials?: unknown };
     const result = await confirmWorkOrderTravelerPrints({
       printIds: body.printIds,
+      materials: body.materials,
       userId: user.id,
       actor: user.displayName || user.username,
     });

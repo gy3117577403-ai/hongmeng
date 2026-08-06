@@ -99,6 +99,16 @@ export const productionPlanOrderInclude = {
                   snapshot: true,
                   printedAt: true,
                   confirmedAt: true,
+                  items: {
+                    select: {
+                      material: true,
+                      status: true,
+                      copies: true,
+                      fileId: true,
+                      fileVersion: true,
+                      confirmedAt: true,
+                    },
+                  },
                 },
               },
             },
@@ -1179,36 +1189,55 @@ function batchTravelerPrint(
   batch: ProductionPlanOrderRecord['batches'][number],
   resources: ReturnType<typeof planningResourceSummary>,
 ): Pick<ProductionPlanBatchDTO,
-  'travelerPrintStatus' | 'travelerPrintMode' | 'travelerPrintId' | 'travelerPrintGeneratedAt' | 'travelerPrintConfirmedAt'> {
+  'travelerPrintStatus' | 'travelerPrintMode' | 'travelerPrintMaterials' | 'travelerPrintId' | 'travelerPrintGeneratedAt' | 'travelerPrintConfirmedAt'> {
   const latest = batch.workOrder?.qrTicket?.prints[0] || null;
   if (!latest) {
     return {
       travelerPrintStatus: 'not_printed',
       travelerPrintMode: null,
+      travelerPrintMaterials: null,
       travelerPrintId: null,
       travelerPrintGeneratedAt: null,
       travelerPrintConfirmedAt: null,
     };
   }
   const route = batch.workOrder?.processRoute;
-  const stale = (
-    latest.routeVersion !== route?.version
-    || latest.drawingFileId !== resources.drawing?.id
-    || latest.drawingFileVersion !== resources.drawing?.version
-    || latest.sopFileId !== resources.sop?.id
-    || latest.sopFileVersion !== resources.sop?.version
-    || printSnapshotTargetQty(latest.snapshot) !== batch.quantity
-  );
+  const travelerStale = latest.routeVersion !== route?.version || printSnapshotTargetQty(latest.snapshot) !== batch.quantity;
+  const materialStates: NonNullable<ProductionPlanBatchDTO['travelerPrintMaterials']> = {};
+  for (const item of latest.items) {
+    const stale = item.material === 'TRAVELER'
+      ? travelerStale
+      : item.material === 'SOP'
+        ? item.fileId !== resources.sop?.id || item.fileVersion !== resources.sop?.version
+        : item.fileId !== resources.drawing?.id || item.fileVersion !== resources.drawing?.version;
+    materialStates[item.material] = {
+      status: stale
+        ? 'needs_reprint'
+        : item.status === 'CONFIRMED'
+          ? 'printed'
+          : item.status === 'LEGACY_UNVERIFIED'
+            ? 'legacy_unverified'
+            : 'generated',
+      copies: item.copies,
+      confirmedAt: item.confirmedAt?.toISOString() || null,
+    };
+  }
+  const states = Object.values(materialStates);
+  const stale = states.some(item => item.status === 'needs_reprint');
+  const confirmedCount = states.filter(item => item.status === 'printed').length;
   const status: ProductionPlanBatchDTO['travelerPrintStatus'] = stale
     ? 'needs_reprint'
-    : latest.status === 'CONFIRMED'
+    : states.length > 0 && confirmedCount === states.length
       ? 'printed'
-      : latest.status === 'LEGACY_UNVERIFIED'
+      : confirmedCount > 0
+        ? 'partial'
+        : states.length > 0 && states.every(item => item.status === 'legacy_unverified')
         ? 'legacy_unverified'
         : 'generated';
   return {
     travelerPrintStatus: status,
     travelerPrintMode: latest.mode,
+    travelerPrintMaterials: materialStates,
     travelerPrintId: latest.id,
     travelerPrintGeneratedAt: latest.printedAt.toISOString(),
     travelerPrintConfirmedAt: latest.confirmedAt?.toISOString() || null,
