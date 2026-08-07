@@ -33,3 +33,44 @@
 - 浏览器原生 PDF iframe 截图为空，且浏览器安全策略不允许直接打开 blob 地址，因此本次无法取得最终 PDF 像素截图；打印 DOM、PDF 生成状态、单元测试与生产构建均已通过。
 
 final result: blocked（生产执行视觉通过；员工明细真实行与原生 PDF 像素验收受隔离数据和浏览器策略限制）
+
+## 2026-08-07 计划中心订单池抽屉与日出货计划
+
+- 目标视口：1366 × 1024 横向平板；补充检查 1024 × 768。
+- 用户参考图：
+  - `C:\Windows\TEMP\codex-clipboard-284f8028-dc22-41b6-a1fa-a7b81c6b59a2.png`
+  - `C:\Windows\TEMP\codex-clipboard-248a69aa-71bc-4745-b859-9e42b771529b.png`
+- 最终实现截图：
+  - `output/design-audit/2026-08-07-daily-shipping-plan/implementation-plan-center-drawer-open-1366x1024.png`
+  - `output/design-audit/2026-08-07-daily-shipping-plan/implementation-partial-shipment-1366x1024.png`
+  - `output/design-audit/2026-08-07-daily-shipping-plan/implementation-loading-skeleton-1366x1024.png`
+  - `output/design-audit/2026-08-07-daily-shipping-plan/implementation-inline-error-1366x1024.png`
+- 同屏对照输入：
+  - `output/design-audit/2026-08-07-daily-shipping-plan/comparison-plan-center.png`
+  - `output/design-audit/2026-08-07-daily-shipping-plan/comparison-daily-shipment.png`
+- 原参考图无法重新采集成 1366 × 1024；对照图将参考和实现按原比例放入相同的 1366 × 1024 面板，未拉伸内容。实现端单独在目标视口完成像素与交互验收。
+
+### 计划中心
+
+- 固定左侧订单池已改为覆盖式抽屉，关闭时排单表格占满工作区，打开时保留背景上下文并通过遮罩区分层级。
+- 订单池入口显示待安排数量；抽屉支持关闭按钮、遮罩关闭和 Escape 关闭。
+- Escape 后焦点返回“订单池”触发按钮；关闭状态下 DOM 中没有残留的隐藏 dialog 或可聚焦抽屉控件。
+- 对照检查未发现遮挡、裁切、错位、异常圆角或文字溢出。
+
+### 日出货计划
+
+- 原人员排程模块已替换为按周选日的日出货工作台；支持从本周生产批次多选、填写数量和计划时间后加入当日计划。
+- 列表同时展示计划数量、生产进度、出货进度、计划时间、实际时间、客户交期和实发流水。
+- 已实测完整主路径：多选三批 → 生成计划 → 确认 → 实发 30 件 → 撤销 5 件，最终净实发 25 件。
+- 已实测后端业务拦截：当完成良品数降低后，20 件实发被拒绝，错误只显示在当前弹窗一次；测试数据随后恢复。
+- 慢请求验收通过：暂停隔离验收库后切换日期，页面显示“同步中”、7 个日期骨架和 6 个指标骨架，不显示“未创建”或 0 值假状态；恢复数据库后正常落入真实空状态。
+- 首次进入由服务端直接返回完整工作台数据，没有二次客户端首屏请求；同日刷新保留当前数据并后台更新，访问过的日期使用内存缓存，减少表格整块闪烁。
+- “已完工可备货”按批次完工良品扣除全周净实发后再受当日待出数量约束；全量撤销后主列表实际出货时间恢复为“尚未出货”，原流水仍完整保留。
+
+### 验证结论
+
+- 1366 × 1024 主视口、1024 × 768 补充视口均可完成核心操作。
+- 真实 PostgreSQL 集成测试覆盖跨日拆分、累计数量上限、完工良品上限、幂等重放、实发撤销和关闭后重开。
+- 当前没有未解决的 P0、P1 或 P2 视觉/交互问题。
+
+final result: passed

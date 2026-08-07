@@ -799,12 +799,52 @@ main.planning-center-shell.hm-workbench-root {
 }
 
 .planning-center-shell .planning-schedule-workspace {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: grid;
-  grid-template-columns: 294px minmax(0, 1fr);
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
+}
+
+.planning-center-shell .planning-order-pool-drawer {
+  position: absolute;
+  z-index: 60;
+  inset: 0;
+  pointer-events: none;
+}
+
+.planning-center-shell .planning-order-pool-scrim {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(20, 34, 52, .26);
+  opacity: 0;
+  transition: opacity .18s ease;
+}
+
+.planning-center-shell .planning-order-pool-drawer > .planning-order-pool {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(380px, calc(100% - 48px));
+  border-radius: 8px;
+  box-shadow: 16px 0 38px rgba(18, 32, 51, .18);
+  transform: translateX(calc(-100% - 14px));
+  transition: transform .2s ease;
+}
+
+.planning-center-shell .planning-order-pool-drawer.open {
+  pointer-events: auto;
+}
+
+.planning-center-shell .planning-order-pool-drawer.open .planning-order-pool-scrim {
+  opacity: 1;
+}
+
+.planning-center-shell .planning-order-pool-drawer.open > .planning-order-pool {
+  transform: translateX(0);
 }
 
 .planning-center-shell .planning-order-pool,
@@ -907,6 +947,18 @@ main.planning-center-shell.hm-workbench-root {
   background: #f0f3f6;
   color: #526074;
   font-size: 12px;
+}
+
+.planning-center-shell .planning-order-pool > header > button {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dce3ea;
+  border-radius: 6px;
+  background: #fff;
+  color: #617084;
+  cursor: pointer;
 }
 
 .planning-center-shell .planning-board-heading > div:last-child {
@@ -1430,6 +1482,24 @@ main.planning-center-shell.hm-workbench-root {
 .planning-center-shell .planning-status.status-exception {
   background: #fff1f0;
   color: #b42318;
+}
+
+.planning-center-shell .planning-board-heading button.pool {
+  border-color: #d9e3ef;
+  color: #3f6794;
+  background: #f4f8fc;
+}
+
+.planning-center-shell .planning-board-heading button.pool b {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: #e5edf7;
+  color: #365d8a;
+  font-size: 9px;
 }
 
 .planning-center-shell .planning-document-status {
@@ -2913,7 +2983,7 @@ main.planning-center-shell.hm-workbench-root {
   }
 
   .planning-center-shell .planning-schedule-workspace {
-    grid-template-columns: 270px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

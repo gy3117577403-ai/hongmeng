@@ -67,7 +67,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
     items: [
       { href: '/production', label: '生产执行', icon: LayoutDashboard },
       { href: '/weekly-plan-center', label: '计划中心', icon: CalendarDays },
-      { href: '/workspace/daily-plans', label: '日计划中心', icon: CalendarClock },
+      { href: '/workspace/daily-plans', label: '日出货计划', icon: CalendarClock },
       { href: '/workspace/weekly-processes', label: '周工序总览', icon: ListTree },
       { href: '/drawing-library', label: '图纸资料库', icon: FolderKanban },
       { href: '/connector-assembly-manuals', label: '组装说明书', icon: BookOpen },
@@ -106,16 +106,14 @@ function navigationForUser(
     if (user.canAccessDailyPlans) return sideNavigation;
     return sideNavigation.map(group => ({
       ...group,
-      items: group.items.filter(item => item.href !== '/workspace/daily-plans' && item.href !== '/workspace/weekly-processes'),
+      items: group.items.filter(item => item.href !== '/workspace/weekly-processes'),
     }));
   }
   const allowed = user.laborRole === 'TEAM_LEAD'
     ? new Set(teamLeadNavigation)
     : new Set(['/workspace/employees', '/workspace/reports']);
-  if (user.canAccessDailyPlans) {
-    allowed.add('/workspace/daily-plans');
-    allowed.add('/workspace/weekly-processes');
-  }
+  allowed.add('/workspace/daily-plans');
+  if (user.canAccessDailyPlans) allowed.add('/workspace/weekly-processes');
   return sideNavigation
     .map(group => ({
       ...group,

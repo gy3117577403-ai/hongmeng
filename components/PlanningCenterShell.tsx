@@ -20,6 +20,7 @@ import {
   ListFilter,
   MoveRight,
   PackageCheck,
+  PanelLeftOpen,
   Pencil,
   Plus,
   Printer,
@@ -472,6 +473,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const [selectedWeekStartDate, setSelectedWeekStartDate] = useState('');
   const [historyWeekStartDate, setHistoryWeekStartDate] = useState('');
   const [carryoverOpen, setCarryoverOpen] = useState(false);
+  const [orderPoolOpen, setOrderPoolOpen] = useState(false);
   const [moveTargetWeekStartDate, setMoveTargetWeekStartDate] = useState('');
   const [keyword, setKeyword] = useState('');
   const [customer, setCustomer] = useState('');
@@ -511,6 +513,8 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   const readinessFilterRef = useRef<HTMLDivElement>(null);
   const readinessTriggerRef = useRef<HTMLButtonElement>(null);
   const scheduleScrollRef = useRef<HTMLDivElement>(null);
+  const orderPoolTriggerRef = useRef<HTMLButtonElement>(null);
+  const orderPoolCloseRef = useRef<HTMLButtonElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const requestedWeekStartRef = useRef('');
   const weekScrollPositionsRef = useRef(new Map<string, number>());
@@ -526,6 +530,18 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     backgroundRef: mainRef,
     onClose: handleDialogEscape,
   });
+
+  useEffect(() => {
+    if (!orderPoolOpen) return undefined;
+    orderPoolCloseRef.current?.focus();
+    function onKeyDown(event: globalThis.KeyboardEvent): void {
+      if (event.key !== 'Escape') return;
+      setOrderPoolOpen(false);
+      window.setTimeout(() => orderPoolTriggerRef.current?.focus(), 0);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [orderPoolOpen]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -951,6 +967,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
   }
 
   function selectView(nextView: PlanningView): void {
+    if (nextView !== 'schedule') setOrderPoolOpen(false);
     if (nextView === 'schedule') {
       selectScheduleWeek(selectedWeek?.weekStartDate || periods?.current.weekStartDate || '');
       return;
@@ -1575,7 +1592,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
     .map(item => item.batch.workOrderId as string))];
   const views: Array<{ id: PlanningView; label: string; icon: typeof ClipboardList; count?: number }> = [
     { id: 'schedule', label: '计划排程', icon: CalendarCheck2, count: summary.scheduledOrderCount },
-    { id: 'orders', label: '订单池', icon: ClipboardList, count: summary.pendingOrderCount },
+    { id: 'orders', label: '订单管理', icon: ClipboardList, count: summary.pendingOrderCount },
     { id: 'preparation', label: '下周生产', icon: PackageCheck, count: summary.preparationBatchCount },
     { id: 'changes', label: '插单与变更', icon: FilePenLine },
     { id: 'history', label: '历史计划', icon: History },
@@ -1693,22 +1710,25 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         {error && <div className="planning-error" role="alert"><AlertTriangle size={16} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="关闭错误"><X size={15} /></button></div>}
 
         {view === 'schedule' && <section className="planning-schedule-workspace">
-          <aside className="planning-order-pool">
-            <header><div><span>待安排</span><h2>订单池</h2></div><b>{orderPool.length}</b></header>
-            <div className="planning-pool-list hm-scroll-region" tabIndex={0}>
-              {orderPool.map(order => <article className={`priority-${order.priority}`} key={order.id}>
-                <div className="planning-pool-order"><span>{order.specification}</span><em>{priorityText(order.priority)}</em></div>
-                <strong title={order.specification}>{order.specification}</strong>
-                <p title={`${order.customerName} · ${order.productName}`}>{order.customerName}<small>{order.productName}</small></p>
-                <dl><div><dt>未排数量</dt><dd>{order.remainingQuantity.toLocaleString()}</dd></div><div><dt>客户交期</dt><dd>{order.customerDueDate.slice(5)}</dd></div><div><dt>单件工时</dt><dd>{duration(planningUnitMilliseconds(order))}</dd></div></dl>
-                <div className="planning-pool-actions">
-                  <button className="schedule" type="button" disabled={saving} onClick={event => openBatch(order, event.currentTarget)}><Plus size={15} />安排批次</button>
-                  <button className="delete" type="button" disabled={saving} title="从计划系统删除，保留图纸与产品工时" aria-label={`删除计划 ${order.specification}`} onClick={() => { void deleteOrder(order); }}><Trash2 size={15} /></button>
-                </div>
-              </article>)}
-              {!loading && !orderPool.length && <div className="planning-empty compact"><CheckCircle2 /><strong>订单池已安排完毕</strong><span>新增订单或调整筛选后继续排程。</span></div>}
-            </div>
-          </aside>
+          {orderPoolOpen && <div className="planning-order-pool-drawer open">
+            <button className="planning-order-pool-scrim" type="button" aria-label="关闭订单池" onClick={() => { setOrderPoolOpen(false); orderPoolTriggerRef.current?.focus(); }} />
+            <aside className="planning-order-pool" role="dialog" aria-modal="true" aria-label="待安排订单池">
+              <header><div><span>待安排</span><h2>订单池</h2></div><b>{orderPool.length}</b><button ref={orderPoolCloseRef} type="button" aria-label="关闭订单池" onClick={() => { setOrderPoolOpen(false); orderPoolTriggerRef.current?.focus(); }}><X size={18} /></button></header>
+              <div className="planning-pool-list hm-scroll-region" tabIndex={0}>
+                {orderPool.map(order => <article className={`priority-${order.priority}`} key={order.id}>
+                  <div className="planning-pool-order"><span>{order.specification}</span><em>{priorityText(order.priority)}</em></div>
+                  <strong title={order.specification}>{order.specification}</strong>
+                  <p title={`${order.customerName} · ${order.productName}`}>{order.customerName}<small>{order.productName}</small></p>
+                  <dl><div><dt>未排数量</dt><dd>{order.remainingQuantity.toLocaleString()}</dd></div><div><dt>客户交期</dt><dd>{order.customerDueDate.slice(5)}</dd></div><div><dt>单件工时</dt><dd>{duration(planningUnitMilliseconds(order))}</dd></div></dl>
+                  <div className="planning-pool-actions">
+                    <button className="schedule" type="button" disabled={saving} onClick={event => { setOrderPoolOpen(false); openBatch(order, orderPoolTriggerRef.current || event.currentTarget); }}><Plus size={15} />安排批次</button>
+                    <button className="delete" type="button" disabled={saving} title="从计划系统删除，保留图纸与产品工时" aria-label={`删除计划 ${order.specification}`} onClick={() => { void deleteOrder(order); }}><Trash2 size={15} /></button>
+                  </div>
+                </article>)}
+                {!loading && !orderPool.length && <div className="planning-empty compact"><CheckCircle2 /><strong>订单池已安排完毕</strong><span>新增订单或调整筛选后继续排程。</span></div>}
+              </div>
+            </aside>
+          </div>}
 
           <div className="planning-schedule-board">
             <header className="planning-board-heading">
@@ -1717,6 +1737,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
                 <h2>{selectedWeek ? `${selectedWeek.weekStartDate.slice(5)} - ${selectedWeek.weekEndDate.slice(5)}` : '生产周加载中'}</h2>
               </div>
               <div>
+                <button ref={orderPoolTriggerRef} className="pool" type="button" aria-haspopup="dialog" aria-expanded={orderPoolOpen} onClick={() => setOrderPoolOpen(true)}><PanelLeftOpen size={15} />订单池<b>{orderPool.length}</b></button>
                 <button className="import" type="button" onClick={event => openPlanningImport(event.currentTarget)}><Upload size={15} />导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button>
                 <em>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`} · {selectedWeekQuantity.toLocaleString()} 件 · {selectedWeekTotalMilliseconds ? duration(selectedWeekTotalMilliseconds) : '工时待补'}</em>

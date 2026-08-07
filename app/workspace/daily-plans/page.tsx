@@ -1,17 +1,24 @@
-import { notFound, redirect } from 'next/navigation';
-import DailyPlanWorkbench from '@/components/daily-plans/DailyPlanWorkbench';
+import { redirect } from 'next/navigation';
+import DailyShipmentWorkbench from '@/components/daily-shipments/DailyShipmentWorkbench';
 import { currentUser } from '@/lib/auth';
-import { dailyPlanEnabled } from '@/lib/daily-plan-feature';
-import './daily-plan-workbench.css';
+import { chinaDateKey } from '@/lib/china-date';
+import { loadDailyShipmentWorkbench } from '@/lib/daily-shipment-service';
+import { productionDateKey } from '@/lib/production-week';
+import './daily-shipment-workbench.css';
 
 export const dynamic = 'force-dynamic';
 
-export default async function DailyPlansPage() {
-  if (!dailyPlanEnabled()) notFound();
-
+export default async function DailyPlansPage({ searchParams }: { searchParams?: { date?: string } }) {
   const user = await currentUser();
   if (!user) redirect('/login?next=%2Fworkspace%2Fdaily-plans');
-  if (!user.canAccessDailyPlans) notFound();
 
-  return <DailyPlanWorkbench user={user} />;
+  let initialDate = chinaDateKey(new Date());
+  try {
+    if (searchParams?.date) initialDate = productionDateKey(searchParams.date);
+  } catch {
+    // Invalid URL dates fall back to today's Shanghai business date.
+  }
+
+  const initialData = await loadDailyShipmentWorkbench({ shipDate: initialDate });
+  return <DailyShipmentWorkbench user={user} initialDate={initialDate} initialData={initialData} />;
 }

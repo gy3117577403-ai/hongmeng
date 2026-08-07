@@ -182,6 +182,31 @@ enum DailyCrossTeamRequestStatus {
   @@map("daily_cross_team_request_status")
 }
 
+enum DailyShipmentPlanStatus {
+  DRAFT
+  CONFIRMED
+  CLOSED
+  CANCELLED
+
+  @@map("daily_shipment_plan_status")
+}
+
+enum DailyShipmentItemStatus {
+  PLANNED
+  PARTIALLY_SHIPPED
+  SHIPPED
+  CANCELLED
+
+  @@map("daily_shipment_item_status")
+}
+
+enum ShipmentEventType {
+  SHIPMENT
+  REVERSAL
+
+  @@map("shipment_event_type")
+}
+
 enum MaterialFollowUpStatus {
   PENDING
   IN_PROGRESS
@@ -319,6 +344,14 @@ model User {
   dailyPlanRevisions             DailyPlanRevision[]          @relation("DailyPlanRevisionActor")
   requestedDailyCrossTeam        DailyCrossTeamRequest[]      @relation("DailyCrossTeamRequestedBy")
   reviewedDailyCrossTeam         DailyCrossTeamRequest[]      @relation("DailyCrossTeamReviewedBy")
+  createdDailyShipmentPlans      DailyShipmentPlan[]          @relation("DailyShipmentPlanCreatedBy")
+  updatedDailyShipmentPlans      DailyShipmentPlan[]          @relation("DailyShipmentPlanUpdatedBy")
+  confirmedDailyShipmentPlans    DailyShipmentPlan[]          @relation("DailyShipmentPlanConfirmedBy")
+  closedDailyShipmentPlans       DailyShipmentPlan[]          @relation("DailyShipmentPlanClosedBy")
+  createdDailyShipmentItems      DailyShipmentPlanItem[]      @relation("DailyShipmentItemCreatedBy")
+  updatedDailyShipmentItems      DailyShipmentPlanItem[]      @relation("DailyShipmentItemUpdatedBy")
+  dailyShipmentEvents            ShipmentEvent[]              @relation("ShipmentEventActor")
+  dailyShipmentRevisions         DailyShipmentRevision[]      @relation("DailyShipmentRevisionActor")
   createdWeeklyWorkerPresets     WeeklyProcessWorkerPreset[]  @relation("WeeklyProcessWorkerPresetCreatedBy")
   updatedWeeklyWorkerPresets     WeeklyProcessWorkerPreset[]  @relation("WeeklyProcessWorkerPresetUpdatedBy")
   createdWorkOrderQrTickets      WorkOrderQrTicket[]          @relation("WorkOrderQrTicketCreatedBy")
@@ -410,6 +443,7 @@ model WorkOrder {
   branchQuantityMovements ProcessQuantityMovement[] @relation("MovementBranchWorkOrder")
   processLaborPools       ProcessLaborPool[]
   dailyProcessTasks       DailyProcessTask[]
+  dailyShipmentItems      DailyShipmentPlanItem[]
   qrTicket                WorkOrderQrTicket?
 
   @@unique([parentWorkOrderId, branchSequence])
@@ -682,21 +716,21 @@ model WorkOrderQrPrint {
 }
 
 model WorkOrderQrPrintItem {
-  id              String                   @id @default(uuid())
-  printId         String                   @map("print_id")
-  material        WorkOrderQrPrintMaterial
-  status          WorkOrderQrPrintStatus   @default(GENERATED)
-  copies          Int                      @default(1)
-  fileId          String?                  @map("file_id")
-  fileVersion     String?                  @map("file_version")
-  fileName        String?                  @map("file_name")
-  mimeType        String?                  @map("mime_type")
-  confirmedById   String?                  @map("confirmed_by_id")
-  confirmedAt     DateTime?                @map("confirmed_at")
-  createdAt       DateTime                 @default(now()) @map("created_at")
-  updatedAt       DateTime                 @updatedAt @map("updated_at")
-  print           WorkOrderQrPrint         @relation(fields: [printId], references: [id], onDelete: Cascade)
-  confirmedBy     User?                    @relation("WorkOrderQrPrintItemConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  id            String                   @id @default(uuid())
+  printId       String                   @map("print_id")
+  material      WorkOrderQrPrintMaterial
+  status        WorkOrderQrPrintStatus   @default(GENERATED)
+  copies        Int                      @default(1)
+  fileId        String?                  @map("file_id")
+  fileVersion   String?                  @map("file_version")
+  fileName      String?                  @map("file_name")
+  mimeType      String?                  @map("mime_type")
+  confirmedById String?                  @map("confirmed_by_id")
+  confirmedAt   DateTime?                @map("confirmed_at")
+  createdAt     DateTime                 @default(now()) @map("created_at")
+  updatedAt     DateTime                 @updatedAt @map("updated_at")
+  print         WorkOrderQrPrint         @relation(fields: [printId], references: [id], onDelete: Cascade)
+  confirmedBy   User?                    @relation("WorkOrderQrPrintItemConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
 
   @@unique([printId, material])
   @@index([printId, status])
@@ -1096,6 +1130,107 @@ model DailyCrossTeamRequest {
   @@index([requestedById])
   @@index([reviewedById])
   @@map("daily_cross_team_requests")
+}
+
+model DailyShipmentPlan {
+  id            String                  @id @default(uuid())
+  shipDate      DateTime                @unique @map("ship_date") @db.Date
+  status        DailyShipmentPlanStatus @default(DRAFT)
+  version       Int                     @default(0)
+  confirmedAt   DateTime?               @map("confirmed_at")
+  confirmedById String?                 @map("confirmed_by_id")
+  closedAt      DateTime?               @map("closed_at")
+  closedById    String?                 @map("closed_by_id")
+  createdById   String                  @map("created_by_id")
+  updatedById   String                  @map("updated_by_id")
+  createdAt     DateTime                @default(now()) @map("created_at")
+  updatedAt     DateTime                @updatedAt @map("updated_at")
+  confirmedBy   User?                   @relation("DailyShipmentPlanConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  closedBy      User?                   @relation("DailyShipmentPlanClosedBy", fields: [closedById], references: [id], onDelete: SetNull)
+  createdBy     User                    @relation("DailyShipmentPlanCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy     User                    @relation("DailyShipmentPlanUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  items         DailyShipmentPlanItem[]
+  revisions     DailyShipmentRevision[]
+
+  @@index([status, shipDate])
+  @@index([confirmedById])
+  @@index([closedById])
+  @@map("daily_shipment_plans")
+}
+
+model DailyShipmentPlanItem {
+  id                    String                  @id @default(uuid())
+  planId                String                  @map("plan_id")
+  productionPlanBatchId String                  @map("production_plan_batch_id")
+  workOrderId           String                  @map("work_order_id")
+  plannedQuantity       Int                     @map("planned_quantity")
+  plannedShipAt         DateTime                @map("planned_ship_at")
+  status                DailyShipmentItemStatus @default(PLANNED)
+  sortOrder             Int                     @default(0) @map("sort_order")
+  note                  String?
+  sourceSnapshot        Json                    @map("source_snapshot")
+  version               Int                     @default(0)
+  createdById           String                  @map("created_by_id")
+  updatedById           String                  @map("updated_by_id")
+  createdAt             DateTime                @default(now()) @map("created_at")
+  updatedAt             DateTime                @updatedAt @map("updated_at")
+  plan                  DailyShipmentPlan       @relation(fields: [planId], references: [id], onDelete: Restrict)
+  productionPlanBatch   ProductionPlanBatch     @relation(fields: [productionPlanBatchId], references: [id], onDelete: Restrict)
+  workOrder             WorkOrder               @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  createdBy             User                    @relation("DailyShipmentItemCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  updatedBy             User                    @relation("DailyShipmentItemUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
+  events                ShipmentEvent[]
+  revisions             DailyShipmentRevision[]
+
+  @@unique([planId, productionPlanBatchId])
+  @@index([productionPlanBatchId, status])
+  @@index([workOrderId, status])
+  @@index([plannedShipAt, status])
+  @@map("daily_shipment_plan_items")
+}
+
+model ShipmentEvent {
+  id                String                @id @default(uuid())
+  itemId            String                @map("item_id")
+  eventType         ShipmentEventType     @map("event_type")
+  quantity          Int
+  shippedAt         DateTime              @map("shipped_at")
+  reversalOfEventId String?               @map("reversal_of_event_id")
+  reason            String?
+  idempotencyKey    String                @unique @map("idempotency_key")
+  actorId           String                @map("actor_id")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  item              DailyShipmentPlanItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  reversalOfEvent   ShipmentEvent?        @relation("ShipmentEventReversal", fields: [reversalOfEventId], references: [id], onDelete: Restrict)
+  reversals         ShipmentEvent[]       @relation("ShipmentEventReversal")
+  actor             User                  @relation("ShipmentEventActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([itemId, createdAt])
+  @@index([reversalOfEventId])
+  @@index([actorId])
+  @@map("shipment_events")
+}
+
+model DailyShipmentRevision {
+  id             String                 @id @default(uuid())
+  planId         String                 @map("plan_id")
+  itemId         String?                @map("item_id")
+  action         String
+  idempotencyKey String                 @unique @map("idempotency_key")
+  payloadHash    String                 @map("payload_hash")
+  beforeData     Json?                  @map("before_data")
+  afterData      Json?                  @map("after_data")
+  reason         String?
+  actorId        String                 @map("actor_id")
+  createdAt      DateTime               @default(now()) @map("created_at")
+  plan           DailyShipmentPlan      @relation(fields: [planId], references: [id], onDelete: Restrict)
+  item           DailyShipmentPlanItem? @relation(fields: [itemId], references: [id], onDelete: SetNull)
+  actor          User                   @relation("DailyShipmentRevisionActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([planId, createdAt])
+  @@index([itemId, createdAt])
+  @@index([actorId])
+  @@map("daily_shipment_revisions")
 }
 
 model EmployeeNumberSequence {
@@ -2283,33 +2418,34 @@ model ProductionPlanOrder {
 }
 
 model ProductionPlanBatch {
-  id                        String                 @id @default(uuid())
-  planOrderId               String                 @map("plan_order_id")
-  batchNo                   Int                    @map("batch_no")
+  id                        String                  @id @default(uuid())
+  planOrderId               String                  @map("plan_order_id")
+  batchNo                   Int                     @map("batch_no")
   quantity                  Int
-  weekStartDate             DateTime               @map("week_start_date")
-  weekEndDate               DateTime               @map("week_end_date")
-  plannedCompletionDate     DateTime               @map("planned_completion_date")
-  releaseState              String                 @default("draft") @map("release_state")
-  workOrderId               String?                @unique @map("work_order_id")
-  productTimeProfileId      String?                @map("product_time_profile_id")
-  productTimeProfileVersion Int?                   @map("product_time_profile_version")
-  unitMillisecondsSnapshot  Int?                   @map("unit_milliseconds_snapshot")
-  totalMillisecondsSnapshot BigInt?                @map("total_milliseconds_snapshot")
-  releasedAt                DateTime?              @map("released_at")
-  releasedById              String?                @map("released_by_id")
-  activatedAt               DateTime?              @map("activated_at")
-  activatedById             String?                @map("activated_by_id")
-  createdAt                 DateTime               @default(now()) @map("created_at")
-  updatedAt                 DateTime               @updatedAt @map("updated_at")
-  deletedAt                 DateTime?              @map("deleted_at")
-  planOrder                 ProductionPlanOrder    @relation(fields: [planOrderId], references: [id], onDelete: Cascade)
-  workOrder                 WorkOrder?             @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
-  productTimeProfile        ProductTimeProfile?    @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
-  releasedBy                User?                  @relation("ProductionPlanBatchReleasedBy", fields: [releasedById], references: [id], onDelete: SetNull)
-  activatedBy               User?                  @relation("ProductionPlanBatchActivatedBy", fields: [activatedById], references: [id], onDelete: SetNull)
+  weekStartDate             DateTime                @map("week_start_date")
+  weekEndDate               DateTime                @map("week_end_date")
+  plannedCompletionDate     DateTime                @map("planned_completion_date")
+  releaseState              String                  @default("draft") @map("release_state")
+  workOrderId               String?                 @unique @map("work_order_id")
+  productTimeProfileId      String?                 @map("product_time_profile_id")
+  productTimeProfileVersion Int?                    @map("product_time_profile_version")
+  unitMillisecondsSnapshot  Int?                    @map("unit_milliseconds_snapshot")
+  totalMillisecondsSnapshot BigInt?                 @map("total_milliseconds_snapshot")
+  releasedAt                DateTime?               @map("released_at")
+  releasedById              String?                 @map("released_by_id")
+  activatedAt               DateTime?               @map("activated_at")
+  activatedById             String?                 @map("activated_by_id")
+  createdAt                 DateTime                @default(now()) @map("created_at")
+  updatedAt                 DateTime                @updatedAt @map("updated_at")
+  deletedAt                 DateTime?               @map("deleted_at")
+  planOrder                 ProductionPlanOrder     @relation(fields: [planOrderId], references: [id], onDelete: Cascade)
+  workOrder                 WorkOrder?              @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  productTimeProfile        ProductTimeProfile?     @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
+  releasedBy                User?                   @relation("ProductionPlanBatchReleasedBy", fields: [releasedById], references: [id], onDelete: SetNull)
+  activatedBy               User?                   @relation("ProductionPlanBatchActivatedBy", fields: [activatedById], references: [id], onDelete: SetNull)
   changes                   ProductionPlanChange[]
   dailyProcessTasks         DailyProcessTask[]
+  dailyShipmentItems        DailyShipmentPlanItem[]
 
   @@unique([planOrderId, batchNo])
   @@index([weekStartDate, releaseState])
