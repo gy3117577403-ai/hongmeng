@@ -1,6 +1,7 @@
 'use client';
 
 import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, Users, X } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
@@ -2332,7 +2333,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             >
               <AlertTriangle size={15} aria-hidden="true" />跨周遗留 <b>{summary?.navigation.carryoverCount ?? 0}</b>
             </button>
-            {(canAdministerProduction || canScheduleProduction) && <a className="hm-workbench-button" href={weeklyPlanHref}><CalendarDays size={15} aria-hidden="true" />周计划</a>}
+            {(canAdministerProduction || canScheduleProduction) && <Link className="hm-workbench-button" href={weeklyPlanHref} prefetch={false}><CalendarDays size={15} aria-hidden="true" />周计划</Link>}
             {canSelectProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
             <button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button>
             <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
@@ -2391,7 +2392,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         </section>
 
         {error && <div className="production-error"><span><strong>加载失败</strong>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
-        {scope === 'current' && summary?.total === 0 && !loading && <div className="production-empty-week"><strong>本周暂无已启用生产工单</strong><span>历史遗留工单可从“跨周遗留”继续处理；新计划请在计划中心下达。</span><a href={weeklyPlanHref}>进入计划中心</a></div>}
+        {scope === 'current' && summary?.total === 0 && !loading && <div className="production-empty-week"><strong>本周暂无已启用生产工单</strong><span>历史遗留工单可从“跨周遗留”继续处理；新计划请在计划中心下达。</span><Link href={weeklyPlanHref} prefetch={false}>进入计划中心</Link></div>}
 
         <div className={`production-dispatch-layout ${insightsOpen ? 'rail-open' : ''}`.trim()}>
           <section className="production-dispatch-list-panel" aria-label="生产工单调度列表">
@@ -2418,7 +2419,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
                 copySpecification={copySpecification}
                 openArrangement={(order, sourceArrangement) => openProductionArrangement([order], sourceArrangement)}
               />)}
-              {loading && <DispatchRowSkeleton count={dispatchPageSize} />}
+              {loading && !board && <DispatchRowSkeleton count={dispatchPageSize} />}
               {!loading && !board?.items.length && <div className="production-dispatch-empty"><Rows3 size={28} aria-hidden="true" /><strong>当前没有匹配工单</strong><span>调整周范围或筛选条件后重试。</span></div>}
               {!loading && dispatchAllItems.length > 0 && <div ref={dispatchLoadMoreRef} className={`production-dispatch-load-more ${dispatchHasMore ? 'loading' : 'complete'}`} aria-live="polite">
                 {dispatchHasMore
@@ -3251,7 +3252,7 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
           <div>{order.branchWorkOrders.map(branch => <article key={branch.id}>
             <span><b>{branch.businessCode || '不良分支工单'}</b><small>{branchTypeText(branch.branchType)} · {branch.productionTargetQty || 0} {branch.unitLabel || '件'}</small></span>
             <span><b>{branch.currentProcessName || (branch.routeStatus === 'completed' ? '路线已完成' : '工序待确认')}</b><small>{branchStatusText(branch.branchStatus)}</small></span>
-            <a href={`/workspace/workflows?workOrderId=${encodeURIComponent(branch.id)}&from=production&returnTo=${encodeURIComponent('/production')}`}>查看分支流程</a>
+            <Link href={`/workspace/workflows?workOrderId=${encodeURIComponent(branch.id)}&from=production&returnTo=${encodeURIComponent('/production')}`} prefetch={false}>查看分支流程</Link>
           </article>)}</div>
         </section>}</>}
         {tab === 'drawing' && <div className="production-drawing-detail"><div className="production-drawing-score"><span>工单资料完整度</span><strong>{order.documentFilledCount}/{order.documentTotalCount || 5}</strong></div><div className="production-category-status">{categoryLabels.map(category => <span className={order.documentCategoryCodes.includes(category.code) ? 'ready' : 'missing'} key={category.code}><i />{category.label}<b>{order.documentCategoryCodes.includes(category.code) ? '已有资料' : '待补充'}</b></span>)}</div><div className="production-drawing-actions"><button className="primary-button" type="button" onClick={resources}>打开工单资料</button><button type="button" onClick={drawingLibrary}>查看图纸资料库</button></div></div>}

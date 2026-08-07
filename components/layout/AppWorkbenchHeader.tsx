@@ -26,6 +26,8 @@ import {
   Warehouse,
   type LucideIcon,
 } from 'lucide-react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -150,6 +152,7 @@ export function AppWorkbenchHeader({
   hideHeader = false,
   sidebarTriggerTargetId,
 }: AppWorkbenchHeaderProps) {
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [sidebarPreferenceLoaded, setSidebarPreferenceLoaded] = useState(false);
@@ -215,11 +218,11 @@ export function AppWorkbenchHeader({
     function openGlobalSearch(event: KeyboardEvent): void {
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k') return;
       event.preventDefault();
-      window.location.href = '/home?focusSearch=1';
+      router.push('/home?focusSearch=1', { scroll: false });
     }
     window.addEventListener('keydown', openGlobalSearch);
     return () => window.removeEventListener('keydown', openGlobalSearch);
-  }, []);
+  }, [router]);
 
   function closeSidebar(): void {
     setSidebarExpanded(false);
@@ -237,13 +240,13 @@ export function AppWorkbenchHeader({
       <button className={`hm-platform-sidebar-scrim ${sidebarExpanded ? 'open' : ''}`} type="button" aria-label="关闭平台导航" onClick={closeSidebar} />
       <aside ref={sidebarRef} className={`hm-platform-sidebar ${sidebarExpanded ? 'expanded' : ''}`} id="hm-platform-sidebar" aria-label={`${brandTitle}业务导航`}>
         <button className="hm-platform-sidebar-close" type="button" aria-label="收起平台导航" title="收起平台导航" onClick={closeSidebar}><PanelLeftClose size={18} aria-hidden="true" /></button>
-        <a className="hm-platform-brand" href={landingHref} title={`返回${brandTitle}`}>
+        <Link className="hm-platform-brand" href={landingHref} prefetch={false} title={`返回${brandTitle}`}>
           <span aria-hidden="true">杭</span>
           <div><strong>{brandTitle}</strong><small>生产与技术协同工作台</small></div>
-        </a>
-        {user.laborRole !== 'EMPLOYEE' && <a className={`hm-platform-home ${isActiveRoute(activeHref, '/home') ? 'active' : ''}`} href="/home" title="首页" aria-current={isActiveRoute(activeHref, '/home') ? 'page' : undefined}>
+        </Link>
+        {user.laborRole !== 'EMPLOYEE' && <Link className={`hm-platform-home ${isActiveRoute(activeHref, '/home') ? 'active' : ''}`} href="/home" prefetch={false} title="首页" aria-current={isActiveRoute(activeHref, '/home') ? 'page' : undefined}>
           <Home size={18} aria-hidden="true" /><b>首页</b>
-        </a>}
+        </Link>}
         <nav className="hm-platform-side-nav">
           {visibleNavigation.map(group => (
             <section key={group.label}>
@@ -252,17 +255,17 @@ export function AppWorkbenchHeader({
                 const Icon = item.icon;
                 const active = isActiveRoute(activeHref, item.href);
                 return (
-                  <a className={`${active ? 'active' : ''} ${item.planned ? 'planned' : ''}`.trim()} href={item.href} key={item.href} title={`${item.label}${item.planned ? '（规划中）' : ''}`} aria-current={active ? 'page' : undefined}>
+                  <Link className={`${active ? 'active' : ''} ${item.planned ? 'planned' : ''}`.trim()} href={item.href} prefetch={false} key={item.href} title={`${item.label}${item.planned ? '（规划中）' : ''}`} aria-current={active ? 'page' : undefined}>
                     <Icon size={18} aria-hidden="true" /><span>{item.label}</span>{item.planned && <em>规划</em>}
-                  </a>
+                  </Link>
                 );
               })}
             </section>
           ))}
         </nav>
         <div className="hm-platform-sidebar-footer">
-          <a href="/workspace/help" title="使用帮助（规划中）" className="planned"><HelpCircle size={18} aria-hidden="true" /><span>使用帮助</span><em>规划</em></a>
-          {user.laborRole === 'ADMIN' && <a href="/dashboard?openSettings=1" title="系统设置"><Settings size={18} aria-hidden="true" /><span>系统设置</span></a>}
+          <Link href="/workspace/help" prefetch={false} title="使用帮助（规划中）" className="planned"><HelpCircle size={18} aria-hidden="true" /><span>使用帮助</span><em>规划</em></Link>
+          {user.laborRole === 'ADMIN' && <Link href="/dashboard?openSettings=1" prefetch={false} title="系统设置"><Settings size={18} aria-hidden="true" /><span>系统设置</span></Link>}
         </div>
       </aside>
 
@@ -275,9 +278,9 @@ export function AppWorkbenchHeader({
         </div>
         {isHome && <div className="hm-workbench-search-slot">
           {searchSlot || (
-            <a className="hm-workbench-search-link" href="/home?focusSearch=1" title="打开全局搜索">
+            <Link className="hm-workbench-search-link" href="/home?focusSearch=1" prefetch={false} title="打开全局搜索">
               <Search size={16} aria-hidden="true" /><span>搜索工单、图纸、说明书</span><kbd>Ctrl K</kbd>
-            </a>
+            </Link>
           )}
         </div>}
         {utilityActions && <div className="hm-workbench-utility-actions">{utilityActions}</div>}
@@ -289,7 +292,7 @@ export function AppWorkbenchHeader({
             {visibleMenuItems.map(item => (
               <button type="button" key={item.label} onClick={() => {
                 setMenuOpen(false);
-                if (item.href) location.href = item.href;
+                if (item.href) router.push(item.href);
                 else item.onSelect?.();
               }}>{item.label}</button>
             ))}

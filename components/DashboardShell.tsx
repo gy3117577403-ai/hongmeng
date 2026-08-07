@@ -688,6 +688,7 @@ export default function DashboardShell({
   const orderDrawerCloseRef = useRef<HTMLButtonElement>(null);
   const orderDrawerReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const moreActionsButtonRef = useRef<HTMLButtonElement>(null);
+  const initialPlanViewRef = useRef(true);
   const directTargetRef = useRef<{ workOrderId: string; categoryId: string; fileId: string } | null>(null);
   const nestedLayerOpen = Boolean(
     cameraOpen
@@ -973,6 +974,10 @@ export default function DashboardShell({
   }
 
   useEffect(() => {
+    if (initialPlanViewRef.current) {
+      initialPlanViewRef.current = false;
+      return;
+    }
     refreshOrders(undefined, true).catch(() => setMsg('工单列表刷新失败'));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planView]);
@@ -1631,7 +1636,6 @@ export default function DashboardShell({
     const preferredFileId = directTarget && directTarget.workOrderId === order?.id && directTarget.categoryId === category?.id ? directTarget.fileId : undefined;
     if (directTarget && directTarget.workOrderId === order?.id && directTarget.categoryId === category?.id) directTargetRef.current = null;
     loadFiles(order?.id, category?.id, preferredFileId);
-    loadAllFiles(order?.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wo, cat]);
 

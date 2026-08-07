@@ -2,6 +2,7 @@
 
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
@@ -173,20 +174,58 @@ function DistributionBars({ items }: { items: HomeDistributionItem[] }) {
   );
 }
 
+type PendingPointerFrame = { id: number; clientX: number; clientY: number };
+const pendingPointerFrames = new WeakMap<HTMLElement, PendingPointerFrame>();
+
+function supportsPointerMotion(event: ReactPointerEvent<HTMLElement>): boolean {
+  return event.pointerType === 'mouse'
+    && window.matchMedia('(hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference)').matches;
+}
+
+function schedulePointerFrame(
+  element: HTMLElement,
+  clientX: number,
+  clientY: number,
+  update: (x: number, y: number) => void,
+): void {
+  const pending = pendingPointerFrames.get(element);
+  if (pending) {
+    pending.clientX = clientX;
+    pending.clientY = clientY;
+    return;
+  }
+  const next: PendingPointerFrame = { id: 0, clientX, clientY };
+  next.id = window.requestAnimationFrame(() => {
+    pendingPointerFrames.delete(element);
+    update(next.clientX, next.clientY);
+  });
+  pendingPointerFrames.set(element, next);
+}
+
+function cancelPointerFrame(element: HTMLElement): void {
+  const pending = pendingPointerFrames.get(element);
+  if (!pending) return;
+  window.cancelAnimationFrame(pending.id);
+  pendingPointerFrames.delete(element);
+}
+
 function handleTiltMove(event: ReactPointerEvent<HTMLElement>): void {
+  if (!supportsPointerMotion(event)) return;
   const element = event.currentTarget;
   element.dataset.interacting = 'true';
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const rect = element.getBoundingClientRect();
-  const x = (event.clientX - rect.left) / rect.width - .5;
-  const y = (event.clientY - rect.top) / rect.height - .5;
-  element.style.setProperty('--tilt-x', `${(-y * 7).toFixed(2)}deg`);
-  element.style.setProperty('--tilt-y', `${(x * 9).toFixed(2)}deg`);
-  element.style.setProperty('--shine-x', `${((x + .5) * 100).toFixed(1)}%`);
-  element.style.setProperty('--shine-y', `${((y + .5) * 100).toFixed(1)}%`);
+  schedulePointerFrame(element, event.clientX, event.clientY, (clientX, clientY) => {
+    const rect = element.getBoundingClientRect();
+    const x = (clientX - rect.left) / rect.width - .5;
+    const y = (clientY - rect.top) / rect.height - .5;
+    element.style.setProperty('--tilt-x', `${(-y * 7).toFixed(2)}deg`);
+    element.style.setProperty('--tilt-y', `${(x * 9).toFixed(2)}deg`);
+    element.style.setProperty('--shine-x', `${((x + .5) * 100).toFixed(1)}%`);
+    element.style.setProperty('--shine-y', `${((y + .5) * 100).toFixed(1)}%`);
+  });
 }
 
 function resetTilt(event: ReactPointerEvent<HTMLElement>): void {
+  cancelPointerFrame(event.currentTarget);
   delete event.currentTarget.dataset.interacting;
   event.currentTarget.style.removeProperty('--tilt-x');
   event.currentTarget.style.removeProperty('--tilt-y');
@@ -195,19 +234,23 @@ function resetTilt(event: ReactPointerEvent<HTMLElement>): void {
 }
 
 function handleScenePointerMove(event: ReactPointerEvent<HTMLElement>): void {
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const rect = event.currentTarget.getBoundingClientRect();
-  const x = ((event.clientX - rect.left) / Math.max(rect.width, 1) - .5) * 2;
-  const y = ((event.clientY - rect.top) / Math.max(rect.height, 1) - .5) * 2;
-  event.currentTarget.style.setProperty('--scene-x', `${(x * 9).toFixed(2)}px`);
-  event.currentTarget.style.setProperty('--scene-y', `${(y * 6).toFixed(2)}px`);
-  event.currentTarget.style.setProperty('--scene-x-soft', `${(x * 3.5).toFixed(2)}px`);
-  event.currentTarget.style.setProperty('--scene-y-soft', `${(y * 2.5).toFixed(2)}px`);
-  event.currentTarget.style.setProperty('--scene-x-back', `${(-x * 5).toFixed(2)}px`);
-  event.currentTarget.style.setProperty('--scene-y-back', `${(-y * 3).toFixed(2)}px`);
+  if (!supportsPointerMotion(event)) return;
+  const element = event.currentTarget;
+  schedulePointerFrame(element, event.clientX, event.clientY, (clientX, clientY) => {
+    const rect = element.getBoundingClientRect();
+    const x = ((clientX - rect.left) / Math.max(rect.width, 1) - .5) * 2;
+    const y = ((clientY - rect.top) / Math.max(rect.height, 1) - .5) * 2;
+    element.style.setProperty('--scene-x', `${(x * 9).toFixed(2)}px`);
+    element.style.setProperty('--scene-y', `${(y * 6).toFixed(2)}px`);
+    element.style.setProperty('--scene-x-soft', `${(x * 3.5).toFixed(2)}px`);
+    element.style.setProperty('--scene-y-soft', `${(y * 2.5).toFixed(2)}px`);
+    element.style.setProperty('--scene-x-back', `${(-x * 5).toFixed(2)}px`);
+    element.style.setProperty('--scene-y-back', `${(-y * 3).toFixed(2)}px`);
+  });
 }
 
 function resetScenePointer(event: ReactPointerEvent<HTMLElement>): void {
+  cancelPointerFrame(event.currentTarget);
   event.currentTarget.style.removeProperty('--scene-x');
   event.currentTarget.style.removeProperty('--scene-y');
   event.currentTarget.style.removeProperty('--scene-x-soft');
@@ -492,7 +535,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
                 {!searchLoading && searchError && <div className="hm-home-search-state error">{searchError}</div>}
                 {!searchLoading && !searchError && !results.length && <div className="hm-home-search-state">未找到匹配结果</div>}
                 {!searchLoading && !searchError && searchGroups.map(([group, items]) => (
-                  <section key={group}><h3>{group}</h3>{items.map(item => <a href={item.route} key={item.id} onClick={() => setSearchOpen(false)}><strong>{item.title}</strong><span>{item.detail}</span></a>)}</section>
+                  <section key={group}><h3>{group}</h3>{items.map(item => <Link href={item.route} prefetch={false} key={item.id} onClick={() => setSearchOpen(false)}><strong>{item.title}</strong><span>{item.detail}</span></Link>)}</section>
                 ))}
               </div>
             )}
@@ -509,9 +552,9 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       />
 
       <PortalMenu open={utilityPanel !== null} anchorRef={utilityButtonRef} className="hm-home-utility-menu" width={300} closeOnSelect={false} onClose={() => setUtilityPanel(null)}>
-        {utilityPanel === 'notifications' && <div><header><Bell size={17} /><strong>待办通知</strong></header>{data.actionItems.length ? data.actionItems.slice(0, 3).map(item => <a href={item.targetRoute} key={item.id}><b>{item.title}</b><span>{item.subtitle}</span></a>) : <p>当前没有新的待办通知</p>}<a className="hm-home-utility-all" href="/production?view=exceptions">查看全部待办</a></div>}
-        {utilityPanel === 'messages' && <div><header><MessageSquareText size={17} /><strong>消息中心</strong></header><p>消息能力正在规划，当前入口不影响生产业务。</p><a className="hm-home-utility-all" href="/workspace/messages">查看规划说明</a></div>}
-        {utilityPanel === 'help' && <div><header><CircleHelp size={17} /><strong>帮助与支持</strong></header><a href="/workspace/help"><b>使用帮助</b><span>查看平台模块和规划入口</span></a><a href="/dashboard?openSettings=1"><b>系统设置</b><span>安装、诊断和账号设置</span></a></div>}
+        {utilityPanel === 'notifications' && <div><header><Bell size={17} /><strong>待办通知</strong></header>{data.actionItems.length ? data.actionItems.slice(0, 3).map(item => <Link href={item.targetRoute} prefetch={false} key={item.id}><b>{item.title}</b><span>{item.subtitle}</span></Link>) : <p>当前没有新的待办通知</p>}<Link className="hm-home-utility-all" href="/production?view=exceptions" prefetch={false}>查看全部待办</Link></div>}
+        {utilityPanel === 'messages' && <div><header><MessageSquareText size={17} /><strong>消息中心</strong></header><p>消息能力正在规划，当前入口不影响生产业务。</p><Link className="hm-home-utility-all" href="/workspace/messages" prefetch={false}>查看规划说明</Link></div>}
+        {utilityPanel === 'help' && <div><header><CircleHelp size={17} /><strong>帮助与支持</strong></header><Link href="/workspace/help" prefetch={false}><b>使用帮助</b><span>查看平台模块和规划入口</span></Link><Link href="/dashboard?openSettings=1" prefetch={false}><b>系统设置</b><span>安装、诊断和账号设置</span></Link></div>}
       </PortalMenu>
 
       <div className="hm-home-frame hm-collab-frame">
@@ -551,9 +594,9 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
               <small id="hm-collab-title">本周协同执行率</small>
               <strong>{progressRate === null ? '--' : progressRate}<em>{progressRate === null ? '' : '%'}</em></strong>
               <p>{data.planChart.completed} 项完成 · {data.planChart.inProgress} 项进行中</p>
-              <a href={hasOperationalData ? '/production' : '/weekly-plan-center'}>
+              <Link href={hasOperationalData ? '/production' : '/weekly-plan-center'} prefetch={false}>
                 进入工作台<ArrowUpRight size={15} aria-hidden="true" />
-              </a>
+              </Link>
             </div>
           </div>
 
@@ -566,7 +609,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
                 onPointerMove={handleTiltMove}
                 onPointerLeave={resetTilt}
               >
-                <a className="hm-collab-card-link" href={card.route} aria-label={`进入${card.label}`}>
+                <Link className="hm-collab-card-link" href={card.route} prefetch={false} aria-label={`进入${card.label}`}>
                   <span className="hm-collab-card-icon" aria-hidden="true"><card.Icon size={21} /></span>
                   <div className="hm-collab-card-copy">
                     <small>{card.eyebrow}</small>
@@ -578,7 +621,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
                     <div><dt>协同状态</dt><dd>{card.detail}</dd></div>
                   </dl>
                   <footer><span>查看业务详情</span><ChevronRight size={14} aria-hidden="true" /></footer>
-                </a>
+                </Link>
                 {card.stream && (
                   <button
                     className="hm-collab-card-tasks"
@@ -596,29 +639,29 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
 
         <section className="hm-collab-insights" aria-label="业务洞察">
           <article className="hm-collab-insight">
-            <header><div><FileCheck2 size={16} aria-hidden="true" /><h2>当前处理图纸</h2></div><a href="/drawing-library">全部 {drawingCount}<ChevronRight size={13} /></a></header>
+            <header><div><FileCheck2 size={16} aria-hidden="true" /><h2>当前处理图纸</h2></div><Link href="/drawing-library" prefetch={false}>全部 {drawingCount}<ChevronRight size={13} /></Link></header>
             <div className="hm-collab-insight-list">
               {insightDrawings.length ? insightDrawings.map(item => (
-                <a href={item.targetRoute} key={item.id}><span>{item.title}</span><small>{item.status}</small></a>
+                <Link href={item.targetRoute} prefetch={false} key={item.id}><span>{item.title}</span><small>{item.status}</small></Link>
               )) : <p className="hm-collab-empty">当前没有待处理图纸</p>}
             </div>
           </article>
 
           <article className="hm-collab-insight">
-            <header><div><AlertTriangle size={16} aria-hidden="true" /><h2>优先风险</h2></div><a href="/production?view=exceptions">全部 {riskCount}<ChevronRight size={13} /></a></header>
+            <header><div><AlertTriangle size={16} aria-hidden="true" /><h2>优先风险</h2></div><Link href="/production?view=exceptions" prefetch={false}>全部 {riskCount}<ChevronRight size={13} /></Link></header>
             <div className="hm-collab-insight-list">
               {priorityRisks.length ? priorityRisks.map(item => (
-                <a href={item.targetRoute} key={item.id}><i className={`priority-${item.priority}`}>{item.priority === 'urgent' ? '紧急' : item.priority === 'high' ? '关注' : '提示'}</i><span>{item.title}</span><small>{item.dateLabel}</small></a>
+                <Link href={item.targetRoute} prefetch={false} key={item.id}><i className={`priority-${item.priority}`}>{item.priority === 'urgent' ? '紧急' : item.priority === 'high' ? '关注' : '提示'}</i><span>{item.title}</span><small>{item.dateLabel}</small></Link>
               )) : <p className="hm-collab-empty">当前没有优先风险</p>}
             </div>
           </article>
 
           <article className="hm-collab-insight hm-collab-quality">
-            <header><div><ShieldCheck size={16} aria-hidden="true" /><h2>质量与问题</h2></div><a href="/workspace/issues">全部 {data.issues.length}<ChevronRight size={13} /></a></header>
+            <header><div><ShieldCheck size={16} aria-hidden="true" /><h2>质量与问题</h2></div><Link href="/workspace/issues" prefetch={false}>全部 {data.issues.length}<ChevronRight size={13} /></Link></header>
             <div className="hm-collab-quality-body">
               <div className="hm-collab-quality-rate" style={{ '--issue-rate': `${Math.min(100, data.issues.length * 12)}%` } as CSSProperties}><strong>{data.issues.length}</strong><small>未关闭</small></div>
               <div className="hm-collab-quality-list">
-                {qualityIssues.length ? qualityIssues.map(item => <a href={item.targetRoute} key={item.id}><span>{item.title}</span><small>{item.status}</small></a>) : <p className="hm-collab-empty">质量状态正常</p>}
+                {qualityIssues.length ? qualityIssues.map(item => <Link href={item.targetRoute} prefetch={false} key={item.id}><span>{item.title}</span><small>{item.status}</small></Link>) : <p className="hm-collab-empty">质量状态正常</p>}
               </div>
             </div>
           </article>
@@ -655,14 +698,14 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
                 {!activeStream.items.length ? (
                   <div className="hm-command-drawer-empty"><CheckCircle2 size={26} aria-hidden="true" /><strong>当前没有待处理任务</strong><p>该业务节点运行平稳。</p></div>
                 ) : activeStream.items.map(item => (
-                  <a className={`risk-${item.risk}`} href={item.targetRoute} key={item.id}>
+                  <Link className={`risk-${item.risk}`} href={item.targetRoute} prefetch={false} key={item.id}>
                     <span>{item.status}</span>
                     <div><strong>{item.title}</strong><p>{item.subtitle}</p><small>{item.meta}</small></div>
                     <ChevronRight size={16} aria-hidden="true" />
-                  </a>
+                  </Link>
                 ))}
               </div>
-              <footer><a href={activeStream.route}>进入{activeStream.label}<ArrowUpRight size={15} aria-hidden="true" /></a></footer>
+              <footer><Link href={activeStream.route} prefetch={false}>进入{activeStream.label}<ArrowUpRight size={15} aria-hidden="true" /></Link></footer>
             </>
           )}
         </aside>
