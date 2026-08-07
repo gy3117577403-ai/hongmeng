@@ -253,6 +253,33 @@ export type IssueWorkOrderDTO = {
   plannedAt?: string | null;
 };
 
+export type IssueWorkOrderOptionDTO = {
+  id: string;
+  code: string;
+  businessCode?: string | null;
+  displayCode: string;
+  customerName?: string | null;
+  productName: string;
+  specification?: string | null;
+  sourceOrderNo?: string | null;
+  stage: string;
+  stageText: string;
+  drawingStatus?: string | null;
+  planActive?: boolean;
+  planClearedAt?: string | null;
+  branchType?: WorkOrderBranchType | null;
+  updatedAt?: string;
+};
+
+export type IssueWorkOrderDraftDTO = {
+  code: string;
+  productName: string;
+  customerName: string;
+  specification: string;
+  sourceOrderNo: string;
+  remark: string;
+};
+
 export type IssueActivityDTO = {
   id: string;
   action: string;

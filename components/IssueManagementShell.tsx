@@ -43,7 +43,8 @@ import type {
   IssueStatus,
   IssueSummaryDTO,
   IssueType,
-  WorkOrderDTO,
+  IssueWorkOrderDraftDTO,
+  IssueWorkOrderOptionDTO,
 } from '@/types';
 
 type IssueManagementShellProps = { user: CurrentUserDTO };
@@ -51,9 +52,17 @@ type QueueMode = 'issues' | 'detected';
 type IssueListResponse = { ok: boolean; issues: IssueDTO[]; summary: IssueSummaryDTO; pagination: { page: number; pageSize: number; total: number; totalPages: number }; error?: string };
 type DetectedResponse = { ok: boolean; detected: DetectedIssueDTO[]; pendingCount: number; error?: string };
 type EmployeesResponse = { ok: boolean; employees: EmployeeDTO[]; error?: string };
-type WorkOrdersResponse = { workOrders?: WorkOrderDTO[]; error?: string; message?: string };
 type DuplicateIssue = { id: string; code: string; title: string; status: IssueStatus };
-type IssueMutationResponse = { ok: boolean; issue?: IssueDTO; error?: string; created?: boolean; duplicateIssue?: DuplicateIssue };
+type IssueMutationResponse = {
+  ok: boolean;
+  issue?: IssueDTO;
+  error?: string;
+  created?: boolean;
+  duplicateIssue?: DuplicateIssue;
+  createdWorkOrder?: IssueWorkOrderOptionDTO | null;
+  existingWorkOrder?: IssueWorkOrderOptionDTO;
+  conflictType?: 'existing' | 'soft_deleted';
+};
 
 type Filters = {
   status: 'all' | IssueStatus;
@@ -169,6 +178,29 @@ function issueFormFrom(issue?: IssueDTO | null): IssueFormState {
   };
 }
 
+function issueFormSnapshot(form: IssueFormState, workOrderDraft: IssueWorkOrderDraftDTO | null): string {
+  return JSON.stringify({ form, workOrderDraft });
+}
+
+function issueWorkOrderOptionFromIssue(issue?: IssueDTO | null): IssueWorkOrderOptionDTO | null {
+  const order = issue?.workOrder;
+  if (!order) return null;
+  const stageLabels: Record<string, string> = {
+    not_issued: '未发图', pending: '未发图', frontend: '在前端', processing: '在前端', backend: '在后端', completed: '已完成', done: '已完成',
+  };
+  return {
+    id: order.id,
+    code: order.code,
+    displayCode: order.specification || order.code,
+    customerName: order.customerName,
+    productName: order.productName,
+    specification: order.specification,
+    stage: order.stage,
+    stageText: stageLabels[order.stage] || order.stage,
+    drawingStatus: order.drawingStatus,
+  };
+}
+
 export default function IssueManagementShell({ user }: IssueManagementShellProps) {
   const routeSearchParams = useSearchParams();
   const initialParams = useMemo(() => new URLSearchParams(routeSearchParams.toString()), [routeSearchParams]);
@@ -184,7 +216,6 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [detected, setDetected] = useState<DetectedIssueDTO[]>([]);
   const [pendingDetected, setPendingDetected] = useState(0);
   const [employees, setEmployees] = useState<EmployeeDTO[]>([]);
-  const [workOrders, setWorkOrders] = useState<WorkOrderDTO[]>([]);
   const [selected, setSelected] = useState<IssueDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -196,6 +227,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [formOpen, setFormOpen] = useState(initialParams.get('action') === 'new');
   const [editingIssue, setEditingIssue] = useState<IssueDTO | null>(null);
   const [form, setForm] = useState<IssueFormState>(emptyForm);
+  const [newWorkOrderDraft, setNewWorkOrderDraft] = useState<IssueWorkOrderDraftDTO | null>(null);
   const [formError, setFormError] = useState('');
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [duplicateIssue, setDuplicateIssue] = useState<DuplicateIssue | null>(null);
@@ -216,7 +248,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const modalReturnFocusRef = useRef<HTMLElement | null>(null);
   const modalWasOpenRef = useRef(false);
   const handledDirectAlertRef = useRef('');
-  const formBaselineRef = useRef(JSON.stringify(emptyForm));
+  const formBaselineRef = useRef(issueFormSnapshot(emptyForm, null));
 
   const updateIssue = useCallback((issue: IssueDTO): void => {
     setIssues(current => current.some(item => item.id === issue.id)
@@ -288,13 +320,9 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
 
   useEffect(() => {
     void loadDetected();
-    Promise.all([
-      jsonRequest<EmployeesResponse>('/api/employees?active=true'),
-      jsonRequest<WorkOrdersResponse>('/api/work-orders'),
-    ]).then(([employeeData, orderData]) => {
-      setEmployees(employeeData.employees || []);
-      setWorkOrders(orderData.workOrders || []);
-    }).catch(() => setToast('员工档案或工单选项加载失败'));
+    jsonRequest<EmployeesResponse>('/api/employees?active=true')
+      .then(employeeData => setEmployees(employeeData.employees || []))
+      .catch(() => setToast('员工档案加载失败'));
   }, [loadDetected]);
 
   useEffect(() => {
@@ -373,16 +401,17 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     setFormOpen(false);
     setEditingIssue(null);
     setForm({ ...emptyForm });
+    setNewWorkOrderDraft(null);
     setPendingFiles([]);
     setFormError('');
     setDuplicateIssue(null);
     setConfirmDiscard(false);
-    formBaselineRef.current = JSON.stringify(emptyForm);
+    formBaselineRef.current = issueFormSnapshot(emptyForm, null);
   }, []);
 
   const formIsDirty = useCallback((): boolean => (
-    JSON.stringify(form) !== formBaselineRef.current || pendingFiles.length > 0
-  ), [form, pendingFiles.length]);
+    issueFormSnapshot(form, newWorkOrderDraft) !== formBaselineRef.current || pendingFiles.length > 0
+  ), [form, newWorkOrderDraft, pendingFiles.length]);
 
   const requestCloseForm = useCallback((): void => {
     if (saving) return;
@@ -441,10 +470,11 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     const nextForm = { ...emptyForm, collaboratorEmployeeIds: [] };
     setEditingIssue(null);
     setForm(nextForm);
+    setNewWorkOrderDraft(null);
     setPendingFiles([]);
     setFormError('');
     setDuplicateIssue(null);
-    formBaselineRef.current = JSON.stringify(nextForm);
+    formBaselineRef.current = issueFormSnapshot(nextForm, null);
     setFormOpen(true);
   }
 
@@ -453,10 +483,11 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     const nextForm = issueFormFrom(issue);
     setEditingIssue(issue);
     setForm(nextForm);
+    setNewWorkOrderDraft(null);
     setPendingFiles([]);
     setFormError('');
     setDuplicateIssue(null);
-    formBaselineRef.current = JSON.stringify(nextForm);
+    formBaselineRef.current = issueFormSnapshot(nextForm, null);
     setFormOpen(true);
   }
 
@@ -475,6 +506,10 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   async function persistForm(allowDuplicate = false): Promise<void> {
     if (!form.title.trim()) { setFormError('请填写问题标题'); return; }
     if (form.type === 'process' && !form.processName.trim()) { setFormError('工艺问题请填写关联工序'); return; }
+    if (newWorkOrderDraft && (!newWorkOrderDraft.code.trim() || !newWorkOrderDraft.productName.trim())) {
+      setFormError('待创建工单需要填写工单号和产品名称');
+      return;
+    }
     setSaving(true);
     setFormError('');
     try {
@@ -487,6 +522,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
         processName: form.type === 'process' ? form.processName.trim() || null : null,
         affectedQuantity: form.type === 'process' && form.affectedQuantity !== '' ? Number(form.affectedQuantity) : null,
         temporaryMeasure: form.type === 'process' ? form.temporaryMeasure.trim() || null : null,
+        newWorkOrderDraft: editingIssue ? null : newWorkOrderDraft,
         allowDuplicate,
       };
       const data = await jsonRequest<IssueMutationResponse>(editingIssue ? `/api/issues/${editingIssue.id}` : '/api/issues', {
@@ -512,6 +548,17 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
         : editingIssue ? '问题信息已更新' : pendingFiles.length ? '问题已创建，附件已同步上传' : '问题已创建');
       await loadIssues(savedIssue.id);
     } catch (saveError) {
+      if (saveError instanceof ApiRequestError && saveError.status === 409 && saveError.data.conflictType === 'soft_deleted') {
+        setFormError('该工单号存在于回收站，请先恢复原工单，或修改待创建工单的工单号。');
+        return;
+      }
+      if (saveError instanceof ApiRequestError && saveError.status === 409 && saveError.data.existingWorkOrder) {
+        const existingWorkOrder = saveError.data.existingWorkOrder as IssueWorkOrderOptionDTO;
+        setNewWorkOrderDraft(null);
+        setForm(current => ({ ...current, workOrderId: existingWorkOrder.id }));
+        setFormError(`工单号“${existingWorkOrder.code}”已存在，已为你选中。请核对后再提交。`);
+        return;
+      }
       if (saveError instanceof ApiRequestError && saveError.status === 409 && saveError.data.duplicateIssue) {
         setDuplicateIssue(saveError.data.duplicateIssue as DuplicateIssue);
         return;
@@ -845,7 +892,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           <section className="issue-form-section relation">
             <header><div><strong>关联与责任</strong><span>可搜索、复制工单编号，员工直接同步人事档案</span></div><em>02</em></header>
             <div className="issue-form-grid">
-              <div className="issue-form-field wide"><span>关联工单</span><WorkOrderPicker orders={workOrders} value={form.workOrderId} disabled={saving} onCopied={setToast} onChange={value => setForm(current => ({ ...current, workOrderId: value }))} /></div>
+              <div className="issue-form-field wide"><span>关联工单</span><WorkOrderPicker value={form.workOrderId} initialSelected={issueWorkOrderOptionFromIssue(editingIssue)} newWorkOrderDraft={newWorkOrderDraft} allowCreate={!editingIssue} disabled={saving} onCopied={setToast} onNewWorkOrderDraftChange={setNewWorkOrderDraft} onChange={value => setForm(current => ({ ...current, workOrderId: value }))} /></div>
               <div className="issue-form-field"><span>主负责人</span><EmployeePicker employees={employees} value={form.assigneeEmployeeId} disabled={saving} onChange={value => setForm(current => ({ ...current, assigneeEmployeeId: value, collaboratorEmployeeIds: current.collaboratorEmployeeIds.filter(id => id !== value) }))} /></div>
               <div className="issue-form-field"><span>协同人员（可多选）</span><EmployeeMultiPicker employees={employees} values={form.collaboratorEmployeeIds} excludeIds={form.assigneeEmployeeId ? [form.assigneeEmployeeId] : []} disabled={saving} onChange={values => setForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
             </div>
@@ -878,7 +925,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           </section>}
           {formError && <p className="issue-form-error" role="alert">{formError}</p>}
         </div>
-        <footer><span>{form.assigneeEmployeeId ? '已明确主负责人' : '负责人可稍后补充'} · {form.collaboratorEmployeeIds.length} 名协同人 · {pendingFiles.length} 个待上传附件</span><div><button type="button" disabled={saving} onClick={requestCloseForm}>取消</button><button className="primary" type="submit" disabled={saving}>{saving && <Loader2 className="spin" size={15} />}{editingIssue ? '保存修改' : '创建问题'}</button></div></footer>
+        <footer><span>{newWorkOrderDraft ? '将同时创建 1 个待补资料工单' : form.assigneeEmployeeId ? '已明确主负责人' : '负责人可稍后补充'} · {form.collaboratorEmployeeIds.length} 名协同人 · {pendingFiles.length} 个待上传附件</span><div><button type="button" disabled={saving} onClick={requestCloseForm}>取消</button><button className="primary" type="submit" disabled={saving}>{saving && <Loader2 className="spin" size={15} />}{editingIssue ? '保存修改' : newWorkOrderDraft ? '创建问题与工单' : '创建问题'}</button></div></footer>
       </form></div>}
 
       {duplicateIssue && <div className="issue-modal-backdrop"><section className="issue-confirm duplicate-warning" role="alertdialog" aria-modal="true" aria-labelledby="issue-duplicate-title"><AlertTriangle /><h2 id="issue-duplicate-title">发现可能重复的问题</h2><p>{duplicateIssue.code} · {duplicateIssue.title}</p><span>同一工单下已有相同标题或工序的未关闭问题。建议先打开核对，确有不同再继续创建。</span><footer><button type="button" disabled={saving} onClick={() => { setDuplicateIssue(null); closeFormNow(); setQueueMode('issues'); void loadIssues(duplicateIssue.id); }}>打开已有问题</button><button className="danger" type="button" disabled={saving} onClick={() => { setDuplicateIssue(null); void persistForm(true); }}>仍然创建</button></footer></section></div>}

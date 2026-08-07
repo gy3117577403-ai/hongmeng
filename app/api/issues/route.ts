@@ -13,7 +13,15 @@ import {
 } from '@/lib/issues';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import type { IssuePriority, IssueStatus, IssueType } from '@/types';
+import {
+  createIssueWorkOrder,
+  issueWorkOrderOptionSelect,
+  IssueWorkOrderConflictError,
+  parseIssueWorkOrderDraft,
+  serializeIssueWorkOrderOption,
+} from '@/lib/issue-work-orders';
+import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
+import type { IssuePriority, IssueStatus, IssueType, IssueWorkOrderDraftDTO } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -109,12 +117,19 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  let submittedWorkOrderDraft: IssueWorkOrderDraftDTO | null = null;
   try {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const parsed = parseIssueInput(body);
     if (parsed.errors.length) return NextResponse.json({ ok: false, error: parsed.errors[0] }, { status: 400 });
     const data = parsed.data;
+    const parsedWorkOrder = parseIssueWorkOrderDraft(body.newWorkOrderDraft);
+    if (parsedWorkOrder.errors.length) return NextResponse.json({ ok: false, error: parsedWorkOrder.errors[0] }, { status: 400 });
+    submittedWorkOrderDraft = parsedWorkOrder.draft;
+    if (submittedWorkOrderDraft && data.workOrderId) {
+      return NextResponse.json({ ok: false, error: '不能同时选择已有工单和新建工单' }, { status: 400 });
+    }
 
     if (data.workOrderId) {
       const exists = await prisma.workOrder.findFirst({ where: { id: data.workOrderId, deletedAt: null }, select: { id: true } });
@@ -156,14 +171,18 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const issue = await prisma.$transaction(async tx => {
+    const result = await prisma.$transaction(async tx => {
+      const createdWorkOrder = submittedWorkOrderDraft
+        ? await createIssueWorkOrder(tx, submittedWorkOrderDraft, user.id)
+        : null;
+      const workOrderId = createdWorkOrder?.id || data.workOrderId || null;
       const created = await tx.issue.create({
         data: {
           title: data.title as string,
           type: data.type || 'production',
           priority: data.priority || 'normal',
           description: data.description,
-          workOrderId: data.workOrderId,
+          workOrderId,
           assigneeEmployeeId: data.assigneeEmployeeId,
           processName: data.processName,
           affectedQuantity: data.affectedQuantity,
@@ -173,8 +192,8 @@ export async function POST(req: NextRequest) {
           solution: data.solution,
           reporterId: user.id,
           sourceType: 'manual',
-          sourceId: data.workOrderId,
-          sourceRoute: data.workOrderId ? `/dashboard?workOrderId=${encodeURIComponent(data.workOrderId)}` : '/workspace/issues',
+          sourceId: workOrderId,
+          sourceRoute: workOrderId ? `/dashboard?workOrderId=${encodeURIComponent(workOrderId)}` : '/workspace/issues',
           collaborators: collaboratorEmployeeIds.length
             ? { create: collaboratorEmployeeIds.map(employeeId => ({ employeeId })) }
             : undefined,
@@ -186,15 +205,72 @@ export async function POST(req: NextRequest) {
           action: 'create',
           content: '创建问题',
           actorId: user.id,
-          detail: { assigneeEmployeeId: data.assigneeEmployeeId || null, collaboratorCount: collaboratorEmployeeIds.length },
+          detail: {
+            assigneeEmployeeId: data.assigneeEmployeeId || null,
+            collaboratorCount: collaboratorEmployeeIds.length,
+            createdWorkOrderId: createdWorkOrder?.id || null,
+          },
         },
       });
-      return tx.issue.findUniqueOrThrow({ where: { id: created.id }, include: issueDetailInclude });
+      const issue = await tx.issue.findUniqueOrThrow({ where: { id: created.id }, include: issueDetailInclude });
+      return { issue, createdWorkOrder };
     });
-    await logOp({ userId: user.id, action: 'create_issue', targetType: 'issue', targetId: issue.id, detail: { code: issue.sequence, type: issue.type, priority: issue.priority } });
-    return NextResponse.json({ ok: true, issue: serializeIssue(issue) }, { status: 201 });
+    if (result.createdWorkOrder) {
+      await snapshotChange({
+        entityType: 'work_order',
+        entityId: result.createdWorkOrder.id,
+        action: 'create_work_order_from_issue',
+        after: workOrderSnapshot(result.createdWorkOrder),
+        changedBy: user.displayName || user.username,
+      });
+    }
+    await logOp({
+      userId: user.id,
+      action: 'create_issue',
+      targetType: 'issue',
+      targetId: result.issue.id,
+      detail: {
+        code: result.issue.sequence,
+        type: result.issue.type,
+        priority: result.issue.priority,
+        createdWorkOrderId: result.createdWorkOrder?.id || null,
+      },
+    });
+    return NextResponse.json({
+      ok: true,
+      issue: serializeIssue(result.issue),
+      createdWorkOrder: result.createdWorkOrder
+        ? serializeIssueWorkOrderOption(result.createdWorkOrder)
+        : null,
+    }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof IssueWorkOrderConflictError) {
+      return NextResponse.json({
+        ok: false,
+        error: error.softDeleted
+          ? '该工单号存在于回收站，请先恢复工单或更换工单号'
+          : '工单号已存在，请核对后使用已有工单',
+        conflictType: error.softDeleted ? 'soft_deleted' : 'existing',
+        existingWorkOrder: error.softDeleted ? undefined : error.existingWorkOrder,
+      }, { status: 409 });
+    }
+    if ((error as { code?: string }).code === 'P2002' && submittedWorkOrderDraft?.code) {
+      const existing = await prisma.workOrder.findFirst({
+        where: { code: { equals: submittedWorkOrderDraft.code, mode: 'insensitive' } },
+        select: issueWorkOrderOptionSelect,
+      });
+      if (existing) {
+        return NextResponse.json({
+          ok: false,
+          error: existing.deletedAt
+            ? '该工单号存在于回收站，请先恢复工单或更换工单号'
+            : '工单号已存在，请核对后使用已有工单',
+          conflictType: existing.deletedAt ? 'soft_deleted' : 'existing',
+          existingWorkOrder: existing.deletedAt ? undefined : serializeIssueWorkOrderOption(existing),
+        }, { status: 409 });
+      }
+    }
     console.error('issue create failed', error);
     return NextResponse.json({ ok: false, error: '问题创建失败' }, { status: 500 });
   }

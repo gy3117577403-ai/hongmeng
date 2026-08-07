@@ -50,6 +50,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:daily-shipment-integration
+      - name: Issue work order PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npm run test:issue-work-order-integration
       - name: Employee number reorder PostgreSQL integration
         env:
           RUN_EMPLOYEE_REORDER_INTEGRATION: "1"
@@ -83,14 +87,14 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=v1.23.0
+            type=raw,value=v1.24.0
             type=raw,value=latest
             type=sha
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.23.0
+            APP_VERSION=v1.24.0
             APP_REVISION=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
