@@ -80,9 +80,49 @@ export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclu
   },
 });
 
+// List and dashboard calculations only need lightweight readiness relations.
+// Keep execution/completion ledgers out of the broad scan; full route details
+// are loaded only for the page of cards that will actually be rendered.
+export const productionSummaryInclude = Prisma.validator<Prisma.WorkOrderInclude>()({
+  drawingLibraryItem: {
+    select: {
+      id: true,
+      files: {
+        where: { deletedAt: null },
+        select: { category: { select: { code: true } } },
+      },
+    },
+  },
+  materialTask: {
+    select: {
+      id: true,
+      status: true,
+      exceptionType: true,
+      exceptionNote: true,
+      expectedAt: true,
+      completedAt: true,
+      updatedAt: true,
+    },
+  },
+  processRoute: {
+    select: {
+      steps: {
+        orderBy: { position: 'asc' },
+        select: { status: true, sequenceGroup: true },
+      },
+    },
+  },
+});
+
 export type ProductionExecutionOrderRecord = Prisma.WorkOrderGetPayload<{
   include: typeof productionExecutionInclude;
 }>;
+
+export type ProductionSummaryOrderRecord = Prisma.WorkOrderGetPayload<{
+  include: typeof productionSummaryInclude;
+}>;
+
+type ProductionStatusOrderRecord = ProductionExecutionOrderRecord | ProductionSummaryOrderRecord;
 
 export type ProductionExceptionCode =
   | 'overdue'
@@ -255,7 +295,7 @@ function activeArrangement(arrangement: ProductionArrangementView): boolean {
 }
 
 function summarizeArrangementMetrics(
-  orders: ProductionExecutionOrderRecord[],
+  orders: ProductionStatusOrderRecord[],
   arrangementsByOrder: Map<string, ProductionArrangementView[]>,
 ): ProductionArrangementMetrics {
   const today = chinaYmd(new Date());
@@ -273,7 +313,7 @@ function summarizeArrangementMetrics(
 }
 
 async function loadProductionArrangementMap(
-  orders: ProductionExecutionOrderRecord[],
+  orders: ProductionStatusOrderRecord[],
   now = new Date(),
 ): Promise<Map<string, ProductionArrangementView[]>> {
   const orderIds = orders.filter(isRootProductionOrder).map(order => order.id);
@@ -596,7 +636,7 @@ export function isMaterialReady(value?: string | null) {
   return normalized.includes('已配料') || normalized.includes('料齐');
 }
 
-export function executionCompleteness(order: ProductionExecutionOrderRecord) {
+export function executionCompleteness(order: ProductionStatusOrderRecord) {
   const codes = new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || []);
   const filled = PRODUCTION_CATEGORY_CODES.filter(code => codes.has(code)).length;
   return {
@@ -621,7 +661,7 @@ export function hasRequiredProductionDocuments(order: Pick<ProductionExecutionOr
   return hasOriginalProductionDrawing(order) && hasProductionSop(order);
 }
 
-export function productionExceptionCodes(order: ProductionExecutionOrderRecord, now = new Date()): ProductionExceptionCode[] {
+export function productionExceptionCodes(order: ProductionStatusOrderRecord, now = new Date()): ProductionExceptionCode[] {
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   const { start } = chinaDayBounds(now);
   const exceptions: ProductionExceptionCode[] = [];
@@ -820,12 +860,12 @@ function inChinaDay(value: Date | null | undefined, now = new Date()) {
   return value >= start && value < end;
 }
 
-function isDueToday(order: ProductionExecutionOrderRecord, now = new Date()) {
+function isDueToday(order: ProductionStatusOrderRecord, now = new Date()) {
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   return stage !== 'completed' && inChinaDay(order.plannedAt, now);
 }
 
-function isOverdue(order: ProductionExecutionOrderRecord, now = new Date()) {
+function isOverdue(order: ProductionStatusOrderRecord, now = new Date()) {
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   return stage !== 'completed' && !!order.plannedAt && order.plannedAt < chinaDayBounds(now).start;
 }
@@ -848,13 +888,21 @@ export function isProductionDueSoon(
 }
 
 export function hasNextProductionProcess(
-  order: Pick<ProductionExecutionOrderRecord, 'stage' | 'status' | 'processRoute'>,
+  order: Pick<ProductionStatusOrderRecord, 'stage' | 'status' | 'processRoute'>,
 ): boolean {
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
-  return stage !== 'completed' && Boolean(order.processRoute && serializeProcessRoute(order.processRoute).nextStep);
+  if (stage === 'completed' || !order.processRoute) return false;
+  const currentGroups = order.processRoute.steps
+    .filter(step => step.status === 'current')
+    .map(step => step.sequenceGroup);
+  const currentGroup = currentGroups.length ? Math.min(...currentGroups) : null;
+  return order.processRoute.steps.some(step => (
+    step.status === 'pending'
+    && (currentGroup === null || step.sequenceGroup > currentGroup)
+  ));
 }
 
-function isTodayTask(order: ProductionExecutionOrderRecord, now = new Date()) {
+function isTodayTask(order: ProductionStatusOrderRecord, now = new Date()) {
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   return isDueToday(order, now)
     || isOverdue(order, now)
@@ -868,7 +916,7 @@ function dateInput(value?: string) {
   return parseWeek(value);
 }
 
-function drawingStatusValue(order: ProductionExecutionOrderRecord) {
+function drawingStatusValue(order: ProductionStatusOrderRecord) {
   const value = text(order.drawingStatus);
   if ((!value || value === '-' || value.includes('未设置')) && hasEffectiveIssuedDrawing(value, hasOriginalProductionDrawing(order))) {
     return 'issued';
@@ -883,7 +931,7 @@ function drawingStatusValue(order: ProductionExecutionOrderRecord) {
   return 'issued';
 }
 
-function materialStatusValue(order: ProductionExecutionOrderRecord) {
+function materialStatusValue(order: ProductionStatusOrderRecord) {
   if (!order.materialTask) return 'unset';
   if (order.materialTask.status === 'pending') return 'pending';
   if (order.materialTask.status === 'completed') return 'completed';
@@ -891,7 +939,7 @@ function materialStatusValue(order: ProductionExecutionOrderRecord) {
   return 'unset';
 }
 
-function matchesDuePreset(order: ProductionExecutionOrderRecord, preset: string | undefined, week: ProductionWeek, now: Date) {
+function matchesDuePreset(order: ProductionStatusOrderRecord, preset: string | undefined, week: ProductionWeek, now: Date) {
   if (!preset) return true;
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   const { start, end } = chinaDayBounds(now);
@@ -904,7 +952,7 @@ function matchesDuePreset(order: ProductionExecutionOrderRecord, preset: string 
 }
 
 function matchesFilters(
-  order: ProductionExecutionOrderRecord,
+  order: ProductionStatusOrderRecord,
   filters: ProductionExecutionFilters,
   week: ProductionWeek,
   arrangements: ProductionArrangementView[] = [],
@@ -986,7 +1034,7 @@ function matchesFilters(
   return true;
 }
 
-function drawingConfirmationRequired(order: ProductionExecutionOrderRecord, now: Date): boolean {
+function drawingConfirmationRequired(order: ProductionStatusOrderRecord, now: Date): boolean {
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   return getProductionAlerts({
     uncompletedQty: order.uncompletedQty,
@@ -1010,7 +1058,7 @@ function booleanRank(value: boolean): number {
   return value ? 0 : 1;
 }
 
-export function compareProductionOrders(first: ProductionExecutionOrderRecord, second: ProductionExecutionOrderRecord, now = new Date()): number {
+export function compareProductionOrders(first: ProductionStatusOrderRecord, second: ProductionStatusOrderRecord, now = new Date()): number {
   const firstStage = normalizeWorkOrderStage(first.stage || first.status) || 'not_issued';
   const secondStage = normalizeWorkOrderStage(second.stage || second.status) || 'not_issued';
   if (firstStage === 'completed' && secondStage === 'completed') {
@@ -1047,17 +1095,40 @@ export async function loadProductionOrders(week: ProductionWeek, workOrderId?: s
     : orders;
 }
 
+export async function loadProductionSummaryOrders(week: ProductionWeek, workOrderId?: string) {
+  const orders = await prisma.workOrder.findMany({
+    where: workOrderId
+      ? { id: workOrderId, deletedAt: null }
+      : productionWeekWhere(week),
+    include: productionSummaryInclude,
+    orderBy: [{ priority: 'asc' }, { plannedAt: 'asc' }, { createdAt: 'asc' }],
+  });
+  return !workOrderId && week.scope === 'carryover'
+    ? orders.filter(order => normalizeWorkOrderStage(order.stage || order.status) !== 'completed')
+    : orders;
+}
+
 export async function loadProductionExecution(input: {
   week: ProductionWeek;
   filters?: ProductionExecutionFilters;
   view?: ProductionExecutionView;
   page?: number;
   pageSize?: number;
+  offset?: number;
+  includeSummary?: boolean;
 }) {
   const now = new Date();
   const filters = input.filters || {};
-  const all = await loadProductionOrders(input.week, filters.workOrderId);
+  const all = await loadProductionSummaryOrders(input.week, filters.workOrderId);
   const arrangementsByOrder = await loadProductionArrangementMap(all, now);
+  let summaryOrders = all;
+  let summaryArrangementsByOrder = arrangementsByOrder;
+  // A deep link narrows the board to one work order, but the command-center
+  // summary must retain its historical scope-wide meaning.
+  if (input.includeSummary && filters.workOrderId) {
+    summaryOrders = await loadProductionSummaryOrders(input.week);
+    summaryArrangementsByOrder = await loadProductionArrangementMap(summaryOrders, now);
+  }
   let filtered = all.filter(order => matchesFilters(order, filters, input.week, arrangementsByOrder.get(order.id) || [], now));
   if (!filters.workOrderId && input.view === 'today') filtered = filtered.filter(order => isTodayTask(order, now));
   if (!filters.workOrderId && input.view === 'exceptions') filtered = filtered.filter(order => productionExceptionCodes(order, now).length > 0);
@@ -1074,10 +1145,24 @@ export async function loadProductionExecution(input: {
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const page = Math.min(Math.max(input.page || 1, 1), totalPages);
-  const items = filtered.slice((page - 1) * pageSize, page * pageSize).map(order => ({
-    ...serializeProductionOrder(order, now),
-    arrangements: arrangementsByOrder.get(order.id) || [],
-  }));
+  const offset = input.offset === undefined
+    ? (page - 1) * pageSize
+    : Math.min(Math.max(input.offset, 0), total);
+  const pageOrderIds = filtered.slice(offset, offset + pageSize).map(order => order.id);
+  const pageOrders = pageOrderIds.length
+    ? await prisma.workOrder.findMany({
+      where: { id: { in: pageOrderIds }, deletedAt: null },
+      include: productionExecutionInclude,
+    })
+    : [];
+  const pageOrderById = new Map(pageOrders.map(order => [order.id, order] as const));
+  const items = pageOrderIds.flatMap(id => {
+    const order = pageOrderById.get(id);
+    return order ? [{
+      ...serializeProductionOrder(order, now),
+      arrangements: arrangementsByOrder.get(order.id) || [],
+    }] : [];
+  });
   return {
     scope: input.week.scope,
     readOnly: input.week.scope === 'history',
@@ -1090,13 +1175,23 @@ export async function loadProductionExecution(input: {
       customers: [...new Set(all.map(order => text(order.customerName)).filter(Boolean))].sort((first, second) => first.localeCompare(second, 'zh-CN')),
     },
     pagination: { page, pageSize, total, totalPages },
+    ...(input.includeSummary ? {
+      summary: summarizeProductionRecords(
+        input.week,
+        summaryOrders.filter(isRootProductionOrder),
+        summaryArrangementsByOrder,
+        now,
+      ),
+    } : {}),
   };
 }
 
-export async function summarizeProduction(week: ProductionWeek) {
-  const now = new Date();
-  const orders = (await loadProductionOrders(week)).filter(isRootProductionOrder);
-  const arrangementsByOrder = await loadProductionArrangementMap(orders, now);
+function summarizeProductionRecords(
+  week: ProductionWeek,
+  orders: ProductionStatusOrderRecord[],
+  arrangementsByOrder: Map<string, ProductionArrangementView[]>,
+  now: Date,
+) {
   const stageCounts: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
   const stageQuantityTotals: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
   let targetQuantity = 0;
@@ -1206,6 +1301,13 @@ export async function summarizeProduction(week: ProductionWeek) {
       missingOrders: quantityMissingOrders,
     },
   };
+}
+
+export async function summarizeProduction(week: ProductionWeek) {
+  const now = new Date();
+  const orders = (await loadProductionSummaryOrders(week)).filter(isRootProductionOrder);
+  const arrangementsByOrder = await loadProductionArrangementMap(orders, now);
+  return summarizeProductionRecords(week, orders, arrangementsByOrder, now);
 }
 
 export async function loadProductionOrderById(id: string) {

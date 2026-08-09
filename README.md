@@ -59,10 +59,10 @@ docker compose up --build
 推送到 GitHub main 后，工作流会构建：
 
 ```text
-ghcr.io/gy3117577403-ai/hongmeng:v1.24.0
+ghcr.io/gy3117577403-ai/hongmeng:v1.25.0
 ```
 
-Sealos App Deploy 端口填 `3000`。`v1.24.0` 是本次待部署固定镜像；当前生产仍为 `v1.23.0`，完成生产发布前不要把候选版本写成已上线。`latest` 仅用于跟随最新构建。
+Sealos App Deploy 端口填 `3000`。`v1.25.0` 是本次待部署固定镜像；当前生产仍为 `v1.24.0`，完成生产发布前不要把候选版本写成已上线。`latest` 仅用于跟随最新构建。
 
 ## 平板交付方式
 

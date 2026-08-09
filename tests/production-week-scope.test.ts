@@ -3,6 +3,7 @@ import test from 'node:test';
 import { chinaDateKey } from '../lib/china-date';
 import {
   hasOriginalProductionDrawing,
+  hasNextProductionProcess,
   hasProductionSop,
   hasRequiredProductionDocuments,
   isProductionDueSoon,
@@ -10,6 +11,7 @@ import {
   naturalProductionWeek,
   productionFiltersFromSearchParams,
   productionRootWeekWhere,
+  productionSummaryInclude,
   productionWeekWhere,
 } from '../lib/production-execution';
 import {
@@ -148,6 +150,36 @@ test('production execution accepts exact dispatch metric quick filters', () => {
     quick: 'in_production,not_started,due_soon,has_next_process,waiting_transfer,not-a-filter',
   }));
   assert.deepEqual(filters.quick, ['in_production', 'not_started', 'due_soon', 'has_next_process', 'waiting_transfer']);
+});
+
+test('lightweight production scan excludes execution ledgers and keeps route status fields needed by filters', () => {
+  const stepSelect = productionSummaryInclude.processRoute.select.steps.select;
+  assert.deepEqual(stepSelect, { status: true, sequenceGroup: true });
+  assert.equal('executions' in stepSelect, false);
+  assert.equal('completions' in stepSelect, false);
+});
+
+test('next-process filter matches the serialized route transition semantics', () => {
+  const order = (stage: string, steps: Array<{ status: string; sequenceGroup: number }>) => ({
+    stage,
+    status: 'active',
+    processRoute: { steps },
+  }) as Parameters<typeof hasNextProductionProcess>[0];
+
+  assert.equal(hasNextProductionProcess(order('frontend', [
+    { status: 'current', sequenceGroup: 1 },
+    { status: 'pending', sequenceGroup: 2 },
+  ])), true);
+  assert.equal(hasNextProductionProcess(order('frontend', [
+    { status: 'current', sequenceGroup: 2 },
+    { status: 'pending', sequenceGroup: 1 },
+  ])), false);
+  assert.equal(hasNextProductionProcess(order('not_issued', [
+    { status: 'pending', sequenceGroup: 1 },
+  ])), true);
+  assert.equal(hasNextProductionProcess(order('completed', [
+    { status: 'pending', sequenceGroup: 2 },
+  ])), false);
 });
 
 test('due-soon uses the customer delivery day and a stable China-time 0-2 day window', () => {

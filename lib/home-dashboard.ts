@@ -12,10 +12,10 @@ import {
   compareProductionOrders,
   executionCompleteness,
   hasRequiredProductionDocuments,
-  loadProductionOrders,
+  loadProductionSummaryOrders,
   productionExceptionCodes,
   resolveProductionWeek,
-  type ProductionExecutionOrderRecord,
+  type ProductionSummaryOrderRecord,
 } from '@/lib/production-execution';
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
 import { issueStatusLabels } from '@/lib/issues';
@@ -96,11 +96,11 @@ function greeting(value: Date): string {
   return '晚上好';
 }
 
-function stageOf(order: ProductionExecutionOrderRecord) {
+function stageOf(order: ProductionSummaryOrderRecord) {
   return normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
 }
 
-function alertsFor(order: ProductionExecutionOrderRecord, now: Date): ProductionAlert[] {
+function alertsFor(order: ProductionSummaryOrderRecord, now: Date): ProductionAlert[] {
   const stage = stageOf(order);
   return getProductionAlerts({
     uncompletedQty: order.uncompletedQty,
@@ -121,7 +121,7 @@ function alertsFor(order: ProductionExecutionOrderRecord, now: Date): Production
   }, now);
 }
 
-function dueToday(order: ProductionExecutionOrderRecord, now: Date): boolean {
+function dueToday(order: ProductionSummaryOrderRecord, now: Date): boolean {
   if (stageOf(order) === 'completed' || !order.plannedAt) return false;
   const { start, end } = chinaDayBounds(now);
   return order.plannedAt >= start && order.plannedAt < end;
@@ -141,14 +141,14 @@ function hasAlert(alerts: ProductionAlert[], code: ProductionAlert['code']): boo
   return alerts.some(alert => alert.code === code);
 }
 
-function orderRoute(order: ProductionExecutionOrderRecord, definition: ActionDefinition): string {
+function orderRoute(order: ProductionSummaryOrderRecord, definition: ActionDefinition): string {
   const params = new URLSearchParams({ view: definition.view, quick: definition.quick });
   const keyword = text(order.specification) || text(order.code);
   if (keyword) params.set('keyword', keyword);
   return `/production?${params.toString()}`;
 }
 
-function actionItem(order: ProductionExecutionOrderRecord, definition: ActionDefinition): HomeActionItem {
+function actionItem(order: ProductionSummaryOrderRecord, definition: ActionDefinition): HomeActionItem {
   const customer = text(order.customerName) || '客户未设置';
   const specification = text(order.specification) || text(order.code) || '规格未设置';
   const stage = stageOf(order);
@@ -170,7 +170,7 @@ function actionItem(order: ProductionExecutionOrderRecord, definition: ActionDef
   };
 }
 
-function actionsFor(order: ProductionExecutionOrderRecord, now: Date): HomeActionItem[] {
+function actionsFor(order: ProductionSummaryOrderRecord, now: Date): HomeActionItem[] {
   const alerts = alertsFor(order, now);
   const exceptions = new Set(productionExceptionCodes(order, now));
   const definitions: ActionDefinition[] = [];
@@ -470,7 +470,7 @@ export async function loadHomeDashboard(now = new Date()): Promise<HomeDashboard
   const workDateKey = ymd(now) || now.toISOString().slice(0, 10);
   const workDate = parseWorkDate(workDateKey).value;
   const [orders, persistedIssues, warehouseTasks, materialTasks, laborPools] = await Promise.all([
-    loadProductionOrders(week),
+    loadProductionSummaryOrders(week),
     prisma.issue.findMany({
       where: { deletedAt: null, status: { not: 'closed' } },
       include: { workOrder: { select: { id: true, customerName: true, specification: true, code: true } } },

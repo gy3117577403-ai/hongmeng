@@ -12,18 +12,32 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
+    const requestStartedAt = performance.now();
     const user = await requireUser();
-    await prisma.$transaction(async tx => {
-      await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
-      await reconcileAutomaticallyReleasedProductionPlanBatches(tx, { actorId: user.id });
-    }, { maxWait: 10_000, timeout: 180_000 });
+    const authenticatedAt = performance.now();
+    if (req.nextUrl.searchParams.get('skipReconcile') !== '1') {
+      await prisma.$transaction(async tx => {
+        await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
+        await reconcileAutomaticallyReleasedProductionPlanBatches(tx, { actorId: user.id });
+      }, { maxWait: 10_000, timeout: 180_000 });
+    }
+    const reconciledAt = performance.now();
     const week = await resolveProductionWeek(
       req.nextUrl.searchParams.get('weekStart'),
       req.nextUrl.searchParams.get('weekEnd'),
       req.nextUrl.searchParams.get('scope'),
     );
     const [data, navigation] = await Promise.all([summarizeProduction(week), loadProductionWeekNavigation()]);
-    return NextResponse.json({ ok: true, data: { ...data, navigation } });
+    const loadedAt = performance.now();
+    const response = NextResponse.json({ ok: true, data: { ...data, navigation } });
+    response.headers.set('Cache-Control', 'private, no-store');
+    response.headers.set('Server-Timing', [
+      `auth;dur=${(authenticatedAt - requestStartedAt).toFixed(1)}`,
+      `reconcile;dur=${(reconciledAt - authenticatedAt).toFixed(1)}`,
+      `load;dur=${(loadedAt - reconciledAt).toFixed(1)}`,
+      `total;dur=${(loadedAt - requestStartedAt).toFixed(1)}`,
+    ].join(', '));
+    return response;
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     const message = error instanceof Error ? error.message : '生产摘要加载失败';
