@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { LaborAccessRole } from '@prisma/client';
+import { AccessProfileKey, LaborAccessRole, Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   forbidden,
@@ -9,48 +9,21 @@ import {
   UnauthorizedError,
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
+import { validateNewPassword } from '@/lib/password-policy';
 import { prisma } from '@/lib/prisma';
+import {
+  AccessGrantInputError,
+  adminUserInclude,
+  departmentListSelect,
+  legacyLaborRoleForProfile,
+  parseAccessProfileKey,
+  prepareAccessGrant,
+  serializeAdminUser,
+  type AccessGrantInput,
+} from '@/lib/user-access-admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-
-const employeeSelect = {
-  id: true,
-  employeeNo: true,
-  name: true,
-  team: true,
-  isActive: true,
-} as const;
-
-function serializeUser(user: {
-  id: string;
-  username: string;
-  displayName: string;
-  isActive: boolean;
-  laborRole: LaborAccessRole;
-  employeeId: string | null;
-  employee: {
-    id: string;
-    employeeNo: string;
-    name: string;
-    team: string | null;
-    isActive: boolean;
-  } | null;
-  createdAt: Date;
-  updatedAt: Date;
-}) {
-  return {
-    id: user.id,
-    username: user.username,
-    displayName: user.displayName,
-    isActive: user.isActive,
-    laborRole: user.laborRole,
-    employeeId: user.employeeId,
-    employee: user.employee,
-    createdAt: user.createdAt.toISOString(),
-    updatedAt: user.updatedAt.toISOString(),
-  };
-}
 
 function parseLaborRole(value: unknown): LaborAccessRole | null {
   return value === LaborAccessRole.ADMIN
@@ -60,77 +33,137 @@ function parseLaborRole(value: unknown): LaborAccessRole | null {
     : null;
 }
 
+function inferredProfile(
+  requestedProfile: unknown,
+  legacyRole: LaborAccessRole,
+  departmentCode?: string | null,
+): AccessProfileKey {
+  const explicit = parseAccessProfileKey(requestedProfile);
+  if (explicit) return explicit;
+  if (legacyRole === LaborAccessRole.ADMIN) return AccessProfileKey.ADMIN_GLOBAL;
+  if (legacyRole === LaborAccessRole.TEAM_LEAD) return AccessProfileKey.WORKSHOP_TEAM_LEADER;
+  if (departmentCode === 'FINANCE') return AccessProfileKey.FINANCE_ACCOUNT_ONLY;
+  if (departmentCode === 'GM_OFFICE') return AccessProfileKey.GM_OFFICE_READER_APPROVER;
+  if (departmentCode === 'PRODUCTION') return AccessProfileKey.FIELD_REPORTER;
+  return AccessProfileKey.DEPARTMENT_FULL;
+}
+
 export async function GET() {
   try {
     await requireAdmin();
-    const users = await prisma.user.findMany({
-      include: { employee: { select: employeeSelect } },
-      orderBy: [{ isActive: 'desc' }, { createdAt: 'asc' }],
+    const [users, departments, productionTeams] = await Promise.all([
+      prisma.user.findMany({
+        include: adminUserInclude,
+        orderBy: [{ isActive: 'desc' }, { createdAt: 'asc' }],
+      }),
+      prisma.department.findMany({
+        select: departmentListSelect,
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      }),
+      prisma.productionTeam.findMany({
+        where: { isActive: true },
+        select: { id: true, code: true, name: true, legacyTeamName: true },
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      }),
+    ]);
+    return NextResponse.json({
+      ok: true,
+      users: users.map(user => serializeAdminUser(user, { productionTeams })),
+      departments,
+      productionTeams,
     });
-    return NextResponse.json({ ok: true, users: users.map(serializeUser) });
-  } catch (e) {
-    if (e instanceof UnauthorizedError) return unauthorized();
-    if (e instanceof ForbiddenError) return forbidden('只有管理员可以查看账号');
+  } catch (error) {
+    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('只有管理员可以查看账号');
+    console.error('account list failed', error);
     return NextResponse.json({ ok: false, error: '账号列表加载失败' }, { status: 500 });
   }
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(request: NextRequest) {
   try {
     const current = await requireAdmin();
-    const body = await req.json().catch(() => ({})) as {
+    const body = await request.json().catch(() => ({})) as {
       username?: string;
       displayName?: string;
       password?: string;
       laborRole?: unknown;
       employeeId?: unknown;
-    };
+    } & AccessGrantInput;
     const username = String(body.username || '').trim();
-    const displayName = String(body.displayName || '').trim() || username;
     const password = String(body.password || '');
-    const laborRole = parseLaborRole(body.laborRole) || LaborAccessRole.EMPLOYEE;
     const employeeId = String(body.employeeId || '').trim() || null;
-
     if (!username) return NextResponse.json({ ok: false, error: '账号不能为空' }, { status: 400 });
-    if (password.length < 6) return NextResponse.json({ ok: false, error: '初始密码至少 6 位' }, { status: 400 });
-    if (laborRole !== LaborAccessRole.ADMIN && !employeeId) {
-      return NextResponse.json({ ok: false, error: '班组长或员工账号必须绑定员工档案' }, { status: 400 });
-    }
-    const employee = employeeId
-      ? await prisma.employee.findFirst({ where: { id: employeeId, isActive: true } })
-      : null;
-    if (employeeId && !employee) {
-      return NextResponse.json({ ok: false, error: '请选择有效的在职员工档案' }, { status: 400 });
-    }
-    if (laborRole === LaborAccessRole.TEAM_LEAD && !String(employee?.team || '').trim()) {
-      return NextResponse.json({ ok: false, error: '班组长绑定的员工档案必须设置班组' }, { status: 400 });
-    }
+    const passwordError = validateNewPassword(password, username);
+    if (passwordError) return NextResponse.json({ ok: false, error: passwordError }, { status: 400 });
 
-    const user = await prisma.user.create({
-      data: {
-        username,
-        displayName: displayName.slice(0, 80),
-        passwordHash: await bcrypt.hash(password, 10),
-        isActive: true,
-        laborRole,
-        employeeId: laborRole === LaborAccessRole.ADMIN ? null : employeeId,
-      },
-      include: { employee: { select: employeeSelect } },
-    });
+    const user = await prisma.$transaction(async tx => {
+      const employee = employeeId
+        ? await tx.employee.findFirst({
+          where: { id: employeeId, isActive: true },
+          select: {
+            id: true,
+            name: true,
+            departmentId: true,
+            team: true,
+            departmentRef: { select: { code: true } },
+          },
+        })
+        : null;
+      if (employeeId && !employee) throw new AccessGrantInputError('请选择有效的在职员工档案');
+      const legacyRole = parseLaborRole(body.laborRole) || LaborAccessRole.EMPLOYEE;
+      const profile = inferredProfile(body.profileKey, legacyRole, employee?.departmentRef?.code);
+      const grant = await prepareAccessGrant(tx, { ...body, profileKey: profile }, employee);
+      if (grant.grantType !== 'PRIMARY') {
+        throw new AccessGrantInputError('新账号必须先建立主部门权限，兼岗和代班请在账号开通后追加');
+      }
+      const resolvedRole = legacyLaborRoleForProfile(profile);
+      const created = await tx.user.create({
+        data: {
+          username,
+          displayName: (String(body.displayName || '').trim() || employee?.name || username).slice(0, 80),
+          passwordHash: await bcrypt.hash(password, 10),
+          isActive: true,
+          accountStatus: 'ACTIVE',
+          mustChangePassword: true,
+          laborRole: resolvedRole,
+          employeeId: profile === AccessProfileKey.ADMIN_GLOBAL ? null : employeeId,
+        },
+      });
+      await tx.userAccessGrant.create({
+        data: {
+          userId: created.id,
+          ...grant,
+          grantedById: current.id,
+        },
+      });
+      return tx.user.findUniqueOrThrow({ where: { id: created.id }, include: adminUserInclude });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+
     await logOp({
       userId: current.id,
       action: 'create_user',
       targetType: 'user',
       targetId: user.id,
-      detail: { username, laborRole, employeeId: user.employeeId },
+      detail: {
+        username,
+        laborRole: user.laborRole,
+        employeeId: user.employeeId,
+        profileKey: user.accessGrants[0]?.profile,
+        departmentId: user.accessGrants[0]?.departmentId,
+      },
     });
-    return NextResponse.json({ ok: true, user: serializeUser(user) });
-  } catch (e) {
-    if (e instanceof UnauthorizedError) return unauthorized();
-    if (e instanceof ForbiddenError) return forbidden('只有管理员可以新增账号');
-    if ((e as { code?: string }).code === 'P2002') {
+    return NextResponse.json({ ok: true, user: serializeAdminUser(user) }, { status: 201 });
+  } catch (error) {
+    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('只有管理员可以新增账号');
+    if (error instanceof AccessGrantInputError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+    }
+    if ((error as { code?: string }).code === 'P2002') {
       return NextResponse.json({ ok: false, error: '账号已存在，或该员工已绑定其他账号' }, { status: 409 });
     }
+    console.error('create account failed', error);
     return NextResponse.json({ ok: false, error: '新增账号失败' }, { status: 500 });
   }
 }

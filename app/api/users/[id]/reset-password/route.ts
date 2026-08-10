@@ -8,6 +8,7 @@ import {
   UnauthorizedError,
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
+import { validateNewPassword } from '@/lib/password-policy';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
@@ -18,12 +19,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const current = await requireAdmin();
     const body = await req.json().catch(() => ({})) as { password?: string };
     const password = String(body.password || '');
-    if (password.length < 6) return NextResponse.json({ ok: false, error: '新密码至少 6 位' }, { status: 400 });
 
     const old = await prisma.user.findUnique({ where: { id: params.id } });
     if (!old) return NextResponse.json({ ok: false, error: '账号不存在' }, { status: 404 });
+    const passwordError = validateNewPassword(password, old.username);
+    if (passwordError) return NextResponse.json({ ok: false, error: passwordError }, { status: 400 });
 
-    await prisma.user.update({ where: { id: params.id }, data: { passwordHash: await bcrypt.hash(password, 10) } });
+    await prisma.user.update({
+      where: { id: params.id },
+      data: {
+        passwordHash: await bcrypt.hash(password, 10),
+        mustChangePassword: true,
+        sessionVersion: { increment: 1 },
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
+    });
     await logOp({ userId: current.id, action: 'reset_user_password', targetType: 'user', targetId: old.id, detail: { username: old.username } });
     return NextResponse.json({ ok: true });
   } catch (e) {

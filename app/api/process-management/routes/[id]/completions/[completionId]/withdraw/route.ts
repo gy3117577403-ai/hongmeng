@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { hasCapability } from '@/lib/department-access';
 import {
   previewProcessCompletionWithdrawal,
   ProcessCompletionWithdrawalError,
@@ -17,8 +18,7 @@ function serviceError(error: ProcessCompletionWithdrawalError) {
 }
 
 function canWithdraw(user: Awaited<ReturnType<typeof requireUser>>): boolean {
-  return user.laborRole === 'ADMIN'
-    || user.dailyPlanningRoles.includes('WORKSHOP_SUPERVISOR');
+  return hasCapability(user.access, 'PRODUCTION', 'UPDATE');
 }
 
 export async function GET(

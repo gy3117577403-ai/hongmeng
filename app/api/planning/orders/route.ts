@@ -21,6 +21,7 @@ import type {
   ProductionPlanningSummaryDTO,
   ProductionPlanningWeekDTO,
 } from '@/types';
+import { resolveProductionEntityScope } from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -47,12 +48,15 @@ function addDays(value: Date, days: number): Date {
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser();
-    await prisma.$transaction(async tx => {
-      await reconcileLegacyDeletedPlanQuantities(tx, { actorId: user.id });
-      await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
-      await reconcileAutomaticallyReleasedProductionPlanBatches(tx, { actorId: user.id });
-      await reconcileProductionPlanDrawingLinks(tx);
-    }, { maxWait: 10_000, timeout: 180_000 });
+    const productionScope = resolveProductionEntityScope(user);
+    if (productionScope.canReconcile) {
+      await prisma.$transaction(async tx => {
+        await reconcileLegacyDeletedPlanQuantities(tx, { actorId: user.id });
+        await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
+        await reconcileAutomaticallyReleasedProductionPlanBatches(tx, { actorId: user.id });
+        await reconcileProductionPlanDrawingLinks(tx);
+      }, { maxWait: 10_000, timeout: 180_000 });
+    }
     const keyword = String(req.nextUrl.searchParams.get('keyword') || '').trim().slice(0, 160);
     const status = String(req.nextUrl.searchParams.get('status') || '').trim();
     const customer = String(req.nextUrl.searchParams.get('customer') || '').trim().slice(0, 120);

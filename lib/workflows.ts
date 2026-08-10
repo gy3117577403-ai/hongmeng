@@ -1,4 +1,9 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import {
+  productionTeamScopeWhere,
+  type ProductionEntityScope,
+} from '@/lib/production-access-scope';
 import { chinaDateKey } from '@/lib/china-date';
 import { dateKeyFromDatabase } from '@/lib/attendance';
 import { changeCode, changeStatusLabels, changeTypeLabels } from '@/lib/changes';
@@ -625,6 +630,7 @@ export type WorkflowCenterFilters = {
   weekScope?: WorkflowWeekScope;
   weekStartDate?: string;
   laborEmployeeTeam?: string;
+  productionScope?: ProductionEntityScope;
 };
 
 export function workflowWeekNavigationFromBatches(
@@ -669,6 +675,12 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   const now = Date.now();
   const nowDate = new Date(now);
   const currentWeek = workflowWeekRanges(nowDate).current;
+  const productionTeamWhere = filters.productionScope
+    ? productionTeamScopeWhere(filters.productionScope) as Prisma.ProductionTeamWhereInput | null
+    : null;
+  const productionTaskScopeWhere: Prisma.DailyProcessTaskListRelationFilter | undefined = productionTeamWhere
+    ? { some: { plan: { team: productionTeamWhere } } }
+    : undefined;
   const [issues, changes, productionBatches, standaloneProductionOrders] = await Promise.all([
     prisma.issue.findMany({
       where: { deletedAt: null },
@@ -700,7 +712,11 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       take: 500,
     }),
     prisma.productionPlanBatch.findMany({
-      where: { deletedAt: null, planOrder: { deletedAt: null } },
+      where: {
+        deletedAt: null,
+        planOrder: { deletedAt: null },
+        ...(productionTaskScopeWhere ? { dailyProcessTasks: productionTaskScopeWhere } : {}),
+      },
       select: {
         id: true,
         batchNo: true,
@@ -939,7 +955,12 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       take: 5000,
     }),
     prisma.workOrder.findMany({
-      where: { deletedAt: null, planActive: true, productionPlanBatch: null },
+      where: {
+        deletedAt: null,
+        planActive: true,
+        productionPlanBatch: null,
+        ...(productionTaskScopeWhere ? { dailyProcessTasks: productionTaskScopeWhere } : {}),
+      },
       select: {
         id: true, code: true, specification: true, customerName: true, productName: true, priority: true, stage: true,
         status: true, plannedAt: true, deliveryDay: true, updatedAt: true, productionOwner: true, remark: true,

@@ -5,6 +5,11 @@ import {
   adjustProductionQuantities,
   ProductionQuantityAdjustmentServiceError,
 } from '@/lib/production-quantity-adjustment-service';
+import {
+  assertProductionScopeWrite,
+  ProductionAccessScopeError,
+  resolveProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +26,10 @@ type QuantityAdjustmentBody = {
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
+    const productionScope = resolveProductionEntityScope(user);
+    assertProductionScopeWrite(productionScope);
+    const scopedOrder = await loadProductionOrderById(params.id, productionScope);
+    if (!scopedOrder) return NextResponse.json({ ok: false, error: '工单不存在或不在本人生产范围内' }, { status: 404 });
     const body = await req.json().catch(() => ({})) as QuantityAdjustmentBody;
     await adjustProductionQuantities({
       workOrderId: params.id,
@@ -33,10 +42,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       userId: user.id,
       actor: user.displayName || user.username,
     });
-    const workOrder = await loadProductionOrderById(params.id);
+    const workOrder = await loadProductionOrderById(params.id, productionScope);
     return NextResponse.json({ ok: true, data: workOrder ? serializeProductionOrder(workOrder) : null });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof ProductionQuantityAdjustmentServiceError) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }

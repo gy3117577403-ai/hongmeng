@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import { prisma } from '@/lib/prisma';
 
 export default async function RetiredProcessManagementPage({
@@ -7,8 +7,7 @@ export default async function RetiredProcessManagementPage({
 }: {
   searchParams: { workOrderId?: string };
 }) {
-  const user = await currentUser();
-  if (!user) redirect('/login?next=%2Fworkspace%2Fprocesses');
+  await requirePageAccess('/workspace/processes');
   const workOrderId = String(searchParams.workOrderId || '').trim();
   if (workOrderId) {
     const workOrder = await prisma.workOrder.findUnique({

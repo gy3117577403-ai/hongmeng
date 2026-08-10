@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  ForbiddenError,
+  forbidden,
+  requireCapability,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import { serializeAbnormalTimeEvent } from '@/lib/attendance';
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
@@ -19,7 +25,7 @@ const include = {
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await requireUser();
+    const user = await requireCapability('QUALITY', 'EXECUTE_WORKFLOW');
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const resolutionNote = cleanProcessText(body.resolutionNote, 1000);
     if (!resolutionNote) return NextResponse.json({ ok: false, error: '请填写异常处理结果' }, { status: 400 });
@@ -46,6 +52,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true, event: serializeAbnormalTimeEvent(event) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('仅质量部或管理员可以关闭异常工时');
     console.error('resolve abnormal time failed', error);
     return NextResponse.json({ ok: false, error: '关闭异常工时失败' }, { status: 500 });
   }

@@ -71,6 +71,7 @@ test('employee serialization keeps position and team as separate profile fields'
     employeeNo: '0001',
     name: '林波',
     department: '生产',
+    departmentId: null,
     position: '压接操作员',
     team: '前端一组',
     hireDate: new Date('2020-05-06T00:00:00.000Z'),

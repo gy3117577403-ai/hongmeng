@@ -20,10 +20,18 @@ MAX_UPLOAD_SIZE_MB="50"
 # 必须以 Sealos 密钥环境变量保存，不要写进源码、普通配置表或截图。
 WECOM_ROBOT_WEBHOOK_URL="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=替换为真实密钥"
 SEED_ADMIN_USERNAME="admin"
-SEED_ADMIN_PASSWORD="123"
+SEED_ADMIN_PASSWORD=""
 SEED_RESET_ADMIN_PASSWORD="false"
 ```
 6. 健康检查：`/api/health`。
+
+### 管理员初始化与重置
+
+- 全新数据库首次启动前，必须在 Sealos 密钥环境变量中为 `SEED_ADMIN_PASSWORD` 填写一次性强密码：至少 8 位，不得使用常见密码、全部重复字符，也不得包含完整管理员账号名。种子脚本不会再提供默认密码。
+- 已有管理员且 `SEED_RESET_ADMIN_PASSWORD=false` 时，可以删除或留空 `SEED_ADMIN_PASSWORD`；重启不会读取、校验或改写现有密码，也不会重新启用已停用或暂停的管理员。
+- 只有明确需要恢复管理员时，才同时填写新的强密码并临时设置 `SEED_RESET_ADMIN_PASSWORD=true`。该操作会启用账号、使旧会话失效并标记为下次登录需要改密。
+- 重置成功后立即把 `SEED_RESET_ADMIN_PASSWORD` 改回 `false`，并从 Sealos 环境变量中清除 `SEED_ADMIN_PASSWORD`。
+- 常规启动只会维护“已经是管理员”的引导账号及其 `ADMIN_GLOBAL` 主授权；授权是否启用跟随当前账号状态，因此不会借此绕过停用状态。若 `SEED_ADMIN_USERNAME` 已被普通账号占用，启动会拒绝静默提权；确需提升时必须提供强密码并显式执行一次重置，旧会话也会同步失效。
 
 ## 企业微信试发
 

@@ -13,6 +13,7 @@ function employee(id: string, employeeNo: string, name: string, hireDate: Date |
     employeeNo,
     name,
     department: '生产部',
+    departmentId: null,
     position: '岗位明细',
     team: '装配组',
     hireDate,

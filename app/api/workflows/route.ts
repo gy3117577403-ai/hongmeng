@@ -5,6 +5,12 @@ import { parseWeek } from '@/lib/weekly-work-orders';
 import type { WorkflowEntityType, WorkflowProcessStatus, WorkflowWeekScope } from '@/types';
 import { chinaWeekRange } from '@/lib/production-planning';
 import { reconcileCurrentProductionCarryovers } from '@/lib/production-carryovers';
+import { hasCapability } from '@/lib/department-access';
+import {
+  assertProductionScopeRead,
+  ProductionAccessScopeError,
+  resolveProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -52,8 +58,18 @@ export async function GET(req: NextRequest) {
     if (weekStartDate && !parseWeek(weekStartDate)) {
       return NextResponse.json({ ok: false, error: '历史生产周日期格式不正确' }, { status: 400 });
     }
+    const productionScope = resolveProductionEntityScope(user);
+    const productionOnly = hasCapability(user.access, 'PRODUCTION', 'READ')
+      && !hasCapability(user.access, 'QUALITY', 'READ')
+      && !hasCapability(user.access, 'ENGINEERING', 'READ');
+    if (entityType === 'production' || entityType === 'all' || productionOnly) {
+      assertProductionScopeRead(productionScope);
+    }
+    if (productionOnly && entityType !== 'production' && entityType !== 'all') {
+      return forbidden('车间账号只能查看本人生产范围内的流程');
+    }
 
-    if (weekScope === 'current') {
+    if (weekScope === 'current' && productionScope.canReconcile) {
       await reconcileCurrentProductionCarryovers({ targetWeekStart: chinaWeekRange(new Date()).start, actorId: user.id });
     }
 
@@ -69,10 +85,14 @@ export async function GET(req: NextRequest) {
       laborEmployeeTeam: user.laborRole === 'TEAM_LEAD'
         ? String(user.employee?.team || '__UNBOUND_TEAM_LEAD__').trim()
         : undefined,
+      productionScope,
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     console.error('workflow center load failed', error);
     return NextResponse.json({ ok: false, error: '流程中心加载失败' }, { status: 500 });
   }

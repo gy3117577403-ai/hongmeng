@@ -1,6 +1,6 @@
-import { notFound, redirect } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import SkillPrintToolbar from '@/components/SkillPrintToolbar';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import { prisma } from '@/lib/prisma';
 import '../../../skill-print.css';
 
@@ -21,10 +21,8 @@ export default async function SkillTemplatePrintPage({
 }: {
   params: { id: string };
 }) {
-  const user = await currentUser();
-  if (!user) {
-    redirect(`/login?next=${encodeURIComponent(`/workspace/employees/skills/templates/${params.id}/print`)}`);
-  }
+  const next = `/workspace/employees/skills/templates/${params.id}/print`;
+  const user = await requirePageAccess(next);
 
   const template = await prisma.skillAssessmentTemplate.findUnique({
     where: { id: params.id },

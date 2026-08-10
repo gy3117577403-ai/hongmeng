@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  ForbiddenError,
+  forbidden,
+  requireUser,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import {
   attendanceRange,
   parseAbnormalCategory,
@@ -13,6 +19,7 @@ import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
+import { canMutateAbnormalTimeEvent } from '@/lib/critical-operation-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -79,6 +86,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
+    if (!canMutateAbnormalTimeEvent(user.access, 'CREATE')) throw new ForbiddenError();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const title = cleanProcessText(body.title, 160);
     if (!title) return NextResponse.json({ ok: false, error: '请填写异常标题' }, { status: 400 });
@@ -143,6 +151,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, event: serializeAbnormalTimeEvent(event) }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('仅人事部、质量部或管理员可以新增异常工时');
     const message = error instanceof Error ? error.message : '异常工时保存失败';
     console.error('create abnormal time event failed', error);
     return NextResponse.json({ ok: false, error: message }, { status: 400 });

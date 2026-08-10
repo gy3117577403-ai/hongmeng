@@ -1,6 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { UnauthorizedError, requireUser, unauthorized } from '@/lib/auth';
+import {
+  ForbiddenError,
+  forbidden,
+  requireCapability,
+  UnauthorizedError,
+  unauthorized,
+} from '@/lib/auth';
 import { chinaDateKey } from '@/lib/china-date';
+import {
+  canMutateDailyShipment,
+  dailyShipmentRequiredAction,
+} from '@/lib/critical-operation-access';
 import {
   addDailyShipmentItems,
   cancelDailyShipmentItem,
@@ -12,6 +22,7 @@ import {
   reverseDailyShipment,
   updateDailyShipmentItem,
 } from '@/lib/daily-shipment-service';
+import { canRunGetReconciliation } from '@/lib/get-reconciliation-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,6 +40,7 @@ function requestKey(request: NextRequest, body: Record<string, unknown>): unknow
 
 function errorResponse(error: unknown, context: string): NextResponse {
   if (error instanceof UnauthorizedError) return unauthorized();
+  if (error instanceof ForbiddenError) return forbidden('仅计划部或管理员可以执行该出货计划操作');
   if (error instanceof DailyShipmentServiceError) {
     return NextResponse.json({
       ok: false,
@@ -56,9 +68,14 @@ function errorResponse(error: unknown, context: string): NextResponse {
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await requireUser();
+    const user = await requireCapability('PLANNING', 'READ');
     const shipDate = request.nextUrl.searchParams.get('date') || chinaDateKey(new Date());
-    const data = await loadDailyShipmentWorkbench({ shipDate, actorUserId: user.id });
+    const data = await loadDailyShipmentWorkbench({
+      shipDate,
+      ...(canRunGetReconciliation(user.access, ['PLANNING'])
+        ? { actorUserId: user.id }
+        : {}),
+    });
     return NextResponse.json({ ok: true, data });
   } catch (error) {
     return errorResponse(error, 'load workbench');
@@ -67,9 +84,13 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireUser({ write: 'self' });
+    const user = await requireCapability('PLANNING', 'READ');
     const body = asRecord(await request.json());
     const action = String(body.action || '').trim();
+    if (!dailyShipmentRequiredAction(action)) {
+      throw new DailyShipmentServiceError('不支持的日出货计划操作', 'SHIPMENT_ACTION_INVALID');
+    }
+    if (!canMutateDailyShipment(user.access, action)) throw new ForbiddenError();
     const idempotencyKey = requestKey(request, body);
     let result;
     switch (action) {

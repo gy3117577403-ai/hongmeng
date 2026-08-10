@@ -31,6 +31,10 @@ import {
   resolveWeeklyProcessWorkerPreset,
 } from '@/lib/weekly-process-worker-preset-service';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
+import {
+  productionTeamScopeWhere,
+  type ProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export type WeeklyProcessState = 'READY' | 'REVIEW' | 'WAITING' | 'BLOCKED' | 'PARTIAL' | 'PLANNED' | 'COMPLETED';
 
@@ -178,12 +182,17 @@ export async function getWeeklyProcessOverview(input: {
   processKey?: string;
   completion?: string;
   sort?: string;
+  productionScope?: ProductionEntityScope;
 }) {
   const batchWeek = productionBatchWeekStartWindow(input.weekDate);
   const taskWeek = productionWeekDateBounds(input.weekDate);
+  const teamWhere = input.productionScope
+    ? productionTeamScopeWhere(input.productionScope)
+    : null;
+  const teamRestricted = input.productionScope?.level === 'TEAM';
   const [teams, batches, presets, employeeOptions] = await Promise.all([
     prisma.productionTeam.findMany({
-      where: { isActive: true },
+      where: { isActive: true, ...(teamWhere || {}) },
       include: {
         processCapabilities: {
           where: { isActive: true, processDefinition: { isActive: true } },
@@ -241,6 +250,7 @@ export async function getWeeklyProcessOverview(input: {
           productionPlanBatchId: { in: batchIds },
           workDate: { gte: taskWeek.startDate, lt: taskWeek.endExclusiveDate },
           status: { notIn: [DailyProcessTaskStatus.CANCELLED, DailyProcessTaskStatus.CARRIED_OVER] },
+          ...(teamWhere ? { plan: { team: teamWhere } } : {}),
         },
         include: {
           plan: { include: { team: true } },
@@ -299,6 +309,7 @@ export async function getWeeklyProcessOverview(input: {
       batchQuantity: batch.quantity,
     };
     if (!workOrder || !route || !['confirmed', 'in_progress', 'completed'].includes(route.status)) {
+      if (teamRestricted) continue;
       const code = !workOrder ? 'WORK_ORDER_NOT_READY' : !route ? 'MISSING_PROCESS_ROUTE' : 'PROCESS_ROUTE_NOT_PUBLISHED';
       items.push({
         id: `${batch.id}:route`,
@@ -341,6 +352,7 @@ export async function getWeeklyProcessOverview(input: {
     }
     const activeSteps = route.steps.filter(step => step.status !== 'skipped');
     if (!activeSteps.length) {
+      if (teamRestricted) continue;
       items.push({
         id: `${batch.id}:empty-route`,
         ...base,
@@ -384,6 +396,7 @@ export async function getWeeklyProcessOverview(input: {
       const eligibleTeams = step.processDefinitionId
         ? eligibleTeamsByProcess.get(step.processDefinitionId) || []
         : [];
+      if (teamRestricted && eligibleTeams.length === 0) continue;
       if (input.teamId === '__UNASSIGNED__' && eligibleTeams.length > 0) continue;
       if (
         input.teamId

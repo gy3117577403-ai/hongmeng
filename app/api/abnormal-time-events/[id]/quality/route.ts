@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  ForbiddenError,
+  forbidden,
+  requireCapability,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import { segmentsFromJson, serializeAbnormalTimeEvent } from '@/lib/attendance';
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
@@ -19,7 +25,7 @@ const include = {
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await requireUser();
+    const user = await requireCapability('QUALITY', 'UPDATE');
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const decision = body.decision === 'rejected' ? 'rejected' as const : body.decision === 'confirmed' ? 'confirmed' as const : null;
     if (!decision) return NextResponse.json({ ok: false, error: '请选择确认或驳回' }, { status: 400 });
@@ -102,6 +108,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true, event: serializeAbnormalTimeEvent(event) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('仅质量部或管理员可以确认异常工时');
     const message = error instanceof Error ? error.message : '品质确认失败';
     console.error('quality confirm abnormal time failed', error);
     return NextResponse.json({ ok: false, error: message }, { status: 400 });

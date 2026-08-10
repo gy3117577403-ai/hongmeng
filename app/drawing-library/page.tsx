@@ -1,8 +1,7 @@
-import { redirect } from 'next/navigation';
 import { DrawingLibraryShell } from '@/components/DrawingLibraryShell';
-import { currentUser } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { isVisibleDrawingLibraryItem, serializeDrawingLibraryItem } from '@/lib/drawing-library';
+import { requirePageAccess } from '@/lib/page-access';
 import './drawing-library-workbench.css';
 
 const includeFiles = {
@@ -26,10 +25,9 @@ type DrawingLibraryPageProps = {
 };
 
 export default async function DrawingLibraryPage({ searchParams }: DrawingLibraryPageProps) {
-  const user = await currentUser();
-  if (!user) redirect('/login');
-
   const requestedItemId = Array.isArray(searchParams?.itemId) ? searchParams?.itemId[0] : searchParams?.itemId;
+  const next = requestedItemId ? `/drawing-library?itemId=${encodeURIComponent(requestedItemId)}` : '/drawing-library';
+  const user = await requirePageAccess('/drawing-library', next);
 
   const [items, requestedItem, categories] = await Promise.all([
     prisma.drawingLibraryItem.findMany({

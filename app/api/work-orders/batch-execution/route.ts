@@ -6,6 +6,12 @@ import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { prepareExecutionUpdate, type ExecutionUpdateInput } from '@/lib/work-order-execution';
 import { isActiveProductionWorkOrder } from '@/lib/work-orders';
+import { productionWorkOrderScopeWhere } from '@/lib/production-execution';
+import {
+  assertProductionScopeWrite,
+  ProductionAccessScopeError,
+  resolveProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,6 +37,8 @@ function executionInput(operation: BatchOperation, value: unknown, remark: unkno
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
+    const productionScope = resolveProductionEntityScope(user);
+    assertProductionScopeWrite(productionScope);
     const body = await req.json().catch(() => ({})) as BatchBody;
     const ids = Array.isArray(body.ids) ? [...new Set(body.ids.map(value => String(value || '').trim()).filter(Boolean))] : [];
     const operation = String(body.operation || '') as BatchOperation;
@@ -44,7 +52,9 @@ export async function POST(req: NextRequest) {
       }, { status: 409 });
     }
 
-    const orders = await prisma.workOrder.findMany({ where: { id: { in: ids }, deletedAt: null } });
+    const orders = await prisma.workOrder.findMany({
+      where: { id: { in: ids }, deletedAt: null, ...productionWorkOrderScopeWhere(productionScope) },
+    });
     const byId = new Map(orders.map(order => [order.id, order]));
     const prepared: Array<{ old: WorkOrder; update: NonNullable<ReturnType<typeof prepareExecutionUpdate>['update']> }> = [];
     const failed: Array<{ id: string; ok: false; error: string }> = [];
@@ -117,6 +127,9 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     console.error('batch update work order execution failed', error);
     return NextResponse.json({ ok: false, error: '批量更新生产执行信息失败' }, { status: 500 });
   }

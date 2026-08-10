@@ -856,6 +856,190 @@ button.hr-metric-card { cursor: pointer; }
   .hr-analytics-summary > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* 第一阶段：员工主档、账号与部门权限联动 */
+.hr-account-permission-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #dbe6f5;
+  border-radius: 14px;
+  background: linear-gradient(120deg, #fbfdff, #fffdfa);
+  box-shadow: 0 8px 22px rgba(36, 64, 99, .055);
+}
+
+.hr-account-permission-card > header {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.hr-account-permission-card > header > span {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--hr-blue-soft);
+  color: var(--hr-blue);
+}
+
+.hr-account-permission-card > header > span svg { width: 18px; }
+.hr-account-permission-card > header > div { min-width: 0; display: grid; gap: 2px; }
+.hr-account-permission-card > header strong { color: #263b54; font-size: 13px; }
+.hr-account-permission-card > header small { overflow: hidden; color: #8492a4; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.hr-account-permission-card > header > a {
+  min-height: 36px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #bcd0f3;
+  border-radius: 10px;
+  background: #fff;
+  color: var(--hr-blue);
+  font-size: 10px;
+  font-weight: 850;
+  text-decoration: none;
+}
+.hr-account-permission-card > header > a svg { width: 14px; }
+
+.hr-account-state-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid #e4e9f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.hr-account-state-grid article {
+  min-width: 0;
+  min-height: 70px;
+  padding: 10px 11px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  border-right: 1px solid #edf0f4;
+  border-bottom: 1px solid #edf0f4;
+}
+.hr-account-state-grid article:nth-child(2n) { border-right: 0; }
+.hr-account-state-grid article:nth-last-child(-n + 2) { border-bottom: 0; }
+.hr-account-state-grid small { color: #8794a5; font-size: 10px; }
+.hr-account-state-grid strong { overflow: hidden; color: #30455f; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.hr-account-state-grid span { overflow: hidden; color: #98a3b1; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.hr-account-state-grid .tone-active { color: var(--hr-green); }
+.hr-account-state-grid .tone-pending,
+.hr-account-state-grid .tone-suspended { color: var(--hr-orange); }
+.hr-account-state-grid .tone-disabled,
+.hr-account-state-grid .tone-unbound { color: #7e8a99; }
+
+.hr-account-access-row {
+  padding: 9px 10px;
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #e4e9f0;
+  border-radius: 11px;
+  background: #fff;
+}
+.hr-account-access-row > strong { color: #50627a; font-size: 11px; }
+.hr-account-access-row > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.hr-account-access-row span {
+  padding: 5px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 7px;
+  background: var(--hr-blue-soft);
+  color: var(--hr-blue);
+  font-size: 9px;
+  font-weight: 800;
+}
+.hr-account-access-row span.muted { background: #f0f2f5; color: #7f8b99; }
+.hr-account-access-row span.future { border: 1px dashed #cdd5df; background: #fafbfc; color: #8c97a5; }
+.hr-account-access-row svg { width: 12px; }
+
+.hr-account-grant-list { overflow: hidden; border: 1px solid #e4e9f0; border-radius: 12px; background: #fff; }
+.hr-account-grant-list > header { min-height: 38px; padding: 7px 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #edf0f4; background: #f8fafc; }
+.hr-account-grant-list > header strong { color: #42566f; font-size: 10px; }
+.hr-account-grant-list > header small { color: #8b97a7; font-size: 9px; }
+.hr-account-grant-list article {
+  min-width: 0;
+  min-height: 54px;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #edf0f4;
+}
+.hr-account-grant-list article:last-child { border-bottom: 0; }
+.hr-account-grant-list article > span { padding: 4px 6px; border-radius: 7px; background: #e9f7f1; color: #16865f; font-size: 9px; font-weight: 850; text-align: center; }
+.hr-account-grant-list article > span.grant-concurrent { background: #edf4ff; color: #2f73f6; }
+.hr-account-grant-list article > span.grant-acting { background: #fff2e7; color: #df6c18; }
+.hr-account-grant-list article > div { min-width: 0; display: grid; gap: 2px; }
+.hr-account-grant-list article strong,
+.hr-account-grant-list article small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hr-account-grant-list article strong { color: #344a63; font-size: 11px; }
+.hr-account-grant-list article small { color: #8895a5; font-size: 9px; }
+.hr-account-grant-list article > em { color: #7e8c9f; font-size: 9px; font-style: normal; white-space: nowrap; }
+.hr-account-grant-list article.legacy > span { background: #f0f2f5; color: #778493; }
+
+.hr-account-permission-empty {
+  min-height: 72px;
+  padding: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px dashed #cdd8e5;
+  border-radius: 12px;
+  background: #fafbfd;
+  color: #7c8ca0;
+}
+.hr-account-permission-empty > svg { width: 20px; }
+.hr-account-permission-empty > span { display: grid; gap: 3px; }
+.hr-account-permission-empty strong { color: #52667e; font-size: 11px; }
+.hr-account-permission-empty small { font-size: 9px; }
+
+.hr-role-assignment-tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
+.hr-role-assignment-tags span { padding: 5px 7px; border-radius: 7px; background: #fff2e7; color: #cf6619; font-size: 10px; font-weight: 800; }
+.hr-role-profile h3 > a { color: var(--hr-blue); font-size: 10px; text-decoration: none; }
+.hr-role-grant-summary { display: grid; gap: 6px; }
+.hr-role-grant-summary > span { min-width: 0; padding: 7px 8px; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 2px 6px; border: 1px solid #e3e8ef; border-radius: 9px; background: #fbfcfe; }
+.hr-role-grant-summary em { grid-row: 1 / span 2; padding: 4px 5px; border-radius: 6px; background: var(--hr-blue-soft); color: var(--hr-blue); font-size: 9px; font-style: normal; font-weight: 850; }
+.hr-role-grant-summary strong { overflow: hidden; color: #40546d; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.hr-role-grant-summary small { overflow: hidden; color: #8794a5; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+
+.hr-role-account-state { display: grid; gap: 8px; }
+.hr-role-account-state > header { display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+.hr-role-account-state > header > span { padding: 5px 7px; display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; background: #f0f2f5; color: #7b8796; font-size: 10px; font-weight: 850; }
+.hr-role-account-state > header > span.tone-active { background: var(--hr-green-soft); color: var(--hr-green); }
+.hr-role-account-state > header > span.tone-pending,
+.hr-role-account-state > header > span.tone-suspended { background: var(--hr-orange-soft); color: var(--hr-orange); }
+.hr-role-account-state > header svg { width: 12px; }
+.hr-role-account-state > header small { overflow: hidden; color: #8b97a6; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.hr-role-account-state > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.hr-role-account-state > div span { padding: 5px 6px; display: inline-flex; align-items: center; gap: 4px; border-radius: 7px; background: var(--hr-blue-soft); color: var(--hr-blue); font-size: 9px; font-weight: 800; }
+.hr-role-account-state > div span.muted { background: #f1f3f5; color: #7d8998; }
+.hr-role-account-state > div svg { width: 12px; }
+.hr-role-account-state > footer { padding: 8px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; gap: 6px; border: 1px dashed #d5dce5; border-radius: 8px; background: #fafbfc; color: #929caa; }
+.hr-role-account-state > footer > svg { width: 14px; }
+.hr-role-account-state > footer span { display: grid; gap: 1px; }
+.hr-role-account-state > footer strong { color: #6d7b8d; font-size: 9px; }
+.hr-role-account-state > footer small { font-size: 8px; }
+
+@media (max-width: 820px) {
+  .hr-account-permission-card > header { grid-template-columns: 36px minmax(0, 1fr); }
+  .hr-account-permission-card > header > a { grid-column: 1 / -1; justify-content: center; }
+  .hr-account-state-grid { grid-template-columns: minmax(0, 1fr); }
+  .hr-account-state-grid article { border-right: 0; border-bottom: 1px solid #edf0f4 !important; }
+  .hr-account-state-grid article:last-child { border-bottom: 0 !important; }
+  .hr-account-grant-list article { grid-template-columns: 44px minmax(0, 1fr); }
+  .hr-account-grant-list article > em { grid-column: 2; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .hr-workbench *,
   .hr-workbench *::before,
@@ -1089,6 +1273,11 @@ button.hr-metric-card { cursor: pointer; }
 .hr-employment-reinstate-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .hr-employment-reinstate-options label { min-height: 70px; padding: 10px; display: flex; align-items: center; gap: 9px; border: 1px solid #dce6e1; border-radius: 11px; background: #f7fbf9; color: #385346; font-size: 12px; font-weight: 800; }
 .hr-employment-reinstate-options input { width: 18px; min-height: 18px; padding: 0; accent-color: #16875a; }
+.hr-employment-admin-task { min-height: 70px; padding: 10px; display: flex; align-items: center; gap: 9px; border: 1px solid #eadfcf; border-radius: 11px; background: #fff9f1; color: #725331; }
+.hr-employment-admin-task > svg { width: 19px; flex: 0 0 auto; color: #d47720; }
+.hr-employment-admin-task > span { display: grid; gap: 3px; }
+.hr-employment-admin-task strong { font-size: 12px; }
+.hr-employment-admin-task small { color: #8c745b; font-size: 11px; line-height: 1.4; }
 
 .hr-employment-loading {
   min-height: 84px;

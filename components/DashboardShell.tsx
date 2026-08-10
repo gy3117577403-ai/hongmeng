@@ -1,8 +1,8 @@
 'use client';
 
-import { ArrowLeft, BellRing, ClipboardList, Download, HelpCircle, History, ListFilter, LogOut, MonitorDown, Plus, RefreshCw, Search, Settings2, ShieldCheck, Trash2, UserRoundCog, X } from 'lucide-react';
+import { ArrowLeft, BadgeCheck, BellRing, Building2, CalendarClock, ClipboardList, Download, HelpCircle, History, KeyRound, ListFilter, LogOut, Monitor, MonitorDown, Plus, QrCode, RefreshCw, Search, Settings2, ShieldCheck, Smartphone, Trash2, UserRoundCheck, UserRoundCog, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { CameraCaptureModal } from '@/components/CameraCaptureModal';
 import { ImageViewer } from '@/components/ImageViewer';
@@ -19,7 +19,7 @@ import { getAndroidCapabilities, writeClipboardText } from '@/lib/client-platfor
 import { compactFilename, safeDecodeFilename, safeDisplayFilename } from '@/lib/filenames';
 import { compressImageForUpload, normalizeCapturedImage } from '@/lib/image-client';
 import { normalizeLocalImportServiceOrigin } from '@/lib/local-import-service-origin';
-import type { ChangeSnapshotDTO, ConnectorAssemblyManualDTO, ConnectorAssemblyManualSearchAssetDTO, ConnectorParameterDTO, CurrentUserDTO, DrawingLibraryItemDTO, EmployeeDTO, FieldSummaryDTO, IssueDTO, LaborAccessRoleDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserDTO, WorkOrderDTO } from '@/types';
+import type { AccessGrantTypeDTO, AccessProfileKeyDTO, AccountStatusDTO, ChangeSnapshotDTO, ConnectorAssemblyManualDTO, ConnectorAssemblyManualSearchAssetDTO, ConnectorParameterDTO, CurrentUserDTO, DepartmentRefDTO, DrawingLibraryItemDTO, EmployeeDTO, FieldSummaryDTO, IssueDTO, LaborAccessRoleDTO, OperationLogDTO, ResourceCategoryDTO, ResourceFileDTO, TrashDTO, UserAccessGrantDTO, UserDTO, WorkOrderDTO } from '@/types';
 
 type WorkOrderForm = {
   code: string;
@@ -138,19 +138,46 @@ type WeeklyPlanActivateSummary = {
 };
 type WeekAction = 'close' | 'activate_next' | null;
 type RelatedHistory = { fileCount: number; workOrderCount: number } | null;
+type AccountProductionTeam = {
+  id: string;
+  code: string;
+  name: string;
+  legacyTeamName?: string | null;
+};
 type UserForm = {
   username: string;
   displayName: string;
   password: string;
   laborRole: LaborAccessRoleDTO;
   employeeId: string;
+  profileKey: AccessProfileKeyDTO;
+  departmentId: string;
+  grantType: AccessGrantTypeDTO;
+  effectiveFrom: string;
+  effectiveTo: string;
 };
 type AccountEdit = {
   id: string;
   displayName: string;
   isActive: boolean;
+  accountStatus: AccountStatusDTO;
   laborRole: LaborAccessRoleDTO;
   employeeId: string;
+  profileKey: AccessProfileKeyDTO;
+  departmentId: string;
+  grantType: AccessGrantTypeDTO;
+  effectiveFrom: string;
+  effectiveTo: string;
+} | null;
+type AdditionalGrantForm = {
+  userId: string;
+  username: string;
+  profileKey: AccessProfileKeyDTO;
+  departmentId: string;
+  targetTeamId: string;
+  grantType: 'CONCURRENT' | 'ACTING';
+  effectiveFrom: string;
+  effectiveTo: string;
 } | null;
 type PasswordReset = { id: string; username: string; password: string } | null;
 type SearchDrawingLibraryFile = {
@@ -253,6 +280,141 @@ function dt(v: string, withTime = true) {
   const day = `${parts.year}-${parts.month}-${parts.day}`;
   if (!withTime) return day;
   return `${day} ${parts.hour}:${parts.minute}`;
+}
+
+const accessProfileOptions: Array<{ value: AccessProfileKeyDTO; label: string; description: string }> = [
+  { value: 'DEPARTMENT_FULL', label: '部门工作台', description: '继承主部门全部业务权限' },
+  { value: 'FIELD_REPORTER', label: '扫码报工', description: '实名扫码进入现场报工' },
+  { value: 'WORKSHOP_SUPERVISOR', label: '车间主管', description: '车间生产与计划协同' },
+  { value: 'WORKSHOP_TEAM_LEADER', label: '车间组长', description: '本班组生产与人员协同' },
+  { value: 'GM_OFFICE_READER_APPROVER', label: '总经办', description: '基础摘要只读与重大审批' },
+  { value: 'FINANCE_ACCOUNT_ONLY', label: '财务账号', description: '仅账号接入，业务模块待建设' },
+  { value: 'ADMIN_GLOBAL', label: '系统管理员', description: '保留现有全部界面与权限' },
+];
+
+function accessProfileLabel(value?: string | null): string {
+  return accessProfileOptions.find(option => option.value === value)?.label || '旧权限兼容';
+}
+
+function accessProfileDescription(value?: string | null): string {
+  return accessProfileOptions.find(option => option.value === value)?.description || '继续沿用原账号角色，待部门权限同步';
+}
+
+function accessGrantTypeLabel(value?: string | null): string {
+  return value === 'CONCURRENT' ? '兼岗' : value === 'ACTING' ? '代班' : '主部门';
+}
+
+function accountStatusMeta(user: Pick<UserDTO, 'isActive' | 'accountStatus'>): { label: string; tone: string } {
+  const status = user.accountStatus || (user.isActive ? 'ACTIVE' : 'DISABLED');
+  if (status === 'PENDING') return { label: '待激活', tone: 'pending' };
+  if (status === 'SUSPENDED') return { label: '已暂停', tone: 'suspended' };
+  if (status === 'DISABLED' || !user.isActive) return { label: '已停用', tone: 'disabled' };
+  return { label: '正常', tone: 'active' };
+}
+
+function accountCanLogIn(user: Pick<UserDTO, 'isActive' | 'accountStatus'>): boolean {
+  const status = user.accountStatus || (user.isActive ? 'ACTIVE' : 'DISABLED');
+  return user.isActive && status === 'ACTIVE';
+}
+
+function accountPermissionSyncMeta(user: UserDTO): {
+  tone: 'disabled' | 'pending' | 'synced';
+  label: string;
+  detail: string;
+} {
+  if (user.employee?.isActive === false) {
+    return { tone: 'disabled', label: '随离职停用', detail: '账号与权限均已关闭' };
+  }
+  const pending = Boolean(
+    user.permissionSyncPending
+    || (user.employee && !(user.accessGrants || []).length),
+  );
+  if (pending) return { tone: 'pending', label: '待管理员确认', detail: '当前权限尚未启用' };
+  return {
+    tone: 'synced',
+    label: '已同步',
+    detail: (user.accessGrants || []).length
+      ? `V${Math.max(...(user.accessGrants || []).map(grant => grant.version), 0)}`
+      : '管理员',
+  };
+}
+
+function employeeDepartmentName(employee?: EmployeeDTO | UserDTO['employee'] | null): string {
+  if (!employee) return '部门待关联';
+  return employee.departmentRecord?.name || employee.department || '部门待关联';
+}
+
+function recommendedProfile(employee?: EmployeeDTO | null): AccessProfileKeyDTO {
+  const department = employeeDepartmentName(employee);
+  const position = employee?.position || '';
+  if (department.includes('财务')) return 'FINANCE_ACCOUNT_ONLY';
+  if (department.includes('总经办')) return 'GM_OFFICE_READER_APPROVER';
+  if (department.includes('生产')) {
+    if (/主管|主任/.test(position)) return 'WORKSHOP_SUPERVISOR';
+    if (/组长|班长/.test(position)) return 'WORKSHOP_TEAM_LEADER';
+    return 'FIELD_REPORTER';
+  }
+  return 'DEPARTMENT_FULL';
+}
+
+function currentAccessGrants(user: Pick<UserDTO, 'accessGrants'>): UserAccessGrantDTO[] {
+  const now = Date.now();
+  return (user.accessGrants || []).filter(grant => {
+    if (!grant.isActive) return false;
+    const from = new Date(grant.effectiveFrom).getTime();
+    const to = grant.effectiveTo ? new Date(grant.effectiveTo).getTime() : Number.POSITIVE_INFINITY;
+    return (!Number.isFinite(from) || from <= now) && (!Number.isFinite(to) || to > now);
+  });
+}
+
+function accountAccessModes(user: UserDTO): string[] {
+  if (!accountCanLogIn(user)) return ['不可登录'];
+  if (user.accessMethods) {
+    const modes = [
+      ...(user.accessMethods.workbench ? ['后台登录'] : []),
+      ...(user.accessMethods.fieldReport ? ['扫码报工'] : []),
+      ...(user.accessMethods.pin ? ['共享终端PIN'] : []),
+    ];
+    if (modes.length) return modes;
+  }
+  const grants = currentAccessGrants(user);
+  if (!grants.length) return user.employee ? ['账号登录（旧权限）'] : ['后台登录'];
+  const modes = new Set<string>();
+  grants.forEach(grant => {
+    if (grant.profileKey === 'FIELD_REPORTER') modes.add('扫码报工');
+    else modes.add('后台登录');
+  });
+  return [...modes];
+}
+
+function grantDepartmentName(grant: UserAccessGrantDTO, user?: UserDTO): string {
+  return grant.department?.name || (grant.departmentId && grant.departmentId === user?.employee?.departmentId
+    ? employeeDepartmentName(user.employee)
+    : '') || employeeDepartmentName(user?.employee);
+}
+
+function accountInputDate(value?: string | null): string {
+  return value ? dt(value, false) : '';
+}
+
+function emptyAccountForm(employee?: EmployeeDTO | null): UserForm {
+  const profileKey = recommendedProfile(employee);
+  return {
+    username: employee?.employeeNo || '',
+    displayName: employee?.name || '',
+    password: '',
+    laborRole: profileKey === 'ADMIN_GLOBAL'
+      ? 'ADMIN'
+      : profileKey === 'WORKSHOP_SUPERVISOR' || profileKey === 'WORKSHOP_TEAM_LEADER'
+        ? 'TEAM_LEAD'
+        : 'EMPLOYEE',
+    employeeId: employee?.id || '',
+    profileKey,
+    departmentId: employee?.departmentId || employee?.departmentRecord?.id || '',
+    grantType: 'PRIMARY',
+    effectiveFrom: '',
+    effectiveTo: '',
+  };
 }
 
 function shortName(name: string) {
@@ -643,14 +805,11 @@ export default function DashboardShell({
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [users, setUsers] = useState<UserDTO[]>([]);
   const [accountEmployees, setAccountEmployees] = useState<EmployeeDTO[]>([]);
-  const [userForm, setUserForm] = useState<UserForm>({
-    username: '',
-    displayName: '',
-    password: '',
-    laborRole: 'EMPLOYEE',
-    employeeId: '',
-  });
+  const [accountDepartments, setAccountDepartments] = useState<DepartmentRefDTO[]>([]);
+  const [accountProductionTeams, setAccountProductionTeams] = useState<AccountProductionTeam[]>([]);
+  const [userForm, setUserForm] = useState<UserForm>(() => emptyAccountForm());
   const [accountEdit, setAccountEdit] = useState<AccountEdit>(null);
+  const [additionalGrant, setAdditionalGrant] = useState<AdditionalGrantForm>(null);
   const [passwordReset, setPasswordReset] = useState<PasswordReset>(null);
   const [accountError, setAccountError] = useState('');
   const [accountSaving, setAccountSaving] = useState(false);
@@ -690,6 +849,7 @@ export default function DashboardShell({
   const moreActionsButtonRef = useRef<HTMLButtonElement>(null);
   const initialPlanViewRef = useRef(true);
   const directTargetRef = useRef<{ workOrderId: string; categoryId: string; fileId: string } | null>(null);
+  const accountDeepLinkHandledRef = useRef(false);
   const nestedLayerOpen = Boolean(
     cameraOpen
     || localImportOpen
@@ -1446,7 +1606,7 @@ export default function DashboardShell({
     }
   }
 
-  async function loadUsers() {
+  const loadUsers = useCallback(async (): Promise<EmployeeDTO[]> => {
     try {
       const [userResponse, employeeResponse] = await Promise.all([
         fetch('/api/users', { cache: 'no-store' }),
@@ -1458,56 +1618,77 @@ export default function DashboardShell({
       ]);
       if (!userResponse.ok) {
         setAccountError(userBody.error || userBody.message || '账号加载失败');
-        return;
+        return [];
       }
       if (!employeeResponse.ok) {
         setAccountError(employeeBody.error || employeeBody.message || '员工档案加载失败');
-        return;
+        return [];
       }
+      const nextEmployees = Array.isArray(employeeBody.employees) ? employeeBody.employees as EmployeeDTO[] : [];
       setUsers(Array.isArray(userBody.users) ? userBody.users : []);
-      setAccountEmployees(Array.isArray(employeeBody.employees) ? employeeBody.employees : []);
+      setAccountDepartments(Array.isArray(userBody.departments) ? userBody.departments : []);
+      setAccountProductionTeams(Array.isArray(userBody.productionTeams) ? userBody.productionTeams : []);
+      setAccountEmployees(nextEmployees);
+      return nextEmployees;
     } catch {
       setAccountError('账号加载失败');
+      return [];
     }
-  }
+  }, []);
 
-  async function openAccounts() {
+  const openAccounts = useCallback(async (prefillEmployeeId?: string) => {
     if (user.laborRole !== 'ADMIN') {
       setMsg('只有管理员可以进入账号管理');
       return;
     }
     setAccountsOpen(true);
     setAccountError('');
-    await loadUsers();
-  }
+    const nextEmployees = await loadUsers();
+    if (prefillEmployeeId) {
+      const employee = nextEmployees.find(item => item.id === prefillEmployeeId) || null;
+      if (employee) setUserForm(emptyAccountForm(employee));
+    }
+  }, [loadUsers, user.laborRole]);
+
+  useEffect(() => {
+    if (accountDeepLinkHandledRef.current || user.laborRole !== 'ADMIN') return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('settings') !== 'accounts') return;
+    accountDeepLinkHandledRef.current = true;
+    void openAccounts(params.get('employeeId') || undefined);
+  }, [openAccounts, user.laborRole]);
 
   async function saveNewUser(e: React.FormEvent) {
     e.preventDefault();
     setAccountError('');
     if (!userForm.username.trim()) return setAccountError('账号不能为空');
-    if (userForm.password.length < 6) return setAccountError('初始密码至少 6 位');
-    if (userForm.laborRole !== 'ADMIN' && !userForm.employeeId) {
-      return setAccountError('班组长或员工账号必须绑定员工档案');
+    if (userForm.password.length < 8) return setAccountError('初始密码至少 8 位');
+    if (userForm.profileKey !== 'ADMIN_GLOBAL' && !userForm.employeeId) {
+      return setAccountError('请先选择要开通账号的员工档案');
+    }
+    if (userForm.grantType === 'ACTING' && !userForm.effectiveTo) {
+      return setAccountError('代班权限必须设置结束日期');
     }
     setAccountSaving(true);
     try {
       const r = await fetch('/api/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(userForm),
+        body: JSON.stringify({
+          ...userForm,
+          grantType: 'PRIMARY',
+          employeeId: userForm.profileKey === 'ADMIN_GLOBAL' ? null : userForm.employeeId,
+          departmentId: userForm.departmentId || null,
+          effectiveFrom: userForm.effectiveFrom || undefined,
+          effectiveTo: userForm.effectiveTo || null,
+        }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
         setAccountError(d.error || d.message || '新增账号失败');
         return;
       }
-      setUserForm({
-        username: '',
-        displayName: '',
-        password: '',
-        laborRole: 'EMPLOYEE',
-        employeeId: '',
-      });
+      setUserForm(emptyAccountForm());
       await loadUsers();
       setMsg('账号已新增');
     } catch {
@@ -1520,8 +1701,12 @@ export default function DashboardShell({
   async function saveAccountEdit(e: React.FormEvent) {
     e.preventDefault();
     if (!accountEdit) return;
-    if (accountEdit.laborRole !== 'ADMIN' && !accountEdit.employeeId) {
-      setAccountError('班组长或员工账号必须绑定员工档案');
+    if (accountEdit.profileKey !== 'ADMIN_GLOBAL' && !accountEdit.employeeId) {
+      setAccountError('请先选择要绑定的员工档案');
+      return;
+    }
+    if (accountEdit.grantType === 'ACTING' && !accountEdit.effectiveTo) {
+      setAccountError('代班权限必须设置结束日期');
       return;
     }
     setAccountSaving(true);
@@ -1532,9 +1717,15 @@ export default function DashboardShell({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           displayName: accountEdit.displayName,
-          isActive: accountEdit.isActive,
+          isActive: accountEdit.accountStatus === 'ACTIVE',
+          accountStatus: accountEdit.accountStatus,
           laborRole: accountEdit.laborRole,
-          employeeId: accountEdit.laborRole === 'ADMIN' ? null : accountEdit.employeeId,
+          employeeId: accountEdit.profileKey === 'ADMIN_GLOBAL' ? null : accountEdit.employeeId,
+          profileKey: accountEdit.profileKey,
+          departmentId: accountEdit.departmentId || null,
+          grantType: 'PRIMARY',
+          effectiveFrom: accountEdit.effectiveFrom || undefined,
+          effectiveTo: accountEdit.effectiveTo || null,
         }),
       });
       const d = await r.json().catch(() => ({}));
@@ -1544,9 +1735,75 @@ export default function DashboardShell({
       }
       setAccountEdit(null);
       await loadUsers();
-      setMsg(accountEdit.isActive ? '账号已更新' : '账号已禁用');
+      setMsg(accountEdit.accountStatus === 'ACTIVE' ? '账号已更新' : '账号状态已更新');
     } catch {
       setAccountError('保存账号失败');
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function saveAdditionalGrant(e: React.FormEvent) {
+    e.preventDefault();
+    if (!additionalGrant) return;
+    if (!additionalGrant.departmentId) return setAccountError('请选择兼岗或代班对应的部门');
+    if (additionalGrant.profileKey === 'WORKSHOP_TEAM_LEADER' && !additionalGrant.targetTeamId) {
+      return setAccountError('请选择兼岗或代班负责的目标班组');
+    }
+    if (additionalGrant.grantType === 'ACTING' && !additionalGrant.effectiveTo) {
+      return setAccountError('代班权限必须设置结束日期');
+    }
+    setAccountSaving(true);
+    setAccountError('');
+    try {
+      const response = await fetch(`/api/users/${additionalGrant.userId}/access-grants`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profileKey: additionalGrant.profileKey,
+          departmentId: additionalGrant.departmentId,
+          targetTeamId: additionalGrant.profileKey === 'WORKSHOP_TEAM_LEADER'
+            ? additionalGrant.targetTeamId
+            : null,
+          grantType: additionalGrant.grantType,
+          effectiveFrom: additionalGrant.effectiveFrom || undefined,
+          effectiveTo: additionalGrant.effectiveTo || null,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAccountError(body.error || body.message || '新增兼岗或代班失败');
+        return;
+      }
+      setAdditionalGrant(null);
+      await loadUsers();
+      setMsg('兼岗或代班权限已添加，账号需重新登录');
+    } catch {
+      setAccountError('新增兼岗或代班失败');
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function revokeAdditionalGrant(userId: string, grant: UserAccessGrantDTO) {
+    if (!window.confirm(`确认撤销“${accessGrantTypeLabel(grant.grantType)} · ${accessProfileLabel(grant.profileKey)}”吗？`)) return;
+    setAccountSaving(true);
+    setAccountError('');
+    try {
+      const response = await fetch(`/api/users/${userId}/access-grants/${grant.id}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedVersion: grant.version }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAccountError(body.error || body.message || '撤销授权失败');
+        return;
+      }
+      await loadUsers();
+      setMsg('兼岗或代班权限已撤销，账号需重新登录');
+    } catch {
+      setAccountError('撤销授权失败');
     } finally {
       setAccountSaving(false);
     }
@@ -1555,7 +1812,7 @@ export default function DashboardShell({
   async function resetUserPassword(e: React.FormEvent) {
     e.preventDefault();
     if (!passwordReset) return;
-    if (passwordReset.password.length < 6) return setAccountError('新密码至少 6 位');
+    if (passwordReset.password.length < 8) return setAccountError('新密码至少 8 位');
     setAccountSaving(true);
     setAccountError('');
     try {
@@ -3213,17 +3470,23 @@ export default function DashboardShell({
         <AccountManager
           users={users}
           employees={accountEmployees}
+          departments={accountDepartments}
+          productionTeams={accountProductionTeams}
           userForm={userForm}
           accountEdit={accountEdit}
+          additionalGrant={additionalGrant}
           passwordReset={passwordReset}
           error={accountError}
           saving={accountSaving}
-          close={() => setAccountsOpen(false)}
+          close={() => { setAccountsOpen(false); setAccountEdit(null); setAdditionalGrant(null); setPasswordReset(null); }}
           setUserForm={setUserForm}
           setAccountEdit={setAccountEdit}
+          setAdditionalGrant={setAdditionalGrant}
           setPasswordReset={setPasswordReset}
           saveNewUser={saveNewUser}
           saveAccountEdit={saveAccountEdit}
+          saveAdditionalGrant={saveAdditionalGrant}
+          revokeAdditionalGrant={revokeAdditionalGrant}
           resetUserPassword={resetUserPassword}
         />
       )}
@@ -3788,80 +4051,233 @@ function laborRoleLabel(role: LaborAccessRoleDTO): string {
 function AccountManager({
   users,
   employees,
+  departments,
+  productionTeams,
   userForm,
   accountEdit,
+  additionalGrant,
   passwordReset,
   error,
   saving,
   close,
   setUserForm,
   setAccountEdit,
+  setAdditionalGrant,
   setPasswordReset,
   saveNewUser,
   saveAccountEdit,
+  saveAdditionalGrant,
+  revokeAdditionalGrant,
   resetUserPassword,
 }: {
   users: UserDTO[];
   employees: EmployeeDTO[];
+  departments: DepartmentRefDTO[];
+  productionTeams: AccountProductionTeam[];
   userForm: UserForm;
   accountEdit: AccountEdit;
+  additionalGrant: AdditionalGrantForm;
   passwordReset: PasswordReset;
   error: string;
   saving: boolean;
   close: () => void;
   setUserForm: (value: UserForm | ((v: UserForm) => UserForm)) => void;
   setAccountEdit: (value: AccountEdit) => void;
+  setAdditionalGrant: (value: AdditionalGrantForm) => void;
   setPasswordReset: (value: PasswordReset) => void;
   saveNewUser: (e: React.FormEvent) => void;
   saveAccountEdit: (e: React.FormEvent) => void;
+  saveAdditionalGrant: (e: React.FormEvent) => void;
+  revokeAdditionalGrant: (userId: string, grant: UserAccessGrantDTO) => void;
   resetUserPassword: (e: React.FormEvent) => void;
 }) {
+  const selectedEmployee = employees.find(employee => employee.id === userForm.employeeId) || null;
+  const selectedProfile = accessProfileOptions.find(option => option.value === userForm.profileKey) || accessProfileOptions[0];
+  const departmentOptions = useMemo(() => {
+    const options = new Map<string, { id: string; code: string; name: string }>();
+    departments.filter(department => department.isActive !== false).forEach(department => options.set(department.id, department));
+    employees.forEach(employee => {
+      const id = employee.departmentId || employee.departmentRecord?.id;
+      if (!id) return;
+      options.set(id, {
+        id,
+        code: employee.departmentRecord?.code || '',
+        name: employee.departmentRecord?.name || employee.department || '未命名部门',
+      });
+    });
+    users.forEach(item => (item.accessGrants || []).forEach(grant => {
+      if (grant.department) options.set(grant.department.id, grant.department);
+    }));
+    return [...options.values()].sort((left, right) => left.name.localeCompare(right.name, 'zh-CN'));
+  }, [departments, employees, users]);
+  const activeCount = users.filter(item => accountStatusMeta(item).tone === 'active').length;
+  const pendingSyncCount = users.filter(item => accountPermissionSyncMeta(item).tone === 'pending').length;
+  const additionalGrantUser = additionalGrant
+    ? users.find(item => item.id === additionalGrant.userId) || null
+    : null;
+
+  function matchingProductionTeamId(value?: string | null): string {
+    const normalized = String(value || '').trim().toLocaleLowerCase('zh-CN');
+    if (!normalized) return '';
+    return productionTeams.find(team => (
+      [team.id, team.code, team.name, team.legacyTeamName]
+        .some(candidate => String(candidate || '').trim().toLocaleLowerCase('zh-CN') === normalized)
+    ))?.id || '';
+  }
+
+  function departmentIdForProfile(profileKey: AccessProfileKeyDTO, currentDepartmentId = ''): string {
+    const requiredCode = profileKey === 'FINANCE_ACCOUNT_ONLY'
+      ? 'FINANCE'
+      : profileKey === 'GM_OFFICE_READER_APPROVER'
+        ? 'GM_OFFICE'
+        : ['FIELD_REPORTER', 'WORKSHOP_SUPERVISOR', 'WORKSHOP_TEAM_LEADER'].includes(profileKey)
+          ? 'PRODUCTION'
+          : null;
+    return requiredCode
+      ? departmentOptions.find(department => department.code === requiredCode)?.id || ''
+      : currentDepartmentId;
+  }
+
+  function additionalGrantTeamName(grant: UserAccessGrantDTO): string {
+    if (grant.profileKey !== 'WORKSHOP_TEAM_LEADER' || !grant.scopeKey.startsWith('TEAM:')) return '';
+    const teamId = grant.scopeKey.slice('TEAM:'.length);
+    const team = productionTeams.find(item => item.id === teamId);
+    return team ? ` · 班组：${team.name}` : ' · 班组已停用或不存在';
+  }
+
+  function chooseEmployeeForNewAccount(employeeId: string): void {
+    const employee = employees.find(item => item.id === employeeId) || null;
+    setUserForm(current => ({ ...emptyAccountForm(employee), password: current.password }));
+  }
+
+  function chooseNewProfile(profileKey: AccessProfileKeyDTO): void {
+    setUserForm(current => ({
+      ...current,
+      profileKey,
+      laborRole: profileKey === 'ADMIN_GLOBAL'
+        ? 'ADMIN'
+        : profileKey === 'WORKSHOP_SUPERVISOR' || profileKey === 'WORKSHOP_TEAM_LEADER'
+          ? 'TEAM_LEAD'
+          : 'EMPLOYEE',
+      employeeId: profileKey === 'ADMIN_GLOBAL' ? '' : current.employeeId,
+      departmentId: profileKey === 'ADMIN_GLOBAL' ? '' : current.departmentId,
+      grantType: profileKey === 'ADMIN_GLOBAL' ? 'PRIMARY' : current.grantType,
+    }));
+  }
+
+  function beginAccountEdit(item: UserDTO, forcedStatus?: AccountStatusDTO): void {
+    const boundEmployee = employees.find(employee => employee.id === item.employeeId) || null;
+    const grant = currentAccessGrants(item).find(entry => entry.grantType === 'PRIMARY')
+      || item.accessGrants?.find(entry => entry.grantType === 'PRIMARY');
+    const fallbackProfile = item.laborRole === 'ADMIN' ? 'ADMIN_GLOBAL' : recommendedProfile(boundEmployee);
+    const accountStatus = forcedStatus || item.accountStatus || (item.isActive ? 'ACTIVE' : 'DISABLED');
+    setAccountEdit({
+      id: item.id,
+      displayName: item.displayName,
+      isActive: accountStatus === 'ACTIVE',
+      accountStatus: accountStatus === 'PENDING' ? 'ACTIVE' : accountStatus,
+      laborRole: item.laborRole,
+      employeeId: item.employeeId || '',
+      profileKey: grant?.profileKey || fallbackProfile,
+      departmentId: grant?.departmentId || boundEmployee?.departmentId || boundEmployee?.departmentRecord?.id || '',
+      grantType: grant?.grantType || 'PRIMARY',
+      effectiveFrom: accountInputDate(grant?.effectiveFrom),
+      effectiveTo: accountInputDate(grant?.effectiveTo),
+    });
+  }
+
+  function beginAdditionalGrant(item: UserDTO): void {
+    setAdditionalGrant({
+      userId: item.id,
+      username: item.username,
+      profileKey: 'DEPARTMENT_FULL',
+      departmentId: '',
+      targetTeamId: matchingProductionTeamId(item.employee?.team),
+      grantType: 'CONCURRENT',
+      effectiveFrom: '',
+      effectiveTo: '',
+    });
+  }
+
+  function chooseAdditionalProfile(profileKey: AccessProfileKeyDTO): void {
+    if (!additionalGrant) return;
+    setAdditionalGrant({
+      ...additionalGrant,
+      profileKey,
+      departmentId: departmentIdForProfile(profileKey, additionalGrant.departmentId),
+      targetTeamId: profileKey === 'WORKSHOP_TEAM_LEADER'
+        ? additionalGrant.targetTeamId || matchingProductionTeamId(additionalGrantUser?.employee?.team)
+        : '',
+    });
+  }
+
   return (
     <div className="modal-backdrop" role="presentation">
-      <section className="admin-dialog" role="dialog" aria-modal="true" aria-label="账号管理">
+      <section className="admin-dialog account-manager-dialog" role="dialog" aria-modal="true" aria-label="账号与部门权限管理">
         <div className="dialog-title">
-          <strong>账号管理</strong>
+          <div><strong>账号与部门权限</strong><small>员工档案优先绑定 · 主部门权限 · 兼岗与限时代班</small></div>
           <button type="button" onClick={close}>×</button>
         </div>
+        <div className="account-manager-summary" aria-label="账号概览">
+          <article><UserRoundCog /><span><small>账号总数</small><strong>{users.length}</strong></span></article>
+          <article className="success"><BadgeCheck /><span><small>正常账号</small><strong>{activeCount}</strong></span></article>
+          <article className={pendingSyncCount ? 'attention' : 'success'}><ShieldCheck /><span><small>待同步旧权限</small><strong>{pendingSyncCount}</strong></span></article>
+          <article><Building2 /><span><small>已关联部门</small><strong>{departmentOptions.length}</strong></span></article>
+        </div>
         {error && <div className="form-error">{error}</div>}
-        <form className="inline-form" onSubmit={saveNewUser}>
-          <label>账号<input value={userForm.username} onChange={e => setUserForm(v => ({ ...v, username: e.target.value }))} /></label>
-          <label>姓名<input value={userForm.displayName} onChange={e => setUserForm(v => ({ ...v, displayName: e.target.value }))} /></label>
-          <label>初始密码<input type="password" value={userForm.password} onChange={e => setUserForm(v => ({ ...v, password: e.target.value }))} /></label>
-          <label>账号角色<select value={userForm.laborRole} onChange={e => setUserForm(v => ({
-            ...v,
-            laborRole: e.target.value as LaborAccessRoleDTO,
-            employeeId: e.target.value === 'ADMIN' ? '' : v.employeeId,
-          }))}><option value="EMPLOYEE">员工（仅领取本人）</option><option value="TEAM_LEAD">班组长（本班组分配）</option><option value="ADMIN">管理员（全量管理）</option></select></label>
-          {userForm.laborRole !== 'ADMIN' && <label>绑定员工<select value={userForm.employeeId} onChange={e => setUserForm(v => ({ ...v, employeeId: e.target.value }))}><option value="">选择在职员工</option>{employees.map(employee => <option key={employee.id} value={employee.id}>{employee.employeeNo} · {employee.name}{employee.team ? ` · ${employee.team}` : ''}</option>)}</select></label>}
-          <button className="primary-button" type="submit" disabled={saving}>{saving ? '保存中...' : '新增账号'}</button>
+        <form className="inline-form account-create-form" onSubmit={saveNewUser}>
+          <header className="account-form-heading">
+            <span><UserRoundCheck /></span>
+            <div><strong>开通员工账号</strong><small>先选员工，再确认部门权限和访问方式</small></div>
+          </header>
+          <label className="account-field-employee">绑定员工
+            <select value={userForm.employeeId} disabled={userForm.profileKey === 'ADMIN_GLOBAL'} onChange={event => chooseEmployeeForNewAccount(event.target.value)}>
+              <option value="">选择在职员工</option>
+              {employees.map(employee => <option key={employee.id} value={employee.id}>{employee.employeeNo} · {employee.name} · {employeeDepartmentName(employee)}{employee.team ? ` / ${employee.team}` : ''}</option>)}
+            </select>
+          </label>
+          <label>登录账号<input value={userForm.username} onChange={event => setUserForm(value => ({ ...value, username: event.target.value }))} placeholder="默认使用员工编号" /></label>
+          <label>显示姓名<input value={userForm.displayName} onChange={event => setUserForm(value => ({ ...value, displayName: event.target.value }))} /></label>
+          <label>初始密码<input type="password" value={userForm.password} onChange={event => setUserForm(value => ({ ...value, password: event.target.value }))} placeholder="至少8位，避免常用密码" /></label>
+          <label>权限方案
+            <select value={userForm.profileKey} onChange={event => chooseNewProfile(event.target.value as AccessProfileKeyDTO)}>
+              {accessProfileOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>权限部门
+            <select value={userForm.departmentId} disabled={userForm.profileKey === 'ADMIN_GLOBAL' || !departmentOptions.length} onChange={event => setUserForm(value => ({ ...value, departmentId: event.target.value }))}>
+              <option value="">{departmentOptions.length ? '由员工主档案联动' : '等待部门ID同步'}</option>
+              {departmentOptions.map(department => <option key={department.id} value={department.id}>{department.code ? `${department.code} · ` : ''}{department.name}</option>)}
+            </select>
+          </label>
+          <label>任职来源<input value="主部门" disabled /></label>
+          <label>生效日期<input type="date" value={userForm.effectiveFrom} onChange={event => setUserForm(value => ({ ...value, effectiveFrom: event.target.value }))} /></label>
+          <label>结束日期<input type="date" required={userForm.grantType === 'ACTING'} value={userForm.effectiveTo} onChange={event => setUserForm(value => ({ ...value, effectiveTo: event.target.value }))} /></label>
+          <div className="account-permission-preview">
+            <span className="account-preview-icon">{userForm.profileKey === 'FIELD_REPORTER' ? <QrCode /> : <Monitor />}</span>
+            <div><small>本次将开通</small><strong>{selectedProfile.label} · 主部门</strong><p>{selectedProfile.description}{selectedEmployee ? `；权限部门：${employeeDepartmentName(selectedEmployee)}` : ''}</p></div>
+            <em>{userForm.profileKey === 'FIELD_REPORTER' ? <><Smartphone />扫码报工</> : <><Monitor />后台登录</>}</em>
+          </div>
+          <button className="primary-button account-create-submit" type="submit" disabled={saving}>{saving ? '开通中...' : '开通账号'}</button>
         </form>
-        <div className="compact-table users-table">
-          <div className="compact-head"><span>账号</span><span>姓名</span><span>角色</span><span>绑定员工</span><span>状态</span><span>创建时间</span><span>操作</span></div>
+        <div className="compact-table users-table account-users-table">
+          <div className="compact-head"><span>账号与员工</span><span>状态</span><span>访问方式</span><span>部门 / 权限来源</span><span>同步</span><span>最近登录</span><span>操作</span></div>
           {users.map(item => (
             <div className="compact-row" key={item.id}>
-              <span>{item.username}</span>
-              <span>{item.displayName}</span>
-              <span>{laborRoleLabel(item.laborRole)}</span>
-              <span>{item.employee ? `${item.employee.employeeNo} · ${item.employee.name}${item.employee.team ? ` · ${item.employee.team}` : ''}` : '-'}</span>
-              <span>{item.isActive ? '启用' : '禁用'}</span>
-              <span>{dt(item.createdAt)}</span>
+              <div className="account-cell-stack identity"><strong>{item.username}</strong><span>{item.employee ? `${item.employee.employeeNo} · ${item.employee.name}` : item.displayName}</span><small>{item.employee ? employeeDepartmentName(item.employee) : laborRoleLabel(item.laborRole)}</small></div>
+              <div className="account-cell-stack"><em className={`account-status tone-${accountStatusMeta(item).tone}`}>{accountStatusMeta(item).label}</em>{item.mustChangePassword && <small className="account-warning"><KeyRound />首次登录需改密</small>}</div>
+              <div className="account-access-modes">{accountAccessModes(item).map(mode => <span key={mode}>{mode.includes('扫码') ? <QrCode /> : <Monitor />}{mode}</span>)}</div>
+              <div className="account-cell-stack grants">
+                {currentAccessGrants(item).slice(0, 2).map(grant => <span key={grant.id}><strong>{grantDepartmentName(grant, item)}</strong><small>{accessGrantTypeLabel(grant.grantType)} · {accessProfileLabel(grant.profileKey)}</small></span>)}
+                {!currentAccessGrants(item).length && <><strong>{employeeDepartmentName(item.employee)}</strong><small>{item.employee?.isActive === false ? '员工离职 · 权限已停用' : !accountCanLogIn(item) ? '账号不可登录 · 等待管理员确认' : `${laborRoleLabel(item.laborRole)} · 旧权限兼容`}</small></>}
+              </div>
+              <div className={`account-cell-stack sync ${accountPermissionSyncMeta(item).tone}`}>{accountPermissionSyncMeta(item).tone === 'pending' ? <RefreshCw /> : <BadgeCheck />}<strong>{accountPermissionSyncMeta(item).label}</strong><small>{accountPermissionSyncMeta(item).detail}</small></div>
+              <div className="account-cell-stack"><strong>{item.lastLoginAt ? dt(item.lastLoginAt) : '尚未登录'}</strong><small>创建 {dt(item.createdAt, false)}</small></div>
               <span className="row-actions">
-                <button type="button" onClick={() => setAccountEdit({
-                  id: item.id,
-                  displayName: item.displayName,
-                  isActive: item.isActive,
-                  laborRole: item.laborRole,
-                  employeeId: item.employeeId || '',
-                })}>编辑</button>
+                <button type="button" onClick={() => beginAccountEdit(item)}>编辑</button>
+                {item.employee && item.laborRole !== 'ADMIN' && item.isActive && <button type="button" onClick={() => beginAdditionalGrant(item)}>兼岗/代班</button>}
                 <button type="button" onClick={() => setPasswordReset({ id: item.id, username: item.username, password: '' })}>重置密码</button>
-                {item.isActive && <button type="button" onClick={() => setAccountEdit({
-                  id: item.id,
-                  displayName: item.displayName,
-                  isActive: false,
-                  laborRole: item.laborRole,
-                  employeeId: item.employeeId || '',
-                })}>禁用</button>}
+                {item.accountStatus !== 'DISABLED' && <button type="button" onClick={() => beginAccountEdit(item, 'DISABLED')}>停用</button>}
               </span>
             </div>
           ))}
@@ -3869,26 +4285,72 @@ function AccountManager({
         </div>
 
         {accountEdit && (
-          <form className="nested-dialog" onSubmit={saveAccountEdit}>
-            <strong>编辑账号</strong>
-            <label>姓名<input value={accountEdit.displayName} onChange={e => setAccountEdit({ ...accountEdit, displayName: e.target.value })} /></label>
-            <label>账号角色<select value={accountEdit.laborRole} onChange={e => setAccountEdit({
-              ...accountEdit,
-              laborRole: e.target.value as LaborAccessRoleDTO,
-              employeeId: e.target.value === 'ADMIN' ? '' : accountEdit.employeeId,
-            })}><option value="EMPLOYEE">员工（仅领取本人）</option><option value="TEAM_LEAD">班组长（本班组分配）</option><option value="ADMIN">管理员（全量管理）</option></select></label>
-            {accountEdit.laborRole !== 'ADMIN' && <label>绑定员工<select value={accountEdit.employeeId} onChange={e => setAccountEdit({ ...accountEdit, employeeId: e.target.value })}><option value="">选择在职员工</option>{employees.map(employee => <option key={employee.id} value={employee.id}>{employee.employeeNo} · {employee.name}{employee.team ? ` · ${employee.team}` : ''}</option>)}</select></label>}
-            <label className="check-line"><input type="checkbox" checked={accountEdit.isActive} onChange={e => setAccountEdit({ ...accountEdit, isActive: e.target.checked })} /> 启用账号</label>
+          <form className="nested-dialog account-edit-dialog" onSubmit={saveAccountEdit}>
+            <header><span><UserRoundCog /></span><div><strong>编辑账号与主权限</strong><small>这里维护主部门；兼岗与代班请使用账号列表中的追加入口</small></div></header>
+            <label>显示姓名<input value={accountEdit.displayName} onChange={event => setAccountEdit({ ...accountEdit, displayName: event.target.value })} /></label>
+            <label>绑定员工<select value={accountEdit.employeeId} disabled={accountEdit.profileKey === 'ADMIN_GLOBAL'} onChange={event => {
+              const employee = employees.find(item => item.id === event.target.value) || null;
+              setAccountEdit({ ...accountEdit, employeeId: event.target.value, departmentId: employee?.departmentId || employee?.departmentRecord?.id || accountEdit.departmentId });
+            }}><option value="">选择在职员工</option>{employees.map(employee => <option key={employee.id} value={employee.id}>{employee.employeeNo} · {employee.name} · {employeeDepartmentName(employee)}</option>)}</select></label>
+            <label>权限方案<select value={accountEdit.profileKey} onChange={event => {
+              const profileKey = event.target.value as AccessProfileKeyDTO;
+              setAccountEdit({
+                ...accountEdit,
+                profileKey,
+                laborRole: profileKey === 'ADMIN_GLOBAL' ? 'ADMIN' : profileKey === 'WORKSHOP_SUPERVISOR' || profileKey === 'WORKSHOP_TEAM_LEADER' ? 'TEAM_LEAD' : 'EMPLOYEE',
+                employeeId: profileKey === 'ADMIN_GLOBAL' ? '' : accountEdit.employeeId,
+                departmentId: profileKey === 'ADMIN_GLOBAL' ? '' : accountEdit.departmentId,
+              });
+            }}>{accessProfileOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <label>权限部门<select value={accountEdit.departmentId} disabled={accountEdit.profileKey === 'ADMIN_GLOBAL' || !departmentOptions.length} onChange={event => setAccountEdit({ ...accountEdit, departmentId: event.target.value })}><option value="">由员工主档案联动</option>{departmentOptions.map(department => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
+            <label>任职来源<input value="主部门" disabled /></label>
+            <label>生效日期<input type="date" value={accountEdit.effectiveFrom} onChange={event => setAccountEdit({ ...accountEdit, effectiveFrom: event.target.value })} /></label>
+            <label>结束日期<input type="date" required={accountEdit.grantType === 'ACTING'} value={accountEdit.effectiveTo} onChange={event => setAccountEdit({ ...accountEdit, effectiveTo: event.target.value })} /></label>
+            <label>账号状态<select value={accountEdit.accountStatus} onChange={event => {
+              const accountStatus = event.target.value as AccountStatusDTO;
+              setAccountEdit({ ...accountEdit, accountStatus, isActive: accountStatus === 'ACTIVE' });
+            }}><option value="ACTIVE">正常</option><option value="SUSPENDED">暂停登录</option><option value="DISABLED">停用账号</option></select></label>
+            <div className="account-edit-preview"><ShieldCheck /><span><strong>{accessProfileLabel(accountEdit.profileKey)} · 主部门</strong><small>{accessProfileDescription(accountEdit.profileKey)}</small></span></div>
             <div className="dialog-actions">
               <button type="button" onClick={() => setAccountEdit(null)}>取消</button>
-              <button className={accountEdit.isActive ? 'primary-button' : 'danger-button'} type="submit" disabled={saving}>{saving ? '保存中...' : accountEdit.isActive ? '保存' : '确认禁用'}</button>
+              <button className={accountEdit.accountStatus === 'ACTIVE' ? 'primary-button' : 'danger-button'} type="submit" disabled={saving}>{saving ? '保存中...' : accountEdit.accountStatus === 'ACTIVE' ? '保存' : '确认状态变更'}</button>
+            </div>
+          </form>
+        )}
+
+        {additionalGrant && (
+          <form className="nested-dialog account-edit-dialog" onSubmit={saveAdditionalGrant}>
+            <header><span><CalendarClock /></span><div><strong>兼岗与代班：{additionalGrant.username}</strong><small>追加授权不会替换主部门权限；保存后旧登录立即失效</small></div></header>
+            {(additionalGrantUser?.accessGrants || []).some(grant => grant.grantType !== 'PRIMARY' && grant.isActive) && (
+              <div className="account-additional-grants">
+                <strong>现有追加授权</strong>
+                {(additionalGrantUser?.accessGrants || []).filter(grant => grant.grantType !== 'PRIMARY' && grant.isActive).map(grant => (
+                  <div key={grant.id}>
+                    <span><b>{grantDepartmentName(grant, additionalGrantUser || undefined)}</b><small>{accessGrantTypeLabel(grant.grantType)} · {accessProfileLabel(grant.profileKey)}{additionalGrantTeamName(grant)}{grant.effectiveTo ? ` · 至 ${accountInputDate(grant.effectiveTo)}` : ''}</small></span>
+                    <button type="button" disabled={saving} onClick={() => revokeAdditionalGrant(additionalGrant.userId, grant)}>撤销</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label>授权类型<select value={additionalGrant.grantType} onChange={event => setAdditionalGrant({ ...additionalGrant, grantType: event.target.value as 'CONCURRENT' | 'ACTING', effectiveTo: event.target.value === 'ACTING' ? additionalGrant.effectiveTo : '' })}><option value="CONCURRENT">兼岗</option><option value="ACTING">代班</option></select></label>
+            <label>权限方案<select value={additionalGrant.profileKey} onChange={event => chooseAdditionalProfile(event.target.value as AccessProfileKeyDTO)}>{accessProfileOptions.filter(option => option.value !== 'ADMIN_GLOBAL').map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+            <label>权限部门<select required value={additionalGrant.departmentId} onChange={event => setAdditionalGrant({ ...additionalGrant, departmentId: event.target.value })}><option value="">请选择部门</option>{departmentOptions.map(department => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
+            {additionalGrant.profileKey === 'WORKSHOP_TEAM_LEADER' && (
+              <label>目标班组<select required value={additionalGrant.targetTeamId} onChange={event => setAdditionalGrant({ ...additionalGrant, targetTeamId: event.target.value })}><option value="">请选择本次负责的班组</option>{productionTeams.map(team => <option key={team.id} value={team.id}>{team.code} · {team.name}</option>)}</select></label>
+            )}
+            <label>生效日期<input type="date" value={additionalGrant.effectiveFrom} onChange={event => setAdditionalGrant({ ...additionalGrant, effectiveFrom: event.target.value })} /></label>
+            <label>结束日期<input type="date" required={additionalGrant.grantType === 'ACTING'} value={additionalGrant.effectiveTo} onChange={event => setAdditionalGrant({ ...additionalGrant, effectiveTo: event.target.value })} /></label>
+            <div className="account-edit-preview"><ShieldCheck /><span><strong>{accessProfileLabel(additionalGrant.profileKey)} · {accessGrantTypeLabel(additionalGrant.grantType)}</strong><small>{accessProfileDescription(additionalGrant.profileKey)}{additionalGrant.profileKey === 'WORKSHOP_TEAM_LEADER' ? `；目标班组：${productionTeams.find(team => team.id === additionalGrant.targetTeamId)?.name || '未选择'}` : ''}</small></span></div>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setAdditionalGrant(null)}>取消</button>
+              <button className="primary-button" type="submit" disabled={saving}>{saving ? '保存中...' : '添加授权'}</button>
             </div>
           </form>
         )}
 
         {passwordReset && (
-          <form className="nested-dialog" onSubmit={resetUserPassword}>
-            <strong>重置密码：{passwordReset.username}</strong>
+          <form className="nested-dialog account-password-dialog" onSubmit={resetUserPassword}>
+            <header><span><KeyRound /></span><div><strong>重置密码：{passwordReset.username}</strong><small>共享终端PIN将在后续版本独立接入，本操作仅重置登录密码</small></div></header>
             <label>新密码<input type="password" value={passwordReset.password} onChange={e => setPasswordReset({ ...passwordReset, password: e.target.value })} /></label>
             <div className="dialog-actions">
               <button type="button" onClick={() => setPasswordReset(null)}>取消</button>

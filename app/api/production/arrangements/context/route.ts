@@ -4,6 +4,7 @@ import { dailyPlanError, dailyPlanSuccess } from '@/lib/daily-plan-api';
 import { assertDailyPlanEnabled } from '@/lib/daily-plan-feature';
 import { productionPlanningDateBoundary } from '@/lib/production-planning-date';
 import { getProductionArrangementContext } from '@/lib/daily-plan-service';
+import { assertProductionScopeRead, resolveProductionEntityScope } from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,6 +20,7 @@ export async function GET(request: NextRequest) {
   try {
     assertDailyPlanEnabled();
     const user = await requireUser();
+    assertProductionScopeRead(resolveProductionEntityScope(user));
     const params = request.nextUrl.searchParams;
     const data = await getProductionArrangementContext({
       actorUserId: user.id,

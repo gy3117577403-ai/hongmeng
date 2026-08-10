@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  forbidden,
+  ForbiddenError,
+  requireCapability,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import { chinaDateKey } from '@/lib/china-date';
 import {
   EmployeeOffboardingError,
@@ -7,19 +13,22 @@ import {
 } from '@/lib/employee-offboarding';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { serializeEmployee } from '@/lib/process-time';
+import {
+  employeeAccessAdminInclude,
+  serializeEmployeeAccessAdmin,
+} from '@/lib/employee-access-admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await requireUser();
+    const user = await requireCapability('HR', 'EXECUTE_WORKFLOW');
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const effectiveDate = parseEmployeeEffectiveDate(body.effectiveDate || chinaDateKey(new Date()));
     const existing = await prisma.employee.findUnique({
       where: { id: params.id },
-      include: { user: { select: { id: true } } },
+      include: employeeAccessAdminInclude,
     });
     if (!existing) {
       throw new EmployeeOffboardingError('员工档案不存在', { status: 404, code: 'EMPLOYEE_NOT_FOUND' });
@@ -43,7 +52,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
     }
 
-    const restoreLogin = body.restoreLogin === true;
     const employee = await prisma.$transaction(async tx => {
       const updated = await tx.employee.update({
         where: { id: params.id },
@@ -55,10 +63,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           resignationReason: null,
           resignationNote: null,
         },
+        include: employeeAccessAdminInclude,
       });
-      if (restoreLogin && existing.user) {
-        await tx.user.update({ where: { id: existing.user.id }, data: { isActive: true } });
-      }
       await tx.employeeEmploymentEvent.create({
         data: {
           employeeId: params.id,
@@ -80,12 +86,22 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       detail: {
         employeeNo: employee.employeeNo,
         effectiveDate: effectiveDate.key,
-        loginRestored: restoreLogin && Boolean(existing.user),
+        loginRestored: false,
+        accessGrantsRestored: false,
+        linkedAccountRequiresAdmin: Boolean(existing.user),
       },
     });
-    return NextResponse.json({ ok: true, employee: serializeEmployee(employee) });
+    return NextResponse.json({
+      ok: true,
+      employee: serializeEmployeeAccessAdmin(employee),
+      accountAccessRequiresAdmin: Boolean(existing.user),
+      message: existing.user
+        ? '员工档案已恢复在职；账号与权限仍保持停用，请由管理员另行确认'
+        : '员工档案已恢复在职',
+    });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('只有人事部或管理员可以办理员工复职');
     if (error instanceof EmployeeOffboardingError) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }

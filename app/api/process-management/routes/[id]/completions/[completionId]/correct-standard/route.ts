@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { hasCapability } from '@/lib/department-access';
 import { correctProcessCompletionStandard } from '@/lib/process-completion-correction-service';
 import { ProcessCompletionWithdrawalError } from '@/lib/process-completion-withdrawal-service';
 
@@ -13,9 +14,9 @@ export async function POST(
   try {
     const user = await requireUser({ write: 'production' });
     if (
-      user.laborRole !== 'ADMIN'
-      && !user.dailyPlanningRoles.includes('WORKSHOP_SUPERVISOR')
-    ) return forbidden('仅管理员或生产主管可校正工序与标准工时');
+      !hasCapability(user.access, 'PROCESS', 'UPDATE')
+      && !hasCapability(user.access, 'PRODUCTION', 'UPDATE')
+    ) return forbidden('当前账号无权校正工序与标准工时');
     const body = await req.json().catch(() => ({})) as {
       expectedRouteVersion?: unknown;
       processName?: unknown;

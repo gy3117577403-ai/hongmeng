@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  forbidden,
+  ForbiddenError,
+  requireCapability,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import { allocateEmployeeNumber } from '@/lib/employee-number';
 import { normalizeEmployeeMobile, EmployeeContactError } from '@/lib/employee-contact';
 import {
@@ -9,16 +15,22 @@ import {
 } from '@/lib/employee-date';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
-import { normalizeEmployeeDepartment } from '@/lib/production-workforce';
+import { cleanProcessText } from '@/lib/process-time';
 import { chinaDateKey } from '@/lib/china-date';
+import {
+  departmentRecordSelect,
+  EmployeeDepartmentInputError,
+  employeeAccessAdminInclude,
+  resolveEmployeeDepartmentInput,
+  serializeEmployeeAccessAdmin,
+} from '@/lib/employee-access-admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    await requireCapability('HR', 'READ');
     const keyword = cleanProcessText(req.nextUrl.searchParams.get('keyword'), 80);
     const activeOnly = req.nextUrl.searchParams.get('active') === 'true';
     const employees = await prisma.employee.findMany({
@@ -37,11 +49,17 @@ export async function GET(req: NextRequest) {
             }
           : {}),
       },
+      include: employeeAccessAdminInclude,
       orderBy: [{ isActive: 'desc' }, { employeeNo: 'asc' }],
     });
-    return NextResponse.json({ ok: true, employees: employees.map(serializeEmployee) });
+    const now = new Date();
+    return NextResponse.json({
+      ok: true,
+      employees: employees.map(employee => serializeEmployeeAccessAdmin(employee, now)),
+    });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('只有人事部或管理员可以查看员工档案');
     console.error('employee list failed', error);
     return NextResponse.json({ ok: false, error: '员工档案加载失败' }, { status: 500 });
   }
@@ -49,13 +67,19 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireUser();
+    const user = await requireCapability('HR', 'CREATE');
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const name = cleanProcessText(body.name, 80);
     if (!name) return NextResponse.json({ ok: false, error: '请填写员工姓名' }, { status: 400 });
     const hireDate = normalizeEmployeeHireDateInput(body.hireDate) ?? null;
     const mobile = normalizeEmployeeMobile(body.mobile);
     const employee = await prisma.$transaction(async tx => {
+      const resolvedDepartment = await resolveEmployeeDepartmentInput(body, lookup =>
+        tx.department.findFirst({
+          where: { isActive: true, ...lookup },
+          select: departmentRecordSelect,
+        }),
+      );
       if (mobile) {
         const duplicate = await tx.employee.findFirst({ where: { mobile }, select: { id: true } });
         if (duplicate) throw new EmployeeContactError('该手机号已绑定其他员工档案');
@@ -65,7 +89,8 @@ export async function POST(req: NextRequest) {
         data: {
           employeeNo,
           name,
-          department: normalizeEmployeeDepartment(cleanProcessText(body.department, 80)),
+          departmentId: resolvedDepartment?.departmentId ?? null,
+          department: resolvedDepartment?.department ?? null,
           position: cleanProcessText(body.position, 80) || null,
           team: cleanProcessText(body.team, 80) || null,
           hireDate: employeeHireDateToDate(hireDate),
@@ -73,6 +98,7 @@ export async function POST(req: NextRequest) {
           notificationEnabled: body.notificationEnabled !== false,
           attendanceEnabled: body.attendanceEnabled !== false,
         },
+        include: employeeAccessAdminInclude,
       });
       await tx.employeeEmploymentEvent.create({
         data: {
@@ -92,9 +118,16 @@ export async function POST(req: NextRequest) {
       targetId: employee.id,
       detail: { employeeNo: employee.employeeNo },
     });
-    return NextResponse.json({ ok: true, employee: serializeEmployee(employee) }, { status: 201 });
+    return NextResponse.json({
+      ok: true,
+      employee: serializeEmployeeAccessAdmin(employee),
+    }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('只有人事部或管理员可以新增员工档案');
+    if (error instanceof EmployeeDepartmentInputError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+    }
     if (error instanceof EmployeeHireDateError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     }

@@ -1014,11 +1014,17 @@ function withProductionDerived(order: ProductionOrder): ProductionOrder {
 
 export default function ProductionExecutionCenter({ user }: { user: CurrentUserDTO }) {
   const router = useRouter();
-  const canAdministerProduction = user.laborRole === 'ADMIN';
+  const canConfigureSystem = user.access.capabilities.includes('SYSTEM_CONFIGURATION:MANAGE');
+  const canAdministerProduction = user.access.capabilities.includes('PRODUCTION:UPDATE')
+    || user.access.capabilities.includes('BUSINESS:UPDATE');
   const canScheduleProduction = user.canAccessDailyPlans
-    && (user.laborRole === 'ADMIN' || user.dailyPlanningRoles.includes('WORKSHOP_SUPERVISOR'));
+    && (
+      user.access.capabilities.includes('PRODUCTION:UPDATE')
+      || user.access.capabilities.includes('PLANNING:UPDATE')
+    );
   const canSelectProduction = canAdministerProduction || canScheduleProduction;
-  const canPrintTravelers = user.laborRole === 'ADMIN' || user.laborRole === 'TEAM_LEAD';
+  const canPrintTravelers = user.access.capabilities.includes('PRODUCTION:READ')
+    || user.access.capabilities.includes('SYSTEM_CONFIGURATION:READ');
   const [summary, setSummary] = useState<ProductionSummary | null>(null);
   const [board, setBoard] = useState<BoardPayload | null>(null);
   const [view, setView] = useState<ViewKey>('board');
@@ -2350,7 +2356,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         hideHeader
         sidebarTriggerTargetId="production-dispatch-sidebar-trigger"
         menuItems={[
-          ...(canAdministerProduction ? [{ label: '系统设置', href: '/dashboard?openSettings=1' }] : []),
+          ...(canConfigureSystem ? [{ label: '系统设置', href: '/dashboard?openSettings=1' }] : []),
           { label: '退出登录', onSelect: () => { void logout(); } },
         ]}
       />

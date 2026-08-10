@@ -32,6 +32,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PortalMenu } from '@/components/PortalMenu';
+import { canAccessAppRoute, landingRouteForAccess } from '@/lib/app-route-access';
 import type { CurrentUserDTO } from '@/types';
 
 const SIDEBAR_PREFERENCE_KEY = 'hm-platform-sidebar-expanded';
@@ -91,33 +92,19 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
   },
 ];
 
-const teamLeadNavigation = new Set([
-  '/production',
-  '/workspace/workflows',
-  '/workspace/procurement',
-  '/workspace/employees',
-  '/workspace/reports',
-]);
-
 function navigationForUser(
   user: CurrentUserDTO,
 ): Array<{ label: string; items: SideNavigationItem[] }> {
-  if (user.laborRole === 'ADMIN') {
-    if (user.canAccessDailyPlans) return sideNavigation;
-    return sideNavigation.map(group => ({
-      ...group,
-      items: group.items.filter(item => item.href !== '/workspace/weekly-processes'),
-    }));
-  }
-  const allowed = user.laborRole === 'TEAM_LEAD'
-    ? new Set(teamLeadNavigation)
-    : new Set(['/workspace/employees', '/workspace/reports']);
-  allowed.add('/workspace/daily-plans');
-  if (user.canAccessDailyPlans) allowed.add('/workspace/weekly-processes');
   return sideNavigation
     .map(group => ({
       ...group,
-      items: group.items.filter(item => allowed.has(item.href)),
+      items: group.items.filter(item => {
+        if (
+          (item.href === '/workspace/daily-plans' || item.href === '/workspace/weekly-processes')
+          && !user.canAccessDailyPlans
+        ) return false;
+        return canAccessAppRoute(user.access, item.href);
+      }),
     }))
     .filter(group => group.items.length > 0);
 }
@@ -162,8 +149,10 @@ export function AppWorkbenchHeader({
   const moduleName = activeModuleName(activeHref);
   const isHome = isActiveRoute(activeHref, '/home');
   const visibleNavigation = navigationForUser(user);
-  const landingHref = user.laborRole === 'EMPLOYEE' ? '/workspace/reports' : '/home';
-  const visibleMenuItems = user.laborRole === 'ADMIN'
+  const landingHref = landingRouteForAccess(user.access);
+  const canOpenHome = canAccessAppRoute(user.access, '/home');
+  const canOpenSystemSettings = canAccessAppRoute(user.access, '/dashboard?openSettings=1');
+  const visibleMenuItems = canOpenSystemSettings
     ? menuItems
     : menuItems.filter(item => !item.href?.startsWith('/dashboard?openSettings=1'));
 
@@ -242,7 +231,7 @@ export function AppWorkbenchHeader({
           <span aria-hidden="true">杭</span>
           <div><strong>{brandTitle}</strong><small>生产与技术协同工作台</small></div>
         </Link>
-        {user.laborRole !== 'EMPLOYEE' && <Link className={`hm-platform-home ${isActiveRoute(activeHref, '/home') ? 'active' : ''}`} href="/home" prefetch={false} title="首页" aria-current={isActiveRoute(activeHref, '/home') ? 'page' : undefined}>
+        {canOpenHome && <Link className={`hm-platform-home ${isActiveRoute(activeHref, '/home') ? 'active' : ''}`} href="/home" prefetch={false} title="首页" aria-current={isActiveRoute(activeHref, '/home') ? 'page' : undefined}>
           <Home size={18} aria-hidden="true" /><b>首页</b>
         </Link>}
         <nav className="hm-platform-side-nav">
@@ -263,7 +252,7 @@ export function AppWorkbenchHeader({
         </nav>
         <div className="hm-platform-sidebar-footer">
           <Link href="/workspace/help" prefetch={false} title="使用帮助（规划中）" className="planned"><HelpCircle size={18} aria-hidden="true" /><span>使用帮助</span><em>规划</em></Link>
-          {user.laborRole === 'ADMIN' && <Link href="/dashboard?openSettings=1" prefetch={false} title="系统设置"><Settings size={18} aria-hidden="true" /><span>系统设置</span></Link>}
+          {canOpenSystemSettings && <Link href="/dashboard?openSettings=1" prefetch={false} title="系统设置"><Settings size={18} aria-hidden="true" /><span>系统设置</span></Link>}
         </div>
       </aside>
 

@@ -1,10 +1,8 @@
-import { redirect } from 'next/navigation';
 import IssueManagementShell from '@/components/IssueManagementShell';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import './issues-workbench.css';
 
 export default async function IssueManagementPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login');
+  const user = await requirePageAccess('/workspace/issues');
   return <IssueManagementShell user={user} />;
 }

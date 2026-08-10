@@ -1,10 +1,8 @@
-import { redirect } from 'next/navigation';
 import WarehouseManagementShell from '@/components/WarehouseManagementShell';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import './warehouse-workbench.css';
 
 export default async function WarehouseManagementPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login?next=%2Fworkspace%2Fwarehouse');
+  const user = await requirePageAccess('/workspace/warehouse');
   return <WarehouseManagementShell user={user} />;
 }

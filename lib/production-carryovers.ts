@@ -4,6 +4,10 @@ import { prisma } from '@/lib/prisma';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import { chinaWeekRange } from '@/lib/production-planning';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
+import {
+  productionTeamScopeWhere,
+  type ProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export const PRODUCTION_CARRYOVER_ACTIVE = 'ACTIVE';
 export const PRODUCTION_CARRYOVER_COMPLETED = 'COMPLETED';
@@ -14,6 +18,18 @@ export const PRODUCTION_CARRYOVER_MANUAL = 'MANUAL_OLDER_WEEK';
 // when its linked work order is unfinished. Archived batches therefore remain
 // valid carryover sources; the ACTIVE carryover link controls current scope.
 const CARRYOVER_BATCH_STATES = ['active', 'preparation', 'archived'];
+
+function productionBatchScopeWhere(scope?: ProductionEntityScope): Prisma.ProductionPlanBatchWhereInput {
+  const teamWhere = scope
+    ? productionTeamScopeWhere(scope) as Prisma.ProductionTeamWhereInput | null
+    : null;
+  if (!teamWhere) return {};
+  return {
+    dailyProcessTasks: {
+      some: { plan: { team: teamWhere } },
+    },
+  };
+}
 
 export class ProductionCarryoverError extends Error {
   constructor(message: string, public code: string, public status = 400) {
@@ -292,6 +308,7 @@ export async function listOlderProductionCarryoverCandidates(input: {
   targetWeekStart: Date | string;
   keyword?: string;
   limit?: number;
+  productionScope?: ProductionEntityScope;
 }) {
   const targetWeekStart = normalizedWeek(input.targetWeekStart);
   const previousWeekStart = addDays(targetWeekStart, -7);
@@ -318,6 +335,7 @@ export async function listOlderProductionCarryoverCandidates(input: {
         },
       },
       NOT: activeProductionCarryoverBatchWhere(targetWeekStart),
+      ...productionBatchScopeWhere(input.productionScope),
     },
     select: olderCandidateSelect,
     orderBy: [{ weekStartDate: 'desc' }, { plannedCompletionDate: 'asc' }, { createdAt: 'asc' }],
@@ -350,6 +368,7 @@ export async function includeOlderProductionCarryovers(input: {
   batchIds: string[];
   actorId: string;
   reason?: string;
+  productionScope?: ProductionEntityScope;
 }) {
   const targetWeekStart = normalizedWeek(input.targetWeekStart);
   const previousWeekStart = addDays(targetWeekStart, -7);
@@ -368,6 +387,7 @@ export async function includeOlderProductionCarryovers(input: {
         workOrderId: { not: null },
         planOrder: { deletedAt: null },
         workOrder: { is: { deletedAt: null } },
+        ...productionBatchScopeWhere(input.productionScope),
       },
       select: olderCandidateSelect,
     });
@@ -416,12 +436,19 @@ export async function includeOlderProductionCarryovers(input: {
   });
 }
 
-export async function loadProductionCarryoverCounts(targetWeekStart: Date | string) {
+export async function loadProductionCarryoverCounts(
+  targetWeekStart: Date | string,
+  scope?: ProductionEntityScope,
+) {
   const target = normalizedWeek(targetWeekStart);
   const previous = addDays(target, -7);
   const [active, older] = await Promise.all([
     prisma.productionCarryover.count({
-      where: { targetWeekStartDate: productionCarryoverDayWindow(target), status: PRODUCTION_CARRYOVER_ACTIVE },
+      where: {
+        targetWeekStartDate: productionCarryoverDayWindow(target),
+        status: PRODUCTION_CARRYOVER_ACTIVE,
+        productionPlanBatch: productionBatchScopeWhere(scope),
+      },
     }),
     prisma.productionPlanBatch.count({
       where: {
@@ -438,6 +465,7 @@ export async function loadProductionCarryoverCounts(targetWeekStart: Date | stri
           },
         },
         NOT: activeProductionCarryoverBatchWhere(target),
+        ...productionBatchScopeWhere(scope),
       },
     }),
   ]);

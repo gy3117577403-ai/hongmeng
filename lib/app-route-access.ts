@@ -1,0 +1,99 @@
+import type { AccessModuleCode } from '@/lib/department-access';
+
+type AppAccess = {
+  modules: readonly AccessModuleCode[];
+};
+
+type RouteAccessRule = {
+  prefix: string;
+  anyOf: readonly AccessModuleCode[];
+};
+
+/**
+ * Page-level visibility rules for the first department-permission rollout.
+ *
+ * These rules only decide whether a module entry/page is available. APIs still
+ * perform their own action and entity-scope checks; a visible page is never an
+ * authorization grant by itself.
+ */
+export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
+  { prefix: '/field-report', anyOf: ['FIELD_REPORT'] },
+  { prefix: '/account', anyOf: ['ACCOUNT_SELF'] },
+  { prefix: '/home', anyOf: ['BASIC_SUMMARY'] },
+  { prefix: '/production/qr-print', anyOf: ['PRODUCTION'] },
+  { prefix: '/production', anyOf: ['BUSINESS', 'PRODUCTION'] },
+  { prefix: '/weekly-plan-center', anyOf: ['PLANNING'] },
+  { prefix: '/workspace/daily-plans', anyOf: ['PLANNING', 'PRODUCTION'] },
+  { prefix: '/workspace/weekly-processes', anyOf: ['PLANNING', 'PRODUCTION'] },
+  { prefix: '/drawing-library', anyOf: ['ENGINEERING'] },
+  { prefix: '/connector-assembly-manuals', anyOf: ['ENGINEERING'] },
+  { prefix: '/connector-parameters', anyOf: ['ENGINEERING'] },
+  { prefix: '/workspace/issues', anyOf: ['QUALITY'] },
+  { prefix: '/workspace/changes', anyOf: ['ENGINEERING', 'QUALITY'] },
+  {
+    prefix: '/workspace/workflows',
+    anyOf: [
+      'BUSINESS',
+      'PROCUREMENT',
+      'WAREHOUSE',
+      'ENGINEERING',
+      'QUALITY',
+      'PROCESS',
+      'PLANNING',
+      'HR',
+      'PRODUCTION',
+      'MAJOR_APPROVAL',
+    ],
+  },
+  { prefix: '/workspace/warehouse', anyOf: ['WAREHOUSE'] },
+  { prefix: '/workspace/procurement', anyOf: ['PROCUREMENT'] },
+  { prefix: '/workspace/product-times', anyOf: ['PROCESS'] },
+  { prefix: '/workspace/time-standards', anyOf: ['PROCESS'] },
+  { prefix: '/workspace/processes', anyOf: ['PROCESS'] },
+  { prefix: '/workspace/employees', anyOf: ['HR'] },
+  { prefix: '/workspace/attendance', anyOf: ['HR'] },
+  { prefix: '/workspace/responsibilities', anyOf: ['HR', 'SYSTEM_CONFIGURATION'] },
+  {
+    prefix: '/workspace/reports',
+    anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL'],
+  },
+  { prefix: '/workspace/knowledge', anyOf: ['SYSTEM_CONFIGURATION'] },
+  { prefix: '/workspace/reviews', anyOf: ['ENGINEERING', 'QUALITY'] },
+  { prefix: '/workspace/organization', anyOf: ['SYSTEM_CONFIGURATION'] },
+  { prefix: '/workspace/permissions', anyOf: ['SYSTEM_CONFIGURATION'] },
+  { prefix: '/workspace/messages', anyOf: ['NOTIFICATIONS'] },
+  { prefix: '/workspace/initiated', anyOf: ['BASIC_SUMMARY'] },
+  { prefix: '/workspace/involved', anyOf: ['BASIC_SUMMARY'] },
+  { prefix: '/workspace/copied', anyOf: ['BASIC_SUMMARY'] },
+  { prefix: '/workspace/following', anyOf: ['BASIC_SUMMARY'] },
+  { prefix: '/workspace/help', anyOf: ['ACCOUNT_SELF', 'BASIC_SUMMARY'] },
+  { prefix: '/workspace/more', anyOf: ['BASIC_SUMMARY'] },
+  { prefix: '/dashboard', anyOf: ['ACCOUNT_ADMIN', 'SYSTEM_CONFIGURATION'] },
+] as const;
+
+function normalizedPath(pathname: string): string {
+  const value = String(pathname || '/').split('?')[0] || '/';
+  if (value === '/') return value;
+  return value.replace(/\/+$/, '');
+}
+
+export function routeAccessRule(pathname: string): RouteAccessRule | null {
+  const path = normalizedPath(pathname);
+  return APP_ROUTE_ACCESS_RULES.find(rule => (
+    path === rule.prefix || path.startsWith(`${rule.prefix}/`)
+  )) || null;
+}
+
+export function canAccessAppRoute(access: AppAccess, pathname: string): boolean {
+  const rule = routeAccessRule(pathname);
+  if (!rule) return false;
+  const modules = new Set(access.modules);
+  return rule.anyOf.some(module => modules.has(module));
+}
+
+export function landingRouteForAccess(access: AppAccess): string {
+  const modules = new Set(access.modules);
+  if (modules.has('BASIC_SUMMARY')) return '/home';
+  if (modules.has('ACCOUNT_SELF')) return '/account';
+  return '/access-unavailable';
+}

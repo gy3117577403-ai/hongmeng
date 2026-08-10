@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { chinaDateKey } from '@/lib/china-date';
 import { prisma } from '@/lib/prisma';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
@@ -6,6 +7,10 @@ import type {
   ProductionWeekReconciliationIssueCode,
   ProductionWeekReconciliationIssueDTO,
 } from '@/types';
+import {
+  productionTeamScopeWhere,
+  type ProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export type ReconciliationBatchRow = {
   id: string;
@@ -121,6 +126,7 @@ export function buildProductionWeekReconciliation(input: {
 
 export async function loadProductionWeekReconciliation(
   weekStartInput?: string | null,
+  scope?: ProductionEntityScope,
 ): Promise<ProductionWeekReconciliationDTO> {
   const weekStart = parseWeek(weekStartInput);
   if (!weekStart) throw new Error('生产周开始日期格式不正确');
@@ -128,6 +134,10 @@ export async function loadProductionWeekReconciliation(
   const weekStartDate = chinaDateKey(weekStart);
   const weekEndDate = chinaDateKey(weekEnd);
   const sameWeekStart = { gte: weekStart, lt: addDays(weekStart, 1) };
+  const teamWhere = scope
+    ? productionTeamScopeWhere(scope) as Prisma.ProductionTeamWhereInput | null
+    : null;
+  const taskScope = teamWhere ? { dailyProcessTasks: { some: { plan: { team: teamWhere } } } } : {};
 
   const [batches, workOrders] = await Promise.all([
     prisma.productionPlanBatch.findMany({
@@ -135,6 +145,7 @@ export async function loadProductionWeekReconciliation(
         deletedAt: null,
         weekStartDate: sameWeekStart,
         planOrder: { deletedAt: null },
+        ...taskScope,
       },
       select: {
         id: true,
@@ -158,6 +169,7 @@ export async function loadProductionWeekReconciliation(
         parentWorkOrderId: null,
         planType: { in: ['weekly_plan', 'managed_plan'] },
         weekStartDate: sameWeekStart,
+        ...taskScope,
       },
       select: {
         id: true,

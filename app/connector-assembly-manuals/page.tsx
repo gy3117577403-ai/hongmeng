@@ -1,12 +1,10 @@
-import { redirect } from 'next/navigation';
 import { ConnectorAssemblyManualShell } from '@/components/ConnectorAssemblyManualShell';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import './connector-assembly-manuals-workbench.css';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ConnectorAssemblyManualPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login');
+  const user = await requirePageAccess('/connector-assembly-manuals');
   return <ConnectorAssemblyManualShell user={user} />;
 }

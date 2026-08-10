@@ -24,17 +24,20 @@ import {
   FolderTree,
   GraduationCap,
   IdCard,
+  KeyRound,
   Layers3,
   LayoutDashboard,
   ListOrdered,
   Loader2,
   MapPin,
   MessageSquareText,
+  Monitor,
   MoreHorizontal,
   Network,
   PencilLine,
   Phone,
   Plus,
+  QrCode,
   RefreshCw,
   RotateCcw,
   Save,
@@ -45,6 +48,7 @@ import {
   UserPlus,
   UserRound,
   UserRoundCheck,
+  UserRoundCog,
   UsersRound,
   X,
 } from 'lucide-react';
@@ -72,6 +76,8 @@ import type {
   RecruitmentDemandDTO,
   RecruitmentDemandStatusDTO,
   RecruitmentSummaryDTO,
+  UserAccessGrantDTO,
+  UserDTO,
 } from '@/types';
 
 type HrView =
@@ -139,6 +145,8 @@ type EmploymentActionResponse = {
   }>;
   error?: string;
   code?: string;
+  message?: string;
+  accountAccessRequiresAdmin?: boolean;
 };
 
 type EmploymentDialogMode = 'offboard' | 'reinstate' | null;
@@ -147,7 +155,6 @@ type EmploymentActionDraft = {
   effectiveDate: string;
   reason: string;
   note: string;
-  restoreLogin: boolean;
   attendanceEnabled: boolean;
 };
 
@@ -275,7 +282,7 @@ const hrNavigation: HrNavItem[] = [
 
 const directoryDetailTabs: Array<{ id: DirectoryDetailTab; label: string; icon: LucideIcon }> = [
   { id: 'basic', label: '基本信息', icon: UserRound },
-  { id: 'appointment', label: '任职信息', icon: BriefcaseBusiness },
+  { id: 'appointment', label: '任职与权限', icon: BriefcaseBusiness },
   { id: 'attendance', label: '考勤记录', icon: CalendarClock },
   { id: 'collaboration', label: '协作职责', icon: Network },
 ];
@@ -441,6 +448,79 @@ function formatDate(value: string): string {
   }).format(new Date(value));
 }
 
+function employeeAccessProfileLabel(value?: string | null): string {
+  if (value === 'ADMIN_GLOBAL') return '管理员全权限';
+  if (value === 'DEPARTMENT_FULL') return '部门工作台';
+  if (value === 'FIELD_REPORTER') return '扫码报工';
+  if (value === 'GM_OFFICE_READER_APPROVER') return '总经办只读与重大审批';
+  if (value === 'FINANCE_ACCOUNT_ONLY') return '财务账号接入';
+  if (value === 'WORKSHOP_SUPERVISOR') return '车间主管';
+  if (value === 'WORKSHOP_TEAM_LEADER') return '车间组长';
+  return '旧权限兼容';
+}
+
+function employeeGrantTypeLabel(value?: string | null): string {
+  return value === 'CONCURRENT' ? '兼岗' : value === 'ACTING' ? '代班' : '主部门';
+}
+
+function employeeLinkedAccount(employee?: EmployeeDTO | null) {
+  return employee?.user || employee?.linkedUser || null;
+}
+
+function currentEmployeeAccessGrants(employee?: EmployeeDTO | null): UserAccessGrantDTO[] {
+  const now = Date.now();
+  return (employee?.user?.accessGrants || []).filter(grant => {
+    if (!grant.isActive) return false;
+    const from = new Date(grant.effectiveFrom).getTime();
+    const to = grant.effectiveTo ? new Date(grant.effectiveTo).getTime() : Number.POSITIVE_INFINITY;
+    return (!Number.isFinite(from) || from <= now) && (!Number.isFinite(to) || to >= now);
+  });
+}
+
+function employeeAccountStatus(employee?: EmployeeDTO | null): { label: string; tone: string } {
+  const account = employeeLinkedAccount(employee);
+  if (!account) return { label: '未开通', tone: 'unbound' };
+  const status = account.accountStatus || (account.isActive ? 'ACTIVE' : 'DISABLED');
+  if (status === 'PENDING') return { label: '待激活', tone: 'pending' };
+  if (status === 'SUSPENDED') return { label: '已暂停', tone: 'suspended' };
+  if (status === 'DISABLED' || !account.isActive) return { label: '已停用', tone: 'disabled' };
+  return { label: '正常', tone: 'active' };
+}
+
+function employeeAccessMethods(employee: EmployeeDTO | null | undefined, productionEligible: boolean): string[] {
+  const account = employeeLinkedAccount(employee);
+  if (!account) return [];
+  const accountStatus = account.accountStatus || (account.isActive ? 'ACTIVE' : 'DISABLED');
+  if (employee?.isActive === false || !account.isActive || accountStatus !== 'ACTIVE') {
+    return ['不可登录'];
+  }
+  const grants = currentEmployeeAccessGrants(employee);
+  const summary = employee?.linkedUser?.permissionSummary;
+  if (!grants.length && summary?.activeGrantCount) {
+    const summaryMethods: string[] = [];
+    if (summary.profiles.some(profile => profile !== 'FIELD_REPORTER')) summaryMethods.push('后台登录');
+    if (summary.fieldReportEnabled) summaryMethods.push('扫码报工');
+    return summaryMethods;
+  }
+  if (!grants.length) return productionEligible ? ['扫码报工（旧权限）'] : ['后台登录（旧权限）'];
+  const methods = new Set<string>();
+  grants.forEach(grant => {
+    if (grant.profileKey === 'FIELD_REPORTER') methods.add('扫码报工');
+    else methods.add('后台登录');
+  });
+  return [...methods];
+}
+
+function employeeGrantDepartment(grant: UserAccessGrantDTO, fallback: string): string {
+  return grant.department?.name || fallback;
+}
+
+function employeeGrantPeriod(grant: UserAccessGrantDTO): string {
+  const start = grant.effectiveFrom ? formatDate(grant.effectiveFrom) : '立即生效';
+  if (!grant.effectiveTo) return grant.grantType === 'ACTING' ? `${start}起 · 结束日期待补` : `${start}起`;
+  return `${start}—${formatDate(grant.effectiveTo)}`;
+}
+
 function formatRecruitmentDate(value: string | null | undefined): string {
   if (!value) return '未设置';
   return new Intl.DateTimeFormat('zh-CN', {
@@ -567,7 +647,8 @@ function EmptyPanel({
   );
 }
 
-export default function EmployeeManagementShell({ user: _user }: { user: CurrentUserDTO }) {
+export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO }) {
+  const canManageAccounts = user.laborRole === 'ADMIN';
   const [view, setView] = useState<HrView>('overview');
   const [employees, setEmployees] = useState<EmployeeDTO[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecordDTO[]>([]);
@@ -619,7 +700,6 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     effectiveDate: todayDateKey(),
     reason: '主动离职',
     note: '',
-    restoreLogin: true,
     attendanceEnabled: true,
   });
   const workbenchRef = useRef<HTMLElement>(null);
@@ -652,18 +732,44 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     setError('');
     setAuxiliaryWarning('');
     try {
-      const [employeeResult, attendanceResult, abnormalResult, attainmentResult, recruitmentResult] = await Promise.allSettled([
+      const [employeeResult, attendanceResult, abnormalResult, attainmentResult, recruitmentResult, accountResult] = await Promise.allSettled([
         fetch('/api/employees', { cache: 'no-store' }),
         fetch('/api/attendance/records?period=month', { cache: 'no-store' }),
         fetch('/api/abnormal-time-events?period=month', { cache: 'no-store' }),
         fetch('/api/reports/employee-attainment?period=month', { cache: 'no-store' }),
         fetch('/api/recruitment/demands', { cache: 'no-store' }),
+        canManageAccounts ? fetch('/api/users', { cache: 'no-store' }) : Promise.resolve(null),
       ]);
 
       if (employeeResult.status !== 'fulfilled') throw new Error('员工档案加载失败');
       const employeeBody = await employeeResult.value.json() as EmployeesResponse;
       if (!employeeResult.value.ok) throw new Error(employeeBody.error || '员工档案加载失败');
-      const nextEmployees = sortEmployees(employeeBody.employees || []);
+      let nextEmployees = sortEmployees(employeeBody.employees || []);
+      if (accountResult.status === 'fulfilled' && accountResult.value) {
+        const accountBody = await accountResult.value.json().catch(() => ({})) as { users?: UserDTO[] };
+        if (accountResult.value.ok && Array.isArray(accountBody.users)) {
+          const accountByEmployeeId = new Map(accountBody.users
+            .filter(account => Boolean(account.employeeId))
+            .map(account => [account.employeeId as string, account]));
+          nextEmployees = nextEmployees.map(employee => {
+            const account = accountByEmployeeId.get(employee.id);
+            if (!account) return employee;
+            return {
+              ...employee,
+              permissionSyncPending: account.permissionSyncPending ?? employee.permissionSyncPending,
+              user: {
+                id: account.id,
+                username: account.username,
+                accountStatus: account.accountStatus,
+                isActive: account.isActive,
+                mustChangePassword: account.mustChangePassword,
+                lastLoginAt: account.lastLoginAt,
+                accessGrants: account.accessGrants,
+              },
+            };
+          });
+        }
+      }
       setEmployees(nextEmployees);
       setSelectedEmployeeId(current => {
         const params = new URLSearchParams(window.location.search);
@@ -736,7 +842,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canManageAccounts]);
 
   useEffect(() => {
     void loadHumanResources();
@@ -1255,10 +1361,6 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       const body = await response.json() as EmploymentActionResponse;
       if (!response.ok) throw new Error(body.error || '离职影响检查失败');
       setEmploymentPreview(body);
-      setEmploymentDraft(current => ({
-        ...current,
-        restoreLogin: body.impact?.linkedLogin ? true : current.restoreLogin,
-      }));
     } catch (reason) {
       setEmploymentPreview(null);
       setEmploymentError(reason instanceof Error ? reason.message : '离职影响检查失败');
@@ -1278,7 +1380,6 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       effectiveDate,
       reason: '主动离职',
       note: '',
-      restoreLogin: true,
       attendanceEnabled: true,
     });
     setEmploymentPreview(null);
@@ -1312,7 +1413,6 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
         } : {
           effectiveDate: employmentDraft.effectiveDate,
           note: employmentDraft.note,
-          restoreLogin: employmentDraft.restoreLogin,
           attendanceEnabled: employmentDraft.attendanceEnabled,
           notificationEnabled: true,
         }),
@@ -1334,7 +1434,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
       await loadHumanResources();
       setToast(employmentDialog === 'offboard'
         ? `${savedEmployee.name} 已办理离职，工号 ${savedEmployee.employeeNo} 永久保留`
-        : `${savedEmployee.name} 已恢复在职，继续使用原工号 ${savedEmployee.employeeNo}`);
+        : body.message || `${savedEmployee.name} 已恢复在职；账号与权限等待管理员确认`);
     } catch (reason) {
       setEmploymentError(reason instanceof Error ? reason.message : '员工状态变更失败');
     } finally {
@@ -1549,6 +1649,45 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
     const profileTeam = draft.team.trim() || '班组待维护';
     const productionDepartment = isProductionDepartment(draft.department);
     const productionReportingEligible = isProductionWorkforceEmployee(draft);
+    const profileAccount = employeeLinkedAccount(profileEmployee);
+    const profilePermissionSummary = profileEmployee?.linkedUser?.permissionSummary;
+    const profileAccountStatus = employeeAccountStatus(profileEmployee);
+    const profileAccessGrants = currentEmployeeAccessGrants(profileEmployee);
+    const profileAccessMethods = employeeAccessMethods(profileEmployee, productionReportingEligible);
+    const profilePrimaryGrant = profileAccessGrants.find(grant => grant.grantType === 'PRIMARY') || null;
+    const profilePermissionVersion = profileAccessGrants.length
+      ? Math.max(...profileAccessGrants.map(grant => grant.version), 0)
+      : 0;
+    const profilePermissionNeedsSync = Boolean(profileAccount && (
+      profileEmployee?.permissionSyncPending
+      || profilePermissionSummary?.permissionSyncPending
+      || (profileEmployee?.user && (
+        !(profileEmployee.user.accessGrants || []).length
+        || (profileEmployee.departmentId && profilePrimaryGrant?.departmentId && profileEmployee.departmentId !== profilePrimaryGrant.departmentId)
+      ))
+    ));
+    const profileActiveGrantCount = profileAccessGrants.length || profilePermissionSummary?.activeGrantCount || 0;
+    const profilePermissionSyncLabel = !profileAccount
+      ? '等待开通账号'
+      : profileEmployee?.isActive === false
+        ? '随离职停用'
+      : profilePermissionNeedsSync
+        ? '待管理员确认'
+        : `已同步${profilePermissionVersion ? ` V${profilePermissionVersion}` : ''}`;
+    const profileNoGrantLabel = !profileAccount
+      ? '未开通'
+      : profileEmployee?.isActive === false
+        ? '停用'
+        : profilePermissionNeedsSync
+          ? '待办'
+          : '兼容';
+    const profileNoGrantDescription = !profileAccount
+      ? '尚未创建登录账号'
+      : profileEmployee?.isActive === false
+        ? '员工已离职，账号与权限均已停用'
+        : profilePermissionNeedsSync
+          ? '员工已在职，账号与权限等待管理员确认'
+          : '旧账号保持限制性兼容权限';
     const productionReportingDescription = !draft.isActive && !productionDepartment
       ? `该员工已离职，历史记录继续保留；“${profileDepartment}”原本也不会进入生产报工名单。`
       : !productionDepartment
@@ -1819,9 +1958,9 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                       <legend><BriefcaseBusiness />岗位信息</legend>
                       <label><span>岗位</span><input value={draft.position} maxLength={80} onChange={event => setDraft(current => ({ ...current, position: event.target.value }))} placeholder="例如 压接操作员" /></label>
                       <div className="hr-profile-readonly">
-                        <span>数据范围</span>
-                        <strong>{productionDepartment ? '生产员工档案' : '非生产员工档案'}</strong>
-                        <small>{productionReportingEligible ? '自动进入生产报工范围' : '不进入生产报工范围'}</small>
+                        <span>生产报工</span>
+                        <strong>{productionReportingEligible ? '可实名扫码报工' : '不具备生产报工资格'}</strong>
+                        <small>{productionReportingEligible ? '账号开通后使用员工编号登录' : `${profileDepartment}仍按部门权限进入后台工作台`}</small>
                       </div>
                       <label className="hr-contact-control">
                         <span>手机号（选填）</span>
@@ -1832,30 +1971,67 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                           value={draft.mobile}
                           maxLength={24}
                           onChange={event => setDraft(current => ({ ...current, mobile: event.target.value }))}
-                          placeholder="用于后续企业微信通知"
+                          placeholder="用于业务联系（选填）"
                         />
                         <small><Phone />仅用于业务通知，不在人员列表公开完整号码</small>
                       </label>
                       <div className="hr-contact-status">
-                        <span className={profileEmployee?.wecomUserId ? 'bound' : ''}><MessageSquareText />企业微信 {profileEmployee?.wecomUserId ? '已绑定' : '待接入'}</span>
-                        <span className={draft.isActive && draft.notificationEnabled ? 'ready' : ''}><Send />{draft.isActive && draft.notificationEnabled ? '通知可用' : '通知暂停'}</span>
+                        <span className={draft.isActive && draft.notificationEnabled ? 'ready' : ''}><Send />系统内通知 {draft.isActive && draft.notificationEnabled ? '已启用' : '已暂停'}</span>
+                        <span className={profileEmployee?.wecomUserId ? 'bound' : ''}><MessageSquareText />企业微信 {profileEmployee?.wecomUserId ? '已绑定' : '未接入（未来）'}</span>
                       </div>
                     </fieldset>
                   </div>
-                  <div className="hr-editor-note"><BadgeCheck /><div><strong>手机号已纳入员工主档案</strong><span>后续接入企业微信应用时，将继续使用同一员工编号匹配人员；系统日志不会记录完整手机号。</span></div></div>
+                  <div className="hr-editor-note"><BadgeCheck /><div><strong>人员主档是账号与权限的唯一来源</strong><span>部门、兼岗和代班变更后同步权限；手机号仅用于业务联系与未来通知。</span></div></div>
                   {formError && <div className="hr-editor-error" role="alert"><AlertTriangle size={16} />{formError}</div>}
                 </section>
               )}
 
               {directoryDetailTab === 'appointment' && (
                 <section className="hr-profile-section">
-                  <header><div><span className="hr-eyebrow">组织与任职</span><h2>任职信息</h2></div><BriefcaseBusiness /></header>
+                  <header><div><span className="hr-eyebrow">组织、账号与权限</span><h2>任职与权限</h2></div><BriefcaseBusiness /></header>
                   <div className="hr-appointment-overview">
                     <article><small>所属部门</small><strong>{profileDepartment}</strong><span>组织归属</span></article>
                     <article><small>当前岗位</small><strong>{profilePosition}</strong><span>岗位配置</span></article>
                     <article><small>所在班组</small><strong>{profileTeam}</strong><span>{profileTeamMembers.length} 名在岗成员</span></article>
                     <article><small>入职日期</small><strong>{draft.hireDate ? formatDate(draft.hireDate) : '待维护'}</strong><span>{profileEmployee ? `档案建立 ${formatDate(profileEmployee.createdAt)}` : '保存后建立档案'}</span></article>
                   </div>
+                  {profileEmployee ? (
+                    <section className="hr-account-permission-card">
+                      <header>
+                        <span><ShieldCheck /></span>
+                        <div><strong>账号与权限</strong><small>人员主档联动部门权限，兼岗与代班按授权期限生效</small></div>
+                        {canManageAccounts && <a href={`/dashboard?settings=accounts&employeeId=${encodeURIComponent(profileEmployee.id)}`}><UserRoundCog />打开账号设置</a>}
+                      </header>
+                      <div className="hr-account-state-grid">
+                        <article><small>账号状态</small><strong className={`tone-${profileAccountStatus.tone}`}>{profileAccountStatus.label}</strong><span>{profileAccount?.username || '由管理员开通'}</span></article>
+                        <article><small>主部门</small><strong>{profileEmployee.departmentRecord?.name || profileDepartment}</strong><span>{profileEmployee.departmentRecord?.code || '沿用人员主档'}</span></article>
+                        <article><small>权限同步</small><strong className={profileEmployee.isActive === false ? 'tone-disabled' : profilePermissionNeedsSync ? 'tone-pending' : 'tone-active'}>{profilePermissionSyncLabel}</strong><span>{profileActiveGrantCount ? `${profileActiveGrantCount} 条当前有效授权` : profileNoGrantDescription}</span></article>
+                        <article><small>最近登录</small><strong>{profileAccount?.lastLoginAt ? formatDateTime(profileAccount.lastLoginAt) : profileEmployee.user ? '尚未登录' : profileAccount ? '账号摘要未提供' : '—'}</strong><span>{profileAccount?.mustChangePassword ? '首次登录需修改密码' : profileAccount ? '登录凭证正常' : '等待管理员开通'}</span></article>
+                      </div>
+                      <div className="hr-account-access-row">
+                        <strong>访问方式</strong>
+                        <div>
+                          {profileAccessMethods.map(method => <span key={method}>{method.includes('扫码') ? <QrCode /> : <Monitor />}{method}</span>)}
+                          {!profileAccessMethods.length && <span className="muted"><KeyRound />尚未开通</span>}
+                          <span className="future"><KeyRound />共享终端PIN · 未来接入</span>
+                        </div>
+                      </div>
+                      <div className="hr-account-grant-list">
+                        <header><strong>部门与权限来源</strong><small>同一部门账号采用统一权限方案</small></header>
+                        {profileAccessGrants.map(grant => (
+                          <article key={grant.id}>
+                            <span className={`grant-${grant.grantType.toLowerCase()}`}>{employeeGrantTypeLabel(grant.grantType)}</span>
+                            <div><strong>{employeeGrantDepartment(grant, profileDepartment)}</strong><small>{employeeAccessProfileLabel(grant.profileKey)} · {grant.scopeKey}</small></div>
+                            <em>{employeeGrantPeriod(grant)}</em>
+                          </article>
+                        ))}
+                        {!profileAccessGrants.length && profilePermissionSummary?.activeGrantCount ? <article className="legacy"><span>摘要</span><div><strong>{profilePermissionSummary.departmentCodes.join('、') || profileDepartment}</strong><small>{profilePermissionSummary.profiles.map(employeeAccessProfileLabel).join('、') || '部门权限已配置'}</small></div><em>{profilePermissionSummary.activeGrantCount} 条有效</em></article> : null}
+                        {!profileAccessGrants.length && !profilePermissionSummary?.activeGrantCount && <article className="legacy"><span>{profileNoGrantLabel}</span><div><strong>{profileDepartment}</strong><small>{profileNoGrantDescription}</small></div><em>{profilePermissionSyncLabel}</em></article>}
+                      </div>
+                    </section>
+                  ) : (
+                    <div className="hr-account-permission-empty"><ShieldCheck /><span><strong>创建员工后配置账号与权限</strong><small>账号由管理员开通，部门权限将从人员主档自动继承。</small></span></div>
+                  )}
                   <div className="hr-editor-switches">
                     <label>
                       <input type="checkbox" disabled={!draft.isActive} checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
@@ -1939,12 +2115,13 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
           </section>
 
           <aside className="hr-role-profile">
-            <header><button type="button" title="返回员工列表"><ChevronRight /></button><div><span className="hr-eyebrow">人员画像</span><h2>岗位与协同画像</h2></div></header>
+            <header><button type="button" title="返回员工列表"><ChevronRight /></button><div><span className="hr-eyebrow">人员主档联动</span><h2>岗位、账号与权限</h2></div></header>
             <section>
               <h3>岗位归属</h3>
               <div className="hr-role-path">
                 <span>公司</span><ChevronRight /><span>{profileDepartment}</span><ChevronRight /><span>{profileTeam}</span><ChevronRight /><strong>{profilePosition}</strong>
               </div>
+              {!!profileAccessGrants.filter(grant => grant.grantType !== 'PRIMARY').length && <div className="hr-role-assignment-tags">{profileAccessGrants.filter(grant => grant.grantType !== 'PRIMARY').map(grant => <span key={grant.id}>{employeeGrantTypeLabel(grant.grantType)} · {employeeGrantDepartment(grant, profileDepartment)}{grant.effectiveTo ? ` · 至${formatDate(grant.effectiveTo)}` : ''}</span>)}</div>}
             </section>
             <section>
               <h3>核心职责</h3>
@@ -1957,10 +2134,19 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
               )}
             </section>
             <section>
-              <h3>可管理模块</h3>
-              <div className="hr-role-tags">
-                {(profilePerson?.managedModules || []).map(module => <span key={module}>{module}</span>)}
-                {!profilePerson?.managedModules.length && <small>待配置</small>}
+              <h3>部门权限来源 <small>{profilePermissionSyncLabel}</small></h3>
+              <div className="hr-role-grant-summary">
+                {profileAccessGrants.map(grant => <span key={grant.id}><em>{employeeGrantTypeLabel(grant.grantType)}</em><strong>{employeeGrantDepartment(grant, profileDepartment)}</strong><small>{employeeAccessProfileLabel(grant.profileKey)}</small></span>)}
+                {!profileAccessGrants.length && profilePermissionSummary?.activeGrantCount ? <span><em>摘要</em><strong>{profilePermissionSummary.departmentCodes.join('、') || profileDepartment}</strong><small>{profilePermissionSummary.profiles.map(employeeAccessProfileLabel).join('、')}</small></span> : null}
+                {!profileAccessGrants.length && !profilePermissionSummary?.activeGrantCount && <p className="hr-role-empty">{profileAccount ? `${profileDepartment} · ${profileNoGrantDescription}` : '尚未开通账号与部门权限。'}</p>}
+              </div>
+            </section>
+            <section>
+              <h3>账号与访问 {canManageAccounts && profileEmployee && <a href={`/dashboard?settings=accounts&employeeId=${encodeURIComponent(profileEmployee.id)}`}>设置</a>}</h3>
+              <div className="hr-role-account-state">
+                <header><span className={`tone-${profileAccountStatus.tone}`}><KeyRound />{profileAccountStatus.label}</span><small>{profileAccount?.username || '未分配账号'}</small></header>
+                <div>{profileAccessMethods.map(method => <span key={method}>{method.includes('扫码') ? <QrCode /> : <Monitor />}{method}</span>)}{!profileAccessMethods.length && <span className="muted"><KeyRound />未开通访问方式</span>}</div>
+                <footer><KeyRound /><span><strong>共享终端PIN</strong><small>未来接入，本阶段不配置</small></span></footer>
               </div>
             </section>
             <section>
@@ -1968,7 +2154,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
               <div className="hr-role-status">
                 <span className={draft.isActive ? 'ok' : ''}><CheckCircle2 />{draft.isActive ? '在职' : '已离职'}</span>
                 <span className={draft.attendanceEnabled ? 'ok' : ''}><CalendarCheck2 />{draft.attendanceEnabled ? '考勤启用' : '考勤未启用'}</span>
-                <span className={productionReportingEligible ? 'ok' : ''}><UserRoundCheck />{productionReportingEligible ? '生产报工范围' : '非生产报工范围'}</span>
+                <span className={productionReportingEligible ? 'ok' : ''}><UserRoundCheck />{productionReportingEligible ? '具备生产报工资格' : '不具备生产报工资格'}</span>
               </div>
             </section>
             <section className="hr-role-team">
@@ -2526,7 +2712,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
           </div>
           <a className="hr-secondary-button" href="/workspace/workflows">查看业务流程<ArrowRight size={17} /></a>
         </section>
-        <ResponsibilityMatrixWorkspace user={_user} />
+            <ResponsibilityMatrixWorkspace user={user} />
       </div>
     );
   }
@@ -2732,7 +2918,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
                 <strong>{employmentDialog === 'offboard' ? '工号与全部历史记录永久保留' : '继续使用原员工编号与历史档案'}</strong>
                 <p>{employmentDialog === 'offboard'
                   ? '生效后退出派工、报工、考勤和员工登录名单；已完成记录不会删除或改名。'
-                  : '复职不会恢复旧派工或旧班组权限，主管可按当前岗位重新安排。'}</p>
+                  : '复职只恢复员工在职状态与所选考勤；登录账号和部门权限继续停用，需管理员另行确认。'}</p>
               </div>
             </section>
 
@@ -2767,7 +2953,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
               ) : (
                 <div className="hr-employment-reinstate-options">
                   <label><input type="checkbox" checked={employmentDraft.attendanceEnabled} onChange={event => setEmploymentDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} /><span>恢复考勤</span></label>
-                  <label><input type="checkbox" checked={employmentDraft.restoreLogin} onChange={event => setEmploymentDraft(current => ({ ...current, restoreLogin: event.target.checked }))} /><span>恢复关联登录账号</span></label>
+                  <div className="hr-employment-admin-task"><ShieldCheck /><span><strong>账号与权限保持停用</strong><small>复职完成后由管理员在账号设置中确认恢复</small></span></div>
                 </div>
               )}
             </div>
@@ -2813,7 +2999,7 @@ export default function EmployeeManagementShell({ user: _user }: { user: Current
           </div>
 
           <footer>
-            <span>{employmentDialog === 'offboard' ? '历史报工、工时与考勤不会删除' : '旧派工不会自动恢复'}</span>
+            <span>{employmentDialog === 'offboard' ? '历史报工、工时与考勤不会删除' : '旧派工不会自动恢复，账号权限由管理员确认'}</span>
             <button type="button" className="hr-secondary-button" disabled={employmentSaving} onClick={closeEmploymentAction}>取消</button>
             <button
               type="button"

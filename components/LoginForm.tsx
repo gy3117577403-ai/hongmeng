@@ -73,7 +73,12 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
         setError(d.message || '登录失败');
         return;
       }
-      location.href = nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/home';
+      const safeNextPath = nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/home';
+      if (d.mustChangePassword === true) {
+        location.href = `/change-password?next=${encodeURIComponent(safeNextPath)}`;
+        return;
+      }
+      location.href = safeNextPath;
     } catch {
       setError('网络异常，请稍后重试');
     } finally {
@@ -102,7 +107,7 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
           <span>账号登录</span>
           <strong>欢迎回来</strong>
         </div>
-        <label>员工编号 / 管理账号<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" inputMode="numeric" placeholder="生产员工请输入员工编号" autoFocus /></label>
+        <label>员工编号 / 管理账号<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} placeholder="生产员工请输入员工编号" autoFocus /></label>
         {identity && <div className="login-employee-identity" role="status">
           <span>身份已识别</span>
           <strong>{identity.employeeNo} · {identity.name}</strong>

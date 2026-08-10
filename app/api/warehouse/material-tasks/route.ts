@@ -17,6 +17,7 @@ import {
   loadProductionCarryoverMetadata,
   reconcileCurrentProductionCarryovers,
 } from '@/lib/production-carryovers';
+import { canRunGetReconciliation } from '@/lib/get-reconciliation-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -57,7 +58,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: '周开始日期格式不正确' }, { status: 400 });
     }
     const naturalWeek = naturalProductionWeek();
-    if (scope === 'current') {
+    if (scope === 'current' && canRunGetReconciliation(user.access, ['WAREHOUSE'])) {
       await reconcileCurrentProductionCarryovers({ targetWeekStart: naturalWeek.start, actorId: user.id });
     }
     const nextWeekStart = addDays(naturalWeek.start, 7);

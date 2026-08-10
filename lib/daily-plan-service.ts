@@ -41,6 +41,16 @@ import {
   isCurrentProductionCarryoverTarget,
   reconcileCurrentProductionCarryovers,
 } from '@/lib/production-carryovers';
+import {
+  DEPARTMENT_CODES,
+  hasCapability,
+  resolveAccessContext,
+  type AccessGrant,
+  type AccessGrantType,
+  type AccessProfileCode,
+  type DepartmentCode,
+} from '@/lib/department-access';
+import { resolveDailyPlanningActorScopeSources } from '@/lib/production-access-scope';
 
 const DEFAULT_SHIFT_CODE = 'DAY';
 const ACTIVE_ROUTE_STATUSES = new Set(['confirmed', 'in_progress', 'completed']);
@@ -224,6 +234,7 @@ function activeMembershipWhere(workDate: Date): Prisma.ProductionPlanningMembers
 }
 
 async function resolveActorScope(actorUserId: string, workDate = productionPlanningDateBoundary()): Promise<ActorScope> {
+  const accessNow = new Date();
   const actor = await prisma.user.findUnique({
     where: { id: requiredText(actorUserId, '操作人') },
     select: {
@@ -231,6 +242,23 @@ async function resolveActorScope(actorUserId: string, workDate = productionPlann
       isActive: true,
       laborRole: true,
       employeeId: true,
+      accessGrants: {
+        where: {
+          isActive: true,
+          effectiveFrom: { lte: accessNow },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gt: accessNow } }],
+        },
+        select: {
+          id: true,
+          profile: true,
+          grantType: true,
+          scopeKey: true,
+          isActive: true,
+          effectiveFrom: true,
+          effectiveTo: true,
+          department: { select: { code: true } },
+        },
+      },
       employee: {
         select: {
           productionPlanningMemberships: {
@@ -252,14 +280,63 @@ async function resolveActorScope(actorUserId: string, workDate = productionPlann
     .filter(item => item.role === ProductionPlanningRole.MEMBER && item.teamId)
     .map(item => item.teamId as string);
   const isSupervisor = memberships.some(item => item.role === ProductionPlanningRole.WORKSHOP_SUPERVISOR);
+  const grants: AccessGrant[] = actor.accessGrants.map(grant => ({
+    id: grant.id,
+    profile: grant.profile as AccessProfileCode,
+    grantType: grant.grantType as AccessGrantType,
+    scopeKey: grant.scopeKey,
+    isActive: grant.isActive,
+    effectiveFrom: grant.effectiveFrom,
+    effectiveTo: grant.effectiveTo,
+    departmentCode: DEPARTMENT_CODES.includes(grant.department?.code as DepartmentCode)
+      ? grant.department?.code as DepartmentCode
+      : null,
+  }));
+  const access = resolveAccessContext(grants, { now: accessNow });
+  const accessTeamKeys = access.scopeHints
+    .filter(hint => hint.module === 'PRODUCTION' && hint.level === 'TEAM')
+    .map(hint => hint.teamId || hint.scopeKey.replace(/^TEAM:/i, ''))
+    .map(value => String(value || '').trim())
+    .filter(Boolean);
+  const accessTeams = accessTeamKeys.length
+    ? await prisma.productionTeam.findMany({
+        where: {
+          OR: [
+            { id: { in: accessTeamKeys } },
+            { code: { in: accessTeamKeys } },
+            { name: { in: accessTeamKeys } },
+            { legacyTeamName: { in: accessTeamKeys } },
+          ],
+        },
+        select: { id: true },
+      })
+    : [];
+  const accessCanWrite = hasCapability(access, 'PRODUCTION', 'UPDATE')
+    || hasCapability(access, 'PLANNING', 'UPDATE');
+  const hasWorkshopWrite = accessCanWrite && (
+    access.productionScope === 'WORKSHOP'
+    || access.productionScope === 'GLOBAL'
+    || hasCapability(access, 'PLANNING', 'READ')
+  );
+  const accessLeaderTeamIds = access.productionScope === 'TEAM'
+    ? accessTeams.map(team => team.id)
+    : [];
+  const planningScope = resolveDailyPlanningActorScopeSources({
+    hasExplicitAccessGrants: grants.length > 0,
+    explicitWorkshopAccess: hasWorkshopWrite,
+    explicitTeamIds: accessLeaderTeamIds,
+    legacySupervisor: isSupervisor,
+    legacyLeaderTeamIds: leaderTeamIds,
+    legacyMemberTeamIds: memberTeamIds,
+  });
   return {
     userId: actor.id,
     employeeId: actor.employeeId,
-    isAdmin: actor.laborRole === 'ADMIN',
-    isSupervisor,
-    leaderTeamIds: [...new Set(leaderTeamIds)],
-    memberTeamIds: [...new Set(memberTeamIds)],
-    configured: memberships.length > 0,
+    isAdmin: actor.laborRole === 'ADMIN' || grants.some(grant => grant.profile === 'ADMIN_GLOBAL'),
+    isSupervisor: planningScope.isSupervisor,
+    leaderTeamIds: [...planningScope.teamKeys],
+    memberTeamIds: planningScope.memberTeamIds,
+    configured: memberships.length > 0 || grants.length > 0,
   };
 }
 
@@ -640,7 +717,7 @@ export async function previewDailyPlanSuggestions(input: {
   assertTeamMutation(scope, teamId);
   const batchWeek = productionBatchWeekStartWindow(workDate);
   const taskWeek = productionWeekDateBounds(workDate);
-  if (isCurrentProductionCarryoverTarget(taskWeek.startDate)) {
+  if ((scope.isAdmin || scope.isSupervisor) && isCurrentProductionCarryoverTarget(taskWeek.startDate)) {
     await reconcileCurrentProductionCarryovers({ targetWeekStart: taskWeek.startDate, actorId: input.actorUserId });
   }
   const [team, activeCapabilities] = await Promise.all([
@@ -1172,7 +1249,7 @@ export async function confirmDailyProductionPlan(input: {
     const plan = await tx.dailyProductionPlan.findUnique({ where: { id: input.planId } });
     if (!plan) throw new DailyPlanServiceError('日计划不存在', 'DAILY_PLAN_NOT_FOUND', 404);
     const scope = await resolveActorScope(input.actorUserId, plan.workDate);
-    assertSupervisor(scope);
+    assertTeamMutation(scope, plan.teamId);
     const before = plan;
     await ensurePlanVersion(tx, plan.id, expectedVersion(input.expectedVersion), {
       status: DailyProductionPlanStatus.CONFIRMED,
@@ -1338,7 +1415,7 @@ export async function getProductionArrangementContext(input: {
     selectedTeamId: teamId,
     personnelSource: 'HR_PRODUCTION_DEPARTMENT',
     productionEmployeeCount: preview.employeeCapacity.length,
-    canSchedule: scope.isAdmin || scope.isSupervisor,
+    canSchedule: scope.isAdmin || scope.isSupervisor || scope.leaderTeamIds.includes(teamId),
     recommendedEmployeeIds,
     presets: presets.map(preset => ({
       id: preset.id,
@@ -1373,7 +1450,6 @@ export async function scheduleProductionArrangements(input: {
   const idempotencyKey = requiredText(input.idempotencyKey, '幂等键', 200);
   const reason = String(input.reason || '').trim() || '生产执行主管快捷安排';
   const scope = await resolveActorScope(input.actorUserId, workDate);
-  assertSupervisor(scope);
   assertTeamMutation(scope, teamId);
   const requestPayload = {
     workDate: workDateKey,
@@ -1625,7 +1701,6 @@ export async function continueProductionArrangement(input: {
   const reason = String(input.reason || '').trim() || '生产执行未完成续排';
   const idempotencyKey = requiredText(input.idempotencyKey, '幂等键', 200);
   const scope = await resolveActorScope(input.actorUserId, targetDate);
-  assertSupervisor(scope);
   const requestPayload = {
     sourceTaskIds: [...sourceTaskIds].sort(),
     targetDate: targetDateKey,

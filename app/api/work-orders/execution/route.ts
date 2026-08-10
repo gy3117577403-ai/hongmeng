@@ -15,6 +15,11 @@ import {
   resolveProductionWeek,
 } from '@/lib/production-execution';
 import { reconcileProductionCarryovers } from '@/lib/production-carryovers';
+import {
+  assertProductionScopeRead,
+  ProductionAccessScopeError,
+  resolveProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,26 +39,28 @@ export async function GET(req: NextRequest) {
   try {
     const requestStartedAt = performance.now();
     const user = await requireUser();
+    const productionScope = resolveProductionEntityScope(user);
+    assertProductionScopeRead(productionScope);
     const authenticatedAt = performance.now();
     const params = req.nextUrl.searchParams;
     const page = positiveInt(params.get('page'), 1);
     const includeSummary = page === 1 && params.get('includeSummary') === '1';
     const skipReconcile = params.get('skipReconcile') === '1';
-    if (!skipReconcile) {
+    if (!skipReconcile && productionScope.canReconcile) {
       await prisma.$transaction(async tx => {
         await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
         await reconcileAutomaticallyReleasedProductionPlanBatches(tx, { actorId: user.id });
       }, { maxWait: 10_000, timeout: 180_000 });
     }
     const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'), params.get('scope'));
-    if (!skipReconcile && week.scope === 'current' && week.weekStart) {
+    if (!skipReconcile && productionScope.canReconcile && week.scope === 'current' && week.weekStart) {
       await prisma.$transaction(
         tx => reconcileProductionCarryovers(tx, { targetWeekStart: week.weekStart!, actorId: user.id }),
         { maxWait: 10_000, timeout: 180_000 },
       );
     }
     const filters = productionFiltersFromSearchParams(params);
-    if (!skipReconcile) {
+    if (!skipReconcile && productionScope.canReconcile) {
       await prisma.$transaction(tx => reconcileDraftProductTimeRoutes(tx, {
         workOrderWhere: filters.workOrderId
           ? { id: filters.workOrderId, deletedAt: null }
@@ -62,7 +69,9 @@ export async function GET(req: NextRequest) {
       }));
     }
     const reconciledAt = performance.now();
-    const navigationPromise = includeSummary ? loadProductionWeekNavigation() : Promise.resolve(null);
+    const navigationPromise = includeSummary
+      ? loadProductionWeekNavigation(new Date(), productionScope)
+      : Promise.resolve(null);
     const [data, navigation] = await Promise.all([
       loadProductionExecution({
         week,
@@ -72,6 +81,7 @@ export async function GET(req: NextRequest) {
         pageSize: Math.min(500, positiveInt(params.get('pageSize'), 120)),
         offset: nonNegativeInt(params.get('offset')),
         includeSummary,
+        productionScope,
       }),
       navigationPromise,
     ]);
@@ -90,6 +100,9 @@ export async function GET(req: NextRequest) {
     return response;
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : '生产看板加载失败';
     return NextResponse.json({ ok: false, error: message }, { status: message.includes('日期') ? 400 : 500 });
   }

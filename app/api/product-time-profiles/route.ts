@@ -15,6 +15,7 @@ import {
   reconcileFutureActiveProductionPlanWeeks,
 } from '@/lib/production-planning';
 import type { ProductTimePlanningScope } from '@/types';
+import { canRunGetReconciliation } from '@/lib/get-reconciliation-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,10 +37,12 @@ function planningScope(value: string): ProductTimePlanningScope {
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser();
-    await prisma.$transaction(async tx => {
-      await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
-      await reconcileProductionPlanDrawingLinks(tx);
-    });
+    if (canRunGetReconciliation(user.access, ['PROCESS'])) {
+      await prisma.$transaction(async tx => {
+        await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
+        await reconcileProductionPlanDrawingLinks(tx);
+      });
+    }
     const keyword = cleanProductTimeText(req.nextUrl.searchParams.get('keyword'), 100);
     const customer = cleanProductTimeText(req.nextUrl.searchParams.get('customer'), 120);
     const status = cleanProductTimeText(req.nextUrl.searchParams.get('status'), 20);

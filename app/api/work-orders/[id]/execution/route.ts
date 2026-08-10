@@ -11,6 +11,11 @@ import {
 import { prisma } from '@/lib/prisma';
 import { prepareExecutionUpdate, type ExecutionUpdateInput } from '@/lib/work-order-execution';
 import { isActiveProductionWorkOrder } from '@/lib/work-orders';
+import {
+  assertProductionScopeWrite,
+  ProductionAccessScopeError,
+  resolveProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -24,6 +29,10 @@ type ExecutionRequestBody = ExecutionUpdateInput & {
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
+    const productionScope = resolveProductionEntityScope(user);
+    assertProductionScopeWrite(productionScope);
+    const scopedOrder = await loadProductionOrderById(params.id, productionScope);
+    if (!scopedOrder) return NextResponse.json({ ok: false, error: '工单不存在或不在本人生产范围内' }, { status: 404 });
     const body = await req.json().catch(() => ({})) as ExecutionRequestBody;
     if (body.action !== undefined) {
       const action = parseProductionStageFlowAction(body.action);
@@ -36,7 +45,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         userId: user.id,
         actor: user.displayName || user.username,
       });
-      const workOrder = await loadProductionOrderById(params.id);
+      const workOrder = await loadProductionOrderById(params.id, productionScope);
       return NextResponse.json({ ok: true, data: workOrder ? serializeProductionOrder(workOrder) : null });
     }
 
@@ -95,10 +104,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       changedBy: actor,
     });
 
-    const workOrder = await loadProductionOrderById(old.id);
+    const workOrder = await loadProductionOrderById(old.id, productionScope);
     return NextResponse.json({ ok: true, data: workOrder ? serializeProductionOrder(workOrder) : null });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof ProductionStageFlowServiceError) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }

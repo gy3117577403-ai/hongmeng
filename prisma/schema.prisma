@@ -131,6 +131,35 @@ enum LaborAccessRole {
   @@map("labor_access_role")
 }
 
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  DISABLED
+
+  @@map("account_status")
+}
+
+enum AccessProfileKey {
+  ADMIN_GLOBAL
+  DEPARTMENT_FULL
+  FIELD_REPORTER
+  GM_OFFICE_READER_APPROVER
+  FINANCE_ACCOUNT_ONLY
+  WORKSHOP_SUPERVISOR
+  WORKSHOP_TEAM_LEADER
+
+  @@map("access_profile_key")
+}
+
+enum AccessGrantType {
+  PRIMARY
+  CONCURRENT
+  ACTING
+
+  @@map("access_grant_type")
+}
+
 enum ProductionPlanningRole {
   WORKSHOP_SUPERVISOR
   TEAM_LEADER
@@ -271,11 +300,19 @@ model User {
   passwordHash                   String                           @map("password_hash")
   displayName                    String                           @map("display_name")
   isActive                       Boolean                          @default(true) @map("is_active")
+  accountStatus                  AccountStatus                    @default(ACTIVE) @map("account_status")
+  sessionVersion                 Int                              @default(0) @map("session_version")
+  mustChangePassword             Boolean                          @default(false) @map("must_change_password")
+  lastLoginAt                    DateTime?                        @map("last_login_at")
+  failedLoginAttempts            Int                              @default(0) @map("failed_login_attempts")
+  lockedUntil                    DateTime?                        @map("locked_until")
   laborRole                      LaborAccessRole                  @default(EMPLOYEE) @map("labor_role")
   employeeId                     String?                          @unique @map("employee_id")
   createdAt                      DateTime                         @default(now()) @map("created_at")
   updatedAt                      DateTime                         @updatedAt @map("updated_at")
   employee                       Employee?                        @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  accessGrants                   UserAccessGrant[]                @relation("AccessGrantUser")
+  grantedAccessGrants            UserAccessGrant[]                @relation("AccessGrantGrantedBy")
   uploadedFiles                  ResourceFile[]                   @relation("UploadedFiles")
   drawingLibraryFiles            DrawingLibraryFile[]             @relation("UploadedDrawingLibraryFiles")
   operationLogs                  OperationLog[]
@@ -374,6 +411,48 @@ model User {
   employeeEmploymentEvents       EmployeeEmploymentEvent[]        @relation("EmployeeEmploymentEventActor")
 
   @@map("users")
+}
+
+model Department {
+  id           String            @id @default(uuid())
+  code         String            @unique
+  name         String            @unique
+  isActive     Boolean           @default(true) @map("is_active")
+  sortOrder    Int               @default(0) @map("sort_order")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+  employees    Employee[]
+  accessGrants UserAccessGrant[]
+
+  @@index([isActive, sortOrder])
+  @@map("departments")
+}
+
+model UserAccessGrant {
+  id            String           @id @default(uuid())
+  userId        String           @map("user_id")
+  profile       AccessProfileKey @map("profile_key")
+  departmentId  String?          @map("department_id")
+  scopeKey      String           @map("scope_key")
+  grantType     AccessGrantType  @default(PRIMARY) @map("grant_type")
+  effectiveFrom DateTime         @default(now()) @map("effective_from")
+  effectiveTo   DateTime?        @map("effective_to")
+  isActive      Boolean          @default(true) @map("is_active")
+  grantedById   String?          @map("granted_by_id")
+  version       Int              @default(0)
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+  user          User             @relation("AccessGrantUser", fields: [userId], references: [id], onDelete: Cascade)
+  department    Department?      @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  grantedBy     User?            @relation("AccessGrantGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, profile, scopeKey, grantType, effectiveFrom], map: "user_access_grants_identity_key")
+  @@index([userId, isActive, effectiveFrom, effectiveTo], map: "user_access_grants_user_active_window_idx")
+  @@index([profile, scopeKey, isActive], map: "user_access_grants_profile_scope_active_idx")
+  @@index([departmentId, isActive], map: "user_access_grants_department_active_idx")
+  @@index([grantedById], map: "user_access_grants_granted_by_idx")
+  @@index([effectiveTo, isActive], map: "user_access_grants_expiry_active_idx")
+  @@map("user_access_grants")
 }
 
 model WorkOrder {
@@ -759,6 +838,7 @@ model Employee {
   employeeNo                       String                            @unique @map("employee_no")
   name                             String
   department                       String?
+  departmentId                     String?                           @map("department_id")
   position                         String?
   team                             String?
   hireDate                         DateTime?                         @map("hire_date") @db.Date
@@ -778,6 +858,7 @@ model Employee {
   laborClaims                      ProcessLaborClaim[]
   completionParticipants           ProcessCompletionParticipant[]
   user                             User?
+  departmentRef                    Department?                       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   requestedRecruitmentDemands      RecruitmentDemand[]               @relation("RecruitmentDemandRequester")
   coordinatedRecruitmentDemands    RecruitmentDemand[]               @relation("RecruitmentDemandCoordinator")
   recruitmentInterviews            RecruitmentInterview[]            @relation("RecruitmentInterviewInterviewer")
@@ -801,6 +882,7 @@ model Employee {
   @@index([isActive, employeeNo])
   @@index([name])
   @@index([department])
+  @@index([departmentId])
   @@index([position])
   @@index([team])
   @@index([isActive, resignedAt])

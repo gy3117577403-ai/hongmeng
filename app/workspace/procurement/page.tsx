@@ -1,10 +1,8 @@
-import { redirect } from 'next/navigation';
 import MaterialFollowUpShell from '@/components/MaterialFollowUpShell';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import './material-follow-up-workbench.css';
 
 export default async function MaterialFollowUpPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login?next=%2Fworkspace%2Fprocurement');
+  const user = await requirePageAccess('/workspace/procurement');
   return <MaterialFollowUpShell user={user} />;
 }
