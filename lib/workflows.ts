@@ -1,4 +1,9 @@
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import {
+  productionTeamScopeWhere,
+  type ProductionEntityScope,
+} from '@/lib/production-access-scope';
 import { chinaDateKey } from '@/lib/china-date';
 import { dateKeyFromDatabase } from '@/lib/attendance';
 import { changeCode, changeStatusLabels, changeTypeLabels } from '@/lib/changes';
@@ -625,6 +630,7 @@ export type WorkflowCenterFilters = {
   weekScope?: WorkflowWeekScope;
   weekStartDate?: string;
   laborEmployeeTeam?: string;
+  productionScope?: ProductionEntityScope;
 };
 
 export function workflowWeekNavigationFromBatches(
@@ -669,11 +675,23 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   const now = Date.now();
   const nowDate = new Date(now);
   const currentWeek = workflowWeekRanges(nowDate).current;
+  const productionTeamWhere = filters.productionScope
+    ? productionTeamScopeWhere(filters.productionScope) as Prisma.ProductionTeamWhereInput | null
+    : null;
+  const productionTaskScopeWhere: Prisma.DailyProcessTaskListRelationFilter | undefined = productionTeamWhere
+    ? { some: { plan: { team: productionTeamWhere } } }
+    : undefined;
   const [issues, changes, productionBatches, standaloneProductionOrders] = await Promise.all([
     prisma.issue.findMany({
       where: { deletedAt: null },
       select: {
         id: true, sequence: true, title: true, type: true, priority: true, status: true, dueAt: true, updatedAt: true,
+        isMajorQuality: true,
+        majorApprovals: {
+          select: { id: true, status: true, round: true },
+          orderBy: { round: 'desc' },
+          take: 1,
+        },
         assignee: { select: { username: true, displayName: true } },
         assigneeEmployee: { select: { employeeNo: true, name: true } },
         workOrder: { select: { code: true, specification: true, customerName: true } },
@@ -700,7 +718,11 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       take: 500,
     }),
     prisma.productionPlanBatch.findMany({
-      where: { deletedAt: null, planOrder: { deletedAt: null } },
+      where: {
+        deletedAt: null,
+        planOrder: { deletedAt: null },
+        ...(productionTaskScopeWhere ? { dailyProcessTasks: productionTaskScopeWhere } : {}),
+      },
       select: {
         id: true,
         batchNo: true,
@@ -939,7 +961,12 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       take: 5000,
     }),
     prisma.workOrder.findMany({
-      where: { deletedAt: null, planActive: true, productionPlanBatch: null },
+      where: {
+        deletedAt: null,
+        planActive: true,
+        productionPlanBatch: null,
+        ...(productionTaskScopeWhere ? { dailyProcessTasks: productionTaskScopeWhere } : {}),
+      },
       select: {
         id: true, code: true, specification: true, customerName: true, productName: true, priority: true, stage: true,
         status: true, plannedAt: true, deliveryDay: true, updatedAt: true, productionOwner: true, remark: true,
@@ -1095,17 +1122,34 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
 
   for (const issue of issues) {
     const status = issue.status as IssueStatus;
-    const index = Math.max(0, ['pending', 'processing', 'verifying', 'closed'].indexOf(status));
+    const approval = issue.majorApprovals[0] || null;
+    const majorLabels = ['待受理', '整改处理中', '质量二次复核', '总经办终审', '已审批关闭'];
+    const majorIndex = status === 'pending'
+      ? 0
+      : status === 'processing'
+        ? 1
+        : status === 'closed'
+          ? 4
+          : approval?.status === 'PENDING_GM_APPROVAL'
+            ? 3
+            : 2;
+    const index = issue.isMajorQuality
+      ? majorIndex
+      : Math.max(0, ['pending', 'processing', 'verifying', 'closed'].indexOf(status));
     const closed = status === 'closed';
     const dueAt = issue.dueAt?.toISOString() || null;
+    const labels = issue.isMajorQuality ? majorLabels : issueLabels;
+    const currentStep = issue.isMajorQuality ? labels[index] : issueStatusLabels[status];
     items.push({
       id: `issue:${issue.id}`, entityId: issue.id, entityType: 'issue', code: issueCode(issue.sequence), title: issue.title,
-      subtitle: `${issueTypeLabels[issue.type as IssueType]} · ${issue.workOrder?.specification || issue.workOrder?.code || '未关联工单'}`,
-      processStatus: processStatus(status, 'issue'), currentStep: issueStatusLabels[status], nextStep: nextLabel(issueLabels, index),
+      subtitle: `${issue.isMajorQuality ? '重大质量事项' : issueTypeLabels[issue.type as IssueType]} · ${issue.workOrder?.specification || issue.workOrder?.code || '未关联工单'}`,
+      processStatus: processStatus(status, 'issue'), currentStep, nextStep: nextLabel(labels, index),
       priority: issue.priority as WorkflowItemDTO['priority'], owner: issue.assigneeEmployee?.name || issue.assignee?.displayName || issue.assignee?.username || null,
-      dueAt, updatedAt: issue.updatedAt.toISOString(), route: `/workspace/issues?issueId=${encodeURIComponent(issue.id)}`,
+      dueAt, updatedAt: issue.updatedAt.toISOString(), route: issue.isMajorQuality && approval
+        ? `/workspace/approvals?approvalId=${encodeURIComponent(approval.id)}`
+        : `/workspace/issues?issueId=${encodeURIComponent(issue.id)}`,
       sourceRoute: null, isOverdue: !closed && !!issue.dueAt && issue.dueAt.getTime() < now,
-      steps: steps(issueLabels, index, closed),
+      steps: steps(labels, index, closed),
       activities: issue.activities.map(item => activity(item.id, item.action, item.content || (item.toStatus ? `流转到${issueStatusLabels[item.toStatus as IssueStatus] || item.toStatus}` : '更新问题'), item.actor?.displayName || item.actor?.username, item.createdAt)),
     });
   }

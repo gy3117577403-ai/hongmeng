@@ -1,10 +1,8 @@
-import { redirect } from 'next/navigation';
-import { currentUser } from '@/lib/auth';
 import PlanningCenterShell from '@/components/PlanningCenterShell';
+import { requirePageAccess } from '@/lib/page-access';
 import './planning-center.css';
 
 export default async function WeeklyPlanCenterPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login');
+  const user = await requirePageAccess('/weekly-plan-center');
   return <PlanningCenterShell user={user} />;
 }

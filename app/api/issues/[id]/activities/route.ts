@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { ForbiddenError, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { issueDetailInclude, serializeIssue } from '@/lib/issues';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    assertSameOriginMutationRequest(req);
     const user = await requireUser();
     const issue = await prisma.issue.findFirst({ where: { id: params.id, deletedAt: null }, select: { id: true } });
     if (!issue) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
@@ -23,7 +25,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     await logOp({ userId: user.id, action: 'comment_issue', targetType: 'issue', targetId: issue.id });
     return NextResponse.json({ ok: true, issue: serializeIssue(updated) });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     console.error('issue comment failed', error);
     return NextResponse.json({ ok: false, error: '处理记录保存失败' }, { status: 500 });
   }

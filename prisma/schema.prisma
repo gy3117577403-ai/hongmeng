@@ -131,6 +131,46 @@ enum LaborAccessRole {
   @@map("labor_access_role")
 }
 
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  DISABLED
+
+  @@map("account_status")
+}
+
+enum AccessProfileKey {
+  ADMIN_GLOBAL
+  DEPARTMENT_FULL
+  FIELD_REPORTER
+  GM_OFFICE_READER_APPROVER
+  FINANCE_ACCOUNT_ONLY
+  WORKSHOP_SUPERVISOR
+  WORKSHOP_TEAM_LEADER
+
+  @@map("access_profile_key")
+}
+
+enum AccessGrantType {
+  PRIMARY
+  CONCURRENT
+  ACTING
+
+  @@map("access_grant_type")
+}
+
+enum MajorQualityApprovalStatus {
+  PENDING_QUALITY_REVIEW
+  PENDING_GM_APPROVAL
+  APPROVED
+  QUALITY_RETURNED
+  GM_RETURNED
+  CANCELLED
+
+  @@map("major_quality_approval_status")
+}
+
 enum ProductionPlanningRole {
   WORKSHOP_SUPERVISOR
   TEAM_LEADER
@@ -271,11 +311,19 @@ model User {
   passwordHash                   String                           @map("password_hash")
   displayName                    String                           @map("display_name")
   isActive                       Boolean                          @default(true) @map("is_active")
+  accountStatus                  AccountStatus                    @default(ACTIVE) @map("account_status")
+  sessionVersion                 Int                              @default(0) @map("session_version")
+  mustChangePassword             Boolean                          @default(false) @map("must_change_password")
+  lastLoginAt                    DateTime?                        @map("last_login_at")
+  failedLoginAttempts            Int                              @default(0) @map("failed_login_attempts")
+  lockedUntil                    DateTime?                        @map("locked_until")
   laborRole                      LaborAccessRole                  @default(EMPLOYEE) @map("labor_role")
   employeeId                     String?                          @unique @map("employee_id")
   createdAt                      DateTime                         @default(now()) @map("created_at")
   updatedAt                      DateTime                         @updatedAt @map("updated_at")
   employee                       Employee?                        @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  accessGrants                   UserAccessGrant[]                @relation("AccessGrantUser")
+  grantedAccessGrants            UserAccessGrant[]                @relation("AccessGrantGrantedBy")
   uploadedFiles                  ResourceFile[]                   @relation("UploadedFiles")
   drawingLibraryFiles            DrawingLibraryFile[]             @relation("UploadedDrawingLibraryFiles")
   operationLogs                  OperationLog[]
@@ -372,8 +420,56 @@ model User {
   confirmedWorkOrderQrPrints     WorkOrderQrPrint[]               @relation("WorkOrderQrPrintConfirmedBy")
   confirmedWorkOrderQrPrintItems WorkOrderQrPrintItem[]           @relation("WorkOrderQrPrintItemConfirmedBy")
   employeeEmploymentEvents       EmployeeEmploymentEvent[]        @relation("EmployeeEmploymentEventActor")
+  createdSystemNotifications     SystemNotification[]             @relation("SystemNotificationActor")
+  systemNotificationRecipients   SystemNotificationRecipient[]
+  submittedMajorQualityApprovals IssueMajorApproval[]             @relation("IssueMajorApprovalSubmittedBy")
+  qualityReviewedMajorApprovals  IssueMajorApproval[]             @relation("IssueMajorApprovalQualityReviewedBy")
+  finalReviewedMajorApprovals    IssueMajorApproval[]             @relation("IssueMajorApprovalFinalReviewedBy")
+  majorQualityApprovalEvents     IssueMajorApprovalEvent[]        @relation("IssueMajorApprovalEventActor")
 
   @@map("users")
+}
+
+model Department {
+  id           String            @id @default(uuid())
+  code         String            @unique
+  name         String            @unique
+  isActive     Boolean           @default(true) @map("is_active")
+  sortOrder    Int               @default(0) @map("sort_order")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+  employees    Employee[]
+  accessGrants UserAccessGrant[]
+
+  @@index([isActive, sortOrder])
+  @@map("departments")
+}
+
+model UserAccessGrant {
+  id            String           @id @default(uuid())
+  userId        String           @map("user_id")
+  profile       AccessProfileKey @map("profile_key")
+  departmentId  String?          @map("department_id")
+  scopeKey      String           @map("scope_key")
+  grantType     AccessGrantType  @default(PRIMARY) @map("grant_type")
+  effectiveFrom DateTime         @default(now()) @map("effective_from")
+  effectiveTo   DateTime?        @map("effective_to")
+  isActive      Boolean          @default(true) @map("is_active")
+  grantedById   String?          @map("granted_by_id")
+  version       Int              @default(0)
+  createdAt     DateTime         @default(now()) @map("created_at")
+  updatedAt     DateTime         @updatedAt @map("updated_at")
+  user          User             @relation("AccessGrantUser", fields: [userId], references: [id], onDelete: Cascade)
+  department    Department?      @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  grantedBy     User?            @relation("AccessGrantGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+
+  @@unique([userId, profile, scopeKey, grantType, effectiveFrom], map: "user_access_grants_identity_key")
+  @@index([userId, isActive, effectiveFrom, effectiveTo], map: "user_access_grants_user_active_window_idx")
+  @@index([profile, scopeKey, isActive], map: "user_access_grants_profile_scope_active_idx")
+  @@index([departmentId, isActive], map: "user_access_grants_department_active_idx")
+  @@index([grantedById], map: "user_access_grants_granted_by_idx")
+  @@index([effectiveTo, isActive], map: "user_access_grants_expiry_active_idx")
+  @@map("user_access_grants")
 }
 
 model WorkOrder {
@@ -759,6 +855,7 @@ model Employee {
   employeeNo                       String                            @unique @map("employee_no")
   name                             String
   department                       String?
+  departmentId                     String?                           @map("department_id")
   position                         String?
   team                             String?
   hireDate                         DateTime?                         @map("hire_date") @db.Date
@@ -778,6 +875,7 @@ model Employee {
   laborClaims                      ProcessLaborClaim[]
   completionParticipants           ProcessCompletionParticipant[]
   user                             User?
+  departmentRef                    Department?                       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   requestedRecruitmentDemands      RecruitmentDemand[]               @relation("RecruitmentDemandRequester")
   coordinatedRecruitmentDemands    RecruitmentDemand[]               @relation("RecruitmentDemandCoordinator")
   recruitmentInterviews            RecruitmentInterview[]            @relation("RecruitmentInterviewInterviewer")
@@ -801,6 +899,7 @@ model Employee {
   @@index([isActive, employeeNo])
   @@index([name])
   @@index([department])
+  @@index([departmentId])
   @@index([position])
   @@index([team])
   @@index([isActive, resignedAt])
@@ -2642,45 +2741,88 @@ model OperationLog {
   @@map("operation_logs")
 }
 
+model SystemNotification {
+  id          String                        @id @default(uuid())
+  eventType   String                        @map("event_type")
+  dedupeKey   String                        @unique @map("dedupe_key")
+  category    String                        @default("SYSTEM")
+  priority    String                        @default("NORMAL")
+  title       String
+  body        String?
+  targetRoute String?                       @map("target_route")
+  sourceType  String?                       @map("source_type")
+  sourceId    String?                       @map("source_id")
+  actorId     String?                       @map("actor_id")
+  metadata    Json?
+  createdAt   DateTime                      @default(now()) @map("created_at")
+  expiresAt   DateTime?                     @map("expires_at")
+  actor       User?                         @relation("SystemNotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+  recipients  SystemNotificationRecipient[]
+
+  @@index([category, createdAt])
+  @@index([sourceType, sourceId])
+  @@index([actorId])
+  @@index([expiresAt])
+  @@map("system_notifications")
+}
+
+model SystemNotificationRecipient {
+  notificationId String             @map("notification_id")
+  userId         String             @map("user_id")
+  readAt         DateTime?          @map("read_at")
+  createdAt      DateTime           @default(now()) @map("created_at")
+  notification   SystemNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user           User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([notificationId, userId])
+  @@index([userId, readAt, createdAt])
+  @@index([userId, createdAt])
+  @@map("system_notification_recipients")
+}
+
 model Issue {
-  id                 String              @id @default(uuid())
-  sequence           Int                 @unique @default(autoincrement())
+  id                 String               @id @default(uuid())
+  sequence           Int                  @unique @default(autoincrement())
   title              String
-  type               String              @default("production")
-  priority           String              @default("normal")
-  status             String              @default("pending")
+  type               String               @default("production")
+  priority           String               @default("normal")
+  status             String               @default("pending")
   description        String?
-  sourceType         String?             @map("source_type")
-  sourceId           String?             @map("source_id")
-  sourceCode         String?             @map("source_code")
-  sourceRoute        String?             @map("source_route")
-  sourceAlertCode    String?             @map("source_alert_code")
-  sourceFingerprint  String?             @unique @map("source_fingerprint")
-  workOrderId        String?             @map("work_order_id")
-  reporterId         String?             @map("reporter_id")
-  assigneeId         String?             @map("assignee_id")
-  assigneeEmployeeId String?             @map("assignee_employee_id")
-  dueAt              DateTime?           @map("due_at")
-  processName        String?             @map("process_name")
-  affectedQuantity   Int?                @map("affected_quantity")
-  temporaryMeasure   String?             @map("temporary_measure")
-  rootCause          String?             @map("root_cause")
+  sourceType         String?              @map("source_type")
+  sourceId           String?              @map("source_id")
+  sourceCode         String?              @map("source_code")
+  sourceRoute        String?              @map("source_route")
+  sourceAlertCode    String?              @map("source_alert_code")
+  sourceFingerprint  String?              @unique @map("source_fingerprint")
+  workOrderId        String?              @map("work_order_id")
+  reporterId         String?              @map("reporter_id")
+  assigneeId         String?              @map("assignee_id")
+  assigneeEmployeeId String?              @map("assignee_employee_id")
+  dueAt              DateTime?            @map("due_at")
+  processName        String?              @map("process_name")
+  affectedQuantity   Int?                 @map("affected_quantity")
+  temporaryMeasure   String?              @map("temporary_measure")
+  rootCause          String?              @map("root_cause")
   solution           String?
-  verificationResult String?             @map("verification_result")
-  resolvedAt         DateTime?           @map("resolved_at")
-  verifiedAt         DateTime?           @map("verified_at")
-  closedAt           DateTime?           @map("closed_at")
-  createdAt          DateTime            @default(now()) @map("created_at")
-  updatedAt          DateTime            @updatedAt @map("updated_at")
-  deletedAt          DateTime?           @map("deleted_at")
-  workOrder          WorkOrder?          @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
-  reporter           User?               @relation("IssueReporter", fields: [reporterId], references: [id], onDelete: SetNull)
-  assignee           User?               @relation("IssueAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  assigneeEmployee   Employee?           @relation("IssueEmployeeAssignee", fields: [assigneeEmployeeId], references: [id], onDelete: SetNull)
+  verificationResult String?              @map("verification_result")
+  isMajorQuality     Boolean              @default(false) @map("is_major_quality")
+  majorQualityReason String?              @map("major_quality_reason")
+  version            Int                  @default(0)
+  resolvedAt         DateTime?            @map("resolved_at")
+  verifiedAt         DateTime?            @map("verified_at")
+  closedAt           DateTime?            @map("closed_at")
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+  deletedAt          DateTime?            @map("deleted_at")
+  workOrder          WorkOrder?           @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  reporter           User?                @relation("IssueReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  assignee           User?                @relation("IssueAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assigneeEmployee   Employee?            @relation("IssueEmployeeAssignee", fields: [assigneeEmployeeId], references: [id], onDelete: SetNull)
   collaborators      IssueCollaborator[]
   activities         IssueActivity[]
   attachments        IssueAttachment[]
   changeRequests     ChangeRequest[]
+  majorApprovals     IssueMajorApproval[]
 
   @@index([status])
   @@index([priority])
@@ -2694,6 +2836,57 @@ model Issue {
   @@index([updatedAt])
   @@index([deletedAt])
   @@map("issues")
+}
+
+model IssueMajorApproval {
+  id                  String                     @id @default(uuid())
+  issueId             String                     @map("issue_id")
+  round               Int
+  status              MajorQualityApprovalStatus @default(PENDING_QUALITY_REVIEW)
+  version             Int                        @default(0)
+  issueVersion        Int                        @map("issue_version")
+  issueSnapshot       Json                       @map("issue_snapshot")
+  submittedById       String?                    @map("submitted_by_id")
+  submittedAt         DateTime                   @default(now()) @map("submitted_at")
+  qualityReviewedById String?                    @map("quality_reviewed_by_id")
+  qualityReviewedAt   DateTime?                  @map("quality_reviewed_at")
+  qualityReviewNote   String?                    @map("quality_review_note")
+  finalReviewedById   String?                    @map("final_reviewed_by_id")
+  finalReviewedAt     DateTime?                  @map("final_reviewed_at")
+  finalReviewNote     String?                    @map("final_review_note")
+  completedAt         DateTime?                  @map("completed_at")
+  createdAt           DateTime                   @default(now()) @map("created_at")
+  updatedAt           DateTime                   @updatedAt @map("updated_at")
+  issue               Issue                      @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  submittedBy         User?                      @relation("IssueMajorApprovalSubmittedBy", fields: [submittedById], references: [id], onDelete: SetNull)
+  qualityReviewedBy   User?                      @relation("IssueMajorApprovalQualityReviewedBy", fields: [qualityReviewedById], references: [id], onDelete: SetNull)
+  finalReviewedBy     User?                      @relation("IssueMajorApprovalFinalReviewedBy", fields: [finalReviewedById], references: [id], onDelete: SetNull)
+  events              IssueMajorApprovalEvent[]
+
+  @@unique([issueId, round])
+  @@index([status, updatedAt])
+  @@index([submittedById])
+  @@index([qualityReviewedById])
+  @@index([finalReviewedById])
+  @@map("issue_major_approvals")
+}
+
+model IssueMajorApprovalEvent {
+  id         String                      @id @default(uuid())
+  approvalId String                      @map("approval_id")
+  action     String
+  fromStatus MajorQualityApprovalStatus? @map("from_status")
+  toStatus   MajorQualityApprovalStatus? @map("to_status")
+  note       String?
+  actorId    String?                     @map("actor_id")
+  actorName  String                      @map("actor_name")
+  createdAt  DateTime                    @default(now()) @map("created_at")
+  approval   IssueMajorApproval          @relation(fields: [approvalId], references: [id], onDelete: Cascade)
+  actor      User?                       @relation("IssueMajorApprovalEventActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([approvalId, createdAt])
+  @@index([actorId])
+  @@map("issue_major_approval_events")
 }
 
 model IssueCollaborator {

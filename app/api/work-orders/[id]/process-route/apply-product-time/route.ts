@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { hasCapability } from '@/lib/department-access';
 import { prisma } from '@/lib/prisma';
 import {
   applyPublishedProductTimeToWorkOrder,
@@ -16,8 +17,11 @@ export async function POST(
 ) {
   try {
     const user = await requireUser();
-    if (user.laborRole === 'EMPLOYEE') {
-      return forbidden('员工账号不能调整工单工艺路线');
+    if (
+      !hasCapability(user.access, 'PROCESS', 'UPDATE')
+      && !hasCapability(user.access, 'PRODUCTION', 'UPDATE')
+    ) {
+      return forbidden('当前账号无权调整工单工艺路线');
     }
     const result = await prisma.$transaction(
       tx => applyPublishedProductTimeToWorkOrder(tx, {

@@ -338,8 +338,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       || selected.steps[0]
       || null;
   }, [selected, selectedCurrentStep, selectedProcessStepKey]);
-  const canCorrectProduction = user.laborRole === 'ADMIN'
-    || user.dailyPlanningRoles.includes('WORKSHOP_SUPERVISOR');
+  const canCorrectProduction = user.access.capabilities.includes('PRODUCTION:UPDATE')
+    || user.access.capabilities.includes('SYSTEM_CONFIGURATION:MANAGE');
   const activityVersions = useMemo(() => {
     if (!selected) return { current: [], historical: [] };
     const repairIndex = selected.activities.findIndex(item => item.action === 'repair_historical_product_time_route');

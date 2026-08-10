@@ -1,16 +1,14 @@
-import { redirect } from 'next/navigation';
 import DailyShipmentWorkbench from '@/components/daily-shipments/DailyShipmentWorkbench';
-import { currentUser } from '@/lib/auth';
 import { chinaDateKey } from '@/lib/china-date';
 import { loadDailyShipmentWorkbench } from '@/lib/daily-shipment-service';
+import { requirePageAccess } from '@/lib/page-access';
 import { productionDateKey } from '@/lib/production-week';
 import './daily-shipment-workbench.css';
 
 export const dynamic = 'force-dynamic';
 
 export default async function DailyPlansPage({ searchParams }: { searchParams?: { date?: string } }) {
-  const user = await currentUser();
-  if (!user) redirect('/login?next=%2Fworkspace%2Fdaily-plans');
+  const user = await requirePageAccess('/workspace/daily-plans');
 
   let initialDate = chinaDateKey(new Date());
   try {

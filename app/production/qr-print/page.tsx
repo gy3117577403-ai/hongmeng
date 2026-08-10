@@ -1,6 +1,5 @@
-import { redirect } from 'next/navigation';
 import WorkOrderTravelerPrint from '@/components/WorkOrderTravelerPrint';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import {
   loadWorkOrderTravelerPrints,
   WorkOrderQrServiceError,
@@ -15,14 +14,10 @@ export default async function WorkOrderQrPrintPage({
 }: {
   searchParams?: { printIds?: string | string[]; returnTo?: string | string[] };
 }) {
-  const user = await currentUser();
   const value = Array.isArray(searchParams?.printIds) ? searchParams?.printIds[0] : searchParams?.printIds;
   const returnTo = sanitizeWorkOrderPrintReturnTo(searchParams?.returnTo);
-  if (!user) {
-    const query = new URLSearchParams({ printIds: value || '', returnTo });
-    const next = `/production/qr-print?${query.toString()}`;
-    redirect(`/login?next=${encodeURIComponent(next)}`);
-  }
+  const query = new URLSearchParams({ printIds: value || '', returnTo });
+  await requirePageAccess('/production/qr-print', `/production/qr-print?${query.toString()}`);
   try {
     const records = await loadWorkOrderTravelerPrints(String(value || '').split(','));
     return <WorkOrderTravelerPrint records={records} returnTo={returnTo} />;

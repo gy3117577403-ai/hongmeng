@@ -150,24 +150,153 @@ export type DrawingLibraryCustomerDTO = {
 
 export type LaborAccessRoleDTO = 'ADMIN' | 'TEAM_LEAD' | 'EMPLOYEE';
 export type DailyPlanningRoleDTO = 'WORKSHOP_SUPERVISOR' | 'TEAM_LEADER' | 'MEMBER';
+export type AccountStatusDTO = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
+export type AccessProfileKeyDTO =
+  | 'ADMIN_GLOBAL'
+  | 'DEPARTMENT_FULL'
+  | 'FIELD_REPORTER'
+  | 'GM_OFFICE_READER_APPROVER'
+  | 'FINANCE_ACCOUNT_ONLY'
+  | 'WORKSHOP_SUPERVISOR'
+  | 'WORKSHOP_TEAM_LEADER';
+export type AccessGrantTypeDTO = 'PRIMARY' | 'CONCURRENT' | 'ACTING';
+
+export type DepartmentRefDTO = {
+  id: string;
+  code: string;
+  name: string;
+  isActive?: boolean;
+  sortOrder?: number;
+};
+
+export type AccessModuleCodeDTO =
+  | 'BASIC_SUMMARY'
+  | 'ACCOUNT_SELF'
+  | 'NOTIFICATIONS'
+  | 'FIELD_REPORT'
+  | 'BUSINESS'
+  | 'PROCUREMENT'
+  | 'WAREHOUSE'
+  | 'ENGINEERING'
+  | 'QUALITY'
+  | 'PROCESS'
+  | 'PLANNING'
+  | 'HR'
+  | 'PRODUCTION'
+  | 'MAJOR_APPROVAL'
+  | 'ACCOUNT_ADMIN'
+  | 'SYSTEM_CONFIGURATION';
+export type AccessActionCodeDTO = 'READ' | 'CREATE' | 'UPDATE' | 'DELETE' | 'EXECUTE_WORKFLOW' | 'APPROVE' | 'MANAGE' | 'PERMANENT_DELETE';
+export type CapabilityCodeDTO = `${AccessModuleCodeDTO}:${AccessActionCodeDTO}`;
+export type AccessScopeLevelDTO = 'GLOBAL' | 'DEPARTMENT' | 'WORKSHOP' | 'TEAM' | 'SELF';
+export type ProductionScopeLevelDTO = 'NONE' | 'TEAM' | 'WORKSHOP' | 'GLOBAL';
+
+export type ResolvedAccessGrantDTO = {
+  id?: string;
+  profile: AccessProfileKeyDTO;
+  grantType: AccessGrantTypeDTO;
+  departmentCode?: string | null;
+  scopeKey: string;
+  isActive?: boolean;
+  effectiveFrom?: string | number | Date | null;
+  effectiveTo?: string | number | Date | null;
+};
+
+export type AccessScopeHintDTO = {
+  module: AccessModuleCodeDTO;
+  level: AccessScopeLevelDTO;
+  readOnly: boolean;
+  grantType: AccessGrantTypeDTO;
+  scopeKey: string;
+  sourceGrantId?: string;
+  departmentCode?: string;
+  workshopId?: string;
+  teamId?: string;
+};
+
+export type AccessContextDTO = {
+  accountActive: boolean;
+  effectiveGrants: readonly ResolvedAccessGrantDTO[];
+  capabilities: readonly CapabilityCodeDTO[];
+  modules: readonly AccessModuleCodeDTO[];
+  scopeHints: readonly AccessScopeHintDTO[];
+  productionScope: ProductionScopeLevelDTO;
+};
+
+export type UserAccessGrantDTO = {
+  id: string;
+  profileKey: AccessProfileKeyDTO;
+  departmentId: string | null;
+  scopeKey: string;
+  grantType: AccessGrantTypeDTO;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+  isActive: boolean;
+  version: number;
+  department?: DepartmentRefDTO | null;
+};
+
+export type EmployeeLinkedUserDTO = {
+  id: string;
+  username: string;
+  displayName?: string;
+  accountStatus?: AccountStatusDTO | null;
+  isActive: boolean;
+  mustChangePassword?: boolean;
+  lastLoginAt?: string | null;
+  permissionSummary?: {
+    configuredGrantCount: number;
+    activeGrantCount: number;
+    profiles: AccessProfileKeyDTO[];
+    departmentCodes: string[];
+    fieldReportEnabled: boolean;
+    permissionSyncPending: boolean;
+  };
+};
 
 export type CurrentUserDTO = {
   id: string;
   username: string;
   displayName: string;
+  accountStatus: AccountStatusDTO;
+  mustChangePassword: boolean;
+  lastLoginAt: string | null;
   laborRole: LaborAccessRoleDTO;
   employeeId: string | null;
   employee: {
     id: string;
     employeeNo: string;
     name: string;
+    department: string | null;
+    departmentId: string | null;
+    position: string | null;
     team: string | null;
     isActive: boolean;
   } | null;
+  access: AccessContextDTO;
   dailyPlanningRoles: DailyPlanningRoleDTO[];
   dailyPlanningTeamIds: string[];
   canAccessDailyPlans: boolean;
   canManageDailyPlanningOrganization: boolean;
+};
+
+export type SystemNotificationCategoryDTO = 'SYSTEM' | 'ACCOUNT' | 'TODO' | 'APPROVAL';
+
+export type SystemNotificationPriorityDTO = 'NORMAL' | 'HIGH' | 'URGENT';
+
+export type SystemNotificationDTO = {
+  id: string;
+  eventType: string;
+  category: SystemNotificationCategoryDTO;
+  priority: SystemNotificationPriorityDTO;
+  title: string;
+  body: string | null;
+  targetRoute: string | null;
+  sourceType: string | null;
+  sourceId: string | null;
+  actorName: string | null;
+  readAt: string | null;
+  createdAt: string;
 };
 
 export type OperationLogDTO = {
@@ -185,15 +314,29 @@ export type UserDTO = {
   username: string;
   displayName: string;
   isActive: boolean;
+  accountStatus?: AccountStatusDTO | null;
+  mustChangePassword?: boolean;
+  lastLoginAt?: string | null;
   laborRole: LaborAccessRoleDTO;
   employeeId: string | null;
   employee: {
     id: string;
     employeeNo: string;
     name: string;
+    department?: string | null;
+    departmentId?: string | null;
+    departmentRecord?: DepartmentRefDTO | null;
+    position?: string | null;
     team: string | null;
     isActive: boolean;
   } | null;
+  accessMethods?: {
+    workbench: boolean;
+    fieldReport: boolean;
+    pin: boolean;
+  };
+  permissionSyncPending?: boolean;
+  accessGrants?: UserAccessGrantDTO[];
   createdAt: string;
   updatedAt: string;
 };
@@ -222,6 +365,26 @@ export type TrashDTO = {
 export type IssueStatus = 'pending' | 'processing' | 'verifying' | 'closed';
 export type IssuePriority = 'urgent' | 'high' | 'normal';
 export type IssueType = 'production' | 'planning' | 'technical' | 'process' | 'quality' | 'material' | 'equipment' | 'other';
+export type MajorQualityApprovalStatusDTO =
+  | 'PENDING_QUALITY_REVIEW'
+  | 'PENDING_GM_APPROVAL'
+  | 'APPROVED'
+  | 'QUALITY_RETURNED'
+  | 'GM_RETURNED'
+  | 'CANCELLED';
+
+export type IssueMajorApprovalSummaryDTO = {
+  id: string;
+  round: number;
+  status: MajorQualityApprovalStatusDTO;
+  version: number;
+  submittedByName?: string | null;
+  submittedAt: string;
+  qualityReviewedByName?: string | null;
+  qualityReviewedAt?: string | null;
+  finalReviewedByName?: string | null;
+  finalReviewedAt?: string | null;
+};
 
 export type IssueUserDTO = {
   id: string;
@@ -235,6 +398,16 @@ export type IssueEmployeeDTO = {
   name: string;
   displayName: string;
   username: string;
+  department?: string | null;
+  position?: string | null;
+  team?: string | null;
+  isActive: boolean;
+};
+
+export type IssueAssigneeOptionDTO = {
+  id: string;
+  employeeNo: string;
+  name: string;
   department?: string | null;
   position?: string | null;
   team?: string | null;
@@ -331,6 +504,10 @@ export type IssueDTO = {
   rootCause?: string | null;
   solution?: string | null;
   verificationResult?: string | null;
+  isMajorQuality: boolean;
+  majorQualityReason?: string | null;
+  version: number;
+  majorApproval?: IssueMajorApprovalSummaryDTO | null;
   resolvedAt?: string | null;
   verifiedAt?: string | null;
   closedAt?: string | null;
@@ -1081,6 +1258,8 @@ export type EmployeeDTO = {
   employeeNo: string;
   name: string;
   department?: string | null;
+  departmentId?: string | null;
+  departmentRecord?: DepartmentRefDTO | null;
   position?: string | null;
   team?: string | null;
   hireDate: string | null;
@@ -1092,6 +1271,17 @@ export type EmployeeDTO = {
   resignedAt: string | null;
   resignationReason: string | null;
   resignationNote: string | null;
+  permissionSyncPending?: boolean;
+  linkedUser?: EmployeeLinkedUserDTO | null;
+  user?: {
+    id: string;
+    username: string;
+    accountStatus?: AccountStatusDTO | null;
+    isActive: boolean;
+    mustChangePassword?: boolean;
+    lastLoginAt?: string | null;
+    accessGrants?: UserAccessGrantDTO[];
+  } | null;
   createdAt: string;
   updatedAt: string;
 };

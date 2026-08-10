@@ -1,23 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  forbidden,
+  ForbiddenError,
+  requireCapability,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { cleanProcessText, serializeEmployee } from '@/lib/process-time';
+import { cleanProcessText } from '@/lib/process-time';
 import { normalizeEmployeeMobile, EmployeeContactError } from '@/lib/employee-contact';
-import { normalizeEmployeeDepartment } from '@/lib/production-workforce';
 import {
   employeeHireDateToDate,
   EmployeeHireDateError,
   normalizeEmployeeHireDateInput,
 } from '@/lib/employee-date';
+import {
+  departmentRecordSelect,
+  EmployeeDepartmentInputError,
+  employeeAccessAdminInclude,
+  resolveEmployeeDepartmentInput,
+  serializeEmployeeAccessAdmin,
+} from '@/lib/employee-access-admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await requireUser();
-    const existing = await prisma.employee.findUnique({ where: { id: params.id } });
+    const user = await requireCapability('HR', 'UPDATE');
+    const existing = await prisma.employee.findUnique({
+      where: { id: params.id },
+      include: employeeAccessAdminInclude,
+    });
     if (!existing) return NextResponse.json({ ok: false, error: '员工档案不存在' }, { status: 404 });
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const employeeNo = body.employeeNo === undefined ? existing.employeeNo : cleanProcessText(body.employeeNo, 40);
@@ -45,13 +60,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       });
       if (duplicate) return NextResponse.json({ ok: false, error: '该手机号已绑定其他员工档案' }, { status: 409 });
     }
+    const resolvedDepartment = await resolveEmployeeDepartmentInput(body, lookup =>
+      prisma.department.findFirst({
+        where: { isActive: true, ...lookup },
+        select: departmentRecordSelect,
+      }),
+    );
     const employee = await prisma.employee.update({
       where: { id: existing.id },
       data: {
         name,
-        department: body.department === undefined
-          ? existing.department
-          : normalizeEmployeeDepartment(cleanProcessText(body.department, 80)),
+        ...(resolvedDepartment
+          ? {
+              departmentId: resolvedDepartment.departmentId,
+              department: resolvedDepartment.department,
+            }
+          : {}),
         position: body.position === undefined ? existing.position : cleanProcessText(body.position, 80) || null,
         team: body.team === undefined ? existing.team : cleanProcessText(body.team, 80) || null,
         ...(body.hireDate === undefined
@@ -65,17 +89,28 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           ? existing.attendanceEnabled
           : body.attendanceEnabled === true),
       },
+      include: employeeAccessAdminInclude,
     });
+    const serializedEmployee = serializeEmployeeAccessAdmin(employee);
     await logOp({
       userId: user.id,
       action: 'update_employee',
       targetType: 'employee',
       targetId: employee.id,
-      detail: { employeeNo: employee.employeeNo },
+      detail: {
+        employeeNo: employee.employeeNo,
+        previousDepartmentId: existing.departmentId,
+        departmentId: employee.departmentId,
+        permissionSyncPending: serializedEmployee.permissionSyncPending,
+      },
     });
-    return NextResponse.json({ ok: true, employee: serializeEmployee(employee) });
+    return NextResponse.json({ ok: true, employee: serializedEmployee });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('只有人事部或管理员可以修改员工档案');
+    if (error instanceof EmployeeDepartmentInputError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+    }
     if (error instanceof EmployeeHireDateError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     }

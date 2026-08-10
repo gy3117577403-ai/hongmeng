@@ -46,6 +46,18 @@ export const issueTypeLabels: Record<IssueType, string> = {
   other: '其他',
 };
 
+export function issueAttachmentMutationLock(
+  status: string,
+  approvalStatuses: readonly string[],
+): 'approval_pending' | 'final_approved' | null {
+  if (approvalStatuses.some(approvalStatus =>
+    approvalStatus === 'PENDING_QUALITY_REVIEW' || approvalStatus === 'PENDING_GM_APPROVAL')) {
+    return 'approval_pending';
+  }
+  if (status === 'closed' && approvalStatuses.includes('APPROVED')) return 'final_approved';
+  return null;
+}
+
 const issueUserSelect = Prisma.validator<Prisma.UserSelect>()({
   id: true,
   username: true,
@@ -98,6 +110,15 @@ export const issueDetailInclude = Prisma.validator<Prisma.IssueInclude>()({
     include: { uploadedBy: { select: issueUserSelect } },
     orderBy: { createdAt: 'desc' },
   },
+  majorApprovals: {
+    include: {
+      submittedBy: { select: issueUserSelect },
+      qualityReviewedBy: { select: issueUserSelect },
+      finalReviewedBy: { select: issueUserSelect },
+    },
+    orderBy: { round: 'desc' },
+    take: 1,
+  },
 });
 
 export type IssueDetailRecord = Prisma.IssueGetPayload<{ include: typeof issueDetailInclude }>;
@@ -117,6 +138,8 @@ export type IssueInput = {
   rootCause?: string | null;
   solution?: string | null;
   verificationResult?: string | null;
+  isMajorQuality?: boolean;
+  majorQualityReason?: string | null;
 };
 
 function text(value: unknown, max: number): string | null {
@@ -165,6 +188,11 @@ export function parseIssueInput(body: Record<string, unknown>, partial = false):
   if (body.rootCause !== undefined) data.rootCause = text(body.rootCause, 4000);
   if (body.solution !== undefined) data.solution = text(body.solution, 4000);
   if (body.verificationResult !== undefined) data.verificationResult = text(body.verificationResult, 4000);
+  if (body.isMajorQuality !== undefined) {
+    if (typeof body.isMajorQuality !== 'boolean') errors.push('重大质量标记格式不正确');
+    else data.isMajorQuality = body.isMajorQuality;
+  }
+  if (body.majorQualityReason !== undefined) data.majorQualityReason = text(body.majorQualityReason, 1000);
   if (body.workOrderId !== undefined) data.workOrderId = text(body.workOrderId, 80);
   const assigneeEmployeeId = body.assigneeEmployeeId !== undefined ? body.assigneeEmployeeId : body.assigneeId;
   if (assigneeEmployeeId !== undefined) data.assigneeEmployeeId = text(assigneeEmployeeId, 80);
@@ -194,6 +222,17 @@ export function parseIssueInput(body: Record<string, unknown>, partial = false):
   return { data, errors };
 }
 
+export function validateMajorQualityInput(input: {
+  type: string;
+  isMajorQuality: boolean;
+  majorQualityReason?: string | null;
+}): string | null {
+  if (!input.isMajorQuality) return null;
+  if (input.type !== 'quality') return '只有质量问题可以标记为重大质量事项';
+  if (!String(input.majorQualityReason || '').trim()) return '重大质量事项必须填写重大判定原因';
+  return null;
+}
+
 function simpleDetail(value: Prisma.JsonValue | null): Record<string, string | number | boolean | null> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const output: Record<string, string | number | boolean | null> = {};
@@ -209,6 +248,7 @@ export function issueCode(sequence: number): string {
 
 export function serializeIssue(issue: IssueDetailRecord): IssueDTO {
   const now = Date.now();
+  const majorApproval = issue.majorApprovals[0] || null;
   const assigneeEmployee = issue.assigneeEmployee || issue.assignee?.employee || null;
   const assignee = assigneeEmployee
     ? {
@@ -274,6 +314,21 @@ export function serializeIssue(issue: IssueDetailRecord): IssueDTO {
     rootCause: issue.rootCause,
     solution: issue.solution,
     verificationResult: issue.verificationResult,
+    isMajorQuality: issue.isMajorQuality,
+    majorQualityReason: issue.majorQualityReason,
+    version: issue.version,
+    majorApproval: majorApproval ? {
+      id: majorApproval.id,
+      round: majorApproval.round,
+      status: majorApproval.status,
+      version: majorApproval.version,
+      submittedByName: majorApproval.submittedBy?.displayName || majorApproval.submittedBy?.username || null,
+      submittedAt: majorApproval.submittedAt.toISOString(),
+      qualityReviewedByName: majorApproval.qualityReviewedBy?.displayName || majorApproval.qualityReviewedBy?.username || null,
+      qualityReviewedAt: majorApproval.qualityReviewedAt?.toISOString() || null,
+      finalReviewedByName: majorApproval.finalReviewedBy?.displayName || majorApproval.finalReviewedBy?.username || null,
+      finalReviewedAt: majorApproval.finalReviewedAt?.toISOString() || null,
+    } : null,
     resolvedAt: issue.resolvedAt?.toISOString() || null,
     verifiedAt: issue.verifiedAt?.toISOString() || null,
     closedAt: issue.closedAt?.toISOString() || null,
@@ -342,6 +397,7 @@ export function transitionIssueData(
   if (target === 'closed' && !verificationResult) return { data: {}, error: '关闭问题前请填写验证结果' };
 
   const data: Prisma.IssueUpdateInput = { status: target };
+  data.version = { increment: 1 };
   if (body.solution !== undefined) data.solution = solution;
   if (body.verificationResult !== undefined) data.verificationResult = verificationResult;
   if (body.rootCause !== undefined) data.rootCause = text(body.rootCause, 4000);

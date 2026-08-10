@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import DashboardShell from '@/components/DashboardShell';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import { prisma } from '@/lib/prisma';
 import { serializeWorkOrder } from '@/lib/work-orders';
 import './dashboard-workbench.css';
@@ -10,16 +10,13 @@ type DashboardPageProps = {
 };
 
 export default async function Dashboard({ searchParams = {} }: DashboardPageProps) {
-  const user = await currentUser();
-  if (!user) {
-    const params = new URLSearchParams();
-    Object.entries(searchParams).forEach(([key, value]) => {
-      if (typeof value === 'string') params.set(key, value);
-      else value?.forEach(item => params.append(key, item));
-    });
-    const next = `/dashboard${params.size ? `?${params.toString()}` : ''}`;
-    redirect(`/login?next=${encodeURIComponent(next)}`);
-  }
+  const params = new URLSearchParams();
+  Object.entries(searchParams).forEach(([key, value]) => {
+    if (typeof value === 'string') params.set(key, value);
+    else value?.forEach(item => params.append(key, item));
+  });
+  const next = `/dashboard${params.size ? `?${params.toString()}` : ''}`;
+  const user = await requirePageAccess('/dashboard', next);
 
   const hasParam = (name: string): boolean => {
     const value = searchParams[name];
@@ -27,6 +24,7 @@ export default async function Dashboard({ searchParams = {} }: DashboardPageProp
   };
   const keepsLegacyUtility = [
     'openSettings',
+    'settings',
     'openLogs',
     'openTrash',
     'openWeeklyImport',

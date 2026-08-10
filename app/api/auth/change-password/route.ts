@@ -1,16 +1,19 @@
 import bcrypt from 'bcryptjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { SESSION_COOKIE } from '@/lib/constants';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { ForbiddenError, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
+import { validateNewPassword } from '@/lib/password-policy';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const sessionUser = await requireUser({ write: 'self' });
+    assertSameOriginMutationRequest(req);
+    const sessionUser = await requireUser({ write: 'self', allowPasswordChange: true });
     const body = await req.json() as {
       currentPassword?: string;
       newPassword?: string;
@@ -25,16 +28,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ message: '请完整填写密码信息' }, { status: 400 });
     }
 
-    if (newPassword.length < 6) {
-      return NextResponse.json({ message: '新密码格式不正确，至少 6 位' }, { status: 400 });
-    }
+    const passwordError = validateNewPassword(newPassword, sessionUser.username);
+    if (passwordError) return NextResponse.json({ message: passwordError }, { status: 400 });
 
     if (newPassword !== confirmPassword) {
       return NextResponse.json({ message: '两次密码不一致' }, { status: 400 });
     }
 
     const user = await prisma.user.findUnique({ where: { id: sessionUser.id } });
-    if (!user || !user.isActive) {
+    if (!user || !user.isActive || user.accountStatus !== 'ACTIVE') {
       return unauthorized();
     }
 
@@ -45,7 +47,13 @@ export async function POST(req: NextRequest) {
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash },
+      data: {
+        passwordHash,
+        mustChangePassword: false,
+        sessionVersion: { increment: 1 },
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+      },
     });
     await logOp({ userId: user.id, action: 'change_password', targetType: 'user', targetId: user.id });
 
@@ -59,7 +67,7 @@ export async function POST(req: NextRequest) {
     });
     return res;
   } catch (e) {
-    if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof UnauthorizedError || e instanceof ForbiddenError) return unauthorized();
     console.error(e);
     return NextResponse.json({ message: '修改密码失败' }, { status: 500 });
   }

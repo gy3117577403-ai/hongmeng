@@ -152,7 +152,7 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
   const [toast, setToast] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
   const pendingDeepLinkRef = useRef('');
-  const canManage = user.laborRole === 'ADMIN' || user.laborRole === 'TEAM_LEAD';
+  const canManage = user.access.capabilities.includes('PROCUREMENT:UPDATE');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

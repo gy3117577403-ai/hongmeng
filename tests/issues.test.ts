@@ -2,13 +2,23 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   canTransitionIssue,
+  issueAttachmentMutationLock,
   issueCode,
   issueFingerprint,
   parseIssueInput,
   priorityForAlert,
   transitionIssueData,
   typeForAlert,
+  validateMajorQualityInput,
 } from '../lib/issues';
+
+test('major approval locks attachment mutations until return or explicit reopen', () => {
+  assert.equal(issueAttachmentMutationLock('processing', ['PENDING_QUALITY_REVIEW']), 'approval_pending');
+  assert.equal(issueAttachmentMutationLock('verifying', ['PENDING_GM_APPROVAL']), 'approval_pending');
+  assert.equal(issueAttachmentMutationLock('closed', ['APPROVED']), 'final_approved');
+  assert.equal(issueAttachmentMutationLock('processing', ['APPROVED']), null);
+  assert.equal(issueAttachmentMutationLock('closed', []), null);
+});
 
 test('manual issue input uses safe defaults and validates title', () => {
   const valid = parseIssueInput({ title: '图纸尺寸与现场实物不一致' });
@@ -35,6 +45,33 @@ test('process issues preserve HR responsibility and collaboration fields', () =>
   assert.deepEqual(parsed.data.collaboratorEmployeeIds, ['employee-002', 'employee-003']);
   assert.equal(parsed.data.processName, '压接');
   assert.equal(parsed.data.affectedQuantity, 120);
+});
+
+test('major quality classification is explicit and independent from priority', () => {
+  const parsed = parseIssueInput({
+    title: '批量端子拉力异常',
+    type: 'quality',
+    priority: 'normal',
+    isMajorQuality: true,
+    majorQualityReason: '同批次多客户产品存在失效风险',
+  });
+  assert.deepEqual(parsed.errors, []);
+  assert.equal(parsed.data.isMajorQuality, true);
+  assert.equal(validateMajorQualityInput({
+    type: parsed.data.type || 'quality',
+    isMajorQuality: parsed.data.isMajorQuality === true,
+    majorQualityReason: parsed.data.majorQualityReason,
+  }), null);
+  assert.equal(validateMajorQualityInput({
+    type: 'production',
+    isMajorQuality: true,
+    majorQualityReason: '错误类型',
+  }), '只有质量问题可以标记为重大质量事项');
+  assert.equal(validateMajorQualityInput({
+    type: 'quality',
+    isMajorQuality: true,
+    majorQualityReason: '',
+  }), '重大质量事项必须填写重大判定原因');
 });
 
 test('issue input rejects invalid affected quantities and collaborator payloads', () => {

@@ -1,13 +1,11 @@
-import { redirect } from 'next/navigation';
 import FieldReportMobile from '@/components/FieldReportMobile';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import './field-report.css';
 
 export const dynamic = 'force-dynamic';
 
 export default async function FieldReportPage({ params }: { params: { code: string } }) {
   const next = `/field-report/${encodeURIComponent(params.code)}`;
-  const user = await currentUser();
-  if (!user) redirect(`/login?next=${encodeURIComponent(next)}`);
+  const user = await requirePageAccess(next);
   return <FieldReportMobile code={params.code} user={user} />;
 }

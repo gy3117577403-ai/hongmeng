@@ -72,14 +72,14 @@ const modules: PlatformModuleDefinition[] = [
   },
   {
     slug: 'organization', kicker: '基础管理', title: '组织架构',
-    description: '预留公司、部门和人员结构入口。当前系统仍采用账号登录和共享数据模式。',
-    capabilityTitle: '规划能力', capabilities: ['部门结构', '人员目录', '协作关系'],
+    description: '按稳定部门编号维护人员归属，并为账号授权、人事异动和协作范围提供统一依据。',
+    capabilityTitle: '当前能力', capabilities: ['部门结构', '人员目录', '档案与账号联动'],
     links: [{ label: '系统设置', description: '查看当前系统配置入口', href: '/dashboard?openSettings=1' }],
   },
   {
     slug: 'permissions', kicker: '基础管理', title: '权限管理',
-    description: '保留未来权限能力入口。当前版本不启用角色权限，所有已登录账号继续共享同一套业务数据。',
-    capabilityTitle: '当前原则', capabilities: ['登录后共享数据', '不区分业务角色', '不改变现有访问方式'],
+    description: '管理员按员工所属部门开通主权限，并可配置兼岗或有截止日期的代班权限。',
+    capabilityTitle: '当前原则', capabilities: ['部门主权限', '兼岗与代班', '停用立即失效'],
     links: [{ label: '系统设置', description: '管理当前账号和系统设置', href: '/dashboard?openSettings=1' }],
   },
   {

@@ -1,39 +1,175 @@
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 
-const prisma = new PrismaClient();
+const MIN_PASSWORD_LENGTH = 8;
+const COMMON_PASSWORDS = new Set([
+  '12345678',
+  '123456789',
+  '1234567890',
+  'password',
+  'password1',
+  'admin123',
+  'qwerty123',
+  '11111111',
+]);
 
-async function main() {
-  const username = process.env.SEED_ADMIN_USERNAME || 'admin';
-  const password = process.env.SEED_ADMIN_PASSWORD || '123';
-  const resetAdminPassword = process.env.SEED_RESET_ADMIN_PASSWORD === 'true';
-  const seedSampleWorkOrders = process.env.SEED_SAMPLE_WORK_ORDERS === 'true';
-  const passwordHash = await bcrypt.hash(password, 10);
-
-  const existingUser = await prisma.user.findUnique({ where: { username } });
-  if (!existingUser) {
-    await prisma.user.create({
-      data: {
-        username,
-        passwordHash,
-        displayName: '管理员',
-        isActive: true,
-        laborRole: 'ADMIN',
-      },
-    });
-    console.log('created admin');
-  } else {
-    await prisma.user.update({
-      where: { username },
-      data: {
-        isActive: true,
-        laborRole: 'ADMIN',
-        employeeId: null,
-        ...(resetAdminPassword ? { passwordHash } : {}),
-      },
-    });
-    console.log(resetAdminPassword ? 'reset admin' : 'confirmed admin labor access');
+// Keep this in sync with lib/password-policy.ts. The parity test covers the
+// shared rules because the production seed is executed by plain Node.js.
+function validateSeedAdminPassword(password, username) {
+  if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
+    return `密码至少 ${MIN_PASSWORD_LENGTH} 位`;
   }
+  const normalized = password.trim().toLowerCase();
+  if (!normalized || COMMON_PASSWORDS.has(normalized)) {
+    return '密码过于常见，请更换后重试';
+  }
+  if (/^(.)\1+$/.test(password)) {
+    return '密码不能全部使用相同字符';
+  }
+  const normalizedUsername = String(username || '').trim().toLowerCase();
+  if (normalizedUsername && normalized.includes(normalizedUsername)) {
+    return '密码不能包含完整登录账号';
+  }
+  return null;
+}
+
+function requiresSeedAdminPassword(existingAdmin, resetAdminPassword) {
+  return !existingAdmin || resetAdminPassword;
+}
+
+function isAdminAccountActive(admin) {
+  return admin.isActive === true && admin.accountStatus === 'ACTIVE';
+}
+
+async function ensureAdminGlobalGrant(tx, admin) {
+  const desiredActive = isAdminAccountActive(admin);
+  const existingGrant = await tx.userAccessGrant.findFirst({
+    where: {
+      userId: admin.id,
+      profile: 'ADMIN_GLOBAL',
+      departmentId: null,
+      scopeKey: 'GLOBAL',
+      grantType: 'PRIMARY',
+      effectiveTo: null,
+    },
+    orderBy: { effectiveFrom: 'asc' },
+  });
+
+  if (!existingGrant) {
+    return tx.userAccessGrant.create({
+      data: {
+        userId: admin.id,
+        profile: 'ADMIN_GLOBAL',
+        departmentId: null,
+        scopeKey: 'GLOBAL',
+        grantType: 'PRIMARY',
+        isActive: desiredActive,
+      },
+    });
+  }
+
+  if (existingGrant.isActive !== desiredActive) {
+    return tx.userAccessGrant.update({
+      where: { id: existingGrant.id },
+      data: {
+        isActive: desiredActive,
+        version: { increment: 1 },
+      },
+    });
+  }
+
+  return existingGrant;
+}
+
+async function seedAdmin(prisma, options = {}) {
+  const env = options.env || process.env;
+  const hashPassword = options.hashPassword || (password => bcrypt.hash(password, 10));
+  const username = String(env.SEED_ADMIN_USERNAME || 'admin').trim();
+  const resetAdminPassword = env.SEED_RESET_ADMIN_PASSWORD === 'true';
+
+  if (!username) {
+    throw new Error('SEED_ADMIN_USERNAME 不能为空');
+  }
+
+  const existingAdmin = await prisma.user.findUnique({ where: { username } });
+  if (existingAdmin && !resetAdminPassword && existingAdmin.laborRole !== 'ADMIN') {
+    throw new Error(
+      'SEED_ADMIN_USERNAME 已被非管理员账号占用；如需明确提升为管理员，请提供强密码并设置 SEED_RESET_ADMIN_PASSWORD=true',
+    );
+  }
+  const passwordRequired = requiresSeedAdminPassword(existingAdmin, resetAdminPassword);
+  let passwordHash;
+
+  if (passwordRequired) {
+    const password = env.SEED_ADMIN_PASSWORD;
+    if (typeof password !== 'string' || password.length === 0) {
+      throw new Error(
+        '首次创建或显式重置管理员时，必须通过 SEED_ADMIN_PASSWORD 提供强密码',
+      );
+    }
+    const passwordError = validateSeedAdminPassword(password, username);
+    if (passwordError) {
+      throw new Error(`SEED_ADMIN_PASSWORD 不符合密码策略：${passwordError}`);
+    }
+    passwordHash = await hashPassword(password);
+  }
+
+  return prisma.$transaction(async tx => {
+    let admin;
+    let action;
+
+    if (!existingAdmin) {
+      admin = await tx.user.create({
+        data: {
+          username,
+          passwordHash,
+          displayName: '管理员',
+          isActive: true,
+          accountStatus: 'ACTIVE',
+          mustChangePassword: true,
+          laborRole: 'ADMIN',
+          employeeId: null,
+        },
+      });
+      action = 'created';
+    } else if (resetAdminPassword) {
+      admin = await tx.user.update({
+        where: { id: existingAdmin.id },
+        data: {
+          passwordHash,
+          isActive: true,
+          accountStatus: 'ACTIVE',
+          mustChangePassword: true,
+          sessionVersion: { increment: 1 },
+          failedLoginAttempts: 0,
+          lockedUntil: null,
+          laborRole: 'ADMIN',
+          employeeId: null,
+        },
+      });
+      action = 'reset';
+    } else if (existingAdmin.employeeId !== null) {
+      admin = await tx.user.update({
+        where: { id: existingAdmin.id },
+        data: {
+          employeeId: null,
+        },
+      });
+      action = 'confirmed';
+    } else {
+      admin = existingAdmin;
+      action = 'unchanged';
+    }
+
+    const grant = await ensureAdminGlobalGrant(tx, admin);
+    return { admin, grant, action };
+  });
+}
+
+async function main(prisma, env = process.env) {
+  const seedSampleWorkOrders = env.SEED_SAMPLE_WORK_ORDERS === 'true';
+  const adminResult = await seedAdmin(prisma, { env });
+  console.log(`admin seed ${adminResult.action}`);
 
   const categories = [
     ['原图', 'drawing', 1],
@@ -76,9 +212,20 @@ async function main() {
   console.log('seed completed');
 }
 
-main()
-  .catch(error => {
-    console.error(error);
-    process.exit(1);
-  })
-  .finally(() => prisma.$disconnect());
+module.exports = {
+  isAdminAccountActive,
+  main,
+  requiresSeedAdminPassword,
+  seedAdmin,
+  validateSeedAdminPassword,
+};
+
+if (require.main === module) {
+  const prisma = new PrismaClient();
+  main(prisma)
+    .catch(error => {
+      console.error(error);
+      process.exitCode = 1;
+    })
+    .finally(() => prisma.$disconnect());
+}

@@ -12,6 +12,7 @@ import {
   continueProductionArrangement,
   scheduleProductionArrangements,
 } from '@/lib/daily-plan-service';
+import { assertProductionScopeWrite, resolveProductionEntityScope } from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,6 +22,7 @@ export async function POST(request: NextRequest) {
     assertDailyPlanEnabled();
     assertDailyPlanMutationRequest(request);
     const user = await requireUser({ write: 'self' });
+    assertProductionScopeWrite(resolveProductionEntityScope(user));
     const body = asRecord(await request.json());
     const action = asString(body.action || 'schedule').toLowerCase();
     const idempotencyKey = asString(readIdempotencyKey(request, body));

@@ -1,10 +1,8 @@
-import { redirect } from 'next/navigation';
 import ProductTimeShell from '@/components/ProductTimeShell';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import './product-time-workbench.css';
 
 export default async function ProductTimesPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login?next=%2Fworkspace%2Fproduct-times');
+  const user = await requirePageAccess('/workspace/product-times');
   return <ProductTimeShell user={user} />;
 }

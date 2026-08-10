@@ -4,6 +4,7 @@ import { dailyPlanError, dailyPlanSuccess } from '@/lib/daily-plan-api';
 import { assertDailyPlanEnabled } from '@/lib/daily-plan-feature';
 import { productionPlanningDateBoundary } from '@/lib/production-planning-date';
 import { getWeeklyProcessOverview } from '@/lib/weekly-process-service';
+import { assertProductionScopeRead, resolveProductionEntityScope } from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,8 @@ export async function GET(request: NextRequest) {
   try {
     assertDailyPlanEnabled();
     const user = await requireUser();
+    const productionScope = resolveProductionEntityScope(user);
+    assertProductionScopeRead(productionScope);
     if (!user.canAccessDailyPlans) throw new ForbiddenError('当前账号不能访问生产排程');
     const requestedDate = request.nextUrl.searchParams.get('date');
     if (requestedDate && !/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
@@ -25,6 +28,7 @@ export async function GET(request: NextRequest) {
       processKey: request.nextUrl.searchParams.get('processKey') || undefined,
       completion: request.nextUrl.searchParams.get('completion') || undefined,
       sort: request.nextUrl.searchParams.get('sort') || undefined,
+      productionScope,
     });
     return dailyPlanSuccess(result);
   } catch (error) {

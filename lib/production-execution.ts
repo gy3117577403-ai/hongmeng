@@ -1,6 +1,10 @@
 import { DailyProcessTaskStatus, DailyProductionPlanStatus, DailyTaskAssignmentStatus, Prisma } from '@prisma/client';
 import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
+import {
+  productionTeamScopeWhere,
+  type ProductionEntityScope,
+} from '@/lib/production-access-scope';
 import { getProductionAlerts, isDrawingConfirmationAlert } from '@/lib/production-alerts';
 import { hasEffectiveIssuedDrawing } from '@/lib/production-drawing-readiness';
 import { calculateProductionLaborProgress, serializeProductionLaborProgress } from '@/lib/production-labor-progress';
@@ -172,6 +176,36 @@ export type ProductionWeekNavigation = {
   history: Array<{ weekStartDate: string; weekEndDate: string; count: number }>;
 };
 
+function productionTeamWhere(scope?: ProductionEntityScope): Prisma.ProductionTeamWhereInput | null {
+  return scope ? productionTeamScopeWhere(scope) as Prisma.ProductionTeamWhereInput | null : null;
+}
+
+export function productionWorkOrderScopeWhere(scope?: ProductionEntityScope): Prisma.WorkOrderWhereInput {
+  const teamWhere = productionTeamWhere(scope);
+  if (!teamWhere) return {};
+  return {
+    dailyProcessTasks: {
+      some: {
+        status: { not: DailyProcessTaskStatus.CANCELLED },
+        plan: { team: teamWhere },
+      },
+    },
+  };
+}
+
+function productionBatchScopeWhere(scope?: ProductionEntityScope): Prisma.ProductionPlanBatchWhereInput {
+  const teamWhere = productionTeamWhere(scope);
+  if (!teamWhere) return {};
+  return {
+    dailyProcessTasks: {
+      some: {
+        status: { not: DailyProcessTaskStatus.CANCELLED },
+        plan: { team: teamWhere },
+      },
+    },
+  };
+}
+
 const exceptionLabels: Record<ProductionExceptionCode, string> = {
   overdue: '已逾期',
   drawing_not_issued: '未发图',
@@ -322,6 +356,7 @@ function summarizeArrangementMetrics(
 async function loadProductionArrangementMap(
   orders: ProductionStatusOrderRecord[],
   now = new Date(),
+  scope?: ProductionEntityScope,
 ): Promise<Map<string, ProductionArrangementView[]>> {
   const orderIds = orders.filter(isRootProductionOrder).map(order => order.id);
   const result = new Map<string, ProductionArrangementView[]>();
@@ -330,6 +365,7 @@ async function loadProductionArrangementMap(
     where: {
       workOrderId: { in: orderIds },
       status: { not: DailyProcessTaskStatus.CANCELLED },
+      ...(productionTeamWhere(scope) ? { plan: { team: productionTeamWhere(scope)! } } : {}),
     },
     include: {
       plan: { select: { id: true, status: true, teamId: true, team: { select: { name: true } } } },
@@ -607,7 +643,10 @@ export function productionRootWeekWhere(week: ProductionWeek): Prisma.WorkOrderW
   };
 }
 
-export async function loadProductionWeekNavigation(now = new Date()): Promise<ProductionWeekNavigation> {
+export async function loadProductionWeekNavigation(
+  now = new Date(),
+  scope?: ProductionEntityScope,
+): Promise<ProductionWeekNavigation> {
   const natural = naturalProductionWeek(now);
   const nextStart = addDays(natural.start, 7);
   const afterNextStart = addDays(natural.start, 14);
@@ -615,17 +654,19 @@ export async function loadProductionWeekNavigation(now = new Date()): Promise<Pr
     deletedAt: null,
     planOrder: { deletedAt: null },
     weekStartDate: sameDayRange(weekStart),
+    ...productionBatchScopeWhere(scope),
   });
   const [currentCount, nextCount, afterNextCount, carryoverCounts, historicalBatches] = await Promise.all([
     prisma.productionPlanBatch.count({ where: planningBatchWhere(natural.start) }),
     prisma.productionPlanBatch.count({ where: planningBatchWhere(nextStart) }),
     prisma.productionPlanBatch.count({ where: planningBatchWhere(afterNextStart) }),
-    loadProductionCarryoverCounts(natural.start),
+    loadProductionCarryoverCounts(natural.start, scope),
     prisma.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
         planOrder: { deletedAt: null },
         weekStartDate: { lt: natural.start },
+        ...productionBatchScopeWhere(scope),
       },
       select: { weekStartDate: true, weekEndDate: true },
       orderBy: { weekStartDate: 'desc' },
@@ -1109,11 +1150,16 @@ export function compareProductionOrders(first: ProductionStatusOrderRecord, seco
     || text(first.specification).localeCompare(text(second.specification), 'zh-CN');
 }
 
-export async function loadProductionOrders(week: ProductionWeek, workOrderId?: string) {
+export async function loadProductionOrders(
+  week: ProductionWeek,
+  workOrderId?: string,
+  scope?: ProductionEntityScope,
+) {
+  const scopeWhere = productionWorkOrderScopeWhere(scope);
   const orders = await prisma.workOrder.findMany({
     where: workOrderId
-      ? { id: workOrderId, deletedAt: null }
-      : productionWeekWhere(week),
+      ? { id: workOrderId, deletedAt: null, ...scopeWhere }
+      : { ...productionWeekWhere(week), ...scopeWhere },
     include: productionExecutionInclude,
     orderBy: [{ priority: 'asc' }, { plannedAt: 'asc' }, { createdAt: 'asc' }],
   });
@@ -1122,11 +1168,16 @@ export async function loadProductionOrders(week: ProductionWeek, workOrderId?: s
     : orders;
 }
 
-export async function loadProductionSummaryOrders(week: ProductionWeek, workOrderId?: string) {
+export async function loadProductionSummaryOrders(
+  week: ProductionWeek,
+  workOrderId?: string,
+  scope?: ProductionEntityScope,
+) {
+  const scopeWhere = productionWorkOrderScopeWhere(scope);
   const orders = await prisma.workOrder.findMany({
     where: workOrderId
-      ? { id: workOrderId, deletedAt: null }
-      : productionWeekWhere(week),
+      ? { id: workOrderId, deletedAt: null, ...scopeWhere }
+      : { ...productionWeekWhere(week), ...scopeWhere },
     include: productionSummaryInclude,
     orderBy: [{ priority: 'asc' }, { plannedAt: 'asc' }, { createdAt: 'asc' }],
   });
@@ -1143,18 +1194,19 @@ export async function loadProductionExecution(input: {
   pageSize?: number;
   offset?: number;
   includeSummary?: boolean;
+  productionScope?: ProductionEntityScope;
 }) {
   const now = new Date();
   const filters = input.filters || {};
-  const all = await loadProductionSummaryOrders(input.week, filters.workOrderId);
-  const arrangementsByOrder = await loadProductionArrangementMap(all, now);
+  const all = await loadProductionSummaryOrders(input.week, filters.workOrderId, input.productionScope);
+  const arrangementsByOrder = await loadProductionArrangementMap(all, now, input.productionScope);
   let summaryOrders = all;
   let summaryArrangementsByOrder = arrangementsByOrder;
   // A deep link narrows the board to one work order, but the command-center
   // summary must retain its historical scope-wide meaning.
   if (input.includeSummary && filters.workOrderId) {
-    summaryOrders = await loadProductionSummaryOrders(input.week);
-    summaryArrangementsByOrder = await loadProductionArrangementMap(summaryOrders, now);
+    summaryOrders = await loadProductionSummaryOrders(input.week, undefined, input.productionScope);
+    summaryArrangementsByOrder = await loadProductionArrangementMap(summaryOrders, now, input.productionScope);
   }
   let filtered = all.filter(order => matchesFilters(order, filters, input.week, arrangementsByOrder.get(order.id) || [], now));
   if (!filters.workOrderId && input.view === 'today') filtered = filtered.filter(order => isTodayTask(order, now));
@@ -1195,7 +1247,7 @@ export async function loadProductionExecution(input: {
   });
   return {
     scope: input.week.scope,
-    readOnly: input.week.scope === 'history',
+    readOnly: input.week.scope === 'history' || input.productionScope?.readOnly === true,
     weekStartDate: input.week.weekStart ? chinaYmd(input.week.weekStart) : null,
     weekEndDate: input.week.weekEnd ? chinaYmd(input.week.weekEnd) : null,
     stageCounts,
@@ -1211,6 +1263,7 @@ export async function loadProductionExecution(input: {
         summaryOrders.filter(isRootProductionOrder),
         summaryArrangementsByOrder,
         now,
+        input.productionScope,
       ),
     } : {}),
   };
@@ -1221,6 +1274,7 @@ function summarizeProductionRecords(
   orders: ProductionStatusOrderRecord[],
   arrangementsByOrder: Map<string, ProductionArrangementView[]>,
   now: Date,
+  scope?: ProductionEntityScope,
 ) {
   const stageCounts: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
   const stageQuantityTotals: Record<WorkOrderStage, number> = { not_issued: 0, frontend: 0, backend: 0, completed: 0 };
@@ -1299,7 +1353,7 @@ function summarizeProductionRecords(
   }
   return {
     scope: week.scope,
-    readOnly: week.scope === 'history',
+    readOnly: week.scope === 'history' || scope?.readOnly === true,
     weekStartDate: week.weekStart ? chinaYmd(week.weekStart) : null,
     weekEndDate: week.weekEnd ? chinaYmd(week.weekEnd) : null,
     total: orders.length,
@@ -1333,16 +1387,16 @@ function summarizeProductionRecords(
   };
 }
 
-export async function summarizeProduction(week: ProductionWeek) {
+export async function summarizeProduction(week: ProductionWeek, scope?: ProductionEntityScope) {
   const now = new Date();
-  const orders = (await loadProductionSummaryOrders(week)).filter(isRootProductionOrder);
-  const arrangementsByOrder = await loadProductionArrangementMap(orders, now);
-  return summarizeProductionRecords(week, orders, arrangementsByOrder, now);
+  const orders = (await loadProductionSummaryOrders(week, undefined, scope)).filter(isRootProductionOrder);
+  const arrangementsByOrder = await loadProductionArrangementMap(orders, now, scope);
+  return summarizeProductionRecords(week, orders, arrangementsByOrder, now, scope);
 }
 
-export async function loadProductionOrderById(id: string) {
+export async function loadProductionOrderById(id: string, scope?: ProductionEntityScope) {
   return prisma.workOrder.findFirst({
-    where: { id, deletedAt: null },
+    where: { id, deletedAt: null, ...productionWorkOrderScopeWhere(scope) },
     include: productionExecutionInclude,
   });
 }

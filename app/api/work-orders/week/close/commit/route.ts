@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  ForbiddenError,
+  forbidden,
+  requireCapability,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { activeWeeklyWhere, parseWeek, summarizeWeeklyClose } from '@/lib/weekly-work-orders';
@@ -9,7 +15,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await requireUser();
+    const user = await requireCapability('PLANNING', 'EXECUTE_WORKFLOW');
     const body = await req.json().catch(() => ({}));
     const weekStartDate = parseWeek(body.weekStartDate);
     if (!weekStartDate) return NextResponse.json({ ok: false, error: '请选择有效的周开始日期' }, { status: 400 });
@@ -54,6 +60,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, summary: { ...before, clearedCount: result.count } });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof ForbiddenError) return forbidden('仅计划部或管理员可以结束当前周');
     console.error(e);
     return NextResponse.json({ ok: false, error: '归档当前周失败' }, { status: 500 });
   }

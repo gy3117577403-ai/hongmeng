@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
+  assertProductionScopeRead,
+  ProductionAccessScopeError,
+  resolveProductionEntityScope,
+} from '@/lib/production-access-scope';
+import {
   reconcileAutomaticallyReleasedProductionPlanBatches,
   reconcileFutureActiveProductionPlanWeeks,
 } from '@/lib/production-planning';
@@ -16,7 +21,10 @@ export async function GET(req: NextRequest) {
     const requestStartedAt = performance.now();
     const user = await requireUser();
     const authenticatedAt = performance.now();
-    if (req.nextUrl.searchParams.get('skipReconcile') !== '1') {
+    const productionScope = resolveProductionEntityScope(user, { allowBasicSummary: true });
+    assertProductionScopeRead(productionScope);
+    const canReconcile = productionScope.canReconcile;
+    if (canReconcile && req.nextUrl.searchParams.get('skipReconcile') !== '1') {
       await prisma.$transaction(async tx => {
         await reconcileFutureActiveProductionPlanWeeks(tx, { actorId: user.id });
         await reconcileAutomaticallyReleasedProductionPlanBatches(tx, { actorId: user.id });
@@ -28,13 +36,16 @@ export async function GET(req: NextRequest) {
       req.nextUrl.searchParams.get('weekEnd'),
       req.nextUrl.searchParams.get('scope'),
     );
-    if (req.nextUrl.searchParams.get('skipReconcile') !== '1' && week.scope === 'current' && week.weekStart) {
+    if (canReconcile && req.nextUrl.searchParams.get('skipReconcile') !== '1' && week.scope === 'current' && week.weekStart) {
       await prisma.$transaction(
         tx => reconcileProductionCarryovers(tx, { targetWeekStart: week.weekStart!, actorId: user.id }),
         { maxWait: 10_000, timeout: 180_000 },
       );
     }
-    const [data, navigation] = await Promise.all([summarizeProduction(week), loadProductionWeekNavigation()]);
+    const [data, navigation] = await Promise.all([
+      summarizeProduction(week, productionScope),
+      loadProductionWeekNavigation(new Date(), productionScope),
+    ]);
     const loadedAt = performance.now();
     const response = NextResponse.json({ ok: true, data: { ...data, navigation } });
     response.headers.set('Cache-Control', 'private, no-store');
@@ -47,6 +58,9 @@ export async function GET(req: NextRequest) {
     return response;
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     const message = error instanceof Error ? error.message : '生产摘要加载失败';
     return NextResponse.json({ ok: false, error: message }, { status: message.includes('日期') ? 400 : 500 });
   }

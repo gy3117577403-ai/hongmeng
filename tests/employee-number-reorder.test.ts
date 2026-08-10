@@ -14,6 +14,7 @@ function employee(id: string, employeeNo: string, name: string, active = true): 
     employeeNo,
     name,
     department: '生产部',
+    departmentId: null,
     position: '操作员',
     team: '装配',
     hireDate: null,

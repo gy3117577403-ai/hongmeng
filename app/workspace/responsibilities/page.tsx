@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 
 type ResponsibilityCompatibilityPageProps = {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
@@ -10,8 +10,7 @@ function readParam(value: string | string[] | undefined): string {
 }
 
 export default async function ResponsibilityCollaborationPage({ searchParams }: ResponsibilityCompatibilityPageProps) {
-  const user = await currentUser();
-  if (!user) redirect('/login?next=%2Fworkspace%2Fresponsibilities');
+  await requirePageAccess('/workspace/responsibilities');
 
   const params = await searchParams;
   const legacyTab = readParam(params?.tab);

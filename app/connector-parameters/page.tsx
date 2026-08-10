@@ -1,10 +1,8 @@
-import { redirect } from 'next/navigation';
 import { ConnectorParametersShell } from '@/components/ConnectorParametersShell';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import './connector-parameters-workbench.css';
 
 export default async function ConnectorParametersPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login');
+  const user = await requirePageAccess('/connector-parameters');
   return <ConnectorParametersShell user={user} />;
 }

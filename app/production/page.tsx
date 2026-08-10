@@ -1,11 +1,8 @@
-import { redirect } from 'next/navigation';
 import ProductionExecutionCenter from '@/components/ProductionExecutionCenter';
-import { currentUser } from '@/lib/auth';
+import { requirePageAccess } from '@/lib/page-access';
 import './production-workbench.css';
 
 export default async function ProductionPage() {
-  const user = await currentUser();
-  if (!user) redirect('/login');
-  if (user.laborRole === 'EMPLOYEE') redirect('/workspace/reports?view=labor');
+  const user = await requirePageAccess('/production');
   return <ProductionExecutionCenter user={user} />;
 }

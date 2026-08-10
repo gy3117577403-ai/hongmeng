@@ -3,10 +3,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createToken, cookieOptions } from '@/lib/auth';
 import { SESSION_COOKIE } from '@/lib/constants';
 import { logOp } from '@/lib/logs';
+import { isLoginLocked, nextFailedLoginState } from '@/lib/login-security';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+const INVALID_PASSWORD_HASH = bcrypt.hashSync('hm-invalid-login-sentinel', 10);
 
 export async function POST(req: NextRequest) {
   try {
@@ -27,17 +30,56 @@ export async function POST(req: NextRequest) {
     // also makes a rare cross-field collision with a management username deterministic.
     const user = employeeAccount || directAccount;
     const linkedEmployeeDisabled = Boolean(user?.employee && !user.employee.isActive);
-    if (!user || !user.isActive || linkedEmployeeDisabled || !(await bcrypt.compare(password, user.passwordHash))) {
+    const now = new Date();
+    if (user && isLoginLocked(user.lockedUntil, now)) {
+      return NextResponse.json(
+        { message: '登录尝试过多，请 15 分钟后再试或联系管理员重置密码' },
+        { status: 429, headers: { 'Retry-After': '900' } },
+      );
+    }
+    const passwordMatches = await bcrypt.compare(password, user?.passwordHash || INVALID_PASSWORD_HASH);
+    if (
+      !user
+      || !user.isActive
+      || user.accountStatus !== 'ACTIVE'
+      || linkedEmployeeDisabled
+      || !passwordMatches
+    ) {
+      if (user && user.isActive && user.accountStatus === 'ACTIVE' && !linkedEmployeeDisabled) {
+        await prisma.$transaction(async tx => {
+          const counter = await tx.user.update({
+            where: { id: user.id },
+            data: { failedLoginAttempts: { increment: 1 } },
+            select: { failedLoginAttempts: true },
+          });
+          const lockState = nextFailedLoginState(counter.failedLoginAttempts - 1, now);
+          if (lockState.lockedUntil) {
+            await tx.user.update({
+              where: { id: user.id },
+              data: { lockedUntil: lockState.lockedUntil },
+            });
+          }
+        });
+      }
       return NextResponse.json({ message: '员工编号、账号或密码错误' }, { status: 401 });
     }
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: now, failedLoginAttempts: 0, lockedUntil: null },
+    });
     const response = NextResponse.json({
       ok: true,
       displayName: user.employee?.name || user.displayName,
       employeeNo: user.employee?.employeeNo || null,
+      mustChangePassword: user.mustChangePassword,
     });
     response.cookies.set(
       SESSION_COOKIE,
-      createToken({ userId: user.id, username: user.username }),
+      createToken({
+        userId: user.id,
+        username: user.username,
+        sessionVersion: user.sessionVersion,
+      }),
       cookieOptions(),
     );
     await logOp({

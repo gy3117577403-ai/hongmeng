@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  forbidden,
+  ForbiddenError,
+  requireCapability,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import { chinaDateKey } from '@/lib/china-date';
 import {
   EmployeeOffboardingError,
@@ -8,7 +14,12 @@ import {
 } from '@/lib/employee-offboarding';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
-import { serializeEmployee } from '@/lib/process-time';
+import {
+  disableLinkedEmployeeAccess,
+  employeeAccessAdminInclude,
+  isEffectiveEmployeeGrant,
+  serializeEmployeeAccessAdmin,
+} from '@/lib/employee-access-admin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,7 +39,7 @@ async function loadPreview(employeeId: string, effectiveDate: Date) {
     prisma.employee.findUnique({
       where: { id: employeeId },
       include: {
-        user: { select: { id: true, username: true, isActive: true } },
+        ...employeeAccessAdminInclude,
         employmentEvents: {
           orderBy: { createdAt: 'desc' },
           take: 8,
@@ -71,7 +82,10 @@ async function loadPreview(employeeId: string, effectiveDate: Date) {
       futureAttendanceRecords,
       openIssues,
       linkedLogin: Boolean(employee.user),
-      linkedLoginActive: employee.user?.isActive === true,
+      linkedLoginActive: employee.user?.isActive === true && employee.user.accountStatus === 'ACTIVE',
+      activeAccessGrants: employee.user?.accessGrants.filter(grant =>
+        isEffectiveEmployeeGrant(grant),
+      ).length ?? 0,
     },
     blocked: activeAssignments > 0,
     blockerMessage: activeAssignments > 0
@@ -91,14 +105,20 @@ async function loadPreview(employeeId: string, effectiveDate: Date) {
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    await requireUser();
+    await requireCapability('HR', 'READ');
     const date = parseEmployeeEffectiveDate(
       req.nextUrl.searchParams.get('effectiveDate') || chinaDateKey(new Date()),
     );
     const preview = await loadPreview(params.id, date.value);
-    return NextResponse.json({ ok: true, ...preview });
+    const { employee, ...details } = preview;
+    return NextResponse.json({
+      ok: true,
+      ...details,
+      employee: serializeEmployeeAccessAdmin(employee),
+    });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('只有人事部或管理员可以查看离职影响');
     if (error instanceof EmployeeOffboardingError) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }
@@ -109,7 +129,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await requireUser();
+    const user = await requireCapability('HR', 'EXECUTE_WORKFLOW');
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const input = parseOffboardingInput(body);
     const preview = await loadPreview(params.id, input.effectiveDate);
@@ -127,7 +147,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
 
     const now = new Date();
-    const employee = await prisma.$transaction(async tx => {
+    const result = await prisma.$transaction(async tx => {
       const activeAssignments = await tx.dailyTaskAssignment.count({
         where: { employeeId: params.id, status: 'ACTIVE' },
       });
@@ -160,10 +180,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           plan: { workDate: { gte: input.effectiveDate } },
         },
       });
-      await tx.user.updateMany({
-        where: { employeeId: params.id },
-        data: { isActive: false },
-      });
+      const accessDisablement = await disableLinkedEmployeeAccess(tx, params.id);
       const statusChange = await tx.employee.updateMany({
         where: { id: params.id, isActive: true },
         data: {
@@ -181,7 +198,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           code: 'ALREADY_RESIGNED',
         });
       }
-      const updated = await tx.employee.findUniqueOrThrow({ where: { id: params.id } });
       await tx.employeeEmploymentEvent.create({
         data: {
           employeeId: params.id,
@@ -192,8 +208,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           actorId: user.id,
         },
       });
-      return updated;
+      const updated = await tx.employee.findUniqueOrThrow({
+        where: { id: params.id },
+        include: employeeAccessAdminInclude,
+      });
+      return { employee: updated, accessDisablement };
     });
+    const employee = result.employee;
+    const impact = {
+      ...preview.impact,
+      disabledAccessGrants: result.accessDisablement.disabledAccessGrants,
+      sessionInvalidated: result.accessDisablement.sessionInvalidated,
+    };
 
     await logOp({
       userId: user.id,
@@ -209,11 +235,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         disabledPlanningMemberships: preview.impact.activeMemberships,
         removedFutureCapacityOverrides: preview.impact.futureCapacityOverrides,
         loginDisabled: preview.impact.linkedLoginActive,
+        disabledAccessGrants: result.accessDisablement.disabledAccessGrants,
+        sessionInvalidated: result.accessDisablement.sessionInvalidated,
       },
     });
-    return NextResponse.json({ ok: true, employee: serializeEmployee(employee), impact: preview.impact });
+    return NextResponse.json({
+      ok: true,
+      employee: serializeEmployeeAccessAdmin(employee),
+      impact,
+    });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('只有人事部或管理员可以办理员工离职');
     if (error instanceof EmployeeOffboardingError) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }

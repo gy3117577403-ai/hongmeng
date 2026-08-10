@@ -7,6 +7,11 @@ import {
   productionFiltersFromSearchParams,
   resolveProductionWeek,
 } from '@/lib/production-execution';
+import {
+  assertProductionScopeRead,
+  ProductionAccessScopeError,
+  resolveProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,6 +33,8 @@ function chinaDate() {
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser();
+    const productionScope = resolveProductionEntityScope(user);
+    assertProductionScopeRead(productionScope);
     const params = req.nextUrl.searchParams;
     const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'), params.get('scope'));
     const data = await loadProductionExecution({
@@ -36,6 +43,7 @@ export async function GET(req: NextRequest) {
       view: parseProductionExecutionView(params.get('view')),
       page: 1,
       pageSize: 5000,
+      productionScope,
     });
     const headers = ['规格', '客户', '品名', '状态', '优先级', '交期', '未交量', '完成数量', '图纸状态', '配料状态', '资料完整度', '最近进度', '最近更新时间'];
     const rows = data.items.map(item => [
@@ -64,6 +72,9 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
+    }
     console.error('export production execution failed', error);
     return NextResponse.json({ ok: false, error: '生产执行导出失败' }, { status: 500 });
   }

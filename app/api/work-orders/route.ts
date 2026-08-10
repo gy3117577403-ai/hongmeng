@@ -8,6 +8,11 @@ import { normalizeWorkOrderStage, parseWorkOrderBody, serializeWorkOrder } from 
 import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { allocateBusinessWorkOrderCode } from '@/lib/work-order-business-code';
+import { productionWorkOrderScopeWhere } from '@/lib/production-execution';
+import {
+  ProductionAccessScopeError,
+  resolveProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,7 +42,8 @@ function filterDate(filter: string | null) {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
+    const productionScope = resolveProductionEntityScope(user);
     const keyword = req.nextUrl.searchParams.get('keyword')?.trim();
     const filter = req.nextUrl.searchParams.get('filter');
     const includeCleared = req.nextUrl.searchParams.get('includeCleared') === 'true';
@@ -82,6 +88,7 @@ export async function GET(req: NextRequest) {
     const workOrders = await prisma.workOrder.findMany({
       where: {
         deletedAt: null,
+        ...(user.access.productionScope === 'TEAM' ? productionWorkOrderScopeWhere(productionScope) : {}),
         ...(and.length ? { AND: and } : {}),
       },
       include: {
@@ -95,6 +102,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ workOrders: workOrders.map(serializeWorkOrder) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.status });
+    }
     console.error(e);
     return NextResponse.json({ message: '工单加载失败' }, { status: 500 });
   }
@@ -103,6 +113,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
+    const productionScope = resolveProductionEntityScope(user);
+    if (user.access.productionScope === 'TEAM') {
+      return NextResponse.json({ ok: false, error: '班组长不能创建未归属班组的工单' }, { status: 403 });
+    }
     const body = await req.json().catch(() => ({}));
     const { data, errors } = parseWorkOrderBody(body);
     if (errors.length) return NextResponse.json({ ok: false, error: errors[0], message: errors[0] }, { status: 400 });
@@ -158,6 +172,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, workOrder: serializeWorkOrder(workOrder) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.status });
+    }
     if ((e as { code?: string }).code === 'P2002') return NextResponse.json({ ok: false, error: '工单号已存在', message: '工单号已存在' }, { status: 409 });
     console.error(e);
     return NextResponse.json({ ok: false, error: '新建工单失败', message: '新建工单失败' }, { status: 500 });

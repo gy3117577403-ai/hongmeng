@@ -15,6 +15,10 @@ import {
   softDeleteWorkOrderWithProductionGuard,
   WorkOrderDeletionServiceError,
 } from '@/lib/work-order-deletion-service';
+import {
+  ProductionAccessScopeError,
+  resolveProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -32,6 +36,10 @@ class WorkOrderPatchGuardError extends Error {
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
+    const productionScope = resolveProductionEntityScope(user);
+    if (productionScope.level === 'TEAM') {
+      return NextResponse.json({ ok: false, error: '班组长只能维护本班组执行数据，不能修改整张共享工单' }, { status: 403 });
+    }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const { data, errors } = parseWorkOrderBody(body, { partial: true });
     if (errors.length) return NextResponse.json({ ok: false, error: errors[0], message: errors[0] }, { status: 400 });
@@ -151,6 +159,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ ok: true, workOrder: serializeWorkOrder(workOrder) });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.status });
+    }
     if (e instanceof WorkOrderPatchGuardError) {
       return NextResponse.json(
         { ok: false, error: e.message, message: e.message },
@@ -173,6 +184,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
+    const productionScope = resolveProductionEntityScope(user);
+    if (productionScope.level === 'TEAM') {
+      return NextResponse.json({ ok: false, error: '班组长只能维护本班组执行数据，不能删除整张共享工单' }, { status: 403 });
+    }
     const body = await req.json().catch(() => ({})) as { confirmText?: unknown };
     const { before: old, after: workOrder } = await softDeleteWorkOrderWithProductionGuard({
       workOrderId: params.id,
@@ -191,6 +206,9 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     return NextResponse.json({ ok: true });
   } catch (e) {
     if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof ProductionAccessScopeError) {
+      return NextResponse.json({ ok: false, error: e.message, code: e.code }, { status: e.status });
+    }
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2034') {
       return NextResponse.json({
         ok: false,

@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  ForbiddenError,
+  forbidden,
+  requireUser,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import {
   parseAbnormalCategory,
   parseEmployeeIds,
@@ -11,6 +17,7 @@ import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
+import { canMutateAbnormalTimeEvent } from '@/lib/critical-operation-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,6 +33,7 @@ const include = {
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
+    if (!canMutateAbnormalTimeEvent(user.access, 'UPDATE')) throw new ForbiddenError();
     const existing = await prisma.abnormalTimeEvent.findFirst({
       where: { id: params.id, deletedAt: null },
       include: { allocations: true },
@@ -100,6 +108,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ ok: true, event: serializeAbnormalTimeEvent(event) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('仅人事部、质量部或管理员可以修改异常工时');
     const message = error instanceof Error ? error.message : '异常工时更新失败';
     console.error('update abnormal time event failed', error);
     return NextResponse.json({ ok: false, error: message }, { status: 400 });
@@ -109,6 +118,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
+    if (!canMutateAbnormalTimeEvent(user.access, 'DELETE')) throw new ForbiddenError();
     const existing = await prisma.abnormalTimeEvent.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!existing) return NextResponse.json({ ok: false, error: '异常工时记录不存在' }, { status: 404 });
     await prisma.abnormalTimeEvent.update({
@@ -125,6 +135,7 @@ export async function DELETE(_: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden('仅人事部、质量部或管理员可以删除异常工时');
     console.error('delete abnormal time event failed', error);
     return NextResponse.json({ ok: false, error: '删除异常工时失败' }, { status: 500 });
   }
