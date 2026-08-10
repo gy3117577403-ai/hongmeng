@@ -14,6 +14,7 @@ import {
   productionFiltersFromSearchParams,
   resolveProductionWeek,
 } from '@/lib/production-execution';
+import { reconcileProductionCarryovers } from '@/lib/production-carryovers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -45,6 +46,12 @@ export async function GET(req: NextRequest) {
       }, { maxWait: 10_000, timeout: 180_000 });
     }
     const week = await resolveProductionWeek(params.get('weekStart'), params.get('weekEnd'), params.get('scope'));
+    if (!skipReconcile && week.scope === 'current' && week.weekStart) {
+      await prisma.$transaction(
+        tx => reconcileProductionCarryovers(tx, { targetWeekStart: week.weekStart!, actorId: user.id }),
+        { maxWait: 10_000, timeout: 180_000 },
+      );
+    }
     const filters = productionFiltersFromSearchParams(params);
     if (!skipReconcile) {
       await prisma.$transaction(tx => reconcileDraftProductTimeRoutes(tx, {

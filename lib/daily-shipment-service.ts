@@ -24,6 +24,11 @@ import {
 import { prisma } from '@/lib/prisma';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { productionBatchWeekStartWindow } from '@/lib/production-week';
+import {
+  activeProductionCarryoverBatchWhere,
+  isCurrentProductionCarryoverTarget,
+  reconcileCurrentProductionCarryovers,
+} from '@/lib/production-carryovers';
 
 type TransactionClient = Prisma.TransactionClient;
 
@@ -330,11 +335,14 @@ function serializeItem(item: Prisma.DailyShipmentPlanItemGetPayload<{ include: t
   };
 }
 
-export async function loadDailyShipmentWorkbench(input: { shipDate: unknown }) {
+export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; actorUserId?: string }) {
   const parsedDate = parseShipmentDate(input.shipDate);
   const week = shipmentWeek(parsedDate.key);
   const batchWeek = productionBatchWeekStartWindow(parsedDate.key);
   const now = new Date();
+  if (isCurrentProductionCarryoverTarget(week.startDate) && input.actorUserId) {
+    await reconcileCurrentProductionCarryovers({ targetWeekStart: week.startDate, actorId: input.actorUserId });
+  }
 
   const [plan, batches, weekPlans] = await Promise.all([
     prisma.dailyShipmentPlan.findUnique({
@@ -351,9 +359,11 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown }) {
     prisma.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
-        releaseState: { in: ['active', 'preparation'] },
         workOrderId: { not: null },
-        weekStartDate: { gte: batchWeek.gte, lt: batchWeek.lt },
+        OR: [
+          { releaseState: { in: ['active', 'preparation'] }, weekStartDate: { gte: batchWeek.gte, lt: batchWeek.lt } },
+          activeProductionCarryoverBatchWhere(week.startDate),
+        ],
         planOrder: { deletedAt: null },
         workOrder: { is: { deletedAt: null } },
       },
@@ -519,6 +529,10 @@ export async function addDailyShipmentItems(input: {
 }): Promise<MutationResult> {
   const actorId = requiredText(input.actorUserId, '操作人');
   const parsedDate = parseShipmentDate(input.shipDate);
+  const selectedWeek = shipmentWeek(parsedDate.key);
+  if (isCurrentProductionCarryoverTarget(selectedWeek.startDate)) {
+    await reconcileCurrentProductionCarryovers({ targetWeekStart: selectedWeek.startDate, actorId });
+  }
   const key = idempotencyKey(input.idempotencyKey);
   if (!Array.isArray(input.items) || input.items.length === 0) {
     throw new DailyShipmentServiceError('请至少选择一个本周订单', 'SHIPMENT_ITEMS_REQUIRED');
@@ -559,9 +573,11 @@ export async function addDailyShipmentItems(input: {
       where: {
         id: { in: batchIds },
         deletedAt: null,
-        releaseState: { in: ['active', 'preparation'] },
         workOrderId: { not: null },
-        weekStartDate: { gte: batchWindow.gte, lt: batchWindow.lt },
+        OR: [
+          { releaseState: { in: ['active', 'preparation'] }, weekStartDate: { gte: batchWindow.gte, lt: batchWindow.lt } },
+          activeProductionCarryoverBatchWhere(selectedWeek.startDate),
+        ],
         planOrder: { deletedAt: null },
         workOrder: { is: { deletedAt: null } },
       },

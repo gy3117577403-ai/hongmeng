@@ -8,6 +8,7 @@ import { useToastBridge } from '@/components/ToastProvider';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { PortalMenu } from '@/components/PortalMenu';
+import { OlderCarryoverDrawer } from '@/components/production/OlderCarryoverDrawer';
 import { TravelerPrintDialog } from '@/components/TravelerPrintDialog';
 import { VoiceInputButton } from '@/components/VoiceInputButton';
 import { writeClipboardText } from '@/lib/client-platform';
@@ -288,6 +289,14 @@ type ProductionOrder = {
   weekStartDate?: string | null;
   weekEndDate?: string | null;
   updatedAt: string;
+  carryover?: {
+    id: string;
+    sourceWeekStartDate: string;
+    targetWeekStartDate: string;
+    originalWeekStartDate: string;
+    inclusionType: string;
+    weeksOld: number;
+  } | null;
   arrangements: ProductionArrangement[];
 };
 
@@ -329,6 +338,7 @@ type ProductionSummary = {
     next: { weekStartDate: string; weekEndDate: string; count: number };
     afterNext: { weekStartDate: string; weekEndDate: string; count: number };
     carryoverCount: number;
+    olderCarryoverCount: number;
     history: Array<{ weekStartDate: string; weekEndDate: string; count: number }>;
   };
 };
@@ -1066,6 +1076,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [arrangementError, setArrangementError] = useState('');
   const [arrangementSearch, setArrangementSearch] = useState('');
   const [insightsOpen, setInsightsOpen] = useState(false);
+  const [olderCarryoverOpen, setOlderCarryoverOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [density, setDensity] = useState<DispatchDensity>('comfortable');
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -2369,19 +2380,20 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
                 {summary?.navigation.history.map(item => <option key={item.weekStartDate} value={item.weekStartDate}>{dateText(item.weekStartDate)} - {dateText(item.weekEndDate)} · {item.count} 批</option>)}
               </select>
             </label>
-            <button className={scope === 'current' ? 'active' : ''} type="button" aria-pressed={scope === 'current'} onClick={() => changeWeekScope('current')}>本周 <b>{summary?.navigation.current.count ?? 0}</b></button>
+            <button className={scope === 'current' ? 'active' : ''} type="button" aria-pressed={scope === 'current'} onClick={() => changeWeekScope('current')}>本周 <b>{summary?.navigation.current.count ?? 0}</b>{Boolean(summary?.navigation.carryoverCount) && <em>+ 遗留 {summary?.navigation.carryoverCount}</em>}</button>
             <button className={scope === 'next' ? 'active' : ''} type="button" aria-pressed={scope === 'next'} onClick={() => changeWeekScope('next')}>下周 <b>{summary?.navigation.next.count ?? 0}</b></button>
             <button className={scope === 'afterNext' ? 'active' : ''} type="button" aria-pressed={scope === 'afterNext'} onClick={() => changeWeekScope('afterNext')}>下下周 <b>{summary?.navigation.afterNext.count ?? 0}</b></button>
           </nav>
           <div className="production-dispatch-command-actions">
             <button
-              className={`hm-workbench-button production-carryover-trigger ${scope === 'carryover' ? 'active' : ''}`.trim()}
+              className="hm-workbench-button production-carryover-trigger"
               type="button"
-              aria-pressed={scope === 'carryover'}
-              title="查看所有历史周仍未完成的生产工单"
-              onClick={() => changeWeekScope('carryover')}
+              aria-haspopup="dialog"
+              aria-expanded={olderCarryoverOpen}
+              title="从两周前及更早的未完成订单中选择加入本周"
+              onClick={() => setOlderCarryoverOpen(true)}
             >
-              <AlertTriangle size={15} aria-hidden="true" />跨周遗留 <b>{summary?.navigation.carryoverCount ?? 0}</b>
+              <AlertTriangle size={15} aria-hidden="true" />更早遗留 <b>{summary?.navigation.olderCarryoverCount ?? 0}</b>
             </button>
             {(canAdministerProduction || canScheduleProduction) && <Link className="hm-workbench-button" href={weeklyPlanHref} prefetch={false}><CalendarDays size={15} aria-hidden="true" />周计划</Link>}
             {canSelectProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
@@ -2521,6 +2533,17 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       </PortalMenu>
 
       {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} canPrintTraveler={canPrintTravelers} travelerPrinting={false} printTraveler={() => printTravelers([detailOrder.id])} />}
+      <OlderCarryoverDrawer
+        open={olderCarryoverOpen}
+        targetWeekStart={summary?.navigation.current.weekStartDate || ''}
+        onClose={() => setOlderCarryoverOpen(false)}
+        onIncluded={count => {
+          setToast(`已将 ${count} 个更早遗留订单加入本周，原订单和资料保持不变`);
+          changeWeekScope('current');
+          setRefreshToken(value => value + 1);
+          setSummaryRefreshToken(value => value + 1);
+        }}
+      />
       <TravelerPrintDialog open={travelerPrintIds.length > 0} workOrderIds={travelerPrintIds} onClose={() => setTravelerPrintIds([])} onSuccess={message => { setToast(message); setSelected([]); }} />
       {canAdministerProduction && batchOpen && <BatchDialog count={selected.length} operation={batchOperation} value={batchValue} remark={batchRemark} saving={saving} error={formError} setValue={setBatchValue} setRemark={setBatchRemark} close={() => { if (!saving) setBatchOpen(false); }} save={saveBatch} />}
       {canAdministerProduction && stageChangeRequest && <StageChangeDialog request={stageChangeRequest} saving={saving} close={() => { if (!saving) setStageChangeRequest(null); }} confirm={() => void saveStageChange(stageChangeRequest.order, stageChangeRequest.stage)} />}
@@ -2682,7 +2705,7 @@ function ProductionDispatchRow({
     openNextStep(order, displayStage);
   }
 
-  return <article className={`production-dispatch-row stage-${displayStage} risk-${risk.tone} ${selectedRow ? 'selected' : ''}`.trim()} data-production-order-id={order.id} data-production-stage={displayStage}>
+  return <article className={`production-dispatch-row stage-${displayStage} risk-${risk.tone} ${order.carryover ? 'is-carryover' : ''} ${selectedRow ? 'selected' : ''}`.trim()} data-production-order-id={order.id} data-production-stage={displayStage}>
     <div className="production-dispatch-row-identity">
       <div className="production-dispatch-row-select">
         {canSelectProduction && batchMode && !readOnly
@@ -2690,7 +2713,7 @@ function ProductionDispatchRow({
           : <span className="production-dispatch-stage-dot" aria-hidden="true" />}
       </div>
       <div className="production-dispatch-product">
-        <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b>{order.branchType ? <em className="branch">{branchTypeText(order.branchType)}</em> : <em className={order.priority}>{priorityText(order.priority)}</em>}</span>
+        <span><b title={order.customerName || '客户待补充'}>{order.customerName || '客户待补充'}</b>{order.carryover && <em className="carryover-badge" title={`原生产周 ${order.carryover.originalWeekStartDate}，订单与资料未复制`}>{order.carryover.inclusionType === 'MANUAL_OLDER_WEEK' ? '更早遗留' : '上周遗留'}</em>}{order.branchType ? <em className="branch">{branchTypeText(order.branchType)}</em> : <em className={order.priority}>{priorityText(order.priority)}</em>}</span>
         <button type="button" title={`${specText(order)}；进入图纸资料库`} onClick={() => openDrawingLibrary(order, displayStage)}>{specText(order)}</button>
         <small title={`${order.productName || '品名待补充'}${order.businessCode ? ` · ${order.businessCode}` : ''}`}>{order.productName || '品名待补充'}{order.businessCode ? ` · ${order.businessCode}` : ''}</small>
         <div className="production-dispatch-product-quantity"><span>数量</span><b>{targetQuantity > 0 ? formatProductionQuantity(targetQuantity) : '待补充'} {unitLabel}</b></div>

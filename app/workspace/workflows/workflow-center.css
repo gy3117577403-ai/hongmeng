@@ -123,6 +123,27 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
   box-shadow: 0 2px 6px rgba(31, 44, 61, .06);
 }
 
+.hm-workflow-center .workflow-week-tabs button small {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #fff0c5;
+  color: #a65d00;
+  font-size: 9px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.hm-workflow-center .workflow-list-card.is-carryover {
+  border-color: #ebc46c;
+  background: linear-gradient(90deg, #fff8df, #fff 48%);
+  box-shadow: inset 3px 0 0 #edaa2f;
+}
+
+.hm-workflow-center .workflow-card-top em.carryover {
+  background: #fff0c5;
+  color: #a65d00;
+}
+
 .hm-workflow-center .workflow-command-actions {
   display: flex;
   align-items: center;

@@ -6,6 +6,7 @@ import {
   reconcileFutureActiveProductionPlanWeeks,
 } from '@/lib/production-planning';
 import { loadProductionWeekNavigation, resolveProductionWeek, summarizeProduction } from '@/lib/production-execution';
+import { reconcileProductionCarryovers } from '@/lib/production-carryovers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,6 +28,12 @@ export async function GET(req: NextRequest) {
       req.nextUrl.searchParams.get('weekEnd'),
       req.nextUrl.searchParams.get('scope'),
     );
+    if (req.nextUrl.searchParams.get('skipReconcile') !== '1' && week.scope === 'current' && week.weekStart) {
+      await prisma.$transaction(
+        tx => reconcileProductionCarryovers(tx, { targetWeekStart: week.weekStart!, actorId: user.id }),
+        { maxWait: 10_000, timeout: 180_000 },
+      );
+    }
     const [data, navigation] = await Promise.all([summarizeProduction(week), loadProductionWeekNavigation()]);
     const loadedAt = performance.now();
     const response = NextResponse.json({ ok: true, data: { ...data, navigation } });

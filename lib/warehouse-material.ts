@@ -6,6 +6,7 @@ import type {
   WarehouseMaterialStatus,
   WarehouseMaterialTaskDTO,
 } from '@/types';
+import { activeProductionCarryoverWorkOrderWhere } from '@/lib/production-carryovers';
 
 export const WAREHOUSE_MATERIAL_STATUSES: WarehouseMaterialStatus[] = ['pending', 'completed', 'exception'];
 export const WAREHOUSE_EXCEPTION_TYPES: WarehouseExceptionType[] = [
@@ -67,8 +68,13 @@ export function warehouseMaterialWorkOrderWhere(input: {
   if (input.scope === 'current') {
     return {
       ...base,
-      planActive: true,
-      weekStartDate: sameWarehouseDay(input.currentWeekStart),
+      OR: [
+        {
+          planActive: true,
+          weekStartDate: sameWarehouseDay(input.currentWeekStart),
+        },
+        activeProductionCarryoverWorkOrderWhere(input.currentWeekStart),
+      ],
     };
   }
   if (input.scope === 'preparation') {

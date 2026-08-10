@@ -502,6 +502,10 @@ export type WarehouseMaterialTaskDTO = {
   createdAt: string;
   updatedAt: string;
   isExpectedOverdue: boolean;
+  carryover?: {
+    label: '上周遗留' | '更早遗留';
+    originalWeekStartDate: string;
+  } | null;
   followUpTask?: {
     id: string;
     status: MaterialFollowUpStatusDTO;
@@ -577,6 +581,10 @@ export type MaterialFollowUpTaskDTO = {
   version: number;
   createdAt: string;
   updatedAt: string;
+  carryover?: {
+    label: '上周遗留' | '更早遗留';
+    originalWeekStartDate: string;
+  } | null;
   warehouseTask: {
     status: WarehouseMaterialStatus;
     exceptionType?: WarehouseExceptionType | null;
@@ -1587,6 +1595,7 @@ export type WorkflowWeekNavigationDTO = {
   current: ProductionWeekNavigationItemDTO;
   next: ProductionWeekNavigationItemDTO;
   afterNext: ProductionWeekNavigationItemDTO;
+  carryoverCount: number;
   history: ProductionWeekNavigationItemDTO[];
 };
 
@@ -1713,6 +1722,13 @@ export type WorkflowItemDTO = {
   quantity?: number | null;
   weekStartDate?: string | null;
   weekEndDate?: string | null;
+  carryover?: {
+    id: string;
+    sourceWeekStartDate: string;
+    targetWeekStartDate: string;
+    originalWeekStartDate: string;
+    inclusionType: string;
+  } | null;
   processRouteId?: string | null;
   routeVersion?: number | null;
   routeStatus?: ProcessRouteStatus | null;

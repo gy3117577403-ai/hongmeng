@@ -419,7 +419,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
             </header>
             <div className="warehouse-queue-list hm-scroll-region" tabIndex={0} aria-label="仓库配料任务列表">
               {visibleTasks.map(task => <button
-                className={`warehouse-queue-card ${task.status} ${task.isExpectedOverdue ? 'expected-overdue' : ''} ${selectedTask?.id === task.id ? 'selected' : ''}`}
+                className={`warehouse-queue-card ${task.status} ${task.carryover ? 'is-carryover' : ''} ${task.isExpectedOverdue ? 'expected-overdue' : ''} ${selectedTask?.id === task.id ? 'selected' : ''}`}
                 type="button"
                 aria-pressed={selectedTask?.id === task.id}
                 onClick={() => setSelectedTaskId(task.id)}
@@ -427,7 +427,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
               >
                 <span className="warehouse-queue-icon"><Box aria-hidden="true" /></span>
                 <span className="warehouse-queue-copy">
-                  <span><b>{task.workOrder.customerName || '客户未设置'}</b><em className={task.status}>{task.isExpectedOverdue ? '逾期' : task.statusText}</em></span>
+                  <span><b>{task.workOrder.customerName || '客户未设置'}</b>{task.carryover && <em className="carryover" title={`原生产周 ${task.carryover.originalWeekStartDate}`}>{task.carryover.label}</em>}<em className={task.status}>{task.isExpectedOverdue ? '逾期' : task.statusText}</em></span>
                   <strong title={task.workOrder.specification || task.workOrder.code}>{task.workOrder.specification || task.workOrder.code}</strong>
                   <small title={task.workOrder.productName}>{task.workOrder.productName}</small>
                   <span className="warehouse-queue-meta"><i>{quantityText(task)} 套</i><i>{task.workOrder.deliveryDay || dateText(task.workOrder.plannedAt)}</i></span>

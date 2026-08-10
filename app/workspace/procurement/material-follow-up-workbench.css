@@ -193,6 +193,8 @@ main.material-follow-up-workbench.hm-workbench-root.hm-workbench-root {
 }
 .mf-task-card:hover { transform: translate3d(3px, -2px, 8px) rotateY(-.7deg); box-shadow: -8px 14px 23px rgba(37, 50, 74, .1); border-color: rgba(70, 101, 151, .32); }
 .mf-task-card.active { border-color: rgba(242, 103, 34, .62); background: linear-gradient(145deg, #fffaf5, #fff 52%, #f8fbff); box-shadow: -8px 16px 27px rgba(58, 56, 66, .12), 3px 0 0 var(--mf-orange) inset; transform: translate3d(4px, -1px, 14px); }
+.mf-task-card.is-carryover { border-color: #e9c36a; background: linear-gradient(145deg, #fff8dc, #fff 58%); box-shadow: 3px 0 0 #eaa62d inset; }
+.mf-task-card > div small em { color: #a45c00; font-style: normal; font-weight: 800; }
 .mf-task-card > div { min-width: 0; padding-right: 68px; display: grid; gap: 2px; }
 .mf-task-card > div small { color: var(--mf-muted); font-size: 10px; }
 .mf-task-card > div strong, .mf-task-card > div p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -85,6 +85,7 @@ const emptyNavigation: WorkflowWeekNavigationDTO = {
   current: { weekStartDate: '', weekEndDate: '', count: 0 },
   next: { weekStartDate: '', weekEndDate: '', count: 0 },
   afterNext: { weekStartDate: '', weekEndDate: '', count: 0 },
+  carryoverCount: 0,
   history: [],
 };
 const entityLabels: Record<WorkflowEntityType, string> = { issue: '问题', change: '变更', production: '生产' };
@@ -707,7 +708,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                 onClick={() => changeWorkflowWeekScope(scope)}
               >
                 <CalendarDays size={13} aria-hidden="true" />
-                {weekScopeLabels[scope]} <b>{navigation[scope].count}</b>
+                {weekScopeLabels[scope]} <b>{navigation[scope].count}</b>{scope === 'current' && navigation.carryoverCount > 0 && <small>+遗留 {navigation.carryoverCount}</small>}
               </button>
             ))}
           </div>
@@ -754,9 +755,9 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
               {!loading && !error && !items.length && <div className="workflow-empty"><Workflow /><h3>没有符合条件的流程</h3><p>可调整类型、状态或逾期筛选。</p></div>}
               {!loading && !error && items.map(item => {
                 const Icon = entityIcons[item.entityType];
-                return <button type="button" key={item.id} className={`workflow-list-card ${selected?.id === item.id ? 'selected' : ''}`} onClick={() => setSelected(item)}>
+                return <button type="button" key={item.id} className={`workflow-list-card ${item.carryover ? 'is-carryover' : ''} ${selected?.id === item.id ? 'selected' : ''}`} onClick={() => setSelected(item)}>
                   <span className={`workflow-entity-icon entity-${item.entityType}`}><Icon size={16} aria-hidden="true" /></span>
-                  <div><div className="workflow-card-top"><em>{entityLabels[item.entityType]}</em><span>{item.code}</span><i className={`priority-${item.priority}`}>{priorityLabels[item.priority]}</i></div><strong title={item.title}>{item.title}</strong><p title={item.subtitle}>{item.subtitle}</p><footer><span className={`status-${item.processStatus}`}>{statusLabels[item.processStatus]}</span><span>{item.owner || '待分派'}</span><span className={item.isOverdue ? 'overdue' : ''}>{item.isOverdue ? '已逾期' : formatDate(item.dueAt, false)}</span></footer></div>
+                  <div><div className="workflow-card-top"><em>{entityLabels[item.entityType]}</em>{item.carryover && <em className="carryover">{item.carryover.inclusionType === 'MANUAL_OLDER_WEEK' ? '更早遗留' : '上周遗留'}</em>}<span>{item.code}</span><i className={`priority-${item.priority}`}>{priorityLabels[item.priority]}</i></div><strong title={item.title}>{item.title}</strong><p title={item.subtitle}>{item.subtitle}</p><footer><span className={`status-${item.processStatus}`}>{statusLabels[item.processStatus]}</span><span>{item.owner || '待分派'}</span><span className={item.isOverdue ? 'overdue' : ''}>{item.isOverdue ? '已逾期' : formatDate(item.dueAt, false)}</span></footer></div>
                 </button>;
               })}
             </div>

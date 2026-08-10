@@ -13,6 +13,10 @@ import {
 } from '@/lib/warehouse-material';
 import type { WarehouseExceptionType, WarehouseMaterialStatus } from '@/types';
 import { naturalProductionWeek } from '@/lib/production-execution';
+import {
+  loadProductionCarryoverMetadata,
+  reconcileCurrentProductionCarryovers,
+} from '@/lib/production-carryovers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,7 +45,7 @@ function ymd(value: Date | null): string | null {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
     const params = req.nextUrl.searchParams;
     const scope = params.get('scope') === 'history'
       ? 'history'
@@ -53,6 +57,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: '周开始日期格式不正确' }, { status: 400 });
     }
     const naturalWeek = naturalProductionWeek();
+    if (scope === 'current') {
+      await reconcileCurrentProductionCarryovers({ targetWeekStart: naturalWeek.start, actorId: user.id });
+    }
     const nextWeekStart = addDays(naturalWeek.start, 7);
     if (requestedWeek && scope === 'history' && requestedWeek >= naturalWeek.start) {
       return NextResponse.json({ ok: false, error: '历史周只能选择本周以前的生产周' }, { status: 400 });
@@ -105,7 +112,7 @@ export async function GET(req: NextRequest) {
       planType: { in: ['weekly_plan', 'managed_plan'] },
       materialTask: { isNot: null },
       ...(scope === 'current'
-        ? { planActive: true, weekStartDate: { gte: naturalWeek.start, lt: addDays(naturalWeek.start, 1) } }
+        ? warehouseMaterialWorkOrderWhere({ scope: 'current', currentWeekStart: naturalWeek.start })
         : scope === 'preparation'
           ? {
               planActive: false,
@@ -171,10 +178,24 @@ export async function GET(req: NextRequest) {
         ? first.weekStartDate.localeCompare(second.weekStartDate)
         : second.weekStartDate.localeCompare(first.weekStartDate)
     ));
+    const carryoverByWorkOrder = scope === 'current'
+      ? await loadProductionCarryoverMetadata(naturalWeek.start, records.map(record => record.workOrder.id))
+      : new Map();
 
     return NextResponse.json({
       ok: true,
-      tasks: records.map(record => serializeWarehouseMaterialTask(record)),
+      tasks: records.map(record => {
+        const carryover = carryoverByWorkOrder.get(record.workOrder.id);
+        return {
+          ...serializeWarehouseMaterialTask(record),
+          carryover: carryover
+            ? {
+                label: carryover.inclusionType === 'MANUAL_OLDER_WEEK' ? '更早遗留' as const : '上周遗留' as const,
+                originalWeekStartDate: carryover.originalWeekStartDate,
+              }
+            : null,
+        };
+      }),
       summary,
       selectedWeekStart: ymd(activeWeek),
       weeks,

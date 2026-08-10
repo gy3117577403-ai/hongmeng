@@ -365,9 +365,9 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
           <aside className="mf-task-queue" aria-label="物料异常反馈队列">
             <header><div><span>{status === 'RESOLVED' ? '已解决名单' : '异常队列'}</span><strong>{loading ? '加载中' : `${tasks.length} 项`}</strong></div><small>{status === 'RESOLVED' ? '按解决时间归档' : '按风险和预计到料查看'}</small></header>
             <div className="mf-task-list hm-scroll-region" tabIndex={0}>
-              {tasks.map(task => <button type="button" className={`mf-task-card ${selectedId === task.id ? 'active' : ''} risk-${task.risk}`} key={task.id} onClick={() => setSelectedId(task.id)}>
+              {tasks.map(task => <button type="button" className={`mf-task-card ${task.carryover ? 'is-carryover' : ''} ${selectedId === task.id ? 'active' : ''} risk-${task.risk}`} key={task.id} onClick={() => setSelectedId(task.id)}>
                 <span className="mf-task-risk">{task.riskText}</span>
-                <div><small>{task.workOrder.customerName || '客户待补充'} · {task.exceptionCase.exceptionTypeText}</small><strong>{task.workOrder.specification || task.workOrder.code}</strong><p>{task.workOrder.productName}</p></div>
+                <div><small>{task.workOrder.customerName || '客户待补充'} · {task.exceptionCase.exceptionTypeText}{task.carryover && <em title={`原生产周 ${task.carryover.originalWeekStartDate}`}> · {task.carryover.label}</em>}</small><strong>{task.workOrder.specification || task.workOrder.code}</strong><p>{task.workOrder.productName}</p></div>
                 <dl><div><dt>异常</dt><dd>{task.exceptionCase.exceptionNote || '物料异常待处理'}</dd></div><div><dt>负责人</dt><dd>{task.owner?.displayName || task.owner?.username || '待认领'}</dd></div></dl>
                 <footer><span className={`status-${task.status.toLowerCase()}`}>{task.statusText}</span><time>{task.status === 'RESOLVED' ? `解决 ${dateTimeText(task.resolvedAt)}` : task.expectedAt ? `预计到料 ${dateText(task.expectedAt)}` : `反馈 ${dateText(task.exceptionCase.reportedAt)}`}</time><ChevronRight size={15} /></footer>
               </button>)}

@@ -17,6 +17,7 @@ import {
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
+import { productionCarryoverDayWindow } from '@/lib/production-carryovers';
 import type {
   ChangeStatus,
   ChangeType,
@@ -561,7 +562,7 @@ export function workflowWeekRange(
 }
 
 export function workflowItemMatchesWeekScope(
-  item: Pick<WorkflowItemDTO, 'entityType' | 'weekStartDate' | 'weekEndDate'>,
+  item: Pick<WorkflowItemDTO, 'entityType' | 'weekStartDate' | 'weekEndDate' | 'carryover'>,
   scope: WorkflowWeekScope,
   now = new Date(),
   historyWeekStartDate?: string | null,
@@ -570,6 +571,11 @@ export function workflowItemMatchesWeekScope(
   const weekStart = item.weekStartDate ? new Date(item.weekStartDate) : null;
   const weekEnd = item.weekEndDate ? new Date(item.weekEndDate) : null;
   const range = workflowWeekRange(scope, now, historyWeekStartDate);
+  if (
+    scope === 'current'
+    && item.carryover?.targetWeekStartDate
+    && item.carryover.targetWeekStartDate === chinaDateKey(range.start)
+  ) return true;
   if (!weekStart && !weekEnd) return false;
   const rangeStartKey = chinaDateKey(range.start);
   const rangeEndKey = chinaDateKey(range.end);
@@ -583,8 +589,13 @@ function productionExecutionRouteForWeek(
   workOrderId: string,
   weekStartDate: Date | null,
   now = new Date(),
+  carriedToCurrent = false,
 ): string {
   const params = new URLSearchParams({ workOrderId });
+  if (carriedToCurrent) {
+    params.set('scope', 'current');
+    return `/production?${params.toString()}`;
+  }
   if (!weekStartDate) return `/production?${params.toString()}`;
   const ranges = workflowWeekRanges(now);
   const weekKey = chinaDateKey(weekStartDate);
@@ -617,7 +628,7 @@ export type WorkflowCenterFilters = {
 };
 
 export function workflowWeekNavigationFromBatches(
-  batches: Array<{ weekStartDate: Date; weekEndDate: Date }>,
+  batches: Array<{ weekStartDate: Date; weekEndDate: Date; carryovers?: Array<{ id: string }> }>,
   now = new Date(),
 ): WorkflowWeekNavigationDTO {
   const ranges = workflowWeekRanges(now);
@@ -643,6 +654,7 @@ export function workflowWeekNavigationFromBatches(
     current: item('current'),
     next: item('next'),
     afterNext: item('afterNext'),
+    carryoverCount: batches.filter(batch => Boolean(batch.carryovers?.length)).length,
     history: [...historyMap.values()]
       .sort((left, right) => right.weekStartDate.localeCompare(left.weekStartDate)),
   };
@@ -656,6 +668,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
 }> {
   const now = Date.now();
   const nowDate = new Date(now);
+  const currentWeek = workflowWeekRanges(nowDate).current;
   const [issues, changes, productionBatches, standaloneProductionOrders] = await Promise.all([
     prisma.issue.findMany({
       where: { deletedAt: null },
@@ -703,6 +716,19 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
         activatedAt: true,
         createdAt: true,
         updatedAt: true,
+        carryovers: {
+          where: {
+            targetWeekStartDate: productionCarryoverDayWindow(currentWeek.start),
+            status: 'ACTIVE',
+          },
+          select: {
+            id: true,
+            sourceWeekStartDate: true,
+            targetWeekStartDate: true,
+            inclusionType: true,
+          },
+          take: 1,
+        },
         planOrder: {
           select: {
             id: true,
@@ -1104,6 +1130,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   for (const batch of productionBatches) {
     const order = batch.planOrder;
     const workOrder = batch.workOrder;
+    const currentCarryover = batch.carryovers[0] || null;
     const warehouseStatus = (workOrder?.materialTask?.status || 'not_created') as WarehouseMaterialStatus | 'not_created';
     const processRouteStatus = (workOrder?.processRoute?.status || 'not_created') as ProcessRouteStatus | 'not_created';
     const currentProcess = workOrder?.processRoute?.steps.find(step => step.status === 'current')
@@ -1172,7 +1199,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       ? `/drawing-library?itemId=${encodeURIComponent(order.drawingLibraryItemId)}`
       : `/drawing-library?create=1&customerName=${encodeURIComponent(order.customerName)}&specification=${encodeURIComponent(order.specification)}&productName=${encodeURIComponent(order.productName)}`;
     const productionRoute = workOrder?.id
-      ? productionExecutionRouteForWeek(workOrder.id, batch.weekStartDate, nowDate)
+      ? productionExecutionRouteForWeek(workOrder.id, batch.weekStartDate, nowDate, Boolean(currentCarryover))
       : '';
     let targetRoute = `/weekly-plan-center?batchId=${encodeURIComponent(batch.id)}&week=${encodeURIComponent(chinaDateKey(batch.weekStartDate))}`;
     if ((actualRouteState || referenceRoute) && workOrder?.id) {
@@ -1248,6 +1275,13 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       quantity: batch.quantity,
       weekStartDate: batch.weekStartDate.toISOString(),
       weekEndDate: batch.weekEndDate.toISOString(),
+      carryover: currentCarryover ? {
+        id: currentCarryover.id,
+        sourceWeekStartDate: chinaDateKey(currentCarryover.sourceWeekStartDate),
+        targetWeekStartDate: chinaDateKey(currentCarryover.targetWeekStartDate),
+        originalWeekStartDate: chinaDateKey(batch.weekStartDate),
+        inclusionType: currentCarryover.inclusionType,
+      } : null,
       processRouteId: workOrder?.processRoute?.id || null,
       routeVersion: workOrder?.processRoute?.version ?? null,
       routeStatus: (workOrder?.processRoute?.status as ProcessRouteStatus | undefined) || null,

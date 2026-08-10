@@ -36,6 +36,11 @@ import {
   productionEmployeeWhere,
 } from '@/lib/production-workforce';
 import { splitProductionArrangementQuantity } from '@/lib/production-arrangement-domain';
+import {
+  activeProductionCarryoverBatchWhere,
+  isCurrentProductionCarryoverTarget,
+  reconcileCurrentProductionCarryovers,
+} from '@/lib/production-carryovers';
 
 const DEFAULT_SHIFT_CODE = 'DAY';
 const ACTIVE_ROUTE_STATUSES = new Set(['confirmed', 'in_progress', 'completed']);
@@ -635,6 +640,9 @@ export async function previewDailyPlanSuggestions(input: {
   assertTeamMutation(scope, teamId);
   const batchWeek = productionBatchWeekStartWindow(workDate);
   const taskWeek = productionWeekDateBounds(workDate);
+  if (isCurrentProductionCarryoverTarget(taskWeek.startDate)) {
+    await reconcileCurrentProductionCarryovers({ targetWeekStart: taskWeek.startDate, actorId: input.actorUserId });
+  }
   const [team, activeCapabilities] = await Promise.all([
     prisma.productionTeam.findFirst({
       where: { id: teamId, isActive: true },
@@ -658,9 +666,18 @@ export async function previewDailyPlanSuggestions(input: {
   const batches = await prisma.productionPlanBatch.findMany({
     where: {
       deletedAt: null,
-      releaseState: { in: ACTIVE_BATCH_STATES },
       workOrderId: { not: null, ...(workOrderIds.length ? { in: workOrderIds } : {}) },
-      ...(allowCrossWeekWorkOrders ? {} : { weekStartDate: { gte: batchWeek.gte, lt: batchWeek.lt } }),
+      ...(allowCrossWeekWorkOrders ? {
+        OR: [
+          { releaseState: { in: ACTIVE_BATCH_STATES } },
+          activeProductionCarryoverBatchWhere(taskWeek.startDate),
+        ],
+      } : {
+        OR: [
+          { releaseState: { in: ACTIVE_BATCH_STATES }, weekStartDate: { gte: batchWeek.gte, lt: batchWeek.lt } },
+          activeProductionCarryoverBatchWhere(taskWeek.startDate),
+        ],
+      }),
       planOrder: { deletedAt: null },
       workOrder: { is: { deletedAt: null } },
     },

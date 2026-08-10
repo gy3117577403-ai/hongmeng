@@ -418,6 +418,17 @@ main.warehouse-workbench.hm-workbench-root.hm-workbench-root {
 
 .warehouse-queue-card.exception { border-left-color: var(--warehouse-red); }
 .warehouse-queue-card.completed { border-left-color: var(--warehouse-green); }
+.warehouse-queue-card.is-carryover {
+  border-color: #edc56d;
+  border-left-color: #e9a52c;
+  background: linear-gradient(90deg, #fff8df, #fff 55%);
+}
+
+.warehouse-queue-copy em.carryover {
+  border: 1px solid #edc56d;
+  background: #fff0c5;
+  color: #9d5a00;
+}
 .warehouse-queue-card.expected-overdue::after {
   content: '';
   position: absolute;

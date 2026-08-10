@@ -3,6 +3,8 @@ import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/a
 import { loadWorkflowCenter } from '@/lib/workflows';
 import { parseWeek } from '@/lib/weekly-work-orders';
 import type { WorkflowEntityType, WorkflowProcessStatus, WorkflowWeekScope } from '@/types';
+import { chinaWeekRange } from '@/lib/production-planning';
+import { reconcileCurrentProductionCarryovers } from '@/lib/production-carryovers';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -49,6 +51,10 @@ export async function GET(req: NextRequest) {
     }
     if (weekStartDate && !parseWeek(weekStartDate)) {
       return NextResponse.json({ ok: false, error: '历史生产周日期格式不正确' }, { status: 400 });
+    }
+
+    if (weekScope === 'current') {
+      await reconcileCurrentProductionCarryovers({ targetWeekStart: chinaWeekRange(new Date()).start, actorId: user.id });
     }
 
     const result = await loadWorkflowCenter({

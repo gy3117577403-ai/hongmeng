@@ -7,6 +7,12 @@ import { calculateProductionLaborProgress, serializeProductionLaborProgress } fr
 import { getProductionQuantitySummary, parsedImportedProductionTarget } from '@/lib/production-quantity';
 import { processRouteSummaryInclude, serializeProcessRoute } from '@/lib/process-routing';
 import { resolveEffectiveFrontendTransferredQty } from '@/lib/production-stage-flow';
+import {
+  activeProductionCarryoverWorkOrderWhere,
+  loadProductionCarryoverCounts,
+  loadProductionCarryoverMetadata,
+  type ProductionCarryoverMetadata,
+} from '@/lib/production-carryovers';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { normalizeWorkOrderStage, stageText, type WorkOrderStage } from '@/lib/work-orders';
 import {
@@ -162,6 +168,7 @@ export type ProductionWeekNavigation = {
   next: { weekStartDate: string; weekEndDate: string; count: number };
   afterNext: { weekStartDate: string; weekEndDate: string; count: number };
   carryoverCount: number;
+  olderCarryoverCount: number;
   history: Array<{ weekStartDate: string; weekEndDate: string; count: number }>;
 };
 
@@ -543,8 +550,7 @@ export function productionWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhere
   if (week.scope === 'carryover') {
     return { ...base, weekStartDate: { lt: week.weekStart } };
   }
-  return {
-    ...base,
+  const linkedProductionBatch: Prisma.WorkOrderWhereInput = {
     OR: [
       {
         productionPlanBatch: {
@@ -570,7 +576,25 @@ export function productionWeekWhere(week: ProductionWeek): Prisma.WorkOrderWhere
         },
       },
     ],
-    ...(week.scope === 'current' ? { planActive: true } : {}),
+  };
+  if (week.scope === 'current') {
+    return {
+      ...base,
+      OR: [
+        {
+          AND: [
+            linkedProductionBatch,
+            { planActive: true },
+            { weekStartDate: sameDayRange(week.weekStart) },
+          ],
+        },
+        activeProductionCarryoverWorkOrderWhere(week.weekStart),
+      ],
+    };
+  }
+  return {
+    ...base,
+    ...linkedProductionBatch,
     ...(week.scope === 'next' || week.scope === 'afterNext' ? { planActive: false, planClearedAt: null } : {}),
     weekStartDate: sameDayRange(week.weekStart),
   };
@@ -592,14 +616,11 @@ export async function loadProductionWeekNavigation(now = new Date()): Promise<Pr
     planOrder: { deletedAt: null },
     weekStartDate: sameDayRange(weekStart),
   });
-  const [currentCount, nextCount, afterNextCount, priorOrders, historicalBatches] = await Promise.all([
+  const [currentCount, nextCount, afterNextCount, carryoverCounts, historicalBatches] = await Promise.all([
     prisma.productionPlanBatch.count({ where: planningBatchWhere(natural.start) }),
     prisma.productionPlanBatch.count({ where: planningBatchWhere(nextStart) }),
     prisma.productionPlanBatch.count({ where: planningBatchWhere(afterNextStart) }),
-    prisma.workOrder.findMany({
-      where: productionRootWeekWhere({ scope: 'carryover', weekStart: natural.start, weekEnd: natural.end }),
-      select: { stage: true, status: true },
-    }),
+    loadProductionCarryoverCounts(natural.start),
     prisma.productionPlanBatch.findMany({
       where: {
         deletedAt: null,
@@ -626,7 +647,8 @@ export async function loadProductionWeekNavigation(now = new Date()): Promise<Pr
     current: { weekStartDate: chinaYmd(natural.start), weekEndDate: chinaYmd(natural.end), count: currentCount },
     next: { weekStartDate: chinaYmd(nextStart), weekEndDate: chinaYmd(addDays(nextStart, 6)), count: nextCount },
     afterNext: { weekStartDate: chinaYmd(afterNextStart), weekEndDate: chinaYmd(addDays(afterNextStart, 6)), count: afterNextCount },
-    carryoverCount: priorOrders.filter(order => normalizeWorkOrderStage(order.stage || order.status) !== 'completed').length,
+    carryoverCount: carryoverCounts.active,
+    olderCarryoverCount: carryoverCounts.older,
     history: [...historyMap.values()],
   };
 }
@@ -692,7 +714,11 @@ export function productionExceptionCodes(order: ProductionStatusOrderRecord, now
   return exceptions;
 }
 
-export function serializeProductionOrder(order: ProductionExecutionOrderRecord, now = new Date()) {
+export function serializeProductionOrder(
+  order: ProductionExecutionOrderRecord,
+  now = new Date(),
+  carryover: ProductionCarryoverMetadata | null = null,
+) {
   const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
   const completeness = executionCompleteness(order);
   const exceptionCodes = productionExceptionCodes(order, now);
@@ -847,6 +873,7 @@ export function serializeProductionOrder(order: ProductionExecutionOrderRecord, 
     weekStartDate: order.weekStartDate?.toISOString() || null,
     weekEndDate: order.weekEndDate?.toISOString() || null,
     updatedAt: order.updatedAt.toISOString(),
+    carryover,
   };
 }
 
@@ -1156,10 +1183,13 @@ export async function loadProductionExecution(input: {
     })
     : [];
   const pageOrderById = new Map(pageOrders.map(order => [order.id, order] as const));
+  const carryoverByOrder = input.week.scope === 'current' && input.week.weekStart
+    ? await loadProductionCarryoverMetadata(input.week.weekStart, pageOrderIds)
+    : new Map<string, ProductionCarryoverMetadata>();
   const items = pageOrderIds.flatMap(id => {
     const order = pageOrderById.get(id);
     return order ? [{
-      ...serializeProductionOrder(order, now),
+      ...serializeProductionOrder(order, now, carryoverByOrder.get(order.id) || null),
       arrangements: arrangementsByOrder.get(order.id) || [],
     }] : [];
   });

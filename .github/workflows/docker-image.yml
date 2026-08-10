@@ -68,6 +68,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:planning-integration
+      - name: Production carryover and test-week retirement PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/production-carryover.test.ts tests/production-carryover-integration.test.ts tests/production-test-data-retirement-integration.test.ts
       - name: Production correction and product-time sync PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -93,14 +97,14 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=v1.26.1
+            type=raw,value=v1.27.0
             type=raw,value=latest
             type=sha
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.26.1
+            APP_VERSION=v1.27.0
             APP_REVISION=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

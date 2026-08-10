@@ -56,9 +56,9 @@ function errorResponse(error: unknown, context: string): NextResponse {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
     const shipDate = request.nextUrl.searchParams.get('date') || chinaDateKey(new Date());
-    const data = await loadDailyShipmentWorkbench({ shipDate });
+    const data = await loadDailyShipmentWorkbench({ shipDate, actorUserId: user.id });
     return NextResponse.json({ ok: true, data });
   } catch (error) {
     return errorResponse(error, 'load workbench');
