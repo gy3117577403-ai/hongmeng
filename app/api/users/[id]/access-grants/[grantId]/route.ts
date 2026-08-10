@@ -14,6 +14,7 @@ import { createSystemNotification } from '@/lib/system-notifications';
 import {
   AccessGrantInputError,
   prepareAccessGrant,
+  reconcileFieldReportPinEligibility,
   serializeAccessGrant,
   type AccessGrantInput,
 } from '@/lib/user-access-admin';
@@ -78,6 +79,9 @@ export async function PATCH(request: NextRequest, { params }: GrantRouteContext)
         where: { id: currentGrant.id },
         include: { department: { select: { id: true, code: true, name: true } } },
       });
+      await reconcileFieldReportPinEligibility(tx, user.employee?.id, {
+        resetById: current.id,
+      });
       await createSystemNotification(tx, {
         eventType: saved.isActive ? 'ACCOUNT_ADDITIONAL_ACCESS_UPDATED' : 'ACCOUNT_ADDITIONAL_ACCESS_REVOKED',
         dedupeKey: `account:${user.id}:grant:${saved.id}:version:${saved.version}`,
@@ -127,6 +131,7 @@ export async function DELETE(request: NextRequest, { params }: GrantRouteContext
     const result = await prisma.$transaction(async tx => {
       const grant = await tx.userAccessGrant.findFirst({
         where: { id: params.grantId, userId: params.id },
+        include: { user: { select: { employeeId: true } } },
       });
       if (!grant) throw new AccessGrantInputError('授权记录不存在', 404);
       if (grant.grantType === 'PRIMARY') {
@@ -140,6 +145,9 @@ export async function DELETE(request: NextRequest, { params }: GrantRouteContext
       await tx.user.update({
         where: { id: params.id },
         data: { sessionVersion: { increment: 1 } },
+      });
+      await reconcileFieldReportPinEligibility(tx, grant.user.employeeId, {
+        resetById: current.id,
       });
       await createSystemNotification(tx, {
         eventType: 'ACCOUNT_ADDITIONAL_ACCESS_REVOKED',

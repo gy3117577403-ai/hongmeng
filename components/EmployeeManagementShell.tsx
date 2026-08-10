@@ -72,6 +72,7 @@ import type {
   CurrentUserDTO,
   EmployeeAttainmentReportDTO,
   EmployeeDTO,
+  FieldPinSummaryDTO,
   RecruitmentCandidateDTO,
   RecruitmentDemandDTO,
   RecruitmentDemandStatusDTO,
@@ -481,6 +482,9 @@ function employeeAccountStatus(employee?: EmployeeDTO | null): { label: string; 
   const account = employeeLinkedAccount(employee);
   if (!account) return { label: '未开通', tone: 'unbound' };
   const status = account.accountStatus || (account.isActive ? 'ACTIVE' : 'DISABLED');
+  if (account.passwordSetupRequired && account.isActive && status === 'ACTIVE') {
+    return { label: '待设后台密码', tone: 'pending' };
+  }
   if (status === 'PENDING') return { label: '待激活', tone: 'pending' };
   if (status === 'SUSPENDED') return { label: '已暂停', tone: 'suspended' };
   if (status === 'DISABLED' || !account.isActive) return { label: '已停用', tone: 'disabled' };
@@ -496,6 +500,14 @@ function employeeAccessMethods(employee: EmployeeDTO | null | undefined, product
   }
   const grants = currentEmployeeAccessGrants(employee);
   const summary = employee?.linkedUser?.permissionSummary;
+  if (account.passwordSetupRequired) {
+    const pendingMethods = ['后台登录待设密码'];
+    if (
+      summary?.fieldReportEnabled
+      || grants.some(grant => grant.profileKey === 'FIELD_REPORTER')
+    ) pendingMethods.push('扫码报工');
+    return pendingMethods;
+  }
   if (!grants.length && summary?.activeGrantCount) {
     const summaryMethods: string[] = [];
     if (summary.profiles.some(profile => profile !== 'FIELD_REPORTER')) summaryMethods.push('后台登录');
@@ -509,6 +521,16 @@ function employeeAccessMethods(employee: EmployeeDTO | null | undefined, product
     else methods.add('后台登录');
   });
   return [...methods];
+}
+
+function employeeFieldPinStatus(pin: FieldPinSummaryDTO | null | undefined, eligible: boolean): { label: string; detail: string; tone: 'active' | 'warning' | 'disabled' | 'unbound' } {
+  if (!pin?.configured) return eligible
+    ? { label: '未设置', detail: '由管理员在账号设置中配置', tone: 'unbound' }
+    : { label: '不适用', detail: '当前账号未开通扫码报工权限', tone: 'unbound' };
+  if (!eligible) return { label: '不可用', detail: '当前未开通扫码报工权限', tone: 'disabled' };
+  if (pin.isLocked) return { label: '已锁定', detail: pin.lockedUntil ? `锁定至 ${formatDateTime(pin.lockedUntil)}` : '请联系管理员重置', tone: 'warning' };
+  if (!pin.isActive) return { label: '已停用', detail: '当前不能在共享终端验证', tone: 'disabled' };
+  return { label: '已配置', detail: pin.lastUsedAt ? `最近使用 ${formatDateTime(pin.lastUsedAt)}` : '可在共享终端验证，PIN 不回显', tone: 'active' };
 }
 
 function employeeGrantDepartment(grant: UserAccessGrantDTO, fallback: string): string {
@@ -1651,8 +1673,15 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     const productionReportingEligible = isProductionWorkforceEmployee(draft);
     const profileAccount = employeeLinkedAccount(profileEmployee);
     const profilePermissionSummary = profileEmployee?.linkedUser?.permissionSummary;
+    const profileFieldPin = profilePermissionSummary?.pin;
     const profileAccountStatus = employeeAccountStatus(profileEmployee);
     const profileAccessGrants = currentEmployeeAccessGrants(profileEmployee);
+    const profileFieldPinEligible = Boolean(
+      profileEmployee?.isActive
+      && profileAccount?.isActive
+      && (profilePermissionSummary?.fieldReportEnabled || profileAccessGrants.some(grant => grant.profileKey === 'FIELD_REPORTER')),
+    );
+    const profileFieldPinStatus = employeeFieldPinStatus(profileFieldPin, profileFieldPinEligible);
     const profileAccessMethods = employeeAccessMethods(profileEmployee, productionReportingEligible);
     const profilePrimaryGrant = profileAccessGrants.find(grant => grant.grantType === 'PRIMARY') || null;
     const profilePermissionVersion = profileAccessGrants.length
@@ -2006,14 +2035,14 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                         <article><small>账号状态</small><strong className={`tone-${profileAccountStatus.tone}`}>{profileAccountStatus.label}</strong><span>{profileAccount?.username || '由管理员开通'}</span></article>
                         <article><small>主部门</small><strong>{profileEmployee.departmentRecord?.name || profileDepartment}</strong><span>{profileEmployee.departmentRecord?.code || '沿用人员主档'}</span></article>
                         <article><small>权限同步</small><strong className={profileEmployee.isActive === false ? 'tone-disabled' : profilePermissionNeedsSync ? 'tone-pending' : 'tone-active'}>{profilePermissionSyncLabel}</strong><span>{profileActiveGrantCount ? `${profileActiveGrantCount} 条当前有效授权` : profileNoGrantDescription}</span></article>
-                        <article><small>最近登录</small><strong>{profileAccount?.lastLoginAt ? formatDateTime(profileAccount.lastLoginAt) : profileEmployee.user ? '尚未登录' : profileAccount ? '账号摘要未提供' : '—'}</strong><span>{profileAccount?.mustChangePassword ? '首次登录需修改密码' : profileAccount ? '登录凭证正常' : '等待管理员开通'}</span></article>
+                        <article><small>最近登录</small><strong>{profileAccount?.lastLoginAt ? formatDateTime(profileAccount.lastLoginAt) : profileEmployee.user ? '尚未登录' : profileAccount ? '账号摘要未提供' : '—'}</strong><span>{profileAccount?.passwordSetupRequired ? '待管理员设置后台密码' : profileAccount?.mustChangePassword ? '首次登录需修改密码' : profileAccount ? '登录凭证正常' : '等待管理员开通'}</span></article>
                       </div>
                       <div className="hr-account-access-row">
                         <strong>访问方式</strong>
                         <div>
                           {profileAccessMethods.map(method => <span key={method}>{method.includes('扫码') ? <QrCode /> : <Monitor />}{method}</span>)}
                           {!profileAccessMethods.length && <span className="muted"><KeyRound />尚未开通</span>}
-                          <span className="future"><KeyRound />共享终端PIN · 未来接入</span>
+                          <span className={`pin-${profileFieldPinStatus.tone}`} title="系统仅显示配置状态，不显示 PIN 明文"><KeyRound />共享终端 PIN · {profileFieldPinStatus.label}</span>
                         </div>
                       </div>
                       <div className="hr-account-grant-list">
@@ -2146,7 +2175,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
               <div className="hr-role-account-state">
                 <header><span className={`tone-${profileAccountStatus.tone}`}><KeyRound />{profileAccountStatus.label}</span><small>{profileAccount?.username || '未分配账号'}</small></header>
                 <div>{profileAccessMethods.map(method => <span key={method}>{method.includes('扫码') ? <QrCode /> : <Monitor />}{method}</span>)}{!profileAccessMethods.length && <span className="muted"><KeyRound />未开通访问方式</span>}</div>
-                <footer><KeyRound /><span><strong>共享终端PIN</strong><small>未来接入，本阶段不配置</small></span></footer>
+                <footer className={`pin-${profileFieldPinStatus.tone}`}><KeyRound /><span><strong>共享终端 PIN · {profileFieldPinStatus.label}</strong><small>{profileFieldPinStatus.detail}</small></span>{canManageAccounts && profileEmployee && profileFieldPinEligible && <a href={`/dashboard?settings=accounts&employeeId=${encodeURIComponent(profileEmployee.id)}&credential=pin`}>{profileFieldPin?.configured ? '重置' : '设置'}</a>}</footer>
               </div>
             </section>
             <section>

@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { AccessProfileKey, LaborAccessRole, Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
@@ -97,9 +98,6 @@ export async function POST(request: NextRequest) {
     const password = String(body.password || '');
     const employeeId = String(body.employeeId || '').trim() || null;
     if (!username) return NextResponse.json({ ok: false, error: '账号不能为空' }, { status: 400 });
-    const passwordError = validateNewPassword(password, username);
-    if (passwordError) return NextResponse.json({ ok: false, error: passwordError }, { status: 400 });
-
     const user = await prisma.$transaction(async tx => {
       const employee = employeeId
         ? await tx.employee.findFirst({
@@ -116,19 +114,26 @@ export async function POST(request: NextRequest) {
       if (employeeId && !employee) throw new AccessGrantInputError('请选择有效的在职员工档案');
       const legacyRole = parseLaborRole(body.laborRole) || LaborAccessRole.EMPLOYEE;
       const profile = inferredProfile(body.profileKey, legacyRole, employee?.departmentRef?.code);
+      if (profile !== AccessProfileKey.FIELD_REPORTER) {
+        const passwordError = validateNewPassword(password, username);
+        if (passwordError) throw new AccessGrantInputError(passwordError);
+      }
       const grant = await prepareAccessGrant(tx, { ...body, profileKey: profile }, employee);
       if (grant.grantType !== 'PRIMARY') {
         throw new AccessGrantInputError('新账号必须先建立主部门权限，兼岗和代班请在账号开通后追加');
       }
       const resolvedRole = legacyLaborRoleForProfile(profile);
+      const passwordMaterial = profile === AccessProfileKey.FIELD_REPORTER
+        ? randomBytes(32).toString('base64url')
+        : password;
       const created = await tx.user.create({
         data: {
           username,
           displayName: (String(body.displayName || '').trim() || employee?.name || username).slice(0, 80),
-          passwordHash: await bcrypt.hash(password, 10),
+          passwordHash: await bcrypt.hash(passwordMaterial, 10),
           isActive: true,
           accountStatus: 'ACTIVE',
-          mustChangePassword: true,
+          mustChangePassword: profile !== AccessProfileKey.FIELD_REPORTER,
           laborRole: resolvedRole,
           employeeId: profile === AccessProfileKey.ADMIN_GLOBAL ? null : employeeId,
         },

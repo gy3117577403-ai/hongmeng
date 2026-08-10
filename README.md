@@ -5,7 +5,7 @@
 ## 生产部署状态
 
 - 当前生产版本：v1.27.0（revision `ba3f2eeb569b9de83e2245e468dbec4dfe3d6d65`）
-- 待验收候选版本：v1.28.0（尚未切换生产）
+- 待验收候选版本：v1.29.0（尚未切换生产）
 - 上线地址：https://qdowqencjyph.sealoshzh.site
 - 部署平台：Sealos
 - 镜像：`ghcr.io/gy3117577403-ai/hongmeng`
@@ -17,6 +17,7 @@
 ## 功能范围
 
 - 账号登录、修改密码、账号管理
+- 共享终端员工 PIN 报工：沿用现有工单二维码，管理员绑定现场平板，员工以工号 + 6 位 PIN 完成实名报工；PIN 不回显、不建立普通后台会话
 - 工单资料库、工单新增 / 编辑 / 软删除 / 恢复
 - 工单搜索、状态筛选、资料完整性状态
 - PDF / JPG / JPEG / PNG / WEBP 上传到 S3 兼容对象存储
@@ -60,10 +61,10 @@ docker compose up --build
 推送到 GitHub main 后，工作流会构建：
 
 ```text
-ghcr.io/gy3117577403-ai/hongmeng:v1.28.0
+ghcr.io/gy3117577403-ai/hongmeng:v1.29.0
 ```
 
-Sealos App Deploy 端口填 `3000`。`v1.28.0` 是本次待验收固定镜像；当前生产仍为 `v1.27.0`，完成生产发布前不要把候选版本写成已上线。`latest` 仅用于跟随最新构建，生产切换应固定到已验收的镜像 digest。
+Sealos App Deploy 端口填 `3000`。`v1.29.0` 是本次待验收固定镜像；当前生产仍为 `v1.27.0`，完成生产发布前不要把候选版本写成已上线。`latest` 仅用于跟随最新构建，生产切换应固定到已验收的镜像 digest。
 
 ## 平板交付方式
 

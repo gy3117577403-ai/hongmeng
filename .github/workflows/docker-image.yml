@@ -58,6 +58,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/major-quality-approval-integration.test.ts
+      - name: Shared terminal PIN PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/field-report-pin-completion-integration.test.ts
       - name: Warehouse and material follow-up PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -101,14 +105,14 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=v1.28.0
+            type=raw,value=v1.29.0
             type=raw,value=latest
             type=sha
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.28.0
+            APP_VERSION=v1.29.0
             APP_REVISION=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

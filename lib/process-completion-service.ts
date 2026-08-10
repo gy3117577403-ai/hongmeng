@@ -1,4 +1,5 @@
 import {
+  AccessProfileKey,
   DailyProcessTaskStatus,
   Prisma,
   ProcessCompletionCoverageStatus,
@@ -28,7 +29,10 @@ import {
   normalizeWorkOrderStage,
 } from '@/lib/work-orders';
 import { loadWeeklyProcessWorkerPresetForStep } from '@/lib/weekly-process-worker-preset-service';
-import { productionEmployeeWhere } from '@/lib/production-workforce';
+import {
+  isProductionWorkforceEmployee,
+  productionEmployeeWhere,
+} from '@/lib/production-workforce';
 import { branchBusinessWorkOrderCode } from '@/lib/work-order-business-code';
 
 export class ProcessCompletionServiceError extends Error {
@@ -68,6 +72,10 @@ export type CompleteProcessStepCommand = {
   allowAdvanceReporting?: boolean;
   autoAssignLabor?: boolean;
   reportSource?: ProcessCompletionSource;
+  principalEmployeeId?: unknown;
+  fieldReportTerminalId?: unknown;
+  pinCredentialVersion?: unknown;
+  fieldReportPinSession?: unknown;
   idempotencyKey: unknown;
   expectedRouteVersion: unknown;
   userId: string;
@@ -228,6 +236,10 @@ type ParsedCompletionCommand = {
   allowAdvanceReporting: boolean;
   autoAssignLabor: boolean;
   reportSource: ProcessCompletionSource;
+  principalEmployeeId: string | null;
+  fieldReportTerminalId: string | null;
+  pinCredentialVersion: number | null;
+  fieldReportPinSession: ParsedFieldReportPinSessionEvidence | null;
   idempotencyKey: string;
   expectedRouteVersion: number;
   userId: string;
@@ -308,6 +320,118 @@ const replayCompletionInclude = Prisma.validator<Prisma.ProcessCompletionInclude
 type ReplayCompletionRecord = Prisma.ProcessCompletionGetPayload<{
   include: typeof replayCompletionInclude;
 }>;
+
+export type SharedTerminalPrincipalSnapshot = {
+  credential: {
+    credentialVersion: number;
+    isActive: boolean;
+    lockedUntil: Date | null;
+  } | null;
+  terminal: {
+    isActive: boolean;
+    lockedUntil: Date | null;
+  } | null;
+  employeeExists: boolean;
+  user: {
+    id: string;
+    isActive: boolean;
+    accountStatus: string;
+    employeeId: string | null;
+    fieldReporterGrantCount: number;
+  } | null;
+};
+
+export type ParsedFieldReportPinSessionEvidence = {
+  sessionId: string;
+  tokenHash: string;
+  terminalId: string;
+  terminalVersion: number;
+  credentialId: string;
+  credentialVersion: number;
+  employeeId: string;
+  userId: string;
+  ticketId: string;
+};
+
+export function sharedTerminalPrincipalSnapshotIsValid(input: {
+  principalEmployeeId: string;
+  pinCredentialVersion: number;
+  userId: string;
+}, snapshot: SharedTerminalPrincipalSnapshot, now = new Date()): boolean {
+  return Boolean(
+    snapshot.credential?.isActive
+    && snapshot.credential.credentialVersion === input.pinCredentialVersion
+    && (!snapshot.credential.lockedUntil || snapshot.credential.lockedUntil.getTime() <= now.getTime())
+    && snapshot.terminal?.isActive
+    && (!snapshot.terminal.lockedUntil || snapshot.terminal.lockedUntil.getTime() <= now.getTime())
+    && snapshot.employeeExists
+    && snapshot.user?.id === input.userId
+    && snapshot.user.isActive
+    && snapshot.user.accountStatus === 'ACTIVE'
+    && snapshot.user.employeeId === input.principalEmployeeId
+    && snapshot.user.fieldReporterGrantCount === 1
+  );
+}
+
+export function completionPrincipalIdentityMatches(
+  stored: {
+    principalEmployeeId: string | null;
+    fieldReportTerminalId: string | null;
+    pinCredentialVersion: number | null;
+  },
+  requested: {
+    principalEmployeeId: string | null;
+    fieldReportTerminalId: string | null;
+    pinCredentialVersion: number | null;
+  },
+): boolean {
+  return stored.principalEmployeeId === requested.principalEmployeeId
+    && stored.fieldReportTerminalId === requested.fieldReportTerminalId
+    && stored.pinCredentialVersion === requested.pinCredentialVersion;
+}
+
+export type SharedTerminalPinSessionSnapshot = {
+  id: string;
+  tokenHash: string;
+  terminalId: string;
+  terminalVersion: number;
+  credentialId: string;
+  credentialVersion: number;
+  employeeId: string;
+  userId: string;
+  ticketId: string;
+  expiresAt: Date;
+  consumedAt: Date | null;
+  revokedAt: Date | null;
+  ticketStatus: string;
+  ticketRouteId: string | null;
+};
+
+export function sharedTerminalPinSessionSnapshotIsValid(
+  evidence: ParsedFieldReportPinSessionEvidence,
+  snapshot: SharedTerminalPinSessionSnapshot | null,
+  input: { routeId: string },
+  mode: 'consume' | 'replay',
+  now = new Date(),
+): boolean {
+  return Boolean(
+    snapshot
+    && snapshot.id === evidence.sessionId
+    && snapshot.tokenHash === evidence.tokenHash
+    && snapshot.terminalId === evidence.terminalId
+    && snapshot.terminalVersion === evidence.terminalVersion
+    && snapshot.credentialId === evidence.credentialId
+    && snapshot.credentialVersion === evidence.credentialVersion
+    && snapshot.employeeId === evidence.employeeId
+    && snapshot.userId === evidence.userId
+    && snapshot.ticketId === evidence.ticketId
+    && snapshot.expiresAt.getTime() > now.getTime()
+    && snapshot.revokedAt === null
+    && (mode === 'consume' ? snapshot.consumedAt === null : snapshot.consumedAt !== null)
+    && snapshot.ticketStatus === 'ACTIVE'
+    && snapshot.ticketRouteId === input.routeId
+  );
+}
 
 type BranchRoutePlanStep<T> = T & {
   sourceStepId: string;
@@ -590,6 +714,46 @@ function parseDefectDisposition(
   };
 }
 
+function parseFieldReportPinSessionEvidence(
+  value: unknown,
+): ParsedFieldReportPinSessionEvidence | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  const sessionId = cleanText(source.sessionId, 80);
+  const tokenHash = cleanText(source.tokenHash, 128).toLowerCase();
+  const terminalId = cleanText(source.terminalId, 80);
+  const terminalVersion = Number(source.terminalVersion);
+  const credentialId = cleanText(source.credentialId, 80);
+  const credentialVersion = Number(source.credentialVersion);
+  const employeeId = cleanText(source.employeeId, 80);
+  const userId = cleanText(source.userId, 80);
+  const ticketId = cleanText(source.ticketId, 80);
+  if (
+    !sessionId
+    || !/^[a-f0-9]{64}$/.test(tokenHash)
+    || !terminalId
+    || !Number.isSafeInteger(terminalVersion)
+    || terminalVersion <= 0
+    || !credentialId
+    || !Number.isSafeInteger(credentialVersion)
+    || credentialVersion <= 0
+    || !employeeId
+    || !userId
+    || !ticketId
+  ) return null;
+  return {
+    sessionId,
+    tokenHash,
+    terminalId,
+    terminalVersion,
+    credentialId,
+    credentialVersion,
+    employeeId,
+    userId,
+    ticketId,
+  };
+}
+
 export function parseProcessCompletionCommand(
   command: CompleteProcessStepCommand,
 ): ParsedCompletionCommand {
@@ -681,6 +845,55 @@ export function parseProcessCompletionCommand(
   if (!userId) {
     throw new ProcessCompletionServiceError('登录状态已失效', 401, 'PROCESS_COMPLETION_USER_REQUIRED');
   }
+  const reportSource = command.reportSource === ProcessCompletionSource.QR_MOBILE
+    ? ProcessCompletionSource.QR_MOBILE
+    : command.reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+      ? ProcessCompletionSource.SHARED_TERMINAL_PIN
+      : ProcessCompletionSource.DESKTOP;
+  const principalEmployeeId = reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+    ? cleanText(command.principalEmployeeId, 80)
+    : '';
+  const fieldReportTerminalId = reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+    ? cleanText(command.fieldReportTerminalId, 80)
+    : '';
+  const pinCredentialVersionValue = Number(command.pinCredentialVersion);
+  const pinCredentialVersion = reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+    && Number.isSafeInteger(pinCredentialVersionValue)
+    && pinCredentialVersionValue > 0
+    ? pinCredentialVersionValue
+    : null;
+  const fieldReportPinSession = reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+    ? parseFieldReportPinSessionEvidence(command.fieldReportPinSession)
+    : null;
+  if (
+    reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+    && (
+      !principalEmployeeId
+      || !fieldReportTerminalId
+      || pinCredentialVersion === null
+      || !fieldReportPinSession
+      || fieldReportPinSession.employeeId !== principalEmployeeId
+      || fieldReportPinSession.userId !== userId
+      || fieldReportPinSession.terminalId !== fieldReportTerminalId
+      || fieldReportPinSession.credentialVersion !== pinCredentialVersion
+    )
+  ) {
+    throw new ProcessCompletionServiceError(
+      '共享终端报工身份已失效，请重新验证',
+      401,
+      'PROCESS_COMPLETION_PIN_PRINCIPAL_REQUIRED',
+    );
+  }
+  if (
+    reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+    && !employeeIds.includes(principalEmployeeId)
+  ) {
+    throw new ProcessCompletionServiceError(
+      '共享终端报工人必须包含在本次作业人员中',
+      400,
+      'PROCESS_COMPLETION_PIN_PRINCIPAL_PARTICIPANT_REQUIRED',
+    );
+  }
   return {
     routeId,
     stepId,
@@ -698,9 +911,11 @@ export function parseProcessCompletionCommand(
     remark: cleanText(command.remark, 500) || null,
     allowAdvanceReporting: command.allowAdvanceReporting === true,
     autoAssignLabor: command.autoAssignLabor === true,
-    reportSource: command.reportSource === ProcessCompletionSource.QR_MOBILE
-      ? ProcessCompletionSource.QR_MOBILE
-      : ProcessCompletionSource.DESKTOP,
+    reportSource,
+    principalEmployeeId: principalEmployeeId || null,
+    fieldReportTerminalId: fieldReportTerminalId || null,
+    pinCredentialVersion,
+    fieldReportPinSession,
     idempotencyKey: parseIdempotencyKey(command.idempotencyKey),
     expectedRouteVersion: parseExpectedRouteVersion(command.expectedRouteVersion),
     userId,
@@ -920,6 +1135,8 @@ function assertIdempotentPayload(
     && completion.workstation === input.workstation
     && completion.remark === input.remark
     && completion.reportSource === input.reportSource
+    && completion.createdById === input.userId
+    && completionPrincipalIdentityMatches(completion, input)
     && storedEmployeeIds.length === inputEmployeeIds.length
     && storedEmployeeIds.every((id, index) => id === inputEmployeeIds[index]);
   if (!matches) {
@@ -2813,9 +3030,165 @@ async function reconcilePendingCompletionCoverage(
   };
 }
 
+type SharedTerminalSessionPreparation = 'none' | 'new-batch' | 'replay-batch';
+
+async function assertSharedTerminalPinSession(
+  tx: Prisma.TransactionClient,
+  input: ParsedCompletionCommand,
+  mode: 'available' | 'consume' | 'replay',
+): Promise<void> {
+  const evidence = input.fieldReportPinSession;
+  if (!evidence) {
+    throw new ProcessCompletionServiceError(
+      '共享终端报工身份已失效，请重新验证',
+      401,
+      'PROCESS_COMPLETION_PIN_SESSION_REQUIRED',
+    );
+  }
+  const now = new Date();
+  const expectedScope = `EMPLOYEE:${input.principalEmployeeId}`;
+  const session = await tx.fieldReportPinSession.findUnique({
+    where: { id: evidence.sessionId },
+    select: {
+      id: true,
+      tokenHash: true,
+      terminalId: true,
+      terminalVersion: true,
+      credentialId: true,
+      credentialVersion: true,
+      employeeId: true,
+      userId: true,
+      ticketId: true,
+      expiresAt: true,
+      consumedAt: true,
+      revokedAt: true,
+      terminal: {
+        select: { id: true, version: true, isActive: true, lockedUntil: true },
+      },
+      credential: {
+        select: {
+          id: true,
+          employeeId: true,
+          credentialVersion: true,
+          isActive: true,
+          lockedUntil: true,
+        },
+      },
+      employee: {
+        select: { id: true, department: true, isActive: true, attendanceEnabled: true },
+      },
+      user: {
+        select: {
+          id: true,
+          isActive: true,
+          accountStatus: true,
+          employeeId: true,
+          accessGrants: {
+            where: {
+              profile: AccessProfileKey.FIELD_REPORTER,
+              scopeKey: expectedScope,
+              isActive: true,
+              effectiveFrom: { lte: now },
+              OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }],
+            },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+      ticket: {
+        select: {
+          status: true,
+          workOrder: { select: { processRoute: { select: { id: true } } } },
+        },
+      },
+    },
+  });
+  const stateMode = mode === 'replay' ? 'replay' : 'consume';
+  const sessionValid = sharedTerminalPinSessionSnapshotIsValid(evidence, session ? {
+    id: session.id,
+    tokenHash: session.tokenHash,
+    terminalId: session.terminalId,
+    terminalVersion: session.terminalVersion,
+    credentialId: session.credentialId,
+    credentialVersion: session.credentialVersion,
+    employeeId: session.employeeId,
+    userId: session.userId,
+    ticketId: session.ticketId,
+    expiresAt: session.expiresAt,
+    consumedAt: session.consumedAt,
+    revokedAt: session.revokedAt,
+    ticketStatus: session.ticket.status,
+    ticketRouteId: session.ticket.workOrder.processRoute?.id || null,
+  } : null, input, stateMode, now);
+  const livePrincipalValid = Boolean(
+    session
+    && session.terminal.id === evidence.terminalId
+    && session.terminal.version === evidence.terminalVersion
+    && session.credential.id === evidence.credentialId
+    && session.credential.employeeId === evidence.employeeId
+    && session.employee.id === evidence.employeeId
+    && isProductionWorkforceEmployee(session.employee)
+    && sharedTerminalPrincipalSnapshotIsValid({
+      principalEmployeeId: input.principalEmployeeId!,
+      pinCredentialVersion: input.pinCredentialVersion!,
+      userId: input.userId,
+    }, {
+      credential: session.credential,
+      terminal: session.terminal,
+      employeeExists: true,
+      user: {
+        id: session.user.id,
+        isActive: session.user.isActive,
+        accountStatus: session.user.accountStatus,
+        employeeId: session.user.employeeId,
+        fieldReporterGrantCount: session.user.accessGrants.length,
+      },
+    }, now)
+  );
+  if (!sessionValid || !livePrincipalValid) {
+    throw new ProcessCompletionServiceError(
+      mode === 'replay'
+        ? '本次 PIN 报工重放凭据已失效，请重新验证'
+        : '共享终端报工身份已失效，请重新验证',
+      401,
+      mode === 'replay'
+        ? 'PROCESS_COMPLETION_PIN_REPLAY_INVALID'
+        : 'PROCESS_COMPLETION_PIN_SESSION_INVALID',
+    );
+  }
+  if (mode === 'consume') {
+    const consumed = await tx.fieldReportPinSession.updateMany({
+      where: {
+        id: evidence.sessionId,
+        tokenHash: evidence.tokenHash,
+        terminalId: evidence.terminalId,
+        terminalVersion: evidence.terminalVersion,
+        credentialId: evidence.credentialId,
+        credentialVersion: evidence.credentialVersion,
+        employeeId: evidence.employeeId,
+        userId: evidence.userId,
+        ticketId: evidence.ticketId,
+        expiresAt: { gt: now },
+        consumedAt: null,
+        revokedAt: null,
+      },
+      data: { consumedAt: now },
+    });
+    if (consumed.count !== 1) {
+      throw new ProcessCompletionServiceError(
+        '本次 PIN 身份已使用或已过期，请重新验证',
+        401,
+        'PROCESS_COMPLETION_PIN_SESSION_USED',
+      );
+    }
+  }
+}
+
 async function performProcessCompletion(
   tx: Prisma.TransactionClient,
   input: ParsedCompletionCommand,
+  sessionPreparation: SharedTerminalSessionPreparation = 'none',
 ): Promise<ProcessCompletionResult> {
   const existing = await tx.processCompletion.findUnique({
     where: { idempotencyKey: input.idempotencyKey },
@@ -2823,7 +3196,26 @@ async function performProcessCompletion(
   });
   if (existing) {
     assertIdempotentPayload(existing, input);
+    if (
+      input.reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+      && sessionPreparation === 'none'
+    ) {
+      await assertSharedTerminalPinSession(tx, input, 'replay');
+    }
     return resultForExistingCompletion(tx, existing);
+  }
+  if (sessionPreparation === 'replay-batch') {
+    throw new ProcessCompletionServiceError(
+      '共享终端批量报工的幂等记录不完整，不能继续落账',
+      409,
+      'PROCESS_COMPLETION_PIN_BATCH_REPLAY_INCOMPLETE',
+    );
+  }
+  if (
+    input.reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+    && sessionPreparation === 'none'
+  ) {
+    await assertSharedTerminalPinSession(tx, input, 'consume');
   }
 
   const route = await tx.workOrderProcessRoute.findUnique({
@@ -2981,6 +3373,9 @@ async function performProcessCompletion(
       defectQty: input.defectQty,
       reportMode,
       reportSource: input.reportSource,
+      principalEmployeeId: input.principalEmployeeId,
+      fieldReportTerminalId: input.fieldReportTerminalId,
+      pinCredentialVersion: input.pinCredentialVersion,
       coverageStatus: ProcessCompletionCoverageStatus.PENDING,
       coveredQty: 0,
       coveredGoodQty: 0,
@@ -3207,6 +3602,9 @@ async function performProcessCompletion(
         goodTransferredQty: coverage.goodTransferredQty,
         reportMode,
         reportSource: input.reportSource,
+        principalEmployeeId: input.principalEmployeeId,
+        fieldReportTerminalId: input.fieldReportTerminalId,
+        pinCredentialVersion: input.pinCredentialVersion,
         coverageStatus: coveredCompletion.coverageStatus,
         coveredQty: coveredCompletion.coveredQty,
         pendingCoverageQty,
@@ -3235,13 +3633,31 @@ export async function completeProcessStep(
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError
       && (error.code === 'P2002' || error.code === 'P2034')) {
-      const existing = await prisma.processCompletion.findUnique({
-        where: { idempotencyKey: input.idempotencyKey },
-        include: replayCompletionInclude,
-      });
-      if (existing) {
-        assertIdempotentPayload(existing, input);
-        return resultForExistingCompletion(prisma, existing);
+      try {
+        const replay = await prisma.$transaction(async tx => {
+          const existing = await tx.processCompletion.findUnique({
+            where: { idempotencyKey: input.idempotencyKey },
+            include: replayCompletionInclude,
+          });
+          if (!existing) {
+            if (input.reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN) {
+              await assertSharedTerminalPinSession(tx, input, 'available');
+            }
+            return null;
+          }
+          assertIdempotentPayload(existing, input);
+          if (input.reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN) {
+            await assertSharedTerminalPinSession(tx, input, 'replay');
+          }
+          return resultForExistingCompletion(tx, existing);
+        }, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          maxWait: 5_000,
+          timeout: 15_000,
+        });
+        if (replay) return replay;
+      } catch (replayError) {
+        throw normalizeServiceError(replayError);
       }
     }
     throw normalizeServiceError(error);
@@ -3250,6 +3666,7 @@ export async function completeProcessStep(
 
 export async function completeProcessStepsBatch(
   command: CompleteProcessStepsBatchCommand,
+  retrySerializationConflict = true,
 ): Promise<ProcessCompletionBatchResult> {
   if (!Array.isArray(command.items) || command.items.length < 2) {
     throw new ProcessCompletionServiceError(
@@ -3300,20 +3717,46 @@ export async function completeProcessStepsBatch(
           'PROCESS_STEP_NOT_FOUND',
         );
       }
-      let nextExpectedVersion = expectedRouteVersion;
-      const results: ProcessCompletionBatchResult['items'] = [];
-      for (const [index, step] of route.steps.entries()) {
-        const item = itemByStepId.get(step.id)!;
-        const input = parseProcessCompletionCommand({
+      const parsedItems = route.steps.map((step, index) => ({
+        step,
+        input: parseProcessCompletionCommand({
           ...command,
           stepId: step.id,
-          processedQty: item.processedQty,
-          defectQty: item.defectQty,
-          defectDisposition: item.defectDisposition,
+          processedQty: itemByStepId.get(step.id)!.processedQty,
+          defectQty: itemByStepId.get(step.id)!.defectQty,
+          defectDisposition: itemByStepId.get(step.id)!.defectDisposition,
           idempotencyKey: `${batchKey.slice(0, 88)}:${index + 1}:${step.id.slice(0, 8)}`,
-          expectedRouteVersion: nextExpectedVersion,
+          expectedRouteVersion: expectedRouteVersion + index,
+        }),
+      }));
+      let sessionPreparation: SharedTerminalSessionPreparation = 'none';
+      const pinInput = parsedItems[0]?.input.reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+        ? parsedItems[0].input
+        : null;
+      if (pinInput) {
+        const existing = await tx.processCompletion.findMany({
+          where: { idempotencyKey: { in: parsedItems.map(item => item.input.idempotencyKey) } },
+          select: { idempotencyKey: true },
         });
-        const result = await performProcessCompletion(tx, input);
+        if (existing.length > 0 && existing.length !== parsedItems.length) {
+          throw new ProcessCompletionServiceError(
+            '共享终端批量报工的幂等记录不完整，不能继续落账',
+            409,
+            'PROCESS_COMPLETION_PIN_BATCH_REPLAY_INCOMPLETE',
+          );
+        }
+        sessionPreparation = existing.length === parsedItems.length ? 'replay-batch' : 'new-batch';
+        await assertSharedTerminalPinSession(
+          tx,
+          pinInput,
+          sessionPreparation === 'replay-batch' ? 'replay' : 'consume',
+        );
+      }
+      let nextExpectedVersion = expectedRouteVersion;
+      const results: ProcessCompletionBatchResult['items'] = [];
+      for (const { step, input } of parsedItems) {
+        input.expectedRouteVersion = nextExpectedVersion;
+        const result = await performProcessCompletion(tx, input, sessionPreparation);
         nextExpectedVersion = result.routeVersion;
         results.push({
           stepId: step.id,
@@ -3337,6 +3780,13 @@ export async function completeProcessStepsBatch(
       timeout: 30_000,
     });
   } catch (error) {
+    if (
+      retrySerializationConflict
+      && error instanceof Prisma.PrismaClientKnownRequestError
+      && (error.code === 'P2002' || error.code === 'P2034')
+    ) {
+      return completeProcessStepsBatch(command, false);
+    }
     throw normalizeServiceError(error);
   }
 }
