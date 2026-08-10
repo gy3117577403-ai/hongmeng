@@ -236,6 +236,16 @@ export type UserAccessGrantDTO = {
   department?: DepartmentRefDTO | null;
 };
 
+export type FieldPinSummaryDTO = {
+  configured: boolean;
+  isActive: boolean;
+  isLocked: boolean;
+  lockedUntil: string | null;
+  lastUsedAt: string | null;
+  resetAt: string | null;
+  updatedAt: string | null;
+};
+
 export type EmployeeLinkedUserDTO = {
   id: string;
   username: string;
@@ -243,6 +253,7 @@ export type EmployeeLinkedUserDTO = {
   accountStatus?: AccountStatusDTO | null;
   isActive: boolean;
   mustChangePassword?: boolean;
+  passwordSetupRequired?: boolean;
   lastLoginAt?: string | null;
   permissionSummary?: {
     configuredGrantCount: number;
@@ -251,6 +262,7 @@ export type EmployeeLinkedUserDTO = {
     departmentCodes: string[];
     fieldReportEnabled: boolean;
     permissionSyncPending: boolean;
+    pin?: FieldPinSummaryDTO;
   };
 };
 
@@ -316,6 +328,7 @@ export type UserDTO = {
   isActive: boolean;
   accountStatus?: AccountStatusDTO | null;
   mustChangePassword?: boolean;
+  passwordSetupRequired?: boolean;
   lastLoginAt?: string | null;
   laborRole: LaborAccessRoleDTO;
   employeeId: string | null;
@@ -335,6 +348,7 @@ export type UserDTO = {
     fieldReport: boolean;
     pin: boolean;
   };
+  fieldPin?: FieldPinSummaryDTO;
   permissionSyncPending?: boolean;
   accessGrants?: UserAccessGrantDTO[];
   createdAt: string;
@@ -1279,6 +1293,7 @@ export type EmployeeDTO = {
     accountStatus?: AccountStatusDTO | null;
     isActive: boolean;
     mustChangePassword?: boolean;
+    passwordSetupRequired?: boolean;
     lastLoginAt?: string | null;
     accessGrants?: UserAccessGrantDTO[];
   } | null;

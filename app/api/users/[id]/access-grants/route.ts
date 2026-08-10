@@ -14,6 +14,7 @@ import { createSystemNotification } from '@/lib/system-notifications';
 import {
   AccessGrantInputError,
   prepareAccessGrant,
+  reconcileFieldReportPinEligibility,
   serializeAccessGrant,
   type AccessGrantInput,
 } from '@/lib/user-access-admin';
@@ -54,6 +55,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       await tx.user.update({
         where: { id: user.id },
         data: { sessionVersion: { increment: 1 } },
+      });
+      await reconcileFieldReportPinEligibility(tx, user.employee?.id, {
+        resetById: current.id,
       });
       await createSystemNotification(tx, {
         eventType: 'ACCOUNT_ADDITIONAL_ACCESS_GRANTED',

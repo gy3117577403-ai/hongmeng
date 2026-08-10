@@ -3,6 +3,7 @@ import {
   DEPARTMENT_CODES,
   type DepartmentCode,
 } from '@/lib/department-access';
+import { requiresAdminPasswordSetup } from '@/lib/login-security';
 import { serializeEmployee } from '@/lib/process-time';
 
 export const departmentRecordSelect = {
@@ -14,6 +15,15 @@ export const departmentRecordSelect = {
 
 export const employeeAccessAdminInclude = {
   departmentRef: { select: departmentRecordSelect },
+  fieldReportPinCredential: {
+    select: {
+      isActive: true,
+      lockedUntil: true,
+      lastUsedAt: true,
+      resetAt: true,
+      updatedAt: true,
+    },
+  },
   user: {
     select: {
       id: true,
@@ -22,6 +32,7 @@ export const employeeAccessAdminInclude = {
       isActive: true,
       accountStatus: true,
       mustChangePassword: true,
+      lastLoginAt: true,
       accessGrants: {
         select: {
           id: true,
@@ -81,13 +92,34 @@ export class EmployeeDepartmentInputError extends Error {
 }
 
 export async function disableLinkedEmployeeAccess(
-  tx: Pick<Prisma.TransactionClient, 'user' | 'userAccessGrant'>,
+  tx: Pick<
+    Prisma.TransactionClient,
+    'user' | 'userAccessGrant' | 'employeeFieldReportPinCredential' | 'fieldReportPinSession'
+  >,
   employeeId: string,
 ): Promise<{
   linkedAccount: boolean;
   disabledAccessGrants: number;
   sessionInvalidated: boolean;
+  pinCredentialDisabled: boolean;
+  pinSessionsRevoked: number;
 }> {
+  const now = new Date();
+  const [pinCredential, revokedPinSessions] = await Promise.all([
+    tx.employeeFieldReportPinCredential.updateMany({
+      where: { employeeId, isActive: true },
+      data: {
+        isActive: false,
+        credentialVersion: { increment: 1 },
+        failedAttempts: 0,
+        lockedUntil: null,
+      },
+    }),
+    tx.fieldReportPinSession.updateMany({
+      where: { employeeId, consumedAt: null, revokedAt: null },
+      data: { revokedAt: now },
+    }),
+  ]);
   const linkedUser = await tx.user.findUnique({
     where: { employeeId },
     select: { id: true },
@@ -97,6 +129,8 @@ export async function disableLinkedEmployeeAccess(
       linkedAccount: false,
       disabledAccessGrants: 0,
       sessionInvalidated: false,
+      pinCredentialDisabled: pinCredential.count > 0,
+      pinSessionsRevoked: revokedPinSessions.count,
     };
   }
 
@@ -116,6 +150,8 @@ export async function disableLinkedEmployeeAccess(
     linkedAccount: true,
     disabledAccessGrants: disabledGrants.count,
     sessionInvalidated: true,
+    pinCredentialDisabled: pinCredential.count > 0,
+    pinSessionsRevoked: revokedPinSessions.count,
   };
 }
 
@@ -250,6 +286,15 @@ export function serializeEmployeeAccessAdmin(
       .map(grant => grant.department?.code)
       .filter((code): code is string => Boolean(code)),
   )].sort();
+  const pinCredential = employee.fieldReportPinCredential;
+  const pinLockedUntil = pinCredential?.lockedUntil ?? null;
+  const passwordSetupRequired = employee.user ? requiresAdminPasswordSetup({
+    isActive: employee.user.isActive,
+    accountStatus: employee.user.accountStatus,
+    mustChangePassword: employee.user.mustChangePassword,
+    lastLoginAt: employee.user.lastLoginAt,
+    accessGrants: employee.user.accessGrants,
+  }, now) : false;
 
   return {
     ...serializeEmployee(employee),
@@ -263,6 +308,8 @@ export function serializeEmployeeAccessAdmin(
       isActive: employee.user.isActive,
       accountStatus: employee.user.accountStatus,
       mustChangePassword: employee.user.mustChangePassword,
+      passwordSetupRequired,
+      lastLoginAt: employee.user.lastLoginAt?.toISOString() || null,
       permissionSummary: {
         configuredGrantCount: employee.user.accessGrants.length,
         activeGrantCount: activeGrants.length,
@@ -271,6 +318,15 @@ export function serializeEmployeeAccessAdmin(
         fieldReportEnabled: activeGrants.some(
           grant => grant.profile === AccessProfileKey.FIELD_REPORTER,
         ),
+        pin: {
+          configured: Boolean(pinCredential),
+          isActive: Boolean(pinCredential?.isActive),
+          isLocked: Boolean(pinLockedUntil && pinLockedUntil.getTime() > now.getTime()),
+          lockedUntil: pinLockedUntil?.toISOString() || null,
+          lastUsedAt: pinCredential?.lastUsedAt?.toISOString() || null,
+          resetAt: pinCredential?.resetAt.toISOString() || null,
+          updatedAt: pinCredential?.updatedAt.toISOString() || null,
+        },
         permissionSyncPending,
       },
     } : null,

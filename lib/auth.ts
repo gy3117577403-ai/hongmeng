@@ -15,6 +15,7 @@ import {
   type DepartmentCode,
 } from '@/lib/department-access';
 import { legacyFallbackGrants } from '@/lib/legacy-access-policy';
+import { canRetainPasswordSession } from '@/lib/login-security';
 import { prisma } from '@/lib/prisma';
 import { productionPlanningDateBoundary } from '@/lib/production-planning-date';
 import {
@@ -142,9 +143,7 @@ export async function currentUser() {
   });
   if (
     !user
-    || !user.isActive
-    || user.accountStatus !== 'ACTIVE'
-    || (session.sessionVersion ?? 0) !== user.sessionVersion
+    || !canRetainPasswordSession(user, session.sessionVersion ?? 0, now)
   ) return null;
 
   const memberships = user.employee?.productionPlanningMemberships ?? [];

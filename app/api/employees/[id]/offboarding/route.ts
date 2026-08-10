@@ -219,6 +219,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       ...preview.impact,
       disabledAccessGrants: result.accessDisablement.disabledAccessGrants,
       sessionInvalidated: result.accessDisablement.sessionInvalidated,
+      pinCredentialDisabled: result.accessDisablement.pinCredentialDisabled,
+      pinSessionsRevoked: result.accessDisablement.pinSessionsRevoked,
     };
 
     await logOp({
@@ -237,6 +239,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         loginDisabled: preview.impact.linkedLoginActive,
         disabledAccessGrants: result.accessDisablement.disabledAccessGrants,
         sessionInvalidated: result.accessDisablement.sessionInvalidated,
+        pinCredentialDisabled: result.accessDisablement.pinCredentialDisabled,
+        pinSessionsRevoked: result.accessDisablement.pinSessionsRevoked,
       },
     });
     return NextResponse.json({

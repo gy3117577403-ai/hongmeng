@@ -18,6 +18,7 @@ import {
   legacyLaborRoleForProfile,
   parseAccessProfileKey,
   prepareAccessGrant,
+  reconcileFieldReportPinEligibility,
   serializeAdminUser,
   type AccessGrantInput,
 } from '@/lib/user-access-admin';
@@ -176,6 +177,20 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
             grantedById: current.id,
           },
         });
+      }
+
+      if (securityChanged) {
+        const lifecycleNow = new Date();
+        await reconcileFieldReportPinEligibility(tx, old.employeeId, {
+          now: lifecycleNow,
+          resetById: current.id,
+        });
+        if (nextEmployeeId !== old.employeeId) {
+          await reconcileFieldReportPinEligibility(tx, nextEmployeeId, {
+            now: lifecycleNow,
+            resetById: current.id,
+          });
+        }
       }
 
       const saved = await tx.user.findUniqueOrThrow({ where: { id: old.id }, include: adminUserInclude });

@@ -64,6 +64,7 @@ function employeeRecord(overrides: Partial<EmployeeAccessAdminRecord> = {}): Emp
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-08-01T00:00:00.000Z'),
     departmentRef: department,
+    fieldReportPinCredential: null,
     user: {
       id: 'user-1',
       username: 'employee-1',
@@ -71,6 +72,7 @@ function employeeRecord(overrides: Partial<EmployeeAccessAdminRecord> = {}): Emp
       isActive: true,
       accountStatus: AccountStatus.ACTIVE,
       mustChangePassword: false,
+      lastLoginAt: null,
       accessGrants: [accessGrant()],
     },
     ...overrides,
@@ -151,6 +153,8 @@ test('effective grants use an inclusive start and exclusive end boundary', () =>
 test('offboarding disables the linked account, invalidates sessions and deactivates every active grant', async () => {
   let grantUpdate: unknown;
   let userUpdate: unknown;
+  let pinUpdate: unknown;
+  let pinSessionUpdate: unknown;
   const tx = {
     user: {
       findUnique: async () => ({ id: 'user-1' }),
@@ -165,7 +169,22 @@ test('offboarding disables the linked account, invalidates sessions and deactiva
         return { count: 3 };
       },
     },
-  } as unknown as Pick<Prisma.TransactionClient, 'user' | 'userAccessGrant'>;
+    employeeFieldReportPinCredential: {
+      updateMany: async (args: unknown) => {
+        pinUpdate = args;
+        return { count: 1 };
+      },
+    },
+    fieldReportPinSession: {
+      updateMany: async (args: unknown) => {
+        pinSessionUpdate = args;
+        return { count: 2 };
+      },
+    },
+  } as unknown as Pick<
+    Prisma.TransactionClient,
+    'user' | 'userAccessGrant' | 'employeeFieldReportPinCredential' | 'fieldReportPinSession'
+  >;
 
   const result = await disableLinkedEmployeeAccess(tx, 'employee-1');
 
@@ -181,10 +200,25 @@ test('offboarding disables the linked account, invalidates sessions and deactiva
       sessionVersion: { increment: 1 },
     },
   });
+  assert.deepEqual(pinUpdate, {
+    where: { employeeId: 'employee-1', isActive: true },
+    data: {
+      isActive: false,
+      credentialVersion: { increment: 1 },
+      failedAttempts: 0,
+      lockedUntil: null,
+    },
+  });
+  assert.deepEqual(pinSessionUpdate, {
+    where: { employeeId: 'employee-1', consumedAt: null, revokedAt: null },
+    data: { revokedAt: pinSessionUpdate && (pinSessionUpdate as { data: { revokedAt: Date } }).data.revokedAt },
+  });
   assert.deepEqual(result, {
     linkedAccount: true,
     disabledAccessGrants: 3,
     sessionInvalidated: true,
+    pinCredentialDisabled: true,
+    pinSessionsRevoked: 2,
   });
 });
 
@@ -204,12 +238,23 @@ test('offboarding without a linked account performs no account or grant writes',
         return { count: 0 };
       },
     },
-  } as unknown as Pick<Prisma.TransactionClient, 'user' | 'userAccessGrant'>;
+    employeeFieldReportPinCredential: {
+      updateMany: async () => ({ count: 0 }),
+    },
+    fieldReportPinSession: {
+      updateMany: async () => ({ count: 0 }),
+    },
+  } as unknown as Pick<
+    Prisma.TransactionClient,
+    'user' | 'userAccessGrant' | 'employeeFieldReportPinCredential' | 'fieldReportPinSession'
+  >;
 
   assert.deepEqual(await disableLinkedEmployeeAccess(tx, 'employee-without-user'), {
     linkedAccount: false,
     disabledAccessGrants: 0,
     sessionInvalidated: false,
+    pinCredentialDisabled: false,
+    pinSessionsRevoked: 0,
   });
   assert.equal(writeCalled, false);
 });

@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, BadgeCheck, BellRing, Building2, CalendarClock, ClipboardList, Download, HelpCircle, History, KeyRound, ListFilter, LogOut, Monitor, MonitorDown, Plus, QrCode, RefreshCw, Search, Settings2, ShieldCheck, Smartphone, Trash2, UserRoundCheck, UserRoundCog, X } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, BadgeCheck, BellRing, Building2, CalendarClock, ClipboardList, Download, HelpCircle, History, KeyRound, ListFilter, LogOut, Monitor, MonitorDown, MonitorSmartphone, Plus, QrCode, RefreshCw, Search, Settings2, ShieldCheck, Smartphone, Trash2, UserRoundCheck, UserRoundCog, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
@@ -180,6 +180,26 @@ type AdditionalGrantForm = {
   effectiveTo: string;
 } | null;
 type PasswordReset = { id: string; username: string; password: string } | null;
+type FieldPinEdit = {
+  id: string;
+  username: string;
+  employeeName: string;
+  pin: string;
+  confirmPin: string;
+  summary: UserDTO['fieldPin'];
+} | null;
+type FieldReportTerminal = {
+  id: string;
+  name: string;
+  location?: string | null;
+  isActive?: boolean;
+  isCurrent?: boolean;
+  isCurrentDevice?: boolean;
+  lastUsedAt?: string | null;
+  lastSeenAt?: string | null;
+  updatedAt?: string | null;
+};
+type FieldReportTerminalDraft = { name: string; location: string };
 type SearchDrawingLibraryFile = {
   id: string;
   libraryItemId: string;
@@ -304,8 +324,11 @@ function accessGrantTypeLabel(value?: string | null): string {
   return value === 'CONCURRENT' ? '兼岗' : value === 'ACTING' ? '代班' : '主部门';
 }
 
-function accountStatusMeta(user: Pick<UserDTO, 'isActive' | 'accountStatus'>): { label: string; tone: string } {
+function accountStatusMeta(user: Pick<UserDTO, 'isActive' | 'accountStatus' | 'passwordSetupRequired'>): { label: string; tone: string } {
   const status = user.accountStatus || (user.isActive ? 'ACTIVE' : 'DISABLED');
+  if (user.passwordSetupRequired && user.isActive && status === 'ACTIVE') {
+    return { label: '待设后台密码', tone: 'pending' };
+  }
   if (status === 'PENDING') return { label: '待激活', tone: 'pending' };
   if (status === 'SUSPENDED') return { label: '已暂停', tone: 'suspended' };
   if (status === 'DISABLED' || !user.isActive) return { label: '已停用', tone: 'disabled' };
@@ -369,11 +392,20 @@ function currentAccessGrants(user: Pick<UserDTO, 'accessGrants'>): UserAccessGra
 
 function accountAccessModes(user: UserDTO): string[] {
   if (!accountCanLogIn(user)) return ['不可登录'];
+  if (user.passwordSetupRequired) {
+    return [
+      '后台登录待设密码',
+      ...(user.accessMethods?.fieldReport ? ['扫码报工'] : []),
+      ...(user.accessMethods?.pin || (user.fieldPin?.configured && user.fieldPin.isActive)
+        ? ['共享终端PIN']
+        : []),
+    ];
+  }
   if (user.accessMethods) {
     const modes = [
       ...(user.accessMethods.workbench ? ['后台登录'] : []),
       ...(user.accessMethods.fieldReport ? ['扫码报工'] : []),
-      ...(user.accessMethods.pin ? ['共享终端PIN'] : []),
+      ...(user.accessMethods.pin || (user.fieldPin?.configured && user.fieldPin.isActive) ? ['共享终端PIN'] : []),
     ];
     if (modes.length) return modes;
   }
@@ -385,6 +417,19 @@ function accountAccessModes(user: UserDTO): string[] {
     else modes.add('后台登录');
   });
   return [...modes];
+}
+
+function fieldPinStatusMeta(pin?: UserDTO['fieldPin']): { label: string; detail: string; tone: 'active' | 'warning' | 'disabled' | 'unbound' } {
+  if (!pin?.configured) return { label: '未设置', detail: '管理员可设置 6 位 PIN', tone: 'unbound' };
+  if (pin.isLocked) return { label: '已锁定', detail: pin.lockedUntil ? `锁定至 ${dt(pin.lockedUntil)}` : '等待管理员重置', tone: 'warning' };
+  if (!pin.isActive) return { label: '已停用', detail: '可重置 PIN 后重新启用', tone: 'disabled' };
+  return { label: '已配置', detail: pin.lastUsedAt ? `最近使用 ${dt(pin.lastUsedAt)}` : '尚未用于报工', tone: 'active' };
+}
+
+function accountSupportsFieldPin(user: UserDTO): boolean {
+  if (!user.employee?.isActive || !accountCanLogIn(user)) return false;
+  return Boolean(user.accessMethods?.fieldReport
+    || currentAccessGrants(user).some(grant => grant.profileKey === 'FIELD_REPORTER'));
 }
 
 function grantDepartmentName(grant: UserAccessGrantDTO, user?: UserDTO): string {
@@ -811,6 +856,11 @@ export default function DashboardShell({
   const [accountEdit, setAccountEdit] = useState<AccountEdit>(null);
   const [additionalGrant, setAdditionalGrant] = useState<AdditionalGrantForm>(null);
   const [passwordReset, setPasswordReset] = useState<PasswordReset>(null);
+  const [fieldPinEdit, setFieldPinEdit] = useState<FieldPinEdit>(null);
+  const [fieldReportTerminals, setFieldReportTerminals] = useState<FieldReportTerminal[]>([]);
+  const [fieldReportTerminalDraft, setFieldReportTerminalDraft] = useState<FieldReportTerminalDraft>({ name: '', location: '' });
+  const [fieldReportTerminalsLoading, setFieldReportTerminalsLoading] = useState(false);
+  const [fieldReportTerminalError, setFieldReportTerminalError] = useState('');
   const [accountError, setAccountError] = useState('');
   const [accountSaving, setAccountSaving] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -1606,7 +1656,7 @@ export default function DashboardShell({
     }
   }
 
-  const loadUsers = useCallback(async (): Promise<EmployeeDTO[]> => {
+  const loadUsers = useCallback(async (): Promise<{ employees: EmployeeDTO[]; users: UserDTO[] }> => {
     try {
       const [userResponse, employeeResponse] = await Promise.all([
         fetch('/api/users', { cache: 'no-store' }),
@@ -1618,51 +1668,93 @@ export default function DashboardShell({
       ]);
       if (!userResponse.ok) {
         setAccountError(userBody.error || userBody.message || '账号加载失败');
-        return [];
+        return { employees: [], users: [] };
       }
       if (!employeeResponse.ok) {
         setAccountError(employeeBody.error || employeeBody.message || '员工档案加载失败');
-        return [];
+        return { employees: [], users: [] };
       }
       const nextEmployees = Array.isArray(employeeBody.employees) ? employeeBody.employees as EmployeeDTO[] : [];
-      setUsers(Array.isArray(userBody.users) ? userBody.users : []);
+      const nextUsers = Array.isArray(userBody.users) ? userBody.users as UserDTO[] : [];
+      setUsers(nextUsers);
       setAccountDepartments(Array.isArray(userBody.departments) ? userBody.departments : []);
       setAccountProductionTeams(Array.isArray(userBody.productionTeams) ? userBody.productionTeams : []);
       setAccountEmployees(nextEmployees);
-      return nextEmployees;
+      return { employees: nextEmployees, users: nextUsers };
     } catch {
       setAccountError('账号加载失败');
-      return [];
+      return { employees: [], users: [] };
     }
   }, []);
 
-  const openAccounts = useCallback(async (prefillEmployeeId?: string) => {
+  const loadFieldReportTerminals = useCallback(async () => {
+    setFieldReportTerminalsLoading(true);
+    setFieldReportTerminalError('');
+    try {
+      const response = await fetch('/api/field-report/terminals', { cache: 'no-store' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setFieldReportTerminalError(body.error || body.message || '共享终端加载失败');
+        return;
+      }
+      const nextTerminals = Array.isArray(body.terminals)
+        ? body.terminals
+        : Array.isArray(body.data?.terminals)
+          ? body.data.terminals
+          : Array.isArray(body.data)
+            ? body.data
+            : [];
+      setFieldReportTerminals(nextTerminals as FieldReportTerminal[]);
+    } catch {
+      setFieldReportTerminalError('共享终端加载失败');
+    } finally {
+      setFieldReportTerminalsLoading(false);
+    }
+  }, []);
+
+  const openAccounts = useCallback(async (prefillEmployeeId?: string, credential?: 'pin') => {
     if (user.laborRole !== 'ADMIN') {
       setMsg('只有管理员可以进入账号管理');
       return;
     }
     setAccountsOpen(true);
     setAccountError('');
-    const nextEmployees = await loadUsers();
+    void loadFieldReportTerminals();
+    const loaded = await loadUsers();
     if (prefillEmployeeId) {
-      const employee = nextEmployees.find(item => item.id === prefillEmployeeId) || null;
+      const employee = loaded.employees.find(item => item.id === prefillEmployeeId) || null;
       if (employee) setUserForm(emptyAccountForm(employee));
+      if (credential === 'pin') {
+        const account = loaded.users.find(item => item.employeeId === prefillEmployeeId) || null;
+        if (account) {
+          setFieldPinEdit({
+            id: account.id,
+            username: account.username,
+            employeeName: account.employee?.name || account.displayName,
+            pin: '',
+            confirmPin: '',
+            summary: account.fieldPin,
+          });
+        }
+      }
     }
-  }, [loadUsers, user.laborRole]);
+  }, [loadFieldReportTerminals, loadUsers, user.laborRole]);
 
   useEffect(() => {
     if (accountDeepLinkHandledRef.current || user.laborRole !== 'ADMIN') return;
     const params = new URLSearchParams(window.location.search);
     if (params.get('settings') !== 'accounts') return;
     accountDeepLinkHandledRef.current = true;
-    void openAccounts(params.get('employeeId') || undefined);
+    void openAccounts(params.get('employeeId') || undefined, params.get('credential') === 'pin' ? 'pin' : undefined);
   }, [openAccounts, user.laborRole]);
 
   async function saveNewUser(e: React.FormEvent) {
     e.preventDefault();
     setAccountError('');
     if (!userForm.username.trim()) return setAccountError('账号不能为空');
-    if (userForm.password.length < 8) return setAccountError('初始密码至少 8 位');
+    if (userForm.profileKey !== 'FIELD_REPORTER' && userForm.password.length < 8) {
+      return setAccountError('初始密码至少 8 位');
+    }
     if (userForm.profileKey !== 'ADMIN_GLOBAL' && !userForm.employeeId) {
       return setAccountError('请先选择要开通账号的员工档案');
     }
@@ -1830,6 +1922,104 @@ export default function DashboardShell({
       setMsg('密码已重置');
     } catch {
       setAccountError('重置密码失败');
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function saveFieldPin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!fieldPinEdit) return;
+    if (!/^\d{6}$/.test(fieldPinEdit.pin)) return setAccountError('报工 PIN 必须为 6 位数字');
+    if (fieldPinEdit.pin !== fieldPinEdit.confirmPin) return setAccountError('两次输入的报工 PIN 不一致');
+    setAccountSaving(true);
+    setAccountError('');
+    try {
+      const response = await fetch(`/api/users/${fieldPinEdit.id}/field-pin`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: fieldPinEdit.pin, confirmPin: fieldPinEdit.confirmPin }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAccountError(body.error || body.message || '报工 PIN 保存失败');
+        return;
+      }
+      setFieldPinEdit(null);
+      await loadUsers();
+      setMsg('共享终端 PIN 已更新，原 PIN 已立即失效');
+    } catch {
+      setAccountError('报工 PIN 保存失败');
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function disableFieldPin() {
+    if (!fieldPinEdit || !window.confirm(`确认停用 ${fieldPinEdit.employeeName} 的共享终端 PIN 吗？`)) return;
+    setAccountSaving(true);
+    setAccountError('');
+    try {
+      const response = await fetch(`/api/users/${fieldPinEdit.id}/field-pin`, { method: 'DELETE' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAccountError(body.error || body.message || '停用报工 PIN 失败');
+        return;
+      }
+      setFieldPinEdit(null);
+      await loadUsers();
+      setMsg('共享终端 PIN 已停用');
+    } catch {
+      setAccountError('停用报工 PIN 失败');
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function bindFieldReportTerminal(e: React.FormEvent) {
+    e.preventDefault();
+    const name = fieldReportTerminalDraft.name.trim();
+    const locationName = fieldReportTerminalDraft.location.trim();
+    if (!name) return setFieldReportTerminalError('请输入终端名称');
+    if (!locationName) return setFieldReportTerminalError('请输入终端所在位置');
+    if (!window.confirm('绑定后本浏览器将退出当前普通账号，并进入共享终端模式。确认继续吗？')) return;
+    setAccountSaving(true);
+    setFieldReportTerminalError('');
+    try {
+      const response = await fetch('/api/field-report/terminals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, location: locationName }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setFieldReportTerminalError(body.error || body.message || '绑定共享终端失败');
+        return;
+      }
+      sessionStorage.setItem('hm-login-notice', `“${name}”已绑定为共享报工终端，请扫描工单二维码后使用员工编号和 PIN 验证。`);
+      location.href = body.redirectTo || body.nextRoute || '/login?terminal=bound';
+    } catch {
+      setFieldReportTerminalError('绑定共享终端失败');
+    } finally {
+      setAccountSaving(false);
+    }
+  }
+
+  async function disableFieldReportTerminal(terminal: FieldReportTerminal) {
+    if (!window.confirm(`确认停用共享终端“${terminal.name}”吗？该终端将不能再使用员工 PIN 报工。`)) return;
+    setAccountSaving(true);
+    setFieldReportTerminalError('');
+    try {
+      const response = await fetch(`/api/field-report/terminals/${terminal.id}`, { method: 'DELETE' });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setFieldReportTerminalError(body.error || body.message || '停用共享终端失败');
+        return;
+      }
+      await loadFieldReportTerminals();
+      setMsg('共享报工终端已停用');
+    } catch {
+      setFieldReportTerminalError('停用共享终端失败');
     } finally {
       setAccountSaving(false);
     }
@@ -3476,18 +3666,30 @@ export default function DashboardShell({
           accountEdit={accountEdit}
           additionalGrant={additionalGrant}
           passwordReset={passwordReset}
+          fieldPinEdit={fieldPinEdit}
+          terminals={fieldReportTerminals}
+          terminalDraft={fieldReportTerminalDraft}
+          terminalsLoading={fieldReportTerminalsLoading}
+          terminalError={fieldReportTerminalError}
           error={accountError}
           saving={accountSaving}
-          close={() => { setAccountsOpen(false); setAccountEdit(null); setAdditionalGrant(null); setPasswordReset(null); }}
+          close={() => { setAccountsOpen(false); setAccountEdit(null); setAdditionalGrant(null); setPasswordReset(null); setFieldPinEdit(null); }}
           setUserForm={setUserForm}
           setAccountEdit={setAccountEdit}
           setAdditionalGrant={setAdditionalGrant}
           setPasswordReset={setPasswordReset}
+          setFieldPinEdit={value => { setAccountError(''); setFieldPinEdit(value); }}
+          setTerminalDraft={setFieldReportTerminalDraft}
           saveNewUser={saveNewUser}
           saveAccountEdit={saveAccountEdit}
           saveAdditionalGrant={saveAdditionalGrant}
           revokeAdditionalGrant={revokeAdditionalGrant}
           resetUserPassword={resetUserPassword}
+          saveFieldPin={saveFieldPin}
+          disableFieldPin={disableFieldPin}
+          bindTerminal={bindFieldReportTerminal}
+          disableTerminal={disableFieldReportTerminal}
+          reloadTerminals={loadFieldReportTerminals}
         />
       )}
 
@@ -4057,6 +4259,11 @@ function AccountManager({
   accountEdit,
   additionalGrant,
   passwordReset,
+  fieldPinEdit,
+  terminals,
+  terminalDraft,
+  terminalsLoading,
+  terminalError,
   error,
   saving,
   close,
@@ -4064,11 +4271,18 @@ function AccountManager({
   setAccountEdit,
   setAdditionalGrant,
   setPasswordReset,
+  setFieldPinEdit,
+  setTerminalDraft,
   saveNewUser,
   saveAccountEdit,
   saveAdditionalGrant,
   revokeAdditionalGrant,
   resetUserPassword,
+  saveFieldPin,
+  disableFieldPin,
+  bindTerminal,
+  disableTerminal,
+  reloadTerminals,
 }: {
   users: UserDTO[];
   employees: EmployeeDTO[];
@@ -4078,6 +4292,11 @@ function AccountManager({
   accountEdit: AccountEdit;
   additionalGrant: AdditionalGrantForm;
   passwordReset: PasswordReset;
+  fieldPinEdit: FieldPinEdit;
+  terminals: FieldReportTerminal[];
+  terminalDraft: FieldReportTerminalDraft;
+  terminalsLoading: boolean;
+  terminalError: string;
   error: string;
   saving: boolean;
   close: () => void;
@@ -4085,14 +4304,28 @@ function AccountManager({
   setAccountEdit: (value: AccountEdit) => void;
   setAdditionalGrant: (value: AdditionalGrantForm) => void;
   setPasswordReset: (value: PasswordReset) => void;
+  setFieldPinEdit: (value: FieldPinEdit) => void;
+  setTerminalDraft: (value: FieldReportTerminalDraft | ((current: FieldReportTerminalDraft) => FieldReportTerminalDraft)) => void;
   saveNewUser: (e: React.FormEvent) => void;
   saveAccountEdit: (e: React.FormEvent) => void;
   saveAdditionalGrant: (e: React.FormEvent) => void;
   revokeAdditionalGrant: (userId: string, grant: UserAccessGrantDTO) => void;
   resetUserPassword: (e: React.FormEvent) => void;
+  saveFieldPin: (e: React.FormEvent) => void;
+  disableFieldPin: () => void;
+  bindTerminal: (e: React.FormEvent) => void;
+  disableTerminal: (terminal: FieldReportTerminal) => void;
+  reloadTerminals: () => void;
 }) {
   const selectedEmployee = employees.find(employee => employee.id === userForm.employeeId) || null;
   const selectedProfile = accessProfileOptions.find(option => option.value === userForm.profileKey) || accessProfileOptions[0];
+  const selectableEmployees = useMemo(
+    () => employees.filter(employee => (
+      employee.id === userForm.employeeId
+      || !users.some(account => account.employeeId === employee.id)
+    )),
+    [employees, userForm.employeeId, users],
+  );
   const departmentOptions = useMemo(() => {
     const options = new Map<string, { id: string; code: string; name: string }>();
     departments.filter(department => department.isActive !== false).forEach(department => options.set(department.id, department));
@@ -4147,7 +4380,11 @@ function AccountManager({
 
   function chooseEmployeeForNewAccount(employeeId: string): void {
     const employee = employees.find(item => item.id === employeeId) || null;
-    setUserForm(current => ({ ...emptyAccountForm(employee), password: current.password }));
+    const next = emptyAccountForm(employee);
+    setUserForm(current => ({
+      ...next,
+      password: next.profileKey === 'FIELD_REPORTER' ? '' : current.password,
+    }));
   }
 
   function chooseNewProfile(profileKey: AccessProfileKeyDTO): void {
@@ -4162,6 +4399,7 @@ function AccountManager({
       employeeId: profileKey === 'ADMIN_GLOBAL' ? '' : current.employeeId,
       departmentId: profileKey === 'ADMIN_GLOBAL' ? '' : current.departmentId,
       grantType: profileKey === 'ADMIN_GLOBAL' ? 'PRIMARY' : current.grantType,
+      password: profileKey === 'FIELD_REPORTER' ? '' : current.password,
     }));
   }
 
@@ -4199,6 +4437,17 @@ function AccountManager({
     });
   }
 
+  function beginFieldPin(item: UserDTO): void {
+    setFieldPinEdit({
+      id: item.id,
+      username: item.username,
+      employeeName: item.employee?.name || item.displayName,
+      pin: '',
+      confirmPin: '',
+      summary: item.fieldPin,
+    });
+  }
+
   function chooseAdditionalProfile(profileKey: AccessProfileKeyDTO): void {
     if (!additionalGrant) return;
     setAdditionalGrant({
@@ -4215,7 +4464,7 @@ function AccountManager({
     <div className="modal-backdrop" role="presentation">
       <section className="admin-dialog account-manager-dialog" role="dialog" aria-modal="true" aria-label="账号与部门权限管理">
         <div className="dialog-title">
-          <div><strong>账号与部门权限</strong><small>员工档案优先绑定 · 主部门权限 · 兼岗与限时代班</small></div>
+          <div><strong>账号、部门权限与共享终端</strong><small>员工档案优先绑定 · 主部门权限 · 兼岗代班 · PIN 不回显</small></div>
           <button type="button" onClick={close}>×</button>
         </div>
         <div className="account-manager-summary" aria-label="账号概览">
@@ -4232,13 +4481,15 @@ function AccountManager({
           </header>
           <label className="account-field-employee">绑定员工
             <select value={userForm.employeeId} disabled={userForm.profileKey === 'ADMIN_GLOBAL'} onChange={event => chooseEmployeeForNewAccount(event.target.value)}>
-              <option value="">选择在职员工</option>
-              {employees.map(employee => <option key={employee.id} value={employee.id}>{employee.employeeNo} · {employee.name} · {employeeDepartmentName(employee)}{employee.team ? ` / ${employee.team}` : ''}</option>)}
+              <option value="">选择未开通账号的在职员工</option>
+              {selectableEmployees.map(employee => <option key={employee.id} value={employee.id}>{employee.employeeNo} · {employee.name} · {employeeDepartmentName(employee)}{employee.team ? ` / ${employee.team}` : ''}</option>)}
             </select>
           </label>
           <label>登录账号<input value={userForm.username} onChange={event => setUserForm(value => ({ ...value, username: event.target.value }))} placeholder="默认使用员工编号" /></label>
           <label>显示姓名<input value={userForm.displayName} onChange={event => setUserForm(value => ({ ...value, displayName: event.target.value }))} /></label>
-          <label>初始密码<input type="password" value={userForm.password} onChange={event => setUserForm(value => ({ ...value, password: event.target.value }))} placeholder="至少8位，避免常用密码" /></label>
+          {userForm.profileKey === 'FIELD_REPORTER'
+            ? <label>后台密码<input value="" disabled placeholder="扫码报工账号无需后台密码" /></label>
+            : <label>初始密码<input type="password" value={userForm.password} onChange={event => setUserForm(value => ({ ...value, password: event.target.value }))} placeholder="至少8位，避免常用密码" /></label>}
           <label>权限方案
             <select value={userForm.profileKey} onChange={event => chooseNewProfile(event.target.value as AccessProfileKeyDTO)}>
               {accessProfileOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -4265,8 +4516,8 @@ function AccountManager({
           {users.map(item => (
             <div className="compact-row" key={item.id}>
               <div className="account-cell-stack identity"><strong>{item.username}</strong><span>{item.employee ? `${item.employee.employeeNo} · ${item.employee.name}` : item.displayName}</span><small>{item.employee ? employeeDepartmentName(item.employee) : laborRoleLabel(item.laborRole)}</small></div>
-              <div className="account-cell-stack"><em className={`account-status tone-${accountStatusMeta(item).tone}`}>{accountStatusMeta(item).label}</em>{item.mustChangePassword && <small className="account-warning"><KeyRound />首次登录需改密</small>}</div>
-              <div className="account-access-modes">{accountAccessModes(item).map(mode => <span key={mode}>{mode.includes('扫码') ? <QrCode /> : <Monitor />}{mode}</span>)}</div>
+              <div className="account-cell-stack"><em className={`account-status tone-${accountStatusMeta(item).tone}`}>{accountStatusMeta(item).label}</em>{item.passwordSetupRequired ? <small className="account-warning"><KeyRound />请管理员设置后台密码</small> : item.mustChangePassword && <small className="account-warning"><KeyRound />首次登录需改密</small>}{item.fieldPin?.configured && <small className={`account-pin-inline tone-${fieldPinStatusMeta(item.fieldPin).tone}`}><KeyRound />PIN {fieldPinStatusMeta(item.fieldPin).label}</small>}</div>
+              <div className="account-access-modes">{accountAccessModes(item).map(mode => <span key={mode}>{mode.includes('PIN') ? <KeyRound /> : mode.includes('扫码') ? <QrCode /> : <Monitor />}{mode}</span>)}</div>
               <div className="account-cell-stack grants">
                 {currentAccessGrants(item).slice(0, 2).map(grant => <span key={grant.id}><strong>{grantDepartmentName(grant, item)}</strong><small>{accessGrantTypeLabel(grant.grantType)} · {accessProfileLabel(grant.profileKey)}</small></span>)}
                 {!currentAccessGrants(item).length && <><strong>{employeeDepartmentName(item.employee)}</strong><small>{item.employee?.isActive === false ? '员工离职 · 权限已停用' : !accountCanLogIn(item) ? '账号不可登录 · 等待管理员确认' : `${laborRoleLabel(item.laborRole)} · 旧权限兼容`}</small></>}
@@ -4276,7 +4527,8 @@ function AccountManager({
               <span className="row-actions">
                 <button type="button" onClick={() => beginAccountEdit(item)}>编辑</button>
                 {item.employee && item.laborRole !== 'ADMIN' && item.isActive && <button type="button" onClick={() => beginAdditionalGrant(item)}>兼岗/代班</button>}
-                <button type="button" onClick={() => setPasswordReset({ id: item.id, username: item.username, password: '' })}>重置密码</button>
+                {(item.passwordSetupRequired || item.accessMethods?.workbench !== false) && <button type="button" onClick={() => setPasswordReset({ id: item.id, username: item.username, password: '' })}>{item.passwordSetupRequired ? '设置后台密码' : '重置密码'}</button>}
+                {accountSupportsFieldPin(item) && <button type="button" className={item.fieldPin?.configured ? 'pin-ready' : ''} onClick={() => beginFieldPin(item)}>{item.fieldPin?.configured ? '重置PIN' : '设置PIN'}</button>}
                 {item.accountStatus !== 'DISABLED' && <button type="button" onClick={() => beginAccountEdit(item, 'DISABLED')}>停用</button>}
               </span>
             </div>
@@ -4350,7 +4602,7 @@ function AccountManager({
 
         {passwordReset && (
           <form className="nested-dialog account-password-dialog" onSubmit={resetUserPassword}>
-            <header><span><KeyRound /></span><div><strong>重置密码：{passwordReset.username}</strong><small>共享终端PIN将在后续版本独立接入，本操作仅重置登录密码</small></div></header>
+            <header><span><KeyRound /></span><div><strong>重置密码：{passwordReset.username}</strong><small>登录密码与共享终端 PIN 相互独立，本操作不会改变报工 PIN</small></div></header>
             <label>新密码<input type="password" value={passwordReset.password} onChange={e => setPasswordReset({ ...passwordReset, password: e.target.value })} /></label>
             <div className="dialog-actions">
               <button type="button" onClick={() => setPasswordReset(null)}>取消</button>
@@ -4358,6 +4610,52 @@ function AccountManager({
             </div>
           </form>
         )}
+
+        {fieldPinEdit && (
+          <form className="nested-dialog account-pin-dialog" onSubmit={saveFieldPin}>
+            <header><span><KeyRound /></span><div><strong>{fieldPinEdit.summary?.configured ? '重置' : '设置'}共享终端 PIN</strong><small>{fieldPinEdit.employeeName} · {fieldPinEdit.username}；保存后只显示状态，不会回显 PIN</small></div></header>
+            <div className={`account-pin-status tone-${fieldPinStatusMeta(fieldPinEdit.summary).tone}`}>
+              <ShieldCheck />
+              <span><strong>{fieldPinStatusMeta(fieldPinEdit.summary).label}</strong><small>{fieldPinStatusMeta(fieldPinEdit.summary).detail}</small></span>
+            </div>
+            {error && <div className="form-error account-pin-form-error">{error}</div>}
+            <label>新 PIN<input type="password" inputMode="numeric" pattern="[0-9]{6}" autoComplete="new-password" maxLength={6} value={fieldPinEdit.pin} onChange={event => setFieldPinEdit({ ...fieldPinEdit, pin: event.target.value.replace(/\D/g, '').slice(0, 6) })} placeholder="输入 6 位数字" /></label>
+            <label>确认新 PIN<input type="password" inputMode="numeric" pattern="[0-9]{6}" autoComplete="new-password" maxLength={6} value={fieldPinEdit.confirmPin} onChange={event => setFieldPinEdit({ ...fieldPinEdit, confirmPin: event.target.value.replace(/\D/g, '').slice(0, 6) })} placeholder="再次输入 6 位数字" /></label>
+            <p className="account-pin-note"><ShieldCheck />PIN 仅用于已绑定共享终端的现场报工，不能登录后台，也不会在账号或员工档案中显示明文。</p>
+            <div className="dialog-actions">
+              {fieldPinEdit.summary?.configured && fieldPinEdit.summary.isActive && <button className="danger-button" type="button" disabled={saving} onClick={disableFieldPin}>停用 PIN</button>}
+              <button type="button" onClick={() => setFieldPinEdit(null)}>取消</button>
+              <button className="primary-button" type="submit" disabled={saving || fieldPinEdit.pin.length !== 6 || fieldPinEdit.confirmPin.length !== 6}>{saving ? '保存中...' : fieldPinEdit.summary?.configured ? '确认重置' : '启用 PIN'}</button>
+            </div>
+          </form>
+        )}
+
+        <section className="account-terminal-section">
+          <header>
+            <span><MonitorDown /><div><strong>共享报工终端</strong><small>仅在已绑定浏览器扫码工单后显示员工编号与 6 位 PIN 验证</small></div></span>
+            <button type="button" disabled={terminalsLoading} onClick={reloadTerminals}><RefreshCw className={terminalsLoading ? 'spin' : ''} />刷新</button>
+          </header>
+          {terminalError && <div className="account-terminal-error"><AlertTriangle />{terminalError}</div>}
+          <form className="account-terminal-bind" onSubmit={bindTerminal}>
+            <label>终端名称<input maxLength={80} value={terminalDraft.name} onChange={event => setTerminalDraft(current => ({ ...current, name: event.target.value }))} placeholder="例如：一车间报工平板" /></label>
+            <label>所在位置<input maxLength={120} value={terminalDraft.location} onChange={event => setTerminalDraft(current => ({ ...current, location: event.target.value }))} placeholder="例如：一车间入口" /></label>
+            <button className="primary-button" type="submit" disabled={saving}>绑定本机</button>
+          </form>
+          <p className="account-terminal-warning"><ShieldCheck />绑定成功后会退出当前普通账号；此浏览器以后扫码打开工单时，员工使用自己的工号和 PIN 验证，报工记录不匿名。</p>
+          <div className="account-terminal-list">
+            {terminals.map(terminal => {
+              const currentDevice = terminal.isCurrentDevice || terminal.isCurrent;
+              const active = terminal.isActive !== false;
+              const activityAt = terminal.lastUsedAt || terminal.lastSeenAt || terminal.updatedAt;
+              return <article key={terminal.id} className={!active ? 'disabled' : ''}>
+                <span><MonitorSmartphone /><div><strong>{terminal.name}{currentDevice ? <em>本机</em> : null}</strong><small>{terminal.location || '位置未填写'} · {activityAt ? `最近活动 ${dt(activityAt)}` : '尚无使用记录'}</small></div></span>
+                <b className={active ? 'active' : ''}>{active ? '已启用' : '已停用'}</b>
+                {active && <button type="button" disabled={saving} onClick={() => disableTerminal(terminal)}>停用</button>}
+              </article>;
+            })}
+            {!terminalsLoading && !terminals.length && <div className="empty-list">尚未绑定共享报工终端</div>}
+          </div>
+        </section>
       </section>
     </div>
   );

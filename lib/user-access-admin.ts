@@ -5,6 +5,10 @@ import {
   LaborAccessRole,
   Prisma,
 } from '@prisma/client';
+import { requiresAdminPasswordSetup } from '@/lib/login-security';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
+
+export { requiresAdminPasswordSetup } from '@/lib/login-security';
 
 export const adminUserInclude = {
   employee: {
@@ -16,7 +20,17 @@ export const adminUserInclude = {
       departmentId: true,
       position: true,
       team: true,
+      mobile: true,
       isActive: true,
+      fieldReportPinCredential: {
+        select: {
+          isActive: true,
+          lockedUntil: true,
+          lastUsedAt: true,
+          resetAt: true,
+          updatedAt: true,
+        },
+      },
       departmentRef: { select: { id: true, code: true, name: true } },
     },
   },
@@ -143,6 +157,35 @@ export function serializeAdminUser(
       options.productionTeams,
     )
   );
+  const pinCredential = user.employee?.fieldReportPinCredential ?? null;
+  const pinLockedUntil = pinCredential?.lockedUntil ?? null;
+  const fieldPin = {
+    configured: Boolean(pinCredential),
+    isActive: Boolean(pinCredential?.isActive),
+    isLocked: Boolean(pinLockedUntil && pinLockedUntil.getTime() > now),
+    lockedUntil: pinLockedUntil?.toISOString() || null,
+    lastUsedAt: pinCredential?.lastUsedAt?.toISOString() || null,
+    resetAt: pinCredential?.resetAt.toISOString() || null,
+    updatedAt: pinCredential?.updatedAt.toISOString() || null,
+  };
+  const employee = user.employee ? {
+    id: user.employee.id,
+    employeeNo: user.employee.employeeNo,
+    name: user.employee.name,
+    department: user.employee.department,
+    departmentId: user.employee.departmentId,
+    position: user.employee.position,
+    team: user.employee.team,
+    isActive: user.employee.isActive,
+    departmentRef: user.employee.departmentRef,
+  } : null;
+  const passwordSetupRequired = requiresAdminPasswordSetup({
+    isActive: user.isActive,
+    accountStatus: user.accountStatus,
+    mustChangePassword: user.mustChangePassword,
+    lastLoginAt: user.lastLoginAt,
+    accessGrants: user.accessGrants,
+  }, new Date(now));
   return {
     id: user.id,
     username: user.username,
@@ -150,17 +193,20 @@ export function serializeAdminUser(
     isActive: user.isActive,
     accountStatus: user.accountStatus,
     mustChangePassword: user.mustChangePassword,
+    passwordSetupRequired,
     lastLoginAt: user.lastLoginAt?.toISOString() || null,
     laborRole: user.laborRole,
     employeeId: user.employeeId,
-    employee: user.employee ? {
-      ...user.employee,
-      departmentRecord: user.employee.departmentRef,
+    employee: employee ? {
+      ...employee,
+      departmentRecord: employee.departmentRef,
     } : null,
+    fieldPin,
     accessMethods: {
-      workbench: activeGrants.some(grant => grant.profile !== AccessProfileKey.FIELD_REPORTER),
+      workbench: !passwordSetupRequired
+        && activeGrants.some(grant => grant.profile !== AccessProfileKey.FIELD_REPORTER),
       fieldReport: profiles.has(AccessProfileKey.FIELD_REPORTER),
-      pin: false,
+      pin: fieldPin.configured && fieldPin.isActive && profiles.has(AccessProfileKey.FIELD_REPORTER),
     },
     permissionSyncPending: departmentNeedsSync || teamNeedsSync,
     accessGrants: user.accessGrants.map(serializeAccessGrant),
@@ -197,6 +243,94 @@ export function assertEmployeeRebindAllowed(
   if (hasActiveAdditionalGrant) {
     throw new AccessGrantInputError('该账号仍有启用的兼岗或代班授权，请先撤销后再更换绑定员工', 409);
   }
+}
+
+type FieldReportPinLifecycleTransaction = Pick<
+  Prisma.TransactionClient,
+  'employee' | 'employeeFieldReportPinCredential' | 'fieldReportPinSession'
+>;
+
+export type FieldReportPinEligibilityReconcileResult = {
+  eligible: boolean;
+  pinCredentialDisabled: boolean;
+  pinSessionsRevoked: number;
+};
+
+/**
+ * Fail closed when account or grant administration removes an employee's
+ * effective, employee-scoped FIELD_REPORTER access. This helper never
+ * re-enables a credential; restoring PIN access always requires an explicit
+ * administrator reset.
+ */
+export async function reconcileFieldReportPinEligibility(
+  tx: FieldReportPinLifecycleTransaction,
+  employeeId: string | null | undefined,
+  options: { now?: Date; resetById?: string | null } = {},
+): Promise<FieldReportPinEligibilityReconcileResult> {
+  if (!employeeId) {
+    return { eligible: false, pinCredentialDisabled: false, pinSessionsRevoked: 0 };
+  }
+
+  const now = options.now ?? new Date();
+  const employee = await tx.employee.findFirst({
+    where: {
+      id: employeeId,
+      ...productionEmployeeWhere(),
+    },
+    select: {
+      user: {
+        select: {
+          isActive: true,
+          accountStatus: true,
+          accessGrants: {
+            where: {
+              profile: AccessProfileKey.FIELD_REPORTER,
+              scopeKey: `EMPLOYEE:${employeeId}`,
+              isActive: true,
+              effectiveFrom: { lte: now },
+              OR: [
+                { effectiveTo: null },
+                { effectiveTo: { gt: now } },
+              ],
+            },
+            select: { id: true },
+            take: 1,
+          },
+        },
+      },
+    },
+  });
+  const eligible = Boolean(
+    employee?.user?.isActive
+    && employee.user.accountStatus === AccountStatus.ACTIVE
+    && employee.user.accessGrants.length > 0,
+  );
+  if (eligible) {
+    return { eligible: true, pinCredentialDisabled: false, pinSessionsRevoked: 0 };
+  }
+
+  const [credential, sessions] = await Promise.all([
+    tx.employeeFieldReportPinCredential.updateMany({
+      where: { employeeId, isActive: true },
+      data: {
+        isActive: false,
+        credentialVersion: { increment: 1 },
+        failedAttempts: 0,
+        lockedUntil: null,
+        resetAt: now,
+        ...(options.resetById !== undefined ? { resetById: options.resetById } : {}),
+      },
+    }),
+    tx.fieldReportPinSession.updateMany({
+      where: { employeeId, consumedAt: null, revokedAt: null },
+      data: { revokedAt: now },
+    }),
+  ]);
+  return {
+    eligible: false,
+    pinCredentialDisabled: credential.count > 0,
+    pinSessionsRevoked: sessions.count,
+  };
 }
 
 export type AccessGrantInput = {
