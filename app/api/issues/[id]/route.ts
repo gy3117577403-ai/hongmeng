@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { issueDetailInclude, loadIssueById, parseIssueInput, serializeIssue } from '@/lib/issues';
+import { ForbiddenError, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { issueDetailInclude, loadIssueById, parseIssueInput, serializeIssue, validateMajorQualityInput } from '@/lib/issues';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,7 +16,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
     if (!issue) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
     return NextResponse.json({ ok: true, issue: serializeIssue(issue) });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     console.error('issue detail failed', error);
     return NextResponse.json({ ok: false, error: '问题详情加载失败' }, { status: 500 });
   }
@@ -23,16 +24,41 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    assertSameOriginMutationRequest(req);
     const user = await requireUser();
     const current = await prisma.issue.findFirst({
       where: { id: params.id, deletedAt: null },
-      include: { collaborators: { select: { employeeId: true } } },
+      include: {
+        collaborators: { select: { employeeId: true } },
+        majorApprovals: {
+          select: { id: true, status: true },
+        },
+      },
     });
     if (!current) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const parsed = parseIssueInput(body, true);
     if (parsed.errors.length) return NextResponse.json({ ok: false, error: parsed.errors[0] }, { status: 400 });
     const values = parsed.data;
+    const effectiveType = values.type ?? current.type;
+    const effectiveMajor = values.isMajorQuality ?? current.isMajorQuality;
+    const effectiveMajorReason = values.majorQualityReason !== undefined
+      ? values.majorQualityReason
+      : current.majorQualityReason;
+    const majorQualityError = validateMajorQualityInput({
+      type: effectiveType,
+      isMajorQuality: effectiveMajor,
+      majorQualityReason: effectiveMajorReason,
+    });
+    if (majorQualityError) return NextResponse.json({ ok: false, error: majorQualityError }, { status: 400 });
+    const pendingMajorApproval = current.majorApprovals.some(approval =>
+      approval.status === 'PENDING_QUALITY_REVIEW' || approval.status === 'PENDING_GM_APPROVAL');
+    if (pendingMajorApproval) {
+      return NextResponse.json({ ok: false, error: '重大审批进行中，不能修改问题；请先退回处理' }, { status: 409 });
+    }
+    if (current.status === 'closed' && current.majorApprovals.some(approval => approval.status === 'APPROVED')) {
+      return NextResponse.json({ ok: false, error: '已终审关闭的重大问题须先重新打开，才能修改内容' }, { status: 409 });
+    }
 
     if (values.workOrderId) {
       const exists = await prisma.workOrder.findFirst({ where: { id: values.workOrderId, deletedAt: null }, select: { id: true } });
@@ -69,8 +95,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (values.rootCause !== undefined) data.rootCause = values.rootCause;
     if (values.solution !== undefined) data.solution = values.solution;
     if (values.verificationResult !== undefined) data.verificationResult = values.verificationResult;
+    if (values.isMajorQuality !== undefined) data.isMajorQuality = values.isMajorQuality;
+    if (values.majorQualityReason !== undefined || values.isMajorQuality === false) {
+      data.majorQualityReason = effectiveMajor ? effectiveMajorReason : null;
+    }
     if (!Object.keys(data).length && collaboratorEmployeeIds === undefined) return NextResponse.json({ ok: false, error: '没有可更新字段' }, { status: 400 });
-
     const changed = Object.keys(data);
     if (collaboratorEmployeeIds !== undefined) changed.push('collaboratorEmployeeIds');
     const currentCollaborators = current.collaborators.map(item => item.employeeId).sort().join(',');
@@ -79,7 +108,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       || (nextCollaborators !== undefined && nextCollaborators !== currentCollaborators);
     const action = assignmentChanged ? 'assign' : 'update';
     const issue = await prisma.$transaction(async tx => {
-      if (Object.keys(data).length) await tx.issue.update({ where: { id: current.id }, data });
+      const updated = await tx.issue.updateMany({
+        where: {
+          id: current.id,
+          version: current.version,
+          deletedAt: null,
+          majorApprovals: {
+            none: { status: { in: ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL'] } },
+          },
+        },
+        data: { ...data, version: { increment: 1 } },
+      });
+      if (updated.count !== 1) return null;
       if (collaboratorEmployeeIds !== undefined) {
         await tx.issueCollaborator.deleteMany({ where: { issueId: current.id } });
         if (collaboratorEmployeeIds.length) {
@@ -100,28 +140,59 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       });
       return tx.issue.findUniqueOrThrow({ where: { id: current.id }, include: issueDetailInclude });
     });
+    if (!issue) {
+      return NextResponse.json({ ok: false, error: '问题或审批状态已变化，请刷新后重试' }, { status: 409 });
+    }
     await logOp({ userId: user.id, action: action === 'assign' ? 'assign_issue' : 'update_issue', targetType: 'issue', targetId: current.id, detail: { fields: changed } });
     return NextResponse.json({ ok: true, issue: serializeIssue(issue) });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     console.error('issue update failed', error);
     return NextResponse.json({ ok: false, error: '问题更新失败' }, { status: 500 });
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    assertSameOriginMutationRequest(req);
     const user = await requireUser();
-    const current = await prisma.issue.findFirst({ where: { id: params.id, deletedAt: null }, select: { id: true, sequence: true } });
+    const current = await prisma.issue.findFirst({
+      where: { id: params.id, deletedAt: null },
+      select: {
+        id: true,
+        sequence: true,
+        version: true,
+        majorApprovals: {
+          select: { id: true },
+          take: 1,
+        },
+      },
+    });
     if (!current) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
-    await prisma.$transaction([
-      prisma.issueActivity.create({ data: { issueId: current.id, action: 'delete', content: '删除问题', actorId: user.id } }),
-      prisma.issue.update({ where: { id: current.id }, data: { deletedAt: new Date() } }),
-    ]);
+    if (current.majorApprovals.length) {
+      return NextResponse.json({ ok: false, error: '该问题已有重大审批记录，为保留审计链不能删除' }, { status: 409 });
+    }
+    const deleted = await prisma.$transaction(async tx => {
+      const updated = await tx.issue.updateMany({
+        where: {
+          id: current.id,
+          version: current.version,
+          deletedAt: null,
+          majorApprovals: { none: {} },
+        },
+        data: { deletedAt: new Date(), version: { increment: 1 } },
+      });
+      if (updated.count !== 1) return false;
+      await tx.issueActivity.create({ data: { issueId: current.id, action: 'delete', content: '删除问题', actorId: user.id } });
+      return true;
+    });
+    if (!deleted) {
+      return NextResponse.json({ ok: false, error: '问题或审批状态已变化，请刷新后重试' }, { status: 409 });
+    }
     await logOp({ userId: user.id, action: 'delete_issue', targetType: 'issue', targetId: current.id, detail: { sequence: current.sequence } });
     return NextResponse.json({ ok: true });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     console.error('issue delete failed', error);
     return NextResponse.json({ ok: false, error: '问题删除失败' }, { status: 500 });
   }

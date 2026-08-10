@@ -131,6 +131,7 @@ body {
   background: #fff1e7;
 }
 .account-center-card h2 { margin: 0; font-size: 17px; }
+.account-center-card h2 em { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 20px; margin-left: 7px; padding: 0 6px; border-radius: 999px; background: #f97316; color: #fff; font-size: 11px; font-style: normal; }
 .account-center-card header p { margin: 5px 0 0; color: var(--account-muted); font-size: 13px; }
 .account-center-profile { grid-row: span 2; }
 .account-center-profile dl { margin: 20px 0 0; }
@@ -149,6 +150,17 @@ body {
 .account-center-scope span, .account-center-empty span { color: var(--account-muted); font-size: 13px; line-height: 1.55; }
 .account-center-empty { display: grid; justify-items: center; gap: 7px; margin-top: 18px; padding: 18px; text-align: center; color: #64748b; }
 .account-center-empty > svg { width: 27px; color: #a4afbf; }
+.account-center-empty > a { color: var(--account-orange); font-size: 13px; font-weight: 750; text-decoration: none; }
+.account-center-notifications { display: grid; gap: 7px; margin-top: 14px; }
+.account-center-notifications > a:not(.account-center-notification-all) { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-height: 48px; padding: 8px 10px; border: 1px solid #edf0f5; border-radius: 10px; color: #24364b; text-decoration: none; }
+.account-center-notifications > a:not(.account-center-notification-all):hover { border-color: #fed7aa; background: #fffaf5; }
+.account-center-notifications > a > span { width: 7px; height: 7px; border-radius: 50%; background: #cbd5e1; }
+.account-center-notifications > a > span.unread { background: #f97316; box-shadow: 0 0 0 3px #ffedd5; }
+.account-center-notifications > a > div { display: grid; min-width: 0; gap: 3px; }
+.account-center-notifications > a b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.account-center-notifications > a small { color: var(--account-muted); font-size: 11px; }
+.account-center-notifications > a svg { width: 15px; color: #9aa5b5; }
+.account-center-notification-all { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-height: 34px; color: var(--account-orange); font-size: 12px; font-weight: 800; text-decoration: none; }
 .account-center-security a {
   display: flex;
   align-items: center;

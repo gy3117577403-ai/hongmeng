@@ -29,6 +29,7 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -37,7 +38,7 @@ import { EmployeeMultiPicker, EmployeePicker, WorkOrderPicker } from '@/componen
 import type {
   CurrentUserDTO,
   DetectedIssueDTO,
-  EmployeeDTO,
+  IssueAssigneeOptionDTO,
   IssueDTO,
   IssuePriority,
   IssueStatus,
@@ -51,7 +52,7 @@ type IssueManagementShellProps = { user: CurrentUserDTO };
 type QueueMode = 'issues' | 'detected';
 type IssueListResponse = { ok: boolean; issues: IssueDTO[]; summary: IssueSummaryDTO; pagination: { page: number; pageSize: number; total: number; totalPages: number }; error?: string };
 type DetectedResponse = { ok: boolean; detected: DetectedIssueDTO[]; pendingCount: number; error?: string };
-type EmployeesResponse = { ok: boolean; employees: EmployeeDTO[]; error?: string };
+type EmployeesResponse = { ok: boolean; employees: IssueAssigneeOptionDTO[]; error?: string };
 type DuplicateIssue = { id: string; code: string; title: string; status: IssueStatus };
 type IssueMutationResponse = {
   ok: boolean;
@@ -88,6 +89,8 @@ type IssueFormState = {
   rootCause: string;
   solution: string;
   verificationResult: string;
+  isMajorQuality: boolean;
+  majorQualityReason: string;
 };
 
 type TransitionState = { target: IssueStatus; solution: string; verificationResult: string; comment: string };
@@ -100,13 +103,24 @@ const activityLabels: Record<string, string> = {
   create: '创建问题', create_from_source: '由生产异常转入', restore_from_source: '从来源恢复',
   update: '更新问题信息', assign: '更新负责人', transition: '状态流转', comment: '处理记录',
   upload_attachment: '上传附件', delete_attachment: '删除附件', delete: '删除问题',
+  major_quality_review: '重大质量二次复核', major_quality_return: '重大质量退回整改',
+  major_quality_approved: '重大质量终审通过',
 };
+const majorApprovalStatusLabels = {
+  PENDING_QUALITY_REVIEW: '待质量二次复核',
+  PENDING_GM_APPROVAL: '待总经办终审',
+  APPROVED: '终审通过',
+  QUALITY_RETURNED: '质量复核退回',
+  GM_RETURNED: '总经办退回',
+  CANCELLED: '审批已撤回',
+} as const;
 const emptySummary: IssueSummaryDTO = { total: 0, pending: 0, processing: 0, verifying: 0, closed: 0, overdue: 0, unassigned: 0 };
 const emptyFilters: Filters = { status: 'all', type: 'all', priority: 'all', assigneeId: '', overdue: false, unassigned: false };
 const emptyForm: IssueFormState = {
   title: '', type: 'production', priority: 'normal', description: '', workOrderId: '',
   assigneeEmployeeId: '', collaboratorEmployeeIds: [], dueAt: '', processName: '',
   affectedQuantity: '', temporaryMeasure: '', rootCause: '', solution: '', verificationResult: '',
+  isMajorQuality: false, majorQualityReason: '',
 };
 
 function formatDate(value?: string | null, includeTime = true): string {
@@ -175,6 +189,8 @@ function issueFormFrom(issue?: IssueDTO | null): IssueFormState {
     rootCause: issue.rootCause || '',
     solution: issue.solution || '',
     verificationResult: issue.verificationResult || '',
+    isMajorQuality: issue.isMajorQuality,
+    majorQualityReason: issue.majorQualityReason || '',
   };
 }
 
@@ -202,6 +218,10 @@ function issueWorkOrderOptionFromIssue(issue?: IssueDTO | null): IssueWorkOrderO
 }
 
 export default function IssueManagementShell({ user }: IssueManagementShellProps) {
+  const canCreateIssues = user.access.capabilities.includes('QUALITY:CREATE');
+  const canUpdateIssues = user.access.capabilities.includes('QUALITY:UPDATE');
+  const canDeleteIssues = user.access.capabilities.includes('QUALITY:DELETE');
+  const canExecuteIssueWorkflow = user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW');
   const routeSearchParams = useSearchParams();
   const initialParams = useMemo(() => new URLSearchParams(routeSearchParams.toString()), [routeSearchParams]);
   const [keyword, setKeyword] = useState(initialParams.get('keyword') || '');
@@ -215,7 +235,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [summary, setSummary] = useState<IssueSummaryDTO>(emptySummary);
   const [detected, setDetected] = useState<DetectedIssueDTO[]>([]);
   const [pendingDetected, setPendingDetected] = useState(0);
-  const [employees, setEmployees] = useState<EmployeeDTO[]>([]);
+  const [employees, setEmployees] = useState<IssueAssigneeOptionDTO[]>([]);
   const [selected, setSelected] = useState<IssueDTO | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -224,7 +244,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   useToastBridge(toast, setToast);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [formOpen, setFormOpen] = useState(initialParams.get('action') === 'new');
+  const [formOpen, setFormOpen] = useState(canCreateIssues && initialParams.get('action') === 'new');
   const [editingIssue, setEditingIssue] = useState<IssueDTO | null>(null);
   const [form, setForm] = useState<IssueFormState>(emptyForm);
   const [newWorkOrderDraft, setNewWorkOrderDraft] = useState<IssueWorkOrderDraftDTO | null>(null);
@@ -239,6 +259,10 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [confirmDelete, setConfirmDelete] = useState<IssueDTO | null>(null);
   const [confirmAttachmentDelete, setConfirmAttachmentDelete] = useState<AttachmentDeleteState | null>(null);
   const [contextForm, setContextForm] = useState({ assigneeEmployeeId: '', collaboratorEmployeeIds: [] as string[], dueAt: '', priority: 'normal' as IssuePriority });
+  const selectedApprovalPending = ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL']
+    .includes(selected?.majorApproval?.status || '');
+  const selectedApprovedClosed = selected?.status === 'closed' && selected.majorApproval?.status === 'APPROVED';
+  const selectedContentLocked = selectedApprovalPending || selectedApprovedClosed;
   const queueRef = useRef<HTMLDivElement>(null);
   const contextRef = useRef<HTMLElement>(null);
   const contextTriggerRef = useRef<HTMLButtonElement>(null);
@@ -320,10 +344,11 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
 
   useEffect(() => {
     void loadDetected();
-    jsonRequest<EmployeesResponse>('/api/employees?active=true')
+    if (!canCreateIssues && !canUpdateIssues) return;
+    jsonRequest<EmployeesResponse>('/api/issues/assignee-options')
       .then(employeeData => setEmployees(employeeData.employees || []))
       .catch(() => setToast('员工档案加载失败'));
-  }, [loadDetected]);
+  }, [canCreateIssues, canUpdateIssues, loadDetected]);
 
   useEffect(() => {
     const workOrderId = initialParams.get('workOrderId') || initialParams.get('sourceWorkOrderId') || '';
@@ -506,6 +531,8 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   async function persistForm(allowDuplicate = false): Promise<void> {
     if (!form.title.trim()) { setFormError('请填写问题标题'); return; }
     if (form.type === 'process' && !form.processName.trim()) { setFormError('工艺问题请填写关联工序'); return; }
+    if (form.isMajorQuality && form.type !== 'quality') { setFormError('只有质量问题可以标记为重大质量事项'); return; }
+    if (form.isMajorQuality && !form.majorQualityReason.trim()) { setFormError('请填写重大质量判定原因'); return; }
     if (newWorkOrderDraft && (!newWorkOrderDraft.code.trim() || !newWorkOrderDraft.productName.trim())) {
       setFormError('待创建工单需要填写工单号和产品名称');
       return;
@@ -596,7 +623,9 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     setSaving(true);
     try {
       const data = await jsonRequest<IssueMutationResponse>(`/api/issues/${selected.id}/transition`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(transition),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...transition, status: transition.target }),
       });
       if (data.issue) updateIssue(data.issue);
       setTransition(null);
@@ -720,7 +749,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const sourceWorkOrderId = initialParams.get('sourceWorkOrderId') || '';
   const activeDetected = detected.filter(item => !item.existingIssueId).sort((first, second) => Number(second.workOrderId === sourceWorkOrderId) - Number(first.workOrderId === sourceWorkOrderId));
   const employeeGroups = useMemo(() => {
-    const grouped = new Map<string, EmployeeDTO[]>();
+    const grouped = new Map<string, IssueAssigneeOptionDTO[]>();
     employees.filter(item => item.isActive).forEach(employee => {
       const department = employee.department?.trim() || '未设置部门';
       grouped.set(department, [...(grouped.get(department) || []), employee]);
@@ -746,7 +775,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
             {keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={15} /></button>}
           </label>
         )}
-        utilityActions={<button className="hm-workbench-button primary issue-new-header" type="button" onClick={openCreate}><Plus size={16} />新建问题</button>}
+        utilityActions={canCreateIssues ? <button className="hm-workbench-button primary issue-new-header" type="button" onClick={openCreate}><Plus size={16} />新建问题</button> : <Link className="hm-workbench-button primary issue-new-header" href="/workspace/approvals"><ClipboardCheck size={16} />重大审批</Link>}
       />
 
       <div className="issue-workbench-main">
@@ -793,7 +822,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
             <div ref={queueRef} className="issue-queue-scroll hm-scroll-region" tabIndex={0}>
               {loading && queueMode === 'issues' && <div className="issue-loading"><Loader2 className="spin" />正在加载问题</div>}
               {!loading && error && <div className="issue-empty error"><AlertCircle /><strong>加载失败</strong><p>{error}</p><button type="button" onClick={() => { void loadIssues(); }}>重试</button></div>}
-              {!loading && !error && queueMode === 'issues' && !issues.length && <div className="issue-empty"><CheckCircle2 /><strong>当前筛选下没有问题</strong><p>可以新建问题，或从异常收件箱将生产异常转入。</p><button type="button" onClick={openCreate}>新建问题</button></div>}
+              {!loading && !error && queueMode === 'issues' && !issues.length && <div className="issue-empty"><CheckCircle2 /><strong>当前筛选下没有问题</strong><p>{canCreateIssues ? '可以新建问题，或从异常收件箱将生产异常转入。' : '当前没有可查看的问题记录。'}</p>{canCreateIssues && <button type="button" onClick={openCreate}>新建问题</button>}</div>}
               {queueMode === 'issues' && issues.map(issue => (
                 <button className={`issue-card ${selected?.id === issue.id ? 'active' : ''} priority-${issue.priority}`} type="button" aria-pressed={selected?.id === issue.id} key={issue.id} onClick={() => selectIssue(issue)}>
                   <span className={`issue-status status-${issue.status}`}>{statusLabels[issue.status]}</span><em className={`priority-${issue.priority}`}>{priorityLabels[issue.priority]}</em>
@@ -808,7 +837,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                   <header><span>{item.label}</span><em>待转问题</em></header>
                   <strong title={item.specification || item.workOrderCode}>{item.specification || item.workOrderCode}</strong>
                   <p>{item.customerName || '客户未设置'} · {item.productName}</p>
-                  <footer><a href={item.sourceRoute}>查看生产现场 <ExternalLink size={13} /></a><button type="button" disabled={saving} onClick={() => { void convertDetected(item); }}>转为问题</button></footer>
+                  <footer><a href={item.sourceRoute}>查看生产现场 <ExternalLink size={13} /></a>{canCreateIssues && <button type="button" disabled={saving} onClick={() => { void convertDetected(item); }}>转为问题</button>}</footer>
                 </article>
               ))}
             </div>
@@ -818,12 +847,13 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           <section className="issue-detail" aria-label="问题处理详情">
             {!selected ? <div className="issue-detail-empty"><MessageSquareText /><h2>选择一个问题开始处理</h2><p>左侧可选择问题，或从异常收件箱转入生产异常。</p></div> : <>
               <header className="issue-detail-header">
-                <div><span>{selected.code} · {typeLabels[selected.type]}</span><h2 title={selected.title}>{selected.title}</h2><p>{sourceLabel(selected)} · 创建于 {formatDate(selected.createdAt)}</p></div>
-                <div><span className={`issue-status status-${selected.status}`}>{statusLabels[selected.status]}</span><button type="button" aria-label="编辑问题" title="编辑问题" onClick={() => openEdit(selected)}><Pencil size={16} /></button><button className="danger" type="button" aria-label="删除问题" title="删除问题" onClick={() => openIssueDelete(selected)}><Trash2 size={16} /></button></div>
+                <div><span>{selected.code} · {typeLabels[selected.type]}{selected.isMajorQuality && <em className="issue-major-chip">重大质量</em>}</span><h2 title={selected.title}>{selected.title}</h2><p>{sourceLabel(selected)} · 创建于 {formatDate(selected.createdAt)}</p></div>
+                <div><span className={`issue-status status-${selected.status}`}>{statusLabels[selected.status]}</span>{selected.majorApproval && <span className={`issue-approval-state state-${selected.majorApproval.status.toLowerCase()}`}>{majorApprovalStatusLabels[selected.majorApproval.status]}</span>}{!selectedContentLocked && canUpdateIssues && <button type="button" aria-label="编辑问题" title="编辑问题" onClick={() => openEdit(selected)}><Pencil size={16} /></button>}{!selected.majorApproval && canDeleteIssues && <button className="danger" type="button" aria-label="删除问题" title="删除问题" onClick={() => openIssueDelete(selected)}><Trash2 size={16} /></button>}</div>
               </header>
 
               <div className="issue-detail-scroll hm-scroll-region">
                 <section className="issue-description"><h3>问题描述</h3><p>{selected.description || '尚未填写问题描述。'}</p>{selected.type === 'process' && <dl className="issue-process-summary"><div><dt>关联工序</dt><dd>{selected.processName || '未填写'}</dd></div><div><dt>影响数量</dt><dd>{selected.affectedQuantity ?? '未填写'}</dd></div><div><dt>临时措施</dt><dd>{selected.temporaryMeasure || '未填写'}</dd></div></dl>}</section>
+                {selected.isMajorQuality && <section className="issue-major-summary"><header><AlertTriangle size={17} /><div><h3>重大质量事项</h3><span>{selected.majorApproval ? majorApprovalStatusLabels[selected.majorApproval.status] : '尚未提交复核'}</span></div></header><p>{selected.majorQualityReason}</p>{selected.majorApproval && <small>第 {selected.majorApproval.round} 轮 · 提交人 {selected.majorApproval.submittedByName || '未知'}</small>}</section>}
                 <div className="issue-resolution-grid">
                   <section><h3>原因分析</h3><p>{selected.rootCause || '处理中填写原因分析。'}</p></section>
                   <section><h3>处理方案</h3><p>{selected.solution || '提交验证前需要填写处理方案。'}</p></section>
@@ -842,15 +872,15 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                 </section>
               </div>
 
-              <form className="issue-comment" onSubmit={addComment}><textarea value={comment} onChange={event => setComment(event.target.value)} rows={2} maxLength={2000} placeholder="补充处理进展、现场反馈或验证说明..." /><button type="submit" disabled={saving || !comment.trim()}><Send size={15} />添加记录</button></form>
-              <div className="issue-transition-actions">
+              {canCreateIssues && <form className="issue-comment" onSubmit={addComment}><textarea value={comment} onChange={event => setComment(event.target.value)} rows={2} maxLength={2000} placeholder="补充处理进展、现场反馈或验证说明..." /><button type="submit" disabled={saving || !comment.trim()}><Send size={15} />添加记录</button></form>}
+              {canExecuteIssueWorkflow && <div className="issue-transition-actions">
                 <a className="issue-change-link" href={`/workspace/changes?action=new&issueId=${encodeURIComponent(selected.id)}${selected.workOrderId ? `&workOrderId=${encodeURIComponent(selected.workOrderId)}` : ''}`}><GitPullRequestArrow size={15} />发起变更</a>
                 {selected.status === 'pending' && <button className="primary" type="button" onClick={() => beginTransition('processing')}>开始处理</button>}
-                {selected.status === 'processing' && <button className="primary" type="button" onClick={() => beginTransition('verifying')}>提交验证</button>}
-                {selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('processing')}>退回处理</button><button className="primary" type="button" onClick={() => beginTransition('closed')}>验证通过并关闭</button></>}
+                {selected.status === 'processing' && <button className="primary" type="button" onClick={() => beginTransition('verifying')}>{selected.isMajorQuality ? '提交重大复核' : '提交验证'}</button>}
+                {selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('processing')}>{selected.isMajorQuality ? '撤回审批并退回处理' : '退回处理'}</button>{selected.isMajorQuality ? <Link className="issue-approval-link" href={`/workspace/approvals?approvalId=${encodeURIComponent(selected.majorApproval?.id || '')}`}>打开重大审批</Link> : <button className="primary" type="button" onClick={() => beginTransition('closed')}>验证通过并关闭</button>}</>}
                 {selected.status === 'closed' && <button type="button" onClick={() => beginTransition('processing')}>重新打开问题</button>}
                 <button className="context-mobile" type="button" onClick={openContext}><Info size={15} />责任与附件</button>
-              </div>
+              </div>}
             </>}
           </section>
 
@@ -860,16 +890,17 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
             {!selected ? <div className="issue-context-empty">选择问题后查看责任、来源和附件。</div> : <div className="issue-context-scroll hm-scroll-region">
               <section className="context-section responsibility">
                 <h3><UserRound size={15} />责任信息</h3>
-                <div className="context-picker-field"><span>负责人</span><EmployeePicker employees={employees} value={contextForm.assigneeEmployeeId} onChange={value => setContextForm(current => ({ ...current, assigneeEmployeeId: value, collaboratorEmployeeIds: current.collaboratorEmployeeIds.filter(id => id !== value) }))} /></div>
-                <div className="context-picker-field collaborators"><span>协同人</span><EmployeeMultiPicker employees={employees} values={contextForm.collaboratorEmployeeIds} excludeIds={contextForm.assigneeEmployeeId ? [contextForm.assigneeEmployeeId] : []} onChange={values => setContextForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
-                <label>优先级<select value={contextForm.priority} onChange={event => setContextForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-                <label>截止时间<input type="datetime-local" value={contextForm.dueAt} onChange={event => setContextForm(current => ({ ...current, dueAt: event.target.value }))} /></label>
-                <button className="primary" type="button" disabled={saving} onClick={() => { void saveContext(); }}>保存责任信息</button>
+                <div className="context-picker-field"><span>负责人</span><EmployeePicker employees={employees} value={contextForm.assigneeEmployeeId} disabled={!canUpdateIssues || selectedContentLocked} onChange={value => setContextForm(current => ({ ...current, assigneeEmployeeId: value, collaboratorEmployeeIds: current.collaboratorEmployeeIds.filter(id => id !== value) }))} /></div>
+                <div className="context-picker-field collaborators"><span>协同人</span><EmployeeMultiPicker employees={employees} values={contextForm.collaboratorEmployeeIds} excludeIds={contextForm.assigneeEmployeeId ? [contextForm.assigneeEmployeeId] : []} disabled={!canUpdateIssues || selectedContentLocked} onChange={values => setContextForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
+                <label>优先级<select disabled={!canUpdateIssues || selectedContentLocked} value={contextForm.priority} onChange={event => setContextForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                <label>截止时间<input type="datetime-local" disabled={!canUpdateIssues || selectedContentLocked} value={contextForm.dueAt} onChange={event => setContextForm(current => ({ ...current, dueAt: event.target.value }))} /></label>
+                {canUpdateIssues && !selectedContentLocked && <button className="primary" type="button" disabled={saving} onClick={() => { void saveContext(); }}>保存责任信息</button>}
+                {selectedContentLocked && <p className="issue-context-lock-note">{selectedApprovalPending ? '审批进行中，责任信息和附件已锁定；可继续追加处理记录。' : '终审关闭后内容已锁定；如需整改，请先重新打开问题。'}</p>}
               </section>
               <section className="context-section source"><h3><ArrowLeftRight size={15} />来源信息</h3><dl><div><dt>来源</dt><dd>{sourceLabel(selected)}</dd></div><div><dt>报告人</dt><dd>{selected.reporter?.displayName || selected.reporter?.username || '系统'}</dd></div><div><dt>来源标识</dt><dd title={selected.sourceCode || ''}>{selected.sourceCode || '无'}</dd></div></dl>{selected.sourceRoute && <a href={selected.sourceRoute}>返回来源位置 <ExternalLink size={14} /></a>}</section>
               {selected.workOrder && <section className="context-section work-order"><h3><FileText size={15} />关联工单</h3><strong title={selected.workOrder.specification || selected.workOrder.code}>{selected.workOrder.specification || selected.workOrder.code}</strong><p>{selected.workOrder.customerName || '客户未设置'} · {selected.workOrder.productName}</p><dl><div><dt>图纸</dt><dd>{selected.workOrder.drawingStatus || '未设置'}</dd></div><div><dt>配料</dt><dd>{selected.workOrder.materialStatus || '未设置'}</dd></div><div><dt>计划</dt><dd>{formatDate(selected.workOrder.plannedAt, false)}</dd></div></dl><a href={`/production?workOrderId=${encodeURIComponent(selected.workOrder.id)}`}>打开生产执行 <ExternalLink size={14} /></a></section>}
-              <section className="context-section attachments"><header><h3><Paperclip size={15} />附件 <em>{selected.attachmentCount}</em></h3><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></header>
-                <div>{selected.attachments?.map(file => <article key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{formatBytes(file.size)} · {formatDate(file.createdAt)}</small></div><a href={file.contentUrl} target="_blank" rel="noreferrer" aria-label={`预览 ${file.displayName || file.originalName}`} title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} aria-label={`下载 ${file.displayName || file.originalName}`} title="下载"><Download size={14} /></a><button type="button" aria-label={`删除 ${file.displayName || file.originalName}`} title="删除附件" onClick={() => openAttachmentDelete(file.id, file.displayName || file.originalName)}><Trash2 size={14} /></button></article>)}{!selected.attachments?.length && <p className="attachment-empty">可上传 PDF、JPG、PNG、WEBP 作为处理凭证。</p>}</div>
+              <section className="context-section attachments"><header><h3><Paperclip size={15} />附件 <em>{selected.attachmentCount}</em></h3>{canCreateIssues && !selectedContentLocked && <><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></>}</header>
+                <div>{selected.attachments?.map(file => <article key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{formatBytes(file.size)} · {formatDate(file.createdAt)}</small></div><a href={file.contentUrl} target="_blank" rel="noreferrer" aria-label={`预览 ${file.displayName || file.originalName}`} title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} aria-label={`下载 ${file.displayName || file.originalName}`} title="下载"><Download size={14} /></a>{canDeleteIssues && !selectedContentLocked && <button type="button" aria-label={`删除 ${file.displayName || file.originalName}`} title="删除附件" onClick={() => openAttachmentDelete(file.id, file.displayName || file.originalName)}><Trash2 size={14} /></button>}</article>)}{!selected.attachments?.length && <p className="attachment-empty">{canCreateIssues && !selectedContentLocked ? '可上传 PDF、JPG、PNG、WEBP 作为处理凭证。' : '当前没有附件。'}</p>}</div>
               </section>
             </div>}
           </aside>
@@ -883,9 +914,10 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
             <header><div><strong>问题概况</strong><span>先说明发生了什么以及影响程度</span></div><em>01</em></header>
             <div className="issue-form-grid">
               <label className="wide">问题标题<input value={form.title} maxLength={160} autoFocus onChange={event => setForm(current => ({ ...current, title: event.target.value }))} placeholder="一句话说明问题及影响" /></label>
-              <label>问题类型<select value={form.type} onChange={event => setForm(current => ({ ...current, type: event.target.value as IssueType }))}>{Object.entries(typeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+              <label>问题类型<select value={form.type} onChange={event => setForm(current => { const type = event.target.value as IssueType; return { ...current, type, isMajorQuality: type === 'quality' ? current.isMajorQuality : false, majorQualityReason: type === 'quality' ? current.majorQualityReason : '' }; })}>{Object.entries(typeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
               <label>优先级<select value={form.priority} onChange={event => setForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
               <label>截止时间<input type="datetime-local" value={form.dueAt} onChange={event => setForm(current => ({ ...current, dueAt: event.target.value }))} /></label>
+              {form.type === 'quality' && <div className="issue-major-quality-control wide"><label className="issue-major-toggle"><input type="checkbox" checked={form.isMajorQuality} onChange={event => setForm(current => ({ ...current, isMajorQuality: event.target.checked, majorQualityReason: event.target.checked ? current.majorQualityReason : '' }))} /><span><AlertTriangle size={17} /><b>标记为重大质量事项</b><small>提交验证后，必须由另一名质量人员复核，再由总经办终审。</small></span></label>{form.isMajorQuality && <label>重大判定原因<textarea rows={3} required maxLength={1000} value={form.majorQualityReason} onChange={event => setForm(current => ({ ...current, majorQualityReason: event.target.value }))} placeholder="说明重大影响、风险范围及需要升级审批的原因" /></label>}</div>}
             </div>
           </section>
 
@@ -932,9 +964,10 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
       {confirmDiscard && <div className="issue-modal-backdrop"><section className="issue-confirm discard-warning" role="alertdialog" aria-modal="true" aria-labelledby="issue-discard-title"><AlertTriangle /><h2 id="issue-discard-title">放弃未保存的修改？</h2><p>表单内容或待上传附件尚未保存</p><span>关闭后这些修改不会保留，已经存在的问题和附件不会受到影响。</span><footer><button type="button" onClick={() => setConfirmDiscard(false)}>继续编辑</button><button className="danger" type="button" onClick={closeFormNow}>放弃修改</button></footer></section></div>}
 
       {transition && selected && <div className="issue-modal-backdrop"><form className="issue-modal transition-modal" role="dialog" aria-modal="true" aria-labelledby="issue-transition-title" onSubmit={submitTransition}><header><div><span>状态流转</span><h2 id="issue-transition-title">{statusLabels[selected.status]} → {statusLabels[transition.target]}</h2></div><button type="button" aria-label="关闭" title="关闭" disabled={saving} onClick={() => setTransition(null)}><X size={19} /></button></header><div className="issue-modal-body">
+        {transition.target === 'verifying' && selected.isMajorQuality && <div className="issue-major-transition-note"><AlertTriangle /><div><b>将发起第 {(selected.majorApproval?.round || 0) + 1} 轮重大质量审批</b><span>系统会通知其他质量人员二次复核；复核通过后再通知总经办终审。三名关键人员必须相互独立。</span></div></div>}
         {transition.target === 'verifying' && <label className="wide">处理方案<textarea autoFocus required rows={5} value={transition.solution} onChange={event => setTransition(current => current ? { ...current, solution: event.target.value } : current)} placeholder="说明已经采取的处理措施" /></label>}
         {transition.target === 'closed' && <label className="wide">验证结果<textarea autoFocus required rows={5} value={transition.verificationResult} onChange={event => setTransition(current => current ? { ...current, verificationResult: event.target.value } : current)} placeholder="说明如何验证问题已解决" /></label>}
-        <label className="wide">流转备注（可选）<textarea autoFocus={transition.target === 'processing'} rows={3} value={transition.comment} onChange={event => setTransition(current => current ? { ...current, comment: event.target.value } : current)} placeholder="补充本次状态变更说明" /></label>
+        <label className="wide">流转备注{selected.isMajorQuality && selected.status === 'verifying' && transition.target === 'processing' ? '' : '（可选）'}<textarea required={selected.isMajorQuality && selected.status === 'verifying' && transition.target === 'processing'} autoFocus={transition.target === 'processing'} rows={3} value={transition.comment} onChange={event => setTransition(current => current ? { ...current, comment: event.target.value } : current)} placeholder={selected.isMajorQuality && selected.status === 'verifying' && transition.target === 'processing' ? '必须说明撤回审批和退回整改的原因' : '补充本次状态变更说明'} /></label>
       </div><footer><button type="button" disabled={saving} onClick={() => setTransition(null)}>取消</button><button className="primary" type="submit" disabled={saving}>{saving && <Loader2 className="spin" size={15} />}确认流转</button></footer></form></div>}
 
       {confirmDelete && <div className="issue-modal-backdrop"><section className="issue-confirm" role="alertdialog" aria-modal="true" aria-labelledby="issue-delete-title"><AlertTriangle /><h2 id="issue-delete-title">确认删除问题？</h2><p>{confirmDelete.code} · {confirmDelete.title}</p><span>问题将被软删除，关联工单和 S3 附件原文件不会被物理删除。</span><footer><button type="button" disabled={saving} onClick={() => setConfirmDelete(null)}>取消</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteIssue(); }}>确认删除</button></footer></section></div>}

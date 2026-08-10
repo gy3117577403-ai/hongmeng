@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { ForbiddenError, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   ISSUE_PRIORITIES,
   ISSUE_STATUSES,
@@ -10,9 +10,11 @@ import {
   parseIssueInput,
   serializeIssue,
   summarizeIssues,
+  validateMajorQualityInput,
 } from '@/lib/issues';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import {
   createIssueWorkOrder,
   issueWorkOrderOptionSelect,
@@ -119,11 +121,18 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   let submittedWorkOrderDraft: IssueWorkOrderDraftDTO | null = null;
   try {
+    assertSameOriginMutationRequest(req);
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const parsed = parseIssueInput(body);
     if (parsed.errors.length) return NextResponse.json({ ok: false, error: parsed.errors[0] }, { status: 400 });
     const data = parsed.data;
+    const majorQualityError = validateMajorQualityInput({
+      type: data.type || 'production',
+      isMajorQuality: data.isMajorQuality === true,
+      majorQualityReason: data.majorQualityReason,
+    });
+    if (majorQualityError) return NextResponse.json({ ok: false, error: majorQualityError }, { status: 400 });
     const parsedWorkOrder = parseIssueWorkOrderDraft(body.newWorkOrderDraft);
     if (parsedWorkOrder.errors.length) return NextResponse.json({ ok: false, error: parsedWorkOrder.errors[0] }, { status: 400 });
     submittedWorkOrderDraft = parsedWorkOrder.draft;
@@ -187,6 +196,8 @@ export async function POST(req: NextRequest) {
           processName: data.processName,
           affectedQuantity: data.affectedQuantity,
           temporaryMeasure: data.temporaryMeasure,
+          isMajorQuality: data.isMajorQuality === true,
+          majorQualityReason: data.isMajorQuality ? data.majorQualityReason : null,
           dueAt: data.dueAt,
           rootCause: data.rootCause,
           solution: data.solution,
@@ -209,6 +220,7 @@ export async function POST(req: NextRequest) {
             assigneeEmployeeId: data.assigneeEmployeeId || null,
             collaboratorCount: collaboratorEmployeeIds.length,
             createdWorkOrderId: createdWorkOrder?.id || null,
+            isMajorQuality: data.isMajorQuality === true,
           },
         },
       });
@@ -233,6 +245,7 @@ export async function POST(req: NextRequest) {
         code: result.issue.sequence,
         type: result.issue.type,
         priority: result.issue.priority,
+        isMajorQuality: result.issue.isMajorQuality,
         createdWorkOrderId: result.createdWorkOrder?.id || null,
       },
     });
@@ -244,7 +257,7 @@ export async function POST(req: NextRequest) {
         : null,
     }, { status: 201 });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     if (error instanceof IssueWorkOrderConflictError) {
       return NextResponse.json({
         ok: false,

@@ -11,6 +11,8 @@ import {
 import { logOp } from '@/lib/logs';
 import { validateNewPassword } from '@/lib/password-policy';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
+import { createSystemNotification } from '@/lib/system-notifications';
 import {
   AccessGrantInputError,
   adminUserInclude,
@@ -82,6 +84,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
+    assertSameOriginMutationRequest(request);
     const current = await requireAdmin();
     const body = await request.json().catch(() => ({})) as {
       username?: string;
@@ -137,6 +140,21 @@ export async function POST(request: NextRequest) {
           grantedById: current.id,
         },
       });
+      if (profile !== AccessProfileKey.FIELD_REPORTER) {
+        await createSystemNotification(tx, {
+          eventType: 'ACCOUNT_CREATED',
+          dedupeKey: `account:${created.id}:created`,
+          category: 'ACCOUNT',
+          priority: 'HIGH',
+          title: '你的系统账号已开通',
+          body: '首次登录后必须先修改临时密码，再进入已授权的工作台。',
+          targetRoute: '/account',
+          sourceType: 'user',
+          sourceId: created.id,
+          actorId: current.id,
+          recipientUserIds: [created.id],
+        });
+      }
       return tx.user.findUniqueOrThrow({ where: { id: created.id }, include: adminUserInclude });
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 

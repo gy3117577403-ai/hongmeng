@@ -24,6 +24,7 @@ type ApiRule = {
 /** Specific routes must appear before their broader namespace. */
 export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/me', anyOf: ['ACCOUNT_SELF'] },
+  { prefix: '/api/notifications', anyOf: ['NOTIFICATIONS'] },
   { prefix: '/api/users', anyOf: ['ACCOUNT_ADMIN'] },
   { prefix: '/api/field-report', anyOf: ['FIELD_REPORT'] },
 
@@ -37,6 +38,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/warehouse', anyOf: ['WAREHOUSE'] },
 
   { prefix: '/api/issues', anyOf: ['QUALITY'] },
+  { prefix: '/api/major-quality-approvals', anyOf: ['QUALITY', 'MAJOR_APPROVAL'] },
   { prefix: '/api/changes', anyOf: ['ENGINEERING', 'QUALITY'] },
   { prefix: '/api/change-snapshots', anyOf: ['ENGINEERING', 'QUALITY'] },
   { prefix: '/api/drawing-library', anyOf: ['ENGINEERING'] },
@@ -178,6 +180,30 @@ function pathOnly(value: string): string {
 
 export function apiRouteAccessRule(pathname: string): ApiRule | null {
   const path = pathOnly(pathname);
+
+  if (path === '/api/issues/assignee-options') {
+    return {
+      prefix: '/api/issues/assignee-options',
+      anyOf: ['QUALITY'],
+      action: 'UPDATE',
+    };
+  }
+
+  if (/^\/api\/issues\/[^/]+\/major-approval\/quality-review$/.test(path)) {
+    return {
+      prefix: '/api/issues/:id/major-approval/quality-review',
+      anyOf: ['QUALITY'],
+      action: 'EXECUTE_WORKFLOW',
+    };
+  }
+
+  if (/^\/api\/issues\/[^/]+\/major-approval\/final-decision$/.test(path)) {
+    return {
+      prefix: '/api/issues/:id/major-approval/final-decision',
+      anyOf: ['MAJOR_APPROVAL'],
+      action: 'APPROVE',
+    };
+  }
 
   if (/^\/api\/abnormal-time-events\/[^/]+\/(?:quality|resolve)$/.test(path)) {
     return {

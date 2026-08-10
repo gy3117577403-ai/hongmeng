@@ -28,7 +28,7 @@ import {
 } from 'lucide-react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { PortalMenu } from '@/components/PortalMenu';
-import type { CurrentUserDTO } from '@/types';
+import type { CurrentUserDTO, SystemNotificationDTO } from '@/types';
 import type {
   HomeDashboardData,
   HomeDistributionItem,
@@ -269,6 +269,9 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const [results, setResults] = useState<HomeSearchItem[]>([]);
   const [activeStreamId, setActiveStreamId] = useState<HomeWorkstreamId | null>(null);
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const [notificationPreview, setNotificationPreview] = useState<SystemNotificationDTO[]>([]);
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0);
+  const [notificationLoading, setNotificationLoading] = useState(true);
   const [refreshing, startRefresh] = useTransition();
   const utilityButtonRef = useRef<HTMLButtonElement | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -279,6 +282,26 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const displayName = user.displayName || user.username;
   const canGlobalSearch = user.access.modules.includes('SYSTEM_CONFIGURATION');
   const canOpenSettings = user.access.modules.includes('SYSTEM_CONFIGURATION');
+  const canReadNotifications = user.access.modules.includes('NOTIFICATIONS');
+
+  useEffect(() => {
+    if (!canReadNotifications) {
+      setNotificationLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setNotificationLoading(true);
+    fetch('/api/notifications?limit=3&category=ALL&unreadOnly=false', { cache: 'no-store', signal: controller.signal })
+      .then(response => response.json().then(body => ({ response, body })))
+      .then(({ response, body }) => {
+        if (!response.ok || body.ok !== true) return;
+        setNotificationPreview(Array.isArray(body.notifications) ? body.notifications : []);
+        setNotificationUnreadCount(Math.max(0, Number(body.unreadCount) || 0));
+      })
+      .catch(() => undefined)
+      .finally(() => setNotificationLoading(false));
+    return () => controller.abort();
+  }, [canReadNotifications]);
 
   useEffect(() => {
     if (!canGlobalSearch) return;
@@ -549,8 +572,8 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
         )}
         utilityActions={(
           <div className="hm-home-toolbar-actions">
-            <button type="button" aria-label="通知" title="通知" onClick={event => openUtility(event, 'notifications')}><Bell size={19} />{data.actionItems.length > 0 && <span>{Math.min(data.actionItems.length, 9)}</span>}</button>
-            <button type="button" aria-label="消息" title="消息" onClick={event => openUtility(event, 'messages')}><MessageSquareText size={19} /></button>
+            <button type="button" aria-label="业务待办" title="业务待办" onClick={event => openUtility(event, 'notifications')}><Bell size={19} />{data.actionItems.length > 0 && <span>{Math.min(data.actionItems.length, 9)}</span>}</button>
+            {canReadNotifications && <button type="button" aria-label="系统内通知" title="系统内通知" onClick={event => openUtility(event, 'messages')}><MessageSquareText size={19} />{notificationUnreadCount > 0 && <span>{Math.min(notificationUnreadCount, 9)}</span>}</button>}
             <button type="button" aria-label="帮助" title="帮助" onClick={event => openUtility(event, 'help')}><CircleHelp size={19} /></button>
             <button className="hm-home-refresh" type="button" aria-label="刷新首页数据" title="刷新首页数据" disabled={refreshing} onClick={refresh}><RefreshCw className={refreshing ? 'is-spinning' : ''} size={18} /></button>
           </div>
@@ -558,8 +581,8 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
       />
 
       <PortalMenu open={utilityPanel !== null} anchorRef={utilityButtonRef} className="hm-home-utility-menu" width={300} closeOnSelect={false} onClose={() => setUtilityPanel(null)}>
-        {utilityPanel === 'notifications' && <div><header><Bell size={17} /><strong>待办通知</strong></header>{data.actionItems.length ? data.actionItems.slice(0, 3).map(item => <Link href={item.targetRoute} prefetch={false} key={item.id}><b>{item.title}</b><span>{item.subtitle}</span></Link>) : <p>当前没有新的待办通知</p>}<Link className="hm-home-utility-all" href="/workspace/messages" prefetch={false}>查看消息中心</Link></div>}
-        {utilityPanel === 'messages' && <div><header><MessageSquareText size={17} /><strong>消息中心</strong></header><p>消息能力正在规划，当前入口不影响生产业务。</p><Link className="hm-home-utility-all" href="/workspace/messages" prefetch={false}>查看规划说明</Link></div>}
+        {utilityPanel === 'notifications' && <div><header><Bell size={17} /><strong>业务待办</strong></header>{data.actionItems.length ? data.actionItems.slice(0, 3).map(item => <Link href={item.targetRoute} prefetch={false} key={item.id}><b>{item.title}</b><span>{item.subtitle}</span></Link>) : <p>当前没有新的业务待办</p>}</div>}
+        {utilityPanel === 'messages' && <div><header><MessageSquareText size={17} /><strong>系统内通知{notificationUnreadCount > 0 ? ` · ${notificationUnreadCount} 未读` : ''}</strong></header>{notificationLoading ? <p>正在读取个人通知…</p> : notificationPreview.length ? notificationPreview.map(item => <Link href={item.targetRoute || '/workspace/messages'} prefetch={false} key={item.id}><b>{item.readAt ? item.title : `● ${item.title}`}</b><span>{item.body || '打开消息中心查看详情'}</span></Link>) : <p>当前没有系统内通知</p>}<Link className="hm-home-utility-all" href="/workspace/messages" prefetch={false}>查看全部通知</Link></div>}
         {utilityPanel === 'help' && <div><header><CircleHelp size={17} /><strong>帮助与支持</strong></header><Link href="/workspace/help" prefetch={false}><b>使用帮助</b><span>查看平台模块和规划入口</span></Link>{canOpenSettings && <Link href="/dashboard?openSettings=1" prefetch={false}><b>系统设置</b><span>安装、诊断和账号设置</span></Link>}</div>}
       </PortalMenu>
 

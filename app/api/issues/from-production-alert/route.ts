@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { ForbiddenError, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
   alertsForProductionOrder,
   issueDetailInclude,
@@ -12,6 +12,7 @@ import {
 } from '@/lib/issues';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { loadProductionOrderById } from '@/lib/production-execution';
 
 export const runtime = 'nodejs';
@@ -23,6 +24,7 @@ function optionalText(value: unknown, max: number): string | null {
 
 export async function POST(req: NextRequest) {
   try {
+    assertSameOriginMutationRequest(req);
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const workOrderId = optionalText(body.workOrderId, 80);
@@ -122,7 +124,7 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({ ok: true, created: result.created, restored: result.restored, issue: serializeIssue(result.issue) }, { status: result.created ? 201 : 200 });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
     console.error('create issue from production alert failed', error);
     return NextResponse.json({ ok: false, error: '生产异常转问题失败' }, { status: 500 });
   }

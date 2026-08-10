@@ -29,6 +29,40 @@ test('finance account cannot call summary, search or business APIs', () => {
   assert.equal(canAccessApiRoute(finance, '/api/me', 'GET'), true);
   assert.equal(canAccessApiRoute(finance, '/api/dashboard/production-summary', 'GET'), false);
   assert.equal(canAccessApiRoute(finance, '/api/search', 'GET'), false);
+  assert.equal(canAccessApiRoute(finance, '/api/notifications', 'GET'), true);
+  assert.equal(canAccessApiRoute(finance, '/api/notifications/n1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(finance, '/api/major-quality-approvals', 'GET'), false);
+});
+
+test('major quality commands preserve quality review and GM final-decision separation', () => {
+  const quality = context({
+    profile: 'DEPARTMENT_FULL',
+    departmentCode: 'QUALITY',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:QUALITY',
+  });
+  const gm = context({
+    profile: 'GM_OFFICE_READER_APPROVER',
+    departmentCode: 'GM_OFFICE',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:GM_OFFICE',
+  });
+  const planning = context({
+    profile: 'DEPARTMENT_FULL',
+    departmentCode: 'PLANNING',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:PLANNING',
+  });
+
+  assert.equal(canAccessApiRoute(quality, '/api/major-quality-approvals', 'GET'), true);
+  assert.equal(canAccessApiRoute(quality, '/api/issues/assignee-options', 'GET'), true);
+  assert.equal(canAccessApiRoute(quality, '/api/issues/i1/major-approval/quality-review', 'POST'), true);
+  assert.equal(canAccessApiRoute(quality, '/api/issues/i1/major-approval/final-decision', 'POST'), false);
+  assert.equal(canAccessApiRoute(gm, '/api/major-quality-approvals', 'GET'), true);
+  assert.equal(canAccessApiRoute(gm, '/api/issues/assignee-options', 'GET'), false);
+  assert.equal(canAccessApiRoute(gm, '/api/issues/i1/major-approval/quality-review', 'POST'), false);
+  assert.equal(canAccessApiRoute(gm, '/api/issues/i1/major-approval/final-decision', 'POST'), true);
+  assert.equal(canAccessApiRoute(planning, '/api/major-quality-approvals', 'GET'), false);
 });
 
 test('GM can read mapped business APIs but cannot mutate them', () => {
@@ -53,6 +87,7 @@ test('field reporter is limited to the existing QR report API', () => {
   assert.equal(canAccessApiRoute(reporter, '/api/field-report/tickets/code', 'GET'), true);
   assert.equal(canAccessApiRoute(reporter, '/api/field-report/tickets/code/completions', 'POST'), true);
   assert.equal(canAccessApiRoute(reporter, '/api/production/arrangements', 'GET'), false);
+  assert.equal(canAccessApiRoute(reporter, '/api/notifications', 'GET'), false);
 });
 
 test('unknown API routes remain distinguishable for fail-closed callers', () => {

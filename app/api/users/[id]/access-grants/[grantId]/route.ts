@@ -9,6 +9,8 @@ import {
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
+import { createSystemNotification } from '@/lib/system-notifications';
 import {
   AccessGrantInputError,
   prepareAccessGrant,
@@ -23,6 +25,7 @@ type GrantRouteContext = { params: { id: string; grantId: string } };
 
 export async function PATCH(request: NextRequest, { params }: GrantRouteContext) {
   try {
+    assertSameOriginMutationRequest(request);
     const current = await requireAdmin();
     const body = await request.json().catch(() => ({})) as AccessGrantInput & {
       isActive?: boolean;
@@ -71,10 +74,24 @@ export async function PATCH(request: NextRequest, { params }: GrantRouteContext)
         where: { id: user.id },
         data: { sessionVersion: { increment: 1 } },
       });
-      return tx.userAccessGrant.findUniqueOrThrow({
+      const saved = await tx.userAccessGrant.findUniqueOrThrow({
         where: { id: currentGrant.id },
         include: { department: { select: { id: true, code: true, name: true } } },
       });
+      await createSystemNotification(tx, {
+        eventType: saved.isActive ? 'ACCOUNT_ADDITIONAL_ACCESS_UPDATED' : 'ACCOUNT_ADDITIONAL_ACCESS_REVOKED',
+        dedupeKey: `account:${user.id}:grant:${saved.id}:version:${saved.version}`,
+        category: 'ACCOUNT',
+        priority: 'HIGH',
+        title: saved.isActive ? '你的兼岗或代班权限已更新' : '你的兼岗或代班权限已停用',
+        body: '请按个人账号中心显示的当前权限范围使用系统。',
+        targetRoute: '/account',
+        sourceType: 'user_access_grant',
+        sourceId: saved.id,
+        actorId: current.id,
+        recipientUserIds: [user.id],
+      });
+      return saved;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     await logOp({
@@ -101,6 +118,7 @@ export async function PATCH(request: NextRequest, { params }: GrantRouteContext)
 
 export async function DELETE(request: NextRequest, { params }: GrantRouteContext) {
   try {
+    assertSameOriginMutationRequest(request);
     const current = await requireAdmin();
     const body = await request.json().catch(() => ({})) as { expectedVersion?: number };
     if (!Number.isInteger(body.expectedVersion) || Number(body.expectedVersion) < 0) {
@@ -122,6 +140,19 @@ export async function DELETE(request: NextRequest, { params }: GrantRouteContext
       await tx.user.update({
         where: { id: params.id },
         data: { sessionVersion: { increment: 1 } },
+      });
+      await createSystemNotification(tx, {
+        eventType: 'ACCOUNT_ADDITIONAL_ACCESS_REVOKED',
+        dedupeKey: `account:${params.id}:grant:${grant.id}:revoked-version:${grant.version + 1}`,
+        category: 'ACCOUNT',
+        priority: 'HIGH',
+        title: '你的兼岗或代班权限已撤销',
+        body: '权限已立即失效，旧登录也已失效。',
+        targetRoute: '/account',
+        sourceType: 'user_access_grant',
+        sourceId: grant.id,
+        actorId: current.id,
+        recipientUserIds: [params.id],
       });
       return grant;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });

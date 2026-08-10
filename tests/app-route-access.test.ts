@@ -18,6 +18,8 @@ test('finance account lands on account center and cannot open business pages', (
   assert.equal(canAccessAppRoute(finance, '/home'), false);
   assert.equal(canAccessAppRoute(finance, '/production'), false);
   assert.equal(canAccessAppRoute(finance, '/workspace/reports'), false);
+  assert.equal(canAccessAppRoute(finance, '/workspace/messages'), true);
+  assert.equal(canAccessAppRoute(finance, '/workspace/approvals'), false);
 });
 
 test('department users receive only their mapped module entries plus shared workflow', () => {
@@ -39,6 +41,7 @@ test('GM read/approval grants map to reports and workflow but not settings', () 
   const gm = access('ACCOUNT_SELF', 'BASIC_SUMMARY', 'MAJOR_APPROVAL');
   assert.equal(canAccessAppRoute(gm, '/workspace/reports'), true);
   assert.equal(canAccessAppRoute(gm, '/workspace/workflows'), true);
+  assert.equal(canAccessAppRoute(gm, '/workspace/approvals'), true);
   assert.equal(canAccessAppRoute(gm, '/dashboard?openSettings=1'), false);
 });
 

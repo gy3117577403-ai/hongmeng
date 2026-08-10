@@ -9,6 +9,8 @@ import {
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
+import { createSystemNotification } from '@/lib/system-notifications';
 import {
   AccessGrantInputError,
   prepareAccessGrant,
@@ -21,6 +23,7 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
+    assertSameOriginMutationRequest(request);
     const current = await requireAdmin();
     const body = await request.json().catch(() => ({})) as AccessGrantInput;
     const grant = await prisma.$transaction(async tx => {
@@ -51,6 +54,21 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       await tx.user.update({
         where: { id: user.id },
         data: { sessionVersion: { increment: 1 } },
+      });
+      await createSystemNotification(tx, {
+        eventType: 'ACCOUNT_ADDITIONAL_ACCESS_GRANTED',
+        dedupeKey: `account:${user.id}:grant:${created.id}:created`,
+        category: 'ACCOUNT',
+        priority: 'HIGH',
+        title: prepared.grantType === 'ACTING' ? '你的代班权限已配置' : '你的兼岗权限已配置',
+        body: prepared.effectiveTo
+          ? `权限有效至 ${prepared.effectiveTo.toISOString().slice(0, 10)}。`
+          : '权限已按管理员配置生效。',
+        targetRoute: '/account',
+        sourceType: 'user_access_grant',
+        sourceId: created.id,
+        actorId: current.id,
+        recipientUserIds: [user.id],
       });
       return created;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });

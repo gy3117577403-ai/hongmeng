@@ -6,6 +6,7 @@ import {
   unauthorized,
 } from '@/lib/auth';
 import { DailyPlanDisabledError } from '@/lib/daily-plan-feature';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 
 type DomainErrorLike = Error & { status?: number; code?: string };
 
@@ -31,23 +32,7 @@ export function readExpectedVersion(body: Record<string, unknown>): unknown {
  * production reverse proxy.
  */
 export function assertDailyPlanMutationRequest(request: Request) {
-  if (request.headers.get('sec-fetch-site') === 'cross-site') {
-    throw new ForbiddenError('跨站请求已拒绝');
-  }
-
-  const origin = request.headers.get('origin');
-  if (!origin) return;
-
-  const url = new URL(request.url);
-  const forwardedHost = request.headers.get('x-forwarded-host')?.split(',')[0]?.trim();
-  const host = forwardedHost || request.headers.get('host') || url.host;
-  const forwardedProtocol = request.headers.get('x-forwarded-proto')?.split(',')[0]?.trim();
-  const protocol = forwardedProtocol || url.protocol.replace(':', '');
-  const allowedOrigins = new Set([url.origin, `${protocol}://${host}`]);
-
-  if (!allowedOrigins.has(origin)) {
-    throw new ForbiddenError('跨站请求已拒绝');
-  }
+  assertSameOriginMutationRequest(request);
 }
 
 export function dailyPlanError(error: unknown, context: string) {

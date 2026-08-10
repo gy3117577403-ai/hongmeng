@@ -1,20 +1,45 @@
 import crypto from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { issueDetailInclude, serializeIssue } from '@/lib/issues';
+import { ForbiddenError, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { issueAttachmentMutationLock, issueDetailInclude, serializeIssue } from '@/lib/issues';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
 import { fileType, safeFilename, validateFileContent } from '@/lib/validation';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+class IssueAttachmentConflictError extends Error {}
+
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
+    assertSameOriginMutationRequest(req);
     const user = await requireUser();
-    const issue = await prisma.issue.findFirst({ where: { id: params.id, deletedAt: null }, select: { id: true } });
+    const issue = await prisma.issue.findFirst({
+      where: { id: params.id, deletedAt: null },
+      select: {
+        id: true,
+        status: true,
+        version: true,
+        majorApprovals: {
+          where: { status: { in: ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL', 'APPROVED'] } },
+          select: { status: true },
+        },
+      },
+    });
     if (!issue) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
+    const attachmentLock = issueAttachmentMutationLock(
+      issue.status,
+      issue.majorApprovals.map(approval => approval.status),
+    );
+    if (attachmentLock === 'approval_pending') {
+      return NextResponse.json({ ok: false, error: '重大审批进行中，不能增删审批附件；请先退回处理' }, { status: 409 });
+    }
+    if (attachmentLock === 'final_approved') {
+      return NextResponse.json({ ok: false, error: '重大问题已终审关闭，请先重新打开再修改附件' }, { status: 409 });
+    }
     const form = await req.formData();
     const upload = form.get('file');
     if (!(upload instanceof File)) return NextResponse.json({ ok: false, error: '请选择附件' }, { status: 400 });
@@ -28,6 +53,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     let result;
     try {
       result = await prisma.$transaction(async tx => {
+        const updated = await tx.issue.updateMany({
+          where: {
+            id: issue.id,
+            status: issue.status,
+            version: issue.version,
+            deletedAt: null,
+            majorApprovals: {
+              none: { status: { in: ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL'] } },
+            },
+          },
+          data: { version: { increment: 1 } },
+        });
+        if (updated.count !== 1) throw new IssueAttachmentConflictError();
         const attachment = await tx.issueAttachment.create({
           data: {
             issueId: issue.id,
@@ -40,7 +78,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           },
         });
         await tx.issueActivity.create({ data: { issueId: issue.id, action: 'upload_attachment', content: `上传附件：${upload.name.slice(0, 160)}`, actorId: user.id, detail: { attachmentId: attachment.id } } });
-        await tx.issue.update({ where: { id: issue.id }, data: { updatedAt: new Date() } });
         const updatedIssue = await tx.issue.findUniqueOrThrow({ where: { id: issue.id }, include: issueDetailInclude });
         return { attachmentId: attachment.id, issue: updatedIssue };
       });
@@ -51,7 +88,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     await logOp({ userId: user.id, action: 'upload_issue_attachment', targetType: 'issue_attachment', targetId: result.attachmentId, detail: { issueId: issue.id, fileType: fileType(upload.name, mimeType), size: upload.size } });
     return NextResponse.json({ ok: true, issue: serializeIssue(result.issue) });
   } catch (error) {
-    if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
+    if (error instanceof IssueAttachmentConflictError) {
+      return NextResponse.json({ ok: false, error: '问题或审批状态已变化，请刷新后重试' }, { status: 409 });
+    }
     console.error('issue attachment upload failed', error);
     return NextResponse.json({ ok: false, error: '问题附件上传失败' }, { status: 500 });
   }

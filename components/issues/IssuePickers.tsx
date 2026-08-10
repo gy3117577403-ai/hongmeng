@@ -2,7 +2,7 @@
 
 import { Check, ChevronDown, Copy, Loader2, Plus, Search, UserRound, X } from 'lucide-react';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import type { EmployeeDTO, IssueWorkOrderDraftDTO, IssueWorkOrderOptionDTO } from '@/types';
+import type { IssueAssigneeOptionDTO, IssueWorkOrderDraftDTO, IssueWorkOrderOptionDTO } from '@/types';
 
 type BasePickerProps = {
   disabled?: boolean;
@@ -349,11 +349,11 @@ export function WorkOrderPicker({
   </div>;
 }
 
-function employeeLabel(employee: EmployeeDTO): string {
+function employeeLabel(employee: IssueAssigneeOptionDTO): string {
   return `${employee.name} · ${employee.employeeNo}`;
 }
 
-function filterEmployees(employees: EmployeeDTO[], query: string): EmployeeDTO[] {
+function filterEmployees(employees: IssueAssigneeOptionDTO[], query: string): IssueAssigneeOptionDTO[] {
   const normalized = searchText(query);
   const active = employees.filter(employee => employee.isActive);
   if (!normalized) return active;
@@ -362,8 +362,8 @@ function filterEmployees(employees: EmployeeDTO[], query: string): EmployeeDTO[]
   ].some(item => searchText(item).includes(normalized)));
 }
 
-function groupEmployees(employees: EmployeeDTO[]): Array<{ department: string; employees: EmployeeDTO[] }> {
-  const groups = new Map<string, EmployeeDTO[]>();
+function groupEmployees(employees: IssueAssigneeOptionDTO[]): Array<{ department: string; employees: IssueAssigneeOptionDTO[] }> {
+  const groups = new Map<string, IssueAssigneeOptionDTO[]>();
   employees.forEach(employee => {
     const department = employee.department?.trim() || '未设置部门';
     const list = groups.get(department) || [];
@@ -385,7 +385,7 @@ export function EmployeePicker({
   disabled,
   placeholder = '搜索姓名、工号、部门或岗位',
 }: BasePickerProps & {
-  employees: EmployeeDTO[];
+  employees: IssueAssigneeOptionDTO[];
   value: string;
   onChange: (id: string) => void;
   placeholder?: string;
@@ -443,7 +443,7 @@ export function EmployeeMultiPicker({
   excludeIds = [],
   disabled,
 }: BasePickerProps & {
-  employees: EmployeeDTO[];
+  employees: IssueAssigneeOptionDTO[];
   values: string[];
   onChange: (ids: string[]) => void;
   excludeIds?: string[];
@@ -454,7 +454,7 @@ export function EmployeeMultiPicker({
   const close = (): void => { setOpen(false); setQuery(''); };
   const rootRef = useOutsideClose(open, close);
   const excluded = useMemo(() => new Set(excludeIds), [excludeIds]);
-  const selected = useMemo(() => values.map(id => employees.find(employee => employee.id === id)).filter((item): item is EmployeeDTO => !!item), [employees, values]);
+  const selected = useMemo(() => values.map(id => employees.find(employee => employee.id === id)).filter((item): item is IssueAssigneeOptionDTO => !!item), [employees, values]);
   const grouped = useMemo(() => groupEmployees(filterEmployees(employees, query)), [employees, query]);
   const matchCount = grouped.reduce((total, group) => total + group.employees.length, 0);
 

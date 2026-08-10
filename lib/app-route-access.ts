@@ -29,6 +29,7 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/connector-assembly-manuals', anyOf: ['ENGINEERING'] },
   { prefix: '/connector-parameters', anyOf: ['ENGINEERING'] },
   { prefix: '/workspace/issues', anyOf: ['QUALITY'] },
+  { prefix: '/workspace/approvals', anyOf: ['QUALITY', 'MAJOR_APPROVAL'] },
   { prefix: '/workspace/changes', anyOf: ['ENGINEERING', 'QUALITY'] },
   {
     prefix: '/workspace/workflows',

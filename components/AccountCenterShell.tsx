@@ -12,8 +12,8 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import type { CurrentUserDTO } from '@/types';
+import { useEffect, useState } from 'react';
+import type { CurrentUserDTO, SystemNotificationDTO } from '@/types';
 
 const MODULE_LABELS: Partial<Record<CurrentUserDTO['access']['modules'][number], string>> = {
   BUSINESS: '业务部',
@@ -42,7 +42,28 @@ function accountScopeLabel(user: CurrentUserDTO): string {
 export default function AccountCenterShell({ user }: { user: CurrentUserDTO }) {
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [notifications, setNotifications] = useState<SystemNotificationDTO[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
   const employeeName = user.employee?.name || user.displayName || user.username;
+
+  useEffect(() => {
+    if (!user.access.modules.includes('NOTIFICATIONS')) {
+      setNotificationsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    fetch('/api/notifications?limit=3&category=ALL&unreadOnly=false', { cache: 'no-store', signal: controller.signal })
+      .then(response => response.json().then(data => ({ response, data })))
+      .then(({ response, data }) => {
+        if (!response.ok || data.ok !== true) return;
+        setNotifications(Array.isArray(data.notifications) ? data.notifications : []);
+        setUnreadCount(Math.max(0, Number(data.unreadCount) || 0));
+      })
+      .catch(() => undefined)
+      .finally(() => setNotificationsLoading(false));
+    return () => controller.abort();
+  }, [user.access.modules]);
 
   async function logout() {
     setLoggingOut(true);
@@ -85,8 +106,8 @@ export default function AccountCenterShell({ user }: { user: CurrentUserDTO }) {
         </section>
 
         <section className="account-center-card">
-          <header><Bell /><div><h2>系统内通知</h2><p>后续业务流程通知统一汇总到这里</p></div></header>
-          <div className="account-center-empty"><Bell /><b>暂无新通知</b><span>流程模块接入后，将显示待办、审批和账号变更消息。</span></div>
+          <header><Bell /><div><h2>系统内通知{unreadCount > 0 && <em>{unreadCount > 99 ? '99+' : unreadCount}</em>}</h2><p>账号变更、待办与审批消息统一留存</p></div></header>
+          {notificationsLoading ? <div className="account-center-empty"><Bell /><b>正在读取通知…</b></div> : notifications.length ? <div className="account-center-notifications">{notifications.map(item => <Link href={item.targetRoute || '/workspace/messages'} key={item.id}><span className={item.readAt ? '' : 'unread'} /><div><b>{item.title}</b><small>{new Date(item.createdAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}</small></div><ChevronRight /></Link>)}<Link className="account-center-notification-all" href="/workspace/messages">进入消息中心 <ChevronRight /></Link></div> : <div className="account-center-empty"><Bell /><b>暂无系统内通知</b><span>新的账号、待办和审批消息会显示在这里。</span><Link href="/workspace/messages">打开消息中心</Link></div>}
         </section>
 
         <section className="account-center-card account-center-security">

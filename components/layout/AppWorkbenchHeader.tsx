@@ -2,6 +2,7 @@
 
 import {
   BarChart3,
+  Bell,
   BookOpen,
   Boxes,
   CalendarClock,
@@ -9,6 +10,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock3,
+  ClipboardCheck,
   FolderKanban,
   GitPullRequestArrow,
   HelpCircle,
@@ -79,6 +81,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
     label: '协同规划',
     items: [
       { href: '/workspace/issues', label: '问题管理', icon: ShieldCheck },
+      { href: '/workspace/approvals', label: '重大审批', icon: ClipboardCheck },
       { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
       { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
       { href: '/workspace/warehouse', label: '仓库管理', icon: Warehouse },
@@ -88,6 +91,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/workspace/attendance', label: '考勤与异常', icon: CalendarClock },
       { href: '/workspace/knowledge', label: '知识库', icon: BookOpen },
       { href: '/workspace/reports', label: '报表中心', icon: BarChart3 },
+      { href: '/workspace/messages', label: '消息中心', icon: Bell },
     ],
   },
 ];

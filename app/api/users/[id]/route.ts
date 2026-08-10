@@ -9,6 +9,8 @@ import {
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
+import { createSystemNotification } from '@/lib/system-notifications';
 import {
   AccessGrantInputError,
   adminUserInclude,
@@ -49,6 +51,7 @@ function inferProfile(
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   try {
+    assertSameOriginMutationRequest(request);
     const current = await requireAdmin();
     const body = await request.json().catch(() => ({})) as {
       displayName?: string;
@@ -175,7 +178,23 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
         });
       }
 
-      return tx.user.findUniqueOrThrow({ where: { id: old.id }, include: adminUserInclude });
+      const saved = await tx.user.findUniqueOrThrow({ where: { id: old.id }, include: adminUserInclude });
+      if (securityChanged && saved.isActive && saved.accountStatus === AccountStatus.ACTIVE) {
+        await createSystemNotification(tx, {
+          eventType: nextIsActive !== old.isActive ? 'ACCOUNT_REENABLED' : 'ACCOUNT_ACCESS_UPDATED',
+          dedupeKey: `account:${saved.id}:security-version:${saved.sessionVersion}`,
+          category: 'ACCOUNT',
+          priority: 'HIGH',
+          title: nextIsActive !== old.isActive ? '你的系统账号已重新启用' : '你的账号权限已更新',
+          body: '权限变更已生效，请按当前部门、兼岗或代班范围使用系统。',
+          targetRoute: '/account',
+          sourceType: 'user',
+          sourceId: saved.id,
+          actorId: current.id,
+          recipientUserIds: [saved.id],
+        });
+      }
+      return saved;
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
     if (user instanceof NextResponse) return user;

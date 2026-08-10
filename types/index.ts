@@ -280,6 +280,25 @@ export type CurrentUserDTO = {
   canManageDailyPlanningOrganization: boolean;
 };
 
+export type SystemNotificationCategoryDTO = 'SYSTEM' | 'ACCOUNT' | 'TODO' | 'APPROVAL';
+
+export type SystemNotificationPriorityDTO = 'NORMAL' | 'HIGH' | 'URGENT';
+
+export type SystemNotificationDTO = {
+  id: string;
+  eventType: string;
+  category: SystemNotificationCategoryDTO;
+  priority: SystemNotificationPriorityDTO;
+  title: string;
+  body: string | null;
+  targetRoute: string | null;
+  sourceType: string | null;
+  sourceId: string | null;
+  actorName: string | null;
+  readAt: string | null;
+  createdAt: string;
+};
+
 export type OperationLogDTO = {
   id: string;
   createdAt: string;
@@ -346,6 +365,26 @@ export type TrashDTO = {
 export type IssueStatus = 'pending' | 'processing' | 'verifying' | 'closed';
 export type IssuePriority = 'urgent' | 'high' | 'normal';
 export type IssueType = 'production' | 'planning' | 'technical' | 'process' | 'quality' | 'material' | 'equipment' | 'other';
+export type MajorQualityApprovalStatusDTO =
+  | 'PENDING_QUALITY_REVIEW'
+  | 'PENDING_GM_APPROVAL'
+  | 'APPROVED'
+  | 'QUALITY_RETURNED'
+  | 'GM_RETURNED'
+  | 'CANCELLED';
+
+export type IssueMajorApprovalSummaryDTO = {
+  id: string;
+  round: number;
+  status: MajorQualityApprovalStatusDTO;
+  version: number;
+  submittedByName?: string | null;
+  submittedAt: string;
+  qualityReviewedByName?: string | null;
+  qualityReviewedAt?: string | null;
+  finalReviewedByName?: string | null;
+  finalReviewedAt?: string | null;
+};
 
 export type IssueUserDTO = {
   id: string;
@@ -359,6 +398,16 @@ export type IssueEmployeeDTO = {
   name: string;
   displayName: string;
   username: string;
+  department?: string | null;
+  position?: string | null;
+  team?: string | null;
+  isActive: boolean;
+};
+
+export type IssueAssigneeOptionDTO = {
+  id: string;
+  employeeNo: string;
+  name: string;
   department?: string | null;
   position?: string | null;
   team?: string | null;
@@ -455,6 +504,10 @@ export type IssueDTO = {
   rootCause?: string | null;
   solution?: string | null;
   verificationResult?: string | null;
+  isMajorQuality: boolean;
+  majorQualityReason?: string | null;
+  version: number;
+  majorApproval?: IssueMajorApprovalSummaryDTO | null;
   resolvedAt?: string | null;
   verifiedAt?: string | null;
   closedAt?: string | null;

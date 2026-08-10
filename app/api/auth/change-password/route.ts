@@ -1,16 +1,18 @@
 import bcrypt from 'bcryptjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { SESSION_COOKIE } from '@/lib/constants';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { ForbiddenError, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { validateNewPassword } from '@/lib/password-policy';
 import { prisma } from '@/lib/prisma';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
   try {
+    assertSameOriginMutationRequest(req);
     const sessionUser = await requireUser({ write: 'self', allowPasswordChange: true });
     const body = await req.json() as {
       currentPassword?: string;
@@ -65,7 +67,7 @@ export async function POST(req: NextRequest) {
     });
     return res;
   } catch (e) {
-    if (e instanceof UnauthorizedError) return unauthorized();
+    if (e instanceof UnauthorizedError || e instanceof ForbiddenError) return unauthorized();
     console.error(e);
     return NextResponse.json({ message: '修改密码失败' }, { status: 500 });
   }
