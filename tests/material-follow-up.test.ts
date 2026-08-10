@@ -11,11 +11,13 @@ function state(status: MaterialFollowUpTransitionState['status'] = 'PENDING'): M
   return { status, ownerId: null, expectedAt: null };
 }
 
-test('only shortage feedback enters the material follow-up queue', () => {
+test('every warehouse material exception enters the synchronized follow-up queue', () => {
   assert.equal(isTrackedWarehouseException('shortage'), true);
   assert.equal(isTrackedWarehouseException('insufficient_quantity'), true);
-  assert.equal(isTrackedWarehouseException('wrong_material'), false);
-  assert.equal(isTrackedWarehouseException('quality_issue'), false);
+  assert.equal(isTrackedWarehouseException('wrong_material'), true);
+  assert.equal(isTrackedWarehouseException('quality_issue'), true);
+  assert.equal(isTrackedWarehouseException('other'), true);
+  assert.equal(isTrackedWarehouseException(null), false);
 });
 
 test('claim assigns the current actor and starts follow-up', () => {

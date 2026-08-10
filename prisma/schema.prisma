@@ -218,6 +218,14 @@ enum MaterialFollowUpStatus {
   @@map("material_follow_up_status")
 }
 
+enum WarehouseExceptionCaseStatus {
+  OPEN
+  RESOLVED
+  CANCELLED
+
+  @@map("warehouse_exception_case_status")
+}
+
 enum RecruitmentDemandStatus {
   DRAFT
   PENDING_APPROVAL
@@ -283,6 +291,10 @@ model User {
   completedMaterialTasks         WarehouseMaterialTask[]      @relation("WarehouseTaskCompletedBy")
   updatedMaterialTasks           WarehouseMaterialTask[]      @relation("WarehouseTaskUpdatedBy")
   warehouseActivities            WarehouseMaterialActivity[]  @relation("WarehouseActivityActor")
+  reportedWarehouseExceptions    WarehouseMaterialExceptionCase[] @relation("WarehouseExceptionReportedBy")
+  estimatedWarehouseExceptions   WarehouseMaterialExceptionCase[] @relation("WarehouseExceptionExpectedBy")
+  arrivedWarehouseExceptions     WarehouseMaterialExceptionCase[] @relation("WarehouseExceptionArrivedBy")
+  resolvedWarehouseExceptions    WarehouseMaterialExceptionCase[] @relation("WarehouseExceptionResolvedBy")
   createdMaterialFollowUps       MaterialFollowUpTask[]       @relation("MaterialFollowUpCreatedBy")
   ownedMaterialFollowUps         MaterialFollowUpTask[]       @relation("MaterialFollowUpOwner")
   resolvedMaterialFollowUps      MaterialFollowUpTask[]       @relation("MaterialFollowUpResolvedBy")
@@ -1992,13 +2004,50 @@ model WarehouseMaterialTask {
   completedBy   User?                       @relation("WarehouseTaskCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
   updatedBy     User?                       @relation("WarehouseTaskUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
   activities    WarehouseMaterialActivity[]
-  followUpTask  MaterialFollowUpTask?
+  exceptionCases WarehouseMaterialExceptionCase[]
+  followUpTasks MaterialFollowUpTask[]
 
   @@index([status])
   @@index([exceptionType])
   @@index([expectedAt])
   @@index([updatedAt])
   @@map("warehouse_material_tasks")
+}
+
+model WarehouseMaterialExceptionCase {
+  id                       String                       @id @default(uuid())
+  warehouseTaskId          String                       @map("warehouse_task_id")
+  sequence                 Int
+  status                   WarehouseExceptionCaseStatus @default(OPEN)
+  exceptionType            String                       @map("exception_type")
+  exceptionNote            String                       @map("exception_note")
+  weekStartDate            DateTime?                    @map("week_start_date")
+  weekEndDate              DateTime?                    @map("week_end_date")
+  reportedAt               DateTime                     @default(now()) @map("reported_at")
+  reportedById             String?                      @map("reported_by_id")
+  expectedArrivalAt        DateTime?                    @map("expected_arrival_at")
+  expectedArrivalById      String?                      @map("expected_arrival_by_id")
+  expectedArrivalUpdatedAt DateTime?                    @map("expected_arrival_updated_at")
+  actualArrivalAt          DateTime?                    @map("actual_arrival_at")
+  actualArrivalById        String?                      @map("actual_arrival_by_id")
+  resolvedAt               DateTime?                    @map("resolved_at")
+  resolvedById             String?                      @map("resolved_by_id")
+  resolutionNote           String?                      @map("resolution_note")
+  createdAt                DateTime                     @default(now()) @map("created_at")
+  updatedAt                DateTime                     @updatedAt @map("updated_at")
+  warehouseTask            WarehouseMaterialTask        @relation(fields: [warehouseTaskId], references: [id], onDelete: Cascade)
+  reportedBy               User?                        @relation("WarehouseExceptionReportedBy", fields: [reportedById], references: [id], onDelete: SetNull)
+  expectedArrivalBy        User?                        @relation("WarehouseExceptionExpectedBy", fields: [expectedArrivalById], references: [id], onDelete: SetNull)
+  actualArrivalBy          User?                        @relation("WarehouseExceptionArrivedBy", fields: [actualArrivalById], references: [id], onDelete: SetNull)
+  resolvedBy               User?                        @relation("WarehouseExceptionResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  followUpTask             MaterialFollowUpTask?
+
+  @@unique([warehouseTaskId, sequence])
+  @@index([warehouseTaskId, status])
+  @@index([status, expectedArrivalAt])
+  @@index([weekStartDate, status])
+  @@index([resolvedAt])
+  @@map("warehouse_material_exception_cases")
 }
 
 model WarehouseMaterialActivity {
@@ -2022,7 +2071,8 @@ model WarehouseMaterialActivity {
 
 model MaterialFollowUpTask {
   id              String                     @id @default(uuid())
-  warehouseTaskId String                     @unique @map("warehouse_task_id")
+  warehouseTaskId String                     @map("warehouse_task_id")
+  warehouseExceptionId String                @unique @map("warehouse_exception_id")
   status          MaterialFollowUpStatus     @default(PENDING)
   ownerId         String?                    @map("owner_id")
   createdById     String?                    @map("created_by_id")
@@ -2035,12 +2085,14 @@ model MaterialFollowUpTask {
   createdAt       DateTime                   @default(now()) @map("created_at")
   updatedAt       DateTime                   @updatedAt @map("updated_at")
   warehouseTask   WarehouseMaterialTask      @relation(fields: [warehouseTaskId], references: [id], onDelete: Cascade)
+  warehouseException WarehouseMaterialExceptionCase @relation(fields: [warehouseExceptionId], references: [id], onDelete: Cascade)
   owner           User?                      @relation("MaterialFollowUpOwner", fields: [ownerId], references: [id], onDelete: SetNull)
   createdBy       User?                      @relation("MaterialFollowUpCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   resolvedBy      User?                      @relation("MaterialFollowUpResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
   activities      MaterialFollowUpActivity[]
 
   @@index([status, expectedAt])
+  @@index([warehouseTaskId])
   @@index([ownerId, status])
   @@index([updatedAt])
   @@map("material_follow_up_tasks")

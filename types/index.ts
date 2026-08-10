@@ -465,6 +465,27 @@ export type WarehouseMaterialActivityDTO = {
   createdAt: string;
 };
 
+export type WarehouseMaterialExceptionCaseDTO = {
+  id: string;
+  sequence: number;
+  status: 'OPEN' | 'RESOLVED' | 'CANCELLED';
+  exceptionType: WarehouseExceptionType;
+  exceptionTypeText: string;
+  exceptionNote: string;
+  weekStartDate?: string | null;
+  weekEndDate?: string | null;
+  reportedAt: string;
+  reportedBy?: IssueUserDTO | null;
+  expectedArrivalAt?: string | null;
+  expectedArrivalBy?: IssueUserDTO | null;
+  expectedArrivalUpdatedAt?: string | null;
+  actualArrivalAt?: string | null;
+  actualArrivalBy?: IssueUserDTO | null;
+  resolvedAt?: string | null;
+  resolvedBy?: IssueUserDTO | null;
+  resolutionNote?: string | null;
+};
+
 export type WarehouseMaterialTaskDTO = {
   id: string;
   workOrderId: string;
@@ -490,6 +511,7 @@ export type WarehouseMaterialTaskDTO = {
     latestProgress?: string | null;
     updatedAt: string;
   } | null;
+  lastResolvedException?: WarehouseMaterialExceptionCaseDTO | null;
   workOrder: {
     id: string;
     code: string;
@@ -540,6 +562,7 @@ export type MaterialFollowUpActivityDTO = {
 export type MaterialFollowUpTaskDTO = {
   id: string;
   warehouseTaskId: string;
+  warehouseExceptionId: string;
   status: MaterialFollowUpStatusDTO;
   statusText: string;
   risk: MaterialFollowUpRiskDTO;
@@ -560,6 +583,7 @@ export type MaterialFollowUpTaskDTO = {
     exceptionNote?: string | null;
     expectedAt?: string | null;
   };
+  exceptionCase: WarehouseMaterialExceptionCaseDTO;
   workOrder: {
     id: string;
     code: string;
@@ -570,6 +594,9 @@ export type MaterialFollowUpTaskDTO = {
     uncompletedQty?: string | null;
     plannedAt?: string | null;
     deliveryDay?: string | null;
+    weekStartDate?: string | null;
+    weekEndDate?: string | null;
+    planActive: boolean;
     priority: string;
   };
   activities?: MaterialFollowUpActivityDTO[];

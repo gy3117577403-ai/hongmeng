@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { MaterialFollowUpStatus, Prisma } from '@prisma/client';
+import { MaterialFollowUpStatus, Prisma, WarehouseExceptionCaseStatus } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { isTrackedWarehouseException } from '@/lib/material-follow-up';
 import {
   prepareWarehouseTaskTransition,
+  procurementOwnedExpectedArrival,
   serializeWarehouseMaterialTask,
   warehouseLegacyMaterialStatus,
   warehouseMaterialTaskDetailInclude,
@@ -43,47 +44,88 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (!Number.isInteger(requestedVersion) || requestedVersion < 0) {
       return NextResponse.json({ ok: false, error: '缺少有效的任务版本，请刷新后重试' }, { status: 400 });
     }
+    const now = new Date();
     const transition = prepareWarehouseTaskTransition({
       status: current.status as WarehouseMaterialStatus,
       exceptionType: current.exceptionType as WarehouseExceptionType | null,
       exceptionNote: current.exceptionNote,
       expectedAt: current.expectedAt,
       completedAt: current.completedAt,
-    }, body);
+    }, body, now);
     if (!transition.ok) {
       return NextResponse.json({ ok: false, error: transition.error }, { status: transition.statusCode });
     }
 
     const task = await prisma.$transaction(async tx => {
+      let exceptionCase = await tx.warehouseMaterialExceptionCase.findFirst({
+        where: { warehouseTaskId: current.id, status: WarehouseExceptionCaseStatus.OPEN },
+        orderBy: { sequence: 'desc' },
+        include: { followUpTask: true },
+      });
+      const synchronizedExpectedAt = transition.action === 'report_exception' || transition.action === 'update_exception'
+        ? procurementOwnedExpectedArrival({
+            currentExpectedAt: current.expectedAt,
+            eventExpectedArrivalAt: exceptionCase?.expectedArrivalAt,
+            followUpExpectedAt: exceptionCase?.followUpTask?.expectedAt,
+          })
+        : transition.next.expectedAt;
+      const synchronizedNext = {
+        ...transition.next,
+        expectedAt: synchronizedExpectedAt,
+      };
       const update = await tx.warehouseMaterialTask.updateMany({
         where: { id: current.id, version: requestedVersion },
         data: {
-          ...transition.next,
-          completedById: transition.next.status === 'completed' ? user.id : null,
+          ...synchronizedNext,
+          completedById: synchronizedNext.status === 'completed' ? user.id : null,
           updatedById: user.id,
           version: { increment: 1 },
         },
       });
       if (update.count !== 1) throw new Error('WAREHOUSE_TASK_VERSION_CONFLICT');
-      await tx.warehouseMaterialActivity.create({
-        data: {
-          taskId: current.id,
-          action: transition.action,
-          fromStatus: current.status,
-          toStatus: transition.next.status,
-          content: transition.content,
-          actorId: user.id,
-          detail: {
-            exceptionType: transition.next.exceptionType,
-            expectedAt: transition.next.expectedAt?.toISOString() || null,
-          },
-        },
-      });
-      const existingFollowUp = await tx.materialFollowUpTask.findUnique({
-        where: { warehouseTaskId: current.id },
-      });
-      const tracksShortage = isTrackedWarehouseException(transition.next.exceptionType);
-      if ((transition.action === 'report_exception' || transition.action === 'update_exception') && tracksShortage) {
+      if (transition.action === 'report_exception' || transition.action === 'update_exception') {
+        if (!isTrackedWarehouseException(synchronizedNext.exceptionType)) {
+          throw new Error('WAREHOUSE_EXCEPTION_TYPE_NOT_TRACKED');
+        }
+        if (!exceptionCase) {
+          const [sequence, workOrder] = await Promise.all([
+            tx.warehouseMaterialExceptionCase.aggregate({
+              where: { warehouseTaskId: current.id },
+              _max: { sequence: true },
+            }),
+            tx.workOrder.findUniqueOrThrow({
+              where: { id: current.workOrderId },
+              select: { weekStartDate: true, weekEndDate: true },
+            }),
+          ]);
+          exceptionCase = await tx.warehouseMaterialExceptionCase.create({
+            data: {
+              warehouseTaskId: current.id,
+              sequence: (sequence._max.sequence || 0) + 1,
+              exceptionType: synchronizedNext.exceptionType!,
+              exceptionNote: synchronizedNext.exceptionNote!,
+              weekStartDate: workOrder.weekStartDate,
+              weekEndDate: workOrder.weekEndDate,
+              reportedAt: now,
+              reportedById: user.id,
+              expectedArrivalAt: synchronizedExpectedAt,
+            },
+            include: { followUpTask: true },
+          });
+        } else {
+          exceptionCase = await tx.warehouseMaterialExceptionCase.update({
+            where: { id: exceptionCase.id },
+            data: {
+              exceptionType: synchronizedNext.exceptionType!,
+              exceptionNote: synchronizedNext.exceptionNote!,
+              expectedArrivalAt: exceptionCase.followUpTask?.expectedAt
+                ?? exceptionCase.expectedArrivalAt
+                ?? synchronizedExpectedAt,
+            },
+            include: { followUpTask: true },
+          });
+        }
+        const existingFollowUp = exceptionCase.followUpTask;
         const nextFollowUpStatus = existingFollowUp
           && existingFollowUp.status !== MaterialFollowUpStatus.RESOLVED
           && existingFollowUp.status !== MaterialFollowUpStatus.CANCELLED
@@ -94,8 +136,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
               where: { id: existingFollowUp.id },
               data: {
                 status: nextFollowUpStatus,
-                latestProgress: transition.next.exceptionNote,
-                expectedAt: transition.next.expectedAt,
+                latestProgress: existingFollowUp.ownerId
+                  ? existingFollowUp.latestProgress
+                  : synchronizedNext.exceptionNote,
+                expectedAt: existingFollowUp.expectedAt ?? synchronizedExpectedAt,
                 resolvedAt: null,
                 resolvedById: null,
                 version: { increment: 1 },
@@ -104,9 +148,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           : await tx.materialFollowUpTask.create({
               data: {
                 warehouseTaskId: current.id,
+                warehouseExceptionId: exceptionCase.id,
                 status: MaterialFollowUpStatus.PENDING,
-                latestProgress: transition.next.exceptionNote,
-                expectedAt: transition.next.expectedAt,
+                latestProgress: synchronizedNext.exceptionNote,
+                expectedAt: synchronizedExpectedAt,
                 createdById: user.id,
               },
             });
@@ -120,41 +165,99 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
             actorId: user.id,
           },
         });
-      } else if (existingFollowUp && (
-        transition.action === 'resolve'
-        || ((transition.action === 'report_exception' || transition.action === 'update_exception') && !tracksShortage)
-      )) {
-        const nextStatus = transition.action === 'resolve'
-          ? MaterialFollowUpStatus.RESOLVED
-          : MaterialFollowUpStatus.CANCELLED;
-        if (existingFollowUp.status !== MaterialFollowUpStatus.RESOLVED
-          && existingFollowUp.status !== MaterialFollowUpStatus.CANCELLED) {
-          const followUp = await tx.materialFollowUpTask.update({
-            where: { id: existingFollowUp.id },
+      } else if (transition.action === 'resolve') {
+        if (!exceptionCase) {
+          const [sequence, workOrder] = await Promise.all([
+            tx.warehouseMaterialExceptionCase.aggregate({
+              where: { warehouseTaskId: current.id },
+              _max: { sequence: true },
+            }),
+            tx.workOrder.findUniqueOrThrow({
+              where: { id: current.workOrderId },
+              select: { weekStartDate: true, weekEndDate: true },
+            }),
+          ]);
+          exceptionCase = await tx.warehouseMaterialExceptionCase.create({
             data: {
-              status: nextStatus,
-              latestProgress: transition.content,
-              resolvedAt: new Date(),
-              resolvedById: user.id,
-              lastFollowedAt: new Date(),
-              version: { increment: 1 },
+              warehouseTaskId: current.id,
+              sequence: (sequence._max.sequence || 0) + 1,
+              exceptionType: current.exceptionType || 'other',
+              exceptionNote: current.exceptionNote || '历史仓库异常',
+              weekStartDate: workOrder.weekStartDate,
+              weekEndDate: workOrder.weekEndDate,
+              reportedAt: current.updatedAt,
+              reportedById: current.updatedById,
+              expectedArrivalAt: current.expectedAt,
             },
-          });
-          await tx.materialFollowUpActivity.create({
-            data: {
-              taskId: followUp.id,
-              action: transition.action === 'resolve' ? 'warehouse_confirmed_resolved' : 'warehouse_feedback_changed',
-              fromStatus: existingFollowUp.status,
-              toStatus: nextStatus,
-              content: transition.content,
-              actorId: user.id,
-            },
+            include: { followUpTask: true },
           });
         }
+        const resolvedCase = await tx.warehouseMaterialExceptionCase.update({
+          where: { id: exceptionCase.id },
+          data: {
+            status: WarehouseExceptionCaseStatus.RESOLVED,
+            resolvedAt: now,
+            resolvedById: user.id,
+            resolutionNote: transition.content,
+          },
+          include: { followUpTask: true },
+        });
+        const existingFollowUp = resolvedCase.followUpTask;
+        const followUp = existingFollowUp
+          ? await tx.materialFollowUpTask.update({
+            where: { id: existingFollowUp.id },
+            data: {
+              status: MaterialFollowUpStatus.RESOLVED,
+              latestProgress: transition.content,
+              resolvedAt: now,
+              resolvedById: user.id,
+              lastFollowedAt: now,
+              version: { increment: 1 },
+            },
+          })
+          : await tx.materialFollowUpTask.create({
+            data: {
+              warehouseTaskId: current.id,
+              warehouseExceptionId: resolvedCase.id,
+              status: MaterialFollowUpStatus.RESOLVED,
+              latestProgress: transition.content,
+              expectedAt: resolvedCase.expectedArrivalAt,
+              lastFollowedAt: now,
+              resolvedAt: now,
+              createdById: resolvedCase.reportedById,
+              resolvedById: user.id,
+            },
+          });
+        await tx.materialFollowUpActivity.create({
+          data: {
+            taskId: followUp.id,
+            action: 'warehouse_confirmed_resolved',
+            fromStatus: existingFollowUp?.status || null,
+            toStatus: MaterialFollowUpStatus.RESOLVED,
+            content: transition.content,
+            actorId: user.id,
+          },
+        });
       }
+      await tx.warehouseMaterialActivity.create({
+        data: {
+          taskId: current.id,
+          action: transition.action,
+          fromStatus: current.status,
+          toStatus: synchronizedNext.status,
+          content: transition.content,
+          actorId: user.id,
+          detail: {
+            exceptionCaseId: exceptionCase?.id || null,
+            exceptionType: transition.action === 'resolve' ? current.exceptionType : synchronizedNext.exceptionType,
+            expectedAt: synchronizedNext.expectedAt?.toISOString() || null,
+            resolvedAt: transition.action === 'resolve' ? now.toISOString() : null,
+          },
+        },
+      });
       await tx.workOrder.update({
         where: { id: current.workOrderId },
-        data: { materialStatus: warehouseLegacyMaterialStatus(transition.next) },
+        data: { materialStatus: warehouseLegacyMaterialStatus(synchronizedNext) },
       });
       return tx.warehouseMaterialTask.findUniqueOrThrow({
         where: { id: current.id },

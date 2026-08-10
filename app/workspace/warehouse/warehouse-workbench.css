@@ -18,7 +18,7 @@
 
 .warehouse-page-frame {
   position: relative;
-  height: calc(100dvh - var(--hm-shell-header));
+  height: 100dvh;
   min-width: 0;
   padding: 8px 10px 10px;
   display: grid;
@@ -145,6 +145,9 @@
   box-shadow: 0 5px 14px rgba(15, 23, 42, .05), inset 0 1px 0 #fff;
   backdrop-filter: blur(14px);
 }
+
+.warehouse-inline-sidebar-trigger { width: 38px; min-height: 38px; flex: 0 0 38px; }
+.warehouse-inline-sidebar-trigger:empty { display: none; }
 
 .warehouse-scope-tabs {
   display: inline-flex;
@@ -1812,6 +1815,8 @@
 
 .warehouse-follow-up-card { display: grid; gap: 10px; border-color: #bfdbfe; background: linear-gradient(145deg, #f4f8ff, #fff); }
 .warehouse-follow-up-card > div > svg { flex: 0 0 auto; width: 19px; height: 19px; color: #2563eb; }
+.warehouse-follow-up-card.resolved { border-color: #b7e7d1; background: #effaf5; }
+.warehouse-follow-up-card.resolved > div > svg { color: #159a66; }
 .warehouse-follow-up-date { display: flex; align-items: center; gap: 6px; color: #475569; font-size: 10px; font-weight: 750; }
 .warehouse-follow-up-date svg { width: 14px; height: 14px; color: #2563eb; }
 .warehouse-follow-up-card a {

@@ -21,12 +21,12 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
       where: { id: params.id },
       include: materialFollowUpDetailInclude,
     });
-    if (!task) return NextResponse.json({ ok: false, error: '缺料跟进任务不存在' }, { status: 404 });
+    if (!task) return NextResponse.json({ ok: false, error: '物料跟进任务不存在' }, { status: 404 });
     return NextResponse.json({ ok: true, task: serializeMaterialFollowUpTask(task) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     console.error('material follow-up detail failed', error);
-    return NextResponse.json({ ok: false, error: '缺料跟进详情加载失败' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: '物料跟进详情加载失败' }, { status: 500 });
   }
 }
 
@@ -34,17 +34,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const user = await requireUser({ write: 'production' });
     const body = await req.json().catch(() => ({})) as MaterialFollowUpTransitionInput & { version?: unknown };
-    const current = await prisma.materialFollowUpTask.findUnique({ where: { id: params.id } });
-    if (!current) return NextResponse.json({ ok: false, error: '缺料跟进任务不存在' }, { status: 404 });
+    const current = await prisma.materialFollowUpTask.findUnique({
+      where: { id: params.id },
+      include: { warehouseException: true },
+    });
+    if (!current) return NextResponse.json({ ok: false, error: '物料跟进任务不存在' }, { status: 404 });
     const version = Number(body.version);
     if (!Number.isInteger(version) || version < 0) {
       return NextResponse.json({ ok: false, error: '缺少有效的任务版本，请刷新后重试' }, { status: 400 });
     }
+    const now = new Date();
     const transition = prepareMaterialFollowUpTransition({
       status: current.status as MaterialFollowUpStatusDTO,
       ownerId: current.ownerId,
       expectedAt: current.expectedAt,
-    }, body, user.id);
+    }, body, user.id, now);
     if (!transition.ok) {
       return NextResponse.json({ ok: false, error: transition.error }, { status: transition.statusCode });
     }
@@ -63,6 +67,38 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         },
       });
       if (update.count !== 1) throw new Error('MATERIAL_FOLLOW_UP_VERSION_CONFLICT');
+      const expectedArrivalChanged = current.expectedAt?.getTime() !== transition.next.expectedAt?.getTime();
+      const enteredWarehouseConfirmation = current.status !== 'WAITING_WAREHOUSE'
+        && transition.next.status === 'WAITING_WAREHOUSE';
+      const leftWarehouseConfirmation = current.status === 'WAITING_WAREHOUSE'
+        && transition.next.status !== 'WAITING_WAREHOUSE';
+      await tx.warehouseMaterialExceptionCase.update({
+        where: { id: current.warehouseExceptionId },
+        data: {
+          expectedArrivalAt: transition.next.expectedAt,
+          ...(expectedArrivalChanged ? {
+            expectedArrivalById: user.id,
+            expectedArrivalUpdatedAt: now,
+          } : {}),
+          ...(enteredWarehouseConfirmation ? {
+            actualArrivalAt: now,
+            actualArrivalById: user.id,
+          } : leftWarehouseConfirmation ? {
+            actualArrivalAt: null,
+            actualArrivalById: null,
+          } : {}),
+        },
+      });
+      if (expectedArrivalChanged) {
+        await tx.warehouseMaterialTask.update({
+          where: { id: current.warehouseTaskId },
+          data: {
+            expectedAt: transition.next.expectedAt,
+            updatedById: user.id,
+            version: { increment: 1 },
+          },
+        });
+      }
       await tx.materialFollowUpActivity.create({
         data: {
           taskId: current.id,
@@ -71,6 +107,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           toStatus: transition.next.status,
           content: transition.content,
           actorId: user.id,
+        },
+      });
+      await tx.warehouseMaterialActivity.create({
+        data: {
+          taskId: current.warehouseTaskId,
+          action: transition.action === 'claim' ? 'material_follow_up_claimed' : 'material_follow_up_updated',
+          fromStatus: current.warehouseException.status,
+          toStatus: current.warehouseException.status,
+          content: transition.content,
+          actorId: user.id,
+          detail: {
+            exceptionCaseId: current.warehouseExceptionId,
+            followUpStatus: transition.next.status,
+            expectedArrivalAt: transition.next.expectedAt?.toISOString() || null,
+            actualArrivalAt: enteredWarehouseConfirmation ? now.toISOString() : null,
+          },
         },
       });
       return tx.materialFollowUpTask.findUniqueOrThrow({
@@ -97,9 +149,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ ok: false, error: '任务已被其他账号更新，请刷新后重试' }, { status: 409 });
     }
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-      return NextResponse.json({ ok: false, error: '缺料跟进任务不存在' }, { status: 404 });
+      return NextResponse.json({ ok: false, error: '物料跟进任务不存在' }, { status: 404 });
     }
     console.error('material follow-up update failed', error);
-    return NextResponse.json({ ok: false, error: '缺料跟进更新失败' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: '物料跟进更新失败' }, { status: 500 });
   }
 }

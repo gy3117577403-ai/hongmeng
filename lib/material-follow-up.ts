@@ -5,6 +5,7 @@ import type {
   MaterialFollowUpTaskDTO,
   WarehouseExceptionType,
 } from '@/types';
+import { serializeWarehouseExceptionCase } from '@/lib/warehouse-material';
 
 export const MATERIAL_FOLLOW_UP_ACTIVE_STATUSES: MaterialFollowUpStatus[] = [
   MaterialFollowUpStatus.PENDING,
@@ -26,6 +27,14 @@ export const materialFollowUpListInclude = Prisma.validator<Prisma.MaterialFollo
   owner: { select: { id: true, username: true, displayName: true } },
   createdBy: { select: { id: true, username: true, displayName: true } },
   resolvedBy: { select: { id: true, username: true, displayName: true } },
+  warehouseException: {
+    include: {
+      reportedBy: { select: { id: true, username: true, displayName: true } },
+      expectedArrivalBy: { select: { id: true, username: true, displayName: true } },
+      actualArrivalBy: { select: { id: true, username: true, displayName: true } },
+      resolvedBy: { select: { id: true, username: true, displayName: true } },
+    },
+  },
   warehouseTask: {
     select: {
       status: true,
@@ -43,6 +52,9 @@ export const materialFollowUpListInclude = Prisma.validator<Prisma.MaterialFollo
           uncompletedQty: true,
           plannedAt: true,
           deliveryDay: true,
+          weekStartDate: true,
+          weekEndDate: true,
+          planActive: true,
           priority: true,
         },
       },
@@ -121,7 +133,11 @@ export function chinaDayStart(value = new Date()): Date {
 }
 
 export function isTrackedWarehouseException(type: WarehouseExceptionType | null | undefined): boolean {
-  return type === 'shortage' || type === 'insufficient_quantity';
+  return type === 'shortage'
+    || type === 'wrong_material'
+    || type === 'insufficient_quantity'
+    || type === 'quality_issue'
+    || type === 'other';
 }
 
 export function prepareMaterialFollowUpTransition(
@@ -149,7 +165,7 @@ export function prepareMaterialFollowUpTransition(
     };
   }
   if (action !== 'update') {
-    return { ok: false, statusCode: 400, error: '不支持的缺料跟进操作' };
+    return { ok: false, statusCode: 400, error: '不支持的物料跟进操作' };
   }
 
   const status = cleanText(input.status, 40) as MaterialFollowUpStatus;
@@ -167,13 +183,13 @@ export function prepareMaterialFollowUpTransition(
   if (!latestProgress) return { ok: false, statusCode: 400, error: '请填写本次跟进进展' };
   const expectedAt = parseExpectedAt(input.expectedAt);
   if (input.expectedAt && !expectedAt) {
-    return { ok: false, statusCode: 400, error: '预计解决时间格式不正确' };
+    return { ok: false, statusCode: 400, error: '预计到料时间格式不正确' };
   }
   if (status === MaterialFollowUpStatus.WAITING_ARRIVAL && !expectedAt) {
-    return { ok: false, statusCode: 400, error: '等待物料时必须填写预计解决时间' };
+    return { ok: false, statusCode: 400, error: '等待物料时必须填写预计到料时间' };
   }
   if (expectedAt && expectedAt < chinaDayStart(now)) {
-    return { ok: false, statusCode: 400, error: '预计解决时间不能早于今天' };
+    return { ok: false, statusCode: 400, error: '预计到料时间不能早于今天' };
   }
   return {
     ok: true,
@@ -215,6 +231,7 @@ export function serializeMaterialFollowUpTask(
   return {
     id: task.id,
     warehouseTaskId: task.warehouseTaskId,
+    warehouseExceptionId: task.warehouseExceptionId,
     status,
     statusText: materialFollowUpStatusText[status],
     ...risk,
@@ -234,9 +251,12 @@ export function serializeMaterialFollowUpTask(
       exceptionNote: task.warehouseTask.exceptionNote,
       expectedAt: task.warehouseTask.expectedAt?.toISOString() || null,
     },
+    exceptionCase: serializeWarehouseExceptionCase(task.warehouseException),
     workOrder: {
       ...task.warehouseTask.workOrder,
       plannedAt: task.warehouseTask.workOrder.plannedAt?.toISOString() || null,
+      weekStartDate: task.warehouseTask.workOrder.weekStartDate?.toISOString() || null,
+      weekEndDate: task.warehouseTask.workOrder.weekEndDate?.toISOString() || null,
     },
     activities: Array.isArray(detail.activities)
       ? detail.activities.map(activity => ({

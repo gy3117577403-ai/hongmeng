@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import type {
   MaterialFollowUpStatusDTO,
   WarehouseExceptionType,
+  WarehouseMaterialExceptionCaseDTO,
   WarehouseMaterialStatus,
   WarehouseMaterialTaskDTO,
 } from '@/types';
@@ -35,6 +36,17 @@ export function warehouseMaterialScopeWeekStart(
   if (scope === 'current') return currentWeekStart;
   if (scope === 'preparation') return requestedWeekStart || addWarehouseDays(currentWeekStart, 7);
   return requestedWeekStart;
+}
+
+export function procurementOwnedExpectedArrival(input: {
+  currentExpectedAt: Date | null;
+  eventExpectedArrivalAt?: Date | null;
+  followUpExpectedAt?: Date | null;
+}): Date | null {
+  return input.followUpExpectedAt
+    ?? input.eventExpectedArrivalAt
+    ?? input.currentExpectedAt
+    ?? null;
 }
 
 export function warehouseMaterialWorkOrderWhere(input: {
@@ -110,7 +122,10 @@ export const warehouseMaterialTaskListInclude = Prisma.validator<Prisma.Warehous
   },
   completedBy: { select: { id: true, username: true, displayName: true } },
   updatedBy: { select: { id: true, username: true, displayName: true } },
-  followUpTask: {
+  followUpTasks: {
+    where: { warehouseException: { status: 'OPEN' } },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
     select: {
       id: true,
       status: true,
@@ -118,6 +133,17 @@ export const warehouseMaterialTaskListInclude = Prisma.validator<Prisma.Warehous
       expectedAt: true,
       latestProgress: true,
       updatedAt: true,
+    },
+  },
+  exceptionCases: {
+    where: { status: 'RESOLVED' },
+    orderBy: { resolvedAt: 'desc' },
+    take: 1,
+    include: {
+      reportedBy: { select: { id: true, username: true, displayName: true } },
+      expectedArrivalBy: { select: { id: true, username: true, displayName: true } },
+      actualArrivalBy: { select: { id: true, username: true, displayName: true } },
+      resolvedBy: { select: { id: true, username: true, displayName: true } },
     },
   },
 });
@@ -276,6 +302,43 @@ function isExpectedOverdue(status: string, expectedAt: Date | null, now: Date): 
   return status === 'exception' && !!expectedAt && expectedAt < chinaDayStart(now);
 }
 
+type WarehouseExceptionCaseRecord = Prisma.WarehouseMaterialExceptionCaseGetPayload<{
+  include: {
+    reportedBy: { select: { id: true; username: true; displayName: true } };
+    expectedArrivalBy: { select: { id: true; username: true; displayName: true } };
+    actualArrivalBy: { select: { id: true; username: true; displayName: true } };
+    resolvedBy: { select: { id: true; username: true; displayName: true } };
+  };
+}>;
+
+export function serializeWarehouseExceptionCase(
+  exceptionCase: WarehouseExceptionCaseRecord,
+): WarehouseMaterialExceptionCaseDTO {
+  const exceptionType = WAREHOUSE_EXCEPTION_TYPES.includes(exceptionCase.exceptionType as WarehouseExceptionType)
+    ? exceptionCase.exceptionType as WarehouseExceptionType
+    : 'other';
+  return {
+    id: exceptionCase.id,
+    sequence: exceptionCase.sequence,
+    status: exceptionCase.status,
+    exceptionType,
+    exceptionTypeText: warehouseExceptionText[exceptionType],
+    exceptionNote: exceptionCase.exceptionNote,
+    weekStartDate: exceptionCase.weekStartDate?.toISOString() || null,
+    weekEndDate: exceptionCase.weekEndDate?.toISOString() || null,
+    reportedAt: exceptionCase.reportedAt.toISOString(),
+    reportedBy: exceptionCase.reportedBy,
+    expectedArrivalAt: exceptionCase.expectedArrivalAt?.toISOString() || null,
+    expectedArrivalBy: exceptionCase.expectedArrivalBy,
+    expectedArrivalUpdatedAt: exceptionCase.expectedArrivalUpdatedAt?.toISOString() || null,
+    actualArrivalAt: exceptionCase.actualArrivalAt?.toISOString() || null,
+    actualArrivalBy: exceptionCase.actualArrivalBy,
+    resolvedAt: exceptionCase.resolvedAt?.toISOString() || null,
+    resolvedBy: exceptionCase.resolvedBy,
+    resolutionNote: exceptionCase.resolutionNote,
+  };
+}
+
 export function serializeWarehouseMaterialTask(
   task: WarehouseMaterialTaskRecord | WarehouseMaterialTaskDetailRecord,
   now = new Date(),
@@ -287,6 +350,9 @@ export function serializeWarehouseMaterialTask(
     ? task.exceptionType as WarehouseExceptionType
     : null;
   const detailTask = task as WarehouseMaterialTaskDetailRecord;
+  const activeFollowUp = task.followUpTasks[0] || null;
+  const lastResolvedException = task.exceptionCases[0] || null;
+  const synchronizedExpectedAt = activeFollowUp?.expectedAt || task.expectedAt;
   return {
     id: task.id,
     workOrderId: task.workOrderId,
@@ -302,10 +368,10 @@ export function serializeWarehouseMaterialTask(
     version: task.version,
     createdAt: task.createdAt.toISOString(),
     updatedAt: task.updatedAt.toISOString(),
-    isExpectedOverdue: isExpectedOverdue(status, task.expectedAt, now),
-    followUpTask: task.followUpTask ? {
-      id: task.followUpTask.id,
-      status: task.followUpTask.status as MaterialFollowUpStatusDTO,
+    isExpectedOverdue: isExpectedOverdue(status, synchronizedExpectedAt, now),
+    followUpTask: activeFollowUp ? {
+      id: activeFollowUp.id,
+      status: activeFollowUp.status as MaterialFollowUpStatusDTO,
       statusText: ({
         PENDING: '待接收',
         IN_PROGRESS: '跟进中',
@@ -313,12 +379,13 @@ export function serializeWarehouseMaterialTask(
         WAITING_WAREHOUSE: '待仓库确认',
         RESOLVED: '已解决',
         CANCELLED: '已取消',
-      } as Record<MaterialFollowUpStatusDTO, string>)[task.followUpTask.status as MaterialFollowUpStatusDTO],
-      owner: task.followUpTask.owner,
-      expectedAt: task.followUpTask.expectedAt?.toISOString() || null,
-      latestProgress: task.followUpTask.latestProgress,
-      updatedAt: task.followUpTask.updatedAt.toISOString(),
+      } as Record<MaterialFollowUpStatusDTO, string>)[activeFollowUp.status as MaterialFollowUpStatusDTO],
+      owner: activeFollowUp.owner,
+      expectedAt: activeFollowUp.expectedAt?.toISOString() || null,
+      latestProgress: activeFollowUp.latestProgress,
+      updatedAt: activeFollowUp.updatedAt.toISOString(),
     } : null,
+    lastResolvedException: lastResolvedException ? serializeWarehouseExceptionCase(lastResolvedException) : null,
     workOrder: {
       ...task.workOrder,
       plannedAt: task.workOrder.plannedAt?.toISOString() || null,

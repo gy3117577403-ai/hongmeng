@@ -54,6 +54,12 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:issue-work-order-integration
+      - name: Warehouse and material follow-up PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npm run test:material-follow-up-integration
+      - name: Warehouse and material follow-up consistency audit
+        run: npm run audit:material-follow-up-sync -- --json
       - name: Employee number reorder PostgreSQL integration
         env:
           RUN_EMPLOYEE_REORDER_INTEGRATION: "1"
@@ -87,14 +93,14 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=v1.25.0
+            type=raw,value=v1.26.0
             type=raw,value=latest
             type=sha
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.25.0
+            APP_VERSION=v1.26.0
             APP_REVISION=${{ github.sha }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

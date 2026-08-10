@@ -77,7 +77,9 @@ function emptyExceptionForm(task?: WarehouseMaterialTaskDTO | null): ExceptionFo
   return {
     exceptionType: task?.exceptionType || 'shortage',
     exceptionNote: task?.exceptionNote || '',
-    expectedAt: task?.expectedAt ? task.expectedAt.slice(0, 10) : '',
+    expectedAt: task?.followUpTask?.expectedAt?.slice(0, 10)
+      || task?.expectedAt?.slice(0, 10)
+      || '',
     resolutionNote: '',
     reopenNote: '',
   };
@@ -347,13 +349,11 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
       action: task.status === 'exception' ? 'update_exception' : 'report_exception',
       exceptionType: form.exceptionType,
       exceptionNote: form.exceptionNote,
-      expectedAt: form.expectedAt,
     });
     if (updated) {
-      const followsShortage = form.exceptionType === 'shortage' || form.exceptionType === 'insufficient_quantity';
-      setToast(followsShortage
-        ? task.status === 'exception' ? '缺料反馈与跟进任务已更新' : '缺料反馈已进入跟进中心'
-        : task.status === 'exception' ? '仓库异常已更新' : '仓库异常已登记');
+      setToast(task.status === 'exception'
+        ? '仓库异常与物料跟进已同步更新'
+        : '仓库异常已进入物料跟进中心');
     }
   }
 
@@ -378,6 +378,8 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
         user={user}
         activeHref="/workspace/warehouse"
         subtitle="本周物料准备与异常闭环"
+        hideHeader
+        sidebarTriggerTargetId="warehouse-sidebar-trigger"
         menuItems={[{ label: '系统设置', href: '/dashboard?openSettings=1' }, { label: '退出登录', onSelect: () => { void logout(); } }]}
       />
       <div className="warehouse-page-frame">
@@ -390,6 +392,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
         </section>
 
         <section className="warehouse-toolbar" aria-label="仓库任务筛选">
+          <div id="warehouse-sidebar-trigger" className="warehouse-inline-sidebar-trigger" />
           <div className="warehouse-scope-tabs" role="tablist" aria-label="生产周范围">
             <button className={scope === 'current' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'current'} onClick={() => { setScope('current'); setSelectedWeek(''); setPage(1); }}>当前周</button>
             <button className={scope === 'preparation' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'preparation'} onClick={() => { setScope('preparation'); setSelectedWeek(''); setPage(1); }}>下周预备</button>
@@ -400,7 +403,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
           <label className="warehouse-exception-select"><span>异常类型</span><select value={exceptionType} onChange={event => { setExceptionType(event.target.value as 'all' | WarehouseExceptionType); setPage(1); }}><option value="all">全部异常</option>{exceptionOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           <button className="warehouse-reset" type="button" title="重置筛选" aria-label="重置筛选" onClick={resetFilters}><RotateCcw size={15} aria-hidden="true" />重置</button>
           <div className="warehouse-toolbar-actions" aria-label="仓库管理操作">
-            <a className="hm-workbench-button" href="/workspace/procurement" title="打开缺料反馈跟进"><ClipboardList size={15} aria-hidden="true" /><span>缺料跟进</span></a>
+            <a className="hm-workbench-button" href="/workspace/procurement" title="打开物料异常跟进"><ClipboardList size={15} aria-hidden="true" /><span>物料跟进</span></a>
             <a className="hm-workbench-button" href="/weekly-plan-center" title="打开计划中心"><CalendarDays size={15} aria-hidden="true" /><span>计划中心</span></a>
             <button className="hm-workbench-button" type="button" title="刷新仓库任务" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} aria-hidden="true" /><span>刷新</span></button>
           </div>
@@ -499,7 +502,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
                 <article><span>内部编号</span><strong>{selectedTask.workOrder.code}</strong></article>
                 <article><span>生产周</span><strong>{selectedTask.workOrder.weekStartDate ? `${dateText(selectedTask.workOrder.weekStartDate)} - ${dateText(selectedTask.workOrder.weekEndDate)}` : '未指定'}</strong></article>
                 <article><span>配料状态</span><strong className={selectedTask.status}>{selectedTask.statusText}</strong></article>
-                <article><span>预计解决</span><strong>{selectedTask.expectedAt ? dateText(selectedTask.expectedAt) : '—'}</strong></article>
+                <article><span>预计到料/解决</span><strong>{selectedTask.followUpTask?.expectedAt ? dateText(selectedTask.followUpTask.expectedAt) : selectedTask.expectedAt ? dateText(selectedTask.expectedAt) : '—'}</strong></article>
               </section>
 
               {selectedTask.status === 'exception' && <section className="warehouse-focus-alert">
@@ -560,13 +563,13 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
             </section>
 
             <section className="warehouse-collab-section follow-ups">
-              <div className="warehouse-collab-heading"><span><ClipboardList aria-hidden="true" /><strong>缺料跟进</strong></span><a href="/workspace/procurement">查看全部</a></div>
+              <div className="warehouse-collab-heading"><span><ClipboardList aria-hidden="true" /><strong>物料跟进</strong></span><a href="/workspace/procurement">查看全部</a></div>
               <div className="warehouse-collab-list">
                 {followUpTasks.map(task => <a href={`/workspace/procurement?taskId=${encodeURIComponent(task.followUpTask!.id)}`} key={task.id}>
                   <span><b>{task.workOrder.specification || task.workOrder.code}</b><small>{task.followUpTask?.latestProgress || task.exceptionNote || '等待更新进度'}</small></span>
                   <em>{task.followUpTask?.statusText}</em>
                 </a>)}
-                {!followUpTasks.length && <p>当前筛选没有缺料跟进任务</p>}
+                {!followUpTasks.length && <p>当前筛选没有物料跟进任务</p>}
               </div>
             </section>
 
@@ -611,7 +614,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
             </div>}
 
             {drawerTask.status !== 'completed' && modalPanel === 'update' && <section className="warehouse-modal-form">
-              <div className="warehouse-modal-section-heading"><span className="warehouse-modal-icon warning"><AlertTriangle aria-hidden="true" /></span><span><strong>{drawerTask.status === 'exception' ? '更新仓库异常' : '登记仓库异常'}</strong><small>异常会同步显示在生产执行；缺料与数量不足会同时生成采购跟进任务。</small></span></div>
+              <div className="warehouse-modal-section-heading"><span className="warehouse-modal-icon warning"><AlertTriangle aria-hidden="true" /></span><span><strong>{drawerTask.status === 'exception' ? '更新仓库异常' : '登记仓库异常'}</strong><small>所有仓库异常都会同步生成独立的物料跟进事件。</small></span></div>
               <fieldset disabled={savingId === drawerTask.id}>
                 <legend>异常类型</legend>
                 <div className="warehouse-exception-types">
@@ -620,14 +623,8 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
               </fieldset>
               <label className="warehouse-modal-field"><span>异常说明 <b>必填</b><em>{form.exceptionNote.length}/400</em></span><textarea rows={5} maxLength={400} value={form.exceptionNote} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, exceptionNote: event.target.value }))} placeholder="请说明缺少的物料、数量、已采取的措施或核对依据" /></label>
               <div className="warehouse-date-panel">
-                <div className="warehouse-modal-field-heading"><span><CalendarDays aria-hidden="true" />{isArrivalException(form.exceptionType) ? '预计到料时间' : '预计解决时间'} <b>选填</b></span><small>暂时无法确认时可以留空，不影响登记异常。</small></div>
-                <input type="date" min={todayDate} value={form.expectedAt} disabled={savingId === drawerTask.id} onChange={event => setForm(current => ({ ...current, expectedAt: event.target.value }))} />
-                <div className="warehouse-date-quick" aria-label="快捷设置预计时间">
-                  <button type="button" disabled={savingId === drawerTask.id} onClick={() => setForm(current => ({ ...current, expectedAt: todayDate }))}>今天</button>
-                  <button type="button" disabled={savingId === drawerTask.id} onClick={() => setForm(current => ({ ...current, expectedAt: addDaysText(todayDate, 1) }))}>明天</button>
-                  <button type="button" disabled={savingId === drawerTask.id} onClick={() => setForm(current => ({ ...current, expectedAt: addDaysText(todayDate, 2) }))}>后天</button>
-                  <button className={!form.expectedAt ? 'active' : ''} type="button" disabled={savingId === drawerTask.id} onClick={() => setForm(current => ({ ...current, expectedAt: '' }))}>时间待确认</button>
-                </div>
+                <div className="warehouse-modal-field-heading"><span><CalendarDays aria-hidden="true" />采购预计到料时间 <b>由采购维护</b></span><small>仓库只登记异常；采购在物料跟进中标注预计到料，时间会自动同步回这里。</small></div>
+                <input type="date" value={form.expectedAt} disabled aria-label="采购预计到料时间（只读）" />
               </div>
             </section>}
 
@@ -654,11 +651,13 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
             </section>
 
             <section className={`warehouse-impact-card ${isArrivalException(form.exceptionType) ? 'linked' : ''}`}>
-              <div><span className="warehouse-modal-icon"><Activity aria-hidden="true" /></span><span><strong>异常同步影响</strong><small>{isArrivalException(form.exceptionType) ? '生产执行 + 采购跟进' : '同步至生产执行'}</small></span></div>
-              <p>{isArrivalException(form.exceptionType) ? '登记后自动创建或更新缺料跟进。预计到料时间可由仓库暂留空，采购确认后再补充。' : '该异常会显示在生产执行工单卡片中，解决后自动清除当前异常提示。'}</p>
+              <div><span className="warehouse-modal-icon"><Activity aria-hidden="true" /></span><span><strong>异常同步影响</strong><small>生产执行 + 物料跟进</small></span></div>
+              <p>登记后自动创建独立物料跟进事件；采购维护预计到料，仓库确认解决后进入已解决名单。</p>
             </section>
 
-            {drawerTask.followUpTask && <section className="warehouse-follow-up-card"><div><ClipboardList aria-hidden="true" /><span><strong>缺料反馈正在跟进</strong><small>{drawerTask.followUpTask.owner?.displayName || drawerTask.followUpTask.owner?.username || '等待负责人接收'} · {drawerTask.followUpTask.statusText}</small></span></div><p>{drawerTask.followUpTask.latestProgress || drawerTask.exceptionNote || '等待跟进进度'}</p><span className="warehouse-follow-up-date"><Truck aria-hidden="true" />{drawerTask.followUpTask.expectedAt ? `预计 ${dateText(drawerTask.followUpTask.expectedAt)} 到料` : '预计到料时间待确认'}</span><a href={`/workspace/procurement?taskId=${encodeURIComponent(drawerTask.followUpTask.id)}`}>打开跟进任务<ArrowUpRight size={14} /></a></section>}
+            {drawerTask.followUpTask && <section className="warehouse-follow-up-card"><div><ClipboardList aria-hidden="true" /><span><strong>物料异常正在跟进</strong><small>{drawerTask.followUpTask.owner?.displayName || drawerTask.followUpTask.owner?.username || '等待负责人接收'} · {drawerTask.followUpTask.statusText}</small></span></div><p>{drawerTask.followUpTask.latestProgress || drawerTask.exceptionNote || '等待跟进进度'}</p><span className="warehouse-follow-up-date"><Truck aria-hidden="true" />{drawerTask.followUpTask.expectedAt ? `采购预计 ${dateText(drawerTask.followUpTask.expectedAt)} 到料` : '等待采购标注预计到料'}</span><a href={`/workspace/procurement?taskId=${encodeURIComponent(drawerTask.followUpTask.id)}`}>打开跟进任务<ArrowUpRight size={14} /></a></section>}
+
+            {drawerTask.lastResolvedException && <section className="warehouse-follow-up-card resolved"><div><CheckCircle2 aria-hidden="true" /><span><strong>最近异常已解决</strong><small>{dateTimeText(drawerTask.lastResolvedException.resolvedAt)} · {drawerTask.lastResolvedException.resolvedBy?.displayName || drawerTask.lastResolvedException.resolvedBy?.username || '仓库确认'}</small></span></div><p>{drawerTask.lastResolvedException.resolutionNote || drawerTask.lastResolvedException.exceptionNote}</p></section>}
 
             <section className="warehouse-activity-section"><div className="warehouse-modal-section-heading"><span className="warehouse-modal-icon"><Clock3 aria-hidden="true" /></span><span><strong>处理记录</strong><small>最近 40 条仓库操作</small></span></div>{drawerLoading && <div className="warehouse-loading">正在加载处理记录...</div>}<div className="warehouse-activity-list">{drawerTask.activities?.map(activity => <article key={activity.id}><i /><div><strong>{activity.content || activity.action}</strong><span>{activity.actor?.displayName || activity.actor?.username || '系统'} · {dateTimeText(activity.createdAt)}</span></div></article>)}{!drawerLoading && !drawerTask.activities?.length && <p>暂无人工处理记录</p>}</div></section>
           </aside>

@@ -3,6 +3,7 @@ import test from 'node:test';
 import { buildWeeklyPlanPreview } from '../lib/work-order-import';
 import {
   prepareWarehouseTaskTransition,
+  procurementOwnedExpectedArrival,
   warehouseLegacyMaterialStatus,
   warehouseMaterialScopeWeekStart,
   warehouseMaterialWorkOrderWhere,
@@ -61,6 +62,23 @@ test('warehouse preparation defaults to next week and only includes released pre
   assert.match(where, /"planActive":false/);
   assert.match(where, /"releaseState":"preparation"/);
   assert.match(where, /"gte":"2026-08-02T16:00:00.000Z"/);
+});
+
+test('procurement follow-up owns the synchronized expected arrival time', () => {
+  const warehouseLegacyValue = new Date('2026-08-11T04:00:00.000Z');
+  const eventValue = new Date('2026-08-12T04:00:00.000Z');
+  const procurementValue = new Date('2026-08-13T04:00:00.000Z');
+
+  assert.equal(procurementOwnedExpectedArrival({
+    currentExpectedAt: warehouseLegacyValue,
+    eventExpectedArrivalAt: eventValue,
+    followUpExpectedAt: procurementValue,
+  }), procurementValue);
+  assert.equal(procurementOwnedExpectedArrival({
+    currentExpectedAt: warehouseLegacyValue,
+    eventExpectedArrivalAt: eventValue,
+  }), eventValue);
+  assert.equal(procurementOwnedExpectedArrival({ currentExpectedAt: null }), null);
 });
 
 test('pending material task can be completed without changing production stage', () => {

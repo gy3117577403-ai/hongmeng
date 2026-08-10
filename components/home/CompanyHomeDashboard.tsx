@@ -447,7 +447,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
     {
       id: 'material',
       position: 'material',
-      label: '缺料跟进',
+      label: '物料跟进',
       eyebrow: '物料保障',
       value: materialStream?.count || 0,
       unit: '项',

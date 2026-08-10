@@ -363,7 +363,7 @@ function materialWorkstream(tasks: MaterialHomeTask[], now: Date): HomeWorkstrea
   });
   return workstream(
     'material',
-    '缺料跟进',
+    '物料跟进',
     tasks.length,
     overdueCount + unassignedCount,
     `${unassignedCount} 个待认领 · ${overdueCount} 个逾期`,
@@ -439,7 +439,7 @@ function emptyWorkstreams(): HomeWorkstream[] {
   return [
     workstream('production', '生产执行', 0, 0, '暂无生产待办', '/production', 'yellow', []),
     workstream('warehouse', '仓库配料', 0, 0, '暂无待配料任务', '/workspace/warehouse', 'blue', []),
-    workstream('material', '缺料跟进', 0, 0, '暂无缺料反馈', '/workspace/procurement', 'orange', []),
+    workstream('material', '物料跟进', 0, 0, '暂无物料异常反馈', '/workspace/procurement', 'orange', []),
     workstream('labor', '今日工时', 0, 0, '暂无待领取工时', '/workspace/reports?view=labor', 'green', []),
   ];
 }

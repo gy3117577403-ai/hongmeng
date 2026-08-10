@@ -74,3 +74,55 @@ final result: blocked（生产执行视觉通过；员工明细真实行与原�
 - 当前没有未解决的 P0、P1 或 P2 视觉/交互问题。
 
 final result: passed
+
+## 2026-08-10 仓库与物料异常同步
+
+## Sources and target
+
+- Annotated warehouse reference: `C:\Windows\TEMP\codex-clipboard-56a06c48-1ac5-491a-99cc-e9a8bf3392f3.png`
+- Annotated material follow-up reference: `C:\Windows\TEMP\codex-clipboard-27a5a49b-6ac9-4c90-9925-a1c93629fa09.png`
+- Required implementation viewport: 1366 x 1024 CSS pixels
+- Browser: Codex in-app browser, local authenticated application
+- Data state: realistic current-week, next-week, history-week, overdue, waiting, warehouse-confirmation, and resolved exception records
+
+## Rendered evidence
+
+- `artifacts/material-sync-qa/warehouse-1366x1024.png` — current warehouse scope with 11 synchronized active exceptions
+- `artifacts/material-sync-qa/material-active-1366x1024.png` — current material scope with 11 active follow-ups
+- `artifacts/material-sync-qa/material-resolved-1366x1024.png` — resolved list with green closed-loop treatment and resolution timestamps
+- `artifacts/material-sync-qa/material-roundtrip-new-event-1366x1024.png` — the same work order after resolving event 1 and creating independent event 2
+- `artifacts/material-sync-qa/compare-warehouse.jpg` — annotated warehouse source and implementation in one comparison image
+- `artifacts/material-sync-qa/compare-material-resolved.jpg` — annotated resolved source and implementation in one comparison image
+
+The annotated sources were normalized into 1366 x 1024 comparison panels without cropping. The implementation panels are native 1366 x 1024 captures.
+
+## Interaction and state checks
+
+- Current week: warehouse active exceptions = 11; active material follow-ups = 11.
+- Next week: 2 preparation exceptions and 2 material follow-ups.
+- History scope: 2 active follow-ups plus 1 resolved record; week selector exposes the historical production week.
+- Resolved filter: active queue is cleared and 3 resolved records appear in a dedicated list.
+- Resolution detail: green terminal flow, resolution timestamp, confirming warehouse user, resolution note, and warehouse deep link are visible.
+- Procurement update: a real progress submission succeeded and appeared immediately in warehouse activity and follow-up panels.
+- ETA ownership: warehouse drawer renders procurement ETA as read-only and displays the synchronized 08/13 value.
+- Deep links: material-to-warehouse navigation preserved the requested task and opened its detail drawer.
+- Real close/reopen round trip: resolving event 1 changed warehouse/material active counts from 11 to 10 and resolved from 3 to 4; reporting a later event restored active counts to 11 while resolved stayed 4, and the new detail displayed `异常 #2`.
+
+## Visual review
+
+- P0 blocking issues: none.
+- P1 major layout or state issues: none.
+- P2 visible polish issues: none after the final iteration.
+- No clipped primary controls, overlapping panels, horizontal page overflow, or hidden status counts at 1366 x 1024.
+- The redundant large page headers marked for deletion are absent; compact command bars preserve navigation and context.
+- Existing orange theme, sidebar, card geometry, typography, icons, and spacing language are preserved.
+- Resolved records use green without changing the product's established palette.
+
+## Iteration history
+
+1. Replaced the redundant top page headings with compact command bars and shared week controls.
+2. Separated active and resolved task lists; added resolution time and green closed-loop state.
+3. Made procurement the sole ETA editor and warehouse the synchronized read-only consumer.
+4. Corrected local QA fixture encoding, repeated current/resolved comparisons, and rechecked all core controls.
+
+final result: passed
