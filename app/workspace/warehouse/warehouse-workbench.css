@@ -1,3 +1,8 @@
+main.warehouse-workbench.hm-workbench-root.hm-workbench-root {
+  --hm-shell-header: 0px;
+  padding-top: 0;
+}
+
 .warehouse-workbench {
   --warehouse-navy: #0b1f38;
   --warehouse-blue: #2563eb;

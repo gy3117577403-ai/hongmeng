@@ -126,3 +126,43 @@ The annotated sources were normalized into 1366 x 1024 comparison panels without
 4. Corrected local QA fixture encoding, repeated current/resolved comparisons, and rechecked all core controls.
 
 final result: passed
+
+## 2026-08-10 仓库管理与物料异常页顶部空白修复
+
+### Sources and target
+
+- 用户标注图：`artifacts/layout-gap-qa/reference-annotated.png`（2212 × 1422 像素，96 DPI）。
+- 同视口修复前基线：`artifacts/layout-gap-qa/material-before-1366x1024.png`。
+- 物料异常修复后：`artifacts/layout-gap-qa/material-after-1366x1024.png`。
+- 仓库管理修复后：`artifacts/layout-gap-qa/warehouse-after-1366x1024.png`。
+- 实现视口：1366 × 1024 CSS 像素，浏览器缩放与截图密度均为 1×。
+- 状态：已登录、本周范围、真实仓库及物料异常数据已完成加载。
+
+### Full-view and focused comparison evidence
+
+- 用户标注图、1366 × 1024 修复前基线、1366 × 1024 修复后页面已放入同一次视觉比较输入；原图因像素尺寸和数据状态不同，仅用于确认标注区域，不对业务数字做像素级比较。
+- 修复前共用工作台外壳仍预留 64px 隐藏标题栏高度：物料页首卡片顶部为 74px，仓库页首卡片顶部为 72px。
+- 修复后两页根节点顶部内边距均为 0px；物料页首卡片顶部为 10px，仓库页首卡片顶部为 8px，内容框底部均落在 1024px 视口边界内。
+- 重点区域仅为页面顶部占位与首行内容衔接；字体、状态卡、侧栏、表单和三栏详情未改，因此不需要额外局部裁切。
+
+### Required fidelity surfaces
+
+- 字体与排版：字体、字号、字重、行高、截断规则均未改变；顶部标题与统计卡在上移后无裁切或换行漂移。
+- 间距与布局：删除无可见标题时残留的 64px 占位，保留页面自身 8px/10px 安全边距；未发现横向溢出、面板重叠或底部控件被挤出。
+- 颜色与视觉令牌：橙色主题、状态色、边框、阴影及背景令牌均保持原样。
+- 图片与图标：没有新增、替换或降质任何图片和图标资产。
+- 文案与内容：业务文案、统计数字、筛选条件和异常记录内容均未修改。
+
+### Interaction and diagnostics
+
+- 仓库管理与物料异常两条路由均重新加载成功；本周范围、统计卡、列表、详情和操作区正常显示。
+- 物料异常页真实加载 11 条记录，加载态正常退出。
+- 页面控制台没有应用错误或警告；仅有开发环境 Fast Refresh 信息。
+
+### Iteration history
+
+1. 初始发现 P2：`hideHeader` 只隐藏标题组件，但共用根布局仍保留 `--hm-shell-header: 64px`，形成整页顶部空洞。
+2. 在仓库与物料页面根选择器中显式将标题高度和顶部内边距设为 0，不改变其他工作台。
+3. 重新加载两页并在 1366 × 1024 复测，顶部空洞消失，首行内容完整填充且无新增 P0/P1/P2 问题。
+
+final result: passed

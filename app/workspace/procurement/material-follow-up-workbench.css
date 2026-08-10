@@ -1,3 +1,8 @@
+main.material-follow-up-workbench.hm-workbench-root.hm-workbench-root {
+  --hm-shell-header: 0px;
+  padding-top: 0;
+}
+
 .material-follow-up-workbench {
   --mf-orange: #f26722;
   --mf-orange-deep: #d94c0a;
