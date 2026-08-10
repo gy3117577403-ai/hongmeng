@@ -2,13 +2,14 @@
 
 1. 创建 PostgreSQL：库名 `workorder_resource`。
 2. 创建对象存储 Bucket：`workorder-resources`，private。
-3. App Deploy 使用镜像：`ghcr.io/gy3117577403-ai/hongmeng:v1.25.0`（固定版本，避免 `latest` 缓存到旧镜像；生产验收通过后再切换）。
+3. App Deploy 候选镜像：`ghcr.io/gy3117577403-ai/hongmeng:v1.28.0`。当前生产仍为 `v1.27.0`；候选镜像完成隔离验收后，生产应固定到其不可变 digest，不使用 `latest` 切换。
 4. 端口：`3000`。
 5. 环境变量：
 ```env
 DATABASE_URL="postgresql://USER:PASSWORD@HOST:PORT/workorder_resource?schema=public"
 SESSION_SECRET="至少32位随机字符串"
 S3_ENDPOINT="https://你的对象存储endpoint"
+S3_PUBLIC_ENDPOINT="https://浏览器可访问的对象存储endpoint"
 S3_REGION="auto"
 S3_BUCKET="workorder-resources"
 S3_ACCESS_KEY_ID="xxx"
@@ -32,6 +33,12 @@ SEED_RESET_ADMIN_PASSWORD="false"
 - 只有明确需要恢复管理员时，才同时填写新的强密码并临时设置 `SEED_RESET_ADMIN_PASSWORD=true`。该操作会启用账号、使旧会话失效并标记为下次登录需要改密。
 - 重置成功后立即把 `SEED_RESET_ADMIN_PASSWORD` 改回 `false`，并从 Sealos 环境变量中清除 `SEED_ADMIN_PASSWORD`。
 - 常规启动只会维护“已经是管理员”的引导账号及其 `ADMIN_GLOBAL` 主授权；授权是否启用跟随当前账号状态，因此不会借此绕过停用状态。若 `SEED_ADMIN_USERNAME` 已被普通账号占用，启动会拒绝静默提权；确需提升时必须提供强密码并显式执行一次重置，旧会话也会同步失效。
+
+### v1.28.0 回滚边界
+
+- 正式切换前先备份 PostgreSQL，并暂缓创建真实部门、财务和总经办账号，直至候选镜像验收完成。
+- v1.28.0 启用新账号后，不得只把镜像改回 v1.27.0：旧版本不识别新的账号状态、会话版本和部门授权，可能把新增非管理员账号带回旧的宽权限模式。
+- 如必须回退，先进入维护窗口，停用或隔离所有 v1.28.0 新增的非管理员账号，再切换旧 digest；数据库迁移不回退。优先采用保留新认证底座的前向修复镜像。
 
 ## 企业微信试发
 

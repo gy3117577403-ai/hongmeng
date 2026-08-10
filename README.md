@@ -4,14 +4,15 @@
 
 ## 生产部署状态
 
-- 当前生产版本：v1.23.0
+- 当前生产版本：v1.27.0（revision `ba3f2eeb569b9de83e2245e468dbec4dfe3d6d65`）
+- 待验收候选版本：v1.28.0（尚未切换生产）
 - 上线地址：https://qdowqencjyph.sealoshzh.site
 - 部署平台：Sealos
 - 镜像：`ghcr.io/gy3117577403-ai/hongmeng`
 - 数据库：Sealos PostgreSQL
 - 文件存储：Sealos Object Storage
-- 数据模式：账号登录，共享数据
-- 权限模式：无角色权限
+- 数据模式：账号登录；生产扫码报工保留员工身份追溯
+- 权限模式：管理员全局权限、部门权限、车间班组范围、兼岗 / 代班授权
 
 ## 功能范围
 
@@ -59,10 +60,10 @@ docker compose up --build
 推送到 GitHub main 后，工作流会构建：
 
 ```text
-ghcr.io/gy3117577403-ai/hongmeng:v1.25.0
+ghcr.io/gy3117577403-ai/hongmeng:v1.28.0
 ```
 
-Sealos App Deploy 端口填 `3000`。`v1.25.0` 是本次待部署固定镜像；当前生产仍为 `v1.24.0`，完成生产发布前不要把候选版本写成已上线。`latest` 仅用于跟随最新构建。
+Sealos App Deploy 端口填 `3000`。`v1.28.0` 是本次待验收固定镜像；当前生产仍为 `v1.27.0`，完成生产发布前不要把候选版本写成已上线。`latest` 仅用于跟随最新构建，生产切换应固定到已验收的镜像 digest。
 
 ## 平板交付方式
 
