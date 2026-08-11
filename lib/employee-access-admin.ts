@@ -32,6 +32,7 @@ export const employeeAccessAdminInclude = {
       isActive: true,
       accountStatus: true,
       mustChangePassword: true,
+      fieldPasswordOnly: true,
       lastLoginAt: true,
       accessGrants: {
         select: {
@@ -292,6 +293,7 @@ export function serializeEmployeeAccessAdmin(
     isActive: employee.user.isActive,
     accountStatus: employee.user.accountStatus,
     mustChangePassword: employee.user.mustChangePassword,
+    fieldPasswordOnly: employee.user.fieldPasswordOnly,
     lastLoginAt: employee.user.lastLoginAt,
     accessGrants: employee.user.accessGrants,
   }, now) : false;
@@ -308,6 +310,7 @@ export function serializeEmployeeAccessAdmin(
       isActive: employee.user.isActive,
       accountStatus: employee.user.accountStatus,
       mustChangePassword: employee.user.mustChangePassword,
+      fieldPasswordOnly: employee.user.fieldPasswordOnly,
       passwordSetupRequired,
       lastLoginAt: employee.user.lastLoginAt?.toISOString() || null,
       permissionSummary: {

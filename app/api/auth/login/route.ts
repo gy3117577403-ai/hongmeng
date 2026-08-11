@@ -8,7 +8,10 @@ import {
 } from '@/lib/constants';
 import { logOp } from '@/lib/logs';
 import {
+  canAcceptPasswordCredential,
+  canUseDefaultFieldPassword,
   canIssuePasswordSession,
+  FIELD_REPORT_DEFAULT_PASSWORD,
   isLoginLocked,
   nextFailedLoginState,
 } from '@/lib/login-security';
@@ -58,11 +61,20 @@ export async function POST(req: NextRequest) {
     }
     const passwordMatches = await bcrypt.compare(password, user?.passwordHash || INVALID_PASSWORD_HASH);
     const passwordSessionAllowed = Boolean(user && canIssuePasswordSession(user, now));
+    const passwordCredentialAccepted = Boolean(
+      user && canAcceptPasswordCredential(user, password, passwordMatches, now),
+    );
+    const usedFieldDefaultFallback = Boolean(
+      user
+      && !passwordMatches
+      && password === FIELD_REPORT_DEFAULT_PASSWORD
+      && canUseDefaultFieldPassword(user, now),
+    );
     if (
       !user
       || !passwordSessionAllowed
       || linkedEmployeeDisabled
-      || !passwordMatches
+      || !passwordCredentialAccepted
     ) {
       if (user && passwordSessionAllowed && !linkedEmployeeDisabled) {
         await prisma.$transaction(async tx => {
@@ -84,7 +96,16 @@ export async function POST(req: NextRequest) {
     }
     await prisma.user.update({
       where: { id: user.id },
-      data: { lastLoginAt: now, failedLoginAttempts: 0, lockedUntil: null },
+      data: {
+        lastLoginAt: now,
+        failedLoginAttempts: 0,
+        lockedUntil: null,
+        // Repair only accounts that received an unrecoverable random password
+        // during the PIN-only release. Existing working hashes are untouched.
+        ...(usedFieldDefaultFallback
+          ? { passwordHash: await bcrypt.hash(FIELD_REPORT_DEFAULT_PASSWORD, 10) }
+          : {}),
+      },
     });
     const response = NextResponse.json({
       ok: true,

@@ -315,6 +315,7 @@ model User {
   accountStatus                  AccountStatus                      @default(ACTIVE) @map("account_status")
   sessionVersion                 Int                                @default(0) @map("session_version")
   mustChangePassword             Boolean                            @default(false) @map("must_change_password")
+  fieldPasswordOnly              Boolean                            @default(false) @map("field_password_only")
   lastLoginAt                    DateTime?                          @map("last_login_at")
   failedLoginAttempts            Int                                @default(0) @map("failed_login_attempts")
   lockedUntil                    DateTime?                          @map("locked_until")

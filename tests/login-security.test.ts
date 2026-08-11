@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  canAcceptPasswordCredential,
   canIssuePasswordSession,
   canRetainPasswordSession,
+  canUseDefaultFieldPassword,
+  hasPureFieldReporterAccess,
   isLoginLocked,
   LOGIN_LOCK_DURATION_MS,
   MAX_FAILED_LOGIN_ATTEMPTS,
   nextFailedLoginState,
   requiresAdminPasswordSetup,
+  type PasswordSessionAccount,
 } from '../lib/login-security';
 
 test('account locks after the configured consecutive failure threshold', () => {
@@ -46,145 +50,124 @@ function loginGrant(
   };
 }
 
-test('FIELD_REPORTER-only account cannot receive an ordinary password session', () => {
-  assert.equal(canIssuePasswordSession({
+function loginAccount(
+  overrides: Partial<PasswordSessionAccount> = {},
+): PasswordSessionAccount {
+  return {
     isActive: true,
     accountStatus: 'ACTIVE',
     mustChangePassword: false,
+    fieldPasswordOnly: false,
     lastLoginAt: null,
-    accessGrants: [loginGrant('FIELD_REPORTER')],
-  }, PASSWORD_LOGIN_NOW), false);
+    accessGrants: [loginGrant('DEPARTMENT_FULL')],
+    ...overrides,
+  };
+}
+
+test('pure FIELD_REPORTER can receive and retain a password session for QR APIs', () => {
+  const reporter = {
+    ...loginAccount({
+      fieldPasswordOnly: true,
+      accessGrants: [loginGrant('FIELD_REPORTER')],
+    }),
+    sessionVersion: 4,
+  };
+
+  assert.equal(hasPureFieldReporterAccess(reporter, PASSWORD_LOGIN_NOW), true);
+  assert.equal(canUseDefaultFieldPassword(reporter, PASSWORD_LOGIN_NOW), true);
+  assert.equal(canIssuePasswordSession(reporter, PASSWORD_LOGIN_NOW), true);
+  assert.equal(canRetainPasswordSession(reporter, 4, PASSWORD_LOGIN_NOW), true);
 });
 
-test('a mixed account keeps password login through a current non-reporter grant', () => {
-  assert.equal(canIssuePasswordSession({
-    isActive: true,
-    accountStatus: 'ACTIVE',
-    mustChangePassword: false,
+test('weak field credential is blocked as soon as a current non-field grant exists', () => {
+  const promoted = {
+    ...loginAccount({
+      fieldPasswordOnly: true,
+      accessGrants: [
+        loginGrant('FIELD_REPORTER'),
+        loginGrant('WORKSHOP_TEAM_LEADER'),
+      ],
+    }),
+    sessionVersion: 7,
+  };
+
+  assert.equal(requiresAdminPasswordSetup(promoted, PASSWORD_LOGIN_NOW), true);
+  assert.equal(canUseDefaultFieldPassword(promoted, PASSWORD_LOGIN_NOW), false);
+  assert.equal(canIssuePasswordSession(promoted, PASSWORD_LOGIN_NOW), false);
+  assert.equal(canRetainPasswordSession(promoted, 7, PASSWORD_LOGIN_NOW), false);
+
+  const strongReset = {
+    ...promoted,
+    fieldPasswordOnly: false,
+    mustChangePassword: true,
+  };
+  assert.equal(requiresAdminPasswordSetup(strongReset, PASSWORD_LOGIN_NOW), false);
+  assert.equal(canIssuePasswordSession(strongReset, PASSWORD_LOGIN_NOW), true);
+  assert.equal(canRetainPasswordSession(strongReset, 7, PASSWORD_LOGIN_NOW), true);
+});
+
+test('future non-field grant immediately blocks a weak field credential', () => {
+  const futurePromotion = loginAccount({
+    fieldPasswordOnly: true,
+    accessGrants: [
+      loginGrant('FIELD_REPORTER'),
+      loginGrant('WORKSHOP_SUPERVISOR', {
+        effectiveFrom: new Date('2026-08-12T00:00:00.000Z'),
+      }),
+    ],
+  });
+
+  assert.equal(hasPureFieldReporterAccess(futurePromotion, PASSWORD_LOGIN_NOW), false);
+  assert.equal(requiresAdminPasswordSetup(futurePromotion, PASSWORD_LOGIN_NOW), true);
+  assert.equal(canIssuePasswordSession(futurePromotion, PASSWORD_LOGIN_NOW), false);
+});
+
+test('inactive and fully expired non-field grants do not block pure field login', () => {
+  const reporter = loginAccount({
+    fieldPasswordOnly: true,
+    accessGrants: [
+      loginGrant('FIELD_REPORTER'),
+      loginGrant('DEPARTMENT_FULL', { isActive: false }),
+      loginGrant('WORKSHOP_TEAM_LEADER', {
+        effectiveTo: new Date('2026-08-10T08:00:00.000Z'),
+      }),
+    ],
+  });
+
+  assert.equal(hasPureFieldReporterAccess(reporter, PASSWORD_LOGIN_NOW), true);
+  assert.equal(requiresAdminPasswordSetup(reporter, PASSWORD_LOGIN_NOW), false);
+  assert.equal(canIssuePasswordSession(reporter, PASSWORD_LOGIN_NOW), true);
+});
+
+test('strong mixed account keeps password login through a current non-reporter grant', () => {
+  const mixed = loginAccount({
+    fieldPasswordOnly: false,
     lastLoginAt: new Date('2026-08-09T08:00:00.000Z'),
     accessGrants: [
       loginGrant('FIELD_REPORTER'),
       loginGrant('WORKSHOP_TEAM_LEADER'),
     ],
-  }, PASSWORD_LOGIN_NOW), true);
-});
-
-test('an existing mixed-account session is rejected exactly when its workbench grant expires', () => {
-  const account = {
-    isActive: true,
-    accountStatus: 'ACTIVE',
-    mustChangePassword: false,
-    lastLoginAt: new Date('2026-08-09T08:00:00.000Z'),
-    sessionVersion: 4,
-    accessGrants: [
-      loginGrant('FIELD_REPORTER'),
-      loginGrant('WORKSHOP_TEAM_LEADER', {
-        effectiveTo: new Date('2026-08-10T08:15:00.000Z'),
-      }),
-    ],
-  };
-
+  });
+  assert.equal(canIssuePasswordSession(mixed, PASSWORD_LOGIN_NOW), true);
   assert.equal(
-    canRetainPasswordSession(account, 4, new Date('2026-08-10T08:14:59.999Z')),
+    canAcceptPasswordCredential(mixed, 'River-Quartz-2026!', true, PASSWORD_LOGIN_NOW),
     true,
   );
   assert.equal(
-    canRetainPasswordSession(account, 4, new Date('2026-08-10T08:15:00.000Z')),
+    canAcceptPasswordCredential(mixed, '123456', true, PASSWORD_LOGIN_NOW),
     false,
+    'a matching legacy bcrypt hash must not turn 123456 into a workbench password',
   );
 });
 
-test('current ADMIN_GLOBAL session remains valid while pure FIELD_REPORTER and stale versions fail closed', () => {
+test('session version and account lifecycle still fail closed', () => {
   const admin = {
-    isActive: true,
-    accountStatus: 'ACTIVE',
-    mustChangePassword: false,
-    lastLoginAt: new Date('2026-08-09T08:00:00.000Z'),
+    ...loginAccount({ accessGrants: [loginGrant('ADMIN_GLOBAL')] }),
     sessionVersion: 2,
-    accessGrants: [loginGrant('ADMIN_GLOBAL')],
   };
-  const reporter = {
-    ...admin,
-    accessGrants: [loginGrant('FIELD_REPORTER')],
-  };
-
   assert.equal(canRetainPasswordSession(admin, 2, PASSWORD_LOGIN_NOW), true);
   assert.equal(canRetainPasswordSession(admin, 1, PASSWORD_LOGIN_NOW), false);
-  assert.equal(canRetainPasswordSession(reporter, 2, PASSWORD_LOGIN_NOW), false);
-});
-
-test('FIELD_REPORTER promotion requires an administrator password reset before issue or retention', () => {
-  const pending = {
-    isActive: true,
-    accountStatus: 'ACTIVE',
-    mustChangePassword: false,
-    lastLoginAt: null,
-    sessionVersion: 7,
-    accessGrants: [
-      loginGrant('FIELD_REPORTER', { isActive: false }),
-      loginGrant('WORKSHOP_SUPERVISOR'),
-    ],
-  };
-
-  assert.equal(requiresAdminPasswordSetup(pending, PASSWORD_LOGIN_NOW), true);
-  assert.equal(canIssuePasswordSession(pending, PASSWORD_LOGIN_NOW), false);
-  assert.equal(canRetainPasswordSession(pending, 7, PASSWORD_LOGIN_NOW), false);
-
-  const reset = { ...pending, mustChangePassword: true };
-  assert.equal(requiresAdminPasswordSetup(reset, PASSWORD_LOGIN_NOW), false);
-  assert.equal(canIssuePasswordSession(reset, PASSWORD_LOGIN_NOW), true);
-  assert.equal(canRetainPasswordSession(reset, 7, PASSWORD_LOGIN_NOW), true);
-
-  const previouslyLoggedIn = {
-    ...pending,
-    lastLoginAt: new Date('2026-08-09T08:00:00.000Z'),
-  };
-  assert.equal(requiresAdminPasswordSetup(previouslyLoggedIn, PASSWORD_LOGIN_NOW), false);
-  assert.equal(canIssuePasswordSession(previouslyLoggedIn, PASSWORD_LOGIN_NOW), true);
-  assert.equal(canRetainPasswordSession(previouslyLoggedIn, 7, PASSWORD_LOGIN_NOW), true);
-});
-
-test('inactive, future and expired non-reporter grants cannot unlock password login', () => {
-  const accessGrants = [
-    loginGrant('FIELD_REPORTER'),
-    loginGrant('DEPARTMENT_FULL', { isActive: false }),
-    loginGrant('WORKSHOP_SUPERVISOR', {
-      effectiveFrom: new Date('2026-08-10T08:00:00.001Z'),
-    }),
-    loginGrant('ADMIN_GLOBAL', {
-      effectiveTo: new Date('2026-08-10T08:00:00.000Z'),
-    }),
-  ];
-  assert.equal(canIssuePasswordSession({
-    isActive: true,
-    accountStatus: 'ACTIVE',
-    mustChangePassword: false,
-    lastLoginAt: new Date('2026-08-09T08:00:00.000Z'),
-    accessGrants,
-  }, PASSWORD_LOGIN_NOW), false);
-});
-
-test('account lifecycle and missing explicit workbench access fail closed', () => {
-  const accessGrants = [loginGrant('DEPARTMENT_FULL')];
-  assert.equal(canIssuePasswordSession({
-    isActive: false,
-    accountStatus: 'ACTIVE',
-    mustChangePassword: false,
-    lastLoginAt: new Date('2026-08-09T08:00:00.000Z'),
-    accessGrants,
-  }, PASSWORD_LOGIN_NOW), false);
-  assert.equal(canIssuePasswordSession({
-    isActive: true,
-    accountStatus: 'SUSPENDED',
-    mustChangePassword: false,
-    lastLoginAt: new Date('2026-08-09T08:00:00.000Z'),
-    accessGrants,
-  }, PASSWORD_LOGIN_NOW), false);
-  assert.equal(canIssuePasswordSession({
-    isActive: true,
-    accountStatus: 'ACTIVE',
-    mustChangePassword: false,
-    lastLoginAt: new Date('2026-08-09T08:00:00.000Z'),
-    accessGrants: [],
-  }, PASSWORD_LOGIN_NOW), false);
+  assert.equal(canIssuePasswordSession({ ...admin, isActive: false }, PASSWORD_LOGIN_NOW), false);
+  assert.equal(canIssuePasswordSession({ ...admin, accountStatus: 'SUSPENDED' }, PASSWORD_LOGIN_NOW), false);
+  assert.equal(canIssuePasswordSession({ ...admin, accessGrants: [] }, PASSWORD_LOGIN_NOW), false);
 });

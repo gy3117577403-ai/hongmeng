@@ -72,7 +72,6 @@ import type {
   CurrentUserDTO,
   EmployeeAttainmentReportDTO,
   EmployeeDTO,
-  FieldPinSummaryDTO,
   RecruitmentCandidateDTO,
   RecruitmentDemandDTO,
   RecruitmentDemandStatusDTO,
@@ -521,16 +520,6 @@ function employeeAccessMethods(employee: EmployeeDTO | null | undefined, product
     else methods.add('后台登录');
   });
   return [...methods];
-}
-
-function employeeFieldPinStatus(pin: FieldPinSummaryDTO | null | undefined, eligible: boolean): { label: string; detail: string; tone: 'active' | 'warning' | 'disabled' | 'unbound' } {
-  if (!pin?.configured) return eligible
-    ? { label: '未设置', detail: '由管理员在账号设置中配置', tone: 'unbound' }
-    : { label: '不适用', detail: '当前账号未开通扫码报工权限', tone: 'unbound' };
-  if (!eligible) return { label: '不可用', detail: '当前未开通扫码报工权限', tone: 'disabled' };
-  if (pin.isLocked) return { label: '已锁定', detail: pin.lockedUntil ? `锁定至 ${formatDateTime(pin.lockedUntil)}` : '请联系管理员重置', tone: 'warning' };
-  if (!pin.isActive) return { label: '已停用', detail: '当前不能在共享终端验证', tone: 'disabled' };
-  return { label: '已配置', detail: pin.lastUsedAt ? `最近使用 ${formatDateTime(pin.lastUsedAt)}` : '可在共享终端验证，PIN 不回显', tone: 'active' };
 }
 
 function employeeGrantDepartment(grant: UserAccessGrantDTO, fallback: string): string {
@@ -1673,15 +1662,8 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     const productionReportingEligible = isProductionWorkforceEmployee(draft);
     const profileAccount = employeeLinkedAccount(profileEmployee);
     const profilePermissionSummary = profileEmployee?.linkedUser?.permissionSummary;
-    const profileFieldPin = profilePermissionSummary?.pin;
     const profileAccountStatus = employeeAccountStatus(profileEmployee);
     const profileAccessGrants = currentEmployeeAccessGrants(profileEmployee);
-    const profileFieldPinEligible = Boolean(
-      profileEmployee?.isActive
-      && profileAccount?.isActive
-      && (profilePermissionSummary?.fieldReportEnabled || profileAccessGrants.some(grant => grant.profileKey === 'FIELD_REPORTER')),
-    );
-    const profileFieldPinStatus = employeeFieldPinStatus(profileFieldPin, profileFieldPinEligible);
     const profileAccessMethods = employeeAccessMethods(profileEmployee, productionReportingEligible);
     const profilePrimaryGrant = profileAccessGrants.find(grant => grant.grantType === 'PRIMARY') || null;
     const profilePermissionVersion = profileAccessGrants.length
@@ -2042,7 +2024,6 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                         <div>
                           {profileAccessMethods.map(method => <span key={method}>{method.includes('扫码') ? <QrCode /> : <Monitor />}{method}</span>)}
                           {!profileAccessMethods.length && <span className="muted"><KeyRound />尚未开通</span>}
-                          <span className={`pin-${profileFieldPinStatus.tone}`} title="系统仅显示配置状态，不显示 PIN 明文"><KeyRound />共享终端 PIN · {profileFieldPinStatus.label}</span>
                         </div>
                       </div>
                       <div className="hr-account-grant-list">
@@ -2175,7 +2156,6 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
               <div className="hr-role-account-state">
                 <header><span className={`tone-${profileAccountStatus.tone}`}><KeyRound />{profileAccountStatus.label}</span><small>{profileAccount?.username || '未分配账号'}</small></header>
                 <div>{profileAccessMethods.map(method => <span key={method}>{method.includes('扫码') ? <QrCode /> : <Monitor />}{method}</span>)}{!profileAccessMethods.length && <span className="muted"><KeyRound />未开通访问方式</span>}</div>
-                <footer className={`pin-${profileFieldPinStatus.tone}`}><KeyRound /><span><strong>共享终端 PIN · {profileFieldPinStatus.label}</strong><small>{profileFieldPinStatus.detail}</small></span>{canManageAccounts && profileEmployee && profileFieldPinEligible && <a href={`/dashboard?settings=accounts&employeeId=${encodeURIComponent(profileEmployee.id)}&credential=pin`}>{profileFieldPin?.configured ? '重置' : '设置'}</a>}</footer>
               </div>
             </section>
             <section>
