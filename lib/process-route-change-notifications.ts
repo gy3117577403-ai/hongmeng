@@ -249,3 +249,21 @@ export async function dispatchProcessRouteChangeOutbox(options: {
   }
   return result;
 }
+
+/**
+ * Business mutations are already committed before notification delivery starts.
+ * A transient dispatcher/database failure must therefore never turn a successful
+ * review, activation, proposal, or completion into an HTTP failure that invites
+ * the user to submit the same mutation again. The durable outbox worker will
+ * retry every row that remains pending or failed.
+ */
+export async function dispatchProcessRouteChangeOutboxBestEffort(options: {
+  changeId?: string;
+  limit?: number;
+} = {}): Promise<void> {
+  try {
+    await dispatchProcessRouteChangeOutbox(options);
+  } catch {
+    console.error('工艺变更通知即时调度失败，业务操作已提交，将由后台任务重试');
+  }
+}

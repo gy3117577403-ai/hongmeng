@@ -33,12 +33,19 @@ export const PROCESS_SUPPLEMENT_RELEASE_POLICY = 'NONE' as const;
 export class ProcessRouteChangeServiceError extends Error {
   readonly status: number;
   readonly code: string;
+  readonly details: Record<string, unknown> | null;
 
-  constructor(message: string, status = 400, code = 'PROCESS_ROUTE_CHANGE_INVALID') {
+  constructor(
+    message: string,
+    status = 400,
+    code = 'PROCESS_ROUTE_CHANGE_INVALID',
+    details: Record<string, unknown> | null = null,
+  ) {
     super(message);
     this.name = 'ProcessRouteChangeServiceError';
     this.status = status;
     this.code = code;
+    this.details = details;
   }
 }
 
@@ -1188,6 +1195,10 @@ async function transitionProcessRouteChange(input: {
   detail?: Prisma.InputJsonValue;
   data?: Prisma.ProcessRouteChangeUncheckedUpdateManyInput;
   outboxEventType: string;
+  alreadyApplied?: (current: {
+    status: ProcessRouteChangeStatus;
+    reviewDecision: string | null;
+  }) => boolean;
   beforeTransition?: (
     tx: Prisma.TransactionClient,
     current: {
@@ -1198,6 +1209,8 @@ async function transitionProcessRouteChange(input: {
       workOrderId: string;
       routeId: string;
       impactSnapshot: Prisma.JsonValue | null;
+      reviewDecision: string | null;
+      updatedAt: Date;
     },
   ) => Promise<void>;
 }) {
@@ -1218,16 +1231,25 @@ async function transitionProcessRouteChange(input: {
         workOrderId: true,
         routeId: true,
         impactSnapshot: true,
+        reviewDecision: true,
+        updatedAt: true,
       },
     });
     if (!current) {
       throw new ProcessRouteChangeServiceError('工艺变更不存在', 404, 'PROCESS_ROUTE_CHANGE_NOT_FOUND');
     }
     if (current.status !== input.from) {
+      if (input.alreadyApplied?.(current)) return changeId;
       throw new ProcessRouteChangeServiceError(
         `当前状态不能执行${input.action}`,
         409,
         'PROCESS_ROUTE_CHANGE_STATUS_CONFLICT',
+        {
+          currentStatus: current.status,
+          currentVersion: current.version,
+          expectedStatus: input.from,
+          updatedAt: current.updatedAt.toISOString(),
+        },
       );
     }
     if (current.version !== input.identity.expectedVersion) {
@@ -1235,6 +1257,12 @@ async function transitionProcessRouteChange(input: {
         '工艺变更已被其他人更新，请刷新后重试',
         409,
         'PROCESS_ROUTE_CHANGE_VERSION_CONFLICT',
+        {
+          currentStatus: current.status,
+          currentVersion: current.version,
+          expectedStatus: input.from,
+          updatedAt: current.updatedAt.toISOString(),
+        },
       );
     }
     await input.beforeTransition?.(tx, current);
@@ -1560,6 +1588,14 @@ export async function reviewProcessRouteChange(command: ReviewProcessRouteChange
     },
     detail: json({ decision, note }),
     outboxEventType: approved ? 'PROCESS_ROUTE_CHANGE_APPROVED' : 'PROCESS_ROUTE_CHANGE_REJECTED',
+    alreadyApplied: current => approved
+      ? current.reviewDecision === 'APPROVED' && ([
+          ProcessRouteChangeStatus.APPROVED,
+          ProcessRouteChangeStatus.ACTIVATING,
+          ProcessRouteChangeStatus.ACTIVE,
+          ProcessRouteChangeStatus.FAILED,
+        ] as ProcessRouteChangeStatus[]).includes(current.status)
+      : current.reviewDecision === 'REJECTED' && current.status === ProcessRouteChangeStatus.REJECTED,
     beforeTransition: approved ? async (tx, current) => {
       const diffs = await tx.processRouteChangeDiff.findMany({
         where: { changeId: current.id },
@@ -2925,11 +2961,32 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
         },
       });
       if (!change) throw new ProcessRouteChangeServiceError('工艺变更不存在', 404, 'PROCESS_ROUTE_CHANGE_NOT_FOUND');
+      if (change.status === ProcessRouteChangeStatus.ACTIVE) return change.id;
       if (change.status !== ProcessRouteChangeStatus.APPROVED) {
-        throw new ProcessRouteChangeServiceError('只有已审核通过的工艺变更可以启用', 409, 'PROCESS_ROUTE_CHANGE_STATUS_CONFLICT');
+        throw new ProcessRouteChangeServiceError(
+          '只有已审核通过的工艺变更可以启用',
+          409,
+          'PROCESS_ROUTE_CHANGE_STATUS_CONFLICT',
+          {
+            currentStatus: change.status,
+            currentVersion: change.version,
+            expectedStatus: ProcessRouteChangeStatus.APPROVED,
+            updatedAt: change.updatedAt.toISOString(),
+          },
+        );
       }
       if (change.version !== identity.expectedVersion) {
-        throw new ProcessRouteChangeServiceError('工艺变更版本已更新，请刷新后重试', 409, 'PROCESS_ROUTE_CHANGE_VERSION_CONFLICT');
+        throw new ProcessRouteChangeServiceError(
+          '工艺变更版本已更新，请刷新后重试',
+          409,
+          'PROCESS_ROUTE_CHANGE_VERSION_CONFLICT',
+          {
+            currentStatus: change.status,
+            currentVersion: change.version,
+            expectedStatus: ProcessRouteChangeStatus.APPROVED,
+            updatedAt: change.updatedAt.toISOString(),
+          },
+        );
       }
       const requestedRouteVersion = command.expectedRouteVersion == null
         ? change.baseRouteVersion

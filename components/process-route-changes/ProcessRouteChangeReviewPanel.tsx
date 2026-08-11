@@ -15,10 +15,11 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   millisecondsFromSeconds,
   normalizeOptionalProcessRouteChangeNote,
+  processRouteChangeCommandIdempotencyKey,
   processRouteChangeIdempotencyKey,
   processRouteChangeStatusLabels,
   processRouteChangeReviewNoteError,
@@ -29,6 +30,10 @@ import {
   type ProcessRouteChangeListResponse,
   type ProcessRouteTimeChangeDTO,
 } from '@/lib/process-route-change-contract';
+import {
+  publishProcessRouteChangeClientUpdate,
+  subscribeProcessRouteChangeClientUpdates,
+} from '@/lib/process-route-change-client-sync';
 
 type ReviewStep = {
   id: string;
@@ -56,6 +61,46 @@ function formatLabor(value?: string | number | null): string {
   const milliseconds = Number(value || 0);
   if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '0 小时';
   return `${(milliseconds / 3_600_000).toFixed(2)} 小时`;
+}
+
+type ProcessRouteChangeCommandResponse = {
+  data?: ProcessRouteChangeDTO;
+  error?: unknown;
+  code?: unknown;
+  currentStatus?: unknown;
+  currentVersion?: unknown;
+};
+
+function replaceProcessRouteChange(
+  changes: ProcessRouteChangeDTO[],
+  replacement: ProcessRouteChangeDTO,
+): ProcessRouteChangeDTO[] {
+  return changes.some(item => item.id === replacement.id)
+    ? changes.map(item => item.id === replacement.id ? replacement : item)
+    : [replacement, ...changes];
+}
+
+function resolvedCommandMessage(
+  status: ProcessRouteChangeDTO['status'],
+  action: 'approve' | 'reject' | 'activate',
+): { success: boolean; message: string } | null {
+  if (action === 'approve') {
+    if (status === 'APPROVED') return { success: true, message: '该申请已经审核通过，请直接执行一键启用。' };
+    if (status === 'ACTIVATING') return { success: true, message: '该申请已经审核通过，正在启用中，请稍后刷新。' };
+    if (status === 'ACTIVE') return { success: true, message: '该申请已经审核并启用，无需重复审批。' };
+    if (status === 'REJECTED') return { success: false, message: '该申请已经被驳回，不能再次执行通过。' };
+    if (status === 'FAILED') return { success: false, message: '该申请已通过审核，但启用失败，请查看启用错误后处理。' };
+  }
+  if (action === 'reject') {
+    if (status === 'REJECTED') return { success: true, message: '该申请已经驳回，无需重复操作。' };
+    if (status !== 'SUBMITTED') return { success: false, message: `该申请当前为“${processRouteChangeStatusLabels[status]}”，不能再次驳回。` };
+  }
+  if (action === 'activate') {
+    if (status === 'ACTIVE') return { success: true, message: '该申请已经启用，无需重复操作。' };
+    if (status === 'ACTIVATING') return { success: true, message: '该申请正在启用中，请稍后刷新。' };
+    if (status === 'FAILED') return { success: false, message: '该申请启用失败，请查看错误后重新评估。' };
+  }
+  return null;
 }
 
 export function ProcessRouteChangeReviewPanel({
@@ -87,8 +132,10 @@ export function ProcessRouteChangeReviewPanel({
   const [affectedQty, setAffectedQty] = useState('');
   const [newStepSeconds, setNewStepSeconds] = useState('');
   const [timeChanges, setTimeChanges] = useState<ProcessRouteTimeChangeDTO[]>([]);
+  const commandInFlightRef = useRef(false);
+  const panelInstanceIdRef = useRef(processRouteChangeIdempotencyKey('route-change-review-panel'));
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (): Promise<ProcessRouteChangeDTO[]> => {
     setLoading(true);
     setError('');
     try {
@@ -101,14 +148,26 @@ export function ProcessRouteChangeReviewPanel({
       setSelectedId(current => list.some(item => item.id === current)
         ? current
         : list.some(item => item.id === initialChangeId) ? initialChangeId as string : list[0]?.id || '');
+      return list;
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '工艺变更加载失败');
+      return [];
     } finally {
       setLoading(false);
     }
   }, [initialChangeId, routeId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => subscribeProcessRouteChangeClientUpdates(update => {
+    if (update.routeId !== routeId || update.sourceId === panelInstanceIdRef.current) return;
+    void load();
+  }), [load, routeId]);
+
+  useEffect(() => {
+    setError('');
+    setMessage('');
+  }, [selectedId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -150,8 +209,6 @@ export function ProcessRouteChangeReviewPanel({
       processDefinitions,
     );
     setNewProcessDefinitionId(binding.selectedId);
-    setError('');
-    setMessage('');
   }, [processDefinitions, selected]);
 
   const insertAnchor = useMemo(() => steps.find(step => step.id === selectedPayload?.insertBeforeStepId) || null, [selectedPayload?.insertBeforeStepId, steps]);
@@ -176,7 +233,7 @@ export function ProcessRouteChangeReviewPanel({
   ));
 
   async function command(action: 'approve' | 'reject' | 'activate'): Promise<void> {
-    if (!selected || saving) return;
+    if (!selected || saving || commandInFlightRef.current) return;
     const parsedAffectedQty = Number(affectedQty);
     const parsedNewStepStandard = millisecondsFromSeconds(newStepSeconds);
     const includesInsert = selected.payload.changeType === 'INSERT_STEP' || selected.payload.changeType === 'BOTH';
@@ -218,6 +275,7 @@ export function ProcessRouteChangeReviewPanel({
       setError(reviewNoteError);
       return;
     }
+    commandInFlightRef.current = true;
     setSaving(true);
     setError('');
     setMessage('');
@@ -231,7 +289,7 @@ export function ProcessRouteChangeReviewPanel({
         body: JSON.stringify(action === 'activate' ? {
           expectedVersion: selected.version,
           expectedRouteVersion: routeVersion,
-          idempotencyKey: processRouteChangeIdempotencyKey('activate-change'),
+          idempotencyKey: processRouteChangeCommandIdempotencyKey(selected.id, selected.version, action),
         } : {
           action,
           expectedVersion: selected.version,
@@ -240,23 +298,68 @@ export function ProcessRouteChangeReviewPanel({
           affectedQty: parsedAffectedQty,
           newStandardMillisecondsPerUnit: parsedNewStepStandard,
           timeChanges: normalizedTimeChanges,
-          idempotencyKey: processRouteChangeIdempotencyKey(`review-${action}`),
+          idempotencyKey: processRouteChangeCommandIdempotencyKey(selected.id, selected.version, action),
         }),
       });
-      const body = await response.json().catch(() => ({})) as { data?: ProcessRouteChangeDTO; error?: unknown };
-      if (!response.ok) throw new Error(responseError(body, action === 'activate' ? '工艺变更启用失败' : '工艺审核失败'));
-      setMessage(action === 'approve'
-        ? '工艺审核已通过，请核对影响后一键启用。'
-        : action === 'reject'
-          ? '已驳回现场提案。'
-          : body.data?.historicalLaborRecalculationPending
-            ? '路线与产品主档已启用；历史工时和达成率仍在等待重算，完成前不会标记为最终结果。'
-            : '已启用：当前工单、产品主档、扫码工序及历史工时已同步到新版本。');
+      const body = await response.json().catch(() => ({})) as ProcessRouteChangeCommandResponse;
+      if (!response.ok) {
+        const code = String(body.code || '');
+        if (code === 'PROCESS_ROUTE_CHANGE_STATUS_CONFLICT' || code === 'PROCESS_ROUTE_CHANGE_VERSION_CONFLICT') {
+          const latestChanges = await load();
+          const latest = latestChanges.find(item => item.id === selected.id) || null;
+          if (latest) {
+            publishProcessRouteChangeClientUpdate({
+              changeId: latest.id,
+              routeId: latest.routeId,
+              sourceId: panelInstanceIdRef.current,
+              status: latest.status,
+              version: latest.version,
+            });
+            const feedback = resolvedCommandMessage(latest.status, action);
+            if (feedback) {
+              if (feedback.success) setMessage(feedback.message);
+              else setError(feedback.message);
+              if (latest.status === 'ACTIVE') onActivated?.();
+              return;
+            }
+            const serverStatus = String(body.currentStatus || '').trim();
+            if (latest.status === 'SUBMITTED' && serverStatus && serverStatus !== latest.status) {
+              throw new Error(`系统状态不一致：审核节点为 ${serverStatus}，列表仍为 SUBMITTED。请联系管理员检查服务实例数据库配置。`);
+            }
+          }
+        }
+        throw new Error(responseError(body, action === 'activate' ? '工艺变更启用失败' : '工艺审核失败'));
+      }
+      if (body.data) {
+        setChanges(current => replaceProcessRouteChange(current, body.data as ProcessRouteChangeDTO));
+        publishProcessRouteChangeClientUpdate({
+          changeId: body.data.id,
+          routeId: body.data.routeId,
+          sourceId: panelInstanceIdRef.current,
+          status: body.data.status,
+          version: body.data.version,
+        });
+      }
+      const resolved = body.data ? resolvedCommandMessage(body.data.status, action) : null;
+      if (resolved && !resolved.success) {
+        setError(resolved.message);
+      } else {
+        setMessage(action === 'activate'
+          ? (body.data?.historicalLaborRecalculationPending
+              ? '路线与产品主档已启用；历史工时和达成率仍在等待重算，完成前不会标记为最终结果。'
+              : '已启用：当前工单、产品主档、扫码工序及历史工时已同步到新版本。')
+          : action === 'approve' && body.data?.status === 'APPROVED'
+            ? '工艺审核已通过，请核对影响后一键启用。'
+            : action === 'reject' && body.data?.status === 'REJECTED'
+              ? '已驳回现场提案。'
+              : resolved?.message || '工艺变更状态已更新。');
+      }
       await load();
-      if (action === 'activate') onActivated?.();
+      if (body.data?.status === 'ACTIVE') onActivated?.();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '工艺变更操作失败');
     } finally {
+      commandInFlightRef.current = false;
       setSaving(false);
     }
   }

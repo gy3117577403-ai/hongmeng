@@ -301,14 +301,26 @@ test(
         userId: actor.id,
         actor: actor.displayName || actor.username,
       });
-      const reviewed = await reviewProcessRouteChange({
-        changeId,
-        decision: 'approve',
-        idempotencyKey: `${prefix}-approve-change`,
-        expectedVersion: submitted.version,
-        userId: actor.id,
-        actor: actor.displayName || actor.username,
-      });
+      const [reviewed, concurrentReviewReplay] = await Promise.all([
+        reviewProcessRouteChange({
+          changeId,
+          decision: 'approve',
+          idempotencyKey: `${prefix}-approve-change-a`,
+          expectedVersion: submitted.version,
+          userId: actor.id,
+          actor: actor.displayName || actor.username,
+        }),
+        reviewProcessRouteChange({
+          changeId,
+          decision: 'approve',
+          idempotencyKey: `${prefix}-approve-change-b`,
+          expectedVersion: submitted.version,
+          userId: actor.id,
+          actor: actor.displayName || actor.username,
+        }),
+      ]);
+      assert.equal(concurrentReviewReplay.status, 'APPROVED');
+      assert.equal(concurrentReviewReplay.version, reviewed.version);
       const activationCommand = {
         changeId,
         expectedRouteVersion: 2,
@@ -321,6 +333,28 @@ test(
       const activationReplay = await activateProcessRouteChange(activationCommand);
       assert.equal(activationReplay.id, activated.id);
       assert.equal(activationReplay.version, activated.version);
+      const staleActivationReplay = await activateProcessRouteChange({
+        ...activationCommand,
+        idempotencyKey: `${prefix}-activate-change-stale-panel`,
+      });
+      assert.equal(staleActivationReplay.status, 'ACTIVE');
+      assert.equal(staleActivationReplay.version, activated.version);
+      assert.equal(await prisma.processRouteChangeEvent.count({
+        where: { changeId, action: 'activate' },
+      }), 1);
+      const staleReviewReplay = await reviewProcessRouteChange({
+        changeId,
+        decision: 'approve',
+        idempotencyKey: `${prefix}-approve-after-activation`,
+        expectedVersion: submitted.version,
+        userId: actor.id,
+        actor: actor.displayName || actor.username,
+      });
+      assert.equal(staleReviewReplay.status, 'ACTIVE');
+      assert.equal(staleReviewReplay.version, activated.version);
+      assert.equal(await prisma.processRouteChangeEvent.count({
+        where: { changeId, action: 'approve' },
+      }), 1);
       assert.equal(activated.supplementObligations.length, 1);
       obligationId = activated.supplementObligations[0].id;
 

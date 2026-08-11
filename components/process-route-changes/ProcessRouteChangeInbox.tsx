@@ -9,6 +9,7 @@ import {
   type ProcessRouteChangeDTO,
   type ProcessRouteChangeListResponse,
 } from '@/lib/process-route-change-contract';
+import { subscribeProcessRouteChangeClientUpdates } from '@/lib/process-route-change-client-sync';
 
 function responseError(value: unknown): string {
   if (value && typeof value === 'object' && 'error' in value) {
@@ -60,6 +61,7 @@ export function ProcessRouteChangeInbox({ initialChangeId }: { initialChangeId?:
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => subscribeProcessRouteChangeClientUpdates(() => { void load(); }), [load]);
 
   const openReview = useCallback(async (input: ProcessRouteChangeDTO | string): Promise<void> => {
     const changeId = typeof input === 'string' ? input.trim() : input.id;

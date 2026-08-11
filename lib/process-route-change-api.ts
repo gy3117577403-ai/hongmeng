@@ -25,13 +25,27 @@ export function canReviewProcessRouteChanges(user: RouteChangeApiUser): boolean 
 
 export function processRouteChangeErrorResponse(error: unknown, fallback: string): NextResponse {
   if (error && typeof error === 'object') {
-    const record = error as { message?: unknown; status?: unknown; code?: unknown };
+    const record = error as {
+      message?: unknown;
+      status?: unknown;
+      code?: unknown;
+      details?: unknown;
+    };
     const status = Number(record.status);
     if (Number.isSafeInteger(status) && status >= 400 && status <= 599) {
+      const details = record.details && typeof record.details === 'object' && !Array.isArray(record.details)
+        ? record.details as Record<string, unknown>
+        : {};
       return NextResponse.json({
         ok: false,
         error: String(record.message || fallback),
         code: record.code ? String(record.code) : 'PROCESS_ROUTE_CHANGE_FAILED',
+        ...(typeof details.currentStatus === 'string' ? { currentStatus: details.currentStatus } : {}),
+        ...(Number.isSafeInteger(Number(details.currentVersion))
+          ? { currentVersion: Number(details.currentVersion) }
+          : {}),
+        ...(typeof details.expectedStatus === 'string' ? { expectedStatus: details.expectedStatus } : {}),
+        ...(typeof details.updatedAt === 'string' ? { updatedAt: details.updatedAt } : {}),
       }, { status });
     }
   }

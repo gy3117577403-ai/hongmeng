@@ -4,6 +4,7 @@ import {
   canSubmitProcessRouteChangeProposal,
   millisecondsFromSeconds,
   normalizeOptionalProcessRouteChangeNote,
+  processRouteChangeCommandIdempotencyKey,
   processRouteChangeDTO,
   processRouteChangeIdempotencyKey,
   processRouteChangeReviewNoteError,
@@ -146,6 +147,14 @@ test('route change time inputs round-trip between seconds and integer millisecon
 test('route change mutation keys retain the operation-specific prefix', () => {
   const key = processRouteChangeIdempotencyKey('activate-route-change');
   assert.match(key, /^activate-route-change-.+/);
+});
+
+test('review and activation retries reuse a stable command idempotency key', () => {
+  const approve = processRouteChangeCommandIdempotencyKey('change-1', 4, 'approve');
+  assert.equal(approve, processRouteChangeCommandIdempotencyKey('change-1', 4, 'approve'));
+  assert.notEqual(approve, processRouteChangeCommandIdempotencyKey('change-1', 4, 'reject'));
+  assert.notEqual(approve, processRouteChangeCommandIdempotencyKey('change-1', 5, 'approve'));
+  assert.ok(approve.length >= 8 && approve.length <= 120);
 });
 
 test('step NEW markers survive later unrelated active changes and retain the latest related time diff', () => {

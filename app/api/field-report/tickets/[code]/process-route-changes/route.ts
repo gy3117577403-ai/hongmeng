@@ -21,7 +21,7 @@ import {
   processRouteChangeDTO,
   processRouteChangeDTOs,
 } from '@/lib/process-route-change-contract';
-import { dispatchProcessRouteChangeOutbox } from '@/lib/process-route-change-notifications';
+import { dispatchProcessRouteChangeOutboxBestEffort } from '@/lib/process-route-change-notifications';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import {
   loadFieldReportTicket,
@@ -107,7 +107,7 @@ export async function POST(
       actor: processRouteChangeActor(user) || actor,
       idempotencyKey: `${idempotencyKey}:submit`,
     });
-    await dispatchProcessRouteChangeOutbox({ changeId: submitted.id, limit: 2 });
+    await dispatchProcessRouteChangeOutboxBestEffort({ changeId: submitted.id, limit: 2 });
     return NextResponse.json({ ok: true, data: processRouteChangeDTO(submitted) }, { status: 201 });
   } catch (error) {
     if (error instanceof ForbiddenError) return forbidden(error.message);

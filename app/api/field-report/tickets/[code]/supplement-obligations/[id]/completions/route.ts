@@ -11,7 +11,7 @@ import { prisma } from '@/lib/prisma';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
 import { completeProcessSupplementObligation } from '@/lib/process-route-change-service';
 import { processRouteChangeErrorResponse } from '@/lib/process-route-change-api';
-import { dispatchProcessRouteChangeOutbox } from '@/lib/process-route-change-notifications';
+import { dispatchProcessRouteChangeOutboxBestEffort } from '@/lib/process-route-change-notifications';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import {
   ensureFieldReportParticipants,
@@ -67,7 +67,7 @@ export async function POST(
       idempotencyKey: body.idempotencyKey,
     });
     if (data.changeId) {
-      await dispatchProcessRouteChangeOutbox({ changeId: data.changeId, limit: 2 });
+      await dispatchProcessRouteChangeOutboxBestEffort({ changeId: data.changeId, limit: 2 });
     }
     return NextResponse.json({ ok: true, data });
   } catch (error) {

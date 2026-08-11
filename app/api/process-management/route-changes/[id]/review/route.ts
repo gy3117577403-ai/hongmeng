@@ -7,7 +7,7 @@ import {
   processRouteChangeErrorResponse,
 } from '@/lib/process-route-change-api';
 import { processRouteChangeDTO } from '@/lib/process-route-change-contract';
-import { dispatchProcessRouteChangeOutbox } from '@/lib/process-route-change-notifications';
+import { dispatchProcessRouteChangeOutboxBestEffort } from '@/lib/process-route-change-notifications';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 
 export const runtime = 'nodejs';
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       actor: processRouteChangeActor(user),
       idempotencyKey: body.idempotencyKey,
     });
-    await dispatchProcessRouteChangeOutbox({ changeId: data.id, limit: 2 });
+    await dispatchProcessRouteChangeOutboxBestEffort({ changeId: data.id, limit: 2 });
     return NextResponse.json({ ok: true, data: processRouteChangeDTO(data) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

@@ -340,6 +340,22 @@ export function processRouteChangeIdempotencyKey(prefix: string): string {
   return `${prefix}-${suffix}`;
 }
 
+export type ProcessRouteChangeCommandAction = ProcessRouteChangeReviewAction | 'activate';
+
+/**
+ * Retries of the same visible command must reuse one key. A random key per click
+ * turns a lost response or rapid double click into a second business mutation.
+ */
+export function processRouteChangeCommandIdempotencyKey(
+  changeId: string,
+  version: number,
+  action: ProcessRouteChangeCommandAction,
+): string {
+  const normalizedId = String(changeId || '').trim().replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64);
+  const normalizedVersion = Number.isSafeInteger(version) && version >= 0 ? version : 0;
+  return `process-route-change-${action}-${normalizedId}-v${normalizedVersion}`.slice(0, 120);
+}
+
 type UnknownRecord = Record<string, unknown>;
 
 function record(value: unknown): UnknownRecord {
