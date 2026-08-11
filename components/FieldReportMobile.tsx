@@ -21,7 +21,6 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ProcessCompletionContext } from '@/lib/process-completion-service';
 import type { FieldReportTicketView } from '@/lib/work-order-qr-service';
@@ -114,13 +113,10 @@ function stateLabel(step: ProcessCompletionContext['routeSteps'][number], target
 export default function FieldReportMobile({
   code,
   user,
-  authMode = 'ACCOUNT',
 }: {
   code: string;
   user: FieldReportIdentityDTO;
-  authMode?: 'ACCOUNT' | 'FIELD_PIN';
 }) {
-  const router = useRouter();
   const [payload, setPayload] = useState<FieldReportPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -138,7 +134,6 @@ export default function FieldReportMobile({
   const [exceptionConfirmed, setExceptionConfirmed] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState('');
   const [success, setSuccess] = useState<{ title: string; detail: string } | null>(null);
-  const [pinExitSeconds, setPinExitSeconds] = useState(8);
 
   const load = useCallback(async (stepId?: string, quiet = false): Promise<FieldReportPayload | null> => {
     if (!quiet) setLoading(true); else setRefreshing(true);
@@ -148,10 +143,6 @@ export default function FieldReportMobile({
       const response = await fetch(`/api/field-report/tickets/${encodeURIComponent(code)}${query}`, { cache: 'no-store' });
       const body = await response.json().catch(() => ({}));
       if (response.status === 401) {
-        if (authMode === 'FIELD_PIN') {
-          router.refresh();
-          return null;
-        }
         sessionStorage.setItem('hm-login-notice', '登录已过期，请重新使用员工编号登录');
         location.href = `/login?next=${encodeURIComponent(`/field-report/${code}`)}`;
         return null;
@@ -167,22 +158,9 @@ export default function FieldReportMobile({
       setLoading(false);
       setRefreshing(false);
     }
-  }, [authMode, code, router]);
+  }, [code]);
 
   useEffect(() => { void load(); }, [load]);
-
-  useEffect(() => {
-    if (authMode !== 'FIELD_PIN' || !success) return;
-    setPinExitSeconds(8);
-    const interval = window.setInterval(() => setPinExitSeconds(value => Math.max(0, value - 1)), 1000);
-    const timeout = window.setTimeout(() => {
-      void fetch('/api/field-report/pin-logout', { method: 'POST' }).finally(() => router.refresh());
-    }, 8000);
-    return () => {
-      window.clearInterval(interval);
-      window.clearTimeout(timeout);
-    };
-  }, [authMode, router, success]);
 
   const routeSteps: ProcessCompletionContext['routeSteps'] = payload?.context?.routeSteps
     || payload?.ticket.route?.steps.map(step => ({
@@ -347,15 +325,6 @@ export default function FieldReportMobile({
       });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        if (response.status === 401 && authMode === 'FIELD_PIN') {
-          setSheetOpen(false);
-          setForm(null);
-          setBatchItems([]);
-          setSelectedStepIds([]);
-          setBatchSelecting(false);
-          router.refresh();
-          return;
-        }
         throw new Error(body.error || '报工提交失败');
       }
       const pending = Number(body.data?.pendingCoverageQty || 0);
@@ -374,7 +343,7 @@ export default function FieldReportMobile({
             ? `${completionCount} 道工序已分别落账并正常流转；已为 ${employeeCount} 人自动记工。`
             : `${quantity(goodQty)} ${payload.ticket.workOrder.unitLabel}已正常流转；已为 ${employeeCount} 人自动记工。`,
       });
-      if (authMode === 'ACCOUNT') await load(undefined, true);
+      await load(undefined, true);
     } catch (reason) {
       setFormError(reason instanceof Error ? reason.message : '报工提交失败');
     } finally {
@@ -383,12 +352,6 @@ export default function FieldReportMobile({
   }
 
   async function logout(): Promise<void> {
-    if (authMode === 'FIELD_PIN') {
-      setSuccess(null);
-      await fetch('/api/field-report/pin-logout', { method: 'POST' }).catch(() => null);
-      router.refresh();
-      return;
-    }
     await fetch('/api/auth/logout', { method: 'POST' });
     location.href = `/login?next=${encodeURIComponent(`/field-report/${code}`)}`;
   }
@@ -397,15 +360,15 @@ export default function FieldReportMobile({
   if (!payload) return <main className="field-report-failure"><AlertTriangle size={40} /><strong>无法打开工单</strong><p>{error || '二维码无效或工单不存在'}</p><button type="button" onClick={() => void load()}>重新读取</button></main>;
 
   const ticket = payload.ticket;
-  return <main className={`field-report-app${authMode === 'FIELD_PIN' ? ' field-report-pin-session' : ''}`}>
+  return <main className="field-report-app">
     <header className="field-report-topbar">
       <div className="field-report-mark">杭</div>
-      <span><small>{authMode === 'FIELD_PIN' ? '共享终端报工' : '现场扫码报工'}</small><strong>{ticket.workOrder.specification || ticket.workOrder.productName}</strong></span>
-      <button type="button" onClick={() => void logout()} aria-label={authMode === 'FIELD_PIN' ? '切换报工人员' : '切换登录账号'}><LogOut size={18} /><em>{authMode === 'FIELD_PIN' ? '换人' : '切换'}</em></button>
+      <span><small>现场扫码报工</small><strong>{ticket.workOrder.specification || ticket.workOrder.productName}</strong></span>
+      <button type="button" onClick={() => void logout()} aria-label="切换登录账号"><LogOut size={18} /><em>切换</em></button>
     </header>
 
     <section className="field-report-identity">
-      {payload.currentEmployee ? <><UserRoundCheck size={20} /><span><small>{authMode === 'FIELD_PIN' ? 'PIN 已验证 · 当前报工身份' : '当前报工身份'}</small><strong>{payload.currentEmployee.employeeNo} · {payload.currentEmployee.name}</strong></span><BadgeCheck size={20} /></> : <><AlertTriangle size={20} /><span><small>当前账号</small><strong>{user.displayName}</strong></span><em>只读</em></>}
+      {payload.currentEmployee ? <><UserRoundCheck size={20} /><span><small>当前报工身份</small><strong>{payload.currentEmployee.employeeNo} · {payload.currentEmployee.name}</strong></span><BadgeCheck size={20} /></> : <><AlertTriangle size={20} /><span><small>当前账号</small><strong>{user.displayName}</strong></span><em>只读</em></>}
     </section>
 
     <section className="field-report-order-card">
@@ -451,7 +414,7 @@ export default function FieldReportMobile({
 
     <footer className="field-report-footer"><PackageCheck size={17} /><span>一工单一码 · 所有报工记录实时同步生产执行、流程中心和员工达成率</span></footer>
 
-    {success && <div className="field-report-success" role="dialog" aria-modal="true"><section><CheckCircle2 size={48} /><strong>{success.title}</strong><p>{success.detail}</p>{authMode === 'FIELD_PIN' ? <><small className="field-report-pin-countdown">当前员工身份已退出，{pinExitSeconds} 秒后返回验证页</small><button type="button" onClick={() => void logout()}>完成并切换人员</button></> : <button type="button" onClick={() => setSuccess(null)}>知道了，继续报工</button>}</section></div>}
+    {success && <div className="field-report-success" role="dialog" aria-modal="true"><section><CheckCircle2 size={48} /><strong>{success.title}</strong><p>{success.detail}</p><button type="button" onClick={() => setSuccess(null)}>知道了，继续报工</button></section></div>}
 
     {sheetOpen && payload.context && form && <div className="field-report-sheet-backdrop" role="presentation">
       <section className="field-report-sheet" role="dialog" aria-modal="true" aria-labelledby="field-report-sheet-title">

@@ -253,6 +253,7 @@ export type EmployeeLinkedUserDTO = {
   accountStatus?: AccountStatusDTO | null;
   isActive: boolean;
   mustChangePassword?: boolean;
+  fieldPasswordOnly?: boolean;
   passwordSetupRequired?: boolean;
   lastLoginAt?: string | null;
   permissionSummary?: {
@@ -272,6 +273,7 @@ export type CurrentUserDTO = {
   displayName: string;
   accountStatus: AccountStatusDTO;
   mustChangePassword: boolean;
+  fieldPasswordOnly?: boolean;
   lastLoginAt: string | null;
   laborRole: LaborAccessRoleDTO;
   employeeId: string | null;
@@ -328,6 +330,7 @@ export type UserDTO = {
   isActive: boolean;
   accountStatus?: AccountStatusDTO | null;
   mustChangePassword?: boolean;
+  fieldPasswordOnly?: boolean;
   passwordSetupRequired?: boolean;
   lastLoginAt?: string | null;
   laborRole: LaborAccessRoleDTO;

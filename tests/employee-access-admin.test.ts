@@ -72,6 +72,7 @@ function employeeRecord(overrides: Partial<EmployeeAccessAdminRecord> = {}): Emp
       isActive: true,
       accountStatus: AccountStatus.ACTIVE,
       mustChangePassword: false,
+      fieldPasswordOnly: false,
       lastLoginAt: null,
       accessGrants: [accessGrant()],
     },

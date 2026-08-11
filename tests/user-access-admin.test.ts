@@ -13,7 +13,7 @@ import {
   serializeAdminUser,
 } from '../lib/user-access-admin';
 
-test('passwordless FIELD_REPORTER promotion stays pending until administrator reset', () => {
+test('temporary-password FIELD_REPORTER promotion stays pending until administrator reset', () => {
   const now = new Date('2026-08-10T08:00:00.000Z');
   const grants = [
     { profile: 'FIELD_REPORTER' as const, isActive: false, effectiveFrom: new Date('2026-08-01T00:00:00.000Z'), effectiveTo: null },
@@ -23,16 +23,17 @@ test('passwordless FIELD_REPORTER promotion stays pending until administrator re
     isActive: true,
     accountStatus: 'ACTIVE',
     mustChangePassword: false,
+    fieldPasswordOnly: true,
     lastLoginAt: null,
     accessGrants: grants,
   }, now), true);
 
-  // Password reset writes mustChangePassword=true, meaning a temporary
-  // credential now exists and the user can follow the first-login change flow.
+  // A strong administrator reset clears the field-only credential marker.
   assert.equal(requiresAdminPasswordSetup({
     isActive: true,
     accountStatus: 'ACTIVE',
     mustChangePassword: true,
+    fieldPasswordOnly: false,
     lastLoginAt: null,
     accessGrants: grants,
   }, now), false);
@@ -44,6 +45,7 @@ test('field-only and expired workbench grants do not claim password setup is pen
     isActive: true,
     accountStatus: 'ACTIVE',
     mustChangePassword: false,
+    fieldPasswordOnly: true,
     lastLoginAt: null,
     accessGrants: [{ profile: 'FIELD_REPORTER', isActive: true, effectiveFrom: new Date('2026-08-01T00:00:00.000Z'), effectiveTo: null }],
   }, now), false);
@@ -51,6 +53,7 @@ test('field-only and expired workbench grants do not claim password setup is pen
     isActive: true,
     accountStatus: 'ACTIVE',
     mustChangePassword: false,
+    fieldPasswordOnly: true,
     lastLoginAt: null,
     accessGrants: [
       { profile: 'FIELD_REPORTER', isActive: true, effectiveFrom: new Date('2026-08-01T00:00:00.000Z'), effectiveTo: null },
@@ -83,6 +86,7 @@ test('account serializer withholds workbench-ready status until password reset',
     isActive: true,
     accountStatus: 'ACTIVE',
     mustChangePassword: false,
+    fieldPasswordOnly: true,
     lastLoginAt: null,
     laborRole: 'TEAM_LEAD',
     employeeId: 'employee-1',
@@ -105,7 +109,11 @@ test('account serializer withholds workbench-ready status until password reset',
   assert.equal(pending.passwordSetupRequired, true);
   assert.equal(pending.accessMethods.workbench, false);
 
-  const reset = serializeAdminUser({ ...user, mustChangePassword: true } as never, { now });
+  const reset = serializeAdminUser({
+    ...user,
+    mustChangePassword: true,
+    fieldPasswordOnly: false,
+  } as never, { now });
   assert.equal(reset.passwordSetupRequired, false);
   assert.equal(reset.accessMethods.workbench, true);
   assert.equal(reset.mustChangePassword, true);

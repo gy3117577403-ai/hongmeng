@@ -50,6 +50,7 @@ export async function POST(req: NextRequest) {
       data: {
         passwordHash,
         mustChangePassword: false,
+        fieldPasswordOnly: false,
         sessionVersion: { increment: 1 },
         failedLoginAttempts: 0,
         lockedUntil: null,

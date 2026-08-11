@@ -31,7 +31,8 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?Set a strong URL-safe POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:-workorder_resource}?schema=public
       SESSION_SECRET: ${SESSION_SECRET:?Set a random SESSION_SECRET of at least 32 characters in .env}
-      FIELD_REPORT_PIN_PEPPER: ${FIELD_REPORT_PIN_PEPPER:?Set a separate random FIELD_REPORT_PIN_PEPPER of at least 32 characters in .env}
+      # v1.29.1 正常扫码报工不再使用 PIN；仅保留变量兼容旧数据维护。
+      FIELD_REPORT_PIN_PEPPER: ${FIELD_REPORT_PIN_PEPPER:-}
       S3_ENDPOINT: http://minio:9000
       S3_PUBLIC_ENDPOINT: http://localhost:9000
       S3_REGION: auto

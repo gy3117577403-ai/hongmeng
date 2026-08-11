@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import { AccessProfileKey, LaborAccessRole, Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
@@ -10,6 +9,7 @@ import {
   UnauthorizedError,
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
+import { FIELD_REPORT_DEFAULT_PASSWORD } from '@/lib/login-security';
 import { validateNewPassword } from '@/lib/password-policy';
 import { prisma } from '@/lib/prisma';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
@@ -123,9 +123,8 @@ export async function POST(request: NextRequest) {
         throw new AccessGrantInputError('新账号必须先建立主部门权限，兼岗和代班请在账号开通后追加');
       }
       const resolvedRole = legacyLaborRoleForProfile(profile);
-      const passwordMaterial = profile === AccessProfileKey.FIELD_REPORTER
-        ? randomBytes(32).toString('base64url')
-        : password;
+      const isFieldOnlyAccount = profile === AccessProfileKey.FIELD_REPORTER;
+      const passwordMaterial = isFieldOnlyAccount ? FIELD_REPORT_DEFAULT_PASSWORD : password;
       const created = await tx.user.create({
         data: {
           username,
@@ -133,7 +132,8 @@ export async function POST(request: NextRequest) {
           passwordHash: await bcrypt.hash(passwordMaterial, 10),
           isActive: true,
           accountStatus: 'ACTIVE',
-          mustChangePassword: profile !== AccessProfileKey.FIELD_REPORTER,
+          mustChangePassword: !isFieldOnlyAccount,
+          fieldPasswordOnly: isFieldOnlyAccount,
           laborRole: resolvedRole,
           employeeId: profile === AccessProfileKey.ADMIN_GLOBAL ? null : employeeId,
         },

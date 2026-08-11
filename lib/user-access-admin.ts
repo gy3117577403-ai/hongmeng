@@ -183,6 +183,7 @@ export function serializeAdminUser(
     isActive: user.isActive,
     accountStatus: user.accountStatus,
     mustChangePassword: user.mustChangePassword,
+    fieldPasswordOnly: user.fieldPasswordOnly,
     lastLoginAt: user.lastLoginAt,
     accessGrants: user.accessGrants,
   }, new Date(now));
@@ -193,6 +194,7 @@ export function serializeAdminUser(
     isActive: user.isActive,
     accountStatus: user.accountStatus,
     mustChangePassword: user.mustChangePassword,
+    fieldPasswordOnly: user.fieldPasswordOnly,
     passwordSetupRequired,
     lastLoginAt: user.lastLoginAt?.toISOString() || null,
     laborRole: user.laborRole,
