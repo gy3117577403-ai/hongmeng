@@ -18,8 +18,10 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   millisecondsFromSeconds,
+  normalizeOptionalProcessRouteChangeNote,
   processRouteChangeIdempotencyKey,
   processRouteChangeStatusLabels,
+  processRouteChangeReviewNoteError,
   processRouteChangeTypeLabel,
   secondsFromMilliseconds,
   type ProcessRouteChangeDTO,
@@ -139,8 +141,11 @@ export function ProcessRouteChangeReviewPanel({
         return;
       }
     }
-    if (action === 'reject' && !reviewReason.trim()) {
-      setError('驳回时请填写原因');
+    const reviewNoteError = action === 'activate'
+      ? null
+      : processRouteChangeReviewNoteError(action, reviewReason);
+    if (reviewNoteError) {
+      setError(reviewNoteError);
       return;
     }
     setSaving(true);
@@ -160,7 +165,7 @@ export function ProcessRouteChangeReviewPanel({
         } : {
           action,
           expectedVersion: selected.version,
-          reviewReason: reviewReason.trim(),
+          reviewReason: normalizeOptionalProcessRouteChangeNote(reviewReason),
           affectedQty: parsedAffectedQty,
           newStandardMillisecondsPerUnit: parsedNewStepStandard,
           timeChanges: normalizedTimeChanges,
@@ -211,7 +216,7 @@ export function ProcessRouteChangeReviewPanel({
         <section className="workflow-route-change-impact"><div><GitPullRequestArrow /><span><small>后序已报工</small><strong>{selected.impact?.downstreamReportedStepCount || 0} 道</strong></span></div><div><Clock3 /><span><small>追溯报工</small><strong>{selected.impact?.affectedCompletionCount || 0} 笔</strong></span></div><div><Users /><span><small>影响员工</small><strong>{selected.impact?.affectedEmployeeCount || 0} 人</strong></span></div><div><RotateCcw /><span><small>标准工时</small><strong>{formatLabor(selected.impact?.previousStandardLaborMilliseconds)} → {formatLabor(selected.impact?.nextStandardLaborMilliseconds)}</strong></span></div></section>
         {!!selected.impact?.warnings?.length && <ul className="workflow-route-change-warnings">{selected.impact.warnings.map(warning => <li key={warning}><AlertTriangle size={14} />{warning}</li>)}</ul>}
 
-        <label className="workflow-route-change-reason"><span>工艺审核意见</span><textarea rows={2} value={reviewReason} disabled={!canApprove || saving} placeholder="通过时可说明工时调整依据；驳回时必填" onChange={event => setReviewReason(event.target.value)} /></label>
+        <label className="workflow-route-change-reason"><span>工艺审核意见（可选）</span><textarea rows={2} value={reviewReason} disabled={!canApprove || saving} placeholder="通过或驳回均可留空；如需补充，可填写判断依据" onChange={event => setReviewReason(event.target.value)} /></label>
         {message && <p className="workflow-route-change-message success"><Check size={15} />{message}</p>}
         {error && <p className="workflow-route-change-message error"><AlertTriangle size={15} />{error}</p>}
 

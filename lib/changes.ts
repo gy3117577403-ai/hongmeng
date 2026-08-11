@@ -63,6 +63,19 @@ export const changeDetailInclude = Prisma.validator<Prisma.ChangeRequestInclude>
     include: { uploadedBy: { select: changeUserSelect } },
     orderBy: { createdAt: 'desc' },
   },
+  processRouteChange: {
+    select: {
+      id: true,
+      routeId: true,
+      status: true,
+      baseRouteVersion: true,
+      activatedRouteVersion: true,
+      reviewDecision: true,
+      reviewedAt: true,
+      activatedAt: true,
+      activationError: true,
+    },
+  },
 });
 
 export type ChangeDetailRecord = Prisma.ChangeRequestGetPayload<{ include: typeof changeDetailInclude }>;
@@ -192,6 +205,11 @@ export function serializeChange(change: ChangeDetailRecord): ChangeRequestDTO {
       code: `ISS-${String(change.sourceIssue.sequence).padStart(6, '0')}`,
       title: change.sourceIssue.title,
       status: change.sourceIssue.status as IssueStatus,
+    } : null,
+    processRouteChange: change.processRouteChange ? {
+      ...change.processRouteChange,
+      reviewedAt: change.processRouteChange.reviewedAt?.toISOString() || null,
+      activatedAt: change.processRouteChange.activatedAt?.toISOString() || null,
     } : null,
     workOrderId: change.workOrderId,
     workOrder: change.workOrder ? {

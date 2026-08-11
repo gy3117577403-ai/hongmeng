@@ -600,6 +600,27 @@ export type ChangeSourceIssueDTO = {
   status: IssueStatus;
 };
 
+export type ChangeProcessRouteStatus =
+  | 'DRAFT'
+  | 'SUBMITTED'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'ACTIVATING'
+  | 'ACTIVE'
+  | 'FAILED';
+
+export type ChangeProcessRouteDTO = {
+  id: string;
+  routeId: string;
+  status: ChangeProcessRouteStatus;
+  baseRouteVersion: number;
+  activatedRouteVersion?: number | null;
+  reviewDecision?: string | null;
+  reviewedAt?: string | null;
+  activatedAt?: string | null;
+  activationError?: string | null;
+};
+
 export type ChangeRequestDTO = {
   id: string;
   sequence: number;
@@ -618,6 +639,7 @@ export type ChangeRequestDTO = {
   rollbackPlan?: string | null;
   sourceIssueId?: string | null;
   sourceIssue?: ChangeSourceIssueDTO | null;
+  processRouteChange?: ChangeProcessRouteDTO | null;
   workOrderId?: string | null;
   workOrder?: IssueWorkOrderDTO | null;
   requester?: IssueUserDTO | null;
@@ -1024,6 +1046,7 @@ export type ProductQuotationTimeDTO = {
 export type ProductProcessTimeEntryDTO = {
   id: string;
   processDefinitionId: string;
+  occurrenceKey: string;
   processCode: string;
   processName: string;
   stageGroup: ProcessStageGroup;

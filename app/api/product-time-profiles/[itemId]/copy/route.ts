@@ -92,6 +92,7 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
         data: source.entries.map(entry => ({
           profileId: draft!.id,
           processDefinitionId: entry.processDefinitionId,
+          occurrenceKey: entry.occurrenceKey,
           position: entry.position,
           sequenceGroup: entry.sequenceGroup,
           timeBasis: entry.timeBasis,

@@ -322,12 +322,14 @@ test('标准全工序路线可以通过校验并保持顺序', () => {
   assert.deepEqual(result.steps.map(step => step.processName), names);
 });
 
-test('空路线、重复工序和非法分组会被拒绝', () => {
+test('空路线和非法分组会被拒绝，同一工序可作为不同位置的路线实例', () => {
   assert.equal(validateProcessSteps([]).ok, false);
-  assert.equal(validateProcessSteps([
+  const repeated = validateProcessSteps([
     { processCode: 'cutting', processName: '裁线', stageGroup: 'frontend' },
-    { processCode: 'cutting', processName: '重复裁线', stageGroup: 'frontend' },
-  ]).ok, false);
+    { processCode: 'cutting', processName: '二次裁线', stageGroup: 'frontend' },
+  ]);
+  assert.equal(repeated.ok, true);
+  if (repeated.ok) assert.deepEqual(repeated.steps.map(step => step.position), [1, 2]);
   assert.equal(validateProcessSteps([
     { processCode: 'cutting', processName: '裁线', stageGroup: 'unknown' },
   ]).ok, false);

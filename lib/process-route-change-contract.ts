@@ -7,6 +7,50 @@ export type ProcessRouteChangeStatus =
   | 'ACTIVE'
   | 'FAILED';
 
+export type ProcessRouteChangeReviewAction = 'approve' | 'reject';
+
+export function normalizeOptionalProcessRouteChangeNote(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().replace(/\r\n/g, '\n');
+  return normalized ? normalized.slice(0, 2_000) : null;
+}
+
+export function processRouteChangeReviewNoteError(
+  _action: ProcessRouteChangeReviewAction,
+  _value: unknown,
+): string | null {
+  return null;
+}
+
+export type ProcessRouteChangeProposalSubmitState = {
+  saving: boolean;
+  employeeAvailable: boolean;
+  affectedQty: number;
+  includesInsert: boolean;
+  insertBeforeStepId: string;
+  newProcessName: string;
+  newStandardMillisecondsPerUnit: number | null;
+  includesTime: boolean;
+  timeChangesValid: boolean;
+  includesMove: boolean;
+  moveStepId: string;
+  moveIsNoop: boolean;
+};
+
+export function canSubmitProcessRouteChangeProposal(state: ProcessRouteChangeProposalSubmitState): boolean {
+  return !state.saving
+    && state.employeeAvailable
+    && Number.isSafeInteger(state.affectedQty)
+    && state.affectedQty > 0
+    && (!state.includesInsert || Boolean(
+      state.insertBeforeStepId
+      && state.newProcessName.trim()
+      && state.newStandardMillisecondsPerUnit,
+    ))
+    && (!state.includesTime || state.timeChangesValid)
+    && (!state.includesMove || Boolean(state.moveStepId && !state.moveIsNoop));
+}
+
 export type ProcessRouteChangeType = 'INSERT_STEP' | 'UPDATE_TIME' | 'MOVE_STEP' | 'BOTH';
 
 export type ProcessRouteStepChangeTag = 'ADDED' | 'TIME_CHANGED' | 'ADDED_AND_TIME_CHANGED' | 'NONE';

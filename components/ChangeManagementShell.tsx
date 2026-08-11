@@ -31,6 +31,11 @@ import { useSearchParams } from 'next/navigation';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
+import {
+  isProcessRouteChangeManaged,
+  processRouteChangeWorkflowHref,
+} from '@/lib/change-process-route-link';
+import { processRouteChangeStatusLabels } from '@/lib/process-route-change-contract';
 import type {
   ChangeImpactArea,
   ChangePriority,
@@ -569,6 +574,10 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   const activeFilterCount = [filters.status !== 'all', filters.type !== 'all', filters.priority !== 'all', !!filters.ownerId, filters.overdue, filters.unassigned].filter(Boolean).length;
   const orderOptions = useMemo(() => [...workOrders].sort((a, b) => String(a.specification || a.code).localeCompare(String(b.specification || b.code), 'zh-CN')), [workOrders]);
   const transitionTitle = transition && selected ? `${statusLabels[selected.status]} → ${statusLabels[transition.target]}` : '';
+  const selectedProcessRouteChange = selected?.processRouteChange || null;
+  const selectedProcessRouteHref = selectedProcessRouteChange
+    ? processRouteChangeWorkflowHref(selectedProcessRouteChange.id, selected?.workOrderId)
+    : '';
 
   return (
     <main className="hm-workbench-root hm-change-workbench">
@@ -616,7 +625,9 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
                 <div className="change-card-top"><span>{change.code} · {typeLabels[change.type]}</span><em className={`priority-${change.priority}`}>{priorityLabels[change.priority]}</em></div>
                 <strong title={change.title}>{change.title}</strong>
                 <p title={change.workOrder ? `${change.workOrder.customerName || '客户未设置'} · ${change.workOrder.specification || change.workOrder.code}` : '未关联工单'}>{change.workOrder ? `${change.workOrder.customerName || '客户未设置'} · ${change.workOrder.specification || change.workOrder.code}` : '未关联工单'}</p>
-                <div className="change-card-meta"><span className={`status-${change.status}`}>{statusLabels[change.status]}</span><span>{change.owner?.displayName || change.owner?.username || '待分派'}</span><span className={change.isOverdue ? 'overdue' : ''}>{change.isOverdue ? '已逾期' : formatDate(change.dueAt, false)}</span></div>
+                <div className="change-card-meta">{isProcessRouteChangeManaged(change)
+                  ? <span className={`process-route-state status-${change.processRouteChange?.status.toLowerCase()}`}>专用 · {processRouteChangeStatusLabels[change.processRouteChange!.status]}</span>
+                  : <span className={`status-${change.status}`}>{statusLabels[change.status]}</span>}<span>{change.owner?.displayName || change.owner?.username || '待分派'}</span><span className={change.isOverdue ? 'overdue' : ''}>{change.isOverdue ? '已逾期' : formatDate(change.dueAt, false)}</span></div>
               </button>)}
             </div>
             {totalPages > 1 && <footer className="change-pagination"><button type="button" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page} / {totalPages}</span><button type="button" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></footer>}
@@ -626,26 +637,35 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
             {!selected ? <div className="change-detail-empty"><GitPullRequestArrow /><h2>选择一条变更开始处理</h2><p>变更评估、实施、验证和附件都在这里完成。</p></div> : <>
               <header className="change-detail-header">
                 <div><span>{selected.code} · {typeLabels[selected.type]}</span><h2 title={selected.title}>{selected.title}</h2><p>申请人 {selected.requester?.displayName || selected.requester?.username || '未记录'} · 更新于 {formatDate(selected.updatedAt)}</p></div>
-                <div><span className={`change-status status-${selected.status}`}>{statusLabels[selected.status]}</span><button type="button" aria-label="编辑变更" title="编辑变更" onClick={() => openEdit(selected)}><Pencil size={16} /></button><button className="danger" type="button" aria-label="删除变更" title="删除变更" onClick={() => { modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmDelete(selected); }}><Trash2 size={16} /></button></div>
+                <div>{selectedProcessRouteChange
+                  ? <span className={`change-status process-route-state status-${selectedProcessRouteChange.status.toLowerCase()}`}>专用 · {processRouteChangeStatusLabels[selectedProcessRouteChange.status]}</span>
+                  : <><span className={`change-status status-${selected.status}`}>{statusLabels[selected.status]}</span><button type="button" aria-label="编辑变更" title="编辑变更" onClick={() => openEdit(selected)}><Pencil size={16} /></button><button className="danger" type="button" aria-label="删除变更" title="删除变更" onClick={() => { modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmDelete(selected); }}><Trash2 size={16} /></button></>}</div>
               </header>
               <div className="change-detail-scroll hm-scroll-region">
-                <section className="change-overview"><div><h3>变更原因</h3><p>{selected.reason || '尚未填写变更原因。'}</p></div><div><h3>影响范围</h3><p>{selected.impactScope || '尚未填写影响范围。'}</p><div className="impact-tags">{selected.impactAreas.map(area => <span key={area}>{impactLabels[area]}</span>)}{!selected.impactAreas.length && <em>待确认</em>}</div></div></section>
+                {selectedProcessRouteChange && <section className="change-process-route-managed">
+                  <GitPullRequestArrow size={22} />
+                  <div><span>现场工艺变更专用流程</span><strong>{processRouteChangeStatusLabels[selectedProcessRouteChange.status]}</strong><p>此处仅展示关联事项，审核、工时确认和启用必须在流程中心完成；通用状态流转不会同步二维码或生产工序。</p>{selectedProcessRouteChange.activationError && <em>{selectedProcessRouteChange.activationError}</em>}</div>
+                  <a href={selectedProcessRouteHref}>进入工艺审核与启用<ExternalLink size={14} /></a>
+                </section>}
+                <section className="change-overview"><div><h3>{selectedProcessRouteChange ? '现场说明' : '变更原因'}</h3><p>{selected.reason || (selectedProcessRouteChange ? '现场未补充说明（可选）。' : '尚未填写变更原因。')}</p></div><div><h3>影响范围</h3><p>{selected.impactScope || '尚未填写影响范围。'}</p><div className="impact-tags">{selected.impactAreas.map(area => <span key={area}>{impactLabels[area]}</span>)}{!selected.impactAreas.length && <em>待确认</em>}</div></div></section>
                 {selected.description && <section className="change-description"><h3>补充说明</h3><p>{selected.description}</p></section>}
-                <section className="change-execution-grid">
+                {!selectedProcessRouteChange && <section className="change-execution-grid">
                   <article><span>01</span><div><h3>实施方案</h3><p>{selected.implementationPlan || '评估通过后填写实施步骤、负责人和切换窗口。'}</p></div></article>
                   <article><span>02</span><div><h3>实施结果</h3><p>{selected.implementationResult || '执行完成后记录实际结果和偏差。'}</p></div></article>
                   <article><span>03</span><div><h3>验证结果</h3><p>{selected.validationResult || '验证阶段记录验证方法和结论。'}</p></div></article>
                   <article><span>R</span><div><h3>回退方案</h3><p>{selected.rollbackPlan || '可在需要时补充回退条件和恢复步骤。'}</p></div></article>
-                </section>
+                </section>}
                 <section className="change-timeline"><header><div><h3>协同时间线</h3><span>{selected.activityCount} 条记录</span></div></header><div>{selected.activities?.map(item => <article key={item.id}><span className={item.action === 'transition' ? 'transition' : ''} /><div><strong>{activityLabels[item.action] || item.action}</strong>{item.fromStatus && item.toStatus && <em>{statusLabels[item.fromStatus]} <ChevronRight size={12} /> {statusLabels[item.toStatus]}</em>}<p>{item.content || '已记录操作'}</p><small>{item.actor?.displayName || item.actor?.username || '系统'} · {formatDate(item.createdAt)}</small></div></article>)}{!selected.activities?.length && <p className="timeline-empty">暂无协同记录</p>}</div></section>
               </div>
               <form className="change-comment" onSubmit={addComment}><textarea value={comment} onChange={event => setComment(event.target.value)} rows={2} maxLength={2000} placeholder="补充评估结论、实施进展或验证说明..." /><button type="submit" disabled={saving || !comment.trim()}><Send size={15} />添加记录</button></form>
               <div className="change-transition-actions">
-                {selected.status === 'draft' && <button className="primary" type="button" onClick={() => beginTransition('assessing')}>提交评估<ArrowRight size={15} /></button>}
-                {selected.status === 'assessing' && <><button type="button" onClick={() => beginTransition('draft')}><ArrowLeft size={15} />退回草稿</button><button className="primary" type="button" onClick={() => beginTransition('implementing')}>开始实施<ArrowRight size={15} /></button></>}
-                {selected.status === 'implementing' && <button className="primary" type="button" onClick={() => beginTransition('verifying')}>提交验证<ArrowRight size={15} /></button>}
-                {selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('implementing')}><ArrowLeft size={15} />退回实施</button><button className="primary" type="button" onClick={() => beginTransition('closed')}>验证并关闭<CheckCircle2 size={15} /></button></>}
-                {selected.status === 'closed' && <button type="button" onClick={() => beginTransition('assessing')}><RefreshCw size={15} />重新评估</button>}
+                {selectedProcessRouteChange ? <><span className="managed-hint">专用工艺状态不能在此流转</span><a className="primary managed-link" href={selectedProcessRouteHref}>进入工艺审核与启用<ExternalLink size={14} /></a></> : <>
+                  {selected.status === 'draft' && <button className="primary" type="button" onClick={() => beginTransition('assessing')}>提交评估<ArrowRight size={15} /></button>}
+                  {selected.status === 'assessing' && <><button type="button" onClick={() => beginTransition('draft')}><ArrowLeft size={15} />退回草稿</button><button className="primary" type="button" onClick={() => beginTransition('implementing')}>开始实施<ArrowRight size={15} /></button></>}
+                  {selected.status === 'implementing' && <button className="primary" type="button" onClick={() => beginTransition('verifying')}>提交验证<ArrowRight size={15} /></button>}
+                  {selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('implementing')}><ArrowLeft size={15} />退回实施</button><button className="primary" type="button" onClick={() => beginTransition('closed')}>验证并关闭<CheckCircle2 size={15} /></button></>}
+                  {selected.status === 'closed' && <button type="button" onClick={() => beginTransition('assessing')}><RefreshCw size={15} />重新评估</button>}
+                </>}
                 {compactContext && <button ref={contextTriggerRef} type="button" onClick={() => setContextOpen(true)}><Info size={15} />责任与附件</button>}
               </div>
             </>}

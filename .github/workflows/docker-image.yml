@@ -95,7 +95,7 @@ jobs:
       - name: Process route change PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/process-route-change-integration.test.ts tests/process-route-change-move-integration.test.ts tests/process-completion-supplement-flow-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/process-route-change-integration.test.ts tests/process-route-change-move-integration.test.ts tests/process-route-change-duplicate-occurrence-integration.test.ts tests/process-completion-supplement-flow-integration.test.ts
       - name: Advance reporting and automatic labor PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -122,14 +122,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.30.0
+            org.opencontainers.image.version=v1.30.1
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.30.0
+            APP_VERSION=v1.30.1
             APP_REVISION=${{ github.sha }}
           load: true
           push: false

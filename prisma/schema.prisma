@@ -2838,6 +2838,7 @@ model ProductProcessTimeEntry {
   id                  String                 @id @default(uuid())
   profileId           String                 @map("profile_id")
   processDefinitionId String                 @map("process_definition_id")
+  occurrenceKey       String                 @default(uuid()) @map("occurrence_key")
   position            Int
   sequenceGroup       Int                    @default(1) @map("sequence_group")
   timeBasis           String                 @default("per_unit") @map("time_basis")
@@ -2854,8 +2855,9 @@ model ProductProcessTimeEntry {
   processDefinition   ProcessDefinition      @relation(fields: [processDefinitionId], references: [id], onDelete: Restrict)
   routeSteps          WorkOrderProcessStep[]
 
-  @@unique([profileId, processDefinitionId])
+  @@unique([profileId, occurrenceKey])
   @@unique([profileId, position])
+  @@index([profileId, processDefinitionId])
   @@index([processDefinitionId])
   @@map("product_process_time_entries")
 }

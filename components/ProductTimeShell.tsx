@@ -83,6 +83,7 @@ type ReferenceCategory = 'drawing' | 'sop' | 'all';
 
 type EntryDraft = {
   processDefinitionId: string;
+  occurrenceKey: string;
   timeBasis: ProcessTimeBasis;
   unitSeconds: string;
   occurrences: string;
@@ -171,6 +172,7 @@ function entryDraft(
     && entry.occurrences > 1;
   return {
     processDefinitionId: entry.processDefinitionId,
+    occurrenceKey: entry.occurrenceKey,
     timeBasis: entry.timeBasis,
     unitSeconds: seconds(usesActionCount ? entry.actionMilliseconds : entry.unitMilliseconds),
     occurrences: String(usesActionCount ? entry.occurrences : 1),
@@ -547,11 +549,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }, [importOpen, libraryOpen, referenceOpen]);
 
   const filteredDefinitions = useMemo(() => definitions.filter(definition => {
-    if (entries.some(entry => entry.processDefinitionId === definition.id)) return false;
     if (libraryStage !== 'all' && definition.stageGroup !== libraryStage) return false;
     const normalized = libraryKeyword.trim().toLocaleLowerCase('zh-CN');
     return !normalized || `${definition.name} ${definition.code}`.toLocaleLowerCase('zh-CN').includes(normalized);
-  }), [definitions, entries, libraryKeyword, libraryStage]);
+  }), [definitions, libraryKeyword, libraryStage]);
 
   function selectProduct(itemId: string): void {
     if (selectedItem?.id === itemId) return;
@@ -645,6 +646,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   function addDefinition(definition: ProcessDefinition): void {
     setEntries(current => [...current, {
       processDefinitionId: definition.id,
+      occurrenceKey: crypto.randomUUID(),
       timeBasis: 'per_unit',
       unitSeconds: '',
       occurrences: '1',
@@ -777,6 +779,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
           sourceType: activeDraft?.sourceType || 'manual',
           entries: entries.map(entry => ({
             processDefinitionId: entry.processDefinitionId,
+            occurrenceKey: entry.occurrenceKey,
             timeBasis: entry.timeBasis,
             unitSeconds: entry.unitSeconds,
             occurrences: entry.occurrences,
@@ -1159,7 +1162,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 {entries.map((entry, index) => {
                   const definition = definitions.find(item => item.id === entry.processDefinitionId);
                   const invalid = invalidEntry(entry);
-                  return <article className={invalid ? 'invalid' : ''} key={entry.processDefinitionId}>
+                  return <article className={invalid ? 'invalid' : ''} key={entry.occurrenceKey}>
                     <div className="product-time-process-name">
                       <b>{String(index + 1).padStart(2, '0')}</b>
                       <span><strong>{definition?.name || '工序已停用'}</strong><small>{definition ? stageText[definition.stageGroup] : '历史工序'}</small></span>

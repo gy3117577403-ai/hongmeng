@@ -23,6 +23,15 @@ export async function POST(req: NextRequest) {
       if (!itemId || !entries.ok || !entries.entries.length) {
         throw new Error(`第 ${Number(row.rowNo) || index + 1} 行数据不正确${entries.ok ? '' : `：${entries.error}`}`);
       }
+      const definitionCounts = new Map<string, number>();
+      for (const entry of entries.entries) {
+        definitionCounts.set(entry.processDefinitionId, (definitionCounts.get(entry.processDefinitionId) || 0) + 1);
+      }
+      if (entries.entries.some(entry => (
+        (definitionCounts.get(entry.processDefinitionId) || 0) > 1 && !entry.occurrenceKey
+      ))) {
+        throw new Error(`第 ${Number(row.rowNo) || index + 1} 行包含重复工序但缺少稳定实例标识，当前 Excel 模板无法无损导入`);
+      }
       return { itemId, entries: entries.entries, rowNo: Number(row.rowNo) || index + 1 };
     });
     const itemIds = [...new Set(validated.map(row => row.itemId))];
@@ -46,6 +55,22 @@ export async function POST(req: NextRequest) {
           where: { drawingLibraryItemId: row.itemId, status: 'draft' },
           select: { id: true, version: true },
         });
+        const sourceEntries = draft
+          ? await tx.productProcessTimeEntry.findMany({
+              where: { profileId: draft.id },
+              orderBy: { position: 'asc' },
+              select: { processDefinitionId: true, occurrenceKey: true },
+            })
+          : (await tx.productTimeProfile.findFirst({
+              where: { drawingLibraryItemId: row.itemId, status: 'published' },
+              orderBy: { version: 'desc' },
+              select: {
+                entries: {
+                  orderBy: { position: 'asc' },
+                  select: { processDefinitionId: true, occurrenceKey: true },
+                },
+              },
+            }))?.entries || [];
         if (!draft) {
           const latest = await tx.productTimeProfile.aggregate({ where: { drawingLibraryItemId: row.itemId }, _max: { version: true } });
           draft = await tx.productTimeProfile.create({
@@ -69,7 +94,20 @@ export async function POST(req: NextRequest) {
           await tx.productProcessTimeEntry.deleteMany({ where: { profileId: draft.id } });
           updatedDrafts += 1;
         }
-        await tx.productProcessTimeEntry.createMany({ data: row.entries.map(entry => ({ ...entry, profileId: draft!.id })) });
+        const occurrenceKeysByDefinition = new Map<string, string[]>();
+        for (const entry of sourceEntries) {
+          const keys = occurrenceKeysByDefinition.get(entry.processDefinitionId) || [];
+          keys.push(entry.occurrenceKey);
+          occurrenceKeysByDefinition.set(entry.processDefinitionId, keys);
+        }
+        await tx.productProcessTimeEntry.createMany({
+          data: row.entries.map(entry => ({
+            ...entry,
+            occurrenceKey: entry.occurrenceKey
+              || occurrenceKeysByDefinition.get(entry.processDefinitionId)?.shift(),
+            profileId: draft!.id,
+          })),
+        });
         await tx.operationLog.create({
           data: {
             userId: user.id,

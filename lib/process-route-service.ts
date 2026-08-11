@@ -187,7 +187,7 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
             orderBy: { version: 'desc' },
           })
         : null;
-    const productEntryMap = new Map((productProfile?.entries || []).map(entry => [entry.processDefinitionId, entry]));
+    const claimedProductEntryIds = new Set<string>();
     const steps = validation.steps.map(step => ({
       ...step,
       processDefinitionId: step.processDefinitionId && definitionSet.has(step.processDefinitionId)
@@ -208,7 +208,18 @@ async function replaceSteps(input: ReplaceProcessRouteStepsCommand): Promise<str
     await tx.workOrderProcessStep.deleteMany({ where: { routeId: route.id } });
     await tx.workOrderProcessStep.createMany({
       data: steps.map(step => {
-        const productEntry = step.processDefinitionId ? productEntryMap.get(step.processDefinitionId) : null;
+        const productEntry = step.processDefinitionId
+          ? (productProfile?.entries || []).find(entry => (
+              !claimedProductEntryIds.has(entry.id)
+              && entry.processDefinitionId === step.processDefinitionId
+              && entry.position === step.position
+              && entry.sequenceGroup === step.sequenceGroup
+            )) || (productProfile?.entries || []).find(entry => (
+              !claimedProductEntryIds.has(entry.id)
+              && entry.processDefinitionId === step.processDefinitionId
+            ))
+          : null;
+        if (productEntry) claimedProductEntryIds.add(productEntry.id);
         const standard = step.processDefinitionId ? standardMap.get(step.processDefinitionId) : null;
         return {
           routeId: route.id,
@@ -373,10 +384,29 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
           include: productTimeProfileInclude,
         })
       : null;
-    const productEntryMap = new Map((productProfile?.entries || []).map(entry => [entry.processDefinitionId, entry]));
+    const productEntryById = new Map((productProfile?.entries || []).map(entry => [entry.id, entry] as const));
+    const claimedProductEntryIds = new Set<string>();
     const readinessSteps = [];
     for (const step of route.steps) {
-      const productEntry = step.processDefinitionId ? productEntryMap.get(step.processDefinitionId) : null;
+      const linkedProductEntry = step.productTimeEntryId
+        ? productEntryById.get(step.productTimeEntryId)
+        : null;
+      const productEntry = linkedProductEntry
+        && linkedProductEntry.processDefinitionId === step.processDefinitionId
+        && !claimedProductEntryIds.has(linkedProductEntry.id)
+        ? linkedProductEntry
+        : step.processDefinitionId
+          ? (productProfile?.entries || []).find(entry => (
+              !claimedProductEntryIds.has(entry.id)
+              && entry.processDefinitionId === step.processDefinitionId
+              && entry.position === step.position
+              && entry.sequenceGroup === step.sequenceGroup
+            )) || (productProfile?.entries || []).find(entry => (
+              !claimedProductEntryIds.has(entry.id)
+              && entry.processDefinitionId === step.processDefinitionId
+            ))
+          : null;
+      if (productEntry) claimedProductEntryIds.add(productEntry.id);
       const standard = step.processDefinitionId ? standardMap.get(step.processDefinitionId) : null;
       const snapshot = productProfile && productEntry
         ? productTimeStandardSnapshot(productProfile, productEntry)
@@ -554,14 +584,29 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
         }
       : null;
     if (!resolvedStandard && route.productTimeProfileId && current.processDefinitionId) {
-      const productEntry = await tx.productProcessTimeEntry.findFirst({
+      const profileEntries = await tx.productProcessTimeEntry.findMany({
         where: {
           profileId: route.productTimeProfileId,
           processDefinitionId: current.processDefinitionId,
         },
+        orderBy: { position: 'asc' },
         include: { profile: { select: { id: true, version: true } } },
       });
+      const occurrenceIndex = route.steps
+        .filter(step => step.processDefinitionId === current.processDefinitionId)
+        .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id))
+        .findIndex(step => step.id === current.id);
+      const productEntry = (
+        current.productTimeEntryId
+          ? profileEntries.find(entry => entry.id === current.productTimeEntryId)
+          : null
+      ) || profileEntries.find(entry => entry.position === current.position)
+        || profileEntries[occurrenceIndex]
+        || null;
       if (productEntry) {
+        const usesActionCount = productEntry.timeBasis !== 'per_batch'
+          && Boolean(productEntry.actionMilliseconds)
+          && productEntry.occurrences > 1;
         resolvedStandard = {
           id: null,
           version: null,
@@ -569,10 +614,12 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
           productTimeEntryId: productEntry.id,
           productTimeProfileVersion: productEntry.profile.version,
           standardSource: 'product_profile',
-          timeBasis: 'per_unit',
-          unitLabel: '套',
-          standardMillisecondsPerUnit: productEntry.unitMilliseconds,
-          setupMilliseconds: 0,
+          timeBasis: productEntry.timeBasis === 'per_batch' ? 'per_batch' : 'per_unit',
+          unitLabel: productEntry.unitLabel || '套',
+          standardMillisecondsPerUnit: usesActionCount
+            ? productEntry.actionMilliseconds as number
+            : productEntry.unitMilliseconds,
+          setupMilliseconds: productEntry.setupMilliseconds,
           countsForEfficiency: productEntry.countsForEfficiency,
         };
       }

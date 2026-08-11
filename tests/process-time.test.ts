@@ -295,7 +295,7 @@ test('product quotation time accepts an explicitly adopted planning order durati
   assert.equal(result.value.sourceRefId, 'plan-order-1');
 });
 
-test('product time rejects zero, duplicate processes, and ambiguous empty rows', () => {
+test('product time rejects zero and ambiguous empty rows', () => {
   assert.equal(validateProductTimeEntries([{ processDefinitionId: 'cutting', unitSeconds: 0 }]).ok, false);
   assert.equal(validateProductTimeEntries([{ processDefinitionId: 'cutting' }]).ok, false);
   assert.equal(validateProductTimeEntries([{
@@ -310,8 +310,26 @@ test('product time rejects zero, duplicate processes, and ambiguous empty rows',
     unitSeconds: 60,
     setupSeconds: -1,
   }]).ok, false);
+});
+
+test('product time keeps repeated process definitions as distinct route occurrences', () => {
+  const result = validateProductTimeEntries([
+    { processDefinitionId: 'stripping', occurrenceKey: 'strip-first', unitSeconds: 6 },
+    { processDefinitionId: 'crimping', occurrenceKey: 'crimp', unitSeconds: 12 },
+    { processDefinitionId: 'stripping', occurrenceKey: 'strip-second', unitSeconds: 9 },
+  ]);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(
+    result.entries.map(entry => [entry.processDefinitionId, entry.occurrenceKey, entry.position]),
+    [
+      ['stripping', 'strip-first', 1],
+      ['crimping', 'crimp', 2],
+      ['stripping', 'strip-second', 3],
+    ],
+  );
   assert.equal(validateProductTimeEntries([
-    { processDefinitionId: 'cutting', unitSeconds: 6 },
-    { processDefinitionId: 'cutting', unitSeconds: 7 },
+    { processDefinitionId: 'stripping', occurrenceKey: 'same-key', unitSeconds: 6 },
+    { processDefinitionId: 'stripping', occurrenceKey: 'same-key', unitSeconds: 9 },
   ]).ok, false);
 });

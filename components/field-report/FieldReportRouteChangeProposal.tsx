@@ -15,7 +15,9 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  canSubmitProcessRouteChangeProposal,
   millisecondsFromSeconds,
+  normalizeOptionalProcessRouteChangeNote,
   processRouteChangeIdempotencyKey,
   processRouteChangeStatusLabels,
   processRouteChangeTypeLabel,
@@ -134,14 +136,21 @@ export function FieldReportRouteChangeProposal({
     stepId: row.stepId,
     standardMillisecondsPerUnit: millisecondsFromSeconds(row.seconds),
   })), [timeChanges]);
-  const invalid = saving
-    || !employeeAvailable
-    || !reason.trim()
-    || !Number.isSafeInteger(parsedAffectedQty)
-    || parsedAffectedQty <= 0
-    || (includesInsert && (!insertBeforeStepId || !newProcessName.trim() || !parsedNewStandard))
-    || (includesTime && (!normalizedTimeChanges.length || normalizedTimeChanges.some(item => !item.stepId || !item.standardMillisecondsPerUnit)))
-    || (includesMove && (!moveStepId || moveIsNoop));
+  const invalid = !canSubmitProcessRouteChangeProposal({
+    saving,
+    employeeAvailable,
+    affectedQty: parsedAffectedQty,
+    includesInsert,
+    insertBeforeStepId,
+    newProcessName,
+    newStandardMillisecondsPerUnit: parsedNewStandard,
+    includesTime,
+    timeChangesValid: Boolean(normalizedTimeChanges.length)
+      && normalizedTimeChanges.every(item => Boolean(item.stepId && item.standardMillisecondsPerUnit)),
+    includesMove,
+    moveStepId,
+    moveIsNoop,
+  });
   const latest = proposals[0] || null;
 
   function reset(): void {
@@ -187,7 +196,7 @@ export function FieldReportRouteChangeProposal({
           newStandardMillisecondsPerUnit: includesInsert ? parsedNewStandard : null,
           affectedQty: parsedAffectedQty,
           timeChanges: includesTime ? normalizedTimeChanges : [],
-          reason: reason.trim(),
+          reason: normalizeOptionalProcessRouteChangeNote(reason),
           idempotencyKey: processRouteChangeIdempotencyKey('field-change'),
         }),
       });
@@ -244,9 +253,9 @@ export function FieldReportRouteChangeProposal({
             {moveIsNoop && <p>该选择与当前顺序相同，请选择其他落点。</p>}
           </fieldset>}
 
-          <fieldset className="field-report-change-group"><legend>生效数量与原因</legend>
+          <fieldset className="field-report-change-group"><legend>生效数量与现场说明</legend>
             <label><span>当前工单应报数量（整单）</span><div><input inputMode="numeric" value={affectedQty} disabled readOnly /><em>{unitLabel}</em></div></label>
-            <label><span>现场说明</span><textarea value={reason} rows={3} maxLength={500} disabled={saving} placeholder="说明在哪个位置发现、实际应如何执行" onChange={event => setReason(event.target.value)} /></label>
+            <label><span>现场说明（可选）</span><textarea value={reason} rows={3} maxLength={500} disabled={saving} placeholder="可不填；如需补充，可说明发现位置或实际执行情况" onChange={event => setReason(event.target.value)} /></label>
           </fieldset>
 
           <section className="field-report-change-note"><AlertTriangle size={18} /><span><strong>提交不会立即改工艺</strong><small>仅工艺审核并点击启用后生效；顺序调整启用时会再次校验报工与数量账本。</small></span></section>

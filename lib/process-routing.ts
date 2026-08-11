@@ -241,6 +241,7 @@ const draftRouteSyncInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclu
       standardVersion: true,
       productTimeProfileId: true,
       productTimeEntryId: true,
+      productTimeEntry: { select: { occurrenceKey: true } },
       productTimeProfileVersion: true,
       standardSource: true,
       timeBasis: true,
@@ -522,7 +523,6 @@ export function validateProcessSteps(input: unknown): ProcessStepValidationResul
   }
 
   const steps: ValidatedProcessStep[] = [];
-  const codes = new Set<string>();
   for (let index = 0; index < input.length; index += 1) {
     const item = input[index] as ProcessStepInput;
     const processName = cleanText(item?.processName, 60);
@@ -542,10 +542,6 @@ export function validateProcessSteps(input: unknown): ProcessStepValidationResul
       return { ok: false, error: `第 ${index + 1} 个工序的顺序组不正确` };
     }
     if (!processCode) processCode = `custom-${index + 1}-${Date.now()}`;
-    if (codes.has(processCode)) {
-      return { ok: false, error: `工序“${processName}”重复，请删除重复项后再保存` };
-    }
-    codes.add(processCode);
     steps.push({
       processDefinitionId: cleanText(item?.processDefinitionId, 80) || null,
       processCode,
@@ -758,7 +754,7 @@ async function applyPublishedProductTimeToUnstartedRoute(
     && input.route.templateVersion === input.profile.version
     && input.route.steps.length === input.profile.entries.length
     && input.profile.entries.every(entry => {
-      const step = input.route.steps.find(candidate => candidate.processDefinitionId === entry.processDefinitionId);
+      const step = input.route.steps.find(candidate => candidate.productTimeEntryId === entry.id);
       return step ? productTimeStepSnapshotMatches(step, input.profile, entry, true) : false;
     });
   if (routeAlreadyMatches) return { updated: false, started: false };
@@ -1497,6 +1493,53 @@ function activeRouteStepHasBlockingReferences(step: DraftRouteSyncRecord['steps'
     || step._count.targetQuantityMovements > 0;
 }
 
+function matchProductTimeRouteOccurrences(
+  steps: DraftRouteSyncRecord['steps'],
+  entries: ProductTimeProfileRecord['entries'],
+) {
+  const orderedSteps = [...steps].sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
+  const orderedEntries = [...entries].sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
+  const claimedStepIds = new Set<string>();
+  const stepByEntryId = new Map<string, DraftRouteSyncRecord['steps'][number]>();
+
+  // Stable occurrence identity wins before structural matching. This is
+  // essential when a second instance of the same definition is inserted in
+  // front of an existing one: position alone would bind the old step to the
+  // newly inserted entry and silently swap their standards.
+  for (const entry of orderedEntries) {
+    const step = orderedSteps.find(item => (
+      !claimedStepIds.has(item.id)
+      && item.processDefinitionId === entry.processDefinitionId
+      && item.productTimeEntry?.occurrenceKey === entry.occurrenceKey
+    ));
+    if (!step) continue;
+    claimedStepIds.add(step.id);
+    stepByEntryId.set(entry.id, step);
+  }
+
+  for (const entry of orderedEntries) {
+    if (stepByEntryId.has(entry.id)) continue;
+    const step = orderedSteps.find(item => (
+      !claimedStepIds.has(item.id)
+      && item.processDefinitionId === entry.processDefinitionId
+      && item.position === entry.position
+      && item.sequenceGroup === entry.sequenceGroup
+    )) || orderedSteps.find(item => (
+      !claimedStepIds.has(item.id)
+      && item.processDefinitionId === entry.processDefinitionId
+    ));
+    if (!step) continue;
+    claimedStepIds.add(step.id);
+    stepByEntryId.set(entry.id, step);
+  }
+
+  return {
+    stepByEntryId,
+    unmatchedSteps: orderedSteps.filter(step => !claimedStepIds.has(step.id)),
+    unmatchedEntries: orderedEntries.filter(entry => !stepByEntryId.has(entry.id)),
+  };
+}
+
 function productTimeStepSnapshotMatches(
   step: DraftRouteSyncRecord['steps'][number],
   profile: ProductTimeProfileRecord,
@@ -1547,22 +1590,13 @@ async function synchronizeStartedFactFreeProductTimeRoute(
   const alreadySynchronized = routeProductTimeMetadataMatches(input.route, input.profile)
     && input.route.steps.length === input.profile.entries.length
     && input.profile.entries.every(entry => {
-      const step = input.route.steps.find(candidate => candidate.processDefinitionId === entry.processDefinitionId);
+      const step = input.route.steps.find(candidate => candidate.productTimeEntryId === entry.id);
       return step ? productTimeStepSnapshotMatches(step, input.profile, entry, true) : false;
     });
   if (alreadySynchronized) return activeRouteSyncSkipped();
 
-  const entriesByDefinition = new Map(
-    input.profile.entries.map(entry => [entry.processDefinitionId, entry] as const),
-  );
-  const existingByDefinition = new Map(
-    input.route.steps
-      .filter(step => Boolean(step.processDefinitionId))
-      .map(step => [step.processDefinitionId as string, step] as const),
-  );
-  const removedSteps = input.route.steps.filter(step => (
-    !step.processDefinitionId || !entriesByDefinition.has(step.processDefinitionId)
-  ));
+  const occurrenceMatches = matchProductTimeRouteOccurrences(input.route.steps, input.profile.entries);
+  const removedSteps = occurrenceMatches.unmatchedSteps;
   if (removedSteps.some(activeRouteStepHasBlockingReferences)) {
     return activeRouteSyncSkipped(true);
   }
@@ -1599,7 +1633,7 @@ async function synchronizeStartedFactFreeProductTimeRoute(
   const initialInputQty = getProductionQuantitySummary(input.route.workOrder).targetQty || 0;
   const startedAt = input.route.startedAt || new Date();
   for (const entry of input.profile.entries) {
-    const current = existingByDefinition.get(entry.processDefinitionId);
+    const current = occurrenceMatches.stepByEntryId.get(entry.id);
     const isCurrentGroup = entry.sequenceGroup === firstSequenceGroup;
     const data = {
       processDefinitionId: entry.processDefinitionId,
@@ -1659,7 +1693,7 @@ async function synchronizeStartedFactFreeProductTimeRoute(
         productTimeProfileId: input.profile.id,
         productTimeProfileVersion: input.profile.version,
         changedStepCount: input.profile.entries.length,
-        addedStepCount: input.profile.entries.filter(entry => !existingByDefinition.has(entry.processDefinitionId)).length,
+        addedStepCount: occurrenceMatches.unmatchedEntries.length,
         removedStepCount: removedSteps.length,
         routeVersion: input.route.version + 1,
       },
@@ -1701,21 +1735,17 @@ async function synchronizeRemainingActiveProductTimeStandards(
   if (input.route.status !== 'in_progress' || input.route.routeSource !== 'product_time_profile') {
     return activeRouteSyncSkipped();
   }
-  const entriesByDefinition = new Map(
-    input.profile.entries.map(entry => [entry.processDefinitionId, entry] as const),
-  );
+  const occurrenceMatches = matchProductTimeRouteOccurrences(input.route.steps, input.profile.entries);
   const unfinishedSteps = input.route.steps.filter(step => step.status !== 'completed' && step.status !== 'skipped');
-  const matchedSteps = unfinishedSteps.flatMap(step => {
-    const entry = step.processDefinitionId ? entriesByDefinition.get(step.processDefinitionId) : null;
-    return entry ? [{ step, entry }] : [];
+  const unfinishedStepIds = new Set(unfinishedSteps.map(step => step.id));
+  const matchedSteps = input.profile.entries.flatMap(entry => {
+    const step = occurrenceMatches.stepByEntryId.get(entry.id);
+    return step && unfinishedStepIds.has(step.id) ? [{ step, entry }] : [];
   });
   if (matchedSteps.length === 0) return activeRouteSyncSkipped(true);
 
-  const routeDefinitionIds = new Set(input.route.steps.map(step => step.processDefinitionId).filter(Boolean));
-  const profileHasNewSteps = input.profile.entries.some(entry => !routeDefinitionIds.has(entry.processDefinitionId));
-  const unfinishedHasRemovedSteps = unfinishedSteps.some(step => (
-    !step.processDefinitionId || !entriesByDefinition.has(step.processDefinitionId)
-  ));
+  const profileHasNewSteps = occurrenceMatches.unmatchedEntries.length > 0;
+  const unfinishedHasRemovedSteps = occurrenceMatches.unmatchedSteps.some(step => unfinishedStepIds.has(step.id));
   const sequenceChanged = matchedSteps.some(({ step, entry }) => (
     step.position !== entry.position || step.sequenceGroup !== entry.sequenceGroup
   ));

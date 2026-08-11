@@ -23,6 +23,7 @@ export type ProductTimeProfileRecord = Prisma.ProductTimeProfileGetPayload<{
 
 export type ProductTimeEntryInput = {
   processDefinitionId: string;
+  occurrenceKey?: string;
   position: number;
   sequenceGroup: number;
   timeBasis: ProcessTimeBasis;
@@ -41,6 +42,7 @@ export type ProductTimeEntryValidationResult =
 
 type RawProductTimeEntry = {
   processDefinitionId?: unknown;
+  occurrenceKey?: unknown;
   timeBasis?: unknown;
   unitSeconds?: unknown;
   occurrences?: unknown;
@@ -78,15 +80,18 @@ export function validateProductTimeEntries(value: unknown): ProductTimeEntryVali
   if (value.length > 80) return { ok: false, error: '单个产品最多维护 80 道工序' };
 
   const entries: ProductTimeEntryInput[] = [];
-  const definitionIds = new Set<string>();
+  const occurrenceKeys = new Set<string>();
   let sequenceGroup = 0;
   try {
     for (let index = 0; index < value.length; index += 1) {
       const raw = value[index] as RawProductTimeEntry;
       const processDefinitionId = cleanProductTimeText(raw?.processDefinitionId, 80);
       if (!processDefinitionId) return { ok: false, error: `第 ${index + 1} 行缺少工序` };
-      if (definitionIds.has(processDefinitionId)) return { ok: false, error: `第 ${index + 1} 行工序重复` };
-      definitionIds.add(processDefinitionId);
+      const occurrenceKey = cleanProductTimeText(raw?.occurrenceKey, 120);
+      if (occurrenceKey && occurrenceKeys.has(occurrenceKey)) {
+        return { ok: false, error: `第 ${index + 1} 行工序实例标识重复` };
+      }
+      if (occurrenceKey) occurrenceKeys.add(occurrenceKey);
 
       const timeBasis: ProcessTimeBasis = raw?.timeBasis === 'per_batch' ? 'per_batch' : 'per_unit';
       const standardMilliseconds = millisecondsFromSeconds(
@@ -112,6 +117,7 @@ export function validateProductTimeEntries(value: unknown): ProductTimeEntryVali
 
       entries.push({
         processDefinitionId,
+        ...(occurrenceKey ? { occurrenceKey } : {}),
         position: index + 1,
         sequenceGroup,
         timeBasis,
@@ -144,6 +150,7 @@ export function serializeProductTimeEntry(entry: ProductTimeProfileRecord['entri
   return {
     id: entry.id,
     processDefinitionId: entry.processDefinitionId,
+    occurrenceKey: entry.occurrenceKey,
     processCode: entry.processDefinition.code,
     processName: entry.processDefinition.name,
     stageGroup: stageGroup === 'backend' || stageGroup === 'finish' ? stageGroup : 'frontend',

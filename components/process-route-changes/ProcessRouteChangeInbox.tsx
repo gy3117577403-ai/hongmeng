@@ -1,7 +1,7 @@
 'use client';
 
 import { AlertTriangle, GitPullRequestArrow, Loader2, RefreshCw, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ProcessRouteChangeReviewPanel } from '@/components/process-route-changes/ProcessRouteChangeReviewPanel';
 import {
   processRouteChangeTypeLabel,
@@ -18,11 +18,13 @@ function responseError(value: unknown): string {
   return '待审核工艺变更加载失败';
 }
 
-export function ProcessRouteChangeInbox() {
+export function ProcessRouteChangeInbox({ initialChangeId }: { initialChangeId?: string }) {
   const [changes, setChanges] = useState<ProcessRouteChangeDTO[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [openingId, setOpeningId] = useState('');
+  const openingRef = useRef('');
+  const openedInitialIdRef = useRef('');
   const [reviewRoute, setReviewRoute] = useState<{
     changeId: string;
     routeId: string;
@@ -59,11 +61,23 @@ export function ProcessRouteChangeInbox() {
 
   useEffect(() => { void load(); }, [load]);
 
-  async function openReview(change: ProcessRouteChangeDTO): Promise<void> {
-    if (openingId) return;
-    setOpeningId(change.id);
+  const openReview = useCallback(async (input: ProcessRouteChangeDTO | string): Promise<void> => {
+    const changeId = typeof input === 'string' ? input.trim() : input.id;
+    if (!changeId || openingRef.current) return;
+    openingRef.current = changeId;
+    setOpeningId(changeId);
     setError('');
     try {
+      let change = typeof input === 'string' ? null : input;
+      if (!change) {
+        const detailResponse = await fetch(`/api/process-management/route-changes/${encodeURIComponent(changeId)}`, { cache: 'no-store' });
+        const detailBody = await detailResponse.json().catch(() => ({})) as {
+          data?: ProcessRouteChangeDTO;
+          error?: unknown;
+        };
+        if (!detailResponse.ok || !detailBody.data?.routeId) throw new Error(responseError(detailBody));
+        change = detailBody.data;
+      }
       const response = await fetch(`/api/process-management/routes/${encodeURIComponent(change.routeId)}`, { cache: 'no-store' });
       const body = await response.json().catch(() => ({})) as {
         route?: {
@@ -83,7 +97,7 @@ export function ProcessRouteChangeInbox() {
         throw new Error(responseError(body));
       }
       setReviewRoute({
-        changeId: change.id,
+        changeId,
         routeId: body.route.id,
         routeVersion: body.route.version as number,
         steps: (body.route.steps || []).flatMap(step => (
@@ -101,9 +115,17 @@ export function ProcessRouteChangeInbox() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '工艺变更审核加载失败');
     } finally {
+      openingRef.current = '';
       setOpeningId('');
     }
-  }
+  }, []);
+
+  useEffect(() => {
+    const changeId = String(initialChangeId || '').trim();
+    if (!changeId || openedInitialIdRef.current === changeId) return;
+    openedInitialIdRef.current = changeId;
+    void openReview(changeId);
+  }, [initialChangeId, openReview]);
 
   return <><details className="workflow-route-change-inbox">
     <summary>

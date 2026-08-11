@@ -2291,6 +2291,9 @@ async function correctStepHistoricalLabor(
 
 type ProductEntryDraft = {
   processDefinitionId: string;
+  occurrenceKey: string;
+  sourceProductTimeEntryId: string | null;
+  sourceRouteStepId: string | null;
   position: number;
   sequenceGroup: number;
   timeBasis: string;
@@ -2302,6 +2305,41 @@ type ProductEntryDraft = {
   countsForEfficiency: boolean;
   remark: string | null;
 };
+
+function productEntryIndexForRouteStep(
+  entries: ProductEntryDraft[],
+  routeSteps: ActivationChange['route']['steps'],
+  stepId: string | null | undefined,
+): number {
+  if (!stepId) return -1;
+  const step = routeSteps.find(item => item.id === stepId);
+  if (!step) return -1;
+
+  const identityIndex = entries.findIndex(entry => (
+    entry.sourceRouteStepId === step.id
+    || (Boolean(step.productTimeEntryId) && entry.sourceProductTimeEntryId === step.productTimeEntryId)
+  ));
+  if (identityIndex >= 0) return identityIndex;
+
+  const structuralIndex = entries.findIndex(entry => (
+    entry.processDefinitionId === step.processDefinitionId
+    && entry.position === step.position
+    && entry.sequenceGroup === step.sequenceGroup
+  ));
+  if (structuralIndex >= 0) return structuralIndex;
+
+  if (!step.processDefinitionId) return -1;
+  const routeOccurrences = routeSteps
+    .filter(item => item.processDefinitionId === step.processDefinitionId)
+    .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
+  const occurrenceIndex = routeOccurrences.findIndex(item => item.id === step.id);
+  if (occurrenceIndex < 0) return -1;
+  const entryOccurrences = entries
+    .map((entry, index) => ({ entry, index }))
+    .filter(item => item.entry.processDefinitionId === step.processDefinitionId)
+    .sort((left, right) => left.entry.position - right.entry.position || left.index - right.index);
+  return entryOccurrences[occurrenceIndex]?.index ?? -1;
+}
 
 async function publishChangedProductProfile(
   tx: Prisma.TransactionClient,
@@ -2325,6 +2363,9 @@ async function publishChangedProductProfile(
   let entries: ProductEntryDraft[] = published
     ? published.entries.map(entry => ({
         processDefinitionId: entry.processDefinitionId,
+        occurrenceKey: entry.occurrenceKey,
+        sourceProductTimeEntryId: entry.id,
+        sourceRouteStepId: null,
         position: entry.position,
         sequenceGroup: entry.sequenceGroup,
         timeBasis: entry.timeBasis,
@@ -2348,6 +2389,9 @@ async function publishChangedProductProfile(
           }
           return {
             processDefinitionId: step.processDefinitionId,
+            occurrenceKey: `route-step:${step.id}`,
+            sourceProductTimeEntryId: step.productTimeEntryId,
+            sourceRouteStepId: step.id,
             position: step.position,
             sequenceGroup: step.sequenceGroup,
             timeBasis: step.timeBasis || 'per_unit',
@@ -2364,7 +2408,6 @@ async function publishChangedProductProfile(
             remark: step.remark,
           };
         });
-  const stepDefinition = new Map(change.route.steps.map(step => [step.id, step.processDefinitionId]));
   for (const diff of change.diffs) {
     const after = record(diff.afterData);
     if (diff.kind === ProcessRouteChangeDiffKind.INSERT_STEP) {
@@ -2372,17 +2415,7 @@ async function publishChangedProductProfile(
       if (!processDefinitionId) {
         throw new ProcessRouteChangeServiceError('新增工序定义未解析', 409, 'PROCESS_ROUTE_CHANGE_PROCESS_DEFINITION_INVALID');
       }
-      if (entries.some(entry => entry.processDefinitionId === processDefinitionId)) {
-        throw new ProcessRouteChangeServiceError(
-          '产品工艺中已存在同一工序，不能重复插入',
-          409,
-          'PROCESS_ROUTE_CHANGE_PROFILE_DUPLICATE_PROCESS',
-        );
-      }
-      const targetDefinitionId = diff.targetStepId ? stepDefinition.get(diff.targetStepId) : null;
-      const rawTargetIndex = targetDefinitionId
-        ? entries.findIndex(entry => entry.processDefinitionId === targetDefinitionId)
-        : -1;
+      const rawTargetIndex = productEntryIndexForRouteStep(entries, change.route.steps, diff.targetStepId);
       const insertIndex = rawTargetIndex >= 0
         ? entries.findIndex(entry => entry.sequenceGroup === entries[rawTargetIndex].sequenceGroup)
         : entries.length;
@@ -2397,6 +2430,9 @@ async function publishChangedProductProfile(
       const insertedOccurrences = positiveInteger(after.unitsPerProduct ?? 1, '单套工序次数');
       entries.splice(insertIndex, 0, {
         processDefinitionId,
+        occurrenceKey: `route-change:${change.id}:${diff.id}`,
+        sourceProductTimeEntryId: null,
+        sourceRouteStepId: null,
         position: insertIndex,
         sequenceGroup: targetSequence,
         timeBasis: insertedTimeBasis,
@@ -2411,8 +2447,10 @@ async function publishChangedProductProfile(
         remark: `由工艺变更 ${change.id} 新增`,
       });
     } else if (diff.kind === ProcessRouteChangeDiffKind.UPDATE_TIME) {
-      const processDefinitionId = diff.targetStepId ? stepDefinition.get(diff.targetStepId) : diff.processDefinitionId;
-      const entry = entries.find(item => item.processDefinitionId === processDefinitionId);
+      const entryIndex = diff.targetStepId
+        ? productEntryIndexForRouteStep(entries, change.route.steps, diff.targetStepId)
+        : entries.findIndex(item => item.processDefinitionId === diff.processDefinitionId);
+      const entry = entryIndex >= 0 ? entries[entryIndex] : null;
       if (!entry) {
         throw new ProcessRouteChangeServiceError(
           '产品工艺版本中找不到工时变更目标工序',
@@ -2431,27 +2469,31 @@ async function publishChangedProductProfile(
       if (after.unitLabel != null) entry.unitLabel = clean(after.unitLabel, 20) || entry.unitLabel;
       if (after.countsForEfficiency != null) entry.countsForEfficiency = after.countsForEfficiency !== false;
     } else {
-      const processDefinitionId = diff.targetStepId ? stepDefinition.get(diff.targetStepId) : diff.processDefinitionId;
-      if (!processDefinitionId || !entries.some(item => item.processDefinitionId === processDefinitionId)) {
+      const targetIndex = diff.targetStepId
+        ? productEntryIndexForRouteStep(entries, change.route.steps, diff.targetStepId)
+        : entries.findIndex(item => item.processDefinitionId === diff.processDefinitionId);
+      if (targetIndex < 0) {
         throw new ProcessRouteChangeServiceError('产品工艺版本中找不到移动目标工序', 409, 'PROCESS_ROUTE_CHANGE_PROFILE_TARGET_MISSING');
       }
       const beforeStepId = clean(after.beforeStepId, 80) || null;
-      const beforeDefinitionId = beforeStepId ? stepDefinition.get(beforeStepId) : null;
-      if (beforeStepId && !beforeDefinitionId) {
+      const beforeIndex = beforeStepId
+        ? productEntryIndexForRouteStep(entries, change.route.steps, beforeStepId)
+        : -1;
+      if (beforeStepId && beforeIndex < 0) {
         throw new ProcessRouteChangeServiceError('产品工艺版本中找不到移动落点工序', 409, 'PROCESS_ROUTE_CHANGE_PROFILE_TARGET_MISSING');
       }
       const plan = planProcessRouteGroupMove({
         steps: entries.map(entry => ({
           ...entry,
-          id: entry.processDefinitionId,
+          id: entry.occurrenceKey,
         })),
-        stepId: processDefinitionId,
-        beforeStepId: beforeDefinitionId || null,
+        stepId: entries[targetIndex].occurrenceKey,
+        beforeStepId: beforeIndex >= 0 ? entries[beforeIndex].occurrenceKey : null,
       });
       entries = plan.orderedSteps.map(({ id: _id, ...entry }) => entry);
     }
   }
-  entries = entries.map((entry, position) => ({ ...entry, position }));
+  entries = entries.map((entry, position) => ({ ...entry, position: position + 1 }));
   const maxVersion = await tx.productTimeProfile.aggregate({
     where: { drawingLibraryItemId },
     _max: { version: true },
@@ -2473,9 +2515,11 @@ async function publishChangedProductProfile(
       createdById: userId,
       updatedById: userId,
       publishedById: userId,
-      entries: { create: entries },
+      entries: {
+        create: entries.map(({ sourceProductTimeEntryId: _sourceEntryId, sourceRouteStepId: _sourceStepId, ...entry }) => entry),
+      },
     },
-    include: { entries: true },
+    include: { entries: { orderBy: { position: 'asc' } } },
   });
   return {
     id: created.id,
@@ -2831,16 +2875,60 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
           ]);
           const currentSteps = await tx.workOrderProcessStep.findMany({
             where: { routeId: change.routeId },
+            orderBy: { position: 'asc' },
             select: {
               id: true,
               processDefinitionId: true,
+              productTimeEntryId: true,
+              position: true,
+              sequenceGroup: true,
               status: true,
             },
           });
-          const entriesByDefinition = new Map(profile.entries.map(entry => [entry.processDefinitionId, entry] as const));
+          const previousEntryIds = currentSteps
+            .map(step => step.productTimeEntryId)
+            .filter((id): id is string => Boolean(id));
+          const previousEntries = previousEntryIds.length
+            ? await tx.productProcessTimeEntry.findMany({
+                where: { id: { in: previousEntryIds } },
+                select: { id: true, occurrenceKey: true },
+              })
+            : [];
+          const previousOccurrenceByEntryId = new Map(
+            previousEntries.map(entry => [entry.id, entry.occurrenceKey] as const),
+          );
+          const claimedEntryIds = new Set<string>();
+          const entriesByStepId = new Map<string, (typeof profile.entries)[number]>();
+          for (const step of currentSteps) {
+            const previousOccurrenceKey = step.productTimeEntryId
+              ? previousOccurrenceByEntryId.get(step.productTimeEntryId)
+              : null;
+            if (!previousOccurrenceKey) continue;
+            const entry = profile.entries.find(item => (
+              item.occurrenceKey === previousOccurrenceKey && !claimedEntryIds.has(item.id)
+            ));
+            if (!entry) continue;
+            claimedEntryIds.add(entry.id);
+            entriesByStepId.set(step.id, entry);
+          }
+          for (const step of currentSteps) {
+            if (entriesByStepId.has(step.id)) continue;
+            const entry = profile.entries.find(item => (
+              item.processDefinitionId === step.processDefinitionId
+              && item.position === step.position
+              && item.sequenceGroup === step.sequenceGroup
+              && !claimedEntryIds.has(item.id)
+            )) || profile.entries.find(item => (
+              item.processDefinitionId === step.processDefinitionId
+              && !claimedEntryIds.has(item.id)
+            ));
+            if (!entry) continue;
+            claimedEntryIds.add(entry.id);
+            entriesByStepId.set(step.id, entry);
+          }
           for (const step of currentSteps) {
             if (!step.processDefinitionId) continue;
-            const entry = entriesByDefinition.get(step.processDefinitionId);
+            const entry = entriesByStepId.get(step.id);
             if (!entry) continue;
             const closed = step.status === 'completed' || step.status === 'skipped';
             if (closed && !changedStepIds.has(step.id)) continue;

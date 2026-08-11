@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { CHANGE_STATUSES, changeDetailInclude, changeSnapshot, serializeChange, transitionChangeData } from '@/lib/changes';
+import {
+  processRouteChangeManagedTransitionBlock,
+} from '@/lib/change-process-route-link';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import type { ChangeStatus } from '@/types';
@@ -11,8 +14,13 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const current = await prisma.changeRequest.findFirst({ where: { id: params.id, deletedAt: null } });
+    const current = await prisma.changeRequest.findFirst({
+      where: { id: params.id, deletedAt: null },
+      include: { processRouteChange: { select: { id: true } } },
+    });
     if (!current) return NextResponse.json({ ok: false, error: '变更不存在或已删除' }, { status: 404 });
+    const managedBlock = processRouteChangeManagedTransitionBlock(current);
+    if (managedBlock) return NextResponse.json(managedBlock.body, { status: managedBlock.status });
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const expectedVersion = Number(body.expectedVersion);
     if (!Number.isInteger(expectedVersion) || expectedVersion !== current.version) {

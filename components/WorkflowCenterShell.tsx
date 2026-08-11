@@ -29,6 +29,7 @@ import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { ProcessRouteChangeReviewPanel } from '@/components/process-route-changes/ProcessRouteChangeReviewPanel';
 import { ProcessRouteChangeInbox } from '@/components/process-route-changes/ProcessRouteChangeInbox';
+import { selectWorkflowItem } from '@/lib/workflow-item-selection';
 import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import type {
   CurrentUserDTO,
@@ -156,6 +157,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     batchId: '', workOrderId: '', stepId: '', fromPlanning: false, fromProduction: false, returnTo: '/production', returnKey: '',
   });
   const [deepLinkReady, setDeepLinkReady] = useState(false);
+  const [initialProcessRouteChangeId, setInitialProcessRouteChangeId] = useState('');
   const [routeActionPending, setRouteActionPending] = useState(false);
   const [routeActionMessage, setRouteActionMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [historyRepairOpen, setHistoryRepairOpen] = useState(false);
@@ -197,6 +199,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       returnTo: safeLocalRoute(params.get('returnTo')),
       returnKey: params.get('returnKey') || '',
     };
+    setInitialProcessRouteChangeId(String(params.get('processRouteChangeId') || '').trim());
     if (next.batchId) selectedIdRef.current = `production-plan:${next.batchId}`;
     if (requestedKeyword) setKeyword(requestedKeyword);
     if (requestedWeekStart) setHistoryWeekStart(requestedWeekStart);
@@ -228,11 +231,12 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
         setHistoryWeekStart(data.navigation.history[0].weekStartDate);
       }
       const desired = selectedIdRef.current || sessionStorage.getItem('hm-workflow-selected') || '';
-      const nextSelected = data.items.find(item => deepLink.batchId && item.batchId === deepLink.batchId)
-        || data.items.find(item => deepLink.workOrderId && item.workOrderId === deepLink.workOrderId)
-        || data.items.find(item => item.id === desired)
-        || data.items[0]
-        || null;
+      const nextSelected = selectWorkflowItem({
+        items: data.items,
+        batchId: deepLink.batchId,
+        workOrderId: deepLink.workOrderId,
+        preferredId: desired,
+      });
       selectedIdRef.current = nextSelected?.id || '';
       setSelected(nextSelected);
     } catch (loadError) {
@@ -717,7 +721,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             ))}
           </div>
           <div className="workflow-command-actions">
-            {canReviewProcessChanges && <ProcessRouteChangeInbox />}
+            {canReviewProcessChanges && <ProcessRouteChangeInbox initialChangeId={initialProcessRouteChangeId} />}
             {deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回生产执行</a>}
             {deepLink.fromPlanning && !deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回计划中心</a>}
             <button type="button" disabled={loading} onClick={() => { void load(); }}>

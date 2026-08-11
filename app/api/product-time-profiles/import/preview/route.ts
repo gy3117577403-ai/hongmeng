@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomUUID } from 'node:crypto';
 import * as XLSX from 'xlsx';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+import {
+  normalizeProductTimeExcelHeader,
+  PRODUCT_TIME_SEQUENCE_HEADER,
+  resolveProductTimeExcelColumn,
+  restoreProductTimeExcelIdentities,
+} from '@/lib/product-time-excel';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,7 +22,7 @@ function text(value: unknown): string {
 }
 
 function normalized(value: unknown): string {
-  return text(value).replace(/[\s　]+/g, '').replace(/[（）]/g, match => match === '（' ? '(' : ')').toLocaleLowerCase('zh-CN');
+  return normalizeProductTimeExcelHeader(value);
 }
 
 function positiveSeconds(value: unknown): number | null {
@@ -55,6 +62,7 @@ export async function POST(req: NextRequest) {
     const specificationIndex = header.findIndex(value => specificationHeaders.has(value));
     const customerIndex = header.findIndex(value => customerHeaders.has(value));
     const productIndex = header.findIndex(value => productHeaders.has(value));
+    const sequenceIndex = header.findIndex(value => value === PRODUCT_TIME_SEQUENCE_HEADER);
     const [definitions, items] = await Promise.all([
       prisma.processDefinition.findMany({
         where: { isActive: true },
@@ -63,14 +71,46 @@ export async function POST(req: NextRequest) {
       }),
       prisma.drawingLibraryItem.findMany({
         where: { deletedAt: null },
-        select: { id: true, customerName: true, specification: true, productName: true },
+        select: {
+          id: true,
+          customerName: true,
+          specification: true,
+          productName: true,
+          productTimeProfiles: {
+            where: { status: { in: ['draft', 'published'] } },
+            orderBy: [{ status: 'asc' }, { version: 'desc' }],
+            select: {
+              status: true,
+              entries: {
+                orderBy: { position: 'asc' },
+                select: { processDefinitionId: true, occurrenceKey: true },
+              },
+            },
+          },
+        },
       }),
     ]);
-    const definitionByHeader = new Map(definitions.map(definition => [normalized(definition.name), definition]));
-    const processColumns = header.map((value, index) => ({ index, definition: definitionByHeader.get(normalized(value)) || null })).filter(column => column.definition);
+    const processColumns = header.flatMap((value, index) => {
+      const column = resolveProductTimeExcelColumn(value, definitions);
+      return column ? [{ index, ...column }] : [];
+    });
     if (!processColumns.length) {
       return NextResponse.json({ ok: false, error: '表格中没有与工序库匹配的工序列' }, { status: 400 });
     }
+    const processColumnKeys = processColumns.map(column => `${column.definitionId}:${column.occurrence}`);
+    if (new Set(processColumnKeys).size !== processColumnKeys.length) {
+      return NextResponse.json({ ok: false, error: '工序实例列重复，请使用“工序名#1、工序名#2”区分同名工序位置' }, { status: 400 });
+    }
+    const processDefinitionColumnCounts = new Map<string, number>();
+    for (const column of processColumns) {
+      processDefinitionColumnCounts.set(
+        column.definitionId,
+        (processDefinitionColumnCounts.get(column.definitionId) || 0) + 1,
+      );
+    }
+    const requiresStableIdentity = processColumns.some(column => (
+      column.occurrence > 1 || (processDefinitionColumnCounts.get(column.definitionId) || 0) > 1
+    ));
     const itemByExact = new Map(items.map(item => [`${normalized(item.customerName)}::${normalized(item.specification)}`, item]));
     const itemsBySpecification = new Map<string, typeof items>();
     for (const item of items) {
@@ -86,17 +126,50 @@ export async function POST(req: NextRequest) {
       const exact = customerName ? itemByExact.get(`${normalized(customerName)}::${normalized(specification)}`) || null : null;
       const candidates = itemsBySpecification.get(normalized(specification)) || [];
       const item = exact || (candidates.length === 1 ? candidates[0] : null);
-      const entries = processColumns.flatMap(column => {
+      const selectedProfile = item?.productTimeProfiles.find(profile => profile.status === 'draft')
+        || item?.productTimeProfiles.find(profile => profile.status === 'published')
+        || null;
+      const existingOccurrences = new Map<string, string[]>();
+      for (const entry of selectedProfile?.entries || []) {
+        existingOccurrences.set(entry.processDefinitionId, [
+          ...(existingOccurrences.get(entry.processDefinitionId) || []),
+          entry.occurrenceKey,
+        ]);
+      }
+      const parsedEntries = processColumns.flatMap(column => {
         const unitSeconds = positiveSeconds(row[column.index]);
-        return unitSeconds && column.definition ? [{
-          processDefinitionId: column.definition.id,
-          processName: column.definition.name,
+        return unitSeconds ? [{
+          processDefinitionId: column.definitionId,
+          processName: column.definitionName,
+          columnHeader: column.header,
+          columnOccurrence: column.occurrence,
           unitSeconds,
         }] : [];
       });
+      const identityResult = restoreProductTimeExcelIdentities(
+        parsedEntries,
+        sequenceIndex >= 0 ? row[sequenceIndex] : null,
+        { requiresStableIdentity },
+      );
+      const identifiedEntries: Array<typeof parsedEntries[number] & { occurrenceKey?: string }> = identityResult.ok
+        ? identityResult.entries
+        : parsedEntries;
+      const entries = identifiedEntries.map(({
+        columnHeader: _columnHeader,
+        columnOccurrence,
+        occurrenceKey,
+        ...entry
+      }) => ({
+        ...entry,
+        occurrenceKey: occurrenceKey
+          || existingOccurrences.get(entry.processDefinitionId)?.[columnOccurrence - 1]
+          || randomUUID(),
+      }));
       const warnings: string[] = [];
       if (!item) warnings.push(candidates.length > 1 ? '规格对应多个客户，请补充准确客户名称' : '图纸资料库中未找到该产品');
       if (!entries.length) warnings.push('没有可识别的正数工时');
+      if (!identityResult.ok) warnings.push(identityResult.error);
+      if (identityResult.ok && identityResult.warning) warnings.push(identityResult.warning);
       return {
         rowNo: headerIndex + offset + 2,
         itemId: item?.id || null,
@@ -105,7 +178,7 @@ export async function POST(req: NextRequest) {
         productName: productName || item?.productName || '',
         entries,
         totalSeconds: Math.round(entries.reduce((sum, entry) => sum + entry.unitSeconds, 0) * 1000) / 1000,
-        status: item && entries.length ? 'ready' : 'invalid',
+        status: item && entries.length && identityResult.ok ? 'ready' : 'invalid',
         warnings,
       };
     }).filter((row): row is NonNullable<typeof row> => Boolean(row));
@@ -125,7 +198,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       fileName: file.name,
       sheetName,
-      processColumns: processColumns.map(column => column.definition!.name),
+      processColumns: processColumns.map(column => column.header),
       rows,
       summary: {
         total: rows.length,

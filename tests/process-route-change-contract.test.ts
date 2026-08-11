@@ -1,13 +1,41 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  canSubmitProcessRouteChangeProposal,
   millisecondsFromSeconds,
+  normalizeOptionalProcessRouteChangeNote,
   processRouteChangeDTO,
   processRouteChangeIdempotencyKey,
+  processRouteChangeReviewNoteError,
   processRouteStepChangeSnapshots,
   processRouteStepChangeLabel,
   secondsFromMilliseconds,
 } from '../lib/process-route-change-contract';
+
+test('field notes and review comments are optional for approval and rejection', () => {
+  assert.equal(normalizeOptionalProcessRouteChangeNote('   '), null);
+  assert.equal(normalizeOptionalProcessRouteChangeNote('  现场暂时没有补充  '), '现场暂时没有补充');
+  assert.equal(processRouteChangeReviewNoteError('approve', ''), null);
+  assert.equal(processRouteChangeReviewNoteError('reject', '  '), null);
+  assert.equal(processRouteChangeReviewNoteError('reject', '工序定义重复'), null);
+});
+
+test('a valid mobile proposal remains submittable with no field note', () => {
+  assert.equal(canSubmitProcessRouteChangeProposal({
+    saving: false,
+    employeeAvailable: true,
+    affectedQty: 10,
+    includesInsert: true,
+    insertBeforeStepId: 'step-4',
+    newProcessName: '剥皮',
+    newStandardMillisecondsPerUnit: 12_000,
+    includesTime: false,
+    timeChangesValid: false,
+    includesMove: false,
+    moveStepId: '',
+    moveIsNoop: false,
+  }), true);
+});
 
 test('MOVE_STEP persistence data round-trips into the field and review contract', () => {
   const dto = processRouteChangeDTO({

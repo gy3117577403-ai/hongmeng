@@ -66,13 +66,25 @@ export async function PUT(req: NextRequest, { params }: { params: { itemId: stri
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const validation = validateProductTimeEntries(body.entries);
     if (!validation.ok) return NextResponse.json({ ok: false, error: validation.error }, { status: 400 });
+    const definitionCounts = new Map<string, number>();
+    for (const entry of validation.entries) {
+      definitionCounts.set(entry.processDefinitionId, (definitionCounts.get(entry.processDefinitionId) || 0) + 1);
+    }
+    if (validation.entries.some(entry => (
+      (definitionCounts.get(entry.processDefinitionId) || 0) > 1 && !entry.occurrenceKey
+    ))) {
+      return NextResponse.json({
+        ok: false,
+        error: '同一工序出现多次时，每个位置都必须携带独立工序实例标识，请刷新后重新保存',
+      }, { status: 400 });
+    }
     const expectedRevision = body.expectedRevision === null || body.expectedRevision === undefined
       ? null
       : Number(body.expectedRevision);
     if (expectedRevision !== null && (!Number.isInteger(expectedRevision) || expectedRevision < 0)) {
       return NextResponse.json({ ok: false, error: '产品工时版本已失效，请刷新后重试' }, { status: 400 });
     }
-    const definitionIds = validation.entries.map(entry => entry.processDefinitionId);
+    const definitionIds = [...new Set(validation.entries.map(entry => entry.processDefinitionId))];
     const profileId = await prisma.$transaction(async tx => {
       const item = await tx.drawingLibraryItem.findFirst({
         where: { id: params.itemId, deletedAt: null },
@@ -88,6 +100,22 @@ export async function PUT(req: NextRequest, { params }: { params: { itemId: stri
         where: { drawingLibraryItemId: item.id, status: 'draft' },
         select: { id: true, revision: true, version: true },
       });
+      const sourceEntries = draft
+        ? await tx.productProcessTimeEntry.findMany({
+            where: { profileId: draft.id },
+            orderBy: { position: 'asc' },
+            select: { processDefinitionId: true, occurrenceKey: true },
+          })
+        : (await tx.productTimeProfile.findFirst({
+            where: { drawingLibraryItemId: item.id, status: 'published' },
+            orderBy: { version: 'desc' },
+            select: {
+              entries: {
+                orderBy: { position: 'asc' },
+                select: { processDefinitionId: true, occurrenceKey: true },
+              },
+            },
+          }))?.entries || [];
       if (draft) {
         if (expectedRevision !== null && draft.revision !== expectedRevision) throw new Error('PRODUCT_TIME_CONFLICT');
         const updated = await tx.productTimeProfile.updateMany({
@@ -120,8 +148,19 @@ export async function PUT(req: NextRequest, { params }: { params: { itemId: stri
         });
       }
       if (validation.entries.length) {
+        const occurrenceKeysByDefinition = new Map<string, string[]>();
+        for (const entry of sourceEntries) {
+          const keys = occurrenceKeysByDefinition.get(entry.processDefinitionId) || [];
+          keys.push(entry.occurrenceKey);
+          occurrenceKeysByDefinition.set(entry.processDefinitionId, keys);
+        }
         await tx.productProcessTimeEntry.createMany({
-          data: validation.entries.map(entry => ({ ...entry, profileId: draft!.id })),
+          data: validation.entries.map(entry => ({
+            ...entry,
+            occurrenceKey: entry.occurrenceKey
+              || occurrenceKeysByDefinition.get(entry.processDefinitionId)?.shift(),
+            profileId: draft!.id,
+          })),
         });
       }
       await tx.operationLog.create({
