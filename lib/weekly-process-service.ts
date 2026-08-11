@@ -217,7 +217,7 @@ export async function getWeeklyProcessOverview(input: {
             materialTask: true,
             processRoute: {
               include: {
-                steps: { orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
+                steps: { where: { retiredAt: null }, orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
               },
             },
           },

@@ -150,6 +150,7 @@ export type ReviewProcessRouteChangeCommand = MutationIdentity & {
   action?: 'approve' | 'reject';
   note?: unknown;
   reviewReason?: unknown;
+  newProcessDefinitionId?: unknown;
   affectedQty?: unknown;
   newStandardMillisecondsPerUnit?: unknown;
   timeChanges?: unknown;
@@ -546,6 +547,49 @@ function record(value: Prisma.JsonValue | null | undefined): Record<string, unkn
     : {};
 }
 
+type InsertedProcessDefinition = {
+  id: string;
+  code: string;
+  name: string;
+  stageGroup: string;
+};
+
+function sameProcessName(left: string, right: string): boolean {
+  return left.trim().toLocaleLowerCase('zh-CN') === right.trim().toLocaleLowerCase('zh-CN');
+}
+
+function assertInsertedDefinitionNameMatches(
+  definition: InsertedProcessDefinition,
+  requestedName: string,
+) {
+  if (requestedName.trim() && !sameProcessName(definition.name, requestedName)) {
+    throw new ProcessRouteChangeServiceError(
+      `新增工序名称“${requestedName}”与所选工序定义“${definition.name}”不一致`,
+      409,
+      'PROCESS_ROUTE_CHANGE_PROCESS_DEFINITION_NAME_MISMATCH',
+    );
+  }
+}
+
+async function findUniqueActiveDefinitionByName(
+  tx: Prisma.TransactionClient,
+  processName: string,
+) {
+  const matches = await tx.processDefinition.findMany({
+    where: { name: { equals: processName, mode: 'insensitive' }, isActive: true },
+    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+    take: 2,
+  });
+  if (matches.length > 1) {
+    throw new ProcessRouteChangeServiceError(
+      `存在多个名为“${processName}”的有效工序，请工艺审核明确选择工序定义`,
+      409,
+      'PROCESS_ROUTE_CHANGE_PROCESS_DEFINITION_AMBIGUOUS',
+    );
+  }
+  return matches[0] || null;
+}
+
 function serializeChange(change: ChangeDetail) {
   const insert = change.diffs.find(diff => diff.kind === ProcessRouteChangeDiffKind.INSERT_STEP);
   const timeDiffs = change.diffs.filter(diff => diff.kind === ProcessRouteChangeDiffKind.UPDATE_TIME);
@@ -578,6 +622,7 @@ function serializeChange(change: ChangeDetail) {
       insertBeforeStepId: insert?.targetStepId ?? null,
       insertAfterStepId: null,
       newStepId: change.supplementObligations[0]?.displayStepId ?? null,
+      newProcessDefinitionId: insert?.processDefinitionId ?? null,
       newProcessName: typeof insertAfter.processName === 'string' ? insertAfter.processName : null,
       newProcessCode: typeof insertAfter.processCode === 'string' ? insertAfter.processCode : null,
       newStandardMillisecondsPerUnit: Number(insertAfter.standardMillisecondsPerUnit) || null,
@@ -824,7 +869,7 @@ export async function createProcessRouteChangeProposal(
             qrTicket: { select: { publicCode: true } },
           },
         },
-        steps: { orderBy: { position: 'asc' } },
+        steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } },
       },
     });
     if (!route) {
@@ -882,12 +927,20 @@ export async function createProcessRouteChangeProposal(
         );
       }
       const definition = diff.processDefinitionId ? definitionById.get(diff.processDefinitionId) : null;
+      if (diff.kind === ProcessRouteChangeDiffKind.INSERT_STEP && definition) {
+        assertInsertedDefinitionNameMatches(
+          definition,
+          clean((diff.afterData as InsertStepAfterData).processName, 120),
+        );
+      }
       return {
         kind: diff.kind as ProcessRouteChangeDiffKind,
         source: diff.source as ProcessRouteChangeStepSource,
         position: diff.position,
         targetStepId: diff.targetStepId,
-        processDefinitionId: diff.processDefinitionId || target?.processDefinitionId || null,
+        processDefinitionId: diff.kind === ProcessRouteChangeDiffKind.INSERT_STEP
+          ? diff.processDefinitionId
+          : diff.processDefinitionId || target?.processDefinitionId || null,
         beforeData: target ? json({
           id: target.id,
           processDefinitionId: target.processDefinitionId,
@@ -1385,6 +1438,105 @@ async function calculateReviewedTimeImpactSnapshot(
   };
 }
 
+async function bindInsertedDefinitionForReview(
+  tx: Prisma.TransactionClient,
+  input: {
+    routeId: string;
+    diff: { id: string };
+    requestedDefinitionId: string | null;
+  },
+) {
+  const storedDiff = await tx.processRouteChangeDiff.findUniqueOrThrow({
+    where: { id: input.diff.id },
+    select: {
+      id: true,
+      targetStepId: true,
+      processDefinitionId: true,
+      afterData: true,
+    },
+  });
+  const after = record(storedDiff.afterData);
+  const processName = clean(after.processName, 120);
+  let definition: InsertedProcessDefinition | null = null;
+
+  if (input.requestedDefinitionId) {
+    definition = await tx.processDefinition.findFirst({
+      where: { id: input.requestedDefinitionId, isActive: true },
+      select: { id: true, code: true, name: true, stageGroup: true },
+    });
+    if (!definition) {
+      throw new ProcessRouteChangeServiceError(
+        '审核所选工序定义不存在或已停用',
+        409,
+        'PROCESS_ROUTE_CHANGE_PROCESS_DEFINITION_INVALID',
+      );
+    }
+    assertInsertedDefinitionNameMatches(definition, processName);
+  } else if (storedDiff.processDefinitionId) {
+    const boundDefinition = await tx.processDefinition.findFirst({
+      where: { id: storedDiff.processDefinitionId, isActive: true },
+      select: { id: true, code: true, name: true, stageGroup: true },
+    });
+    if (!boundDefinition) {
+      throw new ProcessRouteChangeServiceError(
+        '新增工序定义不存在或已停用',
+        409,
+        'PROCESS_ROUTE_CHANGE_PROCESS_DEFINITION_INVALID',
+      );
+    }
+    if (processName && !sameProcessName(boundDefinition.name, processName)) {
+      const target = storedDiff.targetStepId
+        ? await tx.workOrderProcessStep.findFirst({
+            where: { id: storedDiff.targetStepId, routeId: input.routeId },
+            select: { processDefinitionId: true },
+          })
+        : null;
+      if (target?.processDefinitionId !== boundDefinition.id) {
+        assertInsertedDefinitionNameMatches(boundDefinition, processName);
+      }
+      // Compatibility with proposals created before the INSERT binding fix:
+      // those rows inherited the insertion anchor's definition id. Treat that
+      // exact signature as unbound and resolve the employee-entered name below.
+    } else {
+      definition = boundDefinition;
+    }
+  }
+
+  if (!definition) {
+    if (!processName) {
+      throw new ProcessRouteChangeServiceError(
+        '新增工序缺少名称',
+        409,
+        'PROCESS_ROUTE_CHANGE_PROCESS_NAME_REQUIRED',
+      );
+    }
+    definition = await findUniqueActiveDefinitionByName(tx, processName);
+  }
+
+  if (!definition) {
+    if (storedDiff.processDefinitionId) {
+      await tx.processRouteChangeDiff.update({
+        where: { id: storedDiff.id },
+        data: { processDefinitionId: null },
+      });
+    }
+    return;
+  }
+
+  await tx.processRouteChangeDiff.update({
+    where: { id: storedDiff.id },
+    data: {
+      processDefinitionId: definition.id,
+      afterData: json({
+        ...after,
+        processCode: definition.code,
+        processName: definition.name,
+        stageGroup: definition.stageGroup,
+      }),
+    },
+  });
+}
+
 export async function reviewProcessRouteChange(command: ReviewProcessRouteChangeCommand) {
   const identity = mutationIdentity(command);
   const decision = command.decision || command.action;
@@ -1413,7 +1565,23 @@ export async function reviewProcessRouteChange(command: ReviewProcessRouteChange
         where: { changeId: current.id },
         orderBy: { position: 'asc' },
       });
-      const insert = diffs.find(diff => diff.kind === ProcessRouteChangeDiffKind.INSERT_STEP);
+      const inserts = diffs.filter(diff => diff.kind === ProcessRouteChangeDiffKind.INSERT_STEP);
+      const insert = inserts[0];
+      const requestedDefinitionId = clean(command.newProcessDefinitionId, 80) || null;
+      if (requestedDefinitionId && !insert) {
+        throw new ProcessRouteChangeServiceError(
+          '当前变更不包含新增工序，不能绑定新增工序定义',
+          409,
+          'PROCESS_ROUTE_CHANGE_REVIEW_INSERT_MISSING',
+        );
+      }
+      if (requestedDefinitionId && inserts.length > 1) {
+        throw new ProcessRouteChangeServiceError(
+          '当前变更包含多个新增工序，必须逐项明确绑定工序定义',
+          409,
+          'PROCESS_ROUTE_CHANGE_PROCESS_DEFINITION_BINDING_INVALID',
+        );
+      }
       const affectedQty = command.affectedQty == null ? null : positiveInteger(command.affectedQty, '补充工序应报数量');
       const newStandard = command.newStandardMillisecondsPerUnit == null
         ? null
@@ -1485,6 +1653,13 @@ export async function reviewProcessRouteChange(command: ReviewProcessRouteChange
         });
         nextDiffPosition += 1;
       }
+      for (const insertDiff of inserts) {
+        await bindInsertedDefinitionForReview(tx, {
+          routeId: current.routeId,
+          diff: insertDiff,
+          requestedDefinitionId: insertDiff.id === insert?.id ? requestedDefinitionId : null,
+        });
+      }
       const reviewedDiffs = await tx.processRouteChangeDiff.findMany({
         where: { changeId: current.id },
         orderBy: { position: 'asc' },
@@ -1538,7 +1713,7 @@ type ActivationChange = Prisma.ProcessRouteChangeGetPayload<{
     route: {
       include: {
         workOrder: true;
-        steps: { orderBy: { position: 'asc' } };
+        steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } };
       };
     };
   };
@@ -1561,16 +1736,23 @@ async function resolveInsertedDefinition(
         'PROCESS_ROUTE_CHANGE_PROCESS_DEFINITION_INVALID',
       );
     }
-    return definition;
+    const processName = clean(after.processName, 120);
+    if (!processName || sameProcessName(definition.name, processName)) return definition;
+    const target = diff.targetStepId
+      ? change.route.steps.find(step => step.id === diff.targetStepId)
+      : null;
+    if (target?.processDefinitionId !== definition.id) {
+      assertInsertedDefinitionNameMatches(definition, processName);
+    }
+    // Legacy compatibility: old INSERT rows inherited the insertion anchor's
+    // definition id. If the employee-entered name differs, ignore that polluted
+    // binding and uniquely resolve the requested process below.
   }
   const processName = clean(after.processName, 120);
   if (!processName) {
     throw new ProcessRouteChangeServiceError('新增工序缺少名称', 409, 'PROCESS_ROUTE_CHANGE_PROCESS_NAME_REQUIRED');
   }
-  const existing = await tx.processDefinition.findFirst({
-    where: { name: processName, isActive: true },
-    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
-  });
+  const existing = await findUniqueActiveDefinitionByName(tx, processName);
   if (existing) {
     await tx.processRouteChangeDiff.update({
       where: { id: diff.id },
@@ -2546,7 +2728,7 @@ async function assessCurrentRouteGroupMove(
           completedQty: true,
         },
       },
-      steps: { orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
+      steps: { where: { retiredAt: null }, orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
     },
   });
   if (!route) {
@@ -2737,7 +2919,7 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
           route: {
             include: {
               workOrder: true,
-              steps: { orderBy: { position: 'asc' } },
+              steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } },
             },
           },
         },
@@ -3130,7 +3312,8 @@ export function parseProcessSupplementCompletionTiming(input: {
 }
 
 function serializeSupplementCompletionResult(input: {
-  changeId: string;
+  changeId: string | null;
+  deploymentId?: string | null;
   completionId: string;
   obligationId: string;
   routeId: string;
@@ -3201,7 +3384,14 @@ export async function completeProcessSupplementObligation(
         participants: { orderBy: { position: 'asc' }, select: { employeeId: true } },
         laborPool: { select: { totalStandardLaborMilliseconds: true, claims: { where: { status: ProcessLaborClaimStatus.ACTIVE } } } },
         supplementObligation: {
-          select: { id: true, changeId: true, requiredQty: true, reportedQty: true, status: true },
+          select: {
+            id: true,
+            changeId: true,
+            requiredQty: true,
+            reportedQty: true,
+            status: true,
+            deploymentRoute: { select: { deploymentId: true } },
+          },
         },
       },
     });
@@ -3224,6 +3414,7 @@ export async function completeProcessSupplementObligation(
       }
       return serializeSupplementCompletionResult({
         changeId: duplicate.supplementObligation.changeId,
+        deploymentId: duplicate.supplementObligation.deploymentRoute?.deploymentId || null,
         completionId: duplicate.id,
         obligationId,
         routeId: duplicate.routeId,
@@ -3241,6 +3432,7 @@ export async function completeProcessSupplementObligation(
       where: { id: obligationId },
       include: {
         change: true,
+        deploymentRoute: { include: { deployment: true } },
         route: { include: { workOrder: { include: { qrTicket: true } } } },
         displayStep: true,
       },
@@ -3252,11 +3444,32 @@ export async function completeProcessSupplementObligation(
         'PROCESS_SUPPLEMENT_NOT_FOUND',
       );
     }
+    if (obligation.displayStep.retiredAt) {
+      throw new ProcessRouteChangeServiceError(
+        '该补充工序已退役，不能继续报工',
+        409,
+        'PROCESS_SUPPLEMENT_STEP_RETIRED',
+      );
+    }
     if (publicCode && obligation.route.workOrder.qrTicket?.publicCode !== publicCode) {
       throw new ProcessRouteChangeServiceError('二维码与补充工序义务不匹配', 409, 'PROCESS_SUPPLEMENT_QR_CONFLICT');
     }
-    if (obligation.change.status !== ProcessRouteChangeStatus.ACTIVE) {
+    if (obligation.change && obligation.change.status !== ProcessRouteChangeStatus.ACTIVE) {
       throw new ProcessRouteChangeServiceError('工艺变更尚未启用', 409, 'PROCESS_SUPPLEMENT_CHANGE_NOT_ACTIVE');
+    }
+    if (!obligation.change && obligation.deploymentRoute?.deployment.status !== 'ACTIVE') {
+      throw new ProcessRouteChangeServiceError(
+        '产品工序与工时部署尚未完成',
+        409,
+        'PROCESS_SUPPLEMENT_DEPLOYMENT_NOT_ACTIVE',
+      );
+    }
+    if (!obligation.change && !obligation.deploymentRoute) {
+      throw new ProcessRouteChangeServiceError(
+        '补充工序义务缺少有效来源',
+        409,
+        'PROCESS_SUPPLEMENT_SOURCE_INVALID',
+      );
     }
     if (obligation.status !== ProcessSupplementObligationStatus.ACTIVE) {
       throw new ProcessRouteChangeServiceError('补充工序义务已完成或已取消', 409, 'PROCESS_SUPPLEMENT_NOT_ACTIVE');
@@ -3301,6 +3514,9 @@ export async function completeProcessSupplementObligation(
       );
     }
     const now = new Date();
+    const deploymentId = obligation.deploymentRoute?.deploymentId || null;
+    const sourceKey = obligation.changeId || `product-time-deployment:${deploymentId}`;
+    const standardSource = deploymentId ? 'product_time_deployment' : 'route_change_supplement';
     const nextReportedQty = obligation.reportedQty + processedQty;
     const nextState = processSupplementObligationState({
       requiredQty: obligation.requiredQty,
@@ -3335,7 +3551,10 @@ export async function completeProcessSupplementObligation(
         autoAssignLabor: true,
         routeVersion: obligation.route.version,
         idempotencyKey: identity.idempotencyKey,
-        standardSource: 'route_change_supplement',
+        productTimeProfileId: obligation.displayStep.productTimeProfileId,
+        productTimeEntryId: obligation.displayStep.productTimeEntryId,
+        productTimeProfileVersion: obligation.displayStep.productTimeProfileVersion,
+        standardSource,
         timeBasis: obligation.timeBasis,
         unitLabel: obligation.unitLabel,
         standardMillisecondsPerUnit: obligation.standardMillisecondsPerUnit,
@@ -3373,7 +3592,8 @@ export async function completeProcessSupplementObligation(
         claimedStandardLaborMilliseconds: 0n,
         remainingStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
         countsForEfficiency: obligation.countsForEfficiency,
-        standardSource: 'route_change_supplement',
+        productTimeProfileVersion: obligation.displayStep.productTimeProfileVersion,
+        standardSource,
       },
     });
     const baseQty = Math.floor(processedQty / employeeIds.length);
@@ -3399,7 +3619,7 @@ export async function completeProcessSupplementObligation(
           standardLaborMilliseconds: plan.claimStandardLaborMilliseconds,
           workDate,
           status: ProcessLaborClaimStatus.ACTIVE,
-          source: 'route_change_supplement_auto',
+          source: deploymentId ? 'product_time_deployment_supplement_auto' : 'route_change_supplement_auto',
           idempotencyKey: `supplement-auto:${completion.id}:${employeeId}`.slice(0, 120),
           claimedById: identity.userId,
           claimedAt: now,
@@ -3454,6 +3674,7 @@ export async function completeProcessSupplementObligation(
       where: {
         routeId: obligation.routeId,
         executionMode: ProcessStepExecutionMode.NORMAL,
+        retiredAt: null,
         status: { notIn: ['completed', 'skipped'] },
       },
     });
@@ -3472,7 +3693,7 @@ export async function completeProcessSupplementObligation(
       throw new ProcessRouteChangeServiceError('工艺路线版本冲突', 409, 'PROCESS_ROUTE_VERSION_CONFLICT');
     }
     const dailyTaskSync = await synchronizeRouteChangeDailyTasks(tx, {
-      changeId: obligation.changeId,
+      changeId: sourceKey,
       routeId: obligation.routeId,
       actorId: identity.userId,
       reason: `补充工序 ${obligation.processName} 已报工，同步日任务进度`,
@@ -3499,6 +3720,8 @@ export async function completeProcessSupplementObligation(
         actorId: identity.userId,
         detail: json({
           obligationId: obligation.id,
+          changeId: obligation.changeId,
+          deploymentId,
           completionId: completion.id,
           requiredQty: obligation.requiredQty,
           reportedQty: nextReportedQty,
@@ -3509,43 +3732,45 @@ export async function completeProcessSupplementObligation(
         }),
       },
     });
-    await tx.processRouteChangeEvent.create({
-      data: {
-        changeId: obligation.changeId,
-        action: 'complete_supplement_obligation',
-        idempotencyKey: `supplement:${identity.idempotencyKey}`.slice(0, 120),
-        fromStatus: ProcessRouteChangeStatus.ACTIVE,
-        toStatus: ProcessRouteChangeStatus.ACTIVE,
-        actorId: identity.userId,
-        actorSnapshot: identity.actor,
-        detail: json({
-          obligationId,
-          completionId: completion.id,
-          processedQty,
-          remainingQty: nextState.remainingQty,
-          dailyTaskSync,
-        }),
-      },
-    });
-    await tx.processRouteChangeOutbox.create({
-      data: {
-        changeId: obligation.changeId,
-        eventType: nextState.status === 'FULFILLED'
-          ? 'PROCESS_SUPPLEMENT_OBLIGATION_FULFILLED'
-          : 'PROCESS_SUPPLEMENT_OBLIGATION_REPORTED',
-        dedupeKey: `PROCESS_SUPPLEMENT_REPORTED:${identity.idempotencyKey}`.slice(0, 180),
-        payload: json({
+    if (obligation.changeId) {
+      await tx.processRouteChangeEvent.create({
+        data: {
           changeId: obligation.changeId,
-          obligationId,
-          workOrderId: obligation.workOrderId,
-          processName: obligation.processName,
-          processedQty,
-          reportedQty: nextReportedQty,
-          remainingQty: nextState.remainingQty,
-          actor: identity.actor,
-        }),
-      },
-    });
+          action: 'complete_supplement_obligation',
+          idempotencyKey: `supplement:${identity.idempotencyKey}`.slice(0, 120),
+          fromStatus: ProcessRouteChangeStatus.ACTIVE,
+          toStatus: ProcessRouteChangeStatus.ACTIVE,
+          actorId: identity.userId,
+          actorSnapshot: identity.actor,
+          detail: json({
+            obligationId,
+            completionId: completion.id,
+            processedQty,
+            remainingQty: nextState.remainingQty,
+            dailyTaskSync,
+          }),
+        },
+      });
+      await tx.processRouteChangeOutbox.create({
+        data: {
+          changeId: obligation.changeId,
+          eventType: nextState.status === 'FULFILLED'
+            ? 'PROCESS_SUPPLEMENT_OBLIGATION_FULFILLED'
+            : 'PROCESS_SUPPLEMENT_OBLIGATION_REPORTED',
+          dedupeKey: `PROCESS_SUPPLEMENT_REPORTED:${identity.idempotencyKey}`.slice(0, 180),
+          payload: json({
+            changeId: obligation.changeId,
+            obligationId,
+            workOrderId: obligation.workOrderId,
+            processName: obligation.processName,
+            processedQty,
+            reportedQty: nextReportedQty,
+            remainingQty: nextState.remainingQty,
+            actor: identity.actor,
+          }),
+        },
+      });
+    }
     await tx.operationLog.create({
       data: {
         userId: identity.userId,
@@ -3554,6 +3779,8 @@ export async function completeProcessSupplementObligation(
         targetId: obligation.id,
         detail: json({
           completionId: completion.id,
+          changeId: obligation.changeId,
+          deploymentId,
           processedQty,
           releasePolicy: PROCESS_SUPPLEMENT_RELEASE_POLICY,
           quantityMovementCount: 0,
@@ -3563,6 +3790,7 @@ export async function completeProcessSupplementObligation(
     });
     return serializeSupplementCompletionResult({
       changeId: obligation.changeId,
+      deploymentId,
       completionId: completion.id,
       obligationId,
       routeId: obligation.routeId,

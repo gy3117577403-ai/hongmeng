@@ -1900,6 +1900,598 @@ html:has(.hm-product-time-workbench) {
   gap: 6px;
 }
 
+.hm-product-time-workbench .product-time-deployment-banner {
+  min-height: 48px;
+  margin: 6px 9px 0;
+  padding: 7px 9px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #f0ba8d;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a480d;
+}
+
+.hm-product-time-workbench .product-time-deployment-banner.active {
+  border-color: #a9d8bc;
+  background: #f0faf4;
+  color: #087443;
+}
+
+.hm-product-time-workbench .product-time-deployment-banner.failed {
+  border-color: #f4b4b4;
+  background: #fff5f5;
+  color: #b42318;
+}
+
+.hm-product-time-workbench .product-time-deployment-banner > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-product-time-workbench .product-time-deployment-banner strong,
+.hm-product-time-workbench .product-time-deployment-banner small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-product-time-workbench .product-time-deployment-banner strong {
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-deployment-banner small {
+  opacity: .78;
+  font-size: 9px;
+}
+
+.hm-product-time-workbench .product-time-deployment-banner > button {
+  min-height: 29px;
+  padding: 0 9px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-size: 9px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.hm-product-time-workbench .product-time-publish-button {
+  min-width: 208px;
+}
+
+.hm-product-time-workbench .product-time-deployment-backdrop {
+  position: fixed;
+  z-index: 84;
+  inset: 0;
+  padding: 16px;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 32, 51, .46);
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog {
+  width: min(1120px, calc(100vw - 26px));
+  height: min(880px, calc(100dvh - 26px));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid #dce3eb;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 25px 70px rgba(20, 32, 51, .28);
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header {
+  min-height: 66px;
+  padding: 10px 13px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 36px;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid #e5eaf0;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header > div > svg {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  padding: 9px;
+  border-radius: 8px;
+  background: #fff1e6;
+  color: #dc5600;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header strong {
+  font-size: 15px;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header small {
+  overflow: hidden;
+  color: #748195;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header > b {
+  min-height: 28px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #fff0e5;
+  color: #b74800;
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header > b.active {
+  background: #eaf8ef;
+  color: #087443;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header > b.failed {
+  background: #fff0f0;
+  color: #b42318;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header > button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #dce3eb;
+  border-radius: 7px;
+  background: #fff;
+  color: #627084;
+  cursor: pointer;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > header > button:disabled {
+  opacity: .4;
+  cursor: not-allowed;
+}
+
+.hm-product-time-workbench .product-time-deployment-scope,
+.hm-product-time-workbench .product-time-deployment-error {
+  margin: 9px 12px 0;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #f0c49e;
+  border-radius: 7px;
+  background: #fff8f1;
+  color: #98470d;
+}
+
+.hm-product-time-workbench .product-time-deployment-scope > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-product-time-workbench .product-time-deployment-scope strong {
+  font-size: 11px;
+}
+
+.hm-product-time-workbench .product-time-deployment-scope small {
+  color: #8c6244;
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-deployment-error {
+  border-color: #f3b4b4;
+  background: #fff4f4;
+  color: #b42318;
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-deployment-loading,
+.hm-product-time-workbench .product-time-deployment-empty {
+  min-height: 260px;
+  flex: 1 1 auto;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 7px;
+  color: #657286;
+  text-align: center;
+}
+
+.hm-product-time-workbench .product-time-deployment-loading strong,
+.hm-product-time-workbench .product-time-deployment-empty strong {
+  color: #2b384b;
+  font-size: 13px;
+}
+
+.hm-product-time-workbench .product-time-deployment-loading span,
+.hm-product-time-workbench .product-time-deployment-empty span {
+  max-width: 520px;
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-deployment-body {
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 9px 12px 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.hm-product-time-workbench .product-time-deployment-section {
+  margin-bottom: 9px;
+  overflow: hidden;
+  border: 1px solid #e1e6ec;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.hm-product-time-workbench .product-time-deployment-section > header {
+  min-height: 42px;
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid #e8ecf1;
+  background: #fafbfc;
+}
+
+.hm-product-time-workbench .product-time-deployment-section > header > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.hm-product-time-workbench .product-time-deployment-section > header small {
+  width: 23px;
+  height: 23px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: #fff0e5;
+  color: #c64e00;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.hm-product-time-workbench .product-time-deployment-section > header strong {
+  font-size: 12px;
+}
+
+.hm-product-time-workbench .product-time-deployment-section > header em {
+  color: #758295;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.hm-product-time-workbench .product-time-deployment-change-summary {
+  padding: 8px 9px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.hm-product-time-workbench .product-time-deployment-change-summary > span {
+  min-width: 0;
+  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #e2e7ed;
+  border-radius: 6px;
+  background: #f8fafb;
+}
+
+.hm-product-time-workbench .product-time-deployment-change-summary > span.insert {
+  border-color: #f0c49e;
+  background: #fff7ed;
+}
+
+.hm-product-time-workbench .product-time-deployment-change-summary > span.delete {
+  border-color: #f3c4c4;
+  background: #fff7f7;
+}
+
+.hm-product-time-workbench .product-time-deployment-change-summary small {
+  color: #68768a;
+  font-size: 9px;
+}
+
+.hm-product-time-workbench .product-time-deployment-change-summary strong {
+  font-size: 17px;
+}
+
+.hm-product-time-workbench .product-time-deployment-diffs {
+  max-height: 190px;
+  padding: 0 9px 8px;
+  overflow: auto;
+}
+
+.hm-product-time-workbench .product-time-deployment-diffs > article {
+  min-height: 42px;
+  padding: 5px 7px;
+  display: grid;
+  grid-template-columns: 52px minmax(180px, 1fr) minmax(220px, 1.2fr);
+  align-items: center;
+  gap: 7px;
+  border-top: 1px solid #edf0f4;
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-deployment-diffs > article > b {
+  width: max-content;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fff0e5;
+  color: #b74800;
+  font-size: 8px;
+}
+
+.hm-product-time-workbench .product-time-deployment-diffs > article.delete > b {
+  background: #fff0f0;
+  color: #b42318;
+}
+
+.hm-product-time-workbench .product-time-deployment-diffs > article > span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.hm-product-time-workbench .product-time-deployment-diffs strong,
+.hm-product-time-workbench .product-time-deployment-diffs small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-product-time-workbench .product-time-deployment-diffs small,
+.hm-product-time-workbench .product-time-deployment-diffs em {
+  color: #758295;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.hm-product-time-workbench .product-time-deployment-diffs > p,
+.hm-product-time-workbench .product-time-deployment-route-list > p {
+  margin: 8px;
+  color: #758295;
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-deployment-impact-grid {
+  padding: 8px 9px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.hm-product-time-workbench .product-time-deployment-impact-grid > span {
+  min-width: 0;
+  min-height: 70px;
+  padding: 8px 9px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: center;
+  gap: 4px 8px;
+  border: 1px solid #e2e7ed;
+  border-radius: 7px;
+  background: #f9fafb;
+}
+
+.hm-product-time-workbench .product-time-deployment-impact-grid > span.conflict {
+  border-color: #f3b4b4;
+  background: #fff4f4;
+}
+
+.hm-product-time-workbench .product-time-deployment-impact-grid > span.safe {
+  border-color: #afe0c2;
+  background: #f0faf4;
+}
+
+.hm-product-time-workbench .product-time-deployment-impact-grid small {
+  color: #68768a;
+  font-size: 9px;
+}
+
+.hm-product-time-workbench .product-time-deployment-impact-grid strong {
+  font-size: 18px;
+}
+
+.hm-product-time-workbench .product-time-deployment-impact-grid em {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  color: #7b8798;
+  font-size: 9px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-product-time-workbench .product-time-deployment-conflicts {
+  padding: 0 9px 8px;
+}
+
+.hm-product-time-workbench .product-time-deployment-conflicts > article {
+  min-height: 42px;
+  margin-top: 5px;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid #f1b5b5;
+  border-radius: 6px;
+  background: #fff5f5;
+  color: #b42318;
+}
+
+.hm-product-time-workbench .product-time-deployment-conflicts span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-product-time-workbench .product-time-deployment-conflicts strong {
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-deployment-conflicts small {
+  font-size: 9px;
+}
+
+.hm-product-time-workbench .product-time-deployment-progress {
+  position: relative;
+  height: 19px;
+  margin: 8px 9px 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #edf1f5;
+}
+
+.hm-product-time-workbench .product-time-deployment-progress > i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: #e85d04;
+  transition: width 220ms ease;
+}
+
+.hm-product-time-workbench .product-time-deployment-progress.active > i {
+  background: #14925b;
+}
+
+.hm-product-time-workbench .product-time-deployment-progress.failed > i {
+  background: #d92d20;
+}
+
+.hm-product-time-workbench .product-time-deployment-progress > span {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+}
+
+.hm-product-time-workbench .product-time-deployment-route-list {
+  margin: 8px 9px 9px;
+  overflow: auto;
+  border: 1px solid #e1e6ec;
+  border-radius: 7px;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-head,
+.hm-product-time-workbench .product-time-deployment-route-list > article {
+  min-width: 900px;
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 90px minmax(230px, 1.35fr) minmax(170px, 1fr) minmax(130px, .8fr);
+  align-items: center;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-head {
+  min-height: 36px;
+  padding: 0 8px;
+  background: #f4f6f8;
+  color: #68768a;
+  font-size: 9px;
+  font-weight: 750;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-list > article {
+  min-height: 54px;
+  padding: 6px 8px;
+  border-top: 1px solid #edf0f4;
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-list > article.failed,
+.hm-product-time-workbench .product-time-deployment-route-list > article.blocked {
+  background: #fff7f7;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-list > article.succeeded {
+  background: #f7fcf9;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-list > article > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-list strong,
+.hm-product-time-workbench .product-time-deployment-route-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-list small {
+  color: #758295;
+  font-size: 9px;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-list article > span:last-child > b {
+  color: #5f6d80;
+  font-size: 9px;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-list article.succeeded > span:last-child > b {
+  color: #087443;
+}
+
+.hm-product-time-workbench .product-time-deployment-route-list article.failed > span:last-child > b,
+.hm-product-time-workbench .product-time-deployment-route-list article.blocked > span:last-child > b {
+  color: #b42318;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > footer {
+  min-height: 60px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-top: 1px solid #e5eaf0;
+  background: #fafbfc;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > footer > span {
+  min-width: 0;
+  color: #68768a;
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-deployment-dialog > footer > div {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
 .hm-product-time-workbench .spin {
   animation: product-time-spin 800ms linear infinite;
 }

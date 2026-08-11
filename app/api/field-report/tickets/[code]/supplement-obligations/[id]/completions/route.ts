@@ -66,7 +66,9 @@ export async function POST(
       actor: `${employee.employeeNo} · ${employee.name}`,
       idempotencyKey: body.idempotencyKey,
     });
-    await dispatchProcessRouteChangeOutbox({ changeId: data.changeId, limit: 2 });
+    if (data.changeId) {
+      await dispatchProcessRouteChangeOutbox({ changeId: data.changeId, limit: 2 });
+    }
     return NextResponse.json({ ok: true, data });
   } catch (error) {
     if (error instanceof ForbiddenError) return forbidden(error.message);

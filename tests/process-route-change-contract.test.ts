@@ -7,6 +7,7 @@ import {
   processRouteChangeDTO,
   processRouteChangeIdempotencyKey,
   processRouteChangeReviewNoteError,
+  resolveProcessRouteChangeDefinitionBinding,
   processRouteStepChangeSnapshots,
   processRouteStepChangeLabel,
   secondsFromMilliseconds,
@@ -35,6 +36,58 @@ test('a valid mobile proposal remains submittable with no field note', () => {
     moveStepId: '',
     moveIsNoop: false,
   }), true);
+});
+
+test('review definition binding auto-selects one exact match and requires a choice for duplicate names', () => {
+  const unique = resolveProcessRouteChangeDefinitionBinding('剥皮', null, [
+    { id: 'cut', code: 'CUT', name: '裁线' },
+    { id: 'strip', code: 'STRIP', name: '剥皮' },
+  ]);
+  assert.equal(unique.selectedId, 'strip');
+  assert.equal(unique.requiresExplicitSelection, false);
+  assert.equal(unique.createsNewDefinition, false);
+
+  const duplicates = resolveProcessRouteChangeDefinitionBinding('剥皮', null, [
+    { id: 'strip-a', code: 'STRIP-A', name: '剥皮' },
+    { id: 'strip-b', code: 'STRIP-B', name: '剥皮' },
+  ]);
+  assert.equal(duplicates.selectedId, '');
+  assert.equal(duplicates.requiresExplicitSelection, true);
+  assert.deepEqual(duplicates.exactMatches.map(item => item.id), ['strip-a', 'strip-b']);
+
+  const explicit = resolveProcessRouteChangeDefinitionBinding('剥皮', 'strip-b', duplicates.exactMatches);
+  assert.equal(explicit.selectedId, 'strip-b');
+  assert.equal(explicit.requiresExplicitSelection, false);
+});
+
+test('review definition binding leaves a free new name empty so the service can create it', () => {
+  const binding = resolveProcessRouteChangeDefinitionBinding('全新工序', null, [
+    { id: 'strip', code: 'STRIP', name: '剥皮' },
+  ]);
+  assert.equal(binding.selectedId, '');
+  assert.equal(binding.requiresExplicitSelection, false);
+  assert.equal(binding.createsNewDefinition, true);
+});
+
+test('inserted process definition identity round-trips into the review DTO', () => {
+  const dto = processRouteChangeDTO({
+    id: 'change-insert',
+    routeId: 'route-1',
+    status: 'SUBMITTED',
+    version: 1,
+    baseRouteVersion: 3,
+    createdAt: '2026-08-11T00:00:00.000Z',
+    diffs: [{
+      kind: 'INSERT_STEP',
+      targetStepId: 'step-4',
+      afterData: {
+        processDefinitionId: 'definition-strip',
+        processName: '剥皮',
+        standardMillisecondsPerUnit: 12_000,
+      },
+    }],
+  });
+  assert.equal(dto.payload.newProcessDefinitionId, 'definition-strip');
 });
 
 test('MOVE_STEP persistence data round-trips into the field and review contract', () => {
@@ -174,4 +227,78 @@ test('an inserted step combines its durable ADDED marker with its latest applied
     sourceChangeId: 'change-time',
     previousStandardMillisecondsPerUnit: 4_000,
   });
+});
+
+test('product-time deployment insert exposes a durable NEW marker', () => {
+  const snapshots = processRouteStepChangeSnapshots([{
+    id: 'step-product-insert',
+    changeSource: 'NEW',
+    productTimeDeploymentRoute: {
+      id: 'deployment-route-1',
+      status: 'SUCCEEDED',
+      routeVersionAfter: 12,
+      result: {
+        stepChanges: [{ stepId: 'step-product-insert', kind: 'insert' }],
+      },
+      deployment: { id: 'deployment-1', status: 'ACTIVE' },
+    },
+  }], []);
+
+  assert.deepEqual(snapshots.get('step-product-insert'), {
+    tag: 'ADDED',
+    changeVersion: null,
+    sourceChangeId: 'product-time-deployment:deployment-1',
+    previousStandardMillisecondsPerUnit: null,
+  });
+});
+
+test('product-time deployment time update exposes previous standard time', () => {
+  const snapshots = processRouteStepChangeSnapshots([{
+    id: 'step-product-time',
+    changeSource: 'EXISTING',
+    productTimeDeploymentRoute: {
+      id: 'deployment-route-2',
+      status: 'SUCCEEDED',
+      routeVersionAfter: 13,
+      result: {
+        stepChanges: [{
+          stepId: 'step-product-time',
+          kind: 'update_time',
+          previousStandardMillisecondsPerUnit: 2_000,
+        }],
+      },
+      deployment: { id: 'deployment-2', status: 'ACTIVE' },
+    },
+  }], []);
+
+  assert.deepEqual(snapshots.get('step-product-time'), {
+    tag: 'TIME_CHANGED',
+    changeVersion: 13,
+    sourceChangeId: 'product-time-deployment:deployment-2',
+    previousStandardMillisecondsPerUnit: 2_000,
+  });
+});
+
+test('move plus time update uses the time diff and pure move does not claim a time change', () => {
+  const route = {
+    id: 'deployment-route-3',
+    status: 'SUCCEEDED',
+    routeVersionAfter: 14,
+    result: {
+      stepChanges: [
+        { stepId: 'step-both', kind: 'move', previousStandardMillisecondsPerUnit: null },
+        { stepId: 'step-both', kind: 'update_time', previousStandardMillisecondsPerUnit: 3_000 },
+        { stepId: 'step-move-only', kind: 'move', previousStandardMillisecondsPerUnit: null },
+      ],
+    },
+    deployment: { id: 'deployment-3', status: 'ACTIVE' },
+  };
+  const snapshots = processRouteStepChangeSnapshots([
+    { id: 'step-both', changeSource: 'EXISTING', productTimeDeploymentRoute: route },
+    { id: 'step-move-only', changeSource: 'EXISTING', productTimeDeploymentRoute: route },
+  ], []);
+
+  assert.equal(snapshots.get('step-both')?.tag, 'TIME_CHANGED');
+  assert.equal(snapshots.get('step-both')?.previousStandardMillisecondsPerUnit, 3_000);
+  assert.equal(snapshots.get('step-move-only')?.tag, 'NONE');
 });

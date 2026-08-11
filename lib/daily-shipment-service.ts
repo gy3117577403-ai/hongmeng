@@ -79,7 +79,7 @@ const workOrderSelect = {
         select: { id: true },
         take: 1,
       },
-      steps: { select: routeStepSelect, orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
+      steps: { where: { retiredAt: null }, select: routeStepSelect, orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
     },
   },
 } satisfies Prisma.WorkOrderSelect;

@@ -358,7 +358,7 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
   return prisma.$transaction(async tx => {
     const route = await tx.workOrderProcessRoute.findUnique({
       where: { id: input.routeId },
-      include: { workOrder: true, steps: { orderBy: { position: 'asc' } } },
+      include: { workOrder: true, steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } } },
     });
     if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
     ensureExecutableWeeklyOrder(route.workOrder);
@@ -520,7 +520,7 @@ async function advanceRoute(input: AdvanceProcessRouteCommand): Promise<string> 
   return prisma.$transaction(async tx => {
     const route = await tx.workOrderProcessRoute.findUnique({
       where: { id: input.routeId },
-      include: { workOrder: true, steps: { orderBy: { position: 'asc' } } },
+      include: { workOrder: true, steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } } },
     });
     if (!route) throw new ProcessRouteServiceError('工艺路线不存在', 404, 'PROCESS_ROUTE_NOT_FOUND');
     ensureExecutableWeeklyOrder(route.workOrder);
@@ -972,7 +972,7 @@ export async function startConfirmedProcessRoute(
 ): Promise<boolean> {
   const route = await tx.workOrderProcessRoute.findUnique({
     where: { workOrderId: input.workOrderId },
-    include: { workOrder: true, steps: { orderBy: { position: 'asc' } } },
+    include: { workOrder: true, steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } } },
   });
   if (!route || route.status !== 'confirmed' || route.startedAt || !route.steps.length) return false;
   ensureExecutableWeeklyOrder(route.workOrder);

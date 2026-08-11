@@ -5,6 +5,7 @@ const processQuantityLedgerRouteSelect = Prisma.validator<Prisma.WorkOrderProces
   status: true,
   startedAt: true,
   steps: {
+    where: { retiredAt: null },
     select: {
       inputQty: true,
       processedQty: true,

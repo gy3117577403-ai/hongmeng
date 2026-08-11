@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { productTimeProfileInclude, serializeProductTimeProfile } from '@/lib/product-time';
-import { syncDraftRoutesFromPublishedProductTime } from '@/lib/process-routing';
-import { syncUnfinishedDailyTasksFromPublishedProductTime } from '@/lib/product-time-task-sync';
+import {
+  publishProductTimeDeployment,
+  ProductTimeDeploymentError,
+} from '@/lib/product-time-deployment-service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -14,53 +15,19 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const expectedRevision = Number(body.expectedRevision);
-    if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
-      return NextResponse.json({ ok: false, error: '请先保存当前产品工时草稿' }, { status: 400 });
+    const previewToken = typeof body.previewToken === 'string' ? body.previewToken.trim() : '';
+    if (!Number.isInteger(expectedRevision) || expectedRevision < 0 || !previewToken) {
+      return NextResponse.json(
+        { ok: false, error: '请先保存并预览当前产品工序与工时草稿' },
+        { status: 400 },
+      );
     }
-    const result = await prisma.$transaction(async tx => {
-      const draft = await tx.productTimeProfile.findFirst({
-        where: { drawingLibraryItemId: params.itemId, status: 'draft' },
-        include: { entries: { select: { id: true } } },
-      });
-      if (!draft) throw new Error('DRAFT_NOT_FOUND');
-      if (draft.revision !== expectedRevision) throw new Error('PRODUCT_TIME_CONFLICT');
-      if (!draft.entries.length) throw new Error('PRODUCT_TIME_EMPTY');
-      await tx.productTimeProfile.updateMany({
-        where: { drawingLibraryItemId: params.itemId, status: 'published' },
-        data: { status: 'archived', updatedById: user.id },
-      });
-      const updated = await tx.productTimeProfile.updateMany({
-        where: { id: draft.id, revision: draft.revision, status: 'draft' },
-        data: {
-          status: 'published',
-          revision: { increment: 1 },
-          publishedAt: new Date(),
-          publishedById: user.id,
-          updatedById: user.id,
-        },
-      });
-      if (updated.count !== 1) throw new Error('PRODUCT_TIME_CONFLICT');
-      await tx.operationLog.create({
-        data: {
-          userId: user.id,
-          action: 'publish_product_time_profile',
-          targetType: 'product_time_profile',
-          targetId: draft.id,
-          detail: { drawingLibraryItemId: params.itemId, version: draft.version, processCount: draft.entries.length },
-        },
-      });
-      const routeSync = await syncDraftRoutesFromPublishedProductTime(tx, {
-        profileId: draft.id,
-        actorId: user.id,
-      });
-      const dailyTaskSync = await syncUnfinishedDailyTasksFromPublishedProductTime(tx, {
-        drawingLibraryItemId: params.itemId,
-        profileId: draft.id,
-        profileVersion: draft.version,
-        actorId: user.id,
-      });
-      return { profileId: draft.id, routeSync, dailyTaskSync };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    const result = await publishProductTimeDeployment({
+      itemId: params.itemId,
+      actorId: user.id,
+      expectedRevision,
+      previewToken,
+    });
     const profile = await prisma.productTimeProfile.findUnique({
       where: { id: result.profileId },
       include: productTimeProfileInclude,
@@ -68,18 +35,22 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
     return NextResponse.json({
       ok: true,
       profile: profile ? serializeProductTimeProfile(profile) : null,
-      routeSync: result.routeSync,
-      dailyTaskSynchronized: result.dailyTaskSync.synchronized,
-      dailyTaskReviewRequired: result.dailyTaskSync.reviewRequired,
+      deployment: result.deployment,
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof Error) {
-      if (error.message === 'DRAFT_NOT_FOUND') return NextResponse.json({ ok: false, error: '没有可发布的产品工时草稿' }, { status: 404 });
-      if (error.message === 'PRODUCT_TIME_EMPTY') return NextResponse.json({ ok: false, error: '至少配置一道工序后才能发布' }, { status: 400 });
-      if (error.message === 'PRODUCT_TIME_CONFLICT') return NextResponse.json({ ok: false, error: '产品工时已被其他人修改，请刷新后重试' }, { status: 409 });
+    if (error instanceof ProductTimeDeploymentError) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error.message,
+          code: error.code,
+          deployment: error.deployment,
+        },
+        { status: error.status },
+      );
     }
-    console.error('publish product time profile failed', error);
-    return NextResponse.json({ ok: false, error: '产品工时发布失败' }, { status: 500 });
+    console.error('publish product time deployment failed', error);
+    return NextResponse.json({ ok: false, error: '产品工序与工时发布及同步失败' }, { status: 500 });
   }
 }

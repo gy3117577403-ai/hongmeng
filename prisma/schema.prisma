@@ -141,6 +141,26 @@ enum ProcessSupplementObligationStatus {
   @@map("process_supplement_obligation_status")
 }
 
+enum ProductTimeDeploymentStatus {
+  PENDING
+  APPLYING
+  ACTIVE
+  FAILED
+
+  @@map("product_time_deployment_status")
+}
+
+enum ProductTimeDeploymentRouteStatus {
+  PENDING
+  APPLYING
+  SUCCEEDED
+  FAILED
+  BLOCKED
+  UNCHANGED
+
+  @@map("product_time_deployment_route_status")
+}
+
 enum ProcessRouteChangeOutboxStatus {
   PENDING
   PROCESSING
@@ -629,6 +649,7 @@ model WorkOrder {
   qrTicket                WorkOrderQrTicket?
   processRouteChanges     ProcessRouteChange[]
   supplementObligations   ProcessSupplementObligation[]
+  productTimeDeployments  ProductTimeDeploymentRoute[]
 
   @@unique([parentWorkOrderId, branchSequence])
   @@index([code])
@@ -775,6 +796,7 @@ model WorkOrderProcessRoute {
   qrPrints                  WorkOrderQrPrint[]
   processRouteChanges       ProcessRouteChange[]
   supplementObligations     ProcessSupplementObligation[]
+  productTimeDeployments    ProductTimeDeploymentRoute[]
 
   @@index([status])
   @@index([templateId])
@@ -784,61 +806,64 @@ model WorkOrderProcessRoute {
 }
 
 model WorkOrderProcessStep {
-  id                          String                        @id @default(uuid())
-  routeId                     String                        @map("route_id")
-  processDefinitionId         String?                       @map("process_definition_id")
-  processCode                 String                        @map("process_code")
-  processName                 String                        @map("process_name")
-  stageGroup                  String                        @map("stage_group")
-  position                    Int
-  sequenceGroup               Int                           @default(1) @map("sequence_group")
-  standardTimeId              String?                       @map("standard_time_id")
-  standardVersion             Int?                          @map("standard_version")
-  productTimeProfileId        String?                       @map("product_time_profile_id")
-  productTimeEntryId          String?                       @map("product_time_entry_id")
-  productTimeProfileVersion   Int?                          @map("product_time_profile_version")
-  standardSource              String                        @default("legacy") @map("standard_source")
-  timeBasis                   String?                       @map("time_basis")
-  unitLabel                   String?                       @map("unit_label")
-  standardMillisecondsPerUnit Int?                          @map("standard_milliseconds_per_unit")
-  setupMilliseconds           Int                           @default(0) @map("setup_milliseconds")
-  unitsPerProduct             Int                           @default(1) @map("units_per_product")
-  countsForEfficiency         Boolean                       @default(true) @map("counts_for_efficiency")
-  executionMode               ProcessStepExecutionMode      @default(NORMAL) @map("execution_mode")
-  changeSource                ProcessRouteChangeStepSource  @default(EXISTING) @map("change_source")
-  inputQty                    Int                           @default(0) @map("input_qty")
-  processedQty                Int                           @default(0) @map("processed_qty")
-  goodOutputQty               Int                           @default(0) @map("good_output_qty")
-  defectOutputQty             Int                           @default(0) @map("defect_output_qty")
-  releasedGoodQty             Int                           @default(0) @map("released_good_qty")
-  quantityVersion             Int                           @default(0) @map("quantity_version")
-  status                      String                        @default("pending")
-  startedAt                   DateTime?                     @map("started_at")
-  completedAt                 DateTime?                     @map("completed_at")
-  completedById               String?                       @map("completed_by_id")
-  remark                      String?
-  createdAt                   DateTime                      @default(now()) @map("created_at")
-  updatedAt                   DateTime                      @updatedAt @map("updated_at")
-  route                       WorkOrderProcessRoute         @relation(fields: [routeId], references: [id], onDelete: Cascade)
-  processDefinition           ProcessDefinition?            @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
-  standardTime                ProcessTimeStandard?          @relation(fields: [standardTimeId], references: [id], onDelete: SetNull)
-  productTimeProfile          ProductTimeProfile?           @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
-  productTimeEntry            ProductProcessTimeEntry?      @relation(fields: [productTimeEntryId], references: [id], onDelete: SetNull)
-  completedBy                 User?                         @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
-  activities                  ProcessRouteActivity[]
-  executions                  ProcessExecution[]
-  abnormalTimeEvents          AbnormalTimeEvent[]
-  completions                 ProcessCompletion[]
-  sourceQuantityMovements     ProcessQuantityMovement[]     @relation("MovementSourceStep")
-  targetQuantityMovements     ProcessQuantityMovement[]     @relation("MovementTargetStep")
-  processLaborPools           ProcessLaborPool[]
-  dailyProcessTasks           DailyProcessTask[]
-  weeklyWorkerPresets         WeeklyProcessWorkerPreset[]
-  originatedBranchWorkOrders  WorkOrder[]                   @relation("WorkOrderBranchOriginStep")
-  rejoiningBranchWorkOrders   WorkOrder[]                   @relation("WorkOrderBranchRejoinStep")
-  supplementObligation        ProcessSupplementObligation?  @relation("ProcessSupplementDisplayStep")
-  targetedRouteChangeDiffs    ProcessRouteChangeDiff[]      @relation("ProcessRouteChangeTargetStep")
-  insertedBeforeObligations   ProcessSupplementObligation[] @relation("ProcessSupplementInsertBeforeStep")
+  id                           String                        @id @default(uuid())
+  routeId                      String                        @map("route_id")
+  processDefinitionId          String?                       @map("process_definition_id")
+  processCode                  String                        @map("process_code")
+  processName                  String                        @map("process_name")
+  stageGroup                   String                        @map("stage_group")
+  position                     Int
+  sequenceGroup                Int                           @default(1) @map("sequence_group")
+  standardTimeId               String?                       @map("standard_time_id")
+  standardVersion              Int?                          @map("standard_version")
+  productTimeProfileId         String?                       @map("product_time_profile_id")
+  productTimeEntryId           String?                       @map("product_time_entry_id")
+  productTimeProfileVersion    Int?                          @map("product_time_profile_version")
+  productTimeDeploymentRouteId String?                       @map("product_time_deployment_route_id")
+  standardSource               String                        @default("legacy") @map("standard_source")
+  timeBasis                    String?                       @map("time_basis")
+  unitLabel                    String?                       @map("unit_label")
+  standardMillisecondsPerUnit  Int?                          @map("standard_milliseconds_per_unit")
+  setupMilliseconds            Int                           @default(0) @map("setup_milliseconds")
+  unitsPerProduct              Int                           @default(1) @map("units_per_product")
+  countsForEfficiency          Boolean                       @default(true) @map("counts_for_efficiency")
+  executionMode                ProcessStepExecutionMode      @default(NORMAL) @map("execution_mode")
+  changeSource                 ProcessRouteChangeStepSource  @default(EXISTING) @map("change_source")
+  inputQty                     Int                           @default(0) @map("input_qty")
+  processedQty                 Int                           @default(0) @map("processed_qty")
+  goodOutputQty                Int                           @default(0) @map("good_output_qty")
+  defectOutputQty              Int                           @default(0) @map("defect_output_qty")
+  releasedGoodQty              Int                           @default(0) @map("released_good_qty")
+  quantityVersion              Int                           @default(0) @map("quantity_version")
+  status                       String                        @default("pending")
+  startedAt                    DateTime?                     @map("started_at")
+  completedAt                  DateTime?                     @map("completed_at")
+  completedById                String?                       @map("completed_by_id")
+  retiredAt                    DateTime?                     @map("retired_at")
+  remark                       String?
+  createdAt                    DateTime                      @default(now()) @map("created_at")
+  updatedAt                    DateTime                      @updatedAt @map("updated_at")
+  route                        WorkOrderProcessRoute         @relation(fields: [routeId], references: [id], onDelete: Cascade)
+  processDefinition            ProcessDefinition?            @relation(fields: [processDefinitionId], references: [id], onDelete: SetNull)
+  standardTime                 ProcessTimeStandard?          @relation(fields: [standardTimeId], references: [id], onDelete: SetNull)
+  productTimeProfile           ProductTimeProfile?           @relation(fields: [productTimeProfileId], references: [id], onDelete: SetNull)
+  productTimeEntry             ProductProcessTimeEntry?      @relation(fields: [productTimeEntryId], references: [id], onDelete: SetNull)
+  productTimeDeploymentRoute   ProductTimeDeploymentRoute?   @relation(fields: [productTimeDeploymentRouteId], references: [id], onDelete: SetNull)
+  completedBy                  User?                         @relation("ProcessStepCompletedBy", fields: [completedById], references: [id], onDelete: SetNull)
+  activities                   ProcessRouteActivity[]
+  executions                   ProcessExecution[]
+  abnormalTimeEvents           AbnormalTimeEvent[]
+  completions                  ProcessCompletion[]
+  sourceQuantityMovements      ProcessQuantityMovement[]     @relation("MovementSourceStep")
+  targetQuantityMovements      ProcessQuantityMovement[]     @relation("MovementTargetStep")
+  processLaborPools            ProcessLaborPool[]
+  dailyProcessTasks            DailyProcessTask[]
+  weeklyWorkerPresets          WeeklyProcessWorkerPreset[]
+  originatedBranchWorkOrders   WorkOrder[]                   @relation("WorkOrderBranchOriginStep")
+  rejoiningBranchWorkOrders    WorkOrder[]                   @relation("WorkOrderBranchRejoinStep")
+  supplementObligation         ProcessSupplementObligation?  @relation("ProcessSupplementDisplayStep")
+  targetedRouteChangeDiffs     ProcessRouteChangeDiff[]      @relation("ProcessRouteChangeTargetStep")
+  insertedBeforeObligations    ProcessSupplementObligation[] @relation("ProcessSupplementInsertBeforeStep")
 
   @@unique([routeId, position])
   @@index([routeId, status])
@@ -849,6 +874,8 @@ model WorkOrderProcessStep {
   @@index([standardTimeId])
   @@index([productTimeProfileId])
   @@index([productTimeEntryId])
+  @@index([productTimeDeploymentRouteId])
+  @@index([routeId, retiredAt])
   @@index([completedById])
   @@index([quantityVersion])
   @@map("work_order_process_steps")
@@ -2457,26 +2484,27 @@ model ResourceFile {
 }
 
 model DrawingLibraryItem {
-  id                   String                 @id @default(uuid())
-  customerName         String                 @map("customer_name")
-  customerCode         String?                @map("customer_code")
-  productName          String?                @map("product_name")
-  specification        String
-  libraryKey           String                 @unique @map("library_key")
-  remark               String?
-  deletedAt            DateTime?              @map("deleted_at")
-  createdAt            DateTime               @default(now()) @map("created_at")
-  updatedAt            DateTime               @updatedAt @map("updated_at")
-  lastWorkOrderId      String?                @map("last_work_order_id")
-  lastImportedAt       DateTime?              @map("last_imported_at")
-  files                DrawingLibraryFile[]
-  workOrders           WorkOrder[]            @relation("DrawingLibraryWorkOrders")
-  lastWorkOrder        WorkOrder?             @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
-  productTimeProfiles  ProductTimeProfile[]
-  quotationTimes       ProductQuotationTime[]
-  productionPlanOrders ProductionPlanOrder[]
-  sopDocument          SopDocument?
-  pdfOverlayDocuments  PdfOverlayDocument[]
+  id                     String                  @id @default(uuid())
+  customerName           String                  @map("customer_name")
+  customerCode           String?                 @map("customer_code")
+  productName            String?                 @map("product_name")
+  specification          String
+  libraryKey             String                  @unique @map("library_key")
+  remark                 String?
+  deletedAt              DateTime?               @map("deleted_at")
+  createdAt              DateTime                @default(now()) @map("created_at")
+  updatedAt              DateTime                @updatedAt @map("updated_at")
+  lastWorkOrderId        String?                 @map("last_work_order_id")
+  lastImportedAt         DateTime?               @map("last_imported_at")
+  files                  DrawingLibraryFile[]
+  workOrders             WorkOrder[]             @relation("DrawingLibraryWorkOrders")
+  lastWorkOrder          WorkOrder?              @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
+  productTimeProfiles    ProductTimeProfile[]
+  quotationTimes         ProductQuotationTime[]
+  productionPlanOrders   ProductionPlanOrder[]
+  productTimeDeployments ProductTimeDeployment[]
+  sopDocument            SopDocument?
+  pdfOverlayDocuments    PdfOverlayDocument[]
 
   @@index([customerName])
   @@index([customerCode])
@@ -2512,6 +2540,7 @@ model ProductTimeProfile {
   productionPlanBatches        ProductionPlanBatch[]
   sourceProcessRouteChanges    ProcessRouteChange[]      @relation("ProcessRouteChangeSourceProfile")
   publishedProcessRouteChanges ProcessRouteChange[]      @relation("ProcessRouteChangePublishedProfile")
+  deployments                  ProductTimeDeployment[]
 
   @@unique([drawingLibraryItemId, version])
   @@index([drawingLibraryItemId, status])
@@ -3290,8 +3319,10 @@ model ProcessRouteChangeDiff {
 
 model ProcessSupplementObligation {
   id                          String                            @id @default(uuid())
-  changeId                    String                            @map("change_id")
-  diffId                      String                            @unique @map("diff_id")
+  changeId                    String?                           @map("change_id")
+  diffId                      String?                           @unique @map("diff_id")
+  deploymentRouteId           String?                           @map("deployment_route_id")
+  occurrenceKey               String?                           @map("occurrence_key")
   workOrderId                 String                            @map("work_order_id")
   routeId                     String                            @map("route_id")
   displayStepId               String                            @unique @map("display_step_id")
@@ -3318,8 +3349,9 @@ model ProcessSupplementObligation {
   fulfilledAt                 DateTime?                         @map("fulfilled_at")
   createdAt                   DateTime                          @default(now()) @map("created_at")
   updatedAt                   DateTime                          @updatedAt @map("updated_at")
-  change                      ProcessRouteChange                @relation(fields: [changeId], references: [id], onDelete: Restrict)
-  diff                        ProcessRouteChangeDiff            @relation(fields: [diffId], references: [id], onDelete: Restrict)
+  change                      ProcessRouteChange?               @relation(fields: [changeId], references: [id], onDelete: Restrict)
+  diff                        ProcessRouteChangeDiff?           @relation(fields: [diffId], references: [id], onDelete: Restrict)
+  deploymentRoute             ProductTimeDeploymentRoute?       @relation(fields: [deploymentRouteId], references: [id], onDelete: Restrict)
   workOrder                   WorkOrder                         @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
   route                       WorkOrderProcessRoute             @relation(fields: [routeId], references: [id], onDelete: Restrict)
   displayStep                 WorkOrderProcessStep              @relation("ProcessSupplementDisplayStep", fields: [displayStepId], references: [id], onDelete: Restrict)
@@ -3327,11 +3359,67 @@ model ProcessSupplementObligation {
   processDefinition           ProcessDefinition                 @relation(fields: [processDefinitionId], references: [id], onDelete: Restrict)
   completions                 ProcessCompletion[]
 
+  @@unique([deploymentRouteId, occurrenceKey])
   @@index([workOrderId, status, displayPosition])
   @@index([routeId, status, displayPosition])
   @@index([processDefinitionId])
   @@index([changeId])
+  @@index([deploymentRouteId])
   @@map("process_supplement_obligations")
+}
+
+model ProductTimeDeployment {
+  id                   String                       @id @default(uuid())
+  drawingLibraryItemId String                       @map("drawing_library_item_id")
+  profileId            String                       @unique @map("profile_id")
+  baseProfileId        String?                      @map("base_profile_id")
+  profileVersion       Int                          @map("profile_version")
+  expectedRevision     Int                          @map("expected_revision")
+  previewToken         String                       @map("preview_token")
+  idempotencyKey       String                       @unique @map("idempotency_key")
+  status               ProductTimeDeploymentStatus  @default(PENDING)
+  impact               Json
+  diffs                Json
+  conflicts            Json
+  actorId              String?                      @map("actor_id")
+  error                String?
+  startedAt            DateTime?                    @map("started_at")
+  completedAt          DateTime?                    @map("completed_at")
+  createdAt            DateTime                     @default(now()) @map("created_at")
+  updatedAt            DateTime                     @updatedAt @map("updated_at")
+  drawingLibraryItem   DrawingLibraryItem           @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Restrict)
+  profile              ProductTimeProfile           @relation(fields: [profileId], references: [id], onDelete: Restrict)
+  routes               ProductTimeDeploymentRoute[]
+
+  @@index([drawingLibraryItemId, createdAt])
+  @@index([status, updatedAt])
+  @@map("product_time_deployments")
+}
+
+model ProductTimeDeploymentRoute {
+  id                    String                           @id @default(uuid())
+  deploymentId          String                           @map("deployment_id")
+  workOrderId           String                           @map("work_order_id")
+  routeId               String                           @map("route_id")
+  workOrderState        String                           @map("work_order_state")
+  status                ProductTimeDeploymentRouteStatus @default(PENDING)
+  routeVersionBefore    Int?                             @map("route_version_before")
+  routeVersionAfter     Int?                             @map("route_version_after")
+  result                Json?
+  error                 String?
+  createdAt             DateTime                         @default(now()) @map("created_at")
+  updatedAt             DateTime                         @updatedAt @map("updated_at")
+  deployment            ProductTimeDeployment            @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+  workOrder             WorkOrder                        @relation(fields: [workOrderId], references: [id], onDelete: Restrict)
+  route                 WorkOrderProcessRoute            @relation(fields: [routeId], references: [id], onDelete: Restrict)
+  supplementObligations ProcessSupplementObligation[]
+  steps                 WorkOrderProcessStep[]
+
+  @@unique([deploymentId, routeId])
+  @@index([workOrderId, createdAt])
+  @@index([routeId, createdAt])
+  @@index([status, updatedAt])
+  @@map("product_time_deployment_routes")
 }
 
 model ProcessRouteChangeEvent {

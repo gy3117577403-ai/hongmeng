@@ -992,6 +992,95 @@ export type ProcessRouteStatus = 'draft' | 'confirmed' | 'in_progress' | 'comple
 export type ProcessStepStatus = 'pending' | 'current' | 'completed' | 'skipped';
 export type ProcessTimeBasis = 'per_unit' | 'per_batch';
 export type ProductTimeProfileStatus = 'draft' | 'published' | 'archived';
+
+export type ProductTimeDeploymentStatus = 'preview' | 'pending' | 'applying' | 'active' | 'failed';
+
+export type ProductTimeDeploymentDiffKind = 'insert' | 'move' | 'update_time' | 'delete';
+
+export type ProductTimeDeploymentWorkOrderState = 'unstarted' | 'in_progress' | 'completed';
+
+export type ProductTimeDeploymentRouteStatus = 'pending' | 'applying' | 'succeeded' | 'failed' | 'blocked' | 'unchanged';
+
+export type ProductTimeDeploymentDiffDTO = {
+  kind: ProductTimeDeploymentDiffKind;
+  occurrenceKey: string;
+  processDefinitionId?: string | null;
+  processName: string;
+  previousProcessName?: string | null;
+  oldSequence?: number | null;
+  newSequence?: number | null;
+  oldUnitMilliseconds?: number | null;
+  newUnitMilliseconds?: number | null;
+};
+
+export type ProductTimeDeploymentConflictDTO = {
+  code: string;
+  message: string;
+  workOrderId?: string | null;
+  workOrderCode?: string | null;
+};
+
+export type ProductTimeDeploymentImpactDTO = {
+  workOrders: {
+    total: number;
+    unstarted: number;
+    inProgress: number;
+    completed: number;
+  };
+  historicalReports: number;
+  affectedEmployees: number;
+  attainmentRecords: number;
+  supplementObligations: number;
+  qrTickets: number;
+  conflicts: number;
+};
+
+export type ProductTimeDeploymentRouteDTO = {
+  workOrderId: string;
+  workOrderCode: string;
+  state: ProductTimeDeploymentWorkOrderState;
+  status: ProductTimeDeploymentRouteStatus;
+  qrUpdated: boolean;
+  routeVersionBefore?: number | null;
+  routeVersionAfter?: number | null;
+  insertedProcesses?: number;
+  movedProcesses?: number;
+  updatedTimes?: number;
+  historicalReports?: number;
+  affectedEmployees?: number;
+  supplementObligations?: number;
+  error?: string | null;
+};
+
+export type ProductTimeDeploymentPreviewDTO = {
+  previewToken: string;
+  itemId: string;
+  draftProfileId: string;
+  fromVersion?: number | null;
+  toVersion: number;
+  status: 'preview';
+  generatedAt: string;
+  canPublish: boolean;
+  diffs: ProductTimeDeploymentDiffDTO[];
+  impact: ProductTimeDeploymentImpactDTO;
+  conflicts: ProductTimeDeploymentConflictDTO[];
+  routes: ProductTimeDeploymentRouteDTO[];
+};
+
+export type ProductTimeDeploymentDTO = {
+  id: string;
+  itemId: string;
+  profileId?: string | null;
+  profileVersion: number;
+  status: Exclude<ProductTimeDeploymentStatus, 'preview'>;
+  createdAt?: string | null;
+  completedAt?: string | null;
+  error?: string | null;
+  impact: ProductTimeDeploymentImpactDTO;
+  diffs: ProductTimeDeploymentDiffDTO[];
+  conflicts: ProductTimeDeploymentConflictDTO[];
+  routes: ProductTimeDeploymentRouteDTO[];
+};
 export type ProductTimePlanningScope = 'all' | 'current' | 'next' | 'carryover' | 'history';
 
 export type ProductTimePlanningContextDTO = {

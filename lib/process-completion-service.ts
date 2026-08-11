@@ -303,7 +303,7 @@ type BranchSourceStep = QuantityStep & {
 
 const completionRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
   workOrder: true,
-  steps: { orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
+  steps: { where: { retiredAt: null }, orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
 });
 
 type CompletionRouteRecord = Prisma.WorkOrderProcessRouteGetPayload<{
@@ -1230,6 +1230,7 @@ export async function loadProcessCompletionContext(
           },
         },
         steps: {
+          where: { retiredAt: null },
           orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }],
           include: {
             supplementObligation: true,
@@ -1685,7 +1686,7 @@ async function createDefectBranch(
       },
     },
     include: {
-      steps: { orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
+      steps: { where: { retiredAt: null }, orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
     },
   });
   await tx.processRouteActivity.create({

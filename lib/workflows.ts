@@ -906,6 +906,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                   },
                 },
                 steps: {
+                  where: { retiredAt: null },
                   select: {
                     id: true,
                     processName: true,
@@ -927,6 +928,15 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     remark: true,
                     _count: { select: { executions: true, completions: true } },
                     productTimeEntry: { select: { remark: true } },
+                    productTimeDeploymentRoute: {
+                      select: {
+                        id: true,
+                        status: true,
+                        routeVersionAfter: true,
+                        result: true,
+                        deployment: { select: { id: true, status: true } },
+                      },
+                    },
                     supplementObligation: {
                       select: { requiredQty: true, reportedQty: true, status: true },
                     },
@@ -1083,6 +1093,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
               },
             },
             steps: {
+              where: { retiredAt: null },
               select: {
                 id: true,
                 processName: true,
@@ -1104,6 +1115,15 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 remark: true,
                 _count: { select: { executions: true, completions: true } },
                 productTimeEntry: { select: { remark: true } },
+                productTimeDeploymentRoute: {
+                  select: {
+                    id: true,
+                    status: true,
+                    routeVersionAfter: true,
+                    result: true,
+                    deployment: { select: { id: true, status: true } },
+                  },
+                },
                 supplementObligation: {
                   select: { requiredQty: true, reportedQty: true, status: true },
                 },

@@ -222,6 +222,7 @@ export async function syncDailyTasksAfterProcessRouteChange(
       productTimeProfileId: true,
       productTimeProfileVersion: true,
       steps: {
+        where: { retiredAt: null },
         orderBy: [{ position: 'asc' }, { id: 'asc' }],
         select: {
           id: true,

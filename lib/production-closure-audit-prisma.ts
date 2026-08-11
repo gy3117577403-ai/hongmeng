@@ -40,6 +40,7 @@ export async function loadProductionClosureAuditSnapshot(
             status: true,
             completedAt: true,
             steps: {
+              where: { retiredAt: null },
               select: {
                 id: true,
                 routeId: true,

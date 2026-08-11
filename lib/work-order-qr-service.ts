@@ -324,7 +324,7 @@ export async function createWorkOrderTravelerPrints(input: {
     where: { id: { in: workOrderIds }, deletedAt: null },
     include: {
       processRoute: {
-        include: { steps: { orderBy: [{ position: 'asc' }] } },
+        include: { steps: { where: { retiredAt: null }, orderBy: [{ position: 'asc' }] } },
       },
       drawingLibraryItem: {
         include: {
@@ -654,8 +654,20 @@ export async function loadFieldReportTicket(
           processRoute: {
             include: {
               steps: {
+                where: { retiredAt: null },
                 orderBy: [{ position: 'asc' }],
-                include: { supplementObligation: true },
+                include: {
+                  supplementObligation: true,
+                  productTimeDeploymentRoute: {
+                    select: {
+                      id: true,
+                      status: true,
+                      routeVersionAfter: true,
+                      result: true,
+                      deployment: { select: { id: true, status: true } },
+                    },
+                  },
+                },
               },
             },
           },

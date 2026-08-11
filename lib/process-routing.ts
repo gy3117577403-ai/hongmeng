@@ -75,8 +75,18 @@ export const processTemplateInclude = Prisma.validator<Prisma.ProcessTemplateInc
 export const processRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
   confirmedBy: { select: { id: true, username: true, displayName: true } },
   steps: {
+    where: { retiredAt: null },
     orderBy: { position: 'asc' },
     include: {
+      productTimeDeploymentRoute: {
+        select: {
+          id: true,
+          status: true,
+          routeVersionAfter: true,
+          result: true,
+          deployment: { select: { id: true, status: true } },
+        },
+      },
       completedBy: { select: { id: true, username: true, displayName: true } },
       executions: {
         where: { voidedAt: null },
@@ -124,8 +134,18 @@ export const processRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRoute
 
 export const processRouteSummaryInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
   steps: {
+    where: { retiredAt: null },
     orderBy: { position: 'asc' },
     include: {
+      productTimeDeploymentRoute: {
+        select: {
+          id: true,
+          status: true,
+          routeVersionAfter: true,
+          result: true,
+          deployment: { select: { id: true, status: true } },
+        },
+      },
       executions: {
         where: { voidedAt: null },
         select: { goodQty: true, standardLaborMilliseconds: true },
@@ -228,6 +248,7 @@ const draftRouteSyncInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclu
     },
   },
   steps: {
+    where: { retiredAt: null },
     orderBy: { position: 'asc' },
     select: {
       id: true,
@@ -1245,6 +1266,7 @@ export async function repairHistoricalProductTimeRoute(
           routeSource: true,
           startedAt: true,
           steps: {
+            where: { retiredAt: null },
             select: {
               status: true,
               startedAt: true,
@@ -2083,6 +2105,7 @@ export async function syncDraftRoutesFromPublishedProductTime(
           routeSource: true,
           startedAt: true,
           steps: {
+            where: { retiredAt: null },
             select: {
               status: true,
               startedAt: true,

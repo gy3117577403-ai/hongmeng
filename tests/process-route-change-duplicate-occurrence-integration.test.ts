@@ -4,6 +4,7 @@ import test from 'node:test';
 import {
   activateProcessRouteChange,
   createProcessRouteChangeProposal,
+  ProcessRouteChangeServiceError,
   reviewProcessRouteChange,
   submitProcessRouteChange,
 } from '../lib/process-route-change-service';
@@ -13,7 +14,7 @@ import { loadFieldReportTicket } from '../lib/work-order-qr-service';
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
 
 test(
-  'route change inserts a second occurrence of an existing process without collapsing current, QR, profile or future routes',
+  'mobile name-only insertion keeps 剥皮 distinct from its 合压 anchor across current, QR, profile and future routes',
   { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
   async () => {
     const prefix = `IT-RC-DUP-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -34,10 +35,10 @@ test(
     try {
       const [stripping, packing] = await Promise.all([
         prisma.processDefinition.create({
-          data: { code: `${prefix}-STRIP`, name: '剥皮', stageGroup: 'frontend', sortOrder: 1 },
+          data: { code: `${prefix}-STRIP`, name: `${prefix}-剥皮`, stageGroup: 'frontend', sortOrder: 1 },
         }),
         prisma.processDefinition.create({
-          data: { code: `${prefix}-PACK`, name: '包装', stageGroup: 'finish', sortOrder: 2 },
+          data: { code: `${prefix}-PRESS`, name: `${prefix}-合压`, stageGroup: 'finish', sortOrder: 2 },
         }),
       ]);
       definitionIds.push(stripping.id, packing.id);
@@ -207,36 +208,67 @@ test(
         data: { workOrderId: currentOrder.id, publicCode, createdById: actor.id },
       });
       const beforeTicket = await loadFieldReportTicket(publicCode, { recordScan: false });
-      assert.equal(beforeTicket.route?.steps.filter(step => step.processName === '剥皮').length, 1);
+      assert.equal(beforeTicket.route?.steps.filter(step => step.processName === stripping.name).length, 1);
+
+      await assert.rejects(
+        createProcessRouteChangeProposal({
+          routeId: currentRoute.id,
+          title: '拒绝名称与定义不一致的新增工序',
+          reason: '防止把剥皮错误绑定成合压',
+          scope: 'CURRENT_WORK_ORDER_AND_FUTURE_PRODUCT',
+          expectedRouteVersion: currentRoute.version,
+          expectedVersion: currentRoute.version,
+          userId: actor.id,
+          actor: actor.displayName || actor.username,
+          idempotencyKey: `${prefix}-mismatch-create`,
+          diffs: [{
+            kind: 'INSERT_STEP',
+            processDefinitionId: packing.id,
+            targetStepId: targetPackingStep.id,
+            afterData: {
+              processName: stripping.name,
+              standardMillisecondsPerUnit: 9_000,
+              requiredQty: 10,
+              unitLabel: '件',
+            },
+          }],
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof ProcessRouteChangeServiceError);
+          assert.equal(error.code, 'PROCESS_ROUTE_CHANGE_PROCESS_DEFINITION_NAME_MISMATCH');
+          return true;
+        },
+      );
 
       const proposal = await createProcessRouteChangeProposal({
         routeId: currentRoute.id,
-        title: '在包装前增加第二次剥皮',
-        reason: '产品需要在不同位置执行两次剥皮',
+        publicCode,
+        changeType: 'INSERT_STEP',
+        insertBeforeStepId: targetPackingStep.id,
+        newProcessName: stripping.name,
+        newStandardMillisecondsPerUnit: 9_000,
+        affectedQty: 10,
+        reason: '产品需要在合压前增加第二次剥皮',
         scope: 'CURRENT_WORK_ORDER_AND_FUTURE_PRODUCT',
         expectedRouteVersion: currentRoute.version,
         expectedVersion: currentRoute.version,
         userId: actor.id,
         actor: actor.displayName || actor.username,
         idempotencyKey: `${prefix}-create`,
-        diffs: [{
-          kind: 'INSERT_STEP',
-          processDefinitionId: stripping.id,
-          targetStepId: targetPackingStep.id,
-          afterData: {
-            processName: stripping.name,
-            standardMillisecondsPerUnit: 9_000,
-            requiredQty: 10,
-            unitLabel: '件',
-          },
-        }],
       });
       changeId = proposal.id;
+      assert.equal(proposal.payload.newProcessName, stripping.name);
+      assert.equal(proposal.payload.newProcessDefinitionId, null);
       const storedChange = await prisma.processRouteChange.findUniqueOrThrow({
         where: { id: proposal.id },
-        select: { changeRequestId: true },
+        select: {
+          changeRequestId: true,
+          diffs: { select: { id: true, processDefinitionId: true, afterData: true } },
+        },
       });
       changeRequestId = storedChange.changeRequestId;
+      assert.equal(storedChange.diffs[0].processDefinitionId, null);
+      assert.equal((storedChange.diffs[0].afterData as Record<string, unknown>).processName, stripping.name);
       const submitted = await submitProcessRouteChange({
         changeId: proposal.id,
         expectedVersion: proposal.version,
@@ -244,13 +276,49 @@ test(
         actor: actor.displayName || actor.username,
         idempotencyKey: `${prefix}-submit`,
       });
+      const duplicateStripping = await prisma.processDefinition.create({
+        data: {
+          code: `${prefix}-STRIP-DUPLICATE`,
+          name: stripping.name,
+          stageGroup: 'frontend',
+          sortOrder: 99,
+        },
+      });
+      definitionIds.push(duplicateStripping.id);
+      await assert.rejects(
+        reviewProcessRouteChange({
+          changeId: proposal.id,
+          decision: 'approve',
+          expectedVersion: submitted.version,
+          userId: actor.id,
+          actor: actor.displayName || actor.username,
+          idempotencyKey: `${prefix}-approve-ambiguous`,
+        }),
+        (error: unknown) => {
+          assert.ok(error instanceof ProcessRouteChangeServiceError);
+          assert.equal(error.code, 'PROCESS_ROUTE_CHANGE_PROCESS_DEFINITION_AMBIGUOUS');
+          return true;
+        },
+      );
       const reviewed = await reviewProcessRouteChange({
         changeId: proposal.id,
         decision: 'approve',
+        newProcessDefinitionId: stripping.id,
         expectedVersion: submitted.version,
         userId: actor.id,
         actor: actor.displayName || actor.username,
         idempotencyKey: `${prefix}-approve`,
+      });
+      assert.equal(reviewed.payload.newProcessDefinitionId, stripping.id);
+      await prisma.processDefinition.update({
+        where: { id: duplicateStripping.id },
+        data: { isActive: false },
+      });
+      // Simulate an APPROVED row created by the pre-fix service, which copied
+      // the insertion anchor (合压) definition id into the 剥皮 INSERT diff.
+      await prisma.processRouteChangeDiff.update({
+        where: { id: storedChange.diffs[0].id },
+        data: { processDefinitionId: packing.id },
       });
       const activated = await activateProcessRouteChange({
         changeId: proposal.id,
@@ -261,6 +329,8 @@ test(
         idempotencyKey: `${prefix}-activate`,
       });
       assert.equal(activated.status, 'ACTIVE');
+      assert.equal(activated.payload.newProcessName, stripping.name);
+      assert.equal(activated.payload.newProcessDefinitionId, stripping.id);
 
       const publishedProfile = await prisma.productTimeProfile.findFirstOrThrow({
         where: { drawingLibraryItemId: item.id, status: 'published' },
@@ -306,7 +376,7 @@ test(
 
       const afterTicket = await loadFieldReportTicket(publicCode, { recordScan: false });
       assert.equal(afterTicket.publicCode, beforeTicket.publicCode);
-      const qrStrippingSteps = afterTicket.route?.steps.filter(step => step.processName === '剥皮') || [];
+      const qrStrippingSteps = afterTicket.route?.steps.filter(step => step.processName === stripping.name) || [];
       assert.equal(qrStrippingSteps.length, 2);
       assert.deepEqual(qrStrippingSteps.map(step => step.standardMillisecondsPerUnit), [1_000, 9_000]);
       assert.equal(qrStrippingSteps.filter(step => step.changeTag === 'ADDED').length, 1);

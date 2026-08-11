@@ -25,6 +25,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       changeId: params.id,
       action,
       reviewReason: body.reviewReason,
+      newProcessDefinitionId: body.newProcessDefinitionId,
       affectedQty: body.affectedQty,
       newStandardMillisecondsPerUnit: body.newStandardMillisecondsPerUnit,
       timeChanges: body.timeChanges,

@@ -23,6 +23,7 @@ import {
   processRouteChangeStatusLabels,
   processRouteChangeReviewNoteError,
   processRouteChangeTypeLabel,
+  resolveProcessRouteChangeDefinitionBinding,
   secondsFromMilliseconds,
   type ProcessRouteChangeDTO,
   type ProcessRouteChangeListResponse,
@@ -35,6 +36,12 @@ type ReviewStep = {
   position: number;
   sequenceGroup: number;
   standardMillisecondsPerUnit?: number | null;
+};
+
+type ReviewProcessDefinition = {
+  id: string;
+  code: string;
+  name: string;
 };
 
 function responseError(value: unknown, fallback: string): string {
@@ -73,6 +80,10 @@ export function ProcessRouteChangeReviewPanel({
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [reviewReason, setReviewReason] = useState('');
+  const [processDefinitions, setProcessDefinitions] = useState<ReviewProcessDefinition[]>([]);
+  const [processDefinitionsLoading, setProcessDefinitionsLoading] = useState(true);
+  const [processDefinitionsError, setProcessDefinitionsError] = useState('');
+  const [newProcessDefinitionId, setNewProcessDefinitionId] = useState('');
   const [affectedQty, setAffectedQty] = useState('');
   const [newStepSeconds, setNewStepSeconds] = useState('');
   const [timeChanges, setTimeChanges] = useState<ProcessRouteTimeChangeDTO[]>([]);
@@ -99,6 +110,30 @@ export function ProcessRouteChangeReviewPanel({
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setProcessDefinitionsLoading(true);
+    setProcessDefinitionsError('');
+    fetch('/api/process-definitions', { cache: 'no-store' })
+      .then(async response => {
+        const body = await response.json().catch(() => ({})) as {
+          definitions?: ReviewProcessDefinition[];
+          error?: unknown;
+        };
+        if (!response.ok || !Array.isArray(body.definitions)) {
+          throw new Error(responseError(body, '工序定义加载失败'));
+        }
+        if (!cancelled) setProcessDefinitions(body.definitions);
+      })
+      .catch(reason => {
+        if (!cancelled) setProcessDefinitionsError(reason instanceof Error ? reason.message : '工序定义加载失败');
+      })
+      .finally(() => {
+        if (!cancelled) setProcessDefinitionsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   const selected = changes.find(item => item.id === selectedId) || null;
   const submittedCount = changes.filter(item => item.status === 'SUBMITTED').length;
   const selectedPayload = selected?.payload;
@@ -109,31 +144,66 @@ export function ProcessRouteChangeReviewPanel({
     setAffectedQty(String(selected.payload.affectedQty || selected.impact?.affectedQty || ''));
     setNewStepSeconds(secondsFromMilliseconds(selected.payload.newStandardMillisecondsPerUnit));
     setTimeChanges(selected.payload.timeChanges.map(item => ({ ...item })));
+    const binding = resolveProcessRouteChangeDefinitionBinding(
+      selected.payload.newProcessName,
+      selected.payload.newProcessDefinitionId,
+      processDefinitions,
+    );
+    setNewProcessDefinitionId(binding.selectedId);
     setError('');
     setMessage('');
-  }, [selected]);
+  }, [processDefinitions, selected]);
 
   const insertAnchor = useMemo(() => steps.find(step => step.id === selectedPayload?.insertBeforeStepId) || null, [selectedPayload?.insertBeforeStepId, steps]);
   const movedStep = useMemo(() => steps.find(step => step.id === selectedPayload?.moveStepId) || null, [selectedPayload?.moveStepId, steps]);
   const moveAnchor = useMemo(() => steps.find(step => step.id === selectedPayload?.moveBeforeStepId) || null, [selectedPayload?.moveBeforeStepId, steps]);
+  const definitionBinding = useMemo(() => resolveProcessRouteChangeDefinitionBinding(
+    selectedPayload?.newProcessName,
+    newProcessDefinitionId || selectedPayload?.newProcessDefinitionId,
+    processDefinitions,
+  ), [newProcessDefinitionId, processDefinitions, selectedPayload?.newProcessDefinitionId, selectedPayload?.newProcessName]);
   const normalizedTimeChanges = timeChanges.map(item => ({
     stepId: item.stepId,
     standardMillisecondsPerUnit: item.standardMillisecondsPerUnit,
   }));
   const canApprove = Boolean(selected && selected.status === 'SUBMITTED' && canReview);
   const canActivate = Boolean(selected && selected.status === 'APPROVED' && canReview);
+  const selectedIncludesInsert = selected?.payload.changeType === 'INSERT_STEP' || selected?.payload.changeType === 'BOTH';
+  const definitionApprovalBlocked = Boolean(selectedIncludesInsert && (
+    processDefinitionsLoading
+    || processDefinitionsError
+    || definitionBinding.requiresExplicitSelection
+  ));
 
   async function command(action: 'approve' | 'reject' | 'activate'): Promise<void> {
     if (!selected || saving) return;
     const parsedAffectedQty = Number(affectedQty);
     const parsedNewStepStandard = millisecondsFromSeconds(newStepSeconds);
+    const includesInsert = selected.payload.changeType === 'INSERT_STEP' || selected.payload.changeType === 'BOTH';
+    const resolvedDefinitionBinding = resolveProcessRouteChangeDefinitionBinding(
+      selected.payload.newProcessName,
+      newProcessDefinitionId || selected.payload.newProcessDefinitionId,
+      processDefinitions,
+    );
     if (action === 'approve') {
       if (!Number.isSafeInteger(parsedAffectedQty) || parsedAffectedQty <= 0) {
         setError('请输入正确的当前工单应报数量');
         return;
       }
-      if ((selected.payload.changeType === 'INSERT_STEP' || selected.payload.changeType === 'BOTH') && !parsedNewStepStandard) {
+      if (includesInsert && !parsedNewStepStandard) {
         setError('请确认新增工序标准工时');
+        return;
+      }
+      if (includesInsert && processDefinitionsLoading) {
+        setError('工序定义仍在加载，请稍后再通过');
+        return;
+      }
+      if (includesInsert && processDefinitionsError) {
+        setError(`无法核对工序定义：${processDefinitionsError}`);
+        return;
+      }
+      if (includesInsert && resolvedDefinitionBinding.requiresExplicitSelection) {
+        setError(`存在 ${resolvedDefinitionBinding.exactMatches.length} 个同名“${selected.payload.newProcessName || '新增工序'}”，请明确选择要绑定的工序定义`);
         return;
       }
       if (timeChanges.some(item => !item.stepId || !item.standardMillisecondsPerUnit)) {
@@ -166,6 +236,7 @@ export function ProcessRouteChangeReviewPanel({
           action,
           expectedVersion: selected.version,
           reviewReason: normalizeOptionalProcessRouteChangeNote(reviewReason),
+          newProcessDefinitionId: includesInsert ? resolvedDefinitionBinding.selectedId || null : null,
           affectedQty: parsedAffectedQty,
           newStandardMillisecondsPerUnit: parsedNewStepStandard,
           timeChanges: normalizedTimeChanges,
@@ -207,6 +278,19 @@ export function ProcessRouteChangeReviewPanel({
         {selected.payload.changeType === 'MOVE_STEP' && <section className="workflow-route-change-insert"><ArrowDownUp size={22} /><span><small>完整顺序组移动</small><strong>{movedStep ? `顺序组 ${movedStep.sequenceGroup}：${movedStep.processName}` : selected.payload.movedProcessName || '待核对移动工序'} → {moveAnchor ? `顺序组 ${moveAnchor.sequenceGroup}之前` : '路线末尾'}</strong><em>启用时再校验</em></span></section>}
 
         <div className="workflow-route-change-fields">
+          {(selected.payload.changeType === 'INSERT_STEP' || selected.payload.changeType === 'BOTH') && <label className="workflow-route-change-definition"><span>绑定工序定义</span><select value={definitionBinding.selectedId} disabled={!canApprove || saving || processDefinitionsLoading || Boolean(processDefinitionsError)} aria-invalid={definitionBinding.requiresExplicitSelection} onChange={event => setNewProcessDefinitionId(event.target.value)}>
+            {processDefinitionsLoading && <option value="">正在加载工序库…</option>}
+            {!processDefinitionsLoading && processDefinitionsError && <option value="">工序库加载失败</option>}
+            {!processDefinitionsLoading && !processDefinitionsError && definitionBinding.exactMatches.length === 0 && <option value="">无同名定义；通过后新建“{selected.payload.newProcessName || '新增工序'}”</option>}
+            {!processDefinitionsLoading && !processDefinitionsError && definitionBinding.exactMatches.length > 1 && <option value="">检测到多个同名工序，请明确选择</option>}
+            {!processDefinitionsLoading && !processDefinitionsError && definitionBinding.exactMatches.map(definition => <option key={definition.id} value={definition.id}>{definition.name} · {definition.code || definition.id}</option>)}
+          </select><small className={definitionBinding.requiresExplicitSelection || processDefinitionsError ? 'error' : ''}>{processDefinitionsError
+            ? processDefinitionsError
+            : definitionBinding.requiresExplicitSelection
+              ? `发现 ${definitionBinding.exactMatches.length} 个同名定义，系统不会按名称猜测`
+              : definitionBinding.createsNewDefinition
+                ? '没有现有同名定义，可留空；审核通过后由系统新建'
+                : '已按唯一同名工序自动绑定，可核对编码'}</small></label>}
           {(selected.payload.changeType === 'INSERT_STEP' || selected.payload.changeType === 'BOTH') && <label><span>新增工序标准工时</span><div><input inputMode="decimal" value={newStepSeconds} disabled={!canApprove || saving} onChange={event => setNewStepSeconds(event.target.value)} /><em>秒/件</em></div></label>}
           <label><span>当前工单应报数量（整单）</span><input inputMode="numeric" value={affectedQty} disabled readOnly /></label>
         </div>
@@ -222,7 +306,7 @@ export function ProcessRouteChangeReviewPanel({
 
         <footer>
           {!canReview && <span>当前账号可查看，仅工艺更新权限可审核与启用。</span>}
-          {canApprove && <><button className="reject" type="button" disabled={saving} onClick={() => void command('reject')}><X size={16} />驳回</button><button className="approve" type="button" disabled={saving} onClick={() => void command('approve')}>{saving ? <Loader2 className="spin" size={16} /> : <Check size={16} />}通过并锁定工时</button></>}
+          {canApprove && <><button className="reject" type="button" disabled={saving} onClick={() => void command('reject')}><X size={16} />驳回</button><button className="approve" type="button" disabled={saving || definitionApprovalBlocked} title={definitionApprovalBlocked ? '请先完成工序定义核对' : undefined} onClick={() => void command('approve')}>{saving ? <Loader2 className="spin" size={16} /> : <Check size={16} />}通过并锁定工时</button></>}
           {canActivate && <button className="activate" type="button" disabled={saving} onClick={() => void command('activate')}>{saving ? <Loader2 className="spin" size={16} /> : <Play size={16} />}一键启用到当前工单与产品主档</button>}
         </footer>
       </article>}

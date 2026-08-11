@@ -73,7 +73,7 @@ export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclu
         select: {
           status: true,
           steps: {
-            where: { status: 'current' },
+            where: { status: 'current', retiredAt: null },
             orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }],
             take: 1,
             select: { processName: true, unitLabel: true },
@@ -117,6 +117,7 @@ export const productionSummaryInclude = Prisma.validator<Prisma.WorkOrderInclude
   processRoute: {
     select: {
       steps: {
+        where: { retiredAt: null },
         orderBy: { position: 'asc' },
         select: { status: true, sequenceGroup: true },
       },

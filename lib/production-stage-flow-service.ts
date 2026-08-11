@@ -196,6 +196,7 @@ export async function applyProductionStageFlow(input: ProductionStageFlowCommand
           status: true,
           startedAt: true,
           steps: {
+            where: { retiredAt: null },
             orderBy: { position: 'asc' },
             select: {
               processName: true,

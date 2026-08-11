@@ -116,7 +116,7 @@ const withdrawalStateInclude = Prisma.validator<Prisma.ProcessCompletionInclude>
   route: {
     include: {
       workOrder: true,
-      steps: { orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
+      steps: { where: { retiredAt: null }, orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
     },
   },
 });

@@ -72,6 +72,7 @@ export const productionPlanOrderInclude = {
               startedAt: true,
               completedAt: true,
               steps: {
+                where: { retiredAt: null },
                 orderBy: { position: 'asc' as const },
                 select: {
                   processName: true,
@@ -826,6 +827,7 @@ export async function previewProductionPlanBatchDeletion(
               startedAt: true,
               completedAt: true,
               steps: {
+                where: { retiredAt: null },
                 select: {
                   status: true,
                   startedAt: true,
@@ -1443,6 +1445,7 @@ async function startReadyScheduledWorkOrder(
         },
       },
       steps: {
+        where: { retiredAt: null },
         orderBy: { position: 'asc' },
         select: {
           processName: true,

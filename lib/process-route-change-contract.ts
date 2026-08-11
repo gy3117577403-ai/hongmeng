@@ -9,6 +9,41 @@ export type ProcessRouteChangeStatus =
 
 export type ProcessRouteChangeReviewAction = 'approve' | 'reject';
 
+export type ProcessDefinitionBindingCandidate = {
+  id: string;
+  code?: string | null;
+  name: string;
+};
+
+export type ProcessRouteChangeDefinitionBinding = {
+  selectedId: string;
+  exactMatches: ProcessDefinitionBindingCandidate[];
+  requiresExplicitSelection: boolean;
+  createsNewDefinition: boolean;
+};
+
+export function resolveProcessRouteChangeDefinitionBinding(
+  processName: unknown,
+  persistedDefinitionId: unknown,
+  definitions: ReadonlyArray<ProcessDefinitionBindingCandidate>,
+): ProcessRouteChangeDefinitionBinding {
+  const normalizedName = typeof processName === 'string'
+    ? processName.trim().toLocaleLowerCase('zh-CN')
+    : '';
+  const persistedId = typeof persistedDefinitionId === 'string' ? persistedDefinitionId.trim() : '';
+  const exactMatches = normalizedName
+    ? definitions.filter(definition => definition.name.trim().toLocaleLowerCase('zh-CN') === normalizedName)
+    : [];
+  const persistedMatch = exactMatches.find(definition => definition.id === persistedId) || null;
+  const selectedId = persistedMatch?.id || (exactMatches.length === 1 ? exactMatches[0].id : '');
+  return {
+    selectedId,
+    exactMatches,
+    requiresExplicitSelection: exactMatches.length > 1 && !selectedId,
+    createsNewDefinition: exactMatches.length === 0,
+  };
+}
+
 export function normalizeOptionalProcessRouteChangeNote(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const normalized = value.trim().replace(/\r\n/g, '\n');
@@ -67,6 +102,7 @@ export type ProcessRouteChangePayloadDTO = {
   insertBeforeStepId?: string | null;
   insertAfterStepId?: string | null;
   newStepId?: string | null;
+  newProcessDefinitionId?: string | null;
   newProcessName?: string | null;
   newProcessCode?: string | null;
   newStandardMillisecondsPerUnit?: number | null;
@@ -156,6 +192,17 @@ export type ActivatedProcessRouteChangeForStepNotice = {
   }>;
 };
 
+export type ProductTimeDeploymentForStepNotice = {
+  id: string;
+  status: string;
+  routeVersionAfter: number | null;
+  result: unknown;
+  deployment: {
+    id: string;
+    status: string;
+  };
+};
+
 export type ProcessRouteStepChangeSnapshot = {
   tag: ProcessRouteStepChangeTag;
   changeVersion: number | null;
@@ -174,7 +221,11 @@ export type ProcessRouteStepChangeSnapshot = {
  * rediscover a fact already stored on the current route step.
  */
 export function processRouteStepChangeSnapshots(
-  steps: ReadonlyArray<{ id: string; changeSource?: string | null }>,
+  steps: ReadonlyArray<{
+    id: string;
+    changeSource?: string | null;
+    productTimeDeploymentRoute?: ProductTimeDeploymentForStepNotice | null;
+  }>,
   changes: ReadonlyArray<ActivatedProcessRouteChangeForStepNotice>,
 ): Map<string, ProcessRouteStepChangeSnapshot> {
   const latestTimeChangeByStepId = new Map<string, {
@@ -206,14 +257,40 @@ export function processRouteStepChangeSnapshots(
   }
 
   return new Map(steps.map(step => {
-    const added = step.changeSource === 'NEW';
-    const timeChange = latestTimeChangeByStepId.get(step.id) || null;
+    const deploymentRoute = step.productTimeDeploymentRoute;
+    const deploymentChanges = deploymentRoute?.status === 'SUCCEEDED'
+      && deploymentRoute.deployment.status === 'ACTIVE'
+      ? records(record(deploymentRoute.result).stepChanges)
+          .filter(item => text(item.stepId) === step.id)
+      : [];
+    const deploymentInsert = deploymentChanges.find(item => text(item.kind) === 'insert') || null;
+    const deploymentTime = deploymentChanges.find(item => text(item.kind) === 'update_time') || null;
+    const deploymentVersion = deploymentRoute?.routeVersionAfter;
+    const deploymentTimeChange = deploymentTime
+      && Number.isSafeInteger(deploymentVersion)
+      ? {
+          changeVersion: deploymentVersion as number,
+          sourceChangeId: `product-time-deployment:${deploymentRoute?.deployment.id}`,
+          previousStandardMillisecondsPerUnit: number(
+            deploymentTime.previousStandardMillisecondsPerUnit,
+          ),
+        }
+      : null;
+    const routeChangeTime = latestTimeChangeByStepId.get(step.id) || null;
+    const timeChange = deploymentTimeChange
+      && (!routeChangeTime || deploymentTimeChange.changeVersion >= routeChangeTime.changeVersion)
+      ? deploymentTimeChange
+      : routeChangeTime;
+    const added = step.changeSource === 'NEW' || Boolean(deploymentInsert);
+    const addedSourceId = deploymentInsert
+      ? `product-time-deployment:${deploymentRoute?.deployment.id}`
+      : null;
     return [step.id, {
       tag: added && timeChange
         ? 'ADDED_AND_TIME_CHANGED'
         : added ? 'ADDED' : timeChange ? 'TIME_CHANGED' : 'NONE',
       changeVersion: timeChange?.changeVersion ?? null,
-      sourceChangeId: timeChange?.sourceChangeId ?? null,
+      sourceChangeId: timeChange?.sourceChangeId ?? addedSourceId,
       previousStandardMillisecondsPerUnit: timeChange?.previousStandardMillisecondsPerUnit ?? null,
     }] as const;
   }));
@@ -383,6 +460,9 @@ export function processRouteChangeDTO(value: unknown): ProcessRouteChangeDTO {
       || text(existingPayload.insertBeforeStepId),
     insertAfterStepId: text(existingPayload.insertAfterStepId),
     newStepId: text(existingPayload.newStepId),
+    newProcessDefinitionId: text(insert.processDefinitionId)
+      || text(insertAfter.processDefinitionId)
+      || text(existingPayload.newProcessDefinitionId),
     newProcessName: text(insertAfter.processName) || text(existingPayload.newProcessName),
     newProcessCode: text(insertAfter.processCode) || text(existingPayload.newProcessCode),
     newStandardMillisecondsPerUnit: number(insertAfter.standardMillisecondsPerUnit)

@@ -763,7 +763,7 @@ export async function previewDailyPlanSuggestions(input: {
       workOrder: {
         include: {
           materialTask: true,
-          processRoute: { include: { steps: { orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] } } },
+          processRoute: { include: { steps: { where: { retiredAt: null }, orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] } } },
         },
       },
     },
