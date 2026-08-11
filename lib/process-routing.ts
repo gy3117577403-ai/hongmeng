@@ -14,6 +14,7 @@ import {
 } from '@/lib/product-time';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { legacyStatusForStage, normalizeWorkOrderStage } from '@/lib/work-orders';
+import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
 
 export const PROCESS_STAGE_GROUPS: ProcessStageGroup[] = ['frontend', 'backend', 'finish'];
 export const PROCESS_ROUTE_STATUSES: ProcessRouteStatus[] = ['draft', 'confirmed', 'in_progress', 'completed'];
@@ -103,6 +104,22 @@ export const processRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRoute
     take: 60,
     include: { actor: { select: { id: true, username: true, displayName: true } } },
   },
+  processRouteChanges: {
+    where: {
+      status: 'ACTIVE',
+      activatedRouteVersion: { not: null },
+      diffs: { some: { kind: 'UPDATE_TIME' } },
+    },
+    orderBy: [{ activatedRouteVersion: 'desc' }, { activatedAt: 'desc' }],
+    select: {
+      id: true,
+      activatedRouteVersion: true,
+      diffs: {
+        where: { kind: 'UPDATE_TIME' },
+        select: { kind: true, targetStepId: true, beforeData: true },
+      },
+    },
+  },
 });
 
 export const processRouteSummaryInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
@@ -128,6 +145,22 @@ export const processRouteSummaryInclude = Prisma.validator<Prisma.WorkOrderProce
         },
       },
       _count: { select: { executions: true, completions: true } },
+    },
+  },
+  processRouteChanges: {
+    where: {
+      status: 'ACTIVE',
+      activatedRouteVersion: { not: null },
+      diffs: { some: { kind: 'UPDATE_TIME' } },
+    },
+    orderBy: [{ activatedRouteVersion: 'desc' }, { activatedAt: 'desc' }],
+    select: {
+      id: true,
+      activatedRouteVersion: true,
+      diffs: {
+        where: { kind: 'UPDATE_TIME' },
+        select: { kind: true, targetStepId: true, beforeData: true },
+      },
     },
   },
 });
@@ -552,6 +585,7 @@ export function serializeProcessRoute(
   route: ProcessRouteRecord | ProcessRouteSummaryRecord,
 ): WorkOrderProcessRouteDTO {
   const status = normalizeRouteStatus(route.status);
+  const changeSnapshots = processRouteStepChangeSnapshots(route.steps, route.processRouteChanges);
   const steps = route.steps.map(step => {
     const executionGoodQuantity = 'executions' in step
       ? step.executions.reduce((total, execution) => total + execution.goodQty, 0)
@@ -566,6 +600,7 @@ export function serializeProcessRoute(
       ? step.completions.reduce((total, completion) => total + completion.defectQty, 0)
       : 0;
     const reportedGoodQuantity = executionGoodQuantity + completionGoodQuantity;
+    const changeSnapshot = changeSnapshots.get(step.id)!;
     return {
       id: step.id,
       processDefinitionId: step.processDefinitionId,
@@ -608,6 +643,12 @@ export function serializeProcessRoute(
       productTimeEntryId: step.productTimeEntryId,
       productTimeProfileVersion: step.productTimeProfileVersion,
       standardSource: step.standardSource,
+      executionMode: step.executionMode,
+      changeSource: step.changeSource,
+      changeTag: changeSnapshot.tag,
+      changeVersion: changeSnapshot.changeVersion,
+      sourceChangeId: changeSnapshot.sourceChangeId,
+      previousStandardMillisecondsPerUnit: changeSnapshot.previousStandardMillisecondsPerUnit,
     };
   });
   const completedStepCount = steps.filter(step => step.status === 'completed' || step.status === 'skipped').length;
@@ -1875,7 +1916,7 @@ export async function syncProductTimeRouteFromPublishedProductTime(
 
 export async function syncDraftRoutesFromPublishedProductTime(
   tx: Prisma.TransactionClient,
-  input: { profileId: string; actorId: string },
+  input: { profileId: string; actorId: string; excludeRouteId?: string },
 ): Promise<{
   updated: number;
   activeUpdated: number;
@@ -1903,6 +1944,7 @@ export async function syncDraftRoutesFromPublishedProductTime(
 
   const routes = await tx.workOrderProcessRoute.findMany({
     where: {
+      ...(input.excludeRouteId ? { id: { not: input.excludeRouteId } } : {}),
       workOrder: { drawingLibraryItemId: profile.drawingLibraryItemId },
       OR: [
         { status: 'draft' },

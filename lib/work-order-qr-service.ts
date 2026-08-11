@@ -10,6 +10,7 @@ import { prisma } from '@/lib/prisma';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { isExecutableProductionWorkOrder } from '@/lib/work-orders';
 import { businessWorkOrderCodeBase } from '@/lib/work-order-business-code';
+import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
 
 const MAX_PRINT_BATCH = 30;
 const MAX_SOP_PRINT_BATCH = 10;
@@ -66,6 +67,20 @@ export type WorkOrderTravelerSnapshot = {
     unitsPerProduct: number;
     status: string;
     processedQty: number;
+    executionMode?: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+    changeSource?: 'EXISTING' | 'NEW';
+    changeTag?: 'ADDED' | 'TIME_CHANGED' | 'ADDED_AND_TIME_CHANGED' | 'NONE';
+    changeVersion?: number | null;
+    sourceChangeId?: string | null;
+    previousStandardMillisecondsPerUnit?: number | null;
+    supplementObligation?: {
+      id: string;
+      requiredQty: number;
+      reportedQty: number;
+      remainingQty: number;
+      status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
+      version: number;
+    } | null;
   }>;
 };
 
@@ -577,7 +592,7 @@ export async function confirmWorkOrderTravelerPrints(input: {
 export function resolveFieldReportAccess(input: {
   ticketStatus: WorkOrderQrTicketStatus;
   workOrder: { planType: string | null; planClearedAt: Date | null; stage: string; deletedAt: Date | null };
-  route: { status: string } | null;
+  route: { status: string; hasActiveSupplement?: boolean } | null;
 }): FieldReportTicketView['access'] {
   if (input.ticketStatus === WorkOrderQrTicketStatus.REVOKED) {
     return { canReport: false, state: 'REVOKED', message: '该二维码已停用，请使用重新打印的流转单' };
@@ -588,8 +603,17 @@ export function resolveFieldReportAccess(input: {
   if (!input.route || input.route.status === 'draft') {
     return { canReport: false, state: 'BLOCKED', message: '工艺路线尚未确认，请联系生产主管' };
   }
-  if (input.route.status === 'completed' || input.workOrder.stage === 'completed') {
+  if (
+    (input.route.status === 'completed' || input.workOrder.stage === 'completed')
+    && !input.route.hasActiveSupplement
+  ) {
     return { canReport: false, state: 'COMPLETED', message: '该工单已经完成，当前二维码仅供查询' };
+  }
+  if (
+    input.route.hasActiveSupplement
+    && (input.route.status === 'completed' || input.workOrder.stage === 'completed')
+  ) {
+    return { canReport: true, state: 'READY', message: '原生产流程已完成，但仍有启用中的补充工序，可继续使用原二维码报工' };
   }
   if (input.route.status !== 'in_progress') {
     return { canReport: false, state: 'WAITING_START', message: '该工单尚未开始生产，请由主管先启动工艺路线' };
@@ -628,7 +652,12 @@ export async function loadFieldReportTicket(
       workOrder: {
         include: {
           processRoute: {
-            include: { steps: { orderBy: [{ position: 'asc' }] } },
+            include: {
+              steps: {
+                orderBy: [{ position: 'asc' }],
+                include: { supplementObligation: true },
+              },
+            },
           },
         },
       },
@@ -645,6 +674,27 @@ export async function loadFieldReportTicket(
   }
   const order = ticket.workOrder;
   const route = order.processRoute;
+  const activeTimeChanges = route
+    ? await prisma.processRouteChange.findMany({
+        where: {
+          routeId: route.id,
+          status: 'ACTIVE',
+          activatedRouteVersion: { not: null },
+          diffs: { some: { kind: 'UPDATE_TIME' } },
+        },
+        orderBy: [{ activatedRouteVersion: 'desc' }, { activatedAt: 'desc' }, { createdAt: 'desc' }],
+        select: {
+          id: true,
+          activatedRouteVersion: true,
+          diffs: {
+            where: { kind: 'UPDATE_TIME' },
+            orderBy: { position: 'asc' },
+            select: { kind: true, targetStepId: true, beforeData: true },
+          },
+        },
+      })
+    : [];
+  const changeSnapshots = processRouteStepChangeSnapshots(route?.steps || [], activeTimeChanges);
   const quantity = getProductionQuantitySummary(order);
   const completedQty = Number.isFinite(quantity.completedQty) ? Number(quantity.completedQty) : 0;
   const targetQty = Number.isFinite(quantity.targetQty) ? Number(quantity.targetQty) : 0;
@@ -677,7 +727,9 @@ export async function loadFieldReportTicket(
       paperOutdated: printedVersion !== null && printedVersion !== route.version,
       status: route.status,
       name: route.templateName,
-      steps: route.steps.map(step => ({
+      steps: route.steps.map(step => {
+        const changeSnapshot = changeSnapshots.get(step.id)!;
+        return {
         id: step.id,
         position: step.position,
         sequenceGroup: step.sequenceGroup,
@@ -691,9 +743,34 @@ export async function loadFieldReportTicket(
         unitsPerProduct: step.unitsPerProduct,
         status: step.status,
         processedQty: step.processedQty,
-      })),
+        executionMode: step.executionMode,
+        changeSource: step.changeSource,
+        changeTag: changeSnapshot.tag,
+        changeVersion: changeSnapshot.changeVersion,
+        sourceChangeId: changeSnapshot.sourceChangeId,
+        previousStandardMillisecondsPerUnit: changeSnapshot.previousStandardMillisecondsPerUnit,
+        supplementObligation: step.supplementObligation ? {
+          id: step.supplementObligation.id,
+          requiredQty: step.supplementObligation.requiredQty,
+          reportedQty: step.supplementObligation.reportedQty,
+          remainingQty: Math.max(0, step.supplementObligation.requiredQty - step.supplementObligation.reportedQty),
+          status: step.supplementObligation.status,
+          version: step.supplementObligation.version,
+        } : null,
+      };
+      }),
     } : null,
-    access: resolveFieldReportAccess({ ticketStatus: ticket.status, workOrder: order, route }),
+    access: resolveFieldReportAccess({
+      ticketStatus: ticket.status,
+      workOrder: order,
+      route: route ? {
+        status: route.status,
+        hasActiveSupplement: route.steps.some(step => (
+          step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+          && step.supplementObligation?.status === 'ACTIVE'
+        )),
+      } : null,
+    }),
   };
 }
 

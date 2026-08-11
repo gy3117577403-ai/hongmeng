@@ -17,6 +17,7 @@ export type AuditStep = {
   processName: string;
   position: number;
   sequenceGroup: number;
+  executionMode?: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
   status: string;
   inputQty: number;
   processedQty: number;
@@ -431,7 +432,7 @@ export function auditProductionClosure(
     }
 
     const groups = new Map<number, AuditStep[]>();
-    for (const step of route.steps) {
+    for (const step of route.steps.filter(candidate => candidate.executionMode !== 'SUPPLEMENTAL_OBLIGATION')) {
       const group = groups.get(step.sequenceGroup) || [];
       group.push(step);
       groups.set(step.sequenceGroup, group);
@@ -527,6 +528,23 @@ export function auditProductionClosure(
         workOrderId,
         message: '工序与工艺路线引用不一致',
       });
+      continue;
+    }
+    if (step.executionMode === 'SUPPLEMENTAL_OBLIGATION') {
+      // Supplemental completions are intentionally accounted in their own
+      // obligation/labor ledger. They never mutate material-flow aggregates.
+      if (step.inputQty !== 0 || step.processedQty !== 0 || step.goodOutputQty !== 0
+        || step.defectOutputQty !== 0 || step.releasedGoodQty !== 0) {
+        add({
+          severity: 'error',
+          domain: 'quantity',
+          code: 'SUPPLEMENT_STEP_MATERIAL_FLOW_NOT_ZERO',
+          entityType: 'step',
+          entityId: step.id,
+          workOrderId,
+          message: '补充工序不得改变普通数量流转台账',
+        });
+      }
       continue;
     }
     const quantities = [
@@ -640,7 +658,8 @@ export function auditProductionClosure(
         },
       });
     }
-    const firstSequenceGroup = Math.min(...route.steps.map(candidate => candidate.sequenceGroup));
+    const normalSteps = route.steps.filter(candidate => candidate.executionMode !== 'SUPPLEMENTAL_OBLIGATION');
+    const firstSequenceGroup = Math.min(...normalSteps.map(candidate => candidate.sequenceGroup));
     const expectedInputQty = step.sequenceGroup === firstSequenceGroup
       ? order.targetQty
       : activeInputMovementsByTargetStepId.get(step.id) || 0;

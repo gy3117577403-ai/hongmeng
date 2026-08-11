@@ -304,11 +304,15 @@ async function loadState(
 
 function nextGroupSteps(state: WithdrawalState) {
   const groups = state.route.steps
+    .filter(step => step.executionMode === 'NORMAL')
     .map(step => step.sequenceGroup)
     .filter(group => group > state.step.sequenceGroup);
   if (!groups.length) return [];
   const group = Math.min(...groups);
-  return state.route.steps.filter(step => step.sequenceGroup === group);
+  return state.route.steps.filter(step => (
+    step.executionMode === 'NORMAL'
+    && step.sequenceGroup === group
+  ));
 }
 
 function previewFromState(
@@ -317,7 +321,8 @@ function previewFromState(
 ): ProcessCompletionWithdrawalPreview {
   const blockers: ProcessCompletionWithdrawalBlocker[] = [];
   const groupSteps = state.route.steps.filter(
-    step => step.sequenceGroup === state.step.sequenceGroup,
+    step => step.executionMode === 'NORMAL'
+      && step.sequenceGroup === state.step.sequenceGroup,
   );
   const targetSteps = nextGroupSteps(state);
   const newGoodQuantities = groupSteps.map(step => (
@@ -553,7 +558,10 @@ async function applyWithdrawal(
 ): Promise<number> {
   const { state, preview } = input;
   const now = new Date();
-  const groupSteps = state.route.steps.filter(step => step.sequenceGroup === state.step.sequenceGroup);
+  const groupSteps = state.route.steps.filter(step => (
+    step.executionMode === 'NORMAL'
+    && step.sequenceGroup === state.step.sequenceGroup
+  ));
   const targetSteps = nextGroupSteps(state);
   const releaseReductionQty = preview.impact.releaseReductionQty;
 
@@ -690,8 +698,15 @@ async function applyWithdrawal(
   for (const group of groups) {
     const steps = state.route.steps.filter(step => step.sequenceGroup === group);
     const groupClosed: boolean = priorClosed
-      && steps.every(step => step.processedQty >= step.inputQty);
+      && steps.every(step => (
+        step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+          ? step.status === 'completed' || step.status === 'skipped'
+          : step.processedQty >= step.inputQty
+      ));
     for (const step of steps) {
+      // Supplemental obligations keep an independent ledger and must remain a
+      // lifecycle gate without participating in ordinary quantity rollback.
+      if (step.executionMode === 'SUPPLEMENTAL_OBLIGATION') continue;
       let status: string;
       if (groupClosed) status = step.inputQty > 0 ? 'completed' : 'skipped';
       else if (step.processedQty >= step.inputQty && step.inputQty > 0 && step.id !== state.stepId) status = 'completed';

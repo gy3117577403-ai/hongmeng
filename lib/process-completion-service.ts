@@ -131,6 +131,15 @@ export type ProcessCompletionContext = {
     processName: string;
     position: number;
     sequenceGroup: number;
+    executionMode: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+    supplementObligation: {
+      id: string;
+      requiredQty: number;
+      reportedQty: number;
+      remainingQty: number;
+      status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
+      version: number;
+    } | null;
     status: string;
     startedAt: string | null;
   };
@@ -139,6 +148,15 @@ export type ProcessCompletionContext = {
     processName: string;
     position: number;
     sequenceGroup: number;
+    executionMode: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+    supplementObligation: {
+      id: string;
+      requiredQty: number;
+      reportedQty: number;
+      remainingQty: number;
+      status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
+      version: number;
+    } | null;
     status: string;
     unitLabel: string | null;
     inputQty: number;
@@ -253,6 +271,7 @@ type QuantityStep = {
   stageGroup: string;
   position: number;
   sequenceGroup: number;
+  executionMode: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
   inputQty: number;
   processedQty: number;
   goodOutputQty: number;
@@ -923,20 +942,35 @@ export function parseProcessCompletionCommand(
   };
 }
 
-function firstSequenceGroup(steps: Array<Pick<QuantityStep, 'sequenceGroup'>>): number | null {
-  return steps.length ? Math.min(...steps.map(step => step.sequenceGroup)) : null;
+function normalQuantitySteps<T extends Pick<QuantityStep, 'executionMode'>>(
+  steps: readonly T[],
+): T[] {
+  return steps.filter(step => step.executionMode === 'NORMAL');
 }
 
-function nextSequenceGroupSteps<T extends { sequenceGroup: number; position: number }>(
-  steps: T[],
+function firstNormalSequenceGroup<T extends Pick<QuantityStep, 'sequenceGroup' | 'executionMode'>>(
+  steps: readonly T[],
+): number | null {
+  const normalSteps = normalQuantitySteps(steps);
+  return normalSteps.length
+    ? Math.min(...normalSteps.map(step => step.sequenceGroup))
+    : null;
+}
+
+function nextNormalSequenceGroupSteps<T extends Pick<
+  QuantityStep,
+  'sequenceGroup' | 'position' | 'executionMode'
+>>(
+  steps: readonly T[],
   sequenceGroup: number,
 ): T[] {
-  const futureGroups = steps
+  const normalSteps = normalQuantitySteps(steps);
+  const futureGroups = normalSteps
     .map(step => step.sequenceGroup)
     .filter(group => group > sequenceGroup);
   if (!futureGroups.length) return [];
   const nextGroup = Math.min(...futureGroups);
-  return steps
+  return normalSteps
     .filter(step => step.sequenceGroup === nextGroup)
     .sort((left, right) => left.position - right.position);
 }
@@ -1198,6 +1232,7 @@ export async function loadProcessCompletionContext(
         steps: {
           orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }],
           include: {
+            supplementObligation: true,
             completions: {
               where: { voidedAt: null },
               orderBy: [{ completedAt: 'desc' }, { createdAt: 'desc' }],
@@ -1284,13 +1319,18 @@ export async function loadProcessCompletionContext(
       'PROCESS_STEP_NOT_CURRENT',
     );
   }
-  const firstGroup = firstSequenceGroup(route.steps);
-  const availableInputQty = effectiveInputQuantity(selected, firstGroup, target);
+  const firstGroup = firstNormalSequenceGroup(route.steps);
+  const availableInputQty = selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+    ? selected.supplementObligation?.requiredQty || target
+    : effectiveInputQuantity(selected, firstGroup, target);
   const selectedTotals = totalByStep.get(selected.id) || {
     reportedQty: 0,
     coveredReportedQty: 0,
   };
-  const reportableQty = Math.max(0, target - selectedTotals.reportedQty);
+  const selectedTarget = selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+    ? selected.supplementObligation?.requiredQty || target
+    : target;
+  const reportableQty = Math.max(0, selectedTarget - selectedTotals.reportedQty);
   if (options.allowAdvanceReporting && reportableQty <= 0) {
     throw new ProcessCompletionServiceError(
       '该工序的累计报工数量已达到生产目标',
@@ -1298,7 +1338,7 @@ export async function loadProcessCompletionContext(
       'PROCESS_STEP_REPORT_TARGET_REACHED',
     );
   }
-  const nextSteps = nextSequenceGroupSteps(route.steps, selected.sequenceGroup);
+  const nextSteps = nextNormalSequenceGroupSteps(route.steps, selected.sequenceGroup);
   const presetWeekDate = route.workOrder.productionPlanBatch?.weekStartDate
     || route.workOrder.weekStartDate
     || route.workOrder.rootWorkOrder?.productionPlanBatch?.weekStartDate
@@ -1319,26 +1359,56 @@ export async function loadProcessCompletionContext(
       processName: selected.processName,
       position: selected.position,
       sequenceGroup: selected.sequenceGroup,
+      executionMode: selected.executionMode,
+      supplementObligation: selected.supplementObligation ? {
+        id: selected.supplementObligation.id,
+        requiredQty: selected.supplementObligation.requiredQty,
+        reportedQty: selected.supplementObligation.reportedQty,
+        remainingQty: Math.max(
+          0,
+          selected.supplementObligation.requiredQty - selected.supplementObligation.reportedQty,
+        ),
+        status: selected.supplementObligation.status,
+        version: selected.supplementObligation.version,
+      } : null,
       status: selected.status,
       startedAt: selected.startedAt?.toISOString() || null,
     },
     routeSteps: route.steps.map(step => {
       const totals = totalByStep.get(step.id) || { reportedQty: 0, coveredReportedQty: 0 };
-      const stepAvailableInput = effectiveInputQuantity(step, firstGroup, target);
+      const supplemental = step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+        ? step.supplementObligation
+        : null;
+      const stepTarget = supplemental?.requiredQty || target;
+      const stepAvailableInput = supplemental?.requiredQty
+        || effectiveInputQuantity(step, firstGroup, target);
       return {
         id: step.id,
         processName: step.processName,
         position: step.position,
         sequenceGroup: step.sequenceGroup,
+        executionMode: step.executionMode,
+        supplementObligation: supplemental ? {
+          id: supplemental.id,
+          requiredQty: supplemental.requiredQty,
+          reportedQty: supplemental.reportedQty,
+          remainingQty: Math.max(0, supplemental.requiredQty - supplemental.reportedQty),
+          status: supplemental.status,
+          version: supplemental.version,
+        } : null,
         status: step.status,
         unitLabel: step.unitLabel,
         inputQty: stepAvailableInput,
-        processedQty: step.processedQty,
+        processedQty: supplemental ? totals.reportedQty : step.processedQty,
         reportedQty: totals.reportedQty,
-        coveredReportedQty: totals.coveredReportedQty,
-        pendingCoverageQty: Math.max(0, totals.reportedQty - totals.coveredReportedQty),
-        reportableQty: Math.max(0, target - totals.reportedQty),
-        availableCoverageQty: Math.max(0, stepAvailableInput - step.processedQty),
+        coveredReportedQty: supplemental ? totals.reportedQty : totals.coveredReportedQty,
+        pendingCoverageQty: supplemental
+          ? 0
+          : Math.max(0, totals.reportedQty - totals.coveredReportedQty),
+        reportableQty: Math.max(0, stepTarget - totals.reportedQty),
+        availableCoverageQty: supplemental
+          ? Math.max(0, stepTarget - totals.reportedQty)
+          : Math.max(0, stepAvailableInput - step.processedQty),
       };
     }),
     targetQty: target,
@@ -1348,10 +1418,21 @@ export async function loadProcessCompletionContext(
       sequenceGroup: step.sequenceGroup,
     })),
     availableInputQty,
-    processedQty: selected.processedQty,
-    remainingInputQty: Math.max(0, availableInputQty - selected.processedQty),
-    goodQty: selected.goodOutputQty,
-    defectQty: selected.defectOutputQty,
+    processedQty: selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+      ? selectedTotals.reportedQty
+      : selected.processedQty,
+    remainingInputQty: Math.max(
+      0,
+      availableInputQty - (selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+        ? selectedTotals.reportedQty
+        : selected.processedQty),
+    ),
+    goodQty: selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+      ? selectedTotals.reportedQty
+      : selected.goodOutputQty,
+    defectQty: selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+      ? 0
+      : selected.defectOutputQty,
     reportedQty: selectedTotals.reportedQty,
     coveredReportedQty: selectedTotals.coveredReportedQty,
     pendingCoverageQty: Math.max(0, selectedTotals.reportedQty - selectedTotals.coveredReportedQty),
@@ -1472,7 +1553,7 @@ async function createDefectBranch(
 }> {
   const configuration = branchConfiguration(input.disposition);
   const sourceSteps = planDefectBranchRoute(
-    input.route.steps as BranchSourceStep[],
+    normalQuantitySteps(input.route.steps as BranchSourceStep[]),
     input.currentStepId,
     input.disposition,
   );
@@ -1486,12 +1567,12 @@ async function createDefectBranch(
   const branchSequence = await tx.workOrder.count({
     where: { parentWorkOrderId: input.route.workOrderId },
   }) + 1;
-  const firstGroup = firstSequenceGroup(sourceSteps);
+  const firstGroup = firstNormalSequenceGroup(sourceSteps);
   const firstSource = sourceSteps[0];
   const firstStage = processStageForGroup(
     normalizeProcessStageGroup(firstSource.stageGroup) || 'frontend',
   );
-  const nextOriginalSteps = nextSequenceGroupSteps(
+  const nextOriginalSteps = nextNormalSequenceGroupSteps(
     input.route.steps,
     input.route.steps.find(step => step.id === input.currentStepId)?.sequenceGroup || 0,
   );
@@ -1648,9 +1729,16 @@ async function reconcileQuantityStepStatuses(
   for (const group of groups) {
     const groupSteps = steps.filter(step => step.sequenceGroup === group);
     const groupClosed: boolean = priorGroupClosed && groupSteps.every(step => (
-      step.processedQty >= step.inputQty
+      step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+        ? step.status === 'completed' || step.status === 'skipped'
+        : step.processedQty >= step.inputQty
     ));
     for (const step of groupSteps) {
+      // A late-inserted supplemental step is closed by its independent
+      // obligation ledger. Its input/processed quantities intentionally stay
+      // outside the ordinary material-flow ledger, so zero input must never
+      // cause this reconciler to auto-skip it.
+      if (step.executionMode === 'SUPPLEMENTAL_OBLIGATION') continue;
       let nextStatus = step.status;
       if (groupClosed) nextStatus = step.inputQty > 0 ? 'completed' : 'skipped';
       else if (step.inputQty > step.processedQty) nextStatus = 'current';
@@ -1945,7 +2033,8 @@ async function createDeferredPerBatchLaborPools(
 ): Promise<string[]> {
   const createdPoolIds: string[] = [];
   const candidates = route.steps.filter(step => (
-    step.timeBasis === 'per_batch'
+    step.executionMode === 'NORMAL'
+    && step.timeBasis === 'per_batch'
     && step.inputQty > 0
     && step.processedQty >= step.inputQty
     && step.goodOutputQty > 0
@@ -2516,7 +2605,8 @@ async function returnReworkOutputToParent(
   });
 
   const groupSteps = parentRoute.steps.filter(
-    step => step.sequenceGroup === originStep.sequenceGroup,
+    step => step.executionMode === 'NORMAL'
+      && step.sequenceGroup === originStep.sequenceGroup,
   );
   const alreadyReleasedQty = Math.min(...groupSteps.map(step => step.releasedGoodQty));
   const directRouteCap = await loadDirectRouteReleaseCap(tx, {
@@ -2530,7 +2620,7 @@ async function returnReworkOutputToParent(
     alreadyReleasedQty,
     directRouteCap,
   });
-  const targetSteps = nextSequenceGroupSteps(parentRoute.steps, originStep.sequenceGroup);
+  const targetSteps = nextNormalSequenceGroupSteps(parentRoute.steps, originStep.sequenceGroup);
   let frontendTransferDelta = 0;
   if (release.releaseDeltaQty > 0) {
     if (targetSteps.length) {
@@ -2726,6 +2816,13 @@ async function applyCompletionCoverage(
       'PROCESS_COVERAGE_STEP_NOT_FOUND',
     );
   }
+  if (current.executionMode !== 'NORMAL') {
+    throw new ProcessCompletionServiceError(
+      '补充工序不参与普通数量核销',
+      409,
+      'PROCESS_SUPPLEMENT_QUANTITY_FLOW_FORBIDDEN',
+    );
+  }
   const availableQty = Math.max(0, current.inputQty - current.processedQty);
   const plan = planCompletionCoverage({
     processedQty: input.completion.processedQty,
@@ -2807,7 +2904,10 @@ async function applyCompletionCoverage(
   current.defectOutputQty += plan.deltaDefectQty;
   current.quantityVersion += 1;
 
-  const groupSteps = input.route.steps.filter(step => step.sequenceGroup === current.sequenceGroup);
+  const groupSteps = input.route.steps.filter(step => (
+    step.executionMode === 'NORMAL'
+    && step.sequenceGroup === current.sequenceGroup
+  ));
   const alreadyReleasedQty = Math.min(...groupSteps.map(step => step.releasedGoodQty));
   const directRouteCap = await loadDirectRouteReleaseCap(tx, {
     workOrderId: input.route.workOrderId,
@@ -2823,7 +2923,7 @@ async function applyCompletionCoverage(
     alreadyReleasedQty,
     directRouteCap,
   });
-  const targetSteps = nextSequenceGroupSteps(input.route.steps, current.sequenceGroup);
+  const targetSteps = nextNormalSequenceGroupSteps(input.route.steps, current.sequenceGroup);
   let frontendTransferDelta = 0;
   if (release.releaseDeltaQty > 0) {
     if (targetSteps.length) {
@@ -2971,7 +3071,7 @@ async function reconcilePendingCompletionCoverage(
   let branchWorkOrderId: string | undefined;
   let branchWorkOrderCode: string | undefined;
   const reworkReturns: Array<{ completionId: string; sourceStepId: string; recoveredQty: number }> = [];
-  const orderedSteps = [...input.route.steps].sort((left, right) => (
+  const orderedSteps = normalQuantitySteps(input.route.steps).sort((left, right) => (
     left.sequenceGroup - right.sequenceGroup || left.position - right.position
   ));
 
@@ -3288,8 +3388,11 @@ async function performProcessCompletion(
     }
   }
   const targetQty = targetQuantity(route.workOrder);
-  const firstGroup = firstSequenceGroup(route.steps);
-  for (const firstStep of route.steps.filter(step => step.sequenceGroup === firstGroup)) {
+  const firstGroup = firstNormalSequenceGroup(route.steps);
+  for (const firstStep of route.steps.filter(step => (
+    step.executionMode === 'NORMAL'
+    && step.sequenceGroup === firstGroup
+  ))) {
     if (firstStep.inputQty < targetQty) {
       const updated = await tx.workOrderProcessStep.updateMany({
         where: {
@@ -3319,6 +3422,26 @@ async function performProcessCompletion(
       '所选工序不属于该工艺路线',
       404,
       'PROCESS_STEP_NOT_FOUND',
+    );
+  }
+  if (current.executionMode === 'SUPPLEMENTAL_OBLIGATION') {
+    throw new ProcessCompletionServiceError(
+      '该工序属于工艺变更后的补充报工，请刷新二维码页面后从 NEW 工序卡片提交',
+      409,
+      'PROCESS_SUPPLEMENT_COMPLETION_REQUIRED',
+    );
+  }
+  const blockingSupplement = route.steps.find(step => (
+    step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+    && step.position < current.position
+    && step.status !== 'completed'
+    && step.status !== 'skipped'
+  ));
+  if (blockingSupplement) {
+    throw new ProcessCompletionServiceError(
+      `请先完成新增工序「${blockingSupplement.processName}」的补充报工`,
+      409,
+      'PROCESS_SUPPLEMENT_BLOCKS_DOWNSTREAM',
     );
   }
   if (!input.allowAdvanceReporting && current.status !== 'current') {
@@ -3428,7 +3551,10 @@ async function performProcessCompletion(
   let autoAssignedEmployeeCount = 0;
   let autoAssignedLaborMilliseconds = 0;
   const upstreamPermanentlyClosed = route.steps
-    .filter(step => step.sequenceGroup < current.sequenceGroup)
+    .filter(step => (
+      step.executionMode === 'NORMAL'
+      && step.sequenceGroup < current.sequenceGroup
+    ))
     .every(step => step.inputQty <= step.processedQty);
   const perBatchInputStable = current.timeBasis !== 'per_batch'
     || !await hasActiveUpstreamReworkBranch(tx, route, current.sequenceGroup);

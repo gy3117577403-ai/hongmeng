@@ -1,13 +1,17 @@
 name: Docker Image
 on:
   push:
-    branches: ["main"]
+    tags: ["v*"]
   workflow_dispatch:
+concurrency:
+  group: docker-image-release
+  cancel-in-progress: false
 permissions:
   contents: read
   packages: write
 jobs:
   build-and-push:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -32,6 +36,10 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - name: Verify release tag matches package version
+        run: |
+          PACKAGE_VERSION="$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_NAME" = "v$PACKAGE_VERSION"
       - name: Install dependencies
         run: npm ci
       - name: Validate Prisma schema
@@ -84,6 +92,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/process-completion-withdrawal-integration.test.ts tests/product-time-active-sync-integration.test.ts
+      - name: Process route change PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/process-route-change-integration.test.ts tests/process-route-change-move-integration.test.ts tests/process-completion-supplement-flow-integration.test.ts
       - name: Advance reporting and automatic labor PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -105,15 +117,63 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=v1.29.1
+            type=ref,event=tag
             type=raw,value=latest
             type=sha
+          labels: |
+            org.opencontainers.image.title=hongmeng-workorder-resource
+            org.opencontainers.image.version=v1.30.0
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.29.1
+            APP_VERSION=v1.30.0
             APP_REVISION=${{ github.sha }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          load: true
+          push: false
+          tags: hongmeng-release-smoke:${{ github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
+      - name: Smoke test exact release image
+        env:
+          OUTBOX_WORKER_TOKEN: ci-process-route-change-outbox-worker-token-1234567890
+          SEED_ADMIN_PASSWORD: Codex-V130-CI-Seed-Password-2026!Z
+        run: |
+          docker run -d --name hongmeng-release-smoke --network host \
+            -e DATABASE_URL="$DATABASE_URL" \
+            -e SEED_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" \
+            -e PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$OUTBOX_WORKER_TOKEN" \
+            -e PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS=2 \
+            hongmeng-release-smoke:${{ github.sha }}
+          cleanup() { docker rm -f hongmeng-release-smoke >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/login >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          if [ "$ready" != "1" ]; then
+            docker logs hongmeng-release-smoke
+            exit 1
+          fi
+          curl --fail --silent --show-error \
+            -X POST \
+            -H "x-outbox-worker-token: $OUTBOX_WORKER_TOKEN" \
+            http://127.0.0.1:3000/api/internal/process-route-change-outbox >/dev/null
+          docker stop --time 20 hongmeng-release-smoke >/dev/null
+          test "$(docker inspect -f '{{.State.ExitCode}}' hongmeng-release-smoke)" = "0"
+      - name: Push verified release image
+        env:
+          RELEASE_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            docker tag hongmeng-release-smoke:${{ github.sha }} "$tag"
+            docker push "$tag"
+          done <<EOF
+          $RELEASE_TAGS
+          EOF

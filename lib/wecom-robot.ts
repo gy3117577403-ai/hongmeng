@@ -139,6 +139,8 @@ export function buildWeComRobotTestMessage(
 export async function sendWeComRobotText(options: {
   content: string;
   mentionedMobiles: string[];
+  /** Business event broadcasts may target the robot group without @-mentions. */
+  allowEmptyMentions?: boolean;
   webhookUrl?: string | null;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
@@ -146,7 +148,7 @@ export async function sendWeComRobotText(options: {
   assertTextSize(options.content);
   const webhook = parseWebhookUrl(options.webhookUrl ?? process.env.WECOM_ROBOT_WEBHOOK_URL);
   const mentionedMobiles = [...new Set(options.mentionedMobiles.map(toWeComMentionMobile).filter((item): item is string => Boolean(item)))];
-  if (!mentionedMobiles.length) {
+  if (!mentionedMobiles.length && !options.allowEmptyMentions) {
     throw new WeComRobotError('没有可用于企业微信提醒的手机号', {
       status: 400,
       code: 'WECOM_MENTION_MOBILE_MISSING',

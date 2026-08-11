@@ -1169,6 +1169,12 @@ export type WorkOrderProcessStepDTO = ProcessTemplateStepDTO & {
   productTimeEntryId?: string | null;
   productTimeProfileVersion?: number | null;
   standardSource?: string;
+  executionMode?: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+  changeSource?: 'EXISTING' | 'NEW';
+  changeTag?: 'ADDED' | 'TIME_CHANGED' | 'ADDED_AND_TIME_CHANGED' | 'NONE';
+  changeVersion?: number | null;
+  sourceChangeId?: string | null;
+  previousStandardMillisecondsPerUnit?: number | null;
 };
 
 export type ProcessRouteActivityDTO = {
@@ -1845,6 +1851,12 @@ export type WorkflowStepDTO = {
   stageGroup?: ProcessStageGroup;
   unitLabel?: string | null;
   standardMillisecondsPerUnit?: number | null;
+  executionMode?: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+  changeSource?: 'EXISTING' | 'NEW';
+  changeTag?: 'ADDED' | 'TIME_CHANGED' | 'ADDED_AND_TIME_CHANGED' | 'NONE';
+  changeVersion?: number | null;
+  sourceChangeId?: string | null;
+  previousStandardMillisecondsPerUnit?: number | null;
   inputQuantity?: number;
   processedQuantity?: number;
   reportedGoodQuantity?: number;

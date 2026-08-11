@@ -7412,6 +7412,18 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   transform: translateX(-110%);
 }
 
+.hm-production-workbench .production-route-new-badge {
+  display: inline-flex;
+  margin-left: 3px;
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: #fff0dd;
+  color: #c65305;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
 .hm-production-workbench .production-dispatch-progress.incomplete > i > span {
   background: linear-gradient(90deg, #f59e0b, #f97316);
 }
@@ -9041,4 +9053,19 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   .production-arrangement-employee-grid {
     grid-template-columns: 1fr 1fr;
   }
+}
+.hm-production-workbench .production-dialog.detail > .dialog-actions > a {
+  min-height: 36px;
+  padding: 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid #f0b27f;
+  border-radius: 7px;
+  background: #fff7ed;
+  color: #b45309;
+  font-size: 11px;
+  font-weight: 800;
+  text-decoration: none;
 }

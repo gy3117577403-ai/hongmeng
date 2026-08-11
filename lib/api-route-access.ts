@@ -213,6 +213,22 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
     };
   }
 
+  if (/^\/api\/process-management\/route-changes\/[^/]+\/(?:review|activate)$/.test(path)) {
+    return {
+      prefix: '/api/process-management/route-changes/:id/review-or-activate',
+      anyOf: ['PROCESS'],
+      action: 'EXECUTE_WORKFLOW',
+    };
+  }
+
+  if (/^\/api\/process-management\/route-changes(?:\/[^/]+)?$/.test(path)) {
+    return {
+      prefix: '/api/process-management/route-changes',
+      anyOf: ['PROCESS'],
+      actionsByMethod: { GET: 'READ' },
+    };
+  }
+
   if (/^\/api\/process-management\/routes\/[^/]+\/completions\/[^/]+\/correct-standard$/.test(path)) {
     return {
       prefix: '/api/process-management/routes/:id/completions/:completionId/correct-standard',

@@ -24,4 +24,54 @@ until node node_modules/prisma/build/index.js migrate deploy; do
 done
 
 node prisma/seed.cjs
-exec node .next/standalone/server.js
+
+# Use a per-container secret for the localhost-only durable notification pump.
+# The token is never logged or exposed to browsers.
+if [ -z "${PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN:-}" ]; then
+  PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN="$(openssl rand -hex 32)"
+  export PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN
+fi
+if [ "${#PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN}" -lt 32 ]; then
+  echo "PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN must contain at least 32 characters"
+  exit 1
+fi
+
+case "${PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS:-30}" in
+  ''|*[!0-9]*)
+    echo "PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS must be a positive integer"
+    exit 1
+    ;;
+  *) outbox_poll_seconds="${PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS:-30}" ;;
+esac
+if [ "$outbox_poll_seconds" -lt 1 ]; then
+  echo "PROCESS_ROUTE_CHANGE_OUTBOX_POLL_SECONDS must be a positive integer"
+  exit 1
+fi
+
+HOSTNAME=0.0.0.0 node .next/standalone/server.js &
+server_pid=$!
+
+(
+  while kill -0 "$server_pid" 2>/dev/null; do
+    sleep "$outbox_poll_seconds"
+    if ! node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3000') + '/api/internal/process-route-change-outbox', {method:'POST',headers:{'x-outbox-worker-token':process.env.PROCESS_ROUTE_CHANGE_OUTBOX_WORKER_TOKEN},signal:AbortSignal.timeout(10000)}).then(async response=>{if(!response.ok){throw new Error('HTTP '+response.status+' '+(await response.text()).slice(0,200))}}).catch(error=>{console.error(error instanceof Error?error.message:String(error));process.exit(1)})"; then
+      echo "process route change outbox poll failed; it will retry after ${outbox_poll_seconds}s" >&2
+    fi
+  done
+) &
+worker_pid=$!
+
+shutdown() {
+  trap - INT TERM
+  kill "$server_pid" "$worker_pid" 2>/dev/null || true
+  wait "$server_pid" 2>/dev/null || true
+  wait "$worker_pid" 2>/dev/null || true
+  exit 0
+}
+trap shutdown INT TERM
+
+server_status=0
+wait "$server_pid" || server_status=$?
+kill "$worker_pid" 2>/dev/null || true
+wait "$worker_pid" 2>/dev/null || true
+exit "$server_status"

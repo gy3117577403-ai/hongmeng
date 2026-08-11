@@ -77,6 +77,33 @@ test('发送器去重手机号并生成企业微信文本消息结构', async ()
   });
 });
 
+test('业务事件可以在没有可 @ 手机号时发送到机器人群', async () => {
+  let capturedBody: unknown = null;
+  const fetchImpl = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+    capturedBody = JSON.parse(String(init?.body || '{}')) as unknown;
+    return new Response(JSON.stringify({ errcode: 0, errmsg: 'ok' }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }) as typeof fetch;
+
+  await sendWeComRobotText({
+    content: '工艺变更待审核',
+    mentionedMobiles: [],
+    allowEmptyMentions: true,
+    webhookUrl: validWebhook,
+    fetchImpl,
+  });
+
+  assert.deepEqual(capturedBody, {
+    msgtype: 'text',
+    text: {
+      content: '工艺变更待审核',
+      mentioned_mobile_list: [],
+    },
+  });
+});
+
 test('企业微信业务拒绝时返回可审计的安全错误', async () => {
   const fetchImpl = (async () => new Response(JSON.stringify({ errcode: 93000, errmsg: 'invalid webhook' }), {
     status: 200,

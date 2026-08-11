@@ -2146,6 +2146,19 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
   white-space: nowrap;
 }
 
+.hm-workflow-center .workflow-step-new-badge {
+  display: inline-flex;
+  margin-left: 7px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #fff0dd;
+  color: #c65305;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  vertical-align: 2px;
+}
+
 .hm-workflow-center .workflow-flow-node-main {
   display: flex;
   align-items: flex-end;
@@ -2545,3 +2558,153 @@ main.hm-workflow-center.hm-workbench-root.hm-workbench-root {
 .hm-workflow-center .workflow-correction-dialog > footer button.primary { border-color: var(--hm-color-accent); background: var(--hm-color-accent); color: #fff; }
 .hm-workflow-center .workflow-correction-dialog > footer button.danger { border-color: #cf4b38; background: #cf4b38; color: #fff; }
 .hm-workflow-center .workflow-correction-dialog > footer button:disabled { cursor: not-allowed; opacity: .5; }
+
+.hm-workflow-center .workflow-route-change-panel { margin-top: 12px; overflow: hidden; border: 1px solid #e1e6eb; border-radius: 11px; background: #fff; box-shadow: 0 8px 24px rgba(40,52,68,.05); }
+.hm-workflow-center .workflow-route-change-panel > header { min-height: 58px; padding: 10px 12px; display: grid; grid-template-columns: minmax(0,1fr) auto auto; align-items: center; gap: 10px; border-bottom: 1px solid #edf0f3; background: linear-gradient(135deg,#fff8f2,#fff); }.hm-workflow-center .workflow-route-change-panel > header > div { min-width: 0; display: grid; gap: 2px; }.hm-workflow-center .workflow-route-change-panel > header > div span { display: flex; align-items: center; gap: 5px; color: #bd4d09; font-size: 9px; font-weight: 850; letter-spacing: .04em; }.hm-workflow-center .workflow-route-change-panel > header h3 { margin: 0; color: #263649; font-size: 14px; }.hm-workflow-center .workflow-route-change-panel > header > p { margin: 0; display: flex; align-items: baseline; gap: 4px; color: #bd4d09; }.hm-workflow-center .workflow-route-change-panel > header > p b { font-size: 18px; }.hm-workflow-center .workflow-route-change-panel > header > p small { font-size: 9px; }.hm-workflow-center .workflow-route-change-panel > header > button { min-height: 32px; display: flex; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid #e3d4c8; border-radius: 7px; background: #fff; color: #8b5b39; font-size: 9px; font-weight: 800; }
+.hm-workflow-center .workflow-route-change-empty { min-height: 92px; padding: 18px; display: flex; align-items: center; justify-content: center; gap: 9px; color: #7b8796; }.hm-workflow-center .workflow-route-change-empty > svg { color: #dd7a39; }.hm-workflow-center .workflow-route-change-empty > span { display: grid; gap: 3px; }.hm-workflow-center .workflow-route-change-empty strong { color: #435268; font-size: 11px; }.hm-workflow-center .workflow-route-change-empty small { font-size: 9px; }
+.hm-workflow-center .workflow-route-change-layout { min-height: 260px; display: grid; grid-template-columns: minmax(150px,31%) minmax(0,1fr); }.hm-workflow-center .workflow-route-change-layout > nav { padding: 8px; display: grid; align-content: start; gap: 5px; border-right: 1px solid #edf0f3; background: #f8fafb; }.hm-workflow-center .workflow-route-change-layout > nav > button { min-width: 0; padding: 8px; display: grid; grid-template-columns: 7px minmax(0,1fr); gap: 2px 7px; border: 1px solid transparent; border-radius: 8px; background: transparent; text-align: left; }.hm-workflow-center .workflow-route-change-layout > nav > button.active { border-color: #f0b486; background: #fff; box-shadow: 0 4px 12px rgba(69,49,34,.06); }.hm-workflow-center .workflow-route-change-layout > nav i { grid-row: 1/3; width: 7px; height: 7px; margin-top: 4px; border-radius: 50%; background: #9aa5b1; }.hm-workflow-center .workflow-route-change-layout > nav i.status-submitted { background: #f59e0b; box-shadow: 0 0 0 3px #fef3c7; }.hm-workflow-center .workflow-route-change-layout > nav i.status-approved { background: #2563eb; }.hm-workflow-center .workflow-route-change-layout > nav i.status-active { background: #16a34a; }.hm-workflow-center .workflow-route-change-layout > nav i.status-rejected,.hm-workflow-center .workflow-route-change-layout > nav i.status-failed { background: #dc2626; }.hm-workflow-center .workflow-route-change-layout > nav span { min-width: 0; display: grid; gap: 2px; }.hm-workflow-center .workflow-route-change-layout > nav strong { overflow: hidden; color: #34445a; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.hm-workflow-center .workflow-route-change-layout > nav small { color: #8894a2; font-size: 8px; }.hm-workflow-center .workflow-route-change-layout > nav em { grid-column: 2; width: max-content; padding: 2px 5px; border-radius: 999px; background: #edf1f4; color: #687587; font-size: 7px; font-style: normal; font-weight: 850; }
+.hm-workflow-center .workflow-route-change-review { min-width: 0; padding: 11px; }.hm-workflow-center .workflow-route-change-review > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }.hm-workflow-center .workflow-route-change-review > header > span { min-width: 0; display: grid; gap: 2px; }.hm-workflow-center .workflow-route-change-review > header small { color: #8793a2; font-size: 8px; }.hm-workflow-center .workflow-route-change-review > header strong { overflow: hidden; color: #263649; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }.hm-workflow-center .workflow-route-change-review > header > em { padding: 4px 7px; border-radius: 999px; background: #edf1f4; color: #687587; font-size: 8px; font-style: normal; font-weight: 850; }.hm-workflow-center .workflow-route-change-review > header > em.status-submitted { background: #fff7df; color: #9a5a08; }.hm-workflow-center .workflow-route-change-review > header > em.status-approved { background: #e8f0ff; color: #1d4ed8; }.hm-workflow-center .workflow-route-change-review > header > em.status-active { background: #e9f9ef; color: #15803d; }.hm-workflow-center .workflow-route-change-review > header > em.status-rejected,.hm-workflow-center .workflow-route-change-review > header > em.status-failed { background: #fff0ee; color: #b63e2d; }
+.hm-workflow-center .workflow-route-change-insert { margin-top: 9px; padding: 9px; display: flex; align-items: center; gap: 8px; border: 1px solid #f2c9aa; border-radius: 8px; background: #fff8f2; color: #b45309; }.hm-workflow-center .workflow-route-change-insert > svg { flex: none; }.hm-workflow-center .workflow-route-change-insert > span { min-width: 0; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 2px 8px; }.hm-workflow-center .workflow-route-change-insert small { grid-column: 1; color: #a67858; font-size: 8px; }.hm-workflow-center .workflow-route-change-insert strong { grid-column: 1; overflow: hidden; color: #704122; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }.hm-workflow-center .workflow-route-change-insert em { grid-column: 2; grid-row: 1/3; align-self: center; padding: 3px 6px; border-radius: 999px; background: #ffedd5; color: #c2410c; font-size: 7px; font-style: normal; font-weight: 900; }
+.hm-workflow-center .workflow-route-change-fields { margin-top: 9px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }.hm-workflow-center .workflow-route-change-fields > label,.hm-workflow-center .workflow-route-change-reason { display: grid; gap: 4px; color: #687587; font-size: 8px; font-weight: 800; }.hm-workflow-center .workflow-route-change-fields input,.hm-workflow-center .workflow-route-change-reason textarea,.hm-workflow-center .workflow-route-change-times input { width: 100%; border: 1px solid #d8e0e7; border-radius: 7px; background: #fff; color: #263649; font: inherit; outline: 0; }.hm-workflow-center .workflow-route-change-fields input { height: 35px; padding: 0 8px; }.hm-workflow-center .workflow-route-change-fields label > div,.hm-workflow-center .workflow-route-change-times label > div { position: relative; }.hm-workflow-center .workflow-route-change-fields label > div input,.hm-workflow-center .workflow-route-change-times label > div input { padding-right: 48px; }.hm-workflow-center .workflow-route-change-fields label > div em,.hm-workflow-center .workflow-route-change-times label > div em { position: absolute; right: 7px; top: 50%; transform: translateY(-50%); color: #8c98a7; font-size: 7px; font-style: normal; }.hm-workflow-center .workflow-route-change-fields input:focus,.hm-workflow-center .workflow-route-change-reason textarea:focus,.hm-workflow-center .workflow-route-change-times input:focus { border-color: #ec8c48; box-shadow: 0 0 0 3px rgba(234,88,12,.08); }
+.hm-workflow-center .workflow-route-change-times { margin-top: 9px; padding: 8px; border: 1px solid #e4e8ec; border-radius: 8px; }.hm-workflow-center .workflow-route-change-times > header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }.hm-workflow-center .workflow-route-change-times > header span { display: flex; align-items: center; gap: 5px; color: #425268; font-size: 9px; font-weight: 850; }.hm-workflow-center .workflow-route-change-times > header em { color: #8a96a4; font-size: 8px; font-style: normal; }.hm-workflow-center .workflow-route-change-times > label { min-height: 34px; display: grid; grid-template-columns: minmax(0,1fr) 90px auto; align-items: center; gap: 7px; border-top: 1px solid #f0f2f4; }.hm-workflow-center .workflow-route-change-times > label:first-of-type { border-top: 0; }.hm-workflow-center .workflow-route-change-times > label > span { overflow: hidden; color: #46566a; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }.hm-workflow-center .workflow-route-change-times input { height: 29px; padding: 0 7px; }.hm-workflow-center .workflow-route-change-times label > b { padding: 2px 5px; border-radius: 999px; background: #fff0e5; color: #c2410c; font-size: 7px; }
+.hm-workflow-center .workflow-route-change-impact { margin-top: 9px; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 5px; }.hm-workflow-center .workflow-route-change-impact > div { min-width: 0; padding: 7px; display: flex; align-items: flex-start; gap: 5px; border-radius: 7px; background: #f5f7f9; }.hm-workflow-center .workflow-route-change-impact svg { width: 13px; flex: none; color: #778597; }.hm-workflow-center .workflow-route-change-impact span { min-width: 0; display: grid; gap: 2px; }.hm-workflow-center .workflow-route-change-impact small { color: #8793a2; font-size: 7px; }.hm-workflow-center .workflow-route-change-impact strong { overflow: hidden; color: #34445a; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }.hm-workflow-center .workflow-route-change-warnings { margin: 7px 0 0; padding: 0; display: grid; gap: 4px; list-style: none; }.hm-workflow-center .workflow-route-change-warnings li { padding: 5px 7px; display: flex; align-items: flex-start; gap: 5px; border-radius: 6px; background: #fff7df; color: #94610c; font-size: 8px; line-height: 1.4; }
+.hm-workflow-center .workflow-route-change-reason { margin-top: 9px; }.hm-workflow-center .workflow-route-change-reason textarea { min-height: 52px; padding: 7px 8px; resize: vertical; }.hm-workflow-center .workflow-route-change-message { margin: 7px 0 0; padding: 7px 8px; display: flex; align-items: flex-start; gap: 5px; border-radius: 7px; font-size: 8px; line-height: 1.4; }.hm-workflow-center .workflow-route-change-message.success { background: #eaf8ef; color: #18753c; }.hm-workflow-center .workflow-route-change-message.error { background: #fff0ee; color: #b44535; }
+.hm-workflow-center .workflow-route-change-review > footer { min-height: 42px; margin: 10px -11px -11px; padding: 8px 11px; display: flex; align-items: center; justify-content: flex-end; gap: 6px; border-top: 1px solid #edf0f3; background: #fafbfc; }.hm-workflow-center .workflow-route-change-review > footer > span { margin-right: auto; color: #84909f; font-size: 8px; }.hm-workflow-center .workflow-route-change-review > footer button { min-height: 32px; display: flex; align-items: center; gap: 5px; padding: 0 10px; border: 1px solid #d9e0e6; border-radius: 7px; background: #fff; color: #536175; font-size: 9px; font-weight: 850; }.hm-workflow-center .workflow-route-change-review > footer button.reject { border-color: #efc7c1; color: #b44535; }.hm-workflow-center .workflow-route-change-review > footer button.approve { border-color: #23844a; background: #23844a; color: #fff; }.hm-workflow-center .workflow-route-change-review > footer button.activate { border-color: #d45d0a; background: #d45d0a; color: #fff; }.hm-workflow-center .workflow-route-change-review > footer button:disabled { opacity: .5; }
+@media (max-width: 980px) { .hm-workflow-center .workflow-route-change-layout { grid-template-columns: 1fr; }.hm-workflow-center .workflow-route-change-layout > nav { grid-template-columns: repeat(2,minmax(0,1fr)); border-right: 0; border-bottom: 1px solid #edf0f3; }.hm-workflow-center .workflow-route-change-impact { grid-template-columns: 1fr 1fr; } }
+.hm-workflow-center .workflow-route-change-inbox {
+  position: relative;
+}
+
+.hm-workflow-center .workflow-route-change-inbox > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid #f1caa4;
+  border-radius: 9px;
+  background: #fff8ef;
+  color: #a44709;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.hm-workflow-center .workflow-route-change-inbox > summary::-webkit-details-marker { display: none; }
+.hm-workflow-center .workflow-route-change-inbox > summary b {
+  min-width: 20px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: #e8680c;
+  color: #fff;
+  text-align: center;
+  font-size: 10px;
+}
+
+.hm-workflow-center .workflow-route-change-inbox > div {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(390px, 82vw);
+  max-height: 440px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid #ead7c5;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 18px 45px rgba(70, 38, 16, .18);
+}
+
+.hm-workflow-center .workflow-route-change-inbox > div > header,
+.hm-workflow-center .workflow-route-change-inbox > div > header span {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hm-workflow-center .workflow-route-change-inbox > div > header span {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.hm-workflow-center .workflow-route-change-inbox > div > header small { color: #8c796b; }
+.hm-workflow-center .workflow-route-change-inbox > div > header button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  color: #b84e08;
+  cursor: pointer;
+}
+
+.hm-workflow-center .workflow-route-change-inbox nav {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.hm-workflow-center .workflow-route-change-inbox nav button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid #eee4dc;
+  border-radius: 9px;
+  background: #fff;
+  color: #33251d;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hm-workflow-center .workflow-route-change-inbox nav button:hover { border-color: #e78a47; background: #fffaf5; }
+.hm-workflow-center .workflow-route-change-inbox nav button:disabled { cursor: wait; opacity: .65; }
+.hm-workflow-center .workflow-route-change-inbox nav button span { display: grid; gap: 3px; min-width: 0; }
+.hm-workflow-center .workflow-route-change-inbox nav button strong,
+.hm-workflow-center .workflow-route-change-inbox nav button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-workflow-center .workflow-route-change-inbox nav button small { color: #78685d; }
+.hm-workflow-center .workflow-route-change-inbox nav button em { min-width: 28px; display: grid; place-items: center; color: #c6560a; font-style: normal; font-weight: 750; }
+.hm-workflow-center .workflow-route-change-inbox p { margin: 10px 0 0; color: #78685d; font-size: 12px; }
+.hm-workflow-center .workflow-route-change-inbox p.error { display: flex; align-items: center; gap: 5px; color: #b42318; }
+
+.hm-workflow-center .workflow-route-change-modal {
+  position: fixed;
+  z-index: 220;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: rgba(22, 30, 40, .52);
+  backdrop-filter: blur(3px);
+}
+.hm-workflow-center .workflow-route-change-modal > section {
+  position: relative;
+  width: min(940px, 96vw);
+  max-height: min(900px, 94vh);
+  overflow: auto;
+  border-radius: 13px;
+  background: #f6f8fa;
+  box-shadow: 0 28px 80px rgba(22, 30, 40, .28);
+}
+.hm-workflow-center .workflow-route-change-modal .workflow-route-change-panel { margin-top: 0; }
+.hm-workflow-center .workflow-route-change-modal-close {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #e1d4ca;
+  border-radius: 8px;
+  background: #fff;
+  color: #72523b;
+  cursor: pointer;
+}

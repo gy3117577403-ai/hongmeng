@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -2739,7 +2739,7 @@ function ProductionDispatchRow({
       <i className="production-dispatch-process-flow-bar"><span style={{ width: `${routeProgress}%` }} /></i>
       <span className="production-dispatch-route-track" aria-label={routePreview.length ? `工艺路线：${routePreview.map(step => step.processName).join('、')}` : '工艺路线待维护'}>
         {routePreview.length
-          ? routePreview.map(step => <i className={`state-${step.status}`} title={`${step.processName} · ${step.status === 'completed' ? '已完成' : step.status === 'current' ? '当前工序' : '待处理'}`} key={step.id}><span /><em>{step.processName}</em></i>)
+          ? routePreview.map(step => <i className={`state-${step.status}`} title={`${step.processName} · ${step.status === 'completed' ? '已完成' : step.status === 'current' ? '当前工序' : '待处理'}${step.changeTag === 'TIME_CHANGED' ? ' · 工时已变更' : step.changeTag && step.changeTag !== 'NONE' ? ' · 新增工序' : ''}`} key={step.id}><span /><em>{step.processName}{step.changeTag && step.changeTag !== 'NONE' && <b className="production-route-new-badge">{step.changeTag === 'TIME_CHANGED' ? '工时 NEW' : 'NEW'}</b>}</em></i>)
           : <i className="state-pending"><span /><em>待维护</em></i>}
       </span>
     </button>
@@ -3344,7 +3344,7 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
           ['工序', order.processName || '-'], ['单位工时', order.unitWorkHours || '-'], ['总工时', order.totalWorkHours || '-'], ['图纸说明', order.drawingIssueNote || '-'],
         ]} />}
       </div>
-      <div className="dialog-actions"><button type="button" onClick={resources}>工单资料</button>{canPrintTraveler && <button type="button" disabled={travelerPrinting || !order.processRoute || order.processRoute.status === 'draft'} title={!order.processRoute || order.processRoute.status === 'draft' ? '确认工艺路线后才能打印' : '生成一工单一码流转单'} onClick={printTraveler}><Printer size={15} />{travelerPrinting ? '生成中...' : '打印流转单'}</button>}<button className="primary-button" type="button" onClick={close}>关闭</button></div>
+      <div className="dialog-actions"><button type="button" onClick={resources}>工单资料</button>{order.processRoute && <Link href={`/workspace/workflows?workOrderId=${encodeURIComponent(order.id)}&from=production`}><GitPullRequestArrow size={15} />工艺变更</Link>}{canPrintTraveler && <button type="button" disabled={travelerPrinting || !order.processRoute || order.processRoute.status === 'draft'} title={!order.processRoute || order.processRoute.status === 'draft' ? '确认工艺路线后才能打印' : '生成一工单一码流转单'} onClick={printTraveler}><Printer size={15} />{travelerPrinting ? '生成中...' : '打印流转单'}</button>}<button className="primary-button" type="button" onClick={close}>关闭</button></div>
     </section></div>
   );
 }

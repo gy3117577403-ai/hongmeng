@@ -10,6 +10,7 @@ import {
   ChevronDown,
   CircleDot,
   Clock3,
+  GitPullRequestArrow,
   LoaderCircle,
   ListChecks,
   LogOut,
@@ -22,7 +23,13 @@ import {
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FieldReportRouteChangeProposal } from '@/components/field-report/FieldReportRouteChangeProposal';
 import type { ProcessCompletionContext } from '@/lib/process-completion-service';
+import {
+  processRouteStepChangeLabel,
+  secondsFromMilliseconds,
+  type ProcessRouteStepChangeNotice,
+} from '@/lib/process-route-change-contract';
 import type { FieldReportTicketView } from '@/lib/work-order-qr-service';
 
 export type FieldReportIdentityDTO = {
@@ -58,6 +65,59 @@ type BatchStepForm = {
   defectQty: string;
   defectDisposition: 'rework' | 'scrap_replenish';
 };
+
+type FieldReportStepChangeSnapshot = ProcessRouteStepChangeNotice & {
+  previousStandardMillisecondsPerUnit?: number | null;
+};
+
+type FieldReportSupplementSnapshot = {
+  id: string;
+  requiredQty: number;
+  reportedQty: number;
+  remainingQty: number;
+  status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
+  version: number;
+};
+
+function stepChangeSnapshot(value: unknown): FieldReportStepChangeSnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const tag = String(record.changeTag || record.changeKind || 'NONE');
+  if (tag !== 'ADDED' && tag !== 'TIME_CHANGED' && tag !== 'ADDED_AND_TIME_CHANGED') return null;
+  const routeVersion = Number(record.changeVersion ?? record.introducedRouteVersion ?? record.timeChangedRouteVersion ?? 0);
+  return {
+    tag,
+    routeVersion: Number.isSafeInteger(routeVersion) ? routeVersion : 0,
+    previousStandardMillisecondsPerUnit: Number.isSafeInteger(Number(record.previousStandardMillisecondsPerUnit))
+      ? Number(record.previousStandardMillisecondsPerUnit)
+      : null,
+    currentStandardMillisecondsPerUnit: Number.isSafeInteger(Number(record.standardMillisecondsPerUnit))
+      ? Number(record.standardMillisecondsPerUnit)
+      : null,
+    sourceChangeId: typeof record.sourceChangeId === 'string' ? record.sourceChangeId : null,
+  };
+}
+
+function stepSupplementSnapshot(value: unknown): FieldReportSupplementSnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const obligation = (value as Record<string, unknown>).supplementObligation;
+  if (!obligation || typeof obligation !== 'object') return null;
+  const record = obligation as Record<string, unknown>;
+  const requiredQty = Number(record.requiredQty);
+  const reportedQty = Number(record.reportedQty);
+  const version = Number(record.version);
+  const status = String(record.status || 'ACTIVE');
+  if (!String(record.id || '').trim() || !Number.isSafeInteger(requiredQty) || requiredQty <= 0) return null;
+  if (status !== 'ACTIVE' && status !== 'FULFILLED' && status !== 'CANCELLED') return null;
+  return {
+    id: String(record.id),
+    requiredQty,
+    reportedQty: Number.isSafeInteger(reportedQty) && reportedQty >= 0 ? reportedQty : 0,
+    remainingQty: Math.max(0, Number.isSafeInteger(Number(record.remainingQty)) ? Number(record.remainingQty) : requiredQty - reportedQty),
+    status,
+    version: Number.isSafeInteger(version) && version >= 0 ? version : 0,
+  };
+}
 
 function todayKey(): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -168,6 +228,8 @@ export default function FieldReportMobile({
       processName: step.processName,
       position: step.position,
       sequenceGroup: step.sequenceGroup,
+      executionMode: step.executionMode || 'NORMAL',
+      supplementObligation: step.supplementObligation || null,
       status: step.status,
       unitLabel: step.unitLabel,
       inputQty: payload.ticket.workOrder.targetQty,
@@ -183,6 +245,7 @@ export default function FieldReportMobile({
   const progress = routeSteps.length ? Math.round(completedSteps / routeSteps.length * 100) : 0;
   const selectedStep = payload?.context?.step || null;
   const selectedStepSnapshot = payload?.ticket.route?.steps.find(step => step.id === selectedStep?.id) || null;
+  const selectedSupplement = stepSupplementSnapshot(selectedStepSnapshot);
   const currentEmployeeId = payload?.currentEmployee?.id || '';
   const preferredIds = new Set(payload?.context?.workerPreset?.employees.map(employee => employee.id) || []);
   const selectedEmployees = payload?.context && form
@@ -213,7 +276,7 @@ export default function FieldReportMobile({
       || !Number.isSafeInteger(itemProcessed) || itemProcessed <= 0 || itemProcessed > step.reportableQty
       || !Number.isSafeInteger(itemDefect) || itemDefect < 0 || itemDefect > itemProcessed;
   });
-  const advanceReporting = Boolean(payload?.context && (reportMode === 'batch'
+  const advanceReporting = !selectedSupplement && Boolean(payload?.context && (reportMode === 'batch'
     ? batchItems.some(item => {
         const step = routeSteps.find(candidate => candidate.id === item.stepId);
         return Boolean(step && (step.status !== 'current' || Number(item.processedQty) > step.availableCoverageQty));
@@ -257,6 +320,7 @@ export default function FieldReportMobile({
     const ids = routeSteps.filter(step => {
       if (step.reportableQty <= 0) return false;
       const snapshot = payload?.ticket.route?.steps.find(item => item.id === step.id);
+      if (stepSupplementSnapshot(snapshot)) return false;
       return kind === 'all' || snapshot?.stageGroup === 'backend';
     }).map(step => step.id);
     setSelectedStepIds(ids);
@@ -309,7 +373,13 @@ export default function FieldReportMobile({
             defectQty,
             defectDisposition: defectQty > 0 ? form.defectDisposition : null,
           };
-      const response = await fetch(`/api/field-report/tickets/${encodeURIComponent(code)}/completions`, {
+      const supplement = reportMode === 'single'
+        ? stepSupplementSnapshot(payload.ticket.route?.steps.find(step => step.id === payload.context!.step.id))
+        : null;
+      const endpoint = supplement
+        ? `/api/field-report/tickets/${encodeURIComponent(code)}/supplement-obligations/${encodeURIComponent(supplement.id)}/completions`
+        : `/api/field-report/tickets/${encodeURIComponent(code)}/completions`;
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -321,6 +391,7 @@ export default function FieldReportMobile({
           remark: form.remark,
           idempotencyKey,
           expectedRouteVersion: payload.context.routeVersion,
+          expectedVersion: supplement?.version,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -341,7 +412,9 @@ export default function FieldReportMobile({
           ? `所选工序已全部登记，另有 ${quantity(pending)} ${payload.ticket.workOrder.unitLabel}待前序自动覆盖；已为 ${employeeCount} 人自动记工。`
           : reportMode === 'batch'
             ? `${completionCount} 道工序已分别落账并正常流转；已为 ${employeeCount} 人自动记工。`
-            : `${quantity(goodQty)} ${payload.ticket.workOrder.unitLabel}已正常流转；已为 ${employeeCount} 人自动记工。`,
+            : supplement
+              ? `补充工序已报 ${quantity(processedQty)} ${payload.ticket.workOrder.unitLabel}，已为 ${employeeCount} 人自动记工；已报后序不回退。`
+              : `${quantity(goodQty)} ${payload.ticket.workOrder.unitLabel}已正常流转；已为 ${employeeCount} 人自动记工。`,
       });
       await load(undefined, true);
     } catch (reason) {
@@ -384,9 +457,19 @@ export default function FieldReportMobile({
       <div className="field-report-progress"><span><b>工序进度</b><em>{completedSteps}/{routeSteps.length || ticket.route?.steps.length || 0}</em></span><i><b style={{ width: `${progress}%` }} /></i></div>
     </section>
 
-    {ticket.route?.paperOutdated && <section className="field-report-alert warning"><AlertTriangle size={20} /><span><strong>纸面工艺版本已过期</strong><small>纸面 V{ticket.route.printedVersion}，系统最新 V{ticket.route.version}；请按手机端工序报工并通知主管重新打印。</small></span></section>}
+    {ticket.route?.paperOutdated && <section className="field-report-alert warning"><AlertTriangle size={20} /><span><strong>纸面工艺版本已过期</strong><small>纸面 V{ticket.route.printedVersion}，系统最新 V{ticket.route.version}；原二维码继续有效，无需重印，请以手机端最新工序为准。</small></span></section>}
     {!ticket.access.canReport && <section className={`field-report-alert state-${ticket.access.state.toLowerCase()}`}><ShieldCheck size={20} /><span><strong>{ticket.access.state === 'COMPLETED' ? '工单已完成' : '当前仅可查看'}</strong><small>{ticket.access.message}</small></span></section>}
     {ticket.access.canReport && !payload.currentEmployee && <section className="field-report-alert danger"><AlertTriangle size={20} /><span><strong>账号未关联生产员工</strong><small>请联系管理员把当前登录账号绑定到在职生产员工档案后再报工。</small></span></section>}
+
+    {ticket.route && <FieldReportRouteChangeProposal
+      code={code}
+      routeVersion={ticket.route.version}
+      steps={ticket.route.steps}
+      targetQty={ticket.workOrder.targetQty}
+      unitLabel={ticket.workOrder.unitLabel}
+      employeeAvailable={Boolean(payload.currentEmployee)}
+      onSubmitted={() => void load(undefined, true)}
+    />}
 
     <section className="field-report-route">
       <header><span><small>工艺流程</small><strong>{ticket.route?.name || '工艺路线待确认'}</strong></span><div><button className={batchSelecting ? 'active' : ''} type="button" disabled={!ticket.access.canReport || !payload.currentEmployee} onClick={() => { setBatchSelecting(value => !value); setSelectedStepIds([]); }}><ListChecks size={17} />{batchSelecting ? '退出批量' : '批量报工'}</button><button type="button" disabled={refreshing} onClick={() => void load(undefined, true)}><RefreshCw className={refreshing ? 'spin' : ''} size={17} />刷新</button></div></header>
@@ -394,16 +477,21 @@ export default function FieldReportMobile({
       <div className="field-report-step-list">
         {routeSteps.map((step, index) => {
           const snapshot = ticket.route?.steps.find(item => item.id === step.id);
+          const changeNotice = stepChangeSnapshot(snapshot);
+          const supplement = stepSupplementSnapshot(snapshot);
+          const changeLabel = processRouteStepChangeLabel(changeNotice);
           const state = stateLabel(step, ticket.workOrder.targetQty);
           const isLast = index === routeSteps.length - 1;
           return <article className={`field-report-step tone-${state.tone}`} key={step.id}>
             <div className="field-report-step-rail"><b>{state.tone === 'completed' ? <Check size={17} /> : step.position}</b>{!isLast && <i />}</div>
             <div className="field-report-step-card">
-              <header><span><small>第 {step.position} 道 · 顺序组 {step.sequenceGroup}</small><strong>{step.processName}</strong></span><em>{state.label}</em></header>
-              <div className="field-report-step-facts"><span><Clock3 size={14} />{standardTime(snapshot?.standardMillisecondsPerUnit || null, snapshot?.timeBasis || null, snapshot?.unitsPerProduct || 1)}</span><span>{quantity(step.reportedQty)} / {quantity(ticket.workOrder.targetQty)} {step.unitLabel || ticket.workOrder.unitLabel}</span></div>
-              <div className="field-report-step-meter"><i style={{ width: `${Math.min(100, ticket.workOrder.targetQty ? step.reportedQty / ticket.workOrder.targetQty * 100 : 0)}%` }} /></div>
+              <header><span><small>第 {step.position} 道 · 顺序组 {step.sequenceGroup}</small><strong>{step.processName}{changeLabel && <i className="field-report-change-badge">{changeLabel}</i>}</strong></span><em>{state.label}</em></header>
+              <div className="field-report-step-facts"><span><Clock3 size={14} />{standardTime(snapshot?.standardMillisecondsPerUnit || null, snapshot?.timeBasis || null, snapshot?.unitsPerProduct || 1)}</span><span>{quantity(supplement?.reportedQty ?? step.reportedQty)} / {quantity(supplement?.requiredQty ?? ticket.workOrder.targetQty)} {step.unitLabel || ticket.workOrder.unitLabel}</span></div>
+              {Boolean(changeNotice?.previousStandardMillisecondsPerUnit) && (changeNotice?.tag === 'TIME_CHANGED' || changeNotice?.tag === 'ADDED_AND_TIME_CHANGED') && <small className="field-report-change-time-note">原标准 {secondsFromMilliseconds(changeNotice.previousStandardMillisecondsPerUnit)} 秒 → 现标准 {secondsFromMilliseconds(snapshot?.standardMillisecondsPerUnit)} 秒</small>}
+              {supplement && <p className="field-report-supplement-note"><GitPullRequestArrow size={14} />后序已报工，本工序独立补报，完成后不重复向后序转数量</p>}
+              <div className="field-report-step-meter"><i style={{ width: `${Math.min(100, (supplement?.requiredQty ?? ticket.workOrder.targetQty) ? (supplement?.reportedQty ?? step.reportedQty) / (supplement?.requiredQty ?? ticket.workOrder.targetQty) * 100 : 0)}%` }} /></div>
               {step.pendingCoverageQty > 0 && <p><AlertTriangle size={14} />已提前报工 {quantity(step.pendingCoverageQty)}，等待前序数量补齐后自动覆盖</p>}
-              <button className={batchSelecting && selectedStepIds.includes(step.id) ? 'batch-selected' : ''} type="button" disabled={!ticket.access.canReport || !payload.currentEmployee || step.reportableQty <= 0} onClick={() => batchSelecting ? toggleBatchStep(step.id) : void openReport(step.id)}>{step.reportableQty <= 0 ? <><CheckCircle2 size={17} />该工序已报完成</> : batchSelecting ? selectedStepIds.includes(step.id) ? <><Check size={17} />已加入批量报工</> : <><CircleDot size={17} />加入本次报工</> : <><CircleDot size={17} />选择此工序报工<ArrowRight size={17} /></>}</button>
+              <button className={batchSelecting && selectedStepIds.includes(step.id) ? 'batch-selected' : ''} type="button" disabled={!ticket.access.canReport || !payload.currentEmployee || step.reportableQty <= 0 || (batchSelecting && Boolean(supplement))} onClick={() => batchSelecting ? toggleBatchStep(step.id) : void openReport(step.id)}>{step.reportableQty <= 0 ? <><CheckCircle2 size={17} />该工序已报完成</> : batchSelecting && supplement ? <><GitPullRequestArrow size={17} />补充工序请单独报工</> : batchSelecting ? selectedStepIds.includes(step.id) ? <><Check size={17} />已加入批量报工</> : <><CircleDot size={17} />加入本次报工</> : <><CircleDot size={17} />选择此工序报工<ArrowRight size={17} /></>}</button>
             </div>
           </article>;
         })}
@@ -424,6 +512,7 @@ export default function FieldReportMobile({
           <section className="field-report-date-card"><CalendarDays size={24} /><label><span>生产日期</span><input type="date" value={form.workDate} disabled={saving} onChange={event => setForm({ ...form, workDate: event.target.value })} /></label><strong>请务必核对</strong></section>
 
           {advanceReporting && <section className="field-report-advance"><AlertTriangle size={21} /><span><strong>本次属于提前报工</strong><small>允许先报当前工序，数量不会变成负数；前序补齐后系统自动覆盖并恢复正常流转。</small></span></section>}
+          {selectedSupplement && <section className="field-report-advance supplement"><GitPullRequestArrow size={21} /><span><strong>NEW · 补充工序报工</strong><small>本次只记录该新增工序的数量与员工工时，原后序已报完成保持不变。</small></span></section>}
 
           {reportMode === 'batch' ? <>
             <section className="field-report-quantity-card field-report-batch-quantity">
@@ -441,12 +530,12 @@ export default function FieldReportMobile({
               </article>)}
             </section>
           </> : <section className="field-report-quantity-card">
-            <header><span><strong>本次报工数量</strong><small>剩余可报 {quantity(payload.context.reportableQty)} {ticket.workOrder.unitLabel}</small></span><em>已到料可覆盖 {quantity(payload.context.remainingInputQty)}</em></header>
-            <div><label><span>实际报工</span><div><input inputMode="numeric" pattern="[0-9]*" min="1" max={payload.context.reportableQty} value={form.processedQty} disabled={saving} onChange={event => setForm({ ...form, processedQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label><label><span>不良品</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={processedQty} value={form.defectQty} disabled={saving} onChange={event => setForm({ ...form, defectQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label></div>
-            <footer><span>本次良品</span><strong>{quantity(goodQty)} <small>{ticket.workOrder.unitLabel}</small></strong></footer>
+            <header><span><strong>本次报工数量</strong><small>剩余可报 {quantity(payload.context.reportableQty)} {ticket.workOrder.unitLabel}</small></span><em>{selectedSupplement ? `补充义务剩余 ${quantity(payload.context.reportableQty)}` : `已到料可覆盖 ${quantity(payload.context.remainingInputQty)}`}</em></header>
+            <div><label><span>实际报工</span><div><input inputMode="numeric" pattern="[0-9]*" min="1" max={payload.context.reportableQty} value={form.processedQty} disabled={saving} onChange={event => setForm({ ...form, processedQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label>{!selectedSupplement && <label><span>不良品</span><div><input inputMode="numeric" pattern="[0-9]*" min="0" max={processedQty} value={form.defectQty} disabled={saving} onChange={event => setForm({ ...form, defectQty: event.target.value })} /><em>{ticket.workOrder.unitLabel}</em></div></label>}</div>
+            <footer><span>{selectedSupplement ? '本次补充报工' : '本次良品'}</span><strong>{quantity(selectedSupplement ? processedQty : goodQty)} <small>{ticket.workOrder.unitLabel}</small></strong></footer>
           </section>}
 
-          {reportMode === 'single' && defectQty > 0 && <fieldset className="field-report-defect"><legend>不良品处理方式</legend>{([
+          {reportMode === 'single' && !selectedSupplement && defectQty > 0 && <fieldset className="field-report-defect"><legend>不良品处理方式</legend>{([
             ['rework', '返工', '从当前工序重新处理'],
             ...(!ticket.workOrder.parentWorkOrderId ? [['scrap_replenish', '报废补产', '创建补产分支工单'] as const] : []),
             ['quality_pending', '质量待判', '暂停并等待质量确认'],

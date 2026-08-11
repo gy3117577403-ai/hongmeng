@@ -16,6 +16,7 @@ type ProductTimeTaskSyncInput = {
   profileVersion: number;
   actorId: string;
   routeId?: string;
+  excludeRouteId?: string;
   reason?: string;
 };
 
@@ -39,6 +40,7 @@ export async function syncUnfinishedDailyTasksFromPublishedProductTime(
     where: {
       workOrder: { drawingLibraryItemId: input.drawingLibraryItemId },
       ...(input.routeId ? { routeId: input.routeId } : {}),
+      ...(input.excludeRouteId ? { routeId: { not: input.excludeRouteId } } : {}),
       status: { notIn: mutableTaskStatuses },
     },
     select: {

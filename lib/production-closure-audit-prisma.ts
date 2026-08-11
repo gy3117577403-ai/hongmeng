@@ -46,6 +46,7 @@ export async function loadProductionClosureAuditSnapshot(
                 processName: true,
                 position: true,
                 sequenceGroup: true,
+                executionMode: true,
                 status: true,
                 inputQty: true,
                 processedQty: true,

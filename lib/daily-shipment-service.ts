@@ -74,6 +74,11 @@ const workOrderSelect = {
     select: {
       id: true,
       status: true,
+      supplementObligations: {
+        where: { status: 'ACTIVE' },
+        select: { id: true },
+        take: 1,
+      },
       steps: { select: routeStepSelect, orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }] },
     },
   },
@@ -217,7 +222,12 @@ function completedGoodQuantity(workOrder: {
   productionTargetQty: number | null;
   completedQty: string | null;
   stage: string;
+  processRoute?: { supplementObligations?: Array<{ id: string }> } | null;
 }): number {
+  // A late-added mandatory operation deliberately leaves completedQty intact
+  // for audit. It must nevertheless block physical shipment until its
+  // supplemental obligation has been reported in full.
+  if (workOrder.processRoute?.supplementObligations?.length) return 0;
   const value = getProductionQuantitySummary(workOrder).completedQty;
   return Math.max(0, Math.floor(value ?? 0));
 }

@@ -1,5 +1,5 @@
 FROM node:20-alpine AS base
-ARG APP_VERSION=v1.29.1
+ARG APP_VERSION=v1.30.0
 ARG APP_REVISION=local
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 APP_VERSION=$APP_VERSION APP_REVISION=$APP_REVISION
@@ -14,7 +14,7 @@ RUN npm run build
 RUN cp -r .next/static .next/standalone/.next/static && if [ -d public ]; then cp -r public .next/standalone/public; fi
 
 FROM base AS runner
-ENV NODE_ENV=production PORT=3000 DAILY_PLAN_ENABLED=true
+ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 DAILY_PLAN_ENABLED=true
 COPY --from=builder /app/.next/standalone ./.next/standalone
 COPY --from=builder /app/.next/static ./.next/standalone/.next/static
 COPY --from=builder /app/public ./.next/standalone/public

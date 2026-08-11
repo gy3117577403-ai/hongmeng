@@ -27,6 +27,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { ProcessRouteChangeReviewPanel } from '@/components/process-route-changes/ProcessRouteChangeReviewPanel';
+import { ProcessRouteChangeInbox } from '@/components/process-route-changes/ProcessRouteChangeInbox';
 import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import type {
   CurrentUserDTO,
@@ -339,6 +341,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
       || null;
   }, [selected, selectedCurrentStep, selectedProcessStepKey]);
   const canCorrectProduction = user.access.capabilities.includes('PRODUCTION:UPDATE')
+    || user.access.capabilities.includes('SYSTEM_CONFIGURATION:MANAGE');
+  const canReviewProcessChanges = user.access.capabilities.includes('PROCESS:UPDATE')
     || user.access.capabilities.includes('SYSTEM_CONFIGURATION:MANAGE');
   const activityVersions = useMemo(() => {
     if (!selected) return { current: [], historical: [] };
@@ -713,6 +717,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             ))}
           </div>
           <div className="workflow-command-actions">
+            {canReviewProcessChanges && <ProcessRouteChangeInbox />}
             {deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回生产执行</a>}
             {deepLink.fromPlanning && !deepLink.fromProduction && <a href={deepLink.returnTo}><ArrowLeft size={14} />返回计划中心</a>}
             <button type="button" disabled={loading} onClick={() => { void load(); }}>
@@ -859,7 +864,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                         <span className={`stage-${step.stageGroup || 'frontend'}`}>{step.stageGroup ? stageLabels[step.stageGroup] : '工序'}</span>
                                         <em>{processStepStateLabel(step)}</em>
                                       </header>
-                                      <strong>{step.label}</strong>
+                                      <strong>{step.label}{step.changeTag && step.changeTag !== 'NONE' && <b className="workflow-step-new-badge" title={step.changeTag === 'TIME_CHANGED' ? '本路线版本工时已变更' : '本路线版本新增工序'}>{step.changeTag === 'TIME_CHANGED' ? '工时 NEW' : 'NEW'}</b>}</strong>
                                       <div className="workflow-flow-node-main">
                                         <span>{processed.toLocaleString()} / {input.toLocaleString()} {unitLabel}</span>
                                         <b>{progress}%</b>
@@ -903,6 +908,19 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                     </div>
                     {!canCorrectProduction && <p className="workflow-process-inspector-permission">完工纠错仅由生产主管或管理员执行，其他人员可在问题中心提交报工错误。</p>}
                   </section>}
+                  {selected.processRouteId && selected.routeVersion !== null && selected.routeVersion !== undefined && <ProcessRouteChangeReviewPanel
+                    routeId={selected.processRouteId}
+                    routeVersion={selected.routeVersion}
+                    steps={selected.steps.map((step, index) => ({
+                      id: step.key,
+                      processName: step.label,
+                      position: index + 1,
+                      sequenceGroup: step.sequenceGroup ?? index + 1,
+                      standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
+                    }))}
+                    canReview={canReviewProcessChanges}
+                    onActivated={() => { void load(); }}
+                  />}
                 </> : selected.entityType === 'production' ? <section className={`workflow-route-missing ${selected.processStatus === 'closed' ? 'completed' : ''}`}>
                   <span>{selected.processStatus === 'closed' ? <CheckCircle2 size={24} /> : <AlertTriangle size={24} />}</span>
                   <div>

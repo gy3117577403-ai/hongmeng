@@ -23,6 +23,7 @@ import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { productionCarryoverDayWindow } from '@/lib/production-carryovers';
+import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
 import type {
   ChangeStatus,
   ChangeType,
@@ -247,6 +248,8 @@ type WorkflowRouteStepRecord = {
   stageGroup: string;
   unitLabel: string | null;
   standardMillisecondsPerUnit: number | null;
+  executionMode: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+  changeSource: 'EXISTING' | 'NEW';
   inputQty: number;
   processedQty: number;
   goodOutputQty: number;
@@ -293,6 +296,11 @@ type WorkflowRouteStepRecord = {
       employee: { name: string };
     }>;
   }>;
+  supplementObligation: {
+    requiredQty: number;
+    reportedQty: number;
+    status: string;
+  } | null;
 };
 
 type WorkflowRouteRecord = {
@@ -307,6 +315,15 @@ type WorkflowRouteRecord = {
   startedAt: Date | null;
   completedAt: Date | null;
   productTimeProfile: { remark: string | null } | null;
+  processRouteChanges: Array<{
+    id: string;
+    activatedRouteVersion: number | null;
+    diffs: Array<{
+      kind: 'INSERT_STEP' | 'UPDATE_TIME' | 'MOVE_STEP';
+      targetStepId: string | null;
+      beforeData: unknown;
+    }>;
+  }>;
   steps: WorkflowRouteStepRecord[];
 };
 
@@ -327,8 +344,14 @@ type WorkflowPublishedProductTimeProfile = {
 };
 
 function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): WorkflowStepDTO[] {
+  const changeSnapshots = processRouteStepChangeSnapshots(route.steps, route.processRouteChanges);
   return route.steps.map(step => {
-    const reportedGoodQuantity = step.goodOutputQty;
+    const supplement = step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+      ? step.supplementObligation
+      : null;
+    const displayedInputQuantity = supplement?.requiredQty ?? step.inputQty;
+    const displayedProcessedQuantity = supplement?.reportedQty ?? step.processedQty;
+    const reportedGoodQuantity = supplement?.reportedQty ?? step.goodOutputQty;
     const latestExecution = step.executions[0] || null;
     const latestCompletion = step.completions[0] || null;
     const laborClaims = step.processLaborPools
@@ -349,6 +372,7 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
         (first, second) => second.createdAt.getTime() - first.createdAt.getTime(),
       )[0]
       || null;
+    const changeSnapshot = changeSnapshots.get(step.id)!;
     return {
       key: step.id,
       label: step.processName,
@@ -362,12 +386,18 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
       stageGroup: step.stageGroup as ProcessStageGroup,
       unitLabel: step.unitLabel || '件',
       standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
-      inputQuantity: step.inputQty,
-      processedQuantity: step.processedQty,
+      executionMode: step.executionMode,
+      changeSource: step.changeSource,
+      changeTag: changeSnapshot.tag,
+      changeVersion: changeSnapshot.changeVersion,
+      sourceChangeId: changeSnapshot.sourceChangeId,
+      previousStandardMillisecondsPerUnit: changeSnapshot.previousStandardMillisecondsPerUnit,
+      inputQuantity: displayedInputQuantity,
+      processedQuantity: displayedProcessedQuantity,
       reportedGoodQuantity,
       defectQuantity: step.defectOutputQty,
       releasedGoodQuantity: step.releasedGoodQty,
-      remainingProcessQuantity: Math.max(0, step.inputQty - step.processedQty),
+      remainingProcessQuantity: Math.max(0, displayedInputQuantity - displayedProcessedQuantity),
       laborEligibleQuantity,
       laborClaimedQuantity,
       laborRemainingQuantity,
@@ -859,6 +889,22 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 startedAt: true,
                 completedAt: true,
                 productTimeProfile: { select: { remark: true } },
+                processRouteChanges: {
+                  where: {
+                    status: 'ACTIVE',
+                    activatedRouteVersion: { not: null },
+                    diffs: { some: { kind: 'UPDATE_TIME' } },
+                  },
+                  orderBy: [{ activatedRouteVersion: 'desc' }, { activatedAt: 'desc' }],
+                  select: {
+                    id: true,
+                    activatedRouteVersion: true,
+                    diffs: {
+                      where: { kind: 'UPDATE_TIME' },
+                      select: { kind: true, targetStepId: true, beforeData: true },
+                    },
+                  },
+                },
                 steps: {
                   select: {
                     id: true,
@@ -869,6 +915,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     stageGroup: true,
                     unitLabel: true,
                     standardMillisecondsPerUnit: true,
+                    executionMode: true,
+                    changeSource: true,
                     inputQty: true,
                     processedQty: true,
                     goodOutputQty: true,
@@ -879,6 +927,9 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     remark: true,
                     _count: { select: { executions: true, completions: true } },
                     productTimeEntry: { select: { remark: true } },
+                    supplementObligation: {
+                      select: { requiredQty: true, reportedQty: true, status: true },
+                    },
                     executions: {
                       where: {
                         voidedAt: null,
@@ -1015,6 +1066,22 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
             startedAt: true,
             completedAt: true,
             productTimeProfile: { select: { remark: true } },
+            processRouteChanges: {
+              where: {
+                status: 'ACTIVE',
+                activatedRouteVersion: { not: null },
+                diffs: { some: { kind: 'UPDATE_TIME' } },
+              },
+              orderBy: [{ activatedRouteVersion: 'desc' }, { activatedAt: 'desc' }],
+              select: {
+                id: true,
+                activatedRouteVersion: true,
+                diffs: {
+                  where: { kind: 'UPDATE_TIME' },
+                  select: { kind: true, targetStepId: true, beforeData: true },
+                },
+              },
+            },
             steps: {
               select: {
                 id: true,
@@ -1025,6 +1092,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 stageGroup: true,
                 unitLabel: true,
                 standardMillisecondsPerUnit: true,
+                executionMode: true,
+                changeSource: true,
                 inputQty: true,
                 processedQty: true,
                 goodOutputQty: true,
@@ -1035,6 +1104,9 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 remark: true,
                 _count: { select: { executions: true, completions: true } },
                 productTimeEntry: { select: { remark: true } },
+                supplementObligation: {
+                  select: { requiredQty: true, reportedQty: true, status: true },
+                },
                 executions: {
                   where: {
                     voidedAt: null,
