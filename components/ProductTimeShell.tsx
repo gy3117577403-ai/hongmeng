@@ -14,10 +14,13 @@ import {
   FileDown,
   FileText,
   FileSpreadsheet,
+  GripVertical,
   Image as ImageIcon,
   Library,
   Layers3,
+  ListOrdered,
   LoaderCircle,
+  MoveVertical,
   Plus,
   QrCode,
   RefreshCw,
@@ -29,6 +32,22 @@ import {
   Upload,
   X,
 } from 'lucide-react';
+import {
+  closestCenter,
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
@@ -59,6 +78,16 @@ import {
   productTimeDeploymentRouteStatusText,
   productTimeDeploymentStatusText,
 } from '@/lib/product-time-deployment-presenter';
+import {
+  groupKeyForProductTimeEntry,
+  insertProductTimeRouteEntry,
+  moveProductTimeRouteGroupBefore,
+  moveProductTimeRouteGroupByDirection,
+  productTimeRouteGroups,
+  removeProductTimeRouteEntry,
+  reorderProductTimeRouteGroup,
+  type ProductTimeRouteGroup,
+} from '@/lib/product-time-route-editor';
 
 type ProcessDefinition = {
   id: string;
@@ -247,6 +276,77 @@ function statusText(item: ProductTimeListItemDTO): string {
   return '工时待维护';
 }
 
+type StructuralUndo = {
+  entries: EntryDraft[];
+  label: string;
+  dirtyBefore: boolean;
+};
+
+type SortableProductTimeGroupProps = {
+  group: ProductTimeRouteGroup<EntryDraft>;
+  groupIndex: number;
+  groupCount: number;
+  definitions: ProcessDefinition[];
+  onInsertBefore: (group: ProductTimeRouteGroup<EntryDraft>, trigger: HTMLButtonElement) => void;
+  onInsertAfter: (group: ProductTimeRouteGroup<EntryDraft>, trigger: HTMLButtonElement) => void;
+  onMove: (group: ProductTimeRouteGroup<EntryDraft>) => void;
+  onMoveByDirection: (group: ProductTimeRouteGroup<EntryDraft>, direction: -1 | 1) => void;
+};
+
+function SortableProductTimeGroup({
+  group,
+  groupIndex,
+  groupCount,
+  definitions,
+  onInsertBefore,
+  onInsertAfter,
+  onMove,
+  onMoveByDirection,
+}: SortableProductTimeGroupProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: group.key });
+  const processNames = group.entries.map(entry => definitions.find(
+    definition => definition.id === entry.processDefinitionId,
+  )?.name || '工序已停用');
+  const containsBatchTime = group.entries.some(entry => entry.timeBasis === 'per_batch');
+  const range = group.startIndex === group.endIndex
+    ? `第 ${group.startIndex + 1} 道`
+    : `第 ${group.startIndex + 1}–${group.endIndex + 1} 道`;
+
+  return <article
+    ref={setNodeRef}
+    className={isDragging ? 'dragging' : ''}
+    style={{ transform: CSS.Transform.toString(transform), transition }}
+  >
+    <button
+      className="product-time-drag-handle"
+      type="button"
+      aria-label={`拖动${processNames.join('、')}调整顺序`}
+      title="拖动整组调整顺序"
+      {...attributes}
+      {...listeners}
+    ><GripVertical size={18} aria-hidden="true" /></button>
+    <b>{range}</b>
+    <span className="product-time-reorder-names">
+      <strong>{processNames.join(' / ')}</strong>
+      <small>{group.entries.length > 1 ? `并行组 · ${group.entries.length} 道` : '顺序工序'} · {containsBatchTime ? '含按批工时' : duration(draftTotal(group.entries))}</small>
+    </span>
+    <div className="product-time-reorder-actions">
+      <button type="button" disabled={groupIndex === 0} onClick={() => onMoveByDirection(group, -1)}><ArrowUp size={14} aria-hidden="true" />上移</button>
+      <button type="button" disabled={groupIndex === groupCount - 1} onClick={() => onMoveByDirection(group, 1)}><ArrowDown size={14} aria-hidden="true" />下移</button>
+      <button type="button" onClick={event => onInsertBefore(group, event.currentTarget)}>前加</button>
+      <button type="button" onClick={event => onInsertAfter(group, event.currentTarget)}>后加</button>
+      <button type="button" onClick={() => onMove(group)}><MoveVertical size={14} aria-hidden="true" />移至</button>
+    </div>
+  </article>;
+}
+
 export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [items, setItems] = useState<ProductTimeListItemDTO[]>([]);
   const [definitions, setDefinitions] = useState<ProcessDefinition[]>([]);
@@ -282,6 +382,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [libraryKeyword, setLibraryKeyword] = useState('');
   const [libraryStage, setLibraryStage] = useState<'all' | ProcessStageGroup>('all');
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryBeforeGroupKey, setLibraryBeforeGroupKey] = useState<string | null>(null);
+  const [libraryParallelWithPrevious, setLibraryParallelWithPrevious] = useState(false);
+  const [reorderMode, setReorderMode] = useState(false);
+  const [structuralUndo, setStructuralUndo] = useState<StructuralUndo | null>(null);
+  const [moveGroupKey, setMoveGroupKey] = useState<string | null>(null);
+  const [moveBeforeGroupKey, setMoveBeforeGroupKey] = useState<string | null>(null);
   const [newProcessName, setNewProcessName] = useState('');
   const [newProcessStage, setNewProcessStage] = useState<ProcessStageGroup>('backend');
   const [creatingProcess, setCreatingProcess] = useState(false);
@@ -304,6 +410,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [importPreview, setImportPreview] = useState<ProductTimeImportPreview | null>(null);
   const libraryTriggerRef = useRef<HTMLButtonElement>(null);
   const libraryCloseRef = useRef<HTMLButtonElement>(null);
+  const libraryReturnFocusRef = useRef<HTMLElement | null>(null);
   const referenceTriggerRef = useRef<HTMLButtonElement>(null);
   const referenceCloseRef = useRef<HTMLButtonElement>(null);
   const importTriggerRef = useRef<HTMLButtonElement>(null);
@@ -314,6 +421,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const lastExternalRefreshRef = useRef(0);
   const unsavedToastShownRef = useRef(false);
   const completedDeploymentRef = useRef('');
+  const routeSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 7 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
   const { showToast } = useToast();
   useToastBridge(message, setMessage);
   useToastBridge(error, setError, 'error');
@@ -344,6 +455,17 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     [referenceCategoryFilter, referenceFiles],
   );
   const selectedReferenceFile = visibleReferenceFiles.find(file => file.id === referenceFileId) || visibleReferenceFiles[0] || null;
+  const routeSequenceGroups = useMemo(() => productTimeRouteGroups(entries), [entries]);
+  const effectiveLibraryBeforeGroupKey = routeSequenceGroups.some(group => group.key === libraryBeforeGroupKey)
+    ? libraryBeforeGroupKey
+    : null;
+  const libraryTargetGroup = effectiveLibraryBeforeGroupKey
+    ? routeSequenceGroups.find(group => group.key === effectiveLibraryBeforeGroupKey) || null
+    : null;
+  const libraryInsertionIndex = libraryTargetGroup?.startIndex ?? entries.length;
+  const selectedMoveGroup = moveGroupKey
+    ? routeSequenceGroups.find(group => group.key === moveGroupKey) || null
+    : null;
 
   const load = useCallback(async (preferredItemId?: string) => {
     setLoading(true);
@@ -444,6 +566,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     setRemark(activeProfile?.remark || '');
     setCopySourceId('');
     setDirty(false);
+    setReorderMode(false);
+    setStructuralUndo(null);
+    setMoveGroupKey(null);
+    setMoveBeforeGroupKey(null);
+    setLibraryBeforeGroupKey(null);
+    setLibraryParallelWithPrevious(false);
     setQuotationSeconds(seconds(selectedItem?.quotation?.unitMilliseconds));
     setQuotationRemark(selectedItem?.quotation?.remark || '');
     setQuotationSourceType(selectedItem?.quotation?.sourceType || 'manual');
@@ -545,7 +673,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }, [dirty, quotationDirty]);
 
   useEffect(() => {
-    if (!libraryOpen && !importOpen && !referenceOpen && !deploymentOpen) return;
+    if (!libraryOpen && !importOpen && !referenceOpen && !deploymentOpen && !moveGroupKey) return;
 
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -559,7 +687,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     return () => {
       document.body.style.overflow = previousBodyOverflow;
     };
-  }, [deploymentOpen, importOpen, libraryOpen, referenceOpen]);
+  }, [deploymentOpen, importOpen, libraryOpen, moveGroupKey, referenceOpen]);
 
   useEffect(() => {
     function onEscape(event: KeyboardEvent): void {
@@ -578,15 +706,19 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         window.requestAnimationFrame(() => importTriggerRef.current?.focus());
         return;
       }
+      if (moveGroupKey) {
+        setMoveGroupKey(null);
+        return;
+      }
       if (libraryOpen) {
         setLibraryOpen(false);
-        window.requestAnimationFrame(() => libraryTriggerRef.current?.focus());
+        window.requestAnimationFrame(() => (libraryReturnFocusRef.current || libraryTriggerRef.current)?.focus());
         return;
       }
     }
     window.addEventListener('keydown', onEscape);
     return () => window.removeEventListener('keydown', onEscape);
-  }, [deploymentOpen, importOpen, libraryOpen, referenceOpen]);
+  }, [deploymentOpen, importOpen, libraryOpen, moveGroupKey, referenceOpen]);
 
   useEffect(() => {
     const deploymentId = deployment?.id;
@@ -665,6 +797,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     setRemark(activeProfile?.remark || '');
     setCopySourceId('');
     setDirty(false);
+    setReorderMode(false);
+    setStructuralUndo(null);
+    setMoveGroupKey(null);
+    setMoveBeforeGroupKey(null);
     setQuotationSeconds(seconds(activeQuotation?.unitMilliseconds));
     setQuotationRemark(activeQuotation?.remark || '');
     setQuotationSourceType(activeQuotation?.sourceType || 'manual');
@@ -739,8 +875,51 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     }
   }
 
+  function structuralOrderChanged(current: EntryDraft[], next: EntryDraft[]): boolean {
+    if (current.length !== next.length) return true;
+    return current.some((entry, index) => entry.occurrenceKey !== next[index]?.occurrenceKey
+      || entry.parallelWithPrevious !== next[index]?.parallelWithPrevious);
+  }
+
+  function applyStructuralChange(next: EntryDraft[], label: string): boolean {
+    if (!structuralOrderChanged(entries, next)) return false;
+    setStructuralUndo({
+      entries: entries.map(entry => ({ ...entry })),
+      label,
+      dirtyBefore: dirty,
+    });
+    setEntries(next);
+    setDirty(true);
+    setMessage(label);
+    return true;
+  }
+
+  function openProcessLibrary(
+    beforeGroupKey: string | null,
+    parallelWithPrevious: boolean,
+    trigger?: HTMLElement | null,
+  ): void {
+    const target = beforeGroupKey
+      ? routeSequenceGroups.find(group => group.key === beforeGroupKey) || null
+      : null;
+    libraryReturnFocusRef.current = trigger || libraryTriggerRef.current;
+    setLibraryBeforeGroupKey(target?.key || null);
+    setLibraryParallelWithPrevious(Boolean(parallelWithPrevious && (target?.startIndex ?? entries.length) > 0));
+    setLibraryOpen(true);
+  }
+
+  function closeProcessLibrary(): void {
+    setLibraryOpen(false);
+    window.requestAnimationFrame(() => (libraryReturnFocusRef.current || libraryTriggerRef.current)?.focus());
+  }
+
+  function nextGroupKey(group: ProductTimeRouteGroup<EntryDraft>): string | null {
+    const groupIndex = routeSequenceGroups.findIndex(item => item.key === group.key);
+    return routeSequenceGroups[groupIndex + 1]?.key || null;
+  }
+
   function addDefinition(definition: ProcessDefinition): void {
-    setEntries(current => [...current, {
+    const newEntry: EntryDraft = {
       processDefinitionId: definition.id,
       occurrenceKey: crypto.randomUUID(),
       timeBasis: 'per_unit',
@@ -751,35 +930,81 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       parallelWithPrevious: false,
       countsForEfficiency: true,
       remark: '',
-    }]);
-    setDirty(true);
-    setMessage(`${definition.name} 已加入产品工时表`);
+    };
+    const next = insertProductTimeRouteEntry(
+      entries,
+      newEntry,
+      effectiveLibraryBeforeGroupKey,
+      libraryParallelWithPrevious && libraryInsertionIndex > 0,
+    );
+    const insertedIndex = next.findIndex(entry => entry.occurrenceKey === newEntry.occurrenceKey);
+    const placement = next[insertedIndex]?.parallelWithPrevious ? '并入前一工序组' : `插入为第 ${insertedIndex + 1} 道`;
+    applyStructuralChange(next, `${definition.name} 已${placement}`);
   }
 
   function updateEntry(index: number, patch: Partial<EntryDraft>): void {
-    setEntries(current => current.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...patch } : entry));
+    const next = entries.map((entry, entryIndex) => entryIndex === index ? { ...entry, ...patch } : entry);
+    if (Object.prototype.hasOwnProperty.call(patch, 'parallelWithPrevious')) {
+      applyStructuralChange(next, patch.parallelWithPrevious ? '已并入上一工序组' : '已改为独立顺序工序');
+      return;
+    }
+    setStructuralUndo(null);
+    setEntries(next);
     setDirty(true);
   }
 
   function moveEntry(index: number, direction: -1 | 1): void {
-    const nextIndex = index + direction;
-    if (nextIndex < 0 || nextIndex >= entries.length) return;
-    setEntries(current => {
-      const next = [...current];
-      [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
-      next[0] = { ...next[0], parallelWithPrevious: false };
-      return next;
-    });
-    setDirty(true);
+    const entry = entries[index];
+    if (!entry) return;
+    const next = moveProductTimeRouteGroupByDirection(entries, entry.occurrenceKey, direction);
+    const definition = definitions.find(item => item.id === entry.processDefinitionId);
+    applyStructuralChange(next, `${definition?.name || '工序组'}已${direction < 0 ? '上移' : '下移'}`);
   }
 
   function removeEntry(index: number): void {
-    setEntries(current => {
-      const next = current.filter((_entry, entryIndex) => entryIndex !== index);
-      if (next.length) next[0] = { ...next[0], parallelWithPrevious: false };
-      return next;
-    });
-    setDirty(true);
+    const entry = entries[index];
+    if (!entry) return;
+    const definition = definitions.find(item => item.id === entry.processDefinitionId);
+    applyStructuralChange(
+      removeProductTimeRouteEntry(entries, entry.occurrenceKey),
+      `${definition?.name || '工序'}已从当前草稿移除`,
+    );
+  }
+
+  function openMoveDialog(group: ProductTimeRouteGroup<EntryDraft>): void {
+    setMoveGroupKey(group.key);
+    setMoveBeforeGroupKey(nextGroupKey(group));
+  }
+
+  function confirmMoveGroup(): void {
+    if (!selectedMoveGroup) return;
+    const processNames = selectedMoveGroup.entries.map(entry => definitions.find(
+      definition => definition.id === entry.processDefinitionId,
+    )?.name || '工序');
+    const changed = applyStructuralChange(
+      moveProductTimeRouteGroupBefore(entries, selectedMoveGroup.key, moveBeforeGroupKey),
+      `${processNames.join(' / ')}已移动到指定位置`,
+    );
+    setMoveGroupKey(null);
+    if (!changed) setMessage('工序位置没有变化');
+  }
+
+  function handleRouteDragEnd(event: DragEndEvent): void {
+    const overKey = event.over?.id ? String(event.over.id) : '';
+    const activeKey = String(event.active.id);
+    if (!overKey || activeKey === overKey) return;
+    applyStructuralChange(
+      reorderProductTimeRouteGroup(entries, activeKey, overKey),
+      '已拖动调整工序顺序',
+    );
+  }
+
+  function undoStructuralChange(): void {
+    if (!structuralUndo) return;
+    setEntries(structuralUndo.entries.map(entry => ({ ...entry })));
+    setDirty(structuralUndo.dirtyBefore);
+    setMessage(`已撤销：${structuralUndo.label}`);
+    setStructuralUndo(null);
   }
 
   async function copyProfile(): Promise<void> {
@@ -1211,7 +1436,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 </div>
                 <div>
                   <button ref={referenceTriggerRef} className="hm-workbench-button" type="button" title="临时查看图纸或作业指导书" aria-haspopup="dialog" aria-expanded={referenceOpen} onClick={openReferencePreview}><BookOpenText size={15} aria-hidden="true" />查看资料</button>
-                  <button ref={libraryTriggerRef} className="hm-workbench-button primary" type="button" aria-expanded={libraryOpen} aria-controls="product-process-library" onClick={() => setLibraryOpen(true)}><Plus size={15} aria-hidden="true" />添加工序</button>
+                  <button className={`hm-workbench-button${reorderMode ? ' active' : ''}`} type="button" disabled={entries.length < 2} aria-pressed={reorderMode} onClick={() => setReorderMode(current => !current)}><ListOrdered size={15} aria-hidden="true" />{reorderMode ? '完成排序' : '调整顺序'}</button>
+                  <button ref={libraryTriggerRef} className="hm-workbench-button primary" type="button" aria-expanded={libraryOpen} aria-controls="product-process-library" onClick={event => openProcessLibrary(null, false, event.currentTarget)}><Plus size={15} aria-hidden="true" />添加工序</button>
                 </div>
               </header>
 
@@ -1246,39 +1472,68 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 </div>}
               </div>
 
-              <div className="product-time-entry-list hm-scroll-region" tabIndex={0} aria-label={`当前产品工序路线，共 ${entries.length} 道工序`}>
-                {entries.map((entry, index) => {
-                  const definition = definitions.find(item => item.id === entry.processDefinitionId);
-                  const invalid = invalidEntry(entry);
-                  return <article className={invalid ? 'invalid' : ''} key={entry.occurrenceKey}>
-                    <div className="product-time-process-name">
-                      <b>{String(index + 1).padStart(2, '0')}</b>
-                      <span><strong>{definition?.name || '工序已停用'}</strong><small>{definition ? stageText[definition.stageGroup] : '历史工序'}</small></span>
-                    </div>
-                    <div className="product-time-standard-editor">
-                      <label><span>工时口径</span><select value={entry.timeBasis} onChange={event => {
-                        const timeBasis = event.target.value as ProcessTimeBasis;
-                        updateEntry(index, { timeBasis });
-                      }}><option value="per_unit">按件 / 按套</option><option value="per_batch">按整批</option></select></label>
-                      <label><span>{entry.timeBasis === 'per_batch' ? '整批标准时间（秒）' : '单次标准时间（秒）'}</span><input inputMode="decimal" aria-invalid={invalid} value={entry.unitSeconds} onChange={event => updateEntry(index, { unitSeconds: event.target.value })} placeholder="输入正数" /></label>
-                      <label><span>{entry.timeBasis === 'per_batch' ? '整批计次' : '每套工序次数'}</span><input inputMode="numeric" disabled={entry.timeBasis === 'per_batch'} value={entry.timeBasis === 'per_batch' ? '1' : entry.occurrences} onChange={event => updateEntry(index, { occurrences: event.target.value })} /></label>
-                      <label><span>准备时间（秒）</span><input inputMode="decimal" value={entry.setupSeconds} onChange={event => updateEntry(index, { setupSeconds: event.target.value })} /></label>
-                      <label><span>产品数量单位</span><input maxLength={20} value={entry.unitLabel} onChange={event => updateEntry(index, { unitLabel: event.target.value })} placeholder="套" /></label>
-                      {invalid && <small>标准时间须大于 0；次数须为正整数；准备时间不能小于 0，单项均不超过 24 小时。</small>}
-                    </div>
-                    <div className="product-time-process-options">
-                      <label><input type="checkbox" disabled={index === 0} checked={entry.parallelWithPrevious} onChange={event => updateEntry(index, { parallelWithPrevious: event.target.checked })} /><span>{index === 0 ? '首道工序' : '与上一道并行'}</span></label>
-                      <label><input type="checkbox" checked={entry.countsForEfficiency} onChange={event => updateEntry(index, { countsForEfficiency: event.target.checked })} /><span>计入员工达成率</span></label>
-                    </div>
-                    <input className="product-time-row-remark" value={entry.remark} onChange={event => updateEntry(index, { remark: event.target.value })} placeholder="工序说明，可选" />
-                    <div className="product-time-row-actions">
-                      <button type="button" title="上移" aria-label={`上移${definition?.name || '工序'}`} disabled={index === 0} onClick={() => moveEntry(index, -1)}><ArrowUp size={15} /></button>
-                      <button type="button" title="下移" aria-label={`下移${definition?.name || '工序'}`} disabled={index === entries.length - 1} onClick={() => moveEntry(index, 1)}><ArrowDown size={15} /></button>
-                      <button className="danger" type="button" title="移除" aria-label={`移除${definition?.name || '工序'}`} onClick={() => removeEntry(index)}><Trash2 size={15} /></button>
-                    </div>
-                  </article>;
-                })}
-                {!entries.length && <div className="product-time-empty large"><Library aria-hidden="true" /><strong>这款产品还没有工序路线</strong><span>从共享工序库添加实际参与的工序。未添加的工序视为该产品不参与，不会进入生产执行。</span><button className="hm-workbench-button primary" type="button" onClick={() => setLibraryOpen(true)}>从工序库添加</button></div>}
+              <div className={`product-time-route-editor${reorderMode ? ' reorder' : ''}`}>
+                {reorderMode && <div className="product-time-reorder-toolbar">
+                  <span><strong>快速调整顺序</strong><small>拖动或点“移至”一次到位；并行工序会作为整组移动。</small></span>
+                  <button type="button" disabled={!structuralUndo} onClick={undoStructuralChange}><RotateCcw size={14} aria-hidden="true" />撤销上一步</button>
+                </div>}
+                <div className={`product-time-entry-list hm-scroll-region${reorderMode ? ' product-time-reorder-list' : ''}`} tabIndex={0} aria-label={`当前产品工序路线，共 ${entries.length} 道工序`}>
+                  {reorderMode ? <DndContext sensors={routeSensors} collisionDetection={closestCenter} onDragEnd={handleRouteDragEnd}>
+                    <SortableContext items={routeSequenceGroups.map(group => group.key)} strategy={verticalListSortingStrategy}>
+                      {routeSequenceGroups.map((group, groupIndex) => <SortableProductTimeGroup
+                        key={group.key}
+                        group={group}
+                        groupIndex={groupIndex}
+                        groupCount={routeSequenceGroups.length}
+                        definitions={definitions}
+                        onInsertBefore={(target, trigger) => openProcessLibrary(target.key, false, trigger)}
+                        onInsertAfter={(target, trigger) => openProcessLibrary(nextGroupKey(target), false, trigger)}
+                        onMove={openMoveDialog}
+                        onMoveByDirection={(target, direction) => {
+                          const next = moveProductTimeRouteGroupByDirection(entries, target.key, direction);
+                          applyStructuralChange(next, `工序组已${direction < 0 ? '上移' : '下移'}`);
+                        }}
+                      />)}
+                    </SortableContext>
+                  </DndContext> : entries.map((entry, index) => {
+                    const definition = definitions.find(item => item.id === entry.processDefinitionId);
+                    const invalid = invalidEntry(entry);
+                    const groupKey = groupKeyForProductTimeEntry(entries, entry.occurrenceKey);
+                    const groupIndex = routeSequenceGroups.findIndex(group => group.key === groupKey);
+                    const group = routeSequenceGroups[groupIndex];
+                    return <article className={invalid ? 'invalid' : ''} key={entry.occurrenceKey}>
+                      <div className="product-time-process-name">
+                        <b>{String(index + 1).padStart(2, '0')}</b>
+                        <span><strong>{definition?.name || '工序已停用'}</strong><small>{definition ? stageText[definition.stageGroup] : '历史工序'}</small></span>
+                      </div>
+                      <div className="product-time-standard-editor">
+                        <label><span>工时口径</span><select value={entry.timeBasis} onChange={event => {
+                          const timeBasis = event.target.value as ProcessTimeBasis;
+                          updateEntry(index, { timeBasis });
+                        }}><option value="per_unit">按件 / 按套</option><option value="per_batch">按整批</option></select></label>
+                        <label><span>{entry.timeBasis === 'per_batch' ? '整批标准时间（秒）' : '单次标准时间（秒）'}</span><input inputMode="decimal" aria-invalid={invalid} value={entry.unitSeconds} onChange={event => updateEntry(index, { unitSeconds: event.target.value })} placeholder="输入正数" /></label>
+                        <label><span>{entry.timeBasis === 'per_batch' ? '整批计次' : '每套工序次数'}</span><input inputMode="numeric" disabled={entry.timeBasis === 'per_batch'} value={entry.timeBasis === 'per_batch' ? '1' : entry.occurrences} onChange={event => updateEntry(index, { occurrences: event.target.value })} /></label>
+                        <label><span>准备时间（秒）</span><input inputMode="decimal" value={entry.setupSeconds} onChange={event => updateEntry(index, { setupSeconds: event.target.value })} /></label>
+                        <label><span>产品数量单位</span><input maxLength={20} value={entry.unitLabel} onChange={event => updateEntry(index, { unitLabel: event.target.value })} placeholder="套" /></label>
+                        {invalid && <small>标准时间须大于 0；次数须为正整数；准备时间不能小于 0，单项均不超过 24 小时。</small>}
+                      </div>
+                      <div className="product-time-process-options">
+                        <label><input type="checkbox" disabled={index === 0} checked={entry.parallelWithPrevious} onChange={event => updateEntry(index, { parallelWithPrevious: event.target.checked })} /><span>{index === 0 ? '首道工序' : '与上一道并行'}</span></label>
+                        <label><input type="checkbox" checked={entry.countsForEfficiency} onChange={event => updateEntry(index, { countsForEfficiency: event.target.checked })} /><span>计入员工达成率</span></label>
+                      </div>
+                      <input className="product-time-row-remark" value={entry.remark} onChange={event => updateEntry(index, { remark: event.target.value })} placeholder="工序说明，可选" />
+                      <div className="product-time-row-actions">
+                        <button type="button" title="整组上移" aria-label={`上移${definition?.name || '工序'}所在工序组`} disabled={groupIndex <= 0} onClick={() => moveEntry(index, -1)}><ArrowUp size={15} /></button>
+                        <button type="button" title="整组下移" aria-label={`下移${definition?.name || '工序'}所在工序组`} disabled={groupIndex < 0 || groupIndex === routeSequenceGroups.length - 1} onClick={() => moveEntry(index, 1)}><ArrowDown size={15} /></button>
+                        <button className="text-action" type="button" disabled={!group} onClick={event => group && openProcessLibrary(group.key, false, event.currentTarget)}>前加</button>
+                        <button className="text-action" type="button" disabled={!group} onClick={event => group && openProcessLibrary(nextGroupKey(group), false, event.currentTarget)}>后加</button>
+                        <button className="text-action" type="button" disabled={!group} onClick={() => group && openMoveDialog(group)}>移至</button>
+                        <button className="danger" type="button" title="移除" aria-label={`移除${definition?.name || '工序'}`} onClick={() => removeEntry(index)}><Trash2 size={15} /></button>
+                      </div>
+                    </article>;
+                  })}
+                  {!entries.length && <div className="product-time-empty large"><Library aria-hidden="true" /><strong>这款产品还没有工序路线</strong><span>从共享工序库添加实际参与的工序。未添加的工序视为该产品不参与，不会进入生产执行。</span><button className="hm-workbench-button primary" type="button" onClick={event => openProcessLibrary(null, false, event.currentTarget)}>从工序库添加</button></div>}
+                </div>
               </div>
 
               <label className="product-time-remark"><span>版本说明</span><textarea value={remark} onChange={event => { setRemark(event.target.value); setDirty(true); }} placeholder="记录测定依据、特殊设备或本次调整原因" /></label>
@@ -1342,21 +1597,52 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
           </aside>
         </section>
 
-        {libraryOpen && <button className="product-time-library-scrim" type="button" aria-label="关闭工序库" onClick={() => {
-          setLibraryOpen(false);
-          window.requestAnimationFrame(() => libraryTriggerRef.current?.focus());
-        }} />}
+        {libraryOpen && <button className="product-time-library-scrim" type="button" aria-label="关闭工序库" onClick={closeProcessLibrary} />}
         {libraryOpen && <aside id="product-process-library" className="product-time-library open" aria-label="共享工序库">
-            <header><span><strong>共享工序库</strong><small>加入当前产品后填写单套该工序合计工时</small></span><button ref={libraryCloseRef} type="button" title="关闭工序库" aria-label="关闭工序库" onClick={() => {
-              setLibraryOpen(false);
-              window.requestAnimationFrame(() => libraryTriggerRef.current?.focus());
-            }}><X size={17} /></button></header>
+            <header><span><strong>共享工序库</strong><small>先选插入位置，再选择或新建工序</small></span><button ref={libraryCloseRef} type="button" title="关闭工序库" aria-label="关闭工序库" onClick={closeProcessLibrary}><X size={17} /></button></header>
+            <section className="product-time-library-target" aria-label="新增工序插入位置">
+              <label><span>插入位置</span><select value={effectiveLibraryBeforeGroupKey || '__end__'} onChange={event => {
+                const value = event.target.value;
+                const nextKey = value === '__end__' ? null : value;
+                const target = nextKey ? routeSequenceGroups.find(group => group.key === nextKey) || null : null;
+                setLibraryBeforeGroupKey(nextKey);
+                if ((target?.startIndex ?? entries.length) === 0) setLibraryParallelWithPrevious(false);
+              }}>
+                {routeSequenceGroups.map(group => {
+                  const names = group.entries.map(entry => definitions.find(definition => definition.id === entry.processDefinitionId)?.name || '历史工序').join(' / ');
+                  return <option key={group.key} value={group.key}>第 {group.startIndex + 1} 道前 · {names}</option>;
+                })}
+                <option value="__end__">路线末尾 · 新第 {entries.length + 1} 道</option>
+              </select></label>
+              <label className="product-time-library-parallel"><input type="checkbox" disabled={libraryInsertionIndex === 0} checked={libraryParallelWithPrevious && libraryInsertionIndex > 0} onChange={event => setLibraryParallelWithPrevious(event.target.checked)} /><span>与前一工序组并行</span></label>
+              <small>将插入为第 {libraryInsertionIndex + 1} 道{libraryParallelWithPrevious && libraryInsertionIndex > 0 ? '，并入前一并行组' : '，后续序号自动顺延'}。</small>
+            </section>
             <label className="product-time-library-search"><Search size={15} aria-hidden="true" /><input value={libraryKeyword} onChange={event => setLibraryKeyword(event.target.value)} placeholder="搜索工序" /></label>
             <div className="product-time-stage-tabs">{(['all', 'frontend', 'backend', 'finish'] as const).map(value => <button key={value} className={libraryStage === value ? 'active' : ''} type="button" onClick={() => setLibraryStage(value)}>{value === 'all' ? '全部' : stageText[value]}</button>)}</div>
             <div className="product-time-definition-list hm-scroll-region" tabIndex={0}>{filteredDefinitions.map(definition => <button key={definition.id} type="button" onClick={() => addDefinition(definition)}><span><strong>{definition.name}</strong><small>{stageText[definition.stageGroup]}</small></span><Plus size={15} aria-hidden="true" /></button>)}{!filteredDefinitions.length && <p>没有可添加的工序</p>}</div>
             <section className="product-time-new-process"><strong>新增共享工序</strong><input value={newProcessName} onChange={event => setNewProcessName(event.target.value)} placeholder="工序名称" maxLength={60} /><select value={newProcessStage} onChange={event => setNewProcessStage(event.target.value as ProcessStageGroup)}><option value="frontend">前端</option><option value="backend">后端</option><option value="finish">完工</option></select><button className="hm-workbench-button" type="button" disabled={creatingProcess} onClick={createProcess}><Plus size={15} />{creatingProcess ? '创建中' : '创建并加入'}</button></section>
         </aside>}
       </div>
+
+      {selectedMoveGroup && <div className="product-time-position-backdrop" role="presentation" onMouseDown={event => {
+        if (event.currentTarget === event.target) setMoveGroupKey(null);
+      }}>
+        <section className="product-time-position-dialog" role="dialog" aria-modal="true" aria-labelledby="product-time-position-title">
+          <header><span><small>一次移动到位</small><strong id="product-time-position-title">移动工序位置</strong></span><button type="button" title="关闭" aria-label="关闭移动工序窗口" onClick={() => setMoveGroupKey(null)}><X size={17} /></button></header>
+          <div>
+            <span className="product-time-position-current"><b>{selectedMoveGroup.startIndex + 1}{selectedMoveGroup.endIndex > selectedMoveGroup.startIndex ? `–${selectedMoveGroup.endIndex + 1}` : ''}</b><strong>{selectedMoveGroup.entries.map(entry => definitions.find(definition => definition.id === entry.processDefinitionId)?.name || '历史工序').join(' / ')}</strong><small>{selectedMoveGroup.entries.length > 1 ? '并行工序会整组移动' : '当前为独立顺序工序'}</small></span>
+            <label><span>移动到</span><select value={moveBeforeGroupKey || '__end__'} onChange={event => setMoveBeforeGroupKey(event.target.value === '__end__' ? null : event.target.value)}>
+              {routeSequenceGroups.filter(group => group.key !== selectedMoveGroup.key).map(group => {
+                const names = group.entries.map(entry => definitions.find(definition => definition.id === entry.processDefinitionId)?.name || '历史工序').join(' / ');
+                return <option key={group.key} value={group.key}>在第 {group.startIndex + 1} 道「{names}」之前</option>;
+              })}
+              <option value="__end__">路线末尾</option>
+            </select></label>
+            <p>保存草稿前只调整编辑顺序；正式发布时仍会先预览全部二维码和关联工单影响。</p>
+          </div>
+          <footer><button className="hm-workbench-button" type="button" onClick={() => setMoveGroupKey(null)}>取消</button><button className="hm-workbench-button primary" type="button" onClick={confirmMoveGroup}><MoveVertical size={15} aria-hidden="true" />确认移动</button></footer>
+        </section>
+      </div>}
 
       {referenceOpen && <div className="product-time-reference-backdrop" role="presentation" onMouseDown={event => {
         if (event.currentTarget === event.target) closeReferencePreview();
