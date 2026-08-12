@@ -29,7 +29,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
+import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
 import { useToastBridge } from '@/components/ToastProvider';
 import type { CurrentUserDTO } from '@/types';
 
@@ -381,7 +381,7 @@ export default function MajorQualityApprovalShell({ user }: { user: CurrentUserD
     : '';
 
   return (
-    <main className="hm-major-approval-workbench hm-workbench-root">
+    <main className="hm-major-approval-workbench hm-workbench-root hm-cockpit-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/approvals"
@@ -391,26 +391,29 @@ export default function MajorQualityApprovalShell({ user }: { user: CurrentUserD
           { label: '系统设置', href: '/dashboard?openSettings=1' },
           { label: '退出登录', onSelect: () => { void logout(); } },
         ]}
-        utilityActions={<>
-          <Link className="hm-workbench-button" href="/workspace/issues" prefetch={false}><ShieldCheck size={15} />问题管理</Link>
-          <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setReloadKey(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} size={15} />刷新</button>
-        </>}
+        hideHeader
+        sidebarTriggerTargetId="major-approval-navigation-trigger"
       />
 
       <div className="major-approval-frame">
-        <WorkbenchPageHeader
-          kicker="质量治理"
+        <WorkbenchCockpitCommand
+          navigationTargetId="major-approval-navigation-trigger"
+          icon={<ClipboardCheck size={19} />}
           title="重大质量审批"
-          description="质量部二级复核后提交总经办终审；每次决定、意见和经办人均完整留痕。"
-          titleId="major-approval-title"
-          actions={<div className="major-viewer-badges">
+          subtitle="质量二级复核与总经办终审任务驾驶舱"
+          context={<>
             {viewer.canQualityReview && <span><UserRoundCheck size={14} />质量复核</span>}
             {viewer.canFinalApprove && <span><Gavel size={14} />重大终审</span>}
-            {!viewer.canQualityReview && !viewer.canFinalApprove && <span className="readonly"><ShieldCheck size={14} />审批只读</span>}
-          </div>}
+            {!viewer.canQualityReview && !viewer.canFinalApprove && <span><ShieldCheck size={14} />审批只读</span>}
+          </>}
+          search={<label><Search size={16} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索问题、工单、责任人" aria-label="搜索重大质量审批" />{keyword ? <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={14} /></button> : <kbd>Ctrl K</kbd>}</label>}
+          actions={<>
+            <Link href="/workspace/issues" prefetch={false}><ShieldCheck size={15} />问题管理</Link>
+            <button className="icon-only" type="button" aria-label="刷新审批队列" title="刷新" disabled={loading} onClick={() => setReloadKey(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} size={15} /></button>
+          </>}
         />
 
-        <section className="major-approval-summary" aria-label="重大质量审批状态概览">
+        <section className="major-approval-summary hm-cockpit-stage-rail" aria-label="重大质量审批状态概览">
           {FILTERS.map(item => {
             const active = filter === item;
             return <button type="button" className={`${active ? 'active' : ''} status-${item.toLowerCase()}`} aria-pressed={active} onClick={() => chooseFilter(item)} key={item}>
@@ -426,11 +429,6 @@ export default function MajorQualityApprovalShell({ user }: { user: CurrentUserD
               <div><ClipboardCheck size={17} /><span><b>{filterMeta[filter].label}</b><small>{visibleApprovals.length} 条当前结果</small></span></div>
               <button type="button" aria-label="刷新审批队列" title="刷新审批队列" disabled={loading} onClick={() => setReloadKey(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} size={15} /></button>
             </header>
-            <label className="major-approval-search">
-              <Search size={15} aria-hidden="true" />
-              <input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索问题、工单、责任人" aria-label="搜索重大质量审批" />
-              {keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={14} /></button>}
-            </label>
             <div className="major-approval-queue-scroll hm-scroll-region" tabIndex={0}>
               {loading && <div className="major-approval-empty"><Loader2 className="spin" /><b>正在加载审批队列</b><span>正在核对最新审批状态和版本</span></div>}
               {!loading && loadError && <div className="major-approval-empty error"><AlertCircle /><b>审批队列加载失败</b><span>{loadError}</span><button type="button" onClick={() => setReloadKey(value => value + 1)}>重新加载</button></div>}

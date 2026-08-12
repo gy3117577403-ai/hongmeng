@@ -31,7 +31,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
+import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { ImageViewer } from '@/components/ImageViewer';
 import { PdfViewer } from '@/components/PdfViewer';
@@ -490,33 +490,28 @@ export default function KnowledgeBaseShell({ user, initialState }: KnowledgeBase
   }
 
   return (
-    <main className="hm-workbench-root hm-knowledge-workbench">
+    <main className="hm-workbench-root hm-knowledge-workbench hm-cockpit-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/knowledge"
         subtitle="跨模块检索、预览与技术经验沉淀"
-        searchSlot={(
-          <label className="hm-knowledge-header-search">
-            <Search size={17} aria-hidden="true" />
-            <span className="sr-only">搜索知识库</span>
-            <input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、规格、型号、图纸、说明书或处理经验" />
-            {keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={15} /></button>}
-            <kbd>Ctrl K</kbd>
-          </label>
-        )}
         menuItems={[{ label: '系统设置', href: '/dashboard?openSettings=1' }, { label: '退出登录', onSelect: logout }]}
+        hideHeader
+        sidebarTriggerTargetId="knowledge-navigation-trigger"
       />
 
       <div ref={bodyRef} className="hm-knowledge-page">
-        <WorkbenchPageHeader
-          kicker="技术知识"
+        <WorkbenchCockpitCommand
+          navigationTargetId="knowledge-navigation-trigger"
+          icon={<Library size={19} />}
           title="知识库"
-          titleId="knowledge-title"
-          description="统一查找图纸、说明书、参数、工艺和已验证经验，资料仍由原业务模块维护。"
+          subtitle="跨模块检索、预览与技术经验沉淀"
+          context={<><span>{overview.totalSources} 项资料</span><span>{overview.articleCount} 条经验</span><span>{overview.updatedThisWeek} 条本周更新</span></>}
+          search={<label><Search size={16} aria-hidden="true" /><span className="sr-only">搜索知识库</span><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索客户、规格、型号、图纸或处理经验" />{keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={14} /></button>}<kbd>Ctrl K</kbd></label>}
           actions={(
             <>
-              <button className="hm-workbench-button" type="button" onClick={() => { void Promise.all([loadOverview(), loadSearch()]); }}><RefreshCw size={16} />刷新</button>
-              <button className="hm-workbench-button primary" type="button" onClick={event => openCreate(event.currentTarget)}><Plus size={17} />新增知识</button>
+              <button className="icon-only" type="button" aria-label="刷新知识库" title="刷新" onClick={() => { void Promise.all([loadOverview(), loadSearch()]); }}><RefreshCw size={16} /></button>
+              <button className="primary" type="button" onClick={event => openCreate(event.currentTarget)}><Plus size={17} />新增知识</button>
             </>
           )}
         />

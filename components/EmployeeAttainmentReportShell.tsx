@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
 import { formatProcessDuration } from '@/lib/process-time';
 import type {
   AbnormalTimeReportDTO,
@@ -155,26 +156,29 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
   const abnormalSummary = abnormalReport?.summary;
 
   return (
-    <main className="employee-report-workbench hm-workbench-root">
+    <main className="employee-report-workbench hm-workbench-root hm-cockpit-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/reports"
         subtitle="生产部出勤达成率、工序效率与异常损失"
         menuItems={[{ label: '系统设置', href: '/dashboard?openSettings=1' }, { label: '退出登录', onSelect: () => void logout() }]}
+        hideHeader
+        sidebarTriggerTargetId="employee-report-navigation-trigger"
       />
       <div className="employee-report-frame">
-        <section className="employee-report-command" aria-labelledby="employee-attainment-title">
-          <div>
-            <span>报表中心</span>
-            <h1 id="employee-attainment-title">生产部效率与异常工时</h1>
-            <p>仅统计人事档案归属生产部且启用考勤的员工；报工后标准工时直接记入作业人员，达成率按标准完成工时 ÷〔（确认出勤－品质确认免责异常）× 95%〕计算。</p>
-          </div>
-          <nav aria-label="报表关联入口">
-            {user.laborRole !== 'EMPLOYEE' && <a className="hm-workbench-button" href="/workspace/attendance"><CalendarClock size={15} />考勤与异常</a>}
-            {user.laborRole !== 'EMPLOYEE' && <a className="hm-workbench-button" href="/workspace/product-times"><Clock3 size={15} />产品工序与工时</a>}
-            <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新</button>
-          </nav>
-        </section>
+        <WorkbenchCockpitCommand
+          navigationTargetId="employee-report-navigation-trigger"
+          icon={<Gauge size={19} />}
+          title="生产部效率与异常工时"
+          subtitle="出勤达成率、工序效率与异常损失任务驾驶舱"
+          context={<><span>{summary?.employeeCount || 0} 名生产员工</span><span>{abnormalSummary?.openCount || 0} 条未关闭异常</span></>}
+          search={<label><Search size={16} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={view === 'employee' ? '搜索员工编号、姓名、岗位或班组' : '搜索异常、员工或分类'} aria-label="搜索报表" /></label>}
+          actions={<>
+            {user.laborRole !== 'EMPLOYEE' && <a href="/workspace/attendance"><CalendarClock size={15} />考勤与异常</a>}
+            {user.laborRole !== 'EMPLOYEE' && <a href="/workspace/product-times"><Clock3 size={15} />产品工序与工时</a>}
+            <button className="icon-only" type="button" aria-label="刷新报表" title="刷新" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>
+          </>}
+        />
 
         <section className="employee-report-summary" aria-label="达成率与异常概览">
           <article><UsersRound /><span>生产员工<small>{periodLabel(period)}生产部口径</small></span><strong>{summary?.employeeCount || 0}</strong></article>
@@ -196,7 +200,6 @@ export default function EmployeeAttainmentReportShell({ user }: { user: CurrentU
               {(['today', 'week', 'month'] as Period[]).map(item => <button className={period === item ? 'active' : ''} type="button" key={item} onClick={() => setPeriod(item)}>{periodLabel(item)}</button>)}
             </div>
             <label className="employee-report-date"><span>统计日期</span><input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
-            <label className="employee-report-search"><Search size={16} /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={view === 'employee' ? '搜索员工编号、姓名、岗位或班组' : '搜索异常、员工或分类'} /></label>
           </>}
           {view === 'labor' && <p className="employee-report-manual-hint">无需员工逐笔领取；生产报工提交后，标准工时会自动分摊并进入员工达成率。</p>}
         </section>

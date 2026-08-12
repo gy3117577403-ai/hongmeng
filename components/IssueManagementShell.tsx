@@ -24,6 +24,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  ShieldCheck,
   Trash2,
   UserRound,
   X,
@@ -33,7 +34,7 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
+import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
 import { EmployeeMultiPicker, EmployeePicker, WorkOrderPicker } from '@/components/issues/IssuePickers';
 import type {
   CurrentUserDTO,
@@ -758,7 +759,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   }, [employees]);
 
   return (
-    <main className="hm-issue-workbench hm-workbench-root">
+    <main className="hm-issue-workbench hm-workbench-root hm-cockpit-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/issues"
@@ -768,30 +769,27 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           { label: '系统设置', href: '/dashboard?openSettings=1' },
           { label: '退出登录', onSelect: () => { void logout(); } },
         ]}
-        searchSlot={(
-          <label className="issue-header-search">
-            <Search size={17} aria-hidden="true" />
-            <input value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索问题、工单、规格、客户..." aria-label="搜索问题" />
-            {keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={15} /></button>}
-          </label>
-        )}
-        utilityActions={canCreateIssues ? <button className="hm-workbench-button primary issue-new-header" type="button" onClick={openCreate}><Plus size={16} />新建问题</button> : <Link className="hm-workbench-button primary issue-new-header" href="/workspace/approvals"><ClipboardCheck size={16} />重大审批</Link>}
+        hideHeader
+        sidebarTriggerTargetId="issue-navigation-trigger"
       />
 
       <div className="issue-workbench-main">
-        <WorkbenchPageHeader
-          kicker="协同闭环"
+        <WorkbenchCockpitCommand
+          navigationTargetId="issue-navigation-trigger"
+          icon={<ShieldCheck size={19} />}
           title="问题管理"
-          description="统一承接生产异常、计划与技术问题，完成受理、处理、验证和关闭。"
-          titleId="issue-workbench-title"
+          subtitle="生产、计划与技术问题闭环任务驾驶舱"
+          context={<><span>{summary.processing} 条处理中</span><span>{summary.overdue} 条逾期</span><span>{pendingDetected} 条待转问题</span></>}
+          search={<label><Search size={16} aria-hidden="true" /><input value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索问题、工单、规格、客户" aria-label="搜索问题" />{keyword ? <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={14} /></button> : <kbd>Ctrl K</kbd>}</label>}
           actions={<>
             {initialParams.get('returnTo') && <a className="hm-workbench-button issue-return-link" href={initialParams.get('returnTo') || '/production'}><ArrowLeft size={15} />返回生产执行</a>}
-            <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => { void Promise.all([loadIssues(), loadDetected()]); }}><RefreshCw className={loading ? 'spin' : ''} size={15} />刷新</button>
-            <button ref={contextTriggerRef} className="hm-workbench-button issue-context-trigger" type="button" disabled={!selected} aria-expanded={contextOpen} onClick={openContext}><Info size={15} />责任与来源</button>
+            <button ref={contextTriggerRef} type="button" disabled={!selected} aria-expanded={contextOpen} onClick={openContext}><Info size={15} />责任与来源</button>
+            <button className="icon-only" type="button" aria-label="刷新问题" title="刷新" disabled={loading} onClick={() => { void Promise.all([loadIssues(), loadDetected()]); }}><RefreshCw className={loading ? 'spin' : ''} size={15} /></button>
+            {canCreateIssues ? <button className="primary" type="button" onClick={openCreate}><Plus size={16} />新建问题</button> : <Link className="primary" href="/workspace/approvals"><ClipboardCheck size={16} />重大审批</Link>}
           </>}
         />
 
-        <section className="issue-summary" aria-label="问题状态概览">
+        <section className="issue-summary hm-cockpit-stage-rail" aria-label="问题状态概览">
           {([
             ['all', '全部问题', summary.total], ['pending', '待受理', summary.pending], ['processing', '处理中', summary.processing],
             ['verifying', '待验证', summary.verifying], ['closed', '已关闭', summary.closed], ['overdue', '已逾期', summary.overdue],

@@ -11,6 +11,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  Search,
   Save,
   ShieldCheck,
   Trash2,
@@ -21,6 +22,7 @@ import {
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
 import { ABNORMAL_TIME_CATEGORIES } from '@/lib/attendance';
 import { formatProcessDuration } from '@/lib/process-time';
 import {
@@ -481,14 +483,32 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   }
 
   return (
-    <main className="attendance-workbench hm-workbench-root">
+    <main className="attendance-workbench hm-workbench-root hm-cockpit-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
         user={user}
         activeHref="/workspace/attendance"
         subtitle="手工考勤、异常免责与品质确认"
         menuItems={[{ label: '修改密码', href: '/dashboard?changePassword=1' }, { label: '退出登录', onSelect: () => void logout() }]}
+        hideHeader
+        sidebarTriggerTargetId="attendance-navigation-trigger"
       />
       <div className="attendance-frame">
+        <WorkbenchCockpitCommand
+          navigationTargetId="attendance-navigation-trigger"
+          icon={<CalendarClock size={19} />}
+          title="考勤与异常"
+          subtitle="生产出勤、异常免责与品质确认任务驾驶舱"
+          context={<><span>{attendanceSummary.confirmedCount} 条已确认</span><span>{eventSummary.pendingCount} 条待品质确认</span></>}
+          search={<label><Search size={16} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、姓名、岗位或班组" aria-label="搜索考勤员工" /></label>}
+          actions={<>
+            <a href="/workspace/employees?view=directory"><UsersRound size={15} />人事管理</a>
+            <button className="icon-only" type="button" aria-label="刷新" title="刷新" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={16} /></button>
+            {tab === 'attendance'
+              ? <button className="primary" type="button" disabled={saving} onClick={() => void batchDefault()}><Plus size={16} />生成正常出勤</button>
+              : <button className="primary" type="button" onClick={beginAbnormal}><Plus size={16} />登记异常工时</button>}
+          </>}
+        />
+
         <section className="attendance-summary" aria-label="考勤与异常概览">
           <article><UsersRound /><span>{workforceLabel}<small>{workforceNote}</small></span><strong>{attendanceSummary.enabledEmployeeCount}</strong></article>
           <article><UserRoundCheck /><span>已确认考勤<small>{date} 日记录</small></span><strong>{attendanceSummary.confirmedCount}</strong></article>
@@ -503,13 +523,11 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
             <button className={tab === 'abnormal' ? 'active' : ''} type="button" role="tab" aria-selected={tab === 'abnormal'} onClick={() => setTab('abnormal')}><FileWarning size={16} />异常工时</button>
             <button className={tab === 'quality' ? 'active' : ''} type="button" role="tab" aria-selected={tab === 'quality'} onClick={() => setTab('quality')}><ShieldCheck size={16} />品质确认 <em>{eventSummary.pendingCount}</em></button>
           </div>
-          <a className="attendance-employee-link" href="/workspace/employees?view=directory" title="打开人事管理"><UsersRound size={16} />人事管理</a>
           <label className="attendance-date"><span>基准日期</span><input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
           {tab !== 'attendance' && <div className="attendance-period" role="group" aria-label="异常汇总周期">{(['today', 'week', 'month'] as Period[]).map(item => <button className={period === item ? 'active' : ''} type="button" key={item} onClick={() => setPeriod(item)}>{periodLabel(item)}</button>)}</div>}
-          <button className="icon-button" type="button" aria-label="刷新" title="刷新" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={17} /></button>
           {tab === 'attendance'
-            ? <><button type="button" disabled={saving || !attendanceSummary.draftCount} onClick={() => void batchConfirm()}><Check size={16} />确认全部草稿</button><button className="primary-button" type="button" disabled={saving} onClick={() => void batchDefault()}><Plus size={16} />一键生成正常出勤</button></>
-            : <button className="primary-button" type="button" onClick={beginAbnormal}><Plus size={16} />登记异常工时</button>}
+            ? <button type="button" disabled={saving || !attendanceSummary.draftCount} onClick={() => void batchConfirm()}><Check size={16} />确认全部草稿</button>
+            : null}
         </section>
 
         {error && <div className="attendance-error" role="alert"><AlertTriangle size={16} />{error}</div>}
@@ -523,7 +541,6 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
                 <button className={workforceScope === 'OTHER' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'OTHER'} onClick={() => { setWorkforceScope('OTHER'); setAttendanceDraft(null); }}><strong>其他人员</strong><em>{scopeCounts.other}</em></button>
                 <button className={workforceScope === 'ALL' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'ALL'} onClick={() => { setWorkforceScope('ALL'); setAttendanceDraft(null); }}><strong>全部人员</strong><em>{scopeCounts.all}</em></button>
               </div>
-              <label><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、姓名、岗位或班组" /></label>
             </header>
             <div className="attendance-table-wrap hm-scroll-region" tabIndex={0}>
               <div className="attendance-table-head"><span>员工</span><span>状态</span><span>有效出勤</span><span>加班</span><span>请假</span><span>确认</span><span>操作</span></div>
