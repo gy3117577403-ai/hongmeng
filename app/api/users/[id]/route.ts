@@ -1,4 +1,5 @@
-import { AccessProfileKey, AccountStatus, LaborAccessRole, Prisma } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import { AccessGrantType, AccessProfileKey, AccountStatus, LaborAccessRole, Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import {
   forbidden,
@@ -8,6 +9,7 @@ import {
   UnauthorizedError,
 } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
+import { validateNewPassword } from '@/lib/password-policy';
 import { prisma } from '@/lib/prisma';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { createSystemNotification } from '@/lib/system-notifications';
@@ -20,6 +22,7 @@ import {
   prepareAccessGrant,
   reconcileFieldReportPinEligibility,
   serializeAdminUser,
+  syncAccountFieldReportGrant,
   type AccessGrantInput,
 } from '@/lib/user-access-admin';
 
@@ -60,6 +63,9 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       accountStatus?: unknown;
       laborRole?: unknown;
       employeeId?: unknown;
+      password?: unknown;
+      fieldReportEnabled?: unknown;
+      mustChangePassword?: unknown;
     } & AccessGrantInput;
     let changedFields: string[] = [];
     let disabledByRequest = false;
@@ -110,6 +116,36 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       }
       assertEmployeeRebindAllowed(old.employeeId, nextEmployeeId, old.accessGrants);
 
+      const now = new Date();
+      const currentlyHasFieldReport = old.accessGrants.some(grant => (
+        grant.profile === AccessProfileKey.FIELD_REPORTER
+        && grant.isActive
+        && (!grant.effectiveTo || grant.effectiveTo > now)
+      ));
+      const fieldReportEnabled = profile === AccessProfileKey.FIELD_REPORTER
+        || (body.fieldReportEnabled === undefined ? currentlyHasFieldReport : body.fieldReportEnabled === true);
+      const hasOtherWorkbenchGrant = old.accessGrants.some(grant => (
+        grant.grantType !== AccessGrantType.PRIMARY
+        && grant.profile !== AccessProfileKey.FIELD_REPORTER
+        && grant.isActive
+        && (!grant.effectiveTo || grant.effectiveTo > now)
+      ));
+      const nextHasWorkbenchAccess = profile !== AccessProfileKey.FIELD_REPORTER || hasOtherWorkbenchGrant;
+      const password = String(body.password || '');
+      const setsPassword = password.length > 0;
+      if (old.fieldPasswordOnly && nextHasWorkbenchAccess && !setsPassword) {
+        return NextResponse.json({ ok: false, error: '开通后台工作台时请同时设置新的登录密码' }, { status: 400 });
+      }
+      if (setsPassword) {
+        const passwordError = validateNewPassword(password, old.username);
+        if (passwordError) {
+          return NextResponse.json({ ok: false, error: passwordError }, { status: 400 });
+        }
+      }
+      const nextMustChangePassword = nextHasWorkbenchAccess
+        ? (body.mustChangePassword === undefined ? old.mustChangePassword : body.mustChangePassword === true)
+        : false;
+
       const nextIsActive = body.isActive === undefined
         ? requestedStatus
           ? requestedStatus === AccountStatus.ACTIVE
@@ -140,10 +176,13 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
         || body.effectiveFrom !== undefined
         || body.effectiveTo !== undefined
         || body.employeeId !== undefined
-        || body.laborRole !== undefined;
+        || body.laborRole !== undefined
+        || body.fieldReportEnabled !== undefined;
       const securityChanged = accessChanged
         || nextIsActive !== old.isActive
-        || nextStatus !== old.accountStatus;
+        || nextStatus !== old.accountStatus
+        || setsPassword
+        || nextMustChangePassword !== old.mustChangePassword;
       const data: Prisma.UserUncheckedUpdateInput = {
         ...(body.displayName !== undefined
           ? { displayName: String(body.displayName || '').trim().slice(0, 80) || old.username }
@@ -152,6 +191,15 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
         accountStatus: nextStatus,
         laborRole: nextRole,
         employeeId: nextEmployeeId,
+        mustChangePassword: nextMustChangePassword,
+        ...(setsPassword
+          ? {
+              passwordHash: await bcrypt.hash(password, 10),
+              fieldPasswordOnly: false,
+              failedLoginAttempts: 0,
+              lockedUntil: null,
+            }
+          : {}),
         ...(securityChanged ? { sessionVersion: { increment: 1 } } : {}),
       };
       changedFields = [
@@ -161,8 +209,10 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       disabledByRequest = !nextIsActive;
       await tx.user.update({ where: { id: old.id }, data });
 
+      let primaryGrant: Awaited<ReturnType<typeof prepareAccessGrant>> | null = null;
       if (accessChanged) {
         const grant = await prepareAccessGrant(tx, { ...body, profileKey: profile }, employee);
+        primaryGrant = grant;
         if (grant.grantType !== 'PRIMARY') {
           throw new AccessGrantInputError('主权限编辑不能改为兼岗或代班，请使用追加授权');
         }
@@ -176,6 +226,18 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
             ...grant,
             grantedById: current.id,
           },
+        });
+      }
+
+      if (accessChanged) {
+        await syncAccountFieldReportGrant(tx, {
+          userId: old.id,
+          employee,
+          enabled: fieldReportEnabled,
+          primaryProfile: profile,
+          departmentId: primaryGrant?.departmentId ?? employee?.departmentId,
+          effectiveFrom: body.effectiveFrom,
+          grantedById: current.id,
         });
       }
 

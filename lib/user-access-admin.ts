@@ -496,3 +496,83 @@ export async function prepareAccessGrant(
     effectiveTo,
   };
 }
+
+export type AccountFieldReportGrantSyncInput = {
+  userId: string;
+  employee: AccessGrantEmployee | null;
+  enabled: boolean;
+  primaryProfile: AccessProfileKey;
+  departmentId?: unknown;
+  effectiveFrom?: unknown;
+  grantedById: string;
+};
+
+/**
+ * Keeps the employee-scoped reporting capability independent from the primary
+ * workbench profile. A FIELD_REPORTER primary grant already supplies that
+ * capability; every other primary profile receives at most one concurrent
+ * reporting grant.
+ */
+export async function syncAccountFieldReportGrant(
+  tx: Prisma.TransactionClient,
+  input: AccountFieldReportGrantSyncInput,
+): Promise<{ created: boolean; disabledCount: number }> {
+  const additionalReporterWhere: Prisma.UserAccessGrantWhereInput = {
+    userId: input.userId,
+    profile: AccessProfileKey.FIELD_REPORTER,
+    grantType: { not: AccessGrantType.PRIMARY },
+    isActive: true,
+  };
+
+  if (!input.enabled || input.primaryProfile === AccessProfileKey.FIELD_REPORTER) {
+    const disabled = await tx.userAccessGrant.updateMany({
+      where: additionalReporterWhere,
+      data: { isActive: false, version: { increment: 1 }, grantedById: input.grantedById },
+    });
+    return { created: false, disabledCount: disabled.count };
+  }
+
+  if (!input.employee) {
+    throw new AccessGrantInputError('扫码报工必须绑定在职员工档案');
+  }
+
+  const now = new Date();
+  const retained = await tx.userAccessGrant.findFirst({
+    where: {
+      ...additionalReporterWhere,
+      OR: [
+        { effectiveTo: null },
+        { effectiveTo: { gt: now } },
+      ],
+    },
+    orderBy: [{ effectiveFrom: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true },
+  });
+
+  if (retained) {
+    const disabled = await tx.userAccessGrant.updateMany({
+      where: { ...additionalReporterWhere, id: { not: retained.id } },
+      data: { isActive: false, version: { increment: 1 }, grantedById: input.grantedById },
+    });
+    return { created: false, disabledCount: disabled.count };
+  }
+
+  const disabled = await tx.userAccessGrant.updateMany({
+    where: additionalReporterWhere,
+    data: { isActive: false, version: { increment: 1 }, grantedById: input.grantedById },
+  });
+  const grant = await prepareAccessGrant(tx, {
+    profileKey: AccessProfileKey.FIELD_REPORTER,
+    departmentId: input.departmentId,
+    grantType: AccessGrantType.CONCURRENT,
+    effectiveFrom: input.effectiveFrom,
+  }, input.employee);
+  await tx.userAccessGrant.create({
+    data: {
+      userId: input.userId,
+      ...grant,
+      grantedById: input.grantedById,
+    },
+  });
+  return { created: true, disabledCount: disabled.count };
+}

@@ -671,6 +671,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   const [draft, setDraft] = useState<EmployeeDraft>(emptyDraft);
   const [baseline, setBaseline] = useState<EmployeeDraft>(emptyDraft);
   const [creating, setCreating] = useState(false);
+  const [directoryEditing, setDirectoryEditing] = useState(false);
   const [nextEmployeeNo, setNextEmployeeNo] = useState('');
   const [nextEmployeeNoLoading, setNextEmployeeNoLoading] = useState(false);
   const [keyword, setKeyword] = useState('');
@@ -715,12 +716,22 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   });
   const workbenchRef = useRef<HTMLElement>(null);
   const employmentDialogRef = useRef<HTMLElement>(null);
+  const allowNextHistoryNavigationRef = useRef(false);
   useToastBridge(toast, setToast);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requested = params.get('view') as HrView | null;
     if (requested && hrNavigation.some(item => item.id === requested)) setView(requested);
+    const directoryMode = params.get('mode');
+    if (directoryMode === 'edit') setDirectoryEditing(true);
+    if (directoryMode === 'create') {
+      setCreating(true);
+      setDirectoryEditing(true);
+      setSelectedEmployeeId('');
+      setDraft(emptyDraft);
+      setBaseline(emptyDraft);
+    }
     if (params.get('detail') === 'collaboration') setDirectoryDetailTab('collaboration');
     const recruitmentStage = params.get('recruitmentStage');
     if (recruitmentStage && recruitmentStageOptions.some(item => item.value === recruitmentStage)) {
@@ -737,6 +748,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     [recruitmentDemands, selectedRecruitmentDemandId],
   );
   const dirty = JSON.stringify(draft) !== JSON.stringify(baseline);
+  const editorUnlocked = creating || directoryEditing;
 
   const loadHumanResources = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -784,6 +796,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
       setEmployees(nextEmployees);
       setSelectedEmployeeId(current => {
         const params = new URLSearchParams(window.location.search);
+        if (params.get('mode') === 'create') return '';
         const requestedId = params.get('employeeId') || '';
         const requestedPersonId = params.get('person') || '';
         const requestedPerson = responsibilityPeople.find(person => person.id === requestedPersonId);
@@ -875,6 +888,56 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     window.addEventListener('beforeunload', warnBeforeLeave);
     return () => window.removeEventListener('beforeunload', warnBeforeLeave);
   }, [dirty]);
+
+  useEffect(() => {
+    function applyHistoryLocation(): void {
+      const params = new URLSearchParams(window.location.search);
+      const requestedView = params.get('view') as HrView | null;
+      const nextView = requestedView && hrNavigation.some(item => item.id === requestedView)
+        ? requestedView
+        : 'overview';
+      const mode = params.get('mode');
+      const nextEditing = nextView === 'directory' && (mode === 'edit' || mode === 'create');
+      const nextCreating = nextView === 'directory' && mode === 'create';
+
+      if (!allowNextHistoryNavigationRef.current && (directoryEditing || creating) && dirty) {
+        if (!window.confirm('当前员工档案有未保存修改，确认放弃并返回吗？')) {
+          const restoreUrl = new URL(window.location.href);
+          restoreUrl.searchParams.set('view', 'directory');
+          if (selectedEmployeeId) restoreUrl.searchParams.set('employeeId', selectedEmployeeId);
+          else restoreUrl.searchParams.delete('employeeId');
+          restoreUrl.searchParams.set('mode', creating ? 'create' : 'edit');
+          window.history.pushState({ hrModeEntry: true }, '', restoreUrl);
+          return;
+        }
+      }
+
+      allowNextHistoryNavigationRef.current = false;
+      if (dirty) setDraft(baseline);
+      setView(nextView);
+      setCreating(nextCreating);
+      setDirectoryEditing(nextEditing);
+      setFormError('');
+
+      if (nextCreating) {
+        setSelectedEmployeeId('');
+        setDraft(emptyDraft);
+        setBaseline(emptyDraft);
+      } else {
+        const employeeId = params.get('employeeId') || '';
+        if (employeeId && employees.some(employee => employee.id === employeeId)) {
+          setSelectedEmployeeId(employeeId);
+        }
+      }
+      const historyEmployeeId = params.get('employeeId') || selectedEmployeeId;
+      if (nextView === 'directory' && !nextEditing && historyEmployeeId) {
+        requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-employee-id="${CSS.escape(historyEmployeeId)}"]`)?.focus());
+      }
+    }
+
+    window.addEventListener('popstate', applyHistoryLocation);
+    return () => window.removeEventListener('popstate', applyHistoryLocation);
+  }, [baseline, creating, directoryEditing, dirty, employees, selectedEmployeeId]);
 
   useEffect(() => {
     if (!employmentDialog) return;
@@ -1286,13 +1349,30 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     }
   }
 
-  function changeView(nextView: HrView): void {
-    if (view === 'directory' && !confirmDiscard()) return;
+  function changeView(nextView: HrView, directoryEmployeeId?: string): void {
+    if (nextView === view && directoryEmployeeId === undefined) return;
+    if (view === 'directory' && nextView !== 'directory' && !confirmDiscard()) return;
+    if (view === 'directory' && nextView !== 'directory' && dirty) setDraft(baseline);
     setView(nextView);
+    if (nextView !== 'directory') {
+      setCreating(false);
+      setDirectoryEditing(false);
+    }
     const url = new URL(window.location.href);
-    if (nextView === 'overview') url.searchParams.delete('view');
-    else url.searchParams.set('view', nextView);
-    window.history.replaceState({}, '', url);
+    if (nextView === 'overview') {
+      url.searchParams.delete('view');
+    } else {
+      url.searchParams.set('view', nextView);
+    }
+    url.searchParams.delete('mode');
+    if (nextView === 'directory') {
+      const employeeId = directoryEmployeeId ?? selectedEmployeeId;
+      if (employeeId) url.searchParams.set('employeeId', employeeId);
+      else url.searchParams.delete('employeeId');
+    } else {
+      url.searchParams.delete('employeeId');
+    }
+    window.history.pushState({ hrView: nextView }, '', url);
   }
 
   function confirmDiscard(): boolean {
@@ -1302,24 +1382,76 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   function chooseEmployee(employee: EmployeeDTO): void {
     if (!confirmDiscard()) return;
     setCreating(false);
+    setDirectoryEditing(false);
     setSelectedEmployeeId(employee.id);
     setDirectoryDetailTab('basic');
     const nextDraft = toDraft(employee);
     setDraft(nextDraft);
     setBaseline(nextDraft);
     setFormError('');
+    if (view === 'directory') {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', 'directory');
+      url.searchParams.set('employeeId', employee.id);
+      url.searchParams.delete('mode');
+      window.history.replaceState({ hrView: 'directory' }, '', url);
+    }
   }
 
   function beginCreate(): void {
     if (!confirmDiscard()) return;
+    const baseUrl = new URL(window.location.href);
+    baseUrl.searchParams.set('view', 'directory');
+    baseUrl.searchParams.delete('mode');
+    baseUrl.searchParams.delete('employeeId');
+    if (view !== 'directory') window.history.pushState({ hrView: 'directory' }, '', baseUrl);
+    else if (window.location.search.includes('mode=')) window.history.replaceState({ hrView: 'directory' }, '', baseUrl);
+    const editorUrl = new URL(baseUrl);
+    editorUrl.searchParams.set('mode', 'create');
+    window.history.pushState({ hrModeEntry: true }, '', editorUrl);
+    setView('directory');
     setCreating(true);
+    setDirectoryEditing(true);
     setSelectedEmployeeId('');
     setDirectoryDetailTab('basic');
     setDraft(emptyDraft);
     setBaseline(emptyDraft);
     setFormError('');
     void loadNextEmployeeNumber();
-    if (view !== 'directory') changeView('directory');
+  }
+
+  function beginDirectoryEdit(): void {
+    if (!selectedEmployee || creating || directoryEditing) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', 'directory');
+    url.searchParams.set('employeeId', selectedEmployee.id);
+    url.searchParams.set('mode', 'edit');
+    window.history.pushState({ hrModeEntry: true }, '', url);
+    setDirectoryEditing(true);
+    setDirectoryDetailTab('basic');
+    requestAnimationFrame(() => document.getElementById('hr-employee-name')?.focus());
+  }
+
+  function exitDirectoryEditor(): void {
+    if (!confirmDiscard()) return;
+    setDraft(baseline);
+    setFormError('');
+    setCreating(false);
+    setDirectoryEditing(false);
+    if (window.history.state?.hrModeEntry) {
+      allowNextHistoryNavigationRef.current = true;
+      window.history.back();
+      return;
+    }
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', 'directory');
+    url.searchParams.delete('mode');
+    if (selectedEmployeeId) url.searchParams.set('employeeId', selectedEmployeeId);
+    window.history.replaceState({ hrView: 'directory' }, '', url);
+  }
+
+  function returnToHrHome(): void {
+    changeView('overview');
   }
 
   function beginNumberReorder(): void {
@@ -1349,11 +1481,22 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
         ? [...current, savedEmployee]
         : current.map(employee => employee.id === savedEmployee.id ? savedEmployee : employee)));
       setCreating(false);
+      setDirectoryEditing(false);
       setSelectedEmployeeId(savedEmployee.id);
       const nextDraft = toDraft(savedEmployee);
       setDraft(nextDraft);
       setBaseline(nextDraft);
       setToast(wasCreating ? `员工档案已创建，员工编号 ${savedEmployee.employeeNo}` : '员工档案已保存');
+      if (window.history.state?.hrModeEntry) {
+        allowNextHistoryNavigationRef.current = true;
+        window.history.back();
+      } else {
+        const url = new URL(window.location.href);
+        url.searchParams.set('view', 'directory');
+        url.searchParams.set('employeeId', savedEmployee.id);
+        url.searchParams.delete('mode');
+        window.history.replaceState({ hrView: 'directory' }, '', url);
+      }
     } catch (reason) {
       setFormError(reason instanceof Error ? reason.message : '保存员工档案失败');
     } finally {
@@ -1614,7 +1757,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
             </header>
             <div>
               {recentEmployees.map(employee => (
-                <button type="button" key={employee.id} onClick={() => { chooseEmployee(employee); changeView('directory'); }}>
+                <button type="button" key={employee.id} onClick={() => { chooseEmployee(employee); changeView('directory', employee.id); }}>
                   <span className="hr-person-avatar">{employee.name.slice(0, 1)}</span>
                   <span><strong>{employee.name}</strong><small>{employee.department || '部门待维护'} · {employee.position || '岗位待维护'}</small></span>
                   <span><em className={employee.isActive ? 'ok' : ''}>{employee.isActive ? '在岗' : '离职'}</em><small>{formatDateTime(employee.updatedAt)}</small></span>
@@ -1860,6 +2003,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                     className={`${selectedEmployeeId === employee.id && !creating ? 'selected' : ''} ${employee.isActive ? '' : 'inactive'}`.trim()}
                     type="button"
                     key={employee.id}
+                    data-employee-id={employee.id}
                     onClick={() => chooseEmployee(employee)}
                   >
                     <span className="hr-person-avatar">{employee.name.slice(0, 1)}</span>
@@ -1902,12 +2046,10 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                 <button
                   type="button"
                   className="hr-primary-button"
-                  onClick={() => {
-                    setDirectoryDetailTab('basic');
-                    requestAnimationFrame(() => document.getElementById('hr-employee-name')?.focus());
-                  }}
+                  disabled={creating || directoryEditing || !selectedEmployee}
+                  onClick={beginDirectoryEdit}
                 >
-                  <PencilLine />编辑档案
+                  <PencilLine />{directoryEditing ? '编辑中' : '编辑档案'}
                 </button>
                 {profileEmployee && <a href={`/workspace/attendance?employeeId=${encodeURIComponent(profileEmployee.id)}`}><CalendarClock />考勤记录</a>}
                 {profileEmployee && (
@@ -1957,17 +2099,17 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                         />
                         <small>{creating ? '创建档案时正式分配，离职后不回收' : '系统唯一编号，普通档案编辑中不可修改'}</small>
                       </label>
-                      <label><span>员工姓名 *</span><input id="hr-employee-name" value={draft.name} maxLength={80} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="填写真实姓名" /></label>
-                      <label><span>入职时间</span><input type="date" value={draft.hireDate} onChange={event => setDraft(current => ({ ...current, hireDate: event.target.value }))} /></label>
+                      <label><span>员工姓名 *</span><input id="hr-employee-name" value={draft.name} disabled={!editorUnlocked} maxLength={80} onChange={event => setDraft(current => ({ ...current, name: event.target.value }))} placeholder="填写真实姓名" /></label>
+                      <label><span>入职时间</span><input type="date" value={draft.hireDate} disabled={!editorUnlocked} onChange={event => setDraft(current => ({ ...current, hireDate: event.target.value }))} /></label>
                     </fieldset>
                     <fieldset>
                       <legend><Building2 />组织归属</legend>
-                      <label><span>部门</span><input value={draft.department} maxLength={80} onChange={event => setDraft(current => ({ ...current, department: event.target.value }))} placeholder="例如 生产部" /></label>
-                      <label><span>班组</span><input value={draft.team} maxLength={80} onChange={event => setDraft(current => ({ ...current, team: event.target.value }))} placeholder="例如 前端一组" /></label>
+                      <label><span>部门</span><input value={draft.department} disabled={!editorUnlocked} maxLength={80} onChange={event => setDraft(current => ({ ...current, department: event.target.value }))} placeholder="例如 生产部" /></label>
+                      <label><span>班组</span><input value={draft.team} disabled={!editorUnlocked} maxLength={80} onChange={event => setDraft(current => ({ ...current, team: event.target.value }))} placeholder="例如 前端一组" /></label>
                     </fieldset>
                     <fieldset>
                       <legend><BriefcaseBusiness />岗位信息</legend>
-                      <label><span>岗位</span><input value={draft.position} maxLength={80} onChange={event => setDraft(current => ({ ...current, position: event.target.value }))} placeholder="例如 压接操作员" /></label>
+                      <label><span>岗位</span><input value={draft.position} disabled={!editorUnlocked} maxLength={80} onChange={event => setDraft(current => ({ ...current, position: event.target.value }))} placeholder="例如 压接操作员" /></label>
                       <div className="hr-profile-readonly">
                         <span>生产报工</span>
                         <strong>{productionReportingEligible ? '可实名扫码报工' : '不具备生产报工资格'}</strong>
@@ -1980,6 +2122,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                           inputMode="tel"
                           autoComplete="tel"
                           value={draft.mobile}
+                          disabled={!editorUnlocked}
                           maxLength={24}
                           onChange={event => setDraft(current => ({ ...current, mobile: event.target.value }))}
                           placeholder="用于业务联系（选填）"
@@ -2044,7 +2187,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                   )}
                   <div className="hr-editor-switches">
                     <label>
-                      <input type="checkbox" disabled={!draft.isActive} checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
+                      <input type="checkbox" disabled={!editorUnlocked || !draft.isActive} checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
                       <span><strong>启用员工考勤</strong><small>所有部门均可登记出勤；生产部进入达成率，其他部门仅统计出勤。</small></span>
                     </label>
                     {!creating && profileEmployee && (
@@ -2116,16 +2259,13 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
             </div>
 
             <footer className="hr-profile-footer">
-              <span>{dirty ? '有未保存修改' : creating ? '填写信息后创建档案' : '档案已保存'}</span>
-              <button type="button" className="hr-primary-button" disabled={saving || (!creating && !selectedEmployee)} onClick={() => void saveEmployee()}>
-                {saving ? <Loader2 className="spin" size={17} /> : dirty ? <Save size={17} /> : <CheckCircle2 size={17} />}
-                {saving ? '保存中…' : creating ? '创建员工' : '保存员工档案'}
-              </button>
+              <span>{dirty ? '有未保存修改' : creating ? '填写信息后创建档案' : directoryEditing ? '编辑模式' : '查看模式 · 点击“编辑档案”后修改'}</span>
+              {editorUnlocked ? <div className="hr-profile-footer-actions"><button type="button" className="hr-secondary-button" disabled={saving} onClick={exitDirectoryEditor}><X size={16} />取消</button><button type="button" className="hr-primary-button" disabled={saving || (!creating && !selectedEmployee)} onClick={() => void saveEmployee()}>{saving ? <Loader2 className="spin" size={17} /> : <Save size={17} />}{saving ? '保存中…' : creating ? '创建员工' : '保存员工档案'}</button></div> : <button type="button" className="hr-primary-button" disabled={!selectedEmployee} onClick={beginDirectoryEdit}><PencilLine size={17} />编辑档案</button>}
             </footer>
           </section>
 
           <aside className="hr-role-profile">
-            <header><button type="button" title="返回员工列表"><ChevronRight /></button><div><span className="hr-eyebrow">人员主档联动</span><h2>岗位、账号与权限</h2></div></header>
+            <header><button type="button" title="返回人事首页" onClick={returnToHrHome}><ChevronRight /></button><div><span className="hr-eyebrow">人员主档联动</span><h2>岗位、账号与权限</h2></div></header>
             <section>
               <h3>岗位归属</h3>
               <div className="hr-role-path">
@@ -2392,7 +2532,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                               <button type="button" onClick={() => {
                                 const employee = employees.find(item => item.id === candidate.employee?.id);
                                 if (employee) chooseEmployee(employee);
-                                changeView('directory');
+                                changeView('directory', employee?.id);
                               }}>查看档案<ExternalLink /></button>
                             )}
                             {['REJECTED', 'WITHDRAWN'].includes(candidate.status) && (

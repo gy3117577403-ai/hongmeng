@@ -22,6 +22,7 @@ import {
   parseAccessProfileKey,
   prepareAccessGrant,
   serializeAdminUser,
+  syncAccountFieldReportGrant,
   type AccessGrantInput,
 } from '@/lib/user-access-admin';
 
@@ -91,6 +92,8 @@ export async function POST(request: NextRequest) {
       username?: string;
       displayName?: string;
       password?: string;
+      fieldReportEnabled?: unknown;
+      mustChangePassword?: unknown;
       laborRole?: unknown;
       employeeId?: unknown;
     } & AccessGrantInput;
@@ -124,6 +127,8 @@ export async function POST(request: NextRequest) {
       }
       const resolvedRole = legacyLaborRoleForProfile(profile);
       const isFieldOnlyAccount = profile === AccessProfileKey.FIELD_REPORTER;
+      const fieldReportEnabled = isFieldOnlyAccount || body.fieldReportEnabled === true;
+      const mustChangePassword = !isFieldOnlyAccount && body.mustChangePassword === true;
       const passwordMaterial = isFieldOnlyAccount ? FIELD_REPORT_DEFAULT_PASSWORD : password;
       const created = await tx.user.create({
         data: {
@@ -132,7 +137,7 @@ export async function POST(request: NextRequest) {
           passwordHash: await bcrypt.hash(passwordMaterial, 10),
           isActive: true,
           accountStatus: 'ACTIVE',
-          mustChangePassword: !isFieldOnlyAccount,
+          mustChangePassword,
           fieldPasswordOnly: isFieldOnlyAccount,
           laborRole: resolvedRole,
           employeeId: profile === AccessProfileKey.ADMIN_GLOBAL ? null : employeeId,
@@ -145,6 +150,15 @@ export async function POST(request: NextRequest) {
           grantedById: current.id,
         },
       });
+      await syncAccountFieldReportGrant(tx, {
+        userId: created.id,
+        employee,
+        enabled: fieldReportEnabled,
+        primaryProfile: profile,
+        departmentId: grant.departmentId,
+        effectiveFrom: body.effectiveFrom,
+        grantedById: current.id,
+      });
       if (profile !== AccessProfileKey.FIELD_REPORTER) {
         await createSystemNotification(tx, {
           eventType: 'ACCOUNT_CREATED',
@@ -152,7 +166,9 @@ export async function POST(request: NextRequest) {
           category: 'ACCOUNT',
           priority: 'HIGH',
           title: '你的系统账号已开通',
-          body: '首次登录后必须先修改临时密码，再进入已授权的工作台。',
+          body: mustChangePassword
+            ? '首次登录后请先修改临时密码，再进入已授权的工作台。'
+            : `账号已开通，可使用${fieldReportEnabled ? '后台工作台和扫码报工' : '后台工作台'}。`,
           targetRoute: '/account',
           sourceType: 'user',
           sourceId: created.id,
@@ -174,6 +190,7 @@ export async function POST(request: NextRequest) {
         employeeId: user.employeeId,
         profileKey: user.accessGrants[0]?.profile,
         departmentId: user.accessGrants[0]?.departmentId,
+        fieldReportEnabled: user.accessGrants.some(grant => grant.profile === AccessProfileKey.FIELD_REPORTER),
       },
     });
     return NextResponse.json({ ok: true, user: serializeAdminUser(user) }, { status: 201 });

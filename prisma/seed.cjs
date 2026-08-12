@@ -1,11 +1,15 @@
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
 
-const MIN_PASSWORD_LENGTH = 8;
+const MIN_PASSWORD_LENGTH = 6;
+const MAX_PASSWORD_LENGTH = 64;
 const COMMON_PASSWORDS = new Set([
+  '123456',
   '12345678',
   '123456789',
   '1234567890',
+  '111111',
+  '654321',
   'password',
   'password1',
   'admin123',
@@ -18,6 +22,9 @@ const COMMON_PASSWORDS = new Set([
 function validateSeedAdminPassword(password, username) {
   if (typeof password !== 'string' || password.length < MIN_PASSWORD_LENGTH) {
     return `密码至少 ${MIN_PASSWORD_LENGTH} 位`;
+  }
+  if (password.length > MAX_PASSWORD_LENGTH) {
+    return `密码最多 ${MAX_PASSWORD_LENGTH} 位`;
   }
   const normalized = password.trim().toLowerCase();
   if (!normalized || COMMON_PASSWORDS.has(normalized)) {

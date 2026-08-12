@@ -22,11 +22,13 @@ test('seed password validation stays aligned with the application password polic
   const cases: Array<[password: string, username: string]> = [
     ['', 'admin'],
     ['short', 'admin'],
+    ['123456', 'admin'],
     ['12345678', 'admin'],
     ['AAAAAAAA', 'admin'],
     ['        ', 'admin'],
     ['Admin-safe-2026!', 'admin'],
     [STRONG_PASSWORD, 'admin'],
+    ['a7b9c2', 'operator'],
     ['normal-pass-2026', 'operator'],
   ];
 
@@ -37,6 +39,12 @@ test('seed password validation stays aligned with the application password polic
       `policy mismatch for case ${index}`,
     );
   }
+});
+
+test('six-character passwords are allowed without composition rules but shared weak passwords stay blocked', () => {
+  assert.equal(validateNewPassword('a7b9c2', 'operator'), null);
+  assert.match(validateNewPassword('123456', 'operator') || '', /过于常见/);
+  assert.match(validateNewPassword('111111', 'operator') || '', /过于常见|相同字符/);
 });
 
 test('only first creation and explicit reset require a seed password', () => {

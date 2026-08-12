@@ -3519,6 +3519,7 @@ main.hr-workbench.hm-workbench-root.hm-workbench-root {
 .hr-profile-readonly > span { color: #7b899b; font-size: 9px; font-weight: 760; }
 .hr-profile-form-grid input { width: 100%; height: 39px; padding: 0 10px; border: 1px solid #dfe5ed; border-radius: 9px; outline: 0; background: #fbfcfe; color: #26384f; font: inherit; font-size: 11px; }
 .hr-profile-form-grid input:focus { border-color: #91b5f7; background: #fff; box-shadow: 0 0 0 3px rgba(47, 115, 246, .09); }
+.hr-profile-form-grid input:disabled { cursor: default; border-color: transparent; background: #f2f4f7; color: #5f6e81; opacity: 1; }
 .hr-profile-readonly { min-height: 55px; padding: 8px 9px; display: grid; align-content: center; gap: 3px; border: 1px solid #e5eaf0; border-radius: 9px; background: #f8fafc; }
 .hr-profile-readonly strong { font-size: 10px; }
 .hr-profile-readonly small { color: #8b97a7; font-size: 7px; line-height: 1.4; }
@@ -3589,6 +3590,8 @@ main.hr-workbench.hm-workbench-root.hm-workbench-root {
   background: #fafbfd;
 }
 .hr-profile-footer > span { margin-right: auto; color: #8492a3; font-size: 8px; }
+.hr-profile-footer-actions { display: flex; align-items: center; gap: 8px; }
+.hr-profile-footer-actions button { min-height: 38px; }
 
 .hr-role-profile {
   display: grid;
