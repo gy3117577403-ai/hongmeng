@@ -100,6 +100,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/advance-reporting-integration.test.ts
+      - name: Terminal tooling PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npx tsx --test --test-concurrency=1 tests/terminal-tooling-integration.test.ts
       - name: Type check
         run: npx tsc --noEmit
       - name: Lint
@@ -122,14 +126,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.31.9
+            org.opencontainers.image.version=v1.32.0
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.31.9
+            APP_VERSION=v1.32.0
             APP_REVISION=${{ github.sha }}
           load: true
           push: false

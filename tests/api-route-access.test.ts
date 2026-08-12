@@ -163,9 +163,26 @@ test('process specialist can collaborate without receiving scheduling, reporting
 
   assert.equal(canAccessApiRoute(process, '/api/drawing-library', 'GET'), true);
   assert.equal(canAccessApiRoute(process, '/api/drawing-library', 'POST'), false);
+  assert.equal(canAccessApiRoute(process, '/api/terminal-tooling/terminals', 'POST'), true);
+  assert.equal(canAccessApiRoute(process, '/api/terminal-tooling/blades/blade-1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(process, '/api/terminal-tooling/setups/setup-1/publish', 'POST'), true);
   assert.equal(canAccessApiRoute(process, '/api/export/production-dispatch.xlsx', 'GET'), false);
   assert.equal(canAccessApiRoute(process, '/api/work-order-qr/prints/packet', 'GET'), false);
   assert.equal(canAccessApiRoute(process, '/api/major-quality-approvals', 'GET'), false);
+});
+
+test('workshop leaders can read terminal tooling but cannot change or publish it', () => {
+  const supervisor = context({
+    profile: 'WORKSHOP_SUPERVISOR',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'WORKSHOP:PRODUCTION',
+  });
+  assert.equal(canAccessApiRoute(supervisor, '/api/terminal-tooling/overview', 'GET'), true);
+  assert.equal(canAccessApiRoute(supervisor, '/api/terminal-tooling/setups', 'GET'), true);
+  assert.equal(canAccessApiRoute(supervisor, '/api/terminal-tooling/terminals', 'POST'), false);
+  assert.equal(canAccessApiRoute(supervisor, '/api/terminal-tooling/blades/blade-1', 'PATCH'), false);
+  assert.equal(canAccessApiRoute(supervisor, '/api/terminal-tooling/setups/setup-1/publish', 'POST'), false);
 });
 
 test('team leaders cannot invoke workshop-wide or cross-team API operations', () => {

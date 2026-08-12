@@ -161,6 +161,23 @@ enum ProductTimeDeploymentRouteStatus {
   @@map("product_time_deployment_route_status")
 }
 
+enum TerminalToolingSetupStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+
+  @@map("terminal_tooling_setup_status")
+}
+
+enum TerminalToolingBladePosition {
+  UPPER_OUTER
+  UPPER_INNER
+  LOWER_OUTER
+  LOWER_INNER
+
+  @@map("terminal_tooling_blade_position")
+}
+
 enum ProcessRouteChangeOutboxStatus {
   PENDING
   PROCESSING
@@ -3772,4 +3789,180 @@ model ConnectorParameterFile {
   @@index([deletedAt])
   @@index([createdAt])
   @@map("connector_parameter_files")
+}
+
+model TerminalToolingTerminal {
+  id            String                          @id @default(cuid())
+  specification String
+  manufacturer  String?
+  normalizedKey String                          @unique @map("normalized_key")
+  aliases       String[]                        @default([])
+  wireRange     String?                         @map("wire_range")
+  material      String?
+  plating       String?
+  remark        String?
+  isActive      Boolean                         @default(true) @map("is_active")
+  lockVersion   Int                             @default(1) @map("lock_version")
+  createdBy     String?                         @map("created_by")
+  updatedBy     String?                         @map("updated_by")
+  createdAt     DateTime                        @default(now()) @map("created_at")
+  updatedAt     DateTime                        @updatedAt @map("updated_at")
+  supplierLinks TerminalToolingTerminalSupply[]
+  setups        TerminalToolingSetup[]
+
+  @@index([specification])
+  @@index([manufacturer])
+  @@index([isActive])
+  @@index([updatedAt])
+  @@map("terminal_tooling_terminals")
+}
+
+model TerminalToolingBlade {
+  id                  String                         @id @default(cuid())
+  model               String
+  manufacturer        String?
+  normalizedKey       String                         @unique @map("normalized_key")
+  compatiblePositions TerminalToolingBladePosition[] @default([]) @map("compatible_positions")
+  specification       String?
+  dimensionA          Decimal?                       @map("dimension_a") @db.Decimal(10, 3)
+  dimensionB          Decimal?                       @map("dimension_b") @db.Decimal(10, 3)
+  dimensionUnit       String?                        @default("mm") @map("dimension_unit")
+  material            String?
+  hardness            String?
+  remark              String?
+  isActive            Boolean                        @default(true) @map("is_active")
+  lockVersion         Int                            @default(1) @map("lock_version")
+  createdBy           String?                        @map("created_by")
+  updatedBy           String?                        @map("updated_by")
+  createdAt           DateTime                       @default(now()) @map("created_at")
+  updatedAt           DateTime                       @updatedAt @map("updated_at")
+  supplierLinks       TerminalToolingBladeSupply[]
+  setupPositions      TerminalToolingSetupPosition[]
+
+  @@index([model])
+  @@index([manufacturer])
+  @@index([isActive])
+  @@index([updatedAt])
+  @@map("terminal_tooling_blades")
+}
+
+model TerminalToolingSupplier {
+  id             String                          @id @default(cuid())
+  name           String
+  normalizedName String                          @unique @map("normalized_name")
+  website        String?
+  contactName    String?                         @map("contact_name")
+  phone          String?
+  remark         String?
+  isActive       Boolean                         @default(true) @map("is_active")
+  createdAt      DateTime                        @default(now()) @map("created_at")
+  updatedAt      DateTime                        @updatedAt @map("updated_at")
+  terminalLinks  TerminalToolingTerminalSupply[]
+  bladeLinks     TerminalToolingBladeSupply[]
+
+  @@index([name])
+  @@index([isActive])
+  @@map("terminal_tooling_suppliers")
+}
+
+model TerminalToolingTerminalSupply {
+  id          String                  @id @default(cuid())
+  terminalId  String                  @map("terminal_id")
+  supplierId  String                  @map("supplier_id")
+  supplierSku String?                 @map("supplier_sku")
+  productUrl  String?                 @map("product_url")
+  remark      String?
+  createdAt   DateTime                @default(now()) @map("created_at")
+  terminal    TerminalToolingTerminal @relation(fields: [terminalId], references: [id], onDelete: Cascade)
+  supplier    TerminalToolingSupplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@index([terminalId])
+  @@index([supplierId])
+  @@map("terminal_tooling_terminal_supplies")
+}
+
+model TerminalToolingBladeSupply {
+  id          String                  @id @default(cuid())
+  bladeId     String                  @map("blade_id")
+  supplierId  String                  @map("supplier_id")
+  supplierSku String?                 @map("supplier_sku")
+  productUrl  String?                 @map("product_url")
+  remark      String?
+  createdAt   DateTime                @default(now()) @map("created_at")
+  blade       TerminalToolingBlade    @relation(fields: [bladeId], references: [id], onDelete: Cascade)
+  supplier    TerminalToolingSupplier @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+
+  @@index([bladeId])
+  @@index([supplierId])
+  @@map("terminal_tooling_blade_supplies")
+}
+
+model TerminalToolingSetup {
+  id          String                         @id @default(cuid())
+  terminalId  String                         @map("terminal_id")
+  name        String?
+  wireRange   String?                        @map("wire_range")
+  equipment   String?
+  mold        String?
+  contextKey  String                         @map("context_key")
+  version     Int
+  status      TerminalToolingSetupStatus     @default(DRAFT)
+  remark      String?
+  lockVersion Int                            @default(1) @map("lock_version")
+  publishedAt DateTime?                      @map("published_at")
+  publishedBy String?                        @map("published_by")
+  createdBy   String?                        @map("created_by")
+  updatedBy   String?                        @map("updated_by")
+  createdAt   DateTime                       @default(now()) @map("created_at")
+  updatedAt   DateTime                       @updatedAt @map("updated_at")
+  terminal    TerminalToolingTerminal        @relation(fields: [terminalId], references: [id], onDelete: Restrict)
+  positions   TerminalToolingSetupPosition[]
+  tags        TerminalToolingSetupTag[]
+
+  @@unique([terminalId, contextKey, version])
+  @@index([terminalId, status])
+  @@index([contextKey])
+  @@index([status, updatedAt])
+  @@map("terminal_tooling_setups")
+}
+
+model TerminalToolingSetupPosition {
+  id        String                       @id @default(cuid())
+  setupId   String                       @map("setup_id")
+  position  TerminalToolingBladePosition
+  bladeId   String                       @map("blade_id")
+  remark    String?
+  createdAt DateTime                     @default(now()) @map("created_at")
+  updatedAt DateTime                     @updatedAt @map("updated_at")
+  setup     TerminalToolingSetup         @relation(fields: [setupId], references: [id], onDelete: Cascade)
+  blade     TerminalToolingBlade         @relation(fields: [bladeId], references: [id], onDelete: Restrict)
+
+  @@unique([setupId, position])
+  @@index([bladeId])
+  @@map("terminal_tooling_setup_positions")
+}
+
+model TerminalToolingTag {
+  id            String                    @id @default(cuid())
+  label         String
+  normalizedKey String                    @unique @map("normalized_key")
+  isActive      Boolean                   @default(true) @map("is_active")
+  createdAt     DateTime                  @default(now()) @map("created_at")
+  updatedAt     DateTime                  @updatedAt @map("updated_at")
+  setups        TerminalToolingSetupTag[]
+
+  @@index([label])
+  @@index([isActive])
+  @@map("terminal_tooling_tags")
+}
+
+model TerminalToolingSetupTag {
+  setupId String               @map("setup_id")
+  tagId   String               @map("tag_id")
+  setup   TerminalToolingSetup @relation(fields: [setupId], references: [id], onDelete: Cascade)
+  tag     TerminalToolingTag   @relation(fields: [tagId], references: [id], onDelete: Restrict)
+
+  @@id([setupId, tagId])
+  @@index([tagId])
+  @@map("terminal_tooling_setup_tags")
 }

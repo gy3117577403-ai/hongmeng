@@ -46,8 +46,8 @@ test('production supervisor can use production and planning collaboration pages'
 
 test('process specialist sees collaboration pages but not scheduling or QR print', () => {
   const process = accessWithCapabilities(
-    ['ACCOUNT_SELF', 'BASIC_SUMMARY', 'PROCESS', 'ISSUE_MANAGEMENT', 'CHANGE_MANAGEMENT', 'DRAWING_LIBRARY', 'PRODUCTION'],
-    ['PROCESS:READ', 'ISSUE_MANAGEMENT:READ', 'CHANGE_MANAGEMENT:READ', 'DRAWING_LIBRARY:READ', 'PRODUCTION:READ'],
+    ['ACCOUNT_SELF', 'BASIC_SUMMARY', 'PROCESS', 'ISSUE_MANAGEMENT', 'CHANGE_MANAGEMENT', 'DRAWING_LIBRARY', 'TERMINAL_TOOLING', 'PRODUCTION'],
+    ['PROCESS:READ', 'ISSUE_MANAGEMENT:READ', 'CHANGE_MANAGEMENT:READ', 'DRAWING_LIBRARY:READ', 'TERMINAL_TOOLING:READ', 'PRODUCTION:READ'],
   );
   assert.equal(canAccessAppRoute(process, '/workspace/workflows'), true);
   assert.equal(canAccessAppRoute(process, '/workspace/issues'), true);
@@ -55,9 +55,15 @@ test('process specialist sees collaboration pages but not scheduling or QR print
   assert.equal(canAccessAppRoute(process, '/drawing-library'), true);
   assert.equal(canAccessAppRoute(process, '/production'), true);
   assert.equal(canAccessAppRoute(process, '/workspace/weekly-processes'), true);
+  assert.equal(canAccessAppRoute(process, '/workspace/terminal-tooling'), true);
   assert.equal(canAccessAppRoute(process, '/workspace/daily-plans'), false);
   assert.equal(canAccessAppRoute(process, '/production/qr-print'), false);
   assert.equal(canAccessAppRoute(process, '/workspace/approvals'), false);
+});
+
+test('terminal tooling is visible to workshop leaders and hidden from field reporters', () => {
+  assert.equal(canAccessAppRoute(access('TERMINAL_TOOLING'), '/workspace/terminal-tooling'), true);
+  assert.equal(canAccessAppRoute(access('FIELD_REPORT'), '/workspace/terminal-tooling'), false);
 });
 
 test('GM read/approval grants map to reports and workflow but not settings', () => {

@@ -184,6 +184,7 @@ export type AccessModuleCodeDTO =
   | 'ISSUE_MANAGEMENT'
   | 'CHANGE_MANAGEMENT'
   | 'DRAWING_LIBRARY'
+  | 'TERMINAL_TOOLING'
   | 'PLANNING'
   | 'HR'
   | 'PRODUCTION'
@@ -2121,6 +2122,99 @@ export type ConnectorParameterDTO = {
   deletedAt?: string | null;
   importBatchId?: string | null;
   manualCount?: number;
+};
+
+export type TerminalToolingBladePositionDTO = 'UPPER_OUTER' | 'UPPER_INNER' | 'LOWER_OUTER' | 'LOWER_INNER';
+export type TerminalToolingSetupStatusDTO = 'DRAFT' | 'PUBLISHED' | 'ARCHIVED';
+
+export type TerminalToolingSupplyDTO = {
+  id: string;
+  supplierId: string;
+  supplierName: string;
+  supplierSku?: string | null;
+  productUrl?: string | null;
+  remark?: string | null;
+};
+
+export type TerminalToolingTerminalDTO = {
+  id: string;
+  specification: string;
+  manufacturer?: string | null;
+  aliases: string[];
+  wireRange?: string | null;
+  material?: string | null;
+  plating?: string | null;
+  remark?: string | null;
+  isActive: boolean;
+  lockVersion: number;
+  setupCount: number;
+  publishedSetupCount: number;
+  supplierLinks: TerminalToolingSupplyDTO[];
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TerminalToolingBladeDTO = {
+  id: string;
+  model: string;
+  manufacturer?: string | null;
+  compatiblePositions: TerminalToolingBladePositionDTO[];
+  specification?: string | null;
+  dimensionA?: string | null;
+  dimensionB?: string | null;
+  dimensionUnit?: string | null;
+  material?: string | null;
+  hardness?: string | null;
+  remark?: string | null;
+  isActive: boolean;
+  lockVersion: number;
+  usageCount: number;
+  supplierLinks: TerminalToolingSupplyDTO[];
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type TerminalToolingSetupPositionDTO = {
+  id: string;
+  position: TerminalToolingBladePositionDTO;
+  bladeId: string;
+  remark?: string | null;
+  blade: TerminalToolingBladeDTO;
+};
+
+export type TerminalToolingSetupDTO = {
+  id: string;
+  terminalId: string;
+  terminal: Pick<TerminalToolingTerminalDTO, 'id' | 'specification' | 'manufacturer' | 'isActive'>;
+  name?: string | null;
+  wireRange?: string | null;
+  equipment?: string | null;
+  mold?: string | null;
+  contextKey: string;
+  version: number;
+  status: TerminalToolingSetupStatusDTO;
+  remark?: string | null;
+  lockVersion: number;
+  publishedAt?: string | null;
+  publishedBy?: string | null;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  positions: TerminalToolingSetupPositionDTO[];
+  tags: string[];
+};
+
+export type TerminalToolingStatsDTO = {
+  terminalCount: number;
+  bladeCount: number;
+  publishedSetupCount: number;
+  draftSetupCount: number;
+  incompleteSetupCount: number;
 };
 
 export type ConnectorAssemblyManualTocDTO = {

@@ -55,6 +55,11 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/connector-parameter-files', anyOf: ['ENGINEERING'] },
   { prefix: '/api/connector-parameter-import-batches', anyOf: ['ENGINEERING'] },
 
+  {
+    prefix: '/api/terminal-tooling',
+    anyOf: ['TERMINAL_TOOLING'],
+  },
+
   { prefix: '/api/product-time-profiles', anyOf: ['PROCESS'] },
   { prefix: '/api/process-time-standards', anyOf: ['PROCESS'] },
   { prefix: '/api/process-definitions', anyOf: ['PROCESS'] },
@@ -193,6 +198,22 @@ function pathOnly(value: string): string {
 
 export function apiRouteAccessRule(pathname: string): ApiRule | null {
   const path = pathOnly(pathname);
+
+  if (/^\/api\/terminal-tooling\/setups\/[^/]+\/publish$/.test(path)) {
+    return {
+      prefix: '/api/terminal-tooling/setups/:id/publish',
+      anyOf: ['TERMINAL_TOOLING'],
+      action: 'EXECUTE_WORKFLOW',
+    };
+  }
+
+  if (/^\/api\/terminal-tooling\/setups\/[^/]+\/duplicate$/.test(path)) {
+    return {
+      prefix: '/api/terminal-tooling/setups/:id/duplicate',
+      anyOf: ['TERMINAL_TOOLING'],
+      action: 'CREATE',
+    };
+  }
 
   if (path === '/api/issues/assignee-options') {
     return {

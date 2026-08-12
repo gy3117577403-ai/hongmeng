@@ -54,6 +54,7 @@ export const ACCESS_MODULES = [
   'ISSUE_MANAGEMENT',
   'CHANGE_MANAGEMENT',
   'DRAWING_LIBRARY',
+  'TERMINAL_TOOLING',
   'PLANNING',
   'HR',
   'PRODUCTION',
@@ -130,6 +131,7 @@ export const MODULE_ACTION_MATRIX = {
   ISSUE_MANAGEMENT: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
   CHANGE_MANAGEMENT: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
   DRAWING_LIBRARY: ['READ'],
+  TERMINAL_TOOLING: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
   PLANNING: DEPARTMENT_OPERATION_ACTIONS,
   HR: DEPARTMENT_OPERATION_ACTIONS,
   PRODUCTION: DEPARTMENT_OPERATION_ACTIONS,
@@ -425,6 +427,7 @@ export function resolveAccessContext(
       addModuleActions(capabilities, 'ISSUE_MANAGEMENT', MODULE_ACTION_MATRIX.ISSUE_MANAGEMENT);
       addModuleActions(capabilities, 'CHANGE_MANAGEMENT', MODULE_ACTION_MATRIX.CHANGE_MANAGEMENT);
       addModuleActions(capabilities, 'DRAWING_LIBRARY', MODULE_ACTION_MATRIX.DRAWING_LIBRARY);
+      addModuleActions(capabilities, 'TERMINAL_TOOLING', MODULE_ACTION_MATRIX.TERMINAL_TOOLING);
       capabilities.add(capabilityCode('PRODUCTION', 'READ'));
       addScope(scopeForGrant(grant, 'ACCOUNT_SELF', 'SELF', false));
       addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
@@ -433,6 +436,7 @@ export function resolveAccessContext(
       addScope(scopeForGrant(grant, 'ISSUE_MANAGEMENT', 'DEPARTMENT', false));
       addScope(scopeForGrant(grant, 'CHANGE_MANAGEMENT', 'DEPARTMENT', false));
       addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', true));
+      addScope(scopeForGrant(grant, 'TERMINAL_TOOLING', 'GLOBAL', false));
       addScope(scopeForGrant(grant, 'PRODUCTION', 'WORKSHOP', true));
       productionScope = strongerProductionScope(productionScope, 'WORKSHOP');
       continue;
@@ -442,9 +446,11 @@ export function resolveAccessContext(
       addSelfService(capabilities);
       addBasicSummary(capabilities);
       addModuleActions(capabilities, 'PRODUCTION', DEPARTMENT_OPERATION_ACTIONS);
+      capabilities.add(capabilityCode('TERMINAL_TOOLING', 'READ'));
       addScope(scopeForGrant(grant, 'ACCOUNT_SELF', 'SELF', false));
       addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
       addScope(scopeForGrant(grant, 'BASIC_SUMMARY', 'GLOBAL', true));
+      addScope(scopeForGrant(grant, 'TERMINAL_TOOLING', 'GLOBAL', true));
 
       const isSupervisor = grant.profile === 'WORKSHOP_SUPERVISOR';
       addScope(scopeForGrant(grant, 'PRODUCTION', isSupervisor ? 'WORKSHOP' : 'TEAM', false));

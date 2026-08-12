@@ -22,6 +22,7 @@ import {
   PackageSearch,
   Search,
   Settings,
+  Settings2,
   ShieldCheck,
   UsersRound,
   Workflow,
@@ -75,6 +76,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/drawing-library', label: '图纸资料库', icon: FolderKanban },
       { href: '/connector-assembly-manuals', label: '组装说明书', icon: BookOpen },
       { href: '/connector-parameters', label: '连接器参数', icon: Boxes },
+      { href: '/workspace/terminal-tooling', label: '端子调模', icon: Settings2 },
     ],
   },
   {

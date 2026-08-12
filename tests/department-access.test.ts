@@ -254,7 +254,7 @@ test('field reporter can only use the field-report module', () => {
   assert.equal(hasCapability(context, 'PRODUCTION', 'READ'), false);
 });
 
-test('process specialist owns process work while production and drawings stay read-only', () => {
+test('process specialist owns process and terminal tooling while production and drawings stay read-only', () => {
   const context = resolveAccessContext([
     grant('PROCESS_SPECIALIST', {
       departmentCode: 'PROCESS',
@@ -271,9 +271,12 @@ test('process specialist owns process work while production and drawings stay re
     assert.equal(scopeHintsFor(context, module)[0]?.readOnly, false);
   }
   assert.deepEqual(allowedActions(context, 'DRAWING_LIBRARY'), ['READ']);
+  assert.deepEqual(allowedActions(context, 'TERMINAL_TOOLING'), ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
   assert.deepEqual(allowedActions(context, 'PRODUCTION'), ['READ']);
   assert.equal(scopeHintsFor(context, 'DRAWING_LIBRARY')[0]?.level, 'GLOBAL');
   assert.equal(scopeHintsFor(context, 'DRAWING_LIBRARY')[0]?.readOnly, true);
+  assert.equal(scopeHintsFor(context, 'TERMINAL_TOOLING')[0]?.level, 'GLOBAL');
+  assert.equal(scopeHintsFor(context, 'TERMINAL_TOOLING')[0]?.readOnly, false);
   assert.equal(scopeHintsFor(context, 'PRODUCTION')[0]?.level, 'WORKSHOP');
   assert.equal(scopeHintsFor(context, 'PRODUCTION')[0]?.readOnly, true);
   assert.equal(context.productionScope, 'WORKSHOP');
@@ -297,6 +300,9 @@ test('workshop supervisor gets production operations for the whole workshop scop
   }
   assert.equal(hasCapability(context, 'PRODUCTION', 'PERMANENT_DELETE'), false);
   assert.equal(context.productionScope, 'WORKSHOP');
+  assert.deepEqual(allowedActions(context, 'TERMINAL_TOOLING'), ['READ']);
+  assert.equal(scopeHintsFor(context, 'TERMINAL_TOOLING')[0]?.level, 'GLOBAL');
+  assert.equal(scopeHintsFor(context, 'TERMINAL_TOOLING')[0]?.readOnly, true);
   assert.deepEqual(scopeHintsFor(context, 'PRODUCTION'), [{
     module: 'PRODUCTION',
     level: 'WORKSHOP',
@@ -320,6 +326,7 @@ test('workshop team leader gets the same actions constrained to the assigned tea
   assert.equal(hasCapability(context, 'PRODUCTION', 'EXECUTE_WORKFLOW'), true);
   assert.equal(hasCapability(context, 'PRODUCTION', 'PERMANENT_DELETE'), false);
   assert.equal(context.productionScope, 'TEAM');
+  assert.deepEqual(allowedActions(context, 'TERMINAL_TOOLING'), ['READ']);
 
   const scope = scopeHintsFor(context, 'PRODUCTION')[0];
   assert.equal(scope?.level, 'TEAM');
