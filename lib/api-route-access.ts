@@ -37,11 +37,17 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/material-follow-ups', anyOf: ['PROCUREMENT'] },
   { prefix: '/api/warehouse', anyOf: ['WAREHOUSE'] },
 
-  { prefix: '/api/issues', anyOf: ['QUALITY'] },
+  { prefix: '/api/issues/from-production-alert', anyOf: ['QUALITY'] },
+  { prefix: '/api/issues/detected', anyOf: ['QUALITY'] },
+  { prefix: '/api/issues', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/api/major-quality-approvals', anyOf: ['QUALITY', 'MAJOR_APPROVAL'] },
-  { prefix: '/api/changes', anyOf: ['ENGINEERING', 'QUALITY'] },
+  { prefix: '/api/changes', anyOf: ['ENGINEERING', 'QUALITY', 'CHANGE_MANAGEMENT'] },
   { prefix: '/api/change-snapshots', anyOf: ['ENGINEERING', 'QUALITY'] },
-  { prefix: '/api/drawing-library', anyOf: ['ENGINEERING'] },
+  {
+    prefix: '/api/drawing-library',
+    anyOf: ['ENGINEERING', 'DRAWING_LIBRARY'],
+    readOnlyModules: ['DRAWING_LIBRARY'],
+  },
   { prefix: '/api/connector-assembly-manuals', anyOf: ['ENGINEERING'] },
   { prefix: '/api/connector-assembly-manual-versions', anyOf: ['ENGINEERING'] },
   { prefix: '/api/connector-assembly-manual-assets', anyOf: ['ENGINEERING'] },
@@ -78,14 +84,16 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   {
     prefix: '/api/export/production-dispatch.xlsx',
     anyOf: ['PLANNING', 'PRODUCTION'],
+    action: 'EXECUTE_WORKFLOW',
   },
   {
     prefix: '/api/daily-plans/organization',
     anyOf: ['PLANNING', 'PRODUCTION'],
+    actionsByMethod: { GET: 'UPDATE' },
     productionMinimumScope: 'WORKSHOP',
   },
-  { prefix: '/api/daily-plans', anyOf: ['PLANNING', 'PRODUCTION'] },
-  { prefix: '/api/daily-plan-tasks', anyOf: ['PLANNING', 'PRODUCTION'] },
+  { prefix: '/api/daily-plans', anyOf: ['PLANNING', 'PRODUCTION'], actionsByMethod: { GET: 'UPDATE' } },
+  { prefix: '/api/daily-plan-tasks', anyOf: ['PLANNING', 'PRODUCTION'], actionsByMethod: { GET: 'UPDATE' } },
   {
     prefix: '/api/daily-shipments',
     anyOf: ['PLANNING'],
@@ -151,6 +159,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   {
     prefix: '/api/work-order-qr',
     anyOf: ['BUSINESS', 'PRODUCTION'],
+    action: 'EXECUTE_WORKFLOW',
     productionMinimumScope: 'WORKSHOP',
   },
   {
@@ -188,8 +197,16 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
   if (path === '/api/issues/assignee-options') {
     return {
       prefix: '/api/issues/assignee-options',
-      anyOf: ['QUALITY'],
+      anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'],
       action: 'UPDATE',
+    };
+  }
+
+  if (path === '/api/changes/owner-options') {
+    return {
+      prefix: '/api/changes/owner-options',
+      anyOf: ['ENGINEERING', 'QUALITY', 'CHANGE_MANAGEMENT'],
+      action: 'READ',
     };
   }
 
@@ -214,6 +231,38 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
       prefix: '/api/abnormal-time-events/:id/quality-or-resolve',
       anyOf: ['QUALITY'],
       action: 'EXECUTE_WORKFLOW',
+    };
+  }
+
+  if (/^\/api\/issues\/[^/]+\/transition$/.test(path)) {
+    return {
+      prefix: '/api/issues/:id/transition',
+      anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'],
+      action: 'EXECUTE_WORKFLOW',
+    };
+  }
+
+  if (/^\/api\/issues\/[^/]+\/(?:activities|attachments\/upload)$/.test(path)) {
+    return {
+      prefix: '/api/issues/:id/collaboration',
+      anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'],
+      action: 'UPDATE',
+    };
+  }
+
+  if (/^\/api\/changes\/[^/]+\/transition$/.test(path)) {
+    return {
+      prefix: '/api/changes/:id/transition',
+      anyOf: ['ENGINEERING', 'QUALITY', 'CHANGE_MANAGEMENT'],
+      action: 'EXECUTE_WORKFLOW',
+    };
+  }
+
+  if (/^\/api\/changes\/[^/]+\/(?:activities|attachments\/upload)$/.test(path)) {
+    return {
+      prefix: '/api/changes/:id/collaboration',
+      anyOf: ['ENGINEERING', 'QUALITY', 'CHANGE_MANAGEMENT'],
+      action: 'UPDATE',
     };
   }
 
@@ -369,7 +418,7 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
     return {
       prefix: path,
       anyOf: ['BUSINESS', 'PRODUCTION'],
-      action: 'READ',
+      action: 'EXECUTE_WORKFLOW',
       productionMinimumScope: 'WORKSHOP',
     };
   }

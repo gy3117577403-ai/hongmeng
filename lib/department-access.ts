@@ -26,6 +26,7 @@ export type DepartmentCode = typeof DEPARTMENT_CODES[number];
 export const ACCESS_PROFILE_CODES = [
   'ADMIN_GLOBAL',
   'DEPARTMENT_FULL',
+  'PROCESS_SPECIALIST',
   'FIELD_REPORTER',
   'GM_OFFICE_READER_APPROVER',
   'FINANCE_ACCOUNT_ONLY',
@@ -50,6 +51,9 @@ export const ACCESS_MODULES = [
   'ENGINEERING',
   'QUALITY',
   'PROCESS',
+  'ISSUE_MANAGEMENT',
+  'CHANGE_MANAGEMENT',
+  'DRAWING_LIBRARY',
   'PLANNING',
   'HR',
   'PRODUCTION',
@@ -123,6 +127,9 @@ export const MODULE_ACTION_MATRIX = {
   ENGINEERING: DEPARTMENT_OPERATION_ACTIONS,
   QUALITY: DEPARTMENT_OPERATION_ACTIONS,
   PROCESS: DEPARTMENT_OPERATION_ACTIONS,
+  ISSUE_MANAGEMENT: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
+  CHANGE_MANAGEMENT: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
+  DRAWING_LIBRARY: ['READ'],
   PLANNING: DEPARTMENT_OPERATION_ACTIONS,
   HR: DEPARTMENT_OPERATION_ACTIONS,
   PRODUCTION: DEPARTMENT_OPERATION_ACTIONS,
@@ -404,6 +411,30 @@ export function resolveAccessContext(
       addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
       addScope(scopeForGrant(grant, 'BASIC_SUMMARY', 'GLOBAL', true));
       addScope(scopeForGrant(grant, moduleKey, 'DEPARTMENT', false));
+      continue;
+    }
+
+    if (grant.profile === 'PROCESS_SPECIALIST') {
+      // A process specialist owns process standards while collaborating with
+      // production, issues, changes and drawings through deliberately narrower
+      // capabilities. In particular, production and drawings remain read-only.
+      if (grant.departmentCode !== 'PROCESS') continue;
+      addSelfService(capabilities);
+      addBasicSummary(capabilities);
+      addModuleActions(capabilities, 'PROCESS', DEPARTMENT_OPERATION_ACTIONS);
+      addModuleActions(capabilities, 'ISSUE_MANAGEMENT', MODULE_ACTION_MATRIX.ISSUE_MANAGEMENT);
+      addModuleActions(capabilities, 'CHANGE_MANAGEMENT', MODULE_ACTION_MATRIX.CHANGE_MANAGEMENT);
+      addModuleActions(capabilities, 'DRAWING_LIBRARY', MODULE_ACTION_MATRIX.DRAWING_LIBRARY);
+      capabilities.add(capabilityCode('PRODUCTION', 'READ'));
+      addScope(scopeForGrant(grant, 'ACCOUNT_SELF', 'SELF', false));
+      addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
+      addScope(scopeForGrant(grant, 'BASIC_SUMMARY', 'GLOBAL', true));
+      addScope(scopeForGrant(grant, 'PROCESS', 'DEPARTMENT', false));
+      addScope(scopeForGrant(grant, 'ISSUE_MANAGEMENT', 'DEPARTMENT', false));
+      addScope(scopeForGrant(grant, 'CHANGE_MANAGEMENT', 'DEPARTMENT', false));
+      addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', true));
+      addScope(scopeForGrant(grant, 'PRODUCTION', 'WORKSHOP', true));
+      productionScope = strongerProductionScope(productionScope, 'WORKSHOP');
       continue;
     }
 

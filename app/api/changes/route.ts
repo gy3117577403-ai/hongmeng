@@ -14,6 +14,7 @@ import {
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import type { ChangePriority, ChangeStatus, ChangeType } from '@/types';
+import { canCreateChangeForProcess } from '@/lib/process-collaboration-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -110,6 +111,9 @@ export async function POST(req: NextRequest) {
     const parsed = parseChangeInput(body);
     if (parsed.errors.length) return NextResponse.json({ ok: false, error: parsed.errors[0] }, { status: 400 });
     const data = parsed.data;
+    if (!canCreateChangeForProcess(user, { type: data.type || 'drawing' })) {
+      return NextResponse.json({ ok: false, error: '工艺账号只能新建工艺变更' }, { status: 403 });
+    }
 
     let workOrderId = data.workOrderId || null;
     if (data.sourceIssueId) {

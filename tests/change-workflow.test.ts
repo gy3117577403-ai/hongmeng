@@ -5,7 +5,7 @@ import {
   parseChangeInput,
   transitionChangeData,
 } from '../lib/changes';
-import { workflowTemplates } from '../lib/workflows';
+import { workflowEntityTypeMatchesFilter, workflowTemplates } from '../lib/workflows';
 
 const baseChange = {
   status: 'draft',
@@ -68,4 +68,12 @@ test('implementation, verification and closure enforce their completion evidence
 test('workflow center exposes only real source modules', () => {
   assert.deepEqual(workflowTemplates.map(item => item.key), ['issue', 'change', 'production']);
   assert.deepEqual(workflowTemplates.map(item => item.route), ['/workspace/issues', '/workspace/changes', '/weekly-plan-center']);
+});
+
+test('workflow all-filter includes issues, changes and production while specific filters stay narrow', () => {
+  assert.equal(workflowEntityTypeMatchesFilter('issue', 'all'), true);
+  assert.equal(workflowEntityTypeMatchesFilter('change', 'all'), true);
+  assert.equal(workflowEntityTypeMatchesFilter('production', 'all'), true);
+  assert.equal(workflowEntityTypeMatchesFilter('issue', 'production'), false);
+  assert.equal(workflowEntityTypeMatchesFilter('production', 'production'), true);
 });

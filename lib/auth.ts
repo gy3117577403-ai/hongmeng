@@ -174,6 +174,18 @@ export async function currentUser() {
       : legacyFallbackGrants(user),
     { accountActive: true, now },
   );
+  const canAccessDailyPlans = dailyPlanEnabled() && (
+    user.laborRole === 'ADMIN'
+    || explicitlyConfigured
+    || hasCapability(access, 'PLANNING', 'READ')
+    || hasCapability(access, 'PRODUCTION', 'UPDATE')
+    || hasCapability(access, 'PRODUCTION', 'CREATE')
+    || hasCapability(access, 'PRODUCTION', 'EXECUTE_WORKFLOW')
+  );
+  const canAccessWeeklyProcesses = dailyPlanEnabled() && (
+    canAccessDailyPlans
+    || hasCapability(access, 'PRODUCTION', 'READ')
+  );
 
   return {
     id: user.id,
@@ -199,12 +211,8 @@ export async function currentUser() {
     access,
     dailyPlanningRoles,
     dailyPlanningTeamIds,
-    canAccessDailyPlans: dailyPlanEnabled() && (
-      user.laborRole === 'ADMIN'
-      || explicitlyConfigured
-      || access.modules.includes('PLANNING')
-      || access.modules.includes('PRODUCTION')
-    ),
+    canAccessDailyPlans,
+    canAccessWeeklyProcesses,
     canManageDailyPlanningOrganization: user.laborRole === 'ADMIN'
       || hasCapability(access, 'SYSTEM_CONFIGURATION', 'MANAGE'),
   };

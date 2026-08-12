@@ -103,10 +103,8 @@ function navigationForUser(
     .map(group => ({
       ...group,
       items: group.items.filter(item => {
-        if (
-          (item.href === '/workspace/daily-plans' || item.href === '/workspace/weekly-processes')
-          && !user.canAccessDailyPlans
-        ) return false;
+        if (item.href === '/workspace/daily-plans' && !user.canAccessDailyPlans) return false;
+        if (item.href === '/workspace/weekly-processes' && !user.canAccessWeeklyProcesses) return false;
         return canAccessAppRoute(user.access, item.href);
       }),
     }))

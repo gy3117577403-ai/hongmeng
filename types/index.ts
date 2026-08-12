@@ -154,6 +154,7 @@ export type AccountStatusDTO = 'PENDING' | 'ACTIVE' | 'SUSPENDED' | 'DISABLED';
 export type AccessProfileKeyDTO =
   | 'ADMIN_GLOBAL'
   | 'DEPARTMENT_FULL'
+  | 'PROCESS_SPECIALIST'
   | 'FIELD_REPORTER'
   | 'GM_OFFICE_READER_APPROVER'
   | 'FINANCE_ACCOUNT_ONLY'
@@ -180,6 +181,9 @@ export type AccessModuleCodeDTO =
   | 'ENGINEERING'
   | 'QUALITY'
   | 'PROCESS'
+  | 'ISSUE_MANAGEMENT'
+  | 'CHANGE_MANAGEMENT'
+  | 'DRAWING_LIBRARY'
   | 'PLANNING'
   | 'HR'
   | 'PRODUCTION'
@@ -291,6 +295,7 @@ export type CurrentUserDTO = {
   dailyPlanningRoles: DailyPlanningRoleDTO[];
   dailyPlanningTeamIds: string[];
   canAccessDailyPlans: boolean;
+  canAccessWeeklyProcesses: boolean;
   canManageDailyPlanningOrganization: boolean;
 };
 

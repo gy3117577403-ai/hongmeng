@@ -7,6 +7,7 @@ import {
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import type { ChangeStatus } from '@/types';
+import { canMutateChangeForProcess } from '@/lib/process-collaboration-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -19,6 +20,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       include: { processRouteChange: { select: { id: true } } },
     });
     if (!current) return NextResponse.json({ ok: false, error: '变更不存在或已删除' }, { status: 404 });
+    if (!canMutateChangeForProcess(user, current, 'EXECUTE_WORKFLOW')) {
+      return NextResponse.json({ ok: false, error: '只能流转工艺变更或本人负责的变更' }, { status: 403 });
+    }
     const managedBlock = processRouteChangeManagedTransitionBlock(current);
     if (managedBlock) return NextResponse.json(managedBlock.body, { status: managedBlock.status });
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;

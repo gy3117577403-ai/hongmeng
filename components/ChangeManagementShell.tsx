@@ -61,7 +61,6 @@ import type {
   ChangeType,
   CurrentUserDTO,
   IssueDTO,
-  UserDTO,
   WorkOrderDTO,
 } from '@/types';
 
@@ -74,7 +73,8 @@ type ChangeListResponse = {
   error?: string;
 };
 type ChangeMutationResponse = { ok: boolean; change?: ChangeRequestDTO; error?: string };
-type UsersResponse = { ok: boolean; users: UserDTO[]; error?: string };
+type ChangeOwnerOption = { id: string; username: string; displayName: string; isActive: boolean };
+type UsersResponse = { ok: boolean; users: ChangeOwnerOption[]; error?: string };
 type WorkOrdersResponse = { workOrders?: WorkOrderDTO[]; error?: string; message?: string };
 type IssuesResponse = { ok: boolean; issues: IssueDTO[]; error?: string };
 
@@ -196,6 +196,20 @@ function formFromChange(change?: ChangeRequestDTO | null): ChangeFormState {
 }
 
 export default function ChangeManagementShell({ user }: ChangeManagementShellProps) {
+  const processChangeMode = user.access.capabilities.includes('CHANGE_MANAGEMENT:READ')
+    && !user.access.capabilities.includes('ENGINEERING:READ')
+    && !user.access.capabilities.includes('QUALITY:READ');
+  const canCreateChanges = user.access.capabilities.includes('ENGINEERING:CREATE')
+    || user.access.capabilities.includes('QUALITY:CREATE')
+    || user.access.capabilities.includes('CHANGE_MANAGEMENT:CREATE');
+  const canUpdateChanges = user.access.capabilities.includes('ENGINEERING:UPDATE')
+    || user.access.capabilities.includes('QUALITY:UPDATE')
+    || user.access.capabilities.includes('CHANGE_MANAGEMENT:UPDATE');
+  const canDeleteChanges = user.access.capabilities.includes('ENGINEERING:DELETE')
+    || user.access.capabilities.includes('QUALITY:DELETE');
+  const canExecuteChangeWorkflow = user.access.capabilities.includes('ENGINEERING:EXECUTE_WORKFLOW')
+    || user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW')
+    || user.access.capabilities.includes('CHANGE_MANAGEMENT:EXECUTE_WORKFLOW');
   const routeSearchParams = useSearchParams();
   const initialParams = useMemo(() => new URLSearchParams(routeSearchParams.toString()), [routeSearchParams]);
   const [keyword, setKeyword] = useState(initialParams.get('keyword') || '');
@@ -211,7 +225,7 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   }));
   const [changes, setChanges] = useState<ChangeRequestDTO[]>([]);
   const [summary, setSummary] = useState<ChangeSummaryDTO>(emptySummary);
-  const [users, setUsers] = useState<UserDTO[]>([]);
+  const [users, setUsers] = useState<ChangeOwnerOption[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrderDTO[]>([]);
   const [issues, setIssues] = useState<IssueDTO[]>([]);
   const [selected, setSelected] = useState<ChangeRequestDTO | null>(null);
@@ -223,10 +237,11 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   useToastBridge(toast, setToast);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
-  const [formOpen, setFormOpen] = useState(initialParams.get('action') === 'new');
+  const [formOpen, setFormOpen] = useState(canCreateChanges && initialParams.get('action') === 'new');
   const [editingChange, setEditingChange] = useState<ChangeRequestDTO | null>(null);
   const [form, setForm] = useState<ChangeFormState>(() => ({
     ...emptyForm,
+    type: processChangeMode ? 'process' : emptyForm.type,
     impactAreas: [],
     sourceIssueId: initialParams.get('issueId') || '',
     workOrderId: initialParams.get('workOrderId') || '',
@@ -240,6 +255,13 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   const [routeChangeDetailLoading, setRouteChangeDetailLoading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<ChangeRequestDTO | null>(null);
   const [confirmAttachmentDelete, setConfirmAttachmentDelete] = useState<AttachmentDeleteState | null>(null);
+  const canMaintainChange = (change: ChangeRequestDTO | null): boolean => !!change
+    && canUpdateChanges
+    && (!processChangeMode
+      || change.type === 'process'
+      || change.requester?.id === user.id
+      || change.owner?.id === user.id);
+  const canMaintainSelected = canMaintainChange(selected);
   const queueRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const contextRef = useRef<HTMLElement>(null);
@@ -295,7 +317,7 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
 
   useEffect(() => {
     Promise.all([
-      jsonRequest<UsersResponse>('/api/users'),
+      jsonRequest<UsersResponse>('/api/changes/owner-options'),
       jsonRequest<WorkOrdersResponse>('/api/work-orders'),
       jsonRequest<IssuesResponse>('/api/issues?pageSize=100'),
     ]).then(([userData, orderData, issueData]) => {
@@ -460,10 +482,12 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   }
 
   function openCreate(): void {
+    if (!canCreateChanges) return;
     modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setEditingChange(null);
     setForm({
       ...emptyForm,
+      type: processChangeMode ? 'process' : emptyForm.type,
       impactAreas: [],
       sourceIssueId: initialParams.get('issueId') || '',
       workOrderId: initialParams.get('workOrderId') || '',
@@ -473,6 +497,7 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   }
 
   function openEdit(change: ChangeRequestDTO): void {
+    if (!canMaintainChange(change)) return;
     modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setEditingChange(change);
     setForm(formFromChange(change));
@@ -520,7 +545,11 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
       setFormOpen(false);
       setEditingChange(null);
       setToast(editingChange ? '变更信息已更新' : '变更草稿已创建');
-      await loadChanges(data.change?.id);
+      if (!editingChange && data.change && !data.change.owner) {
+        setViewScope('all');
+      } else {
+        await loadChanges(data.change?.id);
+      }
     } catch (saveError) {
       setFormError(saveError instanceof Error ? saveError.message : '变更保存失败');
     } finally {
@@ -743,7 +772,7 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
               {([['mine', '我的待办'], ['all', '全部变更'], ['closed', '已完成']] as Array<[ChangeViewScope, string]>).map(([scope, label]) => <button role="tab" aria-selected={viewScope === scope} className={viewScope === scope ? 'active' : ''} type="button" key={scope} onClick={() => changeScope(scope)}>{label}</button>)}
             </div>
             <label className="change-command-search"><Search size={16} aria-hidden="true" /><input ref={searchInputRef} value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索变更编号、标题、产品或申请人" aria-label="搜索变更" />{keyword ? <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={14} /></button> : <kbd>Ctrl K</kbd>}</label>
-            <div className="change-command-actions"><a href="/workspace/workflows"><ClipboardList size={15} />流程中心</a><button type="button" aria-label="刷新变更" title="刷新" disabled={loading} onClick={() => { void loadChanges(selected?.id); }}><RefreshCw size={15} className={loading ? 'spin' : ''} /></button><button className="primary" type="button" onClick={openCreate}><Plus size={16} />新建变更</button></div>
+            <div className="change-command-actions"><a href="/workspace/workflows"><ClipboardList size={15} />流程中心</a><button type="button" aria-label="刷新变更" title="刷新" disabled={loading} onClick={() => { void loadChanges(selected?.id); }}><RefreshCw size={15} className={loading ? 'spin' : ''} /></button>{canCreateChanges && <button className="primary" type="button" onClick={openCreate}><Plus size={16} />新建变更</button>}</div>
           </section>
 
           <div className="change-workspace">
@@ -766,7 +795,7 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
               <div className="change-queue-scroll hm-scroll-region" ref={queueRef} tabIndex={0} onKeyDown={queueKeyDown}>
                 {loading && <div className="change-loading"><Loader2 className="spin" />正在加载变更...</div>}
                 {!loading && error && <div className="change-error"><AlertTriangle /><p>{error}</p><button type="button" onClick={() => { void loadChanges(); }}>重试</button></div>}
-                {!loading && !error && !changes.length && <div className="change-empty"><GitPullRequestArrow /><h3>{viewScope === 'mine' ? '当前没有分派给你的待办' : '没有符合条件的变更'}</h3><p>可切换到全部变更、调整筛选或新建变更。</p><button type="button" onClick={openCreate}><Plus size={15} />新建变更</button></div>}
+                {!loading && !error && !changes.length && <div className="change-empty"><GitPullRequestArrow /><h3>{viewScope === 'mine' ? '当前没有分派给你的待办' : '没有符合条件的变更'}</h3><p>{canCreateChanges ? '可切换到全部变更、调整筛选或新建变更。' : '可切换到全部变更或调整筛选。'}</p>{canCreateChanges && <button type="button" onClick={openCreate}><Plus size={15} />新建变更</button>}</div>}
                 {!loading && !error && (['active', 'closed'] as const).map(section => queueSections[section].length > 0 && <section className="change-queue-group" key={section}><header><span>{section === 'active' ? '进行中' : '已完成'}</span><em>{queueSections[section].length}</em></header>{queueSections[section].map(change => <button data-change-id={change.id} type="button" key={change.id} className={`change-card ${selected?.id === change.id ? 'selected' : ''}`} aria-current={selected?.id === change.id ? 'true' : undefined} onClick={() => setSelected(change)}>
                   <span className="change-card-icon"><GitPullRequestArrow size={17} aria-hidden="true" /></span>
                   <div><div className="change-card-top"><span>{change.code}</span><time>{formatDate(change.updatedAt)}</time></div><strong title={change.title}>{change.title}</strong><p title={change.workOrder ? `${change.workOrder.customerName || '客户未设置'} · ${change.workOrder.specification || change.workOrder.code}` : '未关联工单'}>{change.workOrder?.specification || change.workOrder?.code || '未关联工单'} · {change.owner?.displayName || change.owner?.username || '待分派'}</p></div>
@@ -780,7 +809,7 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
               {!selected ? <div className="change-detail-empty"><GitPullRequestArrow /><h2>选择一条变更开始处理</h2><p>左侧收件箱会保留筛选和选中位置。</p></div> : <>
                 <header className="change-detail-header">
                   <div><div className="change-detail-title-line"><h2 title={selected.title}>{selected.title}</h2>{selectedProcessRouteChange ? <span className={`change-status process-route-state status-${selectedProcessRouteChange.status.toLowerCase()}`}>专用 · {processRouteChangeStatusLabels[selectedProcessRouteChange.status]}</span> : <span className={`change-status status-${selected.status}`}>{statusLabels[selected.status]}</span>}</div><p><b>{selected.code}</b><span>申请人 {selected.requester?.displayName || selected.requester?.username || '未记录'}</span><span>产品 {selected.workOrder?.specification || selected.workOrder?.code || '未关联'}</span><span>版本 V{selected.version}</span><span>更新 {formatDate(selected.updatedAt)}</span></p></div>
-                  <div><button ref={contextTriggerRef} type="button" aria-expanded={contextOpen} onClick={() => setContextOpen(value => !value)}><Info size={15} />上下文</button><details className="change-detail-menu"><summary aria-label="更多操作" title="更多操作"><MoreVertical size={17} /></summary><div>{selectedProcessRouteChange ? <a href={selectedProcessRouteHref}><ExternalLink size={14} />打开工艺流程</a> : <><button type="button" onClick={() => openEdit(selected)}><Pencil size={14} />编辑变更</button><button className="danger" type="button" onClick={() => { modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmDelete(selected); }}><Trash2 size={14} />删除变更</button></>}</div></details></div>
+                  <div><button ref={contextTriggerRef} type="button" aria-expanded={contextOpen} onClick={() => setContextOpen(value => !value)}><Info size={15} />上下文</button>{(selectedProcessRouteChange || canMaintainSelected || canDeleteChanges) && <details className="change-detail-menu"><summary aria-label="更多操作" title="更多操作"><MoreVertical size={17} /></summary><div>{selectedProcessRouteChange ? <a href={selectedProcessRouteHref}><ExternalLink size={14} />打开工艺流程</a> : <>{canMaintainSelected && <button type="button" onClick={() => openEdit(selected)}><Pencil size={14} />编辑变更</button>}{canDeleteChanges && <button className="danger" type="button" onClick={() => { modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmDelete(selected); }}><Trash2 size={14} />删除变更</button>}</>}</div></details>}</div>
                 </header>
 
                 <ol className="change-progress" aria-label="变更处理进度">{progressSteps.map((step, index) => <li className={step.state} key={step.key}><span>{step.state === 'done' ? <Check size={14} /> : index + 1}</span><div><strong>{step.label}</strong><small>{index === 0 ? formatDate(selected.createdAt) : index === 1 ? formatDate(selectedProcessRouteChange?.reviewedAt || null) : index === 2 ? formatDate(selectedProcessRouteChange?.activatedAt || selected.effectiveAt) : step.state === 'current' ? '当前步骤' : '等待前序'}</small></div></li>)}</ol>
@@ -815,16 +844,16 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
                         <section className="context-section"><h3><GitCommitHorizontal size={15} />影响范围</h3><div className="context-impact-list"><span><b>当前工单</b><small>{selected.workOrder?.code || '未关联'}</small></span><span><b>产品路线</b><small>{selected.workOrder?.specification || '待确认'}</small></span>{selectedProcessRouteChange && <span><b>二维码报工</b><small>{routeChangeIsActive ? '已同步' : '待启用'}</small></span>}{routeChangeDetail?.impact?.affectedCompletionCount ? <span><b>历史报工</b><small>{routeChangeDetail.impact.affectedCompletionCount} 笔</small></span> : null}</div></section>
                         <section className="context-section"><h3><UserRound size={15} />责任与参与</h3><dl><div><dt>申请人</dt><dd>{selected.requester?.displayName || selected.requester?.username || '未记录'}</dd></div><div><dt>负责人</dt><dd>{selected.owner?.displayName || selected.owner?.username || '待分派'}</dd></div>{routeChangeDetail?.reviewerName && <div><dt>工艺审核</dt><dd>{routeChangeDetail.reviewerName}</dd></div>}<div><dt>截止时间</dt><dd className={selected.isOverdue ? 'overdue' : ''}>{formatDate(selected.dueAt)}</dd></div><div><dt>版本</dt><dd>V{selected.version}</dd></div></dl></section>
                         <section className="context-section"><h3><ClipboardList size={15} />关联来源</h3>{selected.sourceIssue ? <a className="context-link" href={`/workspace/issues?issueId=${encodeURIComponent(selected.sourceIssue.id)}`}><div><strong>{selected.sourceIssue.code}</strong><span title={selected.sourceIssue.title}>{selected.sourceIssue.title}</span></div><ExternalLink size={14} /></a> : <p className="context-muted">未关联来源问题</p>}{selected.workOrder ? <a className="context-link" href={`/production?workOrderId=${encodeURIComponent(selected.workOrder.id)}`}><div><strong>{selected.workOrder.specification || selected.workOrder.code}</strong><span>{selected.workOrder.customerName || '客户未设置'} · {selected.workOrder.productName}</span></div><ExternalLink size={14} /></a> : <p className="context-muted">未关联生产工单</p>}</section>
-                        <section className="context-section attachments"><header><h3><Paperclip size={15} />附件 <em>{selected.attachmentCount}</em></h3><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></header><div>{selected.attachments?.map(file => <article key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{formatBytes(file.size)} · {formatDate(file.createdAt)}</small></div><a href={file.contentUrl} target="_blank" rel="noreferrer" aria-label={`预览 ${file.displayName || file.originalName}`} title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} aria-label={`下载 ${file.displayName || file.originalName}`} title="下载"><Download size={14} /></a><button type="button" aria-label={`删除 ${file.displayName || file.originalName}`} title="删除附件" onClick={() => { modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmAttachmentDelete({ id: file.id, name: file.displayName || file.originalName }); }}><Trash2 size={14} /></button></article>)}{!selected.attachments?.length && <p className="attachment-empty">暂无附件，可上传 PDF 或图片作为依据。</p>}</div></section>
+                        <section className="context-section attachments"><header><h3><Paperclip size={15} />附件 <em>{selected.attachmentCount}</em></h3>{canMaintainSelected && <><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></>}</header><div>{selected.attachments?.map(file => <article key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{formatBytes(file.size)} · {formatDate(file.createdAt)}</small></div><a href={file.contentUrl} target="_blank" rel="noreferrer" aria-label={`预览 ${file.displayName || file.originalName}`} title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} aria-label={`下载 ${file.displayName || file.originalName}`} title="下载"><Download size={14} /></a>{canDeleteChanges && <button type="button" aria-label={`删除 ${file.displayName || file.originalName}`} title="删除附件" onClick={() => { modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmAttachmentDelete({ id: file.id, name: file.displayName || file.originalName }); }}><Trash2 size={14} /></button>}</article>)}{!selected.attachments?.length && <p className="attachment-empty">{canMaintainSelected ? '暂无附件，可上传 PDF 或图片作为依据。' : '暂无附件。'}</p>}</div></section>
                       </div>
                     </aside>
                   </div>
                 </div>
 
-                <div className="change-action-dock">
-                  <div className="change-transition-actions">{selectedProcessRouteChange ? routeChangeIsActive ? <span className="managed-complete"><CheckCircle2 size={15} />已完成工艺启用</span> : <a className="primary managed-link" href={selectedProcessRouteHref}>进入工艺审核与启用<ExternalLink size={14} /></a> : <>{selected.status === 'draft' && <button className="primary" type="button" onClick={() => beginTransition('assessing')}>提交评估<ArrowRight size={15} /></button>}{selected.status === 'assessing' && <><button type="button" onClick={() => beginTransition('draft')}><ArrowLeft size={15} />退回草稿</button><button className="primary" type="button" onClick={() => beginTransition('implementing')}>开始实施<ArrowRight size={15} /></button></>}{selected.status === 'implementing' && <button className="primary" type="button" onClick={() => beginTransition('verifying')}>提交验证<ArrowRight size={15} /></button>}{selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('implementing')}><ArrowLeft size={15} />退回实施</button><button className="primary" type="button" onClick={() => beginTransition('closed')}>验证并关闭<CheckCircle2 size={15} /></button></>}{selected.status === 'closed' && <button type="button" onClick={() => beginTransition('assessing')}><RefreshCw size={15} />重新评估</button>}</>}</div>
+                {canMaintainSelected && <div className="change-action-dock">
+                  {canExecuteChangeWorkflow && <div className="change-transition-actions">{selectedProcessRouteChange ? routeChangeIsActive ? <span className="managed-complete"><CheckCircle2 size={15} />已完成工艺启用</span> : <a className="primary managed-link" href={selectedProcessRouteHref}>进入工艺审核与启用<ExternalLink size={14} /></a> : <>{selected.status === 'draft' && <button className="primary" type="button" onClick={() => beginTransition('assessing')}>提交评估<ArrowRight size={15} /></button>}{selected.status === 'assessing' && <><button type="button" onClick={() => beginTransition('draft')}><ArrowLeft size={15} />退回草稿</button><button className="primary" type="button" onClick={() => beginTransition('implementing')}>开始实施<ArrowRight size={15} /></button></>}{selected.status === 'implementing' && <button className="primary" type="button" onClick={() => beginTransition('verifying')}>提交验证<ArrowRight size={15} /></button>}{selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('implementing')}><ArrowLeft size={15} />退回实施</button><button className="primary" type="button" onClick={() => beginTransition('closed')}>验证并关闭<CheckCircle2 size={15} /></button></>}{selected.status === 'closed' && <button type="button" onClick={() => beginTransition('assessing')}><RefreshCw size={15} />重新评估</button>}</>}</div>}
                   <form className="change-comment" onSubmit={addComment}><textarea value={comment} onChange={event => setComment(event.target.value)} rows={1} maxLength={2000} placeholder="添加评论，@ 提及相关人员..." /><button type="submit" aria-label="发送评论" disabled={saving || !comment.trim()}><Send size={16} /></button></form>
-                </div>
+                </div>}
               </>}
             </section>
           </div>
@@ -833,7 +862,7 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
 
       {formOpen && <div className="change-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setFormOpen(false); }}><form className="change-modal" role="dialog" aria-modal="true" aria-labelledby="change-form-title" onSubmit={saveForm}><header><div><span>{editingChange ? '编辑变更' : '新建变更'}</span><h2 id="change-form-title">{editingChange ? editingChange.code : '记录需要评估和执行的变更'}</h2></div><button type="button" aria-label="关闭" title="关闭" disabled={saving} onClick={() => setFormOpen(false)}><X size={19} /></button></header><div className="change-modal-body hm-scroll-region">
         <label className="wide">变更标题<input value={form.title} maxLength={160} autoFocus onChange={event => setForm(current => ({ ...current, title: event.target.value }))} placeholder="一句话说明要改变什么" /></label>
-        <label>变更类型<select value={form.type} onChange={event => setForm(current => ({ ...current, type: event.target.value as ChangeType }))}>{Object.entries(typeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+        <label>变更类型<select value={form.type} disabled={processChangeMode} onChange={event => setForm(current => ({ ...current, type: event.target.value as ChangeType }))}>{(processChangeMode ? [form.type] : Object.keys(typeLabels) as ChangeType[]).map(value => <option value={value} key={value}>{typeLabels[value]}</option>)}</select></label>
         <label>优先级<select value={form.priority} onChange={event => setForm(current => ({ ...current, priority: event.target.value as ChangePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
         <label>来源问题<select value={form.sourceIssueId} onChange={event => { const issue = issues.find(item => item.id === event.target.value); setForm(current => ({ ...current, sourceIssueId: event.target.value, workOrderId: current.workOrderId || issue?.workOrderId || '' })); }}><option value="">不关联问题</option>{issues.map(issue => <option value={issue.id} key={issue.id}>{issue.code} · {issue.title}</option>)}</select></label>
         <label>关联工单<select value={form.workOrderId} onChange={event => setForm(current => ({ ...current, workOrderId: event.target.value }))}><option value="">不关联工单</option>{orderOptions.map(order => <option value={order.id} key={order.id}>{order.specification || order.code} · {order.customerName || '客户未设置'}</option>)}</select></label>

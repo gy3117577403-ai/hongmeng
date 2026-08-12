@@ -219,10 +219,21 @@ function issueWorkOrderOptionFromIssue(issue?: IssueDTO | null): IssueWorkOrderO
 }
 
 export default function IssueManagementShell({ user }: IssueManagementShellProps) {
-  const canCreateIssues = user.access.capabilities.includes('QUALITY:CREATE');
-  const canUpdateIssues = user.access.capabilities.includes('QUALITY:UPDATE');
+  const processIssueMode = user.access.capabilities.includes('ISSUE_MANAGEMENT:READ')
+    && !user.access.capabilities.includes('QUALITY:READ');
+  const canCreateIssues = user.access.capabilities.includes('QUALITY:CREATE')
+    || user.access.capabilities.includes('ISSUE_MANAGEMENT:CREATE');
+  const canUpdateIssues = user.access.capabilities.includes('QUALITY:UPDATE')
+    || user.access.capabilities.includes('ISSUE_MANAGEMENT:UPDATE');
   const canDeleteIssues = user.access.capabilities.includes('QUALITY:DELETE');
-  const canExecuteIssueWorkflow = user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW');
+  const canExecuteIssueWorkflow = user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW')
+    || user.access.capabilities.includes('ISSUE_MANAGEMENT:EXECUTE_WORKFLOW');
+  const canConvertDetectedIssues = user.access.capabilities.includes('QUALITY:CREATE');
+  const defaultIssueForm = useMemo<IssueFormState>(() => ({
+    ...emptyForm,
+    type: processIssueMode ? 'process' : emptyForm.type,
+    collaboratorEmployeeIds: [],
+  }), [processIssueMode]);
   const routeSearchParams = useSearchParams();
   const initialParams = useMemo(() => new URLSearchParams(routeSearchParams.toString()), [routeSearchParams]);
   const [keyword, setKeyword] = useState(initialParams.get('keyword') || '');
@@ -231,7 +242,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     status: (['pending', 'processing', 'verifying', 'closed'].includes(initialParams.get('status') || '') ? initialParams.get('status') : 'all') as Filters['status'],
     overdue: initialParams.get('overdue') === 'true',
   }));
-  const [queueMode, setQueueMode] = useState<QueueMode>(initialParams.get('inbox') === 'detected' ? 'detected' : 'issues');
+  const [queueMode, setQueueMode] = useState<QueueMode>(canConvertDetectedIssues && initialParams.get('inbox') === 'detected' ? 'detected' : 'issues');
   const [issues, setIssues] = useState<IssueDTO[]>([]);
   const [summary, setSummary] = useState<IssueSummaryDTO>(emptySummary);
   const [detected, setDetected] = useState<DetectedIssueDTO[]>([]);
@@ -247,7 +258,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [totalPages, setTotalPages] = useState(1);
   const [formOpen, setFormOpen] = useState(canCreateIssues && initialParams.get('action') === 'new');
   const [editingIssue, setEditingIssue] = useState<IssueDTO | null>(null);
-  const [form, setForm] = useState<IssueFormState>(emptyForm);
+  const [form, setForm] = useState<IssueFormState>(defaultIssueForm);
   const [newWorkOrderDraft, setNewWorkOrderDraft] = useState<IssueWorkOrderDraftDTO | null>(null);
   const [formError, setFormError] = useState('');
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
@@ -264,6 +275,16 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     .includes(selected?.majorApproval?.status || '');
   const selectedApprovedClosed = selected?.status === 'closed' && selected.majorApproval?.status === 'APPROVED';
   const selectedContentLocked = selectedApprovalPending || selectedApprovedClosed;
+  const canMaintainIssue = (issue: IssueDTO | null): boolean => !!issue
+    && canUpdateIssues
+    && (!processIssueMode
+      || (!issue.isMajorQuality && (
+        issue.type === 'process'
+        || issue.reporter?.id === user.id
+        || issue.assignee?.id === user.employeeId
+        || issue.collaborators.some(employee => employee.id === user.employeeId)
+      )));
+  const canMaintainSelected = canMaintainIssue(selected);
   const queueRef = useRef<HTMLDivElement>(null);
   const contextRef = useRef<HTMLElement>(null);
   const contextTriggerRef = useRef<HTMLButtonElement>(null);
@@ -273,7 +294,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const modalReturnFocusRef = useRef<HTMLElement | null>(null);
   const modalWasOpenRef = useRef(false);
   const handledDirectAlertRef = useRef('');
-  const formBaselineRef = useRef(issueFormSnapshot(emptyForm, null));
+  const formBaselineRef = useRef(issueFormSnapshot(defaultIssueForm, null));
 
   const updateIssue = useCallback((issue: IssueDTO): void => {
     setIssues(current => current.some(item => item.id === issue.id)
@@ -319,6 +340,12 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   }, [filters, initialParams, keyword, page, selected?.id]);
 
   const loadDetected = useCallback(async (): Promise<void> => {
+    if (!canConvertDetectedIssues) {
+      setDetected([]);
+      setPendingDetected(0);
+      setQueueMode('issues');
+      return;
+    }
     try {
       const data = await jsonRequest<DetectedResponse>('/api/issues/detected');
       setDetected(data.detected);
@@ -336,7 +363,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     } catch (loadError) {
       setToast(loadError instanceof Error ? loadError.message : '生产异常收件箱加载失败');
     }
-  }, [initialParams, updateIssue]);
+  }, [canConvertDetectedIssues, initialParams, updateIssue]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadIssues(); }, keyword ? 260 : 0);
@@ -344,12 +371,12 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   }, [filters, keyword, page]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    void loadDetected();
+    if (canConvertDetectedIssues) void loadDetected();
     if (!canCreateIssues && !canUpdateIssues) return;
     jsonRequest<EmployeesResponse>('/api/issues/assignee-options')
       .then(employeeData => setEmployees(employeeData.employees || []))
       .catch(() => setToast('员工档案加载失败'));
-  }, [canCreateIssues, canUpdateIssues, loadDetected]);
+  }, [canConvertDetectedIssues, canCreateIssues, canUpdateIssues, loadDetected]);
 
   useEffect(() => {
     const workOrderId = initialParams.get('workOrderId') || initialParams.get('sourceWorkOrderId') || '';
@@ -426,14 +453,14 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const closeFormNow = useCallback((): void => {
     setFormOpen(false);
     setEditingIssue(null);
-    setForm({ ...emptyForm });
+    setForm({ ...defaultIssueForm });
     setNewWorkOrderDraft(null);
     setPendingFiles([]);
     setFormError('');
     setDuplicateIssue(null);
     setConfirmDiscard(false);
-    formBaselineRef.current = issueFormSnapshot(emptyForm, null);
-  }, []);
+    formBaselineRef.current = issueFormSnapshot(defaultIssueForm, null);
+  }, [defaultIssueForm]);
 
   const formIsDirty = useCallback((): boolean => (
     issueFormSnapshot(form, newWorkOrderDraft) !== formBaselineRef.current || pendingFiles.length > 0
@@ -493,7 +520,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
 
   function openCreate(): void {
     modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const nextForm = { ...emptyForm, collaboratorEmployeeIds: [] };
+    const nextForm = { ...defaultIssueForm, collaboratorEmployeeIds: [] };
     setEditingIssue(null);
     setForm(nextForm);
     setNewWorkOrderDraft(null);
@@ -505,6 +532,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   }
 
   function openEdit(issue: IssueDTO): void {
+    if (!canMaintainIssue(issue)) return;
     modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const nextForm = issueFormFrom(issue);
     setEditingIssue(issue);
@@ -779,12 +807,12 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           icon={<ShieldCheck size={19} />}
           title="问题管理"
           subtitle="生产、计划与技术问题闭环任务驾驶舱"
-          context={<><span>{summary.processing} 条处理中</span><span>{summary.overdue} 条逾期</span><span>{pendingDetected} 条待转问题</span></>}
+          context={<><span>{summary.processing} 条处理中</span><span>{summary.overdue} 条逾期</span>{canConvertDetectedIssues && <span>{pendingDetected} 条待转问题</span>}</>}
           search={<label><Search size={16} aria-hidden="true" /><input value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索问题、工单、规格、客户" aria-label="搜索问题" />{keyword ? <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={14} /></button> : <kbd>Ctrl K</kbd>}</label>}
           actions={<>
             {initialParams.get('returnTo') && <a className="hm-workbench-button issue-return-link" href={initialParams.get('returnTo') || '/production'}><ArrowLeft size={15} />返回生产执行</a>}
             <button ref={contextTriggerRef} type="button" disabled={!selected} aria-expanded={contextOpen} onClick={openContext}><Info size={15} />责任与来源</button>
-            <button className="icon-only" type="button" aria-label="刷新问题" title="刷新" disabled={loading} onClick={() => { void Promise.all([loadIssues(), loadDetected()]); }}><RefreshCw className={loading ? 'spin' : ''} size={15} /></button>
+            <button className="icon-only" type="button" aria-label="刷新问题" title="刷新" disabled={loading} onClick={() => { void (canConvertDetectedIssues ? Promise.all([loadIssues(), loadDetected()]) : loadIssues()); }}><RefreshCw className={loading ? 'spin' : ''} size={15} /></button>
             {canCreateIssues ? <button className="primary" type="button" onClick={openCreate}><Plus size={16} />新建问题</button> : <Link className="primary" href="/workspace/approvals"><ClipboardCheck size={16} />重大审批</Link>}
           </>}
         />
@@ -799,7 +827,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
               setFilters(current => key === 'overdue' ? { ...current, status: 'all', overdue: true } : { ...current, status: key as Filters['status'], overdue: false }); setPage(1);
             }}><span>{label}</span><strong>{count}</strong></button>;
           })}
-          <button className={`detected ${queueMode === 'detected' ? 'active' : ''}`} type="button" aria-pressed={queueMode === 'detected'} onClick={() => setQueueMode('detected')}><span>待转问题</span><strong>{pendingDetected}</strong></button>
+          {canConvertDetectedIssues && <button className={`detected ${queueMode === 'detected' ? 'active' : ''}`} type="button" aria-pressed={queueMode === 'detected'} onClick={() => setQueueMode('detected')}><span>待转问题</span><strong>{pendingDetected}</strong></button>}
         </section>
 
         <section className="issue-filter-bar" aria-label="问题筛选">
@@ -815,12 +843,12 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           <section className="issue-queue" aria-label="问题队列">
             <div className="issue-queue-tabs" role="tablist" aria-label="问题来源">
               <button className={queueMode === 'issues' ? 'active' : ''} type="button" role="tab" aria-selected={queueMode === 'issues'} onClick={() => setQueueMode('issues')}><ClipboardCheck size={15} />问题队列 <em>{summary.total}</em></button>
-              <button className={queueMode === 'detected' ? 'active' : ''} type="button" role="tab" aria-selected={queueMode === 'detected'} onClick={() => setQueueMode('detected')}><Inbox size={15} />异常收件箱 <em>{pendingDetected}</em></button>
+              {canConvertDetectedIssues && <button className={queueMode === 'detected' ? 'active' : ''} type="button" role="tab" aria-selected={queueMode === 'detected'} onClick={() => setQueueMode('detected')}><Inbox size={15} />异常收件箱 <em>{pendingDetected}</em></button>}
             </div>
             <div ref={queueRef} className="issue-queue-scroll hm-scroll-region" tabIndex={0}>
               {loading && queueMode === 'issues' && <div className="issue-loading"><Loader2 className="spin" />正在加载问题</div>}
               {!loading && error && <div className="issue-empty error"><AlertCircle /><strong>加载失败</strong><p>{error}</p><button type="button" onClick={() => { void loadIssues(); }}>重试</button></div>}
-              {!loading && !error && queueMode === 'issues' && !issues.length && <div className="issue-empty"><CheckCircle2 /><strong>当前筛选下没有问题</strong><p>{canCreateIssues ? '可以新建问题，或从异常收件箱将生产异常转入。' : '当前没有可查看的问题记录。'}</p>{canCreateIssues && <button type="button" onClick={openCreate}>新建问题</button>}</div>}
+              {!loading && !error && queueMode === 'issues' && !issues.length && <div className="issue-empty"><CheckCircle2 /><strong>当前筛选下没有问题</strong><p>{canCreateIssues ? (canConvertDetectedIssues ? '可以新建问题，或从异常收件箱将生产异常转入。' : '可以新建工艺问题并进入闭环处理。') : '当前没有可查看的问题记录。'}</p>{canCreateIssues && <button type="button" onClick={openCreate}>新建问题</button>}</div>}
               {queueMode === 'issues' && issues.map(issue => (
                 <button className={`issue-card ${selected?.id === issue.id ? 'active' : ''} priority-${issue.priority}`} type="button" aria-pressed={selected?.id === issue.id} key={issue.id} onClick={() => selectIssue(issue)}>
                   <span className={`issue-status status-${issue.status}`}>{statusLabels[issue.status]}</span><em className={`priority-${issue.priority}`}>{priorityLabels[issue.priority]}</em>
@@ -835,7 +863,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                   <header><span>{item.label}</span><em>待转问题</em></header>
                   <strong title={item.specification || item.workOrderCode}>{item.specification || item.workOrderCode}</strong>
                   <p>{item.customerName || '客户未设置'} · {item.productName}</p>
-                  <footer><a href={item.sourceRoute}>查看生产现场 <ExternalLink size={13} /></a>{canCreateIssues && <button type="button" disabled={saving} onClick={() => { void convertDetected(item); }}>转为问题</button>}</footer>
+                   <footer><a href={item.sourceRoute}>查看生产现场 <ExternalLink size={13} /></a>{canConvertDetectedIssues && <button type="button" disabled={saving} onClick={() => { void convertDetected(item); }}>转为问题</button>}</footer>
                 </article>
               ))}
             </div>
@@ -843,10 +871,10 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           </section>
 
           <section className="issue-detail" aria-label="问题处理详情">
-            {!selected ? <div className="issue-detail-empty"><MessageSquareText /><h2>选择一个问题开始处理</h2><p>左侧可选择问题，或从异常收件箱转入生产异常。</p></div> : <>
+            {!selected ? <div className="issue-detail-empty"><MessageSquareText /><h2>选择一个问题开始处理</h2><p>{canConvertDetectedIssues ? '左侧可选择问题，或从异常收件箱转入生产异常。' : '左侧可选择问题，或新建工艺问题进入闭环处理。'}</p></div> : <>
               <header className="issue-detail-header">
                 <div><span>{selected.code} · {typeLabels[selected.type]}{selected.isMajorQuality && <em className="issue-major-chip">重大质量</em>}</span><h2 title={selected.title}>{selected.title}</h2><p>{sourceLabel(selected)} · 创建于 {formatDate(selected.createdAt)}</p></div>
-                <div><span className={`issue-status status-${selected.status}`}>{statusLabels[selected.status]}</span>{selected.majorApproval && <span className={`issue-approval-state state-${selected.majorApproval.status.toLowerCase()}`}>{majorApprovalStatusLabels[selected.majorApproval.status]}</span>}{!selectedContentLocked && canUpdateIssues && <button type="button" aria-label="编辑问题" title="编辑问题" onClick={() => openEdit(selected)}><Pencil size={16} /></button>}{!selected.majorApproval && canDeleteIssues && <button className="danger" type="button" aria-label="删除问题" title="删除问题" onClick={() => openIssueDelete(selected)}><Trash2 size={16} /></button>}</div>
+                <div><span className={`issue-status status-${selected.status}`}>{statusLabels[selected.status]}</span>{selected.majorApproval && <span className={`issue-approval-state state-${selected.majorApproval.status.toLowerCase()}`}>{majorApprovalStatusLabels[selected.majorApproval.status]}</span>}{!selectedContentLocked && canMaintainSelected && <button type="button" aria-label="编辑问题" title="编辑问题" onClick={() => openEdit(selected)}><Pencil size={16} /></button>}{!selected.majorApproval && canDeleteIssues && <button className="danger" type="button" aria-label="删除问题" title="删除问题" onClick={() => openIssueDelete(selected)}><Trash2 size={16} /></button>}</div>
               </header>
 
               <div className="issue-detail-scroll hm-scroll-region">
@@ -870,8 +898,8 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                 </section>
               </div>
 
-              {canCreateIssues && <form className="issue-comment" onSubmit={addComment}><textarea value={comment} onChange={event => setComment(event.target.value)} rows={2} maxLength={2000} placeholder="补充处理进展、现场反馈或验证说明..." /><button type="submit" disabled={saving || !comment.trim()}><Send size={15} />添加记录</button></form>}
-              {canExecuteIssueWorkflow && <div className="issue-transition-actions">
+              {canMaintainSelected && <form className="issue-comment" onSubmit={addComment}><textarea value={comment} onChange={event => setComment(event.target.value)} rows={2} maxLength={2000} placeholder="补充处理进展、现场反馈或验证说明..." /><button type="submit" disabled={saving || !comment.trim()}><Send size={15} />添加记录</button></form>}
+              {canMaintainSelected && canExecuteIssueWorkflow && <div className="issue-transition-actions">
                 <a className="issue-change-link" href={`/workspace/changes?action=new&issueId=${encodeURIComponent(selected.id)}${selected.workOrderId ? `&workOrderId=${encodeURIComponent(selected.workOrderId)}` : ''}`}><GitPullRequestArrow size={15} />发起变更</a>
                 {selected.status === 'pending' && <button className="primary" type="button" onClick={() => beginTransition('processing')}>开始处理</button>}
                 {selected.status === 'processing' && <button className="primary" type="button" onClick={() => beginTransition('verifying')}>{selected.isMajorQuality ? '提交重大复核' : '提交验证'}</button>}
@@ -888,17 +916,17 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
             {!selected ? <div className="issue-context-empty">选择问题后查看责任、来源和附件。</div> : <div className="issue-context-scroll hm-scroll-region">
               <section className="context-section responsibility">
                 <h3><UserRound size={15} />责任信息</h3>
-                <div className="context-picker-field"><span>负责人</span><EmployeePicker employees={employees} value={contextForm.assigneeEmployeeId} disabled={!canUpdateIssues || selectedContentLocked} onChange={value => setContextForm(current => ({ ...current, assigneeEmployeeId: value, collaboratorEmployeeIds: current.collaboratorEmployeeIds.filter(id => id !== value) }))} /></div>
-                <div className="context-picker-field collaborators"><span>协同人</span><EmployeeMultiPicker employees={employees} values={contextForm.collaboratorEmployeeIds} excludeIds={contextForm.assigneeEmployeeId ? [contextForm.assigneeEmployeeId] : []} disabled={!canUpdateIssues || selectedContentLocked} onChange={values => setContextForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
-                <label>优先级<select disabled={!canUpdateIssues || selectedContentLocked} value={contextForm.priority} onChange={event => setContextForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
-                <label>截止时间<input type="datetime-local" disabled={!canUpdateIssues || selectedContentLocked} value={contextForm.dueAt} onChange={event => setContextForm(current => ({ ...current, dueAt: event.target.value }))} /></label>
-                {canUpdateIssues && !selectedContentLocked && <button className="primary" type="button" disabled={saving} onClick={() => { void saveContext(); }}>保存责任信息</button>}
+                <div className="context-picker-field"><span>负责人</span><EmployeePicker employees={employees} value={contextForm.assigneeEmployeeId} disabled={!canMaintainSelected || selectedContentLocked} onChange={value => setContextForm(current => ({ ...current, assigneeEmployeeId: value, collaboratorEmployeeIds: current.collaboratorEmployeeIds.filter(id => id !== value) }))} /></div>
+                <div className="context-picker-field collaborators"><span>协同人</span><EmployeeMultiPicker employees={employees} values={contextForm.collaboratorEmployeeIds} excludeIds={contextForm.assigneeEmployeeId ? [contextForm.assigneeEmployeeId] : []} disabled={!canMaintainSelected || selectedContentLocked} onChange={values => setContextForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
+                <label>优先级<select disabled={!canMaintainSelected || selectedContentLocked} value={contextForm.priority} onChange={event => setContextForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+                <label>截止时间<input type="datetime-local" disabled={!canMaintainSelected || selectedContentLocked} value={contextForm.dueAt} onChange={event => setContextForm(current => ({ ...current, dueAt: event.target.value }))} /></label>
+                {canMaintainSelected && !selectedContentLocked && <button className="primary" type="button" disabled={saving} onClick={() => { void saveContext(); }}>保存责任信息</button>}
                 {selectedContentLocked && <p className="issue-context-lock-note">{selectedApprovalPending ? '审批进行中，责任信息和附件已锁定；可继续追加处理记录。' : '终审关闭后内容已锁定；如需整改，请先重新打开问题。'}</p>}
               </section>
               <section className="context-section source"><h3><ArrowLeftRight size={15} />来源信息</h3><dl><div><dt>来源</dt><dd>{sourceLabel(selected)}</dd></div><div><dt>报告人</dt><dd>{selected.reporter?.displayName || selected.reporter?.username || '系统'}</dd></div><div><dt>来源标识</dt><dd title={selected.sourceCode || ''}>{selected.sourceCode || '无'}</dd></div></dl>{selected.sourceRoute && <a href={selected.sourceRoute}>返回来源位置 <ExternalLink size={14} /></a>}</section>
               {selected.workOrder && <section className="context-section work-order"><h3><FileText size={15} />关联工单</h3><strong title={selected.workOrder.specification || selected.workOrder.code}>{selected.workOrder.specification || selected.workOrder.code}</strong><p>{selected.workOrder.customerName || '客户未设置'} · {selected.workOrder.productName}</p><dl><div><dt>图纸</dt><dd>{selected.workOrder.drawingStatus || '未设置'}</dd></div><div><dt>配料</dt><dd>{selected.workOrder.materialStatus || '未设置'}</dd></div><div><dt>计划</dt><dd>{formatDate(selected.workOrder.plannedAt, false)}</dd></div></dl><a href={`/production?workOrderId=${encodeURIComponent(selected.workOrder.id)}`}>打开生产执行 <ExternalLink size={14} /></a></section>}
-              <section className="context-section attachments"><header><h3><Paperclip size={15} />附件 <em>{selected.attachmentCount}</em></h3>{canCreateIssues && !selectedContentLocked && <><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></>}</header>
-                <div>{selected.attachments?.map(file => <article key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{formatBytes(file.size)} · {formatDate(file.createdAt)}</small></div><a href={file.contentUrl} target="_blank" rel="noreferrer" aria-label={`预览 ${file.displayName || file.originalName}`} title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} aria-label={`下载 ${file.displayName || file.originalName}`} title="下载"><Download size={14} /></a>{canDeleteIssues && !selectedContentLocked && <button type="button" aria-label={`删除 ${file.displayName || file.originalName}`} title="删除附件" onClick={() => openAttachmentDelete(file.id, file.displayName || file.originalName)}><Trash2 size={14} /></button>}</article>)}{!selected.attachments?.length && <p className="attachment-empty">{canCreateIssues && !selectedContentLocked ? '可上传 PDF、JPG、PNG、WEBP 作为处理凭证。' : '当前没有附件。'}</p>}</div>
+              <section className="context-section attachments"><header><h3><Paperclip size={15} />附件 <em>{selected.attachmentCount}</em></h3>{canMaintainSelected && !selectedContentLocked && <><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></>}</header>
+                <div>{selected.attachments?.map(file => <article key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{formatBytes(file.size)} · {formatDate(file.createdAt)}</small></div><a href={file.contentUrl} target="_blank" rel="noreferrer" aria-label={`预览 ${file.displayName || file.originalName}`} title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} aria-label={`下载 ${file.displayName || file.originalName}`} title="下载"><Download size={14} /></a>{canDeleteIssues && !selectedContentLocked && <button type="button" aria-label={`删除 ${file.displayName || file.originalName}`} title="删除附件" onClick={() => openAttachmentDelete(file.id, file.displayName || file.originalName)}><Trash2 size={14} /></button>}</article>)}{!selected.attachments?.length && <p className="attachment-empty">{canMaintainSelected && !selectedContentLocked ? '可上传 PDF、JPG、PNG、WEBP 作为处理凭证。' : '当前没有附件。'}</p>}</div>
               </section>
             </div>}
           </aside>
@@ -912,17 +940,17 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
             <header><div><strong>问题概况</strong><span>先说明发生了什么以及影响程度</span></div><em>01</em></header>
             <div className="issue-form-grid">
               <label className="wide">问题标题<input value={form.title} maxLength={160} autoFocus onChange={event => setForm(current => ({ ...current, title: event.target.value }))} placeholder="一句话说明问题及影响" /></label>
-              <label>问题类型<select value={form.type} onChange={event => setForm(current => { const type = event.target.value as IssueType; return { ...current, type, isMajorQuality: type === 'quality' ? current.isMajorQuality : false, majorQualityReason: type === 'quality' ? current.majorQualityReason : '' }; })}>{Object.entries(typeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
+              <label>问题类型<select value={form.type} disabled={processIssueMode} onChange={event => setForm(current => { const type = event.target.value as IssueType; return { ...current, type, isMajorQuality: type === 'quality' ? current.isMajorQuality : false, majorQualityReason: type === 'quality' ? current.majorQualityReason : '' }; })}>{(processIssueMode ? [form.type] : Object.keys(typeLabels) as IssueType[]).map(value => <option value={value} key={value}>{typeLabels[value]}</option>)}</select></label>
               <label>优先级<select value={form.priority} onChange={event => setForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label>
               <label>截止时间<input type="datetime-local" value={form.dueAt} onChange={event => setForm(current => ({ ...current, dueAt: event.target.value }))} /></label>
-              {form.type === 'quality' && <div className="issue-major-quality-control wide"><label className="issue-major-toggle"><input type="checkbox" checked={form.isMajorQuality} onChange={event => setForm(current => ({ ...current, isMajorQuality: event.target.checked, majorQualityReason: event.target.checked ? current.majorQualityReason : '' }))} /><span><AlertTriangle size={17} /><b>标记为重大质量事项</b><small>提交验证后，必须由另一名质量人员复核，再由总经办终审。</small></span></label>{form.isMajorQuality && <label>重大判定原因<textarea rows={3} required maxLength={1000} value={form.majorQualityReason} onChange={event => setForm(current => ({ ...current, majorQualityReason: event.target.value }))} placeholder="说明重大影响、风险范围及需要升级审批的原因" /></label>}</div>}
+              {!processIssueMode && form.type === 'quality' && <div className="issue-major-quality-control wide"><label className="issue-major-toggle"><input type="checkbox" checked={form.isMajorQuality} onChange={event => setForm(current => ({ ...current, isMajorQuality: event.target.checked, majorQualityReason: event.target.checked ? current.majorQualityReason : '' }))} /><span><AlertTriangle size={17} /><b>标记为重大质量事项</b><small>提交验证后，必须由另一名质量人员复核，再由总经办终审。</small></span></label>{form.isMajorQuality && <label>重大判定原因<textarea rows={3} required maxLength={1000} value={form.majorQualityReason} onChange={event => setForm(current => ({ ...current, majorQualityReason: event.target.value }))} placeholder="说明重大影响、风险范围及需要升级审批的原因" /></label>}</div>}
             </div>
           </section>
 
           <section className="issue-form-section relation">
             <header><div><strong>关联与责任</strong><span>可搜索、复制工单编号，员工直接同步人事档案</span></div><em>02</em></header>
             <div className="issue-form-grid">
-              <div className="issue-form-field wide"><span>关联工单</span><WorkOrderPicker value={form.workOrderId} initialSelected={issueWorkOrderOptionFromIssue(editingIssue)} newWorkOrderDraft={newWorkOrderDraft} allowCreate={!editingIssue} disabled={saving} onCopied={setToast} onNewWorkOrderDraftChange={setNewWorkOrderDraft} onChange={value => setForm(current => ({ ...current, workOrderId: value }))} /></div>
+              <div className="issue-form-field wide"><span>关联工单</span><WorkOrderPicker value={form.workOrderId} initialSelected={issueWorkOrderOptionFromIssue(editingIssue)} newWorkOrderDraft={newWorkOrderDraft} allowCreate={!editingIssue && !processIssueMode} disabled={saving} onCopied={setToast} onNewWorkOrderDraftChange={setNewWorkOrderDraft} onChange={value => setForm(current => ({ ...current, workOrderId: value }))} /></div>
               <div className="issue-form-field"><span>主负责人</span><EmployeePicker employees={employees} value={form.assigneeEmployeeId} disabled={saving} onChange={value => setForm(current => ({ ...current, assigneeEmployeeId: value, collaboratorEmployeeIds: current.collaboratorEmployeeIds.filter(id => id !== value) }))} /></div>
               <div className="issue-form-field"><span>协同人员（可多选）</span><EmployeeMultiPicker employees={employees} values={form.collaboratorEmployeeIds} excludeIds={form.assigneeEmployeeId ? [form.assigneeEmployeeId] : []} disabled={saving} onChange={values => setForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
             </div>

@@ -3,6 +3,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { changeDetailInclude, serializeChange } from '@/lib/changes';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { canMutateChangeForProcess } from '@/lib/process-collaboration-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -10,8 +11,14 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const current = await prisma.changeRequest.findFirst({ where: { id: params.id, deletedAt: null }, select: { id: true } });
+    const current = await prisma.changeRequest.findFirst({
+      where: { id: params.id, deletedAt: null },
+      select: { id: true, type: true, requesterId: true, ownerId: true },
+    });
     if (!current) return NextResponse.json({ ok: false, error: '变更不存在或已删除' }, { status: 404 });
+    if (!canMutateChangeForProcess(user, current, 'UPDATE')) {
+      return NextResponse.json({ ok: false, error: '只能补充工艺变更或本人负责的变更' }, { status: 403 });
+    }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const content = typeof body.content === 'string' ? body.content.trim().slice(0, 2000) : '';
     if (!content) return NextResponse.json({ ok: false, error: '记录内容不能为空' }, { status: 400 });

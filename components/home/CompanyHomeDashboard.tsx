@@ -402,6 +402,12 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const drawingKpi = data.kpis.find(kpi => kpi.id === 'drawing');
   const drawingCount = drawingKpi?.value
     ?? data.technicalDistribution.reduce((sum, item) => sum + item.value, 0);
+  const planWorkbenchRoute = user.canAccessDailyPlans
+    ? '/weekly-plan-center'
+    : user.canAccessWeeklyProcesses
+      ? '/workspace/weekly-processes'
+      : '/production';
+  const planWorkbenchLabel = user.canAccessDailyPlans ? '计划中心' : '周工序总览';
   const collaborationCards: Array<{
     id: string;
     position: string;
@@ -419,13 +425,13 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
     {
       id: 'plan',
       position: 'plan',
-      label: '计划中心',
+      label: planWorkbenchLabel,
       eyebrow: '本周计划',
       value: data.planChart.total,
       unit: '项',
       badge: `进行中 ${data.planChart.inProgress}`,
       detail: `${data.planChart.completed} 项已完成`,
-      route: '/weekly-plan-center',
+      route: planWorkbenchRoute,
       tone: 'blue',
       Icon: CalendarDays,
     },
@@ -623,7 +629,7 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
               <small id="hm-collab-title">本周协同执行率</small>
               <strong>{progressRate === null ? '--' : progressRate}<em>{progressRate === null ? '' : '%'}</em></strong>
               <p>{data.planChart.completed} 项完成 · {data.planChart.inProgress} 项进行中</p>
-              <Link href={hasOperationalData ? '/production' : '/weekly-plan-center'} prefetch={false}>
+              <Link href={hasOperationalData ? '/production' : planWorkbenchRoute} prefetch={false}>
                 进入工作台<ArrowUpRight size={15} aria-hidden="true" />
               </Link>
             </div>

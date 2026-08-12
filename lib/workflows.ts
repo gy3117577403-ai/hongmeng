@@ -661,7 +661,15 @@ export type WorkflowCenterFilters = {
   weekStartDate?: string;
   laborEmployeeTeam?: string;
   productionScope?: ProductionEntityScope;
+  allowedEntityTypes?: readonly WorkflowEntityType[];
 };
+
+export function workflowEntityTypeMatchesFilter(
+  itemType: WorkflowEntityType,
+  requestedType: WorkflowEntityType | 'all',
+): boolean {
+  return requestedType === 'all' || itemType === requestedType;
+}
 
 export function workflowWeekNavigationFromBatches(
   batches: Array<{ weekStartDate: Date; weekEndDate: Date; carryovers?: Array<{ id: string }> }>,
@@ -1522,19 +1530,24 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
   }
 
   const weekScope = filters.weekScope || 'current';
-  const navigation = workflowWeekNavigationFromBatches(productionBatches, nowDate);
-  const requestedEntityType = filters.entityType || 'production';
-  const scoped = items.filter(item => {
-    if (requestedEntityType === 'issue' || requestedEntityType === 'change') {
-      return item.entityType === requestedEntityType;
-    }
-    if (item.entityType !== 'production') return false;
+  const allowedEntityTypes = new Set<WorkflowEntityType>(
+    filters.allowedEntityTypes || ['issue', 'change', 'production'],
+  );
+  const navigation = workflowWeekNavigationFromBatches(
+    allowedEntityTypes.has('production') ? productionBatches : [],
+    nowDate,
+  );
+  const requestedEntityType = filters.entityType || 'all';
+  const weekScoped = items.filter(item => {
+    if (!allowedEntityTypes.has(item.entityType)) return false;
+    if (item.entityType !== 'production') return true;
     // 周视图以计划批次为唯一主线。旧版未关联计划的独立工单仍可通过深链查看，
     // 但不再混入历史周/本周/未来周统计。
     if (!item.batchId) return false;
     return workflowItemMatchesWeekScope(item, weekScope, nowDate, filters.weekStartDate);
   });
-  const scopedSummary = summary(scoped);
+  const scopedSummary = summary(weekScoped);
+  const scoped = weekScoped.filter(item => workflowEntityTypeMatchesFilter(item.entityType, requestedEntityType));
   const keyword = String(filters.keyword || '').trim().toLocaleLowerCase('zh-CN');
   const filtered = scoped.filter(item => {
     if (filters.status && filters.status !== 'all' && item.processStatus !== filters.status) return false;
@@ -1547,12 +1560,17 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     || Number(first.processStatus === 'closed') - Number(second.processStatus === 'closed')
     || priorityRank[first.priority] - priorityRank[second.priority]
     || new Date(second.updatedAt).getTime() - new Date(first.updatedAt).getTime());
-  const target = items.find(item => (
+  const target = items.find(item => allowedEntityTypes.has(item.entityType) && (
     (filters.batchId && item.batchId === filters.batchId)
     || (filters.workOrderId && item.workOrderId === filters.workOrderId)
   ));
   const result = target
     ? [target, ...filtered.filter(item => item.id !== target.id)]
     : filtered;
-  return { items: result.slice(0, 300), summary: scopedSummary, templates: workflowTemplates, navigation };
+  return {
+    items: result.slice(0, 300),
+    summary: scopedSummary,
+    templates: workflowTemplates.filter(template => allowedEntityTypes.has(template.key)),
+    navigation,
+  };
 }

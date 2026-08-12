@@ -4,6 +4,7 @@ import { issueDetailInclude, serializeIssue } from '@/lib/issues';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
+import { canMutateIssueForProcess } from '@/lib/process-collaboration-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,8 +13,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     assertSameOriginMutationRequest(req);
     const user = await requireUser();
-    const issue = await prisma.issue.findFirst({ where: { id: params.id, deletedAt: null }, select: { id: true } });
+    const issue = await prisma.issue.findFirst({
+      where: { id: params.id, deletedAt: null },
+      select: {
+        id: true,
+        type: true,
+        isMajorQuality: true,
+        reporterId: true,
+        assigneeEmployeeId: true,
+        collaborators: { select: { employeeId: true } },
+      },
+    });
     if (!issue) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
+    if (!canMutateIssueForProcess(user, issue, 'UPDATE')) {
+      return NextResponse.json({ ok: false, error: '只能补充工艺问题或本人参与的问题' }, { status: 403 });
+    }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const content = typeof body.content === 'string' ? body.content.trim().slice(0, 2000) : '';
     if (!content) return NextResponse.json({ ok: false, error: '处理记录不能为空' }, { status: 400 });

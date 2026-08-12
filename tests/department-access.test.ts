@@ -55,6 +55,7 @@ test('stable department, profile and grant-type codes match the persistence cont
   assert.deepEqual(ACCESS_PROFILE_CODES, [
     'ADMIN_GLOBAL',
     'DEPARTMENT_FULL',
+    'PROCESS_SPECIALIST',
     'FIELD_REPORTER',
     'GM_OFFICE_READER_APPROVER',
     'FINANCE_ACCOUNT_ONLY',
@@ -251,6 +252,36 @@ test('field reporter can only use the field-report module', () => {
   assert.equal(hasCapability(context, 'NOTIFICATIONS', 'READ'), false);
   assert.equal(hasCapability(context, 'BASIC_SUMMARY', 'READ'), false);
   assert.equal(hasCapability(context, 'PRODUCTION', 'READ'), false);
+});
+
+test('process specialist owns process work while production and drawings stay read-only', () => {
+  const context = resolveAccessContext([
+    grant('PROCESS_SPECIALIST', {
+      departmentCode: 'PROCESS',
+      scopeKey: 'DEPARTMENT:PROCESS',
+    }),
+  ], { now: NOW });
+
+  for (const action of DEPARTMENT_OPERATION_ACTIONS) {
+    assert.equal(hasCapability(context, 'PROCESS', action), true);
+  }
+  for (const module of ['ISSUE_MANAGEMENT', 'CHANGE_MANAGEMENT'] as const) {
+    assert.deepEqual(allowedActions(context, module), ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
+    assert.equal(scopeHintsFor(context, module)[0]?.level, 'DEPARTMENT');
+    assert.equal(scopeHintsFor(context, module)[0]?.readOnly, false);
+  }
+  assert.deepEqual(allowedActions(context, 'DRAWING_LIBRARY'), ['READ']);
+  assert.deepEqual(allowedActions(context, 'PRODUCTION'), ['READ']);
+  assert.equal(scopeHintsFor(context, 'DRAWING_LIBRARY')[0]?.level, 'GLOBAL');
+  assert.equal(scopeHintsFor(context, 'DRAWING_LIBRARY')[0]?.readOnly, true);
+  assert.equal(scopeHintsFor(context, 'PRODUCTION')[0]?.level, 'WORKSHOP');
+  assert.equal(scopeHintsFor(context, 'PRODUCTION')[0]?.readOnly, true);
+  assert.equal(context.productionScope, 'WORKSHOP');
+  assert.equal(hasCapability(context, 'QUALITY', 'READ'), false);
+  assert.equal(hasCapability(context, 'ENGINEERING', 'READ'), false);
+  assert.equal(hasCapability(context, 'PLANNING', 'READ'), false);
+  assert.equal(hasCapability(context, 'PRODUCTION', 'UPDATE'), false);
+  assert.equal(hasCapability(context, 'DRAWING_LIBRARY', 'UPDATE'), false);
 });
 
 test('workshop supervisor gets production operations for the whole workshop scope', () => {

@@ -11,7 +11,11 @@ import {
   listWeeklyProcessWorkerPresets,
   saveWeeklyProcessWorkerPreset,
 } from '@/lib/weekly-process-worker-preset-service';
-import { assertProductionScopeRead, resolveProductionEntityScope } from '@/lib/production-access-scope';
+import {
+  assertProductionScopeRead,
+  assertProductionScopeWrite,
+  resolveProductionEntityScope,
+} from '@/lib/production-access-scope';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,12 +31,16 @@ function validDate(value: unknown): string {
   return date;
 }
 
-async function authorizedUser() {
+async function authorizedUser(write = false) {
   assertDailyPlanEnabled();
   const user = await requireUser();
   const productionScope = resolveProductionEntityScope(user);
   assertProductionScopeRead(productionScope);
-  if (!user.canAccessDailyPlans) throw new ForbiddenError('当前账号不能访问生产排程');
+  if (!user.canAccessWeeklyProcesses) throw new ForbiddenError('当前账号不能查看周工序总览');
+  if (write) {
+    assertProductionScopeWrite(productionScope);
+    if (!user.canAccessDailyPlans) throw new ForbiddenError('当前账号只能查看周工序总览');
+  }
   return { user, productionScope };
 }
 
@@ -49,7 +57,7 @@ export async function GET(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     assertDailyPlanMutationRequest(request);
-    const { user, productionScope } = await authorizedUser();
+    const { user, productionScope } = await authorizedUser(true);
     if (productionScope.level === 'TEAM') {
       throw new ForbiddenError('班组长不能修改影响全车间的工序预选人员');
     }
@@ -71,7 +79,7 @@ export async function PUT(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   try {
     assertDailyPlanMutationRequest(request);
-    const { user, productionScope } = await authorizedUser();
+    const { user, productionScope } = await authorizedUser(true);
     if (productionScope.level === 'TEAM') {
       throw new ForbiddenError('班组长不能修改影响全车间的工序预选人员');
     }

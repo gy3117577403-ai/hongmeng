@@ -195,6 +195,50 @@ test('team-leader grant fails closed when the target team cannot be resolved', a
   );
 });
 
+test('process department uses the dedicated collaboration template', async () => {
+  const tx = {
+    department: {
+      findFirst: async ({ where }: { where: { id: string } }) => (
+        where.id === 'department-process'
+          ? { id: where.id, code: 'PROCESS' }
+          : where.id === 'department-quality'
+            ? { id: where.id, code: 'QUALITY' }
+            : null
+      ),
+    },
+  } as never;
+  const employee = {
+    id: 'employee-process',
+    departmentId: 'department-process',
+    team: null,
+  };
+
+  const grant = await prepareAccessGrant(tx, {
+    profileKey: 'PROCESS_SPECIALIST',
+    departmentId: 'department-process',
+    grantType: 'PRIMARY',
+  }, employee);
+  assert.equal(grant.profile, 'PROCESS_SPECIALIST');
+  assert.equal(grant.scopeKey, 'DEPARTMENT:PROCESS');
+
+  await assert.rejects(
+    prepareAccessGrant(tx, {
+      profileKey: 'DEPARTMENT_FULL',
+      departmentId: 'department-process',
+      grantType: 'PRIMARY',
+    }, employee),
+    /专用权限模板/,
+  );
+  await assert.rejects(
+    prepareAccessGrant(tx, {
+      profileKey: 'PROCESS_SPECIALIST',
+      departmentId: 'department-quality',
+      grantType: 'PRIMARY',
+    }, employee),
+    /只能绑定工艺部/,
+  );
+});
+
 test('employee rebind requires active concurrent and acting grants to be revoked first', () => {
   for (const grantType of ['CONCURRENT', 'ACTING'] as const) {
     assert.throws(

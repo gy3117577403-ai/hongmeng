@@ -10,6 +10,7 @@ import {
 import { prisma } from '@/lib/prisma';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import type { IssueStatus } from '@/types';
+import { canMutateIssueForProcess } from '@/lib/process-collaboration-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -20,8 +21,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     assertSameOriginMutationRequest(req);
     const user = await requireUser();
-    const current = await prisma.issue.findFirst({ where: { id: params.id, deletedAt: null } });
+    const current = await prisma.issue.findFirst({
+      where: { id: params.id, deletedAt: null },
+      include: { collaborators: { select: { employeeId: true } } },
+    });
     if (!current) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
+    if (!canMutateIssueForProcess(user, current, 'EXECUTE_WORKFLOW')) {
+      return NextResponse.json({ ok: false, error: '只能流转工艺问题或本人参与的问题' }, { status: 403 });
+    }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const target = typeof body.status === 'string' ? body.status as IssueStatus : null;
     if (!target || !ISSUE_STATUSES.includes(target)) return NextResponse.json({ ok: false, error: '目标状态不正确' }, { status: 400 });

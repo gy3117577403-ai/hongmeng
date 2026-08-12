@@ -6,6 +6,7 @@ import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
 import { fileType, safeFilename, validateFileContent } from '@/lib/validation';
+import { canMutateChangeForProcess } from '@/lib/process-collaboration-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -15,9 +16,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const user = await requireUser();
     const change = await prisma.changeRequest.findFirst({
       where: { id: params.id, deletedAt: null },
-      select: { id: true },
+      select: { id: true, type: true, requesterId: true, ownerId: true },
     });
     if (!change) return NextResponse.json({ ok: false, error: '变更不存在或已删除' }, { status: 404 });
+    if (!canMutateChangeForProcess(user, change, 'UPDATE')) {
+      return NextResponse.json({ ok: false, error: '只能为工艺变更或本人负责的变更上传附件' }, { status: 403 });
+    }
 
     const form = await req.formData();
     const upload = form.get('file');

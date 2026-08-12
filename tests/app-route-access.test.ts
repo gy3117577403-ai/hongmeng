@@ -5,10 +5,14 @@ import {
   landingRouteForAccess,
   routeAccessRule,
 } from '../lib/app-route-access';
-import type { AccessModuleCode } from '../lib/department-access';
+import type { AccessModuleCode, CapabilityCode } from '../lib/department-access';
 
 function access(...modules: AccessModuleCode[]) {
   return { modules };
+}
+
+function accessWithCapabilities(modules: AccessModuleCode[], capabilities: CapabilityCode[]) {
+  return { modules, capabilities };
 }
 
 test('finance account lands on account center and cannot open business pages', () => {
@@ -31,10 +35,29 @@ test('department users receive only their mapped module entries plus shared work
 });
 
 test('production supervisor can use production and planning collaboration pages', () => {
-  const supervisor = access('ACCOUNT_SELF', 'BASIC_SUMMARY', 'PRODUCTION');
+  const supervisor = accessWithCapabilities(
+    ['ACCOUNT_SELF', 'BASIC_SUMMARY', 'PRODUCTION'],
+    ['PRODUCTION:UPDATE'],
+  );
   assert.equal(canAccessAppRoute(supervisor, '/production'), true);
   assert.equal(canAccessAppRoute(supervisor, '/workspace/daily-plans'), true);
   assert.equal(canAccessAppRoute(supervisor, '/weekly-plan-center'), false);
+});
+
+test('process specialist sees collaboration pages but not scheduling or QR print', () => {
+  const process = accessWithCapabilities(
+    ['ACCOUNT_SELF', 'BASIC_SUMMARY', 'PROCESS', 'ISSUE_MANAGEMENT', 'CHANGE_MANAGEMENT', 'DRAWING_LIBRARY', 'PRODUCTION'],
+    ['PROCESS:READ', 'ISSUE_MANAGEMENT:READ', 'CHANGE_MANAGEMENT:READ', 'DRAWING_LIBRARY:READ', 'PRODUCTION:READ'],
+  );
+  assert.equal(canAccessAppRoute(process, '/workspace/workflows'), true);
+  assert.equal(canAccessAppRoute(process, '/workspace/issues'), true);
+  assert.equal(canAccessAppRoute(process, '/workspace/changes'), true);
+  assert.equal(canAccessAppRoute(process, '/drawing-library'), true);
+  assert.equal(canAccessAppRoute(process, '/production'), true);
+  assert.equal(canAccessAppRoute(process, '/workspace/weekly-processes'), true);
+  assert.equal(canAccessAppRoute(process, '/workspace/daily-plans'), false);
+  assert.equal(canAccessAppRoute(process, '/production/qr-print'), false);
+  assert.equal(canAccessAppRoute(process, '/workspace/approvals'), false);
 });
 
 test('GM read/approval grants map to reports and workflow but not settings', () => {

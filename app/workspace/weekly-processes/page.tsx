@@ -9,6 +9,6 @@ export const dynamic = 'force-dynamic';
 export default async function WeeklyProcessesPage() {
   if (!dailyPlanEnabled()) notFound();
   const user = await requirePageAccess('/workspace/weekly-processes');
-  if (!user.canAccessDailyPlans) notFound();
+  if (!user.canAccessWeeklyProcesses) notFound();
   return <WeeklyProcessOverview user={user} />;
 }

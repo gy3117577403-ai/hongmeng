@@ -130,6 +130,17 @@ function formatDate(value?: string | null, includeTime = true): string {
   }).format(date);
 }
 
+function workflowTargetLabel(item: WorkflowItemDTO): string {
+  if (item.entityType !== 'production') return '打开来源业务';
+  const pathname = item.route.split('?')[0];
+  if (pathname === '/production') return '打开生产执行';
+  if (pathname === '/drawing-library') return '查看图纸资料';
+  if (pathname === '/workspace/product-times') return '配置产品工序';
+  if (pathname === '/workspace/warehouse') return '查看配料状态';
+  if (pathname === '/weekly-plan-center') return '查看计划批次';
+  return '打开当前业务';
+}
+
 async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, { cache: 'no-store', ...init });
   const data = await response.json().catch(() => ({ ok: false, error: '服务返回格式异常' })) as T & { error?: string };
@@ -139,7 +150,7 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
 
 export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) {
   const [keyword, setKeyword] = useState('');
-  const [filters, setFilters] = useState<Filters>({ entityType: 'production', status: 'all', overdue: false, weekScope: 'current' });
+  const [filters, setFilters] = useState<Filters>({ entityType: 'all', status: 'all', overdue: false, weekScope: 'current' });
   const [items, setItems] = useState<WorkflowItemDTO[]>([]);
   const [summary, setSummary] = useState<WorkflowSummaryDTO>(emptySummary);
   const [navigation, setNavigation] = useState<WorkflowWeekNavigationDTO>(emptyNavigation);
@@ -312,7 +323,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
     location.href = '/login';
   }
 
-  const activeFilterCount = [filters.entityType !== 'production', filters.status !== 'all', filters.overdue].filter(Boolean).length;
+  const activeFilterCount = [filters.entityType !== 'all', filters.status !== 'all', filters.overdue].filter(Boolean).length;
   const selectedRouteGroups = useMemo(() => {
     if (!selected || selected.entityType !== 'production') return [];
     const groups = new Map<number, WorkflowStepDTO[]>();
@@ -753,7 +764,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
 
         <div className="workflow-workspace">
           <section className="workflow-list" aria-label="流程列表">
-            <header><div><h2>流程实例</h2><span>{items.length} 条当前结果</span></div>{activeFilterCount > 0 && <button type="button" onClick={() => setFilters(current => ({ entityType: 'production', status: 'all', overdue: false, weekScope: current.weekScope }))}>清除 {activeFilterCount}</button>}</header>
+            <header><div><h2>流程实例</h2><span>{items.length} 条当前结果</span></div>{activeFilterCount > 0 && <button type="button" onClick={() => setFilters(current => ({ entityType: 'all', status: 'all', overdue: false, weekScope: current.weekScope }))}>清除 {activeFilterCount}</button>}</header>
             <label className="workflow-list-search"><Search size={15} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、产品或负责人" aria-label="搜索流程" />{keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={13} /></button>}</label>
             <div className="workflow-type-filters" role="group" aria-label="流程类型筛选">
               {(['all', 'issue', 'change', 'production'] as const).map(type => <button type="button" key={type} className={filters.entityType === type ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, entityType: type }))}>{type === 'all' ? '全部' : entityLabels[type]}<span>{type === 'all' ? summary.total : summary[type]}</span></button>)}
@@ -968,8 +979,8 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
               </div>
               <footer className="workflow-detail-actions">
                 {manualReportRoute && <a href={manualReportRoute}>自动记工明细<ArrowUpRight size={14} /></a>}
-                <a className={manualReportRoute ? 'secondary' : ''} href={selected.route}>{selected.entityType === 'production' ? '打开生产执行' : '打开来源业务'}<ArrowUpRight size={14} /></a>
-                {selected.sourceRoute && <a className="secondary" href={selected.sourceRoute}>查看关联资料</a>}
+                <a className={manualReportRoute ? 'secondary' : ''} href={selected.route}>{workflowTargetLabel(selected)}<ArrowUpRight size={14} /></a>
+                {selected.sourceRoute && selected.sourceRoute !== selected.route && <a className="secondary" href={selected.sourceRoute}>查看关联资料</a>}
               </footer>
             </>}
           </section>

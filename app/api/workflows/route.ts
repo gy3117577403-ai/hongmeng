@@ -29,10 +29,9 @@ function workflowWeekScope(value: string | null): WorkflowWeekScope {
 export async function GET(req: NextRequest) {
   try {
     const user = await requireUser();
-    if (user.laborRole === 'EMPLOYEE') return forbidden('员工账号请在报表中心领取本人今日工时');
     const params = req.nextUrl.searchParams;
     const keyword = String(params.get('keyword') || '').trim().slice(0, 160);
-    const entityType = String(params.get('entityType') || 'production') as WorkflowEntityType | 'all';
+    const entityType = String(params.get('entityType') || 'all') as WorkflowEntityType | 'all';
     const status = String(params.get('status') || 'all') as WorkflowProcessStatus | 'all';
     const overdue = params.get('overdue') === 'true';
     const batchId = String(params.get('batchId') || '').trim().slice(0, 80);
@@ -59,17 +58,35 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: '历史生产周日期格式不正确' }, { status: 400 });
     }
     const productionScope = resolveProductionEntityScope(user);
-    const productionOnly = hasCapability(user.access, 'PRODUCTION', 'READ')
-      && !hasCapability(user.access, 'QUALITY', 'READ')
-      && !hasCapability(user.access, 'ENGINEERING', 'READ');
-    if (entityType === 'production' || entityType === 'all' || productionOnly) {
+    const canViewProduction = hasCapability(user.access, 'PRODUCTION', 'READ')
+      || hasCapability(user.access, 'PLANNING', 'READ');
+    const canViewIssues = hasCapability(user.access, 'QUALITY', 'READ')
+      || hasCapability(user.access, 'ISSUE_MANAGEMENT', 'READ');
+    const canViewChanges = hasCapability(user.access, 'ENGINEERING', 'READ')
+      || hasCapability(user.access, 'QUALITY', 'READ')
+      || hasCapability(user.access, 'CHANGE_MANAGEMENT', 'READ');
+    if (entityType === 'issue' && !canViewIssues) {
+      return forbidden('当前账号没有查看问题流程的权限');
+    }
+    if (entityType === 'change' && !canViewChanges) {
+      return forbidden('当前账号没有查看变更流程的权限');
+    }
+    if (entityType === 'production') {
+      if (!canViewProduction) return forbidden('当前账号没有查看生产流程的权限');
       assertProductionScopeRead(productionScope);
     }
-    if (productionOnly && entityType !== 'production' && entityType !== 'all') {
-      return forbidden('车间账号只能查看本人生产范围内的流程');
-    }
 
-    if (weekScope === 'current' && productionScope.canReconcile) {
+    const allowedEntityTypes: WorkflowEntityType[] = [
+      ...(canViewIssues ? ['issue' as const] : []),
+      ...(canViewChanges ? ['change' as const] : []),
+      ...(canViewProduction ? ['production' as const] : []),
+    ];
+    if (entityType === 'all' && !allowedEntityTypes.length) {
+      return forbidden('当前账号没有查看流程中心的权限');
+    }
+    if (entityType === 'all' && canViewProduction) assertProductionScopeRead(productionScope);
+
+    if (canViewProduction && weekScope === 'current' && productionScope.canReconcile) {
       await reconcileCurrentProductionCarryovers({ targetWeekStart: chinaWeekRange(new Date()).start, actorId: user.id });
     }
 
@@ -86,6 +103,7 @@ export async function GET(req: NextRequest) {
         ? String(user.employee?.team || '__UNBOUND_TEAM_LEAD__').trim()
         : undefined,
       productionScope,
+      allowedEntityTypes,
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {

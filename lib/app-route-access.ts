@@ -1,12 +1,18 @@
-import type { AccessModuleCode } from '@/lib/department-access';
+import type {
+  AccessActionCode,
+  AccessModuleCode,
+  CapabilityCode,
+} from '@/lib/department-access';
 
 type AppAccess = {
   modules: readonly AccessModuleCode[];
+  capabilities?: readonly CapabilityCode[];
 };
 
 type RouteAccessRule = {
   prefix: string;
   anyOf: readonly AccessModuleCode[];
+  action?: AccessActionCode;
 };
 
 /**
@@ -20,17 +26,17 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/field-report', anyOf: ['FIELD_REPORT'] },
   { prefix: '/account', anyOf: ['ACCOUNT_SELF'] },
   { prefix: '/home', anyOf: ['BASIC_SUMMARY'] },
-  { prefix: '/production/qr-print', anyOf: ['PRODUCTION'] },
+  { prefix: '/production/qr-print', anyOf: ['PRODUCTION'], action: 'EXECUTE_WORKFLOW' },
   { prefix: '/production', anyOf: ['BUSINESS', 'PRODUCTION'] },
   { prefix: '/weekly-plan-center', anyOf: ['PLANNING'] },
-  { prefix: '/workspace/daily-plans', anyOf: ['PLANNING', 'PRODUCTION'] },
+  { prefix: '/workspace/daily-plans', anyOf: ['PLANNING', 'PRODUCTION'], action: 'UPDATE' },
   { prefix: '/workspace/weekly-processes', anyOf: ['PLANNING', 'PRODUCTION'] },
-  { prefix: '/drawing-library', anyOf: ['ENGINEERING'] },
+  { prefix: '/drawing-library', anyOf: ['ENGINEERING', 'DRAWING_LIBRARY'] },
   { prefix: '/connector-assembly-manuals', anyOf: ['ENGINEERING'] },
   { prefix: '/connector-parameters', anyOf: ['ENGINEERING'] },
-  { prefix: '/workspace/issues', anyOf: ['QUALITY'] },
+  { prefix: '/workspace/issues', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/workspace/approvals', anyOf: ['QUALITY', 'MAJOR_APPROVAL'] },
-  { prefix: '/workspace/changes', anyOf: ['ENGINEERING', 'QUALITY'] },
+  { prefix: '/workspace/changes', anyOf: ['ENGINEERING', 'QUALITY', 'CHANGE_MANAGEMENT'] },
   {
     prefix: '/workspace/workflows',
     anyOf: [
@@ -89,7 +95,11 @@ export function canAccessAppRoute(access: AppAccess, pathname: string): boolean 
   const rule = routeAccessRule(pathname);
   if (!rule) return false;
   const modules = new Set(access.modules);
-  return rule.anyOf.some(module => modules.has(module));
+  return rule.anyOf.some(module => {
+    if (!modules.has(module)) return false;
+    if (!rule.action) return true;
+    return access.capabilities?.includes(`${module}:${rule.action}` as CapabilityCode) === true;
+  });
 }
 
 export function landingRouteForAccess(access: AppAccess): string {

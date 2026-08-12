@@ -48,6 +48,7 @@ function inferredProfile(
   if (legacyRole === LaborAccessRole.TEAM_LEAD) return AccessProfileKey.WORKSHOP_TEAM_LEADER;
   if (departmentCode === 'FINANCE') return AccessProfileKey.FINANCE_ACCOUNT_ONLY;
   if (departmentCode === 'GM_OFFICE') return AccessProfileKey.GM_OFFICE_READER_APPROVER;
+  if (departmentCode === 'PROCESS') return AccessProfileKey.PROCESS_SPECIALIST;
   if (departmentCode === 'PRODUCTION') return AccessProfileKey.FIELD_REPORTER;
   return AccessProfileKey.DEPARTMENT_FULL;
 }

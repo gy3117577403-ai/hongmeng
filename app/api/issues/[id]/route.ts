@@ -5,6 +5,10 @@ import { issueDetailInclude, loadIssueById, parseIssueInput, serializeIssue, val
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
+import {
+  canMutateIssueForProcess,
+  isProcessIssueCollaborator,
+} from '@/lib/process-collaboration-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -36,6 +40,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       },
     });
     if (!current) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
+    if (!canMutateIssueForProcess(user, current, 'UPDATE')) {
+      return NextResponse.json({ ok: false, error: '只能维护工艺问题或本人参与的问题' }, { status: 403 });
+    }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const parsed = parseIssueInput(body, true);
     if (parsed.errors.length) return NextResponse.json({ ok: false, error: parsed.errors[0] }, { status: 400 });
@@ -45,6 +52,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const effectiveMajorReason = values.majorQualityReason !== undefined
       ? values.majorQualityReason
       : current.majorQualityReason;
+    if (
+      isProcessIssueCollaborator(user)
+      && (effectiveType !== current.type || effectiveMajor !== current.isMajorQuality)
+    ) {
+      return NextResponse.json({ ok: false, error: '工艺账号不能修改问题类型或重大质量标记' }, { status: 403 });
+    }
     const majorQualityError = validateMajorQualityInput({
       type: effectiveType,
       isMajorQuality: effectiveMajor,

@@ -429,9 +429,12 @@ export async function prepareAccessGrant(
   }
   if (
     profile === AccessProfileKey.DEPARTMENT_FULL
-    && ['PRODUCTION', 'FINANCE', 'GM_OFFICE'].includes(department!.code)
+    && ['PRODUCTION', 'FINANCE', 'GM_OFFICE', 'PROCESS'].includes(department!.code)
   ) {
-    throw new AccessGrantInputError('生产、财务和总经办必须使用对应的专用权限模板');
+    throw new AccessGrantInputError('生产、财务、总经办和工艺必须使用对应的专用权限模板');
+  }
+  if (profile === AccessProfileKey.PROCESS_SPECIALIST && department!.code !== 'PROCESS') {
+    throw new AccessGrantInputError('工艺专员模板只能绑定工艺部员工');
   }
   if (profile === AccessProfileKey.FINANCE_ACCOUNT_ONLY && department!.code !== 'FINANCE') {
     throw new AccessGrantInputError('财务账号模板只能绑定财务部员工');

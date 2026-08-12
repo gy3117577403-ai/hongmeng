@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
     const user = await requireUser();
     const productionScope = resolveProductionEntityScope(user);
     assertProductionScopeRead(productionScope);
-    if (!user.canAccessDailyPlans) throw new ForbiddenError('当前账号不能访问生产排程');
+    if (!user.canAccessWeeklyProcesses) throw new ForbiddenError('当前账号不能查看周工序总览');
     const requestedDate = request.nextUrl.searchParams.get('date');
     if (requestedDate && !/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
       throw Object.assign(new Error('周日期必须为 YYYY-MM-DD'), { status: 400, code: 'WEEK_DATE_INVALID' });

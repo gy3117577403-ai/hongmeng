@@ -1087,7 +1087,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       || user.access.capabilities.includes('PLANNING:UPDATE')
     );
   const canSelectProduction = canAdministerProduction || canScheduleProduction;
-  const canPrintTravelers = user.access.capabilities.includes('PRODUCTION:READ')
+  const canPrintTravelers = user.access.capabilities.includes('PRODUCTION:EXECUTE_WORKFLOW')
     || user.access.capabilities.includes('SYSTEM_CONFIGURATION:READ');
   const [summary, setSummary] = useState<ProductionSummary | null>(null);
   const [board, setBoard] = useState<BoardPayload | null>(null);
@@ -2644,7 +2644,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             <button className={scope === 'afterNext' ? 'active' : ''} type="button" aria-pressed={scope === 'afterNext'} onClick={() => changeWeekScope('afterNext')}>下下周 <b>{summary?.navigation.afterNext.count ?? 0}</b></button>
           </nav>
           <div className="production-dispatch-command-actions">
-            <button
+            {canSelectProduction && <button
               className="hm-workbench-button production-carryover-trigger"
               type="button"
               aria-haspopup="dialog"
@@ -2653,11 +2653,11 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
               onClick={() => setOlderCarryoverOpen(true)}
             >
               <AlertTriangle size={15} aria-hidden="true" />更早遗留 <b>{summary?.navigation.olderCarryoverCount ?? 0}</b>
-            </button>
+            </button>}
             {(canAdministerProduction || canScheduleProduction) && <Link className="hm-workbench-button" href={weeklyPlanHref} prefetch={false}><CalendarDays size={15} aria-hidden="true" />周计划</Link>}
             {canScheduleProduction && <button className="hm-workbench-button production-reassignment-trigger" type="button" disabled={board?.readOnly} title="员工请假、临时缺勤时批量重排未完成数量" onClick={openEmployeeExceptionReassignment}><UserRoundCog size={15} aria-hidden="true" />人员异常</button>}
             {canSelectProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
-            <button ref={exportButtonRef} className={`hm-workbench-button ${exportMenuOpen ? 'active' : ''}`.trim()} type="button" aria-haspopup="menu" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(value => !value)}><Download size={15} aria-hidden="true" />导出/打印<ChevronDown size={13} aria-hidden="true" /></button>
+            {canPrintTravelers && <button ref={exportButtonRef} className={`hm-workbench-button ${exportMenuOpen ? 'active' : ''}`.trim()} type="button" aria-haspopup="menu" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(value => !value)}><Download size={15} aria-hidden="true" />导出/打印<ChevronDown size={13} aria-hidden="true" /></button>}
             <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
             <button className="hm-workbench-button production-fullscreen-trigger" type="button" onClick={() => void toggleFullscreen()}><Expand size={15} aria-hidden="true" />{isFullscreen ? '退出大屏' : '大屏模式'}</button>
           </div>
@@ -2785,7 +2785,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
 
       {canSelectProduction && batchMode && !board?.readOnly && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong>{canScheduleProduction && <button className="primary" type="button" disabled={!selected.length} onClick={() => openProductionArrangement((board?.items || []).filter(order => selected.includes(order.id)))}><CalendarDays size={15} />批量安排日期与人员</button>}{canPrintTravelers && <button type="button" disabled={!selected.length} onClick={() => printTravelers(selected)}><Printer size={15} />打印流转单 / SOP</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button>}<button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
 
-      <PortalMenu open={exportMenuOpen} anchorRef={exportButtonRef} align="right" className="production-export-menu hm-production-menu" width={250} onClose={() => setExportMenuOpen(false)} closeOnSelect={false}>
+      <PortalMenu open={canPrintTravelers && exportMenuOpen} anchorRef={exportButtonRef} align="right" className="production-export-menu hm-production-menu" width={250} onClose={() => setExportMenuOpen(false)} closeOnSelect={false}>
         <span className="production-export-menu-label">当前筛选范围</span>
         <button type="button" onClick={() => exportDispatchWorkbook(false)}><Download size={15} aria-hidden="true" /><span><b>导出 Excel 排班明细</b><small>含日期、工序、员工与剩余量</small></span></button>
         <button type="button" onClick={() => printDispatchSchedule(false)}><Printer size={15} aria-hidden="true" /><span><b>打印 A4 调度排班表</b><small>横向布局，带现场签字栏</small></span></button>

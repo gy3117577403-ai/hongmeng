@@ -291,6 +291,7 @@ function dt(v: string, withTime = true) {
 
 const accessProfileOptions: Array<{ value: AccessProfileKeyDTO; label: string; description: string }> = [
   { value: 'DEPARTMENT_FULL', label: '部门工作台', description: '继承主部门全部业务权限' },
+  { value: 'PROCESS_SPECIALIST', label: '工艺专员', description: '工艺维护，问题与变更协同，生产和图纸只读' },
   { value: 'FIELD_REPORTER', label: '扫码报工', description: '实名扫码进入现场报工' },
   { value: 'WORKSHOP_SUPERVISOR', label: '车间主管', description: '车间生产与计划协同' },
   { value: 'WORKSHOP_TEAM_LEADER', label: '车间组长', description: '本班组生产与人员协同' },
@@ -359,6 +360,7 @@ function recommendedProfile(employee?: EmployeeDTO | null): AccessProfileKeyDTO 
   const position = employee?.position || '';
   if (department.includes('财务')) return 'FINANCE_ACCOUNT_ONLY';
   if (department.includes('总经办')) return 'GM_OFFICE_READER_APPROVER';
+  if (department.includes('工艺')) return 'PROCESS_SPECIALIST';
   if (department.includes('生产')) {
     if (/主管|主任/.test(position)) return 'WORKSHOP_SUPERVISOR';
     if (/组长|班长/.test(position)) return 'WORKSHOP_TEAM_LEADER';
@@ -4250,6 +4252,8 @@ function AccountManager({
       ? 'FINANCE'
       : profileKey === 'GM_OFFICE_READER_APPROVER'
         ? 'GM_OFFICE'
+        : profileKey === 'PROCESS_SPECIALIST'
+          ? 'PROCESS'
         : ['FIELD_REPORTER', 'WORKSHOP_SUPERVISOR', 'WORKSHOP_TEAM_LEADER'].includes(profileKey)
           ? 'PRODUCTION'
           : null;

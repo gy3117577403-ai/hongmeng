@@ -229,6 +229,9 @@ async function readData(response: Response): Promise<WeeklyProcessData> {
 }
 
 export default function WeeklyProcessOverview({ user }: { user: CurrentUserDTO }) {
+  const canManagePresets = user.canAccessDailyPlans
+    && (user.access.capabilities.includes('PRODUCTION:UPDATE')
+      || user.access.capabilities.includes('PLANNING:UPDATE'));
   const [weekDate, setWeekDate] = useState(dateKey());
   const [teamId, setTeamId] = useState('');
   const [state, setState] = useState('ALL');
@@ -321,6 +324,7 @@ export default function WeeklyProcessOverview({ user }: { user: CurrentUserDTO }
   }, []);
 
   function openPreset(target: PresetTarget): void {
+    if (!canManagePresets) return;
     const preset = data?.presets.find(item => item.scopeKey === presetScopeKey(target));
     setPresetTarget(target);
     setPresetEmployeeIds(preset?.employees.filter(employee => employee.isActive).map(employee => employee.id) || []);
@@ -379,7 +383,9 @@ export default function WeeklyProcessOverview({ user }: { user: CurrentUserDTO }
           <button type="button" className="weekly-process-current" onClick={() => setWeekDate(currentWeek)}>本周</button>
         </div>
         <div className="weekly-process-actions">
-          <a href={`/workspace/daily-plans?date=${encodeURIComponent(data?.weekStartDate || weekDate)}`}><ArrowLeft size={16} />返回日计划</a>
+          {user.canAccessDailyPlans
+            ? <a href={`/workspace/daily-plans?date=${encodeURIComponent(data?.weekStartDate || weekDate)}`}><ArrowLeft size={16} />返回日计划</a>
+            : <a href="/production"><ArrowLeft size={16} />返回生产执行</a>}
           <button type="button" onClick={() => setRefreshToken(value => value + 1)} disabled={loading}><RefreshCw size={16} className={loading ? 'spin' : ''} />刷新</button>
         </div>
       </section>
@@ -410,7 +416,7 @@ export default function WeeklyProcessOverview({ user }: { user: CurrentUserDTO }
           </nav>
           <span>当前显示 <b>{data?.filteredCount || 0}</b> 项</span>
           {(teamId || state !== 'ALL' || completion !== 'ALL' || processKey || searchInput || sort !== 'DUE_ASC') && <button className="weekly-process-clear" type="button" onClick={resetFilters}>清除筛选</button>}
-          <button className="weekly-process-bulk-worker" type="button" disabled={!selectedProcess || loading} onClick={() => selectedProcess && openPreset({ processKey: selectedProcess.key, processName: selectedProcess.name, stepId: null, label: '本周同名工序全部明细' })}><UserRoundPlus size={16} />批量预选人员{selectedProcess?.preferredEmployeeCount ? <b>{selectedProcess.preferredEmployeeCount}</b> : null}</button>
+          {canManagePresets && <button className="weekly-process-bulk-worker" type="button" disabled={!selectedProcess || loading} onClick={() => selectedProcess && openPreset({ processKey: selectedProcess.key, processName: selectedProcess.name, stepId: null, label: '本周同名工序全部明细' })}><UserRoundPlus size={16} />批量预选人员{selectedProcess?.preferredEmployeeCount ? <b>{selectedProcess.preferredEmployeeCount}</b> : null}</button>}
         </div>
       </section>
 
@@ -436,14 +442,14 @@ export default function WeeklyProcessOverview({ user }: { user: CurrentUserDTO }
             <div className="weekly-process-step"><span>{String(item.position || 0).padStart(2, '0')}</span><strong>{item.processName}</strong><small>{stageLabel(item.stageGroup)}</small></div>
             <div className="weekly-process-quantity"><strong>{item.processedQuantity}<small> / {item.batchQuantity}</small></strong><span>已完成 / 批次数量</span><progress max={Math.max(1, item.batchQuantity)} value={Math.min(item.batchQuantity, item.processedQuantity)} />{item.pendingCoverageQuantity > 0 && <small className="pending"><Clock3 size={12} />另有 {item.pendingCoverageQuantity} 待前序核销</small>}</div>
             <div className="weekly-process-labor"><div><span>总计</span><strong>{formatLabor(item.totalLaborMilliseconds, true)}</strong></div><div><span>完成</span><b>{formatLabor(item.completedLaborMilliseconds, true)}</b></div><div><span>剩余</span><b>{formatLabor(item.remainingLaborMilliseconds, true)}</b></div>{item.unallocatedLaborMilliseconds !== '0' && <small>待安排 {formatLabor(item.unallocatedLaborMilliseconds, true)}</small>}</div>
-            <div className="weekly-process-workers"><div className="weekly-process-team-tags">{item.eligibleTeams.length ? item.eligibleTeams.map(team => <span key={team.id}>{team.name}</span>) : <em>未配置班组</em>}</div><div className="weekly-process-worker-tags">{item.preferredEmployees.slice(0, 3).map(employee => <span title={`${employee.employeeNo}${employee.team ? ` · ${employee.team}` : ''}`} key={employee.id}>{employee.name}</span>)}{item.preferredEmployees.length > 3 && <b>+{item.preferredEmployees.length - 3}</b>}{!item.preferredEmployees.length && <small>未预选人员</small>}<button type="button" disabled={!item.stepId} onClick={() => openPreset({ processKey: item.processKey, processName: item.processName, stepId: item.stepId, label: `${friendlyOrderLabel(item)} · 第${item.position}道` })}>{item.workerPresetScope === 'STEP' ? '调整专属' : '设为专属'}</button></div></div>
+            <div className="weekly-process-workers"><div className="weekly-process-team-tags">{item.eligibleTeams.length ? item.eligibleTeams.map(team => <span key={team.id}>{team.name}</span>) : <em>未配置班组</em>}</div><div className="weekly-process-worker-tags">{item.preferredEmployees.slice(0, 3).map(employee => <span title={`${employee.employeeNo}${employee.team ? ` · ${employee.team}` : ''}`} key={employee.id}>{employee.name}</span>)}{item.preferredEmployees.length > 3 && <b>+{item.preferredEmployees.length - 3}</b>}{!item.preferredEmployees.length && <small>未预选人员</small>}{canManagePresets && <button type="button" disabled={!item.stepId} onClick={() => openPreset({ processKey: item.processKey, processName: item.processName, stepId: item.stepId, label: `${friendlyOrderLabel(item)} · 第${item.position}道` })}>{item.workerPresetScope === 'STEP' ? '调整专属' : '设为专属'}</button>}</div></div>
             <div className="weekly-process-state"><div><b>{item.completionLabel}</b><em>{item.stateLabel}</em></div>{item.warnings.slice(0, 2).map(warning => <span key={warning}>{warning}</span>)}{item.warnings.length > 2 && <small>另有 {item.warnings.length - 2} 项提醒</small>}</div>
           </article>)}
         </div>
       </section>
     </div>
 
-    {presetTarget && <div className="weekly-process-preset-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !presetSaving) setPresetTarget(null); }}>
+    {canManagePresets && presetTarget && <div className="weekly-process-preset-backdrop" onMouseDown={event => { if (event.target === event.currentTarget && !presetSaving) setPresetTarget(null); }}>
       <aside className="weekly-process-preset-drawer" role="dialog" aria-modal="true" aria-labelledby="weekly-process-preset-title">
         <header><div><span>快速批量配置</span><strong id="weekly-process-preset-title">预选作业人员</strong><small>{presetTarget.processName} · {presetTarget.label}</small></div><button type="button" aria-label="关闭人员配置" disabled={presetSaving} onClick={() => setPresetTarget(null)}><X size={19} /></button></header>
         <section className="weekly-process-preset-summary"><Workflow size={20} /><div><strong>{presetTarget.processName}</strong><span>{presetTarget.stepId ? '仅覆盖当前工单工序，优先级高于本周批量配置' : `应用于 ${weekLabel} 的全部同名工序`}</span></div><b>{selectedPresetEmployees.length} 人</b></section>

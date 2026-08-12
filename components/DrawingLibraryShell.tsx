@@ -137,6 +137,9 @@ export function DrawingLibraryShell({
   categories: ResourceCategoryDTO[];
   requestedItemId: string;
 }) {
+  const canManageDrawing = user.access.capabilities.includes('ENGINEERING:CREATE')
+    || user.access.capabilities.includes('ENGINEERING:UPDATE');
+  const canDeleteDrawing = user.access.capabilities.includes('ENGINEERING:DELETE');
   const [items, setItems] = useState(initialItems);
   const [customers, setCustomers] = useState(initialCustomers);
   const [keyword, setKeyword] = useState('');
@@ -219,7 +222,7 @@ export function DrawingLibraryShell({
         setKeyword(targetKeyword);
         return;
       }
-      if (shouldCreate) {
+      if (shouldCreate && canManageDrawing) {
         setModal({ mode: 'create' });
         setForm({
           customerName: createCustomerName,
@@ -305,7 +308,7 @@ export function DrawingLibraryShell({
         setMsg('图纸文件不存在或已删除。');
       }
     }
-  }, [items, keyword]);
+  }, [canManageDrawing, items, keyword]);
 
   useEffect(() => {
     if (selectedFile && selectedFile.id !== selectedFileId) setSelectedFileId(selectedFile.id);
@@ -825,10 +828,12 @@ export function DrawingLibraryShell({
           </details>
           <button className="hm-drawing-clear-filters" type="button" disabled={!hasActiveFilters} onClick={clearFilters}>清除筛选</button>
           <div className="hm-drawing-command-actions" aria-label="图纸资料操作">
-            <button className="hm-workbench-button" type="button" onClick={() => openModal('create')} title="新增图纸资料"><Plus size={15} aria-hidden="true" /><span>新增</span></button>
-            <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)} title="批量导入原图"><Upload size={15} aria-hidden="true" /><span>批量导入</span></button>
-            <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}><BookOpenText size={15} aria-hidden="true" /><span>说明</span></button>
-            <button className="hm-workbench-button" type="button" title="查看和恢复已删除资料文件" onClick={openTrash}><Trash2 size={15} aria-hidden="true" /><span>文件回收站</span></button>
+            {canManageDrawing && <>
+              <button className="hm-workbench-button" type="button" onClick={() => openModal('create')} title="新增图纸资料"><Plus size={15} aria-hidden="true" /><span>新增</span></button>
+              <button className="hm-workbench-button primary" type="button" onClick={() => setBulkImportOpen(true)} title="批量导入原图"><Upload size={15} aria-hidden="true" /><span>批量导入</span></button>
+              <button className="hm-workbench-button" type="button" title="查看批量导入原图说明" onClick={() => setBulkHelpOpen(true)}><BookOpenText size={15} aria-hidden="true" /><span>说明</span></button>
+              <button className="hm-workbench-button" type="button" title="查看和恢复已删除资料文件" onClick={openTrash}><Trash2 size={15} aria-hidden="true" /><span>文件回收站</span></button>
+            </>}
           </div>
         </section>
 
@@ -857,8 +862,8 @@ export function DrawingLibraryShell({
                 <div className="drawing-result-empty">
                   <Search aria-hidden="true" />
                   <strong>{hasActiveFilters ? '没有符合条件的资料' : '资料库中还没有图纸资料'}</strong>
-                  <p>{hasActiveFilters ? '尝试清除关键词、客户或状态筛选。' : '新增资料或使用批量导入建立长期图纸档案。'}</p>
-                  <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增资料'}</button>
+                  <p>{hasActiveFilters ? '尝试清除关键词、客户或状态筛选。' : canManageDrawing ? '新增资料或使用批量导入建立长期图纸档案。' : '当前资料库中还没有可查看的资料。'}</p>
+                  {(hasActiveFilters || canManageDrawing) && <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增资料'}</button>}
                 </div>
               )}
             </div>
@@ -882,11 +887,11 @@ export function DrawingLibraryShell({
                 </section>
                 <p className="drawing-reference-recovery-note">恢复会保留原图纸和工序工时，并重新核对计划、生产工单及流程中的图纸引用；不会复制或覆盖文件。</p>
                 <div className="drawing-reference-recovery-actions">
-                  <button className="hm-workbench-button" type="button" onClick={openTrash}>查看回收站</button>
+                  {canManageDrawing && <><button className="hm-workbench-button" type="button" onClick={openTrash}>查看回收站</button>
                   <button className="hm-workbench-button primary" type="button" disabled={restoringId === missingReference.item.id} onClick={() => void restoreItem(missingReference.item)}>
                     <ArchiveRestore size={15} aria-hidden="true" />
                     {restoringId === missingReference.item.id ? '恢复并修复中...' : '恢复资料并修复链路'}
-                  </button>
+                  </button></>}
                 </div>
               </div>
             ) : missingReference?.kind === 'missing' ? (
@@ -899,15 +904,15 @@ export function DrawingLibraryShell({
                 </div>
                 <p className="drawing-reference-recovery-note">这通常表示记录已被永久清理，或旧链接指向了错误 ID。可先在回收站按客户或规格搜索；若仍找不到，需要重新绑定正确资料，而不是新建同名空档案。</p>
                 <div className="drawing-reference-recovery-actions">
-                  <button className="hm-workbench-button primary" type="button" onClick={openTrash}>从回收站查找</button>
+                  {canManageDrawing && <button className="hm-workbench-button primary" type="button" onClick={openTrash}>从回收站查找</button>}
                 </div>
               </div>
             ) : (
               <div className="drawing-empty-state">
                 <FileImage aria-hidden="true" />
                 <strong>{hasActiveFilters ? '当前筛选下没有可预览资料' : '选择一个规格开始查看'}</strong>
-                <p>{hasActiveFilters ? '左侧结果会随搜索条件更新，清除筛选可返回全部资料。' : '预览区会保持图纸原始比例，并提供版本、下载和资料维护入口。'}</p>
-                <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增图纸资料'}</button>
+                <p>{hasActiveFilters ? '左侧结果会随搜索条件更新，清除筛选可返回全部资料。' : canManageDrawing ? '预览区会保持图纸原始比例，并提供版本、下载和资料维护入口。' : '预览区会保持图纸原始比例，并提供版本和下载入口。'}</p>
+                {(hasActiveFilters || canManageDrawing) && <button className="hm-workbench-button" type="button" onClick={hasActiveFilters ? clearFilters : () => openModal('create')}>{hasActiveFilters ? '清除筛选' : '新增图纸资料'}</button>}
               </div>
             )
           ) : (
@@ -926,7 +931,7 @@ export function DrawingLibraryShell({
                   </p>
                 </div>
                 <div className="drawing-head-actions">
-                  {isSopCategory && (
+                  {canManageDrawing && isSopCategory && (
                     <div className="drawing-sop-mode-switch" role="group" aria-label="SOP 查看模式">
                       <button className="active" type="button" aria-pressed="true">文件预览</button>
                       <button type="button" disabled={pdfOverlayOpening || selectedFile?.fileType !== 'pdf'} onClick={() => { void openPdfOverlayEditor(); }}>
@@ -936,9 +941,9 @@ export function DrawingLibraryShell({
                   )}
                   <button className="hm-workbench-button" type="button" onClick={() => { void openProductTime(selectedItem.id); }}><Clock3 size={15} aria-hidden="true" />产品工时</button>
                   <button ref={filePanelTriggerRef} className="hm-workbench-button hm-drawing-file-toggle" type="button" aria-controls="drawing-library-file-panel" aria-expanded={filePanelOpen} onClick={() => filePanelOpen ? closeFilePanel() : setFilePanelOpen(true)}>文件 {activeFiles.length}</button>
-                  <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>
-                  <button className="hm-workbench-button" type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>
-                  {selectedFile && (
+                  {canManageDrawing && <button className="hm-workbench-button" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传资料'}</button>}
+                  {canManageDrawing && <button className="hm-workbench-button" type="button" onClick={() => openModal('edit', selectedItem)}>编辑</button>}
+                  {canDeleteDrawing && selectedFile && (
                     <button
                       className="hm-workbench-button danger"
                       type="button"
@@ -983,8 +988,8 @@ export function DrawingLibraryShell({
                         <div className="drawing-preview-placeholder" aria-label="当前分类暂无可预览文件">
                           <span aria-hidden="true">＋</span>
                           <strong>{activeCategory?.name || '当前分类'}暂无文件</strong>
-                          <p>产品档案已经建立，可直接上传 PDF、JPG、PNG 等资料，上传后会在这里预览。</p>
-                          <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : `上传到${activeCategory?.name || '当前分类'}`}</button>
+                          <p>{canManageDrawing ? '产品档案已经建立，可直接上传 PDF、JPG、PNG 等资料，上传后会在这里预览。' : '产品档案已经建立，当前分类暂未上传文件。'}</p>
+                          {canManageDrawing && <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : `上传到${activeCategory?.name || '当前分类'}`}</button>}
                         </div>
                       ) : selectedFile.fileType === 'pdf' ? (
                         <PdfViewer dashboardMode fileId={selectedFile.id} title={safeDisplayFilename(selectedFile)} contentUrl={selectedFile.contentUrl} viewUrl={selectedFile.viewUrl} downloadUrl={selectedFile.downloadUrl} />
@@ -1024,7 +1029,7 @@ export function DrawingLibraryShell({
               {selectedFile && (
                 <div className="drawing-file-actions">
                   <a className="hm-workbench-button" href={selectedFile.downloadUrl} target="_blank" rel="noreferrer">下载文件</a>
-                  <button className="hm-workbench-button danger" type="button" onClick={() => deleteFile(selectedFile)}>删除文件</button>
+                  {canDeleteDrawing && <button className="hm-workbench-button danger" type="button" onClick={() => deleteFile(selectedFile)}>删除文件</button>}
                 </div>
               )}
             </>
@@ -1032,14 +1037,14 @@ export function DrawingLibraryShell({
             <div className="drawing-file-empty">
               <strong>{selectedItem ? '档案已建立，当前分类待上传' : '请选择规格'}</strong>
               <p>{selectedItem ? '上传 PDF 或图片后会在中间预览区查看。' : '选择左侧规格后查看当前分类文件。'}</p>
-              {selectedItem && <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传 PDF / 图片'}</button>}
+              {selectedItem && canManageDrawing && <button className="hm-workbench-button primary" type="button" disabled={uploading} onClick={() => fileInputRef.current?.click()}>{uploading ? '上传中...' : '上传 PDF / 图片'}</button>}
             </div>
           )}
           </aside>}
         </section>
       </div>
 
-      {modal && (
+      {canManageDrawing && modal && (
         <div className="modal-backdrop" role="presentation">
           <form className="drawing-dialog" onSubmit={saveItem}>
             <div className="dialog-title">
@@ -1074,7 +1079,7 @@ export function DrawingLibraryShell({
         </div>
       )}
 
-      {trashOpen && (
+      {canManageDrawing && trashOpen && (
         <div className="modal-backdrop" role="presentation">
           <div className="drawing-dialog drawing-trash-dialog" role="dialog" aria-modal="true" aria-labelledby="drawing-trash-title">
             <div className="dialog-title">
@@ -1160,7 +1165,7 @@ export function DrawingLibraryShell({
         </div>
       )}
 
-      {bulkHelpOpen && (
+      {canManageDrawing && bulkHelpOpen && (
         <div className="modal-backdrop" role="presentation">
           <div className="drawing-dialog cleanup-dialog" role="dialog" aria-modal="true">
             <div className="dialog-title">
@@ -1190,7 +1195,7 @@ export function DrawingLibraryShell({
         </div>
       )}
 
-      {pdfOverlaySession && (
+      {canManageDrawing && pdfOverlaySession && (
         <PdfOverlayEditorModal
           key={`${pdfOverlaySession.itemId}:${pdfOverlaySession.sourceFile.id}:${pdfOverlaySession.versionId}`}
           open
@@ -1210,14 +1215,14 @@ export function DrawingLibraryShell({
       )}
 
       <BulkOriginalDrawingImportModal
-        open={bulkImportOpen}
+        open={canManageDrawing && bulkImportOpen}
         customers={customers}
         onClose={() => setBulkImportOpen(false)}
         onCompleted={loadData}
       />
 
       <ConfirmDialog
-        open={Boolean(deleteTarget)}
+        open={canDeleteDrawing && Boolean(deleteTarget)}
         title="删除资料文件？"
         description={deleteTarget
           ? `“${safeDisplayFilename(deleteTarget)}”将移入文件回收站；产品主档、计划、工单、工序工时和历史记录均会保留。`

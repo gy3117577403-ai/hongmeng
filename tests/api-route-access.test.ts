@@ -56,6 +56,7 @@ test('major quality commands preserve quality review and GM final-decision separ
 
   assert.equal(canAccessApiRoute(quality, '/api/major-quality-approvals', 'GET'), true);
   assert.equal(canAccessApiRoute(quality, '/api/issues/assignee-options', 'GET'), true);
+  assert.equal(canAccessApiRoute(quality, '/api/issues/detected', 'GET'), true);
   assert.equal(canAccessApiRoute(quality, '/api/issues/i1/major-approval/quality-review', 'POST'), true);
   assert.equal(canAccessApiRoute(quality, '/api/issues/i1/major-approval/final-decision', 'POST'), false);
   assert.equal(canAccessApiRoute(gm, '/api/major-quality-approvals', 'GET'), true);
@@ -126,6 +127,45 @@ test('process-route endpoints use process or production permission instead of br
   });
   assert.equal(canAccessApiRoute(process, '/api/work-orders/w1/process-route/apply-product-time', 'POST'), true);
   assert.equal(canAccessApiRoute(process, '/api/work-orders/w1/progress-logs', 'GET'), false);
+});
+
+test('process specialist can collaborate without receiving scheduling, reporting or approval powers', () => {
+  const process = context({
+    profile: 'PROCESS_SPECIALIST',
+    departmentCode: 'PROCESS',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:PROCESS',
+  });
+
+  assert.equal(canAccessApiRoute(process, '/api/workflows', 'GET'), true);
+  assert.equal(canAccessApiRoute(process, '/api/production', 'GET'), true);
+  assert.equal(canAccessApiRoute(process, '/api/production/arrangements', 'PATCH'), false);
+  assert.equal(canAccessApiRoute(process, '/api/weekly-processes', 'GET'), true);
+  assert.equal(canAccessApiRoute(process, '/api/weekly-processes/worker-presets', 'GET'), true);
+  assert.equal(canAccessApiRoute(process, '/api/weekly-processes/worker-presets', 'PUT'), false);
+  assert.equal(canAccessApiRoute(process, '/api/daily-plans', 'GET'), false);
+  assert.equal(canAccessApiRoute(process, '/api/daily-plan-tasks', 'GET'), false);
+
+  assert.equal(canAccessApiRoute(process, '/api/issues', 'GET'), true);
+  assert.equal(canAccessApiRoute(process, '/api/issues', 'POST'), true);
+  assert.equal(canAccessApiRoute(process, '/api/issues/i1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(process, '/api/issues/i1/transition', 'POST'), true);
+  assert.equal(canAccessApiRoute(process, '/api/issues/i1', 'DELETE'), false);
+  assert.equal(canAccessApiRoute(process, '/api/issues/from-production-alert', 'POST'), false);
+  assert.equal(canAccessApiRoute(process, '/api/issues/detected', 'GET'), false);
+  assert.equal(canAccessApiRoute(process, '/api/issues/i1/major-approval/quality-review', 'POST'), false);
+
+  assert.equal(canAccessApiRoute(process, '/api/changes', 'GET'), true);
+  assert.equal(canAccessApiRoute(process, '/api/changes', 'POST'), true);
+  assert.equal(canAccessApiRoute(process, '/api/changes/c1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(process, '/api/changes/c1/transition', 'POST'), true);
+  assert.equal(canAccessApiRoute(process, '/api/changes/c1', 'DELETE'), false);
+
+  assert.equal(canAccessApiRoute(process, '/api/drawing-library', 'GET'), true);
+  assert.equal(canAccessApiRoute(process, '/api/drawing-library', 'POST'), false);
+  assert.equal(canAccessApiRoute(process, '/api/export/production-dispatch.xlsx', 'GET'), false);
+  assert.equal(canAccessApiRoute(process, '/api/work-order-qr/prints/packet', 'GET'), false);
+  assert.equal(canAccessApiRoute(process, '/api/major-quality-approvals', 'GET'), false);
 });
 
 test('team leaders cannot invoke workshop-wide or cross-team API operations', () => {

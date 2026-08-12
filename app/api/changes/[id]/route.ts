@@ -4,6 +4,10 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { changeDetailInclude, changeSnapshot, loadChangeById, parseChangeInput, serializeChange } from '@/lib/changes';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import {
+  canMutateChangeForProcess,
+  isProcessChangeCollaborator,
+} from '@/lib/process-collaboration-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,6 +30,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const user = await requireUser();
     const current = await prisma.changeRequest.findFirst({ where: { id: params.id, deletedAt: null } });
     if (!current) return NextResponse.json({ ok: false, error: '变更不存在或已删除' }, { status: 404 });
+    if (!canMutateChangeForProcess(user, current, 'UPDATE')) {
+      return NextResponse.json({ ok: false, error: '只能维护工艺变更或本人负责的变更' }, { status: 403 });
+    }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const expectedVersion = Number(body.expectedVersion);
     if (!Number.isInteger(expectedVersion) || expectedVersion !== current.version) {
@@ -34,6 +41,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const parsed = parseChangeInput(body, true);
     if (parsed.errors.length) return NextResponse.json({ ok: false, error: parsed.errors[0] }, { status: 400 });
     const values = parsed.data;
+    if (
+      isProcessChangeCollaborator(user)
+      && values.type !== undefined
+      && values.type !== current.type
+    ) {
+      return NextResponse.json({ ok: false, error: '工艺账号不能修改变更类型' }, { status: 403 });
+    }
     if (values.workOrderId) {
       const exists = await prisma.workOrder.findFirst({ where: { id: values.workOrderId, deletedAt: null }, select: { id: true } });
       if (!exists) return NextResponse.json({ ok: false, error: '关联工单不存在' }, { status: 404 });

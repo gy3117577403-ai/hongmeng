@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { ForbiddenError, requireCapability, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { ForbiddenError, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { hasCapability } from '@/lib/department-access';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
@@ -7,7 +8,11 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    await requireCapability('QUALITY', 'UPDATE');
+    const user = await requireUser();
+    if (
+      !hasCapability(user.access, 'QUALITY', 'UPDATE')
+      && !hasCapability(user.access, 'ISSUE_MANAGEMENT', 'UPDATE')
+    ) throw new ForbiddenError();
     const employees = await prisma.employee.findMany({
       where: { isActive: true },
       select: {

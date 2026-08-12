@@ -23,6 +23,7 @@ import {
   serializeIssueWorkOrderOption,
 } from '@/lib/issue-work-orders';
 import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
+import { canCreateIssueForProcess, isProcessIssueCollaborator } from '@/lib/process-collaboration-access';
 import type { IssuePriority, IssueStatus, IssueType, IssueWorkOrderDraftDTO } from '@/types';
 
 export const runtime = 'nodejs';
@@ -127,6 +128,12 @@ export async function POST(req: NextRequest) {
     const parsed = parseIssueInput(body);
     if (parsed.errors.length) return NextResponse.json({ ok: false, error: parsed.errors[0] }, { status: 400 });
     const data = parsed.data;
+    if (!canCreateIssueForProcess(user, {
+      type: data.type || 'production',
+      isMajorQuality: data.isMajorQuality === true,
+    })) {
+      return NextResponse.json({ ok: false, error: '工艺账号只能新建工艺问题，重大质量事项仍由质量部门发起' }, { status: 403 });
+    }
     const majorQualityError = validateMajorQualityInput({
       type: data.type || 'production',
       isMajorQuality: data.isMajorQuality === true,
@@ -136,6 +143,9 @@ export async function POST(req: NextRequest) {
     const parsedWorkOrder = parseIssueWorkOrderDraft(body.newWorkOrderDraft);
     if (parsedWorkOrder.errors.length) return NextResponse.json({ ok: false, error: parsedWorkOrder.errors[0] }, { status: 400 });
     submittedWorkOrderDraft = parsedWorkOrder.draft;
+    if (submittedWorkOrderDraft && isProcessIssueCollaborator(user)) {
+      return NextResponse.json({ ok: false, error: '工艺账号可关联已有工单，但不能从问题中心新建生产工单' }, { status: 403 });
+    }
     if (submittedWorkOrderDraft && data.workOrderId) {
       return NextResponse.json({ ok: false, error: '不能同时选择已有工单和新建工单' }, { status: 400 });
     }

@@ -7,6 +7,7 @@ import { prisma } from '@/lib/prisma';
 import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import { deleteObjectsBestEffort, putObject } from '@/lib/s3';
 import { fileType, safeFilename, validateFileContent } from '@/lib/validation';
+import { canMutateIssueForProcess } from '@/lib/process-collaboration-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,8 +22,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       where: { id: params.id, deletedAt: null },
       select: {
         id: true,
+        type: true,
+        isMajorQuality: true,
+        reporterId: true,
+        assigneeEmployeeId: true,
         status: true,
         version: true,
+        collaborators: { select: { employeeId: true } },
         majorApprovals: {
           where: { status: { in: ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL', 'APPROVED'] } },
           select: { status: true },
@@ -30,6 +36,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       },
     });
     if (!issue) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
+    if (!canMutateIssueForProcess(user, issue, 'UPDATE')) {
+      return NextResponse.json({ ok: false, error: '只能为工艺问题或本人参与的问题上传附件' }, { status: 403 });
+    }
     const attachmentLock = issueAttachmentMutationLock(
       issue.status,
       issue.majorApprovals.map(approval => approval.status),
