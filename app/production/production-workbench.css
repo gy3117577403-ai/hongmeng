@@ -8319,6 +8319,38 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   background: #f3f7fd;
 }
 
+.hm-production-workbench button.production-arrangement-worker-record {
+  width: 100%;
+  border-top: 0;
+  border-right: 0;
+  border-bottom: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.hm-production-workbench button.production-arrangement-worker-record.adjustable {
+  cursor: pointer;
+  transition: transform .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+
+.hm-production-workbench button.production-arrangement-worker-record.adjustable:hover {
+  transform: translateY(-1px);
+  background: #fff7ed;
+  box-shadow: 0 4px 12px rgba(223, 91, 11, .13);
+}
+
+.hm-production-workbench button.production-arrangement-worker-record:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.hm-production-workbench .production-arrangement-worker-record small {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
 .hm-production-workbench .production-arrangement-record > span,
 .hm-production-workbench .production-arrangement-worker-record > span {
   min-width: 0;
@@ -9015,7 +9047,8 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
 
 .production-arrangement-dialog button:focus-visible,
 .production-arrangement-dialog input:focus-visible,
-.production-arrangement-dialog select:focus-visible {
+.production-arrangement-dialog select:focus-visible,
+.production-arrangement-dialog textarea:focus-visible {
   outline: 3px solid rgba(240, 90, 0, .28);
   outline-offset: 2px;
 }
@@ -9068,4 +9101,237 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-size: 11px;
   font-weight: 800;
   text-decoration: none;
+}
+
+.hm-production-workbench .production-reassignment-trigger {
+  color: #b45309;
+  background: #fff8ef;
+}
+
+.production-export-menu {
+  padding: 7px !important;
+}
+
+.production-export-menu .production-export-menu-label {
+  padding: 7px 9px 4px;
+  display: block;
+  color: #8a96a8;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.production-export-menu button {
+  min-height: 48px;
+  display: grid !important;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center !important;
+  gap: 8px;
+  text-align: left !important;
+}
+
+.production-export-menu button > span {
+  display: grid;
+  gap: 2px;
+}
+
+.production-export-menu button b {
+  font-size: 11px;
+}
+
+.production-export-menu button small {
+  color: #8793a4;
+  font-size: 8px;
+}
+
+.production-reassignment-dialog {
+  width: min(1240px, calc(100vw - 32px));
+}
+
+.production-reassignment-source,
+.production-reassignment-reason label {
+  display: grid;
+  gap: 6px;
+  color: #526177;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.production-reassignment-source select,
+.production-reassignment-reason select,
+.production-reassignment-reason textarea {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid #d7dfe9;
+  border-radius: 8px;
+  background: #fff;
+  color: #1e2f45;
+  font: inherit;
+  font-size: 11px;
+}
+
+.production-reassignment-source small {
+  color: #8894a5;
+  font-size: 9px;
+  font-weight: 500;
+}
+
+.production-reassignment-overview {
+  margin-bottom: 13px;
+}
+
+.production-reassignment-task-list {
+  padding: 11px;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+
+.production-reassignment-task-list .production-arrangement-workers-head {
+  margin-top: 0;
+}
+
+.production-reassignment-task-grid {
+  max-height: 190px;
+  margin-top: 9px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  overflow-y: auto;
+}
+
+.production-reassignment-task-grid > button {
+  min-width: 0;
+  min-height: 66px;
+  padding: 8px 9px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 9px;
+  border: 1px solid #dde4ed;
+  border-radius: 8px;
+  background: #fff;
+  color: #27374d;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.production-reassignment-task-grid > button.selected {
+  border-color: #f0813b;
+  background: #fff7ef;
+  box-shadow: inset 0 0 0 1px rgba(230, 95, 14, .12);
+}
+
+.production-reassignment-task-grid > button > span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.production-reassignment-task-grid input {
+  accent-color: #e86108;
+}
+
+.production-reassignment-task-grid b,
+.production-reassignment-task-grid strong {
+  overflow: hidden;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.production-reassignment-task-grid small,
+.production-reassignment-task-grid em {
+  color: #7c899b;
+  font-size: 8px;
+  font-style: normal;
+}
+
+.production-reassignment-task-grid em {
+  grid-column: 1 / -1;
+}
+
+.production-reassignment-employee-grid {
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.production-reassignment-employee-grid > button.current:not(.selected) {
+  border-color: #acd4be;
+  background: #f1faf5;
+}
+
+.production-reassignment-reason {
+  margin-top: 13px;
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.production-reassignment-reason textarea {
+  min-height: 64px;
+  padding-top: 9px;
+  resize: vertical;
+}
+
+.production-reassignment-ledger,
+.production-reassignment-history-card,
+.production-reassignment-loading {
+  margin-top: 12px;
+  padding: 10px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  border: 1px solid #cce9d9;
+  border-radius: 9px;
+  background: #f0faf5;
+  color: #168456;
+}
+
+.production-reassignment-ledger span,
+.production-reassignment-history-card,
+.production-reassignment-loading {
+  display: grid;
+  gap: 3px;
+}
+
+.production-reassignment-ledger strong,
+.production-reassignment-history-card strong {
+  color: #26364b;
+  font-size: 11px;
+}
+
+.production-reassignment-ledger small,
+.production-reassignment-history-card small,
+.production-reassignment-loading span {
+  color: #768498;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.production-reassignment-history-card {
+  border-color: #ded6f4;
+  background: #f8f6ff;
+}
+
+.production-reassignment-history-card > span {
+  color: #7158a8;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.production-reassignment-loading {
+  grid-template-columns: auto 1fr;
+  border-color: #d8e3f4;
+  background: #f5f8fd;
+  color: #3c6faf;
+}
+
+@media (max-width: 900px) {
+  .production-reassignment-task-grid,
+  .production-reassignment-reason {
+    grid-template-columns: 1fr;
+  }
 }

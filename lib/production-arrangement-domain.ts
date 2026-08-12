@@ -46,6 +46,46 @@ export function splitProductionArrangementQuantity(
   }));
 }
 
+export type ProductionArrangementRemainingRebuild = {
+  plannedQty: number;
+  completedQty: number;
+  remainingQty: number;
+  finalEmployeeIds: string[];
+  assignments: Array<{ employeeId: string; quantity: number }>;
+};
+
+/**
+ * Rebuilds only the unfinished part of a scheduled task.  Reported quantity is
+ * intentionally kept outside of the new assignments because completion and
+ * labor ledgers are historical facts, while assignments are a future plan.
+ */
+export function rebuildProductionArrangementRemaining(input: {
+  plannedQty: unknown;
+  completedQty: unknown;
+  currentEmployeeIds: readonly string[];
+  replacementEmployeeIds: readonly string[];
+  sourceEmployeeId?: string | null;
+  offset?: number;
+}): ProductionArrangementRemainingRebuild {
+  const plannedQty = positiveInteger(input.plannedQty);
+  const completedQty = Math.max(0, Math.min(Number(input.completedQty) || 0, plannedQty));
+  const remainingQty = Math.max(0, plannedQty - completedQty);
+  const currentEmployeeIds = [...new Set(input.currentEmployeeIds.map(item => String(item).trim()).filter(Boolean))];
+  const replacementEmployeeIds = [...new Set(input.replacementEmployeeIds.map(item => String(item).trim()).filter(Boolean))];
+  const sourceEmployeeId = String(input.sourceEmployeeId || '').trim();
+  const finalEmployeeIds = sourceEmployeeId
+    ? [...new Set([...currentEmployeeIds.filter(id => id !== sourceEmployeeId), ...replacementEmployeeIds])]
+    : replacementEmployeeIds;
+
+  return {
+    plannedQty,
+    completedQty,
+    remainingQty,
+    finalEmployeeIds,
+    assignments: splitProductionArrangementQuantity(remainingQty, finalEmployeeIds, input.offset || 0),
+  };
+}
+
 export function resolveProductionArrangementProgress(input: {
   workDate: string;
   today: string;

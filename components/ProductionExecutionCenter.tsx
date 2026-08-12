@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -191,6 +191,70 @@ type ProductionArrangementForm = {
   teamId: string;
   employeeIds: string[];
   includeWaitingUpstream: boolean;
+};
+
+type ProductionReassignmentRequest = {
+  mode: 'arrangement' | 'employee_exception';
+  orders: ProductionOrder[];
+  planId?: string;
+  sourceEmployeeId?: string;
+  title: string;
+};
+
+type ProductionReassignmentContext = {
+  mode: 'arrangement' | 'employee_exception';
+  planId: string | null;
+  sourceEmployeeId: string | null;
+  currentEmployeeIds: string[];
+  defaultTargetEmployeeIds: string[];
+  employees: Array<{
+    id: string;
+    employeeNo: string;
+    name: string;
+    department?: string | null;
+    position?: string | null;
+    team?: string | null;
+  }>;
+  tasks: Array<{
+    id: string;
+    version: number;
+    planId: string;
+    planVersion: number;
+    workDate: string;
+    shiftCode: string;
+    processCode: string;
+    processName: string;
+    position: number;
+    plannedQty: number;
+    completedQty: number;
+    remainingQty: number;
+    team: { id: string; code: string; name: string };
+    workOrder: { id: string; code: string; customerName?: string | null; productName?: string | null };
+    assignments: Array<{
+      id: string;
+      version: number;
+      employeeId: string;
+      quantity: number;
+      plannedStandardMilliseconds: string;
+      employee: { id: string; employeeNo: string; name: string; position?: string | null };
+    }>;
+  }>;
+  summary: {
+    taskCount: number;
+    workOrderCount: number;
+    plannedQty: number;
+    completedQty: number;
+    remainingQty: number;
+  };
+  rule: string;
+};
+
+type ProductionReassignmentForm = {
+  sourceEmployeeId: string;
+  targetEmployeeIds: string[];
+  taskIds: string[];
+  reasonCode: string;
+  reason: string;
 };
 
 type ProductionOrder = {
@@ -1081,6 +1145,16 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const [arrangementSaving, setArrangementSaving] = useState(false);
   const [arrangementError, setArrangementError] = useState('');
   const [arrangementSearch, setArrangementSearch] = useState('');
+  const [reassignmentRequest, setReassignmentRequest] = useState<ProductionReassignmentRequest | null>(null);
+  const [reassignmentContext, setReassignmentContext] = useState<ProductionReassignmentContext | null>(null);
+  const [reassignmentForm, setReassignmentForm] = useState<ProductionReassignmentForm>({
+    sourceEmployeeId: '', targetEmployeeIds: [], taskIds: [], reasonCode: 'ABSENCE', reason: '',
+  });
+  const [reassignmentSearch, setReassignmentSearch] = useState('');
+  const [reassignmentLoading, setReassignmentLoading] = useState(false);
+  const [reassignmentSaving, setReassignmentSaving] = useState(false);
+  const [reassignmentError, setReassignmentError] = useState('');
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [insightsOpen, setInsightsOpen] = useState(false);
   const [olderCarryoverOpen, setOlderCarryoverOpen] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -1095,7 +1169,9 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
   const drawingButtonRef = useRef<HTMLButtonElement | null>(null);
   const completionRequestRef = useRef(0);
   const arrangementRequestRef = useRef(0);
+  const reassignmentRequestRef = useRef(0);
   const arrangementAutoSelectionRef = useRef('');
+  const exportButtonRef = useRef<HTMLButtonElement | null>(null);
   const boardShellRef = useRef<HTMLDivElement | null>(null);
   const dispatchLoadMoreRef = useRef<HTMLDivElement | null>(null);
   const pendingRestoreRef = useRef<ProductionExecutionViewState | null>(null);
@@ -1412,6 +1488,51 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       .finally(() => { if (requestId === arrangementRequestRef.current) setArrangementLoading(false); });
     return () => controller.abort();
   }, [arrangementForm.includeWaitingUpstream, arrangementForm.shiftCode, arrangementForm.teamId, arrangementForm.workDate, arrangementRequest]);
+
+  useEffect(() => {
+    if (!reassignmentRequest) return undefined;
+    const sourceEmployeeId = reassignmentForm.sourceEmployeeId || reassignmentRequest.sourceEmployeeId || '';
+    if (reassignmentRequest.mode === 'employee_exception' && !sourceEmployeeId) {
+      setReassignmentContext(null);
+      setReassignmentLoading(false);
+      return undefined;
+    }
+    const requestId = reassignmentRequestRef.current + 1;
+    reassignmentRequestRef.current = requestId;
+    const controller = new AbortController();
+    const params = new URLSearchParams();
+    reassignmentRequest.orders.forEach(order => params.append('workOrderId', order.id));
+    if (reassignmentRequest.planId) params.set('planId', reassignmentRequest.planId);
+    if (sourceEmployeeId) params.set('sourceEmployeeId', sourceEmployeeId);
+    setReassignmentLoading(true);
+    setReassignmentError('');
+    fetch(`/api/production/arrangements/reassignment/context?${params.toString()}`, { cache: 'no-store', signal: controller.signal })
+      .then(async response => {
+        const body = await response.json().catch(() => ({}));
+        if (response.status === 401) location.href = '/login';
+        if (!response.ok || !body.data) throw new Error(body.error || '调班影响预览加载失败');
+        return body.data as ProductionReassignmentContext;
+      })
+      .then(data => {
+        if (requestId !== reassignmentRequestRef.current) return;
+        setReassignmentContext(data);
+        setReassignmentForm(current => ({
+          ...current,
+          sourceEmployeeId,
+          targetEmployeeIds: data.defaultTargetEmployeeIds,
+          taskIds: data.tasks.map(task => task.id),
+        }));
+      })
+      .catch(reason => {
+        if (reason instanceof DOMException && reason.name === 'AbortError') return;
+        if (requestId === reassignmentRequestRef.current) {
+          setReassignmentContext(null);
+          setReassignmentError(reason instanceof Error ? reason.message : '调班影响预览加载失败');
+        }
+      })
+      .finally(() => { if (requestId === reassignmentRequestRef.current) setReassignmentLoading(false); });
+    return () => controller.abort();
+  }, [reassignmentForm.sourceEmployeeId, reassignmentRequest]);
 
   useEffect(() => {
     if (!insightsOpen) return undefined;
@@ -1794,6 +1915,125 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       setArrangementError(reason instanceof Error ? reason.message : '生产安排保存失败');
     } finally {
       setArrangementSaving(false);
+    }
+  }
+
+  function openProductionReassignment(order: ProductionOrder, arrangement: ProductionArrangement): void {
+    if (!canScheduleProduction || board?.readOnly) {
+      setToast(board?.readOnly ? '历史周仅供查看，不能调整人员' : '当前账号不能调整生产人员');
+      return;
+    }
+    if (arrangement.status === 'completed' || arrangement.status === 'carried_over' || arrangement.remainingQty <= 0) {
+      setToast('该安排已完成，只能查看历史，不能修改人员');
+      return;
+    }
+    setReassignmentRequest({
+      mode: 'arrangement',
+      orders: [order],
+      planId: arrangement.planId,
+      title: `${specText(order)} · ${compactDateText(arrangement.workDate)}`,
+    });
+    setReassignmentForm({
+      sourceEmployeeId: '',
+      targetEmployeeIds: arrangement.employees.map(employee => employee.employeeId),
+      taskIds: [],
+      reasonCode: 'TEMPORARY_TRANSFER',
+      reason: '',
+    });
+    setReassignmentContext(null);
+    setReassignmentSearch('');
+    setReassignmentError('');
+  }
+
+  function openEmployeeExceptionReassignment(): void {
+    if (!canScheduleProduction || board?.readOnly) {
+      setToast(board?.readOnly ? '历史周仅供查看，不能调整人员' : '当前账号不能调整生产人员');
+      return;
+    }
+    const orders = (board?.items || []).filter(order => order.arrangements.some(arrangement => (
+      arrangement.remainingQty > 0
+      && arrangement.status !== 'completed'
+      && arrangement.status !== 'carried_over'
+      && arrangement.employees.length > 0
+    )));
+    if (!orders.length) {
+      setToast('当前筛选范围没有可调班的未完成安排');
+      return;
+    }
+    setReassignmentRequest({
+      mode: 'employee_exception',
+      orders,
+      title: `当前范围 ${orders.length} 个工单`,
+    });
+    setReassignmentForm({
+      sourceEmployeeId: '', targetEmployeeIds: [], taskIds: [], reasonCode: 'ABSENCE', reason: '',
+    });
+    setReassignmentContext(null);
+    setReassignmentSearch('');
+    setReassignmentError('');
+  }
+
+  function closeProductionReassignment(force = false): void {
+    if (reassignmentSaving && !force) return;
+    reassignmentRequestRef.current += 1;
+    setReassignmentRequest(null);
+    setReassignmentContext(null);
+    setReassignmentSearch('');
+    setReassignmentError('');
+  }
+
+  async function saveProductionReassignment(): Promise<void> {
+    if (!reassignmentRequest || !reassignmentContext || reassignmentSaving) return;
+    const selectedTasks = reassignmentContext.tasks.filter(task => reassignmentForm.taskIds.includes(task.id));
+    if (!selectedTasks.length) {
+      setReassignmentError('请至少选择 1 道待调整工序');
+      return;
+    }
+    if (reassignmentRequest.mode === 'arrangement' && !reassignmentForm.targetEmployeeIds.length) {
+      setReassignmentError('调整后必须至少保留 1 名作业员工');
+      return;
+    }
+    const idempotencyKey = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `production-reassignment-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setReassignmentSaving(true);
+    setReassignmentError('');
+    try {
+      const response = await fetch('/api/production/arrangements/reassignment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': idempotencyKey },
+        body: JSON.stringify({
+          taskIds: selectedTasks.map(task => task.id),
+          sourceEmployeeId: reassignmentForm.sourceEmployeeId || undefined,
+          targetEmployeeIds: reassignmentForm.targetEmployeeIds,
+          expectedTasks: selectedTasks.map(task => ({
+            taskId: task.id,
+            taskVersion: task.version,
+            planVersion: task.planVersion,
+            completedQty: task.completedQty,
+            assignmentVersions: task.assignments.map(assignment => ({
+              assignmentId: assignment.id,
+              version: assignment.version,
+            })),
+          })),
+          reasonCode: reassignmentForm.reasonCode,
+          reason: reassignmentForm.reason,
+          idempotencyKey,
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (response.status === 401) location.href = '/login';
+      if (!response.ok) throw new Error(body.error || '生产调班保存失败');
+      const redistributedQty = Number(body.data?.redistributedQty || 0);
+      const updatedTaskCount = Number(body.data?.updatedTaskCount || selectedTasks.length);
+      closeProductionReassignment(true);
+      productionBoardCache.clear();
+      setRefreshToken(value => value + 1);
+      setToast(`已重排 ${updatedTaskCount} 道工序的剩余 ${formatProductionQuantity(redistributedQty)} 件，既有报工与员工工时未改变`);
+    } catch (reason) {
+      setReassignmentError(reason instanceof Error ? reason.message : '生产调班保存失败');
+    } finally {
+      setReassignmentSaving(false);
     }
   }
 
@@ -2303,10 +2543,23 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
     setTravelerPrintIds(cleanIds);
   }
 
-  function exportCsv(): void {
+  function productionDocumentParams(selectedOnly = false): URLSearchParams {
     const params = executionParams(view, debouncedKeyword, quick, advanced, scope, weekStart, 1, targetWorkOrderId);
     params.delete('page'); params.delete('pageSize');
-    location.href = `/api/export/production-execution.csv?${params.toString()}`;
+    if (selectedOnly) selected.forEach(id => params.append('selectedWorkOrderId', id));
+    return params;
+  }
+
+  function exportDispatchWorkbook(selectedOnly = false): void {
+    setExportMenuOpen(false);
+    location.href = `/api/export/production-dispatch.xlsx?${productionDocumentParams(selectedOnly).toString()}`;
+  }
+
+  function printDispatchSchedule(selectedOnly = false): void {
+    setExportMenuOpen(false);
+    const popup = window.open(`/api/production/dispatch-print?${productionDocumentParams(selectedOnly).toString()}`, '_blank');
+    if (popup) popup.opener = null;
+    else setToast('浏览器拦截了打印窗口，请允许本站打开新窗口后重试');
   }
 
   async function copySpecification(order: ProductionOrder): Promise<void> {
@@ -2402,8 +2655,9 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
               <AlertTriangle size={15} aria-hidden="true" />更早遗留 <b>{summary?.navigation.olderCarryoverCount ?? 0}</b>
             </button>
             {(canAdministerProduction || canScheduleProduction) && <Link className="hm-workbench-button" href={weeklyPlanHref} prefetch={false}><CalendarDays size={15} aria-hidden="true" />周计划</Link>}
+            {canScheduleProduction && <button className="hm-workbench-button production-reassignment-trigger" type="button" disabled={board?.readOnly} title="员工请假、临时缺勤时批量重排未完成数量" onClick={openEmployeeExceptionReassignment}><UserRoundCog size={15} aria-hidden="true" />人员异常</button>}
             {canSelectProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
-            <button className="hm-workbench-button" type="button" onClick={exportCsv}><Download size={15} aria-hidden="true" />导出</button>
+            <button ref={exportButtonRef} className={`hm-workbench-button ${exportMenuOpen ? 'active' : ''}`.trim()} type="button" aria-haspopup="menu" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(value => !value)}><Download size={15} aria-hidden="true" />导出/打印<ChevronDown size={13} aria-hidden="true" /></button>
             <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
             <button className="hm-workbench-button production-fullscreen-trigger" type="button" onClick={() => void toggleFullscreen()}><Expand size={15} aria-hidden="true" />{isFullscreen ? '退出大屏' : '大屏模式'}</button>
           </div>
@@ -2488,6 +2742,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
                 openIssue={openProductionIssue}
                 copySpecification={copySpecification}
                 openArrangement={(order, sourceArrangement) => openProductionArrangement([order], sourceArrangement)}
+                openReassignment={openProductionReassignment}
               />)}
               {loading && !board && <DispatchRowSkeleton count={dispatchPageSize} />}
               {!loading && !board?.items.length && <div className="production-dispatch-empty"><Rows3 size={28} aria-hidden="true" /><strong>当前没有匹配工单</strong><span>调整周范围或筛选条件后重试。</span></div>}
@@ -2529,6 +2784,15 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       </div>
 
       {canSelectProduction && batchMode && !board?.readOnly && <div className="production-batch-bar"><strong>已选 {selected.length} 单</strong>{canScheduleProduction && <button className="primary" type="button" disabled={!selected.length} onClick={() => openProductionArrangement((board?.items || []).filter(order => selected.includes(order.id)))}><CalendarDays size={15} />批量安排日期与人员</button>}{canPrintTravelers && <button type="button" disabled={!selected.length} onClick={() => printTravelers(selected)}><Printer size={15} />打印流转单 / SOP</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('set_priority')}>设置优先级</button>}{canAdministerProduction && <button type="button" disabled={!selected.length} onClick={() => openBatch('add_remark')}>添加进度备注</button>}<button type="button" onClick={() => setSelected([])}>清空选择</button><button type="button" onClick={toggleBatchMode}>退出批量</button></div>}
+
+      <PortalMenu open={exportMenuOpen} anchorRef={exportButtonRef} align="right" className="production-export-menu hm-production-menu" width={250} onClose={() => setExportMenuOpen(false)} closeOnSelect={false}>
+        <span className="production-export-menu-label">当前筛选范围</span>
+        <button type="button" onClick={() => exportDispatchWorkbook(false)}><Download size={15} aria-hidden="true" /><span><b>导出 Excel 排班明细</b><small>含日期、工序、员工与剩余量</small></span></button>
+        <button type="button" onClick={() => printDispatchSchedule(false)}><Printer size={15} aria-hidden="true" /><span><b>打印 A4 调度排班表</b><small>横向布局，带现场签字栏</small></span></button>
+        <span className="production-export-menu-label">已选工单</span>
+        <button type="button" disabled={!selected.length} onClick={() => exportDispatchWorkbook(true)}><Download size={15} aria-hidden="true" /><span><b>仅导出已选 {selected.length} 单</b><small>需先进入批量模式勾选工单</small></span></button>
+        <button type="button" disabled={!selected.length} onClick={() => printDispatchSchedule(true)}><Printer size={15} aria-hidden="true" /><span><b>仅打印已选 {selected.length} 单</b><small>适合班前会或现场派工</small></span></button>
+      </PortalMenu>
 
       <PortalMenu open={canAdministerProduction && !!statusMenuOrder} anchorRef={statusButtonRef} className="production-status-menu hm-production-menu hm-production-status-menu" width={164} onClose={() => setStatusMenuOrder(null)} closeOnSelect={false}>
         {statusMenuOrder && stageMenuItems(statusMenuOrder).map(stage => <button type="button" disabled={saving} key={stage.key} onClick={() => requestStageChange(statusMenuOrder, stage.key)}>{stage.label}</button>)}
@@ -2578,6 +2842,20 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         close={() => closeProductionArrangement()}
         save={() => void saveProductionArrangement()}
       />}
+      {canScheduleProduction && reassignmentRequest && <ProductionReassignmentDialog
+        request={reassignmentRequest}
+        sourceEmployees={scheduledEmployeeOptions(board?.items || [])}
+        context={reassignmentContext}
+        value={reassignmentForm}
+        setValue={setReassignmentForm}
+        search={reassignmentSearch}
+        setSearch={setReassignmentSearch}
+        loading={reassignmentLoading}
+        saving={reassignmentSaving}
+        error={reassignmentError}
+        close={() => closeProductionReassignment()}
+        save={() => void saveProductionReassignment()}
+      />}
       {completionOrder && <ProcessCompletionDialog
         order={completionOrder}
         activeSteps={completionOrder.processRoute?.steps || []}
@@ -2613,12 +2891,35 @@ type ProductionDispatchRowProps = {
   openIssue: (order: ProductionOrder, alertCode: string, focusedStage?: StageKey) => void;
   copySpecification: (order: ProductionOrder) => Promise<void>;
   openArrangement: (order: ProductionOrder, sourceArrangement?: ProductionArrangement) => void;
+  openReassignment: (order: ProductionOrder, arrangement: ProductionArrangement) => void;
 };
 
 function DispatchRowSkeleton({ count }: { count: number }) {
   return <>{Array.from({ length: count }, (_, index) => <div className="production-dispatch-row production-dispatch-row-skeleton" aria-hidden="true" key={index}>
     <span /><span /><span /><span /><span /><span /><span />
   </div>)}</>;
+}
+
+function scheduledEmployeeOptions(orders: ProductionOrder[]): Array<{ employeeId: string; employeeNo: string; name: string; affectedOrderCount: number }> {
+  const employees = new Map<string, { employeeId: string; employeeNo: string; name: string; workOrderIds: Set<string> }>();
+  for (const order of orders) {
+    for (const arrangement of order.arrangements || []) {
+      if (arrangement.remainingQty <= 0 || arrangement.status === 'completed' || arrangement.status === 'carried_over') continue;
+      for (const employee of arrangement.employees) {
+        const current = employees.get(employee.employeeId) || {
+          employeeId: employee.employeeId,
+          employeeNo: employee.employeeNo,
+          name: employee.name,
+          workOrderIds: new Set<string>(),
+        };
+        current.workOrderIds.add(order.id);
+        employees.set(employee.employeeId, current);
+      }
+    }
+  }
+  return [...employees.values()]
+    .map(employee => ({ ...employee, affectedOrderCount: employee.workOrderIds.size }))
+    .sort((left, right) => right.affectedOrderCount - left.affectedOrderCount || left.employeeNo.localeCompare(right.employeeNo, 'zh-CN'));
 }
 
 function ProductionDispatchRow({
@@ -2638,6 +2939,7 @@ function ProductionDispatchRow({
   openIssue,
   copySpecification,
   openArrangement,
+  openReassignment,
 }: ProductionDispatchRowProps) {
   const { order, displayStage } = item;
   const route = order.processRoute;
@@ -2755,10 +3057,12 @@ function ProductionDispatchRow({
     </div>
 
     <div className="production-arrangement-worker-cell">
-      {visibleArrangements.map(arrangement => <div className={`production-arrangement-worker-record status-${arrangement.status}`} key={arrangement.id}>
+      {visibleArrangements.map(arrangement => {
+        const adjustable = !readOnly && canScheduleProduction && arrangement.remainingQty > 0 && arrangement.status !== 'completed' && arrangement.status !== 'carried_over';
+        return <button className={`production-arrangement-worker-record status-${arrangement.status} ${adjustable ? 'adjustable' : ''}`.trim()} type="button" disabled={!adjustable} title={adjustable ? '点击调整未完成数量的作业人员' : '已完成或历史安排仅供查看'} onClick={() => openReassignment(order, arrangement)} key={arrangement.id}>
         <span>{arrangement.employees.slice(0, 3).map(employee => <b title={`${employee.employeeNo} · ${employee.name}`} key={employee.employeeId}>{employee.name}</b>)}{arrangement.employees.length > 3 && <em>+{arrangement.employees.length - 3}</em>}</span>
-        <small>{arrangement.shiftCode === 'NIGHT' ? '夜班' : '白班'}{arrangement.remainingQty > 0 ? ` · 余 ${formatProductionQuantity(arrangement.remainingQty)}` : ' · 已完成'}</small>
-      </div>)}
+        <small>{arrangement.shiftCode === 'NIGHT' ? '夜班' : '白班'}{arrangement.remainingQty > 0 ? ` · 余 ${formatProductionQuantity(arrangement.remainingQty)}` : ' · 已完成'}{adjustable && <Pencil size={11} aria-hidden="true" />}</small>
+      </button>;})}
       {!visibleArrangements.length && <span className="production-arrangement-empty">待主管安排</span>}
     </div>
 
@@ -2916,6 +3220,132 @@ function ProductionArrangementDialog({ request, context, value, setValue, search
       </div>
 
       <footer><span>{loading ? '正在核对工序与人员容量…' : `已选择 ${value.employeeIds.length} 人${crossWeekCount ? ` · ${crossWeekCount} 道跨周` : ''}`}</span><div><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary" type="button" disabled={loading || saving || !context?.canSchedule || !value.employeeIds.length || !value.teamId} onClick={save}>{saving ? <><Loader2 size={16} aria-hidden="true" />保存中…</> : request.mode === 'continue' ? '确认续排并保留历史' : request.orders.length > 1 ? `确认批量安排 ${request.orders.length} 单` : '确认安排'}</button></div></footer>
+    </section>
+  </div>;
+}
+
+function ProductionReassignmentDialog({ request, sourceEmployees, context, value, setValue, search, setSearch, loading, saving, error, close, save }: {
+  request: ProductionReassignmentRequest;
+  sourceEmployees: Array<{ employeeId: string; employeeNo: string; name: string; affectedOrderCount: number }>;
+  context: ProductionReassignmentContext | null;
+  value: ProductionReassignmentForm;
+  setValue: (value: ProductionReassignmentForm) => void;
+  search: string;
+  setSearch: (value: string) => void;
+  loading: boolean;
+  saving: boolean;
+  error: string;
+  close: () => void;
+  save: () => void;
+}) {
+  const dialogRef = useRef<HTMLElement | null>(null);
+  const closeRef = useRef(close);
+  const savingRef = useRef(saving);
+  closeRef.current = close;
+  savingRef.current = saving;
+  const sourceEmployee = sourceEmployees.find(employee => employee.employeeId === value.sourceEmployeeId) || null;
+  const currentEmployeeIds = new Set(context?.currentEmployeeIds || []);
+  const sourceEmployeeId = value.sourceEmployeeId || request.sourceEmployeeId || '';
+  const normalizedSearch = search.trim().toLocaleLowerCase('zh-CN');
+  const employees = (context?.employees || [])
+    .filter(employee => employee.id !== sourceEmployeeId)
+    .filter(employee => !normalizedSearch || `${employee.employeeNo} ${employee.name} ${employee.position || ''} ${employee.team || ''}`.toLocaleLowerCase('zh-CN').includes(normalizedSearch));
+  const selectedTasks = context?.tasks.filter(task => value.taskIds.includes(task.id)) || [];
+  const selectedRemainingQty = selectedTasks.reduce((sum, task) => sum + task.remainingQty, 0);
+  const selectedCompletedQty = selectedTasks.reduce((sum, task) => sum + task.completedQty, 0);
+  const finalEmployeeIdsByTask = selectedTasks.map(task => new Set([
+    ...(sourceEmployeeId ? task.assignments.map(item => item.employeeId).filter(id => id !== sourceEmployeeId) : []),
+    ...value.targetEmployeeIds,
+  ]));
+  const hasEmptyFinalCrew = finalEmployeeIdsByTask.some(ids => ids.size === 0);
+
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    document.body.style.overflow = 'hidden';
+    const frame = window.requestAnimationFrame(() => dialogRef.current?.focus());
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape' && !savingRef.current) {
+        event.preventDefault();
+        closeRef.current();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener('keydown', handleKeyDown);
+      previousFocus?.focus({ preventScroll: true });
+    };
+  }, []);
+
+  function toggleEmployee(employeeId: string): void {
+    setValue({
+      ...value,
+      targetEmployeeIds: value.targetEmployeeIds.includes(employeeId)
+        ? value.targetEmployeeIds.filter(id => id !== employeeId)
+        : [...value.targetEmployeeIds, employeeId],
+    });
+  }
+
+  function toggleTask(taskId: string): void {
+    setValue({
+      ...value,
+      taskIds: value.taskIds.includes(taskId)
+        ? value.taskIds.filter(id => id !== taskId)
+        : [...value.taskIds, taskId],
+    });
+  }
+
+  return <div className="production-arrangement-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) close(); }}>
+    <section ref={dialogRef} className="production-arrangement-dialog production-reassignment-dialog" role="dialog" aria-modal="true" aria-labelledby="production-reassignment-title" tabIndex={-1}>
+      <header>
+        <div><span>生产调度 · 剩余量重排</span><h2 id="production-reassignment-title">{request.mode === 'employee_exception' ? '员工突发异常批量调班' : '调整当前生产安排'}</h2><p>{request.title} · 已完成报工和员工实际工时不会被修改。</p></div>
+        <button type="button" aria-label="关闭调班窗口" disabled={saving} onClick={close}><X size={20} aria-hidden="true" /></button>
+      </header>
+      <div className="production-arrangement-dialog-body">
+        <section className="production-arrangement-config production-reassignment-config">
+          {request.mode === 'employee_exception' && <label className="production-reassignment-source"><span>突发异常员工</span><select value={value.sourceEmployeeId} onChange={event => setValue({ ...value, sourceEmployeeId: event.target.value, targetEmployeeIds: [], taskIds: [] })}><option value="">请选择请假 / 无法到岗员工</option>{sourceEmployees.map(employee => <option value={employee.employeeId} key={employee.employeeId}>{employee.employeeNo} · {employee.name} · 影响 {employee.affectedOrderCount} 单</option>)}</select><small>选择后系统只加载该员工名下尚未完成的安排。</small></label>}
+
+          <div className="production-arrangement-overview production-reassignment-overview">
+            <div><span>影响工单</span><strong>{context?.summary.workOrderCount || 0}</strong><small>单</small></div>
+            <div><span>待调工序</span><strong>{selectedTasks.length}</strong><small>道</small></div>
+            <div><span>已报保留</span><strong>{formatProductionQuantity(selectedCompletedQty)}</strong><small>件</small></div>
+            <div><span>本次重排</span><strong>{formatProductionQuantity(selectedRemainingQty)}</strong><small>件</small></div>
+          </div>
+
+          {context && <div className="production-reassignment-task-list">
+            <div className="production-arrangement-workers-head"><div><strong>选择需要调班的工序</strong><small>默认选中全部剩余任务，可取消不需要调整的工序。</small></div><div><button type="button" onClick={() => setValue({ ...value, taskIds: context.tasks.map(task => task.id) })}>全选</button><button type="button" onClick={() => setValue({ ...value, taskIds: [] })}>清空</button></div></div>
+            <div className="production-reassignment-task-grid">{context.tasks.map(task => <button className={value.taskIds.includes(task.id) ? 'selected' : ''} type="button" aria-pressed={value.taskIds.includes(task.id)} onClick={() => toggleTask(task.id)} key={task.id}><span><input type="checkbox" tabIndex={-1} readOnly checked={value.taskIds.includes(task.id)} /><b>{task.workOrder.code}</b><small>{task.workDate} · {task.team.name}</small></span><strong>{task.processName}</strong><em>已报 {task.completedQty} · 剩余 {task.remainingQty}</em></button>)}</div>
+          </div>}
+
+          {context && <>
+            <div className="production-arrangement-workers-head"><div><strong>{request.mode === 'employee_exception' ? '选择接替员工' : '设置调整后作业人员'}</strong><small>{request.mode === 'employee_exception' ? `${sourceEmployee?.name || '异常员工'} 将从所选任务的后续安排中移除；原同组人员自动保留。` : '这里选择的是未完成数量的新执行人员；取消某人不会删除其历史报工。'}</small></div><div><button type="button" disabled={!value.targetEmployeeIds.length} onClick={() => setValue({ ...value, targetEmployeeIds: [] })}>清空新增</button></div></div>
+            <label className="production-arrangement-employee-search"><Search size={16} aria-hidden="true" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索员工编号、姓名、岗位或班组" /></label>
+            <div className="production-arrangement-employee-grid production-reassignment-employee-grid">{employees.map(employee => {
+              const selected = value.targetEmployeeIds.includes(employee.id);
+              const current = currentEmployeeIds.has(employee.id) && employee.id !== sourceEmployeeId;
+              return <button className={`${selected ? 'selected' : ''} ${current ? 'current' : ''}`.trim()} type="button" aria-pressed={selected} onClick={() => toggleEmployee(employee.id)} key={employee.id}><span>{employee.name.slice(0, 1)}</span><b>{employee.name}<small>{employee.employeeNo} · {employee.position || '生产员工'}</small></b><em>{current ? '当前人员' : selected ? '已选接替' : employee.team || '生产部'}</em></button>;
+            })}{!employees.length && <p>没有匹配的生产部在职人员。</p>}</div>
+          </>}
+
+          <div className="production-reassignment-reason">
+            <label><span>调整原因</span><select value={value.reasonCode} onChange={event => setValue({ ...value, reasonCode: event.target.value })}><option value="ABSENCE">员工临时缺勤</option><option value="LEAVE">员工请假</option><option value="ILLNESS">员工身体不适</option><option value="TEMPORARY_TRANSFER">临时支援调配</option><option value="CAPACITY_BALANCE">产能平衡调整</option><option value="OTHER">其他现场原因</option></select></label>
+            <label><span>补充说明（可选）</span><textarea maxLength={500} value={value.reason} onChange={event => setValue({ ...value, reason: event.target.value })} placeholder="例如：员工下午请假，由同组人员接替剩余任务" /></label>
+          </div>
+        </section>
+
+        <aside className="production-arrangement-advice production-reassignment-advice">
+          <div className="production-arrangement-advice-title"><UserRoundCog size={18} aria-hidden="true" /><span><small>变更预览</small><strong>{request.mode === 'employee_exception' ? sourceEmployee?.name || '待选异常员工' : request.title}</strong></span></div>
+          <dl><div><dt>已报数量</dt><dd>{selectedCompletedQty} 件 · 锁定</dd></div><div><dt>重排数量</dt><dd>{selectedRemainingQty} 件</dd></div><div><dt>新增接替</dt><dd>{value.targetEmployeeIds.length} 人</dd></div><div><dt>审计方式</dt><dd>保留前后快照</dd></div></dl>
+          <div className="production-reassignment-ledger"><CheckCircle2 size={18} aria-hidden="true" /><span><strong>报工与工时账本不回写</strong><small>{context?.rule || '只有未完成数量会生成新的排班分配；已完成事实保持原日期、原员工和原工时。'}</small></span></div>
+          {sourceEmployeeId && <div className="production-reassignment-history-card"><span>移出后续安排</span><strong>{sourceEmployee?.name || context?.employees.find(employee => employee.id === sourceEmployeeId)?.name || sourceEmployeeId}</strong><small>如果某道任务已有其他人员，他们会继续保留；接替人员加入后共同分摊剩余量。</small></div>}
+          {hasEmptyFinalCrew && <div className="production-arrangement-error"><AlertTriangle size={17} aria-hidden="true" /><span><strong>无法保存</strong><small>至少有一道工序在移除异常员工后没有任何执行人员，请选择接替员工。</small></span></div>}
+          {error && <div className="production-arrangement-error"><AlertTriangle size={17} aria-hidden="true" /><span><strong>无法保存</strong><small>{error}</small></span></div>}
+          {loading && <div className="production-reassignment-loading"><Loader2 size={18} aria-hidden="true" /><span>正在核对最新报工与排班版本…</span></div>}
+        </aside>
+      </div>
+      <footer><span>{context ? `所选 ${selectedTasks.length} 道工序 · 重排 ${selectedRemainingQty} 件` : request.mode === 'employee_exception' && !value.sourceEmployeeId ? '请先选择突发异常员工' : '正在加载影响范围…'}</span><div><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary" type="button" disabled={loading || saving || !context || !selectedTasks.length || hasEmptyFinalCrew || (request.mode === 'arrangement' && !value.targetEmployeeIds.length)} onClick={save}>{saving ? <><Loader2 size={16} aria-hidden="true" />保存中…</> : '确认重排剩余数量'}</button></div></footer>
     </section>
   </div>;
 }

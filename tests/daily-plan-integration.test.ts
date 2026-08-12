@@ -19,10 +19,12 @@ import {
   createDailyProductionPlan,
   DailyPlanServiceError,
   getProductionArrangementContext,
+  getProductionArrangementReassignmentContext,
   listDailyCrossTeamRequests,
   previewDailyPlanSuggestions,
   requestDailyCrossTeamAssignment,
   reviewDailyCrossTeamRequest,
+  reassignProductionArrangementRemaining,
   scheduleProductionArrangements,
   upsertProductionTeam,
   upsertProductionTeamProcessCapability,
@@ -529,7 +531,7 @@ test(
         assert.equal(scheduledTask.assignments.length, 2);
         assert.equal(scheduledTask.assignments.reduce((sum, assignment) => sum + assignment.quantity, 0), 10);
 
-        await completeProcessStep({
+        const partialCompletion = await completeProcessStep({
           routeId: route.routeId,
           stepId: route.step.id,
           processedQty: 4,
@@ -544,6 +546,68 @@ test(
           userId: admin.id,
           actor: admin.displayName,
         });
+
+        const reassignmentContext = await getProductionArrangementReassignmentContext({
+          actorUserId: admin.id,
+          planId: scheduledTask.planId,
+          workOrderIds: [route.workOrderId],
+          sourceEmployeeId: workerA1.id,
+        });
+        assert.equal(reassignmentContext.tasks.length, 1);
+        assert.equal(reassignmentContext.tasks[0].completedQty, 4);
+        assert.equal(reassignmentContext.tasks[0].remainingQty, 6);
+        const contextTask = reassignmentContext.tasks[0];
+        const reassignInput = {
+          actorUserId: admin.id,
+          taskIds: [contextTask.id],
+          sourceEmployeeId: workerA1.id,
+          targetEmployeeIds: [workerA2.id],
+          expectedTasks: [{
+            taskId: contextTask.id,
+            taskVersion: contextTask.version,
+            planVersion: contextTask.planVersion,
+            completedQty: contextTask.completedQty,
+            assignmentVersions: contextTask.assignments.map(assignment => ({
+              assignmentId: assignment.id,
+              version: assignment.version,
+            })),
+          }],
+          reasonCode: 'ABSENCE',
+          reason: 'partial completion reassignment integration',
+          idempotencyKey: integrationKey(prefix, 'arrangement-reassign-remaining'),
+        };
+        const reassigned = await reassignProductionArrangementRemaining(reassignInput);
+        const reassignedReplay = await reassignProductionArrangementRemaining(reassignInput);
+        assert.deepEqual(reassignedReplay, reassigned);
+        assert.equal(Number(reassigned.redistributedQty), 6);
+        const assignmentsAfterReassignment = await prisma.dailyTaskAssignment.findMany({
+          where: { taskId: scheduledTask.id },
+          orderBy: { createdAt: 'asc' },
+        });
+        const activeAfterReassignment = assignmentsAfterReassignment.filter(assignment => assignment.status !== DailyTaskAssignmentStatus.CANCELLED);
+        assert.equal(activeAfterReassignment.reduce((sum, assignment) => sum + assignment.quantity, 0), 6);
+        assert.equal(activeAfterReassignment.some(assignment => assignment.employeeId === workerA1.id), false);
+        assert.deepEqual(
+          activeAfterReassignment.map(assignment => assignment.employeeId).sort(),
+          [hrOnlyWorker.id, workerA2.id].sort(),
+        );
+        assert.equal(
+          await prisma.processCompletion.count({ where: { id: partialCompletion.completionId } }),
+          1,
+          'reassignment must retain the original completion fact',
+        );
+        if (partialCompletion.laborPoolId) {
+          const laborStateAfter = await prisma.processLaborPool.findUniqueOrThrow({
+            where: { id: partialCompletion.laborPoolId },
+            select: {
+              status: true,
+              claimedStandardLaborMilliseconds: true,
+              claims: { select: { id: true, employeeId: true, quantity: true, status: true, standardLaborMilliseconds: true } },
+            },
+          });
+          assert.equal(laborStateAfter.claimedStandardLaborMilliseconds.toString(), partialCompletion.autoAssignedLaborMilliseconds.toString());
+          assert.equal(laborStateAfter.claims.every(claim => claim.employeeId === workerA1.id), true);
+        }
 
         const continueInput = {
           actorUserId: admin.id,

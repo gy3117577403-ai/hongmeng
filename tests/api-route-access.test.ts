@@ -90,6 +90,23 @@ test('field reporter is limited to the existing QR report API', () => {
   assert.equal(canAccessApiRoute(reporter, '/api/notifications', 'GET'), false);
 });
 
+test('production dispatch export follows scoped production access', () => {
+  const supervisor = context({
+    profile: 'WORKSHOP_SUPERVISOR',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'WORKSHOP:PRODUCTION',
+  });
+  const teamLeader = context({
+    profile: 'WORKSHOP_TEAM_LEADER',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'TEAM:A',
+  });
+  assert.equal(canAccessApiRoute(supervisor, '/api/export/production-dispatch.xlsx', 'GET'), true);
+  assert.equal(canAccessApiRoute(teamLeader, '/api/export/production-dispatch.xlsx', 'GET'), true);
+});
+
 test('unknown API routes remain distinguishable for fail-closed callers', () => {
   const reporter = context({
     profile: 'FIELD_REPORTER',

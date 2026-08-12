@@ -76,6 +76,10 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
 
   { prefix: '/api/planning', anyOf: ['PLANNING'] },
   {
+    prefix: '/api/export/production-dispatch.xlsx',
+    anyOf: ['PLANNING', 'PRODUCTION'],
+  },
+  {
     prefix: '/api/daily-plans/organization',
     anyOf: ['PLANNING', 'PRODUCTION'],
     productionMinimumScope: 'WORKSHOP',
