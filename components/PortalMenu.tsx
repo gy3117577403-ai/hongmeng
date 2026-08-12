@@ -161,7 +161,7 @@ export function PortalMenu({
   };
 
   return createPortal(
-    <div ref={layerRef} id={menuId} role="menu" className={`app-dropdown-layer ${className}`} style={style} onClickCapture={handleMenuClick}>
+    <div ref={layerRef} id={menuId} role="menu" className={`app-dropdown-layer ${className}`} style={style} onClick={handleMenuClick}>
       {children}
     </div>,
     document.body,

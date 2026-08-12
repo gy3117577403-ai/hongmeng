@@ -505,8 +505,8 @@ export default function CompanyHomeDashboard({ user, data }: CompanyHomeDashboar
   const qualityIssues = data.issues.slice(0, 3);
 
   async function logout(): Promise<void> {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    location.href = '/login';
+    await fetch('/api/auth/logout', { method: 'POST', cache: 'no-store' });
+    window.location.replace('/login');
   }
 
   function refresh(): void {

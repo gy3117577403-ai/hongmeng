@@ -2029,7 +2029,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
       closeProductionReassignment(true);
       productionBoardCache.clear();
       setRefreshToken(value => value + 1);
-      setToast(`已重排 ${updatedTaskCount} 道工序的剩余 ${formatProductionQuantity(redistributedQty)} 件，既有报工与员工工时未改变`);
+      setToast(`已重排 ${updatedTaskCount} 道工序的剩余 ${formatProductionQuantity(redistributedQty)} 件次，既有报工与员工工时未改变`);
     } catch (reason) {
       setReassignmentError(reason instanceof Error ? reason.message : '生产调班保存失败');
     } finally {
@@ -3251,6 +3251,23 @@ function ProductionReassignmentDialog({ request, sourceEmployees, context, value
     .filter(employee => employee.id !== sourceEmployeeId)
     .filter(employee => !normalizedSearch || `${employee.employeeNo} ${employee.name} ${employee.position || ''} ${employee.team || ''}`.toLocaleLowerCase('zh-CN').includes(normalizedSearch));
   const selectedTasks = context?.tasks.filter(task => value.taskIds.includes(task.id)) || [];
+  const requestOrderById = new Map(request.orders.map(order => [order.id, order] as const));
+  const employeeNameById = new Map<string, string>();
+  (context?.employees || []).forEach(employee => employeeNameById.set(employee.id, employee.name));
+  selectedTasks.forEach(task => task.assignments.forEach(assignment => employeeNameById.set(assignment.employeeId, assignment.employee.name)));
+  const currentCrewIds = new Set(selectedTasks.flatMap(task => task.assignments.map(assignment => assignment.employeeId)));
+  const afterCrewIds = new Set<string>();
+  selectedTasks.forEach(task => {
+    if (sourceEmployeeId) {
+      task.assignments.forEach(assignment => {
+        if (assignment.employeeId !== sourceEmployeeId) afterCrewIds.add(assignment.employeeId);
+      });
+    }
+    value.targetEmployeeIds.forEach(employeeId => afterCrewIds.add(employeeId));
+  });
+  const currentCrewText = [...currentCrewIds].map(employeeId => employeeNameById.get(employeeId) || employeeId).join('、') || '未安排';
+  const afterCrewText = [...afterCrewIds].map(employeeId => employeeNameById.get(employeeId) || employeeId).join('、') || '待选择';
+  const isMultipleWorkOrders = (context?.summary.workOrderCount || request.orders.length) > 1;
   const selectedRemainingQty = selectedTasks.reduce((sum, task) => sum + task.remainingQty, 0);
   const selectedCompletedQty = selectedTasks.reduce((sum, task) => sum + task.completedQty, 0);
   const finalEmployeeIdsByTask = selectedTasks.map(task => new Set([
@@ -3297,6 +3314,14 @@ function ProductionReassignmentDialog({ request, sourceEmployees, context, value
     });
   }
 
+  function taskOrderLabel(task: ProductionReassignmentContext['tasks'][number]): string {
+    const order = requestOrderById.get(task.workOrder.id);
+    return order?.specification?.trim()
+      || order?.businessCode?.trim()
+      || task.workOrder.productName?.trim()
+      || '生产任务';
+  }
+
   return <div className="production-arrangement-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) close(); }}>
     <section ref={dialogRef} className="production-arrangement-dialog production-reassignment-dialog" role="dialog" aria-modal="true" aria-labelledby="production-reassignment-title" tabIndex={-1}>
       <header>
@@ -3310,17 +3335,26 @@ function ProductionReassignmentDialog({ request, sourceEmployees, context, value
           <div className="production-arrangement-overview production-reassignment-overview">
             <div><span>影响工单</span><strong>{context?.summary.workOrderCount || 0}</strong><small>单</small></div>
             <div><span>待调工序</span><strong>{selectedTasks.length}</strong><small>道</small></div>
-            <div><span>已报保留</span><strong>{formatProductionQuantity(selectedCompletedQty)}</strong><small>件</small></div>
-            <div><span>本次重排</span><strong>{formatProductionQuantity(selectedRemainingQty)}</strong><small>件</small></div>
+            <div><span>已报保留</span><strong>{formatProductionQuantity(selectedCompletedQty)}</strong><small>件次</small></div>
+            <div><span>本次重排</span><strong>{formatProductionQuantity(selectedRemainingQty)}</strong><small>件次</small></div>
           </div>
 
           {context && <div className="production-reassignment-task-list">
-            <div className="production-arrangement-workers-head"><div><strong>选择需要调班的工序</strong><small>默认选中全部剩余任务，可取消不需要调整的工序。</small></div><div><button type="button" onClick={() => setValue({ ...value, taskIds: context.tasks.map(task => task.id) })}>全选</button><button type="button" onClick={() => setValue({ ...value, taskIds: [] })}>清空</button></div></div>
-            <div className="production-reassignment-task-grid">{context.tasks.map(task => <button className={value.taskIds.includes(task.id) ? 'selected' : ''} type="button" aria-pressed={value.taskIds.includes(task.id)} onClick={() => toggleTask(task.id)} key={task.id}><span><input type="checkbox" tabIndex={-1} readOnly checked={value.taskIds.includes(task.id)} /><b>{task.workOrder.code}</b><small>{task.workDate} · {task.team.name}</small></span><strong>{task.processName}</strong><em>已报 {task.completedQty} · 剩余 {task.remainingQty}</em></button>)}</div>
+            <div className="production-arrangement-workers-head"><div><strong>选择需要调整的工序</strong><small>默认选中全部剩余任务，可取消不需要调整的工序。</small></div><div><button type="button" onClick={() => setValue({ ...value, taskIds: context.tasks.map(task => task.id) })}>全选</button><button type="button" onClick={() => setValue({ ...value, taskIds: [] })}>清空</button></div></div>
+            <div className="production-reassignment-task-grid" role="group" aria-label="待调整工序">{context.tasks.map(task => {
+              const selected = value.taskIds.includes(task.id);
+              const taskCrew = [...new Set(task.assignments.map(assignment => assignment.employee.name))].join('、') || '未安排';
+              return <label className={selected ? 'selected' : ''} key={task.id}>
+                <input type="checkbox" checked={selected} onChange={() => toggleTask(task.id)} aria-label={`选择第 ${task.position} 道工序 ${task.processName}`} />
+                <span className="production-reassignment-task-process"><strong><b>{String(task.position).padStart(2, '0')}</b>{task.processName}</strong><small>{isMultipleWorkOrders ? `${taskOrderLabel(task)} · ` : ''}{task.workDate} · {task.team.name}</small></span>
+                <span className="production-reassignment-task-crew"><small>当前人员</small><strong>{taskCrew}</strong></span>
+                <span className="production-reassignment-task-quantity"><small>已报 {formatProductionQuantity(task.completedQty)} 件次</small><strong>剩余 {formatProductionQuantity(task.remainingQty)} 件次</strong></span>
+              </label>;
+            })}</div>
           </div>}
 
           {context && <>
-            <div className="production-arrangement-workers-head"><div><strong>{request.mode === 'employee_exception' ? '选择接替员工' : '设置调整后作业人员'}</strong><small>{request.mode === 'employee_exception' ? `${sourceEmployee?.name || '异常员工'} 将从所选任务的后续安排中移除；原同组人员自动保留。` : '这里选择的是未完成数量的新执行人员；取消某人不会删除其历史报工。'}</small></div><div><button type="button" disabled={!value.targetEmployeeIds.length} onClick={() => setValue({ ...value, targetEmployeeIds: [] })}>清空新增</button></div></div>
+            <div className="production-arrangement-workers-head"><div><strong>{request.mode === 'employee_exception' ? '选择接替员工' : '设置调整后作业人员'}</strong><small>{request.mode === 'employee_exception' ? `${sourceEmployee?.name || '异常员工'} 将从所选任务的后续安排中移除；原同组人员自动保留。` : '这里选择的是未完成数量的新执行人员；取消某人不会删除其历史报工。'}</small></div><div><button type="button" disabled={!value.targetEmployeeIds.length} onClick={() => setValue({ ...value, targetEmployeeIds: [] })}>{request.mode === 'employee_exception' ? '清空新增' : '清空所选'}</button></div></div>
             <label className="production-arrangement-employee-search"><Search size={16} aria-hidden="true" /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索员工编号、姓名、岗位或班组" /></label>
             <div className="production-arrangement-employee-grid production-reassignment-employee-grid">{employees.map(employee => {
               const selected = value.targetEmployeeIds.includes(employee.id);
@@ -3337,7 +3371,8 @@ function ProductionReassignmentDialog({ request, sourceEmployees, context, value
 
         <aside className="production-arrangement-advice production-reassignment-advice">
           <div className="production-arrangement-advice-title"><UserRoundCog size={18} aria-hidden="true" /><span><small>变更预览</small><strong>{request.mode === 'employee_exception' ? sourceEmployee?.name || '待选异常员工' : request.title}</strong></span></div>
-          <dl><div><dt>已报数量</dt><dd>{selectedCompletedQty} 件 · 锁定</dd></div><div><dt>重排数量</dt><dd>{selectedRemainingQty} 件</dd></div><div><dt>新增接替</dt><dd>{value.targetEmployeeIds.length} 人</dd></div><div><dt>审计方式</dt><dd>保留前后快照</dd></div></dl>
+          <div className="production-reassignment-crew-preview"><div><small>当前人员</small><strong title={currentCrewText}>{currentCrewText}</strong></div><ArrowRight size={17} aria-hidden="true" /><div><small>调整后人员</small><strong title={afterCrewText}>{afterCrewText}</strong></div></div>
+          <dl><div><dt>已报工序量</dt><dd>{formatProductionQuantity(selectedCompletedQty)} 件次 · 锁定</dd></div><div><dt>重排工序量</dt><dd>{formatProductionQuantity(selectedRemainingQty)} 件次</dd></div><div><dt>{request.mode === 'employee_exception' ? '新增接替' : '调整后人员'}</dt><dd>{value.targetEmployeeIds.length} 人</dd></div><div><dt>审计方式</dt><dd>保留前后快照</dd></div></dl>
           <div className="production-reassignment-ledger"><CheckCircle2 size={18} aria-hidden="true" /><span><strong>报工与工时账本不回写</strong><small>{context?.rule || '只有未完成数量会生成新的排班分配；已完成事实保持原日期、原员工和原工时。'}</small></span></div>
           {sourceEmployeeId && <div className="production-reassignment-history-card"><span>移出后续安排</span><strong>{sourceEmployee?.name || context?.employees.find(employee => employee.id === sourceEmployeeId)?.name || sourceEmployeeId}</strong><small>如果某道任务已有其他人员，他们会继续保留；接替人员加入后共同分摊剩余量。</small></div>}
           {hasEmptyFinalCrew && <div className="production-arrangement-error"><AlertTriangle size={17} aria-hidden="true" /><span><strong>无法保存</strong><small>至少有一道工序在移除异常员工后没有任何执行人员，请选择接替员工。</small></span></div>}
@@ -3345,7 +3380,7 @@ function ProductionReassignmentDialog({ request, sourceEmployees, context, value
           {loading && <div className="production-reassignment-loading"><Loader2 size={18} aria-hidden="true" /><span>正在核对最新报工与排班版本…</span></div>}
         </aside>
       </div>
-      <footer><span>{context ? `所选 ${selectedTasks.length} 道工序 · 重排 ${selectedRemainingQty} 件` : request.mode === 'employee_exception' && !value.sourceEmployeeId ? '请先选择突发异常员工' : '正在加载影响范围…'}</span><div><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary" type="button" disabled={loading || saving || !context || !selectedTasks.length || hasEmptyFinalCrew || (request.mode === 'arrangement' && !value.targetEmployeeIds.length)} onClick={save}>{saving ? <><Loader2 size={16} aria-hidden="true" />保存中…</> : '确认重排剩余数量'}</button></div></footer>
+      <footer><span>{context ? `所选 ${selectedTasks.length} 道工序 · 重排 ${formatProductionQuantity(selectedRemainingQty)} 件次` : request.mode === 'employee_exception' && !value.sourceEmployeeId ? '请先选择突发异常员工' : '正在加载影响范围…'}</span><div><button type="button" disabled={saving} onClick={close}>取消</button><button className="primary" type="button" disabled={loading || saving || !context || !selectedTasks.length || hasEmptyFinalCrew || (request.mode === 'arrangement' && !value.targetEmployeeIds.length)} onClick={save}>{saving ? <><Loader2 size={16} aria-hidden="true" />保存中…</> : request.mode === 'employee_exception' ? `确认调班人员（${selectedTasks.length}道工序）` : `确认调整人员（${selectedTasks.length}道工序）`}</button></div></footer>
     </section>
   </div>;
 }

@@ -9148,6 +9148,24 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   width: min(1240px, calc(100vw - 32px));
 }
 
+.production-reassignment-dialog .production-arrangement-dialog-body {
+  grid-template-columns: minmax(0, 1fr) 320px;
+  align-items: start;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.production-reassignment-dialog .production-reassignment-config,
+.production-reassignment-dialog .production-reassignment-advice {
+  overflow: visible;
+}
+
+.production-reassignment-dialog .production-reassignment-advice {
+  position: sticky;
+  top: 0;
+  align-self: start;
+}
+
 .production-reassignment-source,
 .production-reassignment-reason label {
   display: grid;
@@ -9193,74 +9211,115 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
 }
 
 .production-reassignment-task-grid {
-  max-height: 190px;
   margin-top: 9px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 7px;
-  overflow-y: auto;
 }
 
-.production-reassignment-task-grid > button {
+.production-reassignment-task-grid > label {
   min-width: 0;
-  min-height: 66px;
-  padding: 8px 9px;
+  min-height: 64px;
+  padding: 9px 11px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 3px 9px;
+  grid-template-columns: 20px minmax(220px, 1.35fr) minmax(120px, .72fr) minmax(142px, auto);
+  align-items: center;
+  gap: 10px;
   border: 1px solid #dde4ed;
   border-radius: 8px;
   background: #fff;
   color: #27374d;
-  font: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-.production-reassignment-task-grid > button.selected {
+.production-reassignment-task-grid > label:hover {
+  border-color: #efb58f;
+  background: #fffaf6;
+}
+
+.production-reassignment-task-grid > label.selected {
   border-color: #f0813b;
   background: #fff7ef;
   box-shadow: inset 0 0 0 1px rgba(230, 95, 14, .12);
 }
 
-.production-reassignment-task-grid > button > span {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
 .production-reassignment-task-grid input {
+  width: 17px;
+  height: 17px;
+  margin: 0;
   accent-color: #e86108;
 }
 
-.production-reassignment-task-grid b,
-.production-reassignment-task-grid strong {
+.production-reassignment-task-process,
+.production-reassignment-task-crew,
+.production-reassignment-task-quantity {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.production-reassignment-task-process > strong {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   overflow: hidden;
-  font-size: 10px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.production-reassignment-task-grid small,
-.production-reassignment-task-grid em {
-  color: #7c899b;
-  font-size: 8px;
-  font-style: normal;
+.production-reassignment-task-process > strong b {
+  min-width: 30px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  background: #edf3fa;
+  color: #4d6684;
+  font-size: 10px;
+  text-align: center;
 }
 
-.production-reassignment-task-grid em {
-  grid-column: 1 / -1;
+.production-reassignment-task-grid small {
+  overflow: hidden;
+  color: #7c899b;
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.production-reassignment-task-crew strong,
+.production-reassignment-task-quantity strong {
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.production-reassignment-task-quantity {
+  justify-items: end;
+  text-align: right;
+}
+
+.production-reassignment-task-quantity strong {
+  color: #d95a0b;
 }
 
 .production-reassignment-employee-grid {
-  max-height: 210px;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .production-reassignment-employee-grid > button.current:not(.selected) {
   border-color: #acd4be;
   background: #f1faf5;
+}
+
+.production-reassignment-employee-grid > button > b small,
+.production-reassignment-employee-grid > button > em {
+  font-size: 9px;
 }
 
 .production-reassignment-reason {
@@ -9322,6 +9381,44 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   font-weight: 800;
 }
 
+.production-reassignment-crew-preview {
+  margin-top: 12px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  border: 1px solid #dce5ef;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.production-reassignment-crew-preview > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.production-reassignment-crew-preview small {
+  color: #7a8798;
+  font-size: 9px;
+}
+
+.production-reassignment-crew-preview strong {
+  overflow: hidden;
+  color: #26364b;
+  font-size: 11px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.production-reassignment-crew-preview svg {
+  justify-self: center;
+  color: #e86108;
+  transform: rotate(90deg);
+}
+
 .production-reassignment-loading {
   grid-template-columns: auto 1fr;
   border-color: #d8e3f4;
@@ -9329,9 +9426,46 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   color: #3c6faf;
 }
 
+@media (max-width: 1100px) {
+  .production-reassignment-task-grid > label {
+    grid-template-columns: 20px minmax(0, 1fr) minmax(110px, .55fr);
+  }
+
+  .production-reassignment-task-quantity {
+    grid-column: 2 / -1;
+    display: flex;
+    justify-content: space-between;
+    justify-items: stretch;
+    gap: 10px;
+    text-align: left;
+  }
+}
+
 @media (max-width: 900px) {
-  .production-reassignment-task-grid,
   .production-reassignment-reason {
     grid-template-columns: 1fr;
+  }
+
+  .production-reassignment-dialog .production-reassignment-advice {
+    position: static;
+  }
+
+  .production-reassignment-task-grid > label {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .production-reassignment-task-crew,
+  .production-reassignment-task-quantity {
+    grid-column: 2;
+  }
+
+  .production-reassignment-employee-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .production-reassignment-employee-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
