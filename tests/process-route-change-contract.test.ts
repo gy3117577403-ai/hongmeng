@@ -161,10 +161,30 @@ test('route change mutation keys retain the operation-specific prefix', () => {
 
 test('review and activation retries reuse a stable command idempotency key', () => {
   const approve = processRouteChangeCommandIdempotencyKey('change-1', 4, 'approve');
+  const reevaluate = processRouteChangeCommandIdempotencyKey('change-1', 4, 'reevaluate');
   assert.equal(approve, processRouteChangeCommandIdempotencyKey('change-1', 4, 'approve'));
   assert.notEqual(approve, processRouteChangeCommandIdempotencyKey('change-1', 4, 'reject'));
   assert.notEqual(approve, processRouteChangeCommandIdempotencyKey('change-1', 5, 'approve'));
+  assert.notEqual(approve, reevaluate);
+  assert.match(reevaluate, /-reevaluate-/);
   assert.ok(approve.length >= 8 && approve.length <= 120);
+  assert.ok(reevaluate.length >= 8 && reevaluate.length <= 120);
+});
+
+test('route change DTO exposes a stale approved route baseline', () => {
+  const dto = processRouteChangeDTO({
+    id: 'change-stale',
+    routeId: 'route-1',
+    status: 'APPROVED',
+    version: 3,
+    baseRouteVersion: 8,
+    route: { version: 9 },
+    routeSnapshot: { steps: [] },
+    diffs: [],
+    createdAt: '2026-08-12T00:00:00.000Z',
+  });
+  assert.equal(dto.currentRouteVersion, 9);
+  assert.equal(dto.routeVersionConflict, true);
 });
 
 test('step NEW markers survive later unrelated active changes and retain the latest related time diff', () => {

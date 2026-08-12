@@ -8,6 +8,7 @@ export type ProcessRouteChangeStatus =
   | 'FAILED';
 
 export type ProcessRouteChangeReviewAction = 'approve' | 'reject';
+export type ProcessRouteChangeCommandAction = ProcessRouteChangeReviewAction | 'activate' | 'reevaluate';
 
 export type ProcessDefinitionBindingCandidate = {
   id: string;
@@ -145,6 +146,8 @@ export type ProcessRouteChangeDTO = {
   status: ProcessRouteChangeStatus;
   version: number;
   baseRouteVersion: number;
+  currentRouteVersion?: number | null;
+  routeVersionConflict?: boolean;
   activatedRouteVersion?: number | null;
   baseProductProfileVersion?: number | null;
   publishedProductProfileVersion?: number | null;
@@ -349,8 +352,6 @@ export function processRouteChangeIdempotencyKey(prefix: string): string {
   return `${prefix}-${suffix}`;
 }
 
-export type ProcessRouteChangeCommandAction = ProcessRouteChangeReviewAction | 'activate';
-
 /**
  * Retries of the same visible command must reuse one key. A random key per click
  * turns a lost response or rapid double click into a second business mutation.
@@ -519,6 +520,13 @@ export function processRouteChangeDTO(value: unknown): ProcessRouteChangeDTO {
     status: changeStatus(source.status),
     version: integer(source.version),
     baseRouteVersion: integer(source.baseRouteVersion),
+    currentRouteVersion: number(record(source.route).version) ?? number(source.currentRouteVersion),
+    routeVersionConflict: source.routeVersionConflict === true
+      || (
+        changeStatus(source.status) === 'APPROVED'
+        && number(record(source.route).version) !== null
+        && integer(source.baseRouteVersion) !== integer(record(source.route).version)
+      ),
     activatedRouteVersion: number(source.activatedRouteVersion),
     baseProductProfileVersion: number(source.baseProductProfileVersion),
     publishedProductProfileVersion: number(source.publishedProductProfileVersion),

@@ -163,6 +163,10 @@ export type ReviewProcessRouteChangeCommand = MutationIdentity & {
   timeChanges?: unknown;
 };
 
+export type ReevaluateProcessRouteChangeCommand = MutationIdentity & {
+  changeId: string;
+};
+
 export type ActivateProcessRouteChangeCommand = MutationIdentity & {
   changeId: string;
   expectedRouteVersion?: unknown;
@@ -624,6 +628,9 @@ function serializeChange(change: ChangeDetail) {
       : 'UPDATE_TIME';
   return {
     ...change,
+    currentRouteVersion: change.route.version,
+    routeVersionConflict: change.status === ProcessRouteChangeStatus.APPROVED
+      && change.route.version !== change.baseRouteVersion,
     payload: {
       changeType,
       insertBeforeStepId: insert?.targetStepId ?? null,
@@ -1466,6 +1473,133 @@ async function calculateReviewedTimeImpactSnapshot(
   };
 }
 
+type RouteChangeReevaluationStep = {
+  id: string;
+  processDefinitionId: string | null;
+  processCode: string;
+  processName: string;
+  stageGroup: string;
+  position: number;
+  sequenceGroup: number;
+  status: string;
+  processedQty: number;
+  goodOutputQty: number;
+  defectOutputQty: number;
+  releasedGoodQty: number;
+  standardMillisecondsPerUnit: number | null;
+  timeBasis: string | null;
+  setupMilliseconds: number;
+  unitsPerProduct: number;
+  unitLabel: string | null;
+  countsForEfficiency: boolean;
+};
+
+type RouteChangeReevaluationDiff = {
+  id: string;
+  kind: ProcessRouteChangeDiffKind;
+  targetStepId: string | null;
+  afterData: Prisma.JsonValue;
+};
+
+type RouteChangeReevaluationInput = {
+    route: {
+      id: string;
+      workOrder: { productionTargetQty: number | null; completedQty: number | string | null };
+      steps: RouteChangeReevaluationStep[];
+    };
+    diffs: RouteChangeReevaluationDiff[];
+};
+
+async function calculateRouteChangeImpactSnapshot(
+  tx: Prisma.TransactionClient,
+  input: RouteChangeReevaluationInput,
+) {
+  const stepById = new Map(input.route.steps.map(step => [step.id, step]));
+  const insertBoundaryStepIds = new Set<string>();
+  for (const diff of input.diffs.filter(item => item.kind === ProcessRouteChangeDiffKind.INSERT_STEP)) {
+    const target = diff.targetStepId ? stepById.get(diff.targetStepId) : null;
+    if (!target) continue;
+    for (const step of input.route.steps) {
+      if (step.sequenceGroup >= target.sequenceGroup) insertBoundaryStepIds.add(step.id);
+    }
+  }
+  const boundaryIds = [...insertBoundaryStepIds];
+  const [boundaryCompletions, boundaryExecutions, reviewedTimeImpact] = await Promise.all([
+    boundaryIds.length
+      ? tx.processCompletion.findMany({
+          where: { routeId: input.route.id, stepId: { in: boundaryIds }, voidedAt: null },
+          select: { stepId: true },
+          distinct: ['stepId'],
+        })
+      : Promise.resolve([]),
+    boundaryIds.length
+      ? tx.processExecution.findMany({
+          where: { stepId: { in: boundaryIds }, step: { routeId: input.route.id }, voidedAt: null },
+          select: { stepId: true },
+          distinct: ['stepId'],
+        })
+      : Promise.resolve([]),
+    calculateReviewedTimeImpactSnapshot(tx, input.route.id, input.diffs),
+  ]);
+  const reportedBoundaryStepIds = new Set([
+    ...input.route.steps
+      .filter(step => insertBoundaryStepIds.has(step.id) && (
+        step.processedQty > 0
+        || step.goodOutputQty > 0
+        || step.defectOutputQty > 0
+        || step.releasedGoodQty > 0
+      ))
+      .map(step => step.id),
+    ...boundaryCompletions.map(item => item.stepId),
+    ...boundaryExecutions.map(item => item.stepId),
+  ]);
+  return {
+    ...reviewedTimeImpact,
+    downstreamReportedStepCount: Math.max(
+      reportedBoundaryStepIds.size,
+      input.diffs.some(diff => diff.kind === ProcessRouteChangeDiffKind.INSERT_STEP)
+        && Number(input.route.workOrder.completedQty || 0) > 0
+        ? 1
+        : 0,
+    ),
+    affectedQty: input.route.workOrder.productionTargetQty || 0,
+  };
+}
+
+async function refreshProcessRouteChangeDiffBaselines(
+  tx: Prisma.TransactionClient,
+  input: RouteChangeReevaluationInput,
+) {
+  const stepById = new Map(input.route.steps.map(step => [step.id, step]));
+  for (const diff of input.diffs) {
+    if (!diff.targetStepId || diff.kind === ProcessRouteChangeDiffKind.INSERT_STEP) continue;
+    const step = stepById.get(diff.targetStepId);
+    if (!step) continue;
+    await tx.processRouteChangeDiff.update({
+      where: { id: diff.id },
+      data: {
+        processDefinitionId: step.processDefinitionId || null,
+        beforeData: json({
+          id: step.id,
+          processDefinitionId: step.processDefinitionId || null,
+          processCode: step.processCode,
+          processName: step.processName,
+          stageGroup: step.stageGroup,
+          position: step.position,
+          sequenceGroup: step.sequenceGroup,
+          status: step.status,
+          standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
+          timeBasis: step.timeBasis,
+          setupMilliseconds: step.setupMilliseconds,
+          unitsPerProduct: step.unitsPerProduct,
+          unitLabel: step.unitLabel,
+          countsForEfficiency: step.countsForEfficiency,
+        }),
+      },
+    });
+  }
+}
+
 async function bindInsertedDefinitionForReview(
   tx: Prisma.TransactionClient,
   input: {
@@ -1573,30 +1707,139 @@ export async function reviewProcessRouteChange(command: ReviewProcessRouteChange
   }
   const approved = decision === 'approve';
   const note = clean(command.note ?? command.reviewReason, 2_000) || null;
+  if (!approved) {
+    const changeId = clean(command.changeId, 80);
+    if (!changeId) {
+      throw new ProcessRouteChangeServiceError('缺少工艺变更标识', 400, 'PROCESS_ROUTE_CHANGE_ID_REQUIRED');
+    }
+    const id = await serializable(async tx => {
+      const replay = await replayChangeId(tx, identity.idempotencyKey, 'reject', changeId);
+      if (replay) return replay;
+      const current = await tx.processRouteChange.findUnique({
+        where: { id: changeId },
+        select: {
+          id: true,
+          changeRequestId: true,
+          status: true,
+          version: true,
+          workOrderId: true,
+          routeId: true,
+          reviewDecision: true,
+          updatedAt: true,
+        },
+      });
+      if (!current) {
+        throw new ProcessRouteChangeServiceError('工艺变更不存在', 404, 'PROCESS_ROUTE_CHANGE_NOT_FOUND');
+      }
+      if (current.status === ProcessRouteChangeStatus.REJECTED && current.reviewDecision === 'REJECTED') {
+        return changeId;
+      }
+      if (
+        current.status !== ProcessRouteChangeStatus.SUBMITTED
+        && current.status !== ProcessRouteChangeStatus.APPROVED
+      ) {
+        throw new ProcessRouteChangeServiceError(
+          '只有待审核或已通过但尚未启用的工艺变更可以驳回',
+          409,
+          'PROCESS_ROUTE_CHANGE_STATUS_CONFLICT',
+          {
+            currentStatus: current.status,
+            currentVersion: current.version,
+            expectedStatus: `${ProcessRouteChangeStatus.SUBMITTED}|${ProcessRouteChangeStatus.APPROVED}`,
+            updatedAt: current.updatedAt.toISOString(),
+          },
+        );
+      }
+      if (current.version !== identity.expectedVersion) {
+        throw new ProcessRouteChangeServiceError(
+          '工艺变更已被其他人更新，请刷新后重试',
+          409,
+          'PROCESS_ROUTE_CHANGE_VERSION_CONFLICT',
+          {
+            currentStatus: current.status,
+            currentVersion: current.version,
+            updatedAt: current.updatedAt.toISOString(),
+          },
+        );
+      }
+      const updated = await tx.processRouteChange.updateMany({
+        where: { id: changeId, version: current.version, status: current.status },
+        data: {
+          status: ProcessRouteChangeStatus.REJECTED,
+          reviewDecision: 'REJECTED',
+          reviewNote: note,
+          reviewedAt: new Date(),
+          reviewedById: identity.userId,
+          activationError: null,
+          activationStartedAt: null,
+          updatedById: identity.userId,
+          version: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1) {
+        throw new ProcessRouteChangeServiceError(
+          '工艺变更已被其他人更新，请刷新后重试',
+          409,
+          'PROCESS_ROUTE_CHANGE_VERSION_CONFLICT',
+        );
+      }
+      await tx.changeRequest.update({
+        where: { id: current.changeRequestId },
+        data: { status: 'closed', closedAt: new Date(), version: { increment: 1 } },
+      });
+      await tx.processRouteChangeEvent.create({
+        data: {
+          changeId,
+          action: 'reject',
+          idempotencyKey: identity.idempotencyKey,
+          fromStatus: current.status,
+          toStatus: ProcessRouteChangeStatus.REJECTED,
+          actorId: identity.userId,
+          actorSnapshot: identity.actor,
+          detail: json({ decision: 'reject', note, approvalRevoked: current.status === ProcessRouteChangeStatus.APPROVED }),
+        },
+      });
+      await tx.processRouteChangeOutbox.create({
+        data: {
+          changeId,
+          eventType: 'PROCESS_ROUTE_CHANGE_REJECTED',
+          dedupeKey: `PROCESS_ROUTE_CHANGE_REJECTED:${identity.idempotencyKey}`.slice(0, 180),
+          payload: json({
+            changeId,
+            workOrderId: current.workOrderId,
+            fromStatus: current.status,
+            toStatus: ProcessRouteChangeStatus.REJECTED,
+            actor: identity.actor,
+            detail: { decision: 'reject', note, approvalRevoked: current.status === ProcessRouteChangeStatus.APPROVED },
+          }),
+        },
+      });
+      return changeId;
+    });
+    return serializeChange(await loadChangeDetail(id));
+  }
   return transitionProcessRouteChange({
     changeId: command.changeId,
     identity,
-    action: approved ? 'approve' : 'reject',
+    action: 'approve',
     from: ProcessRouteChangeStatus.SUBMITTED,
-    to: approved ? ProcessRouteChangeStatus.APPROVED : ProcessRouteChangeStatus.REJECTED,
-    changeRequestStatus: approved ? 'implementing' : 'closed',
+    to: ProcessRouteChangeStatus.APPROVED,
+    changeRequestStatus: 'implementing',
     data: {
-      reviewDecision: approved ? 'APPROVED' : 'REJECTED',
+      reviewDecision: 'APPROVED',
       reviewNote: note,
       reviewedAt: new Date(),
       reviewedById: identity.userId,
     },
     detail: json({ decision, note }),
-    outboxEventType: approved ? 'PROCESS_ROUTE_CHANGE_APPROVED' : 'PROCESS_ROUTE_CHANGE_REJECTED',
-    alreadyApplied: current => approved
-      ? current.reviewDecision === 'APPROVED' && ([
+    outboxEventType: 'PROCESS_ROUTE_CHANGE_APPROVED',
+    alreadyApplied: current => current.reviewDecision === 'APPROVED' && ([
           ProcessRouteChangeStatus.APPROVED,
           ProcessRouteChangeStatus.ACTIVATING,
           ProcessRouteChangeStatus.ACTIVE,
           ProcessRouteChangeStatus.FAILED,
-        ] as ProcessRouteChangeStatus[]).includes(current.status)
-      : current.reviewDecision === 'REJECTED' && current.status === ProcessRouteChangeStatus.REJECTED,
-    beforeTransition: approved ? async (tx, current) => {
+        ] as ProcessRouteChangeStatus[]).includes(current.status),
+    beforeTransition: async (tx, current) => {
       const diffs = await tx.processRouteChangeDiff.findMany({
         where: { changeId: current.id },
         orderBy: { position: 'asc' },
@@ -1716,8 +1959,184 @@ export async function reviewProcessRouteChange(command: ReviewProcessRouteChange
           }),
         },
       });
-    } : undefined,
+    },
   });
+}
+
+export async function reevaluateProcessRouteChange(command: ReevaluateProcessRouteChangeCommand) {
+  const identity = mutationIdentity(command);
+  const changeId = clean(command.changeId, 80);
+  if (!changeId) {
+    throw new ProcessRouteChangeServiceError('缺少工艺变更标识', 400, 'PROCESS_ROUTE_CHANGE_ID_REQUIRED');
+  }
+  const id = await serializable(async tx => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`process-route-change:${changeId}`}))`;
+    const replay = await replayChangeId(tx, identity.idempotencyKey, 'reevaluate', changeId);
+    if (replay) return replay;
+    const change = await tx.processRouteChange.findUnique({
+      where: { id: changeId },
+      include: {
+        diffs: { orderBy: { position: 'asc' } },
+        route: {
+          include: {
+            workOrder: {
+              select: {
+                productionTargetQty: true,
+                completedQty: true,
+                drawingLibraryItemId: true,
+              },
+            },
+            steps: { where: { retiredAt: null }, orderBy: { position: 'asc' } },
+          },
+        },
+      },
+    });
+    if (!change) {
+      throw new ProcessRouteChangeServiceError('工艺变更不存在', 404, 'PROCESS_ROUTE_CHANGE_NOT_FOUND');
+    }
+    if (change.status === ProcessRouteChangeStatus.SUBMITTED && change.baseRouteVersion === change.route.version) {
+      return change.id;
+    }
+    if (change.status !== ProcessRouteChangeStatus.APPROVED) {
+      throw new ProcessRouteChangeServiceError(
+        '只有已通过但尚未启用的工艺变更可以重新评估',
+        409,
+        'PROCESS_ROUTE_CHANGE_STATUS_CONFLICT',
+        {
+          currentStatus: change.status,
+          currentVersion: change.version,
+          expectedStatus: ProcessRouteChangeStatus.APPROVED,
+          updatedAt: change.updatedAt.toISOString(),
+        },
+      );
+    }
+    if (change.version !== identity.expectedVersion) {
+      throw new ProcessRouteChangeServiceError(
+        '工艺变更已被其他人更新，请刷新后重试',
+        409,
+        'PROCESS_ROUTE_CHANGE_VERSION_CONFLICT',
+        {
+          currentStatus: change.status,
+          currentVersion: change.version,
+          updatedAt: change.updatedAt.toISOString(),
+        },
+      );
+    }
+    if (change.route.version === change.baseRouteVersion) {
+      throw new ProcessRouteChangeServiceError(
+        '当前工艺路线没有变化，无需重新评估',
+        409,
+        'PROCESS_ROUTE_REEVALUATION_NOT_REQUIRED',
+      );
+    }
+    const stepById = new Map(change.route.steps.map(step => [step.id, step]));
+    for (const diff of change.diffs) {
+      if (diff.targetStepId && !stepById.has(diff.targetStepId)) {
+        throw new ProcessRouteChangeServiceError(
+          '原申请引用的工序已不存在，无法自动重新评估；请驳回后重新提交',
+          409,
+          'PROCESS_ROUTE_CHANGE_REEVALUATION_TARGET_MISSING',
+        );
+      }
+      if (diff.kind === ProcessRouteChangeDiffKind.MOVE_STEP) {
+        const beforeStepId = clean(record(diff.afterData).beforeStepId, 80);
+        if (beforeStepId && !stepById.has(beforeStepId)) {
+          throw new ProcessRouteChangeServiceError(
+            '原申请的移动位置已不存在，无法自动重新评估；请驳回后重新提交',
+            409,
+            'PROCESS_ROUTE_CHANGE_REEVALUATION_TARGET_MISSING',
+          );
+        }
+        if (diff.targetStepId) {
+          await assessCurrentRouteGroupMove(tx, change.route.id, diff.targetStepId, beforeStepId || null);
+        }
+      }
+    }
+    const impactSnapshot = await calculateRouteChangeImpactSnapshot(tx, {
+      route: change.route,
+      diffs: change.diffs,
+    });
+    await refreshProcessRouteChangeDiffBaselines(tx, {
+      route: change.route,
+      diffs: change.diffs,
+    });
+    const now = new Date();
+    const latestPublishedProfile = change.scope === ProcessRouteChangeScope.CURRENT_WORK_ORDER_ONLY
+      || !change.route.workOrder.drawingLibraryItemId
+      ? null
+      : await tx.productTimeProfile.findFirst({
+          where: {
+            drawingLibraryItemId: change.route.workOrder.drawingLibraryItemId,
+            status: 'published',
+          },
+          orderBy: { version: 'desc' },
+          select: { id: true, version: true },
+        });
+    const updated = await tx.processRouteChange.updateMany({
+      where: { id: change.id, status: ProcessRouteChangeStatus.APPROVED, version: change.version },
+      data: {
+        status: ProcessRouteChangeStatus.SUBMITTED,
+        baseRouteVersion: change.route.version,
+        sourceProductTimeProfileId: latestPublishedProfile?.id ?? change.sourceProductTimeProfileId,
+        baseProductProfileVersion: latestPublishedProfile?.version ?? change.baseProductProfileVersion,
+        routeSnapshot: json(routeSnapshot(change.route)),
+        impactSnapshot: json({
+          ...record(change.impactSnapshot),
+          ...impactSnapshot,
+          warnings: ['路线已按最新版本重新评估，请工艺重新审核后再启用。'],
+        }),
+        reviewDecision: null,
+        reviewNote: null,
+        reviewedAt: null,
+        reviewedById: null,
+        activationError: null,
+        activationStartedAt: null,
+        submittedAt: now,
+        updatedById: identity.userId,
+        version: { increment: 1 },
+      },
+    });
+    if (updated.count !== 1) {
+      throw new ProcessRouteChangeServiceError(
+        '工艺变更已被其他人更新，请刷新后重试',
+        409,
+        'PROCESS_ROUTE_CHANGE_VERSION_CONFLICT',
+      );
+    }
+    await tx.changeRequest.update({
+      where: { id: change.changeRequestId },
+      data: { status: 'assessing', closedAt: null, effectiveAt: null, version: { increment: 1 } },
+    });
+    await tx.processRouteChangeEvent.create({
+      data: {
+        changeId: change.id,
+        action: 'reevaluate',
+        idempotencyKey: identity.idempotencyKey,
+        fromStatus: ProcessRouteChangeStatus.APPROVED,
+        toStatus: ProcessRouteChangeStatus.SUBMITTED,
+        actorId: identity.userId,
+        actorSnapshot: identity.actor,
+        detail: json({ fromRouteVersion: change.baseRouteVersion, toRouteVersion: change.route.version }),
+      },
+    });
+    await tx.processRouteChangeOutbox.create({
+      data: {
+        changeId: change.id,
+        eventType: 'PROCESS_ROUTE_CHANGE_REEVALUATED',
+        dedupeKey: `PROCESS_ROUTE_CHANGE_REEVALUATED:${identity.idempotencyKey}`.slice(0, 180),
+        payload: json({
+          changeId: change.id,
+          workOrderId: change.workOrderId,
+          routeId: change.routeId,
+          fromRouteVersion: change.baseRouteVersion,
+          toRouteVersion: change.route.version,
+          actor: identity.actor,
+        }),
+      },
+    });
+    return change.id;
+  });
+  return serializeChange(await loadChangeDetail(id));
 }
 
 export async function listProcessRouteChanges(query: ListProcessRouteChangesQuery = {}) {

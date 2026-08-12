@@ -82,7 +82,7 @@ function replaceProcessRouteChange(
 
 function resolvedCommandMessage(
   status: ProcessRouteChangeDTO['status'],
-  action: 'approve' | 'reject' | 'activate',
+  action: 'approve' | 'reject' | 'activate' | 'reevaluate',
 ): { success: boolean; message: string } | null {
   if (action === 'approve') {
     if (status === 'APPROVED') return { success: true, message: '该申请已经审核通过，请直接执行一键启用。' };
@@ -93,12 +93,16 @@ function resolvedCommandMessage(
   }
   if (action === 'reject') {
     if (status === 'REJECTED') return { success: true, message: '该申请已经驳回，无需重复操作。' };
-    if (status !== 'SUBMITTED') return { success: false, message: `该申请当前为“${processRouteChangeStatusLabels[status]}”，不能再次驳回。` };
+    if (status !== 'SUBMITTED' && status !== 'APPROVED') return { success: false, message: `该申请当前为“${processRouteChangeStatusLabels[status]}”，不能再次驳回。` };
   }
   if (action === 'activate') {
     if (status === 'ACTIVE') return { success: true, message: '该申请已经启用，无需重复操作。' };
     if (status === 'ACTIVATING') return { success: true, message: '该申请正在启用中，请稍后刷新。' };
     if (status === 'FAILED') return { success: false, message: '该申请启用失败，请查看错误后重新评估。' };
+  }
+  if (action === 'reevaluate') {
+    if (status === 'SUBMITTED') return { success: true, message: '已按最新路线重新评估，请重新审核。' };
+    if (status === 'ACTIVE') return { success: true, message: '该申请已经启用，无需重新评估。' };
   }
   return null;
 }
@@ -225,6 +229,8 @@ export function ProcessRouteChangeReviewPanel({
   }));
   const canApprove = Boolean(selected && selected.status === 'SUBMITTED' && canReview);
   const canActivate = Boolean(selected && selected.status === 'APPROVED' && canReview);
+  const canReject = Boolean(selected && (selected.status === 'SUBMITTED' || selected.status === 'APPROVED') && canReview);
+  const canReevaluate = Boolean(selected && selected.status === 'APPROVED' && selected.routeVersionConflict && canReview);
   const selectedIncludesInsert = selected?.payload.changeType === 'INSERT_STEP' || selected?.payload.changeType === 'BOTH';
   const definitionApprovalBlocked = Boolean(selectedIncludesInsert && (
     processDefinitionsLoading
@@ -232,7 +238,7 @@ export function ProcessRouteChangeReviewPanel({
     || definitionBinding.requiresExplicitSelection
   ));
 
-  async function command(action: 'approve' | 'reject' | 'activate'): Promise<void> {
+  async function command(action: 'approve' | 'reject' | 'activate' | 'reevaluate'): Promise<void> {
     if (!selected || saving || commandInFlightRef.current) return;
     const parsedAffectedQty = Number(affectedQty);
     const parsedNewStepStandard = millisecondsFromSeconds(newStepSeconds);
@@ -268,7 +274,7 @@ export function ProcessRouteChangeReviewPanel({
         return;
       }
     }
-    const reviewNoteError = action === 'activate'
+    const reviewNoteError = action === 'activate' || action === 'reevaluate'
       ? null
       : processRouteChangeReviewNoteError(action, reviewReason);
     if (reviewNoteError) {
@@ -282,13 +288,18 @@ export function ProcessRouteChangeReviewPanel({
     try {
       const endpoint = action === 'activate'
         ? `/api/process-management/route-changes/${encodeURIComponent(selected.id)}/activate`
-        : `/api/process-management/route-changes/${encodeURIComponent(selected.id)}/review`;
+        : action === 'reevaluate'
+          ? `/api/process-management/route-changes/${encodeURIComponent(selected.id)}/reevaluate`
+          : `/api/process-management/route-changes/${encodeURIComponent(selected.id)}/review`;
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(action === 'activate' ? {
           expectedVersion: selected.version,
-          expectedRouteVersion: routeVersion,
+          expectedRouteVersion: selected.currentRouteVersion ?? routeVersion,
+          idempotencyKey: processRouteChangeCommandIdempotencyKey(selected.id, selected.version, action),
+        } : action === 'reevaluate' ? {
+          expectedVersion: selected.version,
           idempotencyKey: processRouteChangeCommandIdempotencyKey(selected.id, selected.version, action),
         } : {
           action,
@@ -328,7 +339,11 @@ export function ProcessRouteChangeReviewPanel({
             }
           }
         }
-        throw new Error(responseError(body, action === 'activate' ? '工艺变更启用失败' : '工艺审核失败'));
+        throw new Error(responseError(body, action === 'activate'
+          ? '工艺变更启用失败'
+          : action === 'reevaluate'
+            ? '工艺变更重新评估失败'
+            : '工艺审核失败'));
       }
       if (body.data) {
         setChanges(current => replaceProcessRouteChange(current, body.data as ProcessRouteChangeDTO));
@@ -348,6 +363,8 @@ export function ProcessRouteChangeReviewPanel({
           ? (body.data?.historicalLaborRecalculationPending
               ? '路线与产品主档已启用；历史工时和达成率仍在等待重算，完成前不会标记为最终结果。'
               : '已启用：当前工单、产品主档、扫码工序及历史工时已同步到新版本。')
+          : action === 'reevaluate' && body.data?.status === 'SUBMITTED'
+            ? '已基于最新工艺路线重新评估，请重新审核后再启用。'
           : action === 'approve' && body.data?.status === 'APPROVED'
             ? '工艺审核已通过，请核对影响后一键启用。'
             : action === 'reject' && body.data?.status === 'REJECTED'
@@ -403,14 +420,17 @@ export function ProcessRouteChangeReviewPanel({
         <section className="workflow-route-change-impact"><div><GitPullRequestArrow /><span><small>后序已报工</small><strong>{selected.impact?.downstreamReportedStepCount || 0} 道</strong></span></div><div><Clock3 /><span><small>追溯报工</small><strong>{selected.impact?.affectedCompletionCount || 0} 笔</strong></span></div><div><Users /><span><small>影响员工</small><strong>{selected.impact?.affectedEmployeeCount || 0} 人</strong></span></div><div><RotateCcw /><span><small>标准工时</small><strong>{formatLabor(selected.impact?.previousStandardLaborMilliseconds)} → {formatLabor(selected.impact?.nextStandardLaborMilliseconds)}</strong></span></div></section>
         {!!selected.impact?.warnings?.length && <ul className="workflow-route-change-warnings">{selected.impact.warnings.map(warning => <li key={warning}><AlertTriangle size={14} />{warning}</li>)}</ul>}
 
-        <label className="workflow-route-change-reason"><span>工艺审核意见（可选）</span><textarea rows={2} value={reviewReason} disabled={!canApprove || saving} placeholder="通过或驳回均可留空；如需补充，可填写判断依据" onChange={event => setReviewReason(event.target.value)} /></label>
+        <label className="workflow-route-change-reason"><span>工艺审核意见（可选）</span><textarea rows={2} value={reviewReason} disabled={!canReject || saving} placeholder="通过或驳回均可留空；如需补充，可填写判断依据" onChange={event => setReviewReason(event.target.value)} /></label>
+        {selected.routeVersionConflict && <p className="workflow-route-change-message error"><AlertTriangle size={15} />工艺路线已从 R{selected.baseRouteVersion} 更新到 R{selected.currentRouteVersion ?? routeVersion}。请先重新评估，重新审核后才能启用。</p>}
         {message && <p className="workflow-route-change-message success"><Check size={15} />{message}</p>}
         {error && <p className="workflow-route-change-message error"><AlertTriangle size={15} />{error}</p>}
 
         <footer>
           {!canReview && <span>当前账号可查看，仅工艺更新权限可审核与启用。</span>}
-          {canApprove && <><button className="reject" type="button" disabled={saving} onClick={() => void command('reject')}><X size={16} />驳回</button><button className="approve" type="button" disabled={saving || definitionApprovalBlocked} title={definitionApprovalBlocked ? '请先完成工序定义核对' : undefined} onClick={() => void command('approve')}>{saving ? <Loader2 className="spin" size={16} /> : <Check size={16} />}通过并锁定工时</button></>}
-          {canActivate && <button className="activate" type="button" disabled={saving} onClick={() => void command('activate')}>{saving ? <Loader2 className="spin" size={16} /> : <Play size={16} />}一键启用到当前工单与产品主档</button>}
+          {canReject && <button className="reject" type="button" disabled={saving} onClick={() => void command('reject')}><X size={16} />{selected.status === 'APPROVED' ? '撤销通过并驳回' : '驳回'}</button>}
+          {canApprove && <button className="approve" type="button" disabled={saving || definitionApprovalBlocked} title={definitionApprovalBlocked ? '请先完成工序定义核对' : undefined} onClick={() => void command('approve')}>{saving ? <Loader2 className="spin" size={16} /> : <Check size={16} />}通过并锁定工时</button>}
+          {canReevaluate && <button className="reevaluate" type="button" disabled={saving} onClick={() => void command('reevaluate')}>{saving ? <Loader2 className="spin" size={16} /> : <RefreshCw size={16} />}按最新路线重新评估</button>}
+          {canActivate && !selected.routeVersionConflict && <button className="activate" type="button" disabled={saving} onClick={() => void command('activate')}>{saving ? <Loader2 className="spin" size={16} /> : <Play size={16} />}一键启用到当前工单与产品主档</button>}
         </footer>
       </article>}
     </div>}

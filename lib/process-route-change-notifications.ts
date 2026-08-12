@@ -37,6 +37,9 @@ function eventCopy(eventType: string): { title: string; action: string } {
   if (eventType === 'PROCESS_ROUTE_CHANGE_REJECTED') {
     return { title: '现场工艺变更已驳回', action: '工艺审核未通过' };
   }
+  if (eventType === 'PROCESS_ROUTE_CHANGE_REEVALUATED') {
+    return { title: '现场工艺变更已重新评估', action: '路线基线已更新，等待工艺重新审核' };
+  }
   if (eventType === 'PROCESS_ROUTE_CHANGE_ACTIVATED') {
     return { title: '现场工艺变更已启用', action: '二维码、生产路线和产品工艺已同步新版本' };
   }
