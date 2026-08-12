@@ -100,6 +100,7 @@ export type ProcessRouteTimeChangeDTO = {
 export type ProcessRouteChangePayloadDTO = {
   changeType: ProcessRouteChangeType;
   insertBeforeStepId?: string | null;
+  insertBeforeProcessName?: string | null;
   insertAfterStepId?: string | null;
   newStepId?: string | null;
   newProcessDefinitionId?: string | null;
@@ -128,6 +129,13 @@ export type ProcessRouteChangeImpactDTO = {
   warnings?: string[];
 };
 
+export type ProcessRouteSnapshotStepDTO = {
+  id: string;
+  processName: string;
+  position: number;
+  standardMillisecondsPerUnit?: number | null;
+};
+
 export type ProcessRouteChangeDTO = {
   id: string;
   routeId: string;
@@ -141,6 +149,7 @@ export type ProcessRouteChangeDTO = {
   baseProductProfileVersion?: number | null;
   publishedProductProfileVersion?: number | null;
   payload: ProcessRouteChangePayloadDTO;
+  routeSteps?: ProcessRouteSnapshotStepDTO[];
   impact?: ProcessRouteChangeImpactDTO | null;
   requesterName?: string | null;
   reviewerName?: string | null;
@@ -456,6 +465,11 @@ export function processRouteChangeDTO(value: unknown): ProcessRouteChangeDTO {
   const routeSnapshot = record(source.routeSnapshot);
   const snapshotSteps = records(routeSnapshot.steps);
   const movedSnapshot = snapshotSteps.find(step => text(step.id) === text(move.targetStepId));
+  const insertBeforeSnapshot = snapshotSteps.find(step => text(step.id) === (
+    text(insertAfter.insertBeforeStepId)
+    || text(insert.targetStepId)
+    || text(existingPayload.insertBeforeStepId)
+  ));
   const moveBeforeSnapshot = snapshotSteps.find(step => text(step.id) === (text(moveAfter.beforeStepId) || text(existingPayload.moveBeforeStepId)));
   const request = record(source.changeRequest);
   const workOrder = record(source.workOrder);
@@ -474,6 +488,8 @@ export function processRouteChangeDTO(value: unknown): ProcessRouteChangeDTO {
     insertBeforeStepId: text(insertAfter.insertBeforeStepId)
       || text(insert.targetStepId)
       || text(existingPayload.insertBeforeStepId),
+    insertBeforeProcessName: text(insertBeforeSnapshot?.processName)
+      || text(existingPayload.insertBeforeProcessName),
     insertAfterStepId: text(existingPayload.insertAfterStepId),
     newStepId: text(existingPayload.newStepId),
     newProcessDefinitionId: text(insert.processDefinitionId)
@@ -507,6 +523,14 @@ export function processRouteChangeDTO(value: unknown): ProcessRouteChangeDTO {
     baseProductProfileVersion: number(source.baseProductProfileVersion),
     publishedProductProfileVersion: number(source.publishedProductProfileVersion),
     payload,
+    routeSteps: snapshotSteps
+      .map((step, index) => ({
+        id: text(step.id) || `snapshot-step-${index + 1}`,
+        processName: text(step.processName) || text(step.name) || `工序 ${index + 1}`,
+        position: integer(step.position) || index + 1,
+        standardMillisecondsPerUnit: number(step.standardMillisecondsPerUnit),
+      }))
+      .sort((left, right) => left.position - right.position),
     impact: {
       downstreamReportedStepCount: integer(impactSource.downstreamReportedStepCount),
       affectedCompletionCount,

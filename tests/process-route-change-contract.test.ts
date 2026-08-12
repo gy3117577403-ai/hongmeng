@@ -78,6 +78,9 @@ test('inserted process definition identity round-trips into the review DTO', () 
     version: 1,
     baseRouteVersion: 3,
     createdAt: '2026-08-11T00:00:00.000Z',
+    routeSnapshot: {
+      steps: [{ id: 'step-4', processName: '合压', position: 4, standardMillisecondsPerUnit: 40_000 }],
+    },
     diffs: [{
       kind: 'INSERT_STEP',
       targetStepId: 'step-4',
@@ -89,6 +92,13 @@ test('inserted process definition identity round-trips into the review DTO', () 
     }],
   });
   assert.equal(dto.payload.newProcessDefinitionId, 'definition-strip');
+  assert.equal(dto.payload.insertBeforeProcessName, '合压');
+  assert.deepEqual(dto.routeSteps, [{
+    id: 'step-4',
+    processName: '合压',
+    position: 4,
+    standardMillisecondsPerUnit: 40_000,
+  }]);
 });
 
 test('MOVE_STEP persistence data round-trips into the field and review contract', () => {

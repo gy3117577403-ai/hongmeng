@@ -36,6 +36,7 @@ export async function GET(req: NextRequest) {
     const sourceIssueId = String(params.get('sourceIssueId') || '').trim();
     const overdueOnly = params.get('overdue') === 'true';
     const unassignedOnly = params.get('unassigned') === 'true';
+    const openOnly = params.get('openOnly') === 'true';
     const page = integer(params.get('page'), 1, 100000);
     const pageSize = integer(params.get('pageSize'), 40, 100);
 
@@ -51,6 +52,7 @@ export async function GET(req: NextRequest) {
 
     const where: Prisma.ChangeRequestWhereInput = { deletedAt: null };
     if (status && status !== 'all') where.status = status;
+    else if (openOnly) where.status = { not: 'closed' };
     if (type && type !== 'all') where.type = type;
     if (priority && priority !== 'all') where.priority = priority;
     if (ownerId) where.ownerId = ownerId;

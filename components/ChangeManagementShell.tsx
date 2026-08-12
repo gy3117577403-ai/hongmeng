@@ -4,24 +4,28 @@ import {
   AlertTriangle,
   ArrowLeft,
   ArrowRight,
-  CalendarClock,
+  Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
   ClipboardList,
   Download,
   ExternalLink,
   FileImage,
   FileText,
+  Filter,
+  GitCommitHorizontal,
   GitPullRequestArrow,
   Info,
   Loader2,
-  MessageSquareText,
+  MoreVertical,
   Paperclip,
   Pencil,
   Plus,
   RefreshCw,
   Search,
   Send,
+  SlidersHorizontal,
   Trash2,
   UserRound,
   X,
@@ -30,12 +34,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
-import { WorkbenchPageHeader } from '@/components/layout/WorkbenchPageHeader';
+import {
+  changeQueueSection,
+  changeScopeQuery,
+  genericChangeProgress,
+  processRouteChangeProgress,
+  type ChangeViewScope,
+} from '@/lib/change-management-presenter';
 import {
   isProcessRouteChangeManaged,
   processRouteChangeWorkflowHref,
 } from '@/lib/change-process-route-link';
-import { processRouteChangeStatusLabels } from '@/lib/process-route-change-contract';
+import {
+  processRouteChangeStatusLabels,
+  processRouteChangeTypeLabel,
+  secondsFromMilliseconds,
+  type ProcessRouteChangeDTO,
+  type ProcessRouteChangeDetailResponse,
+} from '@/lib/process-route-change-contract';
 import type {
   ChangeImpactArea,
   ChangePriority,
@@ -183,6 +199,11 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   const routeSearchParams = useSearchParams();
   const initialParams = useMemo(() => new URLSearchParams(routeSearchParams.toString()), [routeSearchParams]);
   const [keyword, setKeyword] = useState(initialParams.get('keyword') || '');
+  const [viewScope, setViewScope] = useState<ChangeViewScope>(() => {
+    const scope = initialParams.get('scope');
+    if (scope === 'all' || scope === 'closed') return scope;
+    return initialParams.get('changeId') ? 'all' : 'mine';
+  });
   const [filters, setFilters] = useState<Filters>(() => ({
     ...emptyFilters,
     status: (['draft', 'assessing', 'implementing', 'verifying', 'closed'].includes(initialParams.get('status') || '') ? initialParams.get('status') : 'all') as Filters['status'],
@@ -213,8 +234,10 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   const [formError, setFormError] = useState('');
   const [transition, setTransition] = useState<TransitionState | null>(null);
   const [comment, setComment] = useState('');
-  const [contextOpen, setContextOpen] = useState(false);
+  const [contextOpen, setContextOpen] = useState(true);
   const [compactContext, setCompactContext] = useState(false);
+  const [routeChangeDetail, setRouteChangeDetail] = useState<ProcessRouteChangeDTO | null>(null);
+  const [routeChangeDetailLoading, setRouteChangeDetailLoading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<ChangeRequestDTO | null>(null);
   const [confirmAttachmentDelete, setConfirmAttachmentDelete] = useState<AttachmentDeleteState | null>(null);
   const queueRef = useRef<HTMLDivElement>(null);
@@ -222,6 +245,7 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   const contextRef = useRef<HTMLElement>(null);
   const contextTriggerRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const modalReturnFocusRef = useRef<HTMLElement | null>(null);
 
   const updateChange = useCallback((change: ChangeRequestDTO): void => {
@@ -237,11 +261,12 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
     setError('');
     try {
       const params = new URLSearchParams({ page: String(page), pageSize: '60' });
+      for (const [key, value] of Object.entries(changeScopeQuery(viewScope, user.id))) params.set(key, value);
       if (keyword.trim()) params.set('keyword', keyword.trim());
-      if (filters.status !== 'all') params.set('status', filters.status);
+      if (viewScope !== 'closed' && filters.status !== 'all') params.set('status', filters.status);
       if (filters.type !== 'all') params.set('type', filters.type);
       if (filters.priority !== 'all') params.set('priority', filters.priority);
-      if (filters.ownerId) params.set('ownerId', filters.ownerId);
+      if (filters.ownerId && viewScope !== 'mine') params.set('ownerId', filters.ownerId);
       if (filters.overdue) params.set('overdue', 'true');
       if (filters.unassigned) params.set('unassigned', 'true');
       const linkedWorkOrder = initialParams.get('workOrderId');
@@ -261,7 +286,7 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
     } finally {
       setLoading(false);
     }
-  }, [filters, initialParams, keyword, page]);
+  }, [filters, initialParams, keyword, page, user.id, viewScope]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadChanges(); }, keyword ? 260 : 0);
@@ -287,8 +312,55 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
     const params = new URLSearchParams(window.location.search);
     params.delete('action');
     params.set('changeId', selected.id);
+    params.set('scope', viewScope);
     window.history.replaceState(window.history.state, '', `${window.location.pathname}?${params.toString()}`);
-  }, [selected]);
+  }, [selected, viewScope]);
+
+  useEffect(() => {
+    const processChangeId = selected?.processRouteChange?.id;
+    if (!processChangeId) {
+      setRouteChangeDetail(null);
+      return;
+    }
+    let cancelled = false;
+    setRouteChangeDetailLoading(true);
+    fetch(`/api/process-management/route-changes/${encodeURIComponent(processChangeId)}`, { cache: 'no-store' })
+      .then(async response => {
+        const body = await response.json().catch(() => ({})) as Partial<ProcessRouteChangeDetailResponse>;
+        if (!response.ok || !body.data) throw new Error(body.error || '工艺变更详情加载失败');
+        if (!cancelled) setRouteChangeDetail(body.data);
+      })
+      .catch(reason => {
+        if (!cancelled) {
+          setRouteChangeDetail(null);
+          setToast(reason instanceof Error ? reason.message : '工艺变更详情加载失败');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setRouteChangeDetailLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [selected?.processRouteChange?.id]);
+
+  useEffect(() => {
+    function onShortcut(event: KeyboardEvent): void {
+      const target = event.target as HTMLElement | null;
+      const editing = target?.matches('input, textarea, select, [contenteditable="true"]');
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        searchInputRef.current?.focus();
+        return;
+      }
+      if (!editing && event.key === '/') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        searchInputRef.current?.focus();
+      }
+    }
+    window.addEventListener('keydown', onShortcut, true);
+    return () => window.removeEventListener('keydown', onShortcut, true);
+  }, []);
 
   useEffect(() => {
     const element = queueRef.current;
@@ -578,110 +650,185 @@ export default function ChangeManagementShell({ user }: ChangeManagementShellPro
   const selectedProcessRouteHref = selectedProcessRouteChange
     ? processRouteChangeWorkflowHref(selectedProcessRouteChange.id, selected?.workOrderId)
     : '';
+  const queueSections = useMemo(() => ({
+    active: changes.filter(change => changeQueueSection(change.status) === 'active'),
+    closed: changes.filter(change => changeQueueSection(change.status) === 'closed'),
+  }), [changes]);
+  const progressSteps = selected
+    ? selectedProcessRouteChange
+      ? processRouteChangeProgress(selectedProcessRouteChange.status)
+      : genericChangeProgress(selected.status)
+    : [];
+  const changeScope = (scope: ChangeViewScope): void => {
+    setViewScope(scope);
+    setPage(1);
+    setFilters(current => ({
+      ...current,
+      status: scope === 'closed' ? 'closed' : 'all',
+      ownerId: '',
+      overdue: false,
+      unassigned: false,
+    }));
+  };
+  const routePayload = routeChangeDetail?.payload || null;
+  const insertAnchorName = routePayload?.insertBeforeProcessName || '目标工序';
+  const newProcessName = routePayload?.newProcessName || '新增工序';
+  const routeBeforeSteps = routeChangeDetail?.routeSteps || [];
+  const routeAfterSteps: Array<{
+    id: string;
+    processName: string;
+    position: number;
+    standardMillisecondsPerUnit?: number | null;
+    isNew?: boolean;
+  }> = routeBeforeSteps.map(step => {
+    const timeChange = routePayload?.timeChanges.find(item => item.stepId === step.id);
+    return timeChange ? { ...step, standardMillisecondsPerUnit: timeChange.standardMillisecondsPerUnit } : { ...step };
+  });
+  if (routePayload && (routePayload.changeType === 'INSERT_STEP' || routePayload.changeType === 'BOTH')) {
+    const targetIndex = routeAfterSteps.findIndex(step => step.id === routePayload.insertBeforeStepId);
+    routeAfterSteps.splice(targetIndex >= 0 ? targetIndex : routeAfterSteps.length, 0, {
+      id: routePayload.newStepId || `new-${routeChangeDetail?.id || 'step'}`,
+      processName: newProcessName,
+      position: targetIndex >= 0 ? targetIndex + 1 : routeAfterSteps.length + 1,
+      standardMillisecondsPerUnit: routePayload.newStandardMillisecondsPerUnit,
+      isNew: true,
+    });
+  }
+  const routeChangeIsActive = selectedProcessRouteChange?.status === 'ACTIVE';
+
+  function chooseStatus(status: Filters['status'], options?: { overdue?: boolean }): void {
+    setViewScope(status === 'closed' ? 'closed' : 'all');
+    setPage(1);
+    setFilters(current => ({
+      ...current,
+      status,
+      overdue: Boolean(options?.overdue),
+      ownerId: '',
+      unassigned: false,
+    }));
+  }
+
+  function queueKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
+    if (!['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key) || !changes.length) return;
+    const currentIndex = selected ? changes.findIndex(change => change.id === selected.id) : -1;
+    if (event.key === 'Enter') {
+      document.querySelector<HTMLElement>(`[data-change-id="${selected?.id || ''}"]`)?.focus();
+      return;
+    }
+    event.preventDefault();
+    const offset = event.key === 'ArrowDown' ? 1 : -1;
+    const nextIndex = Math.min(Math.max(currentIndex + offset, 0), changes.length - 1);
+    const next = changes[nextIndex];
+    setSelected(next);
+    window.requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-change-id="${next.id}"]`)?.focus());
+  }
 
   return (
-    <main className="hm-workbench-root hm-change-workbench">
+    <main className="hm-workbench-root hm-workbench-navigation-overlay hm-change-workbench">
       <div ref={surfaceRef} className="change-workbench-surface">
-      <AppWorkbenchHeader
-        user={user}
-        activeHref="/workspace/changes"
-        subtitle="影响评估、执行和验证闭环"
-        menuItems={[{ label: '系统设置', href: '/dashboard?openSettings=1' }, { label: '退出登录', onSelect: () => { void logout(); } }]}
-        searchSlot={<label className="change-global-search"><Search size={16} aria-hidden="true" /><input value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索变更编号、标题、工单、规格或客户" aria-label="搜索变更" />{keyword && <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={14} /></button>}</label>}
-        utilityActions={<a className="change-workflow-link" href="/workspace/workflows"><ClipboardList size={15} />流程中心</a>}
-      />
-
-      <div className="change-page-frame">
-        <WorkbenchPageHeader
-          kicker="协同中心"
-          title="变更管理"
-          titleId="change-page-title"
-          description="图纸、工艺、计划、物料和资料变更的评估、执行与验证闭环。"
-          actions={<><button className="hm-workbench-button" type="button" disabled={loading} onClick={() => { void loadChanges(selected?.id); }}><RefreshCw size={15} className={loading ? 'spin' : ''} />刷新</button><button className="hm-workbench-button primary" type="button" onClick={openCreate}><Plus size={16} />新建变更</button></>}
+        <AppWorkbenchHeader
+          user={user}
+          activeHref="/workspace/changes"
+          subtitle="影响评估、执行和验证闭环"
+          hideHeader
+          sidebarTriggerTargetId="change-navigation-trigger"
+          menuItems={[{ label: '系统设置', href: '/dashboard?openSettings=1' }, { label: '退出登录', onSelect: () => { void logout(); } }]}
         />
 
-        <section className="change-summary" aria-label="变更统计">
-          {([
-            ['全部', summary.total, 'all'], ['草稿', summary.draft, 'draft'], ['待评估', summary.assessing, 'assessing'],
-            ['执行中', summary.implementing, 'implementing'], ['待验证', summary.verifying, 'verifying'], ['已关闭', summary.closed, 'closed'],
-          ] as const).map(([label, count, status]) => <button key={status} type="button" className={filters.status === status ? 'active' : ''} onClick={() => { setFilters(current => ({ ...current, status })); setPage(1); }}><span>{label}</span><strong>{count}</strong></button>)}
-          <button type="button" className={`warning ${filters.overdue ? 'active' : ''}`} onClick={() => setFilters(current => ({ ...current, overdue: !current.overdue }))}><span>逾期</span><strong>{summary.overdue}</strong></button>
-        </section>
-
-        <div className="change-workspace">
-          <section className="change-queue" aria-label="变更队列">
-            <header><div><h2>变更队列</h2><span>{changes.length} 条当前结果</span></div>{activeFilterCount > 0 && <button type="button" onClick={() => setFilters({ ...emptyFilters })}>清除 {activeFilterCount}</button>}</header>
-            <div className="change-filter-grid">
-              <select aria-label="变更类型" value={filters.type} onChange={event => { setFilters(current => ({ ...current, type: event.target.value as Filters['type'] })); setPage(1); }}><option value="all">全部类型</option>{Object.entries(typeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
-              <select aria-label="优先级" value={filters.priority} onChange={event => { setFilters(current => ({ ...current, priority: event.target.value as Filters['priority'] })); setPage(1); }}><option value="all">全部优先级</option>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
-              <select aria-label="负责人" value={filters.ownerId} onChange={event => { setFilters(current => ({ ...current, ownerId: event.target.value })); setPage(1); }}><option value="">全部负责人</option>{users.filter(item => item.isActive).map(item => <option value={item.id} key={item.id}>{item.displayName || item.username}</option>)}</select>
-              <button type="button" className={filters.unassigned ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, unassigned: !current.unassigned }))}><UserRound size={14} />待分派 {summary.unassigned}</button>
+        <div className="change-page-frame">
+          <section className="change-command-bar" aria-label="变更管理搜索与操作">
+            <span id="change-navigation-trigger" className="change-navigation-trigger" aria-label="平台导航入口" />
+            <div className="change-inline-title"><GitPullRequestArrow size={19} aria-hidden="true" /><div><h1>变更管理</h1><small>变更任务驾驶舱</small></div></div>
+            <div className="change-scope-tabs" role="tablist" aria-label="变更工作范围">
+              {([['mine', '我的待办'], ['all', '全部变更'], ['closed', '已完成']] as Array<[ChangeViewScope, string]>).map(([scope, label]) => <button role="tab" aria-selected={viewScope === scope} className={viewScope === scope ? 'active' : ''} type="button" key={scope} onClick={() => changeScope(scope)}>{label}</button>)}
             </div>
-            <div className="change-queue-scroll hm-scroll-region" ref={queueRef} tabIndex={0}>
-              {loading && <div className="change-loading"><Loader2 className="spin" />正在加载变更...</div>}
-              {!loading && error && <div className="change-error"><AlertTriangle /><p>{error}</p><button type="button" onClick={() => { void loadChanges(); }}>重试</button></div>}
-              {!loading && !error && !changes.length && <div className="change-empty"><GitPullRequestArrow /><h3>没有符合条件的变更</h3><p>可调整筛选，或创建第一条变更草稿。</p><button type="button" onClick={openCreate}><Plus size={15} />新建变更</button></div>}
-              {!loading && !error && changes.map(change => <button type="button" key={change.id} className={`change-card ${selected?.id === change.id ? 'selected' : ''}`} onClick={() => setSelected(change)}>
-                <div className="change-card-top"><span>{change.code} · {typeLabels[change.type]}</span><em className={`priority-${change.priority}`}>{priorityLabels[change.priority]}</em></div>
-                <strong title={change.title}>{change.title}</strong>
-                <p title={change.workOrder ? `${change.workOrder.customerName || '客户未设置'} · ${change.workOrder.specification || change.workOrder.code}` : '未关联工单'}>{change.workOrder ? `${change.workOrder.customerName || '客户未设置'} · ${change.workOrder.specification || change.workOrder.code}` : '未关联工单'}</p>
-                <div className="change-card-meta">{isProcessRouteChangeManaged(change)
-                  ? <span className={`process-route-state status-${change.processRouteChange?.status.toLowerCase()}`}>专用 · {processRouteChangeStatusLabels[change.processRouteChange!.status]}</span>
-                  : <span className={`status-${change.status}`}>{statusLabels[change.status]}</span>}<span>{change.owner?.displayName || change.owner?.username || '待分派'}</span><span className={change.isOverdue ? 'overdue' : ''}>{change.isOverdue ? '已逾期' : formatDate(change.dueAt, false)}</span></div>
-              </button>)}
-            </div>
-            {totalPages > 1 && <footer className="change-pagination"><button type="button" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page} / {totalPages}</span><button type="button" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></footer>}
+            <label className="change-command-search"><Search size={16} aria-hidden="true" /><input ref={searchInputRef} value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索变更编号、标题、产品或申请人" aria-label="搜索变更" />{keyword ? <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={14} /></button> : <kbd>Ctrl K</kbd>}</label>
+            <div className="change-command-actions"><a href="/workspace/workflows"><ClipboardList size={15} />流程中心</a><button type="button" aria-label="刷新变更" title="刷新" disabled={loading} onClick={() => { void loadChanges(selected?.id); }}><RefreshCw size={15} className={loading ? 'spin' : ''} /></button><button className="primary" type="button" onClick={openCreate}><Plus size={16} />新建变更</button></div>
           </section>
 
-          <section className="change-detail" aria-label="变更处理详情">
-            {!selected ? <div className="change-detail-empty"><GitPullRequestArrow /><h2>选择一条变更开始处理</h2><p>变更评估、实施、验证和附件都在这里完成。</p></div> : <>
-              <header className="change-detail-header">
-                <div><span>{selected.code} · {typeLabels[selected.type]}</span><h2 title={selected.title}>{selected.title}</h2><p>申请人 {selected.requester?.displayName || selected.requester?.username || '未记录'} · 更新于 {formatDate(selected.updatedAt)}</p></div>
-                <div>{selectedProcessRouteChange
-                  ? <span className={`change-status process-route-state status-${selectedProcessRouteChange.status.toLowerCase()}`}>专用 · {processRouteChangeStatusLabels[selectedProcessRouteChange.status]}</span>
-                  : <><span className={`change-status status-${selected.status}`}>{statusLabels[selected.status]}</span><button type="button" aria-label="编辑变更" title="编辑变更" onClick={() => openEdit(selected)}><Pencil size={16} /></button><button className="danger" type="button" aria-label="删除变更" title="删除变更" onClick={() => { modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmDelete(selected); }}><Trash2 size={16} /></button></>}</div>
-              </header>
-              <div className="change-detail-scroll hm-scroll-region">
-                {selectedProcessRouteChange && <section className="change-process-route-managed">
-                  <GitPullRequestArrow size={22} />
-                  <div><span>现场工艺变更专用流程</span><strong>{processRouteChangeStatusLabels[selectedProcessRouteChange.status]}</strong><p>此处仅展示关联事项，审核、工时确认和启用必须在流程中心完成；通用状态流转不会同步二维码或生产工序。</p>{selectedProcessRouteChange.activationError && <em>{selectedProcessRouteChange.activationError}</em>}</div>
-                  <a href={selectedProcessRouteHref}>进入工艺审核与启用<ExternalLink size={14} /></a>
-                </section>}
-                <section className="change-overview"><div><h3>{selectedProcessRouteChange ? '现场说明' : '变更原因'}</h3><p>{selected.reason || (selectedProcessRouteChange ? '现场未补充说明（可选）。' : '尚未填写变更原因。')}</p></div><div><h3>影响范围</h3><p>{selected.impactScope || '尚未填写影响范围。'}</p><div className="impact-tags">{selected.impactAreas.map(area => <span key={area}>{impactLabels[area]}</span>)}{!selected.impactAreas.length && <em>待确认</em>}</div></div></section>
-                {selected.description && <section className="change-description"><h3>补充说明</h3><p>{selected.description}</p></section>}
-                {!selectedProcessRouteChange && <section className="change-execution-grid">
-                  <article><span>01</span><div><h3>实施方案</h3><p>{selected.implementationPlan || '评估通过后填写实施步骤、负责人和切换窗口。'}</p></div></article>
-                  <article><span>02</span><div><h3>实施结果</h3><p>{selected.implementationResult || '执行完成后记录实际结果和偏差。'}</p></div></article>
-                  <article><span>03</span><div><h3>验证结果</h3><p>{selected.validationResult || '验证阶段记录验证方法和结论。'}</p></div></article>
-                  <article><span>R</span><div><h3>回退方案</h3><p>{selected.rollbackPlan || '可在需要时补充回退条件和恢复步骤。'}</p></div></article>
-                </section>}
-                <section className="change-timeline"><header><div><h3>协同时间线</h3><span>{selected.activityCount} 条记录</span></div></header><div>{selected.activities?.map(item => <article key={item.id}><span className={item.action === 'transition' ? 'transition' : ''} /><div><strong>{activityLabels[item.action] || item.action}</strong>{item.fromStatus && item.toStatus && <em>{statusLabels[item.fromStatus]} <ChevronRight size={12} /> {statusLabels[item.toStatus]}</em>}<p>{item.content || '已记录操作'}</p><small>{item.actor?.displayName || item.actor?.username || '系统'} · {formatDate(item.createdAt)}</small></div></article>)}{!selected.activities?.length && <p className="timeline-empty">暂无协同记录</p>}</div></section>
+          <div className="change-workspace">
+            <section className="change-queue" aria-label="变更收件箱">
+              <div className="change-queue-metrics" role="group" aria-label="变更状态筛选">
+                <button className={viewScope === 'all' && filters.status === 'all' && !filters.overdue ? 'active' : ''} type="button" onClick={() => chooseStatus('all')}><span>全部</span><strong>{summary.total}</strong></button>
+                <button className={filters.status === 'assessing' ? 'active' : ''} type="button" onClick={() => chooseStatus('assessing')}><span>待评估</span><strong>{summary.assessing}</strong></button>
+                <button className={filters.status === 'implementing' ? 'active' : ''} type="button" onClick={() => chooseStatus('implementing')}><span>执行中</span><strong>{summary.implementing}</strong></button>
+                <button className={filters.status === 'verifying' ? 'active' : ''} type="button" onClick={() => chooseStatus('verifying')}><span>待验证</span><strong>{summary.verifying}</strong></button>
+                <button className={`danger ${filters.overdue ? 'active' : ''}`} type="button" onClick={() => chooseStatus('all', { overdue: true })}><span>逾期</span><strong>{summary.overdue}</strong></button>
               </div>
-              <form className="change-comment" onSubmit={addComment}><textarea value={comment} onChange={event => setComment(event.target.value)} rows={2} maxLength={2000} placeholder="补充评估结论、实施进展或验证说明..." /><button type="submit" disabled={saving || !comment.trim()}><Send size={15} />添加记录</button></form>
-              <div className="change-transition-actions">
-                {selectedProcessRouteChange ? <><span className="managed-hint">专用工艺状态不能在此流转</span><a className="primary managed-link" href={selectedProcessRouteHref}>进入工艺审核与启用<ExternalLink size={14} /></a></> : <>
-                  {selected.status === 'draft' && <button className="primary" type="button" onClick={() => beginTransition('assessing')}>提交评估<ArrowRight size={15} /></button>}
-                  {selected.status === 'assessing' && <><button type="button" onClick={() => beginTransition('draft')}><ArrowLeft size={15} />退回草稿</button><button className="primary" type="button" onClick={() => beginTransition('implementing')}>开始实施<ArrowRight size={15} /></button></>}
-                  {selected.status === 'implementing' && <button className="primary" type="button" onClick={() => beginTransition('verifying')}>提交验证<ArrowRight size={15} /></button>}
-                  {selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('implementing')}><ArrowLeft size={15} />退回实施</button><button className="primary" type="button" onClick={() => beginTransition('closed')}>验证并关闭<CheckCircle2 size={15} /></button></>}
-                  {selected.status === 'closed' && <button type="button" onClick={() => beginTransition('assessing')}><RefreshCw size={15} />重新评估</button>}
-                </>}
-                {compactContext && <button ref={contextTriggerRef} type="button" onClick={() => setContextOpen(true)}><Info size={15} />责任与附件</button>}
+              <div className="change-queue-toolbar">
+                <Filter size={15} aria-hidden="true" />
+                <select aria-label="变更类型" value={filters.type} onChange={event => { setFilters(current => ({ ...current, type: event.target.value as Filters['type'] })); setPage(1); }}><option value="all">全部类型</option>{Object.entries(typeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
+                <select aria-label="优先级" value={filters.priority} onChange={event => { setFilters(current => ({ ...current, priority: event.target.value as Filters['priority'] })); setPage(1); }}><option value="all">全部优先级</option>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
+                <select aria-label="负责人" value={filters.ownerId} disabled={viewScope === 'mine'} onChange={event => { setFilters(current => ({ ...current, ownerId: event.target.value })); setPage(1); }}><option value="">{viewScope === 'mine' ? '当前账号' : '全部负责人'}</option>{users.filter(item => item.isActive).map(item => <option value={item.id} key={item.id}>{item.displayName || item.username}</option>)}</select>
+                <button type="button" aria-label="待分派筛选" title="仅看待分派" className={filters.unassigned ? 'active' : ''} onClick={() => setFilters(current => ({ ...current, unassigned: !current.unassigned }))}><SlidersHorizontal size={14} /></button>
+                {activeFilterCount > 0 && <button className="clear" type="button" onClick={() => setFilters({ ...emptyFilters })}>清除</button>}
               </div>
-            </>}
-          </section>
+              <div className="change-queue-scroll hm-scroll-region" ref={queueRef} tabIndex={0} onKeyDown={queueKeyDown}>
+                {loading && <div className="change-loading"><Loader2 className="spin" />正在加载变更...</div>}
+                {!loading && error && <div className="change-error"><AlertTriangle /><p>{error}</p><button type="button" onClick={() => { void loadChanges(); }}>重试</button></div>}
+                {!loading && !error && !changes.length && <div className="change-empty"><GitPullRequestArrow /><h3>{viewScope === 'mine' ? '当前没有分派给你的待办' : '没有符合条件的变更'}</h3><p>可切换到全部变更、调整筛选或新建变更。</p><button type="button" onClick={openCreate}><Plus size={15} />新建变更</button></div>}
+                {!loading && !error && (['active', 'closed'] as const).map(section => queueSections[section].length > 0 && <section className="change-queue-group" key={section}><header><span>{section === 'active' ? '进行中' : '已完成'}</span><em>{queueSections[section].length}</em></header>{queueSections[section].map(change => <button data-change-id={change.id} type="button" key={change.id} className={`change-card ${selected?.id === change.id ? 'selected' : ''}`} aria-current={selected?.id === change.id ? 'true' : undefined} onClick={() => setSelected(change)}>
+                  <span className="change-card-icon"><GitPullRequestArrow size={17} aria-hidden="true" /></span>
+                  <div><div className="change-card-top"><span>{change.code}</span><time>{formatDate(change.updatedAt)}</time></div><strong title={change.title}>{change.title}</strong><p title={change.workOrder ? `${change.workOrder.customerName || '客户未设置'} · ${change.workOrder.specification || change.workOrder.code}` : '未关联工单'}>{change.workOrder?.specification || change.workOrder?.code || '未关联工单'} · {change.owner?.displayName || change.owner?.username || '待分派'}</p></div>
+                  {isProcessRouteChangeManaged(change) ? <em className={`process-route-state status-${change.processRouteChange?.status.toLowerCase()}`}>专用 · {processRouteChangeStatusLabels[change.processRouteChange!.status]}</em> : <em className={`status-${change.status}`}>{statusLabels[change.status]}</em>}
+                </button>)}</section>)}
+              </div>
+              {totalPages > 1 && <footer className="change-pagination"><button type="button" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button><span>{page} / {totalPages}</span><button type="button" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></footer>}
+            </section>
 
-          {compactContext && <button className={`change-context-scrim ${contextOpen ? 'open' : ''}`} type="button" aria-label="关闭责任与附件面板" onClick={() => setContextOpen(false)} />}
-          <aside ref={contextRef} className={`change-context ${compactContext && contextOpen ? 'open' : ''}`} aria-label="变更上下文">
-            <header><div><span>变更上下文</span><h2>{selected?.code || '未选择变更'}</h2></div>{compactContext && <button type="button" aria-label="关闭责任与附件面板" title="关闭" onClick={() => { setContextOpen(false); window.requestAnimationFrame(() => contextTriggerRef.current?.focus()); }}><X size={18} /></button>}</header>
-            {!selected ? <div className="change-context-empty"><Info /><p>选择变更后查看责任、关联来源和附件。</p></div> : <div className="change-context-scroll hm-scroll-region">
-              <section className="context-section"><h3><UserRound size={15} />责任与时间</h3><dl><div><dt>申请人</dt><dd>{selected.requester?.displayName || selected.requester?.username || '未记录'}</dd></div><div><dt>负责人</dt><dd>{selected.owner?.displayName || selected.owner?.username || '待分派'}</dd></div><div><dt>截止时间</dt><dd className={selected.isOverdue ? 'overdue' : ''}>{formatDate(selected.dueAt)}</dd></div><div><dt>计划生效</dt><dd>{formatDate(selected.effectiveAt)}</dd></div><div><dt>版本</dt><dd>V{selected.version}</dd></div></dl></section>
-              <section className="context-section"><h3><ClipboardList size={15} />关联来源</h3>{selected.sourceIssue ? <a className="context-link" href={`/workspace/issues?issueId=${encodeURIComponent(selected.sourceIssue.id)}`}><div><strong>{selected.sourceIssue.code}</strong><span title={selected.sourceIssue.title}>{selected.sourceIssue.title}</span></div><ExternalLink size={14} /></a> : <p className="context-muted">未关联来源问题</p>}{selected.workOrder ? <a className="context-link" href={`/production?workOrderId=${encodeURIComponent(selected.workOrder.id)}`}><div><strong>{selected.workOrder.specification || selected.workOrder.code}</strong><span>{selected.workOrder.customerName || '客户未设置'} · {selected.workOrder.productName}</span></div><ExternalLink size={14} /></a> : <p className="context-muted">未关联生产工单</p>}</section>
-              <section className="context-section attachments"><header><h3><Paperclip size={15} />附件 <em>{selected.attachmentCount}</em></h3><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></header><div>{selected.attachments?.map(file => <article key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{formatBytes(file.size)} · {formatDate(file.createdAt)}</small></div><a href={file.contentUrl} target="_blank" rel="noreferrer" aria-label={`预览 ${file.displayName || file.originalName}`} title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} aria-label={`下载 ${file.displayName || file.originalName}`} title="下载"><Download size={14} /></a><button type="button" aria-label={`删除 ${file.displayName || file.originalName}`} title="删除附件" onClick={() => { modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmAttachmentDelete({ id: file.id, name: file.displayName || file.originalName }); }}><Trash2 size={14} /></button></article>)}{!selected.attachments?.length && <p className="attachment-empty">可上传 PDF、JPG、PNG、WEBP 作为变更依据或验证凭证。</p>}</div></section>
-            </div>}
-          </aside>
+            <section className="change-detail" aria-label="变更处理详情">
+              {!selected ? <div className="change-detail-empty"><GitPullRequestArrow /><h2>选择一条变更开始处理</h2><p>左侧收件箱会保留筛选和选中位置。</p></div> : <>
+                <header className="change-detail-header">
+                  <div><div className="change-detail-title-line"><h2 title={selected.title}>{selected.title}</h2>{selectedProcessRouteChange ? <span className={`change-status process-route-state status-${selectedProcessRouteChange.status.toLowerCase()}`}>专用 · {processRouteChangeStatusLabels[selectedProcessRouteChange.status]}</span> : <span className={`change-status status-${selected.status}`}>{statusLabels[selected.status]}</span>}</div><p><b>{selected.code}</b><span>申请人 {selected.requester?.displayName || selected.requester?.username || '未记录'}</span><span>产品 {selected.workOrder?.specification || selected.workOrder?.code || '未关联'}</span><span>版本 V{selected.version}</span><span>更新 {formatDate(selected.updatedAt)}</span></p></div>
+                  <div><button ref={contextTriggerRef} type="button" aria-expanded={contextOpen} onClick={() => setContextOpen(value => !value)}><Info size={15} />上下文</button><details className="change-detail-menu"><summary aria-label="更多操作" title="更多操作"><MoreVertical size={17} /></summary><div>{selectedProcessRouteChange ? <a href={selectedProcessRouteHref}><ExternalLink size={14} />打开工艺流程</a> : <><button type="button" onClick={() => openEdit(selected)}><Pencil size={14} />编辑变更</button><button className="danger" type="button" onClick={() => { modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmDelete(selected); }}><Trash2 size={14} />删除变更</button></>}</div></details></div>
+                </header>
+
+                <ol className="change-progress" aria-label="变更处理进度">{progressSteps.map((step, index) => <li className={step.state} key={step.key}><span>{step.state === 'done' ? <Check size={14} /> : index + 1}</span><div><strong>{step.label}</strong><small>{index === 0 ? formatDate(selected.createdAt) : index === 1 ? formatDate(selectedProcessRouteChange?.reviewedAt || null) : index === 2 ? formatDate(selectedProcessRouteChange?.activatedAt || selected.effectiveAt) : step.state === 'current' ? '当前步骤' : '等待前序'}</small></div></li>)}</ol>
+
+                <div className="change-detail-scroll hm-scroll-region">
+                  <div className={`change-inspector-grid ${contextOpen ? '' : 'context-closed'}`}>
+                    <div className="change-primary-pane">
+                      <section className="change-summary-panel">
+                        <header><div><span>变更摘要</span><h3>{selectedProcessRouteChange ? '现场工艺变更' : typeLabels[selected.type]}</h3></div>{routeChangeDetail && <em>{processRouteChangeTypeLabel(routeChangeDetail.payload.changeType)}</em>}</header>
+                        <div className="change-summary-copy"><strong>变更内容</strong><p>{selected.reason || selected.description || (selectedProcessRouteChange ? '现场未补充说明，可进入工艺流程查看结构化提案。' : '尚未填写变更原因。')}</p></div>
+                        {selectedProcessRouteChange && <div className="change-process-state"><GitPullRequestArrow size={19} /><div><strong>{processRouteChangeStatusLabels[selectedProcessRouteChange.status]}</strong><p>{routeChangeIsActive ? '工艺路线已同步到当前工单、二维码报工和产品主档。' : '审核、工时确认和启用在专用工艺流程中完成。'}</p>{selectedProcessRouteChange.activationError && <em>{selectedProcessRouteChange.activationError}</em>}</div></div>}
+                        {selectedProcessRouteChange && <section className="change-route-diff" aria-label="工艺路线变更对比">
+                          <header><span>工艺路线变更对比</span>{routeChangeDetailLoading && <Loader2 className="spin" size={14} />}</header>
+                          {routePayload ? <>
+                            {(routePayload.changeType === 'INSERT_STEP' || routePayload.changeType === 'BOTH') && <div className="change-route-lanes"><div><small>变更前 · R{routeChangeDetail?.baseRouteVersion}</small><p className="route-sequence">{(routeBeforeSteps.length ? routeBeforeSteps : [{ id: 'anchor-before', processName: insertAnchorName, position: 1, standardMillisecondsPerUnit: null }]).map((step, index, steps) => <span className="route-sequence-node" key={step.id}><b>{step.processName}{step.standardMillisecondsPerUnit ? <em>{secondsFromMilliseconds(step.standardMillisecondsPerUnit)} 秒/件</em> : null}</b>{index < steps.length - 1 && <ArrowRight size={13} />}</span>)}</p></div><div><small>变更后 · R{routeChangeDetail?.activatedRouteVersion || ((routeChangeDetail?.baseRouteVersion || selectedProcessRouteChange.baseRouteVersion) + 1)}</small><p className="route-sequence">{(routeAfterSteps.length ? routeAfterSteps : [{ id: 'new-step', processName: newProcessName, position: 1, standardMillisecondsPerUnit: routePayload.newStandardMillisecondsPerUnit, isNew: true }, { id: 'anchor-after', processName: insertAnchorName, position: 2, standardMillisecondsPerUnit: null }]).map((step, index, steps) => <span className="route-sequence-node" key={step.id}><b className={step.isNew ? 'new' : ''}>{step.processName}{step.standardMillisecondsPerUnit ? <em>{step.isNew ? 'NEW · ' : ''}{secondsFromMilliseconds(step.standardMillisecondsPerUnit)} 秒/件</em> : null}</b>{index < steps.length - 1 && <ArrowRight size={13} />}</span>)}</p></div></div>}
+                            {routePayload.changeType === 'MOVE_STEP' && <div className="change-route-move"><span>{routePayload.movedProcessName || '移动工序'}</span><ArrowRight size={15} /><strong>{routePayload.moveBeforeProcessName ? `移到“${routePayload.moveBeforeProcessName}”之前` : '移动到路线末尾'}</strong></div>}
+                            {!!routePayload.timeChanges.length && <div className="change-time-diffs">{routePayload.timeChanges.map(item => <div key={item.stepId}><span>{item.processName || '工序工时'}</span><strong>{secondsFromMilliseconds(item.previousStandardMillisecondsPerUnit)} → {secondsFromMilliseconds(item.standardMillisecondsPerUnit)} 秒/件</strong><em>NEW</em></div>)}</div>}
+                          </> : !routeChangeDetailLoading ? <p className="change-route-empty">暂时无法读取结构化差异，可从右上角进入工艺流程查看。</p> : null}
+                        </section>}
+                        <div className="change-impact-copy"><strong>影响说明</strong><p>{selected.impactScope || '影响范围尚未补充。'}</p><div className="impact-tags">{selected.impactAreas.map(area => <span key={area}>{impactLabels[area]}</span>)}{!selected.impactAreas.length && <em>待确认</em>}</div></div>
+                      </section>
+
+                      {!selectedProcessRouteChange && <section className="change-execution-grid"><article><span>01</span><div><h3>实施方案</h3><p>{selected.implementationPlan || '评估通过后填写实施步骤、负责人和切换窗口。'}</p></div></article><article><span>02</span><div><h3>实施结果</h3><p>{selected.implementationResult || '执行完成后记录实际结果和偏差。'}</p></div></article><article><span>03</span><div><h3>验证结果</h3><p>{selected.validationResult || '验证阶段记录验证方法和结论。'}</p></div></article><article><span>R</span><div><h3>回退方案</h3><p>{selected.rollbackPlan || '可在需要时补充回退条件和恢复步骤。'}</p></div></article></section>}
+
+                      <section className="change-timeline"><header><div><h3>活动记录</h3><span>{selected.activityCount} 条记录</span></div></header><div>{selected.activities?.map(item => <article key={item.id}><span className="activity-person"><UserRound size={14} /></span><div><strong>{item.actor?.displayName || item.actor?.username || '系统'} <small>{activityLabels[item.action] || item.action}</small></strong>{item.fromStatus && item.toStatus && <em>{statusLabels[item.fromStatus]} <ChevronRight size={12} /> {statusLabels[item.toStatus]}</em>}<p>{item.content || '已记录操作'}</p></div><time>{formatDate(item.createdAt)}</time></article>)}{!selected.activities?.length && <p className="timeline-empty">暂无协同记录</p>}</div></section>
+                    </div>
+
+                    {compactContext && <button className={`change-context-scrim ${contextOpen ? 'open' : ''}`} type="button" aria-label="关闭责任与附件面板" onClick={() => setContextOpen(false)} />}
+                    <aside ref={contextRef} className={`change-context ${contextOpen ? 'open' : 'collapsed'}`} aria-label="影响与责任">
+                      <header><div><span>影响与责任</span><h2>{selected.code}</h2></div><button type="button" aria-label="关闭影响与责任" title="关闭" onClick={() => { setContextOpen(false); window.requestAnimationFrame(() => contextTriggerRef.current?.focus()); }}><ChevronDown size={17} /></button></header>
+                      <div className="change-context-scroll hm-scroll-region">
+                        <section className="context-section"><h3><GitCommitHorizontal size={15} />影响范围</h3><div className="context-impact-list"><span><b>当前工单</b><small>{selected.workOrder?.code || '未关联'}</small></span><span><b>产品路线</b><small>{selected.workOrder?.specification || '待确认'}</small></span>{selectedProcessRouteChange && <span><b>二维码报工</b><small>{routeChangeIsActive ? '已同步' : '待启用'}</small></span>}{routeChangeDetail?.impact?.affectedCompletionCount ? <span><b>历史报工</b><small>{routeChangeDetail.impact.affectedCompletionCount} 笔</small></span> : null}</div></section>
+                        <section className="context-section"><h3><UserRound size={15} />责任与参与</h3><dl><div><dt>申请人</dt><dd>{selected.requester?.displayName || selected.requester?.username || '未记录'}</dd></div><div><dt>负责人</dt><dd>{selected.owner?.displayName || selected.owner?.username || '待分派'}</dd></div>{routeChangeDetail?.reviewerName && <div><dt>工艺审核</dt><dd>{routeChangeDetail.reviewerName}</dd></div>}<div><dt>截止时间</dt><dd className={selected.isOverdue ? 'overdue' : ''}>{formatDate(selected.dueAt)}</dd></div><div><dt>版本</dt><dd>V{selected.version}</dd></div></dl></section>
+                        <section className="context-section"><h3><ClipboardList size={15} />关联来源</h3>{selected.sourceIssue ? <a className="context-link" href={`/workspace/issues?issueId=${encodeURIComponent(selected.sourceIssue.id)}`}><div><strong>{selected.sourceIssue.code}</strong><span title={selected.sourceIssue.title}>{selected.sourceIssue.title}</span></div><ExternalLink size={14} /></a> : <p className="context-muted">未关联来源问题</p>}{selected.workOrder ? <a className="context-link" href={`/production?workOrderId=${encodeURIComponent(selected.workOrder.id)}`}><div><strong>{selected.workOrder.specification || selected.workOrder.code}</strong><span>{selected.workOrder.customerName || '客户未设置'} · {selected.workOrder.productName}</span></div><ExternalLink size={14} /></a> : <p className="context-muted">未关联生产工单</p>}</section>
+                        <section className="context-section attachments"><header><h3><Paperclip size={15} />附件 <em>{selected.attachmentCount}</em></h3><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></header><div>{selected.attachments?.map(file => <article key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{formatBytes(file.size)} · {formatDate(file.createdAt)}</small></div><a href={file.contentUrl} target="_blank" rel="noreferrer" aria-label={`预览 ${file.displayName || file.originalName}`} title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} aria-label={`下载 ${file.displayName || file.originalName}`} title="下载"><Download size={14} /></a><button type="button" aria-label={`删除 ${file.displayName || file.originalName}`} title="删除附件" onClick={() => { modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setConfirmAttachmentDelete({ id: file.id, name: file.displayName || file.originalName }); }}><Trash2 size={14} /></button></article>)}{!selected.attachments?.length && <p className="attachment-empty">暂无附件，可上传 PDF 或图片作为依据。</p>}</div></section>
+                      </div>
+                    </aside>
+                  </div>
+                </div>
+
+                <div className="change-action-dock">
+                  <div className="change-transition-actions">{selectedProcessRouteChange ? routeChangeIsActive ? <span className="managed-complete"><CheckCircle2 size={15} />已完成工艺启用</span> : <a className="primary managed-link" href={selectedProcessRouteHref}>进入工艺审核与启用<ExternalLink size={14} /></a> : <>{selected.status === 'draft' && <button className="primary" type="button" onClick={() => beginTransition('assessing')}>提交评估<ArrowRight size={15} /></button>}{selected.status === 'assessing' && <><button type="button" onClick={() => beginTransition('draft')}><ArrowLeft size={15} />退回草稿</button><button className="primary" type="button" onClick={() => beginTransition('implementing')}>开始实施<ArrowRight size={15} /></button></>}{selected.status === 'implementing' && <button className="primary" type="button" onClick={() => beginTransition('verifying')}>提交验证<ArrowRight size={15} /></button>}{selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('implementing')}><ArrowLeft size={15} />退回实施</button><button className="primary" type="button" onClick={() => beginTransition('closed')}>验证并关闭<CheckCircle2 size={15} /></button></>}{selected.status === 'closed' && <button type="button" onClick={() => beginTransition('assessing')}><RefreshCw size={15} />重新评估</button>}</>}</div>
+                  <form className="change-comment" onSubmit={addComment}><textarea value={comment} onChange={event => setComment(event.target.value)} rows={1} maxLength={2000} placeholder="添加评论，@ 提及相关人员..." /><button type="submit" aria-label="发送评论" disabled={saving || !comment.trim()}><Send size={16} /></button></form>
+                </div>
+              </>}
+            </section>
+          </div>
         </div>
-      </div>
       </div>
 
       {formOpen && <div className="change-modal-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setFormOpen(false); }}><form className="change-modal" role="dialog" aria-modal="true" aria-labelledby="change-form-title" onSubmit={saveForm}><header><div><span>{editingChange ? '编辑变更' : '新建变更'}</span><h2 id="change-form-title">{editingChange ? editingChange.code : '记录需要评估和执行的变更'}</h2></div><button type="button" aria-label="关闭" title="关闭" disabled={saving} onClick={() => setFormOpen(false)}><X size={19} /></button></header><div className="change-modal-body hm-scroll-region">
