@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { completeProcessStep } from '../lib/process-completion-service';
+import { completeProcessStep, loadProcessCompletionContext } from '../lib/process-completion-service';
+import {
+  previewProcessCompletionWithdrawal,
+  withdrawProcessCompletion,
+} from '../lib/process-completion-withdrawal-service';
 import {
   activateProcessRouteChange,
   completeProcessSupplementObligation,
@@ -105,6 +109,7 @@ async function insertSupplement(input: {
   routeVersion: number;
   targetStepId: string;
   supplementDefinition: { id: string };
+  actionBased?: boolean;
 }) {
   const proposal = await createProcessRouteChangeProposal({
     workOrderId: input.workOrderId,
@@ -122,6 +127,11 @@ async function insertSupplement(input: {
         setupMilliseconds: 0,
         requiredQty: 10,
         unitLabel: 'piece',
+        ...(input.actionBased ? {
+          unitsPerProduct: 3,
+          reportQuantityBasis: 'action',
+          reportUnitLabel: 'terminal',
+        } : {}),
       },
     }],
     idempotencyKey: `${input.prefix}-create-change`,
@@ -188,6 +198,9 @@ async function cleanupWorkOrder(workOrderId: string) {
     },
   });
   await prisma.processQuantityMovement.deleteMany({ where: { workOrderId } });
+  await prisma.processActionConsumption.deleteMany({
+    where: { step: { route: { workOrderId } } },
+  });
   await prisma.processCompletionParticipant.deleteMany({ where: { completion: { workOrderId } } });
   await prisma.processCompletion.deleteMany({ where: { workOrderId } });
   if (route) await prisma.processRouteActivity.deleteMany({ where: { routeId: route.id } });
@@ -278,6 +291,7 @@ test(
         routeVersion: 1,
         targetStepId: firstStep.id,
         supplementDefinition: definitions[2],
+        actionBased: true,
       });
       const fulfilled = await completeProcessSupplementObligation({
         obligationId: obligation.id,
@@ -285,6 +299,8 @@ test(
         expectedRouteVersion: 2,
         processedQty: 10,
         defectQty: 0,
+        reportedUnitQty: 33,
+        reportedDefectUnitQty: 3,
         workDate,
         employeeIds: [employee.id],
         idempotencyKey: `${prefix}-complete-supplement`,
@@ -293,6 +309,27 @@ test(
         actor: actor.displayName || actor.username,
       });
       assert.equal(fulfilled.status, 'FULFILLED');
+
+      const [storedActionObligation, actionCompletion, actionContext] = await Promise.all([
+        prisma.processSupplementObligation.findUniqueOrThrow({ where: { id: obligation.id } }),
+        prisma.processCompletion.findUniqueOrThrow({
+          where: { id: fulfilled.completionId },
+          include: { laborPool: true },
+        }),
+        loadProcessCompletionContext(order.processRoute.id, obligation.displayStepId, {
+          allowAdvanceReporting: true,
+          allowCompletedSelection: true,
+        }),
+      ]);
+      assert.equal(storedActionObligation.reportQuantityBasis, 'action');
+      assert.equal(storedActionObligation.reportedUnitQty, 33);
+      assert.equal(storedActionObligation.reportedGoodUnitQty, 30);
+      assert.equal(storedActionObligation.reportedDefectUnitQty, 3);
+      assert.equal(actionCompletion.principalEmployeeId, employee.id);
+      assert.equal(actionCompletion.laborPool?.eligibleQty, 33);
+      assert.equal(actionCompletion.laborPool?.totalStandardLaborMilliseconds, 99_000n);
+      assert.equal(actionContext.step.reportQuantityBasis, 'action');
+      assert.equal(actionContext.reportTargetQty, 30);
 
       const normalCompletion = await completeProcessStep({
         routeId: order.processRoute.id,
@@ -317,6 +354,31 @@ test(
       assert.equal(storedFirst.inputQty, 10);
       assert.equal(storedFirst.processedQty, 10);
       assert.equal(storedSecond.inputQty, 10);
+
+      const supplementPreview = await previewProcessCompletionWithdrawal(
+        order.processRoute.id,
+        fulfilled.completionId,
+      );
+      assert.equal(supplementPreview.canWithdraw, true);
+      const withdrawnSupplement = await withdrawProcessCompletion({
+        routeId: order.processRoute.id,
+        completionId: fulfilled.completionId,
+        expectedRouteVersion: normalCompletion.routeVersion,
+        category: 'REPORTING_ERROR',
+        reason: '',
+        idempotencyKey: `${prefix}-withdraw-supplement`,
+        userId: actor.id,
+        actor: actor.displayName || actor.username,
+      });
+      assert.equal(withdrawnSupplement.status, 'WITHDRAWN');
+      const [reopenedObligation, reopenedSupplementStep] = await Promise.all([
+        prisma.processSupplementObligation.findUniqueOrThrow({ where: { id: obligation.id } }),
+        prisma.workOrderProcessStep.findUniqueOrThrow({ where: { id: obligation.displayStepId } }),
+      ]);
+      assert.equal(reopenedObligation.status, 'ACTIVE');
+      assert.equal(reopenedObligation.reportedQty, 0);
+      assert.equal(reopenedSupplementStep.status, 'current');
+      await assertSupplementQuantityLedgerIsZero(obligation.displayStepId);
     } finally {
       if (workOrderId) await cleanupWorkOrder(workOrderId);
       await prisma.processDefinition.deleteMany({ where: { id: { in: definitions.map(item => item.id) } } });

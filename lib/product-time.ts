@@ -5,6 +5,7 @@ import type {
   ProductTimeProfileStatus,
   ProcessStageGroup,
   ProcessReportQuantityBasis,
+  ProcessReportingPolicy,
   ProcessTimeBasis,
 } from '@/types';
 
@@ -42,6 +43,10 @@ export type ProductTimeEntryInput = {
 export type ProductTimeEntryValidationResult =
   | { ok: true; entries: ProductTimeEntryInput[] }
   | { ok: false; error: string };
+
+export function normalizeProcessReportingPolicy(value: unknown): ProcessReportingPolicy {
+  return value === 'strict_sequence' ? 'strict_sequence' : 'free_sequence';
+}
 
 type RawProductTimeEntry = {
   processDefinitionId?: unknown;
@@ -187,6 +192,7 @@ export function serializeProductTimeProfile(profile: ProductTimeProfileRecord): 
     version: profile.version,
     revision: profile.revision,
     status: profileStatus(profile.status),
+    reportingPolicy: normalizeProcessReportingPolicy(profile.reportingPolicy),
     sourceType: profile.sourceType,
     remark: profile.remark,
     totalMillisecondsPerUnit: productTimeTotalMilliseconds(profile.entries),

@@ -1,6 +1,7 @@
 import { ProcessCompletionSource } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import {
+  ForbiddenError,
   forbidden,
   requireUser,
   unauthorized,
@@ -94,9 +95,12 @@ export async function GET(
         context.completion.principalEmployeeId === null
         && context.completion.createdById === context.user.id
       );
-    const ownMobileQrReport = ownQrReport
-      && context.completion.reportSource === ProcessCompletionSource.QR_MOBILE;
-    if (!ownMobileQrReport) {
+    const ownFieldReport = ownQrReport && (
+      context.completion.reportSource === ProcessCompletionSource.QR_MOBILE
+      || context.completion.reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+      || context.completion.reportSource === ProcessCompletionSource.SUPPLEMENT_OBLIGATION
+    );
+    if (!ownFieldReport) {
       return NextResponse.json({
         ok: true,
         data: {
@@ -117,7 +121,17 @@ export async function GET(
     );
     return NextResponse.json({
       ok: true,
-      data: { ownership: 'SELF', canRequestCorrection: true, preview },
+      data: {
+        ownership: 'SELF',
+        canRequestCorrection: true,
+        completion: {
+          id: context.completion.id,
+          processName: context.completion.step.processName,
+          processedQty: context.completion.processedQty,
+          completedAt: context.completion.completedAt.toISOString(),
+        },
+        preview,
+      },
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
@@ -143,6 +157,13 @@ export async function POST(
 ) {
   try {
     assertSameOriginMutationRequest(req);
+    const mediaType = req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+    if (mediaType !== 'application/json') {
+      return NextResponse.json(
+        { ok: false, error: '请求格式错误', code: 'FIELD_REPORT_CORRECTION_JSON_REQUIRED' },
+        { status: 415 },
+      );
+    }
     const context = await correctionContext(params.code, params.completionId, true);
     if (!context.employee) return forbidden('当前账号未关联有效生产员工');
     if (!correctionAvailable(context.ticket)) {
@@ -167,9 +188,12 @@ export async function POST(
         context.completion.principalEmployeeId === null
         && context.completion.createdById === context.user.id
       );
-    const ownMobileQrReport = ownQrReport
-      && context.completion.reportSource === ProcessCompletionSource.QR_MOBILE;
-    if (ownMobileQrReport) {
+    const ownFieldReport = ownQrReport && (
+      context.completion.reportSource === ProcessCompletionSource.QR_MOBILE
+      || context.completion.reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
+      || context.completion.reportSource === ProcessCompletionSource.SUPPLEMENT_OBLIGATION
+    );
+    if (ownFieldReport) {
       const result = await withdrawProcessCompletion({
         routeId: context.completion.routeId,
         completionId: context.completion.id,
@@ -192,6 +216,7 @@ export async function POST(
     });
     return NextResponse.json({ ok: true, data: { status: 'REQUESTED', ...result } });
   } catch (error) {
+    if (error instanceof ForbiddenError) return forbidden(error.message);
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof WorkOrderQrServiceError || error instanceof ProcessCompletionWithdrawalError) {
       return error instanceof ProcessCompletionWithdrawalError

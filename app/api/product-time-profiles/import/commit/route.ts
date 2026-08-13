@@ -78,6 +78,7 @@ export async function POST(req: NextRequest) {
               drawingLibraryItemId: row.itemId,
               version: (latest._max.version || 0) + 1,
               status: 'draft',
+              reportingPolicy: 'free_sequence',
               sourceType: 'excel_import',
               remark: `Excel 导入第 ${row.rowNo} 行`,
               createdById: user.id,

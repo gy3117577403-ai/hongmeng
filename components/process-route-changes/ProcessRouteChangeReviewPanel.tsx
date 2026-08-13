@@ -411,7 +411,7 @@ export function ProcessRouteChangeReviewPanel({
               : definitionBinding.createsNewDefinition
                 ? '没有现有同名定义，可留空；审核通过后由系统新建'
                 : '已按唯一同名工序自动绑定，可核对编码'}</small></label>}
-          {(selected.payload.changeType === 'INSERT_STEP' || selected.payload.changeType === 'BOTH') && <label><span>新增工序标准工时</span><div><input inputMode="decimal" value={newStepSeconds} disabled={!canApprove || saving} onChange={event => setNewStepSeconds(event.target.value)} /><em>秒/件</em></div></label>}
+          {(selected.payload.changeType === 'INSERT_STEP' || selected.payload.changeType === 'BOTH') && <label><span>新增工序标准工时</span><div><input inputMode="decimal" value={newStepSeconds} disabled={!canApprove || saving} onChange={event => setNewStepSeconds(event.target.value)} /><em>秒/{selected.payload.newReportQuantityBasis === 'action' ? selected.payload.newReportUnitLabel || '动作' : selected.payload.newUnitLabel || '件'}</em></div><small>{selected.payload.newReportQuantityBasis === 'action' ? `按动作数量报工 · 每${selected.payload.newUnitLabel || '套'} ${selected.payload.newUnitsPerProduct || 1} ${selected.payload.newReportUnitLabel || '个'}` : `按产品数量报工 · 单位 ${selected.payload.newUnitLabel || '件'}`}</small></label>}
           <label><span>当前工单应报数量（整单）</span><input inputMode="numeric" value={affectedQty} disabled readOnly /></label>
         </div>
 

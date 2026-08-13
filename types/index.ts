@@ -998,6 +998,7 @@ export type ProcessRouteStatus = 'draft' | 'confirmed' | 'in_progress' | 'comple
 export type ProcessStepStatus = 'pending' | 'current' | 'completed' | 'skipped';
 export type ProcessTimeBasis = 'per_unit' | 'per_batch';
 export type ProcessReportQuantityBasis = 'product' | 'action';
+export type ProcessReportingPolicy = 'free_sequence' | 'strict_sequence';
 export type ProductTimeProfileStatus = 'draft' | 'published' | 'archived';
 
 export type ProductTimeDeploymentStatus = 'preview' | 'pending' | 'applying' | 'active' | 'failed';
@@ -1166,6 +1167,7 @@ export type ProductTimeProfileDTO = {
   version: number;
   revision: number;
   status: ProductTimeProfileStatus;
+  reportingPolicy: ProcessReportingPolicy;
   sourceType: string;
   remark?: string | null;
   totalMillisecondsPerUnit: number;
@@ -1315,6 +1317,7 @@ export type WorkOrderProcessRouteDTO = {
   templateId?: string | null;
   templateName: string;
   templateVersion: number;
+  reportingPolicy: ProcessReportingPolicy;
   status: ProcessRouteStatus;
   statusText: string;
   version: number;

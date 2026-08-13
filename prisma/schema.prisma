@@ -801,6 +801,7 @@ model WorkOrderProcessRoute {
   productTimeProfileId      String?                       @map("product_time_profile_id")
   productTimeProfileVersion Int?                          @map("product_time_profile_version")
   routeSource               String                        @default("process_template") @map("route_source")
+  reportingPolicy           String                        @default("free_sequence") @map("reporting_policy")
   createdAt                 DateTime                      @default(now()) @map("created_at")
   updatedAt                 DateTime                      @updatedAt @map("updated_at")
   workOrder                 WorkOrder                     @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
@@ -884,6 +885,7 @@ model WorkOrderProcessStep {
   supplementObligation         ProcessSupplementObligation?  @relation("ProcessSupplementDisplayStep")
   targetedRouteChangeDiffs     ProcessRouteChangeDiff[]      @relation("ProcessRouteChangeTargetStep")
   insertedBeforeObligations    ProcessSupplementObligation[] @relation("ProcessSupplementInsertBeforeStep")
+  actionConsumptions           ProcessActionConsumption[]
 
   @@unique([routeId, position])
   @@index([routeId, status])
@@ -2054,6 +2056,8 @@ model ProcessCompletion {
   coverageAllocations          ProcessCompletionCoverage[]     @relation("CoveredProcessCompletion")
   triggeredCoverageAllocations ProcessCompletionCoverage[]     @relation("CoverageTriggerCompletion")
   supplementObligation         ProcessSupplementObligation?    @relation(fields: [supplementObligationId], references: [id], onDelete: Restrict)
+  sourcedActionConsumptions    ProcessActionConsumption[]      @relation("ActionConsumptionSource")
+  consumedActionAllocations    ProcessActionConsumption[]      @relation("ActionConsumptionConsumer")
 
   @@index([workOrderId, workDate])
   @@index([routeId, completedAt])
@@ -2066,6 +2070,28 @@ model ProcessCompletion {
   @@index([fieldReportTerminalId])
   @@index([supplementObligationId, voidedAt])
   @@map("process_completions")
+}
+
+model ProcessActionConsumption {
+  id                   String               @id @default(uuid())
+  stepId               String               @map("step_id")
+  sourceCompletionId   String               @map("source_completion_id")
+  consumerCompletionId String               @map("consumer_completion_id")
+  quantity             Int
+  idempotencyKey       String               @unique @map("idempotency_key")
+  createdAt            DateTime             @default(now()) @map("created_at")
+  voidedAt             DateTime?            @map("voided_at")
+  voidedById           String?              @map("voided_by_id")
+  voidReason           String?              @map("void_reason")
+  step                 WorkOrderProcessStep @relation(fields: [stepId], references: [id], onDelete: Restrict)
+  sourceCompletion     ProcessCompletion    @relation("ActionConsumptionSource", fields: [sourceCompletionId], references: [id], onDelete: Restrict)
+  consumerCompletion   ProcessCompletion    @relation("ActionConsumptionConsumer", fields: [consumerCompletionId], references: [id], onDelete: Restrict)
+
+  @@unique([sourceCompletionId, consumerCompletionId])
+  @@index([stepId, voidedAt])
+  @@index([sourceCompletionId, voidedAt])
+  @@index([consumerCompletionId, voidedAt])
+  @@map("process_action_consumptions")
 }
 
 model ProcessCompletionParticipant {
@@ -2560,6 +2586,7 @@ model ProductTimeProfile {
   revision                     Int                       @default(0)
   status                       String                    @default("draft")
   sourceType                   String                    @default("manual") @map("source_type")
+  reportingPolicy              String                    @default("free_sequence") @map("reporting_policy")
   remark                       String?
   publishedAt                  DateTime?                 @map("published_at")
   createdById                  String?                   @map("created_by_id")
@@ -3375,6 +3402,11 @@ model ProcessSupplementObligation {
   intendedSequenceGroup       Int                               @map("intended_sequence_group")
   requiredQty                 Int                               @map("required_qty")
   reportedQty                 Int                               @default(0) @map("reported_qty")
+  reportedUnitQty             Int                               @default(0) @map("reported_unit_qty")
+  reportedGoodUnitQty         Int                               @default(0) @map("reported_good_unit_qty")
+  reportedDefectUnitQty       Int                               @default(0) @map("reported_defect_unit_qty")
+  reportQuantityBasis         String                            @default("product") @map("report_quantity_basis")
+  reportUnitLabel             String                            @default("件") @map("report_unit_label")
   status                      ProcessSupplementObligationStatus @default(ACTIVE)
   version                     Int                               @default(0)
   releasePolicy               String                            @default("NONE") @map("release_policy")

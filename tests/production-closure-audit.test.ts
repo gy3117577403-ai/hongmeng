@@ -557,3 +557,38 @@ test('quantity drift and labor over-allocation are reported with stable finding 
   assert.ok(codes.has('LABOR_POOL_DURATION_MISMATCH'));
   assert.ok(codes.has('LABOR_POOL_CLAIM_AGGREGATE_MISMATCH'));
 });
+
+test('action-only completion is valid without advancing product flow', () => {
+  const snapshot = sequentialSnapshot();
+  snapshot.completions.push({
+    id: 'completion-action-only',
+    workOrderId: 'order-a',
+    routeId: 'route-a',
+    stepId: 'step-crimp',
+    workDate: WORK_DATE,
+    processedQty: 0,
+    goodQty: 0,
+    defectQty: 0,
+    reportedUnitQty: 96,
+    reportedGoodUnitQty: 96,
+    reportedDefectUnitQty: 0,
+    reportQuantityBasis: 'action',
+    coverageStatus: 'COVERED',
+    coveredQty: 0,
+    coveredGoodQty: 0,
+    coveredDefectQty: 0,
+    defectDisposition: null,
+    routeVersion: 1,
+    timeBasis: 'per_unit',
+    voidedAt: null,
+  });
+
+  const result = auditProductionClosure(snapshot);
+  assert.equal(
+    result.findings.some(finding => (
+      finding.entityId === 'completion-action-only'
+      && finding.code === 'COMPLETION_QUANTITY_INVALID'
+    )),
+    false,
+  );
+});

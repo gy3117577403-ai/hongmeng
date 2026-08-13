@@ -62,6 +62,7 @@ test(
             templateVersion: 1,
             status: 'in_progress',
             version: 0,
+            reportingPolicy: 'strict_sequence',
             confirmedAt: new Date(),
             confirmedById: actor.id,
             startedAt: new Date(),
@@ -113,6 +114,31 @@ test(
     const completionIds: string[] = [];
 
     try {
+      await assert.rejects(
+        completeProcessStep({
+          routeId: order.processRoute.id,
+          stepId: pack.id,
+          processedQty: 1,
+          defectQty: 0,
+          workDate: '2026-08-03',
+          employeeIds: [downstreamEmployee.id],
+          requireParticipants: true,
+          autoAssignLabor: true,
+          reportSource: 'QR_MOBILE',
+          principalEmployeeId: downstreamEmployee.id,
+          idempotencyKey: `${prefix}-strict-pack-blocked`,
+          expectedRouteVersion: 0,
+          userId: actor.id,
+          actor: actor.displayName || actor.username,
+        }),
+        (error: unknown) => error instanceof Error
+          && 'code' in error
+          && error.code === 'PROCESS_STEP_NOT_CURRENT',
+      );
+      await prisma.workOrderProcessRoute.update({
+        where: { id: order.processRoute.id },
+        data: { reportingPolicy: 'free_sequence' },
+      });
       const advance = await completeProcessStep({
         routeId: order.processRoute.id,
         stepId: pack.id,
@@ -121,7 +147,6 @@ test(
         workDate: '2026-08-03',
         employeeIds: [downstreamEmployee.id],
         requireParticipants: true,
-        allowAdvanceReporting: true,
         autoAssignLabor: true,
         reportSource: 'QR_MOBILE',
         principalEmployeeId: downstreamEmployee.id,

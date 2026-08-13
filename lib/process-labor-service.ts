@@ -473,9 +473,6 @@ export async function resolveProcessLaborPoolStandard(command: {
   if (!Number.isSafeInteger(unitsPerProduct) || unitsPerProduct <= 0) {
     throw new ProcessLaborServiceError('每产品工序次数必须是正整数', 400, 'PROCESS_LABOR_UNITS_INVALID');
   }
-  if (reason.length < 2) {
-    throw new ProcessLaborServiceError('补录标准必须填写原因', 400, 'PROCESS_LABOR_STANDARD_REASON_REQUIRED');
-  }
 
   try {
     await prisma.$transaction(async tx => {
@@ -1339,7 +1336,6 @@ export async function voidProcessLaborClaim(command: VoidClaimCommand): Promise<
   const reason = cleanProcessText(command.reason, 500);
   const idempotencyKey = parseIdempotencyKey(command.idempotencyKey);
   if (!claimId) throw new ProcessLaborServiceError('缺少领取记录标识', 400, 'PROCESS_LABOR_CLAIM_REQUIRED');
-  if (!reason) throw new ProcessLaborServiceError('冲销必须填写原因', 400, 'PROCESS_LABOR_VOID_REASON_REQUIRED');
 
   try {
     const result = await prisma.$transaction(async tx => {
@@ -1380,7 +1376,7 @@ export async function voidProcessLaborClaim(command: VoidClaimCommand): Promise<
         return { originalId: claim.id, reversalId: claim.reversal.id, poolId: claim.poolId };
       }
       if (claim.status !== ProcessLaborClaimStatus.ACTIVE
-        || claim.quantity <= 0
+        || claim.quantity < 0
         || claim.standardLaborMilliseconds <= 0n) {
         throw new ProcessLaborServiceError('该领取记录不能冲销', 409, 'PROCESS_LABOR_CLAIM_NOT_ACTIVE');
       }
@@ -1426,7 +1422,7 @@ export async function voidProcessLaborClaim(command: VoidClaimCommand): Promise<
           status: ProcessLaborClaimStatus.VOIDED,
           voidedAt: now,
           voidedById: command.userId,
-          voidReason: reason,
+          voidReason: reason || null,
         },
       });
       if (voided.count !== 1) {

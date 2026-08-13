@@ -693,6 +693,7 @@ export function serializeProcessRoute(
     templateId: route.templateId,
     templateName: route.templateName,
     templateVersion: route.templateVersion,
+    reportingPolicy: route.reportingPolicy === 'strict_sequence' ? 'strict_sequence' : 'free_sequence',
     status,
     statusText: status === 'draft' && route.routeSource === PRODUCT_TIME_PENDING_ROUTE_SOURCE
       ? '产品工序待发布'
@@ -821,6 +822,7 @@ async function applyPublishedProductTimeToUnstartedRoute(
       templateVersion: input.profile.version,
       productTimeProfileId: input.profile.id,
       productTimeProfileVersion: input.profile.version,
+      reportingPolicy: input.profile.reportingPolicy,
       routeSource: 'product_time_profile',
       status: activation.status,
       confirmedAt: now,
@@ -1063,6 +1065,7 @@ export async function createWorkOrderProcessRoute(
       templateVersion: productProfile?.version || 0,
       productTimeProfileId: productProfile?.id || null,
       productTimeProfileVersion: productProfile?.version || null,
+      reportingPolicy: productProfile?.reportingPolicy || 'free_sequence',
       routeSource: productProfile ? 'product_time_profile' : PRODUCT_TIME_PENDING_ROUTE_SOURCE,
       status: initialStatus,
       confirmedAt,
@@ -1406,6 +1409,7 @@ export async function repairHistoricalProductTimeRoute(
         templateVersion: profile.version,
         productTimeProfileId: profile.id,
         productTimeProfileVersion: profile.version,
+        reportingPolicy: profile.reportingPolicy,
         routeSource: 'product_time_profile',
         status: 'in_progress',
         confirmedAt: now,
@@ -1432,6 +1436,7 @@ export async function repairHistoricalProductTimeRoute(
         templateVersion: profile.version,
         productTimeProfileId: profile.id,
         productTimeProfileVersion: profile.version,
+        reportingPolicy: profile.reportingPolicy,
         routeSource: 'product_time_profile',
         status: 'in_progress',
         confirmedAt: now,
@@ -1601,6 +1606,7 @@ function routeProductTimeMetadataMatches(
 ): boolean {
   return route.routeSource === 'product_time_profile'
     && route.productTimeProfileId === profile.id
+    && route.reportingPolicy === profile.reportingPolicy
     && route.productTimeProfileVersion === profile.version
     && route.templateVersion === profile.version;
 }
@@ -1642,6 +1648,7 @@ async function synchronizeStartedFactFreeProductTimeRoute(
       templateVersion: input.profile.version,
       productTimeProfileId: input.profile.id,
       productTimeProfileVersion: input.profile.version,
+      reportingPolicy: input.profile.reportingPolicy,
       routeSource: 'product_time_profile',
       version: { increment: 1 },
     },
@@ -1795,6 +1802,7 @@ async function synchronizeRemainingActiveProductTimeStandards(
       templateVersion: input.profile.version,
       productTimeProfileId: input.profile.id,
       productTimeProfileVersion: input.profile.version,
+      reportingPolicy: input.profile.reportingPolicy,
       version: { increment: 1 },
     },
   });

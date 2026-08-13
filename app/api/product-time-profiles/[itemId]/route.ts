@@ -8,6 +8,7 @@ import {
 } from '@/lib/product-quotation';
 import {
   cleanProductTimeText,
+  normalizeProcessReportingPolicy,
   productTimeProfileInclude,
   serializeProductTimeProfile,
   validateProductTimeEntries,
@@ -96,6 +97,7 @@ export async function PUT(req: NextRequest, { params }: { params: { itemId: stri
         : [];
       if (definitions.length !== definitionIds.length) throw new Error('PROCESS_DEFINITION_INVALID');
 
+      const reportingPolicy = normalizeProcessReportingPolicy(body.reportingPolicy);
       let draft = await tx.productTimeProfile.findFirst({
         where: { drawingLibraryItemId: item.id, status: 'draft' },
         select: { id: true, revision: true, version: true },
@@ -123,6 +125,7 @@ export async function PUT(req: NextRequest, { params }: { params: { itemId: stri
           data: {
             revision: { increment: 1 },
             sourceType: cleanProductTimeText(body.sourceType, 30) || 'manual',
+            reportingPolicy,
             remark: cleanProductTimeText(body.remark, 500) || null,
             updatedById: user.id,
           },
@@ -139,6 +142,7 @@ export async function PUT(req: NextRequest, { params }: { params: { itemId: stri
             drawingLibraryItemId: item.id,
             version: (latest._max.version || 0) + 1,
             status: 'draft',
+            reportingPolicy,
             sourceType: cleanProductTimeText(body.sourceType, 30) || 'manual',
             remark: cleanProductTimeText(body.remark, 500) || null,
             createdById: user.id,
@@ -169,7 +173,12 @@ export async function PUT(req: NextRequest, { params }: { params: { itemId: stri
           action: 'save_product_time_profile',
           targetType: 'product_time_profile',
           targetId: draft.id,
-          detail: { drawingLibraryItemId: item.id, version: draft.version, processCount: validation.entries.length },
+          detail: {
+            drawingLibraryItemId: item.id,
+            version: draft.version,
+            reportingPolicy,
+            processCount: validation.entries.length,
+          },
         },
       });
       return draft.id;

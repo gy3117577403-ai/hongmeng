@@ -116,14 +116,27 @@ test('completion command normalizes the API disposition and preserves the sessio
   assert.equal(parsed.userId, 'user-001');
 });
 
-test('mobile QR completion keeps the authenticated user as its attribution identity', () => {
+test('mobile QR completion keeps the authenticated employee and user attribution', () => {
   const parsed = parseProcessCompletionCommand(command({
     reportSource: 'QR_MOBILE',
     principalEmployeeId: 'employee-001',
   }));
   assert.equal(parsed.reportSource, 'QR_MOBILE');
   assert.equal(parsed.userId, 'user-001');
-  assert.equal(parsed.principalEmployeeId, null);
+  assert.equal(parsed.principalEmployeeId, 'employee-001');
+});
+
+test('mobile QR completion requires the authenticated employee to be a participant', () => {
+  for (const principalEmployeeId of [undefined, 'employee-003']) {
+    assert.throws(
+      () => parseProcessCompletionCommand(command({
+        reportSource: 'QR_MOBILE',
+        principalEmployeeId,
+      })),
+      (error: unknown) => error instanceof ProcessCompletionServiceError
+        && error.code === 'PROCESS_COMPLETION_QR_PRINCIPAL_PARTICIPANT_REQUIRED',
+    );
+  }
 });
 
 test('completion command requires a disposition only when defects exist', () => {
@@ -162,6 +175,11 @@ test('completion command rejects impossible quantities, stale-shaped dates, and 
     () => parseProcessCompletionCommand(command({ workDate: '2026-02-30' })),
     (error: unknown) => error instanceof ProcessCompletionServiceError
       && error.code === 'PROCESS_COMPLETION_WORK_DATE_INVALID',
+  );
+  assert.throws(
+    () => parseProcessCompletionCommand(command({ workDate: '2999-01-01' })),
+    (error: unknown) => error instanceof ProcessCompletionServiceError
+      && error.code === 'PROCESS_COMPLETION_WORK_DATE_FUTURE',
   );
   assert.throws(
     () => parseProcessCompletionCommand(command({ idempotencyKey: 'short' })),

@@ -109,6 +109,11 @@ test('route change diff normalization derives NEW only for inserted steps', () =
         processName: ' supplemental operation ',
         stageGroup: ' backend ',
         standardMillisecondsPerUnit: 6_750,
+        timeBasis: 'per_unit',
+        unitLabel: 'set',
+        unitsPerProduct: 96,
+        reportQuantityBasis: 'action',
+        reportUnitLabel: 'terminal',
         requiredQty: 80,
       },
     },
@@ -135,6 +140,9 @@ test('route change diff normalization derives NEW only for inserted steps', () =
   assert.equal(inserted.processDefinitionId, 'process-new');
   assert.equal(inserted.targetStepId, 'step-four');
   assert.equal(inserted.afterData.standardMillisecondsPerUnit, 6_750);
+  assert.equal(inserted.afterData.unitsPerProduct, 96);
+  assert.equal(inserted.afterData.reportQuantityBasis, 'action');
+  assert.equal(inserted.afterData.reportUnitLabel, 'terminal');
   assert.equal('requiredQty' in inserted.afterData ? inserted.afterData.requiredQty : null, 80);
 });
 
@@ -220,6 +228,21 @@ test('route change diff normalization rejects ambiguous or impossible commands',
       kind: 'INSERT_STEP',
       processDefinitionId: '',
       afterData: { standardMillisecondsPerUnit: 1_000 },
+    }]),
+    (error: unknown) => error instanceof ProcessRouteChangeServiceError
+      && error.code === 'PROCESS_ROUTE_CHANGE_DIFF_INVALID',
+  );
+  assert.throws(
+    () => normalizeProcessRouteChangeDiffs([{
+      kind: 'INSERT_STEP',
+      processDefinitionId: 'action-step',
+      afterData: {
+        standardMillisecondsPerUnit: 9_000,
+        timeBasis: 'per_unit',
+        unitsPerProduct: 1,
+        reportQuantityBasis: 'action',
+        reportUnitLabel: 'terminal',
+      },
     }]),
     (error: unknown) => error instanceof ProcessRouteChangeServiceError
       && error.code === 'PROCESS_ROUTE_CHANGE_DIFF_INVALID',

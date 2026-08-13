@@ -64,7 +64,9 @@ export type AuditCompletion = {
   processedQty: number;
   goodQty: number;
   defectQty: number;
+  reportedUnitQty?: number;
   reportedGoodUnitQty?: number;
+  reportedDefectUnitQty?: number;
   reportQuantityBasis?: string;
   coverageStatus?: string;
   coveredQty?: number;
@@ -700,12 +702,23 @@ export function auditProductionClosure(
         message: '工序完成记录引用的工单、路线或工序不一致',
       });
     }
+    const actionReport = completion.reportQuantityBasis === 'action';
+    const reportedUnitQty = completion.reportedUnitQty ?? 0;
+    const reportedGoodUnitQty = completion.reportedGoodUnitQty ?? 0;
+    const reportedDefectUnitQty = completion.reportedDefectUnitQty ?? 0;
     if (
       !Number.isSafeInteger(completion.processedQty)
-      || completion.processedQty <= 0
+      || completion.processedQty < 0
       || !isNonnegativeSafeInteger(completion.goodQty)
       || !isNonnegativeSafeInteger(completion.defectQty)
       || completion.processedQty !== completion.goodQty + completion.defectQty
+      || (actionReport
+        ? !isNonnegativeSafeInteger(reportedUnitQty)
+          || !isNonnegativeSafeInteger(reportedGoodUnitQty)
+          || !isNonnegativeSafeInteger(reportedDefectUnitQty)
+          || reportedUnitQty !== reportedGoodUnitQty + reportedDefectUnitQty
+          || (completion.processedQty <= 0 && reportedUnitQty <= 0)
+        : completion.processedQty <= 0)
     ) {
       add({
         severity: 'error',
@@ -719,6 +732,10 @@ export function auditProductionClosure(
           processedQty: completion.processedQty,
           goodQty: completion.goodQty,
           defectQty: completion.defectQty,
+          reportQuantityBasis: completion.reportQuantityBasis || 'product',
+          reportedUnitQty,
+          reportedGoodUnitQty,
+          reportedDefectUnitQty,
         },
       });
     }
@@ -1202,7 +1219,7 @@ export function auditProductionClosure(
     if (
       claim.status === 'ACTIVE'
       && (
-        claim.quantity <= 0
+        claim.quantity < 0
         || claim.standardLaborMilliseconds <= 0n
         || claim.voidedAt
         || claim.reversalOfId

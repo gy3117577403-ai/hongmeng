@@ -13,7 +13,7 @@ import {
 } from '@prisma/client';
 import {
   calculateCompletionLaborSnapshot,
-  planLaborClaim,
+  redistributeStandardLaborByExistingShares,
 } from '@/lib/process-completion-domain';
 import { calculateAttainmentBasisPoints } from '@/lib/process-time';
 import {
@@ -763,7 +763,7 @@ async function correctHistoricalStandard(
       laborPool: {
         include: {
           claims: {
-            where: { status: ProcessLaborClaimStatus.ACTIVE, quantity: { gt: 0 } },
+            where: { status: ProcessLaborClaimStatus.ACTIVE, standardLaborMilliseconds: { gt: 0 } },
             orderBy: [{ claimedAt: 'asc' }, { id: 'asc' }],
           },
         },
@@ -836,16 +836,14 @@ async function correctHistoricalStandard(
     });
     let claimedQty = 0;
     let claimedLabor = 0n;
-    for (const claim of pool.claims) {
-      const plan = planLaborClaim({
-        eligibleQty: pool.eligibleQty,
-        claimedQty,
-        claimQty: claim.quantity,
-        totalStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
-        claimedStandardLaborMilliseconds: claimedLabor,
-      });
-      claimedQty = plan.nextClaimedQty;
-      claimedLabor = plan.nextClaimedStandardLaborMilliseconds;
+    const replacementLaborByClaim = redistributeStandardLaborByExistingShares({
+      totalStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
+      existingStandardLaborMilliseconds: pool.claims.map(claim => claim.standardLaborMilliseconds),
+    });
+    for (const [claimIndex, claim] of pool.claims.entries()) {
+      const replacementLabor = replacementLaborByClaim[claimIndex];
+      claimedQty += claim.quantity;
+      claimedLabor += replacementLabor;
       employees.add(claim.employeeId);
       const key = `product-time-deployment:${input.deploymentId}:${claim.id}`;
       await tx.processLaborClaim.update({
@@ -877,7 +875,7 @@ async function correctHistoricalStandard(
           poolId: pool.id,
           employeeId: claim.employeeId,
           quantity: claim.quantity,
-          standardLaborMilliseconds: plan.claimStandardLaborMilliseconds,
+          standardLaborMilliseconds: replacementLabor,
           workDate: claim.workDate,
           status: ProcessLaborClaimStatus.ACTIVE,
           source: 'product_time_deployment',
@@ -1207,6 +1205,7 @@ async function applyRouteDeployment(
       templateVersion: profile.version,
       productTimeProfileId: profile.id,
       productTimeProfileVersion: profile.version,
+      reportingPolicy: profile.reportingPolicy,
       routeSource: 'product_time_profile',
       version: { increment: 1 },
     },
@@ -1341,10 +1340,6 @@ async function applyRouteDeployment(
         position: entry.position,
         sequenceGroup: entry.sequenceGroup,
         ...standard,
-        ...(mustSupplement ? {
-          reportQuantityBasis: 'product',
-          reportUnitLabel: standard.unitLabel || '件',
-        } : {}),
         productTimeDeploymentRouteId: input.deploymentRouteId,
         executionMode: mustSupplement
           ? ProcessStepExecutionMode.SUPPLEMENTAL_OBLIGATION
@@ -1396,6 +1391,11 @@ async function applyRouteDeployment(
           intendedSequenceGroup: entry.sequenceGroup,
           requiredQty,
           reportedQty: 0,
+          reportedUnitQty: 0,
+          reportedGoodUnitQty: 0,
+          reportedDefectUnitQty: 0,
+          reportQuantityBasis: standard.reportQuantityBasis,
+          reportUnitLabel: standard.reportUnitLabel,
           status: ProcessSupplementObligationStatus.ACTIVE,
           releasePolicy: 'NONE',
           timeBasis: standard.timeBasis as string,

@@ -31,6 +31,9 @@ test('a valid mobile proposal remains submittable with no field note', () => {
     insertBeforeStepId: 'step-4',
     newProcessName: '剥皮',
     newStandardMillisecondsPerUnit: 12_000,
+    newReportQuantityBasis: 'product',
+    newUnitsPerProduct: 1,
+    newReportUnitLabel: '个',
     includesTime: false,
     timeChangesValid: false,
     includesMove: false,
@@ -88,11 +91,19 @@ test('inserted process definition identity round-trips into the review DTO', () 
         processDefinitionId: 'definition-strip',
         processName: '剥皮',
         standardMillisecondsPerUnit: 12_000,
+        timeBasis: 'per_unit',
+        unitLabel: '套',
+        unitsPerProduct: 96,
+        reportQuantityBasis: 'action',
+        reportUnitLabel: '端子',
       },
     }],
   });
   assert.equal(dto.payload.newProcessDefinitionId, 'definition-strip');
   assert.equal(dto.payload.insertBeforeProcessName, '合压');
+  assert.equal(dto.payload.newUnitsPerProduct, 96);
+  assert.equal(dto.payload.newReportQuantityBasis, 'action');
+  assert.equal(dto.payload.newReportUnitLabel, '端子');
   assert.deepEqual(dto.routeSteps, [{
     id: 'step-4',
     processName: '合压',

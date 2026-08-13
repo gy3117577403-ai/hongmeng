@@ -66,6 +66,9 @@ export type ProcessRouteChangeProposalSubmitState = {
   insertBeforeStepId: string;
   newProcessName: string;
   newStandardMillisecondsPerUnit: number | null;
+  newReportQuantityBasis?: 'product' | 'action';
+  newUnitsPerProduct?: number;
+  newReportUnitLabel?: string;
   includesTime: boolean;
   timeChangesValid: boolean;
   includesMove: boolean;
@@ -83,6 +86,13 @@ export function canSubmitProcessRouteChangeProposal(state: ProcessRouteChangePro
       && state.newProcessName.trim()
       && state.newStandardMillisecondsPerUnit,
     ))
+    && (!state.includesInsert
+      || state.newReportQuantityBasis !== 'action'
+      || Boolean(
+        Number.isSafeInteger(state.newUnitsPerProduct)
+        && Number(state.newUnitsPerProduct) > 1
+        && state.newReportUnitLabel?.trim(),
+      ))
     && (!state.includesTime || state.timeChangesValid)
     && (!state.includesMove || Boolean(state.moveStepId && !state.moveIsNoop));
 }
@@ -108,6 +118,11 @@ export type ProcessRouteChangePayloadDTO = {
   newProcessName?: string | null;
   newProcessCode?: string | null;
   newStandardMillisecondsPerUnit?: number | null;
+  newTimeBasis?: 'per_unit' | 'per_batch' | null;
+  newUnitLabel?: string | null;
+  newUnitsPerProduct?: number | null;
+  newReportQuantityBasis?: 'product' | 'action' | null;
+  newReportUnitLabel?: string | null;
   affectedQty?: number | null;
   moveStepId?: string | null;
   moveBeforeStepId?: string | null;
@@ -500,6 +515,12 @@ export function processRouteChangeDTO(value: unknown): ProcessRouteChangeDTO {
     newProcessCode: text(insertAfter.processCode) || text(existingPayload.newProcessCode),
     newStandardMillisecondsPerUnit: number(insertAfter.standardMillisecondsPerUnit)
       ?? number(existingPayload.newStandardMillisecondsPerUnit),
+    newTimeBasis: text(insertAfter.timeBasis) === 'per_batch' ? 'per_batch' : 'per_unit',
+    newUnitLabel: text(insertAfter.unitLabel) || text(existingPayload.newUnitLabel),
+    newUnitsPerProduct: number(insertAfter.unitsPerProduct)
+      ?? number(existingPayload.newUnitsPerProduct),
+    newReportQuantityBasis: text(insertAfter.reportQuantityBasis) === 'action' ? 'action' : 'product',
+    newReportUnitLabel: text(insertAfter.reportUnitLabel) || text(existingPayload.newReportUnitLabel),
     affectedQty: number(insertAfter.requiredQty)
       ?? number(existingPayload.affectedQty)
       ?? number(impactSource.affectedQty),

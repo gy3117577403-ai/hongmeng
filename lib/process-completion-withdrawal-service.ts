@@ -12,6 +12,10 @@ import { prisma } from '@/lib/prisma';
 import { syncProductTimeRouteFromPublishedProductTime } from '@/lib/process-routing';
 import { syncUnfinishedDailyTasksFromPublishedProductTime } from '@/lib/product-time-task-sync';
 import { legacyStatusForStage, type WorkOrderStage } from '@/lib/work-orders';
+import {
+  materializeProcessActionConsumptions,
+  voidProcessActionConsumptionsForCompletion,
+} from '@/lib/process-action-consumption';
 
 export class ProcessCompletionWithdrawalError extends Error {
   readonly status: number;
@@ -92,8 +96,21 @@ export type WithdrawProcessCompletionResult = {
 };
 
 const withdrawalStateInclude = Prisma.validator<Prisma.ProcessCompletionInclude>()({
-  step: true,
+  step: {
+    include: {
+      completions: {
+        where: { voidedAt: null, reportQuantityBasis: 'action' },
+        select: {
+          id: true,
+          reportedGoodUnitQty: true,
+          goodQty: true,
+          unitsPerProduct: true,
+        },
+      },
+    },
+  },
   branchWorkOrder: { select: { id: true, code: true, branchStatus: true } },
+  supplementObligation: true,
   participants: {
     include: { employee: { select: { id: true, name: true, employeeNo: true } } },
     orderBy: { position: 'asc' },
@@ -406,6 +423,20 @@ function buildWithdrawalRollbackPlan(
   triggeredCoverages: TriggeredCoverageRecord[],
 ): WithdrawalRollbackPlan {
   const blockers: ProcessCompletionWithdrawalBlocker[] = [];
+  if (state.reportQuantityBasis === 'action') {
+    const remainingActionOutput = state.step.completions
+      .filter(completion => completion.id !== state.id)
+      .reduce((sum, completion) => sum + completion.reportedGoodUnitQty, 0);
+    const remainingActionDemand = state.step.completions
+      .filter(completion => completion.id !== state.id)
+      .reduce((sum, completion) => sum + completion.goodQty * completion.unitsPerProduct, 0);
+    if (remainingActionOutput < remainingActionDemand) {
+      blockers.push({
+        code: 'PROCESS_ACTION_WITHDRAWAL_DEPENDENCY_EXISTS',
+        message: `该笔动作报工撤回后只剩 ${remainingActionOutput} 个合格动作，但其余整套良品仍需要 ${remainingActionDemand} 个；请先撤回依赖它形成的整套报工`,
+      });
+    }
+  }
   const normalSteps = state.route.steps.filter(step => step.executionMode === 'NORMAL');
   const groups = [...new Set(normalSteps.map(step => step.sequenceGroup))]
     .filter(group => group >= state.step.sequenceGroup)
@@ -628,9 +659,12 @@ function previewFromState(
     blockers.push({ code: 'PROCESS_COMPLETION_ALREADY_WITHDRAWN', message: '该完工记录已经撤回' });
   }
   if (
-    state.coveredQty > state.step.processedQty
-    || state.coveredGoodQty > state.step.goodOutputQty
-    || state.coveredDefectQty > state.step.defectOutputQty
+    !state.supplementObligationId
+    && (
+      state.coveredQty > state.step.processedQty
+      || state.coveredGoodQty > state.step.goodOutputQty
+      || state.coveredDefectQty > state.step.defectOutputQty
+    )
   ) {
     blockers.push({
       code: 'PROCESS_COMPLETION_QUANTITY_STATE_INVALID',
@@ -801,13 +835,7 @@ export async function requestProcessCompletionCorrection(input: {
       'PROCESS_COMPLETION_CORRECTION_TARGET_REQUIRED',
     );
   }
-  if (reason.length < 4) {
-    throw new ProcessCompletionWithdrawalError(
-      '请说明发现的报工数量问题',
-      400,
-      'PROCESS_COMPLETION_CORRECTION_REASON_REQUIRED',
-    );
-  }
+  const reasonText = reason || '未填写现场说明';
   return prisma.$transaction(async tx => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`process-completion-correction:${completionId}`}))`;
     const { state } = await loadState(tx, routeId, completionId);
@@ -832,7 +860,7 @@ export async function requestProcessCompletionCorrection(input: {
           type: 'production',
           priority: 'high',
           status: 'pending',
-          description: `现场员工报告该笔报工可能有误。\n报工数量：${completionQuantityDescription(state)}\n现场说明：${reason}`,
+          description: `现场员工报告该笔报工可能有误。\n报工数量：${completionQuantityDescription(state)}\n现场说明：${reasonText}`,
           sourceType: 'process_reporting_error',
           sourceId: state.id,
           sourceCode: state.route.workOrder.specification || state.route.workOrder.code,
@@ -847,7 +875,7 @@ export async function requestProcessCompletionCorrection(input: {
         data: {
           issueId: issue.id,
           action: 'create_from_field_report_correction',
-          content: `${text(input.actor, 120) || '现场员工'}申请核对报工数量：${reason}`.slice(0, 500),
+          content: `${text(input.actor, 120) || '现场员工'}申请核对报工数量：${reasonText}`.slice(0, 500),
           actorId: input.userId,
           detail: { completionId, routeId, idempotencyKey, reason },
         },
@@ -859,7 +887,7 @@ export async function requestProcessCompletionCorrection(input: {
           deletedAt: null,
           status: 'pending',
           reporterId: input.userId,
-          description: `现场员工再次报告该笔报工可能有误。\n报工数量：${completionQuantityDescription(state)}\n现场说明：${reason}`,
+          description: `现场员工再次报告该笔报工可能有误。\n报工数量：${completionQuantityDescription(state)}\n现场说明：${reasonText}`,
         },
       });
     }
@@ -959,6 +987,66 @@ async function applyWithdrawal(
       409,
       'PROCESS_COMPLETION_WITHDRAWAL_CONFLICT',
     );
+  }
+  if (state.reportQuantityBasis === 'action') {
+    await voidProcessActionConsumptionsForCompletion(tx, {
+      completionId: state.id,
+      userId: input.userId,
+      reason: input.reason,
+      now,
+    });
+    await materializeProcessActionConsumptions(tx, state.stepId);
+  }
+  if (state.supplementObligation) {
+    const obligation = state.supplementObligation;
+    const nextReportedQty = obligation.reportedQty - state.processedQty;
+    const nextReportedUnitQty = obligation.reportedUnitQty - state.reportedUnitQty;
+    const nextReportedGoodUnitQty = obligation.reportedGoodUnitQty - state.reportedGoodUnitQty;
+    const nextReportedDefectUnitQty = obligation.reportedDefectUnitQty - state.reportedDefectUnitQty;
+    if (
+      nextReportedQty < 0
+      || nextReportedUnitQty < 0
+      || nextReportedGoodUnitQty < 0
+      || nextReportedDefectUnitQty < 0
+    ) {
+      throw new ProcessCompletionWithdrawalError(
+        '补充工序累计数量小于本次撤回数量，请先核对补充报工台账',
+        409,
+        'PROCESS_SUPPLEMENT_WITHDRAWAL_LEDGER_INVALID',
+      );
+    }
+    const obligationUpdate = await tx.processSupplementObligation.updateMany({
+      where: { id: obligation.id, version: obligation.version },
+      data: {
+        reportedQty: nextReportedQty,
+        reportedUnitQty: nextReportedUnitQty,
+        reportedGoodUnitQty: nextReportedGoodUnitQty,
+        reportedDefectUnitQty: nextReportedDefectUnitQty,
+        status: 'ACTIVE',
+        fulfilledAt: null,
+        lastReportedAt: now,
+        version: { increment: 1 },
+      },
+    });
+    if (obligationUpdate.count !== 1) {
+      throw new ProcessCompletionWithdrawalError(
+        '补充工序义务已变化，请刷新后重试',
+        409,
+        'PROCESS_SUPPLEMENT_VERSION_CONFLICT',
+      );
+    }
+    await tx.workOrderProcessStep.update({
+      where: { id: state.stepId },
+      data: {
+        status: 'current',
+        startedAt: state.step.startedAt || now,
+        completedAt: null,
+        completedById: null,
+        quantityVersion: { increment: 1 },
+      },
+    });
+    state.step.status = 'current';
+    state.step.completedAt = null;
   }
 
   await tx.processCompletionCoverage.updateMany({
@@ -1183,12 +1271,14 @@ async function applyWithdrawal(
     where: { id: order.id },
     data: {
       stage,
-      status: legacyStatusForStage(stage),
-      progress: Math.min(100, Math.round((completedQty / target) * 100)),
+      status: state.supplementObligationId ? 'processing' : legacyStatusForStage(stage),
+      progress: state.supplementObligationId
+        ? Math.min(99, order.progress)
+        : Math.min(100, Math.round((completedQty / target) * 100)),
       completedQty: String(completedQty),
       frontendTransferredQty,
       executionVersion: { increment: 1 },
-      completedAt: stage === 'completed' ? order.completedAt : null,
+      completedAt: state.supplementObligationId ? null : stage === 'completed' ? order.completedAt : null,
       lastProgressAt: now,
       latestProgressRemark: `${state.step.processName}完工已撤回：${input.reason}`,
     },
@@ -1221,7 +1311,18 @@ async function applyWithdrawal(
   for (const task of tasks) {
     const step = stepById.get(task.stepId);
     if (!step) continue;
-    const projected = nextTaskStatus(step, task.plannedQty);
+    const supplementReportedAfter = state.supplementObligationId === state.supplementObligation?.id
+      && task.stepId === state.stepId
+      ? Math.max(0, state.supplementObligation.reportedQty - state.processedQty)
+      : null;
+    const projected = supplementReportedAfter === null
+      ? nextTaskStatus(step, task.plannedQty)
+      : {
+          status: supplementReportedAfter > 0
+            ? DailyProcessTaskStatus.IN_PROGRESS
+            : DailyProcessTaskStatus.READY,
+          availableQty: Math.max(0, state.supplementObligation!.requiredQty - supplementReportedAfter),
+        };
     if (task.status === projected.status && task.availableQty === projected.availableQty) continue;
     await tx.dailyProcessTask.update({
       where: { id: task.id },

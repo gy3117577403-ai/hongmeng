@@ -82,7 +82,6 @@ export async function POST(
       workstation: body.workstation,
       remark: body.remark,
       requireParticipants: true,
-      allowAdvanceReporting: true,
       autoAssignLabor: true,
       reportSource: ProcessCompletionSource.QR_MOBILE,
       idempotencyKey: body.idempotencyKey,

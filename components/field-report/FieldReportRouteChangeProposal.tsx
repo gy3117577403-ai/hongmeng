@@ -83,6 +83,9 @@ export function FieldReportRouteChangeProposal({
   const [moveBeforeStepId, setMoveBeforeStepId] = useState('');
   const [newProcessName, setNewProcessName] = useState('');
   const [newStandardSeconds, setNewStandardSeconds] = useState('');
+  const [newReportQuantityBasis, setNewReportQuantityBasis] = useState<'product' | 'action'>('product');
+  const [newUnitsPerProduct, setNewUnitsPerProduct] = useState('1');
+  const [newReportUnitLabel, setNewReportUnitLabel] = useState('个');
   const [affectedQty, setAffectedQty] = useState(String(Math.max(0, targetQty)));
   const [reason, setReason] = useState('');
   const [timeChanges, setTimeChanges] = useState<TimeChangeRow[]>([]);
@@ -144,6 +147,9 @@ export function FieldReportRouteChangeProposal({
     insertBeforeStepId,
     newProcessName,
     newStandardMillisecondsPerUnit: parsedNewStandard,
+    newReportQuantityBasis,
+    newUnitsPerProduct: Number(newUnitsPerProduct),
+    newReportUnitLabel,
     includesTime,
     timeChangesValid: Boolean(normalizedTimeChanges.length)
       && normalizedTimeChanges.every(item => Boolean(item.stepId && item.standardMillisecondsPerUnit)),
@@ -160,6 +166,9 @@ export function FieldReportRouteChangeProposal({
     setMoveBeforeStepId('');
     setNewProcessName('');
     setNewStandardSeconds('');
+    setNewReportQuantityBasis('product');
+    setNewUnitsPerProduct('1');
+    setNewReportUnitLabel('个');
     setAffectedQty(String(Math.max(0, targetQty)));
     setReason('');
     setTimeChanges([]);
@@ -194,6 +203,15 @@ export function FieldReportRouteChangeProposal({
             : null,
           newProcessName: includesInsert ? newProcessName.trim() : null,
           newStandardMillisecondsPerUnit: includesInsert ? parsedNewStandard : null,
+          newTimeBasis: includesInsert ? 'per_unit' : null,
+          newUnitLabel: includesInsert ? unitLabel : null,
+          newUnitsPerProduct: includesInsert
+            ? newReportQuantityBasis === 'action' ? Number(newUnitsPerProduct) : 1
+            : null,
+          newReportQuantityBasis: includesInsert ? newReportQuantityBasis : null,
+          newReportUnitLabel: includesInsert && newReportQuantityBasis === 'action'
+            ? newReportUnitLabel.trim()
+            : unitLabel,
           affectedQty: parsedAffectedQty,
           timeChanges: includesTime ? normalizedTimeChanges : [],
           reason: normalizeOptionalProcessRouteChangeNote(reason),
@@ -233,7 +251,12 @@ export function FieldReportRouteChangeProposal({
           {includesInsert && <fieldset className="field-report-change-group"><legend>新增工序</legend>
             <label><span>插入位置</span><select value={insertBeforeStepId} disabled={saving} onChange={event => setInsertBeforeStepId(event.target.value)}>{steps.map(step => <option value={step.id} key={step.id}>在第 {step.position} 道「{step.processName}」之前</option>)}</select></label>
             <label><span>新工序名称</span><input value={newProcessName} maxLength={80} disabled={saving} placeholder="例：热缩管定位" onChange={event => setNewProcessName(event.target.value)} /></label>
-            <label><span>标准工时</span><div><input inputMode="decimal" value={newStandardSeconds} disabled={saving} placeholder="0" onChange={event => setNewStandardSeconds(event.target.value)} /><em>秒/{unitLabel}</em></div></label>
+            <label><span>现场报工口径</span><select value={newReportQuantityBasis} disabled={saving} onChange={event => setNewReportQuantityBasis(event.target.value as 'product' | 'action')}><option value="product">按产品数量报工</option><option value="action">按实际动作数量报工</option></select></label>
+            {newReportQuantityBasis === 'action' && <>
+              <label><span>每{unitLabel}动作次数</span><div><input inputMode="numeric" value={newUnitsPerProduct} disabled={saving} placeholder="例：96" onChange={event => setNewUnitsPerProduct(event.target.value)} /><em>次/{unitLabel}</em></div></label>
+              <label><span>动作数量单位</span><input value={newReportUnitLabel} maxLength={20} disabled={saving} placeholder="例：个、端子" onChange={event => setNewReportUnitLabel(event.target.value)} /></label>
+            </>}
+            <label><span>标准工时</span><div><input inputMode="decimal" value={newStandardSeconds} disabled={saving} placeholder="0" onChange={event => setNewStandardSeconds(event.target.value)} /><em>秒/{newReportQuantityBasis === 'action' ? newReportUnitLabel.trim() || '动作' : unitLabel}</em></div></label>
           </fieldset>}
 
           {includesTime && <fieldset className="field-report-change-group"><legend>工时变更</legend>

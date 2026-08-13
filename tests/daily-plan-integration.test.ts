@@ -32,8 +32,10 @@ import {
 import { completeProcessStep } from '../lib/process-completion-service';
 
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
-const workDate = '2099-01-10';
-const carryDate = '2099-01-11';
+// Keep integration dates in a completed historical week so production-date
+// validation remains meaningful instead of relying on a far-future fixture.
+const workDate = '2020-01-11';
+const carryDate = '2020-01-12';
 
 function integrationKey(prefix: string, label: string): string {
   return `${prefix}-${label}`;
@@ -339,7 +341,7 @@ test(
           },
         }),
       ]);
-      const effectiveFrom = new Date('2099-01-01T00:00:00.000Z');
+      const effectiveFrom = new Date('2020-01-02T00:00:00.000Z');
       await prisma.productionPlanningMembership.createMany({
         data: [
           {
@@ -417,8 +419,8 @@ test(
             productName: 'weekly boundary product',
             specification: 'weekly-boundary-specification',
             orderQuantity: 10,
-            orderDate: new Date('2099-01-01T04:00:00.000Z'),
-            customerDueDate: new Date('2099-01-10T04:00:00.000Z'),
+            orderDate: new Date('2020-01-02T04:00:00.000Z'),
+            customerDueDate: new Date('2020-01-11T04:00:00.000Z'),
             status: 'scheduled',
           },
         });
@@ -427,24 +429,24 @@ test(
             planOrderId: planOrder.id,
             batchNo: 1,
             quantity: 10,
-            weekStartDate: new Date('2099-01-05T04:00:00.000Z'),
-            weekEndDate: new Date('2099-01-11T04:00:00.000Z'),
-            plannedCompletionDate: new Date('2099-01-10T04:00:00.000Z'),
+            weekStartDate: new Date('2020-01-06T04:00:00.000Z'),
+            weekEndDate: new Date('2020-01-12T04:00:00.000Z'),
+            plannedCompletionDate: new Date('2020-01-11T04:00:00.000Z'),
             releaseState: 'active',
             workOrderId: route.workOrderId,
           },
         });
 
         const [monday, tuesday] = await Promise.all([
-          previewDailyPlanSuggestions({ actorUserId: admin.id, workDate: '2099-01-05', shiftCode: 'DAY', teamId: teamA.id }),
-          previewDailyPlanSuggestions({ actorUserId: admin.id, workDate: '2099-01-06', shiftCode: 'DAY', teamId: teamA.id }),
+          previewDailyPlanSuggestions({ actorUserId: admin.id, workDate: '2020-01-06', shiftCode: 'DAY', teamId: teamA.id }),
+          previewDailyPlanSuggestions({ actorUserId: admin.id, workDate: '2020-01-07', shiftCode: 'DAY', teamId: teamA.id }),
         ]);
         assert.deepEqual(monday.candidates.map(candidate => candidate.stepId), [route.step.id]);
         assert.deepEqual(tuesday.candidates.map(candidate => candidate.stepId), [route.step.id]);
 
         const created = await createDailyProductionPlan({
           actorUserId: admin.id,
-          workDate: '2099-01-05',
+          workDate: '2020-01-06',
           shiftCode: 'DAY',
           teamId: teamA.id,
           workOrderIds: [route.workOrderId],
@@ -453,7 +455,7 @@ test(
         assert.equal(Number(created.createdTaskCount), 1);
         const tuesdayAfterPlanning = await previewDailyPlanSuggestions({
           actorUserId: admin.id,
-          workDate: '2099-01-06',
+          workDate: '2020-01-07',
           shiftCode: 'DAY',
           teamId: teamA.id,
         });
@@ -471,8 +473,8 @@ test(
             productName: 'arrangement integration product',
             specification: 'arrangement-integration-specification',
             orderQuantity: 10,
-            orderDate: new Date('2099-01-01T04:00:00.000Z'),
-            customerDueDate: new Date('2099-01-10T04:00:00.000Z'),
+            orderDate: new Date('2020-01-02T04:00:00.000Z'),
+            customerDueDate: new Date('2020-01-11T04:00:00.000Z'),
             status: 'scheduled',
           },
         });
@@ -481,9 +483,9 @@ test(
             planOrderId: planOrder.id,
             batchNo: 1,
             quantity: 10,
-            weekStartDate: new Date('2099-01-05T04:00:00.000Z'),
-            weekEndDate: new Date('2099-01-11T04:00:00.000Z'),
-            plannedCompletionDate: new Date('2099-01-10T04:00:00.000Z'),
+            weekStartDate: new Date('2020-01-06T04:00:00.000Z'),
+            weekEndDate: new Date('2020-01-12T04:00:00.000Z'),
+            plannedCompletionDate: new Date('2020-01-11T04:00:00.000Z'),
             releaseState: 'active',
             workOrderId: route.workOrderId,
           },
@@ -492,7 +494,7 @@ test(
         const context = await getProductionArrangementContext({
           actorUserId: admin.id,
           workOrderIds: [route.workOrderId],
-          workDate: '2099-01-12',
+          workDate: '2020-01-13',
           shiftCode: 'DAY',
           teamId: teamA.id,
           includeWaitingUpstream: true,
@@ -510,7 +512,7 @@ test(
 
         const scheduleInput = {
           actorUserId: admin.id,
-          workDate: '2099-01-12',
+          workDate: '2020-01-13',
           shiftCode: 'DAY',
           teamId: teamA.id,
           workOrderIds: [route.workOrderId],
@@ -536,9 +538,9 @@ test(
           stepId: route.step.id,
           processedQty: 4,
           defectQty: 0,
-          workDate: '2099-01-12',
-          workStartedAt: '2099-01-12T00:00:00.000Z',
-          workEndedAt: '2099-01-12T01:00:00.000Z',
+          workDate: '2020-01-13',
+          workStartedAt: '2020-01-13T00:00:00.000Z',
+          workEndedAt: '2020-01-13T01:00:00.000Z',
           employeeIds: [workerA1.id],
           requireParticipants: true,
           idempotencyKey: integrationKey(prefix, 'arrangement-partial-completion'),
@@ -612,7 +614,7 @@ test(
         const continueInput = {
           actorUserId: admin.id,
           sourceTaskIds: scheduled.taskIds,
-          targetDate: '2099-01-13',
+          targetDate: '2020-01-14',
           shiftCode: 'DAY',
           employeeIds: [workerA2.id, workerA3.id],
           reason: 'integration continuation',
@@ -635,7 +637,7 @@ test(
         assert.equal(sourceAfter.status, DailyProcessTaskStatus.CARRIED_OVER);
         assert.equal(activeSourceAssignments, 0);
         assert.equal(targetAfter.carryOverFromTaskId, scheduled.taskIds[0]);
-        assert.equal(formatWorkDate(targetAfter.plan.workDate), '2099-01-13');
+        assert.equal(formatWorkDate(targetAfter.plan.workDate), '2020-01-14');
         assert.equal(targetAfter.plannedQty, 6);
         assert.equal(targetAfter.assignments.reduce((sum, assignment) => sum + assignment.quantity, 0), 6);
         assert.equal(

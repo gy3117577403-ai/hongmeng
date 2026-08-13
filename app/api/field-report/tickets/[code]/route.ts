@@ -38,7 +38,6 @@ export async function GET(
     const canInspectCompletions = ticket.access.canReport || ticket.access.state === 'COMPLETED';
     const context = canInspectCompletions && ticket.route
       ? await loadProcessCompletionContext(ticket.route.id, stepId, {
-          allowAdvanceReporting: true,
           allowCompletedSelection: true,
         })
       : null;

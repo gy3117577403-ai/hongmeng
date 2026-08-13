@@ -470,6 +470,7 @@ type DefectDisposition = 'rework' | 'scrap_replenish';
 type ProcessCompletionContext = {
   routeId: string;
   routeVersion: number;
+  reportingPolicy: 'free_sequence' | 'strict_sequence';
   step: {
     id: string;
     processName: string;
@@ -3626,7 +3627,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
     <section ref={dialogRef} tabIndex={-1} className="production-dialog process-completion-dialog" role="dialog" aria-modal="true" aria-labelledby="process-completion-title" aria-describedby="process-completion-order">
       <header className="process-completion-header">
         <div className="process-completion-heading">
-          <span>工序自由报工</span>
+          <span>{context?.reportingPolicy === 'strict_sequence' ? '严格按流程报工' : '工序自由报工'}</span>
           <strong id="process-completion-title">{completionTitle}</strong>
           <small id="process-completion-order">{order.customerName || '客户待补充'} · {specText(order)}{order.businessCode ? ` · ${order.businessCode}` : ''}</small>
         </div>
@@ -3646,6 +3647,8 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
               const actionStep = routeStep?.reportQuantityBasis === 'action';
               const pending = routeStep?.pendingCoverageQty || 0;
               const noRemaining = reportable === 0 && (!actionStep || routeStep.reportableUnitQty === 0);
+              const strictBlocked = context?.reportingPolicy === 'strict_sequence'
+                && routeStep?.status !== 'current';
               const statusHint = noRemaining
                 ? ' · 已报完'
                 : reportable === undefined
@@ -3653,7 +3656,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
                   : actionStep
                     ? ` · 可报 ${formatProductionQuantity(routeStep.reportableUnitQty)} ${routeStep.reportUnitLabel}动作 · 整套余 ${formatProductionQuantity(reportable)} ${routeStep.unitLabel || step.unitLabel || '件'}`
                     : ` · 可报 ${formatProductionQuantity(reportable)} ${routeStep?.unitLabel || step.unitLabel || '件'}${pending > 0 ? ` · 待核销 ${formatProductionQuantity(pending)}` : ''}`;
-              return <option disabled={noRemaining} value={step.id} key={step.id}>第 {step.position} 道 · {step.processName}{statusHint}</option>;
+              return <option disabled={noRemaining || strictBlocked} value={step.id} key={step.id}>第 {step.position} 道 · {step.processName}{strictBlocked ? ' · 等待前序' : statusHint}</option>;
             })}
           </select>
         </label>
@@ -3684,7 +3687,7 @@ function ProcessCompletionDialog({ order, activeSteps, selectedStepId, selectSte
           </section>
 
           <section className="process-completion-quantity-panel" aria-label="本次完成数量">
-            <header><div><strong>{actionReporting ? '实际动作与整套流转' : '本次报工数量'}</strong><small>{actionReporting ? `剩余合格动作 ${formatProductionQuantity(context.reportableUnitQty)} ${reportUnitLabel}；整套剩余 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}` : `剩余可报 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}；当前已到料可核销 ${formatProductionQuantity(context.remainingInputQty)} ${unitLabel}`}</small></div><label className="process-completion-work-date"><span><CalendarDays size={16} aria-hidden="true" />生产日期</span><input type="date" value={value.workDate} disabled={saving} onChange={event => setValue({ ...value, workDate: event.target.value })} /></label></header>
+            <header><div><strong>{actionReporting ? '实际动作与整套流转' : '本次报工数量'}</strong><small>{actionReporting ? `剩余合格动作 ${formatProductionQuantity(context.reportableUnitQty)} ${reportUnitLabel}；整套剩余 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}` : `剩余可报 ${formatProductionQuantity(context.reportableQty)} ${unitLabel}；当前已到料可核销 ${formatProductionQuantity(context.remainingInputQty)} ${unitLabel}`}</small></div><label className="process-completion-work-date"><span><CalendarDays size={16} aria-hidden="true" />生产日期</span><input type="date" max={todayShanghaiDateKey()} value={value.workDate} disabled={saving} onChange={event => setValue({ ...value, workDate: event.target.value })} /></label></header>
             {actionReporting && <p className="process-completion-action-note">实际动作量用于计算工时；只有形成完整产品的数量才推进下一工序。每套标准为 {formatProductionQuantity(context.step.unitsPerProduct)} {reportUnitLabel}。</p>}
             <div className={`process-completion-quantity-grid${actionReporting ? ' action' : ''}`}>
               {actionReporting && <>

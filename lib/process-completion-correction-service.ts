@@ -36,7 +36,7 @@ const correctionInclude = Prisma.validator<Prisma.ProcessCompletionInclude>()({
   laborPool: {
     include: {
       claims: {
-        where: { status: ProcessLaborClaimStatus.ACTIVE, quantity: { gt: 0 } },
+        where: { status: ProcessLaborClaimStatus.ACTIVE, standardLaborMilliseconds: { gt: 0 } },
         include: { employee: { select: { name: true } } },
         orderBy: [{ claimedAt: 'asc' }, { id: 'asc' }],
       },

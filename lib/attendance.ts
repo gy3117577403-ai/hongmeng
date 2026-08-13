@@ -86,6 +86,10 @@ export function dateKeyFromDatabase(value: Date): string {
   return value.toISOString().slice(0, 10);
 }
 
+export function chinaTodayDateKey(now = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(now);
+}
+
 export function parseAttendanceType(value: unknown): AttendanceType {
   if (value === 'leave' || value === 'absent' || value === 'rest') return value;
   return 'normal';

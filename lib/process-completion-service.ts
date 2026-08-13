@@ -8,7 +8,7 @@ import {
   ProcessLaborClaimStatus,
   ProcessLaborPoolStatus,
 } from '@prisma/client';
-import { dateKeyFromDatabase, parseWorkDate } from '@/lib/attendance';
+import { chinaTodayDateKey, dateKeyFromDatabase, parseWorkDate } from '@/lib/attendance';
 import { resolveDailyTaskProgress } from '@/lib/daily-plan-domain';
 import {
   calculateCompletionLaborSnapshot,
@@ -41,6 +41,7 @@ import {
   productionEmployeeWhere,
 } from '@/lib/production-workforce';
 import { branchBusinessWorkOrderCode } from '@/lib/work-order-business-code';
+import { materializeProcessActionConsumptions } from '@/lib/process-action-consumption';
 
 export class ProcessCompletionServiceError extends Error {
   readonly status: number;
@@ -137,6 +138,7 @@ export type ProcessCompletionBatchResult = {
 export type ProcessCompletionContext = {
   routeId: string;
   routeVersion: number;
+  reportingPolicy: 'free_sequence' | 'strict_sequence';
   step: {
     id: string;
     processName: string;
@@ -147,6 +149,11 @@ export type ProcessCompletionContext = {
       id: string;
       requiredQty: number;
       reportedQty: number;
+      reportedUnitQty: number;
+      reportedGoodUnitQty: number;
+      reportedDefectUnitQty: number;
+      reportQuantityBasis: ProcessReportQuantityBasis;
+      reportUnitLabel: string;
       remainingQty: number;
       status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
       version: number;
@@ -167,6 +174,11 @@ export type ProcessCompletionContext = {
       id: string;
       requiredQty: number;
       reportedQty: number;
+      reportedUnitQty: number;
+      reportedGoodUnitQty: number;
+      reportedDefectUnitQty: number;
+      reportQuantityBasis: ProcessReportQuantityBasis;
+      reportUnitLabel: string;
       remainingQty: number;
       status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
       version: number;
@@ -313,7 +325,7 @@ type ParsedCompletionCommand = {
   team: string | null;
   workstation: string | null;
   remark: string | null;
-  allowAdvanceReporting: boolean;
+  allowAdvanceReporting: boolean | null;
   autoAssignLabor: boolean;
   reportSource: ProcessCompletionSource;
   principalEmployeeId: string | null;
@@ -949,6 +961,13 @@ export function parseProcessCompletionCommand(
       'PROCESS_COMPLETION_WORK_DATE_INVALID',
     );
   }
+  if (parsedWorkDate.key > chinaTodayDateKey()) {
+    throw new ProcessCompletionServiceError(
+      '生产日期不能晚于今天',
+      400,
+      'PROCESS_COMPLETION_WORK_DATE_FUTURE',
+    );
+  }
   const userId = cleanText(command.userId, 80);
   if (!userId) {
     throw new ProcessCompletionServiceError('登录状态已失效', 401, 'PROCESS_COMPLETION_USER_REQUIRED');
@@ -958,9 +977,9 @@ export function parseProcessCompletionCommand(
     : command.reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
       ? ProcessCompletionSource.SHARED_TERMINAL_PIN
       : ProcessCompletionSource.DESKTOP;
-  const principalEmployeeId = reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
-    ? cleanText(command.principalEmployeeId, 80)
-    : '';
+  const principalEmployeeId = reportSource === ProcessCompletionSource.DESKTOP
+    ? ''
+    : cleanText(command.principalEmployeeId, 80);
   const fieldReportTerminalId = reportSource === ProcessCompletionSource.SHARED_TERMINAL_PIN
     ? cleanText(command.fieldReportTerminalId, 80)
     : '';
@@ -1002,6 +1021,16 @@ export function parseProcessCompletionCommand(
       'PROCESS_COMPLETION_PIN_PRINCIPAL_PARTICIPANT_REQUIRED',
     );
   }
+  if (
+    reportSource === ProcessCompletionSource.QR_MOBILE
+    && (!principalEmployeeId || !employeeIds.includes(principalEmployeeId))
+  ) {
+    throw new ProcessCompletionServiceError(
+      '手机扫码报工人必须包含在本次作业人员中',
+      400,
+      'PROCESS_COMPLETION_QR_PRINCIPAL_PARTICIPANT_REQUIRED',
+    );
+  }
   return {
     routeId,
     stepId,
@@ -1019,7 +1048,9 @@ export function parseProcessCompletionCommand(
     team: cleanText(command.team, 80) || null,
     workstation: cleanText(command.workstation, 80) || null,
     remark: cleanText(command.remark, 500) || null,
-    allowAdvanceReporting: command.allowAdvanceReporting === true,
+    allowAdvanceReporting: typeof command.allowAdvanceReporting === 'boolean'
+      ? command.allowAdvanceReporting
+      : null,
     autoAssignLabor: command.autoAssignLabor === true,
     reportSource,
     principalEmployeeId: principalEmployeeId || null,
@@ -1396,6 +1427,11 @@ export async function loadProcessCompletionContext(
       'PROCESS_ROUTE_STEPS_REQUIRED',
     );
   }
+  const reportingPolicy = route.reportingPolicy === 'strict_sequence'
+    ? 'strict_sequence' as const
+    : 'free_sequence' as const;
+  const allowAdvanceReporting = options.allowAdvanceReporting
+    ?? reportingPolicy === 'free_sequence';
   const target = targetQuantity(route.workOrder);
   const totalByStep = new Map(completionTotals.map(total => [
     total.stepId,
@@ -1410,7 +1446,7 @@ export async function loadProcessCompletionContext(
   ]));
   const selected = stepId
     ? route.steps.find(step => step.id === stepId)
-    : options.allowAdvanceReporting
+    : allowAdvanceReporting
       ? route.steps.find(step => (
           step.status === 'current'
           && (
@@ -1443,7 +1479,11 @@ export async function loadProcessCompletionContext(
       stepId ? 'PROCESS_STEP_NOT_FOUND' : 'PROCESS_CURRENT_STEP_REQUIRED',
     );
   }
-  if (!options.allowAdvanceReporting && selected.status !== 'current') {
+  if (
+    !allowAdvanceReporting
+    && selected.status !== 'current'
+    && !(options.allowCompletedSelection && selected.completions.length > 0)
+  ) {
     throw new ProcessCompletionServiceError(
       '该工序已不是当前可完成工序，请刷新后重试',
       409,
@@ -1467,7 +1507,7 @@ export async function loadProcessCompletionContext(
     : target;
   const reportableQty = Math.max(0, selectedTarget - selectedTotals.reportedQty);
   const selectedReportQuantityBasis = selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
-    ? 'product' as const
+    ? normalizeProcessReportQuantityBasis(selected.supplementObligation?.reportQuantityBasis)
     : normalizeProcessReportQuantityBasis(selected.reportQuantityBasis);
   const reportTargetQty = processReportTargetQuantity({
     productTargetQty: selectedTarget,
@@ -1476,7 +1516,7 @@ export async function loadProcessCompletionContext(
   });
   const reportableUnitQty = Math.max(0, reportTargetQty - selectedTotals.reportedGoodUnitQty);
   if (
-    options.allowAdvanceReporting
+    allowAdvanceReporting
     && reportableQty <= 0
     && reportableUnitQty <= 0
     && !stepId
@@ -1504,6 +1544,7 @@ export async function loadProcessCompletionContext(
   return {
     routeId: route.id,
     routeVersion: route.version,
+    reportingPolicy,
     step: {
       id: selected.id,
       processName: selected.processName,
@@ -1514,6 +1555,11 @@ export async function loadProcessCompletionContext(
         id: selected.supplementObligation.id,
         requiredQty: selected.supplementObligation.requiredQty,
         reportedQty: selected.supplementObligation.reportedQty,
+        reportedUnitQty: selected.supplementObligation.reportedUnitQty,
+        reportedGoodUnitQty: selected.supplementObligation.reportedGoodUnitQty,
+        reportedDefectUnitQty: selected.supplementObligation.reportedDefectUnitQty,
+        reportQuantityBasis: normalizeProcessReportQuantityBasis(selected.supplementObligation.reportQuantityBasis),
+        reportUnitLabel: selected.supplementObligation.reportUnitLabel,
         remainingQty: Math.max(
           0,
           selected.supplementObligation.requiredQty - selected.supplementObligation.reportedQty,
@@ -1545,7 +1591,7 @@ export async function loadProcessCompletionContext(
       const stepAvailableInput = supplemental?.requiredQty
         || effectiveInputQuantity(step, firstGroup, target);
       const stepReportQuantityBasis = supplemental
-        ? 'product' as const
+        ? normalizeProcessReportQuantityBasis(supplemental.reportQuantityBasis)
         : normalizeProcessReportQuantityBasis(step.reportQuantityBasis);
       const stepReportTargetQty = processReportTargetQuantity({
         productTargetQty: stepTarget,
@@ -1562,6 +1608,11 @@ export async function loadProcessCompletionContext(
           id: supplemental.id,
           requiredQty: supplemental.requiredQty,
           reportedQty: supplemental.reportedQty,
+          reportedUnitQty: supplemental.reportedUnitQty,
+          reportedGoodUnitQty: supplemental.reportedGoodUnitQty,
+          reportedDefectUnitQty: supplemental.reportedDefectUnitQty,
+          reportQuantityBasis: normalizeProcessReportQuantityBasis(supplemental.reportQuantityBasis),
+          reportUnitLabel: supplemental.reportUnitLabel,
           remainingQty: Math.max(0, supplemental.requiredQty - supplemental.reportedQty),
           status: supplemental.status,
           version: supplemental.version,
@@ -1867,6 +1918,7 @@ async function createDefectBranch(
       startedAt: configuration.frozen ? null : input.now,
       productTimeProfileId: input.route.productTimeProfileId,
       productTimeProfileVersion: input.route.productTimeProfileVersion,
+      reportingPolicy: input.route.reportingPolicy,
       routeSource: input.route.routeSource,
       steps: {
         create: sourceSteps.map(step => {
@@ -2173,6 +2225,9 @@ export async function autoAssignCompletionLaborPool(
   const participants = [...new Set(input.employeeIds)];
   const baseQty = Math.floor(pool.remainingQty / participants.length);
   const remainder = pool.remainingQty % participants.length;
+  const laborToAssign = pool.totalStandardLaborMilliseconds - pool.claimedStandardLaborMilliseconds;
+  const baseLabor = laborToAssign / BigInt(participants.length);
+  const laborRemainder = laborToAssign % BigInt(participants.length);
   let claimedQty = pool.claimedQty;
   let claimedLabor = pool.claimedStandardLaborMilliseconds;
   let assignedLabor = 0n;
@@ -2180,20 +2235,14 @@ export async function autoAssignCompletionLaborPool(
 
   for (let index = 0; index < participants.length; index += 1) {
     const claimQty = baseQty + (index < remainder ? 1 : 0);
-    if (claimQty <= 0) continue;
-    const plan = planLaborClaim({
-      eligibleQty: pool.eligibleQty,
-      claimedQty,
-      claimQty,
-      totalStandardLaborMilliseconds: pool.totalStandardLaborMilliseconds,
-      claimedStandardLaborMilliseconds: claimedLabor,
-    });
+    const claimLabor = baseLabor + (BigInt(index) < laborRemainder ? 1n : 0n);
+    if (claimQty <= 0 && claimLabor <= 0n) continue;
     await tx.processLaborClaim.create({
       data: {
         poolId: pool.id,
         employeeId: participants[index],
         quantity: claimQty,
-        standardLaborMilliseconds: plan.claimStandardLaborMilliseconds,
+        standardLaborMilliseconds: claimLabor,
         workDate: pool.workDate,
         status: ProcessLaborClaimStatus.ACTIVE,
         source: 'completion_auto',
@@ -2202,9 +2251,9 @@ export async function autoAssignCompletionLaborPool(
         claimedAt: input.now,
       },
     });
-    claimedQty = plan.nextClaimedQty;
-    claimedLabor = plan.nextClaimedStandardLaborMilliseconds;
-    assignedLabor += plan.claimStandardLaborMilliseconds;
+    claimedQty += claimQty;
+    claimedLabor += claimLabor;
+    assignedLabor += claimLabor;
     assignedEmployeeCount += 1;
   }
 
@@ -3589,6 +3638,8 @@ async function performProcessCompletion(
       'PROCESS_ROUTE_STEPS_REQUIRED',
     );
   }
+  const allowAdvanceReporting = input.allowAdvanceReporting
+    ?? route.reportingPolicy !== 'strict_sequence';
   if (input.employeeIds.length) {
     const activeEmployees = await tx.employee.findMany({
       where: {
@@ -3654,7 +3705,7 @@ async function performProcessCompletion(
   // but it must not override the existing free/advance-reporting rule for
   // ordinary steps. This lets non-real-time shop-floor reports arrive in any
   // order without rewriting the preserved downstream history.
-  if (!input.allowAdvanceReporting && current.status !== 'current') {
+  if (!allowAdvanceReporting && current.status !== 'current') {
     throw new ProcessCompletionServiceError(
       '该工序已不是当前可完成工序，请刷新后重试',
       409,
@@ -3744,15 +3795,31 @@ async function performProcessCompletion(
     }
   }
   const availableInputQty = Math.max(0, current.inputQty - current.processedQty);
-  if (!input.allowAdvanceReporting) {
+  if (!allowAdvanceReporting) {
     resolveCompletionQuantities({
       availableInputQty,
       processedQty: input.processedQty,
       defectQty: input.defectQty,
     });
+    if (
+      reportQuantityBasis === 'action'
+      && reportedGoodUnitQtyBefore + reportQuantities.reportedGoodUnitQty
+        > current.inputQty * current.unitsPerProduct
+    ) {
+      throw new ProcessCompletionServiceError(
+        `严格按流程时，合格动作累计不能超过前序已投入的 ${current.inputQty * current.unitsPerProduct} ${current.reportUnitLabel}`,
+        409,
+        'PROCESS_ACTION_REPORT_EXCEEDS_STRICT_INPUT',
+      );
+    }
   }
   const goodQty = input.processedQty - input.defectQty;
-  const reportMode = current.status === 'current' && input.processedQty <= availableInputQty
+  const actionWithinInput = reportQuantityBasis !== 'action'
+    || reportedGoodUnitQtyBefore + reportQuantities.reportedGoodUnitQty
+      <= current.inputQty * current.unitsPerProduct;
+  const reportMode = current.status === 'current'
+    && input.processedQty <= availableInputQty
+    && actionWithinInput
     ? ProcessCompletionReportMode.SEQUENTIAL
     : ProcessCompletionReportMode.ADVANCE;
   const now = new Date();
@@ -3816,6 +3883,17 @@ async function performProcessCompletion(
       } : {}),
     },
   });
+  if (reportQuantityBasis === 'action') {
+    try {
+      await materializeProcessActionConsumptions(tx, current.id);
+    } catch (error) {
+      throw new ProcessCompletionServiceError(
+        error instanceof Error ? error.message : '动作产出与整套流转台账不一致',
+        409,
+        'PROCESS_ACTION_CONSUMPTION_INSUFFICIENT',
+      );
+    }
+  }
   const coverage = await reconcilePendingCompletionCoverage(tx, {
     route,
     triggerCompletionId: completion.id,
@@ -3848,7 +3926,7 @@ async function performProcessCompletion(
   const perBatchInputStable = current.timeBasis !== 'per_batch'
     || !await hasActiveUpstreamReworkBranch(tx, route, current.sequenceGroup);
   const laborPoolEligibleQty = reportQuantityBasis === 'action'
-    ? reportQuantities.reportedGoodUnitQty
+    ? reportQuantities.reportedUnitQty
     : current.timeBasis === 'per_batch'
     ? (
         current.processedQty >= current.inputQty
@@ -3860,7 +3938,7 @@ async function performProcessCompletion(
     : goodQty;
   const laborUnitsPerProduct = reportQuantityBasis === 'action' ? 1 : current.unitsPerProduct;
   const hadEligibleOutputBefore = reportQuantityBasis === 'action'
-    ? reportedGoodUnitQtyBefore > 0
+    ? (reported._sum.reportedUnitQty || 0) > 0
     : goodOutputBeforeCompletion > 0;
   if (laborPoolEligibleQty > 0) {
     const pool = await createCompletionLaborPool(tx, {

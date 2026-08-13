@@ -15,8 +15,16 @@ import {
 } from '@prisma/client';
 import {
   calculateCompletionLaborSnapshot,
-  planLaborClaim,
+  redistributeStandardLaborByExistingShares,
 } from '@/lib/process-completion-domain';
+import { autoAssignCompletionLaborPool } from '@/lib/process-completion-service';
+import { chinaTodayDateKey } from '@/lib/attendance';
+import {
+  assertActionFlowDoesNotExceedReportedOutput,
+  processReportTargetQuantity,
+  resolveProcessReportQuantities,
+} from '@/lib/process-report-quantity';
+import { materializeProcessActionConsumptions } from '@/lib/process-action-consumption';
 import { normalizeWorkDate } from '@/lib/daily-plan-domain';
 import { calculateAttainmentBasisPoints } from '@/lib/process-time';
 import { prisma } from '@/lib/prisma';
@@ -73,6 +81,8 @@ export type InsertStepAfterData = {
   unitLabel?: string;
   setupMilliseconds?: number;
   unitsPerProduct?: number;
+  reportQuantityBasis?: 'product' | 'action';
+  reportUnitLabel?: string;
   countsForEfficiency?: boolean;
   requiredQty?: number;
 };
@@ -144,6 +154,11 @@ export type CreateProcessRouteChangeProposalCommand = MutationIdentity & {
   movePosition?: unknown;
   newProcessName?: unknown;
   newStandardMillisecondsPerUnit?: unknown;
+  newTimeBasis?: unknown;
+  newUnitLabel?: unknown;
+  newUnitsPerProduct?: unknown;
+  newReportQuantityBasis?: unknown;
+  newReportUnitLabel?: unknown;
   affectedQty?: unknown;
   timeChanges?: unknown;
   expectedRouteVersion?: unknown;
@@ -179,6 +194,8 @@ export type CompleteProcessSupplementObligationCommand = MutationIdentity & {
   expectedRouteVersion?: unknown;
   processedQty: unknown;
   defectQty?: unknown;
+  reportedUnitQty?: unknown;
+  reportedDefectUnitQty?: unknown;
   defectDisposition?: unknown;
   workDate: unknown;
   employeeIds: string[];
@@ -316,6 +333,14 @@ export function normalizeProcessRouteChangeDiffs(
       const after = raw.afterData as InsertStepAfterData;
       if (!processDefinitionId && !clean(after?.processName, 120)) invalidDiff('新增工序缺少工序名称');
       const insertBeforeStepId = clean(after?.insertBeforeStepId ?? targetStepId, 80) || null;
+      const normalizedTimeBasis = timeBasis(after?.timeBasis);
+      const normalizedUnitsPerProduct = positiveInteger(after?.unitsPerProduct ?? 1, '单套工序次数');
+      const normalizedReportQuantityBasis = after?.reportQuantityBasis === 'action' ? 'action' : 'product';
+      const normalizedReportUnitLabel = clean(after?.reportUnitLabel, 20) || undefined;
+      if (normalizedReportQuantityBasis === 'action'
+        && (normalizedTimeBasis !== 'per_unit' || normalizedUnitsPerProduct <= 1 || !normalizedReportUnitLabel)) {
+        invalidDiff('按动作数量报工仅适用于按件计时、每套次数大于 1 且已填写动作单位的工序');
+      }
       return {
         kind,
         source: 'NEW',
@@ -328,10 +353,12 @@ export function normalizeProcessRouteChangeDiffs(
           stageGroup: clean(after?.stageGroup, 80) || undefined,
           insertBeforeStepId,
           standardMillisecondsPerUnit: positiveMilliseconds(after?.standardMillisecondsPerUnit),
-          timeBasis: timeBasis(after?.timeBasis),
+          timeBasis: normalizedTimeBasis,
           unitLabel: clean(after?.unitLabel, 20) || '件',
           setupMilliseconds: nonnegativeInteger(after?.setupMilliseconds ?? 0, '准备工时'),
-          unitsPerProduct: positiveInteger(after?.unitsPerProduct ?? 1, '单套工序次数'),
+          unitsPerProduct: normalizedUnitsPerProduct,
+          reportQuantityBasis: normalizedReportQuantityBasis,
+          reportUnitLabel: normalizedReportUnitLabel,
           countsForEfficiency: after?.countsForEfficiency !== false,
           requiredQty: after?.requiredQty == null ? undefined : positiveInteger(after.requiredQty, '补充工序应报数量'),
         },
@@ -840,6 +867,11 @@ export async function createProcessRouteChangeProposal(
         afterData: {
           processName: rawNewProcessName,
           standardMillisecondsPerUnit: positiveMilliseconds(command.newStandardMillisecondsPerUnit),
+          timeBasis: command.newTimeBasis === 'per_batch' ? 'per_batch' : 'per_unit',
+          unitLabel: clean(command.newUnitLabel, 20) || '件',
+          unitsPerProduct: positiveInteger(command.newUnitsPerProduct ?? 1, '单套工序次数'),
+          reportQuantityBasis: command.newReportQuantityBasis === 'action' ? 'action' : 'product',
+          reportUnitLabel: clean(command.newReportUnitLabel, 20) || undefined,
           requiredQty: command.affectedQty == null ? undefined : positiveInteger(command.affectedQty, '补充工序应报数量'),
         },
       });
@@ -2382,6 +2414,14 @@ async function insertNormalRouteStep(
   const standardMillisecondsPerUnit = positiveMilliseconds(after.standardMillisecondsPerUnit);
   const setupMilliseconds = nonnegativeInteger(after.setupMilliseconds ?? 0, '准备工时');
   const unitsPerProduct = positiveInteger(after.unitsPerProduct ?? 1, '单套工序次数');
+  const reportQuantityBasis = after.reportQuantityBasis === 'action'
+    && timeBasisValue === 'per_unit'
+    && unitsPerProduct > 1
+    ? 'action'
+    : 'product';
+  const reportUnitLabel = reportQuantityBasis === 'action'
+    ? clean(after.reportUnitLabel, 20) || '个'
+    : clean(after.unitLabel, 20) || '件';
   const insertedStep = await tx.workOrderProcessStep.create({
     data: {
       routeId: change.routeId,
@@ -2397,6 +2437,8 @@ async function insertNormalRouteStep(
       standardMillisecondsPerUnit,
       setupMilliseconds,
       unitsPerProduct,
+      reportQuantityBasis,
+      reportUnitLabel,
       countsForEfficiency: after.countsForEfficiency !== false,
       executionMode: ProcessStepExecutionMode.NORMAL,
       changeSource: ProcessRouteChangeStepSource.NEW,
@@ -2586,6 +2628,14 @@ async function insertSupplementObligation(
   const standardMillisecondsPerUnit = positiveMilliseconds(after.standardMillisecondsPerUnit);
   const setupMilliseconds = nonnegativeInteger(after.setupMilliseconds ?? 0, '准备工时');
   const unitsPerProduct = positiveInteger(after.unitsPerProduct ?? 1, '单套工序次数');
+  const reportQuantityBasis = after.reportQuantityBasis === 'action'
+    && timeBasisValue === 'per_unit'
+    && unitsPerProduct > 1
+    ? 'action'
+    : 'product';
+  const reportUnitLabel = reportQuantityBasis === 'action'
+    ? clean(after.reportUnitLabel, 20) || '个'
+    : clean(after.unitLabel, 20) || '件';
   const displayStep = await tx.workOrderProcessStep.create({
     data: {
       routeId: change.routeId,
@@ -2601,6 +2651,8 @@ async function insertSupplementObligation(
       standardMillisecondsPerUnit,
       setupMilliseconds,
       unitsPerProduct,
+      reportQuantityBasis,
+      reportUnitLabel,
       countsForEfficiency: after.countsForEfficiency !== false,
       executionMode: ProcessStepExecutionMode.SUPPLEMENTAL_OBLIGATION,
       changeSource: ProcessRouteChangeStepSource.NEW,
@@ -2650,6 +2702,11 @@ async function insertSupplementObligation(
       intendedSequenceGroup: sequenceGroup,
       requiredQty,
       reportedQty: 0,
+      reportedUnitQty: 0,
+      reportedGoodUnitQty: 0,
+      reportedDefectUnitQty: 0,
+      reportQuantityBasis,
+      reportUnitLabel,
       status: ProcessSupplementObligationStatus.ACTIVE,
       releasePolicy: PROCESS_SUPPLEMENT_RELEASE_POLICY,
       timeBasis: timeBasisValue,
@@ -2719,7 +2776,7 @@ async function correctStepHistoricalLabor(
       laborPool: {
         include: {
           claims: {
-            where: { status: ProcessLaborClaimStatus.ACTIVE, quantity: { gt: 0 } },
+            where: { status: ProcessLaborClaimStatus.ACTIVE, standardLaborMilliseconds: { gt: 0 } },
             orderBy: [{ claimedAt: 'asc' }, { id: 'asc' }],
           },
         },
@@ -2766,17 +2823,15 @@ async function correctStepHistoricalLabor(
     let claimedQty = 0;
     let claimedLabor = 0n;
     const replacements: Array<{ claim: (typeof pool.claims)[number]; labor: bigint }> = [];
-    for (const claim of pool.claims) {
-      const plan = planLaborClaim({
-        eligibleQty: pool.eligibleQty,
-        claimedQty,
-        claimQty: claim.quantity,
-        totalStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
-        claimedStandardLaborMilliseconds: claimedLabor,
-      });
-      claimedQty = plan.nextClaimedQty;
-      claimedLabor = plan.nextClaimedStandardLaborMilliseconds;
-      replacements.push({ claim, labor: plan.claimStandardLaborMilliseconds });
+    const replacementLaborByClaim = redistributeStandardLaborByExistingShares({
+      totalStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
+      existingStandardLaborMilliseconds: pool.claims.map(claim => claim.standardLaborMilliseconds),
+    });
+    for (const [claimIndex, claim] of pool.claims.entries()) {
+      const labor = replacementLaborByClaim[claimIndex];
+      claimedQty += claim.quantity;
+      claimedLabor += labor;
+      replacements.push({ claim, labor });
       affectedEmployees.add(claim.employeeId);
     }
     for (const replacement of replacements) {
@@ -3086,8 +3141,14 @@ async function publishChangedProductProfile(
         occurrences: insertedOccurrences,
         setupMilliseconds: nonnegativeInteger(after.setupMilliseconds ?? 0, '准备工时'),
         unitLabel: clean(after.unitLabel, 20) || '件',
-        reportQuantityBasis: 'product',
-        reportUnitLabel: clean(after.unitLabel, 20) || '件',
+        reportQuantityBasis: after.reportQuantityBasis === 'action'
+          && insertedTimeBasis === 'per_unit'
+          && insertedOccurrences > 1
+          ? 'action'
+          : 'product',
+        reportUnitLabel: after.reportQuantityBasis === 'action'
+          ? clean(after.reportUnitLabel, 20) || '个'
+          : clean(after.unitLabel, 20) || '件',
         countsForEfficiency: after.countsForEfficiency !== false,
         remark: `由工艺变更 ${change.id} 新增`,
       });
@@ -3155,6 +3216,7 @@ async function publishChangedProductProfile(
       revision: 0,
       status: 'published',
       sourceType: 'process_route_change',
+      reportingPolicy: published?.reportingPolicy || change.route.reportingPolicy,
       remark: `工艺变更 ${change.id} 自动发布`,
       publishedAt: new Date(),
       createdById: userId,
@@ -3774,6 +3836,13 @@ export function parseProcessSupplementCompletionTiming(input: {
       'PROCESS_SUPPLEMENT_WORK_DATE_INVALID',
     );
   }
+  if (workDate.toISOString().slice(0, 10) > chinaTodayDateKey()) {
+    throw new ProcessRouteChangeServiceError(
+      '生产日期不能晚于今天',
+      400,
+      'PROCESS_SUPPLEMENT_WORK_DATE_FUTURE',
+    );
+  }
   const workStartedAt = optionalDate(input.workStartedAt, '开始时间');
   const workEndedAt = optionalDate(input.workEndedAt, '结束时间');
   if ((workStartedAt && !workEndedAt) || (!workStartedAt && workEndedAt)) {
@@ -3834,13 +3903,21 @@ export async function completeProcessSupplementObligation(
   const obligationId = clean(command.obligationId, 80);
   const routeId = clean(command.routeId, 80);
   const publicCode = clean(command.publicCode, 120);
-  const processedQty = positiveInteger(command.processedQty, '本次补充报工数量');
+  const processedQty = nonnegativeInteger(command.processedQty ?? 0, '本次补充整套数量');
   const defectQty = nonnegativeInteger(command.defectQty ?? 0, '不良数量');
-  if (defectQty !== 0 || command.defectDisposition) {
+  const reportedUnitQty = nonnegativeInteger(
+    command.reportedUnitQty ?? processedQty,
+    '本次实际动作数量',
+  );
+  const reportedDefectUnitQty = nonnegativeInteger(
+    command.reportedDefectUnitQty ?? defectQty,
+    '动作不良数量',
+  );
+  if (reportedDefectUnitQty > reportedUnitQty) {
     throw new ProcessRouteChangeServiceError(
-      '补充工序义务不处理质量、返工或报废分支，不良数量必须为 0',
+      '动作不良数量不能超过实际动作数量',
       400,
-      'PROCESS_SUPPLEMENT_DEFECT_NOT_SUPPORTED',
+      'PROCESS_SUPPLEMENT_ACTION_DEFECT_EXCEEDED',
     );
   }
   const { workDate, workStartedAt, workEndedAt } = parseProcessSupplementCompletionTiming(command);
@@ -3873,6 +3950,9 @@ export async function completeProcessSupplementObligation(
         routeVersion: true,
         workDate: true,
         processedQty: true,
+        defectQty: true,
+        reportedUnitQty: true,
+        reportedDefectUnitQty: true,
         participants: { orderBy: { position: 'asc' }, select: { employeeId: true } },
         laborPool: { select: { totalStandardLaborMilliseconds: true, claims: { where: { status: ProcessLaborClaimStatus.ACTIVE } } } },
         supplementObligation: {
@@ -3881,6 +3961,11 @@ export async function completeProcessSupplementObligation(
             changeId: true,
             requiredQty: true,
             reportedQty: true,
+            reportedUnitQty: true,
+            reportedGoodUnitQty: true,
+            reportedDefectUnitQty: true,
+            reportQuantityBasis: true,
+            reportUnitLabel: true,
             status: true,
             deploymentRoute: { select: { deploymentId: true } },
           },
@@ -3895,6 +3980,9 @@ export async function completeProcessSupplementObligation(
         duplicate.supplementObligationId !== obligationId
         || !duplicate.supplementObligation
         || duplicate.processedQty !== processedQty
+        || duplicate.defectQty !== defectQty
+        || duplicate.reportedUnitQty !== reportedUnitQty
+        || duplicate.reportedDefectUnitQty !== reportedDefectUnitQty
         || duplicate.workDate.getTime() !== workDate.getTime()
         || !sameEmployees
       ) {
@@ -3975,19 +4063,81 @@ export async function completeProcessSupplementObligation(
     if (obligation.route.version !== requestedRouteVersion) {
       throw new ProcessRouteChangeServiceError('工艺路线版本已变化，请刷新后重试', 409, 'PROCESS_ROUTE_VERSION_CONFLICT');
     }
-    const progress = processSupplementObligationState({
-      requiredQty: obligation.requiredQty,
-      reportedQty: obligation.reportedQty,
-      status: obligation.status,
-    });
-    if (processedQty > progress.remainingQty) {
+    const reportQuantityBasis = obligation.reportQuantityBasis === 'action' ? 'action' : 'product';
+    if (defectQty !== 0 || command.defectDisposition) {
       throw new ProcessRouteChangeServiceError(
-        `本次补充报工数量不能超过剩余数量 ${progress.remainingQty}`,
+        '补充工序不改变既有整套质量分支；整套不良必须为 0，动作不良可单独登记',
+        400,
+        'PROCESS_SUPPLEMENT_PRODUCT_DEFECT_NOT_SUPPORTED',
+      );
+    }
+    if (
+      reportQuantityBasis === 'product'
+      && (
+        processedQty <= 0
+        || reportedUnitQty !== processedQty
+        || reportedDefectUnitQty !== defectQty
+      )
+    ) {
+      throw new ProcessRouteChangeServiceError(
+        '该补充工序按整套数量报工，实际数量必须与整套完成数量一致',
+        400,
+        'PROCESS_SUPPLEMENT_PRODUCT_QUANTITY_MISMATCH',
+      );
+    }
+    if (reportQuantityBasis === 'action' && processedQty === 0 && reportedUnitQty === 0) {
+      throw new ProcessRouteChangeServiceError(
+        '实际动作数量和形成整套数量不能同时为 0',
+        400,
+        'PROCESS_SUPPLEMENT_ACTION_QUANTITY_REQUIRED',
+      );
+    }
+    const reportQuantities = resolveProcessReportQuantities({
+      basis: reportQuantityBasis,
+      productProcessedQty: processedQty,
+      productDefectQty: defectQty,
+      reportedUnitQty,
+      reportedDefectUnitQty,
+    });
+    const remainingQty = Math.max(0, obligation.requiredQty - obligation.reportedQty);
+    if (processedQty > remainingQty) {
+      throw new ProcessRouteChangeServiceError(
+        `本次补充报工数量不能超过剩余数量 ${remainingQty}`,
         409,
         'PROCESS_SUPPLEMENT_QTY_EXCEEDED',
       );
     }
-    if (obligation.timeBasis === 'per_batch' && processedQty !== progress.remainingQty) {
+    const actionTargetQty = processReportTargetQuantity({
+      productTargetQty: obligation.requiredQty,
+      basis: reportQuantityBasis,
+      unitsPerProduct: obligation.unitsPerProduct,
+    });
+    const remainingActionQty = Math.max(0, actionTargetQty - obligation.reportedGoodUnitQty);
+    if (reportQuantities.reportedGoodUnitQty > remainingActionQty) {
+      throw new ProcessRouteChangeServiceError(
+        `本次合格动作数量不能超过剩余数量 ${remainingActionQty}`,
+        409,
+        'PROCESS_SUPPLEMENT_ACTION_QTY_EXCEEDED',
+      );
+    }
+    if (reportQuantityBasis === 'action') {
+      try {
+        assertActionFlowDoesNotExceedReportedOutput({
+          unitsPerProduct: obligation.unitsPerProduct,
+          previousProductGoodQty: obligation.reportedQty,
+          nextProductGoodQty: reportQuantities.productGoodQty,
+          previousReportedGoodUnitQty: obligation.reportedGoodUnitQty,
+          nextReportedGoodUnitQty: reportQuantities.reportedGoodUnitQty,
+        });
+      } catch (error) {
+        throw new ProcessRouteChangeServiceError(
+          error instanceof Error ? error.message : '整套完成数量超过动作产出',
+          409,
+          'PROCESS_SUPPLEMENT_PRODUCT_FLOW_EXCEEDS_ACTION_OUTPUT',
+        );
+      }
+    }
+    if (obligation.timeBasis === 'per_batch' && processedQty !== remainingQty) {
       throw new ProcessRouteChangeServiceError(
         '按批计时的补充工序必须一次报完剩余数量',
         409,
@@ -4010,11 +4160,16 @@ export async function completeProcessSupplementObligation(
     const sourceKey = obligation.changeId || `product-time-deployment:${deploymentId}`;
     const standardSource = deploymentId ? 'product_time_deployment' : 'route_change_supplement';
     const nextReportedQty = obligation.reportedQty + processedQty;
-    const nextState = processSupplementObligationState({
-      requiredQty: obligation.requiredQty,
-      reportedQty: nextReportedQty,
-    });
-    const effectiveSetupMilliseconds = obligation.reportedQty === 0
+    const nextReportedUnitQty = obligation.reportedUnitQty + reportQuantities.reportedUnitQty;
+    const nextReportedGoodUnitQty = obligation.reportedGoodUnitQty + reportQuantities.reportedGoodUnitQty;
+    const nextReportedDefectUnitQty = obligation.reportedDefectUnitQty + reportQuantities.reportedDefectUnitQty;
+    const fulfilled = nextReportedQty >= obligation.requiredQty
+      && nextReportedGoodUnitQty >= actionTargetQty;
+    const nextState = {
+      status: fulfilled ? 'FULFILLED' : 'ACTIVE',
+      remainingQty: Math.max(0, obligation.requiredQty - nextReportedQty),
+    } as const;
+    const effectiveSetupMilliseconds = obligation.reportedUnitQty === 0
       ? obligation.setupMilliseconds
       : 0;
     const completion = await tx.processCompletion.create({
@@ -4031,13 +4186,13 @@ export async function completeProcessSupplementObligation(
         workstation: clean(command.workstation, 120) || null,
         remark: clean(command.remark, 500) || null,
         processedQty,
-        goodQty: processedQty,
-        defectQty: 0,
-        reportedUnitQty: processedQty,
-        reportedGoodUnitQty: processedQty,
-        reportedDefectUnitQty: 0,
-        reportQuantityBasis: 'product',
-        reportUnitLabel: obligation.unitLabel,
+        goodQty: reportQuantities.productGoodQty,
+        defectQty,
+        reportedUnitQty: reportQuantities.reportedUnitQty,
+        reportedGoodUnitQty: reportQuantities.reportedGoodUnitQty,
+        reportedDefectUnitQty: reportQuantities.reportedDefectUnitQty,
+        reportQuantityBasis,
+        reportUnitLabel: obligation.reportUnitLabel,
         reportMode: ProcessCompletionReportMode.SEQUENTIAL,
         reportSource: ProcessCompletionSource.SUPPLEMENT_OBLIGATION,
         coverageStatus: ProcessCompletionCoverageStatus.COVERED,
@@ -4059,88 +4214,75 @@ export async function completeProcessSupplementObligation(
         unitsPerProduct: obligation.unitsPerProduct,
         countsForEfficiency: obligation.countsForEfficiency,
         createdById: identity.userId,
-        principalEmployeeId: null,
+        principalEmployeeId,
         participants: {
           create: employeeIds.map((employeeId, position) => ({ employeeId, position })),
         },
       },
     });
-    const snapshot = calculateCompletionLaborSnapshot({
-      timeBasis: obligation.timeBasis as 'per_unit' | 'per_batch',
-      eligibleQty: processedQty,
-      standardMillisecondsPerUnit: obligation.standardMillisecondsPerUnit,
-      setupMilliseconds: effectiveSetupMilliseconds,
-      unitsPerProduct: obligation.unitsPerProduct,
-    });
-    const pool = await tx.processLaborPool.create({
-      data: {
-        completionId: completion.id,
-        workOrderId: obligation.workOrderId,
-        stepId: obligation.displayStepId,
-        workDate,
-        eligibleQty: processedQty,
-        claimedQty: 0,
-        remainingQty: processedQty,
-        status: ProcessLaborPoolStatus.OPEN,
+    if (reportQuantityBasis === 'action') {
+      try {
+        await materializeProcessActionConsumptions(tx, obligation.displayStepId);
+      } catch (error) {
+        throw new ProcessRouteChangeServiceError(
+          error instanceof Error ? error.message : '补充动作产出与整套流转台账不一致',
+          409,
+          'PROCESS_SUPPLEMENT_ACTION_CONSUMPTION_INSUFFICIENT',
+        );
+      }
+    }
+    const laborEligibleQty = reportQuantityBasis === 'action'
+      ? reportQuantities.reportedUnitQty
+      : processedQty;
+    const laborUnitsPerProduct = reportQuantityBasis === 'action' ? 1 : obligation.unitsPerProduct;
+    let standardLaborMilliseconds = 0n;
+    let employeeCount = 0;
+    if (laborEligibleQty > 0) {
+      const snapshot = calculateCompletionLaborSnapshot({
+        timeBasis: obligation.timeBasis as 'per_unit' | 'per_batch',
+        eligibleQty: laborEligibleQty,
         standardMillisecondsPerUnit: obligation.standardMillisecondsPerUnit,
         setupMilliseconds: effectiveSetupMilliseconds,
-        unitsPerProduct: obligation.unitsPerProduct,
-        totalStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
-        claimedStandardLaborMilliseconds: 0n,
-        remainingStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
-        countsForEfficiency: obligation.countsForEfficiency,
-        productTimeProfileVersion: obligation.displayStep.productTimeProfileVersion,
-        standardSource,
-      },
-    });
-    const baseQty = Math.floor(processedQty / employeeIds.length);
-    const remainder = processedQty % employeeIds.length;
-    let claimedQty = 0;
-    let claimedLabor = 0n;
-    let employeeCount = 0;
-    for (const [index, employeeId] of employeeIds.entries()) {
-      const claimQty = baseQty + (index < remainder ? 1 : 0);
-      if (claimQty <= 0) continue;
-      const plan = planLaborClaim({
-        eligibleQty: processedQty,
-        claimedQty,
-        claimQty,
-        totalStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
-        claimedStandardLaborMilliseconds: claimedLabor,
+        unitsPerProduct: laborUnitsPerProduct,
       });
-      await tx.processLaborClaim.create({
+      standardLaborMilliseconds = snapshot.totalStandardLaborMilliseconds;
+      const pool = await tx.processLaborPool.create({
         data: {
-          poolId: pool.id,
-          employeeId,
-          quantity: claimQty,
-          standardLaborMilliseconds: plan.claimStandardLaborMilliseconds,
+          completionId: completion.id,
+          workOrderId: obligation.workOrderId,
+          stepId: obligation.displayStepId,
           workDate,
-          status: ProcessLaborClaimStatus.ACTIVE,
-          source: deploymentId ? 'product_time_deployment_supplement_auto' : 'route_change_supplement_auto',
-          idempotencyKey: `supplement-auto:${completion.id}:${employeeId}`.slice(0, 120),
-          claimedById: identity.userId,
-          claimedAt: now,
+          eligibleQty: laborEligibleQty,
+          claimedQty: 0,
+          remainingQty: laborEligibleQty,
+          status: ProcessLaborPoolStatus.OPEN,
+          standardMillisecondsPerUnit: obligation.standardMillisecondsPerUnit,
+          setupMilliseconds: effectiveSetupMilliseconds,
+          unitsPerProduct: laborUnitsPerProduct,
+          totalStandardLaborMilliseconds: standardLaborMilliseconds,
+          claimedStandardLaborMilliseconds: 0n,
+          remainingStandardLaborMilliseconds: standardLaborMilliseconds,
+          countsForEfficiency: obligation.countsForEfficiency,
+          productTimeProfileVersion: obligation.displayStep.productTimeProfileVersion,
+          standardSource,
         },
       });
-      claimedQty = plan.nextClaimedQty;
-      claimedLabor = plan.nextClaimedStandardLaborMilliseconds;
-      employeeCount += 1;
+      const assigned = await autoAssignCompletionLaborPool(tx, {
+        poolId: pool.id,
+        completionId: completion.id,
+        employeeIds,
+        userId: identity.userId,
+        now,
+      });
+      employeeCount = assigned.employeeCount;
     }
-    await tx.processLaborPool.update({
-      where: { id: pool.id },
-      data: {
-        claimedQty,
-        remainingQty: processedQty - claimedQty,
-        claimedStandardLaborMilliseconds: claimedLabor,
-        remainingStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds - claimedLabor,
-        status: claimedQty === processedQty ? ProcessLaborPoolStatus.EXHAUSTED : ProcessLaborPoolStatus.PARTIAL,
-        version: { increment: 1 },
-      },
-    });
     const obligationUpdate = await tx.processSupplementObligation.updateMany({
       where: { id: obligation.id, version: obligation.version, status: ProcessSupplementObligationStatus.ACTIVE },
       data: {
         reportedQty: nextReportedQty,
+        reportedUnitQty: nextReportedUnitQty,
+        reportedGoodUnitQty: nextReportedGoodUnitQty,
+        reportedDefectUnitQty: nextReportedDefectUnitQty,
         status: nextState.status as ProcessSupplementObligationStatus,
         version: { increment: 1 },
         lastReportedAt: now,
@@ -4298,7 +4440,7 @@ export async function completeProcessSupplementObligation(
       status: nextState.status,
       processedQty,
       employeeCount,
-      standardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
+      standardLaborMilliseconds,
     });
   });
 }

@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  ForbiddenError,
+  forbidden,
+  requireUser,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 import {
   completeProcessStep,
   loadProcessCompletionContext,
@@ -25,7 +32,7 @@ export async function GET(
     const data = await loadProcessCompletionContext(
       params.id,
       req.nextUrl.searchParams.get('stepId'),
-      { allowAdvanceReporting: true },
+      {},
     );
     return NextResponse.json({ ok: true, data });
   } catch (error) {
@@ -44,6 +51,14 @@ export async function POST(
   { params }: { params: { id: string } },
 ) {
   try {
+    assertSameOriginMutationRequest(req);
+    const mediaType = req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+    if (mediaType !== 'application/json') {
+      return NextResponse.json(
+        { ok: false, error: '请求格式错误', code: 'PROCESS_COMPLETION_JSON_REQUIRED' },
+        { status: 415 },
+      );
+    }
     const user = await requireUser({ write: 'production' });
     const body = await req.json().catch(() => ({})) as {
       stepId?: unknown;
@@ -74,7 +89,6 @@ export async function POST(
       workstation: body.workstation,
       remark: body.remark,
       requireParticipants: true,
-      allowAdvanceReporting: true,
       autoAssignLabor: true,
       idempotencyKey: body.idempotencyKey,
       expectedRouteVersion: body.expectedRouteVersion,
@@ -84,6 +98,7 @@ export async function POST(
     return NextResponse.json({ ok: true, data });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ForbiddenError) return forbidden(error.message);
     if (error instanceof ProcessCompletionServiceError) return serviceError(error);
     console.error('process completion failed', error);
     return NextResponse.json(

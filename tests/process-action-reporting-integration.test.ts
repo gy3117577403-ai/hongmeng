@@ -23,13 +23,14 @@ test(
         laborRole: 'ADMIN',
       },
     });
-    const employee = await prisma.employee.create({
+    const employees = await Promise.all([0, 1, 2].map(index => prisma.employee.create({
       data: {
-        employeeNo: `${prefix}-EMP`,
-        name: `${prefix} operator`,
+        employeeNo: `${prefix}-EMP-${index + 1}`,
+        name: `${prefix} operator ${index + 1}`,
         department: '生产部',
       },
-    });
+    })));
+    const employee = employees[0];
     const order = await prisma.workOrder.create({
       data: {
         code: `${prefix}-ORDER`,
@@ -115,9 +116,28 @@ test(
       const first = await completeProcessStep({
         routeId: order.processRoute.id,
         stepId: step.id,
+        processedQty: 0,
+        defectQty: 0,
+        reportedUnitQty: 100,
+        reportedDefectUnitQty: 4,
+        workDate: '2026-08-13',
+        employeeIds: employees.map(item => item.id),
+        requireParticipants: true,
+        allowAdvanceReporting: true,
+        autoAssignLabor: true,
+        reportSource: 'QR_MOBILE',
+        principalEmployeeId: employee.id,
+        idempotencyKey: `${prefix}-first`,
+        expectedRouteVersion: 0,
+        userId: actor.id,
+        actor: actor.displayName || actor.username,
+      });
+      const converted = await completeProcessStep({
+        routeId: order.processRoute.id,
+        stepId: step.id,
         processedQty: 1,
         defectQty: 0,
-        reportedUnitQty: 96,
+        reportedUnitQty: 0,
         reportedDefectUnitQty: 0,
         workDate: '2026-08-13',
         employeeIds: [employee.id],
@@ -126,8 +146,8 @@ test(
         autoAssignLabor: true,
         reportSource: 'QR_MOBILE',
         principalEmployeeId: employee.id,
-        idempotencyKey: `${prefix}-first`,
-        expectedRouteVersion: 0,
+        idempotencyKey: `${prefix}-converted`,
+        expectedRouteVersion: 1,
         userId: actor.id,
         actor: actor.displayName || actor.username,
       });
@@ -146,14 +166,18 @@ test(
         reportSource: 'QR_MOBILE',
         principalEmployeeId: employee.id,
         idempotencyKey: `${prefix}-partial`,
-        expectedRouteVersion: 1,
+        expectedRouteVersion: 2,
         userId: actor.id,
         actor: actor.displayName || actor.username,
       });
 
-      const [firstCompletion, partialCompletion, storedStep, context] = await Promise.all([
+      const [firstCompletion, convertedCompletion, partialCompletion, storedStep, context] = await Promise.all([
         prisma.processCompletion.findUniqueOrThrow({
           where: { id: first.completionId },
+          include: { laborPool: { include: { claims: { where: { status: 'ACTIVE' } } } } },
+        }),
+        prisma.processCompletion.findUniqueOrThrow({
+          where: { id: converted.completionId },
           include: { laborPool: true },
         }),
         prisma.processCompletion.findUniqueOrThrow({
@@ -167,22 +191,44 @@ test(
         }),
       ]);
 
-      assert.equal(firstCompletion.reportedUnitQty, 96);
-      assert.equal(firstCompletion.laborPool?.eligibleQty, 96);
+      assert.equal(firstCompletion.reportedUnitQty, 100);
+      assert.equal(firstCompletion.reportedDefectUnitQty, 4);
+      assert.equal(firstCompletion.laborPool?.eligibleQty, 100);
       assert.equal(firstCompletion.laborPool?.unitsPerProduct, 1);
-      assert.equal(firstCompletion.laborPool?.totalStandardLaborMilliseconds, 864_000n);
+      assert.equal(firstCompletion.laborPool?.totalStandardLaborMilliseconds, 900_000n);
+      assert.deepEqual(
+        firstCompletion.laborPool?.claims.map(claim => claim.standardLaborMilliseconds),
+        [300_000n, 300_000n, 300_000n],
+      );
+      assert.equal(
+        firstCompletion.laborPool?.claims.reduce((sum, claim) => sum + claim.quantity, 0),
+        100,
+      );
+      assert.equal(convertedCompletion.processedQty, 1);
+      assert.equal(convertedCompletion.reportedUnitQty, 0);
+      assert.equal(convertedCompletion.laborPool, null);
       assert.equal(partialCompletion.processedQty, 0);
       assert.equal(partialCompletion.coverageStatus, 'COVERED');
       assert.equal(partialCompletion.laborPool?.eligibleQty, 48);
       assert.equal(partialCompletion.laborPool?.totalStandardLaborMilliseconds, 432_000n);
       assert.equal(storedStep.processedQty, 1);
       assert.equal(context.step.reportQuantityBasis, 'action');
-      assert.equal(context.reportedUnitQty, 144);
+      assert.equal(context.reportedUnitQty, 148);
       assert.equal(context.reportedGoodUnitQty, 144);
+      assert.equal(context.reportedDefectUnitQty, 4);
       assert.equal(context.reportTargetQty, 4_800);
       assert.equal(context.reportableUnitQty, 4_656);
       assert.equal(context.reportedQty, 1);
       assert.equal(context.reportableQty, 49);
+
+      const sourceWithdrawalPreview = await previewProcessCompletionWithdrawal(
+        order.processRoute.id,
+        first.completionId,
+      );
+      assert.equal(sourceWithdrawalPreview.canWithdraw, false);
+      assert.ok(sourceWithdrawalPreview.blockers.some(
+        blocker => blocker.code === 'PROCESS_ACTION_WITHDRAWAL_DEPENDENCY_EXISTS',
+      ));
 
       const withdrawalPreview = await previewProcessCompletionWithdrawal(
         order.processRoute.id,
@@ -198,7 +244,7 @@ test(
       const withdrawal = await withdrawProcessCompletion({
         routeId: order.processRoute.id,
         completionId: partial.completionId,
-        expectedRouteVersion: 2,
+        expectedRouteVersion: 3,
         category: 'REPORTING_ERROR',
         reason: 'integration-test action-only correction',
         idempotencyKey: `${prefix}-partial-withdrawal`,
@@ -224,16 +270,34 @@ test(
       assert.equal(withdrawnPool.claims.length, 2);
       assert.equal(withdrawnPool.claims[0].status, 'VOIDED');
       assert.equal(withdrawnPool.claims[1].status, 'REVERSAL');
-      assert.equal(remainingContext.reportedUnitQty, 96);
+      assert.equal(remainingContext.reportedUnitQty, 100);
       assert.equal(remainingContext.reportedQty, 1);
+
+      const convertedWithdrawal = await withdrawProcessCompletion({
+        routeId: order.processRoute.id,
+        completionId: converted.completionId,
+        expectedRouteVersion: withdrawal.routeVersion,
+        category: 'REPORTING_ERROR',
+        reason: '',
+        idempotencyKey: `${prefix}-converted-withdrawal`,
+        userId: actor.id,
+        actor: actor.displayName || actor.username,
+      });
+      assert.equal(convertedWithdrawal.status, 'WITHDRAWN');
+      const sourceAfterConsumer = await previewProcessCompletionWithdrawal(
+        order.processRoute.id,
+        first.completionId,
+      );
+      assert.equal(sourceAfterConsumer.canWithdraw, true);
     } finally {
       await prisma.processLaborClaim.deleteMany({ where: { pool: { workOrderId: order.id } } });
       await prisma.processLaborPool.deleteMany({ where: { workOrderId: order.id } });
       await prisma.processCompletionCoverage.deleteMany({ where: { reportCompletion: { workOrderId: order.id } } });
       await prisma.processQuantityMovement.deleteMany({ where: { workOrderId: order.id } });
+      await prisma.processActionConsumption.deleteMany({ where: { step: { route: { workOrderId: order.id } } } });
       await prisma.processCompletion.deleteMany({ where: { workOrderId: order.id } });
       await prisma.workOrder.delete({ where: { id: order.id } });
-      await prisma.employee.delete({ where: { id: employee.id } });
+      await prisma.employee.deleteMany({ where: { id: { in: employees.map(item => item.id) } } });
       await prisma.user.delete({ where: { id: actor.id } });
     }
   },

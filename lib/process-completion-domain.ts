@@ -197,6 +197,46 @@ export function planLaborClaim(input: {
   };
 }
 
+/**
+ * Revalues existing employee claims without changing who owned the work.
+ * Every existing positive claim keeps at least one millisecond and the
+ * remaining duration follows the prior labor shares. This preserves both
+ * legacy quantity-based splits and newer equal-time collaboration splits.
+ */
+export function redistributeStandardLaborByExistingShares(input: {
+  totalStandardLaborMilliseconds: bigint;
+  existingStandardLaborMilliseconds: readonly bigint[];
+}): bigint[] {
+  const total = positiveBigInt(
+    input.totalStandardLaborMilliseconds,
+    '重算后总标准工时',
+    'INVALID_REDISTRIBUTED_TOTAL_STANDARD_LABOR',
+  );
+  if (!input.existingStandardLaborMilliseconds.length) return [];
+  const existing = input.existingStandardLaborMilliseconds.map((value) => positiveBigInt(
+    value,
+    '原员工标准工时',
+    'INVALID_EXISTING_STANDARD_LABOR_SHARE',
+  ));
+  if (total < BigInt(existing.length)) {
+    throw new ProcessCompletionDomainError(
+      '新标准工时小于现有有效员工领取笔数，无法在保留人员历史的前提下重算',
+      'REDISTRIBUTED_STANDARD_LABOR_TOO_SMALL',
+    );
+  }
+  const existingTotal = existing.reduce((sum, value) => sum + value, 0n);
+  const distributable = total - BigInt(existing.length);
+  let cumulativeExisting = 0n;
+  let cumulativeDistributed = 0n;
+  return existing.map((value) => {
+    cumulativeExisting += value;
+    const nextCumulative = distributable * cumulativeExisting / existingTotal;
+    const share = 1n + nextCumulative - cumulativeDistributed;
+    cumulativeDistributed = nextCumulative;
+    return share;
+  });
+}
+
 export type ParallelGroupReleaseResolution = {
   releasableGoodQty: number;
   alreadyReleasedQty: number;

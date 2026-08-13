@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  ForbiddenError,
+  forbidden,
+  requireUser,
+  unauthorized,
+  UnauthorizedError,
+} from '@/lib/auth';
 import { hasCapability } from '@/lib/department-access';
 import { correctProcessCompletionStandard } from '@/lib/process-completion-correction-service';
 import { ProcessCompletionWithdrawalError } from '@/lib/process-completion-withdrawal-service';
+import { assertSameOriginMutationRequest } from '@/lib/request-origin';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,6 +19,14 @@ export async function POST(
   { params }: { params: { id: string; completionId: string } },
 ) {
   try {
+    assertSameOriginMutationRequest(req);
+    const mediaType = req.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+    if (mediaType !== 'application/json') {
+      return NextResponse.json(
+        { ok: false, error: '请求格式错误', code: 'PROCESS_COMPLETION_CORRECTION_JSON_REQUIRED' },
+        { status: 415 },
+      );
+    }
     const user = await requireUser({ write: 'production' });
     if (
       !hasCapability(user.access, 'PROCESS', 'UPDATE')
@@ -35,6 +50,7 @@ export async function POST(
     });
     return NextResponse.json({ ok: true, data });
   } catch (error) {
+    if (error instanceof ForbiddenError) return forbidden(error.message);
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof ProcessCompletionWithdrawalError) {
       return NextResponse.json(

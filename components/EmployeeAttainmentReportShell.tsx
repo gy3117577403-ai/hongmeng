@@ -475,7 +475,6 @@ function ProcessLaborPoolPanel({ onCommitted }: { onCommitted: () => void }) {
       return setError('准备工时不能小于 0 分钟');
     }
     if (!unitsPerProduct) return setError(`每${selectedPool.unitLabel}工序次数必须是正整数`);
-    if (standardForm.reason.trim().length < 2) return setError('请填写本次补录标准的原因');
 
     setResolvingStandard(true);
     setError('');
@@ -546,9 +545,8 @@ function ProcessLaborPoolPanel({ onCommitted }: { onCommitted: () => void }) {
   async function voidClaim(claimId: string): Promise<void> {
     if (!selectedPool) return;
     if (!access?.canVoid) return setError('员工领取记录需由班组长或管理员冲销');
-    const reason = window.prompt('请输入冲销原因。冲销后数量和标准工时会退回工时池。', '');
+    const reason = window.prompt('冲销原因（选填）。冲销后数量和标准工时会退回工时池。', '');
     if (reason === null) return;
-    if (!reason.trim()) return setError('冲销必须填写原因');
     setVoidingClaimId(claimId);
     setError('');
     try {
@@ -655,7 +653,7 @@ function ProcessLaborPoolPanel({ onCommitted }: { onCommitted: () => void }) {
               <label><span>{standardForm.timeBasis === 'per_batch' ? '整批标准时间（分钟） *' : '单次标准时间（分钟） *'}</span><input type="number" min="0.001" step="0.001" value={standardForm.standardMinutes} onChange={event => setStandardForm(current => ({ ...current, standardMinutes: event.target.value }))} /></label>
               <label><span>准备工时（分钟）</span><input type="number" min="0" step="0.001" value={standardForm.setupMinutes} onChange={event => setStandardForm(current => ({ ...current, setupMinutes: event.target.value }))} /></label>
               <label><span>每{selectedPool.unitLabel}工序次数 *</span><input type="number" min="1" step="1" value={standardForm.unitsPerProduct} onChange={event => setStandardForm(current => ({ ...current, unitsPerProduct: event.target.value }))} disabled={standardForm.timeBasis === 'per_batch'} /></label>
-              <label className="labor-standard-reason"><span>补录原因 *</span><input value={standardForm.reason} maxLength={500} placeholder="例如：工艺标准发布滞后，按现场确认值补录" onChange={event => setStandardForm(current => ({ ...current, reason: event.target.value }))} /></label>
+              <label className="labor-standard-reason"><span>补录原因（选填）</span><input value={standardForm.reason} maxLength={500} placeholder="可不填写；系统仍会记录修改前后值和操作人" onChange={event => setStandardForm(current => ({ ...current, reason: event.target.value }))} /></label>
               <label className="labor-standard-checkbox"><input type="checkbox" checked={standardForm.countsForEfficiency} onChange={event => setStandardForm(current => ({ ...current, countsForEfficiency: event.target.checked }))} /><span>计入员工达成率</span></label>
             </div>
             <footer>

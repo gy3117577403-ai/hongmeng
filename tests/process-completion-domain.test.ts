@@ -5,6 +5,7 @@ import {
   calculateParallelGroupReleaseDelta,
   planLaborClaim,
   ProcessCompletionDomainError,
+  redistributeStandardLaborByExistingShares,
   resolveCompletionQuantities,
 } from '../lib/process-completion-domain';
 
@@ -134,6 +135,32 @@ test('labor claim can continue after a non-LIFO reversal without losing millisec
   assert.equal(replenished.nextClaimedStandardLaborMilliseconds, 101n);
   assert.equal(replenished.remainingStandardLaborMilliseconds, 0n);
   assert.equal(replenished.nextStatus, 'EXHAUSTED');
+});
+
+test('historical standard changes preserve prior employee labor shares and exact total', () => {
+  const redistributed = redistributeStandardLaborByExistingShares({
+    totalStandardLaborMilliseconds: 2_000n,
+    existingStandardLaborMilliseconds: [800n, 200n],
+  });
+  assert.deepEqual(redistributed, [1_599n, 401n]);
+  assert.equal(redistributed.reduce((sum, value) => sum + value, 0n), 2_000n);
+
+  const equalCollaboration = redistributeStandardLaborByExistingShares({
+    totalStandardLaborMilliseconds: 101n,
+    existingStandardLaborMilliseconds: [34n, 33n, 33n],
+  });
+  assert.deepEqual(equalCollaboration, [34n, 33n, 34n]);
+});
+
+test('historical standard changes fail safely when one millisecond per existing claim is impossible', () => {
+  assert.throws(
+    () => redistributeStandardLaborByExistingShares({
+      totalStandardLaborMilliseconds: 2n,
+      existingStandardLaborMilliseconds: [10n, 10n, 10n],
+    }),
+    (error: unknown) => error instanceof ProcessCompletionDomainError
+      && error.code === 'REDISTRIBUTED_STANDARD_LABOR_TOO_SMALL',
+  );
 });
 
 test('parallel group releases only the new common good-output minimum', () => {

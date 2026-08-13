@@ -65,6 +65,8 @@ export type WorkOrderTravelerSnapshot = {
     standardMillisecondsPerUnit: number | null;
     setupMilliseconds: number;
     unitsPerProduct: number;
+    reportQuantityBasis: 'product' | 'action';
+    reportUnitLabel: string;
     status: string;
     processedQty: number;
     executionMode?: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
@@ -77,6 +79,11 @@ export type WorkOrderTravelerSnapshot = {
       id: string;
       requiredQty: number;
       reportedQty: number;
+      reportedUnitQty: number;
+      reportedGoodUnitQty: number;
+      reportedDefectUnitQty: number;
+      reportQuantityBasis: 'product' | 'action';
+      reportUnitLabel: string;
       remainingQty: number;
       status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
       version: number;
@@ -287,6 +294,8 @@ function createSnapshot(order: TravelerOrder): WorkOrderTravelerSnapshot {
         standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
         setupMilliseconds: step.setupMilliseconds,
         unitsPerProduct: step.unitsPerProduct,
+        reportQuantityBasis: step.reportQuantityBasis === 'action' ? 'action' : 'product',
+        reportUnitLabel: step.reportUnitLabel || step.unitLabel || '件',
         status: step.status,
         processedQty: step.processedQty,
       })),
@@ -753,6 +762,8 @@ export async function loadFieldReportTicket(
         standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
         setupMilliseconds: step.setupMilliseconds,
         unitsPerProduct: step.unitsPerProduct,
+        reportQuantityBasis: step.reportQuantityBasis === 'action' ? 'action' : 'product',
+        reportUnitLabel: step.reportUnitLabel || step.unitLabel || '件',
         status: step.status,
         processedQty: step.processedQty,
         executionMode: step.executionMode,
@@ -765,6 +776,11 @@ export async function loadFieldReportTicket(
           id: step.supplementObligation.id,
           requiredQty: step.supplementObligation.requiredQty,
           reportedQty: step.supplementObligation.reportedQty,
+          reportedUnitQty: step.supplementObligation.reportedUnitQty,
+          reportedGoodUnitQty: step.supplementObligation.reportedGoodUnitQty,
+          reportedDefectUnitQty: step.supplementObligation.reportedDefectUnitQty,
+          reportQuantityBasis: step.supplementObligation.reportQuantityBasis === 'action' ? 'action' : 'product',
+          reportUnitLabel: step.supplementObligation.reportUnitLabel,
           remainingQty: Math.max(0, step.supplementObligation.requiredQty - step.supplementObligation.reportedQty),
           status: step.supplementObligation.status,
           version: step.supplementObligation.version,

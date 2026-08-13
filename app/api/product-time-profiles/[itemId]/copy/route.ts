@@ -38,6 +38,7 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
             id: true,
             drawingLibraryItemId: true,
             version: true,
+            reportingPolicy: true,
             entries: { orderBy: { position: 'asc' } },
             drawingLibraryItem: {
               select: { customerName: true, specification: true, productName: true },
@@ -61,6 +62,7 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
           where: { id: draft.id, revision: draft.revision, status: 'draft' },
           data: {
             revision: { increment: 1 },
+            reportingPolicy: source.reportingPolicy,
             sourceType: 'copied',
             remark: `复制自 ${source.drawingLibraryItem.customerName} · ${source.drawingLibraryItem.specification} · V${source.version}`,
             updatedById: user.id,
@@ -79,6 +81,7 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
             drawingLibraryItemId: target.id,
             version: (latest._max.version || 0) + 1,
             status: 'draft',
+            reportingPolicy: source.reportingPolicy,
             sourceType: 'copied',
             remark: `复制自 ${source.drawingLibraryItem.customerName} · ${source.drawingLibraryItem.specification} · V${source.version}`,
             createdById: user.id,

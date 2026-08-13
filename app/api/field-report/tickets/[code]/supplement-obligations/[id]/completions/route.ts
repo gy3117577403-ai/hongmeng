@@ -54,6 +54,8 @@ export async function POST(
       expectedRouteVersion: body.expectedRouteVersion,
       processedQty: body.processedQty,
       defectQty: body.defectQty,
+      reportedUnitQty: body.reportedUnitQty,
+      reportedDefectUnitQty: body.reportedDefectUnitQty,
       defectDisposition: body.defectDisposition,
       workDate: body.workDate,
       employeeIds,

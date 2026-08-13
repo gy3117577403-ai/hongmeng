@@ -68,6 +68,7 @@ import type {
   ProductTimePlanningSummaryDTO,
   ProductTimeProfileDTO,
   ProcessReportQuantityBasis,
+  ProcessReportingPolicy,
   ProcessStageGroup,
   ProcessTimeBasis,
 } from '@/types';
@@ -367,6 +368,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [selectedId, setSelectedId] = useState('');
   const [entries, setEntries] = useState<EntryDraft[]>([]);
   const [remark, setRemark] = useState('');
+  const [reportingPolicy, setReportingPolicy] = useState<ProcessReportingPolicy>('free_sequence');
   const [dirty, setDirty] = useState(false);
   const [quotationSeconds, setQuotationSeconds] = useState('');
   const [quotationRemark, setQuotationRemark] = useState('');
@@ -570,6 +572,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   useEffect(() => {
     setEntries(activeProfile?.entries.map(entryDraft) || []);
     setRemark(activeProfile?.remark || '');
+    setReportingPolicy(activeProfile?.reportingPolicy || 'free_sequence');
     setCopySourceId('');
     setDirty(false);
     setReorderMode(false);
@@ -801,6 +804,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   function resetChanges(): void {
     setEntries(activeProfile?.entries.map(entryDraft) || []);
     setRemark(activeProfile?.remark || '');
+    setReportingPolicy(activeProfile?.reportingPolicy || 'free_sequence');
     setCopySourceId('');
     setDirty(false);
     setReorderMode(false);
@@ -1105,6 +1109,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         body: JSON.stringify({
           expectedRevision: activeDraft?.revision ?? null,
           remark,
+          reportingPolicy,
           sourceType: activeDraft?.sourceType || 'manual',
           entries: entries.map(entry => ({
             processDefinitionId: entry.processDefinitionId,
@@ -1459,6 +1464,17 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               </div>
 
               <div className="product-time-route-notices">
+                <div className="product-time-route-guidance">
+                  <Route size={18} aria-hidden="true" />
+                  <span><strong>现场报工顺序</strong><small>{reportingPolicy === 'strict_sequence' ? '严格按前序已投入的整套数量报工；动作数量仍按实际动作登记。' : '允许跨工序先报，待前序完成后自动核销覆盖。'}</small></span>
+                  <label>
+                    <span className="sr-only">现场报工顺序</span>
+                    <select value={reportingPolicy} onChange={event => { setReportingPolicy(event.target.value as ProcessReportingPolicy); setDirty(true); }}>
+                      <option value="free_sequence">自由跨序报工</option>
+                      <option value="strict_sequence">严格按流程报工</option>
+                    </select>
+                  </label>
+                </div>
                 <div className="product-time-route-guidance">
                   <Route size={18} aria-hidden="true" />
                   <span><strong>每道工序可选择“按件”或“按整批”计时</strong><small>按件工时＝单次标准时间 × 每套工序次数；按批工时整批只计一次。准备时间在该次工时池中只计一次。</small></span>

@@ -149,7 +149,7 @@ export async function GET(req: NextRequest) {
       prisma.processLaborClaim.findMany({
         where: {
           status: 'ACTIVE',
-          quantity: { gt: 0 },
+          standardLaborMilliseconds: { gt: 0 },
           workDate: { gte: startDate, lt: endDate },
           ...(employeeIdConstraint ? { employeeId: employeeIdConstraint } : {}),
         },
