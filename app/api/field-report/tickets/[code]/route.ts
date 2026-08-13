@@ -35,8 +35,12 @@ export async function GET(
           },
         })
       : null;
-    const context = ticket.access.canReport && ticket.route
-      ? await loadProcessCompletionContext(ticket.route.id, stepId, { allowAdvanceReporting: true })
+    const canInspectCompletions = ticket.access.canReport || ticket.access.state === 'COMPLETED';
+    const context = canInspectCompletions && ticket.route
+      ? await loadProcessCompletionContext(ticket.route.id, stepId, {
+          allowAdvanceReporting: true,
+          allowCompletedSelection: true,
+        })
       : null;
     return NextResponse.json({
       ok: true,

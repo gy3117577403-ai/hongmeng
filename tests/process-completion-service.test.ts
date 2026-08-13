@@ -116,6 +116,16 @@ test('completion command normalizes the API disposition and preserves the sessio
   assert.equal(parsed.userId, 'user-001');
 });
 
+test('mobile QR completion keeps the authenticated user as its attribution identity', () => {
+  const parsed = parseProcessCompletionCommand(command({
+    reportSource: 'QR_MOBILE',
+    principalEmployeeId: 'employee-001',
+  }));
+  assert.equal(parsed.reportSource, 'QR_MOBILE');
+  assert.equal(parsed.userId, 'user-001');
+  assert.equal(parsed.principalEmployeeId, null);
+});
+
 test('completion command requires a disposition only when defects exist', () => {
   const clean = parseProcessCompletionCommand(command({
     defectQty: 0,

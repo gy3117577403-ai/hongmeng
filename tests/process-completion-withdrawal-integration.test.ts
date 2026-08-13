@@ -190,7 +190,7 @@ test(
         prisma.processQuantityMovement.findMany({ where: { completionId, type: 'REVERSAL' } }),
       ]);
       assert.ok(storedCompletion.voidedAt);
-      assert.match(storedCompletion.voidReason || '', /主管完工撤回（报工错误）/);
+      assert.match(storedCompletion.voidReason || '', /完工撤回（报工错误）/);
       assert.equal(storedRoute.status, 'in_progress');
       assert.equal(steps[0].processedQty, 0);
       assert.equal(steps[0].goodOutputQty, 0);

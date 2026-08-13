@@ -3,6 +3,10 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { prisma } from '../lib/prisma';
 import { completeProcessStep } from '../lib/process-completion-service';
+import {
+  previewProcessCompletionWithdrawal,
+  withdrawProcessCompletion,
+} from '../lib/process-completion-withdrawal-service';
 import { resolveProcessLaborPoolStandard } from '../lib/process-labor-service';
 
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
@@ -21,10 +25,18 @@ test(
       },
       select: { id: true, username: true, displayName: true },
     });
-    const employee = await prisma.employee.create({
+    const downstreamEmployee = await prisma.employee.create({
       data: {
-        employeeNo: `${prefix}-E`,
-        name: `${prefix} operator`,
+        employeeNo: `${prefix}-DOWN`,
+        name: `${prefix} downstream operator`,
+        department: '生产部',
+        team: `${prefix}-TEAM`,
+      },
+    });
+    const upstreamEmployee = await prisma.employee.create({
+      data: {
+        employeeNo: `${prefix}-UP`,
+        name: `${prefix} upstream operator`,
         department: '生产部',
         team: `${prefix}-TEAM`,
       },
@@ -107,10 +119,12 @@ test(
         processedQty: 100,
         defectQty: 0,
         workDate: '2026-08-03',
-        employeeIds: [employee.id],
+        employeeIds: [downstreamEmployee.id],
         requireParticipants: true,
         allowAdvanceReporting: true,
         autoAssignLabor: true,
+        reportSource: 'QR_MOBILE',
+        principalEmployeeId: downstreamEmployee.id,
         idempotencyKey: `${prefix}-advance-pack`,
         expectedRouteVersion: 0,
         userId: actor.id,
@@ -138,10 +152,12 @@ test(
         processedQty: 100,
         defectQty: 0,
         workDate: '2026-08-03',
-        employeeIds: [employee.id],
+        employeeIds: [upstreamEmployee.id],
         requireParticipants: true,
         allowAdvanceReporting: true,
         autoAssignLabor: true,
+        reportSource: 'QR_MOBILE',
+        principalEmployeeId: upstreamEmployee.id,
         idempotencyKey: `${prefix}-upstream-cut`,
         expectedRouteVersion: 1,
         userId: actor.id,
@@ -165,6 +181,102 @@ test(
       assert.equal(route.status, 'completed');
       assert.equal(coverageRows.reduce((sum, row) => sum + row.quantity, 0), 100);
       assert.ok(coverageRows.every(row => row.quantity > 0));
+
+      const preview = await previewProcessCompletionWithdrawal(
+        order.processRoute.id,
+        upstream.completionId,
+      );
+      assert.equal(preview.canWithdraw, true);
+      assert.equal(preview.impact.downstreamPendingCompletionCount, 1);
+      assert.equal(preview.impact.downstreamPendingQty, 100);
+
+      const withdrawn = await withdrawProcessCompletion({
+        routeId: order.processRoute.id,
+        completionId: upstream.completionId,
+        expectedRouteVersion: preview.routeVersion,
+        category: 'REPORTING_ERROR',
+        reason: '上道员工误报，保留下道员工已经完成的记录',
+        idempotencyKey: `${prefix}-withdraw-upstream`,
+        userId: actor.id,
+        actor: `${upstreamEmployee.employeeNo} · ${upstreamEmployee.name}`,
+      });
+      assert.equal(withdrawn.status, 'WITHDRAWN');
+
+      const [withdrawnUpstream, preservedDownstream, downstreamPool, upstreamPool, reopenedRoute, reopenedOrder, reopenedSteps, activeCoverageRows] = await Promise.all([
+        prisma.processCompletion.findUniqueOrThrow({ where: { id: upstream.completionId } }),
+        prisma.processCompletion.findUniqueOrThrow({ where: { id: advance.completionId } }),
+        prisma.processLaborPool.findFirstOrThrow({
+          where: { completionId: advance.completionId },
+          include: { claims: true },
+        }),
+        prisma.processLaborPool.findFirstOrThrow({
+          where: { completionId: upstream.completionId },
+          include: { claims: true },
+        }),
+        prisma.workOrderProcessRoute.findUniqueOrThrow({ where: { id: order.processRoute.id } }),
+        prisma.workOrder.findUniqueOrThrow({ where: { id: order.id } }),
+        prisma.workOrderProcessStep.findMany({
+          where: { routeId: order.processRoute.id },
+          orderBy: { position: 'asc' },
+        }),
+        prisma.processCompletionCoverage.findMany({
+          where: {
+            reportCompletionId: advance.completionId,
+            voidedAt: null,
+          },
+        }),
+      ]);
+      assert.ok(withdrawnUpstream.voidedAt);
+      assert.equal(preservedDownstream.voidedAt, null);
+      assert.equal(preservedDownstream.coverageStatus, 'PENDING');
+      assert.equal(preservedDownstream.coveredQty, 0);
+      assert.equal(downstreamPool.status, 'EXHAUSTED');
+      assert.equal(downstreamPool.claims.filter(claim => claim.status === 'ACTIVE').length, 1);
+      assert.equal(downstreamPool.claims.find(claim => claim.status === 'ACTIVE')?.employeeId, downstreamEmployee.id);
+      assert.equal(upstreamPool.status, 'VOIDED');
+      assert.equal(upstreamPool.claims.filter(claim => claim.status === 'ACTIVE').length, 0);
+      assert.equal(reopenedRoute.status, 'in_progress');
+      assert.equal(reopenedOrder.stage, 'frontend');
+      assert.equal(reopenedOrder.completedQty, '0');
+      assert.equal(reopenedSteps[0].processedQty, 0);
+      assert.equal(reopenedSteps[0].status, 'current');
+      assert.equal(reopenedSteps[1].inputQty, 0);
+      assert.equal(reopenedSteps[1].processedQty, 0);
+      assert.equal(reopenedSteps[1].status, 'pending');
+      assert.equal(activeCoverageRows.length, 0);
+
+      const correctedUpstream = await completeProcessStep({
+        routeId: order.processRoute.id,
+        stepId: cut.id,
+        processedQty: 100,
+        defectQty: 0,
+        workDate: '2026-08-03',
+        employeeIds: [upstreamEmployee.id],
+        requireParticipants: true,
+        allowAdvanceReporting: true,
+        autoAssignLabor: true,
+        reportSource: 'QR_MOBILE',
+        principalEmployeeId: upstreamEmployee.id,
+        idempotencyKey: `${prefix}-upstream-cut-corrected`,
+        expectedRouteVersion: withdrawn.routeVersion,
+        userId: actor.id,
+        actor: actor.displayName || actor.username,
+      });
+      completionIds.push(correctedUpstream.completionId);
+      assert.equal(correctedUpstream.routeCompleted, true);
+      const [coveredAgain, downstreamPools, completedAgain] = await Promise.all([
+        prisma.processCompletion.findUniqueOrThrow({ where: { id: advance.completionId } }),
+        prisma.processLaborPool.findMany({
+          where: { completionId: advance.completionId },
+          include: { claims: true },
+        }),
+        prisma.workOrder.findUniqueOrThrow({ where: { id: order.id } }),
+      ]);
+      assert.equal(coveredAgain.coverageStatus, 'COVERED');
+      assert.equal(coveredAgain.coveredQty, 100);
+      assert.equal(downstreamPools.length, 1);
+      assert.equal(downstreamPools[0].claims.filter(claim => claim.status === 'ACTIVE').length, 1);
+      assert.equal(completedAgain.completedQty, '100');
     } finally {
       await prisma.operationLog.deleteMany({ where: { targetId: { in: completionIds } } });
       await prisma.processRouteActivity.deleteMany({ where: { routeId: order.processRoute.id } });
@@ -187,7 +299,9 @@ test(
       await prisma.workOrderProcessStep.deleteMany({ where: { routeId: order.processRoute.id } });
       await prisma.workOrderProcessRoute.delete({ where: { id: order.processRoute.id } });
       await prisma.workOrder.delete({ where: { id: order.id } });
-      await prisma.employee.delete({ where: { id: employee.id } });
+      await prisma.employee.deleteMany({
+        where: { id: { in: [downstreamEmployee.id, upstreamEmployee.id] } },
+      });
       await prisma.user.delete({ where: { id: actor.id } });
     }
   },

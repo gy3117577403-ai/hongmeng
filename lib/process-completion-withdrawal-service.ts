@@ -37,6 +37,8 @@ export type ProcessCompletionWithdrawalImpact = {
   goodQty: number;
   releaseReductionQty: number;
   affectedTargetStepCount: number;
+  downstreamPendingCompletionCount: number;
+  downstreamPendingQty: number;
   laborPoolId: string | null;
   laborClaimCount: number;
   laborClaimedQty: number;
@@ -121,8 +123,21 @@ const withdrawalStateInclude = Prisma.validator<Prisma.ProcessCompletionInclude>
   },
 });
 
+const triggeredCoverageInclude = Prisma.validator<Prisma.ProcessCompletionCoverageInclude>()({
+  reportCompletion: {
+    include: {
+      step: true,
+      branchWorkOrder: { select: { id: true, code: true, branchStatus: true } },
+    },
+  },
+});
+
 type WithdrawalState = Prisma.ProcessCompletionGetPayload<{
   include: typeof withdrawalStateInclude;
+}>;
+
+type TriggeredCoverageRecord = Prisma.ProcessCompletionCoverageGetPayload<{
+  include: typeof triggeredCoverageInclude;
 }>;
 
 type ReleaseMovementRecord = {
@@ -143,6 +158,49 @@ type ReleaseMovementRecord = {
 type MovementReversalPlan = {
   original: ReleaseMovementRecord;
   quantity: number;
+};
+
+type StepRollbackPlan = {
+  stepId: string;
+  sequenceGroup: number;
+  inputReduction: number;
+  processedReduction: number;
+  goodReduction: number;
+  defectReduction: number;
+  releaseReduction: number;
+  nextInputQty: number;
+  nextProcessedQty: number;
+  nextGoodOutputQty: number;
+  nextDefectOutputQty: number;
+  nextReleasedGoodQty: number;
+};
+
+type CompletionCoverageRollback = {
+  completionId: string;
+  quantity: number;
+  goodQty: number;
+  defectQty: number;
+  currentCoveredQty: number;
+  currentCoveredGoodQty: number;
+  currentCoveredDefectQty: number;
+  processedQty: number;
+};
+
+type WithdrawalRollbackPlan = {
+  blockers: ProcessCompletionWithdrawalBlocker[];
+  steps: StepRollbackPlan[];
+  coverageAllocationIds: string[];
+  completionCoverages: CompletionCoverageRollback[];
+  movementReversals: Array<{
+    sequenceGroup: number;
+    targetStepId: string | null;
+    plans: MovementReversalPlan[];
+  }>;
+  sourceReleaseReductionQty: number;
+  terminalReleaseReductionQty: number;
+  frontendTransferReductionQty: number;
+  downstreamPendingCompletionCount: number;
+  downstreamPendingQty: number;
 };
 
 function text(value: unknown, max: number): string {
@@ -177,7 +235,7 @@ function automaticWithdrawalAuditReason(
 ): string {
   const categoryLabel = category === 'REPORTING_ERROR' ? '报工错误' : '流程异常';
   return [
-    `主管完工撤回（${categoryLabel}）`,
+    `完工撤回（${categoryLabel}）`,
     `工序：${state.step.processName}`,
     `完工数量：${preview.impact.processedQty}`,
     `回收转序：${preview.impact.releaseReductionQty}`,
@@ -220,11 +278,16 @@ export function planQuantityMovementReversals(input: {
   movements: ReleaseMovementRecord[];
   targetStepId: string | null;
   requiredQty: number;
+  sourceSequenceGroup?: number;
 }): MovementReversalPlan[] {
   let remaining = input.requiredQty;
   const planned: MovementReversalPlan[] = [];
   const matching = input.movements
-    .filter(movement => movement.targetStepId === input.targetStepId)
+    .filter(movement => (
+      movement.targetStepId === input.targetStepId
+      && (input.sourceSequenceGroup === undefined
+        || movement.sourceSequenceGroup === input.sourceSequenceGroup)
+    ))
     .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
   for (const movement of matching) {
     if (remaining <= 0) break;
@@ -248,7 +311,11 @@ async function loadState(
   db: Prisma.TransactionClient | typeof prisma,
   routeId: string,
   completionId: string,
-): Promise<{ state: WithdrawalState; releaseMovements: ReleaseMovementRecord[] }> {
+): Promise<{
+  state: WithdrawalState;
+  releaseMovements: ReleaseMovementRecord[];
+  triggeredCoverages: TriggeredCoverageRecord[];
+}> {
   const state = await db.processCompletion.findFirst({
     where: { id: completionId, routeId },
     include: withdrawalStateInclude,
@@ -274,32 +341,39 @@ async function loadState(
     state.coveredGoodQty = state.goodQty;
     state.coveredDefectQty = state.defectQty;
   }
-  const releaseMovements = await db.processQuantityMovement.findMany({
-    where: {
-      workOrderId: state.workOrderId,
-      sourceSequenceGroup: state.step.sequenceGroup,
-      type: { in: [ProcessMovementType.GOOD_TRANSFER, ProcessMovementType.FINISHED_GOOD] },
-      voidedAt: null,
-    },
-    select: {
-      id: true,
-      completionId: true,
-      workOrderId: true,
-      sourceStepId: true,
-      targetStepId: true,
-      branchWorkOrderId: true,
-      type: true,
-      quantity: true,
-      sourceSequenceGroup: true,
-      targetSequenceGroup: true,
-      createdAt: true,
-      reversals: {
-        where: { voidedAt: null },
-        select: { quantity: true },
+  const [releaseMovements, triggeredCoverages] = await Promise.all([
+    db.processQuantityMovement.findMany({
+      where: {
+        workOrderId: state.workOrderId,
+        sourceSequenceGroup: { gte: state.step.sequenceGroup },
+        type: { in: [ProcessMovementType.GOOD_TRANSFER, ProcessMovementType.FINISHED_GOOD] },
+        voidedAt: null,
       },
-    },
-  });
-  return { state, releaseMovements };
+      select: {
+        id: true,
+        completionId: true,
+        workOrderId: true,
+        sourceStepId: true,
+        targetStepId: true,
+        branchWorkOrderId: true,
+        type: true,
+        quantity: true,
+        sourceSequenceGroup: true,
+        targetSequenceGroup: true,
+        createdAt: true,
+        reversals: {
+          where: { voidedAt: null },
+          select: { quantity: true },
+        },
+      },
+    }),
+    db.processCompletionCoverage.findMany({
+      where: { triggerCompletionId: state.id, voidedAt: null },
+      include: triggeredCoverageInclude,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    }),
+  ]);
+  return { state, releaseMovements, triggeredCoverages };
 }
 
 function nextGroupSteps(state: WithdrawalState) {
@@ -315,24 +389,229 @@ function nextGroupSteps(state: WithdrawalState) {
   ));
 }
 
+function buildWithdrawalRollbackPlan(
+  state: WithdrawalState,
+  releaseMovements: ReleaseMovementRecord[],
+  triggeredCoverages: TriggeredCoverageRecord[],
+): WithdrawalRollbackPlan {
+  const blockers: ProcessCompletionWithdrawalBlocker[] = [];
+  const normalSteps = state.route.steps.filter(step => step.executionMode === 'NORMAL');
+  const groups = [...new Set(normalSteps.map(step => step.sequenceGroup))]
+    .filter(group => group >= state.step.sequenceGroup)
+    .sort((left, right) => left - right);
+  const stepPlans: StepRollbackPlan[] = [];
+  const inputReductionByStep = new Map<string, number>();
+  const downstreamCoverageByStep = new Map<string, TriggeredCoverageRecord[]>();
+  const completionCoverageMap = new Map<string, CompletionCoverageRollback>();
+  const coverageAllocationIds: string[] = [];
+  const movementReversals: WithdrawalRollbackPlan['movementReversals'] = [];
+  let sourceReleaseReductionQty = 0;
+  let terminalReleaseReductionQty = 0;
+  let frontendTransferReductionQty = 0;
+
+  for (const coverage of triggeredCoverages) {
+    if (
+      coverage.reportCompletionId === state.id
+      || coverage.reportCompletion.step.sequenceGroup <= state.step.sequenceGroup
+    ) continue;
+    const list = downstreamCoverageByStep.get(coverage.reportCompletion.stepId) || [];
+    list.push(coverage);
+    downstreamCoverageByStep.set(coverage.reportCompletion.stepId, list);
+  }
+
+  for (const group of groups) {
+    const groupSteps = normalSteps.filter(step => step.sequenceGroup === group);
+    const reductions = new Map<string, { processed: number; good: number; defect: number }>();
+    for (const step of groupSteps) {
+      const inputReduction = inputReductionByStep.get(step.id) || 0;
+      if (inputReduction > step.inputQty) {
+        blockers.push({
+          code: 'PROCESS_COMPLETION_TARGET_QUANTITY_CONFLICT',
+          message: `${step.processName} 的投入数量不足以回退 ${inputReduction}`,
+        });
+      }
+      if (step.id === state.stepId) {
+        reductions.set(step.id, {
+          processed: state.coveredQty,
+          good: state.coveredGoodQty,
+          defect: state.coveredDefectQty,
+        });
+        continue;
+      }
+      const nextInputQty = Math.max(0, step.inputQty - inputReduction);
+      const requiredDemotion = Math.max(0, step.processedQty - nextInputQty);
+      if (requiredDemotion <= 0) {
+        reductions.set(step.id, { processed: 0, good: 0, defect: 0 });
+        continue;
+      }
+      const candidates = downstreamCoverageByStep.get(step.id) || [];
+      const candidateQty = candidates.reduce((sum, coverage) => sum + coverage.quantity, 0);
+      if (candidateQty !== requiredDemotion) {
+        blockers.push({
+          code: candidateQty < requiredDemotion
+            ? 'PROCESS_COMPLETION_DOWNSTREAM_COVERAGE_NOT_ATTRIBUTABLE'
+            : 'PROCESS_COMPLETION_DOWNSTREAM_PARTIAL_COVERAGE_REQUIRED',
+          message: candidateQty < requiredDemotion
+            ? `${step.processName} 需退回 ${requiredDemotion}，但本次上道报工只关联 ${candidateQty}，不能自动回退`
+            : `${step.processName} 只需退回 ${requiredDemotion}，关联核销为 ${candidateQty}，需主管核对后处理`,
+        });
+        reductions.set(step.id, { processed: 0, good: 0, defect: 0 });
+        continue;
+      }
+      const invalidCoverage = candidates.find(coverage => (
+        coverage.reportCompletion.voidedAt
+        || coverage.defectQty > 0
+        || Boolean(coverage.reportCompletion.branchWorkOrder)
+      ));
+      if (invalidCoverage) {
+        blockers.push({
+          code: 'PROCESS_COMPLETION_DOWNSTREAM_BRANCH_EFFECT_EXISTS',
+          message: `${step.processName} 的提前报工已产生不良或分支影响，需进入流程异常处理`,
+        });
+        reductions.set(step.id, { processed: 0, good: 0, defect: 0 });
+        continue;
+      }
+      const good = candidates.reduce((sum, coverage) => sum + coverage.goodQty, 0);
+      const defect = candidates.reduce((sum, coverage) => sum + coverage.defectQty, 0);
+      reductions.set(step.id, { processed: candidateQty, good, defect });
+      for (const coverage of candidates) {
+        coverageAllocationIds.push(coverage.id);
+        const report = coverage.reportCompletion;
+        const existing = completionCoverageMap.get(report.id) || {
+          completionId: report.id,
+          quantity: 0,
+          goodQty: 0,
+          defectQty: 0,
+          currentCoveredQty: report.coveredQty,
+          currentCoveredGoodQty: report.coveredGoodQty,
+          currentCoveredDefectQty: report.coveredDefectQty,
+          processedQty: report.processedQty,
+        };
+        existing.quantity += coverage.quantity;
+        existing.goodQty += coverage.goodQty;
+        existing.defectQty += coverage.defectQty;
+        completionCoverageMap.set(report.id, existing);
+      }
+    }
+
+    const currentReleased = groupSteps.length
+      ? Math.min(...groupSteps.map(step => step.releasedGoodQty))
+      : 0;
+    const nextGoodQuantities = groupSteps.map(step => {
+      const reduction = reductions.get(step.id) || { processed: 0, good: 0, defect: 0 };
+      if (
+        reduction.processed > step.processedQty
+        || reduction.good > step.goodOutputQty
+        || reduction.defect > step.defectOutputQty
+      ) {
+        blockers.push({
+          code: 'PROCESS_COMPLETION_QUANTITY_STATE_INVALID',
+          message: `${step.processName} 当前数量小于需回退数量，需先核对数量台账`,
+        });
+      }
+      return Math.max(0, step.goodOutputQty - reduction.good);
+    });
+    const nextReleasedGoodQty = Math.min(
+      currentReleased,
+      nextGoodQuantities.length ? Math.min(...nextGoodQuantities) : 0,
+    );
+    const releaseReduction = Math.max(0, currentReleased - nextReleasedGoodQty);
+    if (group === state.step.sequenceGroup) sourceReleaseReductionQty = releaseReduction;
+    const groupIndex = groups.indexOf(group);
+    const nextGroup = groups[groupIndex + 1];
+    const targetSteps = nextGroup === undefined
+      ? []
+      : normalSteps.filter(step => step.sequenceGroup === nextGroup);
+    if (releaseReduction > 0) {
+      const channels = targetSteps.length ? targetSteps.map(step => step.id) : [null];
+      for (const targetStepId of channels) {
+        try {
+          movementReversals.push({
+            sequenceGroup: group,
+            targetStepId,
+            plans: planQuantityMovementReversals({
+              movements: releaseMovements,
+              targetStepId,
+              requiredQty: releaseReduction,
+              sourceSequenceGroup: group,
+            }),
+          });
+        } catch (error) {
+          if (error instanceof ProcessCompletionWithdrawalError) {
+            blockers.push({ code: error.code, message: error.message });
+          } else {
+            throw error;
+          }
+        }
+      }
+      if (!targetSteps.length) terminalReleaseReductionQty += releaseReduction;
+      if (
+        targetSteps.length
+        && groupSteps[0]?.stageGroup === 'frontend'
+        && targetSteps[0]?.stageGroup !== 'frontend'
+      ) frontendTransferReductionQty += releaseReduction;
+      for (const targetStep of targetSteps) {
+        inputReductionByStep.set(
+          targetStep.id,
+          (inputReductionByStep.get(targetStep.id) || 0) + releaseReduction,
+        );
+      }
+    }
+
+    for (const step of groupSteps) {
+      const reduction = reductions.get(step.id) || { processed: 0, good: 0, defect: 0 };
+      const inputReduction = inputReductionByStep.get(step.id) || 0;
+      const nextInputQty = Math.max(0, step.inputQty - inputReduction);
+      const nextProcessedQty = Math.max(0, step.processedQty - reduction.processed);
+      if (nextProcessedQty > nextInputQty) {
+        blockers.push({
+          code: 'PROCESS_COMPLETION_DOWNSTREAM_PROCESSED',
+          message: `${step.processName} 回退后仍有 ${nextProcessedQty - nextInputQty} 数量无法转回待前序覆盖`,
+        });
+      }
+      stepPlans.push({
+        stepId: step.id,
+        sequenceGroup: group,
+        inputReduction,
+        processedReduction: reduction.processed,
+        goodReduction: reduction.good,
+        defectReduction: reduction.defect,
+        releaseReduction,
+        nextInputQty,
+        nextProcessedQty,
+        nextGoodOutputQty: Math.max(0, step.goodOutputQty - reduction.good),
+        nextDefectOutputQty: Math.max(0, step.defectOutputQty - reduction.defect),
+        nextReleasedGoodQty,
+      });
+    }
+  }
+
+  const uniqueBlockers = blockers.filter((blocker, index, items) => (
+    items.findIndex(item => item.code === blocker.code && item.message === blocker.message) === index
+  ));
+  const completionCoverages = [...completionCoverageMap.values()];
+  return {
+    blockers: uniqueBlockers,
+    steps: stepPlans,
+    coverageAllocationIds: [...new Set(coverageAllocationIds)],
+    completionCoverages,
+    movementReversals,
+    sourceReleaseReductionQty,
+    terminalReleaseReductionQty,
+    frontendTransferReductionQty,
+    downstreamPendingCompletionCount: completionCoverages.length,
+    downstreamPendingQty: completionCoverages.reduce((sum, completion) => sum + completion.quantity, 0),
+  };
+}
+
 function previewFromState(
   state: WithdrawalState,
   releaseMovements: ReleaseMovementRecord[],
+  triggeredCoverages: TriggeredCoverageRecord[],
 ): ProcessCompletionWithdrawalPreview {
   const blockers: ProcessCompletionWithdrawalBlocker[] = [];
-  const groupSteps = state.route.steps.filter(
-    step => step.executionMode === 'NORMAL'
-      && step.sequenceGroup === state.step.sequenceGroup,
-  );
-  const targetSteps = nextGroupSteps(state);
-  const newGoodQuantities = groupSteps.map(step => (
-    step.id === state.stepId ? step.goodOutputQty - state.coveredGoodQty : step.goodOutputQty
-  ));
-  const currentReleased = groupSteps.length
-    ? Math.min(...groupSteps.map(step => step.releasedGoodQty))
-    : 0;
-  const nextReleasable = newGoodQuantities.length ? Math.min(...newGoodQuantities) : 0;
-  const releaseReductionQty = Math.max(0, currentReleased - Math.max(0, nextReleasable));
+  const rollbackPlan = buildWithdrawalRollbackPlan(state, releaseMovements, triggeredCoverages);
+  blockers.push(...rollbackPlan.blockers);
 
   if (state.voidedAt) {
     blockers.push({ code: 'PROCESS_COMPLETION_ALREADY_WITHDRAWN', message: '该完工记录已经撤回' });
@@ -367,44 +646,6 @@ function previewFromState(
       message: '分支工单的完工会影响上级数量，需进入流程异常处理',
     });
   }
-  const downstreamProcessed = state.route.steps.filter(step => (
-    step.sequenceGroup > state.step.sequenceGroup && step.processedQty > 0
-  ));
-  if (downstreamProcessed.length) {
-    blockers.push({
-      code: 'PROCESS_COMPLETION_DOWNSTREAM_PROCESSED',
-      message: `下道已有 ${downstreamProcessed.length} 道工序报工，禁止自动回退`,
-    });
-  }
-  for (const targetStep of targetSteps) {
-    if (
-      targetStep.inputQty < releaseReductionQty
-      || targetStep.processedQty > targetStep.inputQty - releaseReductionQty
-    ) {
-      blockers.push({
-        code: 'PROCESS_COMPLETION_TARGET_QUANTITY_CONFLICT',
-        message: `${targetStep.processName} 的投入/已处理数量不允许回退 ${releaseReductionQty}`,
-      });
-    }
-  }
-  if (releaseReductionQty > 0) {
-    const channels = targetSteps.length ? targetSteps.map(step => step.id) : [null];
-    for (const targetStepId of channels) {
-      try {
-        planQuantityMovementReversals({
-          movements: releaseMovements,
-          targetStepId,
-          requiredQty: releaseReductionQty,
-        });
-      } catch (error) {
-        if (error instanceof ProcessCompletionWithdrawalError) {
-          blockers.push({ code: error.code, message: error.message });
-        } else {
-          throw error;
-        }
-      }
-    }
-  }
   if (state.laborPool?.status === ProcessLaborPoolStatus.VOIDED) {
     blockers.push({
       code: 'PROCESS_COMPLETION_LABOR_POOL_ALREADY_VOIDED',
@@ -414,14 +655,6 @@ function previewFromState(
 
   const claims = state.laborPool?.claims || [];
   const employeeNames = [...new Set(claims.map(claim => claim.employee.name))];
-  const sourceStage = groupSteps[0]?.stageGroup || state.step.stageGroup;
-  const targetStage = targetSteps[0]?.stageGroup || null;
-  const frontendTransferReductionQty = sourceStage === 'frontend'
-    && targetStage !== null
-    && targetStage !== 'frontend'
-    ? releaseReductionQty
-    : 0;
-
   return {
     routeId: state.routeId,
     routeVersion: state.route.version,
@@ -443,14 +676,19 @@ function previewFromState(
     impact: {
       processedQty: state.coveredQty,
       goodQty: state.coveredGoodQty,
-      releaseReductionQty,
-      affectedTargetStepCount: targetSteps.length,
+      releaseReductionQty: rollbackPlan.sourceReleaseReductionQty,
+      affectedTargetStepCount: rollbackPlan.steps.filter(step => (
+        step.sequenceGroup > state.step.sequenceGroup
+        && (step.inputReduction > 0 || step.processedReduction > 0)
+      )).length,
+      downstreamPendingCompletionCount: rollbackPlan.downstreamPendingCompletionCount,
+      downstreamPendingQty: rollbackPlan.downstreamPendingQty,
       laborPoolId: state.laborPool?.id || null,
       laborClaimCount: claims.length,
       laborClaimedQty: claims.reduce((sum, claim) => sum + claim.quantity, 0),
       employeeNames,
-      workOrderCompletedReductionQty: targetSteps.length ? 0 : releaseReductionQty,
-      frontendTransferReductionQty,
+      workOrderCompletedReductionQty: rollbackPlan.terminalReleaseReductionQty,
+      frontendTransferReductionQty: rollbackPlan.frontendTransferReductionQty,
     },
   };
 }
@@ -468,8 +706,8 @@ export async function previewProcessCompletionWithdrawal(
       'PROCESS_COMPLETION_WITHDRAWAL_TARGET_REQUIRED',
     );
   }
-  const { state, releaseMovements } = await loadState(prisma, routeId, completionId);
-  return previewFromState(state, releaseMovements);
+  const { state, releaseMovements, triggeredCoverages } = await loadState(prisma, routeId, completionId);
+  return previewFromState(state, releaseMovements, triggeredCoverages);
 }
 
 async function createBlockedIssue(
@@ -529,6 +767,104 @@ async function createBlockedIssue(
   return issue;
 }
 
+export async function requestProcessCompletionCorrection(input: {
+  routeId: string;
+  completionId: string;
+  reason: unknown;
+  idempotencyKey: unknown;
+  userId: string;
+  actor: string;
+}): Promise<{ issue: { id: string; code: string }; completionId: string }> {
+  const routeId = text(input.routeId, 80);
+  const completionId = text(input.completionId, 80);
+  const reason = text(input.reason, 500);
+  const idempotencyKey = parseIdempotencyKey(input.idempotencyKey);
+  if (!routeId || !completionId) {
+    throw new ProcessCompletionWithdrawalError(
+      '缺少路线或报工记录标识',
+      400,
+      'PROCESS_COMPLETION_CORRECTION_TARGET_REQUIRED',
+    );
+  }
+  if (reason.length < 4) {
+    throw new ProcessCompletionWithdrawalError(
+      '请说明发现的报工数量问题',
+      400,
+      'PROCESS_COMPLETION_CORRECTION_REASON_REQUIRED',
+    );
+  }
+  return prisma.$transaction(async tx => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`process-completion-correction:${completionId}`}))`;
+    const { state } = await loadState(tx, routeId, completionId);
+    if (state.voidedAt) {
+      throw new ProcessCompletionWithdrawalError(
+        '该报工记录已经撤回，请刷新后核对',
+        409,
+        'PROCESS_COMPLETION_ALREADY_WITHDRAWN',
+      );
+    }
+    const fingerprint = `field-process-completion-correction:${completionId}`;
+    const sourceRoute = `/workspace/workflows?${new URLSearchParams({
+      entityType: 'production',
+      workOrderId: state.workOrderId,
+      stepId: state.stepId,
+    }).toString()}`;
+    let issue = await tx.issue.findUnique({ where: { sourceFingerprint: fingerprint } });
+    if (!issue) {
+      issue = await tx.issue.create({
+        data: {
+          title: `报工数量待核对：${state.route.workOrder.specification || state.route.workOrder.code} · ${state.step.processName}`,
+          type: 'production',
+          priority: 'high',
+          status: 'pending',
+          description: `现场员工报告该笔报工可能有误。\n报工数量：${state.processedQty}\n现场说明：${reason}`,
+          sourceType: 'process_reporting_error',
+          sourceId: state.id,
+          sourceCode: state.route.workOrder.specification || state.route.workOrder.code,
+          sourceRoute,
+          sourceAlertCode: 'FIELD_REPORT_CORRECTION_REQUEST',
+          sourceFingerprint: fingerprint,
+          workOrderId: state.workOrderId,
+          reporterId: input.userId,
+        },
+      });
+      await tx.issueActivity.create({
+        data: {
+          issueId: issue.id,
+          action: 'create_from_field_report_correction',
+          content: `${text(input.actor, 120) || '现场员工'}申请核对报工数量：${reason}`.slice(0, 500),
+          actorId: input.userId,
+          detail: { completionId, routeId, idempotencyKey, reason },
+        },
+      });
+    } else if (issue.deletedAt || issue.status === 'closed') {
+      issue = await tx.issue.update({
+        where: { id: issue.id },
+        data: {
+          deletedAt: null,
+          status: 'pending',
+          reporterId: input.userId,
+          description: `现场员工再次报告该笔报工可能有误。\n报工数量：${state.processedQty}\n现场说明：${reason}`,
+        },
+      });
+    }
+    await tx.operationLog.create({
+      data: {
+        userId: input.userId,
+        action: 'request_process_completion_correction',
+        targetType: 'process_completion',
+        targetId: completionId,
+        detail: { routeId, issueId: issue.id, idempotencyKey, reason },
+      },
+    });
+    return { issue: { id: issue.id, code: issueCode(issue.sequence) }, completionId };
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+    maxWait: 5_000,
+    timeout: 15_000,
+  });
+}
+
 function nextTaskStatus(step: WithdrawalState['route']['steps'][number], plannedQty: number) {
   if (step.status === 'completed' || step.status === 'skipped') {
     return { status: DailyProcessTaskStatus.COMPLETED, availableQty: 0 };
@@ -548,6 +884,7 @@ async function applyWithdrawal(
   input: {
     state: WithdrawalState;
     releaseMovements: ReleaseMovementRecord[];
+    triggeredCoverages: TriggeredCoverageRecord[];
     preview: ProcessCompletionWithdrawalPreview;
     reason: string;
     category: CompletionCorrectionCategory;
@@ -558,22 +895,21 @@ async function applyWithdrawal(
 ): Promise<number> {
   const { state, preview } = input;
   const now = new Date();
-  const groupSteps = state.route.steps.filter(step => (
-    step.executionMode === 'NORMAL'
-    && step.sequenceGroup === state.step.sequenceGroup
-  ));
-  const targetSteps = nextGroupSteps(state);
-  const releaseReductionQty = preview.impact.releaseReductionQty;
+  const rollbackPlan = buildWithdrawalRollbackPlan(
+    state,
+    input.releaseMovements,
+    input.triggeredCoverages,
+  );
+  if (rollbackPlan.blockers.length) {
+    throw new ProcessCompletionWithdrawalError(
+      rollbackPlan.blockers[0].message,
+      409,
+      rollbackPlan.blockers[0].code,
+    );
+  }
 
-  if (releaseReductionQty > 0) {
-    const channels = targetSteps.length ? targetSteps.map(step => step.id) : [null];
-    for (const targetStepId of channels) {
-      const plans = planQuantityMovementReversals({
-        movements: input.releaseMovements,
-        targetStepId,
-        requiredQty: releaseReductionQty,
-      });
-      for (const [index, plan] of plans.entries()) {
+  for (const channel of rollbackPlan.movementReversals) {
+    for (const [index, plan] of channel.plans.entries()) {
         await tx.processQuantityMovement.create({
           data: {
             completionId: state.id,
@@ -586,10 +922,9 @@ async function applyWithdrawal(
             sourceSequenceGroup: plan.original.sourceSequenceGroup,
             targetSequenceGroup: plan.original.targetSequenceGroup,
             reversalOfId: plan.original.id,
-            idempotencyKey: `${input.idempotencyKey}:qty:${targetStepId || 'finished'}:${index}`.slice(0, 190),
+            idempotencyKey: `${input.idempotencyKey}:qty:${channel.sequenceGroup}:${channel.targetStepId || 'finished'}:${index}`.slice(0, 190),
           },
         });
-      }
     }
   }
 
@@ -612,85 +947,91 @@ async function applyWithdrawal(
   }
 
   await tx.processCompletionCoverage.updateMany({
-    where: { reportCompletionId: state.id, voidedAt: null },
+    where: {
+      voidedAt: null,
+      OR: [
+        { reportCompletionId: state.id },
+        ...(rollbackPlan.coverageAllocationIds.length
+          ? [{ id: { in: rollbackPlan.coverageAllocationIds } }]
+          : []),
+      ],
+    },
     data: { voidedAt: now },
   });
 
-  state.step.processedQty -= state.coveredQty;
-  state.step.goodOutputQty -= state.coveredGoodQty;
-  state.step.defectOutputQty -= state.coveredDefectQty;
-  const routeSourceStep = groupSteps.find(step => step.id === state.stepId);
-  if (!routeSourceStep) {
-    throw new ProcessCompletionWithdrawalError(
-      '完工工序已不在当前路线中',
-      409,
-      'PROCESS_COMPLETION_STEP_MISSING',
-    );
-  }
-  routeSourceStep.processedQty -= state.coveredQty;
-  routeSourceStep.goodOutputQty -= state.coveredGoodQty;
-  routeSourceStep.defectOutputQty -= state.coveredDefectQty;
-  const nextReleased = Math.max(0, groupSteps[0].releasedGoodQty - releaseReductionQty);
-  for (const step of groupSteps) step.releasedGoodQty = nextReleased;
-  for (const targetStep of targetSteps) targetStep.inputQty -= releaseReductionQty;
-
-  const sourceUpdate = await tx.workOrderProcessStep.updateMany({
-    where: {
-      id: state.step.id,
-      quantityVersion: state.step.quantityVersion,
-      processedQty: { gte: state.coveredQty },
-      goodOutputQty: { gte: state.coveredGoodQty },
-      defectOutputQty: { gte: state.coveredDefectQty },
-    },
-    data: {
-      processedQty: { decrement: state.coveredQty },
-      goodOutputQty: { decrement: state.coveredGoodQty },
-      defectOutputQty: { decrement: state.coveredDefectQty },
-      releasedGoodQty: nextReleased,
-      quantityVersion: { increment: 1 },
-    },
-  });
-  if (sourceUpdate.count !== 1) {
-    throw new ProcessCompletionWithdrawalError(
-      '当前工序数量已变化，请刷新后重试',
-      409,
-      'PROCESS_STEP_QUANTITY_CONFLICT',
-    );
-  }
-  state.step.quantityVersion += 1;
-
-  for (const groupStep of groupSteps) {
-    if (groupStep.id === state.step.id) continue;
-    const update = await tx.workOrderProcessStep.updateMany({
-      where: { id: groupStep.id, quantityVersion: groupStep.quantityVersion },
-      data: { releasedGoodQty: nextReleased, quantityVersion: { increment: 1 } },
+  for (const completion of rollbackPlan.completionCoverages) {
+    const nextCoveredQty = completion.currentCoveredQty - completion.quantity;
+    const nextCoveredGoodQty = completion.currentCoveredGoodQty - completion.goodQty;
+    const nextCoveredDefectQty = completion.currentCoveredDefectQty - completion.defectQty;
+    const coverageStatus = nextCoveredQty <= 0
+      ? ProcessCompletionCoverageStatus.PENDING
+      : nextCoveredQty < completion.processedQty
+        ? ProcessCompletionCoverageStatus.PARTIAL
+        : ProcessCompletionCoverageStatus.COVERED;
+    const updated = await tx.processCompletion.updateMany({
+      where: {
+        id: completion.completionId,
+        voidedAt: null,
+        coveredQty: completion.currentCoveredQty,
+        coveredGoodQty: completion.currentCoveredGoodQty,
+        coveredDefectQty: completion.currentCoveredDefectQty,
+      },
+      data: {
+        coveredQty: nextCoveredQty,
+        coveredGoodQty: nextCoveredGoodQty,
+        coveredDefectQty: nextCoveredDefectQty,
+        coverageStatus,
+        coverageUpdatedAt: now,
+      },
     });
-    if (update.count !== 1) {
+    if (updated.count !== 1) {
       throw new ProcessCompletionWithdrawalError(
-        '并行工序释放数量已变化，请刷新后重试',
+        '下道提前报工的核销数量已变化，请刷新后重试',
         409,
-        'PROCESS_STEP_QUANTITY_CONFLICT',
+        'PROCESS_COMPLETION_COVERAGE_CONFLICT',
       );
     }
-    groupStep.quantityVersion += 1;
   }
-  for (const targetStep of targetSteps) {
+
+  for (const plan of rollbackPlan.steps) {
+    const step = state.route.steps.find(item => item.id === plan.stepId);
+    if (!step) continue;
+    const changed = plan.inputReduction > 0
+      || plan.processedReduction > 0
+      || plan.releaseReduction > 0;
+    if (!changed) continue;
     const update = await tx.workOrderProcessStep.updateMany({
       where: {
-        id: targetStep.id,
-        quantityVersion: targetStep.quantityVersion,
-        inputQty: { gte: releaseReductionQty },
+        id: step.id,
+        quantityVersion: step.quantityVersion,
+        inputQty: step.inputQty,
+        processedQty: step.processedQty,
+        goodOutputQty: step.goodOutputQty,
+        defectOutputQty: step.defectOutputQty,
+        releasedGoodQty: step.releasedGoodQty,
       },
-      data: { inputQty: { decrement: releaseReductionQty }, quantityVersion: { increment: 1 } },
+      data: {
+        inputQty: plan.nextInputQty,
+        processedQty: plan.nextProcessedQty,
+        goodOutputQty: plan.nextGoodOutputQty,
+        defectOutputQty: plan.nextDefectOutputQty,
+        releasedGoodQty: plan.nextReleasedGoodQty,
+        quantityVersion: { increment: 1 },
+      },
     });
     if (update.count !== 1) {
       throw new ProcessCompletionWithdrawalError(
-        '下道工序投入数量已变化，请刷新后重试',
+        `${step.processName} 数量已变化，请刷新后重试`,
         409,
         'PROCESS_STEP_QUANTITY_CONFLICT',
       );
     }
-    targetStep.quantityVersion += 1;
+    step.inputQty = plan.nextInputQty;
+    step.processedQty = plan.nextProcessedQty;
+    step.goodOutputQty = plan.nextGoodOutputQty;
+    step.defectOutputQty = plan.nextDefectOutputQty;
+    step.releasedGoodQty = plan.nextReleasedGoodQty;
+    step.quantityVersion += 1;
   }
 
   const groups = [...new Set(state.route.steps.map(step => step.sequenceGroup))].sort((a, b) => a - b);
@@ -1012,7 +1353,11 @@ export async function withdrawProcessCompletion(
               status: 'BLOCKED' as const,
               completionId,
               routeVersion: replay.routeVersion,
-              preview: previewFromState(loaded.state, loaded.releaseMovements),
+              preview: previewFromState(
+                loaded.state,
+                loaded.releaseMovements,
+                loaded.triggeredCoverages,
+              ),
               issue: issue ? { id: issue.id, code: issueCode(issue.sequence) } : null,
             };
           }
@@ -1020,12 +1365,20 @@ export async function withdrawProcessCompletion(
             status: 'WITHDRAWN' as const,
             completionId,
             routeVersion: replay.routeVersion,
-            preview: previewFromState(loaded.state, loaded.releaseMovements),
+            preview: previewFromState(
+              loaded.state,
+              loaded.releaseMovements,
+              loaded.triggeredCoverages,
+            ),
             issue: null,
           };
         }
 
-        const { state, releaseMovements } = await loadState(tx, routeId, completionId);
+        const { state, releaseMovements, triggeredCoverages } = await loadState(
+          tx,
+          routeId,
+          completionId,
+        );
         if (state.route.version !== expectedRouteVersion) {
           throw new ProcessCompletionWithdrawalError(
             '工艺路线已更新，请刷新影响预览后重试',
@@ -1033,8 +1386,12 @@ export async function withdrawProcessCompletion(
             'PROCESS_ROUTE_VERSION_CONFLICT',
           );
         }
-        const preview = previewFromState(state, releaseMovements);
-        const reason = automaticWithdrawalAuditReason(category, state, preview);
+        const preview = previewFromState(state, releaseMovements, triggeredCoverages);
+        const submittedReason = text(command.reason, 180);
+        const reason = [
+          automaticWithdrawalAuditReason(category, state, preview),
+          ...(submittedReason ? [`现场说明：${submittedReason}`] : []),
+        ].join('；').slice(0, 500);
         if (!preview.canWithdraw) {
           const issue = await createBlockedIssue(tx, {
             state,
@@ -1087,6 +1444,7 @@ export async function withdrawProcessCompletion(
         const routeVersion = await applyWithdrawal(tx, {
           state,
           releaseMovements,
+          triggeredCoverages,
           preview,
           reason,
           category,

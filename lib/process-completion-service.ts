@@ -166,6 +166,21 @@ export type ProcessCompletionContext = {
     pendingCoverageQty: number;
     reportableQty: number;
     availableCoverageQty: number;
+    latestCompletion: {
+      id: string;
+      processedQty: number;
+      completedAt: string;
+      principalEmployee: {
+        id: string;
+        employeeNo: string;
+        name: string;
+      } | null;
+      participants: Array<{
+        id: string;
+        employeeNo: string;
+        name: string;
+      }>;
+    } | null;
   }>;
   targetQty: number;
   nextSteps: Array<{
@@ -205,6 +220,7 @@ export type ProcessCompletionContext = {
   } | null;
   recentCompletions: Array<{
     id: string;
+    reportSource: ProcessCompletionSource;
     processedQty: number;
     goodQty: number;
     defectQty: number;
@@ -220,6 +236,15 @@ export type ProcessCompletionContext = {
     team: string | null;
     workstation: string | null;
     remark: string | null;
+    principalEmployee: {
+      id: string;
+      employeeNo: string;
+      name: string;
+    } | null;
+    submittedBy: {
+      id: string;
+      name: string;
+    } | null;
     participants: Array<{
       id: string;
       employeeNo: string;
@@ -1213,7 +1238,7 @@ function normalizeServiceError(error: unknown): ProcessCompletionServiceError {
 export async function loadProcessCompletionContext(
   routeIdInput: string,
   stepIdInput?: string | null,
-  options: { allowAdvanceReporting?: boolean } = {},
+  options: { allowAdvanceReporting?: boolean; allowCompletedSelection?: boolean } = {},
 ): Promise<ProcessCompletionContext> {
   const routeId = cleanText(routeIdInput, 80);
   const stepId = cleanText(stepIdInput, 80);
@@ -1251,6 +1276,12 @@ export async function loadProcessCompletionContext(
                 participants: {
                   include: { employee: true },
                   orderBy: [{ position: 'asc' }, { createdAt: 'asc' }],
+                },
+                principalEmployee: {
+                  select: { id: true, employeeNo: true, name: true },
+                },
+                createdBy: {
+                  select: { id: true, displayName: true, username: true },
                 },
               },
             },
@@ -1304,7 +1335,11 @@ export async function loadProcessCompletionContext(
       ? route.steps.find(step => (
           step.status === 'current'
           && (totalByStep.get(step.id)?.reportedQty || 0) < target
-        )) || route.steps.find(step => (totalByStep.get(step.id)?.reportedQty || 0) < target)
+        ))
+          || route.steps.find(step => (totalByStep.get(step.id)?.reportedQty || 0) < target)
+          || (options.allowCompletedSelection
+            ? [...route.steps].reverse().find(step => step.completions.length > 0) || route.steps[0]
+            : undefined)
       : route.steps.find(step => step.status === 'current');
   if (!selected) {
     throw new ProcessCompletionServiceError(
@@ -1332,7 +1367,12 @@ export async function loadProcessCompletionContext(
     ? selected.supplementObligation?.requiredQty || target
     : target;
   const reportableQty = Math.max(0, selectedTarget - selectedTotals.reportedQty);
-  if (options.allowAdvanceReporting && reportableQty <= 0) {
+  if (
+    options.allowAdvanceReporting
+    && reportableQty <= 0
+    && !stepId
+    && !options.allowCompletedSelection
+  ) {
     throw new ProcessCompletionServiceError(
       '该工序的累计报工数量已达到生产目标',
       409,
@@ -1410,6 +1450,21 @@ export async function loadProcessCompletionContext(
         availableCoverageQty: supplemental
           ? Math.max(0, stepTarget - totals.reportedQty)
           : Math.max(0, stepAvailableInput - step.processedQty),
+        latestCompletion: step.completions[0] ? {
+          id: step.completions[0].id,
+          processedQty: step.completions[0].processedQty,
+          completedAt: step.completions[0].completedAt.toISOString(),
+          principalEmployee: step.completions[0].principalEmployee ? {
+            id: step.completions[0].principalEmployee.id,
+            employeeNo: step.completions[0].principalEmployee.employeeNo,
+            name: step.completions[0].principalEmployee.name,
+          } : null,
+          participants: step.completions[0].participants.map(participant => ({
+            id: participant.employee.id,
+            employeeNo: participant.employee.employeeNo,
+            name: participant.employee.name,
+          })),
+        } : null,
       };
     }),
     targetQty: target,
@@ -1456,6 +1511,7 @@ export async function loadProcessCompletionContext(
     } : null,
     recentCompletions: selected.completions.map(completion => ({
       id: completion.id,
+      reportSource: completion.reportSource,
       processedQty: completion.processedQty,
       goodQty: completion.goodQty,
       defectQty: completion.defectQty,
@@ -1471,6 +1527,15 @@ export async function loadProcessCompletionContext(
       team: completion.team,
       workstation: completion.workstation,
       remark: completion.remark,
+      principalEmployee: completion.principalEmployee ? {
+        id: completion.principalEmployee.id,
+        employeeNo: completion.principalEmployee.employeeNo,
+        name: completion.principalEmployee.name,
+      } : null,
+      submittedBy: completion.createdBy ? {
+        id: completion.createdBy.id,
+        name: completion.createdBy.displayName || completion.createdBy.username,
+      } : null,
       participants: completion.participants.map(participant => ({
         id: participant.employee.id,
         employeeNo: participant.employee.employeeNo,
@@ -2872,7 +2937,7 @@ async function applyCompletionCoverage(
       quantity: plan.deltaQty,
       goodQty: plan.deltaGoodQty,
       defectQty: plan.deltaDefectQty,
-      idempotencyKey: `coverage:${input.completion.id}:${input.completion.coveredQty}:${plan.coveredQty}`,
+      idempotencyKey: `coverage:${input.completion.id}:${input.triggerCompletionId}:${input.completion.coveredQty}:${plan.coveredQty}`,
     },
   });
   input.completion.coveredQty = plan.coveredQty;
@@ -2938,7 +3003,7 @@ async function applyCompletionCoverage(
           quantity: release.releaseDeltaQty,
           sourceSequenceGroup: current.sequenceGroup,
           targetSequenceGroup: targetStep.sequenceGroup,
-          idempotencyKey: `${input.completion.id}:coverage:${plan.coveredQty}:good:${targetStep.id}`,
+          idempotencyKey: `${input.completion.id}:coverage:${input.triggerCompletionId}:${plan.coveredQty}:good:${targetStep.id}`,
         })),
       });
       for (const targetStep of targetSteps) {
@@ -2972,7 +3037,7 @@ async function applyCompletionCoverage(
           quantity: release.releaseDeltaQty,
           sourceSequenceGroup: current.sequenceGroup,
           targetSequenceGroup: null,
-          idempotencyKey: `${input.completion.id}:coverage:${plan.coveredQty}:finished`,
+          idempotencyKey: `${input.completion.id}:coverage:${input.triggerCompletionId}:${plan.coveredQty}:finished`,
         },
       });
     }
@@ -3023,7 +3088,7 @@ async function applyCompletionCoverage(
         quantity: plan.deltaDefectQty,
         sourceSequenceGroup: current.sequenceGroup,
         targetSequenceGroup: branch.firstSequenceGroup,
-        idempotencyKey: `${input.completion.id}:coverage:${plan.coveredQty}:defect`,
+        idempotencyKey: `${input.completion.id}:coverage:${input.triggerCompletionId}:${plan.coveredQty}:defect`,
       },
     });
   }
