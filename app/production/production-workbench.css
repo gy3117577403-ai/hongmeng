@@ -6021,6 +6021,26 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   gap: 9px;
 }
 
+.hm-production-workbench .process-completion-action-note {
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a4a12;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.hm-production-workbench .process-completion-quantity-grid.action {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.hm-production-workbench .process-completion-quantity-grid.action .process-completion-good {
+  grid-column: 1 / -1;
+  min-height: 62px;
+}
+
 .hm-production-workbench .process-completion-quantity-grid > label,
 .hm-production-workbench .process-completion-good {
   min-width: 0;
@@ -6766,6 +6786,10 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   .hm-production-workbench .process-completion-work-grid,
   .hm-production-workbench .process-completion-more > div,
   .hm-production-workbench .process-completion-disposition {
+    grid-template-columns: 1fr;
+  }
+
+  .hm-production-workbench .process-completion-quantity-grid.action {
     grid-template-columns: 1fr;
   }
 

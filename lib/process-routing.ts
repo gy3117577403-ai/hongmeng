@@ -270,6 +270,8 @@ const draftRouteSyncInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclu
       standardMillisecondsPerUnit: true,
       setupMilliseconds: true,
       unitsPerProduct: true,
+      reportQuantityBasis: true,
+      reportUnitLabel: true,
       countsForEfficiency: true,
       status: true,
       startedAt: true,
@@ -642,6 +644,8 @@ export function serializeProcessRoute(
       unitLabel: step.unitLabel,
       standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
       setupMilliseconds: step.setupMilliseconds,
+      reportQuantityBasis: step.reportQuantityBasis === 'action' ? 'action' as const : 'product' as const,
+      reportUnitLabel: step.reportUnitLabel,
       countsForEfficiency: step.countsForEfficiency,
       inputQty: step.inputQty,
       processedQty: step.processedQty,
@@ -1585,6 +1589,8 @@ function productTimeStepSnapshotMatches(
     && step.standardMillisecondsPerUnit === snapshot.standardMillisecondsPerUnit
     && step.setupMilliseconds === snapshot.setupMilliseconds
     && step.unitsPerProduct === snapshot.unitsPerProduct
+    && step.reportQuantityBasis === snapshot.reportQuantityBasis
+    && step.reportUnitLabel === snapshot.reportUnitLabel
     && step.countsForEfficiency === snapshot.countsForEfficiency
     && step.remark === entry.remark;
 }

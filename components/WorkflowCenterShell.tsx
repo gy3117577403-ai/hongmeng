@@ -73,6 +73,10 @@ type WithdrawalPreview = {
   impact: {
     processedQty: number;
     goodQty: number;
+    reportedUnitQty: number;
+    reportedGoodUnitQty: number;
+    reportQuantityBasis: 'product' | 'action';
+    reportUnitLabel: string;
     releaseReductionQty: number;
     affectedTargetStepCount: number;
     laborClaimCount: number;
@@ -105,13 +109,19 @@ function safeLocalRoute(value: string | null): string {
   return value && value.startsWith('/') && !value.startsWith('//') ? value : '/production';
 }
 
-function formatDuration(milliseconds?: number | null): string {
+function formatDuration(milliseconds?: number | null, unitLabel = '套'): string {
   if (!milliseconds || milliseconds <= 0) return '未设标准工时';
   const seconds = milliseconds / 1000;
-  if (seconds < 60) return `${Number(seconds.toFixed(seconds < 10 ? 1 : 0))} 秒/套`;
+  if (seconds < 60) return `${Number(seconds.toFixed(seconds < 10 ? 1 : 0))} 秒/${unitLabel}`;
   const minutes = seconds / 60;
-  if (minutes < 60) return `${Number(minutes.toFixed(minutes < 10 ? 1 : 0))} 分/套`;
-  return `${Number((minutes / 60).toFixed(2))} 小时/套`;
+  if (minutes < 60) return `${Number(minutes.toFixed(minutes < 10 ? 1 : 0))} 分/${unitLabel}`;
+  return `${Number((minutes / 60).toFixed(2))} 小时/${unitLabel}`;
+}
+
+function reportingUnitLabel(step: WorkflowStepDTO): string {
+  return step.reportQuantityBasis === 'action'
+    ? step.reportUnitLabel || '个'
+    : step.unitLabel || '件';
 }
 
 function processStepStateLabel(step: WorkflowStepDTO): string {
@@ -850,8 +860,9 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                 <div className="workflow-flow-nodes">
                                   {steps.map(step => {
                                     const input = step.inputQuantity ?? selected.quantity ?? 0;
-                                    const processed = step.processedQuantity || 0;
-                                    const unitLabel = step.unitLabel || '件';
+                                     const processed = step.processedQuantity || 0;
+                                     const unitLabel = step.unitLabel || '件';
+                                     const laborUnitLabel = reportingUnitLabel(step);
                                     const progress = input > 0
                                       ? Math.min(100, Math.round((processed / input) * 100))
                                       : step.state === 'done' ? 100 : 0;
@@ -860,7 +871,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                       ? '工时标准待补'
                                       : step.hasLaborPool
                                         ? (step.laborRemainingQuantity || 0) > 0
-                                          ? `${step.latestEmployeeName ? `${step.latestEmployeeName} · ` : ''}待领 ${(step.laborRemainingQuantity || 0).toLocaleString()} ${unitLabel}`
+                                          ? `${step.latestEmployeeName ? `${step.latestEmployeeName} · ` : ''}待领 ${(step.laborRemainingQuantity || 0).toLocaleString()} ${laborUnitLabel}`
                                           : step.latestEmployeeName || '工时已自动记入'
                                         : '工时尚未生成';
                                     return <button
@@ -885,7 +896,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                         <b>{progress}%</b>
                                       </div>
                                       <div className="workflow-flow-progress" aria-label={`${step.label}完成${progress}%`}><span style={{ transform: `scaleX(${progress / 100})` }} /></div>
-                                      <footer><span><Clock3 size={12} />{formatDuration(step.standardMillisecondsPerUnit)}</span><span><UserRound size={12} />{laborStatusText}</span></footer>
+                                      <footer><span><Clock3 size={12} />{formatDuration(step.standardMillisecondsPerUnit, laborUnitLabel)}</span><span><UserRound size={12} />{laborStatusText}</span></footer>
                                     </button>;
                                   })}
                                 </div>
@@ -902,8 +913,10 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                     <header>
                       <div><span>工序核对</span><h3>{selectedProcessStep.label}</h3></div>
                       <div className="workflow-process-inspector-summary">
-                        <span>已处理 {(selectedProcessStep.processedQuantity || 0).toLocaleString()} {selectedProcessStep.unitLabel || '件'}</span>
-                        <span>{formatDuration(selectedProcessStep.standardMillisecondsPerUnit)}</span>
+                        <span>{selectedProcessStep.reportQuantityBasis === 'action'
+                          ? `已报动作 ${(selectedProcessStep.completionRecords || []).reduce((sum, completion) => sum + completion.reportedUnitQty, 0).toLocaleString()} ${reportingUnitLabel(selectedProcessStep)} · 整套流转 ${(selectedProcessStep.processedQuantity || 0).toLocaleString()} ${selectedProcessStep.unitLabel || '件'}`
+                          : `已处理 ${(selectedProcessStep.processedQuantity || 0).toLocaleString()} ${selectedProcessStep.unitLabel || '件'}`}</span>
+                        <span>{formatDuration(selectedProcessStep.standardMillisecondsPerUnit, reportingUnitLabel(selectedProcessStep))}</span>
                         <span>{selectedProcessStep.completionRecords?.length || 0} 笔完工</span>
                       </div>
                     </header>
@@ -911,8 +924,10 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                       {selectedProcessStep.completionRecords?.map(completion => <article key={completion.id}>
                         <div className="workflow-completion-record-main">
                           <span>{formatDate(completion.completedAt)} · {completion.workDate}</span>
-                          <strong>报工 {completion.processedQty.toLocaleString()}，已核销 {completion.coveredQty.toLocaleString()}{completion.defectQty ? `，不良 ${completion.defectQty.toLocaleString()}` : ''}</strong>
-                          <small>{completion.pendingCoverageQty > 0 ? `待前序核销 ${completion.pendingCoverageQty.toLocaleString()} · ` : ''}{completion.participantNames.length ? completion.participantNames.join('、') : '未记录作业人员'} · {completion.laborClaimedQty > 0 ? `已自动记工 ${completion.laborClaimedQty}` : '暂无标准工时'}</small>
+                          <strong>{completion.reportQuantityBasis === 'action'
+                            ? `动作报工 ${completion.reportedUnitQty.toLocaleString()} ${completion.reportUnitLabel}，整套流转 ${completion.processedQty.toLocaleString()} ${selectedProcessStep.unitLabel || '件'}，已覆盖 ${completion.coveredQty.toLocaleString()}`
+                            : `报工 ${completion.processedQty.toLocaleString()}，已核销 ${completion.coveredQty.toLocaleString()}${completion.defectQty ? `，不良 ${completion.defectQty.toLocaleString()}` : ''}`}</strong>
+                          <small>{completion.pendingCoverageQty > 0 ? `待前序核销 ${completion.pendingCoverageQty.toLocaleString()} · ` : ''}{completion.participantNames.length ? completion.participantNames.join('、') : '未记录作业人员'} · {completion.laborClaimedQty > 0 ? `已自动记工 ${completion.laborClaimedQty} ${completion.reportUnitLabel}` : '暂无标准工时'}</small>
                         </div>
                         {canCorrectProduction && <div className="workflow-completion-record-actions">
                           <button type="button" disabled={routeActionPending} onClick={() => openCompletionCorrection(selectedProcessStep, completion)}><Wrench size={13} />校正工序/工时</button>
@@ -1000,14 +1015,14 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
               {withdrawalPreview.canWithdraw ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
               <span>
                 <strong>{withdrawalPreview.canWithdraw ? '可直接撤回并同步冲销' : '检测到下游影响，将转为流程异常'}</strong>
-                <small>撤回已核销 {withdrawalPreview.impact.processedQty}，回收转序 {withdrawalPreview.impact.releaseReductionQty}，冲销自动记工 {withdrawalPreview.impact.laborClaimCount} 笔</small>
+                <small>{withdrawalPreview.impact.reportQuantityBasis === 'action' ? `撤回动作报工 ${withdrawalPreview.impact.reportedUnitQty} ${withdrawalPreview.impact.reportUnitLabel}，` : ''}撤回已核销 {withdrawalPreview.impact.processedQty}，回收转序 {withdrawalPreview.impact.releaseReductionQty}，冲销自动记工 {withdrawalPreview.impact.laborClaimCount} 笔</small>
               </span>
             </div>
             {!!withdrawalPreview.blockers.length && <ul className="workflow-withdrawal-blockers">
               {withdrawalPreview.blockers.map(blocker => <li key={blocker.code}><AlertTriangle size={14} /><span>{blocker.message}</span></li>)}
             </ul>}
             <div className="workflow-correction-facts">
-              <span><small>本次良品</small><strong>{withdrawalPreview.impact.goodQty.toLocaleString()}</strong></span>
+              <span><small>{withdrawalPreview.impact.reportQuantityBasis === 'action' ? '本次合格动作' : '本次良品'}</small><strong>{(withdrawalPreview.impact.reportQuantityBasis === 'action' ? withdrawalPreview.impact.reportedGoodUnitQty : withdrawalPreview.impact.goodQty).toLocaleString()} {withdrawalPreview.impact.reportQuantityBasis === 'action' ? withdrawalPreview.impact.reportUnitLabel : ''}</strong></span>
               <span><small>影响下道</small><strong>{withdrawalPreview.impact.affectedTargetStepCount} 道</strong></span>
               <span><small>已自动记工数量</small><strong>{withdrawalPreview.impact.laborClaimedQty.toLocaleString()}</strong></span>
               <span><small>涉及员工</small><strong>{withdrawalPreview.impact.employeeNames.length || 0} 人</strong></span>
@@ -1033,9 +1048,9 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
             <div><small>主管纠错 · 员工报表同步</small><h2 id="workflow-standard-correction-title">校正工序与标准工时</h2></div>
             <button type="button" disabled={routeActionPending} aria-label="关闭工时校正" onClick={() => setCorrectionTarget(null)}><X size={18} /></button>
           </header>
-          <div className="workflow-standard-correction-summary"><Wrench size={19} /><span><strong>{correctionTarget.completion.workDate} · 报工 {correctionTarget.completion.processedQty.toLocaleString()}</strong><small>已自动记工 {correctionTarget.completion.laborClaimedQty.toLocaleString()}，保存后将自动作废旧记录并按新标准重新入账。</small></span></div>
+          <div className="workflow-standard-correction-summary"><Wrench size={19} /><span><strong>{correctionTarget.completion.workDate} · {correctionTarget.completion.reportQuantityBasis === 'action' ? `动作报工 ${correctionTarget.completion.reportedUnitQty.toLocaleString()} ${correctionTarget.completion.reportUnitLabel} · 整套 ${correctionTarget.completion.processedQty.toLocaleString()}` : `报工 ${correctionTarget.completion.processedQty.toLocaleString()}`}</strong><small>已自动记工 {correctionTarget.completion.laborClaimedQty.toLocaleString()}，保存后将自动作废旧记录并按新标准重新入账。</small></span></div>
           <label><span>工序名称</span><input maxLength={80} value={correctionProcessName} onChange={event => setCorrectionProcessName(event.target.value)} /></label>
-          <label><span>单位标准工时（秒/{correctionTarget.step.unitLabel || '件'}）</span><input inputMode="decimal" min="0.001" step="0.001" value={correctionSeconds} onChange={event => setCorrectionSeconds(event.target.value)} /></label>
+          <label><span>单位标准工时（秒/{reportingUnitLabel(correctionTarget.step)}）</span><input inputMode="decimal" min="0.001" step="0.001" value={correctionSeconds} onChange={event => setCorrectionSeconds(event.target.value)} /></label>
           <p className="workflow-correction-note">系统会自动记录校正前后工序、标准工时、完工数量和员工工时冲销结果；不会静默改写产品主数据的已发布版本。</p>
           <footer>
             <button type="button" disabled={routeActionPending} onClick={() => setCorrectionTarget(null)}>取消</button>

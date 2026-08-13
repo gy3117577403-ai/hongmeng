@@ -35,6 +35,10 @@ export type ProcessCompletionWithdrawalBlocker = {
 export type ProcessCompletionWithdrawalImpact = {
   processedQty: number;
   goodQty: number;
+  reportedUnitQty: number;
+  reportedGoodUnitQty: number;
+  reportQuantityBasis: 'product' | 'action';
+  reportUnitLabel: string;
   releaseReductionQty: number;
   affectedTargetStepCount: number;
   downstreamPendingCompletionCount: number;
@@ -237,10 +241,17 @@ function automaticWithdrawalAuditReason(
   return [
     `完工撤回（${categoryLabel}）`,
     `工序：${state.step.processName}`,
-    `完工数量：${preview.impact.processedQty}`,
+    `报工数量：${completionQuantityDescription(state)}`,
     `回收转序：${preview.impact.releaseReductionQty}`,
     `冲销领取：${preview.impact.laborClaimedQty}`,
   ].join('；').slice(0, 500);
+}
+
+function completionQuantityDescription(state: WithdrawalState): string {
+  if (state.reportQuantityBasis === 'action') {
+    return `${state.reportedUnitQty} ${state.reportUnitLabel || '个'}动作，形成 ${state.processedQty} ${state.step.unitLabel || '件'}整套流转`;
+  }
+  return `${state.processedQty} ${state.step.unitLabel || state.reportUnitLabel || '件'}`;
 }
 
 function parseIdempotencyKey(value: unknown): string {
@@ -676,6 +687,10 @@ function previewFromState(
     impact: {
       processedQty: state.coveredQty,
       goodQty: state.coveredGoodQty,
+      reportedUnitQty: state.reportedUnitQty,
+      reportedGoodUnitQty: state.reportedGoodUnitQty,
+      reportQuantityBasis: state.reportQuantityBasis === 'action' ? 'action' : 'product',
+      reportUnitLabel: state.reportUnitLabel || state.step.unitLabel || '件',
       releaseReductionQty: rollbackPlan.sourceReleaseReductionQty,
       affectedTargetStepCount: rollbackPlan.steps.filter(step => (
         step.sequenceGroup > state.step.sequenceGroup
@@ -817,7 +832,7 @@ export async function requestProcessCompletionCorrection(input: {
           type: 'production',
           priority: 'high',
           status: 'pending',
-          description: `现场员工报告该笔报工可能有误。\n报工数量：${state.processedQty}\n现场说明：${reason}`,
+          description: `现场员工报告该笔报工可能有误。\n报工数量：${completionQuantityDescription(state)}\n现场说明：${reason}`,
           sourceType: 'process_reporting_error',
           sourceId: state.id,
           sourceCode: state.route.workOrder.specification || state.route.workOrder.code,
@@ -844,7 +859,7 @@ export async function requestProcessCompletionCorrection(input: {
           deletedAt: null,
           status: 'pending',
           reporterId: input.userId,
-          description: `现场员工再次报告该笔报工可能有误。\n报工数量：${state.processedQty}\n现场说明：${reason}`,
+          description: `现场员工再次报告该笔报工可能有误。\n报工数量：${completionQuantityDescription(state)}\n现场说明：${reason}`,
         },
       });
     }

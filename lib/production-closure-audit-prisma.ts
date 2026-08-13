@@ -79,6 +79,8 @@ export async function loadProductionClosureAuditSnapshot(
         processedQty: true,
         goodQty: true,
         defectQty: true,
+        reportedGoodUnitQty: true,
+        reportQuantityBasis: true,
         coverageStatus: true,
         coveredQty: true,
         coveredGoodQty: true,

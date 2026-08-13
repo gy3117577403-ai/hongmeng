@@ -118,7 +118,9 @@ test('product time accepts per-unit occurrences and preparation time', () => {
     unitSeconds: 4,
     occurrences: 8,
     setupSeconds: 120,
-    unitLabel: '端子',
+    unitLabel: '套',
+    reportQuantityBasis: 'action',
+    reportUnitLabel: '个',
   }]);
   assert.equal(result.ok, true);
   if (!result.ok) return;
@@ -131,7 +133,9 @@ test('product time accepts per-unit occurrences and preparation time', () => {
     actionMilliseconds: 4_000,
     occurrences: 8,
     setupMilliseconds: 120_000,
-    unitLabel: '端子',
+    unitLabel: '套',
+    reportQuantityBasis: 'action',
+    reportUnitLabel: '个',
     countsForEfficiency: true,
     remark: null,
   });
@@ -159,7 +163,9 @@ test('product time accepts per-unit occurrences and preparation time', () => {
   assert.equal(snapshot.standardMillisecondsPerUnit, 4_000);
   assert.equal(snapshot.unitsPerProduct, 8);
   assert.equal(snapshot.setupMilliseconds, 120_000);
-  assert.equal(snapshot.unitLabel, '端子');
+  assert.equal(snapshot.unitLabel, '套');
+  assert.equal(snapshot.reportQuantityBasis, 'action');
+  assert.equal(snapshot.reportUnitLabel, '个');
 });
 
 test('product time per-batch snapshots preserve basis, batch duration and setup time', () => {

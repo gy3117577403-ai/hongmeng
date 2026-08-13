@@ -289,6 +289,12 @@ function entryStandard(entry: ProductTimeProfileRecord['entries'][number]) {
     setupMilliseconds: entry.setupMilliseconds,
     unitsPerProduct: actionBased ? entry.occurrences : 1,
     unitLabel: entry.unitLabel,
+    reportQuantityBasis: entry.reportQuantityBasis === 'action' && actionBased
+      ? 'action' as const
+      : 'product' as const,
+    reportUnitLabel: entry.reportQuantityBasis === 'action' && actionBased
+      ? entry.reportUnitLabel || '个'
+      : entry.unitLabel,
     countsForEfficiency: entry.countsForEfficiency,
   };
 }
@@ -304,6 +310,8 @@ function sameStandard(
     && first.setupMilliseconds === second.setupMilliseconds
     && first.unitsPerProduct === second.unitsPerProduct
     && first.unitLabel === second.unitLabel
+    && first.reportQuantityBasis === second.reportQuantityBasis
+    && first.reportUnitLabel === second.reportUnitLabel
     && first.countsForEfficiency === second.countsForEfficiency;
 }
 
@@ -317,6 +325,10 @@ function stepStandardMatchesEntry(
     && step.setupMilliseconds === standard.setupMilliseconds
     && step.unitsPerProduct === standard.unitsPerProduct
     && step.unitLabel === standard.unitLabel
+    && (stepHasFacts(step) || (
+      step.reportQuantityBasis === standard.reportQuantityBasis
+      && step.reportUnitLabel === standard.reportUnitLabel
+    ))
     && step.countsForEfficiency === standard.countsForEfficiency;
 }
 
@@ -794,6 +806,7 @@ async function correctHistoricalStandard(
 
   for (const completion of completions) {
     const completionSetup = completion.id === setupCompletionId ? standard.setupMilliseconds : 0;
+    const laborUnitsPerProduct = completion.reportQuantityBasis === 'action' ? 1 : standard.unitsPerProduct;
     await tx.processCompletion.update({
       where: { id: completion.id },
       data: {
@@ -819,7 +832,7 @@ async function correctHistoricalStandard(
       eligibleQty: pool.eligibleQty,
       standardMillisecondsPerUnit: standard.standardMillisecondsPerUnit,
       setupMilliseconds: effectiveSetup,
-      unitsPerProduct: standard.unitsPerProduct,
+      unitsPerProduct: laborUnitsPerProduct,
     });
     let claimedQty = 0;
     let claimedLabor = 0n;
@@ -888,7 +901,7 @@ async function correctHistoricalStandard(
         status,
         standardMillisecondsPerUnit: standard.standardMillisecondsPerUnit,
         setupMilliseconds: effectiveSetup,
-        unitsPerProduct: standard.unitsPerProduct,
+        unitsPerProduct: laborUnitsPerProduct,
         totalStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds,
         claimedStandardLaborMilliseconds: claimedLabor,
         remainingStandardLaborMilliseconds: snapshot.totalStandardLaborMilliseconds - claimedLabor,
@@ -1266,8 +1279,11 @@ async function applyRouteDeployment(
           previousStandardMillisecondsPerUnit: existing.standardMillisecondsPerUnit,
         });
       }
-      await tx.workOrderProcessStep.update({
-        where: { id: existing.id },
+      const synchronized = await tx.workOrderProcessStep.updateMany({
+        where: {
+          id: existing.id,
+          quantityVersion: existing.quantityVersion,
+        },
         data: {
           processDefinitionId: entry.processDefinitionId,
           processCode: entry.processDefinition.code,
@@ -1276,6 +1292,13 @@ async function applyRouteDeployment(
           position: entry.position,
           sequenceGroup: entry.sequenceGroup,
           ...productTimeStandardSnapshot(profile, entry),
+          // Quantity reporting is a ledger contract, not merely a display
+          // preference. Once facts exist, keep the original reporting basis so
+          // historical quantities and labor claims never change units.
+          ...(stepHasFacts(existing) ? {
+            reportQuantityBasis: existing.reportQuantityBasis,
+            reportUnitLabel: existing.reportUnitLabel,
+          } : {}),
           // A later publication that does not change this step's standard must
           // preserve the durable deployment marker that originally introduced
           // or changed it. Pure ordering changes do not claim a time change.
@@ -1284,6 +1307,19 @@ async function applyRouteDeployment(
           quantityVersion: { increment: 1 },
         },
       });
+      if (synchronized.count !== 1) {
+        throw new ProductTimeDeploymentError(
+          `工单 ${route.workOrder.code} 的 ${existing.processName} 数量已变化，请刷新后重试发布`,
+          409,
+          'PRODUCT_TIME_STEP_QUANTITY_CONFLICT',
+        );
+      }
+      // The same transaction may later redirect this unchanged step's input to
+      // a newly inserted upstream group. Keep the in-memory optimistic version
+      // aligned with the metadata update above so that redirectSequentialInput
+      // detects real concurrent quantity changes instead of conflicting with
+      // this deployment's own version increment.
+      existing.quantityVersion += 1;
       continue;
     }
 
@@ -1305,6 +1341,10 @@ async function applyRouteDeployment(
         position: entry.position,
         sequenceGroup: entry.sequenceGroup,
         ...standard,
+        ...(mustSupplement ? {
+          reportQuantityBasis: 'product',
+          reportUnitLabel: standard.unitLabel || '件',
+        } : {}),
         productTimeDeploymentRouteId: input.deploymentRouteId,
         executionMode: mustSupplement
           ? ProcessStepExecutionMode.SUPPLEMENTAL_OBLIGATION

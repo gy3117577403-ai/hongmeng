@@ -997,6 +997,7 @@ export type ProcessStageGroup = 'frontend' | 'backend' | 'finish';
 export type ProcessRouteStatus = 'draft' | 'confirmed' | 'in_progress' | 'completed';
 export type ProcessStepStatus = 'pending' | 'current' | 'completed' | 'skipped';
 export type ProcessTimeBasis = 'per_unit' | 'per_batch';
+export type ProcessReportQuantityBasis = 'product' | 'action';
 export type ProductTimeProfileStatus = 'draft' | 'published' | 'archived';
 
 export type ProductTimeDeploymentStatus = 'preview' | 'pending' | 'applying' | 'active' | 'failed';
@@ -1153,6 +1154,8 @@ export type ProductProcessTimeEntryDTO = {
   occurrences: number;
   setupMilliseconds: number;
   unitLabel: string;
+  reportQuantityBasis: ProcessReportQuantityBasis;
+  reportUnitLabel: string;
   countsForEfficiency: boolean;
   remark?: string | null;
 };
@@ -1269,6 +1272,8 @@ export type WorkOrderProcessStepDTO = ProcessTemplateStepDTO & {
   unitLabel?: string | null;
   standardMillisecondsPerUnit?: number | null;
   setupMilliseconds?: number;
+  reportQuantityBasis?: ProcessReportQuantityBasis;
+  reportUnitLabel?: string;
   countsForEfficiency?: boolean;
   inputQty?: number;
   processedQty?: number;
@@ -1986,6 +1991,8 @@ export type WorkflowStepDTO = {
   status?: ProcessStepStatus;
   stageGroup?: ProcessStageGroup;
   unitLabel?: string | null;
+  reportQuantityBasis?: ProcessReportQuantityBasis;
+  reportUnitLabel?: string | null;
   standardMillisecondsPerUnit?: number | null;
   executionMode?: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
   changeSource?: 'EXISTING' | 'NEW';
@@ -2021,6 +2028,11 @@ export type WorkflowStepDTO = {
     processedQty: number;
     goodQty: number;
     defectQty: number;
+    reportedUnitQty: number;
+    reportedGoodUnitQty: number;
+    reportedDefectUnitQty: number;
+    reportQuantityBasis: ProcessReportQuantityBasis;
+    reportUnitLabel: string;
     reportMode: 'sequential' | 'advance';
     coverageStatus: 'pending' | 'partial' | 'covered';
     coveredQty: number;

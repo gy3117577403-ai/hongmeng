@@ -67,6 +67,7 @@ import type {
   ProductTimePlanningScope,
   ProductTimePlanningSummaryDTO,
   ProductTimeProfileDTO,
+  ProcessReportQuantityBasis,
   ProcessStageGroup,
   ProcessTimeBasis,
 } from '@/types';
@@ -151,6 +152,8 @@ type EntryDraft = {
   occurrences: string;
   setupSeconds: string;
   unitLabel: string;
+  reportQuantityBasis: ProcessReportQuantityBasis;
+  reportUnitLabel: string;
   parallelWithPrevious: boolean;
   countsForEfficiency: boolean;
   remark: string;
@@ -240,6 +243,8 @@ function entryDraft(
     occurrences: String(usesActionCount ? entry.occurrences : 1),
     setupSeconds: seconds(entry.setupMilliseconds) || '0',
     unitLabel: entry.unitLabel || '套',
+    reportQuantityBasis: entry.reportQuantityBasis || 'product',
+    reportUnitLabel: entry.reportUnitLabel || '个',
     parallelWithPrevious: index > 0 && allEntries[index - 1].sequenceGroup === entry.sequenceGroup,
     countsForEfficiency: entry.countsForEfficiency,
     remark: entry.remark || '',
@@ -267,7 +272,8 @@ function invalidEntry(entry: EntryDraft): boolean {
     || !Number.isFinite(setup)
     || setup < 0
     || setup > 86_400
-    || (entry.timeBasis === 'per_unit' && (!Number.isInteger(occurrences) || occurrences <= 0 || occurrences > 10_000));
+    || (entry.timeBasis === 'per_unit' && (!Number.isInteger(occurrences) || occurrences <= 0 || occurrences > 10_000))
+    || (entry.reportQuantityBasis === 'action' && (entry.timeBasis !== 'per_unit' || occurrences <= 1 || !entry.reportUnitLabel.trim()));
 }
 
 function statusText(item: ProductTimeListItemDTO): string {
@@ -927,6 +933,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       occurrences: '1',
       setupSeconds: '0',
       unitLabel: '套',
+      reportQuantityBasis: 'product',
+      reportUnitLabel: '个',
       parallelWithPrevious: false,
       countsForEfficiency: true,
       remark: '',
@@ -1106,6 +1114,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             occurrences: entry.occurrences,
             setupSeconds: entry.setupSeconds,
             unitLabel: entry.unitLabel,
+            reportQuantityBasis: entry.reportQuantityBasis,
+            reportUnitLabel: entry.reportUnitLabel,
             parallelWithPrevious: entry.parallelWithPrevious,
             countsForEfficiency: entry.countsForEfficiency,
             remark: entry.remark,
@@ -1515,6 +1525,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                         <label><span>{entry.timeBasis === 'per_batch' ? '整批计次' : '每套工序次数'}</span><input inputMode="numeric" disabled={entry.timeBasis === 'per_batch'} value={entry.timeBasis === 'per_batch' ? '1' : entry.occurrences} onChange={event => updateEntry(index, { occurrences: event.target.value })} /></label>
                         <label><span>准备时间（秒）</span><input inputMode="decimal" value={entry.setupSeconds} onChange={event => updateEntry(index, { setupSeconds: event.target.value })} /></label>
                         <label><span>产品数量单位</span><input maxLength={20} value={entry.unitLabel} onChange={event => updateEntry(index, { unitLabel: event.target.value })} placeholder="套" /></label>
+                        <label><span>现场报工口径</span><select value={entry.reportQuantityBasis} onChange={event => updateEntry(index, { reportQuantityBasis: event.target.value as ProcessReportQuantityBasis })}><option value="product">按产品数量报工</option><option value="action" disabled={entry.timeBasis !== 'per_unit' || Number(entry.occurrences) <= 1}>按实际动作数量报工</option></select></label>
+                        {entry.reportQuantityBasis === 'action' && <label><span>动作数量单位</span><input maxLength={20} value={entry.reportUnitLabel} onChange={event => updateEntry(index, { reportUnitLabel: event.target.value })} placeholder="个" /></label>}
                         {invalid && <small>标准时间须大于 0；次数须为正整数；准备时间不能小于 0，单项均不超过 24 小时。</small>}
                       </div>
                       <div className="product-time-process-options">

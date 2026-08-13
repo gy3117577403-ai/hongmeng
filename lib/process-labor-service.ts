@@ -191,6 +191,8 @@ const processLaborPoolInclude = Prisma.validator<Prisma.ProcessLaborPoolInclude>
     select: {
       timeBasis: true,
       unitLabel: true,
+      reportQuantityBasis: true,
+      reportUnitLabel: true,
       workStartedAt: true,
       workEndedAt: true,
       team: true,
@@ -271,7 +273,9 @@ export function serializeProcessLaborPool(pool: ProcessLaborPoolRecord): Process
     timeBasis: pool.completion.timeBasis === 'per_unit' || pool.completion.timeBasis === 'per_batch'
       ? pool.completion.timeBasis
       : null,
-    unitLabel: pool.completion.unitLabel || pool.step.unitLabel || '件',
+    unitLabel: pool.completion.reportQuantityBasis === 'action'
+      ? pool.completion.reportUnitLabel
+      : pool.completion.unitLabel || pool.step.unitLabel || '件',
     suggestedEmployees: pool.completion.participants.map(participant => (
       serializeEmployee(participant.employee)
     )),

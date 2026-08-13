@@ -64,6 +64,8 @@ export type AuditCompletion = {
   processedQty: number;
   goodQty: number;
   defectQty: number;
+  reportedGoodUnitQty?: number;
+  reportQuantityBasis?: string;
   coverageStatus?: string;
   coveredQty?: number;
   coveredGoodQty?: number;
@@ -1130,7 +1132,9 @@ export function auditProductionClosure(
     }
 
     if (completion && pool.status !== 'VOIDED') {
-      const expectedEligibleQty = completion.timeBasis === 'per_batch'
+      const expectedEligibleQty = completion.reportQuantityBasis === 'action'
+        ? Math.max(0, completion.reportedGoodUnitQty || 0)
+        : completion.timeBasis === 'per_batch'
         ? sumNumbers(activeCompletions
             .filter(record => record.stepId === pool.stepId)
             .map(record => record.goodQty))

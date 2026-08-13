@@ -176,6 +176,8 @@ export async function GET(req: NextRequest) {
               completion: {
                 select: {
                   unitLabel: true,
+                  reportQuantityBasis: true,
+                  reportUnitLabel: true,
                   completedAt: true,
                 },
               },
@@ -347,7 +349,9 @@ export async function GET(req: NextRequest) {
         processName: claim.pool.step.processName,
         workDate: claim.workDate.toISOString().slice(0, 10),
         quantity: claim.quantity,
-        unitLabel: claim.pool.completion.unitLabel || claim.pool.step.unitLabel || '件',
+        unitLabel: claim.pool.completion.reportQuantityBasis === 'action'
+          ? claim.pool.completion.reportUnitLabel
+          : claim.pool.completion.unitLabel || claim.pool.step.unitLabel || '件',
         standardLaborMilliseconds,
         claimedAt: claim.claimedAt.toISOString(),
         reportedAt: claim.pool.completion.completedAt.toISOString(),

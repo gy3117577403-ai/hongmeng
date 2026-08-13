@@ -247,6 +247,8 @@ type WorkflowRouteStepRecord = {
   sequenceGroup: number;
   stageGroup: string;
   unitLabel: string | null;
+  reportQuantityBasis: string;
+  reportUnitLabel: string;
   standardMillisecondsPerUnit: number | null;
   executionMode: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
   changeSource: 'EXISTING' | 'NEW';
@@ -271,6 +273,11 @@ type WorkflowRouteStepRecord = {
     processedQty: number;
     goodQty: number;
     defectQty: number;
+    reportedUnitQty: number;
+    reportedGoodUnitQty: number;
+    reportedDefectUnitQty: number;
+    reportQuantityBasis: string;
+    reportUnitLabel: string;
     reportMode: string;
     coverageStatus: string;
     coveredQty: number;
@@ -335,6 +342,8 @@ type WorkflowPublishedProductTimeProfile = {
     sequenceGroup: number;
     unitMilliseconds: number;
     unitLabel: string;
+    reportQuantityBasis: string;
+    reportUnitLabel: string;
     remark: string | null;
     processDefinition: {
       name: string;
@@ -385,6 +394,8 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
       status: step.status as ProcessStepStatus,
       stageGroup: step.stageGroup as ProcessStageGroup,
       unitLabel: step.unitLabel || '件',
+      reportQuantityBasis: step.reportQuantityBasis === 'action' ? 'action' : 'product',
+      reportUnitLabel: step.reportUnitLabel || step.unitLabel || '件',
       standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
       executionMode: step.executionMode,
       changeSource: step.changeSource,
@@ -421,6 +432,11 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
         processedQty: completion.processedQty,
         goodQty: completion.goodQty,
         defectQty: completion.defectQty,
+        reportedUnitQty: completion.reportedUnitQty,
+        reportedGoodUnitQty: completion.reportedGoodUnitQty,
+        reportedDefectUnitQty: completion.reportedDefectUnitQty,
+        reportQuantityBasis: completion.reportQuantityBasis === 'action' ? 'action' : 'product',
+        reportUnitLabel: completion.reportUnitLabel || step.reportUnitLabel || step.unitLabel || '件',
         reportMode: completion.reportMode === 'ADVANCE' ? 'advance' : 'sequential',
         coverageStatus: completion.coverageStatus === 'PENDING'
           ? 'pending'
@@ -489,6 +505,8 @@ function publishedReferenceRoute(
       status,
       stageGroup,
       unitLabel: entry.unitLabel || '套',
+      reportQuantityBasis: entry.reportQuantityBasis === 'action' ? 'action' : 'product',
+      reportUnitLabel: entry.reportUnitLabel || entry.unitLabel || '套',
       standardMillisecondsPerUnit: entry.unitMilliseconds,
       inputQuantity: state === 'pending' ? 0 : groupInput,
       processedQuantity: processed,
@@ -820,6 +838,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                         sequenceGroup: true,
                         unitMilliseconds: true,
                         unitLabel: true,
+                        reportQuantityBasis: true,
+                        reportUnitLabel: true,
                         remark: true,
                         processDefinition: { select: { name: true, stageGroup: true } },
                       },
@@ -923,6 +943,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     sequenceGroup: true,
                     stageGroup: true,
                     unitLabel: true,
+                    reportQuantityBasis: true,
+                    reportUnitLabel: true,
                     standardMillisecondsPerUnit: true,
                     executionMode: true,
                     changeSource: true,
@@ -967,6 +989,11 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                         processedQty: true,
                         goodQty: true,
                         defectQty: true,
+                        reportedUnitQty: true,
+                        reportedGoodUnitQty: true,
+                        reportedDefectUnitQty: true,
+                        reportQuantityBasis: true,
+                        reportUnitLabel: true,
                         reportMode: true,
                         coverageStatus: true,
                         coveredQty: true,
@@ -1059,6 +1086,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     sequenceGroup: true,
                     unitMilliseconds: true,
                     unitLabel: true,
+                    reportQuantityBasis: true,
+                    reportUnitLabel: true,
                     remark: true,
                     processDefinition: { select: { name: true, stageGroup: true } },
                   },
@@ -1110,6 +1139,8 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 sequenceGroup: true,
                 stageGroup: true,
                 unitLabel: true,
+                reportQuantityBasis: true,
+                reportUnitLabel: true,
                 standardMillisecondsPerUnit: true,
                 executionMode: true,
                 changeSource: true,
@@ -1154,6 +1185,11 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     processedQty: true,
                     goodQty: true,
                     defectQty: true,
+                    reportedUnitQty: true,
+                    reportedGoodUnitQty: true,
+                    reportedDefectUnitQty: true,
+                    reportQuantityBasis: true,
+                    reportUnitLabel: true,
                     reportMode: true,
                     coverageStatus: true,
                     coveredQty: true,

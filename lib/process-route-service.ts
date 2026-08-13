@@ -424,6 +424,8 @@ async function confirmRoute(input: ConfirmProcessRouteCommand): Promise<string> 
         unitLabel: null,
         standardMillisecondsPerUnit: null,
         setupMilliseconds: 0,
+        reportQuantityBasis: 'product',
+        reportUnitLabel: step.unitLabel || '件',
         countsForEfficiency: true,
       };
       readinessSteps.push({

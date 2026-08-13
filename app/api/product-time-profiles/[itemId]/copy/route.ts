@@ -101,6 +101,8 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
           occurrences: entry.occurrences,
           setupMilliseconds: entry.setupMilliseconds,
           unitLabel: entry.unitLabel,
+          reportQuantityBasis: entry.reportQuantityBasis,
+          reportUnitLabel: entry.reportUnitLabel,
           countsForEfficiency: entry.countsForEfficiency,
           remark: entry.remark,
         })),

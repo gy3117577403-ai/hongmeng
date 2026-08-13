@@ -96,6 +96,8 @@ export type CorrectiveDraftSourceEntry = {
   occurrences: number;
   setupMilliseconds: number;
   unitLabel: string;
+  reportQuantityBasis?: string;
+  reportUnitLabel?: string;
   countsForEfficiency: boolean;
   remark: string | null;
 };
@@ -121,6 +123,8 @@ export function buildCorrectiveDraftEntries(
     occurrences: entry.occurrences,
     setupMilliseconds: entry.setupMilliseconds,
     unitLabel: entry.unitLabel,
+    reportQuantityBasis: entry.reportQuantityBasis || 'product',
+    reportUnitLabel: entry.reportUnitLabel || entry.unitLabel,
     countsForEfficiency: entry.countsForEfficiency,
     remark: entry.remark,
   }));

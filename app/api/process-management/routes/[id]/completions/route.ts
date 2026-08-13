@@ -49,6 +49,8 @@ export async function POST(
       stepId?: unknown;
       processedQty?: unknown;
       defectQty?: unknown;
+      reportedUnitQty?: unknown;
+      reportedDefectUnitQty?: unknown;
       defectDisposition?: unknown;
       workDate?: unknown;
       employeeIds?: unknown;
@@ -63,6 +65,8 @@ export async function POST(
       stepId: body.stepId,
       processedQty: body.processedQty,
       defectQty: body.defectQty,
+      reportedUnitQty: body.reportedUnitQty,
+      reportedDefectUnitQty: body.reportedDefectUnitQty,
       defectDisposition: body.defectDisposition,
       workDate: body.workDate,
       employeeIds: body.employeeIds,

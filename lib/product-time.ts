@@ -4,6 +4,7 @@ import type {
   ProductTimeProfileDTO,
   ProductTimeProfileStatus,
   ProcessStageGroup,
+  ProcessReportQuantityBasis,
   ProcessTimeBasis,
 } from '@/types';
 
@@ -32,6 +33,8 @@ export type ProductTimeEntryInput = {
   occurrences: number;
   setupMilliseconds: number;
   unitLabel: string;
+  reportQuantityBasis: ProcessReportQuantityBasis;
+  reportUnitLabel: string;
   countsForEfficiency: boolean;
   remark: string | null;
 };
@@ -48,6 +51,8 @@ type RawProductTimeEntry = {
   occurrences?: unknown;
   setupSeconds?: unknown;
   unitLabel?: unknown;
+  reportQuantityBasis?: unknown;
+  reportUnitLabel?: unknown;
   parallelWithPrevious?: unknown;
   countsForEfficiency?: unknown;
   remark?: unknown;
@@ -126,6 +131,12 @@ export function validateProductTimeEntries(value: unknown): ProductTimeEntryVali
         occurrences,
         setupMilliseconds: nonnegativeMilliseconds(raw?.setupSeconds, `第 ${index + 1} 行准备时间`),
         unitLabel: cleanProductTimeText(raw?.unitLabel, 20) || '套',
+        reportQuantityBasis: raw?.reportQuantityBasis === 'action'
+          && timeBasis === 'per_unit'
+          && occurrences > 1
+          ? 'action'
+          : 'product',
+        reportUnitLabel: cleanProductTimeText(raw?.reportUnitLabel, 20) || '个',
         countsForEfficiency: raw?.countsForEfficiency !== false,
         remark: cleanProductTimeText(raw?.remark, 300) || null,
       });
@@ -162,6 +173,8 @@ export function serializeProductTimeEntry(entry: ProductTimeProfileRecord['entri
     occurrences: entry.occurrences,
     setupMilliseconds: entry.setupMilliseconds,
     unitLabel: entry.unitLabel,
+    reportQuantityBasis: entry.reportQuantityBasis === 'action' ? 'action' : 'product',
+    reportUnitLabel: entry.reportUnitLabel || '个',
     countsForEfficiency: entry.countsForEfficiency,
     remark: entry.remark,
   };
@@ -209,6 +222,12 @@ export function productTimeStandardSnapshot(
       : entry.unitMilliseconds,
     setupMilliseconds: entry.setupMilliseconds,
     unitsPerProduct: usesActionCount ? entry.occurrences : 1,
+    reportQuantityBasis: entry.reportQuantityBasis === 'action' && usesActionCount
+      ? 'action'
+      : 'product',
+    reportUnitLabel: entry.reportQuantityBasis === 'action' && usesActionCount
+      ? entry.reportUnitLabel || '个'
+      : entry.unitLabel || '套',
     countsForEfficiency: entry.countsForEfficiency,
   } as const;
 }
@@ -234,6 +253,8 @@ export function legacyProcessStandardSnapshot(standard: {
     standardMillisecondsPerUnit: standard.standardMillisecondsPerUnit,
     setupMilliseconds: standard.setupMilliseconds,
     unitsPerProduct,
+    reportQuantityBasis: 'product',
+    reportUnitLabel: standard.unitLabel,
     countsForEfficiency: standard.countsForEfficiency,
   };
 }

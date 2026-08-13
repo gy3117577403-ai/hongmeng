@@ -18,6 +18,13 @@ import {
   resolveCompletionQuantities,
 } from '@/lib/process-completion-domain';
 import { prisma } from '@/lib/prisma';
+import {
+  assertActionFlowDoesNotExceedReportedOutput,
+  normalizeProcessReportQuantityBasis,
+  processReportTargetQuantity,
+  resolveProcessReportQuantities,
+  type ProcessReportQuantityBasis,
+} from '@/lib/process-report-quantity';
 import { normalizeProcessStageGroup, processStageForGroup } from '@/lib/process-routing';
 import {
   compatibleStageForQuantities,
@@ -60,6 +67,8 @@ export type CompleteProcessStepCommand = {
   stepId: unknown;
   processedQty: unknown;
   defectQty: unknown;
+  reportedUnitQty?: unknown;
+  reportedDefectUnitQty?: unknown;
   defectDisposition?: unknown;
   workDate: unknown;
   workStartedAt?: unknown;
@@ -99,11 +108,13 @@ export type ProcessCompletionResult = {
 };
 
 export type CompleteProcessStepsBatchCommand = Omit<CompleteProcessStepCommand,
-  'stepId' | 'processedQty' | 'defectQty' | 'defectDisposition'> & {
+  'stepId' | 'processedQty' | 'defectQty' | 'reportedUnitQty' | 'reportedDefectUnitQty' | 'defectDisposition'> & {
   items: Array<{
     stepId: unknown;
     processedQty: unknown;
     defectQty?: unknown;
+    reportedUnitQty?: unknown;
+    reportedDefectUnitQty?: unknown;
     defectDisposition?: unknown;
   }>;
 };
@@ -142,6 +153,9 @@ export type ProcessCompletionContext = {
     } | null;
     status: string;
     startedAt: string | null;
+    reportQuantityBasis: ProcessReportQuantityBasis;
+    reportUnitLabel: string;
+    unitsPerProduct: number;
   };
   routeSteps: Array<{
     id: string;
@@ -159,16 +173,27 @@ export type ProcessCompletionContext = {
     } | null;
     status: string;
     unitLabel: string | null;
+    reportQuantityBasis: ProcessReportQuantityBasis;
+    reportUnitLabel: string;
+    unitsPerProduct: number;
     inputQty: number;
     processedQty: number;
     reportedQty: number;
     coveredReportedQty: number;
     pendingCoverageQty: number;
     reportableQty: number;
+    reportTargetQty: number;
+    reportedUnitQty: number;
+    reportedGoodUnitQty: number;
+    reportedDefectUnitQty: number;
+    reportableUnitQty: number;
     availableCoverageQty: number;
     latestCompletion: {
       id: string;
       processedQty: number;
+      reportedUnitQty: number;
+      reportQuantityBasis: ProcessReportQuantityBasis;
+      reportUnitLabel: string;
       completedAt: string;
       principalEmployee: {
         id: string;
@@ -197,6 +222,11 @@ export type ProcessCompletionContext = {
   coveredReportedQty: number;
   pendingCoverageQty: number;
   reportableQty: number;
+  reportTargetQty: number;
+  reportedUnitQty: number;
+  reportedGoodUnitQty: number;
+  reportedDefectUnitQty: number;
+  reportableUnitQty: number;
   employees: Array<{
     id: string;
     employeeNo: string;
@@ -224,6 +254,11 @@ export type ProcessCompletionContext = {
     processedQty: number;
     goodQty: number;
     defectQty: number;
+    reportedUnitQty: number;
+    reportedGoodUnitQty: number;
+    reportedDefectUnitQty: number;
+    reportQuantityBasis: ProcessReportQuantityBasis;
+    reportUnitLabel: string;
     reportMode: 'sequential' | 'advance';
     coverageStatus: 'pending' | 'partial' | 'covered';
     coveredQty: number;
@@ -266,6 +301,8 @@ type ParsedCompletionCommand = {
   stepId: string;
   processedQty: number;
   defectQty: number;
+  reportedUnitQty: number;
+  reportedDefectUnitQty: number;
   defectDisposition: ProcessDefectDispositionInput | null;
   databaseDefectDisposition: 'REWORK' | 'SCRAP_REPLENISH' | 'QUALITY_PENDING' | null;
   workDate: Date;
@@ -805,15 +842,24 @@ export function parseProcessCompletionCommand(
   const stepId = cleanText(command.stepId, 80);
   const processedQty = Number(command.processedQty);
   const defectQty = Number(command.defectQty ?? 0);
+  const hasReportedUnitQty = command.reportedUnitQty !== undefined
+    && command.reportedUnitQty !== null
+    && String(command.reportedUnitQty).trim() !== '';
+  const reportedUnitQty = Number(hasReportedUnitQty ? command.reportedUnitQty : processedQty);
+  const reportedDefectUnitQty = Number(
+    command.reportedDefectUnitQty === undefined || command.reportedDefectUnitQty === null
+      ? defectQty
+      : command.reportedDefectUnitQty,
+  );
   if (!routeId) {
     throw new ProcessCompletionServiceError('工艺路线不能为空', 400, 'PROCESS_ROUTE_REQUIRED');
   }
   if (!stepId) {
     throw new ProcessCompletionServiceError('请选择当前工序', 400, 'PROCESS_STEP_REQUIRED');
   }
-  if (!Number.isSafeInteger(processedQty) || processedQty <= 0) {
+  if (!Number.isSafeInteger(processedQty) || processedQty < 0 || (processedQty === 0 && reportedUnitQty <= 0)) {
     throw new ProcessCompletionServiceError(
-      '本次完成数量必须是正整数',
+      '本次整套完成数量必须是非负整数，且实际报工数量必须大于 0',
       400,
       'INVALID_PROCESSED_QTY',
     );
@@ -830,6 +876,24 @@ export function parseProcessCompletionCommand(
       '不良品数量不能超过本次完成数量',
       400,
       'DEFECT_QTY_EXCEEDS_PROCESSED',
+    );
+  }
+  if (!Number.isSafeInteger(reportedUnitQty) || reportedUnitQty < 0) {
+    throw new ProcessCompletionServiceError(
+      '本次实际动作数量必须是非负整数',
+      400,
+      'INVALID_REPORTED_UNIT_QTY',
+    );
+  }
+  if (
+    !Number.isSafeInteger(reportedDefectUnitQty)
+    || reportedDefectUnitQty < 0
+    || reportedDefectUnitQty > reportedUnitQty
+  ) {
+    throw new ProcessCompletionServiceError(
+      '动作不良数量必须是非负整数，且不能超过实际动作数量',
+      400,
+      'INVALID_REPORTED_DEFECT_UNIT_QTY',
     );
   }
   const disposition = parseDefectDisposition(command.defectDisposition, defectQty);
@@ -943,6 +1007,8 @@ export function parseProcessCompletionCommand(
     stepId,
     processedQty,
     defectQty,
+    reportedUnitQty,
+    reportedDefectUnitQty,
     defectDisposition: disposition.input,
     databaseDefectDisposition: disposition.database,
     workDate: parsedWorkDate.value,
@@ -1186,6 +1252,8 @@ function assertIdempotentPayload(
     && completion.stepId === input.stepId
     && completion.processedQty === input.processedQty
     && completion.defectQty === input.defectQty
+    && completion.reportedUnitQty === input.reportedUnitQty
+    && completion.reportedDefectUnitQty === input.reportedDefectUnitQty
     && completion.defectDisposition === input.databaseDefectDisposition
     && dateKeyFromDatabase(completion.workDate) === input.workDateKey
     && (completion.workStartedAt?.getTime() || null) === (input.workStartedAt?.getTime() || null)
@@ -1304,7 +1372,14 @@ export async function loadProcessCompletionContext(
     prisma.processCompletion.groupBy({
       by: ['stepId'],
       where: { routeId, voidedAt: null },
-      _sum: { processedQty: true, coveredQty: true },
+      _sum: {
+        processedQty: true,
+        goodQty: true,
+        coveredQty: true,
+        reportedUnitQty: true,
+        reportedGoodUnitQty: true,
+        reportedDefectUnitQty: true,
+      },
     }),
   ]);
   if (!route) {
@@ -1326,7 +1401,11 @@ export async function loadProcessCompletionContext(
     total.stepId,
     {
       reportedQty: total._sum.processedQty || 0,
+      reportedGoodQty: total._sum.goodQty || 0,
       coveredReportedQty: total._sum.coveredQty || 0,
+      reportedUnitQty: total._sum.reportedUnitQty || 0,
+      reportedGoodUnitQty: total._sum.reportedGoodUnitQty || 0,
+      reportedDefectUnitQty: total._sum.reportedDefectUnitQty || 0,
     },
   ]));
   const selected = stepId
@@ -1334,9 +1413,25 @@ export async function loadProcessCompletionContext(
     : options.allowAdvanceReporting
       ? route.steps.find(step => (
           step.status === 'current'
-          && (totalByStep.get(step.id)?.reportedQty || 0) < target
+          && (
+            (totalByStep.get(step.id)?.reportedQty || 0) < target
+            || (normalizeProcessReportQuantityBasis(step.reportQuantityBasis) === 'action'
+              && (totalByStep.get(step.id)?.reportedGoodUnitQty || 0) < processReportTargetQuantity({
+                productTargetQty: target,
+                basis: 'action',
+                unitsPerProduct: step.unitsPerProduct,
+              }))
+          )
         ))
-          || route.steps.find(step => (totalByStep.get(step.id)?.reportedQty || 0) < target)
+          || route.steps.find(step => (
+            (totalByStep.get(step.id)?.reportedQty || 0) < target
+            || (normalizeProcessReportQuantityBasis(step.reportQuantityBasis) === 'action'
+              && (totalByStep.get(step.id)?.reportedGoodUnitQty || 0) < processReportTargetQuantity({
+                productTargetQty: target,
+                basis: 'action',
+                unitsPerProduct: step.unitsPerProduct,
+              }))
+          ))
           || (options.allowCompletedSelection
             ? [...route.steps].reverse().find(step => step.completions.length > 0) || route.steps[0]
             : undefined)
@@ -1361,15 +1456,29 @@ export async function loadProcessCompletionContext(
     : effectiveInputQuantity(selected, firstGroup, target);
   const selectedTotals = totalByStep.get(selected.id) || {
     reportedQty: 0,
+    reportedGoodQty: 0,
     coveredReportedQty: 0,
+    reportedUnitQty: 0,
+    reportedGoodUnitQty: 0,
+    reportedDefectUnitQty: 0,
   };
   const selectedTarget = selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
     ? selected.supplementObligation?.requiredQty || target
     : target;
   const reportableQty = Math.max(0, selectedTarget - selectedTotals.reportedQty);
+  const selectedReportQuantityBasis = selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+    ? 'product' as const
+    : normalizeProcessReportQuantityBasis(selected.reportQuantityBasis);
+  const reportTargetQty = processReportTargetQuantity({
+    productTargetQty: selectedTarget,
+    basis: selectedReportQuantityBasis,
+    unitsPerProduct: selected.unitsPerProduct,
+  });
+  const reportableUnitQty = Math.max(0, reportTargetQty - selectedTotals.reportedGoodUnitQty);
   if (
     options.allowAdvanceReporting
     && reportableQty <= 0
+    && reportableUnitQty <= 0
     && !stepId
     && !options.allowCompletedSelection
   ) {
@@ -1414,15 +1523,35 @@ export async function loadProcessCompletionContext(
       } : null,
       status: selected.status,
       startedAt: selected.startedAt?.toISOString() || null,
+      reportQuantityBasis: selectedReportQuantityBasis,
+      reportUnitLabel: selectedReportQuantityBasis === 'action'
+        ? selected.reportUnitLabel
+        : selected.unitLabel || '件',
+      unitsPerProduct: selected.unitsPerProduct,
     },
     routeSteps: route.steps.map(step => {
-      const totals = totalByStep.get(step.id) || { reportedQty: 0, coveredReportedQty: 0 };
+      const totals = totalByStep.get(step.id) || {
+        reportedQty: 0,
+        reportedGoodQty: 0,
+        coveredReportedQty: 0,
+        reportedUnitQty: 0,
+        reportedGoodUnitQty: 0,
+        reportedDefectUnitQty: 0,
+      };
       const supplemental = step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
         ? step.supplementObligation
         : null;
       const stepTarget = supplemental?.requiredQty || target;
       const stepAvailableInput = supplemental?.requiredQty
         || effectiveInputQuantity(step, firstGroup, target);
+      const stepReportQuantityBasis = supplemental
+        ? 'product' as const
+        : normalizeProcessReportQuantityBasis(step.reportQuantityBasis);
+      const stepReportTargetQty = processReportTargetQuantity({
+        productTargetQty: stepTarget,
+        basis: stepReportQuantityBasis,
+        unitsPerProduct: step.unitsPerProduct,
+      });
       return {
         id: step.id,
         processName: step.processName,
@@ -1439,6 +1568,11 @@ export async function loadProcessCompletionContext(
         } : null,
         status: step.status,
         unitLabel: step.unitLabel,
+        reportQuantityBasis: stepReportQuantityBasis,
+        reportUnitLabel: stepReportQuantityBasis === 'action'
+          ? step.reportUnitLabel
+          : step.unitLabel || '件',
+        unitsPerProduct: step.unitsPerProduct,
         inputQty: stepAvailableInput,
         processedQty: supplemental ? totals.reportedQty : step.processedQty,
         reportedQty: totals.reportedQty,
@@ -1447,12 +1581,20 @@ export async function loadProcessCompletionContext(
           ? 0
           : Math.max(0, totals.reportedQty - totals.coveredReportedQty),
         reportableQty: Math.max(0, stepTarget - totals.reportedQty),
+        reportTargetQty: stepReportTargetQty,
+        reportedUnitQty: totals.reportedUnitQty,
+        reportedGoodUnitQty: totals.reportedGoodUnitQty,
+        reportedDefectUnitQty: totals.reportedDefectUnitQty,
+        reportableUnitQty: Math.max(0, stepReportTargetQty - totals.reportedGoodUnitQty),
         availableCoverageQty: supplemental
           ? Math.max(0, stepTarget - totals.reportedQty)
           : Math.max(0, stepAvailableInput - step.processedQty),
         latestCompletion: step.completions[0] ? {
           id: step.completions[0].id,
           processedQty: step.completions[0].processedQty,
+          reportedUnitQty: step.completions[0].reportedUnitQty,
+          reportQuantityBasis: normalizeProcessReportQuantityBasis(step.completions[0].reportQuantityBasis),
+          reportUnitLabel: step.completions[0].reportUnitLabel,
           completedAt: step.completions[0].completedAt.toISOString(),
           principalEmployee: step.completions[0].principalEmployee ? {
             id: step.completions[0].principalEmployee.id,
@@ -1493,6 +1635,11 @@ export async function loadProcessCompletionContext(
     coveredReportedQty: selectedTotals.coveredReportedQty,
     pendingCoverageQty: Math.max(0, selectedTotals.reportedQty - selectedTotals.coveredReportedQty),
     reportableQty,
+    reportTargetQty,
+    reportedUnitQty: selectedTotals.reportedUnitQty,
+    reportedGoodUnitQty: selectedTotals.reportedGoodUnitQty,
+    reportedDefectUnitQty: selectedTotals.reportedDefectUnitQty,
+    reportableUnitQty,
     employees,
     workerPreset: workerPreset ? {
       weekStartDate: workerPreset.weekStartDate,
@@ -1515,6 +1662,11 @@ export async function loadProcessCompletionContext(
       processedQty: completion.processedQty,
       goodQty: completion.goodQty,
       defectQty: completion.defectQty,
+      reportedUnitQty: completion.reportedUnitQty,
+      reportedGoodUnitQty: completion.reportedGoodUnitQty,
+      reportedDefectUnitQty: completion.reportedDefectUnitQty,
+      reportQuantityBasis: normalizeProcessReportQuantityBasis(completion.reportQuantityBasis),
+      reportUnitLabel: completion.reportUnitLabel,
       reportMode: lowercaseReportMode(completion.reportMode),
       coverageStatus: lowercaseCoverageStatus(completion.coverageStatus),
       coveredQty: completion.coveredQty,
@@ -3511,7 +3663,13 @@ async function performProcessCompletion(
   }
   const reported = await tx.processCompletion.aggregate({
     where: { routeId: route.id, stepId: current.id, voidedAt: null },
-    _sum: { processedQty: true },
+    _sum: {
+      processedQty: true,
+      goodQty: true,
+      reportedUnitQty: true,
+      reportedGoodUnitQty: true,
+      reportedDefectUnitQty: true,
+    },
   });
   const reportedQty = reported._sum.processedQty || 0;
   const reportableQty = Math.max(0, targetQty - reportedQty);
@@ -3521,6 +3679,69 @@ async function performProcessCompletion(
       409,
       'PROCESS_REPORTED_QTY_EXCEEDS_TARGET',
     );
+  }
+  const reportQuantityBasis = normalizeProcessReportQuantityBasis(current.reportQuantityBasis);
+  if (
+    reportQuantityBasis === 'action'
+    && (current.timeBasis !== 'per_unit' || current.unitsPerProduct <= 1)
+  ) {
+    throw new ProcessCompletionServiceError(
+      '该工序的动作报工口径与标准工时不一致，请先重新发布产品工时',
+      409,
+      'PROCESS_ACTION_REPORT_STANDARD_INVALID',
+    );
+  }
+  if (
+    reportQuantityBasis === 'product'
+    && (
+      input.processedQty <= 0
+      || input.reportedUnitQty !== input.processedQty
+      || input.reportedDefectUnitQty !== input.defectQty
+    )
+  ) {
+    throw new ProcessCompletionServiceError(
+      '该工序按产品数量报工，实际报工与整套完成数量必须一致',
+      400,
+      'PROCESS_PRODUCT_REPORT_QUANTITY_MISMATCH',
+    );
+  }
+  const reportQuantities = resolveProcessReportQuantities({
+    basis: reportQuantityBasis,
+    productProcessedQty: input.processedQty,
+    productDefectQty: input.defectQty,
+    reportedUnitQty: input.reportedUnitQty,
+    reportedDefectUnitQty: input.reportedDefectUnitQty,
+  });
+  const reportTargetQty = processReportTargetQuantity({
+    productTargetQty: targetQty,
+    basis: reportQuantityBasis,
+    unitsPerProduct: current.unitsPerProduct,
+  });
+  const reportedGoodUnitQtyBefore = reported._sum.reportedGoodUnitQty || 0;
+  const reportableUnitQty = Math.max(0, reportTargetQty - reportedGoodUnitQtyBefore);
+  if (reportQuantities.reportedGoodUnitQty > reportableUnitQty) {
+    throw new ProcessCompletionServiceError(
+      `本次合格动作数量不能超过剩余可报数量 ${reportableUnitQty}`,
+      409,
+      'PROCESS_REPORTED_UNIT_QTY_EXCEEDS_TARGET',
+    );
+  }
+  if (reportQuantityBasis === 'action') {
+    try {
+      assertActionFlowDoesNotExceedReportedOutput({
+        unitsPerProduct: current.unitsPerProduct,
+        previousProductGoodQty: reported._sum.goodQty || 0,
+        nextProductGoodQty: reportQuantities.productGoodQty,
+        previousReportedGoodUnitQty: reportedGoodUnitQtyBefore,
+        nextReportedGoodUnitQty: reportQuantities.reportedGoodUnitQty,
+      });
+    } catch (error) {
+      throw new ProcessCompletionServiceError(
+        error instanceof Error ? error.message : '整套完成数量超过动作产出',
+        409,
+        'PROCESS_PRODUCT_FLOW_EXCEEDS_ACTION_OUTPUT',
+      );
+    }
   }
   const availableInputQty = Math.max(0, current.inputQty - current.processedQty);
   if (!input.allowAdvanceReporting) {
@@ -3552,15 +3773,25 @@ async function performProcessCompletion(
       processedQty: input.processedQty,
       goodQty,
       defectQty: input.defectQty,
+      reportedUnitQty: reportQuantities.reportedUnitQty,
+      reportedGoodUnitQty: reportQuantities.reportedGoodUnitQty,
+      reportedDefectUnitQty: reportQuantities.reportedDefectUnitQty,
+      reportQuantityBasis,
+      reportUnitLabel: reportQuantityBasis === 'action'
+        ? current.reportUnitLabel
+        : current.unitLabel || '件',
       reportMode,
       reportSource: input.reportSource,
       principalEmployeeId: input.principalEmployeeId,
       fieldReportTerminalId: input.fieldReportTerminalId,
       pinCredentialVersion: input.pinCredentialVersion,
-      coverageStatus: ProcessCompletionCoverageStatus.PENDING,
+      coverageStatus: input.processedQty > 0
+        ? ProcessCompletionCoverageStatus.PENDING
+        : ProcessCompletionCoverageStatus.COVERED,
       coveredQty: 0,
       coveredGoodQty: 0,
       coveredDefectQty: 0,
+      coverageUpdatedAt: input.processedQty > 0 ? null : now,
       autoAssignLabor: input.autoAssignLabor,
       defectDisposition: input.databaseDefectDisposition,
       routeVersion: nextRouteVersion,
@@ -3616,7 +3847,9 @@ async function performProcessCompletion(
     .every(step => step.inputQty <= step.processedQty);
   const perBatchInputStable = current.timeBasis !== 'per_batch'
     || !await hasActiveUpstreamReworkBranch(tx, route, current.sequenceGroup);
-  const laborPoolEligibleQty = current.timeBasis === 'per_batch'
+  const laborPoolEligibleQty = reportQuantityBasis === 'action'
+    ? reportQuantities.reportedGoodUnitQty
+    : current.timeBasis === 'per_batch'
     ? (
         current.processedQty >= current.inputQty
         && upstreamPermanentlyClosed
@@ -3625,6 +3858,10 @@ async function performProcessCompletion(
           : 0
       )
     : goodQty;
+  const laborUnitsPerProduct = reportQuantityBasis === 'action' ? 1 : current.unitsPerProduct;
+  const hadEligibleOutputBefore = reportQuantityBasis === 'action'
+    ? reportedGoodUnitQtyBefore > 0
+    : goodOutputBeforeCompletion > 0;
   if (laborPoolEligibleQty > 0) {
     const pool = await createCompletionLaborPool(tx, {
       completionId: completion.id,
@@ -3634,10 +3871,10 @@ async function performProcessCompletion(
       eligibleQty: laborPoolEligibleQty,
       timeBasis: current.timeBasis,
       standardMillisecondsPerUnit: current.standardMillisecondsPerUnit,
-      setupMilliseconds: current.timeBasis === 'per_batch' || goodOutputBeforeCompletion === 0
+      setupMilliseconds: current.timeBasis === 'per_batch' || !hadEligibleOutputBefore
         ? current.setupMilliseconds
         : 0,
-      unitsPerProduct: current.unitsPerProduct,
+      unitsPerProduct: laborUnitsPerProduct,
       countsForEfficiency: current.countsForEfficiency,
       standardSource: current.standardSource,
       productTimeProfileVersion: current.productTimeProfileVersion,
@@ -3734,11 +3971,16 @@ async function performProcessCompletion(
     autoAssignedEmployeeCount,
     autoAssignedLaborMilliseconds,
   };
+  const quantitySummary = reportQuantityBasis === 'action'
+    ? `${reportQuantities.reportedUnitQty} ${current.reportUnitLabel}动作，形成 ${input.processedQty} ${current.unitLabel || '件'}`
+    : `${input.processedQty} ${current.unitLabel || '件'}`;
   const content = pendingCoverageQty > 0
-    ? `${current.processName}报工 ${input.processedQty}，已核销 ${coveredCompletion.coveredQty}，待前序核销 ${pendingCoverageQty}`
+    ? `${current.processName}报工 ${quantitySummary}，已核销 ${coveredCompletion.coveredQty}，待前序核销 ${pendingCoverageQty}`
+    : reportQuantityBasis === 'action' && input.processedQty === 0
+      ? `${current.processName}报工 ${quantitySummary}，本次仅登记动作工时，未形成整套流转`
     : input.defectQty > 0
-      ? `${current.processName}报工 ${input.processedQty}，良品 ${goodQty}，不良 ${input.defectQty}`
-      : `${current.processName}报工 ${input.processedQty}，已自动核销转序`;
+      ? `${current.processName}报工 ${quantitySummary}，整套良品 ${goodQty}，不良 ${input.defectQty}`
+      : `${current.processName}报工 ${quantitySummary}，已自动核销转序`;
   await tx.processRouteActivity.create({
     data: {
       routeId: route.id,
@@ -3772,6 +4014,13 @@ async function performProcessCompletion(
         processedQty: input.processedQty,
         goodQty,
         defectQty: input.defectQty,
+        reportedUnitQty: reportQuantities.reportedUnitQty,
+        reportedGoodUnitQty: reportQuantities.reportedGoodUnitQty,
+        reportedDefectUnitQty: reportQuantities.reportedDefectUnitQty,
+        reportQuantityBasis,
+        reportUnitLabel: reportQuantityBasis === 'action'
+          ? current.reportUnitLabel
+          : current.unitLabel || '件',
         defectDisposition: input.databaseDefectDisposition,
         workDate: input.workDateKey,
         workStartedAt: input.workStartedAt?.toISOString() || null,
@@ -3890,7 +4139,12 @@ export async function completeProcessStepsBatch(
           steps: {
             where: { id: { in: [...itemByStepId.keys()] } },
             orderBy: [{ sequenceGroup: 'asc' }, { position: 'asc' }],
-            select: { id: true, processName: true, position: true },
+            select: {
+              id: true,
+              processName: true,
+              position: true,
+              reportQuantityBasis: true,
+            },
           },
         },
       });
@@ -3901,6 +4155,13 @@ export async function completeProcessStepsBatch(
           'PROCESS_STEP_NOT_FOUND',
         );
       }
+      if (route.steps.some(step => normalizeProcessReportQuantityBasis(step.reportQuantityBasis) === 'action')) {
+        throw new ProcessCompletionServiceError(
+          '按实际动作数量报工的工序需要同时核对动作量和整套量，请单独提交',
+          400,
+          'PROCESS_ACTION_REPORT_BATCH_FORBIDDEN',
+        );
+      }
       const parsedItems = route.steps.map((step, index) => ({
         step,
         input: parseProcessCompletionCommand({
@@ -3908,6 +4169,8 @@ export async function completeProcessStepsBatch(
           stepId: step.id,
           processedQty: itemByStepId.get(step.id)!.processedQty,
           defectQty: itemByStepId.get(step.id)!.defectQty,
+          reportedUnitQty: itemByStepId.get(step.id)!.reportedUnitQty,
+          reportedDefectUnitQty: itemByStepId.get(step.id)!.reportedDefectUnitQty,
           defectDisposition: itemByStepId.get(step.id)!.defectDisposition,
           idempotencyKey: `${batchKey.slice(0, 88)}:${index + 1}:${step.id.slice(0, 8)}`,
           expectedRouteVersion: expectedRouteVersion + index,

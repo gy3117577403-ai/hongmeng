@@ -2939,6 +2939,8 @@ type ProductEntryDraft = {
   occurrences: number;
   setupMilliseconds: number;
   unitLabel: string;
+  reportQuantityBasis: string;
+  reportUnitLabel: string;
   countsForEfficiency: boolean;
   remark: string | null;
 };
@@ -3011,6 +3013,8 @@ async function publishChangedProductProfile(
         occurrences: entry.occurrences,
         setupMilliseconds: entry.setupMilliseconds,
         unitLabel: entry.unitLabel,
+        reportQuantityBasis: entry.reportQuantityBasis,
+        reportUnitLabel: entry.reportUnitLabel,
         countsForEfficiency: entry.countsForEfficiency,
         remark: entry.remark,
       }))
@@ -3041,6 +3045,8 @@ async function publishChangedProductProfile(
             occurrences: step.unitsPerProduct,
             setupMilliseconds: step.setupMilliseconds,
             unitLabel: step.unitLabel || '件',
+            reportQuantityBasis: step.reportQuantityBasis,
+            reportUnitLabel: step.reportUnitLabel,
             countsForEfficiency: step.countsForEfficiency,
             remark: step.remark,
           };
@@ -3080,6 +3086,8 @@ async function publishChangedProductProfile(
         occurrences: insertedOccurrences,
         setupMilliseconds: nonnegativeInteger(after.setupMilliseconds ?? 0, '准备工时'),
         unitLabel: clean(after.unitLabel, 20) || '件',
+        reportQuantityBasis: 'product',
+        reportUnitLabel: clean(after.unitLabel, 20) || '件',
         countsForEfficiency: after.countsForEfficiency !== false,
         remark: `由工艺变更 ${change.id} 新增`,
       });
@@ -3541,6 +3549,8 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
               position: true,
               sequenceGroup: true,
               status: true,
+              processedQty: true,
+              _count: { select: { completions: true } },
             },
           });
           const previousEntryIds = currentSteps
@@ -3609,6 +3619,12 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
                   : entry.unitMilliseconds,
                 setupMilliseconds: entry.setupMilliseconds,
                 unitsPerProduct: usesActionCount ? entry.occurrences : 1,
+                ...(step.processedQty > 0 || step._count.completions > 0 ? {} : {
+                  reportQuantityBasis: entry.reportQuantityBasis === 'action' && usesActionCount
+                    ? 'action'
+                    : 'product',
+                  reportUnitLabel: entry.reportUnitLabel || '个',
+                }),
                 countsForEfficiency: entry.countsForEfficiency,
               },
             });
@@ -4017,6 +4033,11 @@ export async function completeProcessSupplementObligation(
         processedQty,
         goodQty: processedQty,
         defectQty: 0,
+        reportedUnitQty: processedQty,
+        reportedGoodUnitQty: processedQty,
+        reportedDefectUnitQty: 0,
+        reportQuantityBasis: 'product',
+        reportUnitLabel: obligation.unitLabel,
         reportMode: ProcessCompletionReportMode.SEQUENTIAL,
         reportSource: ProcessCompletionSource.SUPPLEMENT_OBLIGATION,
         coverageStatus: ProcessCompletionCoverageStatus.COVERED,

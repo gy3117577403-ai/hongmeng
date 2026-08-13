@@ -206,6 +206,8 @@ test('纠正草稿保留全量 occurrenceKey 和工时字段，只改污染 occu
     occurrences: 1,
     setupMilliseconds: 5,
     unitLabel: '件',
+    reportQuantityBasis: 'product',
+    reportUnitLabel: '件',
     countsForEfficiency: true,
     remark: '新增',
   });
