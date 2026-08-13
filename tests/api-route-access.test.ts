@@ -78,7 +78,7 @@ test('GM can read mapped business APIs but cannot mutate them', () => {
   assert.equal(canAccessApiRoute(gm, '/api/work-orders', 'POST'), false);
 });
 
-test('field reporter is limited to the existing QR report API', () => {
+test('field reporter can use QR reporting and its independent abnormal-time command only', () => {
   const reporter = context({
     profile: 'FIELD_REPORTER',
     departmentCode: 'PRODUCTION',
@@ -87,6 +87,8 @@ test('field reporter is limited to the existing QR report API', () => {
   });
   assert.equal(canAccessApiRoute(reporter, '/api/field-report/tickets/code', 'GET'), true);
   assert.equal(canAccessApiRoute(reporter, '/api/field-report/tickets/code/completions', 'POST'), true);
+  assert.equal(canAccessApiRoute(reporter, '/api/field-report/tickets/code/abnormal-time-events', 'POST'), true);
+  assert.equal(canAccessApiRoute(reporter, '/api/abnormal-time-events', 'GET'), false);
   assert.equal(canAccessApiRoute(reporter, '/api/production/arrangements', 'GET'), false);
   assert.equal(canAccessApiRoute(reporter, '/api/notifications', 'GET'), false);
 });
@@ -240,7 +242,7 @@ test('planning owns week lifecycle and daily shipments while GM stays read-only'
   assert.equal(canAccessApiRoute(gm, '/api/daily-shipments', 'POST'), false);
 });
 
-test('abnormal-event quality commands are quality-only and base records exclude production', () => {
+test('abnormal-event review is available to quality and workshop supervisors while team scope stays read-only', () => {
   const quality = context({
     profile: 'DEPARTMENT_FULL',
     departmentCode: 'QUALITY',
@@ -259,12 +261,21 @@ test('abnormal-event quality commands are quality-only and base records exclude 
     grantType: 'PRIMARY',
     scopeKey: 'WORKSHOP:main',
   });
+  const teamLeader = context({
+    profile: 'WORKSHOP_TEAM_LEADER',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'TEAM:A',
+  });
 
   assert.equal(canAccessApiRoute(quality, '/api/abnormal-time-events/event-1/quality', 'POST'), true);
   assert.equal(canAccessApiRoute(quality, '/api/abnormal-time-events/event-1/resolve', 'POST'), true);
   assert.equal(canAccessApiRoute(hr, '/api/abnormal-time-events', 'GET'), true);
   assert.equal(canAccessApiRoute(hr, '/api/abnormal-time-events/event-1/quality', 'POST'), false);
-  assert.equal(canAccessApiRoute(workshop, '/api/abnormal-time-events', 'GET'), false);
+  assert.equal(canAccessApiRoute(workshop, '/api/abnormal-time-events', 'GET'), true);
+  assert.equal(canAccessApiRoute(workshop, '/api/abnormal-time-events/event-1/quality', 'POST'), true);
+  assert.equal(canAccessApiRoute(teamLeader, '/api/abnormal-time-events', 'GET'), true);
+  assert.equal(canAccessApiRoute(teamLeader, '/api/abnormal-time-events/event-1/quality', 'POST'), false);
 });
 
 test('production bulk operations require workshop scope without restricting owning departments', () => {

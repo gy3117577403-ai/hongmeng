@@ -8,13 +8,21 @@ import {
   UnauthorizedError,
 } from '@/lib/auth';
 import {
+  abnormalCategoryLabel,
   attendanceRange,
+  isAbnormalTimeCategory,
   parseAbnormalCategory,
   parseEmployeeIds,
   parseEventDateTimes,
+  parseOptionalPositiveInteger,
   parseWorkDate,
   serializeAbnormalTimeEvent,
 } from '@/lib/attendance';
+import {
+  abnormalTimeScopeLabel,
+  abnormalTimeScopedEmployeeIds,
+  canReviewAbnormalTime,
+} from '@/lib/abnormal-time-access';
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
@@ -30,11 +38,12 @@ const include = {
   resolvedBy: { select: { id: true, username: true, displayName: true } },
   workOrder: { select: { id: true, code: true, customerName: true, specification: true, productName: true } },
   processStep: { select: { id: true, processCode: true, processName: true } },
+  reportedByEmployee: true,
 } satisfies Prisma.AbnormalTimeEventInclude;
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
     const period = req.nextUrl.searchParams.get('period') === 'month'
       ? 'month' as const
       : req.nextUrl.searchParams.get('period') === 'week'
@@ -45,20 +54,61 @@ export async function GET(req: NextRequest) {
     const end = parseWorkDate(range.end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const qualityStatus = cleanProcessText(req.nextUrl.searchParams.get('qualityStatus'), 20);
     const employeeId = cleanProcessText(req.nextUrl.searchParams.get('employeeId'), 80);
+    const category = cleanProcessText(req.nextUrl.searchParams.get('category'), 40);
+    const scopedEmployeeIds = await abnormalTimeScopedEmployeeIds(user);
+    if (employeeId && scopedEmployeeIds !== null && !scopedEmployeeIds.includes(employeeId)) {
+      return forbidden('当前账号不能查看该员工的异常工时');
+    }
     const events = await prisma.abnormalTimeEvent.findMany({
       where: {
         deletedAt: null,
         workDate: { gte: start, lt: end },
+        ...(isAbnormalTimeCategory(category) ? { category } : {}),
         ...(qualityStatus === 'pending' || qualityStatus === 'confirmed' || qualityStatus === 'rejected'
           ? { qualityStatus }
           : {}),
-        ...(employeeId ? { allocations: { some: { employeeId } } } : {}),
+        ...(employeeId
+          ? { allocations: { some: { employeeId } } }
+          : scopedEmployeeIds === null
+            ? {}
+            : { allocations: { some: { employeeId: { in: scopedEmployeeIds } } } }),
       },
-      include,
+      include: {
+        ...include,
+        allocations: {
+          ...include.allocations,
+          ...(scopedEmployeeIds === null
+            ? {}
+            : { where: { employeeId: { in: scopedEmployeeIds } } }),
+        },
+      },
       orderBy: [{ startedAt: 'desc' }, { sequence: 'desc' }],
-      take: 1000,
+      take: 2000,
     });
     const serialized = events.map(serializeAbnormalTimeEvent);
+    const categoryMap = new Map<string, {
+      category: typeof serialized[number]['category'];
+      categoryLabel: string;
+      eventCount: number;
+      incidentMilliseconds: number;
+      affectedPersonMilliseconds: number;
+      approvedPersonMilliseconds: number;
+    }>();
+    for (const event of serialized) {
+      const row = categoryMap.get(event.category) || {
+        category: event.category,
+        categoryLabel: abnormalCategoryLabel(event.category),
+        eventCount: 0,
+        incidentMilliseconds: 0,
+        affectedPersonMilliseconds: 0,
+        approvedPersonMilliseconds: 0,
+      };
+      row.eventCount += 1;
+      row.incidentMilliseconds += event.durationMilliseconds;
+      row.affectedPersonMilliseconds += event.affectedPersonMilliseconds;
+      row.approvedPersonMilliseconds += event.approvedPersonMilliseconds;
+      categoryMap.set(event.category, row);
+    }
     return NextResponse.json({
       ok: true,
       period,
@@ -66,6 +116,12 @@ export async function GET(req: NextRequest) {
       rangeStart: range.start.toISOString(),
       rangeEnd: range.end.toISOString(),
       events: serialized,
+      categories: [...categoryMap.values()].sort((left, right) =>
+        right.affectedPersonMilliseconds - left.affectedPersonMilliseconds),
+      permissions: {
+        canReview: canReviewAbnormalTime(user),
+        scopeLabel: abnormalTimeScopeLabel(user),
+      },
       summary: {
         eventCount: serialized.length,
         pendingCount: serialized.filter(item => item.qualityStatus === 'pending').length,
@@ -74,6 +130,10 @@ export async function GET(req: NextRequest) {
         openCount: serialized.filter(item => item.resolutionStatus === 'open').length,
         incidentMilliseconds: serialized.reduce((sum, item) => sum + item.durationMilliseconds, 0),
         affectedPersonMilliseconds: serialized.reduce((sum, item) => sum + item.affectedPersonMilliseconds, 0),
+        approvedPersonMilliseconds: serialized.reduce((sum, item) => sum + item.approvedPersonMilliseconds, 0),
+        confirmedExemptPersonMilliseconds: serialized
+          .filter(item => item.qualityStatus === 'confirmed' && item.employeeExempt)
+          .reduce((sum, item) => sum + item.approvedPersonMilliseconds, 0),
       },
     });
   } catch (error) {
@@ -114,16 +174,20 @@ export async function POST(req: NextRequest) {
       data: {
         workDate: times.workDate,
         category: parseAbnormalCategory(body.category),
+        subcategory: cleanProcessText(body.subcategory, 100) || null,
         title,
         reason: cleanProcessText(body.reason, 1000) || null,
         startedAt: times.startedAt,
         endedAt: times.endedAt,
         durationMilliseconds: times.durationMilliseconds,
+        affectedQuantity: parseOptionalPositiveInteger(body.affectedQuantity, '受影响数量'),
         employeeExempt: body.employeeExempt === true,
         responsibilityDepartment: cleanProcessText(body.responsibilityDepartment, 100) || null,
+        responsibilityObject: cleanProcessText(body.responsibilityObject, 160) || null,
         expectedResolvedAt,
         workOrderId,
         processStepId,
+        source: 'BACKOFFICE',
         createdById: user.id,
         updatedById: user.id,
         allocations: {

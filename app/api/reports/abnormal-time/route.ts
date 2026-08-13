@@ -19,6 +19,7 @@ const include = {
   resolvedBy: { select: { id: true, username: true, displayName: true } },
   workOrder: { select: { id: true, code: true, customerName: true, specification: true, productName: true } },
   processStep: { select: { id: true, processCode: true, processName: true } },
+  reportedByEmployee: true,
 } satisfies Prisma.AbnormalTimeEventInclude;
 
 export async function GET(req: NextRequest) {
@@ -71,6 +72,7 @@ export async function GET(req: NextRequest) {
       eventCount: number;
       incidentMilliseconds: number;
       affectedPersonMilliseconds: number;
+      approvedPersonMilliseconds: number;
     }>();
     for (const event of serialized) {
       const row = categoryMap.get(event.category) || {
@@ -79,10 +81,12 @@ export async function GET(req: NextRequest) {
         eventCount: 0,
         incidentMilliseconds: 0,
         affectedPersonMilliseconds: 0,
+        approvedPersonMilliseconds: 0,
       };
       row.eventCount += 1;
       row.incidentMilliseconds += event.durationMilliseconds;
       row.affectedPersonMilliseconds += event.affectedPersonMilliseconds;
+      row.approvedPersonMilliseconds += event.approvedPersonMilliseconds;
       categoryMap.set(event.category, row);
     }
     return NextResponse.json({
@@ -100,9 +104,10 @@ export async function GET(req: NextRequest) {
           openCount: serialized.filter(item => item.resolutionStatus === 'open').length,
           incidentMilliseconds: serialized.reduce((sum, item) => sum + item.durationMilliseconds, 0),
           affectedPersonMilliseconds: serialized.reduce((sum, item) => sum + item.affectedPersonMilliseconds, 0),
+          approvedPersonMilliseconds: serialized.reduce((sum, item) => sum + item.approvedPersonMilliseconds, 0),
           confirmedExemptPersonMilliseconds: serialized
             .filter(item => item.qualityStatus === 'confirmed' && item.employeeExempt)
-            .reduce((sum, item) => sum + item.affectedPersonMilliseconds, 0),
+            .reduce((sum, item) => sum + item.approvedPersonMilliseconds, 0),
         },
         categories: [...categoryMap.values()].sort((left, right) =>
           right.affectedPersonMilliseconds - left.affectedPersonMilliseconds),

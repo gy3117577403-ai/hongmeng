@@ -1080,6 +1080,7 @@ model Employee {
   executions                       ProcessExecution[]
   attendanceRecords                AttendanceRecord[]
   abnormalTimeAllocations          AbnormalTimeAllocation[]
+  reportedAbnormalTimeEvents       AbnormalTimeEvent[]               @relation("AbnormalTimeEventReportedByEmployee")
   laborClaims                      ProcessLaborClaim[]
   completionParticipants           ProcessCompletionParticipant[]
   user                             User?
@@ -2229,46 +2230,57 @@ model AttendanceRecord {
 }
 
 model AbnormalTimeEvent {
-  id                       String                   @id @default(uuid())
-  sequence                 Int                      @unique @default(autoincrement())
-  workDate                 DateTime                 @map("work_date") @db.Date
-  category                 String
-  title                    String
-  reason                   String?
-  startedAt                DateTime                 @map("started_at")
-  endedAt                  DateTime                 @map("ended_at")
-  durationMilliseconds     Int                      @map("duration_milliseconds")
-  employeeExempt           Boolean                  @default(false) @map("employee_exempt")
-  qualityStatus            String                   @default("pending") @map("quality_status")
-  qualityNote              String?                  @map("quality_note")
-  qualityConfirmedById     String?                  @map("quality_confirmed_by_id")
-  qualityConfirmedAt       DateTime?                @map("quality_confirmed_at")
-  resolutionStatus         String                   @default("open") @map("resolution_status")
-  responsibilityDepartment String?                  @map("responsibility_department")
-  expectedResolvedAt       DateTime?                @map("expected_resolved_at")
-  resolutionNote           String?                  @map("resolution_note")
-  resolvedById             String?                  @map("resolved_by_id")
-  resolvedAt               DateTime?                @map("resolved_at")
-  workOrderId              String?                  @map("work_order_id")
-  processStepId            String?                  @map("process_step_id")
-  createdById              String?                  @map("created_by_id")
-  updatedById              String?                  @map("updated_by_id")
-  createdAt                DateTime                 @default(now()) @map("created_at")
-  updatedAt                DateTime                 @updatedAt @map("updated_at")
-  deletedAt                DateTime?                @map("deleted_at")
-  workOrder                WorkOrder?               @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
-  processStep              WorkOrderProcessStep?    @relation(fields: [processStepId], references: [id], onDelete: SetNull)
-  createdBy                User?                    @relation("AbnormalTimeEventCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedBy                User?                    @relation("AbnormalTimeEventUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
-  qualityConfirmedBy       User?                    @relation("AbnormalTimeEventQualityConfirmedBy", fields: [qualityConfirmedById], references: [id], onDelete: SetNull)
-  resolvedBy               User?                    @relation("AbnormalTimeEventResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
-  allocations              AbnormalTimeAllocation[]
+  id                           String                   @id @default(uuid())
+  sequence                     Int                      @unique @default(autoincrement())
+  workDate                     DateTime                 @map("work_date") @db.Date
+  category                     String
+  subcategory                  String?
+  title                        String
+  reason                       String?
+  startedAt                    DateTime                 @map("started_at")
+  endedAt                      DateTime                 @map("ended_at")
+  durationMilliseconds         Int                      @map("duration_milliseconds")
+  approvedDurationMilliseconds Int?                     @map("approved_duration_milliseconds")
+  affectedQuantity             Int?                     @map("affected_quantity")
+  employeeExempt               Boolean                  @default(false) @map("employee_exempt")
+  qualityStatus                String                   @default("pending") @map("quality_status")
+  qualityNote                  String?                  @map("quality_note")
+  qualityConfirmedById         String?                  @map("quality_confirmed_by_id")
+  qualityConfirmedAt           DateTime?                @map("quality_confirmed_at")
+  resolutionStatus             String                   @default("open") @map("resolution_status")
+  responsibilityDepartment     String?                  @map("responsibility_department")
+  responsibilityObject         String?                  @map("responsibility_object")
+  expectedResolvedAt           DateTime?                @map("expected_resolved_at")
+  resolutionNote               String?                  @map("resolution_note")
+  resolvedById                 String?                  @map("resolved_by_id")
+  resolvedAt                   DateTime?                @map("resolved_at")
+  workOrderId                  String?                  @map("work_order_id")
+  processStepId                String?                  @map("process_step_id")
+  source                       String                   @default("BACKOFFICE")
+  idempotencyKey               String?                  @unique @map("idempotency_key")
+  reportedByEmployeeId         String?                  @map("reported_by_employee_id")
+  createdById                  String?                  @map("created_by_id")
+  updatedById                  String?                  @map("updated_by_id")
+  version                      Int                      @default(0)
+  createdAt                    DateTime                 @default(now()) @map("created_at")
+  updatedAt                    DateTime                 @updatedAt @map("updated_at")
+  deletedAt                    DateTime?                @map("deleted_at")
+  workOrder                    WorkOrder?               @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  processStep                  WorkOrderProcessStep?    @relation(fields: [processStepId], references: [id], onDelete: SetNull)
+  reportedByEmployee           Employee?                @relation("AbnormalTimeEventReportedByEmployee", fields: [reportedByEmployeeId], references: [id], onDelete: SetNull)
+  createdBy                    User?                    @relation("AbnormalTimeEventCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy                    User?                    @relation("AbnormalTimeEventUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  qualityConfirmedBy           User?                    @relation("AbnormalTimeEventQualityConfirmedBy", fields: [qualityConfirmedById], references: [id], onDelete: SetNull)
+  resolvedBy                   User?                    @relation("AbnormalTimeEventResolvedBy", fields: [resolvedById], references: [id], onDelete: SetNull)
+  allocations                  AbnormalTimeAllocation[]
 
   @@index([workDate, qualityStatus])
   @@index([category, workDate])
   @@index([resolutionStatus, workDate])
   @@index([workOrderId])
   @@index([processStepId])
+  @@index([reportedByEmployeeId, workDate])
+  @@index([source, workDate])
   @@index([deletedAt])
   @@map("abnormal_time_events")
 }

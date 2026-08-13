@@ -212,7 +212,12 @@ export async function GET(req: NextRequest) {
           ...(employeeIdConstraint ? { employeeId: employeeIdConstraint } : {}),
           event: { deletedAt: null, employeeExempt: true, qualityStatus: 'confirmed' },
         },
-        select: { employeeId: true, workDate: true, durationMilliseconds: true },
+        select: {
+          employeeId: true,
+          workDate: true,
+          durationMilliseconds: true,
+          event: { select: { approvedDurationMilliseconds: true } },
+        },
       }),
     ]);
     const productionEmployeeIds = new Set(employees.map(employee => employee.id));
@@ -256,12 +261,14 @@ export async function GET(req: NextRequest) {
       if (!productionEmployeeIds.has(allocation.employeeId)) continue;
       const row = groups.get(allocation.employeeId);
       if (row) {
+        const approvedDuration = allocation.event.approvedDurationMilliseconds
+          ?? allocation.durationMilliseconds;
         activityEmployeeIds.add(allocation.employeeId);
         dailyFor(
           allocation.employeeId,
           dateKeyFromDatabase(allocation.workDate),
-        ).exemptAbnormalMilliseconds += allocation.durationMilliseconds;
-        row.exemptAbnormalMilliseconds += allocation.durationMilliseconds;
+        ).exemptAbnormalMilliseconds += approvedDuration;
+        row.exemptAbnormalMilliseconds += approvedDuration;
       }
     }
     for (const execution of executions) {

@@ -11,6 +11,7 @@ import {
   parseAbnormalCategory,
   parseEmployeeIds,
   parseEventDateTimes,
+  parseOptionalPositiveInteger,
   serializeAbnormalTimeEvent,
 } from '@/lib/attendance';
 import { cleanProcessText } from '@/lib/process-time';
@@ -28,6 +29,7 @@ const include = {
   resolvedBy: { select: { id: true, username: true, displayName: true } },
   workOrder: { select: { id: true, code: true, customerName: true, specification: true, productName: true } },
   processStep: { select: { id: true, processCode: true, processName: true } },
+  reportedByEmployee: true,
 } satisfies Prisma.AbnormalTimeEventInclude;
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
@@ -70,15 +72,23 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         data: {
           workDate: times.workDate,
           category: body.category === undefined ? existing.category : parseAbnormalCategory(body.category),
+          subcategory: body.subcategory === undefined ? existing.subcategory : cleanProcessText(body.subcategory, 100) || null,
           title,
           reason: body.reason === undefined ? existing.reason : cleanProcessText(body.reason, 1000) || null,
           startedAt: times.startedAt,
           endedAt: times.endedAt,
           durationMilliseconds: times.durationMilliseconds,
+          approvedDurationMilliseconds: null,
+          affectedQuantity: body.affectedQuantity === undefined
+            ? existing.affectedQuantity
+            : parseOptionalPositiveInteger(body.affectedQuantity, '受影响数量'),
           employeeExempt: body.employeeExempt === undefined ? existing.employeeExempt : body.employeeExempt === true,
           responsibilityDepartment: body.responsibilityDepartment === undefined
             ? existing.responsibilityDepartment
             : cleanProcessText(body.responsibilityDepartment, 100) || null,
+          responsibilityObject: body.responsibilityObject === undefined
+            ? existing.responsibilityObject
+            : cleanProcessText(body.responsibilityObject, 160) || null,
           expectedResolvedAt,
           workOrderId: body.workOrderId === undefined ? existing.workOrderId : cleanProcessText(body.workOrderId, 80) || null,
           processStepId: body.processStepId === undefined ? existing.processStepId : cleanProcessText(body.processStepId, 80) || null,
@@ -86,6 +96,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           qualityNote: null,
           qualityConfirmedById: null,
           qualityConfirmedAt: null,
+          version: { increment: 1 },
           updatedById: user.id,
           allocations: {
             create: employeeIds.map(employeeId => ({

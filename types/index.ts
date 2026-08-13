@@ -1592,6 +1592,14 @@ export type AttendanceRecordDTO = {
 };
 
 export type AbnormalTimeCategory =
+  | 'personal'
+  | 'drawing_technical'
+  | 'process'
+  | 'quality'
+  | 'incoming_material'
+  | 'equipment_tooling'
+  | 'planning_coordination'
+  | 'system_other'
   | 'equipment'
   | 'material_shortage'
   | 'wrong_material'
@@ -1620,12 +1628,16 @@ export type AbnormalTimeEventDTO = {
   workDate: string;
   category: AbnormalTimeCategory;
   categoryLabel: string;
+  subcategory?: string | null;
   title: string;
   reason?: string | null;
   startedAt: string;
   endedAt: string;
   durationMilliseconds: number;
+  approvedDurationMilliseconds?: number | null;
   affectedPersonMilliseconds: number;
+  approvedPersonMilliseconds: number;
+  affectedQuantity?: number | null;
   employeeExempt: boolean;
   qualityStatus: AbnormalTimeQualityStatus;
   qualityNote?: string | null;
@@ -1633,6 +1645,7 @@ export type AbnormalTimeEventDTO = {
   qualityConfirmedAt?: string | null;
   resolutionStatus: AbnormalTimeResolutionStatus;
   responsibilityDepartment?: string | null;
+  responsibilityObject?: string | null;
   expectedResolvedAt?: string | null;
   resolutionNote?: string | null;
   resolvedBy?: { id: string; username: string; displayName: string } | null;
@@ -1645,6 +1658,9 @@ export type AbnormalTimeEventDTO = {
     productName: string;
   } | null;
   processStep?: { id: string; processCode: string; processName: string } | null;
+  source: 'BACKOFFICE' | 'FIELD_REPORT' | string;
+  reportedByEmployee?: EmployeeDTO | null;
+  version: number;
   allocations: AbnormalTimeAllocationDTO[];
   createdAt: string;
   updatedAt: string;
@@ -1901,6 +1917,7 @@ export type AbnormalTimeReportDTO = {
     openCount: number;
     incidentMilliseconds: number;
     affectedPersonMilliseconds: number;
+    approvedPersonMilliseconds: number;
     confirmedExemptPersonMilliseconds: number;
   };
   categories: Array<{
@@ -1909,6 +1926,7 @@ export type AbnormalTimeReportDTO = {
     eventCount: number;
     incidentMilliseconds: number;
     affectedPersonMilliseconds: number;
+    approvedPersonMilliseconds: number;
   }>;
   events: AbnormalTimeEventDTO[];
 };

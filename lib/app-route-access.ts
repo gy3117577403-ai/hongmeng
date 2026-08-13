@@ -60,6 +60,7 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/workspace/processes', anyOf: ['PROCESS'] },
   { prefix: '/workspace/employees', anyOf: ['HR'] },
   { prefix: '/workspace/attendance', anyOf: ['HR'] },
+  { prefix: '/workspace/abnormal-times', anyOf: ['HR', 'QUALITY', 'PRODUCTION'] },
   { prefix: '/workspace/responsibilities', anyOf: ['HR', 'SYSTEM_CONFIGURATION'] },
   {
     prefix: '/workspace/reports',

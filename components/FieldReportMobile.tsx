@@ -20,12 +20,14 @@ import {
   RotateCcw,
   Search,
   ShieldCheck,
+  TimerOff,
   UserRoundCheck,
   Users,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FieldReportRouteChangeProposal } from '@/components/field-report/FieldReportRouteChangeProposal';
+import { ABNORMAL_TIME_CATEGORIES } from '@/lib/attendance';
 import type { ProcessCompletionContext } from '@/lib/process-completion-service';
 import {
   processRouteStepChangeLabel,
@@ -33,6 +35,7 @@ import {
   type ProcessRouteStepChangeNotice,
 } from '@/lib/process-route-change-contract';
 import type { FieldReportTicketView } from '@/lib/work-order-qr-service';
+import type { AbnormalTimeCategory } from '@/types';
 
 export type FieldReportIdentityDTO = {
   id: string;
@@ -112,6 +115,23 @@ type CompletionCorrectionState = {
   reason: string;
   error: string;
   data: CompletionCorrectionPreview | null;
+};
+
+type FieldAbnormalTimeDraft = {
+  stepId: string;
+  processName: string;
+  category: '' | AbnormalTimeCategory;
+  subcategory: string;
+  workDate: string;
+  startedAt: string;
+  durationMinutes: string;
+  affectedQuantity: string;
+  employeeIds: string[];
+  reason: string;
+  responsibilityDepartment: string;
+  responsibilityObject: string;
+  idempotencyKey: string;
+  error: string;
 };
 
 function stepChangeSnapshot(value: unknown): FieldReportStepChangeSnapshot | null {
@@ -208,6 +228,16 @@ function newIdempotencyKey(): string {
     : `qr-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+function chinaLocalDateTimeValue(date = new Date()): string {
+  return new Date(date.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16);
+}
+
+function fieldAbnormalIdempotencyKey(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? `qra-${crypto.randomUUID()}`
+    : `qra-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 function formFor(context: ProcessCompletionContext, currentEmployee: EmployeeOption): ReportForm {
   return {
     processedQty: '0',
@@ -255,6 +285,9 @@ export default function FieldReportMobile({
   const [success, setSuccess] = useState<{ title: string; detail: string } | null>(null);
   const [fullQuantityConfirmOpen, setFullQuantityConfirmOpen] = useState(false);
   const [correction, setCorrection] = useState<CompletionCorrectionState | null>(null);
+  const [abnormalDraft, setAbnormalDraft] = useState<FieldAbnormalTimeDraft | null>(null);
+  const [abnormalSaving, setAbnormalSaving] = useState(false);
+  const [abnormalMoreOpen, setAbnormalMoreOpen] = useState(false);
 
   const load = useCallback(async (stepId?: string, quiet = false): Promise<FieldReportPayload | null> => {
     if (!quiet) setLoading(true); else setRefreshing(true);
@@ -369,6 +402,87 @@ export default function FieldReportMobile({
     setForm(formFor(nextPayload.context, nextPayload.currentEmployee));
     setIdempotencyKey(newIdempotencyKey());
     setSheetOpen(true);
+  }
+
+  function openAbnormalTime(step: ProcessCompletionContext['routeSteps'][number]): void {
+    if (!payload?.currentEmployee) return;
+    const startedAt = chinaLocalDateTimeValue();
+    setAbnormalMoreOpen(false);
+    setAbnormalDraft({
+      stepId: step.id,
+      processName: step.processName,
+      category: '',
+      subcategory: '',
+      workDate: startedAt.slice(0, 10),
+      startedAt,
+      durationMinutes: '0',
+      affectedQuantity: '',
+      employeeIds: [payload.currentEmployee.id],
+      reason: '',
+      responsibilityDepartment: '',
+      responsibilityObject: '',
+      idempotencyKey: fieldAbnormalIdempotencyKey(),
+      error: '',
+    });
+  }
+
+  async function submitAbnormalTime(): Promise<void> {
+    if (!abnormalDraft || !payload?.currentEmployee || abnormalSaving) return;
+    const minutes = Number(abnormalDraft.durationMinutes);
+    if (!abnormalDraft.category) {
+      setAbnormalDraft({ ...abnormalDraft, error: '请选择异常问题分类' });
+      return;
+    }
+    if (!Number.isSafeInteger(minutes) || minutes <= 0 || minutes > 1200) {
+      setAbnormalDraft({ ...abnormalDraft, error: '请输入 1 至 1200 分钟的异常时长' });
+      return;
+    }
+    if (!abnormalDraft.employeeIds.includes(payload.currentEmployee.id)) {
+      setAbnormalDraft({ ...abnormalDraft, error: '受影响员工必须包含当前登录人' });
+      return;
+    }
+    const startedAt = new Date(`${abnormalDraft.startedAt}:00+08:00`);
+    if (Number.isNaN(startedAt.getTime())) {
+      setAbnormalDraft({ ...abnormalDraft, error: '请选择有效的异常开始时间' });
+      return;
+    }
+    setAbnormalSaving(true);
+    setAbnormalDraft({ ...abnormalDraft, error: '' });
+    try {
+      const response = await fetch(`/api/field-report/tickets/${encodeURIComponent(code)}/abnormal-time-events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          stepId: abnormalDraft.stepId,
+          category: abnormalDraft.category,
+          subcategory: abnormalDraft.subcategory,
+          workDate: abnormalDraft.workDate,
+          startedAt: startedAt.toISOString(),
+          durationMinutes: minutes,
+          affectedQuantity: abnormalDraft.affectedQuantity,
+          employeeIds: abnormalDraft.employeeIds,
+          reason: abnormalDraft.reason,
+          responsibilityDepartment: abnormalDraft.responsibilityDepartment,
+          responsibilityObject: abnormalDraft.responsibilityObject,
+          idempotencyKey: abnormalDraft.idempotencyKey,
+        }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string; data?: { event?: { sequence?: number } } };
+      if (!response.ok) throw new Error(body.error || '异常工时登记失败');
+      const sequence = body.data?.event?.sequence;
+      setAbnormalDraft(null);
+      setSuccess({
+        title: '异常工时已提交主管审核',
+        detail: `${sequence ? `记录 #${sequence} 已建立，` : ''}本次登记不改变报工数量和工序完整性，可继续正常报工。`,
+      });
+    } catch (reason) {
+      setAbnormalDraft(current => current ? {
+        ...current,
+        error: reason instanceof Error ? reason.message : '异常工时登记失败',
+      } : current);
+    } finally {
+      setAbnormalSaving(false);
+    }
   }
 
   function toggleBatchStep(stepId: string): void {
@@ -665,12 +779,15 @@ export default function FieldReportMobile({
               <div className="field-report-step-meter"><i style={{ width: `${Math.min(100, (supplement?.requiredQty ?? ticket.workOrder.targetQty) ? (supplement?.reportedQty ?? step.coveredReportedQty) / (supplement?.requiredQty ?? ticket.workOrder.targetQty) * 100 : 0)}%` }} /></div>
               {step.pendingCoverageQty > 0 && <p><AlertTriangle size={14} />已提前报工 {quantity(step.pendingCoverageQty)}，等待前序数量补齐后自动覆盖</p>}
               {step.latestCompletion && <p className="field-report-latest-completion"><History size={14} /><span>最近：<b>{completionWorkerNames(step.latestCompletion)}</b> · {quantity(step.latestCompletion.processedQty)} {step.unitLabel || ticket.workOrder.unitLabel} · {dateTimeText(step.latestCompletion.completedAt)}</span></p>}
-              <button
-                className={batchSelecting && selectedStepIds.includes(step.id) ? 'batch-selected' : ''}
-                type="button"
-                disabled={!payload.currentEmployee || !payload.context || (batchSelecting && (!ticket.access.canReport || step.reportableQty <= 0 || Boolean(supplement)))}
-                onClick={() => batchSelecting ? toggleBatchStep(step.id) : void openReport(step.id)}
-              >{!ticket.access.canReport || step.reportableQty <= 0 ? <><History size={17} />查看报工明细<ArrowRight size={17} /></> : batchSelecting && supplement ? <><GitPullRequestArrow size={17} />补充工序请单独报工</> : batchSelecting ? selectedStepIds.includes(step.id) ? <><Check size={17} />已加入批量报工</> : <><CircleDot size={17} />加入本次报工</> : <><CircleDot size={17} />选择此工序报工<ArrowRight size={17} /></>}</button>
+              <div className="field-report-step-actions">
+                <button
+                  className={batchSelecting && selectedStepIds.includes(step.id) ? 'batch-selected' : ''}
+                  type="button"
+                  disabled={!payload.currentEmployee || !payload.context || (batchSelecting && (!ticket.access.canReport || step.reportableQty <= 0 || Boolean(supplement)))}
+                  onClick={() => batchSelecting ? toggleBatchStep(step.id) : void openReport(step.id)}
+                >{!ticket.access.canReport || step.reportableQty <= 0 ? <><History size={17} />查看报工明细<ArrowRight size={17} /></> : batchSelecting && supplement ? <><GitPullRequestArrow size={17} />补充工序请单独报工</> : batchSelecting ? selectedStepIds.includes(step.id) ? <><Check size={17} />已加入批量报工</> : <><CircleDot size={17} />加入本次报工</> : <><CircleDot size={17} />选择此工序报工<ArrowRight size={17} /></>}</button>
+                {!batchSelecting && <button className="abnormal" type="button" disabled={!payload.currentEmployee || (ticket.access.state !== 'READY' && ticket.access.state !== 'COMPLETED')} onClick={() => openAbnormalTime(step)}><TimerOff size={16} />登记异常工时</button>}
+              </div>
             </div>
           </article>;
         })}
@@ -706,6 +823,40 @@ export default function FieldReportMobile({
           {correction.error && <p className="field-report-form-error" role="alert">{correction.error}</p>}
         </div>
         <footer><span>所有纠错都会保留操作日志，不会静默改账。</span><button type="button" disabled={correction.loading || correction.saving || correction.reason.trim().length < 4} onClick={() => void submitCorrection()}>{correction.saving ? <><LoaderCircle className="spin" size={18} />正在提交...</> : correction.data?.ownership === 'SELF' ? <><RotateCcw size={18} />确认撤回误报</> : <><AlertTriangle size={18} />提交主管核对</>}</button></footer>
+      </section>
+    </div>}
+
+    {abnormalDraft && <div className="field-report-abnormal-backdrop" role="presentation">
+      <section className="field-report-abnormal-sheet" role="dialog" aria-modal="true" aria-labelledby="field-report-abnormal-title">
+        <header><span><small>独立登记 · 不改变报工数量</small><strong id="field-report-abnormal-title">{abnormalDraft.processName}</strong><em>异常工时</em></span><button type="button" disabled={abnormalSaving} aria-label="关闭异常登记" onClick={() => setAbnormalDraft(null)}><X size={22} /></button></header>
+        <div>
+          <section className="field-report-abnormal-notice"><ShieldCheck size={21} /><span><strong>不填不影响正常报工</strong><small>本记录单独送主管审核；审核通过后才进入个人解释工时，不增加标准产出工时。</small></span></section>
+          <div className="field-report-abnormal-grid">
+            <label><span>问题分类 <b>必填</b></span><select value={abnormalDraft.category} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, category: event.target.value as FieldAbnormalTimeDraft['category'], error: '' })}><option value="">请选择</option>{ABNORMAL_TIME_CATEGORIES.map(item => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
+            <label><span>异常时长 <b>必填</b></span><div><input inputMode="numeric" type="number" min="1" max="1200" step="1" value={abnormalDraft.durationMinutes} disabled={abnormalSaving} onFocus={event => event.currentTarget.select()} onChange={event => setAbnormalDraft({ ...abnormalDraft, durationMinutes: event.target.value, error: '' })} /><em>分钟</em></div></label>
+            <label className="wide"><span>异常开始时间 <b>必填</b></span><input type="datetime-local" value={abnormalDraft.startedAt} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, startedAt: event.target.value, workDate: event.target.value.slice(0, 10), error: '' })} /></label>
+            <label><span>受影响数量 <i>可选</i></span><div><input inputMode="numeric" type="number" min="1" step="1" value={abnormalDraft.affectedQuantity} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, affectedQuantity: event.target.value, error: '' })} /><em>{ticket.workOrder.unitLabel}</em></div></label>
+            <label><span>细分原因 <i>可选</i></span><input value={abnormalDraft.subcategory} maxLength={100} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, subcategory: event.target.value })} placeholder="例如等待确认、设备停机" /></label>
+          </div>
+          <section className="field-report-abnormal-workers">
+            <header><span><strong>受影响员工 <b>必填</b></strong><small>本人已锁定，可添加共同受影响人员。</small></span><em>{abnormalDraft.employeeIds.length} 人</em></header>
+            <div>{(payload.context?.employees || [payload.currentEmployee]).filter((employee): employee is EmployeeOption => Boolean(employee)).map(employee => {
+              const checked = abnormalDraft.employeeIds.includes(employee.id);
+              const locked = employee.id === currentEmployeeId;
+              return <label className={checked ? 'selected' : ''} key={employee.id}><input type="checkbox" checked={checked} disabled={abnormalSaving || locked} onChange={() => setAbnormalDraft({ ...abnormalDraft, employeeIds: checked ? abnormalDraft.employeeIds.filter(id => id !== employee.id) : [...abnormalDraft.employeeIds, employee.id], error: '' })} /><span><strong>{employee.name}{locked && <em>本人</em>}</strong><small>{employee.employeeNo} · {employee.team || employee.position || '班组待维护'}</small></span></label>;
+            })}</div>
+          </section>
+          <section className={`field-report-abnormal-more${abnormalMoreOpen ? ' open' : ''}`}>
+            <button type="button" aria-expanded={abnormalMoreOpen} disabled={abnormalSaving} onClick={() => setAbnormalMoreOpen(value => !value)}><strong>补充信息</strong><span>以下全部可留空</span><ChevronDown size={17} /></button>
+            {abnormalMoreOpen && <div>
+              <label><span>具体原因</span><textarea rows={3} maxLength={1000} value={abnormalDraft.reason} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, reason: event.target.value })} placeholder="可记录现场现象或等待事项" /></label>
+              <label><span>责任部门</span><input maxLength={100} value={abnormalDraft.responsibilityDepartment} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, responsibilityDepartment: event.target.value })} /></label>
+              <label><span>责任对象</span><input maxLength={160} value={abnormalDraft.responsibilityObject} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, responsibilityObject: event.target.value })} placeholder="人员、供应商、设备或其他对象" /></label>
+            </div>}
+          </section>
+          {abnormalDraft.error && <p className="field-report-form-error" role="alert">{abnormalDraft.error}</p>}
+        </div>
+        <footer><span>异常登记失败也不会影响正常报工</span><button type="button" disabled={abnormalSaving || !abnormalDraft.category || !Number(abnormalDraft.durationMinutes)} onClick={() => void submitAbnormalTime()}>{abnormalSaving ? <><LoaderCircle className="spin" size={19} />正在登记...</> : <><TimerOff size={19} />提交主管审核</>}</button></footer>
       </section>
     </div>}
 

@@ -1,0 +1,100 @@
+.abnormal-time-workbench { width: 100%; height: 100dvh; min-width: 0; overflow: hidden; background: #f5f7f9; color: #172033; }
+.abnormal-time-frame { height: 100dvh; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.abnormal-time-frame > .hm-cockpit-command { flex: 0 0 58px; }
+.abnormal-time-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.abnormal-time-summary article { min-width: 0; height: 64px; padding: 8px 10px; display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid var(--hm-color-border); border-radius: 10px; background: #fff; box-shadow: var(--hm-shadow-xs); }
+.abnormal-time-summary article > svg { width: 36px; height: 36px; padding: 9px; border-radius: 9px; background: #fff1e8; color: #c2410c; }
+.abnormal-time-summary article.warning > svg { background: #fff7d6; color: #a16207; }
+.abnormal-time-summary article.good > svg { background: #edf8f0; color: #287a45; }
+.abnormal-time-summary article span { min-width: 0; display: grid; gap: 2px; font-size: 11px; font-weight: 850; }
+.abnormal-time-summary article small { overflow: hidden; color: #7a8796; font-size: 9px; font-weight: 550; text-overflow: ellipsis; white-space: nowrap; }
+.abnormal-time-summary article strong { font-size: 17px; white-space: nowrap; }
+.abnormal-time-toolbar { min-height: 50px; padding: 6px 8px; display: flex; align-items: center; gap: 8px; border: 1px solid var(--hm-color-border); border-radius: 10px; background: #fff; box-shadow: var(--hm-shadow-sm); }
+.abnormal-time-period { display: flex; padding: 3px; border-radius: 8px; background: #f1f3f5; }
+.abnormal-time-period button { min-height: 34px; padding: 0 13px; border: 0; border-radius: 6px; background: transparent; color: #66717e; font-size: 10px; font-weight: 850; }
+.abnormal-time-period button.active { background: #fff; color: #c2410c; box-shadow: 0 1px 4px rgba(31, 41, 51, .12); }
+.abnormal-time-toolbar > label { height: 38px; padding: 0 9px; display: flex; align-items: center; gap: 7px; border: 1px solid #dfe4e8; border-radius: 8px; color: #66717e; font-size: 9px; font-weight: 800; }
+.abnormal-time-toolbar input, .abnormal-time-toolbar select { height: 32px; border: 0; outline: 0; background: transparent; color: #263241; font: inherit; }
+.abnormal-time-toolbar > p { margin: 0 0 0 auto; display: flex; align-items: center; gap: 5px; color: #287a45; font-size: 9px; font-weight: 750; white-space: nowrap; }
+.abnormal-time-error { min-height: 36px; padding: 8px 11px; display: flex; align-items: center; gap: 7px; border: 1px solid #fecaca; border-radius: 8px; background: #fff1f0; color: #b42318; font-size: 11px; font-weight: 750; }
+.abnormal-time-content { min-height: 0; flex: 1; display: grid; grid-template-columns: 285px minmax(0, 1fr); gap: 8px; }
+.abnormal-time-categories, .abnormal-time-ledger { min-height: 0; border: 1px solid var(--hm-color-border); border-radius: 10px; background: #fff; box-shadow: var(--hm-shadow-sm); overflow: hidden; }
+.abnormal-time-categories { display: grid; grid-template-rows: 52px minmax(0, 1fr); }
+.abnormal-time-categories > header, .abnormal-time-ledger > header { padding: 8px 11px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #edf0f3; background: linear-gradient(90deg, #fff7ed, #fff); }
+.abnormal-time-categories > header span { display: flex; align-items: center; gap: 6px; color: #9a3412; font-size: 12px; font-weight: 850; }
+.abnormal-time-categories > header small { color: #7a8796; font-size: 8px; }
+.abnormal-time-categories > div { min-height: 0; padding: 8px; display: grid; align-content: start; gap: 7px; overflow: auto; }
+.abnormal-time-categories button { padding: 9px; display: grid; gap: 6px; border: 1px solid #e5e9ed; border-radius: 9px; background: #fff; text-align: left; }
+.abnormal-time-categories button:hover, .abnormal-time-categories button.active { border-color: #fb923c; background: #fffaf6; }
+.abnormal-time-categories button > span { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.abnormal-time-categories button strong { font-size: 11px; }
+.abnormal-time-categories button em { color: #7a8796; font-size: 9px; font-style: normal; }
+.abnormal-time-categories button > i { height: 5px; overflow: hidden; border-radius: 999px; background: #edf0f3; }
+.abnormal-time-categories button > i b { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #fb923c, #ea580c); }
+.abnormal-time-categories button > small { color: #7a8796; font-size: 8px; }
+.abnormal-time-categories > div > p { min-height: 180px; margin: 0; display: grid; place-items: center; align-content: center; gap: 7px; color: #7a8796; font-size: 10px; }
+.abnormal-time-ledger { display: grid; grid-template-rows: 52px minmax(0, 1fr); position: relative; }
+.abnormal-time-ledger > header > div { display: grid; gap: 1px; }
+.abnormal-time-ledger > header span { color: #d95600; font-size: 8px; font-weight: 850; }
+.abnormal-time-ledger > header h2 { margin: 0; font-size: 15px; }
+.abnormal-time-ledger > header em { padding: 4px 8px; border-radius: 999px; background: #fff1e8; color: #b94700; font-size: 9px; font-style: normal; font-weight: 850; }
+.abnormal-time-list { min-height: 0; padding: 9px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 8px; overflow: auto; }
+.abnormal-time-list article { min-width: 0; padding: 10px; display: grid; gap: 7px; border: 1px solid #e2e7eb; border-left: 3px solid #f59e0b; border-radius: 9px; background: #fff; }
+.abnormal-time-list article.status-confirmed { border-left-color: #2d8a4e; }
+.abnormal-time-list article.status-rejected { border-left-color: #c2410c; background: #fffafa; }
+.abnormal-time-list article > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.abnormal-time-list article > header span { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.abnormal-time-list article > header em, .abnormal-time-list article > header b, .abnormal-time-list article > header i, .abnormal-time-list article > header strong { padding: 3px 6px; border-radius: 999px; font-size: 8px; font-style: normal; white-space: nowrap; }
+.abnormal-time-list article > header em { background: #f1f3f5; color: #66717e; }
+.abnormal-time-list article > header b { background: #fff1e8; color: #b94700; }
+.abnormal-time-list article > header i { background: #eef4ff; color: #2563eb; }
+.abnormal-time-list article > header strong { background: #fff7d6; color: #91600b; }
+.abnormal-time-list article.status-confirmed > header strong { background: #edf8f0; color: #287a45; }
+.abnormal-time-list article.status-rejected > header strong { background: #fff1f0; color: #b42318; }
+.abnormal-time-list h3 { margin: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.abnormal-time-list article > p { margin: 0; overflow: hidden; color: #66717e; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.abnormal-time-list dl { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.abnormal-time-list dl div { min-width: 0; padding: 6px 7px; display: grid; gap: 2px; border-radius: 7px; background: #f7f8fa; }
+.abnormal-time-list dt { color: #7a8796; font-size: 8px; }
+.abnormal-time-list dd { margin: 0; overflow: hidden; font-size: 9px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+.abnormal-time-list blockquote { margin: 0; padding: 6px 8px; border-left: 2px solid #fdba74; border-radius: 0 6px 6px 0; background: #fffaf6; color: #66717e; font-size: 9px; line-height: 1.45; }
+.abnormal-time-list article > footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.abnormal-time-list article > footer span { overflow: hidden; color: #7a8796; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.abnormal-time-list article > footer button { min-height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid #fdba74; border-radius: 7px; background: #fff7ed; color: #c2410c; font-size: 9px; font-weight: 850; white-space: nowrap; }
+.abnormal-time-empty { position: absolute; inset: 52px 0 0; display: grid; place-items: center; align-content: center; gap: 7px; color: #7a8796; text-align: center; pointer-events: none; }
+.abnormal-time-empty svg { color: #2d8a4e; }
+.abnormal-time-empty strong { color: #394553; font-size: 13px; }
+.abnormal-time-empty span { font-size: 10px; }
+.abnormal-time-loading { position: fixed; z-index: 120; inset: 0; display: grid; place-items: center; align-content: center; gap: 9px; background: rgba(245, 247, 249, .82); color: #c2410c; font-weight: 800; backdrop-filter: blur(4px); }
+.abnormal-time-toast { position: fixed; z-index: 160; right: 18px; bottom: 18px; max-width: 420px; padding: 11px 14px; display: flex; align-items: center; gap: 7px; border-radius: 9px; background: #173c2a; color: #fff; font-size: 11px; box-shadow: 0 16px 42px rgba(15, 23, 42, .2); }
+.abnormal-time-review-backdrop { position: fixed; z-index: 150; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(15, 23, 42, .58); backdrop-filter: blur(7px); }
+.abnormal-time-review { width: min(540px, 100%); max-height: calc(100dvh - 36px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; border-radius: 15px; background: #fff; box-shadow: 0 28px 80px rgba(15, 23, 42, .3); }
+.abnormal-time-review > header { padding: 14px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #e5e9ed; background: linear-gradient(90deg, #fff7ed, #fff); }
+.abnormal-time-review > header div { min-width: 0; display: grid; gap: 2px; }
+.abnormal-time-review > header span { color: #d95600; font-size: 9px; font-weight: 850; }
+.abnormal-time-review > header h2 { margin: 0; overflow: hidden; font-size: 18px; text-overflow: ellipsis; white-space: nowrap; }
+.abnormal-time-review > header button { width: 36px; height: 36px; display: grid; place-items: center; border: 1px solid #dfe4e8; border-radius: 8px; background: #fff; color: #66717e; }
+.abnormal-time-review > div { min-height: 0; padding: 14px 16px; display: grid; gap: 12px; overflow: auto; }
+.abnormal-time-review > div > section { padding: 10px; display: flex; align-items: center; gap: 9px; border: 1px solid #fed7aa; border-radius: 9px; background: #fff7ed; color: #9a3412; }
+.abnormal-time-review > div > section span { display: grid; gap: 2px; }
+.abnormal-time-review > div > section small { font-size: 8px; }
+.abnormal-time-review > div > section strong { font-size: 11px; }
+.abnormal-time-review label { display: grid; gap: 6px; color: #4a5664; font-size: 10px; font-weight: 800; }
+.abnormal-time-review label > span b { color: #c2410c; font-size: 8px; }
+.abnormal-time-review label > div { display: grid; grid-template-columns: 1fr auto; border: 1px solid #dfe4e8; border-radius: 8px; overflow: hidden; }
+.abnormal-time-review input[type='number'] { min-width: 0; height: 42px; padding: 0 10px; border: 0; outline: 0; font: inherit; }
+.abnormal-time-review label > div em { padding: 0 12px; display: grid; place-items: center; background: #f4f6f8; color: #66717e; font-style: normal; }
+.abnormal-time-review label > small { color: #7a8796; font-size: 8px; font-weight: 550; }
+.abnormal-time-review textarea { min-height: 88px; padding: 9px; border: 1px solid #dfe4e8; border-radius: 8px; outline: 0; resize: vertical; font: inherit; }
+.abnormal-time-review label.abnormal-time-exempt { padding: 10px; display: grid; grid-template-columns: auto 1fr; align-items: center; border: 1px solid #bbf7d0; border-radius: 9px; background: #f0fdf4; }
+.abnormal-time-exempt input { width: 18px; height: 18px; accent-color: #16a34a; }
+.abnormal-time-exempt span { display: grid; gap: 2px; }
+.abnormal-time-exempt small { color: #5f7768; font-size: 8px; font-weight: 550; }
+.abnormal-time-review > div > p { margin: 0; padding: 8px 10px; display: flex; align-items: center; gap: 6px; border-radius: 8px; background: #fff1f0; color: #b42318; font-size: 10px; font-weight: 750; }
+.abnormal-time-review > footer { padding: 11px 16px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid #e5e9ed; background: #fafbfc; }
+.abnormal-time-review > footer button { min-height: 40px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #dfe4e8; border-radius: 8px; background: #fff; color: #4a5664; font-size: 10px; font-weight: 850; }
+.abnormal-time-review > footer button.primary { border-color: #ea580c; background: #ea580c; color: #fff; }
+.abnormal-time-review button:disabled { opacity: .55; }
+@media (max-width: 1040px) { .abnormal-time-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }.abnormal-time-summary article:nth-child(n+4) { display: none; }.abnormal-time-toolbar > p { display: none; }.abnormal-time-content { grid-template-columns: 240px minmax(0, 1fr); }.abnormal-time-list { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { .abnormal-time-frame { padding: 6px; }.abnormal-time-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }.abnormal-time-summary article:nth-child(n+3) { display: none; }.abnormal-time-toolbar { overflow-x: auto; }.abnormal-time-toolbar > label { flex: none; }.abnormal-time-content { grid-template-columns: 1fr; }.abnormal-time-categories { display: none; } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none !important; } }

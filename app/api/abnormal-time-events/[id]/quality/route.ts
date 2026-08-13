@@ -3,10 +3,11 @@ import type { Prisma } from '@prisma/client';
 import {
   ForbiddenError,
   forbidden,
-  requireCapability,
+  requireUser,
   unauthorized,
   UnauthorizedError,
 } from '@/lib/auth';
+import { canReviewAbnormalTimeEvent } from '@/lib/abnormal-time-access';
 import { segmentsFromJson, serializeAbnormalTimeEvent } from '@/lib/attendance';
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
@@ -21,11 +22,12 @@ const include = {
   resolvedBy: { select: { id: true, username: true, displayName: true } },
   workOrder: { select: { id: true, code: true, customerName: true, specification: true, productName: true } },
   processStep: { select: { id: true, processCode: true, processName: true } },
+  reportedByEmployee: true,
 } satisfies Prisma.AbnormalTimeEventInclude;
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await requireCapability('QUALITY', 'UPDATE');
+    const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const decision = body.decision === 'rejected' ? 'rejected' as const : body.decision === 'confirmed' ? 'confirmed' as const : null;
     if (!decision) return NextResponse.json({ ok: false, error: '请选择确认或驳回' }, { status: 400 });
@@ -39,7 +41,32 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         include: { allocations: { include: { employee: true } } },
       });
       if (!existing) throw new Error('异常工时记录不存在');
-      if (decision === 'confirmed' && existing.employeeExempt) {
+      if (!(await canReviewAbnormalTimeEvent(user, existing.allocations.map(item => item.employeeId)))) {
+        throw new ForbiddenError();
+      }
+      const expectedVersion = body.expectedVersion === undefined ? existing.version : Number(body.expectedVersion);
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== existing.version) {
+        throw new Error('异常记录已被其他人更新，请刷新后重新审核');
+      }
+      const approvedMinutesProvided = body.approvedDurationMinutes !== undefined
+        && String(body.approvedDurationMinutes).trim() !== '';
+      const approvedMinutes = approvedMinutesProvided ? Number(body.approvedDurationMinutes) : null;
+      const approvedDurationMilliseconds = approvedMinutes === null
+        ? existing.durationMilliseconds
+        : approvedMinutes * 60_000;
+      if (
+        decision === 'confirmed'
+        && (
+          (approvedMinutes !== null && (!Number.isSafeInteger(approvedMinutes) || approvedMinutes <= 0))
+          || approvedDurationMilliseconds > existing.durationMilliseconds
+        )
+      ) {
+        throw new Error(`审核时长必须是 1 至 ${Math.floor(existing.durationMilliseconds / 60_000)} 分钟的整数，或留空按原始时长确认`);
+      }
+      const employeeExempt = decision === 'confirmed' && (
+        body.employeeExempt === undefined ? existing.employeeExempt : body.employeeExempt === true
+      );
+      if (employeeExempt) {
         for (const allocation of existing.allocations) {
           const attendance = await tx.attendanceRecord.findUnique({
             where: {
@@ -91,26 +118,33 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         data: {
           qualityStatus: decision,
           qualityNote: note || null,
+          approvedDurationMilliseconds: decision === 'confirmed' ? approvedDurationMilliseconds : null,
+          employeeExempt,
           qualityConfirmedById: user.id,
           qualityConfirmedAt: new Date(),
           updatedById: user.id,
+          version: { increment: 1 },
         },
         include,
       });
     });
     await logOp({
       userId: user.id,
-      action: decision === 'confirmed' ? 'quality_confirm_abnormal_time' : 'quality_reject_abnormal_time',
+      action: decision === 'confirmed' ? 'supervisor_confirm_abnormal_time' : 'supervisor_reject_abnormal_time',
       targetType: 'abnormal_time_event',
       targetId: event.id,
-      detail: { sequence: event.sequence, employeeExempt: event.employeeExempt },
+      detail: {
+        sequence: event.sequence,
+        employeeExempt: event.employeeExempt,
+        approvedDurationMilliseconds: event.approvedDurationMilliseconds,
+      },
     });
     return NextResponse.json({ ok: true, event: serializeAbnormalTimeEvent(event) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof ForbiddenError) return forbidden('仅质量部或管理员可以确认异常工时');
-    const message = error instanceof Error ? error.message : '品质确认失败';
-    console.error('quality confirm abnormal time failed', error);
+    if (error instanceof ForbiddenError) return forbidden('仅车间主管、质量部或管理员可以审核当前范围的异常工时');
+    const message = error instanceof Error ? error.message : '异常工时审核失败';
+    console.error('supervisor review abnormal time failed', error);
     return NextResponse.json({ ok: false, error: message }, { status: 400 });
   }
 }

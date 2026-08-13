@@ -41,6 +41,7 @@ test('production supervisor can use production and planning collaboration pages'
   );
   assert.equal(canAccessAppRoute(supervisor, '/production'), true);
   assert.equal(canAccessAppRoute(supervisor, '/workspace/daily-plans'), true);
+  assert.equal(canAccessAppRoute(supervisor, '/workspace/abnormal-times'), true);
   assert.equal(canAccessAppRoute(supervisor, '/weekly-plan-center'), false);
 });
 
@@ -64,6 +65,7 @@ test('process specialist sees collaboration pages but not scheduling or QR print
 test('terminal tooling is visible to workshop leaders and hidden from field reporters', () => {
   assert.equal(canAccessAppRoute(access('TERMINAL_TOOLING'), '/workspace/terminal-tooling'), true);
   assert.equal(canAccessAppRoute(access('FIELD_REPORT'), '/workspace/terminal-tooling'), false);
+  assert.equal(canAccessAppRoute(access('FIELD_REPORT'), '/workspace/abnormal-times'), false);
 });
 
 test('GM read/approval grants map to reports and workflow but not settings', () => {

@@ -32,7 +32,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/recruitment', anyOf: ['HR'] },
   { prefix: '/api/skills', anyOf: ['HR'] },
   { prefix: '/api/attendance', anyOf: ['HR'] },
-  { prefix: '/api/abnormal-time-events', anyOf: ['HR', 'QUALITY'] },
+  { prefix: '/api/abnormal-time-events', anyOf: ['HR', 'QUALITY', 'PRODUCTION'] },
 
   { prefix: '/api/material-follow-ups', anyOf: ['PROCUREMENT'] },
   { prefix: '/api/warehouse', anyOf: ['WAREHOUSE'] },
@@ -247,9 +247,18 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
     };
   }
 
-  if (/^\/api\/abnormal-time-events\/[^/]+\/(?:quality|resolve)$/.test(path)) {
+  if (/^\/api\/abnormal-time-events\/[^/]+\/quality$/.test(path)) {
     return {
-      prefix: '/api/abnormal-time-events/:id/quality-or-resolve',
+      prefix: '/api/abnormal-time-events/:id/quality',
+      anyOf: ['QUALITY', 'PRODUCTION'],
+      action: 'EXECUTE_WORKFLOW',
+      productionMinimumScope: 'WORKSHOP',
+    };
+  }
+
+  if (/^\/api\/abnormal-time-events\/[^/]+\/resolve$/.test(path)) {
+    return {
+      prefix: '/api/abnormal-time-events/:id/resolve',
       anyOf: ['QUALITY'],
       action: 'EXECUTE_WORKFLOW',
     };

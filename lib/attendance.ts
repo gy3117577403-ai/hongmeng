@@ -15,6 +15,17 @@ export const MINUTE_MILLISECONDS = 60 * 1000;
 export const ATTAINMENT_CAPACITY_FACTOR = 0.95;
 
 export const ABNORMAL_TIME_CATEGORIES: Array<{ value: AbnormalTimeCategory; label: string }> = [
+  { value: 'personal', label: '个人问题' },
+  { value: 'drawing_technical', label: '图纸 / 技术问题' },
+  { value: 'process', label: '工艺问题' },
+  { value: 'quality', label: '质量问题' },
+  { value: 'incoming_material', label: '来料问题' },
+  { value: 'equipment_tooling', label: '设备 / 工装问题' },
+  { value: 'planning_coordination', label: '计划 / 协同问题' },
+  { value: 'system_other', label: '系统 / 其他问题' },
+];
+
+const LEGACY_ABNORMAL_TIME_CATEGORIES: Array<{ value: AbnormalTimeCategory; label: string }> = [
   { value: 'equipment', label: '设备异常' },
   { value: 'material_shortage', label: '缺料' },
   { value: 'wrong_material', label: '错料' },
@@ -26,6 +37,11 @@ export const ABNORMAL_TIME_CATEGORIES: Array<{ value: AbnormalTimeCategory; labe
   { value: 'planning_change', label: '计划变更' },
   { value: 'power_network_system', label: '电力 / 网络 / 系统' },
   { value: 'other', label: '其他' },
+];
+
+const ALL_ABNORMAL_TIME_CATEGORIES = [
+  ...ABNORMAL_TIME_CATEGORIES,
+  ...LEGACY_ABNORMAL_TIME_CATEGORIES,
 ];
 
 type AttendanceWithRelations = Prisma.AttendanceRecordGetPayload<{
@@ -50,6 +66,7 @@ type AbnormalEventWithRelations = Prisma.AbnormalTimeEventGetPayload<{
       };
     };
     processStep: { select: { id: true; processCode: true; processName: true } };
+    reportedByEmployee: true;
   };
 }>;
 
@@ -76,11 +93,15 @@ export function parseAttendanceType(value: unknown): AttendanceType {
 
 export function parseAbnormalCategory(value: unknown): AbnormalTimeCategory {
   const candidate = cleanProcessText(value, 40) as AbnormalTimeCategory;
-  return ABNORMAL_TIME_CATEGORIES.some(item => item.value === candidate) ? candidate : 'other';
+  return ALL_ABNORMAL_TIME_CATEGORIES.some(item => item.value === candidate) ? candidate : 'system_other';
 }
 
 export function abnormalCategoryLabel(category: string): string {
-  return ABNORMAL_TIME_CATEGORIES.find(item => item.value === category)?.label || '其他';
+  return ALL_ABNORMAL_TIME_CATEGORIES.find(item => item.value === category)?.label || '系统 / 其他问题';
+}
+
+export function isAbnormalTimeCategory(value: unknown): value is AbnormalTimeCategory {
+  return ALL_ABNORMAL_TIME_CATEGORIES.some(item => item.value === cleanProcessText(value, 40));
 }
 
 function parseDateTime(value: unknown, workDate: string, label: string): Date {
@@ -181,6 +202,13 @@ export function parseEmployeeIds(value: unknown): string[] {
   return ids;
 }
 
+export function parseOptionalPositiveInteger(value: unknown, label: string): number | null {
+  if (value === undefined || value === null || String(value).trim() === '') return null;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) throw new Error(`${label}必须是大于 0 的整数`);
+  return parsed;
+}
+
 export function segmentsFromJson(value: Prisma.JsonValue): AttendanceSegmentDTO[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap(raw => {
@@ -228,18 +256,27 @@ export function serializeAbnormalTimeEvent(event: AbnormalEventWithRelations): A
     employee: serializeEmployee(item.employee),
     durationMilliseconds: item.durationMilliseconds,
   }));
+  const approvedDurationMilliseconds = event.qualityStatus === 'confirmed'
+    ? event.approvedDurationMilliseconds ?? event.durationMilliseconds
+    : null;
   return {
     id: event.id,
     sequence: event.sequence,
     workDate: dateKeyFromDatabase(event.workDate),
     category: parseAbnormalCategory(event.category),
     categoryLabel: abnormalCategoryLabel(event.category),
+    subcategory: event.subcategory,
     title: event.title,
     reason: event.reason,
     startedAt: event.startedAt.toISOString(),
     endedAt: event.endedAt.toISOString(),
     durationMilliseconds: event.durationMilliseconds,
+    approvedDurationMilliseconds,
     affectedPersonMilliseconds: allocations.reduce((sum, item) => sum + item.durationMilliseconds, 0),
+    approvedPersonMilliseconds: approvedDurationMilliseconds === null
+      ? 0
+      : approvedDurationMilliseconds * allocations.length,
+    affectedQuantity: event.affectedQuantity,
     employeeExempt: event.employeeExempt,
     qualityStatus: event.qualityStatus === 'confirmed' ? 'confirmed' : event.qualityStatus === 'rejected' ? 'rejected' : 'pending',
     qualityNote: event.qualityNote,
@@ -247,12 +284,16 @@ export function serializeAbnormalTimeEvent(event: AbnormalEventWithRelations): A
     qualityConfirmedAt: event.qualityConfirmedAt?.toISOString() || null,
     resolutionStatus: event.resolutionStatus === 'resolved' ? 'resolved' : 'open',
     responsibilityDepartment: event.responsibilityDepartment,
+    responsibilityObject: event.responsibilityObject,
     expectedResolvedAt: event.expectedResolvedAt?.toISOString() || null,
     resolutionNote: event.resolutionNote,
     resolvedBy: event.resolvedBy,
     resolvedAt: event.resolvedAt?.toISOString() || null,
     workOrder: event.workOrder,
     processStep: event.processStep,
+    source: event.source,
+    reportedByEmployee: event.reportedByEmployee ? serializeEmployee(event.reportedByEmployee) : null,
+    version: event.version,
     allocations,
     createdAt: event.createdAt.toISOString(),
     updatedAt: event.updatedAt.toISOString(),

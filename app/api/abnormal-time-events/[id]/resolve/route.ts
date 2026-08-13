@@ -21,6 +21,7 @@ const include = {
   resolvedBy: { select: { id: true, username: true, displayName: true } },
   workOrder: { select: { id: true, code: true, customerName: true, specification: true, productName: true } },
   processStep: { select: { id: true, processCode: true, processName: true } },
+  reportedByEmployee: true,
 } satisfies Prisma.AbnormalTimeEventInclude;
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
