@@ -15,7 +15,7 @@ const packageLock = JSON.parse(readFileSync(resolve(repositoryRoot, 'package-loc
 const dockerfile = readFileSync(resolve(repositoryRoot, 'Dockerfile'), 'utf8');
 const workflow = readFileSync(resolve(repositoryRoot, '.github/workflows/docker-image.yml'), 'utf8');
 
-const expectedPackageVersion = '1.32.1';
+const expectedPackageVersion = '1.32.2';
 const expectedImageVersion = `v${expectedPackageVersion}`;
 
 test('release version stays aligned across npm, Docker, and GHCR publishing', () => {

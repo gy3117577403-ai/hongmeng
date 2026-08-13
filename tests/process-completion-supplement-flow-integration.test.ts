@@ -327,7 +327,7 @@ test(
 );
 
 test(
-  'ordinary upstream reporting skips an active supplemental middle group and feeds the next normal group',
+  'ordinary reporting remains free across an active supplemental middle group',
   { skip: runDatabaseIntegration ? false : 'set RUN_DB_INTEGRATION=1 to use the configured database' },
   async () => {
     const prefix = `IT-SUP-MIDDLE-${Date.now()}-${randomUUID().slice(0, 8)}`;
@@ -443,10 +443,32 @@ test(
         0,
       );
 
+      const downstreamWhileSupplementActive = await completeProcessStep({
+        routeId: order.processRoute.id,
+        stepId: secondStep.id,
+        processedQty: 9,
+        defectQty: 0,
+        workDate,
+        employeeIds: [employee.id],
+        requireParticipants: true,
+        allowAdvanceReporting: true,
+        idempotencyKey: `${prefix}-complete-normal-second-rest-before-supplement`,
+        expectedRouteVersion: 4,
+        userId: actor.id,
+        actor: actor.displayName || actor.username,
+      });
+      assert.equal(downstreamWhileSupplementActive.routeCompleted, false);
+      assert.equal(downstreamWhileSupplementActive.pendingCoverageQty, 0);
+      const stillOpenObligation = await prisma.processSupplementObligation.findUniqueOrThrow({
+        where: { id: obligation.id },
+      });
+      assert.equal(stillOpenObligation.status, 'ACTIVE');
+      assert.equal(stillOpenObligation.reportedQty, 0);
+
       const fulfilled = await completeProcessSupplementObligation({
         obligationId: obligation.id,
         routeId: order.processRoute.id,
-        expectedRouteVersion: 4,
+        expectedRouteVersion: 5,
         processedQty: 10,
         defectQty: 0,
         workDate,

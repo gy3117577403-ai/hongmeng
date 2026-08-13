@@ -3497,19 +3497,11 @@ async function performProcessCompletion(
       'PROCESS_SUPPLEMENT_COMPLETION_REQUIRED',
     );
   }
-  const blockingSupplement = route.steps.find(step => (
-    step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
-    && step.position < current.position
-    && step.status !== 'completed'
-    && step.status !== 'skipped'
-  ));
-  if (blockingSupplement) {
-    throw new ProcessCompletionServiceError(
-      `请先完成新增工序「${blockingSupplement.processName}」的补充报工`,
-      409,
-      'PROCESS_SUPPLEMENT_BLOCKS_DOWNSTREAM',
-    );
-  }
+  // A late-inserted supplemental obligation has its own quantity and labor
+  // ledger. It must remain visible and keep the route open until fulfilled,
+  // but it must not override the existing free/advance-reporting rule for
+  // ordinary steps. This lets non-real-time shop-floor reports arrive in any
+  // order without rewriting the preserved downstream history.
   if (!input.allowAdvanceReporting && current.status !== 'current') {
     throw new ProcessCompletionServiceError(
       '该工序已不是当前可完成工序，请刷新后重试',
