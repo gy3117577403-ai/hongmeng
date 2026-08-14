@@ -83,7 +83,24 @@ function materialText(material: PrintMaterial): string {
 function targetText(target: PrintTarget): string {
   if (target === 'all') return '流转单 + SOP 双面打印包';
   if (target === 'traveler') return '二维码流转单';
-  return 'SOP 原版打印包';
+  return 'SOP 打印包';
+}
+
+function sourceFormatText(item: WorkOrderTravelerPrintRecord['items'][number]): string {
+  const name = String(item.fileName || '').toLowerCase();
+  const mime = String(item.mimeType || '').toLowerCase();
+  if (mime === 'application/pdf' || name.endsWith('.pdf')) return 'PDF';
+  if (mime === 'image/jpeg' || name.endsWith('.jpg') || name.endsWith('.jpeg')) return 'JPEG图片';
+  if (mime === 'image/png' || name.endsWith('.png')) return 'PNG图片';
+  if (mime === 'image/webp' || name.endsWith('.webp')) return 'WebP图片';
+  return '可打印文件';
+}
+
+function drawingPrintRule(record: WorkOrderTravelerPrintRecord, item: WorkOrderTravelerPrintRecord['items'][number]) {
+  const format = sourceFormatText(item);
+  if (format === 'PDF') return '保留源页面尺寸和方向';
+  const paperSize = record.snapshot.printRendering?.drawingImagePaperSize === 'A3' ? 'A3' : 'A4';
+  return `${paperSize}纸张 · 自动横竖 · 完整适配`;
 }
 
 function targetMaterials(target: PrintTarget): PrintMaterial[] {
@@ -373,37 +390,37 @@ export default function WorkOrderTravelerPrint({
         </div>
       </header>
 
-      {duplexTravelerSop && includesTraveler && includesSop && <div className="traveler-print-instruction"><FileText size={18} /><span><strong>原生 PDF 双面打印包</strong> SOP 保留源文件横竖方向、矢量内容和已发布标注；打印时选择“双面 / 长边翻转”，方向选择“自动”。</span></div>}
+      {duplexTravelerSop && includesTraveler && includesSop && <div className="traveler-print-instruction"><FileText size={18} /><span><strong>统一 PDF 双面打印包</strong> PDF版SOP保留源页面，图片版SOP自动转为A4打印页；打印时选择“双面 / 长边翻转”，方向选择“自动”。</span></div>}
       {loadError && <div className="traveler-print-warning">资料加载失败：{loadError}</div>}
 
       {includesDrawing && <section className="traveler-drawing-jobs" aria-label="原图打印清单">
-        <header><span><FileImage size={19} /><strong>原图打印清单</strong><small>每张工单独立打开源 PDF，打印机按 PDF 自带的 A3/A4 页面尺寸和方向输出。</small></span><em>{records.filter(record => printItem(record, 'DRAWING')).length} 项</em></header>
+        <header><span><FileImage size={19} /><strong>原图打印清单</strong><small>PDF保留源页面尺寸；JPG、PNG、WebP自动转换为所选A4/A3打印页。</small></span><em>{records.filter(record => printItem(record, 'DRAWING')).length} 项</em></header>
         <div>{records.filter(record => printItem(record, 'DRAWING')).map(record => {
           const drawing = printItem(record, 'DRAWING')!;
           const confirmed = confirmedItems.has(itemKey(record.printId, 'DRAWING'));
-          return <article key={record.printId}><span><strong>{record.snapshot.specification || record.snapshot.productName}</strong><small>{drawing.fileName || '原图 PDF'} · {drawing.copies} 份</small></span><b className={confirmed ? 'confirmed' : openedDrawings.has(record.printId) ? 'opened' : ''}>{confirmed ? '已打印' : openedDrawings.has(record.printId) ? '待确认' : '未打开'}</b><button type="button" onClick={() => openDrawing(record)}><ExternalLink size={15} />{openedDrawings.has(record.printId) ? '重新打开原图' : '打开原图'}</button>{!confirmed && <button className="confirm" type="button" disabled={!openedDrawings.has(record.printId)} onClick={() => setConfirmRequest({ printIds: [record.printId], materials: ['DRAWING'] })}><FileCheck2 size={15} />确认已打印</button>}</article>;
+          return <article key={record.printId}><span><strong>{record.snapshot.specification || record.snapshot.productName}</strong><small>{drawing.fileName || '原图'} · {sourceFormatText(drawing)} · {drawingPrintRule(record, drawing)} · {drawing.copies} 份</small></span><b className={confirmed ? 'confirmed' : openedDrawings.has(record.printId) ? 'opened' : ''}>{confirmed ? '已打印' : openedDrawings.has(record.printId) ? '待确认' : '未打开'}</b><button type="button" onClick={() => openDrawing(record)}><ExternalLink size={15} />{openedDrawings.has(record.printId) ? '重新打开原图' : '打开原图'}</button>{!confirmed && <button className="confirm" type="button" disabled={!openedDrawings.has(record.printId)} onClick={() => setConfirmRequest({ printIds: [record.printId], materials: ['DRAWING'] })}><FileCheck2 size={15} />确认已打印</button>}</article>;
         })}</div>
       </section>}
 
       {visibleTargets.length > 0 ? <section className="traveler-packet-card" aria-label="打印文件预览">
         <header>
-          <div><span>打印预览</span><strong>{targetText(selectedTarget)}</strong><small>{activePacket?.status === 'ready' ? `${activePacket.pageCount || '多'} 页 · 原始纸张方向已保留` : '正在准备可重复使用的原生 PDF 打印文件'}</small></div>
+          <div><span>打印预览</span><strong>{targetText(selectedTarget)}</strong><small>{activePacket?.status === 'ready' ? `${activePacket.pageCount || '多'} 页 · PDF保留源页面，图片自动适配` : '正在准备可重复使用的统一 PDF 打印文件'}</small></div>
           {visibleTargets.length > 1 && <nav aria-label="打印资料切换">{visibleTargets.map(target => <button className={selectedTarget === target ? 'active' : ''} type="button" key={target} onClick={() => setActiveTarget(target)}>{targetText(target)}</button>)}</nav>}
         </header>
         <div className="traveler-packet-preview">
-          {(!activePacket || activePacket.status === 'loading') && <div className="traveler-packet-loading"><LoaderCircle className="spin" size={34} /><strong>正在生成打印文件</strong><span>流转单只渲染一次，SOP 直接复制原 PDF，不再逐页转图片。</span></div>}
+          {(!activePacket || activePacket.status === 'loading') && <div className="traveler-packet-loading"><LoaderCircle className="spin" size={34} /><strong>正在生成打印文件</strong><span>流转单只渲染一次；PDF版SOP直接复制页面，图片版SOP安全转换为打印页。</span></div>}
           {activePacket?.status === 'error' && <div className="traveler-packet-error"><FileText size={34} /><strong>合并打印文件生成失败</strong><span>{activePacket.message}</span>{includesSop && <small>下方已提供 SOP 原文件入口；流转单备用文件会继续生成。</small>}</div>}
           {activePacket?.status === 'ready' && activePacket.url && <iframe title={`${targetText(selectedTarget)}预览`} src={`${activePacket.url}#toolbar=1&navpanes=0&view=FitH`} />}
         </div>
         {activePacket?.status === 'ready' && <footer><span><CheckCircle2 size={16} />预览文件已固定，可连续多次打开，不会再次转换 SOP。</span><small>浏览器预览不会自动标记打印；纸张输出并核对后再点“确认已打印”。</small></footer>}
-      </section> : <section className="traveler-print-external-only"><FileImage size={34} /><strong>当前任务仅包含原图</strong><span>请在上方清单逐张打开源 PDF 打印并确认。</span></section>}
+      </section> : <section className="traveler-print-external-only"><FileImage size={34} /><strong>当前任务仅包含原图</strong><span>请在上方清单逐张打开统一PDF打印预览并确认。</span></section>}
 
       {sopPacketFailed && <section className="traveler-drawing-jobs traveler-sop-fallback" aria-label="SOP 原文件打印清单">
-        <header><span><FileText size={19} /><strong>SOP 原文件备用打印</strong><small>仅当合并文件失败时使用；源 PDF 不经过转换，横竖方向和标注保持不变。</small></span><em>{records.filter(record => printItem(record, 'SOP')).length} 项</em></header>
+        <header><span><FileText size={19} /><strong>SOP 单文件备用打印</strong><small>仅当合并文件失败时使用；PDF保留源页面，图片自动生成A4打印页。</small></span><em>{records.filter(record => printItem(record, 'SOP')).length} 项</em></header>
         <div>{records.filter(record => printItem(record, 'SOP')).map(record => {
           const sop = printItem(record, 'SOP')!;
           const confirmed = confirmedItems.has(itemKey(record.printId, 'SOP'));
-          return <article key={record.printId}><span><strong>{record.snapshot.specification || record.snapshot.productName}</strong><small>{sop.fileName || 'SOP PDF'} · {sop.copies} 份</small></span><b className={confirmed ? 'confirmed' : openedSops.has(record.printId) ? 'opened' : ''}>{confirmed ? '已打印' : openedSops.has(record.printId) ? '待确认' : '未打开'}</b><button type="button" onClick={() => openSop(record)}><ExternalLink size={15} />{openedSops.has(record.printId) ? '重新打开 SOP' : '打开 SOP'}</button>{!confirmed && <button className="confirm" type="button" disabled={!openedSops.has(record.printId)} onClick={() => setConfirmRequest({ printIds: [record.printId], materials: ['SOP'] })}><FileCheck2 size={15} />确认已打印</button>}</article>;
+          return <article key={record.printId}><span><strong>{record.snapshot.specification || record.snapshot.productName}</strong><small>{sop.fileName || 'SOP'} · {sourceFormatText(sop)} · {sourceFormatText(sop) === 'PDF' ? '保留源页面' : 'A4自动横竖'} · {sop.copies} 份</small></span><b className={confirmed ? 'confirmed' : openedSops.has(record.printId) ? 'opened' : ''}>{confirmed ? '已打印' : openedSops.has(record.printId) ? '待确认' : '未打开'}</b><button type="button" onClick={() => openSop(record)}><ExternalLink size={15} />{openedSops.has(record.printId) ? '重新打开 SOP' : '打开 SOP'}</button>{!confirmed && <button className="confirm" type="button" disabled={!openedSops.has(record.printId)} onClick={() => setConfirmRequest({ printIds: [record.printId], materials: ['SOP'] })}><FileCheck2 size={15} />确认已打印</button>}</article>;
         })}</div>
       </section>}
 

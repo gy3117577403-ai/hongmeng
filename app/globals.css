@@ -16223,10 +16223,14 @@ body:has(.qr-dialog) .modal-backdrop {
 .traveler-print-hint strong { font-size: 12px; }
 .traveler-print-hint small { color: #657b98; font-size: 11px; line-height: 1.5; }
 .traveler-print-form-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 14px; margin-top: 17px; }
+.traveler-print-form-row.with-paper { grid-template-columns: 150px 190px minmax(0, 1fr); }
+.traveler-print-form-row.with-paper.custom-mode { grid-template-columns: 190px minmax(0, 1fr); }
 .traveler-print-form-row label { display: grid; gap: 7px; }
 .traveler-print-form-row label > span { color: #4f5f75; font-size: 12px; font-weight: 700; }
-.traveler-print-form-row input { min-height: 44px; width: 100%; padding: 0 12px; border: 1px solid #d6dfeb; border-radius: 10px; color: #18263c; background: #fff; font: inherit; }
-.traveler-print-form-row input:focus { outline: 3px solid rgba(47, 115, 232, .11); border-color: #75a5ee; }
+.traveler-print-form-row input,
+.traveler-print-form-row select { min-height: 44px; width: 100%; padding: 0 12px; border: 1px solid #d6dfeb; border-radius: 10px; color: #18263c; background: #fff; font: inherit; }
+.traveler-print-form-row input:focus,
+.traveler-print-form-row select:focus { outline: 3px solid rgba(47, 115, 232, .11); border-color: #75a5ee; }
 .traveler-print-confirm-note { color: #8b4d13; background: #fff8ed; border: 1px solid #f5dfbd; font-size: 11px; line-height: 1.55; }
 .traveler-print-dialog-error { margin-top: 14px; padding: 11px 13px; border-radius: 10px; color: #b4232d; background: #fff0f1; border: 1px solid #f2c9cd; font-size: 12px; font-weight: 700; }
 .traveler-print-dialog > footer { min-height: 72px; display: flex; align-items: center; justify-content: flex-end; gap: 10px; padding: 14px 22px; border-top: 1px solid #e8edf4; background: #fbfcfe; }
@@ -16238,5 +16242,7 @@ body:has(.qr-dialog) .modal-backdrop {
   .traveler-print-mode-grid { grid-template-columns: 1fr; }
   .traveler-print-mode-grid > button { min-height: 104px; grid-template-columns: auto 1fr; grid-template-rows: 1fr; }
   .traveler-print-advanced-body { grid-template-columns: 1fr; }
-  .traveler-print-form-row { grid-template-columns: 1fr; }
+  .traveler-print-form-row,
+  .traveler-print-form-row.with-paper,
+  .traveler-print-form-row.with-paper.custom-mode { grid-template-columns: 1fr; }
 }

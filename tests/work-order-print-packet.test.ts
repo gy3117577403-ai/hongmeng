@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { degrees, PDFDocument, rgb } from 'pdf-lib';
+import sharp from 'sharp';
 import { buildWorkOrderPrintPacket, type WorkOrderPrintPacketRecord } from '../lib/work-order-print-packet';
 
 const ONE_PIXEL_PNG = Buffer.from(
@@ -34,7 +35,11 @@ test('duplex packet keeps native SOP page sizes and rotation and adds only a pai
     records: [duplexRecord()],
     target: 'all',
     travelerImages: new Map([['print-1', ONE_PIXEL_PNG]]),
-    sourcePdfs: new Map([['sop-1', await sourceSop()]]),
+    sourceFiles: new Map([['sop-1', {
+      bytes: await sourceSop(),
+      fileName: 'SOP-v2.pdf',
+      mimeType: 'application/pdf',
+    }]]),
   });
   const packet = await PDFDocument.load(result.bytes);
   assert.equal(result.pageCount, 4);
@@ -52,11 +57,36 @@ test('separate SOP packet does not force A4 portrait or insert duplex blanks', a
   const result = await buildWorkOrderPrintPacket({
     records: [duplexRecord()],
     target: 'sop',
-    sourcePdfs: new Map([['sop-1', await sourceSop()]]),
+    sourceFiles: new Map([['sop-1', {
+      bytes: await sourceSop(),
+      fileName: 'SOP-v2.pdf',
+      mimeType: 'application/pdf',
+    }]]),
   });
   const packet = await PDFDocument.load(result.bytes);
   assert.equal(packet.getPageCount(), 2);
   assert.equal(packet.getPage(0).getWidth(), 842);
   assert.equal(packet.getPage(0).getHeight(), 595);
   assert.equal(packet.getPage(1).getRotation().angle, 90);
+});
+
+test('duplex packet converts a landscape PNG SOP into an A4 landscape page', async () => {
+  const png = await sharp({
+    create: { width: 1200, height: 600, channels: 4, background: { r: 245, g: 120, b: 30, alpha: 0.8 } },
+  }).png().toBuffer();
+  const result = await buildWorkOrderPrintPacket({
+    records: [duplexRecord()],
+    target: 'all',
+    travelerImages: new Map([['print-1', ONE_PIXEL_PNG]]),
+    sourceFiles: new Map([['sop-1', {
+      bytes: png,
+      fileName: '现场SOP.png',
+      mimeType: 'image/png',
+      imagePaperSize: 'A4',
+    }]]),
+  });
+  const packet = await PDFDocument.load(result.bytes);
+  assert.equal(packet.getPageCount(), 2);
+  assert.ok(Math.abs(packet.getPage(1).getWidth() - 841.89) < 0.1);
+  assert.ok(Math.abs(packet.getPage(1).getHeight() - 595.28) < 0.1);
 });

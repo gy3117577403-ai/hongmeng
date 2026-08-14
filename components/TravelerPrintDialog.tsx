@@ -12,6 +12,7 @@ export type TravelerPrintMode =
   | 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX'
   | 'CUSTOM';
 type TravelerPrintMaterial = 'TRAVELER' | 'SOP' | 'DRAWING';
+type DrawingImagePaperSize = 'A4' | 'A3';
 type ReadinessState =
   | { status: 'idle' | 'loading'; items: WorkOrderTravelerPrintReadinessRecord[]; message: string }
   | { status: 'ready'; items: WorkOrderTravelerPrintReadinessRecord[]; message: string }
@@ -44,15 +45,15 @@ const printModes: Array<{
   {
     value: 'DRAWING_SOP_TRAVELER_SEPARATE',
     title: '原图 + SOP + 二维码分开打印',
-    description: '三类资料独立打印、独立确认，原图保持源 PDF 纸张尺寸。',
+    description: '三类资料独立打印、独立确认；PDF保留原尺寸，图片自动排版。',
     icon: Files,
   },
 ];
 
 const materialOptions: Array<{ value: TravelerPrintMaterial; label: string; description: string }> = [
   { value: 'TRAVELER', label: '二维码流转单', description: '现场扫码报工与纸面流转' },
-  { value: 'SOP', label: 'SOP', description: '当前已发布 PDF 快照' },
-  { value: 'DRAWING', label: '原图', description: '按源 PDF 的 A3/A4 尺寸打印' },
+  { value: 'SOP', label: 'SOP', description: '当前已发布或上传的可打印快照' },
+  { value: 'DRAWING', label: '原图', description: 'PDF保留原尺寸，图片按所选纸张适配' },
 ];
 
 export function TravelerPrintDialog({
@@ -71,6 +72,7 @@ export function TravelerPrintDialog({
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [customMaterials, setCustomMaterials] = useState<TravelerPrintMaterial[]>(['TRAVELER']);
   const [materialCopies, setMaterialCopies] = useState<Record<TravelerPrintMaterial, number>>({ TRAVELER: 1, SOP: 1, DRAWING: 1 });
+  const [drawingImagePaperSize, setDrawingImagePaperSize] = useState<DrawingImagePaperSize>('A4');
   const [reprintReason, setReprintReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -87,6 +89,7 @@ export function TravelerPrintDialog({
       setAdvancedOpen(false);
       setCustomMaterials(['TRAVELER']);
       setMaterialCopies({ TRAVELER: 1, SOP: 1, DRAWING: 1 });
+      setDrawingImagePaperSize('A4');
       setReprintReason('');
       setSaving(false);
       setError('');
@@ -204,6 +207,7 @@ export function TravelerPrintDialog({
           copies,
           materials: mode === 'CUSTOM' ? customMaterials : undefined,
           materialCopies: mode === 'CUSTOM' ? materialCopies : undefined,
+          drawingImagePaperSize,
           reprintReason,
           returnTo,
         }),
@@ -246,7 +250,7 @@ export function TravelerPrintDialog({
           })}
         </div>
         <section className={`traveler-print-readiness ${readiness.status}`} aria-live="polite">
-          {readiness.status === 'loading' && <><Loader2 className="spin" size={20} /><span><strong>正在校验打印条件</strong><small>检查工艺路线、当前发布 SOP、PDF 文件状态和原图关联。</small></span></>}
+          {readiness.status === 'loading' && <><Loader2 className="spin" size={20} /><span><strong>正在校验打印条件</strong><small>检查工艺路线、当前发布 SOP、PDF/图片格式和原图关联。</small></span></>}
           {readiness.status === 'error' && <><AlertTriangle size={20} /><span><strong>打印前校验失败</strong><small>{readiness.message}</small></span><button type="button" onClick={() => setReadinessNonce(value => value + 1)}><RefreshCw size={15} />重新校验</button></>}
           {readiness.status === 'ready' && <><ShieldCheck size={20} /><span><strong>打印条件已校验</strong><small>流转单 {readyCount('traveler')}/{readiness.items.length} · SOP {readyCount('sop')}/{readiness.items.length} · 原图 {readyCount('drawing')}/{readiness.items.length}；不可用方式已标出具体原因。</small></span><button type="button" aria-label="重新校验打印条件" onClick={() => setReadinessNonce(value => value + 1)}><RefreshCw size={15} /></button></>}
         </section>
@@ -256,7 +260,7 @@ export function TravelerPrintDialog({
           </button>
           {advancedOpen && <div className="traveler-print-advanced-body">
             <button type="button" aria-disabled={Boolean(blockingIssue('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX'))} className={`traveler-print-hybrid ${mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX' ? 'selected' : ''}${blockingIssue('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX') ? ' blocked' : ''}`} onClick={() => selectMode('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX')}>
-              <i><Layers3 size={20} /></i><span><strong>原图单独 + 流转单/SOP 双面</strong><small>{blockingIssue('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX') && readiness.status === 'ready' ? `暂不可用：${blockingIssue('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX')}` : '图纸保持原尺寸，现场资料合并双面，兼顾尺寸与装订。'}</small></span>{mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX' && <em><Check size={15} /></em>}
+              <i><Layers3 size={20} /></i><span><strong>原图单独 + 流转单/SOP 双面</strong><small>{blockingIssue('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX') && readiness.status === 'ready' ? `暂不可用：${blockingIssue('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX')}` : 'PDF图纸保持原尺寸，图片图纸按所选A4/A3纸张适配。'}</small></span>{mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX' && <em><Check size={15} /></em>}
             </button>
             <div className={`traveler-print-custom ${mode === 'CUSTOM' ? 'selected' : ''}`}>
               <button type="button" onClick={() => selectMode('CUSTOM')}><i><FileImage size={20} /></i><span><strong>自定义补打</strong><small>按资料单独选择并设置份数，不重复打印已完成资料。</small></span>{mode === 'CUSTOM' && <em><Check size={15} /></em>}</button>
@@ -281,9 +285,10 @@ export function TravelerPrintDialog({
             </div>
           </div>}
         </section>
-        {(includesSop || includesDrawing) && <div className="traveler-print-hint"><FileText size={18} /><span><strong>{includesDrawing ? '原图与 SOP 均使用当前文件快照' : '将使用当前已发布 SOP 的 PDF 快照'}</strong><small>{includesDrawing ? '原图必须为 PDF，并会在独立标签页中按源文件纸张尺寸打印；资料更新后系统会提示重打。' : '如果 SOP 尚未上传、不是 PDF 或已删除，系统会阻止生成，避免错印旧版资料。'}</small></span></div>}
-        <div className="traveler-print-form-row">
+        {(includesSop || includesDrawing) && <div className="traveler-print-hint"><FileText size={18} /><span><strong>{includesDrawing ? '原图与 SOP 均使用当前文件快照' : '将使用当前已发布或上传的 SOP 快照'}</strong><small>{includesDrawing ? '支持 PDF、JPG、JPEG、PNG、WebP；PDF保留源页面，图片自动转为打印PDF，资料更新后仍会提示重打。' : '支持 PDF、JPG、JPEG、PNG、WebP；损坏、已删除或版本失效的文件仍会被阻止。'}</small></span></div>}
+        <div className={`traveler-print-form-row${includesDrawing ? ' with-paper' : ''}${mode === 'CUSTOM' ? ' custom-mode' : ''}`}>
           {mode !== 'CUSTOM' && <label><span>打印份数</span><input type="number" min={1} max={10} value={copies} onChange={event => setCopies(Math.max(1, Math.min(10, Number(event.target.value) || 1)))} /></label>}
+          {includesDrawing && <label><span>图片原图纸张</span><select value={drawingImagePaperSize} onChange={event => setDrawingImagePaperSize(event.target.value === 'A3' ? 'A3' : 'A4')}><option value="A4">A4 · 自动横竖</option><option value="A3">A3 · 自动横竖</option></select></label>}
           <label className="reason"><span>重打原因（选填）</span><input maxLength={500} value={reprintReason} onChange={event => setReprintReason(event.target.value)} placeholder="例如：SOP 更新、纸张污损、数量调整" /></label>
         </div>
         <div className="traveler-print-confirm-note"><Printer size={18} /><span>打开预览不等于已打印。完成实体打印后，请在预览页点击“确认已打印”，系统才会标记为已打印。</span></div>

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { WorkOrderQrPrintMaterial, WorkOrderQrPrintMode } from '@prisma/client';
 import {
+  drawingImagePaperSizeFromSnapshot,
   resolveTravelerPrintMaterialReadiness,
   resolveWorkOrderQrPrintMaterials,
   WorkOrderQrServiceError,
@@ -108,6 +109,53 @@ test('legacy manual PDF remains printable when no online SOP was published', () 
   }), 'sop');
   assert.equal(readiness.ready, true);
   assert.equal(readiness.fileId, 'manual-sop');
+});
+
+for (const source of [
+  { id: 'manual-jpeg', name: '现场SOP.jpg', mimeType: 'image/jpeg' },
+  { id: 'manual-png', name: '现场SOP.png', mimeType: 'image/png' },
+  { id: 'manual-webp', name: '现场SOP.webp', mimeType: 'image/webp' },
+]) {
+  test(`legacy manual ${source.mimeType} SOP is printable when no online SOP was published`, () => {
+    const readiness = resolveTravelerPrintMaterialReadiness(resourceContext({
+      files: [{
+        id: source.id, categoryCode: 'sop', originalName: source.name, mimeType: source.mimeType,
+        sourceSopVersionId: null, isCurrent: true, deletedAt: null, updatedAt: '2026-08-14T08:00:00Z',
+      }],
+    }), 'sop');
+    assert.equal(readiness.ready, true);
+    assert.equal(readiness.fileId, source.id);
+    assert.match(readiness.message, /可打印/);
+  });
+}
+
+test('image drawing is printable while an unsupported office document is blocked', () => {
+  const image = resolveTravelerPrintMaterialReadiness(resourceContext({
+    files: [{
+      id: 'drawing-webp', categoryCode: 'drawing', originalName: '原图.webp', mimeType: 'image/webp',
+      isCurrent: true, deletedAt: null, updatedAt: '2026-08-14T08:00:00Z',
+    }],
+  }), 'drawing');
+  assert.equal(image.ready, true);
+  assert.equal(image.fileId, 'drawing-webp');
+
+  const office = resolveTravelerPrintMaterialReadiness(resourceContext({
+    files: [{
+      id: 'drawing-docx', categoryCode: 'drawing', originalName: '原图.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      isCurrent: true, deletedAt: null, updatedAt: '2026-08-14T08:00:00Z',
+    }],
+  }), 'drawing');
+  assert.equal(office.ready, false);
+  assert.equal(office.code, 'QR_DRAWING_FORMAT_UNSUPPORTED');
+  assert.match(office.message, /PDF、JPG、JPEG、PNG、WebP/);
+});
+
+test('drawing image paper size is read safely from the immutable print snapshot', () => {
+  assert.equal(drawingImagePaperSizeFromSnapshot({ printRendering: { drawingImagePaperSize: 'A3' } }), 'A3');
+  assert.equal(drawingImagePaperSizeFromSnapshot({ printRendering: { drawingImagePaperSize: 'A4' } }), 'A4');
+  assert.equal(drawingImagePaperSizeFromSnapshot({ printRendering: { drawingImagePaperSize: 'A2' } }), 'A4');
+  assert.equal(drawingImagePaperSizeFromSnapshot({}), 'A4');
 });
 
 test('deleted or non-current source files never pass readiness', () => {

@@ -18,6 +18,7 @@ export async function POST(req: NextRequest) {
       copies?: unknown;
       materials?: unknown;
       materialCopies?: unknown;
+      drawingImagePaperSize?: unknown;
       reprintReason?: unknown;
       returnTo?: unknown;
     };
@@ -27,6 +28,7 @@ export async function POST(req: NextRequest) {
       copies: body.copies,
       materials: body.materials,
       materialCopies: body.materialCopies,
+      drawingImagePaperSize: body.drawingImagePaperSize,
       reprintReason: body.reprintReason,
       userId: user.id,
       actor: user.displayName || user.username,

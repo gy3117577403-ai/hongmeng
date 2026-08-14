@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { PDFDocument, type PDFPage } from 'pdf-lib';
+import { appendPrintableSource, type PrintableSourceInput } from '@/lib/printable-document';
 
 export type WorkOrderPrintPacketTarget = 'all' | 'traveler' | 'sop';
 export type WorkOrderPrintPacketMaterial = 'TRAVELER' | 'SOP' | 'DRAWING';
@@ -77,34 +78,23 @@ async function appendTraveler(
   });
 }
 
-async function appendSourcePdf(
+async function appendSourceFile(
   output: PDFDocument,
   fileId: string,
-  sourcePdfs: ReadonlyMap<string, Uint8Array>,
+  sourceFiles: ReadonlyMap<string, PrintableSourceInput>,
 ): Promise<number> {
-  const bytes = sourcePdfs.get(fileId);
-  if (!bytes?.byteLength) {
+  const source = sourceFiles.get(fileId);
+  if (!source?.bytes.byteLength) {
     throw new WorkOrderPrintPacketError('SOP 文件快照不存在，请重新生成打印任务', 410, 'PRINT_PACKET_SOP_MISSING');
   }
-  let source: PDFDocument;
-  try {
-    source = await PDFDocument.load(bytes, { ignoreEncryption: false, updateMetadata: false });
-  } catch {
-    throw new WorkOrderPrintPacketError('SOP PDF 已加密或损坏，无法合并；请打开原文件打印', 409, 'PRINT_PACKET_SOP_INVALID');
-  }
-  if (!source.getPageCount()) {
-    throw new WorkOrderPrintPacketError('SOP PDF 没有可打印页面', 409, 'PRINT_PACKET_SOP_EMPTY');
-  }
-  const pages = await output.copyPages(source, source.getPageIndices());
-  pages.forEach(page => output.addPage(page));
-  return pages.length;
+  return appendPrintableSource(output, source);
 }
 
 export async function buildWorkOrderPrintPacket(input: {
   records: readonly WorkOrderPrintPacketRecord[];
   target: WorkOrderPrintPacketTarget;
   travelerImages?: ReadonlyMap<string, Uint8Array>;
-  sourcePdfs?: ReadonlyMap<string, Uint8Array>;
+  sourceFiles?: ReadonlyMap<string, PrintableSourceInput>;
 }): Promise<{ bytes: Uint8Array; pageCount: number; hash: string }> {
   if (!input.records.length) {
     throw new WorkOrderPrintPacketError('打印任务为空', 400, 'PRINT_PACKET_EMPTY');
@@ -118,7 +108,7 @@ export async function buildWorkOrderPrintPacket(input: {
   output.setCreator('杭连电子协同平台');
   output.setProducer('杭连电子协同平台');
   const travelerImages = input.travelerImages || new Map<string, Uint8Array>();
-  const sourcePdfs = input.sourcePdfs || new Map<string, Uint8Array>();
+  const sourceFiles = input.sourceFiles || new Map<string, PrintableSourceInput>();
 
   for (const record of input.records) {
     const traveler = materialItem(record, 'TRAVELER');
@@ -135,7 +125,7 @@ export async function buildWorkOrderPrintPacket(input: {
       for (let copy = 0; copy < travelerCopies; copy += 1) {
         const packetStart = output.getPageCount();
         await appendTraveler(output, record.printId, travelerImages);
-        await appendSourcePdf(output, sop.fileId, sourcePdfs);
+        await appendSourceFile(output, sop.fileId, sourceFiles);
         const packetPageCount = output.getPageCount() - packetStart;
         if (packetPageCount % 2 === 1) {
           addBlankBack(output, output.getPages().at(-1));
@@ -150,7 +140,7 @@ export async function buildWorkOrderPrintPacket(input: {
     }
     if (input.target === 'sop' && sop?.fileId) {
       for (let copy = 0; copy < positiveCopies(sop.copies); copy += 1) {
-        await appendSourcePdf(output, sop.fileId, sourcePdfs);
+        await appendSourceFile(output, sop.fileId, sourceFiles);
       }
     }
   }

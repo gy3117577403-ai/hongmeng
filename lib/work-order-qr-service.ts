@@ -8,6 +8,7 @@ import {
 } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
+import { printableSourceFormat, type ImagePrintPaperSize } from '@/lib/printable-document';
 import { isExecutableProductionWorkOrder } from '@/lib/work-orders';
 import { businessWorkOrderCodeBase } from '@/lib/work-order-business-code';
 import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
@@ -53,6 +54,11 @@ export type WorkOrderTravelerSnapshot = {
   sopFileVersion: string | null;
   sopFileName: string | null;
   sopMimeType: string | null;
+  printRendering?: {
+    version: 'IMAGE_PRINT_V1';
+    drawingImagePaperSize: ImagePrintPaperSize;
+    imageFit: 'contain';
+  };
   steps: Array<{
     id: string;
     position: number;
@@ -299,13 +305,24 @@ function fileTimestamp(value: Date | string): number {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+function cleanDrawingImagePaperSize(value: unknown): ImagePrintPaperSize {
+  return String(value || '').trim().toUpperCase() === 'A3' ? 'A3' : 'A4';
+}
+
+export function drawingImagePaperSizeFromSnapshot(value: unknown): ImagePrintPaperSize {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'A4';
+  const rendering = (value as { printRendering?: unknown }).printRendering;
+  if (!rendering || typeof rendering !== 'object' || Array.isArray(rendering)) return 'A4';
+  return cleanDrawingImagePaperSize((rendering as { drawingImagePaperSize?: unknown }).drawingImagePaperSize);
+}
+
 function isActiveFile(file: TravelerPrintSourceFileInput): boolean {
   return file.deletedAt == null && file.isCurrent;
 }
 
-function isPdfFile(file: TravelerPrintSourceFileInput): boolean {
+function isPrintableFile(file: TravelerPrintSourceFileInput): boolean {
   const name = file.displayName || file.originalName;
-  return file.mimeType === 'application/pdf' || name.toLowerCase().endsWith('.pdf');
+  return Boolean(printableSourceFormat(name, file.mimeType));
 }
 
 function resourceFileResult(
@@ -315,13 +332,14 @@ function resourceFileResult(
 ): TravelerPrintReadinessCheck {
   const materialLabel = material === 'sop' ? 'SOP' : '原图';
   const fileName = file.displayName || file.originalName;
-  if (!isPdfFile(file)) {
+  const format = printableSourceFormat(fileName, file.mimeType);
+  if (!isPrintableFile(file) || !format) {
     return {
       ready: false,
-      code: material === 'sop' ? 'QR_SOP_PDF_REQUIRED' : 'QR_DRAWING_PDF_REQUIRED',
+      code: material === 'sop' ? 'QR_SOP_FORMAT_UNSUPPORTED' : 'QR_DRAWING_FORMAT_UNSUPPORTED',
       message: material === 'sop'
-        ? `${label} 的当前 SOP 不是 PDF，请转换或重新发布后再打印`
-        : `${label} 的原图不是 PDF；为保留 A3/A4 原始纸张尺寸，请先上传 PDF`,
+        ? `${label} 的当前 SOP 格式不支持打印；仅支持 PDF、JPG、JPEG、PNG、WebP`
+        : `${label} 的原图格式不支持打印；仅支持 PDF、JPG、JPEG、PNG、WebP`,
       fileId: file.id,
       fileName,
       fileVersion: file.version || null,
@@ -331,7 +349,7 @@ function resourceFileResult(
   return {
     ready: true,
     code: 'READY',
-    message: `${label} 的${materialLabel}可打印`,
+    message: `${label} 的${materialLabel}可打印（${format.toUpperCase()}）`,
     fileId: file.id,
     fileName,
     fileVersion: file.version || null,
@@ -406,12 +424,12 @@ export function resolveTravelerPrintMaterialReadiness(
   if (sopDocument?.versions.some(version => version.deletedAt == null)) {
     return missingResourceResult(
       'QR_SOP_NOT_PUBLISHED',
-      `${input.label} 的 SOP 目前只有草稿，请先发布为 PDF 再打印`,
+      `${input.label} 的 SOP 目前只有草稿，请先发布后再打印`,
     );
   }
   return missingResourceResult(
     'QR_SOP_REQUIRED',
-    `${input.label} 尚未上传或发布 SOP PDF，不能合并打印`,
+    `${input.label} 尚未上传或发布可打印 SOP，不能合并打印`,
   );
 }
 
@@ -583,6 +601,7 @@ export async function createWorkOrderTravelerPrints(input: {
   copies?: unknown;
   materials?: unknown;
   materialCopies?: unknown;
+  drawingImagePaperSize?: unknown;
   reprintReason?: unknown;
   userId: string;
   actor: string;
@@ -592,6 +611,7 @@ export async function createWorkOrderTravelerPrints(input: {
   const copies = cleanCopies(input.copies ?? 1);
   const materials = resolveWorkOrderQrPrintMaterials(mode, input.materials);
   const materialCopies = cleanMaterialCopies(input.materialCopies, materials, copies);
+  const drawingImagePaperSize = cleanDrawingImagePaperSize(input.drawingImagePaperSize);
   const requiresSop = materials.includes(WorkOrderQrPrintMaterial.SOP);
   const requiresDrawing = materials.includes(WorkOrderQrPrintMaterial.DRAWING);
   const reprintReason = String(input.reprintReason || '').trim().slice(0, 500) || null;
@@ -610,7 +630,14 @@ export async function createWorkOrderTravelerPrints(input: {
   }
   const orderById = new Map(orders.map(order => [order.id, order]));
   const orderedOrders = workOrderIds.map(id => orderById.get(id)!);
-  const snapshots = orderedOrders.map(order => createSnapshot(order));
+  const snapshots = orderedOrders.map(order => ({
+    ...createSnapshot(order),
+    printRendering: {
+      version: 'IMAGE_PRINT_V1' as const,
+      drawingImagePaperSize,
+      imageFit: 'contain' as const,
+    },
+  }));
   if (requiresSop) {
     const invalidSop = orderedOrders
       .map(order => materialReadiness(order, 'sop'))
@@ -688,6 +715,7 @@ export async function createWorkOrderTravelerPrints(input: {
             drawingFileVersion: snapshot.drawingFileVersion,
             sopFileId: snapshot.sopFileId,
             sopFileVersion: snapshot.sopFileVersion,
+            printRendering: snapshot.printRendering,
           })).digest('hex'),
           reprintReason,
           printedById: input.userId,

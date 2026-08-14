@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { streamToBuffer } from '@/lib/pdf-overlay';
+import { safeDisplayFilename } from '@/lib/filenames';
+import {
+  PrintableDocumentError,
+  printableSourceFormat,
+  readPrintableSourceStream,
+  type PrintableSourceInput,
+} from '@/lib/printable-document';
 import { prisma } from '@/lib/prisma';
 import { getObjectStream } from '@/lib/s3';
 import {
@@ -18,8 +24,8 @@ export const dynamic = 'force-dynamic';
 
 const MAX_TRAVELER_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_TRAVELER_IMAGE_TOTAL_BYTES = 60 * 1024 * 1024;
-const MAX_SOP_SOURCE_BYTES = 50 * 1024 * 1024;
-const MAX_SOP_SOURCE_TOTAL_BYTES = 160 * 1024 * 1024;
+const MAX_SOURCE_BYTES = 50 * 1024 * 1024;
+const MAX_SOURCE_TOTAL_BYTES = 160 * 1024 * 1024;
 
 function packetTarget(value: FormDataEntryValue | null): WorkOrderPrintPacketTarget {
   if (value === 'all' || value === 'traveler' || value === 'sop') return value;
@@ -66,7 +72,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const sourcePdfs = new Map<string, Uint8Array>();
+    const sourceFiles = new Map<string, PrintableSourceInput>();
     if (target === 'all' || target === 'sop') {
       const fileIds = [...new Set(records.flatMap(record => record.items
         .filter(item => item.material === 'SOP' && item.fileId)
@@ -79,30 +85,43 @@ export async function POST(req: NextRequest) {
             libraryItem: { deletedAt: null },
             category: { code: 'sop' },
           },
-          select: { id: true, objectKey: true, originalName: true, mimeType: true, size: true },
+          select: { id: true, objectKey: true, originalName: true, displayName: true, mimeType: true, size: true },
         });
         if (files.length !== fileIds.length) {
           throw new WorkOrderPrintPacketError('部分 SOP 打印快照已被删除，请重新生成打印任务', 410, 'PRINT_PACKET_SOP_MISSING');
         }
         let sourceTotal = 0;
         for (const file of files) {
-          if (file.mimeType !== 'application/pdf' && !file.originalName.toLowerCase().endsWith('.pdf')) {
-            throw new WorkOrderPrintPacketError('SOP 不是 PDF，无法保留原始版式打印', 409, 'PRINT_PACKET_SOP_PDF_REQUIRED');
+          const fileName = safeDisplayFilename(file);
+          if (!printableSourceFormat(fileName, file.mimeType)) {
+            throw new WorkOrderPrintPacketError(
+              `${fileName} 的格式不支持打印；仅支持 PDF、JPG、JPEG、PNG、WebP`,
+              409,
+              'PRINT_PACKET_SOURCE_FORMAT_UNSUPPORTED',
+            );
           }
-          if (file.size > MAX_SOP_SOURCE_BYTES) {
-            throw new WorkOrderPrintPacketError(`${file.originalName} 超过 50MB，请打开原文件打印`, 413, 'PRINT_PACKET_SOP_TOO_LARGE');
+          if (file.size > MAX_SOURCE_BYTES) {
+            throw new WorkOrderPrintPacketError(`${fileName} 超过 50MB，请分开打印`, 413, 'PRINT_PACKET_SOURCE_TOO_LARGE');
           }
           sourceTotal += file.size;
-          if (sourceTotal > MAX_SOP_SOURCE_TOTAL_BYTES) {
+          if (sourceTotal > MAX_SOURCE_TOTAL_BYTES) {
             throw new WorkOrderPrintPacketError('本次 SOP 总量过大，请分批打印', 413, 'PRINT_PACKET_SOP_BATCH_TOO_LARGE');
           }
-          const body = await streamToBuffer(await getObjectStream(file.objectKey));
-          sourcePdfs.set(file.id, body);
+          const body = await readPrintableSourceStream(await getObjectStream(file.objectKey), {
+            fileName,
+            maxBytes: MAX_SOURCE_BYTES,
+          });
+          sourceFiles.set(file.id, {
+            bytes: body,
+            fileName,
+            mimeType: file.mimeType,
+            imagePaperSize: 'A4',
+          });
         }
       }
     }
 
-    const packet = await buildWorkOrderPrintPacket({ records, target, travelerImages, sourcePdfs });
+    const packet = await buildWorkOrderPrintPacket({ records, target, travelerImages, sourceFiles });
     return new Response(Buffer.from(packet.bytes), {
       headers: {
         'Content-Type': 'application/pdf',
@@ -116,7 +135,11 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof WorkOrderQrServiceError || error instanceof WorkOrderPrintPacketError) {
+    if (
+      error instanceof WorkOrderQrServiceError
+      || error instanceof WorkOrderPrintPacketError
+      || error instanceof PrintableDocumentError
+    ) {
       return NextResponse.json({ ok: false, error: error.message, code: error.code }, { status: error.status });
     }
     console.error('build work-order print packet failed', error);

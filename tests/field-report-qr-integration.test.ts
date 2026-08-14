@@ -171,20 +171,20 @@ test(
           create: [
             {
               categoryId: drawingCategory.id,
-              originalName: `${prefix}-drawing.pdf`,
-              mimeType: 'application/pdf',
+              originalName: `${prefix}-drawing.webp`,
+              mimeType: 'image/webp',
               size: 100,
               version: 'V1.0',
-              objectKey: `integration/${prefix}/drawing.pdf`,
+              objectKey: `integration/${prefix}/drawing.webp`,
               uploadedById: actor.id,
             },
             {
               categoryId: sopCategory.id,
-              originalName: `${prefix}-sop.pdf`,
-              mimeType: 'application/pdf',
+              originalName: `${prefix}-sop.png`,
+              mimeType: 'image/png',
               size: 100,
               version: 'V1.0',
-              objectKey: `integration/${prefix}/sop.pdf`,
+              objectKey: `integration/${prefix}/sop.png`,
               uploadedById: actor.id,
             },
           ],
@@ -266,11 +266,15 @@ test(
         workOrderIds: [order.id],
         mode: 'DRAWING_SOP_TRAVELER_SEPARATE',
         copies: 2,
+        drawingImagePaperSize: 'A3',
         userId: actor.id,
         actor: actor.displayName || actor.username,
       });
       assert.deepEqual(packet.items.map(item => item.material).sort(), ['DRAWING', 'SOP', 'TRAVELER']);
       assert.ok(packet.items.every(item => item.copies === 2));
+      assert.equal(packet.items.find(item => item.material === 'DRAWING')?.mimeType, 'image/webp');
+      assert.equal(packet.items.find(item => item.material === 'SOP')?.mimeType, 'image/png');
+      assert.equal(packet.snapshot.printRendering?.drawingImagePaperSize, 'A3');
 
       const firstConfirmation = await confirmWorkOrderTravelerPrints({
         printIds: [packet.printId],
