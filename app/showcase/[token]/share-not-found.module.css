@@ -1,0 +1,6 @@
+.page { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: linear-gradient(145deg, #fff8f3, #f2f4f7); color: #172234; font-family: "Microsoft YaHei", system-ui, sans-serif; }
+.page section { width: min(480px, 100%); padding: 45px; border: 1px solid #e1e5ea; border-radius: 14px; background: #fff; box-shadow: 0 24px 70px rgba(28,39,57,.11); text-align: center; }
+.page span { color: #f36a1f; font-size: 13px; font-weight: 900; letter-spacing: .16em; }
+.page h1 { margin: 12px 0 10px; font-size: 28px; }
+.page p { margin: 0 0 24px; color: #707b8b; font-size: 13px; line-height: 1.8; }
+.page a { min-height: 42px; display: inline-flex; align-items: center; padding: 0 20px; border-radius: 7px; background: #f36a1f; color: #fff; font-size: 12px; font-weight: 750; text-decoration: none; }

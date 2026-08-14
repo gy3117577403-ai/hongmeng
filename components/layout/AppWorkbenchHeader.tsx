@@ -23,6 +23,7 @@ import {
   Search,
   Settings,
   Settings2,
+  PanelsTopLeft,
   ShieldCheck,
   TimerOff,
   UsersRound,
@@ -78,6 +79,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/connector-assembly-manuals', label: '组装说明书', icon: BookOpen },
       { href: '/connector-parameters', label: '连接器参数', icon: Boxes },
       { href: '/workspace/terminal-tooling', label: '端子调模', icon: Settings2 },
+      { href: '/workspace/capability-showcase', label: '能力展厅', icon: PanelsTopLeft },
     ],
   },
   {

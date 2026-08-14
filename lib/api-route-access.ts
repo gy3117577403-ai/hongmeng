@@ -59,6 +59,11 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
     prefix: '/api/terminal-tooling',
     anyOf: ['TERMINAL_TOOLING'],
   },
+  {
+    prefix: '/api/capability-showcase',
+    anyOf: ['ACCOUNT_SELF'],
+    actionsByMethod: { POST: 'UPDATE', PATCH: 'UPDATE', DELETE: 'UPDATE' },
+  },
 
   { prefix: '/api/product-time-profiles', anyOf: ['PROCESS'] },
   { prefix: '/api/process-time-standards', anyOf: ['PROCESS'] },
