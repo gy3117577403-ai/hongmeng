@@ -263,13 +263,23 @@ export default function WorkOrderTravelerPrint({
     };
   }, [duplexTravelerSop, includesSop, includesTraveler, loadError, originKey, qrReady, records, separateTargets]);
 
+  function openSourcePdf(url: string) {
+    const popup = window.open('', '_blank');
+    if (!popup) {
+      window.location.assign(url);
+      return;
+    }
+    popup.opener = null;
+    popup.location.replace(url);
+  }
+
   function openDrawing(record: WorkOrderTravelerPrintRecord) {
-    window.open(`/api/work-order-qr/prints/${encodeURIComponent(record.printId)}/drawing`, '_blank', 'noopener,noreferrer');
+    openSourcePdf(`/api/work-order-qr/prints/${encodeURIComponent(record.printId)}/drawing`);
     setOpenedDrawings(previous => new Set(previous).add(record.printId));
   }
 
   function openSop(record: WorkOrderTravelerPrintRecord) {
-    window.open(`/api/work-order-qr/prints/${encodeURIComponent(record.printId)}/sop`, '_blank', 'noopener,noreferrer');
+    openSourcePdf(`/api/work-order-qr/prints/${encodeURIComponent(record.printId)}/sop`);
     setOpenedSops(previous => new Set(previous).add(record.printId));
   }
 
@@ -356,10 +366,8 @@ export default function WorkOrderTravelerPrint({
           {activePacket?.status === 'ready' && activePacket.url && <a
             className="traveler-print-primary"
             href={activePacket.url}
-            target="_blank"
-            rel="noopener noreferrer"
             onClick={() => setOpenedTargets(previous => new Set(previous).add(selectedTarget))}
-          ><Printer size={18} />{openedTargets.has(selectedTarget) ? '再次打开打印界面' : '打开完整打印界面'}</a>}
+          ><Printer size={18} />{openedTargets.has(selectedTarget) ? '再次打开打印界面' : '在当前页打开打印界面'}</a>}
           {activePacket?.status === 'ready' && <button className="confirm" type="button" onClick={() => requestPacketConfirmation(selectedTarget)}><FileCheck2 size={17} />确认已打印</button>}
           {allConfirmed && <span className="traveler-print-confirmed"><CheckCircle2 size={17} />全部资料已确认</span>}
         </div>

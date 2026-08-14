@@ -153,18 +153,86 @@ export type FieldReportTicketView = {
   };
 };
 
-type TravelerOrder = Prisma.WorkOrderGetPayload<{
-  include: {
-    processRoute: { include: { steps: true } };
-    drawingLibraryItem: {
-      include: {
-        files: { include: { category: true } };
-      };
-    };
-  };
-}>;
+const travelerOrderInclude = Prisma.validator<Prisma.WorkOrderInclude>()({
+  processRoute: {
+    include: {
+      steps: {
+        where: { retiredAt: null },
+        orderBy: [{ position: 'asc' }],
+      },
+    },
+  },
+  drawingLibraryItem: {
+    include: {
+      files: {
+        where: { category: { code: { in: ['drawing', 'sop'] } } },
+        include: { category: true },
+        orderBy: [{ updatedAt: 'desc' }],
+      },
+      sopDocument: {
+        include: {
+          versions: {
+            select: { id: true, status: true, deletedAt: true },
+            orderBy: [{ version: 'desc' }],
+          },
+        },
+      },
+    },
+  },
+});
+
+type TravelerOrder = Prisma.WorkOrderGetPayload<{ include: typeof travelerOrderInclude }>;
 
 type TravelerSourceFile = NonNullable<TravelerOrder['drawingLibraryItem']>['files'][number];
+
+export type TravelerPrintReadinessCheck = {
+  ready: boolean;
+  code: string;
+  message: string;
+  fileId: string | null;
+  fileName: string | null;
+  fileVersion: string | null;
+  mimeType: string | null;
+};
+
+export type WorkOrderTravelerPrintReadinessRecord = {
+  workOrderId: string;
+  workOrderCode: string;
+  businessWorkOrderCode: string;
+  productName: string;
+  specification: string | null;
+  traveler: TravelerPrintReadinessCheck;
+  sop: TravelerPrintReadinessCheck;
+  drawing: TravelerPrintReadinessCheck;
+};
+
+export type TravelerPrintSourceFileInput = {
+  id: string;
+  categoryCode: 'drawing' | 'sop';
+  originalName: string;
+  displayName?: string | null;
+  mimeType: string;
+  version?: string | null;
+  sourceSopVersionId?: string | null;
+  isCurrent: boolean;
+  deletedAt?: Date | string | null;
+  updatedAt: Date | string;
+};
+
+export type TravelerPrintResourceContext = {
+  label: string;
+  hasLibraryItem: boolean;
+  files: TravelerPrintSourceFileInput[];
+  sopDocument?: {
+    deletedAt?: Date | string | null;
+    currentPublishedVersionId?: string | null;
+    versions: Array<{
+      id: string;
+      status: string;
+      deletedAt?: Date | string | null;
+    }>;
+  } | null;
+};
 
 function cleanIds(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
@@ -226,11 +294,159 @@ function cleanCopies(value: unknown): number {
   return copies;
 }
 
+function fileTimestamp(value: Date | string): number {
+  const timestamp = value instanceof Date ? value.getTime() : new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function isActiveFile(file: TravelerPrintSourceFileInput): boolean {
+  return file.deletedAt == null && file.isCurrent;
+}
+
+function isPdfFile(file: TravelerPrintSourceFileInput): boolean {
+  const name = file.displayName || file.originalName;
+  return file.mimeType === 'application/pdf' || name.toLowerCase().endsWith('.pdf');
+}
+
+function resourceFileResult(
+  label: string,
+  material: 'drawing' | 'sop',
+  file: TravelerPrintSourceFileInput,
+): TravelerPrintReadinessCheck {
+  const materialLabel = material === 'sop' ? 'SOP' : '原图';
+  const fileName = file.displayName || file.originalName;
+  if (!isPdfFile(file)) {
+    return {
+      ready: false,
+      code: material === 'sop' ? 'QR_SOP_PDF_REQUIRED' : 'QR_DRAWING_PDF_REQUIRED',
+      message: material === 'sop'
+        ? `${label} 的当前 SOP 不是 PDF，请转换或重新发布后再打印`
+        : `${label} 的原图不是 PDF；为保留 A3/A4 原始纸张尺寸，请先上传 PDF`,
+      fileId: file.id,
+      fileName,
+      fileVersion: file.version || null,
+      mimeType: file.mimeType,
+    };
+  }
+  return {
+    ready: true,
+    code: 'READY',
+    message: `${label} 的${materialLabel}可打印`,
+    fileId: file.id,
+    fileName,
+    fileVersion: file.version || null,
+    mimeType: file.mimeType,
+  };
+}
+
+function missingResourceResult(code: string, message: string): TravelerPrintReadinessCheck {
+  return {
+    ready: false,
+    code,
+    message,
+    fileId: null,
+    fileName: null,
+    fileVersion: null,
+    mimeType: null,
+  };
+}
+
+export function resolveTravelerPrintMaterialReadiness(
+  input: TravelerPrintResourceContext,
+  material: 'drawing' | 'sop',
+): TravelerPrintReadinessCheck {
+  if (!input.hasLibraryItem) {
+    return missingResourceResult(
+      material === 'sop' ? 'QR_SOP_PRODUCT_LINK_REQUIRED' : 'QR_DRAWING_PRODUCT_LINK_REQUIRED',
+      material === 'sop'
+        ? `${input.label} 尚未关联产品资料，无法读取 SOP；请先关联对应产品`
+        : `${input.label} 尚未关联产品资料，无法读取原图；请先关联对应产品`,
+    );
+  }
+
+  const categoryFiles = input.files.filter(file => file.categoryCode === material);
+  const activeFiles = categoryFiles
+    .filter(isActiveFile)
+    .sort((left, right) => fileTimestamp(right.updatedAt) - fileTimestamp(left.updatedAt));
+
+  if (material === 'drawing') {
+    const drawing = activeFiles[0];
+    return drawing
+      ? resourceFileResult(input.label, material, drawing)
+      : missingResourceResult('QR_DRAWING_REQUIRED', `${input.label} 尚未上传有效原图，不能生成原图打印任务`);
+  }
+
+  const sopDocument = input.sopDocument && input.sopDocument.deletedAt == null
+    ? input.sopDocument
+    : null;
+  const publishedVersionId = sopDocument?.currentPublishedVersionId || null;
+  if (publishedVersionId) {
+    const publishedVersion = sopDocument?.versions.find(version => version.id === publishedVersionId);
+    if (!publishedVersion || publishedVersion.deletedAt != null || publishedVersion.status !== 'published') {
+      return missingResourceResult(
+        'QR_SOP_PUBLISH_POINTER_INVALID',
+        `${input.label} 的 SOP 发布状态异常，请重新发布后再打印`,
+      );
+    }
+    const publishedFile = categoryFiles.find(file => file.sourceSopVersionId === publishedVersionId);
+    if (!publishedFile || !isActiveFile(publishedFile)) {
+      return missingResourceResult(
+        'QR_SOP_PUBLISHED_FILE_MISSING',
+        `${input.label} 的已发布 SOP 文件已删除或失效，请重新发布 SOP`,
+      );
+    }
+    return resourceFileResult(input.label, material, publishedFile);
+  }
+
+  // Legacy/manual SOP uploads remain printable when no online version has been published.
+  // Generated files without a current document pointer are deliberately excluded to avoid printing an orphaned version.
+  const manualSop = activeFiles.find(file => !file.sourceSopVersionId);
+  if (manualSop) return resourceFileResult(input.label, material, manualSop);
+
+  if (sopDocument?.versions.some(version => version.deletedAt == null)) {
+    return missingResourceResult(
+      'QR_SOP_NOT_PUBLISHED',
+      `${input.label} 的 SOP 目前只有草稿，请先发布为 PDF 再打印`,
+    );
+  }
+  return missingResourceResult(
+    'QR_SOP_REQUIRED',
+    `${input.label} 尚未上传或发布 SOP PDF，不能合并打印`,
+  );
+}
+
+function resourceContext(order: TravelerOrder): TravelerPrintResourceContext {
+  const item = order.drawingLibraryItem;
+  return {
+    label: order.businessCode || businessWorkOrderCodeBase(order) || order.code,
+    hasLibraryItem: Boolean(item),
+    files: (item?.files || []).map(file => ({
+      id: file.id,
+      categoryCode: file.category.code === 'drawing' ? 'drawing' : 'sop',
+      originalName: file.originalName,
+      displayName: file.displayName,
+      mimeType: file.mimeType,
+      version: file.version,
+      sourceSopVersionId: file.sourceSopVersionId,
+      isCurrent: file.isCurrent,
+      deletedAt: file.deletedAt,
+      updatedAt: file.updatedAt,
+    })),
+    sopDocument: item?.sopDocument ? {
+      deletedAt: item.sopDocument.deletedAt,
+      currentPublishedVersionId: item.sopDocument.currentPublishedVersionId,
+      versions: item.sopDocument.versions,
+    } : null,
+  };
+}
+
+function materialReadiness(order: TravelerOrder, categoryCode: 'drawing' | 'sop') {
+  return resolveTravelerPrintMaterialReadiness(resourceContext(order), categoryCode);
+}
+
 function latestSourceFile(order: TravelerOrder, categoryCode: 'drawing' | 'sop'): TravelerSourceFile | null {
-  const files = order.drawingLibraryItem?.files || [];
-  return [...files]
-    .filter(file => file.deletedAt === null && file.isCurrent && file.category.code === categoryCode)
-    .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0] || null;
+  const fileId = materialReadiness(order, categoryCode).fileId;
+  return order.drawingLibraryItem?.files.find(file => file.id === fileId) || null;
 }
 
 function targetQuantity(order: Pick<TravelerOrder, 'productionTargetQty' | 'uncompletedQty' | 'completedQty' | 'stage'>): number {
@@ -302,6 +518,65 @@ function createSnapshot(order: TravelerOrder): WorkOrderTravelerSnapshot {
   };
 }
 
+async function findTravelerOrders(workOrderIds: string[]): Promise<TravelerOrder[]> {
+  return prisma.workOrder.findMany({
+    where: { id: { in: workOrderIds }, deletedAt: null },
+    include: travelerOrderInclude,
+  });
+}
+
+function readyCheck(message: string): TravelerPrintReadinessCheck {
+  return {
+    ready: true,
+    code: 'READY',
+    message,
+    fileId: null,
+    fileName: null,
+    fileVersion: null,
+    mimeType: null,
+  };
+}
+
+function buildTravelerPrintReadiness(order: TravelerOrder): WorkOrderTravelerPrintReadinessRecord {
+  const businessCode = order.businessCode || businessWorkOrderCodeBase(order) || order.code;
+  let traveler: TravelerPrintReadinessCheck;
+  try {
+    createSnapshot(order);
+    traveler = readyCheck(`${businessCode} 的流转单可打印`);
+  } catch (error) {
+    if (!(error instanceof WorkOrderQrServiceError)) throw error;
+    traveler = missingResourceResult(error.code, `${businessCode}：${error.message}`);
+  }
+  return {
+    workOrderId: order.id,
+    workOrderCode: order.code,
+    businessWorkOrderCode: businessCode,
+    productName: order.productName,
+    specification: order.specification,
+    traveler,
+    sop: materialReadiness(order, 'sop'),
+    drawing: materialReadiness(order, 'drawing'),
+  };
+}
+
+export async function loadWorkOrderTravelerPrintReadiness(input: {
+  workOrderIds: unknown;
+}): Promise<WorkOrderTravelerPrintReadinessRecord[]> {
+  const workOrderIds = cleanIds(input.workOrderIds);
+  if (!workOrderIds.length) {
+    throw new WorkOrderQrServiceError('请至少选择一张生产工单', 400, 'QR_WORK_ORDER_REQUIRED');
+  }
+  if (workOrderIds.length > MAX_PRINT_BATCH) {
+    throw new WorkOrderQrServiceError(`每次最多校验 ${MAX_PRINT_BATCH} 张流转单`, 400, 'QR_PRINT_BATCH_TOO_LARGE');
+  }
+  const orders = await findTravelerOrders(workOrderIds);
+  if (orders.length !== workOrderIds.length) {
+    throw new WorkOrderQrServiceError('所选工单中有记录不存在或已删除，请刷新后重试', 404, 'QR_WORK_ORDER_NOT_FOUND');
+  }
+  const orderById = new Map(orders.map(order => [order.id, order]));
+  return workOrderIds.map(id => buildTravelerPrintReadiness(orderById.get(id)!));
+}
+
 export async function createWorkOrderTravelerPrints(input: {
   workOrderIds: unknown;
   mode?: unknown;
@@ -329,46 +604,27 @@ export async function createWorkOrderTravelerPrints(input: {
   if ((requiresSop || requiresDrawing) && workOrderIds.length > MAX_SOP_PRINT_BATCH) {
     throw new WorkOrderQrServiceError(`含生产资料的打印任务每次最多选择 ${MAX_SOP_PRINT_BATCH} 张工单`, 400, 'QR_RESOURCE_PRINT_BATCH_TOO_LARGE');
   }
-  const orders = await prisma.workOrder.findMany({
-    where: { id: { in: workOrderIds }, deletedAt: null },
-    include: {
-      processRoute: {
-        include: { steps: { where: { retiredAt: null }, orderBy: [{ position: 'asc' }] } },
-      },
-      drawingLibraryItem: {
-        include: {
-          files: {
-            where: { deletedAt: null, isCurrent: true, category: { code: { in: ['drawing', 'sop'] } } },
-            include: { category: true },
-            orderBy: [{ updatedAt: 'desc' }],
-          },
-        },
-      },
-    },
-  });
+  const orders = await findTravelerOrders(workOrderIds);
   if (orders.length !== workOrderIds.length) {
     throw new WorkOrderQrServiceError('所选工单中有记录不存在或已删除，请刷新后重试', 404, 'QR_WORK_ORDER_NOT_FOUND');
   }
   const orderById = new Map(orders.map(order => [order.id, order]));
-  const snapshots = workOrderIds.map(id => createSnapshot(orderById.get(id)!));
+  const orderedOrders = workOrderIds.map(id => orderById.get(id)!);
+  const snapshots = orderedOrders.map(order => createSnapshot(order));
   if (requiresSop) {
-    const missingSop = snapshots.find(snapshot => !snapshot.sopFileId);
-    if (missingSop) {
-      throw new WorkOrderQrServiceError(`${missingSop.businessWorkOrderCode || missingSop.workOrderCode} 尚未上传 SOP，不能合并打印`, 409, 'QR_SOP_REQUIRED');
-    }
-    const nonPdfSop = snapshots.find(snapshot => snapshot.sopMimeType !== 'application/pdf' && !snapshot.sopFileName?.toLowerCase().endsWith('.pdf'));
-    if (nonPdfSop) {
-      throw new WorkOrderQrServiceError(`${nonPdfSop.businessWorkOrderCode || nonPdfSop.workOrderCode} 的 SOP 不是 PDF，请先转换后再合并打印`, 409, 'QR_SOP_PDF_REQUIRED');
+    const invalidSop = orderedOrders
+      .map(order => materialReadiness(order, 'sop'))
+      .find(readiness => !readiness.ready);
+    if (invalidSop) {
+      throw new WorkOrderQrServiceError(invalidSop.message, 409, invalidSop.code);
     }
   }
   if (requiresDrawing) {
-    const missingDrawing = snapshots.find(snapshot => !snapshot.drawingFileId);
-    if (missingDrawing) {
-      throw new WorkOrderQrServiceError(`${missingDrawing.businessWorkOrderCode || missingDrawing.workOrderCode} 尚未上传原图，不能生成原图打印任务`, 409, 'QR_DRAWING_REQUIRED');
-    }
-    const nonPdfDrawing = snapshots.find(snapshot => snapshot.drawingMimeType !== 'application/pdf' && !snapshot.drawingFileName?.toLowerCase().endsWith('.pdf'));
-    if (nonPdfDrawing) {
-      throw new WorkOrderQrServiceError(`${nonPdfDrawing.businessWorkOrderCode || nonPdfDrawing.workOrderCode} 的原图不是 PDF；为保留 A3/A4 原始纸张尺寸，请先上传 PDF`, 409, 'QR_DRAWING_PDF_REQUIRED');
+    const invalidDrawing = orderedOrders
+      .map(order => materialReadiness(order, 'drawing'))
+      .find(readiness => !readiness.ready);
+    if (invalidDrawing) {
+      throw new WorkOrderQrServiceError(invalidDrawing.message, 409, invalidDrawing.code);
     }
   }
 

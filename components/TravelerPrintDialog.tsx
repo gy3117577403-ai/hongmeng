@@ -1,7 +1,8 @@
 'use client';
 
-import { Check, ChevronDown, FileImage, Files, FileText, Layers3, Loader2, Printer, Settings2, X } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, FileImage, Files, FileText, Layers3, Loader2, Printer, RefreshCw, Settings2, ShieldCheck, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import type { WorkOrderTravelerPrintReadinessRecord } from '@/lib/work-order-qr-service';
 
 export type TravelerPrintMode =
   | 'TRAVELER_ONLY'
@@ -11,6 +12,10 @@ export type TravelerPrintMode =
   | 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX'
   | 'CUSTOM';
 type TravelerPrintMaterial = 'TRAVELER' | 'SOP' | 'DRAWING';
+type ReadinessState =
+  | { status: 'idle' | 'loading'; items: WorkOrderTravelerPrintReadinessRecord[]; message: string }
+  | { status: 'ready'; items: WorkOrderTravelerPrintReadinessRecord[]; message: string }
+  | { status: 'error'; items: WorkOrderTravelerPrintReadinessRecord[]; message: string };
 
 const printModes: Array<{
   value: TravelerPrintMode;
@@ -69,8 +74,11 @@ export function TravelerPrintDialog({
   const [reprintReason, setReprintReason] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [readiness, setReadiness] = useState<ReadinessState>({ status: 'idle', items: [], message: '' });
+  const [readinessNonce, setReadinessNonce] = useState(0);
   const dialogRef = useRef<HTMLElement | null>(null);
   const wasOpenRef = useRef(false);
+  const workOrderIdKey = workOrderIds.join('\u001f');
 
   useEffect(() => {
     if (open && !wasOpenRef.current) {
@@ -82,9 +90,38 @@ export function TravelerPrintDialog({
       setReprintReason('');
       setSaving(false);
       setError('');
+      setReadiness({ status: 'loading', items: [], message: '' });
     }
     wasOpenRef.current = open;
   }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    const selectedIds = workOrderIdKey ? workOrderIdKey.split('\u001f') : [];
+    setReadiness({ status: 'loading', items: [], message: '' });
+    void fetch('/api/work-order-qr/prints/readiness', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workOrderIds: selectedIds }),
+      cache: 'no-store',
+      signal: controller.signal,
+    }).then(async response => {
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || '生产资料校验失败');
+      const items = Array.isArray(body.data?.items) ? body.data.items as WorkOrderTravelerPrintReadinessRecord[] : [];
+      if (items.length !== selectedIds.length) throw new Error('生产资料校验结果不完整，请刷新后重试');
+      setReadiness({ status: 'ready', items, message: '' });
+    }).catch(reason => {
+      if (controller.signal.aborted) return;
+      setReadiness({
+        status: 'error',
+        items: [],
+        message: reason instanceof Error ? reason.message : '生产资料校验失败，请重试',
+      });
+    });
+    return () => controller.abort();
+  }, [open, readinessNonce, workOrderIdKey]);
 
   useEffect(() => {
     if (!open) return;
@@ -111,8 +148,48 @@ export function TravelerPrintDialog({
     || mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX'
     || (mode === 'CUSTOM' && customMaterials.includes('DRAWING'));
 
+  function blockingIssue(targetMode: TravelerPrintMode, materials = customMaterials): string {
+    if (readiness.status === 'idle' || readiness.status === 'loading') return '正在校验工艺路线和生产资料，请稍候';
+    if (readiness.status === 'error') return readiness.message || '生产资料校验失败，请重试';
+    const requiresSop = targetMode === 'TRAVELER_SOP_DUPLEX'
+      || targetMode === 'TRAVELER_SOP_SEPARATE'
+      || targetMode === 'DRAWING_SOP_TRAVELER_SEPARATE'
+      || targetMode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX'
+      || (targetMode === 'CUSTOM' && materials.includes('SOP'));
+    const requiresDrawing = targetMode === 'DRAWING_SOP_TRAVELER_SEPARATE'
+      || targetMode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX'
+      || (targetMode === 'CUSTOM' && materials.includes('DRAWING'));
+    const checks = readiness.items.flatMap(item => [
+      item.traveler,
+      ...(requiresSop ? [item.sop] : []),
+      ...(requiresDrawing ? [item.drawing] : []),
+    ]);
+    const issues = checks.filter(check => !check.ready);
+    if (!issues.length) return '';
+    return `${issues[0].message}${issues.length > 1 ? `（另有 ${issues.length - 1} 项待处理）` : ''}`;
+  }
+
+  function selectMode(nextMode: TravelerPrintMode) {
+    const issue = blockingIssue(nextMode);
+    if (issue) {
+      setError(issue);
+      return;
+    }
+    setMode(nextMode);
+    setError('');
+  }
+
+  const currentBlockingIssue = blockingIssue(mode);
+  const readyCount = (material: 'traveler' | 'sop' | 'drawing') => readiness.status === 'ready'
+    ? readiness.items.filter(item => item[material].ready).length
+    : 0;
+
   async function submit() {
     if (!workOrderIds.length || saving) return;
+    if (currentBlockingIssue) {
+      setError(currentBlockingIssue);
+      return;
+    }
     setSaving(true);
     setError('');
     let navigating = false;
@@ -132,7 +209,10 @@ export function TravelerPrintDialog({
         }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || '打印任务生成失败');
+      if (!response.ok) {
+        if (response.status === 409) setReadinessNonce(value => value + 1);
+        throw new Error(body.error || '打印任务生成失败');
+      }
       const url = String(body.data?.url || '');
       const parsed = new URL(url, window.location.origin);
       if (parsed.origin !== window.location.origin || parsed.pathname !== '/production/qr-print') throw new Error('打印地址生成失败');
@@ -159,27 +239,38 @@ export function TravelerPrintDialog({
           {printModes.map(option => {
             const Icon = option.icon;
             const selected = mode === option.value;
-            return <button className={selected ? 'selected' : ''} type="button" key={option.value} onClick={() => setMode(option.value)}>
-              <i><Icon size={20} /></i><span><strong>{option.title}</strong><small>{option.description}</small></span>{selected && <em><Check size={15} /></em>}
+            const issue = blockingIssue(option.value);
+            return <button className={`${selected ? 'selected' : ''}${issue ? ' blocked' : ''}`} aria-disabled={Boolean(issue)} type="button" key={option.value} onClick={() => selectMode(option.value)}>
+              <i><Icon size={20} /></i><span><strong>{option.title}</strong><small>{issue && readiness.status === 'ready' ? `暂不可用：${issue}` : option.description}</small></span>{selected && <em><Check size={15} /></em>}
             </button>;
           })}
         </div>
+        <section className={`traveler-print-readiness ${readiness.status}`} aria-live="polite">
+          {readiness.status === 'loading' && <><Loader2 className="spin" size={20} /><span><strong>正在校验打印条件</strong><small>检查工艺路线、当前发布 SOP、PDF 文件状态和原图关联。</small></span></>}
+          {readiness.status === 'error' && <><AlertTriangle size={20} /><span><strong>打印前校验失败</strong><small>{readiness.message}</small></span><button type="button" onClick={() => setReadinessNonce(value => value + 1)}><RefreshCw size={15} />重新校验</button></>}
+          {readiness.status === 'ready' && <><ShieldCheck size={20} /><span><strong>打印条件已校验</strong><small>流转单 {readyCount('traveler')}/{readiness.items.length} · SOP {readyCount('sop')}/{readiness.items.length} · 原图 {readyCount('drawing')}/{readiness.items.length}；不可用方式已标出具体原因。</small></span><button type="button" aria-label="重新校验打印条件" onClick={() => setReadinessNonce(value => value + 1)}><RefreshCw size={15} /></button></>}
+        </section>
         <section className={`traveler-print-advanced ${advancedOpen ? 'open' : ''}`}>
           <button type="button" className="traveler-print-advanced-toggle" aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(current => !current)}>
             <span><Settings2 size={17} /><strong>更多组合与自定义补打</strong><small>原图单独打印 + 流转单/SOP 双面，或只补打指定资料</small></span><ChevronDown size={18} />
           </button>
           {advancedOpen && <div className="traveler-print-advanced-body">
-            <button type="button" className={`traveler-print-hybrid ${mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX' ? 'selected' : ''}`} onClick={() => setMode('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX')}>
-              <i><Layers3 size={20} /></i><span><strong>原图单独 + 流转单/SOP 双面</strong><small>图纸保持原尺寸，现场资料合并双面，兼顾尺寸与装订。</small></span>{mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX' && <em><Check size={15} /></em>}
+            <button type="button" aria-disabled={Boolean(blockingIssue('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX'))} className={`traveler-print-hybrid ${mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX' ? 'selected' : ''}${blockingIssue('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX') ? ' blocked' : ''}`} onClick={() => selectMode('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX')}>
+              <i><Layers3 size={20} /></i><span><strong>原图单独 + 流转单/SOP 双面</strong><small>{blockingIssue('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX') && readiness.status === 'ready' ? `暂不可用：${blockingIssue('DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX')}` : '图纸保持原尺寸，现场资料合并双面，兼顾尺寸与装订。'}</small></span>{mode === 'DRAWING_SEPARATE_TRAVELER_SOP_DUPLEX' && <em><Check size={15} /></em>}
             </button>
             <div className={`traveler-print-custom ${mode === 'CUSTOM' ? 'selected' : ''}`}>
-              <button type="button" onClick={() => setMode('CUSTOM')}><i><FileImage size={20} /></i><span><strong>自定义补打</strong><small>按资料单独选择并设置份数，不重复打印已完成资料。</small></span>{mode === 'CUSTOM' && <em><Check size={15} /></em>}</button>
+              <button type="button" onClick={() => selectMode('CUSTOM')}><i><FileImage size={20} /></i><span><strong>自定义补打</strong><small>按资料单独选择并设置份数，不重复打印已完成资料。</small></span>{mode === 'CUSTOM' && <em><Check size={15} /></em>}</button>
               {mode === 'CUSTOM' && <div className="traveler-print-material-options">{materialOptions.map(option => {
                 const checked = customMaterials.includes(option.value);
+                const materialIssue = option.value === 'SOP'
+                  ? readiness.status === 'ready' ? readiness.items.find(item => !item.sop.ready)?.sop.message || '' : blockingIssue('CUSTOM', [option.value])
+                  : option.value === 'DRAWING'
+                    ? readiness.status === 'ready' ? readiness.items.find(item => !item.drawing.ready)?.drawing.message || '' : blockingIssue('CUSTOM', [option.value])
+                    : readiness.status === 'ready' ? readiness.items.find(item => !item.traveler.ready)?.traveler.message || '' : blockingIssue('CUSTOM', [option.value]);
                 return <div key={option.value} className={`traveler-print-material-row ${checked ? 'checked' : ''}`}>
                   <label className="traveler-print-material-choice">
-                    <input type="checkbox" checked={checked} onChange={() => setCustomMaterials(current => checked ? current.filter(item => item !== option.value) : [...current, option.value])} />
-                    <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                    <input type="checkbox" checked={checked} disabled={Boolean(materialIssue) && !checked} onChange={() => setCustomMaterials(current => checked ? current.filter(item => item !== option.value) : [...current, option.value])} />
+                    <span><strong>{option.label}</strong><small>{materialIssue ? `不可选：${materialIssue}` : option.description}</small></span>
                   </label>
                   <label className="traveler-print-material-copy">
                     <input aria-label={`${option.label}份数`} type="number" min={1} max={10} disabled={!checked} value={materialCopies[option.value]} onChange={event => setMaterialCopies(current => ({ ...current, [option.value]: Math.max(1, Math.min(10, Number(event.target.value) || 1)) }))} />
@@ -198,7 +289,7 @@ export function TravelerPrintDialog({
         <div className="traveler-print-confirm-note"><Printer size={18} /><span>打开预览不等于已打印。完成实体打印后，请在预览页点击“确认已打印”，系统才会标记为已打印。</span></div>
         {error && <div className="traveler-print-dialog-error">{error}</div>}
       </div>
-      <footer><button type="button" disabled={saving} onClick={onClose}>取消</button><button className="primary-button" type="button" disabled={saving || !workOrderIds.length || (mode === 'CUSTOM' && !customMaterials.length)} onClick={() => { void submit(); }}>{saving ? <><Loader2 className="spin" size={17} />生成中...</> : <><Printer size={17} />生成打印任务</>}</button></footer>
+      <footer><button type="button" disabled={saving} onClick={onClose}>取消</button><button className="primary-button" type="button" disabled={saving || !workOrderIds.length || Boolean(currentBlockingIssue) || (mode === 'CUSTOM' && !customMaterials.length)} onClick={() => { void submit(); }}>{saving ? <><Loader2 className="spin" size={17} />生成中...</> : <><Printer size={17} />生成打印任务</>}</button></footer>
     </section>
   </div>;
 }

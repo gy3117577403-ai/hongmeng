@@ -201,6 +201,7 @@ test('team leaders cannot invoke workshop-wide or cross-team API operations', ()
     ['/api/resource-files/file-1/delete', 'POST'],
     ['/api/daily-shipments', 'POST'],
     ['/api/work-order-qr/prints', 'POST'],
+    ['/api/work-order-qr/prints/readiness', 'POST'],
     ['/api/work-orders/clear-weekly-plan/commit', 'POST'],
     ['/api/work-orders/week/close/commit', 'POST'],
     ['/api/daily-plans/organization', 'GET'],
@@ -315,4 +316,5 @@ test('production bulk operations require workshop scope without restricting owni
   assert.equal(canAccessApiRoute(engineering, '/api/work-orders/w1/execution', 'PATCH'), false);
   assert.equal(canAccessApiRoute(engineering, '/api/work-orders/w1/sync-drawing-library', 'POST'), true);
   assert.equal(canAccessApiRoute(business, '/api/work-order-qr/prints', 'POST'), true);
+  assert.equal(canAccessApiRoute(business, '/api/work-order-qr/prints/readiness', 'POST'), true);
 });
