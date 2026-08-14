@@ -373,6 +373,11 @@ export default function WorkOrderTravelerPrint({
   const activePacket = packetStates[selectedTarget];
   const sopPacketFailed = includesSop && (packetStates.sop?.status === 'error' || packetStates.all?.status === 'error');
   const confirmLabels = confirmRequest?.materials.map(materialText).join('、') || '';
+  const selectedTargetKeys = records.flatMap(record => targetMaterials(selectedTarget)
+    .filter(material => printItem(record, material))
+    .map(material => itemKey(record.printId, material)));
+  const selectedTargetConfirmed = selectedTargetKeys.length > 0
+    && selectedTargetKeys.every(key => confirmedItems.has(key));
 
   return <>
     <main className="traveler-print-screen">
@@ -385,7 +390,8 @@ export default function WorkOrderTravelerPrint({
             href={activePacket.url}
             onClick={() => setOpenedTargets(previous => new Set(previous).add(selectedTarget))}
           ><Printer size={18} />{openedTargets.has(selectedTarget) ? '再次打开打印界面' : '在当前页打开打印界面'}</a>}
-          {activePacket?.status === 'ready' && <button className="confirm" type="button" onClick={() => requestPacketConfirmation(selectedTarget)}><FileCheck2 size={17} />确认已打印</button>}
+          {activePacket?.status === 'ready' && !selectedTargetConfirmed && <button className="confirm" type="button" onClick={() => requestPacketConfirmation(selectedTarget)}><FileCheck2 size={17} />确认已打印</button>}
+          {activePacket?.status === 'ready' && selectedTargetConfirmed && !allConfirmed && <span className="traveler-print-confirmed"><CheckCircle2 size={17} />当前资料已确认</span>}
           {allConfirmed && <span className="traveler-print-confirmed"><CheckCircle2 size={17} />全部资料已确认</span>}
         </div>
       </header>
