@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
       total: active.length,
       dueToday: active.filter(task => task.dueDate === today && task.status !== 'COMPLETED').length,
       overdue: active.filter(task => Boolean(task.dueDate && task.dueDate < today) && task.status !== 'COMPLETED').length,
-      pendingReview: active.filter(task => task.counts.pendingReview > 0).length,
+      pendingReview: active.reduce((count, task) => count + task.counts.pendingReview, 0),
       collecting: active.filter(task => task.status === 'PLANNED' || task.status === 'IN_PROGRESS').length,
       completed: active.filter(task => task.status === 'COMPLETED').length,
       publishedItems: active.reduce((sum, task) => sum + task.counts.published, 0),

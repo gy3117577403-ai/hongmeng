@@ -99,3 +99,28 @@ test('sample migration stores metadata in PostgreSQL and keeps uploaded files in
   assert.match(uploadRoute, /putObject\(/);
   assert.doesNotMatch(uploadRoute, /writeFile|createWriteStream/);
 });
+
+test('sample planning workspace uses one compact master-detail surface instead of duplicate empty panels', () => {
+  const component = readFileSync('components/SampleTeamCenter.tsx', 'utf8');
+  const stylesheet = readFileSync('app/sample-team-workbench.css', 'utf8');
+
+  assert.match(component, /className="sample-team-zero-state"/);
+  assert.match(component, /className="sample-team-statusbar"/);
+  assert.match(component, /className="sample-detail-tabs"/);
+  assert.match(component, /任务概览/);
+  assert.match(component, /采集数据/);
+  assert.match(component, /过程照片/);
+  assert.match(component, /逐项审核/);
+  assert.doesNotMatch(component, /className="sample-team-metrics"/);
+  assert.doesNotMatch(component, /className="sample-team-toolbar"/);
+  assert.match(stylesheet, /grid-template-columns:\s*352px minmax\(0, 1fr\)/);
+  assert.match(stylesheet, /\.sample-plan-backdrop \.sample-plan-dialog/);
+  assert.match(stylesheet, /main\.sample-team-page\.hm-workbench-root\.hm-workbench-root\s*\{\s*padding-top:\s*0/);
+  assert.match(stylesheet, /\.sample-capture-page\s*\{\s*box-sizing:\s*border-box;\s*padding-bottom:\s*88px/);
+});
+
+test('pending review summary counts review items rather than tasks', () => {
+  const listRoute = readFileSync('app/api/sample-tasks/route.ts', 'utf8');
+
+  assert.match(listRoute, /active\.reduce\(\(count, task\) => count \+ task\.counts\.pendingReview, 0\)/);
+});
