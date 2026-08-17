@@ -27,6 +27,28 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/notifications', anyOf: ['NOTIFICATIONS'] },
   { prefix: '/api/users', anyOf: ['ACCOUNT_ADMIN'] },
   { prefix: '/api/field-report', anyOf: ['FIELD_REPORT'] },
+  {
+    prefix: '/api/sample-team',
+    anyOf: ['FIELD_REPORT', 'BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'],
+    productionMinimumScope: 'WORKSHOP',
+  },
+  {
+    prefix: '/api/sample-entries',
+    anyOf: ['FIELD_REPORT', 'BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'],
+    action: 'EXECUTE_WORKFLOW',
+    productionMinimumScope: 'WORKSHOP',
+  },
+  {
+    prefix: '/api/sample-photos',
+    anyOf: ['FIELD_REPORT', 'BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'],
+    actionsByMethod: { PATCH: 'EXECUTE_WORKFLOW', DELETE: 'EXECUTE_WORKFLOW' },
+    productionMinimumScope: 'WORKSHOP',
+  },
+  {
+    prefix: '/api/sample-tasks',
+    anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'],
+    productionMinimumScope: 'WORKSHOP',
+  },
 
   { prefix: '/api/employees', anyOf: ['HR'] },
   { prefix: '/api/recruitment', anyOf: ['HR'] },
@@ -203,6 +225,32 @@ function pathOnly(value: string): string {
 
 export function apiRouteAccessRule(pathname: string): ApiRule | null {
   const path = pathOnly(pathname);
+
+  if (/^\/api\/sample-tasks\/code\/[^/]+$/.test(path)) {
+    return {
+      prefix: '/api/sample-tasks/code/:code',
+      anyOf: ['FIELD_REPORT', 'BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'],
+      action: 'READ',
+      productionMinimumScope: 'WORKSHOP',
+    };
+  }
+
+  if (/^\/api\/sample-tasks\/[^/]+\/(?:entries|photos)$/.test(path)) {
+    return {
+      prefix: '/api/sample-tasks/:id/capture',
+      anyOf: ['FIELD_REPORT', 'BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'],
+      productionMinimumScope: 'WORKSHOP',
+    };
+  }
+
+  if (/^\/api\/sample-tasks\/[^/]+\/submit$/.test(path)) {
+    return {
+      prefix: '/api/sample-tasks/:id/submit',
+      anyOf: ['FIELD_REPORT', 'BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'PROCESS'],
+      action: 'EXECUTE_WORKFLOW',
+      productionMinimumScope: 'WORKSHOP',
+    };
+  }
 
   if (/^\/api\/terminal-tooling\/setups\/[^/]+\/publish$/.test(path)) {
     return {

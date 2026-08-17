@@ -24,6 +24,7 @@ type RouteAccessRule = {
  */
 export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/field-report', anyOf: ['FIELD_REPORT'] },
+  { prefix: '/sample-capture', anyOf: ['ACCOUNT_SELF', 'BASIC_SUMMARY', 'FIELD_REPORT', 'PRODUCTION', 'PLANNING', 'ENGINEERING', 'PROCESS'] },
   { prefix: '/account', anyOf: ['ACCOUNT_SELF'] },
   { prefix: '/home', anyOf: ['BASIC_SUMMARY'] },
   { prefix: '/production/qr-print', anyOf: ['PRODUCTION'], action: 'EXECUTE_WORKFLOW' },

@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -2682,6 +2682,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
               <small>{todayLabel} · {weekScopeRangeText}</small>
             </div>
           </div>
+          <Link className="sample-module-branch-entry" href="/production?branch=samples" prefetch={false}><ClipboardCheck size={15} aria-hidden="true" /><span>样品执行</span></Link>
           <nav className="production-dispatch-week-tabs" aria-label="生产周范围">
             <label className={scope === 'history' ? 'active' : ''}>
               <span>历史周</span>

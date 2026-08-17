@@ -1613,6 +1613,7 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         <header className="planning-titlebar">
           <div className="planning-navigation-trigger" id="planning-navigation-trigger" aria-label="平台导航入口" />
           <div className="planning-title-copy"><span>生产计划</span><h1>计划中心</h1><p>订单、排程、配料、工艺与生产下达</p></div>
+          <a className="sample-module-branch-entry" href="/weekly-plan-center?branch=samples"><PackageCheck size={15} aria-hidden="true" /><span>样品组计划</span></a>
           <nav aria-label="计划中心视图">
             {views.map(item => {
               const Icon = item.icon;

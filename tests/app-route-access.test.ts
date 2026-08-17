@@ -68,6 +68,12 @@ test('terminal tooling is visible to workshop leaders and hidden from field repo
   assert.equal(canAccessAppRoute(access('FIELD_REPORT'), '/workspace/abnormal-times'), false);
 });
 
+test('sample QR capture is a narrow page available to field reporters', () => {
+  assert.equal(canAccessAppRoute(access('FIELD_REPORT'), '/sample-capture/qr-code'), true);
+  assert.equal(canAccessAppRoute(access('FIELD_REPORT'), '/production?branch=samples'), false);
+  assert.equal(canAccessAppRoute(access('PLANNING'), '/sample-capture/qr-code'), true);
+});
+
 test('GM read/approval grants map to reports and workflow but not settings', () => {
   const gm = access('ACCOUNT_SELF', 'BASIC_SUMMARY', 'MAJOR_APPROVAL');
   assert.equal(canAccessAppRoute(gm, '/workspace/reports'), true);

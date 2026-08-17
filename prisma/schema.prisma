@@ -1123,6 +1123,7 @@ model Employee {
   fieldReportPinCredential         EmployeeFieldReportPinCredential?
   fieldReportPinSessions           FieldReportPinSession[]
   principalProcessCompletions      ProcessCompletion[]               @relation("ProcessCompletionPrincipalEmployee")
+  sampleTaskAssignments            SampleTaskAssignee[]
 
   @@index([isActive, employeeNo])
   @@index([name])
@@ -2559,27 +2560,30 @@ model ResourceFile {
 }
 
 model DrawingLibraryItem {
-  id                     String                  @id @default(uuid())
-  customerName           String                  @map("customer_name")
-  customerCode           String?                 @map("customer_code")
-  productName            String?                 @map("product_name")
+  id                     String                             @id @default(uuid())
+  customerName           String                             @map("customer_name")
+  customerCode           String?                            @map("customer_code")
+  productName            String?                            @map("product_name")
   specification          String
-  libraryKey             String                  @unique @map("library_key")
+  libraryKey             String                             @unique @map("library_key")
   remark                 String?
-  deletedAt              DateTime?               @map("deleted_at")
-  createdAt              DateTime                @default(now()) @map("created_at")
-  updatedAt              DateTime                @updatedAt @map("updated_at")
-  lastWorkOrderId        String?                 @map("last_work_order_id")
-  lastImportedAt         DateTime?               @map("last_imported_at")
+  deletedAt              DateTime?                          @map("deleted_at")
+  createdAt              DateTime                           @default(now()) @map("created_at")
+  updatedAt              DateTime                           @updatedAt @map("updated_at")
+  lastWorkOrderId        String?                            @map("last_work_order_id")
+  lastImportedAt         DateTime?                          @map("last_imported_at")
   files                  DrawingLibraryFile[]
-  workOrders             WorkOrder[]             @relation("DrawingLibraryWorkOrders")
-  lastWorkOrder          WorkOrder?              @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
+  workOrders             WorkOrder[]                        @relation("DrawingLibraryWorkOrders")
+  lastWorkOrder          WorkOrder?                         @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
   productTimeProfiles    ProductTimeProfile[]
   quotationTimes         ProductQuotationTime[]
   productionPlanOrders   ProductionPlanOrder[]
   productTimeDeployments ProductTimeDeployment[]
   sopDocument            SopDocument?
   pdfOverlayDocuments    PdfOverlayDocument[]
+  sampleTasks            SampleTask[]
+  productDataRecords     ProductDataRecord[]
+  connectorBindings      ProductConnectorParameterBinding[]
 
   @@index([customerName])
   @@index([customerCode])
@@ -2970,6 +2974,179 @@ model ProductProcessTimeEntry {
   @@map("product_process_time_entries")
 }
 
+model SampleTask {
+  id                    String               @id @default(uuid())
+  code                  String               @unique
+  qrCode                String               @unique @map("qr_code")
+  drawingLibraryItemId  String               @map("drawing_library_item_id")
+  sourceOrderNo         String?              @map("source_order_no")
+  customerNameSnapshot  String               @map("customer_name_snapshot")
+  productNameSnapshot   String?              @map("product_name_snapshot")
+  specificationSnapshot String               @map("specification_snapshot")
+  customerLevelCode     String?              @map("customer_level_code")
+  customerLevelLabel    String?              @map("customer_level_label")
+  customerLevelColor    String?              @map("customer_level_color")
+  sampleQuantity        Int?                 @map("sample_quantity")
+  dueDate               DateTime?            @map("due_date") @db.Date
+  priority              Int                  @default(0)
+  status                String               @default("PLANNED")
+  dataStatus            String               @default("NO_DATA") @map("data_status")
+  planRemark            String?              @map("plan_remark")
+  createdById           String?              @map("created_by_id")
+  createdByName         String?              @map("created_by_name")
+  updatedById           String?              @map("updated_by_id")
+  updatedByName         String?              @map("updated_by_name")
+  version               Int                  @default(1)
+  startedAt             DateTime?            @map("started_at")
+  submittedAt           DateTime?            @map("submitted_at")
+  completedAt           DateTime?            @map("completed_at")
+  cancelledAt           DateTime?            @map("cancelled_at")
+  deletedAt             DateTime?            @map("deleted_at")
+  createdAt             DateTime             @default(now()) @map("created_at")
+  updatedAt             DateTime             @updatedAt @map("updated_at")
+  drawingLibraryItem    DrawingLibraryItem   @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Restrict)
+  assignees             SampleTaskAssignee[]
+  entries               SampleDataEntry[]
+  photos                SamplePhoto[]
+
+  @@index([drawingLibraryItemId, createdAt])
+  @@index([status, dueDate])
+  @@index([dataStatus, updatedAt])
+  @@index([customerLevelCode])
+  @@index([deletedAt])
+  @@map("sample_tasks")
+}
+
+model SampleTaskAssignee {
+  id             String     @id @default(uuid())
+  taskId         String     @map("task_id")
+  employeeId     String     @map("employee_id")
+  assignedById   String?    @map("assigned_by_id")
+  assignedByName String?    @map("assigned_by_name")
+  createdAt      DateTime   @default(now()) @map("created_at")
+  task           SampleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  employee       Employee   @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@unique([taskId, employeeId])
+  @@index([employeeId, createdAt])
+  @@map("sample_task_assignees")
+}
+
+model SampleDataEntry {
+  id                  String     @id @default(uuid())
+  taskId              String     @map("task_id")
+  kind                String
+  label               String?
+  payload             Json
+  reviewStatus        String     @default("DRAFT") @map("review_status")
+  publishMode         String?    @map("publish_mode")
+  reviewComment       String?    @map("review_comment")
+  createdById         String?    @map("created_by_id")
+  createdByName       String?    @map("created_by_name")
+  updatedById         String?    @map("updated_by_id")
+  updatedByName       String?    @map("updated_by_name")
+  reviewedById        String?    @map("reviewed_by_id")
+  reviewedByName      String?    @map("reviewed_by_name")
+  reviewedAt          DateTime?  @map("reviewed_at")
+  publishedById       String?    @map("published_by_id")
+  publishedByName     String?    @map("published_by_name")
+  publishedAt         DateTime?  @map("published_at")
+  publishedEntityType String?    @map("published_entity_type")
+  publishedEntityId   String?    @map("published_entity_id")
+  version             Int        @default(1)
+  deletedAt           DateTime?  @map("deleted_at")
+  createdAt           DateTime   @default(now()) @map("created_at")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
+  task                SampleTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId, reviewStatus, createdAt])
+  @@index([kind, reviewStatus])
+  @@index([publishedEntityType, publishedEntityId])
+  @@index([deletedAt])
+  @@map("sample_data_entries")
+}
+
+model SamplePhoto {
+  id              String              @id @default(uuid())
+  taskId          String              @map("task_id")
+  category        String              @default("UNCLASSIFIED")
+  caption         String?
+  originalName    String              @map("original_name")
+  mimeType        String              @map("mime_type")
+  size            Int
+  objectKey       String              @unique @map("object_key")
+  sha256          String
+  captureSource   String?             @map("capture_source")
+  reviewStatus    String              @default("DRAFT") @map("review_status")
+  reviewComment   String?             @map("review_comment")
+  uploadedById    String?             @map("uploaded_by_id")
+  uploadedByName  String?             @map("uploaded_by_name")
+  reviewedById    String?             @map("reviewed_by_id")
+  reviewedByName  String?             @map("reviewed_by_name")
+  reviewedAt      DateTime?           @map("reviewed_at")
+  publishedById   String?             @map("published_by_id")
+  publishedByName String?             @map("published_by_name")
+  publishedAt     DateTime?           @map("published_at")
+  publishedFileId String?             @unique @map("published_file_id")
+  version         Int                 @default(1)
+  deletedAt       DateTime?           @map("deleted_at")
+  createdAt       DateTime            @default(now()) @map("created_at")
+  updatedAt       DateTime            @updatedAt @map("updated_at")
+  task            SampleTask          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  publishedFile   DrawingLibraryFile? @relation("SamplePhotoPublishedFile", fields: [publishedFileId], references: [id], onDelete: SetNull)
+
+  @@index([taskId, reviewStatus, createdAt])
+  @@index([category, reviewStatus])
+  @@index([deletedAt])
+  @@map("sample_photos")
+}
+
+model ProductDataRecord {
+  id                   String             @id @default(uuid())
+  drawingLibraryItemId String             @map("drawing_library_item_id")
+  kind                 String
+  label                String?
+  payload              Json
+  version              Int
+  status               String             @default("PUBLISHED")
+  sourceType           String             @default("SAMPLE_TASK") @map("source_type")
+  sourceSampleEntryId  String?            @unique @map("source_sample_entry_id")
+  supersedesRecordId   String?            @map("supersedes_record_id")
+  publishedById        String?            @map("published_by_id")
+  publishedByName      String?            @map("published_by_name")
+  publishedAt          DateTime           @default(now()) @map("published_at")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+  drawingLibraryItem   DrawingLibraryItem @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Cascade)
+
+  @@unique([drawingLibraryItemId, kind, version])
+  @@index([drawingLibraryItemId, kind, status])
+  @@index([publishedAt])
+  @@map("product_data_records")
+}
+
+model ProductConnectorParameterBinding {
+  id                   String             @id @default(uuid())
+  drawingLibraryItemId String             @map("drawing_library_item_id")
+  connectorParameterId String             @map("connector_parameter_id")
+  positionLabel        String?            @map("position_label")
+  version              Int
+  isCurrent            Boolean            @default(true) @map("is_current")
+  sourceSampleEntryId  String?            @unique @map("source_sample_entry_id")
+  publishedById        String?            @map("published_by_id")
+  publishedByName      String?            @map("published_by_name")
+  publishedAt          DateTime           @default(now()) @map("published_at")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  updatedAt            DateTime           @updatedAt @map("updated_at")
+  drawingLibraryItem   DrawingLibraryItem @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Cascade)
+  connectorParameter   ConnectorParameter @relation(fields: [connectorParameterId], references: [id], onDelete: Restrict)
+
+  @@unique([drawingLibraryItemId, version])
+  @@index([drawingLibraryItemId, isCurrent])
+  @@index([connectorParameterId])
+  @@map("product_connector_parameter_bindings")
+}
+
 model DrawingLibraryFile {
   id                          String              @id @default(uuid())
   libraryItemId               String              @map("library_item_id")
@@ -3001,6 +3178,7 @@ model DrawingLibraryFile {
   pdfOverlayCurrentFor        PdfOverlayDocument? @relation("PdfOverlayCurrentFile")
   supersedesFile              DrawingLibraryFile? @relation("DrawingLibraryFileSupersession", fields: [supersedesFileId], references: [id], onDelete: SetNull)
   supersededByFile            DrawingLibraryFile? @relation("DrawingLibraryFileSupersession")
+  samplePhotoSource           SamplePhoto?        @relation("SamplePhotoPublishedFile")
 
   @@index([libraryItemId])
   @@index([categoryId])
@@ -3649,22 +3827,23 @@ model KnowledgeRelation {
 }
 
 model ConnectorParameter {
-  id                     String                           @id @default(cuid())
-  rowNo                  Int?                             @map("row_no")
+  id                     String                             @id @default(cuid())
+  rowNo                  Int?                               @map("row_no")
   model                  String?
-  outerPeelMm            String?                          @map("outer_peel_mm")
-  innerPeelMm            String?                          @map("inner_peel_mm")
-  insertionLengthMm      String?                          @map("insertion_length_mm")
+  outerPeelMm            String?                            @map("outer_peel_mm")
+  innerPeelMm            String?                            @map("inner_peel_mm")
+  insertionLengthMm      String?                            @map("insertion_length_mm")
   remark                 String?
-  isHighlighted          Boolean                          @default(false) @map("is_highlighted")
-  createdBy              String?                          @map("created_by")
-  updatedBy              String?                          @map("updated_by")
-  createdAt              DateTime                         @default(now()) @map("created_at")
-  updatedAt              DateTime                         @updatedAt @map("updated_at")
-  deletedAt              DateTime?                        @map("deleted_at")
-  importBatchId          String?                          @map("import_batch_id")
-  importBatch            ConnectorParameterImportBatch?   @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
+  isHighlighted          Boolean                            @default(false) @map("is_highlighted")
+  createdBy              String?                            @map("created_by")
+  updatedBy              String?                            @map("updated_by")
+  createdAt              DateTime                           @default(now()) @map("created_at")
+  updatedAt              DateTime                           @updatedAt @map("updated_at")
+  deletedAt              DateTime?                          @map("deleted_at")
+  importBatchId          String?                            @map("import_batch_id")
+  importBatch            ConnectorParameterImportBatch?     @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
   assemblyManualBindings ConnectorAssemblyManualBinding[]
+  productBindings        ProductConnectorParameterBinding[]
 
   @@index([rowNo])
   @@index([model])

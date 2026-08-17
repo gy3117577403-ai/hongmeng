@@ -184,6 +184,9 @@ async function main(prisma, env = process.env) {
     ['成品图', 'product', 3],
     ['辅料规格', 'material', 4],
     ['注意事项', 'notice', 5],
+    ['剥皮参数', 'sample_parameters', 6],
+    ['样品过程图', 'sample_process', 7],
+    ['测量证据', 'sample_measurement', 8],
   ];
 
   for (const [name, code, sortOrder] of categories) {

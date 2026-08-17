@@ -1,4 +1,12 @@
-import type { DrawingLibraryFile, DrawingLibraryItem, ResourceCategory, User } from '@prisma/client';
+import type {
+  ConnectorParameter,
+  DrawingLibraryFile,
+  DrawingLibraryItem,
+  ProductConnectorParameterBinding,
+  ProductDataRecord,
+  ResourceCategory,
+  User,
+} from '@prisma/client';
 import { invalidSpecificationReason, isInvalidSpecification } from '@/lib/bulk-original-drawing-parser';
 import { safeDisplayFilename } from '@/lib/filenames';
 import { prisma } from '@/lib/prisma';
@@ -146,6 +154,8 @@ export type DrawingLibraryFileWithMeta = DrawingLibraryFile & {
 export type DrawingLibraryItemWithFiles = DrawingLibraryItem & {
   files?: DrawingLibraryFileWithMeta[];
   productionPlanOrders?: DrawingLibraryPlanningLink[];
+  productDataRecords?: ProductDataRecord[];
+  connectorBindings?: Array<ProductConnectorParameterBinding & { connectorParameter: ConnectorParameter }>;
 };
 
 export function serializeDrawingLibraryFile(file: DrawingLibraryFileWithMeta) {
@@ -222,5 +232,40 @@ export function serializeDrawingLibraryItem(item: DrawingLibraryItemWithFiles, c
     isAnomaly: !!anomalyReason,
     anomalyReason,
     files: files.map(serializeDrawingLibraryFile),
+    structuredRecords: (item.productDataRecords || []).map(record => ({
+      id: record.id,
+      drawingLibraryItemId: record.drawingLibraryItemId,
+      kind: record.kind,
+      label: record.label,
+      payload: record.payload && typeof record.payload === 'object' && !Array.isArray(record.payload)
+        ? record.payload as Record<string, unknown>
+        : {},
+      version: record.version,
+      status: record.status,
+      sourceType: record.sourceType,
+      sourceSampleEntryId: record.sourceSampleEntryId,
+      supersedesRecordId: record.supersedesRecordId,
+      publishedBy: record.publishedByName,
+      publishedAt: record.publishedAt.toISOString(),
+    })),
+    connectorParameters: (item.connectorBindings || []).map(binding => ({
+      id: binding.id,
+      drawingLibraryItemId: binding.drawingLibraryItemId,
+      connectorParameterId: binding.connectorParameterId,
+      positionLabel: binding.positionLabel,
+      version: binding.version,
+      isCurrent: binding.isCurrent,
+      sourceSampleEntryId: binding.sourceSampleEntryId,
+      publishedBy: binding.publishedByName,
+      publishedAt: binding.publishedAt.toISOString(),
+      parameter: {
+        id: binding.connectorParameter.id,
+        model: binding.connectorParameter.model,
+        outerPeelMm: binding.connectorParameter.outerPeelMm,
+        innerPeelMm: binding.connectorParameter.innerPeelMm,
+        insertionLengthMm: binding.connectorParameter.insertionLengthMm,
+        remark: binding.connectorParameter.remark,
+      },
+    })),
   };
 }

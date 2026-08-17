@@ -93,6 +93,31 @@ test('field reporter can use QR reporting and its independent abnormal-time comm
   assert.equal(canAccessApiRoute(reporter, '/api/notifications', 'GET'), false);
 });
 
+test('sample capture is available to field reporters while plan and review commands stay separated', () => {
+  const reporter = context({
+    profile: 'FIELD_REPORTER',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'EMPLOYEE:e1',
+  });
+  const planning = context({
+    profile: 'DEPARTMENT_FULL',
+    departmentCode: 'PLANNING',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:PLANNING',
+  });
+
+  assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/code/qr-code', 'GET'), true);
+  assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/task-1/entries', 'POST'), true);
+  assert.equal(canAccessApiRoute(reporter, '/api/sample-entries/entry-1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(reporter, '/api/sample-photos/photo-1', 'DELETE'), true);
+  assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/task-1/submit', 'POST'), true);
+  assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks', 'POST'), false);
+  assert.equal(canAccessApiRoute(reporter, '/api/sample-tasks/task-1/review', 'POST'), false);
+  assert.equal(canAccessApiRoute(planning, '/api/sample-tasks', 'POST'), true);
+  assert.equal(canAccessApiRoute(planning, '/api/sample-tasks/task-1/review', 'POST'), true);
+});
+
 test('production dispatch export follows scoped production access', () => {
   const supervisor = context({
     profile: 'WORKSHOP_SUPERVISOR',

@@ -121,7 +121,36 @@ function categoryShortName(value?: string | null) {
   if (value === 'SOP指导书') return 'SOP';
   if (value === '成品图') return '成品';
   if (value === '注意事项') return '注意';
+  if (value === '样品过程图') return '过程';
+  if (value === '测量证据') return '测量';
+  if (value === '剥皮参数') return '剥皮';
   return value || '分类';
+}
+
+const structuredFieldLabels: Record<string, string> = {
+  name: '名称',
+  specification: '规格',
+  model: '型号',
+  length: '长度',
+  quantity: '数量',
+  unit: '单位',
+  tolerance: '公差',
+  position: '使用位置',
+  positionLabel: '部位',
+  category: '分类',
+  severity: '等级',
+  content: '内容',
+  processName: '适用工序',
+  value: '记录值',
+  remark: '备注',
+};
+
+function structuredValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return '';
+  if (Array.isArray(value)) return value.map(item => typeof item === 'object' ? JSON.stringify(item) : String(item)).join('、');
+  if (typeof value === 'object') return JSON.stringify(value);
+  if (typeof value === 'boolean') return value ? '是' : '否';
+  return String(value);
 }
 
 export function DrawingLibraryShell({
@@ -192,6 +221,17 @@ export function DrawingLibraryShell({
   const activeCategory = categories.find(category => category.id === activeCategoryId) || categories[0] || null;
   const activeFiles = selectedItem?.files.filter(file => file.categoryId === activeCategory?.id) || [];
   const selectedFile = activeFiles.find(file => file.id === selectedFileId) || activeFiles[0] || null;
+  const activeStructuredRecords = (selectedItem?.structuredRecords || []).filter(record => (
+    activeCategory?.code === 'material'
+      ? record.kind === 'MATERIAL'
+      : activeCategory?.code === 'notice'
+        ? record.kind === 'NOTICE' || record.kind === 'CUSTOM'
+        : false
+  ));
+  const activeConnectorParameters = activeCategory?.code === 'sample_parameters'
+    ? selectedItem?.connectorParameters || []
+    : [];
+  const activeStructuredCount = activeStructuredRecords.length + activeConnectorParameters.length;
   const isSopCategory = activeCategory?.code === 'sop';
   const hasActiveFilters = !!keyword.trim() || filter !== 'all' || customer !== '全部客户';
   const activeFilterLabel = filterOptions.find(([key]) => key === filter)?.[1] || '全部';
@@ -960,7 +1000,15 @@ export function DrawingLibraryShell({
               <div className="drawing-library-main">
                 <nav className="drawing-category-rail">
                   {categories.map(category => {
-                    const count = selectedItem.categoryFileCounts[category.id] || 0;
+                    const fileCount = selectedItem.categoryFileCounts[category.id] || 0;
+                    const structuredCount = category.code === 'material'
+                      ? (selectedItem.structuredRecords || []).filter(record => record.kind === 'MATERIAL').length
+                      : category.code === 'notice'
+                        ? (selectedItem.structuredRecords || []).filter(record => record.kind === 'NOTICE' || record.kind === 'CUSTOM').length
+                        : category.code === 'sample_parameters'
+                          ? (selectedItem.connectorParameters || []).length
+                          : 0;
+                    const count = fileCount + structuredCount;
                     return (
                       <button key={category.id} className={activeCategoryId === category.id ? 'active' : ''} type="button" onClick={() => { void chooseCategory(category); }}>
                         <span className={count ? 'dot filled' : 'dot'} />
@@ -984,7 +1032,31 @@ export function DrawingLibraryShell({
                         <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>
                       </div>
 
-                      {!selectedFile ? (
+                      {!selectedFile && activeStructuredCount > 0 ? (
+                        <div className="drawing-structured-records hm-scroll-region" tabIndex={0} aria-label={`${activeCategory?.name || '结构化资料'}，共 ${activeStructuredCount} 条`}>
+                          {activeConnectorParameters.map(binding => (
+                            <article key={binding.id}>
+                              <header><span>剥皮参数</span><strong>{binding.positionLabel || binding.parameter.model || '未命名部位'}</strong><em>V{binding.version}</em></header>
+                              <dl>
+                                <div><dt>连接器型号</dt><dd>{binding.parameter.model || '-'}</dd></div>
+                                <div><dt>外剥皮</dt><dd>{binding.parameter.outerPeelMm || '-'}</dd></div>
+                                <div><dt>内剥皮</dt><dd>{binding.parameter.innerPeelMm || '-'}</dd></div>
+                                <div><dt>入长</dt><dd>{binding.parameter.insertionLengthMm || '-'}</dd></div>
+                              </dl>
+                              {binding.parameter.remark && <p>{binding.parameter.remark}</p>}
+                              <footer>来源：样品审核 · {binding.publishedBy || '系统'} · {dt(binding.publishedAt)}</footer>
+                            </article>
+                          ))}
+                          {activeStructuredRecords.map(record => {
+                            const fields = Object.entries(record.payload).map(([key, value]) => [key, structuredValue(value)] as const).filter(([, value]) => value);
+                            return <article key={record.id}>
+                              <header><span>{record.kind === 'NOTICE' ? '注意事项' : record.kind === 'MATERIAL' ? '辅料规则' : '补充资料'}</span><strong>{record.label || '未命名记录'}</strong><em>V{record.version}</em></header>
+                              {!!fields.length && <dl>{fields.map(([key, value]) => <div key={key}><dt>{structuredFieldLabels[key] || key}</dt><dd>{value}</dd></div>)}</dl>}
+                              <footer>来源：{record.sourceType === 'SAMPLE_TASK' ? '样品审核' : record.sourceType} · {record.publishedBy || '系统'} · {dt(record.publishedAt)}</footer>
+                            </article>;
+                          })}
+                        </div>
+                      ) : !selectedFile ? (
                         <div className="drawing-preview-placeholder" aria-label="当前分类暂无可预览文件">
                           <span aria-hidden="true">＋</span>
                           <strong>{activeCategory?.name || '当前分类'}暂无文件</strong>

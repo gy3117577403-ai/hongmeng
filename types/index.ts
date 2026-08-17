@@ -116,6 +116,41 @@ export type DrawingLibraryFileDTO = {
   downloadUrl: string;
 };
 
+export type ProductDataRecordDTO = {
+  id: string;
+  drawingLibraryItemId: string;
+  kind: 'MATERIAL' | 'NOTICE' | 'CUSTOM' | string;
+  label: string | null;
+  payload: Record<string, unknown>;
+  version: number;
+  status: string;
+  sourceType: string;
+  sourceSampleEntryId: string | null;
+  supersedesRecordId: string | null;
+  publishedBy: string | null;
+  publishedAt: string;
+};
+
+export type ProductConnectorParameterBindingDTO = {
+  id: string;
+  drawingLibraryItemId: string;
+  connectorParameterId: string;
+  positionLabel: string | null;
+  version: number;
+  isCurrent: boolean;
+  sourceSampleEntryId: string | null;
+  publishedBy: string | null;
+  publishedAt: string;
+  parameter: {
+    id: string;
+    model: string | null;
+    outerPeelMm: string | null;
+    innerPeelMm: string | null;
+    insertionLengthMm: string | null;
+    remark: string | null;
+  };
+};
+
 export type DrawingLibraryItemDTO = {
   id: string;
   customerName: string;
@@ -139,6 +174,119 @@ export type DrawingLibraryItemDTO = {
   isAnomaly: boolean;
   anomalyReason: string;
   files: DrawingLibraryFileDTO[];
+  structuredRecords?: ProductDataRecordDTO[];
+  connectorParameters?: ProductConnectorParameterBindingDTO[];
+};
+
+export type SampleTaskStatusDTO = 'PLANNED' | 'IN_PROGRESS' | 'SUBMITTED' | 'COMPLETED' | 'CANCELLED';
+export type SampleDataStatusDTO = 'NO_DATA' | 'COLLECTING' | 'PENDING_REVIEW' | 'NEEDS_CHANGES' | 'PARTIALLY_PUBLISHED' | 'PROCESSED';
+export type SampleReviewStatusDTO = 'DRAFT' | 'PENDING' | 'CHANGES_REQUESTED' | 'APPROVED' | 'PUBLISHED' | 'VOIDED';
+export type SampleDataKindDTO = 'PROCESS_TIME' | 'STRIPPING' | 'MATERIAL' | 'NOTICE' | 'CUSTOM';
+export type SamplePhotoCategoryDTO = 'UNCLASSIFIED' | 'PROCESS' | 'MEASUREMENT' | 'FINISHED' | 'DETAIL' | 'EXCEPTION';
+export type SamplePublishModeDTO = 'APPEND' | 'REPLACE_MATCHING' | 'RECORD_ONLY';
+
+export type SampleTaskAssigneeDTO = {
+  id: string;
+  employeeId: string;
+  employeeNo: string;
+  name: string;
+  team: string | null;
+  position: string | null;
+};
+
+export type SampleDataEntryDTO = {
+  id: string;
+  taskId: string;
+  kind: SampleDataKindDTO;
+  label: string | null;
+  payload: Record<string, unknown>;
+  reviewStatus: SampleReviewStatusDTO;
+  publishMode: SamplePublishModeDTO | null;
+  reviewComment: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  publishedBy: string | null;
+  publishedAt: string | null;
+  publishedEntityType: string | null;
+  publishedEntityId: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SamplePhotoDTO = {
+  id: string;
+  taskId: string;
+  category: SamplePhotoCategoryDTO;
+  caption: string | null;
+  originalName: string;
+  mimeType: string;
+  size: number;
+  captureSource: string | null;
+  reviewStatus: SampleReviewStatusDTO;
+  reviewComment: string | null;
+  uploadedBy: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  publishedBy: string | null;
+  publishedAt: string | null;
+  publishedFileId: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  contentUrl: string;
+};
+
+export type SampleTaskDTO = {
+  id: string;
+  code: string;
+  qrCode: string;
+  captureUrl: string;
+  drawingLibraryItemId: string;
+  sourceOrderNo: string | null;
+  customerName: string;
+  productName: string | null;
+  specification: string;
+  customerLevelCode: string | null;
+  customerLevelLabel: string | null;
+  customerLevelColor: string | null;
+  sampleQuantity: number | null;
+  dueDate: string | null;
+  priority: number;
+  status: SampleTaskStatusDTO;
+  dataStatus: SampleDataStatusDTO;
+  planRemark: string | null;
+  version: number;
+  startedAt: string | null;
+  submittedAt: string | null;
+  completedAt: string | null;
+  cancelledAt: string | null;
+  createdBy: string | null;
+  updatedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+  assignees: SampleTaskAssigneeDTO[];
+  entries: SampleDataEntryDTO[];
+  photos: SamplePhotoDTO[];
+  counts: {
+    data: number;
+    photos: number;
+    pendingReview: number;
+    changesRequested: number;
+    published: number;
+  };
+};
+
+export type SampleTeamSummaryDTO = {
+  total: number;
+  dueToday: number;
+  overdue: number;
+  pendingReview: number;
+  collecting: number;
+  completed: number;
+  publishedItems: number;
 };
 
 export type DrawingLibraryCustomerDTO = {

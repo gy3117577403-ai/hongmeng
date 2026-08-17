@@ -31,6 +31,15 @@ function itemInclude() {
       select: { id: true },
       take: 1,
     },
+    productDataRecords: {
+      where: { status: 'PUBLISHED' },
+      orderBy: [{ kind: 'asc' as const }, { version: 'desc' as const }],
+    },
+    connectorBindings: {
+      where: { isCurrent: true },
+      include: { connectorParameter: true },
+      orderBy: [{ version: 'desc' as const }],
+    },
   };
 }
 
