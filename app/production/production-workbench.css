@@ -7448,6 +7448,18 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   line-height: 1.2;
 }
 
+.hm-production-workbench .production-route-coverage-badge {
+  display: inline-flex;
+  margin-left: 3px;
+  padding: 1px 3px;
+  border-radius: 4px;
+  background: #e8f7ef;
+  color: #157347;
+  font-size: 8px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
 .hm-production-workbench .production-dispatch-progress.incomplete > i > span {
   background: linear-gradient(90deg, #f59e0b, #f97316);
 }

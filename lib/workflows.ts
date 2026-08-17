@@ -24,6 +24,10 @@ import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import { addDays, parseWeek } from '@/lib/weekly-work-orders';
 import { productionCarryoverDayWindow } from '@/lib/production-carryovers';
 import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
+import {
+  processSupplementActualRequiredQty,
+  processSupplementRemainingQty,
+} from '@/lib/process-supplement-coverage';
 import type {
   ChangeStatus,
   ChangeType,
@@ -251,6 +255,7 @@ type WorkflowRouteStepRecord = {
   reportUnitLabel: string;
   standardMillisecondsPerUnit: number | null;
   executionMode: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+  isCritical: boolean;
   changeSource: 'EXISTING' | 'NEW';
   inputQty: number;
   processedQty: number;
@@ -305,8 +310,12 @@ type WorkflowRouteStepRecord = {
   }>;
   supplementObligation: {
     requiredQty: number;
+    systemCoveredQty: number;
     reportedQty: number;
     status: string;
+    fulfillmentMode: 'ACTUAL' | 'MIXED' | 'SYSTEM_COVERED' | 'FUTURE_ONLY' | 'RECALL_REQUIRED';
+    releasePolicy: string;
+    isCritical: boolean;
   } | null;
 };
 
@@ -358,7 +367,9 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
     const supplement = step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
       ? step.supplementObligation
       : null;
-    const displayedInputQuantity = supplement?.requiredQty ?? step.inputQty;
+    const displayedInputQuantity = supplement
+      ? processSupplementActualRequiredQty(supplement)
+      : step.inputQty;
     const displayedProcessedQuantity = supplement?.reportedQty ?? step.processedQty;
     const reportedGoodQuantity = supplement?.reportedQty ?? step.goodOutputQty;
     const latestExecution = step.executions[0] || null;
@@ -398,6 +409,7 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
       reportUnitLabel: step.reportUnitLabel || step.unitLabel || '件',
       standardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
       executionMode: step.executionMode,
+      isCritical: step.isCritical,
       changeSource: step.changeSource,
       changeTag: changeSnapshot.tag,
       changeVersion: changeSnapshot.changeVersion,
@@ -409,6 +421,11 @@ function routeSteps(route: WorkflowRouteRecord, targetQuantity: number | null): 
       defectQuantity: step.defectOutputQty,
       releasedGoodQuantity: step.releasedGoodQty,
       remainingProcessQuantity: Math.max(0, displayedInputQuantity - displayedProcessedQuantity),
+      systemCoveredQuantity: supplement?.systemCoveredQty || 0,
+      actualRequiredQuantity: supplement ? processSupplementActualRequiredQty(supplement) : displayedInputQuantity,
+      supplementRemainingQuantity: supplement ? processSupplementRemainingQty(supplement) : null,
+      supplementFulfillmentMode: supplement?.fulfillmentMode || null,
+      supplementReleasePolicy: supplement?.releasePolicy || null,
       laborEligibleQuantity,
       laborClaimedQuantity,
       laborRemainingQuantity,
@@ -947,6 +964,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                     reportUnitLabel: true,
                     standardMillisecondsPerUnit: true,
                     executionMode: true,
+                    isCritical: true,
                     changeSource: true,
                     inputQty: true,
                     processedQty: true,
@@ -968,7 +986,15 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                       },
                     },
                     supplementObligation: {
-                      select: { requiredQty: true, reportedQty: true, status: true },
+                      select: {
+                        requiredQty: true,
+                        systemCoveredQty: true,
+                        reportedQty: true,
+                        status: true,
+                        fulfillmentMode: true,
+                        releasePolicy: true,
+                        isCritical: true,
+                      },
                     },
                     executions: {
                       where: {
@@ -1143,6 +1169,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                 reportUnitLabel: true,
                 standardMillisecondsPerUnit: true,
                 executionMode: true,
+                isCritical: true,
                 changeSource: true,
                 inputQty: true,
                 processedQty: true,
@@ -1164,7 +1191,15 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
                   },
                 },
                 supplementObligation: {
-                  select: { requiredQty: true, reportedQty: true, status: true },
+                  select: {
+                    requiredQty: true,
+                    systemCoveredQty: true,
+                    reportedQty: true,
+                    status: true,
+                    fulfillmentMode: true,
+                    releasePolicy: true,
+                    isCritical: true,
+                  },
                 },
                 executions: {
                   where: {

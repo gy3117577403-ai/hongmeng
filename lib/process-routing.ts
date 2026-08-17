@@ -15,6 +15,10 @@ import {
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
 import { legacyStatusForStage, normalizeWorkOrderStage } from '@/lib/work-orders';
 import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
+import {
+  processSupplementActualRequiredQty,
+  processSupplementRemainingQty,
+} from '@/lib/process-supplement-coverage';
 
 export const PROCESS_STAGE_GROUPS: ProcessStageGroup[] = ['frontend', 'backend', 'finish'];
 export const PROCESS_ROUTE_STATUSES: ProcessRouteStatus[] = ['draft', 'confirmed', 'in_progress', 'completed'];
@@ -88,6 +92,17 @@ export const processRouteInclude = Prisma.validator<Prisma.WorkOrderProcessRoute
         },
       },
       completedBy: { select: { id: true, username: true, displayName: true } },
+      supplementObligation: {
+        select: {
+          requiredQty: true,
+          systemCoveredQty: true,
+          reportedQty: true,
+          status: true,
+          fulfillmentMode: true,
+          releasePolicy: true,
+          isCritical: true,
+        },
+      },
       executions: {
         where: { voidedAt: null },
         select: { goodQty: true, standardLaborMilliseconds: true },
@@ -144,6 +159,17 @@ export const processRouteSummaryInclude = Prisma.validator<Prisma.WorkOrderProce
           routeVersionAfter: true,
           result: true,
           deployment: { select: { id: true, status: true } },
+        },
+      },
+      supplementObligation: {
+        select: {
+          requiredQty: true,
+          systemCoveredQty: true,
+          reportedQty: true,
+          status: true,
+          fulfillmentMode: true,
+          releasePolicy: true,
+          isCritical: true,
         },
       },
       executions: {
@@ -619,6 +645,7 @@ export function serializeProcessRoute(
       ? step.completions.reduce((total, completion) => total + completion.defectQty, 0)
       : 0;
     const reportedGoodQuantity = executionGoodQuantity + completionGoodQuantity;
+    const supplement = step.supplementObligation;
     const changeSnapshot = changeSnapshots.get(step.id)!;
     return {
       id: step.id,
@@ -647,6 +674,7 @@ export function serializeProcessRoute(
       reportQuantityBasis: step.reportQuantityBasis === 'action' ? 'action' as const : 'product' as const,
       reportUnitLabel: step.reportUnitLabel,
       countsForEfficiency: step.countsForEfficiency,
+      isCritical: step.isCritical,
       inputQty: step.inputQty,
       processedQty: step.processedQty,
       goodOutputQty: step.goodOutputQty,
@@ -665,6 +693,11 @@ export function serializeProcessRoute(
       productTimeProfileVersion: step.productTimeProfileVersion,
       standardSource: step.standardSource,
       executionMode: step.executionMode,
+      systemCoveredQty: supplement?.systemCoveredQty || 0,
+      actualRequiredQty: supplement ? processSupplementActualRequiredQty(supplement) : null,
+      supplementRemainingQty: supplement ? processSupplementRemainingQty(supplement) : null,
+      supplementFulfillmentMode: supplement?.fulfillmentMode || null,
+      supplementReleasePolicy: supplement?.releasePolicy || null,
       changeSource: step.changeSource,
       changeTag: changeSnapshot.tag,
       changeVersion: changeSnapshot.changeVersion,

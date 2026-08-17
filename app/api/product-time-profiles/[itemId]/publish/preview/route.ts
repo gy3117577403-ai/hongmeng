@@ -8,10 +8,11 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-export async function POST(_req: Request, { params }: { params: { itemId: string } }) {
+export async function POST(req: Request, { params }: { params: { itemId: string } }) {
   try {
     await requireUser();
-    const preview = await previewProductTimeDeployment(params.itemId);
+    const body = await req.json().catch(() => ({})) as Record<string, unknown>;
+    const preview = await previewProductTimeDeployment(params.itemId, undefined, body.policies);
     // Business conflicts are a successful preview result. The client needs the
     // complete impact/conflict list to explain why publish is blocked.
     return NextResponse.json({ ok: true, preview });

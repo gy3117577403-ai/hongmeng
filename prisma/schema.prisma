@@ -141,6 +141,16 @@ enum ProcessSupplementObligationStatus {
   @@map("process_supplement_obligation_status")
 }
 
+enum ProcessSupplementFulfillmentMode {
+  ACTUAL
+  MIXED
+  SYSTEM_COVERED
+  FUTURE_ONLY
+  RECALL_REQUIRED
+
+  @@map("process_supplement_fulfillment_mode")
+}
+
 enum ProductTimeDeploymentStatus {
   PENDING
   APPLYING
@@ -536,6 +546,7 @@ model User {
   reviewedProcessRouteChanges    ProcessRouteChange[]               @relation("ProcessRouteChangeReviewedBy")
   activatedProcessRouteChanges   ProcessRouteChange[]               @relation("ProcessRouteChangeActivatedBy")
   processRouteChangeEvents       ProcessRouteChangeEvent[]          @relation("ProcessRouteChangeEventActor")
+  processSupplementCoverages     ProcessSupplementCoverage[]        @relation("ProcessSupplementCoverageActor")
 
   @@map("users")
 }
@@ -848,6 +859,7 @@ model WorkOrderProcessStep {
   reportQuantityBasis          String                        @default("product") @map("report_quantity_basis")
   reportUnitLabel              String                        @default("件") @map("report_unit_label")
   countsForEfficiency          Boolean                       @default(true) @map("counts_for_efficiency")
+  isCritical                   Boolean                       @default(false) @map("is_critical")
   executionMode                ProcessStepExecutionMode      @default(NORMAL) @map("execution_mode")
   changeSource                 ProcessRouteChangeStepSource  @default(EXISTING) @map("change_source")
   inputQty                     Int                           @default(0) @map("input_qty")
@@ -2943,6 +2955,7 @@ model ProductProcessTimeEntry {
   reportQuantityBasis String                 @default("product") @map("report_quantity_basis")
   reportUnitLabel     String                 @default("个") @map("report_unit_label")
   countsForEfficiency Boolean                @default(true) @map("counts_for_efficiency")
+  isCritical          Boolean                @default(false) @map("is_critical")
   remark              String?
   createdAt           DateTime               @default(now()) @map("created_at")
   updatedAt           DateTime               @updatedAt @map("updated_at")
@@ -3401,6 +3414,7 @@ model ProcessSupplementObligation {
   displayPosition             Int                               @map("display_position")
   intendedSequenceGroup       Int                               @map("intended_sequence_group")
   requiredQty                 Int                               @map("required_qty")
+  systemCoveredQty            Int                               @default(0) @map("system_covered_qty")
   reportedQty                 Int                               @default(0) @map("reported_qty")
   reportedUnitQty             Int                               @default(0) @map("reported_unit_qty")
   reportedGoodUnitQty         Int                               @default(0) @map("reported_good_unit_qty")
@@ -3408,8 +3422,10 @@ model ProcessSupplementObligation {
   reportQuantityBasis         String                            @default("product") @map("report_quantity_basis")
   reportUnitLabel             String                            @default("件") @map("report_unit_label")
   status                      ProcessSupplementObligationStatus @default(ACTIVE)
+  fulfillmentMode             ProcessSupplementFulfillmentMode  @default(ACTUAL) @map("fulfillment_mode")
   version                     Int                               @default(0)
   releasePolicy               String                            @default("NONE") @map("release_policy")
+  isCritical                  Boolean                           @default(false) @map("is_critical")
   timeBasis                   String                            @default("per_unit") @map("time_basis")
   unitLabel                   String                            @default("件") @map("unit_label")
   standardMillisecondsPerUnit Int                               @map("standard_milliseconds_per_unit")
@@ -3429,6 +3445,7 @@ model ProcessSupplementObligation {
   insertBeforeStep            WorkOrderProcessStep?             @relation("ProcessSupplementInsertBeforeStep", fields: [insertBeforeStepId], references: [id], onDelete: Restrict)
   processDefinition           ProcessDefinition                 @relation(fields: [processDefinitionId], references: [id], onDelete: Restrict)
   completions                 ProcessCompletion[]
+  coverage                    ProcessSupplementCoverage?
 
   @@unique([deploymentRouteId, occurrenceKey])
   @@index([workOrderId, status, displayPosition])
@@ -3437,6 +3454,32 @@ model ProcessSupplementObligation {
   @@index([changeId])
   @@index([deploymentRouteId])
   @@map("process_supplement_obligations")
+}
+
+model ProcessSupplementCoverage {
+  id                String                           @id @default(uuid())
+  obligationId      String                           @unique @map("obligation_id")
+  deploymentRouteId String?                          @map("deployment_route_id")
+  workOrderId       String                           @map("work_order_id")
+  routeId           String                           @map("route_id")
+  displayStepId     String                           @map("display_step_id")
+  policy            String
+  fulfillmentMode   ProcessSupplementFulfillmentMode @map("fulfillment_mode")
+  routeTargetQty    Int                              @map("route_target_qty")
+  systemCoveredQty  Int                              @map("system_covered_qty")
+  actualRequiredQty Int                              @map("actual_required_qty")
+  evidence          Json
+  actorId           String?                          @map("actor_id")
+  createdAt         DateTime                         @default(now()) @map("created_at")
+  obligation        ProcessSupplementObligation      @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+  actor             User?                            @relation("ProcessSupplementCoverageActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([deploymentRouteId, createdAt])
+  @@index([workOrderId, createdAt])
+  @@index([routeId, createdAt])
+  @@index([displayStepId, createdAt])
+  @@index([actorId])
+  @@map("process_supplement_coverages")
 }
 
 model ProductTimeDeployment {

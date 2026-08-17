@@ -7,6 +7,7 @@ import {
   ProcessRouteChangeStatus,
   ProcessRouteChangeStepSource,
   ProcessStepExecutionMode,
+  ProcessSupplementFulfillmentMode,
   ProcessSupplementObligationStatus,
   ProductTimeDeploymentRouteStatus,
   ProductTimeDeploymentStatus,
@@ -22,6 +23,12 @@ import {
   type ProductTimeProfileRecord,
 } from '@/lib/product-time';
 import { getProductionQuantitySummary } from '@/lib/production-quantity';
+import {
+  normalizeProductTimeInsertPolicies,
+  projectProductTimeCoverage,
+  type ProductTimeCoverageProjection,
+  type ProductTimeInsertPolicy,
+} from '@/lib/process-supplement-coverage';
 import {
   syncDailyTasksAfterProcessRouteChange,
 } from '@/lib/process-route-change-daily-task-sync';
@@ -39,6 +46,9 @@ export type ProductTimeDeploymentDiffDTO = {
   newSequence?: number | null;
   oldUnitMilliseconds?: number | null;
   newUnitMilliseconds?: number | null;
+  isCritical?: boolean;
+  policy?: ProductTimeInsertPolicy | null;
+  policyRequired?: boolean;
 };
 
 export type ProductTimeDeploymentConflictDTO = {
@@ -62,6 +72,9 @@ export type ProductTimeDeploymentRouteDTO = {
   historicalReports?: number;
   affectedEmployees?: number;
   supplementObligations?: number;
+  systemCoveredQty?: number;
+  actualRequiredQty?: number;
+  fulfillmentModes?: string[];
   error?: string | null;
 };
 
@@ -71,6 +84,10 @@ export type ProductTimeDeploymentImpactDTO = {
   affectedEmployees: number;
   attainmentRecords: number;
   supplementObligations: number;
+  keptCompleted: number;
+  systemCoveredQty: number;
+  actualRequiredQty: number;
+  generatedLaborRecords: number;
   qrTickets: number;
   conflicts: number;
 };
@@ -160,7 +177,11 @@ const routeInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
           occurrenceKey: true,
           status: true,
           requiredQty: true,
+          systemCoveredQty: true,
           reportedQty: true,
+          fulfillmentMode: true,
+          releasePolicy: true,
+          isCritical: true,
         },
       },
       completions: {
@@ -169,6 +190,7 @@ const routeInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
           id: true,
           principalEmployeeId: true,
           completedAt: true,
+          processedQty: true,
           laborPool: {
             select: {
               id: true,
@@ -400,6 +422,7 @@ function routeDeploymentDrift(
 function buildDiffs(
   previous: ProductTimeProfileRecord | null,
   next: ProductTimeProfileRecord,
+  policies: Record<string, ProductTimeInsertPolicy> = {},
 ): ProductTimeDeploymentDiffDTO[] {
   const beforeByKey = new Map((previous?.entries || []).map(entry => [entry.occurrenceKey, entry] as const));
   const afterByKey = new Map(next.entries.map(entry => [entry.occurrenceKey, entry] as const));
@@ -419,6 +442,12 @@ function buildDiffs(
   for (const entry of next.entries) {
     const before = beforeByKey.get(entry.occurrenceKey);
     if (!before || before.processDefinitionId !== entry.processDefinitionId) {
+      const requestedPolicy = policies[entry.occurrenceKey] || null;
+      const policy = entry.isCritical
+        ? requestedPolicy === 'FUTURE_ONLY' || requestedPolicy === 'RECALL_REWORK'
+          ? requestedPolicy
+          : null
+        : requestedPolicy || 'AUTO_BY_PROGRESS';
       diffs.push({
         kind: 'insert',
         occurrenceKey: entry.occurrenceKey,
@@ -429,6 +458,9 @@ function buildDiffs(
         newSequence: entry.position,
         oldUnitMilliseconds: before ? entryStandard(before).standardMillisecondsPerUnit : null,
         newUnitMilliseconds: entryStandard(entry).standardMillisecondsPerUnit,
+        isCritical: entry.isCritical,
+        policy,
+        policyRequired: entry.isCritical && !policy,
       });
       if (before) {
         diffs.push({
@@ -500,6 +532,128 @@ function downstreamHasFacts(
   });
 }
 
+function stepProgressQuantity(step: DeploymentStepRecord): number {
+  const completionQty = step.completions.reduce((total, completion) => total + completion.processedQty, 0);
+  return Math.max(
+    step.processedQty,
+    step.goodOutputQty + step.defectOutputQty,
+    step.releasedGoodQty,
+    completionQty,
+  );
+}
+
+type CoverageBoundary = {
+  hasNextExistingStep: boolean;
+  downstreamHasFacts: boolean;
+  boundaryProgressQty: number;
+  evidence: Record<string, unknown>;
+  conflict?: { code: string; message: string };
+};
+
+function coverageBoundaryForEntry(
+  route: DeploymentRouteRecord,
+  profile: ProductTimeProfileRecord,
+  previous: ProductTimeProfileRecord | null,
+  entry: ProductTimeProfileRecord['entries'][number],
+  currentByKey: Map<string, DeploymentStepRecord>,
+  targetQty: number,
+): CoverageBoundary {
+  const downstreamFacts = downstreamHasFacts(route, entry, previous?.entries || []);
+  if (routeState(route) === 'completed') {
+    return {
+      hasNextExistingStep: profile.entries.some(candidate => (
+        candidate.position > entry.position && currentByKey.has(candidate.occurrenceKey)
+      )),
+      downstreamHasFacts: true,
+      boundaryProgressQty: targetQty,
+      evidence: { boundaryType: 'COMPLETED_ROUTE', targetQty, routeVersion: route.version },
+    };
+  }
+
+  const next = profile.entries.find(candidate => (
+    candidate.position > entry.position && currentByKey.has(candidate.occurrenceKey)
+  ));
+  const boundaryEntries = next
+    ? profile.entries.filter(candidate => (
+        candidate.sequenceGroup === next.sequenceGroup && currentByKey.has(candidate.occurrenceKey)
+      ))
+    : (() => {
+        const previousEntries = profile.entries.filter(candidate => (
+          candidate.position < entry.position && currentByKey.has(candidate.occurrenceKey)
+        ));
+        const previousGroup = previousEntries.at(-1)?.sequenceGroup;
+        return previousGroup == null
+          ? []
+          : previousEntries.filter(candidate => candidate.sequenceGroup === previousGroup);
+      })();
+  const boundarySteps = boundaryEntries
+    .map(candidate => currentByKey.get(candidate.occurrenceKey))
+    .filter((step): step is DeploymentStepRecord => Boolean(step));
+  const progressValues = boundarySteps.map(step => stepProgressQuantity(step));
+  const distinctProgress = [...new Set(progressValues)];
+  if (distinctProgress.length > 1) {
+    return {
+      hasNextExistingStep: Boolean(next),
+      downstreamHasFacts: downstreamFacts,
+      boundaryProgressQty: 0,
+      evidence: {
+        boundaryType: next ? 'NEXT_PARALLEL_GROUP' : 'PREVIOUS_PARALLEL_GROUP',
+        stepIds: boundarySteps.map(step => step.id),
+        progressValues,
+        routeVersion: route.version,
+      },
+      conflict: {
+        code: 'PRODUCT_TIME_INSERT_PARALLEL_PROGRESS_CONFLICT',
+        message: `${entry.processDefinition.name} 插入点相邻并行工序的已完成数量不一致，不能自动判定历史承接数量`,
+      },
+    };
+  }
+  const completedQty = getProductionQuantitySummary(route.workOrder).completedQty || 0;
+  const boundaryProgressQty = Math.max(progressValues[0] || 0, next ? 0 : completedQty);
+  const laterProgressQty = next
+    ? Math.max(0, ...profile.entries
+        .filter(candidate => candidate.position > entry.position)
+        .map(candidate => currentByKey.get(candidate.occurrenceKey))
+        .filter((step): step is DeploymentStepRecord => Boolean(step))
+        .map(stepProgressQuantity))
+    : boundaryProgressQty;
+  if (boundaryProgressQty > targetQty || laterProgressQty > targetQty || laterProgressQty > boundaryProgressQty) {
+    return {
+      hasNextExistingStep: Boolean(next),
+      downstreamHasFacts: downstreamFacts,
+      boundaryProgressQty: 0,
+      evidence: {
+        boundaryType: next ? 'NEXT_GROUP' : 'PREVIOUS_GROUP',
+        stepIds: boundarySteps.map(step => step.id),
+        progressValues,
+        completedQty,
+        boundaryProgressQty,
+        laterProgressQty,
+        targetQty,
+        routeVersion: route.version,
+      },
+      conflict: {
+        code: 'PRODUCT_TIME_INSERT_PROGRESS_LEDGER_CONFLICT',
+        message: `${entry.processDefinition.name} 插入点的历史进度与后序数量台账不一致，不能自动承接`,
+      },
+    };
+  }
+  return {
+    hasNextExistingStep: Boolean(next),
+    downstreamHasFacts: downstreamFacts,
+    boundaryProgressQty,
+    evidence: {
+      boundaryType: next ? 'NEXT_GROUP' : 'PREVIOUS_GROUP',
+      stepIds: boundarySteps.map(step => step.id),
+      progressValues,
+      completedQty,
+      boundaryProgressQty,
+      targetQty,
+      routeVersion: route.version,
+    },
+  };
+}
+
 async function loadPreviewContext(
   tx: Tx,
   itemId: string,
@@ -546,13 +700,24 @@ async function loadPreviewContext(
 function previewFromContext(
   itemId: string,
   context: Awaited<ReturnType<typeof loadPreviewContext>>,
+  policiesInput: unknown = {},
 ): ProductTimeDeploymentPreviewDTO {
   const { profile, previous, routes } = context;
-  const diffs = buildDiffs(previous, profile);
+  const policies = normalizeProductTimeInsertPolicies(policiesInput);
+  const diffs = buildDiffs(previous, profile, policies);
   const conflicts: ProductTimeDeploymentConflictDTO[] = [];
+  for (const diff of diffs) {
+    if (diff.kind !== 'insert' || !diff.policyRequired) continue;
+    conflicts.push({
+      code: 'CRITICAL_PROCESS_POLICY_REQUIRED',
+      message: `${diff.processName} 已标记为安全/质量关键工序，发布前必须明确选择“仅未来/未开工产品生效”或“召回返工”`,
+    });
+  }
   const nextByKey = new Map(profile.entries.map(entry => [entry.occurrenceKey, entry] as const));
-  const oldEntries = previous?.entries || [];
   let supplementObligations = 0;
+  let keptCompleted = 0;
+  let systemCoveredQty = 0;
+  let actualRequiredQty = 0;
   let historicalReports = 0;
   let attainmentRecords = 0;
   const employees = new Set<string>();
@@ -663,19 +828,78 @@ function previewFromContext(
         }
       }
     }
-    const routeSupplements = drift.createdEntries.filter(entry => (
-      routeFacts && (downstreamHasFacts(route, entry, oldEntries) || !route.steps.some(step => {
-        const key = stepOccurrenceKey(step);
-        const desired = key ? nextByKey.get(key) : null;
-        return desired && desired.position > entry.position;
-      }))
-    )).length;
+    const targetQty = getProductionQuantitySummary(route.workOrder).targetQty || 0;
+    const projections: ProductTimeCoverageProjection[] = [];
+    if (drift.createdEntries.length && targetQty <= 0) {
+      conflicts.push({
+        code: 'PRODUCT_TIME_SUPPLEMENT_QUANTITY_REQUIRED',
+        message: `工单 ${route.workOrder.code} 缺少有效生产数量，不能计算新增工序的历史承接边界`,
+        workOrderId: route.workOrderId,
+        workOrderCode: route.workOrder.code,
+      });
+    } else {
+      for (const entry of drift.createdEntries) {
+        const diff = diffs.find(item => item.kind === 'insert' && item.occurrenceKey === entry.occurrenceKey);
+        const policy = diff?.policy
+          || (!entry.isCritical ? 'AUTO_BY_PROGRESS' : policies[entry.occurrenceKey]);
+        if (!policy) {
+          conflicts.push({
+            code: 'CRITICAL_PROCESS_POLICY_REQUIRED',
+            message: `${entry.processDefinition.name} 是关键工序且该路线缺少对应工序，必须先明确历史路线处理策略`,
+            workOrderId: route.workOrderId,
+            workOrderCode: route.workOrder.code,
+          });
+          continue;
+        }
+        const boundary = coverageBoundaryForEntry(
+          route,
+          profile,
+          previous,
+          entry,
+          drift.currentByKey,
+          targetQty,
+        );
+        if (boundary.conflict) {
+          conflicts.push({
+            ...boundary.conflict,
+            workOrderId: route.workOrderId,
+            workOrderCode: route.workOrder.code,
+          });
+          continue;
+        }
+        projections.push(projectProductTimeCoverage({
+          routeTargetQty: targetQty,
+          routeHasFacts: routeFacts,
+          routeCompleted: state === 'completed',
+          hasNextExistingStep: boundary.hasNextExistingStep,
+          downstreamHasFacts: boundary.downstreamHasFacts,
+          boundaryProgressQty: boundary.boundaryProgressQty,
+          policy,
+        }));
+      }
+    }
+    const routeSupplements = projections.filter(item => item.execution === 'supplement').length;
+    const routeSystemCoveredQty = projections.reduce((sum, item) => sum + item.systemCoveredQty, 0);
+    const routeActualRequiredQty = projections.reduce((sum, item) => sum + item.actualRequiredQty, 0);
+    const fulfillmentModes = [...new Set(projections.map(item => item.fulfillmentMode))];
     supplementObligations += routeSupplements;
+    systemCoveredQty += routeSystemCoveredQty;
+    actualRequiredQty += routeActualRequiredQty;
+    if (
+      state === 'completed'
+      && drift.createdEntries.length > 0
+      && projections.length === drift.createdEntries.length
+      && projections.every(item => !item.shouldReopenCompletedRoute)
+    ) {
+      keptCompleted += 1;
+    }
     return {
       workOrderId: route.workOrderId,
       workOrderCode: route.workOrder.code,
       state,
-      status: conflicts.some(item => item.workOrderId === route.workOrderId) ? 'blocked' as const : 'pending' as const,
+      status: conflicts.some(item => !item.workOrderId || item.workOrderId === route.workOrderId)
+        ? 'blocked' as const
+        : 'pending' as const,
       qrUpdated: false,
       routeVersionBefore: route.version,
       routeVersionAfter: null,
@@ -685,6 +909,9 @@ function previewFromContext(
       historicalReports: routeReports,
       affectedEmployees: routeEmployees.size,
       supplementObligations: routeSupplements,
+      systemCoveredQty: routeSystemCoveredQty,
+      actualRequiredQty: routeActualRequiredQty,
+      fulfillmentModes,
       error: null,
     };
   });
@@ -702,6 +929,10 @@ function previewFromContext(
     affectedEmployees: employees.size,
     attainmentRecords,
     supplementObligations,
+    keptCompleted,
+    systemCoveredQty,
+    actualRequiredQty,
+    generatedLaborRecords: 0,
     qrTickets: routes.filter(route => route.workOrder.qrTicket?.status === 'ACTIVE').length,
     conflicts: conflicts.length,
   };
@@ -711,6 +942,7 @@ function previewFromContext(
     profileRevision: profile.revision,
     profileVersion: profile.version,
     previousProfileId: previous?.id || null,
+    policies,
     diffs,
     routes: routes.map(route => ({ id: route.id, version: route.version })),
     conflicts,
@@ -734,8 +966,9 @@ function previewFromContext(
 export async function previewProductTimeDeployment(
   itemId: string,
   tx: Tx | typeof prisma = prisma,
+  policiesInput: unknown = {},
 ): Promise<ProductTimeDeploymentPreviewDTO> {
-  return previewFromContext(itemId, await loadPreviewContext(tx as Tx, itemId, 'draft'));
+  return previewFromContext(itemId, await loadPreviewContext(tx as Tx, itemId, 'draft'), policiesInput);
 }
 
 type CorrectionSummary = {
@@ -1194,6 +1427,7 @@ async function applyRouteDeployment(
     previous: ProductTimeProfileRecord | null;
     route: DeploymentRouteRecord;
     diffs: ProductTimeDeploymentDiffDTO[];
+    policies: Record<string, ProductTimeInsertPolicy>;
   },
 ) {
   const { route, profile, previous } = input;
@@ -1238,6 +1472,9 @@ async function applyRouteDeployment(
   let correctedReports = 0;
   const affectedEmployeeIds = new Set<string>();
   let supplements = 0;
+  let systemCoveredQty = 0;
+  let actualRequiredQty = 0;
+  const fulfillmentModes = new Set<string>();
   let reopened = false;
   let cancelledSupplement = false;
 
@@ -1322,14 +1559,70 @@ async function applyRouteDeployment(
       continue;
     }
 
-    const hasDownstreamFacts = facts && downstreamHasFacts(route, entry, previous?.entries || []);
+    const targetQty = getProductionQuantitySummary(route.workOrder).targetQty || 0;
+    if (targetQty <= 0) {
+      throw new ProductTimeDeploymentError(
+        `工单 ${route.workOrder.code} 缺少有效生产数量，不能计算新增工序的历史承接边界`,
+        409,
+        'PRODUCT_TIME_SUPPLEMENT_QUANTITY_REQUIRED',
+      );
+    }
+    const insertDiff = input.diffs.find(diff => (
+      diff.kind === 'insert' && diff.occurrenceKey === entry.occurrenceKey
+    ));
+    const insertPolicy = insertDiff?.policy
+      || input.policies[entry.occurrenceKey]
+      || (!entry.isCritical ? 'AUTO_BY_PROGRESS' : null);
+    if (!insertPolicy) {
+      throw new ProductTimeDeploymentError(
+        `${entry.processDefinition.name} 缺少新增工序生效策略，请重新预览`,
+        409,
+        'CRITICAL_PROCESS_POLICY_REQUIRED',
+      );
+    }
+    const boundary = coverageBoundaryForEntry(
+      route,
+      profile,
+      previous,
+      entry,
+      currentByKey,
+      targetQty,
+    );
+    if (boundary.conflict) {
+      throw new ProductTimeDeploymentError(
+        boundary.conflict.message,
+        409,
+        boundary.conflict.code,
+      );
+    }
+    const projection = projectProductTimeCoverage({
+      routeTargetQty: targetQty,
+      routeHasFacts: facts,
+      routeCompleted: routeState(route) === 'completed',
+      hasNextExistingStep: boundary.hasNextExistingStep,
+      downstreamHasFacts: boundary.downstreamHasFacts,
+      boundaryProgressQty: boundary.boundaryProgressQty,
+      policy: insertPolicy,
+    });
     const nextExistingEntry = profile.entries.find(candidate => (
       candidate.position > entry.position
       && currentByKey.has(candidate.occurrenceKey)
     ));
-    const mustSupplement = facts && (hasDownstreamFacts || !nextExistingEntry);
+    const mustSupplement = projection.execution === 'supplement';
     const standard = productTimeStandardSnapshot(profile, entry);
     const targetStep = nextExistingEntry ? currentByKey.get(nextExistingEntry.occurrenceKey) || null : null;
+    const fulfilledSupplement = mustSupplement && projection.obligationStatus === 'FULFILLED';
+    const futureOnly = projection.fulfillmentMode === 'FUTURE_ONLY';
+    const now = new Date();
+    const supplementRemark = futureOnly
+      ? `产品工序与工时 V${profile.version} 新增关键工序；该已开工/历史路线仅保留“未来生效”审计，不生成报工`
+      : projection.actualRequiredQty === 0
+        ? `产品工序与工时 V${profile.version} 新增工序；系统历史承接 ${projection.systemCoveredQty}，不生成员工报工或工时`
+        : projection.systemCoveredQty > 0
+          ? `产品工序与工时 V${profile.version} 新增工序；系统历史承接 ${projection.systemCoveredQty}，剩余 ${projection.actualRequiredQty} 待实际报工；不参与数量释放`
+          : projection.fulfillmentMode === 'RECALL_REQUIRED'
+            ? `产品工序与工时 V${profile.version} 新增关键工序；${projection.actualRequiredQty} 待召回返工报工；不参与数量释放`
+            : `产品工序与工时 V${profile.version} 新增补充报工义务 ${projection.actualRequiredQty}；不参与数量释放`;
     const step = await tx.workOrderProcessStep.create({
       data: {
         routeId: route.id,
@@ -1350,11 +1643,19 @@ async function applyRouteDeployment(
         goodOutputQty: 0,
         defectOutputQty: 0,
         releasedGoodQty: 0,
-        status: mustSupplement ? 'current' : 'pending',
-        startedAt: mustSupplement ? new Date() : null,
-        remark: entry.remark || (mustSupplement
-          ? `产品工序与工时 V${profile.version} 新增补报义务；不参与数量释放`
-          : `产品工序与工时 V${profile.version} 新增工序`),
+        status: mustSupplement
+          ? futureOnly
+            ? 'skipped'
+            : fulfilledSupplement
+              ? 'completed'
+              : 'current'
+          : 'pending',
+        startedAt: mustSupplement && !fulfilledSupplement ? now : null,
+        completedAt: fulfilledSupplement ? now : null,
+        completedById: null,
+        remark: mustSupplement
+          ? [entry.remark, supplementRemark].filter(Boolean).join('；')
+          : entry.remark || `产品工序与工时 V${profile.version} 新增工序`,
       },
     });
     retainedIds.add(step.id);
@@ -1366,15 +1667,7 @@ async function applyRouteDeployment(
       previousStandardMillisecondsPerUnit: null,
     });
     if (mustSupplement) {
-      const requiredQty = getProductionQuantitySummary(route.workOrder).targetQty;
-      if (!requiredQty || requiredQty <= 0) {
-        throw new ProductTimeDeploymentError(
-          `工单 ${route.workOrder.code} 缺少有效生产数量，不能创建补充报工义务`,
-          409,
-          'PRODUCT_TIME_SUPPLEMENT_QUANTITY_REQUIRED',
-        );
-      }
-      await tx.processSupplementObligation.create({
+      const obligation = await tx.processSupplementObligation.create({
         data: {
           deploymentRouteId: input.deploymentRouteId,
           occurrenceKey: entry.occurrenceKey,
@@ -1389,26 +1682,64 @@ async function applyRouteDeployment(
           stageGroup: entry.processDefinition.stageGroup,
           displayPosition: entry.position,
           intendedSequenceGroup: entry.sequenceGroup,
-          requiredQty,
+          requiredQty: projection.obligationRequiredQty,
+          systemCoveredQty: projection.systemCoveredQty,
           reportedQty: 0,
           reportedUnitQty: 0,
           reportedGoodUnitQty: 0,
           reportedDefectUnitQty: 0,
           reportQuantityBasis: standard.reportQuantityBasis,
           reportUnitLabel: standard.reportUnitLabel,
-          status: ProcessSupplementObligationStatus.ACTIVE,
+          status: projection.obligationStatus === 'FULFILLED'
+            ? ProcessSupplementObligationStatus.FULFILLED
+            : ProcessSupplementObligationStatus.ACTIVE,
+          fulfillmentMode: projection.fulfillmentMode as ProcessSupplementFulfillmentMode,
+          // This legacy field is the physical quantity-release contract and is
+          // intentionally fixed to NONE. The product-time application policy
+          // is stored separately in ProcessSupplementCoverage.policy.
           releasePolicy: 'NONE',
+          isCritical: entry.isCritical,
           timeBasis: standard.timeBasis as string,
           unitLabel: standard.unitLabel || '件',
           standardMillisecondsPerUnit: standard.standardMillisecondsPerUnit as number,
           setupMilliseconds: standard.setupMilliseconds,
           unitsPerProduct: standard.unitsPerProduct,
           countsForEfficiency: standard.countsForEfficiency,
+          fulfilledAt: projection.obligationStatus === 'FULFILLED' ? now : null,
+        },
+      });
+      await tx.processSupplementCoverage.create({
+        data: {
+          obligationId: obligation.id,
+          deploymentRouteId: input.deploymentRouteId,
+          workOrderId: route.workOrderId,
+          routeId: route.id,
+          displayStepId: step.id,
+          policy: projection.policy,
+          fulfillmentMode: projection.fulfillmentMode as ProcessSupplementFulfillmentMode,
+          routeTargetQty: projection.routeTargetQty,
+          systemCoveredQty: projection.systemCoveredQty,
+          actualRequiredQty: projection.actualRequiredQty,
+          evidence: {
+            source: 'product_time_deployment',
+            deploymentId: input.deploymentId,
+            profileId: profile.id,
+            profileVersion: profile.version,
+            occurrenceKey: entry.occurrenceKey,
+            routeState: routeState(route),
+            routeHadFacts: facts,
+            boundary: boundary.evidence,
+            projection,
+          } as Prisma.InputJsonValue,
+          actorId: input.actorId,
         },
       });
       supplements += 1;
-      if (routeState(route) === 'completed') reopened = true;
+      reopened = reopened || projection.shouldReopenCompletedRoute;
     }
+    systemCoveredQty += projection.systemCoveredQty;
+    actualRequiredQty += projection.actualRequiredQty;
+    fulfillmentModes.add(projection.fulfillmentMode);
   }
 
   for (const step of route.steps) {
@@ -1581,6 +1912,9 @@ async function applyRouteDeployment(
     historicalReports: correctedReports,
     affectedEmployees: affectedEmployeeIds.size,
     supplementObligations: supplements,
+    systemCoveredQty,
+    actualRequiredQty,
+    fulfillmentModes: [...fulfillmentModes],
     reopened,
     closedAfterSupplementCancellation,
     taskSync,
@@ -1643,6 +1977,11 @@ function serializeDeployment(record: DeploymentRecord): ProductTimeDeploymentDTO
         historicalReports: Number(result.historicalReports || 0),
         affectedEmployees: Number(result.affectedEmployees || 0),
         supplementObligations: Number(result.supplementObligations || 0),
+        systemCoveredQty: Number(result.systemCoveredQty || 0),
+        actualRequiredQty: Number(result.actualRequiredQty || 0),
+        fulfillmentModes: Array.isArray(result.fulfillmentModes)
+          ? result.fulfillmentModes.map(String)
+          : [],
         error: route.error,
       };
     }),
@@ -1750,10 +2089,12 @@ export async function publishProductTimeDeployment(input: {
   actorId: string;
   expectedRevision: number;
   previewToken: string;
+  policies?: unknown;
 }): Promise<{ profileId: string; deployment: ProductTimeDeploymentDTO }> {
+  const policies = normalizeProductTimeInsertPolicies(input.policies);
   let outside: ProductTimeDeploymentPreviewDTO;
   try {
-    outside = await previewProductTimeDeployment(input.itemId);
+    outside = await previewProductTimeDeployment(input.itemId, prisma, policies);
   } catch (error) {
     if (error instanceof ProductTimeDeploymentError && error.code === 'DRAFT_NOT_FOUND') {
       const active = await prisma.productTimeDeployment.findFirst({
@@ -1793,7 +2134,7 @@ export async function publishProductTimeDeployment(input: {
           });
           if (alreadyActive) return alreadyActive.id;
           const context = await loadPreviewContext(tx, input.itemId, 'draft');
-          const currentPreview = previewFromContext(input.itemId, context);
+          const currentPreview = previewFromContext(input.itemId, context, policies);
           if (context.profile.revision !== input.expectedRevision) {
             throw new ProductTimeDeploymentError('产品工序与工时已被修改，请刷新后重试', 409, 'PRODUCT_TIME_CONFLICT');
           }
@@ -1864,6 +2205,7 @@ export async function publishProductTimeDeployment(input: {
               previous: context.previous,
               route,
               diffs: currentPreview.diffs,
+              policies,
             });
             await tx.productTimeDeploymentRoute.update({
               where: { id: ledger.id },
@@ -1978,6 +2320,7 @@ export async function retryProductTimeDeployment(input: {
       profileId: true,
       status: true,
       expectedRevision: true,
+      diffs: true,
     },
   });
   if (!failed) throw new ProductTimeDeploymentError('部署记录不存在', 404, 'PRODUCT_TIME_DEPLOYMENT_NOT_FOUND');
@@ -1994,20 +2337,32 @@ export async function retryProductTimeDeployment(input: {
     select: { status: true },
   });
   if (profile?.status === 'published') {
+    const policies = Object.fromEntries(
+      jsonArray<ProductTimeDeploymentDiffDTO>(failed.diffs)
+        .filter(diff => diff.kind === 'insert' && diff.policy)
+        .map(diff => [diff.occurrenceKey, diff.policy]),
+    );
     return reconcilePublishedProductTimeDeployment({
       itemId: failed.drawingLibraryItemId,
       actorId: input.actorId,
+      policies,
     });
   }
   // A failed all-or-nothing transaction applied zero routes. The optional UI
   // subset is therefore intentionally advisory: retry always revalidates and
   // reruns the complete product scope so no route is silently omitted.
-  const preview = await previewProductTimeDeployment(failed.drawingLibraryItemId);
+  const policies = Object.fromEntries(
+    jsonArray<ProductTimeDeploymentDiffDTO>(failed.diffs)
+      .filter(diff => diff.kind === 'insert' && diff.policy)
+      .map(diff => [diff.occurrenceKey, diff.policy]),
+  );
+  const preview = await previewProductTimeDeployment(failed.drawingLibraryItemId, prisma, policies);
   const result = await publishProductTimeDeployment({
     itemId: failed.drawingLibraryItemId,
     actorId: input.actorId,
     expectedRevision: failed.expectedRevision,
     previewToken: preview.previewToken,
+    policies,
   });
   return result.deployment;
 }
@@ -2020,7 +2375,9 @@ export async function retryProductTimeDeployment(input: {
 export async function reconcilePublishedProductTimeDeployment(input: {
   itemId: string;
   actorId: string;
+  policies?: unknown;
 }): Promise<ProductTimeDeploymentDTO> {
+  const policies = normalizeProductTimeInsertPolicies(input.policies);
   const published = await prisma.productTimeProfile.findFirst({
     where: { drawingLibraryItemId: input.itemId, status: 'published' },
     orderBy: [{ version: 'desc' }, { publishedAt: 'desc' }],
@@ -2042,7 +2399,7 @@ export async function reconcilePublishedProductTimeDeployment(input: {
   const deploymentId = await prisma.$transaction(async tx => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`product-time-deployment:${input.itemId}`}))`;
     const context = await loadPreviewContext(tx, input.itemId, 'published');
-    const preview = previewFromContext(input.itemId, context);
+    const preview = previewFromContext(input.itemId, context, policies);
     if (!preview.canPublish) {
       throw new ProductTimeDeploymentError(
         '存在阻断冲突，不能校准已发布版本',
@@ -2108,6 +2465,7 @@ export async function reconcilePublishedProductTimeDeployment(input: {
         previous: context.previous,
         route,
         diffs: preview.diffs,
+        policies,
       });
       await tx.productTimeDeploymentRoute.update({
         where: { id: ledger.id },

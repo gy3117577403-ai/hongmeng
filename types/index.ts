@@ -1004,6 +1004,7 @@ export type ProductTimeProfileStatus = 'draft' | 'published' | 'archived';
 export type ProductTimeDeploymentStatus = 'preview' | 'pending' | 'applying' | 'active' | 'failed';
 
 export type ProductTimeDeploymentDiffKind = 'insert' | 'move' | 'update_time' | 'delete';
+export type ProductTimeInsertPolicy = 'AUTO_BY_PROGRESS' | 'FUTURE_ONLY' | 'RECALL_REWORK';
 
 export type ProductTimeDeploymentWorkOrderState = 'unstarted' | 'in_progress' | 'completed';
 
@@ -1019,6 +1020,9 @@ export type ProductTimeDeploymentDiffDTO = {
   newSequence?: number | null;
   oldUnitMilliseconds?: number | null;
   newUnitMilliseconds?: number | null;
+  isCritical?: boolean;
+  policy?: ProductTimeInsertPolicy | null;
+  policyRequired?: boolean;
 };
 
 export type ProductTimeDeploymentConflictDTO = {
@@ -1039,6 +1043,10 @@ export type ProductTimeDeploymentImpactDTO = {
   affectedEmployees: number;
   attainmentRecords: number;
   supplementObligations: number;
+  keptCompleted: number;
+  systemCoveredQty: number;
+  actualRequiredQty: number;
+  generatedLaborRecords: number;
   qrTickets: number;
   conflicts: number;
 };
@@ -1057,6 +1065,9 @@ export type ProductTimeDeploymentRouteDTO = {
   historicalReports?: number;
   affectedEmployees?: number;
   supplementObligations?: number;
+  systemCoveredQty?: number;
+  actualRequiredQty?: number;
+  fulfillmentModes?: string[];
   error?: string | null;
 };
 
@@ -1158,6 +1169,7 @@ export type ProductProcessTimeEntryDTO = {
   reportQuantityBasis: ProcessReportQuantityBasis;
   reportUnitLabel: string;
   countsForEfficiency: boolean;
+  isCritical: boolean;
   remark?: string | null;
 };
 
@@ -1277,6 +1289,7 @@ export type WorkOrderProcessStepDTO = ProcessTemplateStepDTO & {
   reportQuantityBasis?: ProcessReportQuantityBasis;
   reportUnitLabel?: string;
   countsForEfficiency?: boolean;
+  isCritical?: boolean;
   inputQty?: number;
   processedQty?: number;
   goodOutputQty?: number;
@@ -1295,6 +1308,11 @@ export type WorkOrderProcessStepDTO = ProcessTemplateStepDTO & {
   productTimeProfileVersion?: number | null;
   standardSource?: string;
   executionMode?: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+  systemCoveredQty?: number;
+  actualRequiredQty?: number | null;
+  supplementRemainingQty?: number | null;
+  supplementFulfillmentMode?: 'ACTUAL' | 'MIXED' | 'SYSTEM_COVERED' | 'FUTURE_ONLY' | 'RECALL_REQUIRED' | null;
+  supplementReleasePolicy?: string | null;
   changeSource?: 'EXISTING' | 'NEW';
   changeTag?: 'ADDED' | 'TIME_CHANGED' | 'ADDED_AND_TIME_CHANGED' | 'NONE';
   changeVersion?: number | null;
@@ -1998,6 +2016,7 @@ export type WorkflowStepDTO = {
   reportUnitLabel?: string | null;
   standardMillisecondsPerUnit?: number | null;
   executionMode?: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+  isCritical?: boolean;
   changeSource?: 'EXISTING' | 'NEW';
   changeTag?: 'ADDED' | 'TIME_CHANGED' | 'ADDED_AND_TIME_CHANGED' | 'NONE';
   changeVersion?: number | null;
@@ -2009,6 +2028,11 @@ export type WorkflowStepDTO = {
   defectQuantity?: number;
   releasedGoodQuantity?: number;
   remainingProcessQuantity?: number;
+  systemCoveredQuantity?: number;
+  actualRequiredQuantity?: number;
+  supplementRemainingQuantity?: number | null;
+  supplementFulfillmentMode?: 'ACTUAL' | 'MIXED' | 'SYSTEM_COVERED' | 'FUTURE_ONLY' | 'RECALL_REQUIRED' | null;
+  supplementReleasePolicy?: string | null;
   remainingGoodQuantity?: number | null;
   laborEligibleQuantity?: number;
   laborClaimedQuantity?: number;

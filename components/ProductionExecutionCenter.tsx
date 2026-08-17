@@ -3099,7 +3099,7 @@ function ProductionDispatchRow({
       <i className="production-dispatch-process-flow-bar"><span style={{ width: `${routeProgress}%` }} /></i>
       <span className="production-dispatch-route-track" aria-label={routePreview.length ? `工艺路线：${routePreview.map(step => step.processName).join('、')}` : '工艺路线待维护'}>
         {routePreview.length
-          ? routePreview.map(step => <i className={`state-${step.status}`} title={`${step.processName} · ${step.status === 'completed' ? '已完成' : step.status === 'current' ? '当前工序' : '待处理'}${step.changeTag === 'TIME_CHANGED' ? ' · 工时已变更' : step.changeTag && step.changeTag !== 'NONE' ? ' · 新增工序' : ''}`} key={step.id}><span /><em>{step.processName}{step.changeTag && step.changeTag !== 'NONE' && <b className="production-route-new-badge">{step.changeTag === 'TIME_CHANGED' ? '工时 NEW' : 'NEW'}</b>}</em></i>)
+          ? routePreview.map(step => <i className={`state-${step.status}`} title={`${step.processName} · ${step.status === 'completed' ? '已完成' : step.status === 'current' ? '当前工序' : '待处理'}${step.changeTag === 'TIME_CHANGED' ? ' · 工时已变更' : step.changeTag && step.changeTag !== 'NONE' ? ' · 新增工序' : ''}${(step.systemCoveredQty || 0) > 0 ? ` · 系统历史承接 ${step.systemCoveredQty}，不记人员报工` : ''}`} key={step.id}><span /><em>{step.processName}{step.changeTag && step.changeTag !== 'NONE' && <b className="production-route-new-badge">{step.changeTag === 'TIME_CHANGED' ? '工时 NEW' : 'NEW'}</b>}{(step.systemCoveredQty || 0) > 0 && <b className="production-route-coverage-badge">承接 {step.systemCoveredQty}</b>}</em></i>)
           : <i className="state-pending"><span /><em>待维护</em></i>}
       </span>
     </button>

@@ -1,3 +1,5 @@
+import { processSupplementActualRequiredQty } from '@/lib/process-supplement-coverage';
+
 export type ProductionLaborExecution = {
   standardLaborMilliseconds: bigint | number | string;
 };
@@ -11,6 +13,12 @@ export type ProductionLaborCompletion = {
 
 export type ProductionLaborStep = {
   status: string;
+  executionMode?: string;
+  supplementObligation?: {
+    requiredQty: unknown;
+    systemCoveredQty?: unknown;
+    fulfillmentMode?: unknown;
+  } | null;
   timeBasis: string | null;
   standardMillisecondsPerUnit: number | null;
   setupMilliseconds: number;
@@ -79,8 +87,15 @@ export function calculateProductionLaborProgress(input: {
   let pendingCompletionStandardCount = 0;
 
   for (const step of activeSteps) {
-    if (targetQuantity) {
-      const planned = plannedStepLabor(step, targetQuantity);
+    const stepTargetQuantity = step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+      && step.supplementObligation
+      ? processSupplementActualRequiredQty(step.supplementObligation)
+      : targetQuantity;
+    // A system-covered historical quantity is audit evidence, not employee
+    // output. It must add neither planned nor completed labor to attainment.
+    if (stepTargetQuantity === 0) continue;
+    if (stepTargetQuantity) {
+      const planned = plannedStepLabor(step, stepTargetQuantity);
       if (planned === null) missingStandardStepCount += 1;
       else {
         configuredStepCount += 1;

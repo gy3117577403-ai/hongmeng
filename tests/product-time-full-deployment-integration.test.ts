@@ -381,6 +381,10 @@ test(
       assert.equal(preview.canPublish, true);
       assert.equal(preview.impact.workOrders.completed, 1);
       assert.equal(preview.impact.supplementObligations, 1);
+      assert.equal(preview.impact.keptCompleted, 1);
+      assert.equal(preview.impact.systemCoveredQty, 10);
+      assert.equal(preview.impact.actualRequiredQty, 10, 'the fact-free order still executes the new operation');
+      assert.equal(preview.impact.generatedLaborRecords, 0);
       assert.equal(preview.diffs.filter(diff => diff.kind === 'move').length, 0, 'insertion shifts are not moves');
 
       const [firstPublish, concurrentReplay] = await Promise.all([
@@ -429,8 +433,8 @@ test(
           },
         },
       });
-      assert.equal(completedRoute.status, 'in_progress');
-      assert.equal(completedRoute.workOrder.completedAt, null);
+      assert.equal(completedRoute.status, 'completed');
+      assert.equal(completedRoute.workOrder.completedAt?.getTime(), completedAt.getTime());
       assert.equal(completedRoute.workOrder.qrTicket?.publicCode, completedTicketCode);
       const inserted = completedRoute.steps.find(step => step.productTimeEntry?.occurrenceKey === 'c-inserted');
       assert.ok(inserted);
@@ -439,6 +443,27 @@ test(
       assert.equal(inserted.supplementObligation?.changeId, null);
       assert.ok(inserted.supplementObligation?.deploymentRouteId);
       assert.equal(inserted.supplementObligation?.requiredQty, 10);
+      assert.equal(inserted.supplementObligation?.systemCoveredQty, 10);
+      assert.equal(inserted.supplementObligation?.fulfillmentMode, 'SYSTEM_COVERED');
+      assert.equal(inserted.supplementObligation?.status, 'FULFILLED');
+      assert.equal(inserted.status, 'completed');
+      assert.equal(inserted.completedById, null, 'system coverage is not an administrator completion');
+      assert.equal(
+        await prisma.processCompletion.count({ where: { stepId: inserted.id } }),
+        0,
+        'system coverage never fabricates a completion',
+      );
+      assert.equal(
+        await prisma.processLaborPool.count({ where: { stepId: inserted.id } }),
+        0,
+        'system coverage never creates labor',
+      );
+      const coverage = await prisma.processSupplementCoverage.findUniqueOrThrow({
+        where: { obligationId: inserted.supplementObligation!.id },
+      });
+      assert.equal(coverage.routeTargetQty, 10);
+      assert.equal(coverage.systemCoveredQty, 10);
+      assert.equal(coverage.actualRequiredQty, 0);
       const timeChangedStep = completedRoute.steps.find(
         step => step.productTimeEntry?.occurrenceKey === 'b-only',
       );
@@ -555,7 +580,9 @@ test(
       const qrInserted = qrTicket.route?.steps.find(step => step.processName === '穿号码管');
       assert.ok(qrInserted);
       assert.equal(qrInserted.changeTag, 'ADDED');
-      assert.equal(qrInserted.supplementObligation?.remainingQty, 10);
+      assert.equal(qrInserted.supplementObligation?.remainingQty, 0);
+      assert.equal(qrInserted.supplementObligation?.systemCoveredQty, 10);
+      assert.equal(qrInserted.supplementObligation?.actualRequiredQty, 0);
       const qrTimeChanged = qrTicket.route?.steps.find(step => step.processName === '剥皮');
       assert.ok(qrTimeChanged);
       assert.equal(qrTimeChanged.changeTag, 'TIME_CHANGED');
@@ -565,47 +592,26 @@ test(
         where: { id: inserted.supplementObligation.id },
         include: { route: true },
       });
-      const movementCountBefore = await prisma.processQuantityMovement.count({
-        where: { workOrderId: completedOrder.id },
-      });
-      const completedQtyBefore = await prisma.workOrder.findUniqueOrThrow({
-        where: { id: completedOrder.id },
-        select: { completedQty: true },
-      });
-      const fulfilled = await completeProcessSupplementObligation({
-        obligationId: obligation.id,
-        routeId: completedRouteId,
-        publicCode: completedTicketCode,
-        expectedVersion: obligation.version,
-        expectedRouteVersion: obligation.route.version,
-        processedQty: 10,
-        defectQty: 0,
-        workDate,
-        employeeIds: [employee.id],
-        userId: actor.id,
-        actor: actor.displayName || actor.username,
-        idempotencyKey: `${prefix}-COMPLETE-DEPLOYMENT-SUPPLEMENT`,
-      });
-      assert.equal(fulfilled.status, 'FULFILLED');
-      assert.equal(fulfilled.standardLaborMilliseconds, '15000');
-      assert.equal(fulfilled.quantityMovementCount, 0);
-      assert.equal(fulfilled.completedQtyDelta, 0);
-
-      const supplementCompletion = await prisma.processCompletion.findUniqueOrThrow({
-        where: { id: fulfilled.completionId },
-        include: {
-          laborPool: {
-            include: { claims: { where: { status: ProcessLaborClaimStatus.ACTIVE } } },
-          },
-        },
-      });
-      assert.equal(supplementCompletion.standardSource, 'product_time_deployment');
-      assert.equal(supplementCompletion.laborPool?.totalStandardLaborMilliseconds, 15_000n);
-      assert.equal(supplementCompletion.laborPool?.claims.length, 1);
-      assert.equal(supplementCompletion.laborPool?.claims[0].standardLaborMilliseconds, 15_000n);
-      assert.equal(
-        await prisma.processQuantityMovement.count({ where: { workOrderId: completedOrder.id } }),
-        movementCountBefore,
+      await assert.rejects(
+        completeProcessSupplementObligation({
+          obligationId: obligation.id,
+          routeId: completedRouteId,
+          publicCode: completedTicketCode,
+          expectedVersion: obligation.version,
+          expectedRouteVersion: obligation.route.version,
+          processedQty: 10,
+          defectQty: 0,
+          workDate,
+          employeeIds: [employee.id],
+          userId: actor.id,
+          actor: actor.displayName || actor.username,
+          idempotencyKey: `${prefix}-SYSTEM-COVERAGE-CANNOT-REPORT`,
+        }),
+        (error: unknown) => Boolean(
+          error instanceof Error
+          && 'code' in error
+          && error.code === 'PROCESS_SUPPLEMENT_NOT_ACTIVE'
+        ),
       );
       const closed = await prisma.workOrderProcessRoute.findUniqueOrThrow({
         where: { id: completedRouteId },
@@ -617,7 +623,7 @@ test(
       assert.equal(closed.status, 'completed');
       assert.equal(closed.workOrder.status, 'done');
       assert.equal(closed.workOrder.stage, 'completed');
-      assert.equal(closed.workOrder.completedQty, completedQtyBefore.completedQty);
+      assert.equal(closed.workOrder.completedQty, '10');
       assert.equal(closed.workOrder.qrTicket?.publicCode, completedTicketCode);
       assert.equal(closed.steps[0]?.status, 'completed');
     } finally {
@@ -643,6 +649,7 @@ test(
         await prisma.processCompletionParticipant.deleteMany({ where: { completionId: { in: completionIds } } });
         await prisma.processQuantityMovement.deleteMany({ where: { workOrderId: { in: workOrderIds } } });
         await prisma.processCompletion.deleteMany({ where: { id: { in: completionIds } } });
+        await prisma.processSupplementCoverage.deleteMany({ where: { workOrderId: { in: workOrderIds } } });
         await prisma.processSupplementObligation.deleteMany({ where: { workOrderId: { in: workOrderIds } } });
         await prisma.workOrderQrPrint.deleteMany({ where: { routeId: { in: routeIds } } });
         await prisma.workOrderQrTicket.deleteMany({ where: { workOrderId: { in: workOrderIds } } });

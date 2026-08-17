@@ -10,6 +10,7 @@ import {
   allocateIncrementalTaskLabor,
   resolveDailyTaskProgress,
 } from '@/lib/daily-plan-domain';
+import { processSupplementActualRequiredQty } from '@/lib/process-supplement-coverage';
 
 export type ProcessRouteChangeInsertedDailyStep = {
   stepId: string;
@@ -82,6 +83,7 @@ type DailyTaskProjectionInput = {
   executionMode: ProcessStepExecutionMode;
   supplementStatus?: ProcessSupplementObligationStatus | null;
   supplementRequiredQty?: number | null;
+  supplementActualRequiredQty?: number | null;
   supplementReportedQty?: number | null;
   blockedBySupplement?: boolean;
 };
@@ -108,7 +110,9 @@ export function projectProcessRouteChangeDailyTask(
     if (
       input.supplementStatus === ProcessSupplementObligationStatus.FULFILLED
       || input.stepStatus === 'completed'
-      || Number(input.supplementReportedQty || 0) >= Number(input.supplementRequiredQty || 0)
+      || Number(input.supplementReportedQty || 0) >= Number(
+        input.supplementActualRequiredQty ?? input.supplementRequiredQty ?? 0,
+      )
     ) {
       return { status: DailyProcessTaskStatus.COMPLETED, availableQty: 0 };
     }
@@ -248,7 +252,9 @@ export async function syncDailyTasksAfterProcessRouteChange(
             select: {
               status: true,
               requiredQty: true,
+              systemCoveredQty: true,
               reportedQty: true,
+              fulfillmentMode: true,
               insertBeforeStepId: true,
             },
           },
@@ -368,6 +374,9 @@ export async function syncDailyTasksAfterProcessRouteChange(
       executionMode: step.executionMode,
       supplementStatus: step.supplementObligation?.status,
       supplementRequiredQty: step.supplementObligation?.requiredQty,
+      supplementActualRequiredQty: step.supplementObligation
+        ? processSupplementActualRequiredQty(step.supplementObligation)
+        : null,
       supplementReportedQty: step.supplementObligation?.reportedQty,
       blockedBySupplement: supplementBlocked,
     });
@@ -529,7 +538,9 @@ export async function syncDailyTasksAfterProcessRouteChange(
     let supplementalRemaining = step.executionMode === ProcessStepExecutionMode.SUPPLEMENTAL_OBLIGATION
       ? Math.max(
           0,
-          Number(step.supplementObligation?.requiredQty || 0)
+          (step.supplementObligation
+            ? processSupplementActualRequiredQty(step.supplementObligation)
+            : 0)
             - existingInsertedTasks.reduce((sum, task) => sum + task.plannedQty, 0),
         )
       : null;
@@ -581,6 +592,9 @@ export async function syncDailyTasksAfterProcessRouteChange(
         executionMode: step.executionMode,
         supplementStatus: step.supplementObligation?.status,
         supplementRequiredQty: step.supplementObligation?.requiredQty,
+        supplementActualRequiredQty: step.supplementObligation
+          ? processSupplementActualRequiredQty(step.supplementObligation)
+          : null,
         supplementReportedQty: step.supplementObligation?.reportedQty,
         blockedBySupplement: supplementBlocked,
       });

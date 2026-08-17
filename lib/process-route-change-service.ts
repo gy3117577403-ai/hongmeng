@@ -35,6 +35,10 @@ import {
   syncDailyTasksAfterProcessRouteChange,
 } from '@/lib/process-route-change-daily-task-sync';
 import { syncUnfinishedDailyTasksFromPublishedProductTime } from '@/lib/product-time-task-sync';
+import {
+  processSupplementActualRequiredQty,
+  processSupplementRemainingQty,
+} from '@/lib/process-supplement-coverage';
 
 export const PROCESS_SUPPLEMENT_RELEASE_POLICY = 'NONE' as const;
 
@@ -715,7 +719,8 @@ function serializeChange(change: ChangeDetail) {
     diffs: change.diffs.map(diff => ({ ...diff, createdAt: diff.createdAt.toISOString() })),
     supplementObligations: change.supplementObligations.map(item => ({
       ...item,
-      remainingQty: Math.max(0, item.requiredQty - item.reportedQty),
+      actualRequiredQty: processSupplementActualRequiredQty(item),
+      remainingQty: processSupplementRemainingQty(item),
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
       lastReportedAt: item.lastReportedAt?.toISOString() ?? null,
@@ -3880,17 +3885,21 @@ function serializeSupplementCompletionResult(input: {
   routeId: string;
   routeVersion: number;
   requiredQty: number;
+  systemCoveredQty: number;
+  actualRequiredQty: number;
   reportedQty: number;
   remainingQty: number;
   status: string;
   processedQty: number;
   employeeCount: number;
   standardLaborMilliseconds: bigint;
+  releasePolicy?: string;
+  fulfillmentMode?: string;
 }) {
   return {
     ...input,
     standardLaborMilliseconds: input.standardLaborMilliseconds.toString(),
-    releasePolicy: PROCESS_SUPPLEMENT_RELEASE_POLICY,
+    releasePolicy: input.releasePolicy || PROCESS_SUPPLEMENT_RELEASE_POLICY,
     quantityMovementCount: 0,
     completedQtyDelta: 0,
   };
@@ -3960,6 +3969,7 @@ export async function completeProcessSupplementObligation(
             id: true,
             changeId: true,
             requiredQty: true,
+            systemCoveredQty: true,
             reportedQty: true,
             reportedUnitQty: true,
             reportedGoodUnitQty: true,
@@ -3967,6 +3977,8 @@ export async function completeProcessSupplementObligation(
             reportQuantityBasis: true,
             reportUnitLabel: true,
             status: true,
+            fulfillmentMode: true,
+            releasePolicy: true,
             deploymentRoute: { select: { deploymentId: true } },
           },
         },
@@ -4000,12 +4012,16 @@ export async function completeProcessSupplementObligation(
         routeId: duplicate.routeId,
         routeVersion: duplicate.routeVersion + 1,
         requiredQty: duplicate.supplementObligation.requiredQty,
+        systemCoveredQty: duplicate.supplementObligation.systemCoveredQty,
+        actualRequiredQty: processSupplementActualRequiredQty(duplicate.supplementObligation),
         reportedQty: duplicate.supplementObligation.reportedQty,
-        remainingQty: duplicate.supplementObligation.requiredQty - duplicate.supplementObligation.reportedQty,
+        remainingQty: processSupplementRemainingQty(duplicate.supplementObligation),
         status: duplicate.supplementObligation.status,
         processedQty: duplicate.processedQty,
         employeeCount: duplicate.laborPool?.claims.length || 0,
         standardLaborMilliseconds: duplicate.laborPool?.totalStandardLaborMilliseconds || 0n,
+        releasePolicy: duplicate.supplementObligation.releasePolicy,
+        fulfillmentMode: duplicate.supplementObligation.fulfillmentMode,
       });
     }
     const obligation = await tx.processSupplementObligation.findUnique({
@@ -4099,7 +4115,8 @@ export async function completeProcessSupplementObligation(
       reportedUnitQty,
       reportedDefectUnitQty,
     });
-    const remainingQty = Math.max(0, obligation.requiredQty - obligation.reportedQty);
+    const actualRequiredQty = processSupplementActualRequiredQty(obligation);
+    const remainingQty = processSupplementRemainingQty(obligation);
     if (processedQty > remainingQty) {
       throw new ProcessRouteChangeServiceError(
         `本次补充报工数量不能超过剩余数量 ${remainingQty}`,
@@ -4108,7 +4125,7 @@ export async function completeProcessSupplementObligation(
       );
     }
     const actionTargetQty = processReportTargetQuantity({
-      productTargetQty: obligation.requiredQty,
+      productTargetQty: actualRequiredQty,
       basis: reportQuantityBasis,
       unitsPerProduct: obligation.unitsPerProduct,
     });
@@ -4163,11 +4180,11 @@ export async function completeProcessSupplementObligation(
     const nextReportedUnitQty = obligation.reportedUnitQty + reportQuantities.reportedUnitQty;
     const nextReportedGoodUnitQty = obligation.reportedGoodUnitQty + reportQuantities.reportedGoodUnitQty;
     const nextReportedDefectUnitQty = obligation.reportedDefectUnitQty + reportQuantities.reportedDefectUnitQty;
-    const fulfilled = nextReportedQty >= obligation.requiredQty
+    const fulfilled = nextReportedQty >= actualRequiredQty
       && nextReportedGoodUnitQty >= actionTargetQty;
     const nextState = {
       status: fulfilled ? 'FULFILLED' : 'ACTIVE',
-      remainingQty: Math.max(0, obligation.requiredQty - nextReportedQty),
+      remainingQty: Math.max(0, actualRequiredQty - nextReportedQty),
     } as const;
     const effectiveSetupMilliseconds = obligation.reportedUnitQty === 0
       ? obligation.setupMilliseconds
@@ -4363,9 +4380,11 @@ export async function completeProcessSupplementObligation(
           deploymentId,
           completionId: completion.id,
           requiredQty: obligation.requiredQty,
+          systemCoveredQty: obligation.systemCoveredQty,
+          actualRequiredQty,
           reportedQty: nextReportedQty,
           remainingQty: nextState.remainingQty,
-          releasePolicy: PROCESS_SUPPLEMENT_RELEASE_POLICY,
+          releasePolicy: obligation.releasePolicy,
           quantityMovementCount: 0,
           completedQtyDelta: 0,
         }),
@@ -4421,7 +4440,7 @@ export async function completeProcessSupplementObligation(
           changeId: obligation.changeId,
           deploymentId,
           processedQty,
-          releasePolicy: PROCESS_SUPPLEMENT_RELEASE_POLICY,
+          releasePolicy: obligation.releasePolicy,
           quantityMovementCount: 0,
           completedQtyDelta: 0,
         }),
@@ -4435,12 +4454,16 @@ export async function completeProcessSupplementObligation(
       routeId: obligation.routeId,
       routeVersion: obligation.route.version + 1,
       requiredQty: obligation.requiredQty,
+      systemCoveredQty: obligation.systemCoveredQty,
+      actualRequiredQty,
       reportedQty: nextReportedQty,
       remainingQty: nextState.remainingQty,
       status: nextState.status,
       processedQty,
       employeeCount,
       standardLaborMilliseconds,
+      releasePolicy: obligation.releasePolicy,
+      fulfillmentMode: obligation.fulfillmentMode,
     });
   });
 }

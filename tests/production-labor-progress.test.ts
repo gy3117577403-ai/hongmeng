@@ -67,6 +67,36 @@ test('skipped route steps do not inflate planned labor or trigger maintenance wa
   assert.equal(result.percentage, 0);
 });
 
+test('system-covered history creates no planned or completed employee labor', () => {
+  const result = calculateProductionLaborProgress({
+    targetQuantity: 100,
+    steps: [
+      step({
+        status: 'completed',
+        executionMode: 'SUPPLEMENTAL_OBLIGATION',
+        supplementObligation: {
+          requiredQty: 100,
+          systemCoveredQty: 100,
+          fulfillmentMode: 'SYSTEM_COVERED',
+        },
+      }),
+      step({
+        executionMode: 'SUPPLEMENTAL_OBLIGATION',
+        supplementObligation: {
+          requiredQty: 100,
+          systemCoveredQty: 60,
+          fulfillmentMode: 'MIXED',
+        },
+      }),
+    ],
+  });
+
+  assert.equal(result.totalStandardMilliseconds, 241_000n, 'only the 40 actually required units plus setup are planned');
+  assert.equal(result.completedStandardMilliseconds, 0n);
+  assert.equal(result.configuredStepCount, 1);
+  assert.equal(result.missingStandardStepCount, 0);
+});
+
 test('locked completion labor blocks the percentage until standard time is repaired', () => {
   const result = calculateProductionLaborProgress({
     targetQuantity: 100,

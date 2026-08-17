@@ -16,6 +16,7 @@ import {
   materializeProcessActionConsumptions,
   voidProcessActionConsumptionsForCompletion,
 } from '@/lib/process-action-consumption';
+import { processSupplementActualRequiredQty } from '@/lib/process-supplement-coverage';
 
 export class ProcessCompletionWithdrawalError extends Error {
   readonly status: number;
@@ -1321,7 +1322,10 @@ async function applyWithdrawal(
           status: supplementReportedAfter > 0
             ? DailyProcessTaskStatus.IN_PROGRESS
             : DailyProcessTaskStatus.READY,
-          availableQty: Math.max(0, state.supplementObligation!.requiredQty - supplementReportedAfter),
+          availableQty: Math.max(
+            0,
+            processSupplementActualRequiredQty(state.supplementObligation!) - supplementReportedAfter,
+          ),
         };
     if (task.status === projected.status && task.availableQty === projected.availableQty) continue;
     await tx.dailyProcessTask.update({

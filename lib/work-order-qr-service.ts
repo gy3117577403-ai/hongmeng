@@ -12,6 +12,10 @@ import { printableSourceFormat, type ImagePrintPaperSize } from '@/lib/printable
 import { isExecutableProductionWorkOrder } from '@/lib/work-orders';
 import { businessWorkOrderCodeBase } from '@/lib/work-order-business-code';
 import { processRouteStepChangeSnapshots } from '@/lib/process-route-change-contract';
+import {
+  processSupplementActualRequiredQty,
+  processSupplementRemainingQty,
+} from '@/lib/process-supplement-coverage';
 
 const MAX_PRINT_BATCH = 30;
 const MAX_SOP_PRINT_BATCH = 10;
@@ -76,6 +80,7 @@ export type WorkOrderTravelerSnapshot = {
     status: string;
     processedQty: number;
     executionMode?: 'NORMAL' | 'SUPPLEMENTAL_OBLIGATION';
+    isCritical?: boolean;
     changeSource?: 'EXISTING' | 'NEW';
     changeTag?: 'ADDED' | 'TIME_CHANGED' | 'ADDED_AND_TIME_CHANGED' | 'NONE';
     changeVersion?: number | null;
@@ -84,6 +89,8 @@ export type WorkOrderTravelerSnapshot = {
     supplementObligation?: {
       id: string;
       requiredQty: number;
+      systemCoveredQty: number;
+      actualRequiredQty: number;
       reportedQty: number;
       reportedUnitQty: number;
       reportedGoodUnitQty: number;
@@ -91,6 +98,9 @@ export type WorkOrderTravelerSnapshot = {
       reportQuantityBasis: 'product' | 'action';
       reportUnitLabel: string;
       remainingQty: number;
+      fulfillmentMode: 'ACTUAL' | 'MIXED' | 'SYSTEM_COVERED' | 'FUTURE_ONLY' | 'RECALL_REQUIRED';
+      releasePolicy: string;
+      isCritical: boolean;
       status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
       version: number;
     } | null;
@@ -1051,6 +1061,7 @@ export async function loadFieldReportTicket(
         status: step.status,
         processedQty: step.processedQty,
         executionMode: step.executionMode,
+        isCritical: step.isCritical,
         changeSource: step.changeSource,
         changeTag: changeSnapshot.tag,
         changeVersion: changeSnapshot.changeVersion,
@@ -1059,13 +1070,18 @@ export async function loadFieldReportTicket(
         supplementObligation: step.supplementObligation ? {
           id: step.supplementObligation.id,
           requiredQty: step.supplementObligation.requiredQty,
+          systemCoveredQty: step.supplementObligation.systemCoveredQty,
+          actualRequiredQty: processSupplementActualRequiredQty(step.supplementObligation),
           reportedQty: step.supplementObligation.reportedQty,
           reportedUnitQty: step.supplementObligation.reportedUnitQty,
           reportedGoodUnitQty: step.supplementObligation.reportedGoodUnitQty,
           reportedDefectUnitQty: step.supplementObligation.reportedDefectUnitQty,
           reportQuantityBasis: step.supplementObligation.reportQuantityBasis === 'action' ? 'action' : 'product',
           reportUnitLabel: step.supplementObligation.reportUnitLabel,
-          remainingQty: Math.max(0, step.supplementObligation.requiredQty - step.supplementObligation.reportedQty),
+          remainingQty: processSupplementRemainingQty(step.supplementObligation),
+          fulfillmentMode: step.supplementObligation.fulfillmentMode,
+          releasePolicy: step.supplementObligation.releasePolicy,
+          isCritical: step.supplementObligation.isCritical,
           status: step.supplementObligation.status,
           version: step.supplementObligation.version,
         } : null,

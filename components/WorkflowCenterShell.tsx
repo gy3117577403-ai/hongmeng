@@ -867,7 +867,9 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                       ? Math.min(100, Math.round((processed / input) * 100))
                                       : step.state === 'done' ? 100 : 0;
                                     const isDeepLinked = step.key === deepLink.stepId;
-                                    const laborStatusText = step.laborPendingStandard
+                                    const laborStatusText = (step.systemCoveredQuantity || 0) > 0 && (step.actualRequiredQuantity || 0) === 0
+                                      ? '系统历史承接 · 不记人员工时'
+                                      : step.laborPendingStandard
                                       ? '工时标准待补'
                                       : step.hasLaborPool
                                         ? (step.laborRemainingQuantity || 0) > 0
@@ -890,7 +892,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                                         <span className={`stage-${step.stageGroup || 'frontend'}`}>{step.stageGroup ? stageLabels[step.stageGroup] : '工序'}</span>
                                         <em>{processStepStateLabel(step)}</em>
                                       </header>
-                                      <strong>{step.label}{step.changeTag && step.changeTag !== 'NONE' && <b className="workflow-step-new-badge" title={step.changeTag === 'TIME_CHANGED' ? '本路线版本工时已变更' : '本路线版本新增工序'}>{step.changeTag === 'TIME_CHANGED' ? '工时 NEW' : 'NEW'}</b>}</strong>
+                                      <strong>{step.label}{step.changeTag && step.changeTag !== 'NONE' && <b className="workflow-step-new-badge" title={step.changeTag === 'TIME_CHANGED' ? '本路线版本工时已变更' : '本路线版本新增工序'}>{step.changeTag === 'TIME_CHANGED' ? '工时 NEW' : 'NEW'}</b>}{(step.systemCoveredQuantity || 0) > 0 && <b className="workflow-step-coverage-badge" title="由版本发布时的历史进度边界自动承接，不是人员报工">系统承接 {(step.systemCoveredQuantity || 0).toLocaleString()}</b>}</strong>
                                       <div className="workflow-flow-node-main">
                                         <span>{processed.toLocaleString()} / {input.toLocaleString()} {unitLabel}</span>
                                         <b>{progress}%</b>
@@ -915,7 +917,7 @@ export default function WorkflowCenterShell({ user }: WorkflowCenterShellProps) 
                       <div className="workflow-process-inspector-summary">
                         <span>{selectedProcessStep.reportQuantityBasis === 'action'
                           ? `已报动作 ${(selectedProcessStep.completionRecords || []).reduce((sum, completion) => sum + completion.reportedUnitQty, 0).toLocaleString()} ${reportingUnitLabel(selectedProcessStep)} · 整套流转 ${(selectedProcessStep.processedQuantity || 0).toLocaleString()} ${selectedProcessStep.unitLabel || '件'}`
-                          : `已处理 ${(selectedProcessStep.processedQuantity || 0).toLocaleString()} ${selectedProcessStep.unitLabel || '件'}`}</span>
+                          : `已处理 ${(selectedProcessStep.processedQuantity || 0).toLocaleString()} ${selectedProcessStep.unitLabel || '件'}${(selectedProcessStep.systemCoveredQuantity || 0) > 0 ? ` · 系统承接 ${(selectedProcessStep.systemCoveredQuantity || 0).toLocaleString()}` : ''}`}</span>
                         <span>{formatDuration(selectedProcessStep.standardMillisecondsPerUnit, reportingUnitLabel(selectedProcessStep))}</span>
                         <span>{selectedProcessStep.completionRecords?.length || 0} 笔完工</span>
                       </div>

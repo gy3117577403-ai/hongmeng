@@ -81,6 +81,8 @@ type FieldReportStepChangeSnapshot = ProcessRouteStepChangeNotice & {
 type FieldReportSupplementSnapshot = {
   id: string;
   requiredQty: number;
+  systemCoveredQty: number;
+  actualRequiredQty: number;
   reportedQty: number;
   reportedUnitQty: number;
   reportedGoodUnitQty: number;
@@ -88,6 +90,9 @@ type FieldReportSupplementSnapshot = {
   reportQuantityBasis: 'product' | 'action';
   reportUnitLabel: string;
   remainingQty: number;
+  fulfillmentMode: 'ACTUAL' | 'MIXED' | 'SYSTEM_COVERED' | 'FUTURE_ONLY' | 'RECALL_REQUIRED';
+  releasePolicy: string;
+  isCritical: boolean;
   status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
   version: number;
 };
@@ -167,6 +172,8 @@ function stepSupplementSnapshot(value: unknown): FieldReportSupplementSnapshot |
   if (!obligation || typeof obligation !== 'object') return null;
   const record = obligation as Record<string, unknown>;
   const requiredQty = Number(record.requiredQty);
+  const systemCoveredQty = Number(record.systemCoveredQty || 0);
+  const actualRequiredQty = Number(record.actualRequiredQty ?? Math.max(0, requiredQty - systemCoveredQty));
   const reportedQty = Number(record.reportedQty);
   const reportedUnitQty = Number(record.reportedUnitQty);
   const reportedGoodUnitQty = Number(record.reportedGoodUnitQty);
@@ -178,13 +185,20 @@ function stepSupplementSnapshot(value: unknown): FieldReportSupplementSnapshot |
   return {
     id: String(record.id),
     requiredQty,
+    systemCoveredQty: Number.isSafeInteger(systemCoveredQty) && systemCoveredQty >= 0 ? systemCoveredQty : 0,
+    actualRequiredQty: Number.isSafeInteger(actualRequiredQty) && actualRequiredQty >= 0 ? actualRequiredQty : requiredQty,
     reportedQty: Number.isSafeInteger(reportedQty) && reportedQty >= 0 ? reportedQty : 0,
     reportedUnitQty: Number.isSafeInteger(reportedUnitQty) && reportedUnitQty >= 0 ? reportedUnitQty : 0,
     reportedGoodUnitQty: Number.isSafeInteger(reportedGoodUnitQty) && reportedGoodUnitQty >= 0 ? reportedGoodUnitQty : 0,
     reportedDefectUnitQty: Number.isSafeInteger(reportedDefectUnitQty) && reportedDefectUnitQty >= 0 ? reportedDefectUnitQty : 0,
     reportQuantityBasis: record.reportQuantityBasis === 'action' ? 'action' : 'product',
     reportUnitLabel: String(record.reportUnitLabel || '件'),
-    remainingQty: Math.max(0, Number.isSafeInteger(Number(record.remainingQty)) ? Number(record.remainingQty) : requiredQty - reportedQty),
+    remainingQty: Math.max(0, Number.isSafeInteger(Number(record.remainingQty)) ? Number(record.remainingQty) : actualRequiredQty - reportedQty),
+    fulfillmentMode: ['MIXED', 'SYSTEM_COVERED', 'FUTURE_ONLY', 'RECALL_REQUIRED'].includes(String(record.fulfillmentMode))
+      ? String(record.fulfillmentMode) as FieldReportSupplementSnapshot['fulfillmentMode']
+      : 'ACTUAL',
+    releasePolicy: String(record.releasePolicy || 'NONE'),
+    isCritical: record.isCritical === true,
     status,
     version: Number.isSafeInteger(version) && version >= 0 ? version : 0,
   };
@@ -359,9 +373,9 @@ export default function FieldReportMobile({
     && (
       step.reportQuantityBasis === 'action'
         ? step.reportedGoodUnitQty >= step.reportTargetQty
-          && step.coveredReportedQty >= (step.supplementObligation?.requiredQty || payload?.ticket.workOrder.targetQty || 0)
+          && step.coveredReportedQty >= (step.supplementObligation?.actualRequiredQty ?? payload?.ticket.workOrder.targetQty ?? 0)
         : step.status === 'completed'
-          || step.coveredReportedQty >= (step.supplementObligation?.requiredQty || payload?.ticket.workOrder.targetQty || 0)
+          || step.coveredReportedQty >= (step.supplementObligation?.actualRequiredQty ?? payload?.ticket.workOrder.targetQty ?? 0)
     )
   )).length;
   const progress = routeSteps.length ? Math.round(completedSteps / routeSteps.length * 100) : 0;
@@ -817,7 +831,7 @@ export default function FieldReportMobile({
           const changeNotice = stepChangeSnapshot(snapshot);
           const supplement = stepSupplementSnapshot(snapshot);
           const changeLabel = processRouteStepChangeLabel(changeNotice);
-          const stepTargetQty = supplement?.requiredQty ?? ticket.workOrder.targetQty;
+           const stepTargetQty = supplement?.actualRequiredQty ?? ticket.workOrder.targetQty;
           const stepReportedQty = supplement?.reportedQty ?? step.reportedQty;
           const stepCoveredQty = supplement?.reportedQty ?? step.coveredReportedQty;
            const baseState = resolveFieldReportStepPresentation({
@@ -860,7 +874,13 @@ export default function FieldReportMobile({
               <div className="field-report-step-facts"><span><Clock3 size={14} />{standardTime(snapshot?.standardMillisecondsPerUnit || null, snapshot?.timeBasis || null, snapshot?.unitsPerProduct || 1)}</span><span>{step.reportQuantityBasis === 'action' ? <>{quantity(step.reportedGoodUnitQty)} / {quantity(step.reportTargetQty)} {step.reportUnitLabel}</> : <>{quantity(stepReportedQty)} / {quantity(stepTargetQty)} {step.unitLabel || ticket.workOrder.unitLabel}</>}</span></div>
               {step.reportQuantityBasis === 'action' && <small className="field-report-action-progress">整套流转：{quantity(stepReportedQty)} / {quantity(stepTargetQty)} {ticket.workOrder.unitLabel}；每套需 {quantity(step.unitsPerProduct)} {step.reportUnitLabel}</small>}
               {Boolean(changeNotice?.previousStandardMillisecondsPerUnit) && (changeNotice?.tag === 'TIME_CHANGED' || changeNotice?.tag === 'ADDED_AND_TIME_CHANGED') && <small className="field-report-change-time-note">原标准 {secondsFromMilliseconds(changeNotice.previousStandardMillisecondsPerUnit)} 秒 → 现标准 {secondsFromMilliseconds(snapshot?.standardMillisecondsPerUnit)} 秒</small>}
-              {supplement && <p className="field-report-supplement-note"><GitPullRequestArrow size={14} />后序已报工，本工序独立补报，完成后不重复向后序转数量</p>}
+               {supplement && <p className="field-report-supplement-note"><GitPullRequestArrow size={14} />{supplement.fulfillmentMode === 'FUTURE_ONLY'
+                 ? '该已开工路线按“仅未来生效”留存审计，不要求补报'
+                 : supplement.actualRequiredQty === 0
+                   ? `系统已按历史进度承接 ${quantity(supplement.systemCoveredQty)}，未生成任何人员报工或工时`
+                   : supplement.systemCoveredQty > 0
+                     ? `系统承接 ${quantity(supplement.systemCoveredQty)}，仅剩余 ${quantity(supplement.actualRequiredQty)} 需实际报工；不重复向后序转数量`
+                     : '本工序独立补报，完成后不重复向后序转数量'}</p>}
               <div className="field-report-step-progress-detail">
                 {step.reportQuantityBasis === 'action' && <>
                   <span><small>动作进度</small><b>{quantity(step.reportedGoodUnitQty)} / {quantity(step.reportTargetQty)}</b></span>
@@ -964,7 +984,7 @@ export default function FieldReportMobile({
           {(reportMode === 'batch' || (ticket.access.canReport && hasReportableQuantity)) && <section className="field-report-date-card"><CalendarDays size={24} /><label><span>生产日期</span><input type="date" max={todayKey()} value={form.workDate} disabled={saving} onChange={event => setForm({ ...form, workDate: event.target.value })} /></label><strong>请务必核对</strong></section>}
 
           {advanceReporting && <section className="field-report-advance"><AlertTriangle size={21} /><span><strong>本次属于提前报工</strong><small>允许先报当前工序，数量不会变成负数；前序补齐后系统自动覆盖并恢复正常流转。</small></span></section>}
-          {selectedSupplement && <section className="field-report-advance supplement"><GitPullRequestArrow size={21} /><span><strong>NEW · 补充工序报工</strong><small>本次只记录该新增工序的数量与员工工时，原后序已报完成保持不变。</small></span></section>}
+          {selectedSupplement && <section className="field-report-advance supplement"><GitPullRequestArrow size={21} /><span><strong>NEW · 剩余数量实际报工</strong><small>{selectedSupplement.systemCoveredQty > 0 ? `系统已承接 ${quantity(selectedSupplement.systemCoveredQty)}，本次只记录剩余 ${quantity(selectedSupplement.actualRequiredQty)} 的实际人员与工时；` : ''}原后序已报完成保持不变。</small></span></section>}
 
           {reportMode === 'single' && <section className="field-report-history">
             <header><span><strong>最近报工记录</strong><small>现场可直接看到报工人、数量和时间；每笔记录独立纠错。</small></span><em>{payload.context.recentCompletions.length} 笔</em></header>

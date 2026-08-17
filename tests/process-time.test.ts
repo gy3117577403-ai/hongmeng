@@ -137,6 +137,7 @@ test('product time accepts per-unit occurrences and preparation time', () => {
     reportQuantityBasis: 'action',
     reportUnitLabel: '个',
     countsForEfficiency: true,
+    isCritical: false,
     remark: null,
   });
   assert.equal(productTimeTotalMilliseconds(result.entries), 32_000);

@@ -2948,6 +2948,10 @@ html:has(.hm-product-time-workbench) {
   font-size: 10px;
 }
 
+.hm-product-time-workbench .product-time-deployment-diffs > article.critical {
+  background: #fffaf5;
+}
+
 .hm-product-time-workbench .product-time-deployment-diffs > article > b {
   width: max-content;
   padding: 2px 6px;
@@ -2980,6 +2984,68 @@ html:has(.hm-product-time-workbench) {
   color: #758295;
   font-size: 9px;
   font-style: normal;
+}
+
+.hm-product-time-workbench .product-time-insert-policy {
+  grid-column: 2 / -1;
+  padding: 5px 7px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #f0c49e;
+  border-radius: 6px;
+  background: #fff7ed;
+}
+
+.hm-product-time-workbench .product-time-insert-policy > span {
+  margin-right: auto;
+  color: #88410f;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.hm-product-time-workbench .product-time-insert-policy > button {
+  min-height: 26px;
+  padding: 3px 9px;
+  border: 1px solid #e2b486;
+  border-radius: 5px;
+  background: #fff;
+  color: #8a4b18;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.hm-product-time-workbench .product-time-insert-policy > button.selected {
+  border-color: #d65700;
+  background: #d65700;
+  color: #fff;
+}
+
+.hm-product-time-workbench .product-time-insert-policy > button.danger {
+  border-color: #e8aaaa;
+  color: #a61b1b;
+}
+
+.hm-product-time-workbench .product-time-insert-policy > button.selected.danger {
+  border-color: #b42318;
+  background: #b42318;
+  color: #fff;
+}
+
+.hm-product-time-workbench .product-time-insert-policy > button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.hm-product-time-workbench .product-time-insert-policy > strong {
+  color: #9c4211;
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-insert-policy > small {
+  color: #b42318;
+  font-size: 9px;
 }
 
 .hm-product-time-workbench .product-time-deployment-diffs > p,

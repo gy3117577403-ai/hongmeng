@@ -107,6 +107,7 @@ export async function POST(req: NextRequest, { params }: { params: { itemId: str
           reportQuantityBasis: entry.reportQuantityBasis,
           reportUnitLabel: entry.reportUnitLabel,
           countsForEfficiency: entry.countsForEfficiency,
+          isCritical: entry.isCritical,
           remark: entry.remark,
         })),
       });

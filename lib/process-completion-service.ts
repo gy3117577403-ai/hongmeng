@@ -42,6 +42,10 @@ import {
 } from '@/lib/production-workforce';
 import { branchBusinessWorkOrderCode } from '@/lib/work-order-business-code';
 import { materializeProcessActionConsumptions } from '@/lib/process-action-consumption';
+import {
+  processSupplementActualRequiredQty,
+  processSupplementRemainingQty,
+} from '@/lib/process-supplement-coverage';
 
 export class ProcessCompletionServiceError extends Error {
   readonly status: number;
@@ -148,6 +152,8 @@ export type ProcessCompletionContext = {
     supplementObligation: {
       id: string;
       requiredQty: number;
+      systemCoveredQty: number;
+      actualRequiredQty: number;
       reportedQty: number;
       reportedUnitQty: number;
       reportedGoodUnitQty: number;
@@ -155,6 +161,9 @@ export type ProcessCompletionContext = {
       reportQuantityBasis: ProcessReportQuantityBasis;
       reportUnitLabel: string;
       remainingQty: number;
+      fulfillmentMode: 'ACTUAL' | 'MIXED' | 'SYSTEM_COVERED' | 'FUTURE_ONLY' | 'RECALL_REQUIRED';
+      releasePolicy: string;
+      isCritical: boolean;
       status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
       version: number;
     } | null;
@@ -173,6 +182,8 @@ export type ProcessCompletionContext = {
     supplementObligation: {
       id: string;
       requiredQty: number;
+      systemCoveredQty: number;
+      actualRequiredQty: number;
       reportedQty: number;
       reportedUnitQty: number;
       reportedGoodUnitQty: number;
@@ -180,6 +191,9 @@ export type ProcessCompletionContext = {
       reportQuantityBasis: ProcessReportQuantityBasis;
       reportUnitLabel: string;
       remainingQty: number;
+      fulfillmentMode: 'ACTUAL' | 'MIXED' | 'SYSTEM_COVERED' | 'FUTURE_ONLY' | 'RECALL_REQUIRED';
+      releasePolicy: string;
+      isCritical: boolean;
       status: 'ACTIVE' | 'FULFILLED' | 'CANCELLED';
       version: number;
     } | null;
@@ -1444,30 +1458,32 @@ export async function loadProcessCompletionContext(
       reportedDefectUnitQty: total._sum.reportedDefectUnitQty || 0,
     },
   ]));
+  const reportingTargetForStep = (step: typeof route.steps[number]): number => (
+    step.executionMode === 'SUPPLEMENTAL_OBLIGATION' && step.supplementObligation
+      ? processSupplementActualRequiredQty(step.supplementObligation)
+      : target
+  );
+  const hasRemainingReport = (step: typeof route.steps[number]): boolean => {
+    const stepTarget = reportingTargetForStep(step);
+    if (
+      step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
+      && step.supplementObligation?.status !== 'ACTIVE'
+    ) return false;
+    return (totalByStep.get(step.id)?.reportedQty || 0) < stepTarget
+      || (normalizeProcessReportQuantityBasis(step.reportQuantityBasis) === 'action'
+        && (totalByStep.get(step.id)?.reportedGoodUnitQty || 0) < processReportTargetQuantity({
+          productTargetQty: stepTarget,
+          basis: 'action',
+          unitsPerProduct: step.unitsPerProduct,
+        }));
+  };
   const selected = stepId
     ? route.steps.find(step => step.id === stepId)
     : allowAdvanceReporting
       ? route.steps.find(step => (
-          step.status === 'current'
-          && (
-            (totalByStep.get(step.id)?.reportedQty || 0) < target
-            || (normalizeProcessReportQuantityBasis(step.reportQuantityBasis) === 'action'
-              && (totalByStep.get(step.id)?.reportedGoodUnitQty || 0) < processReportTargetQuantity({
-                productTargetQty: target,
-                basis: 'action',
-                unitsPerProduct: step.unitsPerProduct,
-              }))
-          )
+          step.status === 'current' && hasRemainingReport(step)
         ))
-          || route.steps.find(step => (
-            (totalByStep.get(step.id)?.reportedQty || 0) < target
-            || (normalizeProcessReportQuantityBasis(step.reportQuantityBasis) === 'action'
-              && (totalByStep.get(step.id)?.reportedGoodUnitQty || 0) < processReportTargetQuantity({
-                productTargetQty: target,
-                basis: 'action',
-                unitsPerProduct: step.unitsPerProduct,
-              }))
-          ))
+          || route.steps.find(hasRemainingReport)
           || (options.allowCompletedSelection
             ? [...route.steps].reverse().find(step => step.completions.length > 0) || route.steps[0]
             : undefined)
@@ -1492,7 +1508,9 @@ export async function loadProcessCompletionContext(
   }
   const firstGroup = firstNormalSequenceGroup(route.steps);
   const availableInputQty = selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
-    ? selected.supplementObligation?.requiredQty || target
+    ? selected.supplementObligation
+      ? processSupplementActualRequiredQty(selected.supplementObligation)
+      : target
     : effectiveInputQuantity(selected, firstGroup, target);
   const selectedTotals = totalByStep.get(selected.id) || {
     reportedQty: 0,
@@ -1503,7 +1521,9 @@ export async function loadProcessCompletionContext(
     reportedDefectUnitQty: 0,
   };
   const selectedTarget = selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
-    ? selected.supplementObligation?.requiredQty || target
+    ? selected.supplementObligation
+      ? processSupplementActualRequiredQty(selected.supplementObligation)
+      : target
     : target;
   const reportableQty = Math.max(0, selectedTarget - selectedTotals.reportedQty);
   const selectedReportQuantityBasis = selected.executionMode === 'SUPPLEMENTAL_OBLIGATION'
@@ -1554,16 +1574,18 @@ export async function loadProcessCompletionContext(
       supplementObligation: selected.supplementObligation ? {
         id: selected.supplementObligation.id,
         requiredQty: selected.supplementObligation.requiredQty,
+        systemCoveredQty: selected.supplementObligation.systemCoveredQty,
+        actualRequiredQty: processSupplementActualRequiredQty(selected.supplementObligation),
         reportedQty: selected.supplementObligation.reportedQty,
         reportedUnitQty: selected.supplementObligation.reportedUnitQty,
         reportedGoodUnitQty: selected.supplementObligation.reportedGoodUnitQty,
         reportedDefectUnitQty: selected.supplementObligation.reportedDefectUnitQty,
         reportQuantityBasis: normalizeProcessReportQuantityBasis(selected.supplementObligation.reportQuantityBasis),
         reportUnitLabel: selected.supplementObligation.reportUnitLabel,
-        remainingQty: Math.max(
-          0,
-          selected.supplementObligation.requiredQty - selected.supplementObligation.reportedQty,
-        ),
+        remainingQty: processSupplementRemainingQty(selected.supplementObligation),
+        fulfillmentMode: selected.supplementObligation.fulfillmentMode,
+        releasePolicy: selected.supplementObligation.releasePolicy,
+        isCritical: selected.supplementObligation.isCritical,
         status: selected.supplementObligation.status,
         version: selected.supplementObligation.version,
       } : null,
@@ -1587,9 +1609,12 @@ export async function loadProcessCompletionContext(
       const supplemental = step.executionMode === 'SUPPLEMENTAL_OBLIGATION'
         ? step.supplementObligation
         : null;
-      const stepTarget = supplemental?.requiredQty || target;
-      const stepAvailableInput = supplemental?.requiredQty
-        || effectiveInputQuantity(step, firstGroup, target);
+      const stepTarget = supplemental
+        ? processSupplementActualRequiredQty(supplemental)
+        : target;
+      const stepAvailableInput = supplemental
+        ? stepTarget
+        : effectiveInputQuantity(step, firstGroup, target);
       const stepReportQuantityBasis = supplemental
         ? normalizeProcessReportQuantityBasis(supplemental.reportQuantityBasis)
         : normalizeProcessReportQuantityBasis(step.reportQuantityBasis);
@@ -1607,13 +1632,18 @@ export async function loadProcessCompletionContext(
         supplementObligation: supplemental ? {
           id: supplemental.id,
           requiredQty: supplemental.requiredQty,
+          systemCoveredQty: supplemental.systemCoveredQty,
+          actualRequiredQty: processSupplementActualRequiredQty(supplemental),
           reportedQty: supplemental.reportedQty,
           reportedUnitQty: supplemental.reportedUnitQty,
           reportedGoodUnitQty: supplemental.reportedGoodUnitQty,
           reportedDefectUnitQty: supplemental.reportedDefectUnitQty,
           reportQuantityBasis: normalizeProcessReportQuantityBasis(supplemental.reportQuantityBasis),
           reportUnitLabel: supplemental.reportUnitLabel,
-          remainingQty: Math.max(0, supplemental.requiredQty - supplemental.reportedQty),
+          remainingQty: processSupplementRemainingQty(supplemental),
+          fulfillmentMode: supplemental.fulfillmentMode,
+          releasePolicy: supplemental.releasePolicy,
+          isCritical: supplemental.isCritical,
           status: supplemental.status,
           version: supplemental.version,
         } : null,

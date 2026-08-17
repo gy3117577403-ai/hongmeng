@@ -37,6 +37,7 @@ export type ProductTimeEntryInput = {
   reportQuantityBasis: ProcessReportQuantityBasis;
   reportUnitLabel: string;
   countsForEfficiency: boolean;
+  isCritical: boolean;
   remark: string | null;
 };
 
@@ -60,6 +61,7 @@ type RawProductTimeEntry = {
   reportUnitLabel?: unknown;
   parallelWithPrevious?: unknown;
   countsForEfficiency?: unknown;
+  isCritical?: unknown;
   remark?: unknown;
 };
 
@@ -143,6 +145,7 @@ export function validateProductTimeEntries(value: unknown): ProductTimeEntryVali
           : 'product',
         reportUnitLabel: cleanProductTimeText(raw?.reportUnitLabel, 20) || '个',
         countsForEfficiency: raw?.countsForEfficiency !== false,
+        isCritical: raw?.isCritical === true,
         remark: cleanProductTimeText(raw?.remark, 300) || null,
       });
     }
@@ -181,6 +184,7 @@ export function serializeProductTimeEntry(entry: ProductTimeProfileRecord['entri
     reportQuantityBasis: entry.reportQuantityBasis === 'action' ? 'action' : 'product',
     reportUnitLabel: entry.reportUnitLabel || '个',
     countsForEfficiency: entry.countsForEfficiency,
+    isCritical: entry.isCritical,
     remark: entry.remark,
   };
 }
@@ -235,6 +239,7 @@ export function productTimeStandardSnapshot(
       ? entry.reportUnitLabel || '个'
       : entry.unitLabel || '套',
     countsForEfficiency: entry.countsForEfficiency,
+    isCritical: entry.isCritical,
   } as const;
 }
 

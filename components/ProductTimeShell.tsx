@@ -68,6 +68,7 @@ import type {
   ProductTimePlanningScope,
   ProductTimePlanningSummaryDTO,
   ProductTimeProfileDTO,
+  ProductTimeInsertPolicy,
   ProcessReportQuantityBasis,
   ProcessReportingPolicy,
   ProcessStageGroup,
@@ -159,6 +160,7 @@ type EntryDraft = {
   reportUnitLabel: string;
   parallelWithPrevious: boolean;
   countsForEfficiency: boolean;
+  isCritical: boolean;
   remark: string;
 };
 
@@ -250,6 +252,7 @@ function entryDraft(
     reportUnitLabel: entry.reportUnitLabel || '个',
     parallelWithPrevious: index > 0 && allEntries[index - 1].sequenceGroup === entry.sequenceGroup,
     countsForEfficiency: entry.countsForEfficiency,
+    isCritical: entry.isCritical,
     remark: entry.remark || '',
   };
 }
@@ -412,6 +415,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [deploymentPreview, setDeploymentPreview] = useState<ProductTimeDeploymentPreviewDTO | null>(null);
   const [deployment, setDeployment] = useState<ProductTimeDeploymentDTO | null>(null);
   const [deploymentError, setDeploymentError] = useState('');
+  const [insertPolicies, setInsertPolicies] = useState<Record<string, ProductTimeInsertPolicy>>({});
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [libraryKeyword, setLibraryKeyword] = useState('');
@@ -1033,6 +1037,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       reportUnitLabel: '个',
       parallelWithPrevious: false,
       countsForEfficiency: true,
+      isCritical: false,
       remark: '',
     };
     const next = insertProductTimeRouteEntry(
@@ -1221,6 +1226,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             reportUnitLabel: entry.reportUnitLabel,
             parallelWithPrevious: entry.parallelWithPrevious,
             countsForEfficiency: entry.countsForEfficiency,
+            isCritical: entry.isCritical,
             remark: entry.remark,
           })),
         }),
@@ -1239,7 +1245,9 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     }
   }
 
-  async function openPublishPreview(): Promise<void> {
+  async function openPublishPreview(
+    policyOverride?: Record<string, ProductTimeInsertPolicy>,
+  ): Promise<void> {
     if (!selectedItem || !activeDraft) {
       setError('请先保存产品工时草稿');
       return;
@@ -1248,6 +1256,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       setError('当前内容尚未保存，请先保存草稿再发布');
       return;
     }
+    const nextPolicies = policyOverride || (deploymentOpen ? insertPolicies : {});
+    if (!deploymentOpen && !policyOverride) setInsertPolicies({});
     setDeploymentOpen(true);
     setDeploymentPreviewLoading(true);
     setDeploymentPreview(null);
@@ -1258,7 +1268,10 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       const response = await fetch(`/api/product-time-profiles/${selectedItem.id}/publish/preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ expectedRevision: activeDraft.revision }),
+        body: JSON.stringify({
+          expectedRevision: activeDraft.revision,
+          policies: nextPolicies,
+        }),
       });
       const data = await response.json().catch(() => ({})) as ProductTimeDeploymentApiPayload;
       const preview = deploymentPreviewFromPayload(data);
@@ -1270,6 +1283,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     } finally {
       setDeploymentPreviewLoading(false);
     }
+  }
+
+  function chooseInsertPolicy(occurrenceKey: string, policy: ProductTimeInsertPolicy): void {
+    const next = { ...insertPolicies, [occurrenceKey]: policy };
+    setInsertPolicies(next);
+    void openPublishPreview(next);
   }
 
   function closeDeployment(): void {
@@ -1295,6 +1314,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         body: JSON.stringify({
           expectedRevision: activeDraft.revision,
           previewToken: deploymentPreview.previewToken,
+          policies: insertPolicies,
         }),
       });
       const data = await response.json().catch(() => ({})) as ProductTimeDeploymentApiPayload;
@@ -1487,6 +1507,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const deploymentRoutes = deployment?.routes || deploymentPreview?.routes || [];
   const deploymentConflicts = deployment?.conflicts || deploymentPreview?.conflicts || [];
   const deploymentProgress = deployment ? productTimeDeploymentProgress(deployment) : null;
+  const criticalPolicyPending = !deployment
+    && deploymentDiffs.some(diff => diff.kind === 'insert' && diff.policyRequired);
   const failedDeploymentRoutes = deployment ? failedProductTimeDeploymentRoutes(deployment) : [];
   const deploymentStatus = deployment?.status || deploymentPreview?.status || 'preview';
   const planningPeriodText = planningSummary?.weekStartDate && planningSummary?.weekEndDate
@@ -1703,6 +1725,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                       <div className="product-time-process-options">
                         <label><input type="checkbox" disabled={index === 0} checked={entry.parallelWithPrevious} onChange={event => updateEntry(index, { parallelWithPrevious: event.target.checked })} /><span>{index === 0 ? '首道工序' : '与上一道并行'}</span></label>
                         <label><input type="checkbox" checked={entry.countsForEfficiency} onChange={event => updateEntry(index, { countsForEfficiency: event.target.checked })} /><span>计入员工达成率</span></label>
+                        <label><input type="checkbox" checked={entry.isCritical} onChange={event => updateEntry(index, { isCritical: event.target.checked })} /><span>安全/质量关键工序</span></label>
                       </div>
                       <input className="product-time-row-remark" value={entry.remark} onChange={event => updateEntry(index, { remark: event.target.value })} placeholder="工序说明，可选" />
                       <div className="product-time-row-actions">
@@ -2009,12 +2032,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
           <div id="product-time-deployment-description" className="product-time-deployment-scope">
             <Route size={17} aria-hidden="true" />
-            <span><strong>草稿保存不影响生产；确认发布后统一同步</strong><small>覆盖未报工、在制和已完成工单，原二维码无需重印；已报工标准工时及员工达成率按新版本重算。此操作不创建质量、复检或审批任务。</small></span>
+            <span><strong>已完成保持完成，在制按工序边界拆分，未开工执行完整新路线</strong><small>系统历史承接只写独立审计记录，不伪造管理员/员工报工，不生成工时或达成率；原二维码无需重印。关键工序必须明确选择仅未来生效或召回返工。</small></span>
           </div>
 
           {deploymentError && <div className="product-time-deployment-error" role="alert"><AlertTriangle size={17} aria-hidden="true" /><span>{deploymentError}</span></div>}
 
-          {deploymentPreviewLoading && <div className="product-time-deployment-loading"><LoaderCircle className="spin" size={26} aria-hidden="true" /><strong>正在核对全部关联工单</strong><span>计算新增、调序、工时、历史报工、员工达成率、补充义务和并发冲突…</span></div>}
+          {deploymentPreviewLoading && <div className="product-time-deployment-loading"><LoaderCircle className="spin" size={26} aria-hidden="true" /><strong>正在核对全部关联工单</strong><span>计算每个新增工序的历史边界、系统承接量、剩余实报量和并发冲突…</span></div>}
 
           {!deploymentPreviewLoading && (deploymentPreview || deployment) && <div className="product-time-deployment-body hm-scroll-region" tabIndex={0}>
             <section className="product-time-deployment-section" aria-labelledby="product-time-deployment-change-title">
@@ -2026,16 +2049,26 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 <span className="delete"><small>删除 / 退役</small><strong>{deploymentDiffCounts.delete}</strong></span>
               </div>
               <div className="product-time-deployment-diffs">
-                {deploymentDiffs.map(diff => <article key={`${diff.kind}-${diff.occurrenceKey}`} className={diff.kind}>
+                {deploymentDiffs.map(diff => <article key={`${diff.kind}-${diff.occurrenceKey}`} className={`${diff.kind}${diff.isCritical ? ' critical' : ''}`}>
                   <b>{diff.kind === 'insert' ? 'NEW' : diff.kind === 'move' ? '调序' : diff.kind === 'update_time' ? '工时' : '退役'}</b>
-                  <span><strong>{diff.processName}</strong><small title={diff.occurrenceKey}>工序实例 {diff.occurrenceKey.slice(0, 12)}</small></span>
+                  <span><strong>{diff.processName}{diff.isCritical ? ' · 关键工序' : ''}</strong><small title={diff.occurrenceKey}>工序实例 {diff.occurrenceKey.slice(0, 12)}</small></span>
                   <em>{diff.kind === 'update_time'
                     ? `${diff.oldUnitMilliseconds == null ? '—' : duration(diff.oldUnitMilliseconds)} → ${diff.newUnitMilliseconds == null ? '—' : duration(diff.newUnitMilliseconds)}`
                     : diff.kind === 'move'
                       ? `第 ${diff.oldSequence ?? '—'} 道 → 第 ${diff.newSequence ?? '—'} 道`
                       : diff.kind === 'insert'
-                        ? `插入第 ${diff.newSequence ?? '—'} 道，发布后标记 NEW`
+                        ? `插入第 ${diff.newSequence ?? '—'} 道 · ${diff.policy === 'FUTURE_ONLY' ? '已开工路线仅审计，未开工路线执行' : diff.policy === 'RECALL_REWORK' ? '历史路线要求召回返工' : '按实际工序进度自动拆分'}`
                         : `原第 ${diff.oldSequence ?? '—'} 道；已报工历史不物理删除`}</em>
+                  {diff.kind === 'insert' && diff.isCritical && <div className="product-time-insert-policy" role="group" aria-label={`${diff.processName} 生效策略`}>
+                    <span>关键工序生效策略</span>
+                    {deployment
+                      ? <strong>{diff.policy === 'RECALL_REWORK' ? '召回返工' : '仅未开工路线生效'}</strong>
+                      : <>
+                        <button type="button" className={diff.policy === 'FUTURE_ONLY' ? 'selected' : ''} aria-pressed={diff.policy === 'FUTURE_ONLY'} disabled={deploymentPreviewLoading || publishing} onClick={() => chooseInsertPolicy(diff.occurrenceKey, 'FUTURE_ONLY')}>仅未开工路线</button>
+                        <button type="button" className={diff.policy === 'RECALL_REWORK' ? 'selected danger' : 'danger'} aria-pressed={diff.policy === 'RECALL_REWORK'} disabled={deploymentPreviewLoading || publishing} onClick={() => chooseInsertPolicy(diff.occurrenceKey, 'RECALL_REWORK')}>召回返工</button>
+                      </>}
+                    {diff.policyRequired && <small>必须选择后才能发布</small>}
+                  </div>}
                 </article>)}
                 {!deploymentDiffs.length && <p>草稿与当前正式版本没有工序或工时差异。</p>}
               </div>
@@ -2046,9 +2079,13 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <div className="product-time-deployment-impact-grid">
                 <span><small>关联工单</small><strong>{deploymentImpact.workOrders.total}</strong><em>未报工 {deploymentImpact.workOrders.unstarted} · 在制 {deploymentImpact.workOrders.inProgress} · 已完成 {deploymentImpact.workOrders.completed}</em></span>
                 <span><small>原二维码</small><strong>{deploymentImpact.qrTickets}</strong><em>无需重印，扫码读取最新路线</em></span>
-                <span><small>历史报工</small><strong>{deploymentImpact.historicalReports}</strong><em>标准工时重新计算</em></span>
+                <span><small>历史报工</small><strong>{deploymentImpact.historicalReports}</strong><em>仅工时标准变更时重算，原记录保留</em></span>
                 <span><small>影响员工</small><strong>{deploymentImpact.affectedEmployees}</strong><em>{deploymentImpact.attainmentRecords} 条达成率记录重算</em></span>
-                <span><small>补充报工义务</small><strong>{deploymentImpact.supplementObligations}</strong><em>新增工序从 0 开始，不补历史完成</em></span>
+                <span><small>系统历史承接</small><strong>{deploymentImpact.systemCoveredQty ?? 0}</strong><em>独立审计，不生成员工报工/工时</em></span>
+                <span><small>剩余实际执行</small><strong>{deploymentImpact.actualRequiredQty ?? 0}</strong><em>仅未越过新增工序的产品需实报</em></span>
+                <span><small>保持已完成</small><strong>{criticalPolicyPending ? '待策略' : deploymentImpact.keptCompleted ?? 0}</strong><em>{criticalPolicyPending ? '关键工序选择策略后重新计算' : '默认不反向打开历史完成工单'}</em></span>
+                <span><small>历史承接生成报工</small><strong>{deploymentImpact.generatedLaborRecords ?? 0}</strong><em>固定为 0，不归属管理员或员工</em></span>
+                <span><small>承接审计记录</small><strong>{deploymentImpact.supplementObligations}</strong><em>系统承接、混合执行、仅未来或召回均留痕</em></span>
                 <span className={deploymentImpact.conflicts ? 'conflict' : 'safe'}><small>发布冲突</small><strong>{deploymentImpact.conflicts}</strong><em>{deploymentImpact.conflicts ? '必须处理后才能正式生效' : '当前未发现阻断项'}</em></span>
               </div>
               {deploymentConflicts.length > 0 && <div className="product-time-deployment-conflicts">
@@ -2064,7 +2101,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 {deploymentRoutes.map(route => <article key={route.workOrderId} className={route.status}>
                   <span><strong>{route.workOrderCode}</strong><small>{route.workOrderId.slice(0, 12)}</small></span>
                   <span>{productTimeDeploymentRouteStateText(route.state)}</span>
-                  <span><small>新增 {route.insertedProcesses || 0} · 调序 {route.movedProcesses || 0} · 工时 {route.updatedTimes || 0}</small><small>历史 {route.historicalReports || 0} · 员工 {route.affectedEmployees || 0} · 补充 {route.supplementObligations || 0}</small></span>
+                  <span><small>新增 {route.insertedProcesses || 0} · 调序 {route.movedProcesses || 0} · 工时 {route.updatedTimes || 0}</small><small>系统承接 {route.systemCoveredQty || 0} · 待实报 {route.actualRequiredQty || 0} · 审计 {route.supplementObligations || 0}</small></span>
                   <span><small>{deployment ? (route.qrUpdated ? '二维码已更新' : route.status === 'unchanged' ? '二维码无需更新' : '二维码未更新') : '发布后同步二维码'}</small><small>{route.routeVersionBefore == null ? '路线待生成' : `V${route.routeVersionBefore} → ${route.routeVersionAfter == null ? '待发布' : `V${route.routeVersionAfter}`}`}</small></span>
                   <span><b>{deployment ? productTimeDeploymentRouteStatusText(route.status) : route.status === 'blocked' ? '冲突阻断' : '待同步'}</b>{route.error && <small title={route.error}>{route.error}</small>}</span>
                 </article>)}
@@ -2082,7 +2119,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 ? '发布未完整成功，旧正式版本继续有效；请处理冲突或重试失败项。'
                 : deploymentBusy
                   ? '正在原子同步；请勿重复发布。'
-                  : '确认后才会修改正式版本、全部关联工单、二维码和历史标准工时。'}</span>
+                  : '确认后才会修改正式版本与关联路线；历史承接不会伪造任何人员报工。'}</span>
             <div>
               <button className="hm-workbench-button" type="button" onClick={closeDeployment}>{deploymentBusy ? '后台同步，关闭详情' : deployment?.status === 'active' ? '完成' : '关闭'}</button>
               {!deployment && <button className="hm-workbench-button" type="button" disabled={deploymentPreviewLoading || publishing} onClick={() => void openPublishPreview()}><RefreshCw size={15} aria-hidden="true" />重新计算影响</button>}
