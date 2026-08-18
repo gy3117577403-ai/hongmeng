@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  Archive,
   AlertTriangle,
   ArrowRight,
   Boxes,
@@ -18,6 +19,7 @@ import {
   FilePenLine,
   History,
   ListFilter,
+  LockKeyhole,
   MoveRight,
   PackageCheck,
   PanelLeftOpen,
@@ -29,12 +31,21 @@ import {
   Send,
   Settings2,
   ShieldAlert,
+  ShieldCheck,
   Trash2,
   Upload,
   Warehouse,
   X,
 } from 'lucide-react';
-import { Fragment, type KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 import { TravelerPrintDialog } from '@/components/TravelerPrintDialog';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
@@ -160,6 +171,11 @@ type DeletePreview = {
     action: 'delete_draft' | 'withdraw_unstarted' | 'blocked';
     message: string;
   }>;
+};
+
+type HistoricalDeleteTarget = {
+  order: ProductionPlanOrderDTO;
+  batch: ProductionPlanBatchDTO;
 };
 
 type ActivationPreview = {
@@ -433,6 +449,7 @@ function changeActionText(action: string): string {
   const labels: Record<string, string> = {
     create_plan_order: '新建订单', update_plan_order: '修改订单', update_released_plan_order: '变更已下达订单',
     delete_plan_order: '删除订单', create_plan_batch: '新增排产批次', update_plan_batch: '调整排产',
+    direct_delete_plan_order: '删除历史订单',
     update_released_plan_batch: '调整已下达批次', delete_plan_batch: '删除排产批次',
     move_plan_batch_week: '调配生产周', import_plan_week: '导入周排单',
     release_to_current_week: '下达本周执行', release_to_next_week: '下达下周预备', activate_preparation_week: '启用为本周执行',
@@ -507,6 +524,10 @@ export default function PlanningCenterShell({
   const [batchDraft, setBatchDraft] = useState<BatchForm>({ quantity: '', unitSeconds: '', weekStartDate: '', plannedCompletionDate: '', reason: '' });
   const [releasePreview, setReleasePreview] = useState<ReleasePreview | null>(null);
   const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null);
+  const [historicalDeleteTarget, setHistoricalDeleteTarget] = useState<HistoricalDeleteTarget | null>(null);
+  const [historicalDeleteReason, setHistoricalDeleteReason] = useState('');
+  const [historicalDeleteCode, setHistoricalDeleteCode] = useState('');
+  const [historicalDeleteClosing, setHistoricalDeleteClosing] = useState(false);
   const [activationPreview, setActivationPreview] = useState<ActivationPreview | null>(null);
   const [movePreview, setMovePreview] = useState<MovePreview | null>(null);
   const [moveBatchIds, setMoveBatchIds] = useState<string[]>([]);
@@ -516,6 +537,9 @@ export default function PlanningCenterShell({
   const dialogRef = useRef<HTMLDivElement>(null);
   const mainRef = useRef<HTMLElement>(null);
   const dialogTriggerRef = useRef<HTMLElement | null>(null);
+  const historicalDeleteCodeRef = useRef<HTMLInputElement>(null);
+  const historicalDeleteCloseTimerRef = useRef<number | null>(null);
+  const historicalDeleteMotionFrameRef = useRef<number | null>(null);
   const productPickerRef = useRef<HTMLDivElement>(null);
   const productSearchInputRef = useRef<HTMLInputElement>(null);
   const readinessFilterRef = useRef<HTMLDivElement>(null);
@@ -529,15 +553,22 @@ export default function PlanningCenterShell({
   const pendingReturnScrollRef = useRef<{ scheduleScrollTop: number; windowScrollY: number } | null>(null);
   const pendingBatchFocusRef = useRef<string | null>(null);
   const lastExternalRefreshRef = useRef(0);
-  const activeDialog = Boolean(orderDialog || batchDialog || releasePreview || deletePreview || activationPreview || movePreview || importDialog);
+  const activeDialog = Boolean(orderDialog || batchDialog || releasePreview || deletePreview || historicalDeleteTarget || activationPreview || movePreview || importDialog);
 
   useModalLayer({
     open: activeDialog,
     layerRef: dialogRef,
     triggerRef: dialogTriggerRef,
+    initialFocusRef: historicalDeleteTarget ? historicalDeleteCodeRef : undefined,
     backgroundRef: mainRef,
     onClose: handleDialogEscape,
+    interactionEnabled: !historicalDeleteClosing,
   });
+
+  useEffect(() => () => {
+    if (historicalDeleteCloseTimerRef.current !== null) window.clearTimeout(historicalDeleteCloseTimerRef.current);
+    if (historicalDeleteMotionFrameRef.current !== null) window.cancelAnimationFrame(historicalDeleteMotionFrameRef.current);
+  }, []);
 
   useEffect(() => {
     if (!orderPoolOpen) return undefined;
@@ -993,7 +1024,29 @@ export default function PlanningCenterShell({
     if (nextView === 'changes') persistReadinessFilters([]);
   }
 
+  function finishHistoricalDeleteClose(): void {
+    if (historicalDeleteCloseTimerRef.current !== null) {
+      window.clearTimeout(historicalDeleteCloseTimerRef.current);
+      historicalDeleteCloseTimerRef.current = null;
+    }
+    setHistoricalDeleteTarget(null);
+    setHistoricalDeleteReason('');
+    setHistoricalDeleteCode('');
+    setHistoricalDeleteClosing(false);
+    setError('');
+  }
+
+  function closeHistoricalDeleteDialog(): void {
+    if (!historicalDeleteTarget || historicalDeleteClosing) return;
+    setHistoricalDeleteClosing(true);
+    historicalDeleteCloseTimerRef.current = window.setTimeout(finishHistoricalDeleteClose, 220);
+  }
+
   function closeDialog(): void {
+    if (historicalDeleteTarget) {
+      closeHistoricalDeleteDialog();
+      return;
+    }
     setOrderDialog(null);
     setBatchDialog(null);
     setReleasePreview(null);
@@ -1025,6 +1078,23 @@ export default function PlanningCenterShell({
     setProductEntryMode('select');
     setActiveProductIndex(-1);
     setOrderDialog({ mode: 'create' });
+  }
+
+  function openHistoricalDelete(
+    order: ProductionPlanOrderDTO,
+    batch: ProductionPlanBatchDTO,
+    trigger: HTMLElement,
+  ): void {
+    dialogTriggerRef.current = trigger;
+    if (historicalDeleteCloseTimerRef.current !== null) {
+      window.clearTimeout(historicalDeleteCloseTimerRef.current);
+      historicalDeleteCloseTimerRef.current = null;
+    }
+    setHistoricalDeleteReason('');
+    setHistoricalDeleteCode('');
+    setHistoricalDeleteClosing(false);
+    setError('');
+    setHistoricalDeleteTarget({ order, batch });
   }
 
   function openEditOrder(order: ProductionPlanOrderDTO, trigger: HTMLElement): void {
@@ -1243,6 +1313,71 @@ export default function PlanningCenterShell({
       setRefreshToken(value => value + 1);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '删除计划订单失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function moveHistoricalDeleteGlass(event: ReactPointerEvent<HTMLDivElement>): void {
+    if (historicalDeleteClosing || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const layer = event.currentTarget;
+    const bounds = layer.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (event.clientX - bounds.left) / bounds.width));
+    const y = Math.max(0, Math.min(1, (event.clientY - bounds.top) / bounds.height));
+    if (historicalDeleteMotionFrameRef.current !== null) {
+      window.cancelAnimationFrame(historicalDeleteMotionFrameRef.current);
+    }
+    historicalDeleteMotionFrameRef.current = window.requestAnimationFrame(() => {
+      layer.style.setProperty('--history-delete-rotate-x', `${((0.5 - y) * 3.2).toFixed(2)}deg`);
+      layer.style.setProperty('--history-delete-rotate-y', `${((x - 0.5) * 4.4).toFixed(2)}deg`);
+      layer.style.setProperty('--history-delete-light-x', `${((x - 0.5) * 440).toFixed(1)}px`);
+      layer.style.setProperty('--history-delete-light-y', `${((y - 0.5) * 300).toFixed(1)}px`);
+      historicalDeleteMotionFrameRef.current = null;
+    });
+  }
+
+  function resetHistoricalDeleteGlass(event: ReactPointerEvent<HTMLDivElement>): void {
+    const layer = event.currentTarget;
+    if (historicalDeleteMotionFrameRef.current !== null) {
+      window.cancelAnimationFrame(historicalDeleteMotionFrameRef.current);
+      historicalDeleteMotionFrameRef.current = null;
+    }
+    layer.style.setProperty('--history-delete-rotate-x', '0deg');
+    layer.style.setProperty('--history-delete-rotate-y', '0deg');
+    layer.style.setProperty('--history-delete-light-x', '0px');
+    layer.style.setProperty('--history-delete-light-y', '-72px');
+  }
+
+  async function commitHistoricalDelete(): Promise<void> {
+    if (!historicalDeleteTarget) return;
+    if (historicalDeleteCode !== '111') {
+      setError('请输入删除确认码 111');
+      historicalDeleteCodeRef.current?.focus();
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/planning/orders/${historicalDeleteTarget.order.id}/direct-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          confirmationCode: historicalDeleteCode,
+          reason: historicalDeleteReason.trim() || undefined,
+        }),
+      });
+      const body = await responseBody<{
+        result?: {
+          deletedBatchCount: number;
+          retiredWorkOrderCount: number;
+        };
+      }>(response);
+      if (!response.ok || !body.result) throw new Error(body.error || '删除订单失败');
+      setToast(`${historicalDeleteTarget.order.specification} 已删除，关联记录已转入审计留存`);
+      setRefreshToken(value => value + 1);
+      closeHistoricalDeleteDialog();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '删除订单失败');
     } finally {
       setSaving(false);
     }
@@ -1853,7 +1988,7 @@ export default function PlanningCenterShell({
           {!preparationRows.length && <div className="planning-empty"><PackageCheck /><strong>当前没有下周生产任务</strong><span>将订单排入下周后，系统会自动生成生产工单并显示在这里。</span></div>}
         </section>}
 
-        {view === 'changes' && <section className="planning-changes-view"><header><div><span>可追溯变更</span><h2>插单与计划调整记录</h2><p>已下达订单修改后同步关联工单，同时保留仓库与工艺处理进度。</p></div><b>{changes.length} 条</b></header><div className="planning-change-list hm-scroll-region">{changes.map(change => <article key={change.id}><i><FilePenLine /></i><div><strong>{changeActionText(change.action)}</strong><span>{change.actor?.displayName || change.actor?.username || '系统'} · {new Date(change.createdAt).toLocaleString('zh-CN')}</span><p>{change.reason || '常规计划操作'}</p></div><em>{change.planOrderId ? '订单变更' : '计划操作'}</em></article>)}{changesLoading && <div className="planning-loading">正在加载变更记录...</div>}{!changesLoading && !changes.length && <div className="planning-empty"><History /><strong>暂无计划变更</strong><span>新增、排程和下达操作会自动记录。</span></div>}</div></section>}
+        {view === 'changes' && <section className="planning-changes-view"><header><div><span>可追溯变更</span><h2>插单与计划调整记录</h2><p>已下达订单修改后同步关联工单，同时保留仓库与工艺处理进度。</p></div><b>{changes.length} 条</b></header><div className="planning-change-list hm-scroll-region">{changes.map(change => <article key={change.id}><i><FilePenLine /></i><div><strong>{changeActionText(change.action)}</strong><span>{change.actor?.displayName || change.actor?.username || '系统'} · {new Date(change.createdAt).toLocaleString('zh-CN')}</span><p>{change.reason || (change.action === 'direct_delete_plan_order' ? '未填写删除说明' : '常规计划操作')}</p></div><em>{change.planOrderId ? '订单变更' : '计划操作'}</em></article>)}{changesLoading && <div className="planning-loading">正在加载变更记录...</div>}{!changesLoading && !changes.length && <div className="planning-empty"><History /><strong>暂无计划变更</strong><span>新增、排程和下达操作会自动记录。</span></div>}</div></section>}
 
         {view === 'history' && <section className="planning-history-view">
           <header>
@@ -1874,7 +2009,7 @@ export default function PlanningCenterShell({
           />
           <div className="planning-table-scroll hm-scroll-region" tabIndex={0}>
             <table className="planning-table history">
-              <thead><tr><th>规格</th><th>客户 / 品名</th><th>业务员</th><th>批次数量</th><th>原生产周</th><th>计划完成</th><th>计划状态</th><th>仓库</th><th>工艺</th><th>关联执行</th></tr></thead>
+              <thead><tr><th>规格</th><th>客户 / 品名</th><th>业务员</th><th>批次数量</th><th>原生产周</th><th>计划完成</th><th>计划状态</th><th>仓库</th><th>工艺</th><th>关联执行 / 操作</th></tr></thead>
               <tbody>{historyRows.map(({ order, batch }) => <tr className={`state-${batch.releaseState}`} key={batch.id}>
                 <td><strong>{order.specification}</strong></td>
                 <td><strong>{order.customerName}</strong><small>{order.productName}</small></td>
@@ -1885,12 +2020,19 @@ export default function PlanningCenterShell({
                 <td><span className={`planning-release state-${batch.releaseState}`}>{batch.releaseState === 'archived' ? '已归档' : batch.releaseState === 'active' ? '遗留执行中' : batch.releaseState === 'preparation' ? '遗留预备' : '遗留草稿'}</span></td>
                 <td>{batch.warehouseStatus === 'completed' ? '已配料' : batch.warehouseStatus === 'exception' ? '异常' : '未完成'}</td>
                 <td>{batch.processStatus === 'completed' ? '已完成' : batch.processStatus === 'confirmed' || batch.processStatus === 'in_progress' ? '已确认' : '未完成'}</td>
-                <td>{batch.workOrderId
-                  ? <nav className="planning-linked-actions">
-                      <a href={productionExecutionHref(batch, periods)}>生产执行</a>
-                      <a href={`/workspace/workflows?${workflowCenterParams(batch, periods).toString()}`} onClick={rememberPlanningState}>流程中心</a>
-                    </nav>
-                  : '未下达'}</td>
+                <td><nav className="planning-linked-actions">
+                  {batch.workOrderId ? <>
+                    <a href={productionExecutionHref(batch, periods)}>生产执行</a>
+                    <a href={`/workspace/workflows?${workflowCenterParams(batch, periods).toString()}`} onClick={rememberPlanningState}>流程中心</a>
+                  </> : <span className="planning-unreleased-label">未下达</span>}
+                  <button
+                    type="button"
+                    className="planning-history-delete-trigger"
+                    disabled={saving}
+                    aria-label={`删除订单 ${order.specification}`}
+                    onClick={event => openHistoricalDelete(order, batch, event.currentTarget)}
+                  ><Trash2 size={13} />删除订单</button>
+                </nav></td>
               </tr>)}</tbody>
             </table>
             {!loading && !historyRows.length && <div className="planning-empty"><History /><strong>该历史周暂无计划</strong><span>选择其他历史周查看；历史计划不会再混入本周排单清单。</span></div>}
@@ -1912,7 +2054,12 @@ export default function PlanningCenterShell({
 
     <TravelerPrintDialog open={travelerPrintIds.length > 0} workOrderIds={travelerPrintIds} onClose={() => setTravelerPrintIds([])} onSuccess={message => { setToast(message); setRefreshToken(value => value + 1); }} />
 
-    {activeDialog && <button className="planning-dialog-scrim" type="button" aria-label="关闭弹窗" onClick={closeDialog} />}
+    {activeDialog && <button
+      className={`planning-dialog-scrim ${historicalDeleteTarget ? 'historical-delete-scrim' : ''} ${historicalDeleteClosing ? 'is-closing' : ''}`.trim()}
+      type="button"
+      aria-label="关闭弹窗"
+      onClick={closeDialog}
+    />}
 
     {orderDialog && <div ref={dialogRef} className="planning-dialog order-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-order-dialog-title">
       <header><div><span>{orderDialog.mode === 'create' ? '实时订单池' : '订单变更'}</span><h2 id="planning-order-dialog-title">{orderDialog.mode === 'create' ? '新建计划订单' : '编辑计划订单'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>
@@ -2017,6 +2164,88 @@ export default function PlanningCenterShell({
     {releasePreview && <div ref={dialogRef} className="planning-dialog release-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-release-dialog-title"><header><div><span>下达预检</span><h2 id="planning-release-dialog-title">{releasePreview.target === 'active' ? '同步本周执行' : '同步下周生产'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>批次数</span><strong>{releasePreview.batchCount}</strong></div><div><span>目标生产周</span><strong>{releasePreview.targetWeekStartDate.slice(5)} - {releasePreview.targetWeekEndDate.slice(5)}</strong></div><div><span>总数量 / 提醒</span><strong className={releasePreview.warnings ? 'warning' : ''}>{releasePreview.totalQuantity.toLocaleString()} / {releasePreview.warnings}</strong></div></section>{releasePreview.target === 'preparation' && <div className="planning-dialog-note"><PackageCheck /><span><strong>进入下周生产并启动仓库准备</strong><small>生产周统一为 {releasePreview.targetWeekStartDate} 至 {releasePreview.targetWeekEndDate}；缺少工序工时的批次可先配料，补齐发布后再开始工序。</small></span></div>}{releasePreview.target === 'active' && <div className="planning-dialog-note"><Factory /><span><strong>进入本周生产并启动仓库准备</strong><small>同步本周执行清单与仓库配料；缺少工序工时的批次保持生产待配置，补齐发布后才能进行工序流转。</small></span></div>}<div className="planning-warning-list">{releasePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">资料检查通过</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>返回调整</button><button type="button" className="primary" disabled={saving || releasePreview.blockers > 0} onClick={() => { void commitRelease(); }}>{saving ? '同步中...' : '确认同步'}</button></footer></div>}
 
     {deletePreview && <div ref={dialogRef} className="planning-dialog delete-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-delete-dialog-title"><header><div><span>危险操作预检</span><h2 id="planning-delete-dialog-title">删除所选计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary four"><div><span>所选批次</span><strong>{deletePreview.batchCount}</strong></div><div><span>删除草稿</span><strong>{deletePreview.draftDeleteCount}</strong></div><div><span>撤回未开工</span><strong>{deletePreview.withdrawCount}</strong></div><div><span>禁止删除</span><strong className={deletePreview.blockers ? 'danger' : ''}>{deletePreview.blockers}</strong></div></section><div className="planning-dialog-note danger"><ShieldAlert /><span><strong>删除数量不会回到订单池</strong><small>只移除计划订单、排产批次和未开工工单；产品档案、图纸文件、产品工序与标准工时全部保留。已开工计划仍禁止删除。</small></span></div><div className="planning-warning-list">{deletePreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.quantity.toLocaleString()} 件</strong><span className={item.action === 'blocked' ? 'blocker' : item.action === 'withdraw_unstarted' ? 'warning' : 'ready'}>{item.message}</span></article>)}</div>{deletePreview.blockers > 0 && <div className="planning-dialog-error"><AlertTriangle />请取消勾选已开工或已完成的批次后再删除，本次不会处理任何批次。</div>}{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="danger" disabled={saving || deletePreview.blockers > 0} onClick={() => { void commitDeletion(); }}>{saving ? '删除中...' : '确认删除计划'}</button></footer></div>}
+
+    {historicalDeleteTarget && <div
+      ref={dialogRef}
+      className={`planning-dialog historical-delete-dialog ${historicalDeleteClosing ? 'is-closing' : ''}`}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="historical-delete-dialog-title"
+      aria-describedby="historical-delete-dialog-description"
+      onPointerMove={moveHistoricalDeleteGlass}
+      onPointerLeave={resetHistoricalDeleteGlass}
+    >
+      <div className="historical-delete-glass-surface">
+        <span className="historical-delete-glass-light" aria-hidden="true" />
+        <header>
+          <div className="historical-delete-title">
+            <i aria-hidden="true"><Trash2 /></i>
+            <span><small>历史计划管理</small><h2 id="historical-delete-dialog-title">确认删除订单</h2></span>
+          </div>
+          <button type="button" onClick={closeHistoricalDeleteDialog} aria-label="关闭删除订单弹窗"><X /></button>
+        </header>
+        <div className="historical-delete-body">
+          <p id="historical-delete-dialog-description">此操作将立即停止并移除该订单的后续执行。</p>
+          <section className="historical-delete-identity" aria-label="待删除订单">
+            <strong>{historicalDeleteTarget.order.specification}</strong>
+            <span>{historicalDeleteTarget.order.customerName} · {historicalDeleteTarget.batch.quantity.toLocaleString()} 件 · {historicalDeleteTarget.batch.weekStartDate.slice(5)} 至 {historicalDeleteTarget.batch.weekEndDate.slice(5)}</span>
+          </section>
+          <section className="historical-delete-effects" aria-labelledby="historical-delete-effects-title">
+            <h3 id="historical-delete-effects-title">删除后自动处理</h3>
+            <ul>
+              <li><Check aria-hidden="true" /><span>计划与遗留列表移除</span></li>
+              <li><Check aria-hidden="true" /><span>关联生产及流程任务关闭</span></li>
+              <li><Archive aria-hidden="true" /><span>仓库任务转为归档</span></li>
+              <li><ShieldCheck aria-hidden="true" /><span>产品资料、报工与审计记录保留</span></li>
+            </ul>
+          </section>
+          <div className="historical-delete-form">
+            <label>
+              <span>删除说明 <small>选填</small></span>
+              <textarea
+                rows={2}
+                maxLength={300}
+                value={historicalDeleteReason}
+                onChange={event => setHistoricalDeleteReason(event.target.value)}
+                placeholder="可填写计划重复、客户取消等说明"
+              />
+            </label>
+            <label>
+              <span><LockKeyhole aria-hidden="true" />删除确认码</span>
+              <small id="historical-delete-code-help">输入 111 后即可删除</small>
+              <input
+                ref={historicalDeleteCodeRef}
+                type="password"
+                inputMode="numeric"
+                autoComplete="off"
+                maxLength={3}
+                value={historicalDeleteCode}
+                aria-describedby="historical-delete-code-help"
+                aria-invalid={Boolean(error)}
+                onChange={event => {
+                  setHistoricalDeleteCode(event.target.value.replace(/\D/g, '').slice(0, 3));
+                  if (error) setError('');
+                }}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' && historicalDeleteCode === '111' && !saving) void commitHistoricalDelete();
+                }}
+              />
+            </label>
+          </div>
+          {error && <div className="historical-delete-error" role="alert"><AlertTriangle />{error}</div>}
+          <p className="historical-delete-audit"><ShieldCheck aria-hidden="true" />删除完成后不可恢复到计划列表，可从变更记录查看删除快照。</p>
+        </div>
+        <footer>
+          <button type="button" onClick={closeHistoricalDeleteDialog} disabled={saving}>取消</button>
+          <button
+            type="button"
+            className="danger"
+            disabled={saving || historicalDeleteCode !== '111'}
+            onClick={() => { void commitHistoricalDelete(); }}
+          >{saving ? '正在删除...' : '立即删除'}</button>
+        </footer>
+      </div>
+    </div>}
 
     {activationPreview && <div ref={dialogRef} className="planning-dialog activation-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-activation-title"><header><div><span>生产周切换</span><h2 id="planning-activation-title">提前切换为本周计划</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header><div className="planning-dialog-body"><section className="planning-release-summary"><div><span>生产周</span><strong>{activationPreview.weekStartDate.slice(5)} - {activationPreview.weekEndDate.slice(5)}</strong></div><div><span>批次 / 数量</span><strong>{activationPreview.batchCount} / {activationPreview.totalQuantity.toLocaleString()}</strong></div><div><span>阻断 / 提醒</span><strong className={activationPreview.blockerCount || activationPreview.warningCount ? 'warning' : ''}>{activationPreview.blockerCount} / {activationPreview.warningCount}</strong></div></section><div className="planning-dialog-note warning"><ShieldAlert /><span><strong>兼容性手动切换</strong><small>正常排入本周或下周会自动进入对应生产清单；这里只用于需要提前改为本周的特殊情况。</small></span></div><div className="planning-warning-list">{activationPreview.items.map(item => <article key={item.batchId}><strong>{item.specification} · {item.customerName}</strong>{item.blockers.map(message => <span className="blocker" key={message}>{message}</span>)}{item.warnings.map(message => <span key={message}>{message}</span>)}{!item.blockers.length && !item.warnings.length && <span className="ready">工时、仓库与工艺准备完成</span>}</article>)}</div>{error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}</div><footer><button type="button" onClick={closeDialog}>取消</button><button type="button" className="primary" disabled={saving || activationPreview.blockerCount > 0} onClick={() => { void commitActivation(); }}>{saving ? '切换中...' : activationPreview.blockerCount > 0 ? '请先补充单根工时' : '确认切换为本周'}</button></footer></div>}
 

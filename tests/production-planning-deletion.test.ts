@@ -5,6 +5,10 @@ import {
   productionPlanWorkOrderStartBlocker,
   type ProductionPlanDeletionWorkOrderState,
 } from '../lib/production-planning';
+import {
+  isProductionPlanDirectDeleteConfirmationValid,
+  normalizeProductionPlanDirectDeleteReason,
+} from '../lib/production-plan-direct-deletion';
 
 function untouched(overrides: Partial<ProductionPlanDeletionWorkOrderState> = {}): ProductionPlanDeletionWorkOrderState {
   return {
@@ -88,4 +92,18 @@ test('remaining active batches keep the plan order consistent when legacy totals
     removedBatchQuantity: 10,
     shouldDeleteOrder: false,
   });
+});
+
+test('direct historical deletion requires the exact 111 confirmation code', () => {
+  assert.equal(isProductionPlanDirectDeleteConfirmationValid('111'), true);
+  assert.equal(isProductionPlanDirectDeleteConfirmationValid(' 111 '), true);
+  assert.equal(isProductionPlanDirectDeleteConfirmationValid('11'), false);
+  assert.equal(isProductionPlanDirectDeleteConfirmationValid(111), true);
+  assert.equal(isProductionPlanDirectDeleteConfirmationValid(undefined), false);
+});
+
+test('direct historical deletion keeps the optional reason concise', () => {
+  assert.equal(normalizeProductionPlanDirectDeleteReason(' 计划重复 '), '计划重复');
+  assert.equal(normalizeProductionPlanDirectDeleteReason('   '), null);
+  assert.equal(normalizeProductionPlanDirectDeleteReason('a'.repeat(400))?.length, 300);
 });

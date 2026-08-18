@@ -1731,6 +1731,55 @@ main.planning-center-shell.hm-workbench-root {
   gap: 4px;
 }
 
+.planning-center-shell .planning-table.history th:last-child,
+.planning-center-shell .planning-table.history td:last-child {
+  min-width: 225px;
+}
+
+.planning-center-shell .planning-unreleased-label {
+  padding: 6px 5px;
+  color: #7b8795;
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.planning-center-shell .planning-history-delete-trigger {
+  min-height: 28px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid #efb4b1;
+  border-radius: 5px;
+  background: #fffafa;
+  color: #b42318;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: transform .18s ease, border-color .18s ease, background-color .18s ease, box-shadow .18s ease;
+}
+
+.planning-center-shell .planning-history-delete-trigger:hover,
+.planning-center-shell .planning-history-delete-trigger:focus-visible {
+  border-color: #d92d20;
+  outline: 0;
+  background: #fff1f0;
+  box-shadow: 0 5px 14px rgba(180, 35, 24, .12);
+  transform: translateY(-1px);
+}
+
+.planning-center-shell .planning-history-delete-trigger:active {
+  transform: translateY(0) scale(.98);
+}
+
+.planning-center-shell .planning-history-delete-trigger:disabled {
+  opacity: .55;
+  cursor: wait;
+  transform: none;
+}
+
 .planning-center-shell .planning-linked-actions a:first-child {
   border-color: #edb28a;
   background: #fff7f1;
@@ -1796,7 +1845,7 @@ main.planning-center-shell.hm-workbench-root {
 }
 
 .planning-center-shell .planning-table.history {
-  min-width: 1160px;
+  min-width: 1240px;
 }
 
 .planning-center-shell .planning-preparation-view {
@@ -2097,7 +2146,7 @@ main.planning-center-shell.hm-workbench-root {
 
 .planning-dialog-scrim {
   position: fixed;
-  z-index: 140;
+  z-index: var(--z-modal);
   inset: 0;
   width: 100%;
   height: 100%;
@@ -2108,7 +2157,7 @@ main.planning-center-shell.hm-workbench-root {
 
 .planning-dialog {
   position: fixed;
-  z-index: 141;
+  z-index: calc(var(--z-modal) + 1);
   top: 50%;
   left: 50%;
   width: min(700px, calc(100vw - 32px));
@@ -2671,6 +2720,474 @@ main.planning-center-shell.hm-workbench-root {
   color: #fff;
 }
 
+.planning-dialog-scrim.historical-delete-scrim {
+  background: rgba(12, 24, 39, .46);
+  -webkit-backdrop-filter: blur(10px) saturate(1.08);
+  backdrop-filter: blur(10px) saturate(1.08);
+  animation: historical-delete-scrim-in .24s ease-out both;
+}
+
+.planning-dialog-scrim.historical-delete-scrim.is-closing {
+  animation: historical-delete-scrim-out .2s ease-in both;
+}
+
+.planning-dialog.historical-delete-dialog {
+  --history-delete-rotate-x: 0deg;
+  --history-delete-rotate-y: 0deg;
+  --history-delete-light-x: 0px;
+  --history-delete-light-y: -72px;
+  width: min(640px, calc(100vw - 36px));
+  max-height: min(790px, calc(100dvh - 36px));
+  display: block;
+  overflow: visible;
+  border: 0;
+  border-radius: 22px;
+  outline: 0;
+  background: transparent;
+  box-shadow: none;
+  animation: historical-delete-shell-in .38s cubic-bezier(.16, 1, .3, 1) both;
+}
+
+.planning-dialog.historical-delete-dialog.is-closing {
+  pointer-events: none;
+  animation: historical-delete-shell-out .2s cubic-bezier(.4, 0, 1, 1) both;
+}
+
+.historical-delete-glass-surface {
+  position: relative;
+  max-height: min(790px, calc(100dvh - 36px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  isolation: isolate;
+  transform: perspective(1400px) rotateX(var(--history-delete-rotate-x)) rotateY(var(--history-delete-rotate-y)) translateZ(16px);
+  transform-style: preserve-3d;
+  border: 1px solid rgba(255, 255, 255, .82);
+  border-radius: 22px;
+  background: rgba(248, 251, 255, .82);
+  -webkit-backdrop-filter: blur(28px) saturate(1.28);
+  backdrop-filter: blur(28px) saturate(1.28);
+  box-shadow:
+    0 42px 92px rgba(7, 20, 38, .34),
+    0 12px 30px rgba(31, 65, 102, .18),
+    inset 0 1px 0 rgba(255, 255, 255, .96),
+    inset 0 -1px 0 rgba(109, 134, 164, .14);
+  transition: transform .16s ease-out, box-shadow .18s ease-out;
+  will-change: transform;
+}
+
+.historical-delete-glass-light {
+  position: absolute;
+  z-index: -1;
+  top: 24%;
+  left: 50%;
+  width: 230px;
+  height: 230px;
+  border-radius: 50%;
+  opacity: .42;
+  background: rgba(255, 255, 255, .88);
+  filter: blur(46px);
+  pointer-events: none;
+  transform: translate(-50%, -50%) translate3d(var(--history-delete-light-x), var(--history-delete-light-y), 0);
+  transition: transform .18s ease-out, opacity .18s ease-out;
+  will-change: transform;
+}
+
+.historical-delete-glass-surface > header {
+  position: relative;
+  z-index: 2;
+  min-height: 86px;
+  padding: 17px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid rgba(116, 137, 162, .2);
+  background: rgba(255, 255, 255, .48);
+  transform: translateZ(28px);
+}
+
+.historical-delete-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.historical-delete-title > i {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(240, 68, 56, .24);
+  border-radius: 13px;
+  background: rgba(255, 238, 236, .82);
+  color: #d92d20;
+  box-shadow: 0 10px 24px rgba(217, 45, 32, .13), inset 0 1px 0 rgba(255, 255, 255, .92);
+}
+
+.historical-delete-title > i svg {
+  width: 21px;
+  height: 21px;
+}
+
+.historical-delete-title > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.historical-delete-title small {
+  color: #8a5a5b;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.historical-delete-title h2 {
+  margin: 0;
+  color: #172235;
+  font-size: 21px;
+  line-height: 1.2;
+}
+
+.historical-delete-glass-surface > header > button {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 38px;
+  border: 1px solid rgba(109, 130, 155, .22);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .58);
+  color: #64748b;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .94);
+  transition: transform .18s ease, border-color .18s ease, background-color .18s ease, color .18s ease;
+}
+
+.historical-delete-glass-surface > header > button:hover,
+.historical-delete-glass-surface > header > button:focus-visible {
+  border-color: rgba(217, 45, 32, .38);
+  outline: 0;
+  background: rgba(255, 242, 241, .82);
+  color: #b42318;
+  transform: translateY(-1px) rotate(3deg);
+}
+
+.historical-delete-body {
+  position: relative;
+  z-index: 1;
+  min-height: 0;
+  padding: 18px 20px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.historical-delete-body > p:first-child {
+  margin: 0 0 12px;
+  color: #607086;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.historical-delete-identity {
+  padding: 13px 14px;
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(133, 153, 178, .22);
+  border-radius: 11px;
+  background: rgba(235, 241, 248, .62);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9);
+  transform: translateZ(22px);
+}
+
+.historical-delete-identity strong {
+  overflow: hidden;
+  color: #1c2a3d;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.historical-delete-identity span {
+  color: #5f6f83;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.historical-delete-effects {
+  margin-top: 16px;
+  transform: translateZ(18px);
+}
+
+.historical-delete-effects h3 {
+  margin: 0 0 8px;
+  color: #2d3b4e;
+  font-size: 13px;
+}
+
+.historical-delete-effects ul {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid rgba(133, 153, 178, .2);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .46);
+  list-style: none;
+}
+
+.historical-delete-effects li {
+  min-height: 42px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #42536a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.historical-delete-effects li + li {
+  border-top: 1px solid rgba(132, 151, 174, .16);
+}
+
+.historical-delete-effects li svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 17px;
+  padding: 2px;
+  border-radius: 50%;
+  background: rgba(224, 250, 239, .78);
+  color: #039855;
+}
+
+.historical-delete-effects li:nth-child(3) svg {
+  background: rgba(235, 242, 250, .82);
+  color: #3569a8;
+}
+
+.historical-delete-form {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 210px;
+  gap: 12px;
+  transform: translateZ(20px);
+}
+
+.historical-delete-form label {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  color: #344258;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.historical-delete-form label > span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.historical-delete-form label > span svg {
+  width: 14px;
+  height: 14px;
+  color: #6b778a;
+}
+
+.historical-delete-form label > span small {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(232, 237, 244, .78);
+  color: #768398;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.historical-delete-form label > small {
+  min-height: 17px;
+  color: #7b8798;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.historical-delete-form textarea,
+.historical-delete-form input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(113, 134, 160, .3);
+  border-radius: 10px;
+  outline: 0;
+  background: rgba(255, 255, 255, .58);
+  color: #172235;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .92);
+  transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.historical-delete-form textarea {
+  min-height: 73px;
+  padding: 10px 11px;
+  resize: vertical;
+}
+
+.historical-delete-form input {
+  height: 46px;
+  padding: 0 13px;
+  font-size: 19px;
+  letter-spacing: .32em;
+}
+
+.historical-delete-form textarea:focus,
+.historical-delete-form input:focus {
+  border-color: rgba(53, 105, 168, .74);
+  background: rgba(255, 255, 255, .86);
+  box-shadow: 0 0 0 4px rgba(53, 105, 168, .12), inset 0 1px 0 rgba(255, 255, 255, .98);
+  transform: translateY(-1px);
+}
+
+.historical-delete-form input[aria-invalid="true"] {
+  border-color: rgba(217, 45, 32, .62);
+  box-shadow: 0 0 0 4px rgba(217, 45, 32, .1);
+}
+
+.historical-delete-error {
+  margin-top: 12px;
+  padding: 9px 11px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(217, 45, 32, .2);
+  border-radius: 9px;
+  background: rgba(255, 238, 236, .72);
+  color: #b42318;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.historical-delete-error svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.historical-delete-audit {
+  margin: 13px 0 0;
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 9px;
+  background: rgba(235, 242, 250, .56);
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.historical-delete-audit svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  color: #3569a8;
+}
+
+.historical-delete-glass-surface > footer {
+  position: relative;
+  z-index: 2;
+  min-height: 70px;
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  border-top: 1px solid rgba(116, 137, 162, .2);
+  background: rgba(247, 250, 253, .58);
+  transform: translateZ(28px);
+}
+
+.historical-delete-glass-surface > footer button {
+  min-width: 116px;
+  height: 44px;
+  padding: 0 18px;
+  border: 1px solid rgba(112, 132, 157, .28);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .62);
+  color: #46556a;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95);
+  transition: transform .18s ease, border-color .18s ease, background-color .18s ease, box-shadow .18s ease, opacity .18s ease;
+}
+
+.historical-delete-glass-surface > footer button:hover:not(:disabled),
+.historical-delete-glass-surface > footer button:focus-visible:not(:disabled) {
+  border-color: rgba(80, 105, 137, .44);
+  outline: 0;
+  background: rgba(255, 255, 255, .88);
+  box-shadow: 0 9px 20px rgba(25, 48, 77, .12), inset 0 1px 0 rgba(255, 255, 255, .98);
+  transform: translateY(-2px);
+}
+
+.historical-delete-glass-surface > footer button.danger {
+  border-color: rgba(180, 35, 24, .8);
+  background: rgba(208, 39, 31, .94);
+  color: #fff;
+  box-shadow: 0 12px 26px rgba(180, 35, 24, .26), inset 0 1px 0 rgba(255, 255, 255, .22);
+}
+
+.historical-delete-glass-surface > footer button.danger:hover:not(:disabled),
+.historical-delete-glass-surface > footer button.danger:focus-visible:not(:disabled) {
+  border-color: #a61b13;
+  background: rgba(180, 35, 24, .98);
+  box-shadow: 0 16px 30px rgba(180, 35, 24, .34), inset 0 1px 0 rgba(255, 255, 255, .24);
+}
+
+.historical-delete-glass-surface > footer button:active:not(:disabled) {
+  transform: translateY(0) scale(.98);
+}
+
+.historical-delete-glass-surface > footer button:disabled {
+  opacity: .48;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+@keyframes historical-delete-scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes historical-delete-scrim-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes historical-delete-shell-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -47%) perspective(1200px) rotateX(-7deg) rotateY(4deg) scale(.94);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) perspective(1200px) rotateX(0) rotateY(0) scale(1);
+  }
+}
+
+@keyframes historical-delete-shell-out {
+  from {
+    opacity: 1;
+    transform: translate(-50%, -50%) perspective(1200px) rotateX(0) rotateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate(-50%, -48%) perspective(1200px) rotateX(5deg) rotateY(-3deg) scale(.96);
+  }
+}
+
 .planning-warning-list {
   margin-top: 12px;
   display: grid;
@@ -3153,9 +3670,58 @@ main.planning-center-shell.hm-workbench-root {
   }
 }
 
+@media (max-width: 720px) {
+  .planning-dialog.historical-delete-dialog {
+    width: min(600px, calc(100vw - 20px));
+    max-height: calc(100dvh - 20px);
+  }
+
+  .historical-delete-glass-surface {
+    max-height: calc(100dvh - 20px);
+    border-radius: 16px;
+  }
+
+  .historical-delete-glass-surface > header,
+  .historical-delete-body,
+  .historical-delete-glass-surface > footer {
+    padding-inline: 14px;
+  }
+
+  .historical-delete-form {
+    grid-template-columns: 1fr;
+  }
+
+  .historical-delete-form input {
+    letter-spacing: .22em;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .planning-center-shell .planning-week-switcher > button,
-  .planning-center-shell .planning-carryover-summary > svg {
+  .planning-center-shell .planning-carryover-summary > svg,
+  .planning-center-shell .planning-history-delete-trigger,
+  .planning-dialog-scrim.historical-delete-scrim,
+  .planning-dialog.historical-delete-dialog,
+  .historical-delete-glass-surface,
+  .historical-delete-glass-light,
+  .historical-delete-glass-surface button,
+  .historical-delete-form textarea,
+  .historical-delete-form input {
+    animation: none;
     transition: none;
+  }
+
+  .planning-dialog.historical-delete-dialog,
+  .planning-dialog.historical-delete-dialog.is-closing {
+    opacity: 1;
+    transform: translate(-50%, -50%);
+  }
+
+  .historical-delete-glass-surface {
+    transform: none;
+  }
+
+  .historical-delete-glass-light {
+    display: none;
   }
 }
