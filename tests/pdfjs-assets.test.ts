@@ -8,6 +8,8 @@ import {
   createPdfJsAssetOptions,
 } from '../lib/pdfjs-assets';
 import { createPdfJsServerAssetOptions } from '../lib/pdfjs-assets.server';
+import { resolvePdfJsWorkerPath } from '../lib/pdfjs-worker.server';
+import { inspectPdf } from '../lib/connector-assembly-manuals';
 
 function createLegacyChinesePdf() {
   const stream = 'BT /F1 24 Tf 50 200 Td <D6D0CEC4> Tj ET';
@@ -76,6 +78,21 @@ test('PDF.js server assets resolve to non-empty packed CMaps and fallback fonts'
   assert.equal(existsSync(font), true);
   assert.ok(statSync(cMap).size > 0);
   assert.ok(statSync(font).size > 0);
+});
+
+test('PDF.js server worker resolves to installed runtime assets', () => {
+  const regularWorker = resolvePdfJsWorkerPath('pdf.worker.mjs');
+  const minifiedWorker = resolvePdfJsWorkerPath('pdf.worker.min.mjs');
+  assert.ok(regularWorker);
+  assert.ok(minifiedWorker);
+  assert.ok(statSync(regularWorker).size > 100_000);
+  assert.ok(statSync(minifiedWorker).size > 100_000);
+});
+
+test('connector manual inspection uses the packaged worker to parse a real PDF', async () => {
+  const inspected = await inspectPdf(Buffer.from(createLegacyChinesePdf()));
+  assert.equal(inspected.pageCount, 1);
+  assert.match(inspected.searchText, /中文/);
 });
 
 test('PDF.js recovers Chinese text from a GBK-EUC-H drawing without an embedded font', async () => {

@@ -461,7 +461,9 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
         singleFiles.forEach(file => form.append('files', file));
         const uploadResponse = await fetch(`/api/connector-assembly-manual-versions/${manual.latestVersion.id}/assets/upload`, { method: 'POST', body: form });
         const uploadData = await jsonResponse(uploadResponse);
-        uploadMessage = uploadResponse.ok ? `并上传 ${singleFiles.length} 个文件` : `，但文件上传失败：${String(uploadData.error || '请稍后重试')}`;
+        uploadMessage = uploadResponse.ok
+          ? `并上传 ${singleFiles.length} 个文件${uploadData.warning ? `；${String(uploadData.warning)}` : ''}`
+          : `，但文件上传失败：${String(uploadData.error || '请稍后重试')}`;
       }
       setManualModal(null);
       setSingleFiles([]);
@@ -706,7 +708,9 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
       if (!response.ok) throw new Error(String(data.error || '文件上传失败'));
       setUploadFiles([]);
       setUploadOpen(false);
-      setToast(`上传完成，共 ${Array.isArray(data.assets) ? data.assets.length : 0} 个文件`);
+      setToast(data.warning
+        ? `上传完成；${String(data.warning)}`
+        : `上传完成，共 ${Array.isArray(data.assets) ? data.assets.length : 0} 个文件`);
       await loadManual(selectedManual.id, selectedVersion.id);
     } catch (error) {
       setToast(error instanceof Error ? error.message : '文件上传失败');

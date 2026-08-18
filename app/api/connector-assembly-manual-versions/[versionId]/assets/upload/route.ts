@@ -54,6 +54,7 @@ export async function POST(req: NextRequest, { params }: { params: { versionId: 
 
     const prepared: PreparedAsset[] = [];
     let pdfInfo: { pageCount: number; searchText: string } | null = null;
+    let pdfParseWarning: string | null = null;
     for (let index = 0; index < files.length; index += 1) {
       const file = files[index];
       const body = Buffer.from(await file.arrayBuffer());
@@ -67,7 +68,7 @@ export async function POST(req: NextRequest, { params }: { params: { versionId: 
           pdfInfo = await inspectPdf(body);
         } catch (error) {
           console.error('manual PDF inspect failed', error);
-          return NextResponse.json({ ok: false, error: 'PDF 文件无法解析，请确认文件完整且未加密' }, { status: 400 });
+          pdfParseWarning = 'PDF 已保存，但页数和正文暂未解析；文件仍可下载，页数和全文搜索暂不可用';
         }
       }
       const objectKey = manualObjectKey(version.manualId, version.id, file.name);
@@ -109,8 +110,16 @@ export async function POST(req: NextRequest, { params }: { params: { versionId: 
             },
           }));
         }
-        if (pdfInfo) {
-          await tx.connectorAssemblyManualVersion.update({ where: { id: version.id }, data: { pageCount: pdfInfo.pageCount, searchText: pdfInfo.searchText || null, parseStatus: pdfInfo.searchText ? 'parsed' : 'partial' } });
+        if (version.fileMode === 'PDF') {
+          await tx.connectorAssemblyManualVersion.update({
+            where: { id: version.id },
+            data: {
+              pageCount: pdfInfo?.pageCount ?? version.pageCount,
+              searchText: pdfInfo ? pdfInfo.searchText || null : version.searchText,
+              parseStatus: pdfInfo ? (pdfInfo.searchText ? 'parsed' : 'partial') : 'failed',
+              parseWarnings: pdfParseWarning ? [pdfParseWarning] : [],
+            },
+          });
         } else {
           await tx.connectorAssemblyManualVersion.update({ where: { id: version.id }, data: { pageCount: version.assets.length + assets.length } });
         }
@@ -126,9 +135,22 @@ export async function POST(req: NextRequest, { params }: { params: { versionId: 
       action: 'upload_connector_assembly_manual_version',
       targetType: 'connector_assembly_manual_version',
       targetId: version.id,
-      detail: { manualId: version.manualId, revision: version.revision, fileMode: version.fileMode, fileCount: created.length, pageCount: pdfInfo?.pageCount || version.assets.length + created.length },
+      detail: {
+        manualId: version.manualId,
+        revision: version.revision,
+        fileMode: version.fileMode,
+        fileCount: created.length,
+        pageCount: version.fileMode === 'PDF' ? pdfInfo?.pageCount ?? version.pageCount : version.assets.length + created.length,
+        parseStatus: version.fileMode === 'PDF' ? (pdfInfo ? (pdfInfo.searchText ? 'parsed' : 'partial') : 'failed') : null,
+      },
     });
-    return NextResponse.json({ ok: true, assets: created.map(serializeManualAsset), pageCount: pdfInfo?.pageCount || version.assets.length + created.length });
+    return NextResponse.json({
+      ok: true,
+      assets: created.map(serializeManualAsset),
+      pageCount: version.fileMode === 'PDF' ? pdfInfo?.pageCount ?? version.pageCount : version.assets.length + created.length,
+      parseStatus: version.fileMode === 'PDF' ? (pdfInfo ? (pdfInfo.searchText ? 'parsed' : 'partial') : 'failed') : null,
+      warning: pdfParseWarning,
+    });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     console.error(error);

@@ -4,10 +4,9 @@ import type {
   ConnectorAssemblyManualVersion,
   ConnectorParameter,
 } from '@prisma/client';
-import { existsSync } from 'node:fs';
-import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createPdfJsServerAssetOptions } from '@/lib/pdfjs-assets.server';
+import { resolvePdfJsWorkerPath } from '@/lib/pdfjs-worker.server';
 import { sanitizeConnectorManualManufacturer } from '@/lib/connector-manual-parser';
 import { normalizeManualToc } from '@/lib/connector-manual-toc';
 import type { ConnectorManualTocItem } from '@/lib/connector-manual-toc';
@@ -145,13 +144,7 @@ export function validateManualAsset(file: File, fileMode: ManualFileMode): strin
 
 export async function inspectPdf(buffer: Buffer): Promise<{ pageCount: number; searchText: string }> {
   const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  const relativeWorker = path.join('node_modules', 'pdfjs-dist', 'legacy', 'build', 'pdf.worker.mjs');
-  const workerCandidates = [
-    path.resolve(process.cwd(), relativeWorker),
-    path.resolve(process.cwd(), '..', '..', relativeWorker),
-    path.resolve(process.cwd(), '..', '..', '..', relativeWorker),
-  ];
-  const workerPath = workerCandidates.find(candidate => existsSync(candidate));
+  const workerPath = resolvePdfJsWorkerPath('pdf.worker.mjs');
   if (!workerPath) throw new Error('PDF.js worker file is missing');
   pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
   const loadingTask = pdfjs.getDocument({

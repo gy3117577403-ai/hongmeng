@@ -49,6 +49,16 @@ const checks = [
       if (body.byteLength === 0) throw new Error('PDF.js fallback font is empty');
     },
   },
+  {
+    name: 'PDF.js runtime worker',
+    path: '/api/pdf-worker',
+    validate: async response => {
+      const body = await response.text();
+      if (body.length < 100_000 || !body.includes('WorkerMessageHandler')) {
+        throw new Error('PDF.js runtime worker is missing or incomplete');
+      }
+    },
+  },
 ];
 
 async function runCheck(check) {
