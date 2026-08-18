@@ -21,6 +21,10 @@ main.planning-center-shell.hm-workbench-root {
   overflow: hidden;
 }
 
+.planning-center-shell .planning-center-main.module-mode-open {
+  grid-template-rows: 58px 132px 74px 54px 48px minmax(0, 1fr);
+}
+
 .planning-center-shell button,
 .planning-center-shell input,
 .planning-center-shell select,
@@ -76,6 +80,18 @@ main.planning-center-shell.hm-workbench-root {
   font-size: 19px;
   line-height: 1.1;
   letter-spacing: 0;
+}
+
+.planning-center-shell .planning-heading-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.planning-center-shell .planning-heading-line h1 {
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .planning-center-shell .planning-title-copy p {
@@ -2994,6 +3010,10 @@ main.planning-center-shell.hm-workbench-root {
     padding: 7px;
   }
 
+  .planning-center-shell .planning-center-main.module-mode-open {
+    grid-template-rows: 56px 126px 70px 50px 46px minmax(0, 1fr);
+  }
+
   .planning-center-shell .planning-titlebar {
     grid-template-columns: 40px 150px minmax(0, 1fr) 38px;
     gap: 6px;
@@ -3007,6 +3027,10 @@ main.planning-center-shell.hm-workbench-root {
   .planning-center-shell .planning-title-copy h1 {
     grid-column: 1 / -1;
     font-size: 17px;
+  }
+
+  .planning-center-shell .planning-heading-line {
+    grid-column: 1 / -1;
   }
 
   .planning-center-shell .planning-titlebar > nav button {

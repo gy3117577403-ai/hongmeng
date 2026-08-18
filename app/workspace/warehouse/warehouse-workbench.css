@@ -27,9 +27,21 @@ main.warehouse-workbench.hm-workbench-root.hm-workbench-root {
   min-width: 0;
   padding: 8px 10px 10px;
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 8px;
   overflow: hidden;
+}
+
+.warehouse-page-frame.module-mode-open {
+  grid-template-rows: 132px auto auto minmax(0, 1fr);
+}
+
+.warehouse-page-frame.has-error {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+}
+
+.warehouse-page-frame.module-mode-open.has-error {
+  grid-template-rows: 132px auto auto auto minmax(0, 1fr);
 }
 
 .warehouse-page-frame::before {
@@ -48,7 +60,8 @@ main.warehouse-workbench.hm-workbench-root.hm-workbench-root {
 .warehouse-summary,
 .warehouse-toolbar,
 .warehouse-control-grid,
-.warehouse-error {
+.warehouse-error,
+.warehouse-page-frame > .hm-module-mode-drawer {
   position: relative;
   z-index: 1;
 }

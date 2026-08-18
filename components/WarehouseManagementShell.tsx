@@ -27,6 +27,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { ModuleModeDrawer, ModuleModeTrigger, useModuleModeDrawer } from '@/components/layout/ModuleModeDrawer';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
   CurrentUserDTO,
@@ -139,7 +140,14 @@ function taskFlowIndex(task: WarehouseMaterialTaskDTO): number {
   return 1;
 }
 
-export default function WarehouseManagementShell({ user }: { user: CurrentUserDTO }) {
+export default function WarehouseManagementShell({
+  user,
+  modeDrawerInitiallyOpen = false,
+}: {
+  user: CurrentUserDTO;
+  modeDrawerInitiallyOpen?: boolean;
+}) {
+  const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
   const [scope, setScope] = useState<'current' | 'preparation' | 'history'>('current');
   const [selectedWeek, setSelectedWeek] = useState('');
   const [status, setStatus] = useState<'all' | WarehouseMaterialStatus>('all');
@@ -380,9 +388,20 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
         subtitle="本周物料准备与异常闭环"
         hideHeader
         sidebarTriggerTargetId="warehouse-sidebar-trigger"
+        moduleModeSwitcher={{ mode: 'mass', drawerId: 'warehouse-mode-drawer', drawerOpen: modeDrawer.open, onToggle: modeDrawer.toggle }}
         menuItems={[{ label: '系统设置', href: '/dashboard?openSettings=1' }, { label: '退出登录', onSelect: () => { void logout(); } }]}
       />
-      <div className="warehouse-page-frame">
+      <div className={`warehouse-page-frame${modeDrawer.open ? ' module-mode-open' : ''}${error ? ' has-error' : ''}`}>
+        <ModuleModeDrawer
+          id="warehouse-mode-drawer"
+          open={modeDrawer.open}
+          moduleLabel="仓库管理"
+          mode="mass"
+          mass={{ href: '/workspace/warehouse', title: '量产配料', description: '正式配料任务、库存协同与仓库异常闭环', count: summary.total, countLabel: '单' }}
+          sample={{ href: '/workspace/warehouse?branch=samples', title: '样品物料准备', description: '记录样品辅料数据和照片；全部选填且不扣库存' }}
+          onClose={modeDrawer.close}
+        />
+
         <section className="warehouse-summary" aria-label="仓库配料统计">
           <button className={status === 'all' && !expectedOverdue ? 'active total' : 'total'} type="button" onClick={() => chooseSummary('all')}><Warehouse aria-hidden="true" /><span>{scope === 'current' ? '本周配料任务' : scope === 'preparation' ? '下周预备任务' : '历史配料任务'}<small>{scope === 'current' ? '当前生产周全部产品' : scope === 'preparation' ? '提前配料，不进入生产执行' : '当前历史筛选范围'}</small></span><strong>{summary.total}</strong></button>
           <button className={status === 'pending' ? 'active pending' : 'pending'} type="button" onClick={() => chooseSummary('pending')}><Clock3 aria-hidden="true" /><span>待配料<small>等待仓库处理</small></span><strong>{summary.pending}</strong></button>
@@ -393,6 +412,7 @@ export default function WarehouseManagementShell({ user }: { user: CurrentUserDT
 
         <section className="warehouse-toolbar" aria-label="仓库任务筛选">
           <div id="warehouse-sidebar-trigger" className="warehouse-inline-sidebar-trigger" />
+          <ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="mass" onClick={modeDrawer.toggle} controls="warehouse-mode-drawer" compact />
           <div className="warehouse-scope-tabs" role="tablist" aria-label="生产周范围">
             <button className={scope === 'current' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'current'} onClick={() => { setScope('current'); setSelectedWeek(''); setPage(1); }}>当前周</button>
             <button className={scope === 'preparation' ? 'active' : ''} type="button" role="tab" aria-selected={scope === 'preparation'} onClick={() => { setScope('preparation'); setSelectedWeek(''); setPage(1); }}>下周预备</button>

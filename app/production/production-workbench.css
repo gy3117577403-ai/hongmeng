@@ -7448,6 +7448,30 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   line-height: 1.2;
 }
 
+/* Business mode chooser lives in normal layout flow so it can never cover the board. */
+.hm-production-workbench .production-dispatch-heading-line {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: inherit;
+  letter-spacing: normal;
+}
+
+.hm-production-workbench .production-dispatch-title > div > span:first-child:not(.production-dispatch-heading-line) {
+  display: none;
+}
+
+.hm-production-workbench .production-dispatch-heading-line > strong {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .hm-module-mode-drawer {
+  flex: 0 0 132px;
+}
+
 .hm-production-workbench .production-route-coverage-badge {
   display: inline-flex;
   margin-left: 3px;

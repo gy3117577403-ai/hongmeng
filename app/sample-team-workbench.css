@@ -1673,6 +1673,15 @@ main.sample-team-page.hm-workbench-root.hm-workbench-root {
   margin-top: 8px;
 }
 
+.sample-team-main > .hm-module-mode-drawer {
+  margin-top: 8px;
+}
+
+.sample-team-main.mode-drawer-open .sample-team-workspace {
+  height: calc(100dvh - 316px);
+  min-height: 420px;
+}
+
 .sample-task-list,
 .sample-task-detail {
   border-radius: 12px;
@@ -2328,6 +2337,11 @@ main.sample-team-page.hm-workbench-root.hm-workbench-root {
     grid-template-columns: 300px minmax(0, 1fr);
   }
 
+  .sample-team-main.mode-drawer-open .sample-team-workspace {
+    height: calc(100dvh - 354px);
+    min-height: 360px;
+  }
+
   .sample-review-workspace {
     grid-template-columns: 1fr;
   }
@@ -2376,6 +2390,11 @@ main.sample-team-page.hm-workbench-root.hm-workbench-root {
 
   .sample-team-workspace {
     display: block;
+    height: auto;
+    min-height: 0;
+  }
+
+  .sample-team-main.mode-drawer-open .sample-team-workspace {
     height: auto;
     min-height: 0;
   }

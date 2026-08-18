@@ -37,6 +37,7 @@ import type { ReactNode } from 'react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PortalMenu } from '@/components/PortalMenu';
+import type { BusinessMode } from '@/components/layout/ModuleModeDrawer';
 import { canAccessAppRoute, landingRouteForAccess } from '@/lib/app-route-access';
 import type { CurrentUserDTO } from '@/types';
 
@@ -58,6 +59,12 @@ type AppWorkbenchHeaderProps = {
   utilityActions?: ReactNode;
   hideHeader?: boolean;
   sidebarTriggerTargetId?: string;
+  moduleModeSwitcher?: {
+    mode: BusinessMode;
+    drawerId: string;
+    drawerOpen: boolean;
+    onToggle: () => void;
+  };
 };
 
 type SideNavigationItem = {
@@ -65,14 +72,15 @@ type SideNavigationItem = {
   label: string;
   icon: LucideIcon;
   planned?: boolean;
+  modeSwitchable?: boolean;
 };
 
 const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
   {
     label: '业务中心',
     items: [
-      { href: '/production', label: '生产执行', icon: LayoutDashboard },
-      { href: '/weekly-plan-center', label: '计划中心', icon: CalendarDays },
+      { href: '/production', label: '生产执行', icon: LayoutDashboard, modeSwitchable: true },
+      { href: '/weekly-plan-center', label: '计划中心', icon: CalendarDays, modeSwitchable: true },
       { href: '/workspace/daily-plans', label: '日出货计划', icon: CalendarClock },
       { href: '/workspace/weekly-processes', label: '周工序总览', icon: ListTree },
       { href: '/drawing-library', label: '图纸资料库', icon: FolderKanban },
@@ -89,7 +97,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/workspace/approvals', label: '重大审批', icon: ClipboardCheck },
       { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
       { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
-      { href: '/workspace/warehouse', label: '仓库管理', icon: Warehouse },
+      { href: '/workspace/warehouse', label: '仓库管理', icon: Warehouse, modeSwitchable: true },
       { href: '/workspace/procurement', label: '物料跟进', icon: PackageSearch },
       { href: '/workspace/product-times', label: '产品工序与工时', icon: Clock3 },
       { href: '/workspace/employees', label: '人事管理', icon: UsersRound },
@@ -134,6 +142,12 @@ function activeModuleName(activeHref: string): string {
   return '工作台';
 }
 
+function modeSwitchHref(href: string, mode: BusinessMode): string {
+  const params = new URLSearchParams({ chooseMode: '1' });
+  if (mode === 'sample') params.set('branch', 'samples');
+  return `${href}?${params.toString()}`;
+}
+
 export function AppWorkbenchHeader({
   user,
   activeHref,
@@ -144,6 +158,7 @@ export function AppWorkbenchHeader({
   utilityActions,
   hideHeader = false,
   sidebarTriggerTargetId,
+  moduleModeSwitcher,
 }: AppWorkbenchHeaderProps) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -249,9 +264,32 @@ export function AppWorkbenchHeader({
               {group.items.map(item => {
                 const Icon = item.icon;
                 const active = isActiveRoute(activeHref, item.href);
+                const activeModeSwitch = Boolean(active && item.modeSwitchable && moduleModeSwitcher);
+                const href = item.modeSwitchable
+                  ? activeModeSwitch
+                    ? activeHref
+                    : modeSwitchHref(item.href, moduleModeSwitcher?.mode || 'mass')
+                  : item.href;
                 return (
-                  <Link className={`${active ? 'active' : ''} ${item.planned ? 'planned' : ''}`.trim()} href={item.href} prefetch={false} key={item.href} title={`${item.label}${item.planned ? '（规划中）' : ''}`} aria-current={active ? 'page' : undefined}>
-                    <Icon size={18} aria-hidden="true" /><span>{item.label}</span>{item.planned && <em>规划</em>}
+                  <Link
+                    className={`${active ? 'active' : ''} ${item.planned ? 'planned' : ''} ${activeModeSwitch ? 'mode-switch' : ''}`.trim()}
+                    href={href}
+                    prefetch={false}
+                    key={item.href}
+                    title={`${item.label}${activeModeSwitch ? `（当前${moduleModeSwitcher?.mode === 'sample' ? '样品' : '量产'}）` : item.planned ? '（规划中）' : ''}`}
+                    aria-current={active ? 'page' : undefined}
+                    aria-controls={activeModeSwitch ? moduleModeSwitcher?.drawerId : undefined}
+                    aria-expanded={activeModeSwitch ? moduleModeSwitcher?.drawerOpen : undefined}
+                    onClick={activeModeSwitch ? event => {
+                      event.preventDefault();
+                      closeSidebar();
+                      moduleModeSwitcher?.onToggle();
+                    } : undefined}
+                  >
+                    <Icon size={18} aria-hidden="true" />
+                    <span>{item.label}</span>
+                    {item.planned && <em>规划</em>}
+                    {activeModeSwitch && <><em className="mode-label">{moduleModeSwitcher?.mode === 'sample' ? '样品' : '量产'}</em><ChevronDown className={moduleModeSwitcher?.drawerOpen ? 'mode-chevron open' : 'mode-chevron'} size={13} aria-hidden="true" /></>}
                   </Link>
                 );
               })}

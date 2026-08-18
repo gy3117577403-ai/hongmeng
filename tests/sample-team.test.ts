@@ -124,3 +124,26 @@ test('pending review summary counts review items rather than tasks', () => {
 
   assert.match(listRoute, /active\.reduce\(\(count, task\) => count \+ task\.counts\.pendingReview, 0\)/);
 });
+
+test('production, planning, and warehouse share a push-down mass/sample mode drawer', () => {
+  const header = readFileSync('components/layout/AppWorkbenchHeader.tsx', 'utf8');
+  const drawer = readFileSync('components/layout/ModuleModeDrawer.tsx', 'utf8');
+  const foundation = readFileSync('app/styles/hm-workbench-foundation.css', 'utf8');
+  const production = readFileSync('components/ProductionExecutionCenter.tsx', 'utf8');
+  const planning = readFileSync('components/PlanningCenterShell.tsx', 'utf8');
+  const sample = readFileSync('components/SampleTeamCenter.tsx', 'utf8');
+  const warehousePage = readFileSync('app/workspace/warehouse/page.tsx', 'utf8');
+
+  assert.match(header, /href: '\/production'.*modeSwitchable: true/);
+  assert.match(header, /href: '\/weekly-plan-center'.*modeSwitchable: true/);
+  assert.match(header, /href: '\/workspace\/warehouse'.*modeSwitchable: true/);
+  assert.match(drawer, /量产与样品共用模块入口/);
+  assert.match(foundation, /\.hm-module-mode-drawer\s*\{[^}]*position:\s*relative/s);
+  assert.doesNotMatch(foundation, /\.hm-module-mode-drawer\s*\{[^}]*position:\s*(?:fixed|absolute)/s);
+  assert.doesNotMatch(production, /sample-module-branch-entry/);
+  assert.doesNotMatch(planning, /sample-module-branch-entry/);
+  assert.doesNotMatch(sample, /sample-team-branch-tabs/);
+  assert.match(warehousePage, /branch === 'samples'.*mode="materials"/s);
+  assert.match(sample, /不扣库存、不生成正式领料/);
+  assert.match(sample, /kind === 'MATERIAL'/);
+});

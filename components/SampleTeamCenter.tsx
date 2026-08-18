@@ -30,6 +30,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { ModuleModeDrawer, ModuleModeTrigger, useModuleModeDrawer } from '@/components/layout/ModuleModeDrawer';
 import { writeClipboardText } from '@/lib/client-platform';
 import type {
   CurrentUserDTO,
@@ -41,9 +42,9 @@ import type {
   SampleTeamSummaryDTO,
 } from '@/types';
 
-type CenterMode = 'planning' | 'execution';
+type CenterMode = 'planning' | 'execution' | 'materials';
 type TaskViewFilter = 'ALL' | 'TODAY' | 'OVERDUE' | 'PLANNED' | 'IN_PROGRESS' | 'PENDING_REVIEW' | 'COMPLETED' | 'CANCELLED';
-type DetailTab = 'overview' | 'data' | 'photos' | 'review' | 'published';
+type DetailTab = 'overview' | 'data' | 'materials' | 'photos' | 'review' | 'published';
 type ContextPayload = {
   members: Array<{
     id: string;
@@ -249,7 +250,16 @@ async function responseJson(response: Response) {
   return response.json().catch(() => ({})) as Promise<Record<string, any>>;
 }
 
-export default function SampleTeamCenter({ user, mode }: { user: CurrentUserDTO; mode: CenterMode }) {
+export default function SampleTeamCenter({
+  user,
+  mode,
+  modeDrawerInitiallyOpen = false,
+}: {
+  user: CurrentUserDTO;
+  mode: CenterMode;
+  modeDrawerInitiallyOpen?: boolean;
+}) {
+  const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
   const [tasks, setTasks] = useState<SampleTaskDTO[]>([]);
   const [summary, setSummary] = useState<SampleTeamSummaryDTO>(emptySummary);
   const [selectedId, setSelectedId] = useState('');
@@ -365,8 +375,8 @@ export default function SampleTeamCenter({ user, mode }: { user: CurrentUserDTO;
     }
     if (lastDetailTaskRef.current === selected.id) return;
     lastDetailTaskRef.current = selected.id;
-    setDetailTab(selected.counts.pendingReview > 0 ? 'review' : 'overview');
-  }, [selected]);
+    setDetailTab(mode === 'materials' ? 'materials' : selected.counts.pendingReview > 0 ? 'review' : 'overview');
+  }, [mode, selected]);
 
   useEffect(() => {
     if (!message) return undefined;
@@ -564,13 +574,11 @@ export default function SampleTeamCenter({ user, mode }: { user: CurrentUserDTO;
     </article>;
   }
 
-  const branchLinks = mode === 'planning'
-    ? [{ href: '/weekly-plan-center', label: '量产计划' }, { href: '/weekly-plan-center?branch=samples', label: '样品组计划', active: true }]
-    : [{ href: '/production', label: '量产执行' }, { href: '/production?branch=samples', label: '样品执行', active: true }];
   const pendingEntries = selected?.entries.filter(entry => entry.reviewStatus === 'PENDING') || [];
   const pendingPhotos = selected?.photos.filter(photo => photo.reviewStatus === 'PENDING') || [];
-  const publishedEntries = selected?.entries.filter(entry => entry.reviewStatus === 'PUBLISHED') || [];
+  const publishedEntries = selected?.entries.filter(entry => entry.reviewStatus === 'PUBLISHED' && (mode !== 'materials' || entry.kind === 'MATERIAL')) || [];
   const publishedPhotos = selected?.photos.filter(photo => photo.reviewStatus === 'PUBLISHED') || [];
+  const materialEntries = selected?.entries.filter(entry => entry.kind === 'MATERIAL') || [];
   const publishedCount = publishedEntries.length + publishedPhotos.length;
   const stageIndex = !selected
     ? 0
@@ -591,41 +599,97 @@ export default function SampleTeamCenter({ user, mode }: { user: CurrentUserDTO;
     { key: 'COMPLETED' as const, label: '已归档', count: viewCounts.COMPLETED, icon: <CheckCircle2 size={15} /> },
     { key: 'CANCELLED' as const, label: '已取消', count: viewCounts.CANCELLED, icon: <X size={15} />, quiet: true },
   ];
-  const detailTabs = selected ? [
+  const detailTabs: Array<{ key: DetailTab; label: string; count?: number; attention?: boolean }> = !selected ? [] : mode === 'materials' ? [
+    { key: 'overview' as const, label: '准备概览' },
+    { key: 'materials' as const, label: '辅料数据', count: materialEntries.length },
+    { key: 'photos' as const, label: '样品照片', count: selected.photos.length },
+    { key: 'published' as const, label: '正式资料', count: publishedCount },
+  ] : [
     { key: 'overview' as const, label: '任务概览' },
     { key: 'data' as const, label: '采集数据', count: selected.entries.length },
     { key: 'photos' as const, label: '过程照片', count: selected.photos.length },
     { key: 'review' as const, label: '待审核', count: selected.counts.pendingReview, attention: true },
     { key: 'published' as const, label: '已发布', count: publishedCount },
-  ] : [];
+  ];
+  const moduleConfig = mode === 'planning' ? {
+    activeHref: '/weekly-plan-center',
+    subtitle: '样品任务下达与数据审核',
+    eyebrow: '计划中心 / 样品组',
+    title: '样品组计划',
+    description: '下达任务、逐项审核并受控沉淀产品资料',
+    moduleLabel: '计划中心',
+    drawerId: 'sample-planning-mode-drawer',
+    massHref: '/weekly-plan-center',
+    massTitle: '量产计划',
+    massDescription: '订单排程、配料准备、工艺联动与生产下达',
+    sampleHref: '/weekly-plan-center?branch=samples',
+    sampleTitle: '样品组计划',
+  } : mode === 'execution' ? {
+    activeHref: '/production',
+    subtitle: '样品采集与照片留证',
+    eyebrow: '生产执行 / 样品组',
+    title: '样品执行',
+    description: '扫码填写选填数据、拍摄过程与成品照片',
+    moduleLabel: '生产执行',
+    drawerId: 'sample-execution-mode-drawer',
+    massHref: '/production',
+    massTitle: '量产执行',
+    massDescription: '按工单、工序、人员和数量推进正式生产',
+    sampleHref: '/production?branch=samples',
+    sampleTitle: '样品执行',
+  } : {
+    activeHref: '/workspace/warehouse',
+    subtitle: '样品辅料数据与照片准备',
+    eyebrow: '仓库管理 / 样品组',
+    title: '样品物料准备',
+    description: '查看与补充样品辅料、过程及成品照片',
+    moduleLabel: '仓库管理',
+    drawerId: 'sample-materials-mode-drawer',
+    massHref: '/workspace/warehouse',
+    massTitle: '量产配料',
+    massDescription: '正式配料任务、库存协同与仓库异常闭环',
+    sampleHref: '/workspace/warehouse?branch=samples',
+    sampleTitle: '样品物料准备',
+  };
 
   return (
     <main className="sample-team-page hm-workbench-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
         user={user}
-        activeHref={mode === 'planning' ? '/weekly-plan-center' : '/production'}
-        subtitle={mode === 'planning' ? '样品任务下达与数据审核' : '样品采集与照片留证'}
+        activeHref={moduleConfig.activeHref}
+        subtitle={moduleConfig.subtitle}
         hideHeader
         sidebarTriggerTargetId="sample-team-navigation-trigger"
+        moduleModeSwitcher={{ mode: 'sample', drawerId: moduleConfig.drawerId, drawerOpen: modeDrawer.open, onToggle: modeDrawer.toggle }}
         menuItems={[{ label: '退出登录', onSelect: () => { void logout(); } }]}
       />
 
-      <div className="sample-team-main">
+      <div className={`sample-team-main${modeDrawer.open ? ' mode-drawer-open' : ''}`}>
         <header className="sample-team-commandbar">
           <div className="sample-team-title">
             <span id="sample-team-navigation-trigger" className="sample-team-navigation-trigger" />
             <div className="sample-team-title-copy">
-              <small>{mode === 'planning' ? '计划中心 / 样品组' : '生产执行 / 样品组'}</small>
-              <div className="sample-team-title-line"><h1>{mode === 'planning' ? '样品组计划' : '样品执行'}</h1><nav className="sample-team-branch-tabs" aria-label={mode === 'planning' ? '计划中心分支' : '生产执行分支'}>{branchLinks.map(item => <Link key={item.href} className={item.active ? 'active' : ''} href={item.href} prefetch={false}>{item.label}</Link>)}</nav></div>
-              <p>{mode === 'planning' ? '下达任务、逐项审核并受控沉淀产品资料' : '扫码采集样品数据与照片'}</p>
+              <small>{moduleConfig.eyebrow}</small>
+              <div className="sample-team-title-line"><h1>{moduleConfig.title}</h1><ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="sample" onClick={modeDrawer.toggle} controls={moduleConfig.drawerId} compact /></div>
+              <p>{moduleConfig.description}</p>
             </div>
           </div>
-          <div className="sample-team-rule-note"><Info size={16} /><span>样品任务只记录资料<strong>不统计产量与个人效率</strong></span></div>
+          <div className="sample-team-rule-note"><Info size={16} /><span>{mode === 'materials' ? '样品辅料与照片全部选填' : '样品任务只记录资料'}<strong>{mode === 'materials' ? '不扣库存、不生成正式领料' : '不统计产量与个人效率'}</strong></span></div>
           <div className="sample-team-command-actions">
             {mode === 'planning' && <button className="hm-workbench-button primary" type="button" onClick={openCreate}><Plus size={15} />新建样品计划</button>}
             <button className="hm-workbench-button" type="button" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} size={15} />刷新</button>
           </div>
         </header>
+
+        <ModuleModeDrawer
+          id={moduleConfig.drawerId}
+          open={modeDrawer.open}
+          moduleLabel={moduleConfig.moduleLabel}
+          mode="sample"
+          mass={{ href: moduleConfig.massHref, title: moduleConfig.massTitle, description: moduleConfig.massDescription }}
+          sample={{ href: moduleConfig.sampleHref, title: moduleConfig.sampleTitle, description: moduleConfig.description, count: summary.total, countLabel: '项' }}
+          onClose={modeDrawer.close}
+        />
 
         {!!tasks.length && <section className="sample-team-statusbar" aria-label="样品任务状态筛选">
           <div>{taskViews.map(item => <button type="button" className={`${taskView === item.key ? 'active' : ''}${item.danger && item.count ? ' danger' : ''}${item.attention && item.count ? ' attention' : ''}${item.quiet ? ' quiet' : ''}`} aria-pressed={taskView === item.key} key={item.key} onClick={() => setTaskView(item.key)}>{item.icon}<span>{item.label}</span><b>{item.count}{item.unit || ''}</b></button>)}</div>
@@ -635,7 +699,7 @@ export default function SampleTeamCenter({ user, mode }: { user: CurrentUserDTO;
         {error && <div className="sample-team-error"><AlertTriangle size={18} /><span>{error}</span><button type="button" onClick={() => setRefreshToken(value => value + 1)}>重新加载</button></div>}
 
         {loading && !tasks.length ? <section className="sample-team-loading"><Loader2 className="spin" size={28} /><strong>正在加载样品任务</strong></section>
-          : !tasks.length && !debouncedKeyword ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{mode === 'planning' ? '样品组计划' : '样品执行'}</small><h2>{mode === 'planning' ? '从第一条样品任务开始' : '当前还没有样品任务'}</h2><p>{mode === 'planning' ? '建立任务与产品关联后，员工即可扫码填写数据和拍照；所有采集项都可留空。' : '计划中心下达样品任务后，会自动出现在这里。'}</p>{mode === 'planning' && <button className="primary" type="button" onClick={openCreate}><Plus size={17} />新建第一条样品计划</button>}<div><Info size={15} />资料必须逐项审核后才会进入正式产品资料</div></section>
+          : !tasks.length && !debouncedKeyword ? <section className="sample-team-zero-state"><span className="sample-empty-icon"><PackageCheck size={34} /></span><small>{moduleConfig.title}</small><h2>{mode === 'planning' ? '从第一条样品任务开始' : mode === 'materials' ? '当前还没有样品物料记录' : '当前还没有样品任务'}</h2><p>{mode === 'planning' ? '建立任务与产品关联后，员工即可扫码填写数据和拍照；所有采集项都可留空。' : mode === 'materials' ? '计划中心下达样品任务后，可在这里选填辅料数据与上传照片；不会扣减库存。' : '计划中心下达样品任务后，会自动出现在这里。'}</p>{mode === 'planning' && <button className="primary" type="button" onClick={openCreate}><Plus size={17} />新建第一条样品计划</button>}<div><Info size={15} />资料必须逐项审核后才会进入正式产品资料</div></section>
             : !tasks.length || !visibleTasks.length ? <section className="sample-filter-empty"><span className="sample-empty-icon"><Search size={30} /></span><h2>没有符合条件的样品任务</h2><p>调整搜索内容或任务状态后再查看。</p><button type="button" onClick={() => { setKeyword(''); setTaskView('ALL'); }}>清除筛选</button></section>
               : <section className="sample-team-workspace">
           <aside className="sample-task-list" aria-label="样品任务列表">
@@ -662,9 +726,9 @@ export default function SampleTeamCenter({ user, mode }: { user: CurrentUserDTO;
                 <div className="sample-detail-actions">
                   <button type="button" onClick={() => void openQr(selected)}><QrCode size={15} />二维码</button>
                   {mode === 'planning' && selected.status !== 'CANCELLED' && <button type="button" onClick={() => openEdit(selected)}><Pencil size={15} />编辑计划</button>}
-                  {selected.status === 'PLANNED' && <button className="primary" type="button" onClick={() => void taskAction(selected, 'START')}>开始任务</button>}
-                  {(selected.status === 'IN_PROGRESS' || selected.status === 'SUBMITTED') && <button className="primary" type="button" onClick={() => void taskAction(selected, 'COMPLETE')}>完成样品</button>}
-                  {(selected.status === 'COMPLETED' || selected.status === 'CANCELLED') && <button type="button" onClick={() => void taskAction(selected, 'REOPEN')}>重新打开</button>}
+                  {mode !== 'materials' && selected.status === 'PLANNED' && <button className="primary" type="button" onClick={() => void taskAction(selected, 'START')}>开始任务</button>}
+                  {mode !== 'materials' && (selected.status === 'IN_PROGRESS' || selected.status === 'SUBMITTED') && <button className="primary" type="button" onClick={() => void taskAction(selected, 'COMPLETE')}>完成样品</button>}
+                  {mode !== 'materials' && (selected.status === 'COMPLETED' || selected.status === 'CANCELLED') && <button type="button" onClick={() => void taskAction(selected, 'REOPEN')}>重新打开</button>}
                 </div>
               </header>
 
@@ -680,11 +744,13 @@ export default function SampleTeamCenter({ user, mode }: { user: CurrentUserDTO;
                     <div><span>本次采集</span><strong>{selected.counts.data} 条 · {selected.counts.photos} 图</strong><small>待审核 {selected.counts.pendingReview} 项</small></div>
                   </section>
                   {selected.planRemark && <div className="sample-plan-remark"><strong>计划说明</strong><p>{selected.planRemark}</p></div>}
-                  <section className="sample-capture-callout"><div><Camera size={22} /><span><strong>扫码填写数据与拍照</strong><small>所有采集项均为选填；空白不判缺项，也无需说明原因。</small></span></div><div><Link className="primary" href={selected.captureUrl} prefetch={false}>打开采集页<ArrowRight size={15} /></Link><button type="button" onClick={() => void copyCaptureLink(selected)}><Copy size={15} />复制链接</button></div></section>
-                  <div className="sample-overview-cards"><button type="button" onClick={() => setDetailTab('data')}><span><FileText size={18} /></span><div><small>采集数据</small><strong>{selected.entries.length} 条</strong><em>查看记录与审核状态</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('photos')}><span><ImageIcon size={18} /></span><div><small>过程与成品照片</small><strong>{selected.photos.length} 张</strong><em>查看拍照与分类</em></div><ArrowRight size={16} /></button><button className={selected.counts.pendingReview ? 'attention' : ''} type="button" onClick={() => setDetailTab('review')}><span><ClipboardCheck size={18} /></span><div><small>逐项审核</small><strong>{selected.counts.pendingReview} 项</strong><em>{selected.counts.pendingReview ? '需要管理员处理' : '当前没有待审核项'}</em></div><ArrowRight size={16} /></button></div>
+                  <section className="sample-capture-callout"><div><Camera size={22} /><span><strong>{mode === 'materials' ? '补充辅料数据与样品照片' : '扫码填写数据与拍照'}</strong><small>{mode === 'materials' ? '全部选填；仅沉淀样品资料，不扣库存、不生成正式领料。' : '所有采集项均为选填；空白不判缺项，也无需说明原因。'}</small></span></div><div><Link className="primary" href={selected.captureUrl} prefetch={false}>打开采集页<ArrowRight size={15} /></Link><button type="button" onClick={() => void copyCaptureLink(selected)}><Copy size={15} />复制链接</button></div></section>
+                  {mode === 'materials' ? <div className="sample-overview-cards"><button type="button" onClick={() => setDetailTab('materials')}><span><PackageCheck size={18} /></span><div><small>辅料数据</small><strong>{materialEntries.length} 条</strong><em>查看波纹管、热缩管等选填记录</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('photos')}><span><ImageIcon size={18} /></span><div><small>过程与成品照片</small><strong>{selected.photos.length} 张</strong><em>查看拍照与分类</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('published')}><span><FolderKanban size={18} /></span><div><small>正式产品资料</small><strong>{publishedCount} 项</strong><em>仅展示审核发布后的记录</em></div><ArrowRight size={16} /></button></div> : <div className="sample-overview-cards"><button type="button" onClick={() => setDetailTab('data')}><span><FileText size={18} /></span><div><small>采集数据</small><strong>{selected.entries.length} 条</strong><em>查看记录与审核状态</em></div><ArrowRight size={16} /></button><button type="button" onClick={() => setDetailTab('photos')}><span><ImageIcon size={18} /></span><div><small>过程与成品照片</small><strong>{selected.photos.length} 张</strong><em>查看拍照与分类</em></div><ArrowRight size={16} /></button><button className={selected.counts.pendingReview ? 'attention' : ''} type="button" onClick={() => setDetailTab('review')}><span><ClipboardCheck size={18} /></span><div><small>逐项审核</small><strong>{selected.counts.pendingReview} 项</strong><em>{selected.counts.pendingReview ? '需要管理员处理' : '当前没有待审核项'}</em></div><ArrowRight size={16} /></button></div>}
                 </section>}
 
                 {detailTab === 'data' && <section className="sample-record-panel sample-tab-panel"><header><div><FileText size={17} /><span><strong>采集数据</strong><small>{selected.entries.length} 条记录，全部字段均可留空</small></span></div><Link href={selected.captureUrl} prefetch={false}>继续采集</Link></header><div className="sample-record-list" tabIndex={0}>{selected.entries.map(renderDataRecord)}{!selected.entries.length && <div className="sample-record-empty"><FileText size={25} /><strong>本次尚未采集数据</strong><p>这不是缺项，任务仍可提交或完成。</p></div>}</div></section>}
+
+                {detailTab === 'materials' && <section className="sample-record-panel sample-tab-panel"><header><div><PackageCheck size={17} /><span><strong>样品辅料数据</strong><small>{materialEntries.length} 条记录；全部选填，不关联库存扣减</small></span></div><Link href={selected.captureUrl} prefetch={false}>补充资料</Link></header><div className="sample-record-list" tabIndex={0}>{materialEntries.map(renderDataRecord)}{!materialEntries.length && <div className="sample-record-empty"><PackageCheck size={25} /><strong>本次尚未记录辅料数据</strong><p>可按实际需要记录波纹管、热缩管、套管等，不要求填写原因。</p></div>}</div></section>}
 
                 {detailTab === 'photos' && <section className="sample-record-panel sample-tab-panel photo-panel"><header><div><ImageIcon size={17} /><span><strong>过程与成品照片</strong><small>{selected.photos.length} 张照片</small></span></div><Link href={selected.captureUrl} prefetch={false}>继续拍照</Link></header><div className="sample-photo-grid" tabIndex={0}>{selected.photos.map(renderPhotoRecord)}{!selected.photos.length && <div className="sample-record-empty"><ImageIcon size={25} /><strong>本次尚未上传照片</strong><p>照片同样不设必选项。</p></div>}</div></section>}
 

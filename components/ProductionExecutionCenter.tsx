@@ -1,12 +1,13 @@
 'use client';
 
-import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, ClipboardCheck, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
+import { AlertTriangle, ArrowRight, BarChart3, CalendarDays, CheckCircle2, ChevronDown, Clock3, Copy, Download, Expand, GitPullRequestArrow, Info, ListChecks, Loader2, PanelRightClose, PanelRightOpen, Pencil, Plus, Printer, RefreshCw, Rows3, Search, UserRoundCog, Users, X } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { ModuleModeDrawer, ModuleModeTrigger, useModuleModeDrawer } from '@/components/layout/ModuleModeDrawer';
 import { PortalMenu } from '@/components/PortalMenu';
 import { OlderCarryoverDrawer } from '@/components/production/OlderCarryoverDrawer';
 import { TravelerPrintDialog } from '@/components/TravelerPrintDialog';
@@ -1101,8 +1102,15 @@ function withProductionDerived(order: ProductionOrder): ProductionOrder {
   return { ...order, quantitySummary, productionAlerts };
 }
 
-export default function ProductionExecutionCenter({ user }: { user: CurrentUserDTO }) {
+export default function ProductionExecutionCenter({
+  user,
+  modeDrawerInitiallyOpen = false,
+}: {
+  user: CurrentUserDTO;
+  modeDrawerInitiallyOpen?: boolean;
+}) {
   const router = useRouter();
+  const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
   const canConfigureSystem = user.access.capabilities.includes('SYSTEM_CONFIGURATION:MANAGE');
   const canAdministerProduction = user.access.capabilities.includes('PRODUCTION:UPDATE')
     || user.access.capabilities.includes('BUSINESS:UPDATE');
@@ -2666,6 +2674,7 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
         subtitle="现场排程与工序流转"
         hideHeader
         sidebarTriggerTargetId="production-dispatch-sidebar-trigger"
+        moduleModeSwitcher={{ mode: 'mass', drawerId: 'production-mode-drawer', drawerOpen: modeDrawer.open, onToggle: modeDrawer.toggle }}
         menuItems={[
           ...(canConfigureSystem ? [{ label: '系统设置', href: '/dashboard?openSettings=1' }] : []),
           { label: '退出登录', onSelect: () => { void logout(); } },
@@ -2678,11 +2687,13 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             <span id="production-dispatch-sidebar-trigger" className="production-dispatch-nav-trigger" />
             <div>
               <span>现场生产</span>
-              <strong id="production-page-title">生产调度中心</strong>
+              <span className="production-dispatch-heading-line">
+                <strong id="production-page-title">生产调度中心</strong>
+                <ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="mass" onClick={modeDrawer.toggle} controls="production-mode-drawer" compact />
+              </span>
               <small>{todayLabel} · {weekScopeRangeText}</small>
             </div>
           </div>
-          <Link className="sample-module-branch-entry" href="/production?branch=samples" prefetch={false}><ClipboardCheck size={15} aria-hidden="true" /><span>样品执行</span></Link>
           <nav className="production-dispatch-week-tabs" aria-label="生产周范围">
             <label className={scope === 'history' ? 'active' : ''}>
               <span>历史周</span>
@@ -2721,6 +2732,16 @@ export default function ProductionExecutionCenter({ user }: { user: CurrentUserD
             <button className="hm-workbench-button production-fullscreen-trigger" type="button" onClick={() => void toggleFullscreen()}><Expand size={15} aria-hidden="true" />{isFullscreen ? '退出大屏' : '大屏模式'}</button>
           </div>
         </section>
+
+        <ModuleModeDrawer
+          id="production-mode-drawer"
+          open={modeDrawer.open}
+          moduleLabel="生产执行"
+          mode="mass"
+          mass={{ href: '/production', title: '量产执行', description: '按工单、工序、人员和数量推进正式生产', count: summary?.total, countLabel: '单' }}
+          sample={{ href: '/production?branch=samples', title: '样品执行', description: '扫码填写选填数据、拍摄过程与成品照片' }}
+          onClose={modeDrawer.close}
+        />
 
         {scope !== 'carryover' && <WeekReconciliationBar
           className="production-week-reconciliation"

@@ -39,6 +39,7 @@ import { useToastBridge } from '@/components/ToastProvider';
 import { TravelerPrintDialog } from '@/components/TravelerPrintDialog';
 import { WeekReconciliationBar } from '@/components/WeekReconciliationBar';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { ModuleModeDrawer, ModuleModeTrigger, useModuleModeDrawer } from '@/components/layout/ModuleModeDrawer';
 import {
   isPlanningReadinessFilter,
   matchesPlanningReadiness,
@@ -462,7 +463,14 @@ function productTimeHref(
   });
 }
 
-export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) {
+export default function PlanningCenterShell({
+  user,
+  modeDrawerInitiallyOpen = false,
+}: {
+  user: CurrentUserDTO;
+  modeDrawerInitiallyOpen?: boolean;
+}) {
+  const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
   const [view, setView] = useState<PlanningView>('schedule');
   const [orders, setOrders] = useState<ProductionPlanOrderDTO[]>([]);
   const [summary, setSummary] = useState<ProductionPlanningSummaryDTO>(emptySummary);
@@ -1607,13 +1615,13 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
         menuItems={[]}
         hideHeader
         sidebarTriggerTargetId="planning-navigation-trigger"
+        moduleModeSwitcher={{ mode: 'mass', drawerId: 'planning-mode-drawer', drawerOpen: modeDrawer.open, onToggle: modeDrawer.toggle }}
       />
 
-      <div className="planning-center-main">
+      <div className={`planning-center-main${modeDrawer.open ? ' module-mode-open' : ''}`}>
         <header className="planning-titlebar">
           <div className="planning-navigation-trigger" id="planning-navigation-trigger" aria-label="平台导航入口" />
-          <div className="planning-title-copy"><span>生产计划</span><h1>计划中心</h1><p>订单、排程、配料、工艺与生产下达</p></div>
-          <a className="sample-module-branch-entry" href="/weekly-plan-center?branch=samples"><PackageCheck size={15} aria-hidden="true" /><span>样品组计划</span></a>
+          <div className="planning-title-copy"><span>生产计划</span><div className="planning-heading-line"><h1>计划中心</h1><ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="mass" onClick={modeDrawer.toggle} controls="planning-mode-drawer" compact /></div><p>订单、排程、配料、工艺与生产下达</p></div>
           <nav aria-label="计划中心视图">
             {views.map(item => {
               const Icon = item.icon;
@@ -1622,6 +1630,16 @@ export default function PlanningCenterShell({ user }: { user: CurrentUserDTO }) 
           </nav>
           <button className="planning-refresh" type="button" title="刷新计划数据" aria-label="刷新计划数据" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={17} className={loading ? 'spin' : ''} aria-hidden="true" /></button>
         </header>
+
+        <ModuleModeDrawer
+          id="planning-mode-drawer"
+          open={modeDrawer.open}
+          moduleLabel="计划中心"
+          mode="mass"
+          mass={{ href: '/weekly-plan-center', title: '量产计划', description: '订单排程、配料准备、工艺联动与生产下达', count: summary.scheduledOrderCount, countLabel: '单' }}
+          sample={{ href: '/weekly-plan-center?branch=samples', title: '样品组计划', description: '按客户等级下达样品资料采集与分项审核任务' }}
+          onClose={modeDrawer.close}
+        />
 
         <section className="planning-period-ribbon" aria-label="本周与下周计划状态">
           <article className="current"><div><CalendarCheck2 aria-hidden="true" /><span><small>本周执行</small><strong>{periods ? `${periods.current.weekStartDate.slice(5)} - ${periods.current.weekEndDate.slice(5)}` : '加载中'}</strong></span></div><b>{summary.activeBatchCount}<small>批已进入生产</small></b><a href="/production?scope=current">进入生产<ChevronRight size={14} /></a></article>
