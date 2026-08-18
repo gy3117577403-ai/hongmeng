@@ -2013,6 +2013,105 @@ export type EmployeeLaborClaimDetailDTO = {
   corrected?: boolean;
 };
 
+export type ReportCenterPeriodDTO = 'today' | 'week' | 'month';
+export type ReportCenterModeDTO = 'all' | 'mass' | 'sample';
+export type ReportCenterRiskDTO = 'high' | 'medium' | 'low';
+export type ReportCenterFocusStatusDTO = 'completed' | 'in_progress' | 'pending' | 'overdue' | 'review';
+
+export type ReportCenterFocusItemDTO = {
+  entityType: 'workOrder' | 'sampleTask';
+  id: string;
+  code: string;
+  customerName: string;
+  productName: string;
+  specification: string;
+  plannedQty: number | null;
+  completedQty: number | null;
+  unitLabel: string;
+  progressBasisPoints: number | null;
+  status: ReportCenterFocusStatusDTO;
+  statusLabel: string;
+  currentProcess: string | null;
+  nextProcess: string | null;
+  owner: string | null;
+  dueAt: string | null;
+  risk: ReportCenterRiskDTO;
+  riskLabel: string;
+  missingData: string[];
+};
+
+export type ReportCenterOverviewDTO = {
+  period: ReportCenterPeriodDTO;
+  date: string;
+  mode: ReportCenterModeDTO;
+  customer: string;
+  rangeStart: string;
+  rangeEnd: string;
+  generatedAt: string;
+  customers: string[];
+  quantityScope: {
+    label: string;
+    unitLabel: string;
+    note: string;
+  };
+  summary: {
+    plannedQty: number;
+    completedQty: number;
+    completionBasisPoints: number | null;
+    completedOrders: number;
+    activeOrders: number;
+    pendingOrders: number;
+    overdueOrders: number;
+    dueSoonOrders: number;
+    processReportedGoodQty: number;
+    processReportedDefectQty: number;
+    processDefectBasisPoints: number | null;
+    dataCompletenessBasisPoints: number | null;
+    missingRouteOrders: number;
+    missingStandardOrders: number;
+    missingDrawingOrders: number;
+    materialRuleUnpublishedOrders: number;
+    pendingSampleReviewItems: number;
+  };
+  dailyTrend: Array<{
+    date: string;
+    label: string;
+    plannedQty: number;
+    completedQty: number;
+  }>;
+  statusDistribution: Array<{
+    key: ReportCenterFocusStatusDTO;
+    label: string;
+    count: number;
+    basisPoints: number;
+  }>;
+  processBottlenecks: Array<{
+    processCode: string;
+    processName: string;
+    pendingQty: number;
+    workOrderCount: number;
+    overdueWorkOrderCount: number;
+  }>;
+  completeness: Array<{
+    key: 'route' | 'standard' | 'drawing' | 'material' | 'sample_review';
+    label: string;
+    count: number;
+    note: string;
+    route: string;
+  }>;
+  sample: {
+    taskCount: number;
+    activeCount: number;
+    completedCount: number;
+    overdueCount: number;
+    pendingReviewCount: number;
+    publishedItemCount: number;
+    reviewedItemCount: number;
+    reviewBasisPoints: number | null;
+  };
+  focusItems: ReportCenterFocusItemDTO[];
+};
+
 export type EmployeeAttainmentRowDTO = {
   employee: EmployeeDTO;
   standardLaborMilliseconds: number;
