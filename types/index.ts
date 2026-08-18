@@ -2112,6 +2112,130 @@ export type ReportCenterOverviewDTO = {
   focusItems: ReportCenterFocusItemDTO[];
 };
 
+export type ReportOperationsDayStatusDTO = 'missing' | 'draft' | 'confirmed' | 'rest';
+
+export type ReportOperationsLaborRowDTO = {
+  team: string;
+  employeeCount: number;
+  attendancePeople: number;
+  confirmedRecords: number;
+  plannedMilliseconds: number;
+  attendanceMilliseconds: number;
+  leaveMilliseconds: number;
+  exemptAbnormalMilliseconds: number;
+  standardLaborMilliseconds: number;
+  unmatchedStandardLaborMilliseconds: number;
+  attainmentCapacityMilliseconds: number;
+  attendanceBasisPoints: number | null;
+  attainmentBasisPoints: number | null;
+};
+
+export type ReportOperationsEmployeeDayDTO = {
+  date: string;
+  status: ReportOperationsDayStatusDTO;
+  attendanceType: AttendanceType | null;
+  plannedMilliseconds: number;
+  attendanceMilliseconds: number;
+  leaveMilliseconds: number;
+  standardLaborMilliseconds: number;
+  unmatchedStandardLaborMilliseconds: number;
+  exemptAbnormalMilliseconds: number;
+  attainmentCapacityMilliseconds: number;
+  attainmentBasisPoints: number | null;
+};
+
+export type ReportOperationsEmployeeRowDTO = {
+  employee: EmployeeDTO;
+  team: string;
+  position: string;
+  plannedMilliseconds: number;
+  attendanceMilliseconds: number;
+  leaveMilliseconds: number;
+  standardLaborMilliseconds: number;
+  unmatchedStandardLaborMilliseconds: number;
+  exemptAbnormalMilliseconds: number;
+  attainmentCapacityMilliseconds: number;
+  attendanceBasisPoints: number | null;
+  attainmentBasisPoints: number | null;
+  confirmedDays: number;
+  draftDays: number;
+  days: ReportOperationsEmployeeDayDTO[];
+};
+
+export type ReportOperationsDTO = {
+  month: string;
+  workforceScope: 'PRODUCTION';
+  workforceLabel: string;
+  rangeStart: string;
+  rangeEnd: string;
+  cutoffAt: string;
+  generatedAt: string;
+  targetBasisPoints: number;
+  dates: Array<{
+    date: string;
+    day: number;
+    weekday: string;
+    isWeekend: boolean;
+    isFuture: boolean;
+  }>;
+  summary: {
+    employeeCount: number;
+    teamCount: number;
+    plannedMilliseconds: number;
+    attendanceMilliseconds: number;
+    standardLaborMilliseconds: number;
+    unmatchedStandardLaborMilliseconds: number;
+    exemptAbnormalMilliseconds: number;
+    attainmentCapacityMilliseconds: number;
+    attendanceBasisPoints: number | null;
+    attainmentBasisPoints: number | null;
+    confirmedAttendanceRecords: number;
+    draftAttendanceRecords: number;
+    dataCoverageBasisPoints: number | null;
+    plannedBatches: number;
+    completedBatches: number;
+    batchCompletionBasisPoints: number | null;
+    plannedQuantity: number;
+    completedQuantity: number;
+    quantityCompletionBasisPoints: number | null;
+  };
+  teamMonthly: ReportOperationsLaborRowDTO[];
+  teamDaily: Array<ReportOperationsLaborRowDTO & { date: string }>;
+  weeklyPlan: Array<{
+    key: string;
+    label: string;
+    startDate: string;
+    endDate: string;
+    plannedBatches: number;
+    completedBatches: number;
+    plannedQuantity: number;
+    completedQuantity: number;
+    batchCompletionBasisPoints: number | null;
+    quantityCompletionBasisPoints: number | null;
+  }>;
+  dailyAttendance: Array<{
+    date: string;
+    plannedPeople: number;
+    attendancePeople: number;
+    leavePeople: number;
+    absentPeople: number;
+    restPeople: number;
+    confirmedRecords: number;
+    draftRecords: number;
+    plannedMilliseconds: number;
+    attendanceMilliseconds: number;
+    attendanceBasisPoints: number | null;
+    hoursBasisPoints: number | null;
+  }>;
+  employeeMatrix: ReportOperationsEmployeeRowDTO[];
+  dailyAttainmentAverage: Array<{
+    date: string;
+    employeeCount: number;
+    attainmentBasisPoints: number | null;
+  }>;
+  dataNotes: string[];
+};
+
 export type EmployeeAttainmentRowDTO = {
   employee: EmployeeDTO;
   standardLaborMilliseconds: number;

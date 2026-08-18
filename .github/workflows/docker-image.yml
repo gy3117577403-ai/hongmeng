@@ -138,14 +138,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.12
+            org.opencontainers.image.version=v1.34.13
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.12
+            APP_VERSION=v1.34.13
             APP_REVISION=${{ github.sha }}
           load: true
           push: false
@@ -160,10 +160,10 @@ jobs:
           OUTBOX_WORKER_TOKEN: ci-process-route-change-outbox-worker-token-1234567890
           SESSION_SECRET: ci-release-smoke-session-secret-1234567890
           SEED_ADMIN_USERNAME: pdfsmokeadmin
-          SEED_ADMIN_PASSWORD: Codex-V13412-CI-Seed-Password-2026!Z
+          SEED_ADMIN_PASSWORD: Codex-V13413-CI-Seed-Password-2026!Z
           SMOKE_ADMIN_CHANGED_PASSWORD: Codex-PDF-Smoke-Changed-2026!R
           S3_ACCESS_KEY_ID: pdfsmokeaccess
-          S3_SECRET_ACCESS_KEY: Codex-V13412-MinIO-Secret-2026!Z
+          S3_SECRET_ACCESS_KEY: Codex-V13413-MinIO-Secret-2026!Z
         run: |
           docker run -d --name hongmeng-release-minio --network host \
             -e MINIO_ROOT_USER="$S3_ACCESS_KEY_ID" \

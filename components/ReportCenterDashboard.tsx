@@ -1,10 +1,13 @@
 'use client';
 
 import {
+  Activity,
   AlertTriangle,
   BarChart3,
   CalendarDays,
+  CalendarRange,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   CircleAlert,
   ClipboardCheck,
@@ -20,8 +23,12 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Table2,
   TimerOff,
+  TrendingUp,
+  UserCheck,
   UsersRound,
+  Workflow,
   X,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -38,14 +45,19 @@ import type {
   ReportCenterModeDTO,
   ReportCenterOverviewDTO,
   ReportCenterPeriodDTO,
+  ReportOperationsDTO,
+  ReportOperationsEmployeeRowDTO,
+  ReportOperationsLaborRowDTO,
 } from '@/types';
 
-type ReportView = 'overview' | 'production' | 'people' | 'quality' | 'sample';
+type ReportView = 'operations' | 'overview' | 'production' | 'people' | 'quality' | 'sample';
 type PeopleView = 'attainment' | 'labor';
+type OperationsView = 'summary' | 'labor' | 'plan' | 'attendance' | 'matrix';
 type ApiResponse<T> = { ok: boolean; report?: T; error?: string };
 type LaborResponse = { ok: boolean; pools?: ProcessLaborPoolDTO[]; error?: string };
 
 const reportTabs: Array<{ key: ReportView; label: string }> = [
+  { key: 'operations', label: '生产数据总表' },
   { key: 'overview', label: '综合总览' },
   { key: 'production', label: '生产与交付' },
   { key: 'people', label: '人员与工时' },
@@ -65,6 +77,26 @@ function todayKey(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
+}
+
+function shiftMonthKey(month: string, delta: number): string {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, monthNumber - 1 + delta, 1));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+function compactHours(milliseconds: number): string {
+  const hours = Math.max(0, milliseconds) / 3_600_000;
+  return `${hours >= 100 ? Math.round(hours) : Number(hours.toFixed(1))}h`;
+}
+
+function attainmentTone(value: number | null | undefined): string {
+  if (value === null || value === undefined) return 'empty';
+  if (value > 11_000) return 'over';
+  if (value >= 10_000) return 'excellent';
+  if (value >= 9_500) return 'good';
+  if (value >= 8_500) return 'watch';
+  return 'risk';
 }
 
 function numberText(value: number): string {
@@ -125,20 +157,27 @@ function safeHref(item: ReportCenterFocusItemDTO): string {
 }
 
 export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }) {
-  const [view, setView] = useState<ReportView>('overview');
+  const [view, setView] = useState<ReportView>('operations');
   const [peopleView, setPeopleView] = useState<PeopleView>('attainment');
+  const [operationsView, setOperationsView] = useState<OperationsView>('summary');
   const [period, setPeriod] = useState<ReportCenterPeriodDTO>('week');
   const [date, setDate] = useState(todayKey);
+  const [operationsMonth, setOperationsMonth] = useState(() => todayKey().slice(0, 7));
+  const [operationsDate, setOperationsDate] = useState(todayKey);
+  const [operationsTeam, setOperationsTeam] = useState('');
   const [mode, setMode] = useState<ReportCenterModeDTO>('all');
   const [customer, setCustomer] = useState('');
   const [keyword, setKeyword] = useState('');
   const [overview, setOverview] = useState<ReportCenterOverviewDTO | null>(null);
+  const [operationsReport, setOperationsReport] = useState<ReportOperationsDTO | null>(null);
   const [employeeReport, setEmployeeReport] = useState<EmployeeAttainmentReportDTO | null>(null);
   const [abnormalReport, setAbnormalReport] = useState<AbnormalTimeReportDTO | null>(null);
   const [laborPools, setLaborPools] = useState<ProcessLaborPoolDTO[]>([]);
   const [loading, setLoading] = useState(true);
+  const [operationsLoading, setOperationsLoading] = useState(true);
   const [laborLoading, setLaborLoading] = useState(false);
   const [error, setError] = useState('');
+  const [operationsError, setOperationsError] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
   const [selectedFocus, setSelectedFocus] = useState<ReportCenterFocusItemDTO | null>(null);
   const [toast, setToast] = useState('');
@@ -182,6 +221,31 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
     }).finally(() => setLoading(false));
     return () => controller.abort();
   }, [customer, date, mode, period, refreshToken]);
+
+  useEffect(() => {
+    if (view !== 'operations') return undefined;
+    const controller = new AbortController();
+    setOperationsLoading(true);
+    setOperationsError('');
+    fetch(`/api/reports/operations?month=${encodeURIComponent(operationsMonth)}`, {
+      cache: 'no-store',
+      signal: controller.signal,
+    }).then(async response => {
+      const body = await response.json() as ApiResponse<ReportOperationsDTO>;
+      if (!response.ok || !body.report) throw new Error(body.error || '生产数据总表加载失败');
+      setOperationsReport(body.report);
+      setOperationsDate(current => body.report?.dates.some(item => item.date === current)
+        ? current
+        : body.report?.dates.find(item => !item.isFuture)?.date || body.report?.dates[0]?.date || current);
+      setOperationsTeam(current => current && body.report?.teamMonthly.some(item => item.team === current)
+        ? current
+        : '');
+    }).catch(reason => {
+      if ((reason as { name?: string }).name === 'AbortError') return;
+      setOperationsError(reason instanceof Error ? reason.message : '生产数据总表加载失败');
+    }).finally(() => setOperationsLoading(false));
+    return () => controller.abort();
+  }, [operationsMonth, refreshToken, view]);
 
   useEffect(() => {
     if (view !== 'people' || peopleView !== 'labor') return undefined;
@@ -236,6 +300,13 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
     return events.filter(event => `${event.sequence} ${event.categoryLabel} ${event.title} ${event.reason || ''}`
       .toLocaleLowerCase('zh-CN').includes(normalizedKeyword));
   }, [abnormalReport?.events, normalizedKeyword]);
+  const operationsRows = useMemo(() => {
+    const rows = operationsReport?.employeeMatrix || [];
+    return rows.filter(row => (!operationsTeam || row.team === operationsTeam)
+      && (!normalizedKeyword || `${row.employee.employeeNo} ${row.employee.name} ${row.team} ${row.position}`
+        .toLocaleLowerCase('zh-CN').includes(normalizedKeyword)));
+  }, [normalizedKeyword, operationsReport?.employeeMatrix, operationsTeam]);
+  const operationsTeams = operationsReport?.teamMonthly.map(item => item.team) || [];
 
   const employeeSummary = employeeReport?.summary;
   const abnormalSummary = abnormalReport?.summary;
@@ -246,7 +317,46 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
 
   function exportCurrentView(): void {
     const stamp = `${date}-${period}`;
-    if (view === 'people') {
+    if (view === 'operations') {
+      const report = operationsReport;
+      if (!report) {
+        setToast('生产数据尚未加载完成');
+        return;
+      }
+      if (operationsView === 'matrix') {
+        downloadCsv(`个人达成率矩阵-${operationsMonth}.csv`, [
+          ['岗位', '班组', '员工编号', '姓名', ...report.dates.map(item => `${item.day}号`), '月均达成率', '确认天数', '待匹配标准工时'],
+          ...operationsRows.map(row => [
+            row.position,
+            row.team,
+            row.employee.employeeNo,
+            row.employee.name,
+            ...row.days.map(day => day.attainmentBasisPoints === null ? '' : percentText(day.attainmentBasisPoints)),
+            percentText(row.attainmentBasisPoints),
+            row.confirmedDays,
+            compactHours(row.unmatchedStandardLaborMilliseconds),
+          ]),
+        ]);
+      } else if (operationsView === 'plan') {
+        downloadCsv(`周计划达成率-${operationsMonth}.csv`, [
+          ['周次', '日期范围', '计划批次', '完成批次', '批次达成率', '计划数量', '完成数量', '数量达成率'],
+          ...report.weeklyPlan.map(week => [week.label, `${week.startDate} 至 ${week.endDate}`, week.plannedBatches, week.completedBatches, percentText(week.batchCompletionBasisPoints), week.plannedQuantity, week.completedQuantity, percentText(week.quantityCompletionBasisPoints)]),
+        ]);
+      } else if (operationsView === 'attendance') {
+        downloadCsv(`生产车间出勤率-${operationsMonth}.csv`, [
+          ['日期', '应出勤人数', '实际出勤人数', '请假人数', '缺勤人数', '休息人数', '草稿记录', '人数出勤率', '工时出勤率'],
+          ...report.dailyAttendance.map(day => [day.date, day.plannedPeople, day.attendancePeople, day.leavePeople, day.absentPeople, day.restPeople, day.draftRecords, percentText(day.attendanceBasisPoints), percentText(day.hoursBasisPoints)]),
+        ]);
+      } else {
+        const laborRows = operationsView === 'labor'
+          ? report.teamDaily.filter(row => row.date === operationsDate && (!operationsTeam || row.team === operationsTeam))
+          : report.teamMonthly.filter(row => !operationsTeam || row.team === operationsTeam);
+        downloadCsv(`生产车间工时数据-${operationsView === 'labor' ? operationsDate : operationsMonth}.csv`, [
+          ['班组', '人数', '出勤人数', '应出勤工时', '有效出勤工时', '标准产出工时', '免责异常', '待匹配标准工时', '出勤工时率', '工时达成率'],
+          ...laborRows.map(row => [row.team, row.employeeCount, row.attendancePeople, compactHours(row.plannedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.exemptAbnormalMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), percentText(row.attendanceBasisPoints), percentText(row.attainmentBasisPoints)]),
+        ]);
+      }
+    } else if (view === 'people') {
       downloadCsv(`人员与工时-${stamp}.csv`, [
         ['员工编号', '姓名', '班组', '确认出勤', '标准工时', '异常免责', '达成率'],
         ...employeeRows.map(row => [row.employee.employeeNo, row.employee.name, row.employee.team || '', formatProcessDuration(row.attendanceMilliseconds), formatProcessDuration(row.standardLaborMilliseconds), formatProcessDuration(row.exemptAbnormalMilliseconds), percentText(row.attainmentBasisPoints)]),
@@ -289,7 +399,7 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
         <span id="report-center-navigation-trigger" className="report-center-nav-trigger" />
         <div className="report-center-title"><span><BarChart3 /></span><div><small>数据决策</small><h1>报表中心</h1></div><em>{reportTabs.find(item => item.key === view)?.label}</em></div>
         <div className="report-center-source"><Database /><span><strong>真实业务数据</strong><small>金额类指标未启用</small></span></div>
-        <label className="report-center-search"><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索工单、客户、产品或员工" aria-label="搜索报表" /></label>
+        <label className="report-center-search"><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={view === 'operations' ? '搜索员工、工号、岗位或班组' : '搜索工单、客户、产品或员工'} aria-label="搜索报表" /></label>
         <button className="icon" type="button" title="刷新报表" aria-label="刷新报表" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} /></button>
         <button type="button" onClick={exportCurrentView}><Download />导出</button>
       </section>
@@ -297,28 +407,43 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
       <section className="report-center-tabs" aria-label="报表分类">
         <div role="tablist">{reportTabs.map(tab => <button className={view === tab.key ? 'active' : ''} type="button" role="tab" aria-selected={view === tab.key} key={tab.key} onClick={() => setView(tab.key)}>{tab.label}</button>)}</div>
         <div className="report-center-filter-pair">
-          {customerScopedView ? <><label><Layers3 /><select value={mode} onChange={event => setMode(event.target.value as ReportCenterModeDTO)} aria-label="生产类型"><option value="all">量产 + 样品</option><option value="mass">仅量产</option><option value="sample">仅样品</option></select></label>
+          {view === 'operations' ? <label><UsersRound /><select value={operationsTeam} onChange={event => setOperationsTeam(event.target.value)} aria-label="班组筛选"><option value="">全部班组</option>{operationsTeams.map(team => <option value={team} key={team}>{team}</option>)}</select></label> : customerScopedView ? <><label><Layers3 /><select value={mode} onChange={event => setMode(event.target.value as ReportCenterModeDTO)} aria-label="生产类型"><option value="all">量产 + 样品</option><option value="mass">仅量产</option><option value="sample">仅样品</option></select></label>
             <label><UsersRound /><select value={customer} onChange={event => setCustomer(event.target.value)} aria-label="客户筛选"><option value="">全部客户</option>{(overview?.customers || []).map(item => <option value={item} key={item}>{item}</option>)}</select></label></> : <span className="report-center-scope-pill"><UsersRound />全厂人员与异常口径</span>}
         </div>
       </section>
 
-      <section className="report-center-period-bar">
+      {view === 'operations' ? <section className="report-center-period-bar operations-period-bar">
+        <div className="operations-month-nav"><button type="button" aria-label="上个月" onClick={() => setOperationsMonth(value => shiftMonthKey(value, -1))}><ChevronLeft /></button><button type="button" className="active" onClick={() => setOperationsMonth(todayKey().slice(0, 7))}>本月</button><button type="button" aria-label="下个月" onClick={() => setOperationsMonth(value => shiftMonthKey(value, 1))}><ChevronRight /></button></div>
+        <label><CalendarRange /><input type="month" value={operationsMonth} onChange={event => event.target.value && setOperationsMonth(event.target.value)} /><span>{operationsReport ? `${operationsReport.month.replace('-', ' 年 ')} 月 · ${operationsReport.dates.length} 天` : '月度数据加载中'}</span></label>
+        <p><ShieldCheck />正式指标只使用已确认考勤；达成率超过 110% 会提示复核，不作为越高越好</p>
+        <small>{operationsReport ? `截止 ${dateText(operationsReport.cutoffAt)}` : '正在更新'}</small>
+      </section> : <section className="report-center-period-bar">
         <div>{(['today', 'week', 'month'] as ReportCenterPeriodDTO[]).map(item => <button className={period === item ? 'active' : ''} type="button" key={item} onClick={() => setPeriod(item)}>{item === 'today' ? '今日' : item === 'week' ? '本周' : '本月'}</button>)}</div>
         <label><CalendarDays /><input type="date" value={date} onChange={event => setDate(event.target.value)} /><span>{rangeText(overview)}</span></label>
         <p><ShieldCheck />{customer && customerScopedView ? '客户筛选仅作用于量产、样品和资料；人员与异常保持全厂口径' : '成品数量只统计最终工序良品，工序数据仅用于瓶颈和质量分析'}</p>
         <small>{overview ? `更新于 ${dateText(overview.generatedAt).slice(-5)}` : '正在更新'}</small>
-      </section>
+      </section>}
 
-      <section className="report-center-kpis" aria-label="关键指标">
+      {view === 'operations' ? <section className="report-center-kpis operations-kpis" aria-label="生产数据关键指标">
+        <KpiCard icon={<Gauge />} tone={attainmentTone(operationsReport?.summary.attainmentBasisPoints)} label="工时达成率" value={percentText(operationsReport?.summary.attainmentBasisPoints)} note={`目标 95% · 标准产出 ${compactHours(operationsReport?.summary.standardLaborMilliseconds || 0)}`} />
+        <KpiCard icon={<UserCheck />} tone={attainmentTone(operationsReport?.summary.attendanceBasisPoints)} label="出勤工时率" value={percentText(operationsReport?.summary.attendanceBasisPoints)} note={`${compactHours(operationsReport?.summary.attendanceMilliseconds || 0)} / ${compactHours(operationsReport?.summary.plannedMilliseconds || 0)}`} />
+        <KpiCard icon={<Workflow />} tone={attainmentTone(operationsReport?.summary.batchCompletionBasisPoints)} label="周计划批次达成" value={percentText(operationsReport?.summary.batchCompletionBasisPoints)} note={`${operationsReport?.summary.completedBatches || 0} / ${operationsReport?.summary.plannedBatches || 0} 批`} />
+        <KpiCard icon={<PackageCheck />} tone={attainmentTone(operationsReport?.summary.quantityCompletionBasisPoints)} label="周计划数量达成" value={percentText(operationsReport?.summary.quantityCompletionBasisPoints)} note={`${numberText(operationsReport?.summary.completedQuantity || 0)} / ${numberText(operationsReport?.summary.plannedQuantity || 0)}`} />
+        <KpiCard icon={<Activity />} tone="blue" label="有效出勤工时" value={compactHours(operationsReport?.summary.attendanceMilliseconds || 0)} note={`免责异常 ${compactHours(operationsReport?.summary.exemptAbnormalMilliseconds || 0)}`} />
+        <KpiCard icon={<Database />} tone={attainmentTone(operationsReport?.summary.dataCoverageBasisPoints)} label="考勤确认覆盖" value={percentText(operationsReport?.summary.dataCoverageBasisPoints)} note={`确认 ${operationsReport?.summary.confirmedAttendanceRecords || 0} · 草稿 ${operationsReport?.summary.draftAttendanceRecords || 0}`} />
+        <KpiCard icon={<CircleAlert />} tone={(operationsReport?.summary.unmatchedStandardLaborMilliseconds || 0) > 0 ? 'red' : 'green'} label="待匹配标准工时" value={compactHours(operationsReport?.summary.unmatchedStandardLaborMilliseconds || 0)} note="有报工但缺确认考勤" />
+      </section> : <section className="report-center-kpis" aria-label="关键指标">
         <KpiCard icon={<Gauge />} tone="orange" label={overview?.quantityScope.label || '数量达成率'} value={percentText(summary?.completionBasisPoints)} note={`${numberText(summary?.completedQty || 0)} / ${numberText(summary?.plannedQty || 0)} ${overview?.quantityScope.unitLabel || ''}`} />
         <KpiCard icon={<ClipboardCheck />} tone="green" label="完成任务/工单" value={numberText(summary?.completedOrders || 0)} note={`进行中 ${summary?.activeOrders || 0} · 待开始 ${summary?.pendingOrders || 0}`} />
         <KpiCard icon={<Clock3 />} tone="blue" label="全厂出勤达成率" value={percentText(employeeSummary?.attainmentBasisPoints)} note={`标准工时 ${formatProcessDuration(employeeSummary?.standardLaborMilliseconds || 0)}`} />
         <KpiCard icon={<TimerOff />} tone="amber" label="全厂异常影响人时" value={formatProcessDuration(abnormalSummary?.affectedPersonMilliseconds || 0)} note={`未关闭 ${abnormalSummary?.openCount || 0} 条`} />
         <KpiCard icon={<CircleAlert />} tone="red" label="逾期风险" value={numberText(summary?.overdueOrders || 0)} note={`未来 2 天 ${summary?.dueSoonOrders || 0} 项`} />
         <KpiCard icon={<Database />} tone="purple" label={mode === 'sample' ? '审核完成率' : '资料完整率'} value={percentText(summary?.dataCompletenessBasisPoints)} note={mode === 'sample' ? `待审核 ${summary?.pendingSampleReviewItems || 0} 项` : `核心检查：路线 / 工时 / 图纸`} />
-      </section>
+      </section>}
 
       {error && <div className="report-center-error" role="alert"><AlertTriangle />{error}<button type="button" onClick={() => setRefreshToken(value => value + 1)}>重试</button></div>}
+      {operationsError && view === 'operations' && <div className="report-center-error" role="alert"><AlertTriangle />{operationsError}<button type="button" onClick={() => setRefreshToken(value => value + 1)}>重试</button></div>}
+      {view === 'operations' && <OperationsWorkspace report={operationsReport} rows={operationsRows} subview={operationsView} onSubview={setOperationsView} selectedDate={operationsDate} onSelectedDate={setOperationsDate} team={operationsTeam} loading={operationsLoading} />}
       {view === 'overview' && <section className="report-center-body overview-view">
         <div className="report-center-top-grid">
           <Panel className="trend-panel" kicker="生产与交付" title="计划与最终工序完成趋势" action={<span>{overview?.quantityScope.note}</span>}>
@@ -382,11 +507,151 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
         <FocusTable items={focusItems.filter(item => item.entityType === 'sampleTask')} title="样品任务与审核进度" onSelect={setSelectedFocus} />
       </section>}
 
-      {loading && !overview && <div className="report-center-loading"><Loader2 className="spin" /><strong>正在汇总真实业务数据</strong><span>成品、工序、人员、异常与样品资料分别按各自口径计算</span></div>}
+      {view !== 'operations' && loading && !overview && <div className="report-center-loading"><Loader2 className="spin" /><strong>正在汇总真实业务数据</strong><span>成品、工序、人员、异常与样品资料分别按各自口径计算</span></div>}
     </div>
     {selectedFocus && <FocusDrawer item={selectedFocus} onClose={() => setSelectedFocus(null)} />}
     {toast && <div className="report-center-toast"><CheckCircle2 />{toast}</div>}
   </main>;
+}
+
+const operationsTabs: Array<{ key: OperationsView; label: string; icon: ReactNode }> = [
+  { key: 'summary', label: '数据总览', icon: <TrendingUp /> },
+  { key: 'labor', label: '班组工时', icon: <Clock3 /> },
+  { key: 'plan', label: '周计划达成', icon: <Workflow /> },
+  { key: 'attendance', label: '出勤分析', icon: <UserCheck /> },
+  { key: 'matrix', label: '个人达成矩阵', icon: <Table2 /> },
+];
+
+function OperationsWorkspace({
+  report,
+  rows,
+  subview,
+  onSubview,
+  selectedDate,
+  onSelectedDate,
+  team,
+  loading,
+}: {
+  report: ReportOperationsDTO | null;
+  rows: ReportOperationsEmployeeRowDTO[];
+  subview: OperationsView;
+  onSubview: (view: OperationsView) => void;
+  selectedDate: string;
+  onSelectedDate: (date: string) => void;
+  team: string;
+  loading: boolean;
+}) {
+  const dailyTeams = (report?.teamDaily || [])
+    .filter(row => row.date === selectedDate && (!team || row.team === team))
+    .sort((left, right) => (right.attainmentBasisPoints ?? -1) - (left.attainmentBasisPoints ?? -1));
+  const monthlyTeams = (report?.teamMonthly || []).filter(row => !team || row.team === team);
+  const recentDates = (report?.dates || []).filter(item => !item.isFuture).slice(-8);
+  const previewRows = rows.slice(0, 8);
+
+  return <section className="report-center-body operations-view">
+    <div className="operations-subtabs" role="tablist" aria-label="生产数据报表分类">
+      <div>{operationsTabs.map(tab => <button type="button" role="tab" aria-selected={subview === tab.key} className={subview === tab.key ? 'active' : ''} key={tab.key} onClick={() => onSubview(tab.key)}>{tab.icon}{tab.label}</button>)}</div>
+      <span><i className="tone-risk" />低于 85% <i className="tone-watch" />85–94.9% <i className="tone-good" />95–100% <i className="tone-over" />高于 110% 复核</span>
+    </div>
+
+    {subview === 'summary' && <div className="operations-summary-layout">
+      <OperationsCard className="operations-team-card" kicker="日工时利用" title={`${selectedDate} 班组工时`} action={<DatePicker report={report} value={selectedDate} onChange={onSelectedDate} />}>
+        <OperationsLaborTable rows={dailyTeams} compact />
+      </OperationsCard>
+      <OperationsCard className="operations-week-card" kicker="月度计划" title="周计划批次 / 数量达成" action={<button type="button" onClick={() => onSubview('plan')}>查看明细<ChevronRight /></button>}>
+        <OperationsWeeklyPlan report={report} compact />
+      </OperationsCard>
+      <OperationsCard className="operations-attendance-card" kicker="考勤趋势" title="每日出勤人数达成率" action={<button type="button" onClick={() => onSubview('attendance')}>查看明细<ChevronRight /></button>}>
+        <OperationsAttendanceChart report={report} selectedDate={selectedDate} onSelectedDate={onSelectedDate} />
+      </OperationsCard>
+      <OperationsCard className="operations-matrix-card" kicker="个人表现" title={`最近 ${recentDates.length} 天达成热力图`} action={<button type="button" onClick={() => onSubview('matrix')}>完整矩阵<ChevronRight /></button>}>
+        <OperationsMatrix report={report} rows={previewRows} dates={recentDates.map(item => item.date)} compact />
+      </OperationsCard>
+    </div>}
+
+    {subview === 'labor' && <div className="operations-detail-layout labor-detail">
+      <OperationsDateStrip report={report} selectedDate={selectedDate} onSelectedDate={onSelectedDate} />
+      <OperationsCard kicker="按班组拆分" title={`${selectedDate} 生产车间工时利用率`} action={<span>{dailyTeams.length} 个班组</span>}>
+        <OperationsLaborTable rows={dailyTeams} />
+      </OperationsCard>
+      <OperationsCard kicker="本月累计" title="班组月度工时达成" action={<span>{monthlyTeams.length} 个班组</span>}>
+        <OperationsLaborTable rows={monthlyTeams} />
+      </OperationsCard>
+    </div>}
+
+    {subview === 'plan' && <div className="operations-detail-layout plan-detail">
+      <OperationsCard kicker="批次与数量" title={`${report?.month || ''} 周计划达成率`} action={<span>完成量按最终工序良品封顶</span>}>
+        <OperationsWeeklyPlan report={report} />
+      </OperationsCard>
+      <OperationsCard kicker="对比趋势" title="各周计划 / 完成数量" action={<span>截至统计截止时点</span>}>
+        <OperationsWeeklyBars report={report} />
+      </OperationsCard>
+    </div>}
+
+    {subview === 'attendance' && <div className="operations-detail-layout attendance-detail">
+      <OperationsCard kicker="每日趋势" title={`${report?.month || ''} 生产车间出勤率`} action={<span>人数与工时双口径</span>}>
+        <OperationsAttendanceChart report={report} selectedDate={selectedDate} onSelectedDate={onSelectedDate} />
+      </OperationsCard>
+      <OperationsCard kicker="出勤台账" title="每日人数、请假与确认状态" action={<span>{report?.dailyAttendance.length || 0} 天</span>}>
+        <OperationsAttendanceTable report={report} />
+      </OperationsCard>
+    </div>}
+
+    {subview === 'matrix' && <div className="operations-detail-layout matrix-detail">
+      <OperationsCard kicker="员工 × 日期" title={`${report?.month || ''} 个人达成率矩阵`} action={<span>{rows.length} 人 · 空白代表无正式达成数据</span>}>
+        <OperationsMatrix report={report} rows={rows} dates={(report?.dates || []).map(item => item.date)} />
+      </OperationsCard>
+    </div>}
+
+    {loading && !report && <div className="operations-loading"><Loader2 className="spin" /><strong>正在汇总月度生产数据</strong><span>考勤、标准工时、最终工序与周计划分别校验</span></div>}
+    {report && <div className="operations-method-note"><ShieldCheck /><strong>统计口径</strong><span>{report.dataNotes[0]}</span><em>{report.dataNotes.length} 条口径说明</em></div>}
+  </section>;
+}
+
+function OperationsCard({ kicker, title, action, className = '', children }: { kicker: string; title: string; action?: ReactNode; className?: string; children: ReactNode }) {
+  return <section className={`operations-card ${className}`.trim()}><header><div><small>{kicker}</small><h2>{title}</h2></div>{action && <aside>{action}</aside>}</header><div className="operations-card-body">{children}</div></section>;
+}
+
+function DatePicker({ report, value, onChange }: { report: ReportOperationsDTO | null; value: string; onChange: (date: string) => void }) {
+  return <label className="operations-date-picker"><CalendarDays /><input type="date" value={value} min={report?.dates[0]?.date} max={report?.dates.at(-1)?.date} onChange={event => event.target.value && onChange(event.target.value)} /></label>;
+}
+
+function OperationsDateStrip({ report, selectedDate, onSelectedDate }: { report: ReportOperationsDTO | null; selectedDate: string; onSelectedDate: (date: string) => void }) {
+  return <div className="operations-date-strip" tabIndex={0}>{(report?.dates || []).map(day => <button type="button" disabled={day.isFuture} className={`${selectedDate === day.date ? 'active' : ''} ${day.isWeekend ? 'weekend' : ''}`} key={day.date} onClick={() => onSelectedDate(day.date)}><small>{day.weekday}</small><strong>{day.day}</strong><span>{day.isFuture ? '未来' : '查看'}</span></button>)}</div>;
+}
+
+function OperationsLaborTable({ rows, compact = false }: { rows: ReportOperationsLaborRowDTO[]; compact?: boolean }) {
+  return <div className={`operations-labor-table ${compact ? 'compact' : ''}`} tabIndex={0}>
+    <div className="operations-labor-head"><span>班组</span><span>出勤人数</span><span>应出勤工时</span><span>有效出勤</span><span>标准产出</span><span>免责异常</span><span>工时达成率</span><span>出勤工时率</span><span>数据状态</span></div>
+    {rows.map(row => <article key={row.team}><span><strong>{row.team}</strong><small>{row.employeeCount} 人 · {row.confirmedRecords} 条确认</small></span><span><b>{row.attendancePeople}</b><small>人</small></span><span><b>{compactHours(row.plannedMilliseconds)}</b></span><span><b>{compactHours(row.attendanceMilliseconds)}</b></span><span><b>{compactHours(row.standardLaborMilliseconds)}</b></span><span><b>{compactHours(row.exemptAbnormalMilliseconds)}</b></span><span><em className={`metric-tone tone-${attainmentTone(row.attainmentBasisPoints)}`}>{percentText(row.attainmentBasisPoints)}</em></span><span><em className={`metric-tone tone-${attainmentTone(row.attendanceBasisPoints)}`}>{percentText(row.attendanceBasisPoints)}</em></span><span>{row.unmatchedStandardLaborMilliseconds > 0 ? <em className="data-warning">待匹配 {compactHours(row.unmatchedStandardLaborMilliseconds)}</em> : <em className="data-ready">已匹配</em>}</span></article>)}
+    {!rows.length && <EmptyState icon={<Clock3 />} title="所选日期或班组没有正式工时数据" />}
+  </div>;
+}
+
+function OperationsWeeklyPlan({ report, compact = false }: { report: ReportOperationsDTO | null; compact?: boolean }) {
+  return <div className={`operations-weekly-plan ${compact ? 'compact' : ''}`}>{(report?.weeklyPlan || []).map(week => <article key={week.key}><header><span>{week.label}</span><small>{week.startDate.slice(5)}—{week.endDate.slice(5)}</small></header><div><span><small>批次</small><strong>{week.completedBatches}<em> / {week.plannedBatches}</em></strong><i><b style={{ width: `${Math.min(100, (week.batchCompletionBasisPoints || 0) / 100)}%` }} /></i></span><span><small>数量</small><strong>{numberText(week.completedQuantity)}<em> / {numberText(week.plannedQuantity)}</em></strong><i><b style={{ width: `${Math.min(100, (week.quantityCompletionBasisPoints || 0) / 100)}%` }} /></i></span></div><footer><em className={`metric-tone tone-${attainmentTone(week.batchCompletionBasisPoints)}`}>{percentText(week.batchCompletionBasisPoints)}</em><em className={`metric-tone tone-${attainmentTone(week.quantityCompletionBasisPoints)}`}>{percentText(week.quantityCompletionBasisPoints)}</em></footer></article>)}{!report?.weeklyPlan.length && <EmptyState icon={<Workflow />} title="本月没有周计划批次" />}</div>;
+}
+
+function OperationsWeeklyBars({ report }: { report: ReportOperationsDTO | null }) {
+  const max = Math.max(1, ...(report?.weeklyPlan || []).flatMap(week => [week.plannedQuantity, week.completedQuantity]));
+  return <div className="operations-weekly-bars" style={{ '--week-count': Math.max(1, report?.weeklyPlan.length || 1) } as CSSProperties}>{(report?.weeklyPlan || []).map(week => <article key={week.key}><div><i className="planned" style={{ height: `${Math.max(2, (week.plannedQuantity / max) * 100)}%` }} /><i className="completed" style={{ height: `${Math.max(2, (week.completedQuantity / max) * 100)}%` }} /></div><strong>{week.label}</strong><small>{percentText(week.quantityCompletionBasisPoints)}</small></article>)}</div>;
+}
+
+function OperationsAttendanceChart({ report, selectedDate, onSelectedDate }: { report: ReportOperationsDTO | null; selectedDate: string; onSelectedDate: (date: string) => void }) {
+  return <div className="operations-attendance-chart" tabIndex={0}>{(report?.dailyAttendance || []).map(day => <button type="button" className={selectedDate === day.date ? 'active' : ''} key={day.date} onClick={() => onSelectedDate(day.date)} title={`${day.date}：出勤 ${day.attendancePeople}/${day.plannedPeople}，${percentText(day.attendanceBasisPoints)}`}><span><i className={`tone-${attainmentTone(day.attendanceBasisPoints)}`} style={{ height: `${Math.max(day.attendanceBasisPoints === null ? 1 : 5, Math.min(100, (day.attendanceBasisPoints || 0) / 100))}%` }} /></span><strong>{day.date.slice(-2)}</strong><small>{day.attendanceBasisPoints === null ? '—' : `${Math.round(day.attendanceBasisPoints / 100)}%`}</small></button>)}</div>;
+}
+
+function OperationsAttendanceTable({ report }: { report: ReportOperationsDTO | null }) {
+  return <div className="operations-attendance-table" tabIndex={0}><div className="operations-attendance-head"><span>日期</span><span>应出勤</span><span>实际出勤</span><span>请假</span><span>缺勤</span><span>休息</span><span>草稿</span><span>人数出勤率</span><span>工时出勤率</span></div>{(report?.dailyAttendance || []).map(day => <article key={day.date}><span><strong>{day.date.slice(5)}</strong><small>{report?.dates.find(item => item.date === day.date)?.weekday}</small></span><span><b>{day.plannedPeople}</b></span><span><b>{day.attendancePeople}</b></span><span><b>{day.leavePeople}</b></span><span><b>{day.absentPeople}</b></span><span><b>{day.restPeople}</b></span><span><b className={day.draftRecords ? 'warning-text' : ''}>{day.draftRecords}</b></span><span><em className={`metric-tone tone-${attainmentTone(day.attendanceBasisPoints)}`}>{percentText(day.attendanceBasisPoints)}</em></span><span><em className={`metric-tone tone-${attainmentTone(day.hoursBasisPoints)}`}>{percentText(day.hoursBasisPoints)}</em></span></article>)}</div>;
+}
+
+function matrixCell(row: ReportOperationsEmployeeRowDTO, date: string) {
+  return row.days.find(day => day.date === date);
+}
+
+function OperationsMatrix({ report, rows, dates, compact = false }: { report: ReportOperationsDTO | null; rows: ReportOperationsEmployeeRowDTO[]; dates: string[]; compact?: boolean }) {
+  const dailyAverage = new Map((report?.dailyAttainmentAverage || []).map(item => [item.date, item]));
+  return <div className={`operations-matrix-scroll ${compact ? 'compact' : ''}`} tabIndex={0}><table style={{ '--matrix-days': dates.length } as CSSProperties}><thead><tr><th>班组</th><th>岗位</th><th>姓名</th>{dates.map(date => { const meta = report?.dates.find(item => item.date === date); return <th className={meta?.isWeekend ? 'weekend' : ''} key={date}><strong>{meta?.day}号</strong><small>{meta?.weekday}</small></th>; })}<th>月均</th></tr></thead><tbody>{rows.map(row => <tr key={row.employee.id}><td><strong>{row.team}</strong></td><td><span>{row.position}</span></td><td><strong>{row.employee.name}</strong><small>{row.employee.employeeNo}</small></td>{dates.map(date => { const day = matrixCell(row, date); const tone = attainmentTone(day?.attainmentBasisPoints); const text = day?.status === 'draft' ? '草稿' : day?.status === 'rest' ? '休' : day?.attainmentBasisPoints === null || day?.attainmentBasisPoints === undefined ? '—' : percentText(day.attainmentBasisPoints); return <td className={`matrix-metric tone-${tone} status-${day?.status || 'missing'}`} key={date} title={`${row.employee.name} ${date}：${text}${day ? `，标准 ${compactHours(day.standardLaborMilliseconds)}，出勤 ${compactHours(day.attendanceMilliseconds)}` : ''}`}><strong>{text}</strong>{!compact && day?.attainmentBasisPoints !== null && day?.attainmentBasisPoints !== undefined && <small>{compactHours(day.standardLaborMilliseconds)}</small>}</td>; })}<td className={`matrix-average tone-${attainmentTone(row.attainmentBasisPoints)}`}><strong>{percentText(row.attainmentBasisPoints)}</strong><small>{row.confirmedDays} 天</small></td></tr>)}{!rows.length && <tr><td colSpan={dates.length + 4}><EmptyState icon={<Table2 />} title="没有符合筛选条件的员工数据" /></td></tr>}</tbody>{!compact && <tfoot><tr><td colSpan={3}><strong>车间每日平均达成率</strong></td>{dates.map(date => <td className={`tone-${attainmentTone(dailyAverage.get(date)?.attainmentBasisPoints)}`} key={date}><strong>{percentText(dailyAverage.get(date)?.attainmentBasisPoints)}</strong></td>)}<td><strong>{percentText(report?.summary.attainmentBasisPoints)}</strong></td></tr></tfoot>}</table></div>;
 }
 
 function KpiCard({ icon, tone, label, value, note }: { icon: ReactNode; tone: string; label: string; value: string; note: string }) {

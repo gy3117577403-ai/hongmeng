@@ -360,6 +360,36 @@ final result: passed
 
 final result: passed
 
+## 2026-08-19 生产数据总表交互化报表中心
+
+### 来源与统计边界
+
+- 用户 Excel 参考图：`C:\Users\31175\.codex\attachments\988c3ea7-f112-4d66-864b-b7b4edca1b83\image-1.png`、`C:\Users\31175\.codex\attachments\988c3ea7-f112-4d66-864b-b7b4edca1b83\image-2.png`。
+- 参考内容已完整映射为班组工时利用率、周计划批次达成、周计划数量达成、每日出勤、员工逐日达成率、月均和每日平均。
+- Excel 中重复的 `2026-08-18` 区块按模板重复处理，界面改为动态月份与日期，不复制错误日期。
+- 金额、产值和单价没有权威数据源，因此本版不展示虚构金额；正式达成仅使用已确认考勤、标准工时和最终工序良品数据。
+
+### 实现与视觉证据
+
+- 主验收截图：`artifacts/report-center-data-20260819/summary-1366x1024.png`。
+- 完整个人矩阵：`artifacts/report-center-data-20260819/matrix-1366x1024.png`。
+- 补充平板视口：`artifacts/report-center-data-20260819/summary-1024x1024.png`。
+- Excel 来源与实现同屏对照：`artifacts/report-center-data-20260819/source-implementation-comparison.png`；两张来源图保持原比例并放入左侧上下区域，实现图保持原生 1366 × 1024，不做单轴拉伸。
+- 1366 × 1024 主视口和 1024 × 1024 补充视口均无页面级横向或纵向溢出；卡片内部对大表格使用明确滚动区，固定班组、岗位、姓名列。
+- 低于 85%、85–94.9%、95–100%、100–110% 和高于 110% 分别使用红、黄、绿、蓝紫语义色；高于 110% 明确标记为复核，不作为单纯优秀状态。
+- 总览采用紧凑四区布局，班组工时行自动填满可用高度，周计划、出勤趋势和最近八天个人热力图同屏无留白。
+
+### 交互与回归
+
+- 浏览器真实点击通过：数据总览、班组工时、周计划达成、出勤分析、个人达成矩阵。
+- 月份前后切换、本月恢复、日期切换、班组筛选、关键字筛选和当前视图 CSV 导出均已验证；导出成功提示可见。
+- 实际 PostgreSQL 验收数据返回 12 名员工、4 个班组、月度考勤、工时、13 个计划批次和最终工序完成数据；接口与页面统计一致。
+- 1366 × 1024 与 1024 × 1024 下 `document.body.scrollWidth === clientWidth`、`scrollHeight === clientHeight`。
+- 浏览器应用 error 日志为 0；TypeScript、生产构建和相关单元测试通过。
+- P0：无；P1：无；P2：无。
+
+passed
+
 ## 2026-08-19 日出货计划优先级与上日遗留（方案三）
 
 ### 验收对象与状态
@@ -534,3 +564,5 @@ final result: passed
 - P2：无。
 
 final result: passed
+
+passed
