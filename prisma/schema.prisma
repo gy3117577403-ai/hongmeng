@@ -336,6 +336,7 @@ enum DailyShipmentPlanStatus {
   DRAFT
   CONFIRMED
   CLOSED
+  CLOSED_WITH_CARRYOVER
   CANCELLED
 
   @@map("daily_shipment_plan_status")
@@ -345,9 +346,18 @@ enum DailyShipmentItemStatus {
   PLANNED
   PARTIALLY_SHIPPED
   SHIPPED
+  CARRIED_OVER
   CANCELLED
 
   @@map("daily_shipment_item_status")
+}
+
+enum DailyShipmentPriority {
+  URGENT
+  PRIORITY
+  NORMAL
+
+  @@map("daily_shipment_priority")
 }
 
 enum ShipmentEventType {
@@ -1508,9 +1518,14 @@ model DailyShipmentPlanItem {
   plannedQuantity       Int                     @map("planned_quantity")
   plannedShipAt         DateTime                @map("planned_ship_at")
   status                DailyShipmentItemStatus @default(PLANNED)
+  shipmentPriority      DailyShipmentPriority   @default(NORMAL) @map("shipment_priority")
   sortOrder             Int                     @default(0) @map("sort_order")
   note                  String?
   sourceSnapshot        Json                    @map("source_snapshot")
+  carryoverSourceItemId String?                 @unique @map("carryover_source_item_id")
+  carryoverSourceDate   DateTime?               @map("carryover_source_date") @db.Date
+  carryoverDayCount     Int                     @default(0) @map("carryover_day_count")
+  carryoverQuantity     Int                     @default(0) @map("carryover_quantity")
   version               Int                     @default(0)
   createdById           String                  @map("created_by_id")
   updatedById           String                  @map("updated_by_id")
@@ -1523,11 +1538,15 @@ model DailyShipmentPlanItem {
   updatedBy             User                    @relation("DailyShipmentItemUpdatedBy", fields: [updatedById], references: [id], onDelete: Restrict)
   events                ShipmentEvent[]
   revisions             DailyShipmentRevision[]
+  carryoverSourceItem   DailyShipmentPlanItem?  @relation("DailyShipmentCarryoverChain", fields: [carryoverSourceItemId], references: [id], onDelete: Restrict)
+  carryoverTargetItem   DailyShipmentPlanItem?  @relation("DailyShipmentCarryoverChain")
 
   @@unique([planId, productionPlanBatchId])
   @@index([productionPlanBatchId, status])
   @@index([workOrderId, status])
   @@index([plannedShipAt, status])
+  @@index([shipmentPriority, status, plannedShipAt])
+  @@index([carryoverSourceDate])
   @@map("daily_shipment_plan_items")
 }
 

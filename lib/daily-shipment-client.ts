@@ -1,6 +1,7 @@
-export type DailyShipmentPlanStatus = 'DRAFT' | 'CONFIRMED' | 'CLOSED' | 'CANCELLED';
-export type DailyShipmentItemStatus = 'PLANNED' | 'PARTIALLY_SHIPPED' | 'SHIPPED' | 'CANCELLED';
-export type ShipmentProgressState = 'SHIPPED' | 'PARTIAL' | 'OVERDUE' | 'READY' | 'IN_PRODUCTION' | 'NOT_STARTED';
+export type DailyShipmentPlanStatus = 'DRAFT' | 'CONFIRMED' | 'CLOSED' | 'CLOSED_WITH_CARRYOVER' | 'CANCELLED';
+export type DailyShipmentItemStatus = 'PLANNED' | 'PARTIALLY_SHIPPED' | 'SHIPPED' | 'CARRIED_OVER' | 'CANCELLED';
+export type DailyShipmentPriority = 'URGENT' | 'PRIORITY' | 'NORMAL';
+export type ShipmentProgressState = 'SHIPPED' | 'PARTIAL' | 'OVERDUE' | 'READY' | 'IN_PRODUCTION' | 'NOT_STARTED' | 'CARRIED_OVER';
 
 export type DailyShipmentEventDTO = {
   id: string;
@@ -41,8 +42,15 @@ export type DailyShipmentItemDTO = {
   plannedShipAt: string;
   actualShipAt: string | null;
   progressState: ShipmentProgressState;
+  shipmentPriority: DailyShipmentPriority;
   note: string | null;
   sortOrder: number;
+  isCarryover: boolean;
+  carryoverSourceItemId: string | null;
+  carryoverSourceDate: string | null;
+  carryoverDayCount: number;
+  carryoverQuantity: number;
+  carriedOverToDate: string | null;
   events: DailyShipmentEventDTO[];
 };
 
@@ -103,7 +111,22 @@ export type DailyShipmentWorkbenchDTO = {
     shippedQuantity: number;
     pendingQuantity: number;
     riskItemCount: number;
+    urgent: { itemCount: number; quantity: number };
+    priority: { itemCount: number; quantity: number };
+    normal: { itemCount: number; quantity: number };
+    completed: { itemCount: number; quantity: number };
+    carryover: { itemCount: number; quantity: number; sourceDate: string | null; maxDayCount: number };
+    carriedOut: { itemCount: number; quantity: number };
   };
+  carryoverReconciliation: {
+    sourcePlanId: string | null;
+    targetPlanId: string | null;
+    targetDate: string;
+    itemCount: number;
+    quantity: number;
+    autoClosed: boolean;
+    blockedReason: string | null;
+  } | null;
   candidates: DailyShipmentCandidateDTO[];
 };
 

@@ -7,7 +7,12 @@ export type ShipmentProgressState =
   | 'OVERDUE'
   | 'READY'
   | 'IN_PRODUCTION'
-  | 'NOT_STARTED';
+  | 'NOT_STARTED'
+  | 'CARRIED_OVER';
+
+export type ShipmentPriority = 'URGENT' | 'PRIORITY' | 'NORMAL';
+
+const SHIPMENT_PRIORITIES = new Set<ShipmentPriority>(['URGENT', 'PRIORITY', 'NORMAL']);
 
 export class DailyShipmentDomainError extends Error {
   constructor(
@@ -91,6 +96,39 @@ export function shipmentNote(value: unknown, maxLength = 500): string | null {
   return normalized ? normalized.slice(0, maxLength) : null;
 }
 
+export function shipmentPriority(value: unknown): ShipmentPriority {
+  const normalized = String(value ?? '').trim().toUpperCase() as ShipmentPriority;
+  if (!SHIPMENT_PRIORITIES.has(normalized)) {
+    throw new DailyShipmentDomainError('请选择有效的出货优先级', 'SHIPMENT_PRIORITY_INVALID');
+  }
+  return normalized;
+}
+
+export function shipmentPriorityRank(value: ShipmentPriority): number {
+  if (value === 'URGENT') return 0;
+  if (value === 'PRIORITY') return 1;
+  return 2;
+}
+
+export function shiftShipmentDateKey(value: unknown, days: number): string {
+  const parsed = parseShipmentDate(value);
+  const shifted = new Date(parsed.value);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return shifted.toISOString().slice(0, 10);
+}
+
+export function carryoverPlannedShipAt(source: Date, targetDate: string): Date {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Shanghai',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(source);
+  const part = (type: string) => parts.find(item => item.type === type)?.value || '00';
+  return new Date(`${parseShipmentDate(targetDate).key}T${part('hour')}:${part('minute')}:${part('second')}+08:00`);
+}
+
 export function assertScheduledQuantity(input: {
   batchQuantity: number;
   alreadyScheduledQuantity: number;
@@ -148,14 +186,26 @@ export function shipmentProgressState(input: {
   shippedQuantity: number;
   completedQuantity: number;
   plannedShipAt: Date;
+  itemStatus?: string;
   now?: Date;
 }): ShipmentProgressState {
+  if (input.itemStatus === 'CARRIED_OVER') return 'CARRIED_OVER';
   if (input.shippedQuantity >= input.plannedQuantity) return 'SHIPPED';
   if (input.shippedQuantity > 0) return 'PARTIAL';
   if (input.plannedShipAt.getTime() < (input.now ?? new Date()).getTime()) return 'OVERDUE';
   if (input.completedQuantity >= input.plannedQuantity) return 'READY';
   if (input.completedQuantity > 0) return 'IN_PRODUCTION';
   return 'NOT_STARTED';
+}
+
+export function shipmentReservationQuantity(input: {
+  status: string;
+  plannedQuantity: number;
+  events: Array<{ eventType: string; quantity: number }>;
+}): number {
+  if (input.status === 'CANCELLED') return 0;
+  if (input.status === 'CARRIED_OVER') return netShipmentQuantity(input.events);
+  return Math.max(0, input.plannedQuantity);
 }
 
 export function completionPercentage(completedQuantity: number, batchQuantity: number): number {

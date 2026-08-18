@@ -19,6 +19,7 @@ import {
   DailyShipmentServiceError,
   loadDailyShipmentWorkbench,
   recordDailyShipment,
+  rollOverDailyShipmentPlan,
   reverseDailyShipment,
   updateDailyShipmentItem,
 } from '@/lib/daily-shipment-service';
@@ -104,6 +105,7 @@ export async function POST(request: NextRequest) {
             productionPlanBatchId: item.productionPlanBatchId,
             plannedQuantity: item.plannedQuantity,
             plannedShipAt: item.plannedShipAt,
+            shipmentPriority: item.shipmentPriority,
             note: item.note,
           })),
         });
@@ -117,6 +119,7 @@ export async function POST(request: NextRequest) {
           idempotencyKey,
           plannedQuantity: body.plannedQuantity,
           plannedShipAt: body.plannedShipAt,
+          shipmentPriority: body.shipmentPriority,
           note: body.note,
         });
         break;
@@ -143,6 +146,13 @@ export async function POST(request: NextRequest) {
           planId: body.planId,
           planVersion: body.planVersion,
           idempotencyKey,
+        });
+        break;
+      case 'ROLL_OVER_PLAN':
+        result = await rollOverDailyShipmentPlan({
+          actorUserId: user.id,
+          planId: body.planId,
+          planVersion: body.planVersion,
         });
         break;
       case 'RECORD_SHIPMENT':

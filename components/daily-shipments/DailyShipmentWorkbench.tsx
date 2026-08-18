@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  BellRing,
   CalendarCheck2,
   CalendarClock,
   Check,
@@ -9,10 +10,10 @@ import {
   ChevronDown,
   Clock3,
   History,
+  ListFilter,
   LoaderCircle,
   Menu,
   PackageCheck,
-  PanelRightOpen,
   Pencil,
   Plus,
   RefreshCw,
@@ -23,7 +24,7 @@ import {
   Truck,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import {
   fetchDailyShipmentWorkbench,
@@ -31,12 +32,18 @@ import {
   type DailyShipmentCandidateDTO,
   type DailyShipmentEventDTO,
   type DailyShipmentItemDTO,
+  type DailyShipmentPriority,
   type DailyShipmentWorkbenchDTO,
   type ShipmentProgressState,
 } from '@/lib/daily-shipment-client';
 import type { CurrentUserDTO } from '@/types';
 
-type CandidateDraft = { quantity: string; plannedShipAt: string; note: string };
+type CandidateDraft = {
+  quantity: string;
+  plannedShipAt: string;
+  shipmentPriority: DailyShipmentPriority;
+  note: string;
+};
 type DialogState =
   | { kind: 'edit'; item: DailyShipmentItemDTO }
   | { kind: 'cancel'; item: DailyShipmentItemDTO }
@@ -44,7 +51,8 @@ type DialogState =
   | { kind: 'events'; item: DailyShipmentItemDTO }
   | { kind: 'reverse'; item: DailyShipmentItemDTO; event: DailyShipmentEventDTO }
   | { kind: 'confirm' }
-  | { kind: 'close' };
+  | { kind: 'close' }
+  | { kind: 'rollover' };
 
 const DAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -55,14 +63,24 @@ const STATE_TEXT: Record<ShipmentProgressState, string> = {
   READY: '已完工待出货',
   IN_PRODUCTION: '生产中',
   NOT_STARTED: '未开工',
+  CARRIED_OVER: '已结转',
 };
 
 const PLAN_STATUS_TEXT = {
   DRAFT: '草稿',
   CONFIRMED: '已确认',
   CLOSED: '已关闭',
+  CLOSED_WITH_CARRYOVER: '已关闭并结转',
   CANCELLED: '已取消',
 } as const;
+
+const PRIORITY_META: Record<DailyShipmentPriority, { label: string; description: string }> = {
+  URGENT: { label: '紧急', description: '红色 · 最先处理' },
+  PRIORITY: { label: '优先', description: '黄色 · 优先安排' },
+  NORMAL: { label: '常规', description: '蓝色 · 正常顺序' },
+};
+
+const PRIORITY_VALUES: DailyShipmentPriority[] = ['URGENT', 'PRIORITY', 'NORMAL'];
 
 function chinaDateKey(value = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -136,6 +154,13 @@ function productionStageText(value: string): string {
   return value || '进度待同步';
 }
 
+function defaultShipmentPriority(value: string): DailyShipmentPriority {
+  const normalized = value.trim().toLocaleLowerCase();
+  if (['urgent', 'insert', '紧急', '插单'].includes(normalized)) return 'URGENT';
+  if (['high', 'priority', '优先'].includes(normalized)) return 'PRIORITY';
+  return 'NORMAL';
+}
+
 function candidateAvailableToShip(item: DailyShipmentItemDTO, candidates: DailyShipmentCandidateDTO[]): number {
   const candidate = candidates.find(entry => entry.batchId === item.batchId);
   return Math.max(0, (candidate?.completedQuantity ?? item.completedQuantity) - (candidate?.shippedQuantity ?? item.shippedQuantity));
@@ -164,17 +189,40 @@ function DialogShell({ title, description, error, busy, children, onClose }: {
   </div>;
 }
 
-function OrderIdentity({ item }: { item: Pick<DailyShipmentItemDTO, 'workOrderCode' | 'customerName' | 'productName' | 'specification' | 'batchNo'> }) {
-  return <div className="shipment-order-identity">
-    <strong>{item.workOrderCode}</strong>
-    <span>{item.customerName} · {item.productName}</span>
-    <small>{item.specification} · 第 {item.batchNo} 批</small>
+function PrioritySelector({ value, onChange, disabled = false, compact = false }: {
+  value: DailyShipmentPriority;
+  onChange: (value: DailyShipmentPriority) => void;
+  disabled?: boolean;
+  compact?: boolean;
+}) {
+  return <div className={`shipment-priority-selector ${compact ? 'compact' : ''}`} role="radiogroup" aria-label="出货优先级">
+    {PRIORITY_VALUES.map(priority => <button
+      type="button"
+      key={priority}
+      role="radio"
+      aria-checked={value === priority}
+      className={`priority-${priority.toLocaleLowerCase()} ${value === priority ? 'active' : ''}`}
+      disabled={disabled}
+      onClick={() => onChange(priority)}
+    >{PRIORITY_META[priority].label}</button>)}
   </div>;
 }
 
-function ShipmentMetricValue({ loaded, value, unit }: { loaded: boolean; value: React.ReactNode; unit: string }) {
+function OrderIdentity({ item }: { item: Pick<DailyShipmentItemDTO, 'workOrderCode' | 'sourceOrderNo' | 'customerName' | 'productName' | 'specification' | 'batchNo' | 'isCarryover' | 'carryoverDayCount' | 'carriedOverToDate'> }) {
+  return <div className="shipment-order-identity">
+    <strong>{item.workOrderCode}</strong>
+    <span>{item.customerName} · {item.productName}</span>
+    <small>{item.sourceOrderNo} · {item.specification} · 第 {item.batchNo} 批</small>
+    {(item.isCarryover || item.carriedOverToDate) && <div className="shipment-lineage-badges">
+      {item.isCarryover && <b>上日遗留{item.carryoverDayCount > 1 ? ` · 连续 ${item.carryoverDayCount} 天` : ''}</b>}
+      {item.carriedOverToDate && <em>已结转至 {shortDate(item.carriedOverToDate)}</em>}
+    </div>}
+  </div>;
+}
+
+function ShipmentMetricValue({ loaded, value, unit, detail }: { loaded: boolean; value: React.ReactNode; unit: string; detail?: string }) {
   return <strong className={loaded ? undefined : 'loading'} aria-label={loaded ? undefined : '加载中'}>
-    {loaded ? <>{value}<small>{unit}</small></> : <i aria-hidden="true" />}
+    {loaded ? <>{value}<small>{unit}</small>{detail && <em>{detail}</em>}</> : <i aria-hidden="true" />}
   </strong>;
 }
 
@@ -200,7 +248,9 @@ export default function DailyShipmentWorkbench({
   const [candidateFilter, setCandidateFilter] = useState<'all' | 'ready' | 'available' | 'scheduled'>('all');
   const [candidateDrafts, setCandidateDrafts] = useState<Record<string, CandidateDraft>>({});
   const [search, setSearch] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState<'all' | DailyShipmentPriority>('all');
   const [stateFilter, setStateFilter] = useState<'all' | ShipmentProgressState>('all');
+  const [carryoverOnly, setCarryoverOnly] = useState(false);
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const cacheRef = useRef(new Map<string, DailyShipmentWorkbenchDTO>([[initialDate, initialData]]));
@@ -260,12 +310,14 @@ export default function DailyShipmentWorkbench({
   const filteredItems = useMemo(() => {
     const term = search.trim().toLocaleLowerCase('zh-CN');
     return (plan?.items || []).filter(item => {
+      if (priorityFilter !== 'all' && item.shipmentPriority !== priorityFilter) return false;
       if (stateFilter !== 'all' && item.progressState !== stateFilter) return false;
+      if (carryoverOnly && !item.isCarryover) return false;
       if (!term) return true;
       return [item.workOrderCode, item.sourceOrderNo, item.customerName, item.productName, item.specification, item.currentProcess]
         .some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(term));
     });
-  }, [plan, search, stateFilter]);
+  }, [carryoverOnly, plan, priorityFilter, search, stateFilter]);
 
   const filteredCandidates = useMemo(() => {
     const term = candidateSearch.trim().toLocaleLowerCase('zh-CN');
@@ -305,6 +357,7 @@ export default function DailyShipmentWorkbench({
         [candidate.batchId]: {
           quantity: String(candidate.availableQuantity),
           plannedShipAt: `${selectedDate}T16:00`,
+          shipmentPriority: defaultShipmentPriority(candidate.priority),
           note: '',
         },
       };
@@ -340,6 +393,7 @@ export default function DailyShipmentWorkbench({
       productionPlanBatchId: batchId,
       plannedQuantity: Number(candidateDrafts[batchId].quantity),
       plannedShipAt: candidateDrafts[batchId].plannedShipAt,
+      shipmentPriority: candidateDrafts[batchId].shipmentPriority,
       note: candidateDrafts[batchId].note,
     }));
     void execute({ action: 'ADD_ITEMS', shipDate: selectedDate, items }, `已加入 ${items.length} 个订单`);
@@ -351,6 +405,7 @@ export default function DailyShipmentWorkbench({
     if (next.kind === 'edit') setForm({
       quantity: String(next.item.plannedQuantity),
       plannedShipAt: chinaLocalInputFromIso(next.item.plannedShipAt),
+      shipmentPriority: next.item.shipmentPriority,
       note: next.item.note || '',
     });
     if (next.kind === 'cancel') setForm({ reason: '' });
@@ -378,6 +433,7 @@ export default function DailyShipmentWorkbench({
       itemVersion: dialog.item.version,
       plannedQuantity: Number(form.quantity),
       plannedShipAt: form.plannedShipAt,
+      shipmentPriority: form.shipmentPriority,
       note: form.note,
     }, '计划项已更新');
     if (dialog.kind === 'cancel') void execute({
@@ -412,6 +468,11 @@ export default function DailyShipmentWorkbench({
       planId: plan.id,
       planVersion: plan.version,
     }, '当日出货计划已关闭');
+    if (dialog.kind === 'rollover' && plan) void execute({
+      action: 'ROLL_OVER_PLAN',
+      planId: plan.id,
+      planVersion: plan.version,
+    }, '未完成订单已结转到次日计划');
   }
 
   const allShipped = Boolean(plan?.items.length) && plan!.items.every(item => item.pendingQuantity === 0);
@@ -460,22 +521,45 @@ export default function DailyShipmentWorkbench({
           {!data && <span className="shipment-action-skeleton" role="status" aria-label="正在同步计划状态" />}
           {data && editable && <button type="button" className="primary" disabled={!plan?.items.length || busy} onClick={() => openDialog({ kind: 'confirm' })}><Check size={17} />确认计划</button>}
           {data && plan?.status === 'CONFIRMED' && <button type="button" className="primary" disabled={!allShipped || busy} onClick={() => openDialog({ kind: 'close' })}><PackageCheck size={17} />关闭计划</button>}
-          <details><summary aria-label="更多操作"><Menu size={17} />更多</summary><div><button type="button" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} />刷新数据</button></div></details>
+          <details><summary aria-label="更多操作"><Menu size={17} />更多</summary><div>
+            <button type="button" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={15} />刷新数据</button>
+            {plan?.status === 'CONFIRMED' && !allShipped && <button type="button" onClick={() => openDialog({ kind: 'rollover' })}><RotateCcw size={15} />结转未完成订单</button>}
+          </div></details>
         </div>
       </section>
 
       <section className="shipment-kpis" aria-label="当日出货指标" aria-busy={!data}>
         <article><span>计划订单</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.itemCount} unit="批" /><CalendarClock /></article>
         <article><span>计划出货</span><ShipmentMetricValue loaded={Boolean(data)} value={data ? numberText(data.summary.plannedQuantity) : null} unit="件" /><Truck /></article>
-        <article className="ready"><span>已完工可备货</span><ShipmentMetricValue loaded={Boolean(data)} value={data ? numberText(data.summary.readyQuantity) : null} unit="件" /><CheckCircle2 /></article>
+        <article className="priority-urgent"><span>紧急</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.urgent.itemCount} unit="批" detail={data ? `${numberText(data.summary.urgent.quantity)} 件` : undefined} /><ShieldAlert /></article>
+        <article className="priority-priority"><span>优先</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.priority.itemCount} unit="批" detail={data ? `${numberText(data.summary.priority.quantity)} 件` : undefined} /><Clock3 /></article>
+        <article className="priority-normal"><span>常规</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.normal.itemCount} unit="批" detail={data ? `${numberText(data.summary.normal.quantity)} 件` : undefined} /><ListFilter /></article>
+        <article className="carryover"><span>上日遗留</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.carryover.itemCount} unit="批" detail={data ? `${numberText(data.summary.carryover.quantity)} 件` : undefined} /><BellRing /></article>
+        <article className="ready"><span>已完成</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.completed.itemCount} unit="批" detail={data ? `${numberText(data.summary.completed.quantity)} 件` : undefined} /><CheckCircle2 /></article>
         <article className="shipped"><span>实际已出货</span><ShipmentMetricValue loaded={Boolean(data)} value={data ? numberText(data.summary.shippedQuantity) : null} unit="件" /><Send /></article>
-        <article className="pending"><span>待出货</span><ShipmentMetricValue loaded={Boolean(data)} value={data ? numberText(data.summary.pendingQuantity) : null} unit="件" /><Clock3 /></article>
-        <article className="risk"><span>风险订单</span><ShipmentMetricValue loaded={Boolean(data)} value={data?.summary.riskItemCount} unit="批" /><ShieldAlert /></article>
       </section>
+
+      {data && data.summary.carryover.itemCount > 0 && <section className="shipment-carryover-banner incoming">
+        <BellRing size={18} />
+        <div><strong>上日遗留 {data.summary.carryover.itemCount} 批 · {numberText(data.summary.carryover.quantity)} 件</strong><span>已自动同步到今日计划{data.summary.carryover.maxDayCount > 1 ? `，最长连续遗留 ${data.summary.carryover.maxDayCount} 天` : ''}</span></div>
+        <button type="button" onClick={() => { setCarryoverOnly(true); setPriorityFilter('all'); setStateFilter('all'); }}>查看遗留</button>
+        {data.summary.carryover.sourceDate && <button type="button" className="primary" onClick={() => setSelectedDate(data.summary.carryover.sourceDate!)}>查看来源</button>}
+      </section>}
+      {data && data.summary.carryover.itemCount === 0 && data.summary.carriedOut.itemCount > 0 && <section className="shipment-carryover-banner outgoing">
+        <CheckCircle2 size={18} />
+        <div><strong>未完成订单已结转</strong><span>{data.summary.carriedOut.itemCount} 批 · {numberText(data.summary.carriedOut.quantity)} 件已同步到次日计划</span></div>
+      </section>}
+      {data?.carryoverReconciliation?.blockedReason && <div className="shipment-error compact" role="alert"><AlertTriangle size={16} /><span>{data.carryoverReconciliation.blockedReason}</span></div>}
 
       <section className="shipment-list-toolbar">
         <div><span>当日出货清单</span><strong>{shortDate(selectedDate)} · {planStatus}</strong></div>
         <label><Search size={16} /><input value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索工单、客户、产品或规格" /></label>
+        <select value={priorityFilter} onChange={event => { setPriorityFilter(event.target.value as typeof priorityFilter); setCarryoverOnly(false); }} aria-label="筛选出货优先级">
+          <option value="all">全部优先级</option>
+          <option value="URGENT">紧急 · 红色</option>
+          <option value="PRIORITY">优先 · 黄色</option>
+          <option value="NORMAL">常规 · 蓝色</option>
+        </select>
         <select value={stateFilter} onChange={event => setStateFilter(event.target.value as typeof stateFilter)} aria-label="筛选进度状态">
           <option value="all">全部状态</option>
           <option value="READY">已完工待出货</option>
@@ -484,7 +568,9 @@ export default function DailyShipmentWorkbench({
           <option value="OVERDUE">已超时</option>
           <option value="PARTIAL">部分出货</option>
           <option value="SHIPPED">已出货</option>
+          <option value="CARRIED_OVER">已结转</option>
         </select>
+        {carryoverOnly && <button type="button" className="shipment-filter-chip" onClick={() => setCarryoverOnly(false)}>仅看遗留 <X size={12} /></button>}
         <b>{data ? `${filteredItems.length} / ${plan?.items.length ?? 0} 批` : '— / — 批'}</b>
       </section>
 
@@ -495,10 +581,14 @@ export default function DailyShipmentWorkbench({
         {!data && <div className="shipment-initial-loading"><LoaderCircle className="spin" /><strong>正在加载日出货计划</strong><span>同步本周订单、生产进度与出货记录…</span></div>}
         {data && filteredItems.length > 0 && <div className="shipment-table-scroll hm-scroll-region" tabIndex={0}>
           <table>
-            <thead><tr><th>订单 / 产品</th><th>计划出货</th><th>生产进度</th><th>出货进度</th><th>时间跟踪</th><th>客户交期</th><th>操作</th></tr></thead>
-            <tbody>{filteredItems.map(item => {
+            <thead><tr><th>优先级</th><th>订单 / 产品</th><th>计划出货</th><th>生产进度</th><th>出货进度</th><th>时间跟踪</th><th>客户交期</th><th>操作</th></tr></thead>
+            <tbody>{filteredItems.map((item, index) => {
               const availableToShip = candidateAvailableToShip(item, data.candidates);
-              return <tr key={item.id}>
+              const startsCompletedSection = item.status === 'SHIPPED' && (index === 0 || filteredItems[index - 1]?.status !== 'SHIPPED');
+              return <Fragment key={item.id}>
+                {startsCompletedSection && <tr className="shipment-completed-divider"><td colSpan={8}><div><CheckCircle2 size={14} /><strong>已完成</strong><span>{filteredItems.filter(candidate => candidate.status === 'SHIPPED').length} 批已完成出货，保留在当日记录中</span></div></td></tr>}
+                <tr className={`shipment-row-priority-${item.shipmentPriority.toLocaleLowerCase()} ${item.isCarryover ? 'is-carryover' : ''} ${item.status === 'SHIPPED' ? 'is-completed' : ''}`}>
+                <td><div className={`shipment-priority-badge priority-${item.shipmentPriority.toLocaleLowerCase()}`}><b>{PRIORITY_META[item.shipmentPriority].label}</b><small>{item.isCarryover ? '上日遗留' : item.status === 'SHIPPED' ? '已完成' : PRIORITY_META[item.shipmentPriority].description.split(' · ')[1]}</small></div></td>
                 <td><OrderIdentity item={item} /></td>
                 <td><div className="shipment-plan-quantity"><strong>{numberText(item.plannedQuantity)} 件</strong><span>{timeText(item.plannedShipAt)}</span>{item.note && <small title={item.note}>{item.note}</small>}</div></td>
                 <td><div className="shipment-production"><span><b>{item.currentProcess}</b><em>{numberText(item.completedQuantity)} / {numberText(item.batchQuantity)}</em></span><div><i style={{ width: `${Math.min(100, item.productionProgress)}%` }} /></div><small>{numberText(item.productionProgress)}% · {productionStageText(item.productionStage)}</small></div></td>
@@ -508,10 +598,11 @@ export default function DailyShipmentWorkbench({
                 <td><div className="shipment-row-actions">
                   {editable && <button type="button" title="修改计划" onClick={() => openDialog({ kind: 'edit', item })}><Pencil size={15} /></button>}
                   {editable && <button type="button" className="danger" title="取消计划项" onClick={() => openDialog({ kind: 'cancel', item })}><X size={15} /></button>}
-                  {plan?.status === 'CONFIRMED' && item.pendingQuantity > 0 && <button type="button" className="ship" disabled={availableToShip <= 0} title={availableToShip > 0 ? '登记实际出货' : '暂无已完工可出货数量'} onClick={() => openDialog({ kind: 'ship', item })}><Truck size={15} />实发</button>}
+                  {plan?.status === 'CONFIRMED' && item.status !== 'CARRIED_OVER' && item.pendingQuantity > 0 && <button type="button" className="ship" disabled={availableToShip <= 0} title={availableToShip > 0 ? '登记实际出货' : '暂无已完工可出货数量'} onClick={() => openDialog({ kind: 'ship', item })}><Truck size={15} />实发</button>}
                   {item.events.length > 0 && <button type="button" className="history" onClick={() => openDialog({ kind: 'events', item })}><History size={15} />{item.events.length}</button>}
                 </div></td>
-              </tr>;
+                </tr>
+              </Fragment>;
             })}</tbody>
           </table>
         </div>}
@@ -541,7 +632,10 @@ export default function DailyShipmentWorkbench({
               <button type="button" className="shipment-candidate-select" aria-pressed={selected} disabled={!editable || candidate.availableQuantity <= 0} onClick={() => toggleCandidate(candidate)}><i>{selected && <Check size={13} />}</i><span><strong>{candidate.workOrderCode}</strong><small>{candidate.customerName} · {candidate.productName}</small><em>{candidate.specification} · 第 {candidate.batchNo} 批</em></span></button>
               <dl><div><dt>批次数量</dt><dd>{numberText(candidate.batchQuantity)}</dd></div><div><dt>已排计划</dt><dd>{numberText(candidate.scheduledQuantity)}</dd></div><div><dt>剩余可排</dt><dd>{numberText(candidate.availableQuantity)}</dd></div><div><dt>已完工</dt><dd>{numberText(candidate.completedQuantity)}</dd></div></dl>
               <div className="shipment-candidate-progress"><span><b>{candidate.currentProcess}</b><em>{numberText(candidate.productionProgress)}%</em></span><div><i style={{ width: `${Math.min(100, candidate.productionProgress)}%` }} /></div>{candidate.scheduledDates.length > 0 && <small>已安排：{candidate.scheduledDates.map(shortDate).join('、')}</small>}</div>
-              {selected && <div className="shipment-candidate-form"><label>计划数量<input type="number" min="1" max={candidate.availableQuantity} value={draft.quantity} onChange={event => updateCandidateDraft(candidate.batchId, { quantity: event.target.value })} /></label><label>计划时间<input type="datetime-local" min={`${selectedDate}T00:00`} max={`${selectedDate}T23:59`} value={draft.plannedShipAt} onChange={event => updateCandidateDraft(candidate.batchId, { plannedShipAt: event.target.value })} /></label><label className="note">备注<input value={draft.note} maxLength={500} onChange={event => updateCandidateDraft(candidate.batchId, { note: event.target.value })} placeholder="可选" /></label></div>}
+              {selected && <div className="shipment-candidate-form">
+                <div className="shipment-candidate-priority"><span>出货优先级</span><PrioritySelector compact value={draft.shipmentPriority} onChange={shipmentPriority => updateCandidateDraft(candidate.batchId, { shipmentPriority })} /></div>
+                <label>计划数量<input type="number" min="1" max={candidate.availableQuantity} value={draft.quantity} onChange={event => updateCandidateDraft(candidate.batchId, { quantity: event.target.value })} /></label><label>计划时间<input type="datetime-local" min={`${selectedDate}T00:00`} max={`${selectedDate}T23:59`} value={draft.plannedShipAt} onChange={event => updateCandidateDraft(candidate.batchId, { plannedShipAt: event.target.value })} /></label><label className="note">备注<input value={draft.note} maxLength={500} onChange={event => updateCandidateDraft(candidate.batchId, { note: event.target.value })} placeholder="可选" /></label>
+              </div>}
             </article>;
           })}
           {!filteredCandidates.length && <div className="shipment-candidate-empty"><PackageCheck size={26} /><strong>没有匹配的本周订单</strong><span>当前周未下达生产，或订单已全部分配完毕。</span></div>}
@@ -551,13 +645,13 @@ export default function DailyShipmentWorkbench({
     </div>}
 
     {dialog && <DialogShell
-      title={dialog.kind === 'edit' ? '修改出货计划' : dialog.kind === 'cancel' ? '取消计划项' : dialog.kind === 'ship' ? '登记实际出货' : dialog.kind === 'events' ? '出货流水' : dialog.kind === 'reverse' ? '撤销实发记录' : dialog.kind === 'confirm' ? '确认当日计划' : '关闭当日计划'}
+      title={dialog.kind === 'edit' ? '修改出货计划' : dialog.kind === 'cancel' ? '取消计划项' : dialog.kind === 'ship' ? '登记实际出货' : dialog.kind === 'events' ? '出货流水' : dialog.kind === 'reverse' ? '撤销实发记录' : dialog.kind === 'confirm' ? '确认当日计划' : dialog.kind === 'rollover' ? '结转未完成订单' : '关闭当日计划'}
       description={'item' in dialog ? `${dialog.item.workOrderCode} · ${dialog.item.customerName}` : `${selectedDate} · ${plan?.items.length || 0} 批订单`}
       error={error}
       busy={busy}
       onClose={() => { if (!busy) { setDialog(null); setError(''); } }}
     >
-      {dialog.kind === 'edit' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><OrderIdentity item={dialog.item} /><div className="shipment-dialog-grid"><label>计划数量<input required type="number" min="1" max={dialog.item.batchQuantity} value={form.quantity || ''} onChange={event => setForm(current => ({ ...current, quantity: event.target.value }))} /></label><label>计划出货时间<input required type="datetime-local" min={`${selectedDate}T00:00`} max={`${selectedDate}T23:59`} value={form.plannedShipAt || ''} onChange={event => setForm(current => ({ ...current, plannedShipAt: event.target.value }))} /></label><label className="full">备注<textarea value={form.note || ''} maxLength={500} onChange={event => setForm(current => ({ ...current, note: event.target.value }))} /></label></div><footer><button type="button" onClick={() => setDialog(null)}>取消</button><button className="primary" disabled={busy} type="submit">保存修改</button></footer></form>}
+      {dialog.kind === 'edit' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><OrderIdentity item={dialog.item} /><div className="shipment-dialog-grid"><div className="shipment-dialog-priority"><span>出货优先级</span><PrioritySelector value={(form.shipmentPriority || dialog.item.shipmentPriority) as DailyShipmentPriority} onChange={shipmentPriority => setForm(current => ({ ...current, shipmentPriority }))} /></div><label>计划数量<input required type="number" min="1" max={dialog.item.batchQuantity} value={form.quantity || ''} onChange={event => setForm(current => ({ ...current, quantity: event.target.value }))} /></label><label>计划出货时间<input required type="datetime-local" min={`${selectedDate}T00:00`} max={`${selectedDate}T23:59`} value={form.plannedShipAt || ''} onChange={event => setForm(current => ({ ...current, plannedShipAt: event.target.value }))} /></label><label className="full">备注<textarea value={form.note || ''} maxLength={500} onChange={event => setForm(current => ({ ...current, note: event.target.value }))} /></label></div><footer><button type="button" onClick={() => setDialog(null)}>取消</button><button className="primary" disabled={busy} type="submit">保存修改</button></footer></form>}
       {dialog.kind === 'cancel' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><OrderIdentity item={dialog.item} /><div className="shipment-warning"><AlertTriangle size={18} /><span>取消后会释放该批次的可排数量；历史修改仍会保留。</span></div><label className="shipment-single-field">取消原因<textarea required value={form.reason || ''} maxLength={500} onChange={event => setForm({ reason: event.target.value })} placeholder="请填写取消原因" /></label><footer><button type="button" onClick={() => setDialog(null)}>返回</button><button className="danger" disabled={busy} type="submit">确认取消</button></footer></form>}
       {dialog.kind === 'ship' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><OrderIdentity item={dialog.item} /><div className="shipment-availability"><span>本日待出 <b>{numberText(dialog.item.pendingQuantity)}</b> 件</span><span>当前完工可出 <b>{numberText(candidateAvailableToShip(dialog.item, data?.candidates || []))}</b> 件</span></div><div className="shipment-dialog-grid"><label>实际出货数量<input required type="number" min="1" max={Math.min(dialog.item.pendingQuantity, candidateAvailableToShip(dialog.item, data?.candidates || []))} value={form.quantity || ''} onChange={event => setForm(current => ({ ...current, quantity: event.target.value }))} /></label><label>实际出货时间<input required type="datetime-local" max={chinaDateTimeInput()} value={form.shippedAt || ''} onChange={event => setForm(current => ({ ...current, shippedAt: event.target.value }))} /></label><label className="full">出货备注<textarea value={form.note || ''} maxLength={500} onChange={event => setForm(current => ({ ...current, note: event.target.value }))} /></label></div><footer><button type="button" onClick={() => setDialog(null)}>取消</button><button className="primary" disabled={busy || Number(form.quantity) <= 0} type="submit"><Truck size={16} />确认实发</button></footer></form>}
       {dialog.kind === 'events' && <div className="shipment-event-panel"><OrderIdentity item={dialog.item} /><div className="shipment-event-summary"><span>计划 <b>{numberText(dialog.item.plannedQuantity)}</b></span><span>实发 <b>{numberText(dialog.item.shippedQuantity)}</b></span><span>待出 <b>{numberText(dialog.item.pendingQuantity)}</b></span></div><div className="shipment-event-list">{dialog.item.events.map(event => {
@@ -567,6 +661,7 @@ export default function DailyShipmentWorkbench({
       {dialog.kind === 'reverse' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><OrderIdentity item={dialog.item} /><div className="shipment-warning"><RotateCcw size={18} /><span>撤销不会删除原记录，而是新增反向流水；已关闭计划会恢复为已确认。</span></div><div className="shipment-dialog-grid"><label>撤销数量<input required type="number" min="1" max={dialog.event.quantity} value={form.quantity || ''} onChange={event => setForm(current => ({ ...current, quantity: event.target.value }))} /></label><label>撤销时间<input required type="datetime-local" max={chinaDateTimeInput()} value={form.reversedAt || ''} onChange={event => setForm(current => ({ ...current, reversedAt: event.target.value }))} /></label><label className="full">撤销原因<textarea required value={form.reason || ''} maxLength={500} onChange={event => setForm(current => ({ ...current, reason: event.target.value }))} /></label></div><footer><button type="button" onClick={() => openDialog({ kind: 'events', item: dialog.item })}>返回流水</button><button className="danger" disabled={busy} type="submit">确认撤销</button></footer></form>}
       {dialog.kind === 'confirm' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><div className="shipment-confirm-card"><CalendarCheck2 size={28} /><strong>确认 {shortDate(selectedDate)} 出货计划</strong><span>共 {plan?.items.length || 0} 批、{numberText(data?.summary.plannedQuantity || 0)} 件。确认后不能再增删或修改计划项，只能登记实际出货。</span></div><footer><button type="button" onClick={() => setDialog(null)}>继续编辑</button><button className="primary" disabled={busy} type="submit">确认计划</button></footer></form>}
       {dialog.kind === 'close' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><div className="shipment-confirm-card success"><CheckCircle2 size={28} /><strong>关闭 {shortDate(selectedDate)} 出货计划</strong><span>全部 {plan?.items.length || 0} 批订单已完成出货。关闭后如撤销实发，计划会自动恢复为已确认。</span></div><footer><button type="button" onClick={() => setDialog(null)}>返回</button><button className="primary" disabled={busy} type="submit">确认关闭</button></footer></form>}
+      {dialog.kind === 'rollover' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><div className="shipment-confirm-card"><RotateCcw size={28} /><strong>结转 {numberText(data?.summary.pendingQuantity || 0)} 件到次日</strong><span>仅转移尚未出货的数量，已出货流水保留在今天；次日计划会继承红黄蓝优先级并标注“上日遗留”。该操作会关闭今天的计划。</span></div><footer><button type="button" onClick={() => setDialog(null)}>暂不结转</button><button className="primary" disabled={busy || !data?.summary.pendingQuantity} type="submit">确认结转</button></footer></form>}
     </DialogShell>}
 
     {toast && <div className="shipment-toast" role="status"><CheckCircle2 size={17} />{toast}</div>}

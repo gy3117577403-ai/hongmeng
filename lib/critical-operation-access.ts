@@ -28,6 +28,7 @@ export const DAILY_SHIPMENT_MUTATION_ACTIONS = [
   'CANCEL_ITEM',
   'CONFIRM_PLAN',
   'CLOSE_PLAN',
+  'ROLL_OVER_PLAN',
   'RECORD_SHIPMENT',
   'REVERSE_SHIPMENT',
 ] as const;
@@ -49,6 +50,7 @@ export function dailyShipmentRequiredAction(
       return 'UPDATE';
     case 'CONFIRM_PLAN':
     case 'CLOSE_PLAN':
+    case 'ROLL_OVER_PLAN':
     case 'RECORD_SHIPMENT':
     case 'REVERSE_SHIPMENT':
       return 'EXECUTE_WORKFLOW';

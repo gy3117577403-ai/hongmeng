@@ -9,6 +9,7 @@ import {
   confirmDailyShipmentPlan,
   DailyShipmentServiceError,
   loadDailyShipmentWorkbench,
+  reconcileDailyShipmentCarryover,
   recordDailyShipment,
   reverseDailyShipment,
 } from '../lib/daily-shipment-service';
@@ -262,6 +263,129 @@ test('daily shipment persists split plans, enforces completed goods, replays saf
     assert.equal(reopenedWorkbench.summary.readyQuantity, 6);
     assert.equal(reopenedWorkbench.plan?.items[0]?.actualShipAt, null);
     assert.equal(reopenedWorkbench.plan?.items[0]?.events.length, 5);
+  } finally {
+    await cleanup(prefix);
+  }
+});
+
+test('daily shipment carries only pending quantity into the next day and keeps priority lineage', {
+  skip: !runDatabaseIntegration,
+}, async () => {
+  const prefix = `ship-roll-${randomUUID().slice(0, 8)}`;
+  await cleanup(prefix);
+  try {
+    const actor = await prisma.user.create({
+      data: {
+        username: `${prefix}-user`,
+        passwordHash: 'integration-test-only',
+        displayName: 'Shipment Carryover',
+        laborRole: LaborAccessRole.ADMIN,
+      },
+    });
+    const workOrder = await prisma.workOrder.create({
+      data: {
+        code: `${prefix}-WO`,
+        customerName: 'Carryover Customer',
+        productName: 'Carryover Product',
+        specification: 'SPEC-ROLL',
+        stage: 'completed',
+        progress: 100,
+        status: 'processing',
+        uncompletedQty: '20',
+        productionTargetQty: 20,
+        completedQty: '20',
+        processName: 'Packaging',
+      },
+    });
+    const planOrder = await prisma.productionPlanOrder.create({
+      data: {
+        sourceOrderNo: `${prefix}-SO`,
+        sourceLineNo: 1,
+        customerName: 'Carryover Customer',
+        salesperson: 'Planner',
+        productName: 'Carryover Product',
+        specification: 'SPEC-ROLL',
+        orderQuantity: 20,
+        orderDate: new Date('2020-01-01T04:00:00.000Z'),
+        customerDueDate: new Date('2020-01-12T04:00:00.000Z'),
+        priority: 'urgent',
+        createdById: actor.id,
+        updatedById: actor.id,
+      },
+    });
+    const batch = await prisma.productionPlanBatch.create({
+      data: {
+        planOrderId: planOrder.id,
+        batchNo: 1,
+        quantity: 20,
+        weekStartDate: new Date('2020-01-06T04:00:00.000Z'),
+        weekEndDate: new Date('2020-01-12T04:00:00.000Z'),
+        plannedCompletionDate: new Date('2020-01-10T04:00:00.000Z'),
+        releaseState: 'active',
+        workOrderId: workOrder.id,
+      },
+    });
+    const monday = await addDailyShipmentItems({
+      actorUserId: actor.id,
+      shipDate: '2020-01-06',
+      idempotencyKey: key(prefix),
+      items: [{
+        productionPlanBatchId: batch.id,
+        plannedQuantity: 20,
+        plannedShipAt: '2020-01-06T16:30',
+        shipmentPriority: 'URGENT',
+      }],
+    });
+    let sourcePlan = await prisma.dailyShipmentPlan.findUniqueOrThrow({ where: { id: monday.planId } });
+    await confirmDailyShipmentPlan({
+      actorUserId: actor.id,
+      planId: sourcePlan.id,
+      planVersion: sourcePlan.version,
+      idempotencyKey: key(prefix),
+    });
+    let sourceItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({ where: { planId: sourcePlan.id } });
+    await recordDailyShipment({
+      actorUserId: actor.id,
+      itemId: sourceItem.id,
+      itemVersion: sourceItem.version,
+      idempotencyKey: key(prefix),
+      quantity: 7,
+      shippedAt: '2020-01-06T08:10:00.000Z',
+    });
+
+    const carried = await reconcileDailyShipmentCarryover({
+      targetShipDate: '2020-01-07',
+      actorUserId: actor.id,
+      strict: true,
+    });
+    assert.equal(carried.itemCount, 1);
+    assert.equal(carried.quantity, 13);
+    sourcePlan = await prisma.dailyShipmentPlan.findUniqueOrThrow({ where: { id: sourcePlan.id } });
+    sourceItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({ where: { planId: sourcePlan.id } });
+    assert.equal(sourcePlan.status, 'CLOSED_WITH_CARRYOVER');
+    assert.equal(sourceItem.status, 'CARRIED_OVER');
+
+    const targetItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({
+      where: { planId: carried.targetPlanId! },
+    });
+    assert.equal(targetItem.plannedQuantity, 13);
+    assert.equal(targetItem.shipmentPriority, 'URGENT');
+    assert.equal(targetItem.carryoverSourceItemId, sourceItem.id);
+    assert.equal(targetItem.carryoverDayCount, 1);
+    assert.equal(targetItem.carryoverQuantity, 13);
+
+    const targetWorkbench = await loadDailyShipmentWorkbench({ shipDate: '2020-01-07' });
+    assert.equal(targetWorkbench.summary.carryover.itemCount, 1);
+    assert.equal(targetWorkbench.summary.carryover.quantity, 13);
+    assert.equal(targetWorkbench.summary.urgent.quantity, 13);
+    assert.equal(targetWorkbench.candidates[0]?.scheduledQuantity, 20);
+
+    const replay = await reconcileDailyShipmentCarryover({
+      targetShipDate: '2020-01-07',
+      actorUserId: actor.id,
+    });
+    assert.equal(replay.itemCount, 0);
+    assert.equal(await prisma.dailyShipmentPlanItem.count({ where: { planId: carried.targetPlanId! } }), 1);
   } finally {
     await cleanup(prefix);
   }

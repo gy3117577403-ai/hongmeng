@@ -3,12 +3,17 @@ import test from 'node:test';
 import {
   assertRecordableShipment,
   assertScheduledQuantity,
+  carryoverPlannedShipAt,
   completionPercentage,
   netShipmentQuantity,
   parsePlannedShipmentTime,
   parseShipmentDate,
   shipmentItemStatus,
+  shipmentPriority,
+  shipmentPriorityRank,
   shipmentProgressState,
+  shipmentReservationQuantity,
+  shiftShipmentDateKey,
   shipmentWeek,
 } from '@/lib/daily-shipment-domain';
 
@@ -117,4 +122,37 @@ test('visible state prioritizes shipped, partial and overdue before production r
     now,
   }), 'READY');
   assert.equal(completionPercentage(3, 8), 37.5);
+});
+
+test('shipment priorities have a stable red-yellow-blue order', () => {
+  assert.deepEqual(
+    ['NORMAL', 'URGENT', 'PRIORITY'].map(shipmentPriority).sort((first, second) => (
+      shipmentPriorityRank(first) - shipmentPriorityRank(second)
+    )),
+    ['URGENT', 'PRIORITY', 'NORMAL'],
+  );
+  assert.throws(() => shipmentPriority('critical'), /有效的出货优先级/);
+});
+
+test('carryover keeps Shanghai shipment time and reserves only historical shipped quantity', () => {
+  assert.equal(shiftShipmentDateKey('2026-08-19', 1), '2026-08-20');
+  assert.equal(
+    carryoverPlannedShipAt(new Date('2026-08-19T08:35:00.000Z'), '2026-08-20').toISOString(),
+    '2026-08-20T08:35:00.000Z',
+  );
+  assert.equal(shipmentReservationQuantity({
+    status: 'CARRIED_OVER',
+    plannedQuantity: 100,
+    events: [
+      { eventType: 'SHIPMENT', quantity: 45 },
+      { eventType: 'REVERSAL', quantity: 5 },
+    ],
+  }), 40);
+  assert.equal(shipmentProgressState({
+    plannedQuantity: 100,
+    shippedQuantity: 40,
+    completedQuantity: 100,
+    plannedShipAt: new Date('2026-08-19T08:35:00.000Z'),
+    itemStatus: 'CARRIED_OVER',
+  }), 'CARRIED_OVER');
 });
