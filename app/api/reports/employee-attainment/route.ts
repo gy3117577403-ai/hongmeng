@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { hasCapability } from '@/lib/department-access';
 import {
   basisPoints,
   dateKeyFromDatabase,
@@ -87,13 +88,18 @@ export async function GET(req: NextRequest) {
     const { date, start, end } = employeeReportRange(period, req.nextUrl.searchParams.get('date'));
     const requestedEmployeeId = String(req.nextUrl.searchParams.get('employeeId') || '').trim();
     let scopedEmployeeIds: string[] | null = null;
-    if (actor.laborRole === 'EMPLOYEE') {
+    const canReadGlobalPeopleReport = hasCapability(actor.access, 'REPORT_CENTER', 'READ')
+      || hasCapability(actor.access, 'BUSINESS', 'READ')
+      || hasCapability(actor.access, 'PLANNING', 'READ')
+      || hasCapability(actor.access, 'MAJOR_APPROVAL', 'READ')
+      || actor.laborRole === 'ADMIN';
+    if (!canReadGlobalPeopleReport && actor.laborRole === 'EMPLOYEE') {
       const actorEmployee = actor.employee;
       if (!actorEmployee || !isProductionWorkforceEmployee(actorEmployee)) {
         return forbidden('账号未绑定生产部且已启用考勤的在职员工档案，无法查看生产达成率');
       }
       scopedEmployeeIds = [actorEmployee.id];
-    } else if (actor.laborRole === 'TEAM_LEAD') {
+    } else if (!canReadGlobalPeopleReport && actor.laborRole === 'TEAM_LEAD') {
       const team = actor.employee?.isActive ? String(actor.employee.team || '').trim() : '';
       if (!team) return forbidden('班组长账号未绑定有效班组，无法查看达成率');
       scopedEmployeeIds = (await prisma.employee.findMany({

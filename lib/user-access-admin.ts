@@ -442,6 +442,9 @@ export async function prepareAccessGrant(
   if (profile === AccessProfileKey.GM_OFFICE_READER_APPROVER && department!.code !== 'GM_OFFICE') {
     throw new AccessGrantInputError('总经办模板只能绑定总经办员工');
   }
+  if (profile === AccessProfileKey.QUALITY_REVIEWER && department!.code !== 'QUALITY') {
+    throw new AccessGrantInputError('质量审核模板必须选择质量部门');
+  }
   if (
     PRODUCTION_ACCESS_PROFILES.includes(profile)
     && department!.code !== 'PRODUCTION'
@@ -486,6 +489,10 @@ export async function prepareAccessGrant(
   }
 
   let scopeKey = department ? `DEPARTMENT:${department.code}` : 'GLOBAL';
+  if (profile === AccessProfileKey.DRAWING_LIBRARY_READER) scopeKey = 'GLOBAL:DRAWING_LIBRARY';
+  if (profile === AccessProfileKey.DRAWING_LIBRARY_EDITOR) scopeKey = 'GLOBAL:DRAWING_LIBRARY';
+  if (profile === AccessProfileKey.REPORT_PEOPLE_READER) scopeKey = 'GLOBAL:REPORT_PEOPLE';
+  if (profile === AccessProfileKey.QUALITY_REVIEWER) scopeKey = 'GLOBAL:QUALITY_REVIEW';
   if (profile === AccessProfileKey.FIELD_REPORTER) scopeKey = `EMPLOYEE:${employee!.id}`;
   if (profile === AccessProfileKey.WORKSHOP_SUPERVISOR) scopeKey = 'WORKSHOP:PRODUCTION';
   if (profile === AccessProfileKey.WORKSHOP_TEAM_LEADER) scopeKey = `TEAM:${targetTeam!.id}`;

@@ -27,6 +27,10 @@ export const ACCESS_PROFILE_CODES = [
   'ADMIN_GLOBAL',
   'DEPARTMENT_FULL',
   'PROCESS_SPECIALIST',
+  'DRAWING_LIBRARY_READER',
+  'DRAWING_LIBRARY_EDITOR',
+  'REPORT_PEOPLE_READER',
+  'QUALITY_REVIEWER',
   'FIELD_REPORTER',
   'GM_OFFICE_READER_APPROVER',
   'FINANCE_ACCOUNT_ONLY',
@@ -54,6 +58,7 @@ export const ACCESS_MODULES = [
   'ISSUE_MANAGEMENT',
   'CHANGE_MANAGEMENT',
   'DRAWING_LIBRARY',
+  'REPORT_CENTER',
   'TERMINAL_TOOLING',
   'PLANNING',
   'HR',
@@ -130,7 +135,8 @@ export const MODULE_ACTION_MATRIX = {
   PROCESS: DEPARTMENT_OPERATION_ACTIONS,
   ISSUE_MANAGEMENT: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
   CHANGE_MANAGEMENT: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
-  DRAWING_LIBRARY: ['READ'],
+  DRAWING_LIBRARY: ['READ', 'CREATE', 'UPDATE'],
+  REPORT_CENTER: ['READ'],
   TERMINAL_TOOLING: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
   PLANNING: DEPARTMENT_OPERATION_ACTIONS,
   HR: DEPARTMENT_OPERATION_ACTIONS,
@@ -280,6 +286,18 @@ function addBasicSummary(target: Set<CapabilityCode>): void {
   target.add(capabilityCode('BASIC_SUMMARY', 'READ'));
 }
 
+function addWorkbenchCommon(
+  capabilities: Set<CapabilityCode>,
+  addScope: (scope: AccessScopeHint) => void,
+  grant: AccessGrant,
+): void {
+  addSelfService(capabilities);
+  addBasicSummary(capabilities);
+  addScope(scopeForGrant(grant, 'ACCOUNT_SELF', 'SELF', false));
+  addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
+  addScope(scopeForGrant(grant, 'BASIC_SUMMARY', 'GLOBAL', true));
+}
+
 function scopeDedupKey(scope: AccessScopeHint): string {
   return [
     scope.module,
@@ -416,6 +434,36 @@ export function resolveAccessContext(
       continue;
     }
 
+    if (grant.profile === 'DRAWING_LIBRARY_READER') {
+      addWorkbenchCommon(capabilities, addScope, grant);
+      capabilities.add(capabilityCode('DRAWING_LIBRARY', 'READ'));
+      addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', true));
+      continue;
+    }
+
+    if (grant.profile === 'DRAWING_LIBRARY_EDITOR') {
+      addWorkbenchCommon(capabilities, addScope, grant);
+      addModuleActions(capabilities, 'DRAWING_LIBRARY', ['READ', 'CREATE', 'UPDATE']);
+      addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', false));
+      continue;
+    }
+
+    if (grant.profile === 'REPORT_PEOPLE_READER') {
+      addWorkbenchCommon(capabilities, addScope, grant);
+      capabilities.add(capabilityCode('REPORT_CENTER', 'READ'));
+      addScope(scopeForGrant(grant, 'REPORT_CENTER', 'GLOBAL', true));
+      continue;
+    }
+
+    if (grant.profile === 'QUALITY_REVIEWER') {
+      addWorkbenchCommon(capabilities, addScope, grant);
+      addModuleActions(capabilities, 'QUALITY', ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
+      capabilities.add(capabilityCode('DRAWING_LIBRARY', 'READ'));
+      addScope(scopeForGrant(grant, 'QUALITY', 'GLOBAL', false));
+      addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', true));
+      continue;
+    }
+
     if (grant.profile === 'PROCESS_SPECIALIST') {
       // A process specialist owns process standards while collaborating with
       // production, issues, changes and drawings through deliberately narrower
@@ -426,7 +474,7 @@ export function resolveAccessContext(
       addModuleActions(capabilities, 'PROCESS', DEPARTMENT_OPERATION_ACTIONS);
       addModuleActions(capabilities, 'ISSUE_MANAGEMENT', MODULE_ACTION_MATRIX.ISSUE_MANAGEMENT);
       addModuleActions(capabilities, 'CHANGE_MANAGEMENT', MODULE_ACTION_MATRIX.CHANGE_MANAGEMENT);
-      addModuleActions(capabilities, 'DRAWING_LIBRARY', MODULE_ACTION_MATRIX.DRAWING_LIBRARY);
+      capabilities.add(capabilityCode('DRAWING_LIBRARY', 'READ'));
       addModuleActions(capabilities, 'TERMINAL_TOOLING', MODULE_ACTION_MATRIX.TERMINAL_TOOLING);
       capabilities.add(capabilityCode('PRODUCTION', 'READ'));
       addScope(scopeForGrant(grant, 'ACCOUNT_SELF', 'SELF', false));

@@ -129,7 +129,7 @@ function focusDueText(item: ReportCenterFocusItemDTO): string {
   return item.entityType === 'sampleTask' ? dateOnly(item.dueAt) : dateText(item.dueAt);
 }
 
-function rangeText(report: ReportCenterOverviewDTO | null): string {
+function rangeText(report: { rangeStart: string; rangeEnd: string } | null): string {
   if (!report) return '统计范围加载中';
   const end = new Date(new Date(report.rangeEnd).getTime() - 1);
   return `${dateOnly(report.rangeStart)} 至 ${dateOnly(end.toISOString())}`;
@@ -157,7 +157,13 @@ function safeHref(item: ReportCenterFocusItemDTO): string {
 }
 
 export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }) {
-  const [view, setView] = useState<ReportView>('operations');
+  const fullReportAccess = ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL']
+    .some(module => user.access.modules.includes(module as CurrentUserDTO['access']['modules'][number]));
+  const peopleOnlyAccess = !fullReportAccess && user.access.modules.includes('REPORT_CENTER');
+  const availableReportTabs = fullReportAccess
+    ? reportTabs
+    : reportTabs.filter(tab => tab.key === 'people');
+  const [view, setView] = useState<ReportView>(() => fullReportAccess ? 'operations' : 'people');
   const [peopleView, setPeopleView] = useState<PeopleView>('attainment');
   const [operationsView, setOperationsView] = useState<OperationsView>('summary');
   const [period, setPeriod] = useState<ReportCenterPeriodDTO>('week');
@@ -188,22 +194,31 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
     if (requested === 'labor' || requested === 'manual') {
       setView('people');
       setPeopleView('labor');
-    } else if (requested === 'employee') setView('people');
-    else if (requested === 'abnormal') setView('quality');
-  }, []);
+    } else if (requested === 'employee' || peopleOnlyAccess) setView('people');
+    else if (requested === 'abnormal' && fullReportAccess) setView('quality');
+  }, [fullReportAccess, peopleOnlyAccess]);
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError('');
-    const overviewParams = new URLSearchParams({ period, date, mode });
-    if (customer) overviewParams.set('customer', customer);
     const detailParams = new URLSearchParams({ period, date });
-    Promise.all([
-      fetch(`/api/reports/overview?${overviewParams}`, { cache: 'no-store', signal: controller.signal }),
-      fetch(`/api/reports/employee-attainment?${detailParams}`, { cache: 'no-store', signal: controller.signal }),
-      fetch(`/api/reports/abnormal-time?${detailParams}`, { cache: 'no-store', signal: controller.signal }),
-    ]).then(async ([overviewResponse, employeeResponse, abnormalResponse]) => {
+    const loadPeopleOnly = async () => {
+      const employeeResponse = await fetch(`/api/reports/employee-attainment?${detailParams}`, {
+        cache: 'no-store', signal: controller.signal,
+      });
+      const employeeBody = await employeeResponse.json() as ApiResponse<EmployeeAttainmentReportDTO>;
+      if (!employeeResponse.ok || !employeeBody.report) throw new Error(employeeBody.error || '人员报表加载失败');
+      setEmployeeReport(employeeBody.report);
+    };
+    const loadFullReport = async () => {
+      const overviewParams = new URLSearchParams({ period, date, mode });
+      if (customer) overviewParams.set('customer', customer);
+      const [overviewResponse, employeeResponse, abnormalResponse] = await Promise.all([
+        fetch(`/api/reports/overview?${overviewParams}`, { cache: 'no-store', signal: controller.signal }),
+        fetch(`/api/reports/employee-attainment?${detailParams}`, { cache: 'no-store', signal: controller.signal }),
+        fetch(`/api/reports/abnormal-time?${detailParams}`, { cache: 'no-store', signal: controller.signal }),
+      ]);
       const [overviewBody, employeeBody, abnormalBody] = await Promise.all([
         overviewResponse.json() as Promise<ApiResponse<ReportCenterOverviewDTO>>,
         employeeResponse.json() as Promise<ApiResponse<EmployeeAttainmentReportDTO>>,
@@ -215,15 +230,16 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
       setOverview(overviewBody.report);
       setEmployeeReport(employeeBody.report);
       setAbnormalReport(abnormalBody.report);
-    }).catch(reason => {
+    };
+    (fullReportAccess ? loadFullReport() : loadPeopleOnly()).catch(reason => {
       if ((reason as { name?: string }).name === 'AbortError') return;
       setError(reason instanceof Error ? reason.message : '报表加载失败');
     }).finally(() => setLoading(false));
     return () => controller.abort();
-  }, [customer, date, mode, period, refreshToken]);
+  }, [customer, date, fullReportAccess, mode, period, refreshToken]);
 
   useEffect(() => {
-    if (view !== 'operations') return undefined;
+    if (!fullReportAccess || view !== 'operations') return undefined;
     const controller = new AbortController();
     setOperationsLoading(true);
     setOperationsError('');
@@ -245,7 +261,7 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
       setOperationsError(reason instanceof Error ? reason.message : '生产数据总表加载失败');
     }).finally(() => setOperationsLoading(false));
     return () => controller.abort();
-  }, [operationsMonth, refreshToken, view]);
+  }, [fullReportAccess, operationsMonth, refreshToken, view]);
 
   useEffect(() => {
     if (view !== 'people' || peopleView !== 'labor') return undefined;
@@ -397,7 +413,7 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
     <div className="report-center-frame">
       <section className="report-center-command" aria-label="报表中心命令栏">
         <span id="report-center-navigation-trigger" className="report-center-nav-trigger" />
-        <div className="report-center-title"><span><BarChart3 /></span><div><small>数据决策</small><h1>报表中心</h1></div><em>{reportTabs.find(item => item.key === view)?.label}</em></div>
+        <div className="report-center-title"><span><BarChart3 /></span><div><small>数据决策</small><h1>报表中心</h1></div><em>{availableReportTabs.find(item => item.key === view)?.label}</em></div>
         <div className="report-center-source"><Database /><span><strong>真实业务数据</strong><small>金额类指标未启用</small></span></div>
         <label className="report-center-search"><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={view === 'operations' ? '搜索员工、工号、岗位或班组' : '搜索工单、客户、产品或员工'} aria-label="搜索报表" /></label>
         <button className="icon" type="button" title="刷新报表" aria-label="刷新报表" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} /></button>
@@ -405,7 +421,7 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
       </section>
 
       <section className="report-center-tabs" aria-label="报表分类">
-        <div role="tablist">{reportTabs.map(tab => <button className={view === tab.key ? 'active' : ''} type="button" role="tab" aria-selected={view === tab.key} key={tab.key} onClick={() => setView(tab.key)}>{tab.label}</button>)}</div>
+        <div role="tablist">{availableReportTabs.map(tab => <button className={view === tab.key ? 'active' : ''} type="button" role="tab" aria-selected={view === tab.key} key={tab.key} onClick={() => setView(tab.key)}>{tab.label}</button>)}</div>
         <div className="report-center-filter-pair">
           {view === 'operations' ? <label><UsersRound /><select value={operationsTeam} onChange={event => setOperationsTeam(event.target.value)} aria-label="班组筛选"><option value="">全部班组</option>{operationsTeams.map(team => <option value={team} key={team}>{team}</option>)}</select></label> : customerScopedView ? <><label><Layers3 /><select value={mode} onChange={event => setMode(event.target.value as ReportCenterModeDTO)} aria-label="生产类型"><option value="all">量产 + 样品</option><option value="mass">仅量产</option><option value="sample">仅样品</option></select></label>
             <label><UsersRound /><select value={customer} onChange={event => setCustomer(event.target.value)} aria-label="客户筛选"><option value="">全部客户</option>{(overview?.customers || []).map(item => <option value={item} key={item}>{item}</option>)}</select></label></> : <span className="report-center-scope-pill"><UsersRound />全厂人员与异常口径</span>}
@@ -419,9 +435,9 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
         <small>{operationsReport ? `截止 ${dateText(operationsReport.cutoffAt)}` : '正在更新'}</small>
       </section> : <section className="report-center-period-bar">
         <div>{(['today', 'week', 'month'] as ReportCenterPeriodDTO[]).map(item => <button className={period === item ? 'active' : ''} type="button" key={item} onClick={() => setPeriod(item)}>{item === 'today' ? '今日' : item === 'week' ? '本周' : '本月'}</button>)}</div>
-        <label><CalendarDays /><input type="date" value={date} onChange={event => setDate(event.target.value)} /><span>{rangeText(overview)}</span></label>
-        <p><ShieldCheck />{customer && customerScopedView ? '客户筛选仅作用于量产、样品和资料；人员与异常保持全厂口径' : '成品数量只统计最终工序良品，工序数据仅用于瓶颈和质量分析'}</p>
-        <small>{overview ? `更新于 ${dateText(overview.generatedAt).slice(-5)}` : '正在更新'}</small>
+        <label><CalendarDays /><input type="date" value={date} onChange={event => setDate(event.target.value)} /><span>{rangeText(peopleOnlyAccess ? employeeReport : overview)}</span></label>
+        <p><ShieldCheck />{peopleOnlyAccess ? '人事只读口径：全厂确认考勤、标准工时与免责异常' : customer && customerScopedView ? '客户筛选仅作用于量产、样品和资料；人员与异常保持全厂口径' : '成品数量只统计最终工序良品，工序数据仅用于瓶颈和质量分析'}</p>
+        <small>{peopleOnlyAccess ? (employeeReport ? '人员数据已同步' : '正在更新') : overview ? `更新于 ${dateText(overview.generatedAt).slice(-5)}` : '正在更新'}</small>
       </section>}
 
       {view === 'operations' ? <section className="report-center-kpis operations-kpis" aria-label="生产数据关键指标">
@@ -432,6 +448,13 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
         <KpiCard icon={<Activity />} tone="blue" label="有效出勤工时" value={compactHours(operationsReport?.summary.attendanceMilliseconds || 0)} note={`免责异常 ${compactHours(operationsReport?.summary.exemptAbnormalMilliseconds || 0)}`} />
         <KpiCard icon={<Database />} tone={attainmentTone(operationsReport?.summary.dataCoverageBasisPoints)} label="考勤确认覆盖" value={percentText(operationsReport?.summary.dataCoverageBasisPoints)} note={`确认 ${operationsReport?.summary.confirmedAttendanceRecords || 0} · 草稿 ${operationsReport?.summary.draftAttendanceRecords || 0}`} />
         <KpiCard icon={<CircleAlert />} tone={(operationsReport?.summary.unmatchedStandardLaborMilliseconds || 0) > 0 ? 'red' : 'green'} label="待匹配标准工时" value={compactHours(operationsReport?.summary.unmatchedStandardLaborMilliseconds || 0)} note="有报工但缺确认考勤" />
+      </section> : peopleOnlyAccess ? <section className="report-center-kpis" aria-label="人员效率关键指标">
+        <KpiCard icon={<UsersRound />} tone="blue" label="统计员工" value={numberText(employeeSummary?.employeeCount || 0)} note={`确认出勤 ${employeeSummary?.attendanceConfirmedDays || 0} 人日`} />
+        <KpiCard icon={<Gauge />} tone={attainmentTone(employeeSummary?.attainmentBasisPoints)} label="全厂出勤达成率" value={percentText(employeeSummary?.attainmentBasisPoints)} note="标准工时 ÷ 有效产能工时" />
+        <KpiCard icon={<Clock3 />} tone="green" label="标准产出工时" value={formatProcessDuration(employeeSummary?.standardLaborMilliseconds || 0)} note={`工时记录 ${employeeSummary?.claimCount || 0} 笔`} />
+        <KpiCard icon={<UserCheck />} tone="purple" label="有效出勤工时" value={formatProcessDuration(employeeSummary?.attendanceMilliseconds || 0)} note={`覆盖率 ${percentText(employeeSummary?.coverageBasisPoints)}`} />
+        <KpiCard icon={<TimerOff />} tone="amber" label="免责异常工时" value={formatProcessDuration(employeeSummary?.exemptAbnormalMilliseconds || 0)} note="仅统计品质已确认记录" />
+        <KpiCard icon={<CircleAlert />} tone={(employeeSummary?.unmatchedStandardLaborMilliseconds || 0) > 0 ? 'red' : 'green'} label="待匹配标准工时" value={formatProcessDuration(employeeSummary?.unmatchedStandardLaborMilliseconds || 0)} note="有报工但缺确认考勤" />
       </section> : <section className="report-center-kpis" aria-label="关键指标">
         <KpiCard icon={<Gauge />} tone="orange" label={overview?.quantityScope.label || '数量达成率'} value={percentText(summary?.completionBasisPoints)} note={`${numberText(summary?.completedQty || 0)} / ${numberText(summary?.plannedQty || 0)} ${overview?.quantityScope.unitLabel || ''}`} />
         <KpiCard icon={<ClipboardCheck />} tone="green" label="完成任务/工单" value={numberText(summary?.completedOrders || 0)} note={`进行中 ${summary?.activeOrders || 0} · 待开始 ${summary?.pendingOrders || 0}`} />
@@ -507,7 +530,7 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
         <FocusTable items={focusItems.filter(item => item.entityType === 'sampleTask')} title="样品任务与审核进度" onSelect={setSelectedFocus} />
       </section>}
 
-      {view !== 'operations' && loading && !overview && <div className="report-center-loading"><Loader2 className="spin" /><strong>正在汇总真实业务数据</strong><span>成品、工序、人员、异常与样品资料分别按各自口径计算</span></div>}
+      {view !== 'operations' && loading && !(peopleOnlyAccess ? employeeReport : overview) && <div className="report-center-loading"><Loader2 className="spin" /><strong>正在汇总真实业务数据</strong><span>{peopleOnlyAccess ? '确认考勤、标准工时与异常免责分别按正式口径计算' : '成品、工序、人员、异常与样品资料分别按各自口径计算'}</span></div>}
     </div>
     {selectedFocus && <FocusDrawer item={selectedFocus} onClose={() => setSelectedFocus(null)} />}
     {toast && <div className="report-center-toast"><CheckCircle2 />{toast}</div>}

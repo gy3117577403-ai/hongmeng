@@ -10,6 +10,13 @@ type EmployeeIdentity = {
   team: string | null;
 };
 
+type RememberedAccount = {
+  loginId: string;
+  displayName?: string;
+};
+
+const REMEMBERED_ACCOUNT_KEY = 'hm-login-remembered-account-v1';
+
 export default function LoginForm({ nextPath = '/home' }: { nextPath?: string }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -18,12 +25,27 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
   const [notice, setNotice] = useState('');
   const [identity, setIdentity] = useState<EmployeeIdentity | null>(null);
   const [identityState, setIdentityState] = useState<'idle' | 'loading' | 'missing'>('idle');
+  const [rememberAccount, setRememberAccount] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(false);
+  const [rememberedAccount, setRememberedAccount] = useState<RememberedAccount | null>(null);
 
   useEffect(() => {
     const message = sessionStorage.getItem('hm-login-notice') || '';
     if (!message) return;
     sessionStorage.removeItem('hm-login-notice');
     setNotice(message);
+  }, []);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(REMEMBERED_ACCOUNT_KEY) || 'null') as RememberedAccount | null;
+      if (!saved?.loginId) return;
+      setRememberedAccount(saved);
+      setUsername(saved.loginId);
+      setRememberAccount(true);
+    } catch {
+      localStorage.removeItem(REMEMBERED_ACCOUNT_KEY);
+    }
   }, []);
 
   useEffect(() => {
@@ -66,12 +88,23 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
       const r = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, rememberDevice }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) {
         setError(d.message || '登录失败');
         return;
+      }
+      if (rememberAccount) {
+        const account = {
+          loginId: username.trim(),
+          displayName: String(d.displayName || identity?.name || '').trim() || undefined,
+        } satisfies RememberedAccount;
+        localStorage.setItem(REMEMBERED_ACCOUNT_KEY, JSON.stringify(account));
+        setRememberedAccount(account);
+      } else {
+        localStorage.removeItem(REMEMBERED_ACCOUNT_KEY);
+        setRememberedAccount(null);
       }
       const safeNextPath = nextPath.startsWith('/') && !nextPath.startsWith('//') ? nextPath : '/home';
       if (d.mustChangePassword === true) {
@@ -84,6 +117,18 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
     } finally {
       setLoading(false);
     }
+  }
+
+  function clearRememberedAccount() {
+    localStorage.removeItem(REMEMBERED_ACCOUNT_KEY);
+    setRememberedAccount(null);
+    setRememberAccount(false);
+    setRememberDevice(false);
+    setUsername('');
+    setPassword('');
+    setIdentity(null);
+    setIdentityState('idle');
+    setError('');
   }
 
   return (
@@ -107,7 +152,11 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
           <span>账号登录</span>
           <strong>欢迎回来</strong>
         </div>
-        <label>员工编号 / 管理账号<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} placeholder="生产员工请输入员工编号" autoFocus /></label>
+        {rememberedAccount && <div className="login-remembered-account">
+          <span><small>上次账号</small><strong>{rememberedAccount.displayName || rememberedAccount.loginId}</strong><em>{rememberedAccount.loginId}</em></span>
+          <button type="button" onClick={clearRememberedAccount}>换个账号</button>
+        </div>}
+        <label>员工编号 / 管理账号<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} placeholder="生产员工请输入员工编号" autoFocus={!rememberedAccount} /></label>
         {identity && <div className="login-employee-identity" role="status">
           <span>身份已识别</span>
           <strong>{identity.employeeNo} · {identity.name}</strong>
@@ -116,6 +165,18 @@ export default function LoginForm({ nextPath = '/home' }: { nextPath?: string })
         {identityState === 'loading' && <div className="login-identity-hint">正在核对员工姓名...</div>}
         {identityState === 'missing' && <div className="login-identity-hint warning">未找到已开通的员工账号，请核对编号或联系管理员</div>}
         <label>密码<input type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></label>
+        <div className="login-session-options">
+          <label><input type="checkbox" checked={rememberAccount} onChange={event => {
+            const checked = event.target.checked;
+            setRememberAccount(checked);
+            if (!checked) {
+              localStorage.removeItem(REMEMBERED_ACCOUNT_KEY);
+              setRememberedAccount(null);
+            }
+          }} /><span><strong>记住账号</strong><small>只保存员工编号，不保存密码</small></span></label>
+          <label><input type="checkbox" checked={rememberDevice} onChange={event => setRememberDevice(event.target.checked)} /><span><strong>在此设备保持登录 30 天</strong><small>仅建议个人办公设备使用</small></span></label>
+        </div>
+        {rememberDevice && <div className="login-device-warning">共享电脑或车间平板请勿开启；可随时通过“退出登录”清除会话。</div>}
         {notice && <div className="form-success" role="status">{notice}</div>}
         {error && <div className="form-error">{error}</div>}
         <button className="primary-button" disabled={loading || !username.trim() || !password}>{loading ? '登录中...' : identity ? `以 ${identity.name} 身份登录` : '登录'}</button>

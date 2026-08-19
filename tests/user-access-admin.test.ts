@@ -239,6 +239,44 @@ test('process department uses the dedicated collaboration template', async () =>
   );
 });
 
+test('functional role grants resolve stable global scopes and quality department validation', async () => {
+  const tx = {
+    department: {
+      findFirst: async ({ where }: { where: { id: string } }) => (
+        where.id === 'department-quality'
+          ? { id: where.id, code: 'QUALITY' }
+          : where.id === 'department-hr'
+            ? { id: where.id, code: 'HR' }
+            : null
+      ),
+    },
+  } as never;
+  const employee = { id: 'employee-1', departmentId: 'department-hr', team: null };
+
+  const report = await prepareAccessGrant(tx, {
+    profileKey: 'REPORT_PEOPLE_READER',
+    departmentId: 'department-hr',
+    grantType: 'CONCURRENT',
+  }, employee);
+  assert.equal(report.scopeKey, 'GLOBAL:REPORT_PEOPLE');
+
+  const quality = await prepareAccessGrant(tx, {
+    profileKey: 'QUALITY_REVIEWER',
+    departmentId: 'department-quality',
+    grantType: 'CONCURRENT',
+  }, employee);
+  assert.equal(quality.scopeKey, 'GLOBAL:QUALITY_REVIEW');
+
+  await assert.rejects(
+    prepareAccessGrant(tx, {
+      profileKey: 'QUALITY_REVIEWER',
+      departmentId: 'department-hr',
+      grantType: 'CONCURRENT',
+    }, employee),
+    /质量部门/,
+  );
+});
+
 test('employee rebind requires active concurrent and acting grants to be revoked first', () => {
   for (const grantType of ['CONCURRENT', 'ACTING'] as const) {
     assert.throws(

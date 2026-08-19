@@ -167,7 +167,9 @@ export function DrawingLibraryShell({
   requestedItemId: string;
 }) {
   const canManageDrawing = user.access.capabilities.includes('ENGINEERING:CREATE')
-    || user.access.capabilities.includes('ENGINEERING:UPDATE');
+    || user.access.capabilities.includes('ENGINEERING:UPDATE')
+    || user.access.capabilities.includes('DRAWING_LIBRARY:CREATE')
+    || user.access.capabilities.includes('DRAWING_LIBRARY:UPDATE');
   const canDeleteDrawing = user.access.capabilities.includes('ENGINEERING:DELETE');
   const [items, setItems] = useState(initialItems);
   const [customers, setCustomers] = useState(initialCustomers);

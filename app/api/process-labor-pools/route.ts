@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { hasCapability } from '@/lib/department-access';
 import {
   listProcessLaborPools,
   ProcessLaborServiceError,
@@ -15,6 +16,10 @@ export async function GET(req: NextRequest) {
       workDate: req.nextUrl.searchParams.get('workDate'),
       includeExhausted: req.nextUrl.searchParams.get('includeExhausted') === 'true',
       userId: user.id,
+      globalReadOnly: hasCapability(user.access, 'REPORT_CENTER', 'READ')
+        || hasCapability(user.access, 'BUSINESS', 'READ')
+        || hasCapability(user.access, 'PLANNING', 'READ')
+        || hasCapability(user.access, 'MAJOR_APPROVAL', 'READ'),
     });
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {

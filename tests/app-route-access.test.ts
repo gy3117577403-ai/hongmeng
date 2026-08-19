@@ -82,6 +82,13 @@ test('GM read/approval grants map to reports and workflow but not settings', () 
   assert.equal(canAccessAppRoute(gm, '/dashboard?openSettings=1'), false);
 });
 
+test('personnel report reader can open reports without receiving planning or production pages', () => {
+  const hrReport = access('ACCOUNT_SELF', 'BASIC_SUMMARY', 'REPORT_CENTER');
+  assert.equal(canAccessAppRoute(hrReport, '/workspace/reports'), true);
+  assert.equal(canAccessAppRoute(hrReport, '/weekly-plan-center'), false);
+  assert.equal(canAccessAppRoute(hrReport, '/production'), false);
+});
+
 test('longest specific production rule is selected before general prefix', () => {
   assert.deepEqual(routeAccessRule('/production/qr-print')?.anyOf, ['PRODUCTION']);
 });

@@ -198,6 +198,43 @@ test('process specialist can collaborate without receiving scheduling, reporting
   assert.equal(canAccessApiRoute(process, '/api/major-quality-approvals', 'GET'), false);
 });
 
+test('drawing reader and editor share data while write and destructive actions remain separated', () => {
+  const reader = context({
+    profile: 'DRAWING_LIBRARY_READER',
+    departmentCode: 'QUALITY',
+    grantType: 'CONCURRENT',
+    scopeKey: 'GLOBAL:DRAWING_LIBRARY',
+  });
+  const editor = context({
+    profile: 'DRAWING_LIBRARY_EDITOR',
+    departmentCode: 'ENGINEERING',
+    grantType: 'CONCURRENT',
+    scopeKey: 'GLOBAL:DRAWING_LIBRARY',
+  });
+
+  assert.equal(canAccessApiRoute(reader, '/api/drawing-library', 'GET'), true);
+  assert.equal(canAccessApiRoute(reader, '/api/drawing-library/item-1/files/upload', 'POST'), false);
+  assert.equal(canAccessApiRoute(editor, '/api/drawing-library', 'POST'), true);
+  assert.equal(canAccessApiRoute(editor, '/api/drawing-library/item-1/files/upload', 'POST'), true);
+  assert.equal(canAccessApiRoute(editor, '/api/drawing-library/files/file-1', 'DELETE'), false);
+  assert.equal(canAccessApiRoute(editor, '/api/drawing-library/item-1/sop/publish', 'POST'), false);
+});
+
+test('personnel report reader receives only read-only people report APIs', () => {
+  const people = context({
+    profile: 'REPORT_PEOPLE_READER',
+    departmentCode: 'HR',
+    grantType: 'CONCURRENT',
+    scopeKey: 'GLOBAL:REPORT_PEOPLE',
+  });
+
+  assert.equal(canAccessApiRoute(people, '/api/reports/employee-attainment', 'GET'), true);
+  assert.equal(canAccessApiRoute(people, '/api/reports/overview', 'GET'), false);
+  assert.equal(canAccessApiRoute(people, '/api/reports/abnormal-time', 'GET'), false);
+  assert.equal(canAccessApiRoute(people, '/api/process-labor-pools', 'GET'), true);
+  assert.equal(canAccessApiRoute(people, '/api/process-labor-pools/pool-1/claims', 'POST'), false);
+});
+
 test('workshop leaders can read terminal tooling but cannot change or publish it', () => {
   const supervisor = context({
     profile: 'WORKSHOP_SUPERVISOR',

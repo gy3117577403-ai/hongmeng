@@ -66,7 +66,7 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/workspace/responsibilities', anyOf: ['HR', 'SYSTEM_CONFIGURATION'] },
   {
     prefix: '/workspace/reports',
-    anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL'],
+    anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL', 'REPORT_CENTER'],
   },
   { prefix: '/workspace/knowledge', anyOf: ['SYSTEM_CONFIGURATION'] },
   { prefix: '/workspace/reviews', anyOf: ['ENGINEERING', 'QUALITY'] },

@@ -246,6 +246,114 @@ input:focus-visible {
   box-shadow: 0 0 0 4px var(--orange-soft);
 }
 
+.login-remembered-account {
+  min-height: 62px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px 10px 14px;
+  border: 1px solid #fed7aa;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fff7ed, #fff);
+}
+
+.login-remembered-account > span {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: baseline;
+  gap: 2px 8px;
+}
+
+.login-remembered-account small {
+  grid-column: 1 / -1;
+  color: #9a3412;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.login-remembered-account strong {
+  overflow: hidden;
+  color: #1f2937;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.login-remembered-account em {
+  color: #9ca3af;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.login-remembered-account button {
+  min-height: 34px;
+  flex: 0 0 auto;
+  padding: 0 11px;
+  border: 1px solid #fdba74;
+  border-radius: 10px;
+  background: #fff;
+  color: #c2410c;
+  font-weight: 700;
+}
+
+.login-session-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.login-session-options > label {
+  min-height: 68px;
+  display: flex;
+  grid-template-columns: none;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid #e5e7eb;
+  border-radius: 13px;
+  background: #f8fafc;
+  cursor: pointer;
+}
+
+.login-session-options input {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  margin-top: 2px;
+  padding: 0;
+  accent-color: var(--orange);
+}
+
+.login-session-options span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.login-session-options strong {
+  color: #374151;
+  font-size: 13px;
+}
+
+.login-session-options small {
+  color: #8791a2;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.login-device-warning {
+  margin-top: -8px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .login-employee-identity {
   display: grid;
   gap: 3px;
@@ -282,6 +390,10 @@ input:focus-visible {
 .login-identity-hint.warning {
   color: #9a3412;
   background: #fff7ed;
+}
+
+@media (max-width: 620px) {
+  .login-session-options { grid-template-columns: 1fr; }
 }
 
 .tablet-shell {

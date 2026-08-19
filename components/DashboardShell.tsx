@@ -292,6 +292,10 @@ function dt(v: string, withTime = true) {
 const accessProfileOptions: Array<{ value: AccessProfileKeyDTO; label: string; description: string }> = [
   { value: 'DEPARTMENT_FULL', label: '部门工作台', description: '继承主部门全部业务权限' },
   { value: 'PROCESS_SPECIALIST', label: '工艺专员', description: '工艺维护，问题与变更协同，生产和图纸只读' },
+  { value: 'DRAWING_LIBRARY_READER', label: '图纸资料只读', description: '查看、搜索、预览和下载全部图纸资料' },
+  { value: 'DRAWING_LIBRARY_EDITOR', label: '图纸资料编辑', description: '查看、新建、上传和更新图纸，不含删除与发布' },
+  { value: 'REPORT_PEOPLE_READER', label: '人员效率报表', description: '查看并导出全厂人员、工时和效率数据' },
+  { value: 'QUALITY_REVIEWER', label: '质量审核', description: '质量协同与审核，图纸资料只读，不含删除' },
   { value: 'FIELD_REPORTER', label: '扫码报工', description: '实名扫码进入现场报工' },
   { value: 'WORKSHOP_SUPERVISOR', label: '车间主管', description: '车间生产与计划协同' },
   { value: 'WORKSHOP_TEAM_LEADER', label: '车间组长', description: '本班组生产与人员协同' },
@@ -4254,9 +4258,13 @@ function AccountManager({
         ? 'GM_OFFICE'
         : profileKey === 'PROCESS_SPECIALIST'
           ? 'PROCESS'
-        : ['FIELD_REPORTER', 'WORKSHOP_SUPERVISOR', 'WORKSHOP_TEAM_LEADER'].includes(profileKey)
-          ? 'PRODUCTION'
-          : null;
+          : profileKey === 'QUALITY_REVIEWER'
+            ? 'QUALITY'
+            : profileKey === 'REPORT_PEOPLE_READER'
+              ? 'HR'
+              : ['FIELD_REPORTER', 'WORKSHOP_SUPERVISOR', 'WORKSHOP_TEAM_LEADER'].includes(profileKey)
+                ? 'PRODUCTION'
+                : null;
     return requiredCode
       ? departmentOptions.find(department => department.code === requiredCode)?.id || ''
       : currentDepartmentId;

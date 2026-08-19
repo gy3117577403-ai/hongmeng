@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { hasCapability } from '@/lib/department-access';
 import {
   abnormalCategoryLabel,
   attendanceRange,
@@ -34,10 +35,14 @@ export async function GET(req: NextRequest) {
     const start = parseWorkDate(range.start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const end = parseWorkDate(range.end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     let scopedEmployeeIds: string[] | null = null;
-    if (actor.laborRole === 'EMPLOYEE') {
+    const canReadGlobalReport = hasCapability(actor.access, 'BUSINESS', 'READ')
+      || hasCapability(actor.access, 'PLANNING', 'READ')
+      || hasCapability(actor.access, 'MAJOR_APPROVAL', 'READ')
+      || actor.laborRole === 'ADMIN';
+    if (!canReadGlobalReport && actor.laborRole === 'EMPLOYEE') {
       if (!actor.employee?.isActive) return forbidden('账号未绑定在职员工档案，无法查看异常工时');
       scopedEmployeeIds = [actor.employee.id];
-    } else if (actor.laborRole === 'TEAM_LEAD') {
+    } else if (!canReadGlobalReport && actor.laborRole === 'TEAM_LEAD') {
       const team = actor.employee?.isActive ? String(actor.employee.team || '').trim() : '';
       if (!team) return forbidden('班组长账号未绑定有效班组，无法查看异常工时');
       scopedEmployeeIds = (await prisma.employee.findMany({

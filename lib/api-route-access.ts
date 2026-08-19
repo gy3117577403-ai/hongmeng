@@ -68,7 +68,6 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   {
     prefix: '/api/drawing-library',
     anyOf: ['ENGINEERING', 'DRAWING_LIBRARY'],
-    readOnlyModules: ['DRAWING_LIBRARY'],
   },
   { prefix: '/api/connector-assembly-manuals', anyOf: ['ENGINEERING'] },
   { prefix: '/api/connector-assembly-manual-versions', anyOf: ['ENGINEERING'] },
@@ -93,7 +92,8 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/process-templates', anyOf: ['PROCESS'] },
   {
     prefix: '/api/process-labor-pools',
-    anyOf: ['PROCESS', 'PRODUCTION'],
+    anyOf: ['PROCESS', 'PRODUCTION', 'BUSINESS', 'PLANNING', 'MAJOR_APPROVAL', 'REPORT_CENTER'],
+    readOnlyModules: ['BUSINESS', 'PLANNING', 'MAJOR_APPROVAL', 'REPORT_CENTER'],
     productionMinimumScope: 'WORKSHOP',
   },
   {
@@ -204,7 +204,16 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
     prefix: '/api/workflows',
     anyOf: ['BUSINESS', 'PROCUREMENT', 'WAREHOUSE', 'ENGINEERING', 'QUALITY', 'PROCESS', 'PLANNING', 'HR', 'PRODUCTION'],
   },
-  { prefix: '/api/reports', anyOf: ['PLANNING', 'PRODUCTION'] },
+  {
+    prefix: '/api/reports/employee-attainment',
+    anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL', 'REPORT_CENTER'],
+    action: 'READ',
+  },
+  {
+    prefix: '/api/reports',
+    anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'MAJOR_APPROVAL'],
+    action: 'READ',
+  },
   { prefix: '/api/dashboard/field-summary', anyOf: ['BUSINESS', 'ENGINEERING', 'PRODUCTION'] },
   { prefix: '/api/dashboard/production-summary', anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION'] },
 
@@ -225,6 +234,14 @@ function pathOnly(value: string): string {
 
 export function apiRouteAccessRule(pathname: string): ApiRule | null {
   const path = pathOnly(pathname);
+
+  if (/^\/api\/drawing-library\/(?:[^/]+\/sop\/(?:publish|versions\/[^/]+\/publish|pdf-overlay\/versions\/[^/]+\/publish)|bulk-index|bulk-originals|cleanup-empty\/commit)$/.test(path)) {
+    return {
+      prefix: '/api/drawing-library/engineering-command',
+      anyOf: ['ENGINEERING'],
+      action: 'EXECUTE_WORKFLOW',
+    };
+  }
 
   if (/^\/api\/sample-tasks\/code\/[^/]+$/.test(path)) {
     return {

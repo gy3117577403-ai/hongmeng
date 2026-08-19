@@ -376,6 +376,7 @@ export async function listProcessLaborPools(input: {
   workDate: unknown;
   includeExhausted?: boolean;
   userId: string;
+  globalReadOnly?: boolean;
 }): Promise<{
   workDate: string;
   pools: ProcessLaborPoolDTO[];
@@ -396,7 +397,7 @@ export async function listProcessLaborPools(input: {
   });
   if (!actor?.isActive) missingLaborActor();
   const access = laborAccessProfile(authorizationActor(actor));
-  const employeeScope = access.role === 'ADMIN'
+  const employeeScope = input.globalReadOnly || access.role === 'ADMIN'
     ? {}
     : access.role === 'TEAM_LEAD' && access.team
       ? { team: access.team }
@@ -433,7 +434,9 @@ export async function listProcessLaborPools(input: {
   ]);
   return {
     workDate: workDate.key,
-    pools: pools.map(pool => serializeProcessLaborPoolForAccess(pool, access)),
+    pools: input.globalReadOnly
+      ? pools.map(serializeProcessLaborPool)
+      : pools.map(pool => serializeProcessLaborPoolForAccess(pool, access)),
     employees: employees.map(serializeEmployee),
     summary: summarizePools(pools),
     access,

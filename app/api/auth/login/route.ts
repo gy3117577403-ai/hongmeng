@@ -24,9 +24,10 @@ const INVALID_PASSWORD_HASH = bcrypt.hashSync('hm-invalid-login-sentinel', 10);
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json() as { username?: string; password?: string };
+    const body = await req.json() as { username?: string; password?: string; rememberDevice?: boolean };
     const loginId = body.username?.trim();
     const password = body.password || '';
+    const rememberDevice = body.rememberDevice === true;
     if (!loginId || !password) {
       return NextResponse.json({ message: '请输入员工编号（或管理账号）和密码' }, { status: 400 });
     }
@@ -123,15 +124,18 @@ export async function POST(req: NextRequest) {
         userId: user.id,
         username: user.username,
         sessionVersion: user.sessionVersion,
-      }),
-      cookieOptions(),
+      }, { rememberDevice }),
+      cookieOptions({ rememberDevice }),
     );
     await logOp({
       userId: user.id,
       action: 'login',
       targetType: 'user',
       targetId: user.id,
-      detail: { loginMethod: user.employee?.employeeNo === loginId ? 'employee_no' : 'username' },
+      detail: {
+        loginMethod: user.employee?.employeeNo === loginId ? 'employee_no' : 'username',
+        rememberDevice,
+      },
     });
     return response;
   } catch (error) {

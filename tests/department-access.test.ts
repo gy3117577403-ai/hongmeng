@@ -56,6 +56,10 @@ test('stable department, profile and grant-type codes match the persistence cont
     'ADMIN_GLOBAL',
     'DEPARTMENT_FULL',
     'PROCESS_SPECIALIST',
+    'DRAWING_LIBRARY_READER',
+    'DRAWING_LIBRARY_EDITOR',
+    'REPORT_PEOPLE_READER',
+    'QUALITY_REVIEWER',
     'FIELD_REPORTER',
     'GM_OFFICE_READER_APPROVER',
     'FINANCE_ACCOUNT_ONLY',
@@ -252,6 +256,37 @@ test('field reporter can only use the field-report module', () => {
   assert.equal(hasCapability(context, 'NOTIFICATIONS', 'READ'), false);
   assert.equal(hasCapability(context, 'BASIC_SUMMARY', 'READ'), false);
   assert.equal(hasCapability(context, 'PRODUCTION', 'READ'), false);
+});
+
+test('functional roles combine drawing, people-report and quality access without destructive powers', () => {
+  const context = resolveAccessContext([
+    grant('DRAWING_LIBRARY_EDITOR', {
+      id: 'drawing-editor',
+      grantType: 'CONCURRENT',
+      departmentCode: 'ENGINEERING',
+      scopeKey: 'GLOBAL:DRAWING_LIBRARY',
+    }),
+    grant('REPORT_PEOPLE_READER', {
+      id: 'people-reader',
+      grantType: 'CONCURRENT',
+      departmentCode: 'HR',
+      scopeKey: 'GLOBAL:REPORT_PEOPLE',
+    }),
+    grant('QUALITY_REVIEWER', {
+      id: 'quality-reviewer',
+      grantType: 'CONCURRENT',
+      departmentCode: 'QUALITY',
+      scopeKey: 'GLOBAL:QUALITY_REVIEW',
+    }),
+  ], { now: NOW });
+
+  assert.deepEqual(allowedActions(context, 'DRAWING_LIBRARY'), ['READ', 'CREATE', 'UPDATE']);
+  assert.equal(hasCapability(context, 'DRAWING_LIBRARY', 'DELETE'), false);
+  assert.deepEqual(allowedActions(context, 'REPORT_CENTER'), ['READ']);
+  assert.deepEqual(allowedActions(context, 'QUALITY'), ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
+  assert.equal(hasCapability(context, 'QUALITY', 'DELETE'), false);
+  assert.equal(scopeHintsFor(context, 'REPORT_CENTER')[0]?.level, 'GLOBAL');
+  assert.equal(scopeHintsFor(context, 'REPORT_CENTER')[0]?.readOnly, true);
 });
 
 test('process specialist owns process and terminal tooling while production and drawings stay read-only', () => {

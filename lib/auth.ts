@@ -33,6 +33,9 @@ export type Session = {
 export class UnauthorizedError extends Error {}
 export class ForbiddenError extends Error {}
 
+export const DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60;
+export const REMEMBERED_SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
 function secret() {
   const value = process.env.SESSION_SECRET;
   if (!value || value.length < 16) throw new Error('SESSION_SECRET missing or too short');
@@ -47,12 +50,15 @@ export function createToken(user: {
   userId: string;
   username: string;
   sessionVersion?: number;
-}) {
+}, options: { rememberDevice?: boolean } = {}) {
+  const ttlSeconds = options.rememberDevice
+    ? REMEMBERED_SESSION_TTL_SECONDS
+    : DEFAULT_SESSION_TTL_SECONDS;
   const payload = Buffer.from(JSON.stringify({
     userId: user.userId,
     username: user.username,
     sessionVersion: user.sessionVersion ?? 0,
-    exp: Math.floor(Date.now() / 1000) + 604800,
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
   })).toString('base64url');
   return `${payload}.${sign(payload)}`;
 }
@@ -74,14 +80,16 @@ export function verifyToken(token?: string | null): Session | null {
   }
 }
 
-export function cookieOptions() {
-  return {
+export function cookieOptions(options: { rememberDevice?: boolean } = {}) {
+  const base = {
     httpOnly: true,
     sameSite: 'lax' as const,
     secure: process.env.NODE_ENV === 'production',
     path: '/',
-    maxAge: 604800,
   };
+  return options.rememberDevice
+    ? { ...base, maxAge: REMEMBERED_SESSION_TTL_SECONDS }
+    : base;
 }
 
 function departmentCode(value?: string | null): DepartmentCode | null {
