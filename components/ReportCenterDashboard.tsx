@@ -18,9 +18,13 @@ import {
   FileWarning,
   Gauge,
   Layers3,
+  ListFilter,
   Loader2,
+  Maximize2,
+  Minimize2,
   PackageCheck,
   RefreshCw,
+  Rows3,
   Search,
   ShieldCheck,
   Table2,
@@ -50,20 +54,32 @@ import type {
   ReportOperationsLaborRowDTO,
 } from '@/types';
 
-type ReportView = 'operations' | 'overview' | 'production' | 'people' | 'quality' | 'sample';
+type ReportView = 'operations' | 'overview' | 'production' | 'people' | 'quality' | 'governance' | 'sample';
 type PeopleView = 'attainment' | 'labor';
 type OperationsView = 'summary' | 'labor' | 'plan' | 'attendance' | 'matrix';
+type ProductionView = 'trend' | 'orders' | 'load';
+type QualityView = 'overview' | 'events';
+type SampleView = 'tasks' | 'review';
+type ReportDensity = 'compact' | 'standard' | 'relaxed';
 type ApiResponse<T> = { ok: boolean; report?: T; error?: string };
 type LaborResponse = { ok: boolean; pools?: ProcessLaborPoolDTO[]; error?: string };
 
-const reportTabs: Array<{ key: ReportView; label: string }> = [
-  { key: 'operations', label: '生产数据总表' },
-  { key: 'overview', label: '综合总览' },
-  { key: 'production', label: '生产与交付' },
-  { key: 'people', label: '人员与工时' },
-  { key: 'quality', label: '质量与异常' },
-  { key: 'sample', label: '样品资料' },
+const reportTabs: Array<{ key: ReportView; label: string; caption: string }> = [
+  { key: 'overview', label: '决策总览', caption: '风险与重点' },
+  { key: 'operations', label: '生产总表', caption: '月度经营' },
+  { key: 'production', label: '生产交付', caption: '趋势与工单' },
+  { key: 'people', label: '人员工时', caption: '效率与记工' },
+  { key: 'quality', label: '质量异常', caption: '原因与事件' },
+  { key: 'governance', label: '数据治理', caption: '资料完整性' },
+  { key: 'sample', label: '样品资料', caption: '采集与审核' },
 ];
+
+const reportViewKeys = new Set<ReportView>(reportTabs.map(item => item.key));
+const operationsViewKeys = new Set<OperationsView>(['summary', 'labor', 'plan', 'attendance', 'matrix']);
+const peopleViewKeys = new Set<PeopleView>(['attainment', 'labor']);
+const productionViewKeys = new Set<ProductionView>(['trend', 'orders', 'load']);
+const qualityViewKeys = new Set<QualityView>(['overview', 'events']);
+const sampleViewKeys = new Set<SampleView>(['tasks', 'review']);
 
 const statusTone: Record<string, string> = {
   completed: 'green',
@@ -166,6 +182,12 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
   const [view, setView] = useState<ReportView>(() => fullReportAccess ? 'operations' : 'people');
   const [peopleView, setPeopleView] = useState<PeopleView>('attainment');
   const [operationsView, setOperationsView] = useState<OperationsView>('summary');
+  const [productionView, setProductionView] = useState<ProductionView>('trend');
+  const [qualityView, setQualityView] = useState<QualityView>('overview');
+  const [sampleView, setSampleView] = useState<SampleView>('tasks');
+  const [density, setDensity] = useState<ReportDensity>('standard');
+  const [focusMode, setFocusMode] = useState(false);
+  const [urlReady, setUrlReady] = useState(false);
   const [period, setPeriod] = useState<ReportCenterPeriodDTO>('week');
   const [date, setDate] = useState(todayKey);
   const [operationsMonth, setOperationsMonth] = useState(() => todayKey().slice(0, 7));
@@ -189,54 +211,132 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
   const [toast, setToast] = useState('');
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const requested = params.get('view');
-    if (requested === 'labor' || requested === 'manual') {
-      setView('people');
-      setPeopleView('labor');
-    } else if (requested === 'employee' || peopleOnlyAccess) setView('people');
-    else if (requested === 'abnormal' && fullReportAccess) setView('quality');
+    function restoreUrlState() {
+      const params = new URLSearchParams(window.location.search);
+      const requested = params.get('branch') || params.get('view');
+      if (peopleOnlyAccess) {
+        setView('people');
+      } else if (requested && reportViewKeys.has(requested as ReportView) && fullReportAccess) {
+        setView(requested as ReportView);
+      } else if (requested === 'labor' || requested === 'manual') {
+        setView('people');
+        setPeopleView('labor');
+      } else if (requested === 'employee') {
+        setView('people');
+      } else if (requested === 'abnormal' && fullReportAccess) {
+        setView('quality');
+      }
+
+      const section = params.get('section');
+      if (section && operationsViewKeys.has(section as OperationsView)) setOperationsView(section as OperationsView);
+      if (section && peopleViewKeys.has(section as PeopleView)) setPeopleView(section as PeopleView);
+      if (section && productionViewKeys.has(section as ProductionView)) setProductionView(section as ProductionView);
+      if (section && qualityViewKeys.has(section as QualityView)) setQualityView(section as QualityView);
+      if (section && sampleViewKeys.has(section as SampleView)) setSampleView(section as SampleView);
+
+      const requestedPeriod = params.get('period');
+      if (requestedPeriod === 'today' || requestedPeriod === 'week' || requestedPeriod === 'month') setPeriod(requestedPeriod);
+      const requestedDate = params.get('date');
+      if (requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) setDate(requestedDate);
+      const requestedMonth = params.get('month');
+      if (requestedMonth && /^\d{4}-\d{2}$/.test(requestedMonth)) setOperationsMonth(requestedMonth);
+      const requestedMode = params.get('mode');
+      if (requestedMode === 'all' || requestedMode === 'mass' || requestedMode === 'sample') setMode(requestedMode);
+      setCustomer(params.get('customer') || '');
+      setOperationsTeam(params.get('team') || '');
+      const requestedDensity = params.get('density');
+      if (requestedDensity === 'compact' || requestedDensity === 'standard' || requestedDensity === 'relaxed') setDensity(requestedDensity);
+      setUrlReady(true);
+    }
+
+    restoreUrlState();
+    window.addEventListener('popstate', restoreUrlState);
+    return () => window.removeEventListener('popstate', restoreUrlState);
   }, [fullReportAccess, peopleOnlyAccess]);
 
   useEffect(() => {
+    if (!urlReady) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('view');
+    url.searchParams.set('branch', view);
+    const section = view === 'operations'
+      ? operationsView
+      : view === 'people'
+        ? peopleView
+        : view === 'production'
+          ? productionView
+          : view === 'quality'
+            ? qualityView
+            : view === 'sample'
+              ? sampleView
+              : '';
+    if (section) url.searchParams.set('section', section);
+    else url.searchParams.delete('section');
+    url.searchParams.set('period', period);
+    url.searchParams.set('date', date);
+    url.searchParams.set('month', operationsMonth);
+    url.searchParams.set('density', density);
+    if (mode !== 'all') url.searchParams.set('mode', mode);
+    else url.searchParams.delete('mode');
+    if (customer) url.searchParams.set('customer', customer);
+    else url.searchParams.delete('customer');
+    if (operationsTeam) url.searchParams.set('team', operationsTeam);
+    else url.searchParams.delete('team');
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  }, [customer, date, density, mode, operationsMonth, operationsTeam, operationsView, peopleView, period, productionView, qualityView, sampleView, urlReady, view]);
+
+  useEffect(() => {
+    if (!urlReady) return undefined;
+    const needsOverview = fullReportAccess && ['overview', 'production', 'governance', 'sample'].includes(view);
+    const needsEmployee = peopleOnlyAccess || view === 'people' || (fullReportAccess && view === 'overview');
+    const needsAbnormal = fullReportAccess && (view === 'quality' || view === 'overview');
+    if (!needsOverview && !needsEmployee && !needsAbnormal) {
+      setLoading(false);
+      setError('');
+      return undefined;
+    }
+
     const controller = new AbortController();
+    let disposed = false;
     setLoading(true);
     setError('');
     const detailParams = new URLSearchParams({ period, date });
-    const loadPeopleOnly = async () => {
-      const employeeResponse = await fetch(`/api/reports/employee-attainment?${detailParams}`, {
-        cache: 'no-store', signal: controller.signal,
-      });
+    const loadOverview = async () => {
+      const overviewParams = new URLSearchParams({ period, date, mode });
+      if (customer) overviewParams.set('customer', customer);
+      const overviewResponse = await fetch(`/api/reports/overview?${overviewParams}`, { cache: 'no-store', signal: controller.signal });
+      const overviewBody = await overviewResponse.json() as ApiResponse<ReportCenterOverviewDTO>;
+      if (!overviewResponse.ok || !overviewBody.report) throw new Error(overviewBody.error || '综合报表加载失败');
+      setOverview(overviewBody.report);
+    };
+    const loadEmployee = async () => {
+      const employeeResponse = await fetch(`/api/reports/employee-attainment?${detailParams}`, { cache: 'no-store', signal: controller.signal });
       const employeeBody = await employeeResponse.json() as ApiResponse<EmployeeAttainmentReportDTO>;
       if (!employeeResponse.ok || !employeeBody.report) throw new Error(employeeBody.error || '人员报表加载失败');
       setEmployeeReport(employeeBody.report);
     };
-    const loadFullReport = async () => {
-      const overviewParams = new URLSearchParams({ period, date, mode });
-      if (customer) overviewParams.set('customer', customer);
-      const [overviewResponse, employeeResponse, abnormalResponse] = await Promise.all([
-        fetch(`/api/reports/overview?${overviewParams}`, { cache: 'no-store', signal: controller.signal }),
-        fetch(`/api/reports/employee-attainment?${detailParams}`, { cache: 'no-store', signal: controller.signal }),
-        fetch(`/api/reports/abnormal-time?${detailParams}`, { cache: 'no-store', signal: controller.signal }),
-      ]);
-      const [overviewBody, employeeBody, abnormalBody] = await Promise.all([
-        overviewResponse.json() as Promise<ApiResponse<ReportCenterOverviewDTO>>,
-        employeeResponse.json() as Promise<ApiResponse<EmployeeAttainmentReportDTO>>,
-        abnormalResponse.json() as Promise<ApiResponse<AbnormalTimeReportDTO>>,
-      ]);
-      if (!overviewResponse.ok || !overviewBody.report) throw new Error(overviewBody.error || '综合报表加载失败');
-      if (!employeeResponse.ok || !employeeBody.report) throw new Error(employeeBody.error || '人员报表加载失败');
+    const loadAbnormal = async () => {
+      const abnormalResponse = await fetch(`/api/reports/abnormal-time?${detailParams}`, { cache: 'no-store', signal: controller.signal });
+      const abnormalBody = await abnormalResponse.json() as ApiResponse<AbnormalTimeReportDTO>;
       if (!abnormalResponse.ok || !abnormalBody.report) throw new Error(abnormalBody.error || '异常报表加载失败');
-      setOverview(overviewBody.report);
-      setEmployeeReport(employeeBody.report);
       setAbnormalReport(abnormalBody.report);
     };
-    (fullReportAccess ? loadFullReport() : loadPeopleOnly()).catch(reason => {
+
+    const requests: Array<Promise<void>> = [];
+    if (needsOverview) requests.push(loadOverview());
+    if (needsEmployee) requests.push(loadEmployee());
+    if (needsAbnormal) requests.push(loadAbnormal());
+    Promise.all(requests).catch(reason => {
       if ((reason as { name?: string }).name === 'AbortError') return;
       setError(reason instanceof Error ? reason.message : '报表加载失败');
-    }).finally(() => setLoading(false));
-    return () => controller.abort();
-  }, [customer, date, fullReportAccess, mode, period, refreshToken]);
+    }).finally(() => {
+      if (!disposed) setLoading(false);
+    });
+    return () => {
+      disposed = true;
+      controller.abort();
+    };
+  }, [customer, date, fullReportAccess, mode, peopleOnlyAccess, period, refreshToken, urlReady, view]);
 
   useEffect(() => {
     if (!fullReportAccess || view !== 'operations') return undefined;
@@ -301,7 +401,7 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
   const focusItems = useMemo(() => {
     const items = overview?.focusItems || [];
     if (!normalizedKeyword) return items;
-    return items.filter(item => `${item.code} ${item.customerName} ${item.productName} ${item.specification} ${item.owner || ''}`
+    return items.filter(item => `${item.code} ${item.customerName} ${item.productName} ${item.specification} ${item.owner || ''} ${item.currentProcess || ''} ${item.nextProcess || ''} ${item.missingData.join(' ')}`
       .toLocaleLowerCase('zh-CN').includes(normalizedKeyword));
   }, [normalizedKeyword, overview?.focusItems]);
   const employeeRows = useMemo(() => {
@@ -327,9 +427,11 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
   const employeeSummary = employeeReport?.summary;
   const abnormalSummary = abnormalReport?.summary;
   const summary = overview?.summary;
-  const customerScopedView = view === 'overview' || view === 'production' || view === 'sample';
+  const customerScopedView = view === 'overview' || view === 'production' || view === 'governance' || view === 'sample';
   const maxTrend = Math.max(1, ...(overview?.dailyTrend || []).flatMap(item => [item.plannedQty, item.completedQty]));
   const maxBottleneck = Math.max(1, ...(overview?.processBottlenecks || []).map(item => item.pendingQty));
+  const totalBottleneckQty = (overview?.processBottlenecks || []).reduce((total, item) => total + item.pendingQty, 0);
+  const governanceItems = focusItems.filter(item => item.missingData.length > 0);
 
   function exportCurrentView(): void {
     const stamp = `${date}-${period}`;
@@ -401,7 +503,9 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
     location.href = '/login';
   }
 
-  return <main className="report-center-workbench hm-workbench-root hm-cockpit-root hm-workbench-navigation-overlay">
+  const densityLabel = density === 'compact' ? '紧凑' : density === 'relaxed' ? '宽松' : '标准';
+
+  return <main className={`report-center-workbench hm-workbench-root hm-cockpit-root hm-workbench-navigation-overlay density-${density} ${focusMode ? 'is-focus-mode' : ''}`.trim()}>
     <AppWorkbenchHeader
       user={user}
       activeHref="/workspace/reports"
@@ -415,16 +519,22 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
         <span id="report-center-navigation-trigger" className="report-center-nav-trigger" />
         <div className="report-center-title"><span><BarChart3 /></span><div><small>数据决策</small><h1>报表中心</h1></div><em>{availableReportTabs.find(item => item.key === view)?.label}</em></div>
         <div className="report-center-source"><Database /><span><strong>真实业务数据</strong><small>金额类指标未启用</small></span></div>
-        <label className="report-center-search"><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={view === 'operations' ? '搜索员工、工号、岗位或班组' : '搜索工单、客户、产品或员工'} aria-label="搜索报表" /></label>
+        <label className="report-center-search"><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={view === 'operations' || view === 'people' ? '搜索员工、工号、岗位或班组' : '搜索工单、客户、产品、工序或资料缺口'} aria-label="搜索报表" /></label>
         <button className="icon" type="button" title="刷新报表" aria-label="刷新报表" disabled={loading} onClick={() => setRefreshToken(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} /></button>
         <button type="button" onClick={exportCurrentView}><Download />导出</button>
       </section>
 
       <section className="report-center-tabs" aria-label="报表分类">
-        <div role="tablist">{availableReportTabs.map(tab => <button className={view === tab.key ? 'active' : ''} type="button" role="tab" aria-selected={view === tab.key} key={tab.key} onClick={() => setView(tab.key)}>{tab.label}</button>)}</div>
-        <div className="report-center-filter-pair">
-          {view === 'operations' ? <label><UsersRound /><select value={operationsTeam} onChange={event => setOperationsTeam(event.target.value)} aria-label="班组筛选"><option value="">全部班组</option>{operationsTeams.map(team => <option value={team} key={team}>{team}</option>)}</select></label> : customerScopedView ? <><label><Layers3 /><select value={mode} onChange={event => setMode(event.target.value as ReportCenterModeDTO)} aria-label="生产类型"><option value="all">量产 + 样品</option><option value="mass">仅量产</option><option value="sample">仅样品</option></select></label>
-            <label><UsersRound /><select value={customer} onChange={event => setCustomer(event.target.value)} aria-label="客户筛选"><option value="">全部客户</option>{(overview?.customers || []).map(item => <option value={item} key={item}>{item}</option>)}</select></label></> : <span className="report-center-scope-pill"><UsersRound />全厂人员与异常口径</span>}
+        <div role="tablist">{availableReportTabs.map(tab => <button className={view === tab.key ? 'active' : ''} type="button" role="tab" aria-selected={view === tab.key} key={tab.key} onClick={() => setView(tab.key)}><strong>{tab.label}</strong><small>{tab.caption}</small></button>)}</div>
+        <div className="report-center-tab-actions">
+          <div className="report-center-filter-pair">
+            {view === 'operations' ? <label><UsersRound /><select value={operationsTeam} onChange={event => setOperationsTeam(event.target.value)} aria-label="班组筛选"><option value="">全部班组</option>{operationsTeams.map(team => <option value={team} key={team}>{team}</option>)}</select></label> : customerScopedView ? <><label><Layers3 /><select value={mode} onChange={event => setMode(event.target.value as ReportCenterModeDTO)} aria-label="生产类型"><option value="all">量产 + 样品</option><option value="mass">仅量产</option><option value="sample">仅样品</option></select></label>
+              <label><UsersRound /><select value={customer} onChange={event => setCustomer(event.target.value)} aria-label="客户筛选"><option value="">全部客户</option>{(overview?.customers || []).map(item => <option value={item} key={item}>{item}</option>)}</select></label></> : <span className="report-center-scope-pill"><UsersRound />全厂人员与异常口径</span>}
+          </div>
+          <div className="report-center-view-tools" aria-label="显示设置">
+            <button type="button" title="切换表格行高" onClick={() => setDensity(value => value === 'compact' ? 'standard' : value === 'standard' ? 'relaxed' : 'compact')}><Rows3 /><span>{densityLabel}</span></button>
+            <button type="button" title="专注查看当前报表" onClick={() => setFocusMode(true)}><Maximize2 /><span>专注</span></button>
+          </div>
         </div>
       </section>
 
@@ -441,27 +551,40 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
       </section>}
 
       {view === 'operations' ? <section className="report-center-kpis operations-kpis" aria-label="生产数据关键指标">
-        <KpiCard icon={<Gauge />} tone={attainmentTone(operationsReport?.summary.attainmentBasisPoints)} label="工时达成率" value={percentText(operationsReport?.summary.attainmentBasisPoints)} note={`目标 95% · 标准产出 ${compactHours(operationsReport?.summary.standardLaborMilliseconds || 0)}`} />
-        <KpiCard icon={<UserCheck />} tone={attainmentTone(operationsReport?.summary.attendanceBasisPoints)} label="出勤工时率" value={percentText(operationsReport?.summary.attendanceBasisPoints)} note={`${compactHours(operationsReport?.summary.attendanceMilliseconds || 0)} / ${compactHours(operationsReport?.summary.plannedMilliseconds || 0)}`} />
-        <KpiCard icon={<Workflow />} tone={attainmentTone(operationsReport?.summary.batchCompletionBasisPoints)} label="周计划批次达成" value={percentText(operationsReport?.summary.batchCompletionBasisPoints)} note={`${operationsReport?.summary.completedBatches || 0} / ${operationsReport?.summary.plannedBatches || 0} 批`} />
-        <KpiCard icon={<PackageCheck />} tone={attainmentTone(operationsReport?.summary.quantityCompletionBasisPoints)} label="周计划数量达成" value={percentText(operationsReport?.summary.quantityCompletionBasisPoints)} note={`${numberText(operationsReport?.summary.completedQuantity || 0)} / ${numberText(operationsReport?.summary.plannedQuantity || 0)}`} />
-        <KpiCard icon={<Activity />} tone="blue" label="有效出勤工时" value={compactHours(operationsReport?.summary.attendanceMilliseconds || 0)} note={`免责异常 ${compactHours(operationsReport?.summary.exemptAbnormalMilliseconds || 0)}`} />
-        <KpiCard icon={<Database />} tone={attainmentTone(operationsReport?.summary.dataCoverageBasisPoints)} label="考勤确认覆盖" value={percentText(operationsReport?.summary.dataCoverageBasisPoints)} note={`确认 ${operationsReport?.summary.confirmedAttendanceRecords || 0} · 草稿 ${operationsReport?.summary.draftAttendanceRecords || 0}`} />
-        <KpiCard icon={<CircleAlert />} tone={(operationsReport?.summary.unmatchedStandardLaborMilliseconds || 0) > 0 ? 'red' : 'green'} label="待匹配标准工时" value={compactHours(operationsReport?.summary.unmatchedStandardLaborMilliseconds || 0)} note="有报工但缺确认考勤" />
-      </section> : peopleOnlyAccess ? <section className="report-center-kpis" aria-label="人员效率关键指标">
-        <KpiCard icon={<UsersRound />} tone="blue" label="统计员工" value={numberText(employeeSummary?.employeeCount || 0)} note={`确认出勤 ${employeeSummary?.attendanceConfirmedDays || 0} 人日`} />
-        <KpiCard icon={<Gauge />} tone={attainmentTone(employeeSummary?.attainmentBasisPoints)} label="全厂出勤达成率" value={percentText(employeeSummary?.attainmentBasisPoints)} note="标准工时 ÷ 有效产能工时" />
-        <KpiCard icon={<Clock3 />} tone="green" label="标准产出工时" value={formatProcessDuration(employeeSummary?.standardLaborMilliseconds || 0)} note={`工时记录 ${employeeSummary?.claimCount || 0} 笔`} />
-        <KpiCard icon={<UserCheck />} tone="purple" label="有效出勤工时" value={formatProcessDuration(employeeSummary?.attendanceMilliseconds || 0)} note={`覆盖率 ${percentText(employeeSummary?.coverageBasisPoints)}`} />
-        <KpiCard icon={<TimerOff />} tone="amber" label="免责异常工时" value={formatProcessDuration(employeeSummary?.exemptAbnormalMilliseconds || 0)} note="仅统计品质已确认记录" />
-        <KpiCard icon={<CircleAlert />} tone={(employeeSummary?.unmatchedStandardLaborMilliseconds || 0) > 0 ? 'red' : 'green'} label="待匹配标准工时" value={formatProcessDuration(employeeSummary?.unmatchedStandardLaborMilliseconds || 0)} note="有报工但缺确认考勤" />
-      </section> : <section className="report-center-kpis" aria-label="关键指标">
-        <KpiCard icon={<Gauge />} tone="orange" label={overview?.quantityScope.label || '数量达成率'} value={percentText(summary?.completionBasisPoints)} note={`${numberText(summary?.completedQty || 0)} / ${numberText(summary?.plannedQty || 0)} ${overview?.quantityScope.unitLabel || ''}`} />
-        <KpiCard icon={<ClipboardCheck />} tone="green" label="完成任务/工单" value={numberText(summary?.completedOrders || 0)} note={`进行中 ${summary?.activeOrders || 0} · 待开始 ${summary?.pendingOrders || 0}`} />
-        <KpiCard icon={<Clock3 />} tone="blue" label="全厂出勤达成率" value={percentText(employeeSummary?.attainmentBasisPoints)} note={`标准工时 ${formatProcessDuration(employeeSummary?.standardLaborMilliseconds || 0)}`} />
-        <KpiCard icon={<TimerOff />} tone="amber" label="全厂异常影响人时" value={formatProcessDuration(abnormalSummary?.affectedPersonMilliseconds || 0)} note={`未关闭 ${abnormalSummary?.openCount || 0} 条`} />
-        <KpiCard icon={<CircleAlert />} tone="red" label="逾期风险" value={numberText(summary?.overdueOrders || 0)} note={`未来 2 天 ${summary?.dueSoonOrders || 0} 项`} />
-        <KpiCard icon={<Database />} tone="purple" label={mode === 'sample' ? '审核完成率' : '资料完整率'} value={percentText(summary?.dataCompletenessBasisPoints)} note={mode === 'sample' ? `待审核 ${summary?.pendingSampleReviewItems || 0} 项` : `核心检查：路线 / 工时 / 图纸`} />
+        <KpiCard icon={<Gauge />} tone={attainmentTone(operationsReport?.summary.attainmentBasisPoints)} label="工时达成率" value={percentText(operationsReport?.summary.attainmentBasisPoints)} note={`目标 95% · 标准产出 ${compactHours(operationsReport?.summary.standardLaborMilliseconds || 0)}`} onClick={() => setOperationsView('labor')} />
+        <KpiCard icon={<Workflow />} tone={attainmentTone(operationsReport?.summary.quantityCompletionBasisPoints)} label="周计划数量达成" value={percentText(operationsReport?.summary.quantityCompletionBasisPoints)} note={`${numberText(operationsReport?.summary.completedQuantity || 0)} / ${numberText(operationsReport?.summary.plannedQuantity || 0)}`} onClick={() => setOperationsView('plan')} />
+        <KpiCard icon={<UserCheck />} tone={attainmentTone(operationsReport?.summary.attendanceBasisPoints)} label="出勤工时率" value={percentText(operationsReport?.summary.attendanceBasisPoints)} note={`${compactHours(operationsReport?.summary.attendanceMilliseconds || 0)} / ${compactHours(operationsReport?.summary.plannedMilliseconds || 0)}`} onClick={() => setOperationsView('attendance')} />
+        <KpiCard icon={<Database />} tone={attainmentTone(operationsReport?.summary.dataCoverageBasisPoints)} label="考勤数据覆盖" value={percentText(operationsReport?.summary.dataCoverageBasisPoints)} note={`确认 ${operationsReport?.summary.confirmedAttendanceRecords || 0} · 草稿 ${operationsReport?.summary.draftAttendanceRecords || 0}`} onClick={() => setOperationsView('matrix')} />
+      </section> : (peopleOnlyAccess || view === 'people') ? <section className="report-center-kpis" aria-label="人员效率关键指标">
+        <KpiCard icon={<UsersRound />} tone="blue" label="统计员工" value={numberText(employeeSummary?.employeeCount || 0)} note={`确认出勤 ${employeeSummary?.attendanceConfirmedDays || 0} 人日`} onClick={() => setPeopleView('attainment')} />
+        <KpiCard icon={<Gauge />} tone={attainmentTone(employeeSummary?.attainmentBasisPoints)} label="全厂出勤达成率" value={percentText(employeeSummary?.attainmentBasisPoints)} note="标准工时 ÷ 有效产能工时" onClick={() => setPeopleView('attainment')} />
+        <KpiCard icon={<Clock3 />} tone="green" label="标准产出工时" value={formatProcessDuration(employeeSummary?.standardLaborMilliseconds || 0)} note={`自动记工 ${employeeSummary?.claimCount || 0} 笔`} onClick={() => setPeopleView('labor')} />
+        <KpiCard icon={<CircleAlert />} tone={(employeeSummary?.unmatchedStandardLaborMilliseconds || 0) > 0 ? 'risk' : 'good'} label="待匹配标准工时" value={formatProcessDuration(employeeSummary?.unmatchedStandardLaborMilliseconds || 0)} note="有报工但缺确认考勤" onClick={() => setPeopleView('labor')} />
+      </section> : view === 'quality' ? <section className="report-center-kpis" aria-label="质量异常关键指标">
+        <KpiCard icon={<AlertTriangle />} tone="orange" label="异常事件" value={numberText(abnormalSummary?.eventCount || 0)} note={`待品质确认 ${abnormalSummary?.pendingCount || 0} 条`} onClick={() => setQualityView('events')} />
+        <KpiCard icon={<TimerOff />} tone="amber" label="影响人时" value={formatProcessDuration(abnormalSummary?.affectedPersonMilliseconds || 0)} note={`事件时长 ${formatProcessDuration(abnormalSummary?.incidentMilliseconds || 0)}`} onClick={() => setQualityView('overview')} />
+        <KpiCard icon={<ShieldCheck />} tone="green" label="已确认" value={numberText(abnormalSummary?.confirmedCount || 0)} note={`已驳回 ${abnormalSummary?.rejectedCount || 0} 条`} onClick={() => setQualityView('events')} />
+        <KpiCard icon={<CircleAlert />} tone={(abnormalSummary?.openCount || 0) > 0 ? 'risk' : 'good'} label="未关闭事件" value={numberText(abnormalSummary?.openCount || 0)} note="点击进入处理台账" onClick={() => setQualityView('events')} />
+      </section> : view === 'governance' ? <section className="report-center-kpis" aria-label="数据治理关键指标">
+        <KpiCard icon={<Database />} tone="purple" label="核心资料完整率" value={percentText(summary?.dataCompletenessBasisPoints)} note="路线 / 工时 / 图纸三项核查" />
+        <KpiCard icon={<Layers3 />} tone={(summary?.missingRouteOrders || 0) > 0 ? 'risk' : 'good'} label="未建工艺路线" value={numberText(summary?.missingRouteOrders || 0)} note="无法进入正式生产流转" />
+        <KpiCard icon={<Clock3 />} tone={(summary?.missingStandardOrders || 0) > 0 ? 'watch' : 'good'} label="缺标准工时" value={numberText(summary?.missingStandardOrders || 0)} note="影响人员效率口径" />
+        <KpiCard icon={<FileWarning />} tone={(summary?.missingDrawingOrders || 0) > 0 ? 'risk' : 'good'} label="未关联当前图纸" value={numberText(summary?.missingDrawingOrders || 0)} note={`物料规则未发布 ${summary?.materialRuleUnpublishedOrders || 0}`} />
+      </section> : view === 'sample' ? <section className="report-center-kpis" aria-label="样品资料关键指标">
+        <KpiCard icon={<PackageCheck />} tone="orange" label="样品任务" value={numberText(overview?.sample.taskCount || 0)} note={`进行中 ${overview?.sample.activeCount || 0}`} onClick={() => setSampleView('tasks')} />
+        <KpiCard icon={<ClipboardCheck />} tone="purple" label="待分项审核" value={numberText(overview?.sample.pendingReviewCount || 0)} note="仅统计实际提交的数据" onClick={() => setSampleView('review')} />
+        <KpiCard icon={<FileCheck2 />} tone="green" label="已发布资料" value={numberText(overview?.sample.publishedItemCount || 0)} note={`完成任务 ${overview?.sample.completedCount || 0}`} onClick={() => setSampleView('review')} />
+        <KpiCard icon={<Gauge />} tone="blue" label="审核完成率" value={percentText(overview?.sample.reviewBasisPoints)} note="已审核 ÷ 已提交" onClick={() => setSampleView('review')} />
+      </section> : view === 'production' ? <section className="report-center-kpis" aria-label="生产交付关键指标">
+        <KpiCard icon={<Gauge />} tone="orange" label={overview?.quantityScope.label || '数量达成率'} value={percentText(summary?.completionBasisPoints)} note={`${numberText(summary?.completedQty || 0)} / ${numberText(summary?.plannedQty || 0)} ${overview?.quantityScope.unitLabel || ''}`} onClick={() => setProductionView('trend')} />
+        <KpiCard icon={<Activity />} tone="blue" label="进行中工单" value={numberText(summary?.activeOrders || 0)} note={`待开始 ${summary?.pendingOrders || 0}`} onClick={() => setProductionView('orders')} />
+        <KpiCard icon={<CircleAlert />} tone={(summary?.overdueOrders || 0) > 0 ? 'risk' : 'good'} label="逾期风险" value={numberText(summary?.overdueOrders || 0)} note={`未来 2 天 ${summary?.dueSoonOrders || 0} 项`} onClick={() => setProductionView('orders')} />
+        <KpiCard icon={<Layers3 />} tone={totalBottleneckQty > 0 ? 'watch' : 'good'} label="瓶颈待处理量" value={numberText(totalBottleneckQty)} note={`${overview?.processBottlenecks.length || 0} 道工序`} onClick={() => setProductionView('load')} />
+      </section> : <section className="report-center-kpis" aria-label="决策总览关键指标">
+        <KpiCard icon={<Gauge />} tone="orange" label={overview?.quantityScope.label || '数量达成率'} value={percentText(summary?.completionBasisPoints)} note={`${numberText(summary?.completedQty || 0)} / ${numberText(summary?.plannedQty || 0)} ${overview?.quantityScope.unitLabel || ''}`} onClick={() => setView('production')} />
+        <KpiCard icon={<ClipboardCheck />} tone="green" label="完成任务 / 工单" value={numberText(summary?.completedOrders || 0)} note={`进行中 ${summary?.activeOrders || 0} · 待开始 ${summary?.pendingOrders || 0}`} onClick={() => setView('production')} />
+        <KpiCard icon={<Clock3 />} tone="blue" label="全厂出勤达成率" value={percentText(employeeSummary?.attainmentBasisPoints)} note={`标准工时 ${formatProcessDuration(employeeSummary?.standardLaborMilliseconds || 0)}`} onClick={() => setView('people')} />
+        <KpiCard icon={<CircleAlert />} tone={(summary?.overdueOrders || 0) > 0 ? 'risk' : 'good'} label="逾期与资料风险" value={numberText((summary?.overdueOrders || 0) + governanceItems.length)} note={`逾期 ${summary?.overdueOrders || 0} · 资料 ${governanceItems.length}`} onClick={() => setView('governance')} />
       </section>}
 
       {error && <div className="report-center-error" role="alert"><AlertTriangle />{error}<button type="button" onClick={() => setRefreshToken(value => value + 1)}>重试</button></div>}
@@ -471,10 +594,10 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
         <div className="report-center-top-grid">
           <Panel className="trend-panel" kicker="生产与交付" title="计划与最终工序完成趋势" action={<span>{overview?.quantityScope.note}</span>}>
             <div className="report-trend-scroll" tabIndex={0}><div className="report-trend-chart" style={{ '--trend-columns': Math.max(1, overview?.dailyTrend.length || 1) } as CSSProperties}>
-              {(overview?.dailyTrend || []).map(item => <div className="report-trend-day" key={item.date} title={`${item.date}：计划 ${item.plannedQty}，完成 ${item.completedQty}`}>
+              {(overview?.dailyTrend || []).map(item => <button type="button" className="report-trend-day" key={item.date} title={`${item.date}：计划 ${item.plannedQty}，完成 ${item.completedQty}`} onClick={() => { setDate(item.date); setPeriod('today'); setView('production'); setProductionView('orders'); }}>
                 <div><i className="planned" style={{ height: `${Math.max(item.plannedQty ? 8 : 1, Math.round((item.plannedQty / maxTrend) * 100))}%` }} /><i className="completed" style={{ height: `${Math.max(item.completedQty ? 8 : 1, Math.round((item.completedQty / maxTrend) * 100))}%` }} /></div>
                 <span>{item.label}</span><small>{numberText(item.completedQty)}</small>
-              </div>)}
+              </button>)}
               {!overview?.dailyTrend.length && <EmptyState icon={<BarChart3 />} title="当前周期没有趋势数据" />}
             </div></div>
             <footer><strong>{numberText(summary?.plannedQty || 0)}</strong><span>计划</span><strong>{numberText(summary?.completedQty || 0)}</strong><span>最终工序良品</span></footer>
@@ -500,38 +623,56 @@ export default function ReportCenterDashboard({ user }: { user: CurrentUserDTO }
         <FocusTable items={focusItems} title="交付、异常与资料待办" onSelect={setSelectedFocus} />
       </section>}
 
-      {view === 'production' && <section className="report-center-body production-view">
-        <div className="production-insight-grid">
-          <Panel kicker="计划趋势" title="计划与最终工序完成量"><CompactTrend report={overview} max={maxTrend} /></Panel>
-          <Panel kicker="工序负荷" title="待处理量最高工序"><div className="bottleneck-list">{(overview?.processBottlenecks || []).map(item => <article key={item.processCode || item.processName}><span><b>{item.processName}</b><small>{item.workOrderCount} 单 · 逾期 {item.overdueWorkOrderCount}</small></span><div><i style={{ width: `${Math.max(4, Math.round((item.pendingQty / maxBottleneck) * 100))}%` }} /></div><strong>{numberText(item.pendingQty)}</strong></article>)}</div></Panel>
-        </div>
-        <FocusTable items={focusItems.filter(item => item.entityType === 'workOrder')} title="量产工单明细" onSelect={setSelectedFocus} />
+      {view === 'production' && <section className={`report-center-body production-view branch-${productionView}`}>
+        <BranchTabs
+          label="生产与交付分析"
+          value={productionView}
+          onChange={value => setProductionView(value as ProductionView)}
+          tabs={[['trend', '趋势诊断'], ['orders', '工单与风险'], ['load', '工序负荷']]}
+          note="点击指标、日期或工序可继续定位明细"
+        />
+        {productionView === 'trend' && <div className="production-insight-grid production-trend-grid">
+          <Panel kicker="计划趋势" title="计划与最终工序完成量" action={<span>{overview?.quantityScope.note}</span>}><CompactTrend report={overview} max={maxTrend} onSelect={selected => { setDate(selected); setPeriod('today'); }} /></Panel>
+          <Panel className="status-panel" kicker="任务结构" title="当前工单状态分布" action={<span>{focusItems.filter(item => item.entityType === 'workOrder').length} 项</span>}>
+            <div className="status-rate"><strong>{percentText(summary?.completionBasisPoints)}</strong><span>当前数量达成率</span></div>
+            <div className="status-stack">{(overview?.statusDistribution || []).map(item => <i className={statusTone[item.key]} style={{ width: `${item.basisPoints / 100}%` }} key={item.key} />)}</div>
+            <div className="status-legend">{(overview?.statusDistribution || []).map(item => <span key={item.key}><i className={statusTone[item.key]} /><b>{item.label}</b><em>{item.count}</em><small>{percentText(item.basisPoints)}</small></span>)}</div>
+          </Panel>
+        </div>}
+        {productionView === 'load' && <div className="production-load-grid">
+          <Panel kicker="工序负荷" title="待处理量最高工序" action={<span>点击工序筛选下方工单</span>}><div className="bottleneck-list interactive">{(overview?.processBottlenecks || []).map(item => <button type="button" key={item.processCode || item.processName} onClick={() => setKeyword(item.processName)}><span><b>{item.processName}</b><small>{item.workOrderCount} 单 · 逾期 {item.overdueWorkOrderCount}</small></span><div><i style={{ width: `${Math.max(4, Math.round((item.pendingQty / maxBottleneck) * 100))}%` }} /></div><strong>{numberText(item.pendingQty)}</strong><ChevronRight /></button>)}{!overview?.processBottlenecks.length && <EmptyState icon={<Layers3 />} title="没有待处理工序" />}</div></Panel>
+          <div className="load-diagnosis"><strong>{numberText(totalBottleneckQty)}</strong><span>瓶颈待处理总量</span><small>工序数量不计入成品达成率，仅用于排产和负荷诊断。</small><button type="button" onClick={() => setKeyword('')}>清除工序筛选</button></div>
+        </div>}
+        <FocusTable items={focusItems.filter(item => item.entityType === 'workOrder')} title={productionView === 'orders' ? '交付风险与工单明细' : productionView === 'load' ? '所选工序关联工单' : '趋势对应工单明细'} onSelect={setSelectedFocus} />
       </section>}
 
       {view === 'people' && <section className="report-center-body people-view">
-        <div className="report-subtabs" role="tablist"><button className={peopleView === 'attainment' ? 'active' : ''} type="button" onClick={() => setPeopleView('attainment')}>员工达成率</button><button className={peopleView === 'labor' ? 'active' : ''} type="button" onClick={() => setPeopleView('labor')}>自动记工明细</button><span>人员效率仅使用确认考勤与已匹配标准工时</span></div>
+        <BranchTabs label="人员与工时分析" value={peopleView} onChange={value => setPeopleView(value as PeopleView)} tabs={[["attainment", "员工达成率"], ["labor", "自动记工明细"]]} note="仅使用确认考勤与已匹配标准工时" />
         {peopleView === 'attainment' ? <EmployeeTable rows={employeeRows} loading={loading} /> : <LaborLedger pools={laborPools} loading={laborLoading} />}
       </section>}
 
-      {view === 'quality' && <section className="report-center-body quality-view">
-        <div className="quality-summary-grid">{(abnormalReport?.categories || []).slice(0, 6).map(item => <article key={item.category}><span><AlertTriangle /></span><div><small>{item.categoryLabel}</small><strong>{formatProcessDuration(item.affectedPersonMilliseconds)}</strong><em>{item.eventCount} 条 · 事件 {formatProcessDuration(item.incidentMilliseconds)}</em></div></article>)}{!abnormalReport?.categories.length && <EmptyState icon={<ShieldCheck />} title="当前周期没有异常记录" />}</div>
-        <section className="quality-event-panel"><header><div><small>异常明细</small><h2>品质确认与处理状态</h2></div><em>{abnormalEvents.length} 条</em></header><div>{abnormalEvents.map(event => <article key={event.id}><span><em>#{event.sequence}</em><strong>{event.title}</strong><small>{event.categoryLabel} · {event.allocations.map(item => item.employee.name).join('、') || '未分配员工'}</small></span><span><small>事件时长</small><b>{formatProcessDuration(event.durationMilliseconds)}</b></span><span><small>影响人时</small><b>{formatProcessDuration(event.affectedPersonMilliseconds)}</b></span><span><small>品质状态</small><b>{event.qualityStatus === 'pending' ? '待确认' : event.qualityStatus === 'rejected' ? '已驳回' : event.employeeExempt ? '已确认免责' : '已确认不免责'}</b></span><span><small>处理状态</small><b>{event.resolutionStatus === 'resolved' ? '已关闭' : '处理中'}</b></span></article>)}{!abnormalEvents.length && <EmptyState icon={<ShieldCheck />} title="没有符合筛选条件的异常" />}</div></section>
+      {view === 'quality' && <section className={`report-center-body quality-view branch-${qualityView}`}>
+        <BranchTabs label="质量与异常分析" value={qualityView} onChange={value => setQualityView(value as QualityView)} tabs={[["overview", "原因总览"], ["events", "事件台账"]]} note="异常人时与品质确认状态分开统计" />
+        {qualityView === 'overview' && <div className="quality-summary-grid">{(abnormalReport?.categories || []).map(item => <button type="button" key={item.category} onClick={() => { setKeyword(item.categoryLabel); setQualityView('events'); }}><span><AlertTriangle /></span><div><small>{item.categoryLabel}</small><strong>{formatProcessDuration(item.affectedPersonMilliseconds)}</strong><em>{item.eventCount} 条 · 事件 {formatProcessDuration(item.incidentMilliseconds)}</em></div><ChevronRight /></button>)}{!abnormalReport?.categories.length && <EmptyState icon={<ShieldCheck />} title="当前周期没有异常记录" />}</div>}
+        <section className="quality-event-panel"><header><div><small>异常明细</small><h2>{qualityView === 'overview' ? '当前原因对应事件预览' : '品质确认与处理状态'}</h2></div><em>{abnormalEvents.length} 条</em></header><div>{abnormalEvents.map(event => <article key={event.id}><span><em>#{event.sequence}</em><strong>{event.title}</strong><small>{event.categoryLabel} · {event.allocations.map(item => item.employee.name).join('、') || '未分配员工'}</small></span><span><small>事件时长</small><b>{formatProcessDuration(event.durationMilliseconds)}</b></span><span><small>影响人时</small><b>{formatProcessDuration(event.affectedPersonMilliseconds)}</b></span><span><small>品质状态</small><b>{event.qualityStatus === 'pending' ? '待确认' : event.qualityStatus === 'rejected' ? '已驳回' : event.employeeExempt ? '已确认免责' : '已确认不免责'}</b></span><span><small>处理状态</small><b>{event.resolutionStatus === 'resolved' ? '已关闭' : '处理中'}</b></span></article>)}{!abnormalEvents.length && <EmptyState icon={<ShieldCheck />} title="没有符合筛选条件的异常" />}</div></section>
       </section>}
 
-      {view === 'sample' && <section className="report-center-body sample-view">
+      {view === 'governance' && <section className="report-center-body governance-view">
+        <div className="governance-grid">{(overview?.completeness || []).map(item => <Link href={item.route} prefetch={false} key={item.key}><span>{item.key === 'route' ? <Layers3 /> : item.key === 'standard' ? <Clock3 /> : item.key === 'drawing' ? <FileWarning /> : item.key === 'material' ? <PackageCheck /> : <ClipboardCheck />}</span><div><small>{item.label}</small><strong>{item.count}</strong><em>{item.note}</em></div><ChevronRight /></Link>)}</div>
+        <div className="governance-note"><ShieldCheck /><span><strong>资料完整率只检查正式生产所需核心资料</strong><small>缺口清单来自真实工单关联，不把未填写的可选样品字段当作异常。</small></span><button type="button" onClick={() => setKeyword('')}>查看全部缺口</button></div>
+        <FocusTable items={governanceItems} title="资料缺口与待治理工单" onSelect={setSelectedFocus} />
+      </section>}
+
+      {view === 'sample' && <section className={`report-center-body sample-view branch-${sampleView}`}>
         {mode === 'mass' && <div className="report-center-info"><CircleAlert />当前筛选为“仅量产”，切换到“量产 + 样品”或“仅样品”后显示样品任务。</div>}
-        <div className="sample-report-summary">
-          <KpiCard icon={<PackageCheck />} tone="orange" label="样品任务" value={numberText(overview?.sample.taskCount || 0)} note={`进行中 ${overview?.sample.activeCount || 0}`} />
-          <KpiCard icon={<ClipboardCheck />} tone="purple" label="待分项审核" value={numberText(overview?.sample.pendingReviewCount || 0)} note="仅提交项；空白字段不计缺项" />
-          <KpiCard icon={<FileCheck2 />} tone="green" label="已发布资料" value={numberText(overview?.sample.publishedItemCount || 0)} note={`已完成任务 ${overview?.sample.completedCount || 0}`} />
-          <KpiCard icon={<Gauge />} tone="blue" label="审核完成率" value={percentText(overview?.sample.reviewBasisPoints)} note="已审核 ÷（已审核 + 待审核）" />
-        </div>
+        <BranchTabs label="样品资料分析" value={sampleView} onChange={value => setSampleView(value as SampleView)} tabs={[["tasks", "任务进度"], ["review", "分项审核"]]} note="空白选填项不计缺口，只统计已提交资料" />
         <div className="sample-rule-note"><ShieldCheck /><span><strong>样品采集字段全部选填</strong><small>没有填写不算缺项，也不要求员工选择固定原因；只有实际提交的数据和照片才进入分项审核。</small></span></div>
-        <FocusTable items={focusItems.filter(item => item.entityType === 'sampleTask')} title="样品任务与审核进度" onSelect={setSelectedFocus} />
+        <FocusTable items={focusItems.filter(item => item.entityType === 'sampleTask' && (sampleView === 'tasks' || item.currentProcess === '分项审核'))} title={sampleView === 'tasks' ? '样品任务与采集进度' : '待分项审核与发布进度'} onSelect={setSelectedFocus} />
       </section>}
 
       {view !== 'operations' && loading && !(peopleOnlyAccess ? employeeReport : overview) && <div className="report-center-loading"><Loader2 className="spin" /><strong>正在汇总真实业务数据</strong><span>{peopleOnlyAccess ? '确认考勤、标准工时与异常免责分别按正式口径计算' : '成品、工序、人员、异常与样品资料分别按各自口径计算'}</span></div>}
     </div>
+    {focusMode && <button type="button" className="report-focus-exit" onClick={() => setFocusMode(false)}><Minimize2 />退出专注</button>}
     {selectedFocus && <FocusDrawer item={selectedFocus} onClose={() => setSelectedFocus(null)} />}
     {toast && <div className="report-center-toast"><CheckCircle2 />{toast}</div>}
   </main>;
@@ -677,8 +818,19 @@ function OperationsMatrix({ report, rows, dates, compact = false }: { report: Re
   return <div className={`operations-matrix-scroll ${compact ? 'compact' : ''}`} tabIndex={0}><table style={{ '--matrix-days': dates.length } as CSSProperties}><thead><tr><th>班组</th><th>岗位</th><th>姓名</th>{dates.map(date => { const meta = report?.dates.find(item => item.date === date); return <th className={meta?.isWeekend ? 'weekend' : ''} key={date}><strong>{meta?.day}号</strong><small>{meta?.weekday}</small></th>; })}<th>月均</th></tr></thead><tbody>{rows.map(row => <tr key={row.employee.id}><td><strong>{row.team}</strong></td><td><span>{row.position}</span></td><td><strong>{row.employee.name}</strong><small>{row.employee.employeeNo}</small></td>{dates.map(date => { const day = matrixCell(row, date); const tone = attainmentTone(day?.attainmentBasisPoints); const text = day?.status === 'draft' ? '草稿' : day?.status === 'rest' ? '休' : day?.attainmentBasisPoints === null || day?.attainmentBasisPoints === undefined ? '—' : percentText(day.attainmentBasisPoints); return <td className={`matrix-metric tone-${tone} status-${day?.status || 'missing'}`} key={date} title={`${row.employee.name} ${date}：${text}${day ? `，标准 ${compactHours(day.standardLaborMilliseconds)}，出勤 ${compactHours(day.attendanceMilliseconds)}` : ''}`}><strong>{text}</strong>{!compact && day?.attainmentBasisPoints !== null && day?.attainmentBasisPoints !== undefined && <small>{compactHours(day.standardLaborMilliseconds)}</small>}</td>; })}<td className={`matrix-average tone-${attainmentTone(row.attainmentBasisPoints)}`}><strong>{percentText(row.attainmentBasisPoints)}</strong><small>{row.confirmedDays} 天</small></td></tr>)}{!rows.length && <tr><td colSpan={dates.length + 4}><EmptyState icon={<Table2 />} title="没有符合筛选条件的员工数据" /></td></tr>}</tbody>{!compact && <tfoot><tr><td colSpan={3}><strong>车间每日平均达成率</strong></td>{dates.map(date => <td className={`tone-${attainmentTone(dailyAverage.get(date)?.attainmentBasisPoints)}`} key={date}><strong>{percentText(dailyAverage.get(date)?.attainmentBasisPoints)}</strong></td>)}<td><strong>{percentText(report?.summary.attainmentBasisPoints)}</strong></td></tr></tfoot>}</table></div>;
 }
 
-function KpiCard({ icon, tone, label, value, note }: { icon: ReactNode; tone: string; label: string; value: string; note: string }) {
-  return <article className={`report-kpi tone-${tone}`}><span>{icon}</span><div><small>{label}</small><strong>{value}</strong><em>{note}</em></div></article>;
+function KpiCard({ icon, tone, label, value, note, onClick }: { icon: ReactNode; tone: string; label: string; value: string; note: string; onClick?: () => void }) {
+  const content = <><span>{icon}</span><div><small>{label}</small><strong>{value}</strong><em>{note}</em></div>{onClick && <ChevronRight className="report-kpi-arrow" />}</>;
+  return onClick
+    ? <button type="button" className={`report-kpi tone-${tone} is-interactive`} onClick={onClick}>{content}</button>
+    : <article className={`report-kpi tone-${tone}`}>{content}</article>;
+}
+
+function BranchTabs({ label, value, tabs, note, onChange }: { label: string; value: string; tabs: Array<[string, string]>; note: string; onChange: (value: string) => void }) {
+  return <div className="report-subtabs branch-tabs" role="tablist" aria-label={label}>
+    <strong><ListFilter />{label}</strong>
+    <div>{tabs.map(([key, text]) => <button type="button" role="tab" aria-selected={value === key} className={value === key ? 'active' : ''} key={key} onClick={() => onChange(key)}>{text}</button>)}</div>
+    <span>{note}</span>
+  </div>;
 }
 
 function Panel({ kicker, title, action, className = '', children }: { kicker: string; title: string; action?: ReactNode; className?: string; children: ReactNode }) {
@@ -689,8 +841,8 @@ function EmptyState({ icon, title }: { icon: ReactNode; title: string }) {
   return <div className="report-empty">{icon}<span>{title}</span></div>;
 }
 
-function CompactTrend({ report, max }: { report: ReportCenterOverviewDTO | null; max: number }) {
-  return <div className="compact-trend">{(report?.dailyTrend || []).map(item => <article key={item.date}><span>{item.label}</span><div><i className="planned" style={{ width: `${Math.round((item.plannedQty / max) * 100)}%` }} /><i className="completed" style={{ width: `${Math.round((item.completedQty / max) * 100)}%` }} /></div><strong>{numberText(item.completedQty)}</strong></article>)}{!report?.dailyTrend.length && <EmptyState icon={<BarChart3 />} title="暂无趋势数据" />}</div>;
+function CompactTrend({ report, max, onSelect }: { report: ReportCenterOverviewDTO | null; max: number; onSelect?: (date: string) => void }) {
+  return <div className="compact-trend">{(report?.dailyTrend || []).map(item => <button type="button" key={item.date} onClick={() => onSelect?.(item.date)}><span>{item.label}</span><div><i className="planned" style={{ width: `${Math.round((item.plannedQty / max) * 100)}%` }} /><i className="completed" style={{ width: `${Math.round((item.completedQty / max) * 100)}%` }} /></div><small>计划 {numberText(item.plannedQty)}</small><strong>{numberText(item.completedQty)}</strong><ChevronRight /></button>)}{!report?.dailyTrend.length && <EmptyState icon={<BarChart3 />} title="暂无趋势数据" />}</div>;
 }
 
 function FocusTable({ items, title, onSelect }: { items: ReportCenterFocusItemDTO[]; title: string; onSelect: (item: ReportCenterFocusItemDTO) => void }) {
