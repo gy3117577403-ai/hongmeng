@@ -138,14 +138,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.19
+            org.opencontainers.image.version=v1.34.20
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.19
+            APP_VERSION=v1.34.20
             APP_REVISION=${{ github.sha }}
           load: true
           push: false
@@ -242,10 +242,25 @@ jobs:
         env:
           RELEASE_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
+          declare -A pushed_tags=()
           while IFS= read -r tag; do
             [ -n "$tag" ] || continue
+            [ -z "${pushed_tags[$tag]:-}" ] || continue
             docker tag hongmeng-release-smoke:${{ github.sha }} "$tag"
-            docker push "$tag"
+            pushed=0
+            for attempt in $(seq 1 5); do
+              if docker push "$tag"; then
+                pushed=1
+                break
+              fi
+              echo "GHCR push failed for $tag ($attempt/5); retrying after $((attempt * 10)) seconds"
+              sleep $((attempt * 10))
+            done
+            if [ "$pushed" != "1" ]; then
+              echo "GHCR push failed after retries: $tag" >&2
+              exit 1
+            fi
+            pushed_tags[$tag]=1
           done <<EOF
           $RELEASE_TAGS
           EOF

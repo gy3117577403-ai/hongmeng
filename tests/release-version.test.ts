@@ -16,7 +16,7 @@ const dockerfile = readFileSync(resolve(repositoryRoot, 'Dockerfile'), 'utf8');
 const workflow = readFileSync(resolve(repositoryRoot, '.github/workflows/docker-image.yml'), 'utf8');
 const appInfo = readFileSync(resolve(repositoryRoot, 'lib/app-info.ts'), 'utf8');
 
-const expectedPackageVersion = '1.34.19';
+const expectedPackageVersion = '1.34.20';
 const expectedImageVersion = `v${expectedPackageVersion}`;
 
 test('release version stays aligned across npm, Docker, and GHCR publishing', () => {
@@ -52,6 +52,9 @@ test('GHCR images retain immutable traceability tags and OCI identity labels', (
   assert.match(workflow, /^\s+- name: Verify PDF\.js runtime assets$/m);
   assert.match(workflow, /node scripts\/smoke-connector-manual-pdf\.mjs/);
   assert.match(workflow, /^\s+- name: Push verified release image$/m);
+  assert.match(workflow, /^\s+declare -A pushed_tags=\(\)$/m);
+  assert.match(workflow, /^\s+for attempt in \$\(seq 1 5\); do$/m);
+  assert.match(workflow, /GHCR push failed after retries:/);
 });
 
 test('runtime image explicitly carries both PDF.js worker variants', () => {
