@@ -1,5 +1,5 @@
 FROM node:20-alpine AS base
-ARG APP_VERSION=v1.34.17
+ARG APP_VERSION=v1.34.18
 ARG APP_REVISION=local
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 APP_VERSION=$APP_VERSION APP_REVISION=$APP_REVISION
@@ -26,6 +26,7 @@ COPY --from=builder /app/node_modules/bcryptjs ./node_modules/bcryptjs
 COPY --from=builder /app/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs ./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs
 COPY --from=builder /app/node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs ./node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs
 COPY --from=builder /app/docker-entrypoint.sh ./docker-entrypoint.sh
+COPY --from=builder /app/scripts/validate-runtime-env.mjs ./scripts/validate-runtime-env.mjs
 RUN sed -i 's/\r$//' docker-entrypoint.sh && chmod +x docker-entrypoint.sh
 EXPOSE 3000
 CMD ["./docker-entrypoint.sh"]

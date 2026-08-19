@@ -138,14 +138,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.17
+            org.opencontainers.image.version=v1.34.18
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.17
+            APP_VERSION=v1.34.18
             APP_REVISION=${{ github.sha }}
           load: true
           push: false
@@ -155,6 +155,17 @@ jobs:
         run: |
           docker run --rm --entrypoint /bin/sh hongmeng-release-smoke:${{ github.sha }} -c \
             'test -s /app/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs && test -s /app/node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs'
+      - name: Verify runtime origin guard
+        run: |
+          docker run --rm --entrypoint node \
+            -e APP_BASE_URL=https://example.com \
+            hongmeng-release-smoke:${{ github.sha }} scripts/validate-runtime-env.mjs
+          if docker run --rm --entrypoint node \
+            -e APP_BASE_URL=http://https://example.com \
+            hongmeng-release-smoke:${{ github.sha }} scripts/validate-runtime-env.mjs; then
+            echo "Malformed APP_BASE_URL was accepted" >&2
+            exit 1
+          fi
       - name: Smoke test exact release image
         env:
           OUTBOX_WORKER_TOKEN: ci-process-route-change-outbox-worker-token-1234567890
@@ -238,3 +249,33 @@ jobs:
           done <<EOF
           $RELEASE_TAGS
           EOF
+      - name: Verify Sealos China mirror matches GHCR
+        env:
+          UPSTREAM_IMAGE: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          SEALOS_IMAGE: ghcr.nju.edu.cn/${{ github.repository }}:${{ github.ref_name }}
+        run: |
+          upstream_digest="$(docker buildx imagetools inspect "$UPSTREAM_IMAGE" | awk '$1 == "Digest:" { print $2; exit }')"
+          test -n "$upstream_digest"
+
+          mirror_digest=""
+          for attempt in $(seq 1 20); do
+            mirror_digest="$(docker buildx imagetools inspect "$SEALOS_IMAGE" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
+            if [ "$mirror_digest" = "$upstream_digest" ]; then
+              break
+            fi
+            echo "Sealos mirror is not synchronized yet ($attempt/20)"
+            sleep 15
+          done
+
+          if [ "$mirror_digest" != "$upstream_digest" ]; then
+            echo "Sealos mirror digest mismatch: upstream=$upstream_digest mirror=${mirror_digest:-missing}" >&2
+            exit 1
+          fi
+
+          {
+            echo "### Sealos deployment image"
+            echo
+            echo "\`$SEALOS_IMAGE\`"
+            echo
+            echo "Verified digest: \`$upstream_digest\`"
+          } >> "$GITHUB_STEP_SUMMARY"

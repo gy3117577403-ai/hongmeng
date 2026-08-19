@@ -8,7 +8,8 @@
 - 待验收热修版本：v1.29.1（尚未切换生产）
 - 上线地址：https://qdowqencjyph.sealoshzh.site
 - 部署平台：Sealos
-- 镜像：`ghcr.io/gy3117577403-ai/hongmeng`
+- 发布源：`ghcr.io/gy3117577403-ai/hongmeng`
+- Sealos 拉取源：`ghcr.nju.edu.cn/gy3117577403-ai/hongmeng:<release-tag>`
 - 数据库：Sealos PostgreSQL
 - 文件存储：Sealos Object Storage
 - 数据模式：账号登录；生产员工使用员工编号和临时密码扫码报工，保留员工身份追溯
@@ -58,13 +59,15 @@ docker compose up --build
 
 ## Sealos 镜像
 
-将发布提交推送到 GitHub，再从该提交创建并推送 `v1.34.4` 标签后，工作流会构建：
+将发布提交推送到 GitHub，再从该提交创建并推送不可变版本标签后，工作流会构建：
 
 ```text
-ghcr.io/gy3117577403-ai/hongmeng:v1.34.4
+ghcr.io/gy3117577403-ai/hongmeng:<release-tag>
 ```
 
-Sealos App Deploy 端口填 `3000`。`v1.34.4` 是本次待验收候选镜像；当前生产实际版本必须在切换前现场核验，完成生产发布前不要把候选版本写成已上线。`latest` 仅用于跟随最新构建，生产切换应固定到已验收的镜像 digest。
+Sealos App Deploy 端口填 `3000`，镜像填写 `ghcr.nju.edu.cn/gy3117577403-ai/hongmeng:<release-tag>`。发布工作流会等待国内代理可见，并验证代理摘要与 GHCR 完全一致后才通过。Sealos 镜像输入框长度不足以容纳国内代理加完整 digest，因此只能使用已经通过摘要一致性门禁的不可变版本标签，禁止使用 `latest`。
+
+生产环境的 `APP_BASE_URL` 必须是唯一、完整的公网 Origin，例如 `https://qdowqencjyph.sealoshzh.site`；不要填写路径，也不要写成 `http://https://...`。容器启动时会在迁移前校验该值并对错误配置快速失败。
 
 ## 平板交付方式
 

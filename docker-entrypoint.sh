@@ -1,6 +1,11 @@
 #!/bin/sh
 set -e
 
+# Reject malformed public origins before migrations or the HTTP server start.
+# A value such as http://https://host is technically parseable by URL(), but
+# points to the wrong host/path and causes intermittent redirects and callbacks.
+node scripts/validate-runtime-env.mjs
+
 db_tries=1
 until node -e "const net=require('net'); const url=new URL(process.env.DATABASE_URL); const socket=net.connect({host:url.hostname,port:Number(url.port||5432)},()=>{socket.end();process.exit(0)}); socket.setTimeout(1000,()=>{socket.destroy();process.exit(1)}); socket.on('error',()=>process.exit(1));"; do
   if [ "$db_tries" -ge 30 ]; then
