@@ -19,8 +19,10 @@ import {
   DailyShipmentServiceError,
   loadDailyShipmentWorkbench,
   recordDailyShipment,
+  releaseDailyShipmentReservation,
   rollOverDailyShipmentPlan,
   reverseDailyShipment,
+  transferDailyShipmentReservation,
   updateDailyShipmentItem,
 } from '@/lib/daily-shipment-service';
 import { canRunGetReconciliation } from '@/lib/get-reconciliation-access';
@@ -153,6 +155,23 @@ export async function POST(request: NextRequest) {
           actorUserId: user.id,
           planId: body.planId,
           planVersion: body.planVersion,
+        });
+        break;
+      case 'RELEASE_RESERVATION':
+        result = await releaseDailyShipmentReservation({
+          actorUserId: user.id,
+          itemId: body.itemId,
+          itemVersion: body.itemVersion,
+          idempotencyKey,
+        });
+        break;
+      case 'TRANSFER_RESERVATION':
+        result = await transferDailyShipmentReservation({
+          actorUserId: user.id,
+          itemId: body.itemId,
+          itemVersion: body.itemVersion,
+          targetShipDate: body.targetShipDate,
+          idempotencyKey,
         });
         break;
       case 'RECORD_SHIPMENT':

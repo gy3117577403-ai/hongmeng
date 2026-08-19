@@ -390,6 +390,10 @@ function moreUrgentPriority(
   return shipmentPriorityRank(first) <= shipmentPriorityRank(second) ? first : second;
 }
 
+function isOpenShipmentPlanStatus(status: DailyShipmentPlanStatus): boolean {
+  return status === DailyShipmentPlanStatus.DRAFT || status === DailyShipmentPlanStatus.CONFIRMED;
+}
+
 export async function reconcileDailyShipmentCarryover(input: {
   targetShipDate: unknown;
   actorUserId: string;
@@ -399,8 +403,25 @@ export async function reconcileDailyShipmentCarryover(input: {
 }): Promise<DailyShipmentCarryoverResult> {
   const actorId = requiredText(input.actorUserId, '操作人');
   const targetDate = parseShipmentDate(input.targetShipDate);
-  const sourceDateKey = shiftShipmentDateKey(targetDate.key, -1);
+  let sourceDateKey = shiftShipmentDateKey(targetDate.key, -1);
+  if (input.sourcePlanId) {
+    const sourceIdentity = await prisma.dailyShipmentPlan.findUnique({
+      where: { id: input.sourcePlanId },
+      select: { shipDate: true },
+    });
+    if (!sourceIdentity) {
+      throw new DailyShipmentServiceError('出货计划不存在', 'SHIPMENT_PLAN_NOT_FOUND', 404);
+    }
+    sourceDateKey = dateKey(sourceIdentity.shipDate);
+  }
   const sourceDate = parseShipmentDate(sourceDateKey);
+  if (sourceDate.key >= targetDate.key) {
+    throw new DailyShipmentServiceError('结转目标日期必须晚于原计划日期', 'SHIPMENT_CARRYOVER_DATE_INVALID');
+  }
+  const carryoverDayDelta = Math.max(
+    1,
+    Math.round((targetDate.value.getTime() - sourceDate.value.getTime()) / 86_400_000),
+  );
 
   return serializable(async tx => {
     await lock(tx, `daily-shipment-plan:${sourceDate.key}`);
@@ -431,7 +452,7 @@ export async function reconcileDailyShipmentCarryover(input: {
     };
     if (!sourcePlan) return emptyResult;
     if (dateKey(sourcePlan.shipDate) !== sourceDate.key) {
-      throw new DailyShipmentServiceError('结转目标必须是源计划的下一天', 'SHIPMENT_CARRYOVER_DATE_INVALID');
+      throw new DailyShipmentServiceError('原计划日期已变化，请刷新后重试', 'SHIPMENT_CONCURRENCY_CONFLICT', 409);
     }
     if (input.sourcePlanVersion !== undefined && sourcePlan.version !== input.sourcePlanVersion) {
       throw new DailyShipmentServiceError('计划已被其他人修改，请刷新后重试', 'SHIPMENT_CONCURRENCY_CONFLICT', 409);
@@ -444,6 +465,7 @@ export async function reconcileDailyShipmentCarryover(input: {
     }
 
     const pendingItems = sourcePlan.items.flatMap(item => {
+      if (item.status === DailyShipmentItemStatus.CARRIED_OVER) return [];
       if (item.carryoverTargetItem) return [];
       const pendingQuantity = Math.max(0, item.plannedQuantity - netShipmentQuantity(item.events));
       return pendingQuantity > 0 ? [{ item, pendingQuantity }] : [];
@@ -509,9 +531,6 @@ export async function reconcileDailyShipmentCarryover(input: {
     for (let index = 0; index < pendingItems.length; index += 1) {
       const { item: sourceItem, pendingQuantity } = pendingItems[index];
       const existing = targetPlan.items.find(item => item.productionPlanBatchId === sourceItem.productionPlanBatchId);
-      if (existing?.carryoverSourceItemId && existing.carryoverSourceItemId !== sourceItem.id) {
-        throw new DailyShipmentServiceError('目标计划已有其他遗留来源，请刷新后重试', 'SHIPMENT_CARRYOVER_CONFLICT', 409);
-      }
       const carriedShipAt = carryoverPlannedShipAt(sourceItem.plannedShipAt, targetDate.key);
       let targetItemId: string;
       if (existing) {
@@ -525,9 +544,9 @@ export async function reconcileDailyShipmentCarryover(input: {
             plannedShipAt: revived || carriedShipAt < existing.plannedShipAt ? carriedShipAt : existing.plannedShipAt,
             status: shipmentItemStatus(nextPlannedQuantity, existingShipped),
             shipmentPriority: moreUrgentPriority(existing.shipmentPriority, sourceItem.shipmentPriority),
-            carryoverSourceItemId: sourceItem.id,
+            ...(!existing.carryoverSourceItemId ? { carryoverSourceItemId: sourceItem.id } : {}),
             carryoverSourceDate: sourcePlan.shipDate,
-            carryoverDayCount: Math.max(1, sourceItem.carryoverDayCount + 1),
+            carryoverDayCount: Math.max(carryoverDayDelta, sourceItem.carryoverDayCount + carryoverDayDelta),
             carryoverQuantity: (revived ? 0 : existing.carryoverQuantity) + pendingQuantity,
             sourceSnapshot: jsonValue(sourceItem.sourceSnapshot),
             version: { increment: 1 },
@@ -550,7 +569,7 @@ export async function reconcileDailyShipmentCarryover(input: {
             sourceSnapshot: jsonValue(sourceItem.sourceSnapshot),
             carryoverSourceItemId: sourceItem.id,
             carryoverSourceDate: sourcePlan.shipDate,
-            carryoverDayCount: Math.max(1, sourceItem.carryoverDayCount + 1),
+            carryoverDayCount: Math.max(carryoverDayDelta, sourceItem.carryoverDayCount + carryoverDayDelta),
             carryoverQuantity: pendingQuantity,
             createdById: actorId,
             updatedById: actorId,
@@ -625,12 +644,22 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
   const week = shipmentWeek(parsedDate.key);
   const batchWeek = productionBatchWeekStartWindow(parsedDate.key);
   const now = new Date();
-  const carryoverReconciliation = input.actorUserId && parsedDate.key === chinaDateKey(now)
-    ? await reconcileDailyShipmentCarryover({
-        targetShipDate: parsedDate.key,
-        actorUserId: input.actorUserId,
-      })
-    : null;
+  let carryoverReconciliation: DailyShipmentCarryoverResult | null = null;
+  if (input.actorUserId && parsedDate.key === chinaDateKey(now)) {
+    const latestUnresolvedPlan = await prisma.dailyShipmentPlan.findFirst({
+      where: {
+        shipDate: { lt: parsedDate.value },
+        status: DailyShipmentPlanStatus.CONFIRMED,
+      },
+      orderBy: { shipDate: 'desc' },
+      select: { id: true },
+    });
+    carryoverReconciliation = await reconcileDailyShipmentCarryover({
+      targetShipDate: parsedDate.key,
+      actorUserId: input.actorUserId,
+      ...(latestUnresolvedPlan ? { sourcePlanId: latestUnresolvedPlan.id } : {}),
+    });
+  }
   if (isCurrentProductionCarryoverTarget(week.startDate) && input.actorUserId) {
     await reconcileCurrentProductionCarryovers({ targetWeekStart: week.startDate, actorId: input.actorUserId });
   }
@@ -684,32 +713,75 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
           productionPlanBatchId: { in: batchIds },
           status: { not: DailyShipmentItemStatus.CANCELLED },
         },
-        select: {
-          productionPlanBatchId: true,
-          plannedQuantity: true,
-          status: true,
-          plan: { select: { shipDate: true } },
-          events: { select: { eventType: true, quantity: true } },
+         select: {
+           id: true,
+           version: true,
+           productionPlanBatchId: true,
+           plannedQuantity: true,
+           status: true,
+           plan: { select: { id: true, version: true, shipDate: true, status: true } },
+           events: { select: { eventType: true, quantity: true } },
         },
       })
     : [];
   const scheduledByBatch = new Map<string, number>();
   const shippedByBatch = new Map<string, number>();
   const daysByBatch = new Map<string, string[]>();
+  const reservationsByBatch = new Map<string, Array<{
+    itemId: string;
+    itemVersion: number;
+    planId: string;
+    planVersion: number;
+    shipDate: string;
+    planStatus: DailyShipmentPlanStatus;
+    itemStatus: DailyShipmentItemStatus;
+    plannedQuantity: number;
+    shippedQuantity: number;
+    pendingQuantity: number;
+    reservedQuantity: number;
+    canRelease: boolean;
+    canTransferToSelectedDate: boolean;
+  }>>();
   for (const item of scheduledItems) {
     const reservedQuantity = shipmentReservationQuantity(item);
+    const shippedQuantity = netShipmentQuantity(item.events);
+    const shipDate = dateKey(item.plan.shipDate);
     scheduledByBatch.set(
       item.productionPlanBatchId,
       (scheduledByBatch.get(item.productionPlanBatchId) || 0) + reservedQuantity,
     );
     shippedByBatch.set(
       item.productionPlanBatchId,
-      (shippedByBatch.get(item.productionPlanBatchId) || 0) + netShipmentQuantity(item.events),
+      (shippedByBatch.get(item.productionPlanBatchId) || 0) + shippedQuantity,
     );
     if (reservedQuantity > 0 && item.status !== DailyShipmentItemStatus.CARRIED_OVER) {
       const days = daysByBatch.get(item.productionPlanBatchId) || [];
-      days.push(dateKey(item.plan.shipDate));
+      days.push(shipDate);
       daysByBatch.set(item.productionPlanBatchId, days);
+    }
+    if (reservedQuantity > 0) {
+      const reservations = reservationsByBatch.get(item.productionPlanBatchId) || [];
+      reservations.push({
+        itemId: item.id,
+        itemVersion: item.version,
+        planId: item.plan.id,
+        planVersion: item.plan.version,
+        shipDate,
+        planStatus: item.plan.status,
+        itemStatus: item.status,
+        plannedQuantity: item.plannedQuantity,
+        shippedQuantity,
+        pendingQuantity: Math.max(0, item.plannedQuantity - shippedQuantity),
+        reservedQuantity,
+        canRelease: shippedQuantity === 0
+          && item.status === DailyShipmentItemStatus.PLANNED
+          && isOpenShipmentPlanStatus(item.plan.status),
+        canTransferToSelectedDate: shipDate < parsedDate.key
+          && item.status !== DailyShipmentItemStatus.CARRIED_OVER
+          && Math.max(0, item.plannedQuantity - shippedQuantity) > 0
+          && isOpenShipmentPlanStatus(item.plan.status),
+      });
+      reservationsByBatch.set(item.productionPlanBatchId, reservations);
     }
   }
 
@@ -742,6 +814,9 @@ export async function loadDailyShipmentWorkbench(input: { shipDate: unknown; act
       currentProcess: currentProcess(workOrder),
       lastProgressAt: workOrder.lastProgressAt?.toISOString() || null,
       scheduledDates: [...new Set(daysByBatch.get(batch.id) || [])].sort(),
+      reservations: (reservationsByBatch.get(batch.id) || []).sort((first, second) => (
+        first.shipDate.localeCompare(second.shipDate) || first.itemId.localeCompare(second.itemId)
+      )),
     };
   });
 
@@ -1202,6 +1277,335 @@ export async function cancelDailyShipmentItem(input: {
       actorId,
     });
     return { planId: item.planId, replayed: false };
+  });
+}
+
+async function settleReservationSourcePlan(
+  tx: TransactionClient,
+  planId: string,
+  actorId: string,
+): Promise<DailyShipmentPlanStatus | null> {
+  const plan = await tx.dailyShipmentPlan.findUnique({
+    where: { id: planId },
+    include: { items: { select: { status: true } } },
+  });
+  if (!plan) throw new DailyShipmentServiceError('原出货计划不存在', 'SHIPMENT_PLAN_NOT_FOUND', 404);
+  const operational = plan.items.filter(item => (
+    item.status === DailyShipmentItemStatus.PLANNED
+    || item.status === DailyShipmentItemStatus.PARTIALLY_SHIPPED
+  ));
+  if (operational.length > 0) {
+    await tx.dailyShipmentPlan.update({
+      where: { id: plan.id },
+      data: { updatedById: actorId, version: { increment: 1 } },
+    });
+    return null;
+  }
+
+  const retained = plan.items.filter(item => item.status !== DailyShipmentItemStatus.CANCELLED);
+  let nextStatus: DailyShipmentPlanStatus | null = null;
+  if (retained.length === 0) nextStatus = DailyShipmentPlanStatus.CANCELLED;
+  else if (retained.some(item => item.status === DailyShipmentItemStatus.CARRIED_OVER)) {
+    nextStatus = DailyShipmentPlanStatus.CLOSED_WITH_CARRYOVER;
+  } else if (retained.every(item => item.status === DailyShipmentItemStatus.SHIPPED)) {
+    nextStatus = DailyShipmentPlanStatus.CLOSED;
+  }
+  if (!nextStatus) {
+    await tx.dailyShipmentPlan.update({
+      where: { id: plan.id },
+      data: { updatedById: actorId, version: { increment: 1 } },
+    });
+    return null;
+  }
+  await tx.dailyShipmentPlan.update({
+    where: { id: plan.id },
+    data: {
+      status: nextStatus,
+      closedAt: new Date(),
+      closedById: actorId,
+      updatedById: actorId,
+      version: { increment: 1 },
+    },
+  });
+  return nextStatus;
+}
+
+export async function releaseDailyShipmentReservation(input: {
+  actorUserId: string;
+  itemId: unknown;
+  itemVersion: unknown;
+  idempotencyKey: unknown;
+}): Promise<MutationResult> {
+  const actorId = requiredText(input.actorUserId, '操作人');
+  const itemId = requiredText(input.itemId, '占用计划项');
+  const version = shipmentVersion(input.itemVersion, '占用计划项版本');
+  const key = idempotencyKey(input.idempotencyKey);
+  const payloadHash = stableHash({ itemId, version });
+  return serializable(async tx => {
+    const replay = await readReplay(tx, {
+      idempotencyKey: key,
+      payloadHash,
+      actorId,
+      action: 'RELEASE_RESERVATION',
+    });
+    if (replay) return replay;
+    const item = await loadMutableItem(tx, itemId);
+    await lock(tx, `daily-shipment-batch:${item.productionPlanBatchId}`);
+    await lock(tx, `daily-shipment-plan:${dateKey(item.plan.shipDate)}`);
+    if (!isOpenShipmentPlanStatus(item.plan.status)) {
+      throw new DailyShipmentServiceError('原计划已关闭，不能直接释放占用', 'SHIPMENT_PLAN_LOCKED', 409);
+    }
+    if (item.status !== DailyShipmentItemStatus.PLANNED || netShipmentQuantity(item.events) > 0) {
+      throw new DailyShipmentServiceError(
+        '该占用已有实发或已进入结转链，请使用“结转到当前日”保留历史流水',
+        'SHIPMENT_RESERVATION_HAS_EVENTS',
+        409,
+      );
+    }
+    const changed = await tx.dailyShipmentPlanItem.updateMany({
+      where: { id: item.id, version, status: DailyShipmentItemStatus.PLANNED },
+      data: {
+        status: DailyShipmentItemStatus.CANCELLED,
+        version: { increment: 1 },
+        updatedById: actorId,
+      },
+    });
+    if (changed.count !== 1) {
+      throw new DailyShipmentServiceError('占用计划已被其他人修改，请刷新后重试', 'SHIPMENT_CONCURRENCY_CONFLICT', 409);
+    }
+    const settledStatus = await settleReservationSourcePlan(tx, item.planId, actorId);
+    await writeRevision(tx, {
+      planId: item.planId,
+      itemId: item.id,
+      action: 'RELEASE_RESERVATION',
+      idempotencyKey: key,
+      payloadHash,
+      before: {
+        status: item.status,
+        planStatus: item.plan.status,
+        reservedQuantity: item.plannedQuantity,
+      },
+      after: {
+        status: DailyShipmentItemStatus.CANCELLED,
+        planStatus: settledStatus ?? item.plan.status,
+        releasedQuantity: item.plannedQuantity,
+      },
+      reason: '手动释放历史出货计划占用',
+      actorId,
+    });
+    return { planId: item.planId, replayed: false };
+  });
+}
+
+export async function transferDailyShipmentReservation(input: {
+  actorUserId: string;
+  itemId: unknown;
+  itemVersion: unknown;
+  targetShipDate: unknown;
+  idempotencyKey: unknown;
+}): Promise<MutationResult> {
+  const actorId = requiredText(input.actorUserId, '操作人');
+  const itemId = requiredText(input.itemId, '占用计划项');
+  const version = shipmentVersion(input.itemVersion, '占用计划项版本');
+  const targetDate = parseShipmentDate(input.targetShipDate);
+  const key = idempotencyKey(input.idempotencyKey);
+  const payloadHash = stableHash({ itemId, version, targetShipDate: targetDate.key });
+  return serializable(async tx => {
+    const replay = await readReplay(tx, {
+      idempotencyKey: key,
+      payloadHash,
+      actorId,
+      action: 'TRANSFER_RESERVATION',
+    });
+    if (replay) return replay;
+    const sourceItem = await loadMutableItem(tx, itemId);
+    const sourceDateKey = dateKey(sourceItem.plan.shipDate);
+    if (sourceDateKey >= targetDate.key) {
+      throw new DailyShipmentServiceError('只能把较早日期的占用结转到当前选择日', 'SHIPMENT_CARRYOVER_DATE_INVALID');
+    }
+    await lock(tx, `daily-shipment-batch:${sourceItem.productionPlanBatchId}`);
+    await lock(tx, `daily-shipment-plan:${sourceDateKey}`);
+    await lock(tx, `daily-shipment-plan:${targetDate.key}`);
+    if (!isOpenShipmentPlanStatus(sourceItem.plan.status)) {
+      throw new DailyShipmentServiceError('原计划已关闭，不能再次结转', 'SHIPMENT_PLAN_LOCKED', 409);
+    }
+    if (
+      sourceItem.status === DailyShipmentItemStatus.CANCELLED
+      || sourceItem.status === DailyShipmentItemStatus.CARRIED_OVER
+      || sourceItem.status === DailyShipmentItemStatus.SHIPPED
+    ) {
+      throw new DailyShipmentServiceError('该占用已经释放、出货或结转，请刷新后重试', 'SHIPMENT_RESERVATION_LOCKED', 409);
+    }
+    const sourceShippedQuantity = netShipmentQuantity(sourceItem.events);
+    const pendingQuantity = Math.max(0, sourceItem.plannedQuantity - sourceShippedQuantity);
+    if (pendingQuantity <= 0) {
+      throw new DailyShipmentServiceError('该计划项没有可结转数量', 'SHIPMENT_CARRYOVER_EMPTY', 409);
+    }
+
+    let targetPlan = await tx.dailyShipmentPlan.findUnique({ where: { shipDate: targetDate.value } });
+    if (targetPlan && !isOpenShipmentPlanStatus(targetPlan.status)) {
+      throw new DailyShipmentServiceError(
+        `${targetDate.key} 的出货计划已关闭，不能接收历史占用`,
+        'SHIPMENT_CARRYOVER_TARGET_LOCKED',
+        409,
+      );
+    }
+    if (!targetPlan) {
+      targetPlan = await tx.dailyShipmentPlan.create({
+        data: { shipDate: targetDate.value, createdById: actorId, updatedById: actorId },
+      });
+    }
+    const existingTarget = await tx.dailyShipmentPlanItem.findUnique({
+      where: {
+        planId_productionPlanBatchId: {
+          planId: targetPlan.id,
+          productionPlanBatchId: sourceItem.productionPlanBatchId,
+        },
+      },
+      include: { events: { select: { eventType: true, quantity: true } } },
+    });
+    if (existingTarget?.status === DailyShipmentItemStatus.CARRIED_OVER) {
+      throw new DailyShipmentServiceError('当前日的同批订单已继续结转，不能合并到旧链路', 'SHIPMENT_CARRYOVER_CONFLICT', 409);
+    }
+
+    const otherReservations = await tx.dailyShipmentPlanItem.findMany({
+      where: {
+        productionPlanBatchId: sourceItem.productionPlanBatchId,
+        id: { notIn: [sourceItem.id, ...(existingTarget ? [existingTarget.id] : [])] },
+        status: { not: DailyShipmentItemStatus.CANCELLED },
+      },
+      select: {
+        status: true,
+        plannedQuantity: true,
+        events: { select: { eventType: true, quantity: true } },
+      },
+    });
+    const revivedTarget = existingTarget?.status === DailyShipmentItemStatus.CANCELLED;
+    const existingTargetShipped = existingTarget && !revivedTarget
+      ? netShipmentQuantity(existingTarget.events)
+      : 0;
+    const nextTargetQuantity = (existingTarget && !revivedTarget ? existingTarget.plannedQuantity : 0) + pendingQuantity;
+    assertScheduledQuantity({
+      batchQuantity: sourceItem.productionPlanBatch.quantity,
+      alreadyScheduledQuantity: otherReservations.reduce(
+        (total, item) => total + shipmentReservationQuantity(item),
+        sourceShippedQuantity,
+      ),
+      requestedQuantity: nextTargetQuantity,
+    });
+
+    const dayDelta = Math.max(
+      1,
+      Math.round((targetDate.value.getTime() - sourceItem.plan.shipDate.getTime()) / 86_400_000),
+    );
+    const targetShipAt = carryoverPlannedShipAt(sourceItem.plannedShipAt, targetDate.key);
+    let targetItemId: string;
+    if (existingTarget) {
+      const updatedTarget = await tx.dailyShipmentPlanItem.update({
+        where: { id: existingTarget.id },
+        data: {
+          plannedQuantity: nextTargetQuantity,
+          plannedShipAt: revivedTarget || targetShipAt < existingTarget.plannedShipAt
+            ? targetShipAt
+            : existingTarget.plannedShipAt,
+          status: shipmentItemStatus(nextTargetQuantity, existingTargetShipped),
+          shipmentPriority: moreUrgentPriority(existingTarget.shipmentPriority, sourceItem.shipmentPriority),
+          ...(!existingTarget.carryoverSourceItemId ? { carryoverSourceItemId: sourceItem.id } : {}),
+          carryoverSourceDate: existingTarget.carryoverSourceDate && existingTarget.carryoverSourceDate < sourceItem.plan.shipDate
+            ? existingTarget.carryoverSourceDate
+            : sourceItem.plan.shipDate,
+          carryoverDayCount: Math.max(existingTarget.carryoverDayCount, sourceItem.carryoverDayCount + dayDelta),
+          carryoverQuantity: (revivedTarget ? 0 : existingTarget.carryoverQuantity) + pendingQuantity,
+          sourceSnapshot: jsonValue(sourceItem.sourceSnapshot),
+          version: { increment: 1 },
+          updatedById: actorId,
+        },
+      });
+      targetItemId = updatedTarget.id;
+    } else {
+      const currentSort = await tx.dailyShipmentPlanItem.aggregate({
+        where: { planId: targetPlan.id },
+        _max: { sortOrder: true },
+      });
+      const createdTarget = await tx.dailyShipmentPlanItem.create({
+        data: {
+          planId: targetPlan.id,
+          productionPlanBatchId: sourceItem.productionPlanBatchId,
+          workOrderId: sourceItem.workOrderId,
+          plannedQuantity: pendingQuantity,
+          plannedShipAt: targetShipAt,
+          status: DailyShipmentItemStatus.PLANNED,
+          shipmentPriority: sourceItem.shipmentPriority,
+          sortOrder: (currentSort._max.sortOrder ?? -1) + 1,
+          note: sourceItem.note,
+          sourceSnapshot: jsonValue(sourceItem.sourceSnapshot),
+          carryoverSourceItemId: sourceItem.id,
+          carryoverSourceDate: sourceItem.plan.shipDate,
+          carryoverDayCount: sourceItem.carryoverDayCount + dayDelta,
+          carryoverQuantity: pendingQuantity,
+          createdById: actorId,
+          updatedById: actorId,
+        },
+      });
+      targetItemId = createdTarget.id;
+    }
+
+    const sourceNextStatus = sourceItem.plan.status === DailyShipmentPlanStatus.DRAFT
+      ? DailyShipmentItemStatus.CANCELLED
+      : DailyShipmentItemStatus.CARRIED_OVER;
+    const sourceChanged = await tx.dailyShipmentPlanItem.updateMany({
+      where: { id: sourceItem.id, version },
+      data: {
+        status: sourceNextStatus,
+        version: { increment: 1 },
+        updatedById: actorId,
+      },
+    });
+    if (sourceChanged.count !== 1) {
+      throw new DailyShipmentServiceError('占用计划已被其他人修改，请刷新后重试', 'SHIPMENT_CONCURRENCY_CONFLICT', 409);
+    }
+    const settledStatus = await settleReservationSourcePlan(tx, sourceItem.planId, actorId);
+    await tx.dailyShipmentPlan.update({
+      where: { id: targetPlan.id },
+      data: { updatedById: actorId, version: { increment: 1 } },
+    });
+    const revisionPayload = {
+      sourcePlanId: sourceItem.planId,
+      sourceItemId: sourceItem.id,
+      sourceDate: sourceDateKey,
+      targetPlanId: targetPlan.id,
+      targetItemId,
+      targetDate: targetDate.key,
+      quantity: pendingQuantity,
+      sourceStatus: sourceNextStatus,
+    };
+    await writeRevision(tx, {
+      planId: sourceItem.planId,
+      itemId: sourceItem.id,
+      action: 'TRANSFER_RESERVATION_SOURCE',
+      idempotencyKey: `${key}:source`,
+      payloadHash,
+      before: {
+        status: sourceItem.status,
+        planStatus: sourceItem.plan.status,
+        plannedQuantity: sourceItem.plannedQuantity,
+        shippedQuantity: sourceShippedQuantity,
+      },
+      after: { ...revisionPayload, planStatus: settledStatus ?? sourceItem.plan.status },
+      reason: `手动结转到 ${targetDate.key}`,
+      actorId,
+    });
+    await writeRevision(tx, {
+      planId: targetPlan.id,
+      itemId: targetItemId,
+      action: 'TRANSFER_RESERVATION',
+      idempotencyKey: key,
+      payloadHash,
+      after: revisionPayload,
+      reason: `接收 ${sourceDateKey} 历史占用`,
+      actorId,
+    });
+    return { planId: targetPlan.id, replayed: false };
   });
 }
 

@@ -29,6 +29,8 @@ export const DAILY_SHIPMENT_MUTATION_ACTIONS = [
   'CONFIRM_PLAN',
   'CLOSE_PLAN',
   'ROLL_OVER_PLAN',
+  'RELEASE_RESERVATION',
+  'TRANSFER_RESERVATION',
   'RECORD_SHIPMENT',
   'REVERSE_SHIPMENT',
 ] as const;
@@ -51,6 +53,8 @@ export function dailyShipmentRequiredAction(
     case 'CONFIRM_PLAN':
     case 'CLOSE_PLAN':
     case 'ROLL_OVER_PLAN':
+    case 'RELEASE_RESERVATION':
+    case 'TRANSFER_RESERVATION':
     case 'RECORD_SHIPMENT':
     case 'REVERSE_SHIPMENT':
       return 'EXECUTE_WORKFLOW';

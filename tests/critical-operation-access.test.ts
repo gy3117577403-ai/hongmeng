@@ -56,6 +56,8 @@ test('daily shipment actions map to explicit Planning mutation capabilities', ()
   assert.equal(dailyShipmentRequiredAction('CLOSE_PLAN'), 'EXECUTE_WORKFLOW');
   assert.equal(dailyShipmentRequiredAction('RECORD_SHIPMENT'), 'EXECUTE_WORKFLOW');
   assert.equal(dailyShipmentRequiredAction('REVERSE_SHIPMENT'), 'EXECUTE_WORKFLOW');
+  assert.equal(dailyShipmentRequiredAction('RELEASE_RESERVATION'), 'EXECUTE_WORKFLOW');
+  assert.equal(dailyShipmentRequiredAction('TRANSFER_RESERVATION'), 'EXECUTE_WORKFLOW');
   assert.equal(dailyShipmentRequiredAction('UNKNOWN'), null);
 });
 

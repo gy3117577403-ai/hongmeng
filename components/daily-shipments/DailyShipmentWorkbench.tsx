@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  ArrowRight,
   BellRing,
   CalendarCheck2,
   CalendarClock,
@@ -10,8 +11,10 @@ import {
   ChevronDown,
   Clock3,
   History,
+  Eye,
   ListFilter,
   LoaderCircle,
+  LockOpen,
   Menu,
   PackageCheck,
   Pencil,
@@ -44,6 +47,7 @@ type CandidateDraft = {
   shipmentPriority: DailyShipmentPriority;
   note: string;
 };
+type CandidateReservation = DailyShipmentCandidateDTO['reservations'][number];
 type DialogState =
   | { kind: 'edit'; item: DailyShipmentItemDTO }
   | { kind: 'cancel'; item: DailyShipmentItemDTO }
@@ -52,7 +56,10 @@ type DialogState =
   | { kind: 'reverse'; item: DailyShipmentItemDTO; event: DailyShipmentEventDTO }
   | { kind: 'confirm' }
   | { kind: 'close' }
-  | { kind: 'rollover' };
+  | { kind: 'rollover' }
+  | { kind: 'reservations'; candidate: DailyShipmentCandidateDTO }
+  | { kind: 'releaseReservation'; candidate: DailyShipmentCandidateDTO; reservation: CandidateReservation }
+  | { kind: 'transferReservation'; candidate: DailyShipmentCandidateDTO; reservation: CandidateReservation };
 
 const DAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
 
@@ -159,6 +166,12 @@ function defaultShipmentPriority(value: string): DailyShipmentPriority {
   if (['urgent', 'insert', '紧急', '插单'].includes(normalized)) return 'URGENT';
   if (['high', 'priority', '优先'].includes(normalized)) return 'PRIORITY';
   return 'NORMAL';
+}
+
+function reservationStatusText(reservation: CandidateReservation): string {
+  if (reservation.itemStatus === 'CARRIED_OVER') return '历史实发记录';
+  if (reservation.itemStatus === 'SHIPPED') return '已完成出货记录';
+  return `${PLAN_STATUS_TEXT[reservation.planStatus]}计划`;
 }
 
 function candidateAvailableToShip(item: DailyShipmentItemDTO, candidates: DailyShipmentCandidateDTO[]): number {
@@ -376,7 +389,7 @@ export default function DailyShipmentWorkbench({
     setError('');
     try {
       await mutateDailyShipment(body);
-      cacheRef.current.delete(selectedDate);
+      cacheRef.current.clear();
       setDialog(null);
       if (!options?.keepDrawer) setDrawerOpen(false);
       setToast(successMessage);
@@ -423,6 +436,30 @@ export default function DailyShipmentWorkbench({
         .reduce((total, event) => total + event.quantity, 0);
       setForm({ quantity: String(next.event.quantity - reversed), reversedAt: chinaDateTimeInput(), reason: '' });
     }
+  }
+
+  function viewReservationPlan(reservation: CandidateReservation): void {
+    setDialog(null);
+    setDrawerOpen(false);
+    setError('');
+    setSelectedDate(reservation.shipDate);
+  }
+
+  function releaseReservation(reservation: CandidateReservation): void {
+    void execute({
+      action: 'RELEASE_RESERVATION',
+      itemId: reservation.itemId,
+      itemVersion: reservation.itemVersion,
+    }, `已释放 ${shortDate(reservation.shipDate)} 的旧计划占用`, { keepDrawer: true });
+  }
+
+  function transferReservation(reservation: CandidateReservation): void {
+    void execute({
+      action: 'TRANSFER_RESERVATION',
+      itemId: reservation.itemId,
+      itemVersion: reservation.itemVersion,
+      targetShipDate: selectedDate,
+    }, `已结转到 ${shortDate(selectedDate)} 出货计划`, { keepDrawer: true });
   }
 
   function submitDialog(): void {
@@ -628,10 +665,19 @@ export default function DailyShipmentWorkbench({
           {filteredCandidates.map(candidate => {
             const draft = candidateDrafts[candidate.batchId];
             const selected = Boolean(draft);
+            const blockingReservations = candidate.reservations.filter(reservation => reservation.reservedQuantity > 0);
+            const primaryReservation = blockingReservations[0];
             return <article className={`${selected ? 'selected' : ''} ${candidate.availableQuantity <= 0 ? 'unavailable' : ''}`} key={candidate.batchId}>
               <button type="button" className="shipment-candidate-select" aria-pressed={selected} disabled={!editable || candidate.availableQuantity <= 0} onClick={() => toggleCandidate(candidate)}><i>{selected && <Check size={13} />}</i><span><strong>{candidate.workOrderCode}</strong><small>{candidate.customerName} · {candidate.productName}</small><em>{candidate.specification} · 第 {candidate.batchNo} 批</em></span></button>
               <dl><div><dt>批次数量</dt><dd>{numberText(candidate.batchQuantity)}</dd></div><div><dt>已排计划</dt><dd>{numberText(candidate.scheduledQuantity)}</dd></div><div><dt>剩余可排</dt><dd>{numberText(candidate.availableQuantity)}</dd></div><div><dt>已完工</dt><dd>{numberText(candidate.completedQuantity)}</dd></div></dl>
               <div className="shipment-candidate-progress"><span><b>{candidate.currentProcess}</b><em>{numberText(candidate.productionProgress)}%</em></span><div><i style={{ width: `${Math.min(100, candidate.productionProgress)}%` }} /></div>{candidate.scheduledDates.length > 0 && <small>已安排：{candidate.scheduledDates.map(shortDate).join('、')}</small>}</div>
+              {candidate.availableQuantity <= 0 && <div className="shipment-reservation-notice">
+                <span><ShieldAlert size={15} /><b>{primaryReservation
+                  ? `已被 ${shortDate(primaryReservation.shipDate)} ${reservationStatusText(primaryReservation)}占用 ${numberText(primaryReservation.reservedQuantity)} 件`
+                  : '批次数量已被计划或实发记录全部占用'}</b></span>
+                <small>这是防止重复排单的数量保护，并非订单失效。</small>
+                {blockingReservations.length > 0 && <button type="button" onClick={() => openDialog({ kind: 'reservations', candidate })}>查看并处理占用<ArrowRight size={13} /></button>}
+              </div>}
               {selected && <div className="shipment-candidate-form">
                 <div className="shipment-candidate-priority"><span>出货优先级</span><PrioritySelector compact value={draft.shipmentPriority} onChange={shipmentPriority => updateCandidateDraft(candidate.batchId, { shipmentPriority })} /></div>
                 <label>计划数量<input type="number" min="1" max={candidate.availableQuantity} value={draft.quantity} onChange={event => updateCandidateDraft(candidate.batchId, { quantity: event.target.value })} /></label><label>计划时间<input type="datetime-local" min={`${selectedDate}T00:00`} max={`${selectedDate}T23:59`} value={draft.plannedShipAt} onChange={event => updateCandidateDraft(candidate.batchId, { plannedShipAt: event.target.value })} /></label><label className="note">备注<input value={draft.note} maxLength={500} onChange={event => updateCandidateDraft(candidate.batchId, { note: event.target.value })} placeholder="可选" /></label>
@@ -645,8 +691,8 @@ export default function DailyShipmentWorkbench({
     </div>}
 
     {dialog && <DialogShell
-      title={dialog.kind === 'edit' ? '修改出货计划' : dialog.kind === 'cancel' ? '取消计划项' : dialog.kind === 'ship' ? '登记实际出货' : dialog.kind === 'events' ? '出货流水' : dialog.kind === 'reverse' ? '撤销实发记录' : dialog.kind === 'confirm' ? '确认当日计划' : dialog.kind === 'rollover' ? '结转未完成订单' : '关闭当日计划'}
-      description={'item' in dialog ? `${dialog.item.workOrderCode} · ${dialog.item.customerName}` : `${selectedDate} · ${plan?.items.length || 0} 批订单`}
+      title={dialog.kind === 'edit' ? '修改出货计划' : dialog.kind === 'cancel' ? '取消计划项' : dialog.kind === 'ship' ? '登记实际出货' : dialog.kind === 'events' ? '出货流水' : dialog.kind === 'reverse' ? '撤销实发记录' : dialog.kind === 'confirm' ? '确认当日计划' : dialog.kind === 'rollover' ? '结转未完成订单' : dialog.kind === 'reservations' ? '历史占用详情' : dialog.kind === 'releaseReservation' ? '释放旧计划占用' : dialog.kind === 'transferReservation' ? '结转到当前日' : '关闭当日计划'}
+      description={'item' in dialog ? `${dialog.item.workOrderCode} · ${dialog.item.customerName}` : 'candidate' in dialog ? `${dialog.candidate.workOrderCode} · ${dialog.candidate.customerName}` : `${selectedDate} · ${plan?.items.length || 0} 批订单`}
       error={error}
       busy={busy}
       onClose={() => { if (!busy) { setDialog(null); setError(''); } }}
@@ -662,6 +708,27 @@ export default function DailyShipmentWorkbench({
       {dialog.kind === 'confirm' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><div className="shipment-confirm-card"><CalendarCheck2 size={28} /><strong>确认 {shortDate(selectedDate)} 出货计划</strong><span>共 {plan?.items.length || 0} 批、{numberText(data?.summary.plannedQuantity || 0)} 件。确认后不能再增删或修改计划项，只能登记实际出货。</span></div><footer><button type="button" onClick={() => setDialog(null)}>继续编辑</button><button className="primary" disabled={busy} type="submit">确认计划</button></footer></form>}
       {dialog.kind === 'close' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><div className="shipment-confirm-card success"><CheckCircle2 size={28} /><strong>关闭 {shortDate(selectedDate)} 出货计划</strong><span>全部 {plan?.items.length || 0} 批订单已完成出货。关闭后如撤销实发，计划会自动恢复为已确认。</span></div><footer><button type="button" onClick={() => setDialog(null)}>返回</button><button className="primary" disabled={busy} type="submit">确认关闭</button></footer></form>}
       {dialog.kind === 'rollover' && <form onSubmit={event => { event.preventDefault(); submitDialog(); }}><div className="shipment-confirm-card"><RotateCcw size={28} /><strong>结转 {numberText(data?.summary.pendingQuantity || 0)} 件到次日</strong><span>仅转移尚未出货的数量，已出货流水保留在今天；次日计划会继承红黄蓝优先级并标注“上日遗留”。该操作会关闭今天的计划。</span></div><footer><button type="button" onClick={() => setDialog(null)}>暂不结转</button><button className="primary" disabled={busy || !data?.summary.pendingQuantity} type="submit">确认结转</button></footer></form>}
+      {dialog.kind === 'reservations' && <div className="shipment-reservation-panel">
+        <div className="shipment-reservation-summary"><ShieldAlert size={21} /><span><strong>剩余可排为 0，不代表订单失效</strong><small>以下计划或实发记录正在占用该批次数量。先查看来源，再决定释放或结转。</small></span></div>
+        <div className="shipment-reservation-list">{dialog.candidate.reservations.map(reservation => <article key={reservation.itemId}>
+          <header><span><b>{shortDate(reservation.shipDate)}</b><em>{reservationStatusText(reservation)}</em></span><strong>占用 {numberText(reservation.reservedQuantity)} 件</strong></header>
+          <dl><div><dt>原计划</dt><dd>{numberText(reservation.plannedQuantity)}</dd></div><div><dt>已实发</dt><dd>{numberText(reservation.shippedQuantity)}</dd></div><div><dt>待处理</dt><dd>{numberText(reservation.pendingQuantity)}</dd></div></dl>
+          <footer>
+            <button type="button" onClick={() => viewReservationPlan(reservation)}><Eye size={14} />查看原计划</button>
+            {reservation.canRelease && <button type="button" className="release" onClick={() => openDialog({ kind: 'releaseReservation', candidate: dialog.candidate, reservation })}><LockOpen size={14} />释放占用</button>}
+            {reservation.canTransferToSelectedDate && <button type="button" className="transfer" onClick={() => openDialog({ kind: 'transferReservation', candidate: dialog.candidate, reservation })}><ArrowRight size={14} />结转到 {shortDate(selectedDate)}</button>}
+          </footer>
+        </article>)}</div>
+        <footer><button className="primary" type="button" onClick={() => setDialog(null)}>完成</button></footer>
+      </div>}
+      {dialog.kind === 'releaseReservation' && <form onSubmit={event => { event.preventDefault(); releaseReservation(dialog.reservation); }}>
+        <div className="shipment-confirm-card danger"><LockOpen size={28} /><strong>释放 {shortDate(dialog.reservation.shipDate)} 的 {numberText(dialog.reservation.reservedQuantity)} 件占用</strong><span>原计划项会标记为已取消并保留审计记录，释放后该数量可以重新安排。已有实际出货的占用不允许使用此操作。</span></div>
+        <footer><button type="button" onClick={() => openDialog({ kind: 'reservations', candidate: dialog.candidate })}>返回详情</button><button className="danger" disabled={busy} type="submit">确认释放</button></footer>
+      </form>}
+      {dialog.kind === 'transferReservation' && <form onSubmit={event => { event.preventDefault(); transferReservation(dialog.reservation); }}>
+        <div className="shipment-confirm-card"><ArrowRight size={28} /><strong>{shortDate(dialog.reservation.shipDate)} → {shortDate(selectedDate)}，结转 {numberText(dialog.reservation.pendingQuantity)} 件</strong><span>仅移动未出货数量，原计划和实发流水继续保留；当前日会继承原优先级并标注历史遗留。</span></div>
+        <footer><button type="button" onClick={() => openDialog({ kind: 'reservations', candidate: dialog.candidate })}>返回详情</button><button className="primary" disabled={busy} type="submit">确认结转</button></footer>
+      </form>}
     </DialogShell>}
 
     {toast && <div className="shipment-toast" role="status"><CheckCircle2 size={17} />{toast}</div>}

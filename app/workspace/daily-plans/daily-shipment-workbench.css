@@ -409,7 +409,8 @@ main.shipment-shell.hm-workbench-root.hm-workbench-root {
 .shipment-candidate-list { min-height: 0; padding: 10px 12px; display: grid; align-content: start; gap: 8px; overflow-y: auto; }
 .shipment-candidate-list article { padding: 10px; display: grid; gap: 8px; border: 1px solid var(--ship-line); border-radius: 9px; background: #fff; box-shadow: 0 2px 8px rgba(20, 38, 62, .035); }
 .shipment-candidate-list article.selected { border-color: #eba370; box-shadow: 0 0 0 2px rgba(223, 90, 0, .09); }
-.shipment-candidate-list article.unavailable { opacity: .62; }
+.shipment-candidate-list article.unavailable { border-color: #e4d4c8; background: linear-gradient(180deg, #fff 0%, #fffcf9 100%); }
+.shipment-candidate-list article.unavailable .shipment-candidate-select:disabled { opacity: .62; }
 .shipment-candidate-select { width: 100%; padding: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 8px; border: 0; background: transparent; text-align: left; }
 .shipment-candidate-select > i { width: 18px; height: 18px; display: grid; place-items: center; border: 1px solid #cbd4de; border-radius: 5px; color: #fff; background: #fff; }
 .shipment-candidate-list article.selected .shipment-candidate-select > i { border-color: var(--ship-orange); background: var(--ship-orange); }
@@ -427,6 +428,12 @@ main.shipment-shell.hm-workbench-root.hm-workbench-root {
 .shipment-candidate-progress > span { display: flex; justify-content: space-between; gap: 8px; color: #55657a; font-size: 9px; }
 .shipment-candidate-progress > span em { font-style: normal; }
 .shipment-candidate-progress small { color: #8b97a5; font-size: 8px; }
+.shipment-reservation-notice { padding: 8px 9px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 3px 8px; border: 1px solid #efc5a8; border-radius: 8px; color: #9a4a19; background: #fff8f2; }
+.shipment-reservation-notice > span { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.shipment-reservation-notice > span svg { flex: 0 0 auto; }
+.shipment-reservation-notice b { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.shipment-reservation-notice small { grid-column: 1; color: #8a705f; font-size: 8px; }
+.shipment-reservation-notice > button { grid-column: 2; grid-row: 1 / span 2; height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 4px; border: 1px solid #dda171; border-radius: 6px; color: #9a4a19; background: #fff; font-size: 9px; font-weight: 800; white-space: nowrap; }
 .shipment-candidate-form { display: grid; grid-template-columns: 100px 1fr 1fr; gap: 7px; }
 .shipment-candidate-priority { grid-column: 1 / -1; min-width: 0; display: grid; grid-template-columns: 84px minmax(0, 1fr); align-items: center; gap: 8px; }
 .shipment-candidate-priority > span, .shipment-dialog-priority > span { color: #68768a; font-size: 8px; font-weight: 800; }
@@ -458,12 +465,14 @@ main.shipment-shell.hm-workbench-root.hm-workbench-root {
 .shipment-modal > header p { margin: 1px 0 0; color: #7c8999; font-size: 9px; }
 .shipment-modal > header > button { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid var(--ship-line); border-radius: 7px; background: #fff; color: #657387; }
 .shipment-modal > form,
-.shipment-event-panel { min-height: 0; flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 13px; overflow-y: auto; }
+.shipment-event-panel,
+.shipment-reservation-panel { min-height: 0; flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 13px; overflow-y: auto; }
 .shipment-inline-error { min-height: 42px; margin: 10px 14px 0; padding: 8px 10px; display: flex; align-items: center; gap: 8px; border: 1px solid #efbbb7; border-radius: 8px; color: #a53f3a; background: #fff4f3; font-size: 10px; line-height: 1.45; }
 .shipment-inline-error svg { flex: 0 0 auto; }
 .shipment-inline-error.drawer { margin: 9px 12px 0; }
 .shipment-modal form > footer,
-.shipment-event-panel > footer { margin: auto -14px -14px; min-height: 58px; padding: 10px 14px; display: flex; align-items: center; justify-content: flex-end; gap: 7px; border-top: 1px solid var(--ship-line); background: #fafbfd; }
+.shipment-event-panel > footer,
+.shipment-reservation-panel > footer { margin: auto -14px -14px; min-height: 58px; padding: 10px 14px; display: flex; align-items: center; justify-content: flex-end; gap: 7px; border-top: 1px solid var(--ship-line); background: #fafbfd; }
 .shipment-modal footer button { height: 36px; padding: 0 13px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--ship-line); border-radius: 7px; background: #fff; font-weight: 750; }
 .shipment-modal footer button.primary { border-color: var(--ship-orange); color: #fff; background: var(--ship-orange); }
 .shipment-modal footer button.danger { border-color: var(--ship-red); color: #fff; background: var(--ship-red); }
@@ -496,8 +505,29 @@ main.shipment-shell.hm-workbench-root.hm-workbench-root {
 .shipment-event-list article > button { height: 28px; padding: 0 8px; border: 1px solid #efb7b3; border-radius: 6px; color: #a8413c; background: #fff7f6; font-size: 9px; font-weight: 750; }
 .shipment-confirm-card { min-height: 170px; padding: 22px; display: grid; place-content: center; justify-items: center; gap: 9px; border: 1px solid #f1c5a6; border-radius: 10px; color: var(--ship-orange); background: var(--ship-orange-soft); text-align: center; }
 .shipment-confirm-card.success { border-color: #b8ddce; color: var(--ship-green); background: var(--ship-green-soft); }
+.shipment-confirm-card.danger { border-color: #efbbb7; color: var(--ship-red); background: var(--ship-red-soft); }
 .shipment-confirm-card strong { color: #2b394d; font-size: 15px; }
 .shipment-confirm-card span { max-width: 390px; color: #677588; font-size: 10px; line-height: 1.6; }
+.shipment-reservation-summary { padding: 11px 12px; display: flex; align-items: center; gap: 10px; border: 1px solid #efc4a6; border-radius: 9px; color: var(--ship-orange-dark); background: var(--ship-orange-soft); }
+.shipment-reservation-summary > svg { flex: 0 0 auto; }
+.shipment-reservation-summary > span { display: grid; gap: 3px; }
+.shipment-reservation-summary strong { color: #303d51; font-size: 12px; }
+.shipment-reservation-summary small { color: #7c6d64; font-size: 9px; line-height: 1.5; }
+.shipment-reservation-list { display: grid; gap: 8px; }
+.shipment-reservation-list > article { padding: 10px; display: grid; gap: 9px; border: 1px solid var(--ship-line); border-radius: 9px; background: #fff; box-shadow: 0 2px 8px rgba(20, 38, 62, .04); }
+.shipment-reservation-list > article > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.shipment-reservation-list > article > header span { display: flex; align-items: center; gap: 7px; }
+.shipment-reservation-list > article > header b { color: #29384e; font-size: 13px; }
+.shipment-reservation-list > article > header em { padding: 3px 6px; border-radius: 999px; color: #8e4a20; background: #fff0e5; font-size: 8px; font-style: normal; font-weight: 800; }
+.shipment-reservation-list > article > header > strong { color: var(--ship-orange-dark); font-size: 11px; }
+.shipment-reservation-list dl { margin: 0; padding: 8px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-radius: 7px; background: #f6f8fa; }
+.shipment-reservation-list dl div { display: grid; gap: 2px; text-align: center; }
+.shipment-reservation-list dt { color: #8793a2; font-size: 8px; }
+.shipment-reservation-list dd { margin: 0; color: #344257; font-size: 11px; font-weight: 800; }
+.shipment-reservation-list > article > footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.shipment-reservation-list > article > footer button { height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--ship-line); border-radius: 6px; color: #5f6f83; background: #fff; font-size: 9px; font-weight: 800; }
+.shipment-reservation-list > article > footer button.release { border-color: #efbbb7; color: #a5423d; background: #fff7f6; }
+.shipment-reservation-list > article > footer button.transfer { border-color: #e4a273; color: #a64b13; background: #fff8f2; }
 
 .shipment-toast { position: fixed; z-index: 240; left: 50%; bottom: 24px; min-height: 42px; padding: 10px 15px; display: flex; align-items: center; gap: 8px; transform: translateX(-50%); border-radius: 8px; color: #fff; background: #173128; box-shadow: 0 14px 34px rgba(15, 27, 43, .24); }
 .shipment-shell .spin { animation: shipment-spin .8s linear infinite; }

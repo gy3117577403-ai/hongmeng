@@ -78,6 +78,21 @@ export type DailyShipmentCandidateDTO = {
   currentProcess: string;
   lastProgressAt: string | null;
   scheduledDates: string[];
+  reservations: Array<{
+    itemId: string;
+    itemVersion: number;
+    planId: string;
+    planVersion: number;
+    shipDate: string;
+    planStatus: DailyShipmentPlanStatus;
+    itemStatus: DailyShipmentItemStatus;
+    plannedQuantity: number;
+    shippedQuantity: number;
+    pendingQuantity: number;
+    reservedQuantity: number;
+    canRelease: boolean;
+    canTransferToSelectedDate: boolean;
+  }>;
 };
 
 export type DailyShipmentWorkbenchDTO = {

@@ -11,7 +11,9 @@ import {
   loadDailyShipmentWorkbench,
   reconcileDailyShipmentCarryover,
   recordDailyShipment,
+  releaseDailyShipmentReservation,
   reverseDailyShipment,
+  transferDailyShipmentReservation,
 } from '../lib/daily-shipment-service';
 
 const runDatabaseIntegration = process.env.RUN_DB_INTEGRATION === '1';
@@ -386,6 +388,153 @@ test('daily shipment carries only pending quantity into the next day and keeps p
     });
     assert.equal(replay.itemCount, 0);
     assert.equal(await prisma.dailyShipmentPlanItem.count({ where: { planId: carried.targetPlanId! } }), 1);
+  } finally {
+    await cleanup(prefix);
+  }
+});
+
+test('historical reservations expose their source and can be released or transferred across skipped days', {
+  skip: !runDatabaseIntegration,
+}, async () => {
+  const prefix = `ship-res-${randomUUID().slice(0, 8)}`;
+  await cleanup(prefix);
+  try {
+    const actor = await prisma.user.create({
+      data: {
+        username: `${prefix}-user`,
+        passwordHash: 'integration-test-only',
+        displayName: 'Shipment Reservation',
+        laborRole: LaborAccessRole.ADMIN,
+      },
+    });
+    const workOrder = await prisma.workOrder.create({
+      data: {
+        code: `${prefix}-WO`,
+        customerName: 'Reservation Customer',
+        productName: 'Reservation Product',
+        specification: 'SPEC-RES',
+        stage: 'completed',
+        progress: 100,
+        status: 'processing',
+        uncompletedQty: '20',
+        productionTargetQty: 20,
+        completedQty: '20',
+        processName: 'Packaging',
+      },
+    });
+    const planOrder = await prisma.productionPlanOrder.create({
+      data: {
+        sourceOrderNo: `${prefix}-SO`,
+        sourceLineNo: 1,
+        customerName: 'Reservation Customer',
+        salesperson: 'Planner',
+        productName: 'Reservation Product',
+        specification: 'SPEC-RES',
+        orderQuantity: 20,
+        orderDate: new Date('2020-01-01T04:00:00.000Z'),
+        customerDueDate: new Date('2020-01-12T04:00:00.000Z'),
+        priority: 'urgent',
+        createdById: actor.id,
+        updatedById: actor.id,
+      },
+    });
+    const batch = await prisma.productionPlanBatch.create({
+      data: {
+        planOrderId: planOrder.id,
+        batchNo: 1,
+        quantity: 20,
+        weekStartDate: new Date('2020-01-06T04:00:00.000Z'),
+        weekEndDate: new Date('2020-01-12T04:00:00.000Z'),
+        plannedCompletionDate: new Date('2020-01-10T04:00:00.000Z'),
+        releaseState: 'active',
+        workOrderId: workOrder.id,
+      },
+    });
+
+    const draftResult = await addDailyShipmentItems({
+      actorUserId: actor.id,
+      shipDate: '2020-01-06',
+      idempotencyKey: key(prefix),
+      items: [{
+        productionPlanBatchId: batch.id,
+        plannedQuantity: 20,
+        plannedShipAt: '2020-01-06T16:00',
+        shipmentPriority: 'PRIORITY',
+      }],
+    });
+    const draftItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({ where: { planId: draftResult.planId } });
+    const occupied = await loadDailyShipmentWorkbench({ shipDate: '2020-01-09' });
+    assert.equal(occupied.candidates[0]?.availableQuantity, 0);
+    assert.equal(occupied.candidates[0]?.reservations[0]?.shipDate, '2020-01-06');
+    assert.equal(occupied.candidates[0]?.reservations[0]?.canRelease, true);
+    assert.equal(occupied.candidates[0]?.reservations[0]?.canTransferToSelectedDate, true);
+
+    await releaseDailyShipmentReservation({
+      actorUserId: actor.id,
+      itemId: draftItem.id,
+      itemVersion: draftItem.version,
+      idempotencyKey: key(prefix),
+    });
+    const released = await loadDailyShipmentWorkbench({ shipDate: '2020-01-09' });
+    assert.equal(released.candidates[0]?.availableQuantity, 20);
+    assert.equal(released.candidates[0]?.reservations.length, 0);
+
+    const confirmedResult = await addDailyShipmentItems({
+      actorUserId: actor.id,
+      shipDate: '2020-01-07',
+      idempotencyKey: key(prefix),
+      items: [{
+        productionPlanBatchId: batch.id,
+        plannedQuantity: 20,
+        plannedShipAt: '2020-01-07T15:30',
+        shipmentPriority: 'URGENT',
+      }],
+    });
+    let confirmedPlan = await prisma.dailyShipmentPlan.findUniqueOrThrow({ where: { id: confirmedResult.planId } });
+    await confirmDailyShipmentPlan({
+      actorUserId: actor.id,
+      planId: confirmedPlan.id,
+      planVersion: confirmedPlan.version,
+      idempotencyKey: key(prefix),
+    });
+    let confirmedItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({ where: { planId: confirmedPlan.id } });
+    await recordDailyShipment({
+      actorUserId: actor.id,
+      itemId: confirmedItem.id,
+      itemVersion: confirmedItem.version,
+      idempotencyKey: key(prefix),
+      quantity: 5,
+      shippedAt: '2020-01-07T08:30:00.000Z',
+    });
+    confirmedItem = await prisma.dailyShipmentPlanItem.findUniqueOrThrow({ where: { id: confirmedItem.id } });
+    const transferred = await transferDailyShipmentReservation({
+      actorUserId: actor.id,
+      itemId: confirmedItem.id,
+      itemVersion: confirmedItem.version,
+      targetShipDate: '2020-01-10',
+      idempotencyKey: key(prefix),
+    });
+
+    confirmedPlan = await prisma.dailyShipmentPlan.findUniqueOrThrow({ where: { id: confirmedPlan.id } });
+    confirmedItem = await prisma.dailyShipmentPlanItem.findUniqueOrThrow({ where: { id: confirmedItem.id } });
+    const targetItem = await prisma.dailyShipmentPlanItem.findFirstOrThrow({ where: { planId: transferred.planId } });
+    assert.equal(confirmedPlan.status, 'CLOSED_WITH_CARRYOVER');
+    assert.equal(confirmedItem.status, 'CARRIED_OVER');
+    assert.equal(targetItem.plannedQuantity, 15);
+    assert.equal(targetItem.carryoverQuantity, 15);
+    assert.equal(targetItem.carryoverDayCount, 3);
+    assert.equal(targetItem.shipmentPriority, 'URGENT');
+
+    const targetWorkbench = await loadDailyShipmentWorkbench({ shipDate: '2020-01-10' });
+    assert.equal(targetWorkbench.candidates[0]?.scheduledQuantity, 20);
+    assert.equal(targetWorkbench.candidates[0]?.reservations.length, 2);
+    assert.equal(targetWorkbench.plan?.items[0]?.isCarryover, true);
+    assert.equal(await prisma.dailyShipmentRevision.count({
+      where: {
+        plan: { createdById: actor.id },
+        action: { in: ['RELEASE_RESERVATION', 'TRANSFER_RESERVATION_SOURCE', 'TRANSFER_RESERVATION'] },
+      },
+    }), 3);
   } finally {
     await cleanup(prefix);
   }
