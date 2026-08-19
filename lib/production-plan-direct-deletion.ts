@@ -72,7 +72,6 @@ export async function deleteProductionPlanOrderDirectly(
       updatedAt: true,
       deletedAt: true,
       batches: {
-        where: { deletedAt: null },
         orderBy: { batchNo: 'asc' },
         select: {
           id: true,
@@ -85,6 +84,7 @@ export async function deleteProductionPlanOrderDirectly(
           workOrderId: true,
           createdAt: true,
           updatedAt: true,
+          deletedAt: true,
         },
       },
     },
@@ -95,7 +95,8 @@ export async function deleteProductionPlanOrderDirectly(
 
   const now = new Date();
   const reason = normalizeProductionPlanDirectDeleteReason(input.reason);
-  const batchIds = order.batches.map(batch => batch.id);
+  const relatedBatchIds = order.batches.map(batch => batch.id);
+  const activeBatchIds = order.batches.filter(batch => !batch.deletedAt).map(batch => batch.id);
   const rootWorkOrderIds = order.batches
     .map(batch => batch.workOrderId)
     .filter((id): id is string => Boolean(id));
@@ -295,9 +296,15 @@ export async function deleteProductionPlanOrderDirectly(
     });
   }
 
-  const dismissedCarryoverCount = batchIds.length
+  const dismissedCarryoverCount = relatedBatchIds.length || allWorkOrderIds.length
     ? (await tx.productionCarryover.updateMany({
-        where: { productionPlanBatchId: { in: batchIds }, status: 'ACTIVE' },
+        where: {
+          status: 'ACTIVE',
+          OR: [
+            ...(relatedBatchIds.length ? [{ productionPlanBatchId: { in: relatedBatchIds } }] : []),
+            ...(allWorkOrderIds.length ? [{ workOrderId: { in: allWorkOrderIds } }] : []),
+          ],
+        },
         data: {
           status: 'DISMISSED',
           dismissedAt: now,
@@ -305,14 +312,14 @@ export async function deleteProductionPlanOrderDirectly(
         },
       })).count
     : 0;
-  if (batchIds.length) {
-    await tx.productionPlanBatch.updateMany({
-      where: { id: { in: batchIds }, deletedAt: null },
+  const deletedBatchCount = activeBatchIds.length
+    ? (await tx.productionPlanBatch.updateMany({
+      where: { id: { in: activeBatchIds }, deletedAt: null },
       data: { deletedAt: now },
-    });
-  }
-  if (allWorkOrderIds.length) {
-    await tx.workOrder.updateMany({
+    })).count
+    : 0;
+  const retiredWorkOrderCount = allWorkOrderIds.length
+    ? (await tx.workOrder.updateMany({
       where: { id: { in: allWorkOrderIds }, deletedAt: null },
       data: {
         deletedAt: now,
@@ -320,8 +327,8 @@ export async function deleteProductionPlanOrderDirectly(
         planClearedAt: now,
         planClearedBy: input.actorLabel,
       },
-    });
-  }
+    })).count
+    : 0;
   await tx.productionPlanOrder.update({
     where: { id: order.id },
     data: { deletedAt: now, updatedById: input.actorId },
@@ -361,6 +368,7 @@ export async function deleteProductionPlanOrderDirectly(
       plannedCompletionDate: batch.plannedCompletionDate.toISOString(),
       createdAt: batch.createdAt.toISOString(),
       updatedAt: batch.updatedAt.toISOString(),
+      deletedAt: batch.deletedAt?.toISOString() || null,
     })),
     workOrders: workOrders.map(workOrder => ({
       ...workOrder,
@@ -370,8 +378,9 @@ export async function deleteProductionPlanOrderDirectly(
     })),
   };
   const impactData = {
-    deletedBatchCount: batchIds.length,
-    retiredWorkOrderCount: allWorkOrderIds.length,
+    relatedBatchCount: relatedBatchIds.length,
+    deletedBatchCount,
+    retiredWorkOrderCount,
     dismissedCarryoverCount,
     cancelledDailyTaskCount: cancellableDailyTasks.length,
     cancelledShipmentItemCount: cancellableShipmentItems.length,
@@ -407,8 +416,8 @@ export async function deleteProductionPlanOrderDirectly(
 
   return {
     planOrderId: order.id,
-    deletedBatchCount: batchIds.length,
-    retiredWorkOrderCount: allWorkOrderIds.length,
+    deletedBatchCount,
+    retiredWorkOrderCount,
     dismissedCarryoverCount,
     cancelledDailyTaskCount: cancellableDailyTasks.length,
     cancelledShipmentItemCount: cancellableShipmentItems.length,

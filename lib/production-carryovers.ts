@@ -18,6 +18,20 @@ export const PRODUCTION_CARRYOVER_MANUAL = 'MANUAL_OLDER_WEEK';
 // when its linked work order is unfinished. Archived batches therefore remain
 // valid carryover sources; the ACTIVE carryover link controls current scope.
 const CARRYOVER_BATCH_STATES = ['active', 'preparation', 'archived'];
+const CARRYOVER_COMPLETED_WORK_ORDER_STATES = ['completed', 'complete', 'done', '已完成'];
+
+function activeCarryoverWorkOrderWhere(): Prisma.WorkOrderWhereInput {
+  return {
+    deletedAt: null,
+    completedAt: null,
+    NOT: {
+      OR: [
+        { stage: { in: CARRYOVER_COMPLETED_WORK_ORDER_STATES } },
+        { status: { in: CARRYOVER_COMPLETED_WORK_ORDER_STATES } },
+      ],
+    },
+  };
+}
 
 function productionBatchScopeWhere(scope?: ProductionEntityScope): Prisma.ProductionPlanBatchWhereInput {
   const teamWhere = scope
@@ -56,13 +70,30 @@ export function activeProductionCarryoverBatchWhere(targetWeekStart: Date | stri
   return {
     deletedAt: null,
     releaseState: { in: CARRYOVER_BATCH_STATES },
+    workOrderId: { not: null },
     planOrder: { deletedAt: null },
+    workOrder: { is: activeCarryoverWorkOrderWhere() },
     carryovers: {
       some: {
         targetWeekStartDate: productionCarryoverDayWindow(targetWeekStart),
         status: PRODUCTION_CARRYOVER_ACTIVE,
       },
     },
+  };
+}
+
+export function activeProductionCarryoverLinkWhere(
+  targetWeekStart: Date | string,
+  scope?: ProductionEntityScope,
+): Prisma.ProductionCarryoverWhereInput {
+  return {
+    targetWeekStartDate: productionCarryoverDayWindow(targetWeekStart),
+    status: PRODUCTION_CARRYOVER_ACTIVE,
+    productionPlanBatch: {
+      ...activeProductionCarryoverBatchWhere(targetWeekStart),
+      ...productionBatchScopeWhere(scope),
+    },
+    workOrder: activeCarryoverWorkOrderWhere(),
   };
 }
 
@@ -158,9 +189,17 @@ export async function reconcileProductionCarryovers(
       select: {
         id: true,
         productionPlanBatchId: true,
+        workOrderId: true,
         status: true,
-        workOrder: { select: { stage: true, status: true, completedAt: true, deletedAt: true } },
-        productionPlanBatch: { select: { deletedAt: true, planOrder: { select: { deletedAt: true } } } },
+        workOrder: { select: { id: true, stage: true, status: true, completedAt: true, deletedAt: true } },
+        productionPlanBatch: {
+          select: {
+            workOrderId: true,
+            releaseState: true,
+            deletedAt: true,
+            planOrder: { select: { deletedAt: true } },
+          },
+        },
       },
     }),
   ]);
@@ -171,17 +210,38 @@ export async function reconcileProductionCarryovers(
 
   const existingByBatch = new Map(currentCarryovers.map(item => [item.productionPlanBatchId, item]));
   const completedIds: string[] = [];
+  const dismissedIds: string[] = [];
   for (const item of currentCarryovers) {
-    const invalid = !incompleteWorkOrder(item.workOrder)
-      || Boolean(item.productionPlanBatch.deletedAt || item.productionPlanBatch.planOrder.deletedAt);
-    if (item.status === PRODUCTION_CARRYOVER_ACTIVE && invalid) {
+    if (item.status !== PRODUCTION_CARRYOVER_ACTIVE) continue;
+    const deletedOrDetached = Boolean(
+      item.workOrder.deletedAt
+      || item.productionPlanBatch.deletedAt
+      || item.productionPlanBatch.planOrder.deletedAt
+      || !CARRYOVER_BATCH_STATES.includes(item.productionPlanBatch.releaseState)
+      || item.productionPlanBatch.workOrderId !== item.workOrderId,
+    );
+    if (deletedOrDetached) {
+      dismissedIds.push(item.id);
+    } else if (!incompleteWorkOrder(item.workOrder)) {
       completedIds.push(item.id);
     }
   }
+  const now = new Date();
+  const dismissedCount = dismissedIds.length
+    ? (await tx.productionCarryover.updateMany({
+        where: { id: { in: dismissedIds }, status: PRODUCTION_CARRYOVER_ACTIVE },
+        data: {
+          status: 'DISMISSED',
+          completedAt: null,
+          dismissedAt: now,
+          reason: '关联计划、批次或工单已删除，系统自动注销遗留',
+        },
+      })).count
+    : 0;
   const completedCount = completedIds.length
     ? (await tx.productionCarryover.updateMany({
         where: { id: { in: completedIds }, status: PRODUCTION_CARRYOVER_ACTIVE },
-        data: { status: PRODUCTION_CARRYOVER_COMPLETED, completedAt: new Date() },
+        data: { status: PRODUCTION_CARRYOVER_COMPLETED, completedAt: now, dismissedAt: null },
       })).count
     : 0;
 
@@ -220,7 +280,15 @@ export async function reconcileProductionCarryovers(
     ? (await tx.productionCarryover.createMany({ data: creates, skipDuplicates: true })).count
     : 0;
 
-  return { targetWeekStart, previousWeekStart, candidateCount: candidates.size, createdCount, reactivatedCount, completedCount };
+  return {
+    targetWeekStart,
+    previousWeekStart,
+    candidateCount: candidates.size,
+    createdCount,
+    reactivatedCount,
+    completedCount,
+    dismissedCount,
+  };
 }
 
 export async function reconcileCurrentProductionCarryovers(input: { targetWeekStart: Date | string; actorId?: string | null }) {
@@ -251,9 +319,8 @@ export async function loadProductionCarryoverMetadata(targetWeekStart: Date | st
   const rootIds = [...new Set(rootIdByOrder.values())];
   const links = await prisma.productionCarryover.findMany({
     where: {
+      ...activeProductionCarryoverLinkWhere(target),
       workOrderId: { in: rootIds },
-      targetWeekStartDate: productionCarryoverDayWindow(target),
-      status: PRODUCTION_CARRYOVER_ACTIVE,
     },
     select: {
       id: true,
@@ -444,11 +511,7 @@ export async function loadProductionCarryoverCounts(
   const previous = addDays(target, -7);
   const [active, older] = await Promise.all([
     prisma.productionCarryover.count({
-      where: {
-        targetWeekStartDate: productionCarryoverDayWindow(target),
-        status: PRODUCTION_CARRYOVER_ACTIVE,
-        productionPlanBatch: productionBatchScopeWhere(scope),
-      },
+      where: activeProductionCarryoverLinkWhere(target, scope),
     }),
     prisma.productionPlanBatch.count({
       where: {
@@ -457,13 +520,7 @@ export async function loadProductionCarryoverCounts(
         weekStartDate: { lt: previous },
         workOrderId: { not: null },
         planOrder: { deletedAt: null },
-        workOrder: {
-          is: {
-            deletedAt: null,
-            completedAt: null,
-            NOT: { OR: [{ stage: 'completed' }, { status: 'completed' }] },
-          },
-        },
+        workOrder: { is: activeCarryoverWorkOrderWhere() },
         NOT: activeProductionCarryoverBatchWhere(target),
         ...productionBatchScopeWhere(scope),
       },

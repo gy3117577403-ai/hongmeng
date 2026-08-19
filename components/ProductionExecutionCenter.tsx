@@ -20,6 +20,7 @@ import { resolveProductionPrimaryAction } from '@/lib/production-primary-action'
 import { formatProductionPercentage, formatProductionQuantity, getProductionQuantitySummary, type ProductionQuantitySummary } from '@/lib/production-quantity';
 import { formatProcessDuration } from '@/lib/process-time';
 import { processRouteExecutionReadiness } from '@/lib/process-route-readiness';
+import { subscribeProductionDataInvalidations } from '@/lib/production-data-client-sync';
 import { productTimeConfigurationRoute, type ProductTimeRouteScope } from '@/lib/workflow-routes';
 import type {
   CurrentUserDTO,
@@ -1220,6 +1221,12 @@ export default function ProductionExecutionCenter({
   }).format(new Date()), []);
 
   useEffect(() => { boardRef.current = board; }, [board]);
+
+  useEffect(() => subscribeProductionDataInvalidations(() => {
+    productionBoardCache.clear();
+    reconciledScopeKeysRef.current.clear();
+    setRefreshToken(value => value + 1);
+  }), []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

@@ -70,6 +70,7 @@ test('default carryover includes only the previous working set and chains a prio
       const manuallyAdoptedOlder = await createBatch('manual-older', older);
       const untouchedOlder = await createBatch('untouched-older', older);
       const completedPrevious = await createBatch('completed-previous', previous, true);
+      const deletedPrevious = await createBatch('deleted-previous', previous);
 
       await tx.productionCarryover.create({
         data: {
@@ -80,9 +81,33 @@ test('default carryover includes only the previous working set and chains a prio
           inclusionType: PRODUCTION_CARRYOVER_MANUAL,
         },
       });
+      const completedLink = await tx.productionCarryover.create({
+        data: {
+          productionPlanBatchId: completedPrevious.id,
+          workOrderId: completedPrevious.workOrderId!,
+          sourceWeekStartDate: previous,
+          targetWeekStartDate: target,
+          inclusionType: 'AUTO_PREVIOUS_WEEK',
+        },
+      });
+      const deletedLink = await tx.productionCarryover.create({
+        data: {
+          productionPlanBatchId: deletedPrevious.id,
+          workOrderId: deletedPrevious.workOrderId!,
+          sourceWeekStartDate: previous,
+          targetWeekStartDate: target,
+          inclusionType: 'AUTO_PREVIOUS_WEEK',
+        },
+      });
+      await tx.productionPlanBatch.update({
+        where: { id: deletedPrevious.id },
+        data: { deletedAt: new Date('2026-08-11T02:00:00.000Z') },
+      });
 
       const first = await reconcileProductionCarryovers(tx, { targetWeekStart: target });
       assert.equal(first.createdCount, 2);
+      assert.equal(first.completedCount, 1);
+      assert.equal(first.dismissedCount, 1);
       const links = await tx.productionCarryover.findMany({
         where: { targetWeekStartDate: productionCarryoverDayWindow(target), status: PRODUCTION_CARRYOVER_ACTIVE },
         select: { productionPlanBatchId: true },
@@ -93,9 +118,21 @@ test('default carryover includes only the previous working set and chains a prio
       );
       assert.equal(links.some(link => link.productionPlanBatchId === untouchedOlder.id), false);
       assert.equal(links.some(link => link.productionPlanBatchId === completedPrevious.id), false);
+      const [completedState, dismissedState] = await Promise.all([
+        tx.productionCarryover.findUniqueOrThrow({ where: { id: completedLink.id } }),
+        tx.productionCarryover.findUniqueOrThrow({ where: { id: deletedLink.id } }),
+      ]);
+      assert.equal(completedState.status, 'COMPLETED');
+      assert.ok(completedState.completedAt);
+      assert.equal(completedState.dismissedAt, null);
+      assert.equal(dismissedState.status, 'DISMISSED');
+      assert.ok(dismissedState.dismissedAt);
+      assert.equal(dismissedState.completedAt, null);
 
       const second = await reconcileProductionCarryovers(tx, { targetWeekStart: target });
       assert.equal(second.createdCount, 0);
+      assert.equal(second.completedCount, 0);
+      assert.equal(second.dismissedCount, 0);
       assert.equal(await tx.productionCarryover.count({
         where: { targetWeekStartDate: productionCarryoverDayWindow(target), status: PRODUCTION_CARRYOVER_ACTIVE },
       }), 2);

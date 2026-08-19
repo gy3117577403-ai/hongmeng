@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   activeProductionCarryoverBatchWhere,
+  activeProductionCarryoverLinkWhere,
   activeProductionCarryoverWorkOrderWhere,
   productionCarryoverDayWindow,
 } from '../lib/production-carryovers';
@@ -11,6 +12,19 @@ test('carryover query is pinned to one target week and an active preserved batch
   const batchWhere = activeProductionCarryoverBatchWhere('2026-08-10');
   assert.equal(batchWhere.deletedAt, null);
   assert.deepEqual(batchWhere.releaseState, { in: ['active', 'preparation', 'archived'] });
+  assert.deepEqual(batchWhere.workOrderId, { not: null });
+  assert.deepEqual(batchWhere.workOrder, {
+    is: {
+      deletedAt: null,
+      completedAt: null,
+      NOT: {
+        OR: [
+          { stage: { in: ['completed', 'complete', 'done', '已完成'] } },
+          { status: { in: ['completed', 'complete', 'done', '已完成'] } },
+        ],
+      },
+    },
+  });
   assert.deepEqual(batchWhere.carryovers, {
     some: {
       targetWeekStartDate: productionCarryoverDayWindow('2026-08-10'),
@@ -18,6 +32,12 @@ test('carryover query is pinned to one target week and an active preserved batch
     },
   });
   assert.equal(Array.isArray(activeProductionCarryoverWorkOrderWhere('2026-08-10').OR), true);
+
+  const linkWhere = activeProductionCarryoverLinkWhere('2026-08-10');
+  assert.equal(linkWhere.status, 'ACTIVE');
+  assert.deepEqual(linkWhere.targetWeekStartDate, productionCarryoverDayWindow('2026-08-10'));
+  assert.equal((linkWhere.productionPlanBatch as { deletedAt?: unknown }).deletedAt, null);
+  assert.equal((linkWhere.workOrder as { deletedAt?: unknown }).deletedAt, null);
 });
 
 test('workflow current scope accepts a carried order while history keeps its original week', () => {

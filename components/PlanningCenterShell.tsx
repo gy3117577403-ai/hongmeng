@@ -61,6 +61,7 @@ import {
 } from '@/lib/planning-readiness';
 import { resolvePlanningFlow } from '@/lib/planning-flow';
 import { buildPlanningDrawingLibraryHref, buildPlanningReturnPath } from '@/lib/planning-navigation';
+import { publishProductionDataInvalidation } from '@/lib/production-data-client-sync';
 import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
 import { useModalLayer } from '@/components/useModalLayer';
 import type {
@@ -1309,6 +1310,7 @@ export default function PlanningCenterShell({
       const response = await fetch(`/api/planning/orders/${order.id}`, { method: 'DELETE' });
       const body = await responseBody<Record<string, never>>(response);
       if (!response.ok) throw new Error(body.error || '删除计划订单失败');
+      publishProductionDataInvalidation({ kind: 'plan-order-deleted', entityId: order.id });
       setToast('计划已删除，图纸与产品工时资料已保留');
       setRefreshToken(value => value + 1);
     } catch (reason) {
@@ -1373,6 +1375,10 @@ export default function PlanningCenterShell({
         };
       }>(response);
       if (!response.ok || !body.result) throw new Error(body.error || '删除订单失败');
+      publishProductionDataInvalidation({
+        kind: 'plan-order-deleted',
+        entityId: historicalDeleteTarget.order.id,
+      });
       setToast(`${historicalDeleteTarget.order.specification} 已删除，关联记录已转入审计留存`);
       setRefreshToken(value => value + 1);
       closeHistoricalDeleteDialog();
@@ -1429,6 +1435,7 @@ export default function PlanningCenterShell({
     const response = await fetch(`/api/planning/batches/${batch.id}`, { method: 'DELETE' });
     const body = await responseBody<Record<string, never>>(response);
     if (!response.ok) { setError(body.error || '删除排产批次失败'); return; }
+    publishProductionDataInvalidation({ kind: 'plan-batch-deleted', entityId: batch.id });
     setSelectedBatchIds(current => current.filter(id => id !== batch.id));
     setToast('排产批次已删除，未回到订单池');
     setRefreshToken(value => value + 1);
