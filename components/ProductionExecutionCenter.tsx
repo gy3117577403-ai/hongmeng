@@ -1112,6 +1112,7 @@ export default function ProductionExecutionCenter({
 }) {
   const router = useRouter();
   const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const canConfigureSystem = user.access.capabilities.includes('SYSTEM_CONFIGURATION:MANAGE');
   const canAdministerProduction = user.access.capabilities.includes('PRODUCTION:UPDATE')
     || user.access.capabilities.includes('BUSINESS:UPDATE');
@@ -1464,10 +1465,6 @@ export default function ProductionExecutionCenter({
   }, []);
 
   useEffect(() => {
-    setInsightsOpen(window.matchMedia('(min-width: 1280px)').matches);
-  }, []);
-
-  useEffect(() => {
     if (!autoRefresh) return undefined;
     const refresh = (): void => {
       if (document.visibilityState !== 'visible') return;
@@ -1577,7 +1574,7 @@ export default function ProductionExecutionCenter({
   useEffect(() => {
     if (!insightsOpen) return undefined;
     const previousOverflow = document.body.style.overflow;
-    const overlayMode = !window.matchMedia('(min-width: 1280px)').matches;
+    const overlayMode = !window.matchMedia('(min-width: 1920px)').matches;
     if (overlayMode) document.body.style.overflow = 'hidden';
     const focusTimer = overlayMode ? window.setTimeout(() => insightsCloseRef.current?.focus(), 60) : 0;
     const handleInsightKeys = (event: KeyboardEvent): void => {
@@ -1799,6 +1796,30 @@ export default function ProductionExecutionCenter({
   function closeInsights(): void {
     setInsightsOpen(false);
     window.requestAnimationFrame(() => insightsButtonRef.current?.focus());
+  }
+
+  function handleNavigationExpandedChange(expanded: boolean): void {
+    setNavigationOpen(expanded);
+    if (!expanded) return;
+    modeDrawer.close(false);
+    setInsightsOpen(false);
+  }
+
+  function toggleModeDrawer(): void {
+    if (!modeDrawer.open) {
+      setNavigationOpen(false);
+      setInsightsOpen(false);
+    }
+    modeDrawer.toggle();
+  }
+
+  function toggleInsights(): void {
+    const nextOpen = !insightsOpen;
+    if (nextOpen) {
+      setNavigationOpen(false);
+      modeDrawer.close(false);
+    }
+    setInsightsOpen(nextOpen);
   }
 
   async function toggleFullscreen(): Promise<void> {
@@ -2681,7 +2702,9 @@ export default function ProductionExecutionCenter({
         subtitle="现场排程与工序流转"
         hideHeader
         sidebarTriggerTargetId="production-dispatch-sidebar-trigger"
-        moduleModeSwitcher={{ mode: 'mass', drawerId: 'production-mode-drawer', drawerOpen: modeDrawer.open, onToggle: modeDrawer.toggle }}
+        sidebarExpanded={navigationOpen}
+        onSidebarExpandedChange={handleNavigationExpandedChange}
+        moduleModeSwitcher={{ mode: 'mass', drawerId: 'production-mode-drawer', drawerOpen: modeDrawer.open, onToggle: toggleModeDrawer, openFromSidebar: false }}
         menuItems={[
           ...(canConfigureSystem ? [{ label: '系统设置', href: '/dashboard?openSettings=1' }] : []),
           { label: '退出登录', onSelect: () => { void logout(); } },
@@ -2696,7 +2719,7 @@ export default function ProductionExecutionCenter({
               <span>现场生产</span>
               <span className="production-dispatch-heading-line">
                 <strong id="production-page-title">生产调度中心</strong>
-                <ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="mass" onClick={modeDrawer.toggle} controls="production-mode-drawer" compact />
+                <ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="mass" onClick={toggleModeDrawer} controls="production-mode-drawer" compact />
               </span>
               <small>{todayLabel} · {weekScopeRangeText}</small>
             </div>
@@ -2735,7 +2758,7 @@ export default function ProductionExecutionCenter({
             {canScheduleProduction && <button className="hm-workbench-button production-reassignment-trigger" type="button" disabled={board?.readOnly} title="员工请假、临时缺勤时批量重排未完成数量" onClick={openEmployeeExceptionReassignment}><UserRoundCog size={15} aria-hidden="true" />人员异常</button>}
             {canSelectProduction && <button className={`hm-workbench-button ${batchMode ? 'active' : ''}`.trim()} type="button" disabled={board?.readOnly} title={board?.readOnly ? '历史周仅供查看' : ''} onClick={toggleBatchMode}><ListChecks size={15} aria-hidden="true" />{batchMode ? '退出批量' : '批量'}</button>}
             {canPrintTravelers && <button ref={exportButtonRef} className={`hm-workbench-button ${exportMenuOpen ? 'active' : ''}`.trim()} type="button" aria-haspopup="menu" aria-expanded={exportMenuOpen} onClick={() => setExportMenuOpen(value => !value)}><Download size={15} aria-hidden="true" />导出/打印<ChevronDown size={13} aria-hidden="true" /></button>}
-            <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={() => setInsightsOpen(value => !value)}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
+            <button ref={insightsButtonRef} className={`hm-workbench-button production-insight-trigger ${insightsOpen ? 'active' : ''}`.trim()} type="button" aria-expanded={insightsOpen} aria-controls="production-insight-panel" onClick={toggleInsights}>{insightsOpen ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}调度侧栏</button>
             <button className="hm-workbench-button production-fullscreen-trigger" type="button" onClick={() => void toggleFullscreen()}><Expand size={15} aria-hidden="true" />{isFullscreen ? '退出大屏' : '大屏模式'}</button>
           </div>
         </section>

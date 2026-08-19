@@ -390,6 +390,50 @@ final result: passed
 
 passed
 
+## 2026-08-19 生产执行默认聚焦布局
+
+### Sources and target
+
+- 用户问题截图：`C:\Windows\TEMP\codex-clipboard-df06a6f3-ee1e-44c2-9f0f-594f98edac67.png`。
+- 目标视口：1366 × 1024 横向平板，设备像素比 1。
+- 最终默认态：`artifacts/production-execution-default-layout-qa-20260819/01-default-1366x1024.png`。
+- 交互态截图：
+  - `artifacts/production-execution-default-layout-qa-20260819/02-sidebar-open-1366x1024.png`
+  - `artifacts/production-execution-default-layout-qa-20260819/03-mode-drawer-1366x1024.png`
+  - `artifacts/production-execution-default-layout-qa-20260819/04-insights-overlay-1366x1024.png`
+- 用户截图和最终默认态已在同一视觉比较输入中按原比例核对；未对截图做非等比拉伸。
+
+### Required fidelity surfaces
+
+- 首次进入生产执行时，左侧导航固定为收起态，不再继承其他页面的展开偏好。
+- 顶部业务模式默认不展开；仍可通过标题旁“量产”触发器主动打开。
+- 右侧调度建议默认不展开；1366 宽度下主动打开时使用覆盖式侧栏，不压缩工单列表。
+- 默认态工单区域宽 1276 px；调度侧栏打开后仍为 1276 px，页面无横向文档溢出。
+- 左侧导航、业务模式和调度侧栏实行互斥：打开任意一项会收起另外两项。
+
+### Interaction and diagnostics
+
+- 真实点击通过：导航展开、点击当前“生产执行”收起导航且不打开业务模式、业务模式打开、调度侧栏打开/关闭。
+- 调度侧栏在 1366 宽度下计算样式为 `position: fixed`，打开时锁定背景滚动，关闭后恢复。
+- 页面默认态、导航态、业务模式态和调度侧栏态均无页面级横向溢出。
+- 验收使用隔离 PostgreSQL，完整应用 82 个 Prisma migration；隔离库无当前周生产工单，因此本次只核验布局和交互，不把空数据当作生产数据结论。
+- Codex 应用内浏览器对本机地址连续导航超时，按降级路径使用独立无用户资料的 Chrome Headless/CDP 会话完成同尺寸渲染与交互验证。
+
+### Iteration history
+
+1. 将生产执行的平台导航改为受控状态，确保每次进入默认收起，同时保留手动展开和 Escape 收起。
+2. 移除 1280 px 自动打开调度侧栏的副作用，并将 1920 px 以下改为覆盖式侧栏。
+3. 将生产执行侧栏入口改为只收起当前导航，不再联动打开业务模式；计划中心和仓库的既有入口行为保持不变。
+4. 增加三面板互斥逻辑和源代码契约测试，再以 1366 × 1024 真实页面逐项复测。
+
+### Final severity check
+
+- P0：无。
+- P1：无。
+- P2：无。
+
+final result: passed
+
 ## 2026-08-19 日出货计划优先级与上日遗留（方案三）
 
 ### 验收对象与状态

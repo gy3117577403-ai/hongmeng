@@ -34,7 +34,7 @@ import {
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import type { ReactNode } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PortalMenu } from '@/components/PortalMenu';
 import type { BusinessMode } from '@/components/layout/ModuleModeDrawer';
@@ -59,11 +59,14 @@ type AppWorkbenchHeaderProps = {
   utilityActions?: ReactNode;
   hideHeader?: boolean;
   sidebarTriggerTargetId?: string;
+  sidebarExpanded?: boolean;
+  onSidebarExpandedChange?: (expanded: boolean) => void;
   moduleModeSwitcher?: {
     mode: BusinessMode;
     drawerId: string;
     drawerOpen: boolean;
     onToggle: () => void;
+    openFromSidebar?: boolean;
   };
 };
 
@@ -73,13 +76,14 @@ type SideNavigationItem = {
   icon: LucideIcon;
   planned?: boolean;
   modeSwitchable?: boolean;
+  openModeOnEnter?: boolean;
 };
 
 const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
   {
     label: '业务中心',
     items: [
-      { href: '/production', label: '生产执行', icon: LayoutDashboard, modeSwitchable: true },
+      { href: '/production', label: '生产执行', icon: LayoutDashboard, modeSwitchable: true, openModeOnEnter: false },
       { href: '/weekly-plan-center', label: '计划中心', icon: CalendarDays, modeSwitchable: true },
       { href: '/workspace/daily-plans', label: '日出货计划', icon: CalendarClock },
       { href: '/workspace/weekly-processes', label: '周工序总览', icon: ListTree },
@@ -143,10 +147,12 @@ function activeModuleName(activeHref: string): string {
   return '工作台';
 }
 
-function modeSwitchHref(href: string, mode: BusinessMode): string {
-  const params = new URLSearchParams({ chooseMode: '1' });
+function modeSwitchHref(href: string, mode: BusinessMode, openModeOnEnter = true): string {
+  const params = new URLSearchParams();
+  if (openModeOnEnter) params.set('chooseMode', '1');
   if (mode === 'sample') params.set('branch', 'samples');
-  return `${href}?${params.toString()}`;
+  const query = params.toString();
+  return query ? `${href}?${query}` : href;
 }
 
 export function AppWorkbenchHeader({
@@ -159,11 +165,13 @@ export function AppWorkbenchHeader({
   utilityActions,
   hideHeader = false,
   sidebarTriggerTargetId,
+  sidebarExpanded: controlledSidebarExpanded,
+  onSidebarExpandedChange,
   moduleModeSwitcher,
 }: AppWorkbenchHeaderProps) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [internalSidebarExpanded, setInternalSidebarExpanded] = useState(false);
   const [sidebarPreferenceLoaded, setSidebarPreferenceLoaded] = useState(false);
   const [sidebarTriggerTarget, setSidebarTriggerTarget] = useState<HTMLElement | null>(null);
   const userButtonRef = useRef<HTMLButtonElement>(null);
@@ -176,9 +184,16 @@ export function AppWorkbenchHeader({
   const landingHref = landingRouteForAccess(user.access);
   const canOpenHome = canAccessAppRoute(user.access, '/home');
   const canOpenSystemSettings = canAccessAppRoute(user.access, '/dashboard?openSettings=1');
+  const sidebarExpanded = controlledSidebarExpanded ?? internalSidebarExpanded;
   const visibleMenuItems = canOpenSystemSettings
     ? menuItems
     : menuItems.filter(item => !item.href?.startsWith('/dashboard?openSettings=1'));
+
+  const updateSidebarExpanded = useCallback((next: boolean | ((current: boolean) => boolean)): void => {
+    const nextValue = typeof next === 'function' ? next(sidebarExpanded) : next;
+    if (controlledSidebarExpanded === undefined) setInternalSidebarExpanded(nextValue);
+    onSidebarExpandedChange?.(nextValue);
+  }, [controlledSidebarExpanded, onSidebarExpandedChange, sidebarExpanded]);
 
   useEffect(() => {
     if (!sidebarTriggerTargetId) {
@@ -189,14 +204,18 @@ export function AppWorkbenchHeader({
   }, [sidebarTriggerTargetId]);
 
   useEffect(() => {
+    if (controlledSidebarExpanded !== undefined) {
+      setSidebarPreferenceLoaded(true);
+      return;
+    }
     try {
-      setSidebarExpanded(window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY) === 'true');
+      setInternalSidebarExpanded(window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY) === 'true');
     } catch {
-      setSidebarExpanded(false);
+      setInternalSidebarExpanded(false);
     } finally {
       setSidebarPreferenceLoaded(true);
     }
-  }, []);
+  }, [controlledSidebarExpanded]);
 
   useEffect(() => {
     const root = sidebarRef.current?.closest<HTMLElement>('.hm-workbench-root');
@@ -206,24 +225,24 @@ export function AppWorkbenchHeader({
   }, [sidebarExpanded]);
 
   useEffect(() => {
-    if (!sidebarPreferenceLoaded) return;
+    if (!sidebarPreferenceLoaded || controlledSidebarExpanded !== undefined) return;
     try {
       window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, String(sidebarExpanded));
     } catch {
       // Storage can be unavailable in hardened browser profiles; the in-page toggle still works.
     }
-  }, [sidebarExpanded, sidebarPreferenceLoaded]);
+  }, [controlledSidebarExpanded, sidebarExpanded, sidebarPreferenceLoaded]);
 
   useEffect(() => {
     if (!sidebarExpanded) return;
     function onKeyDown(event: KeyboardEvent): void {
       if (event.key !== 'Escape') return;
-      setSidebarExpanded(false);
+      updateSidebarExpanded(false);
       window.requestAnimationFrame(() => sidebarButtonRef.current?.focus());
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [sidebarExpanded]);
+  }, [sidebarExpanded, updateSidebarExpanded]);
 
   useEffect(() => {
     function openGlobalSearch(event: KeyboardEvent): void {
@@ -236,12 +255,12 @@ export function AppWorkbenchHeader({
   }, [router]);
 
   function closeSidebar(): void {
-    setSidebarExpanded(false);
+    updateSidebarExpanded(false);
     window.requestAnimationFrame(() => sidebarButtonRef.current?.focus());
   }
 
   const sidebarTrigger = (
-    <button ref={sidebarButtonRef} className="hm-workbench-sidebar-button" type="button" aria-label={sidebarExpanded ? '收起平台导航' : '展开平台导航'} aria-controls="hm-platform-sidebar" aria-expanded={sidebarExpanded} onClick={() => setSidebarExpanded(value => !value)}>
+    <button ref={sidebarButtonRef} className="hm-workbench-sidebar-button" type="button" aria-label={sidebarExpanded ? '收起平台导航' : '展开平台导航'} aria-controls="hm-platform-sidebar" aria-expanded={sidebarExpanded} onClick={() => updateSidebarExpanded(value => !value)}>
       {sidebarExpanded ? <PanelLeftClose size={19} aria-hidden="true" /> : <PanelLeftOpen size={19} aria-hidden="true" />}
     </button>
   );
@@ -266,31 +285,34 @@ export function AppWorkbenchHeader({
                 const Icon = item.icon;
                 const active = isActiveRoute(activeHref, item.href);
                 const activeModeSwitch = Boolean(active && item.modeSwitchable && moduleModeSwitcher);
+                const canOpenModeFromSidebar = Boolean(activeModeSwitch
+                  && item.openModeOnEnter !== false
+                  && moduleModeSwitcher?.openFromSidebar !== false);
                 const href = item.modeSwitchable
                   ? activeModeSwitch
                     ? activeHref
-                    : modeSwitchHref(item.href, moduleModeSwitcher?.mode || 'mass')
+                    : modeSwitchHref(item.href, moduleModeSwitcher?.mode || 'mass', item.openModeOnEnter !== false)
                   : item.href;
                 return (
                   <Link
-                    className={`${active ? 'active' : ''} ${item.planned ? 'planned' : ''} ${activeModeSwitch ? 'mode-switch' : ''}`.trim()}
+                    className={`${active ? 'active' : ''} ${item.planned ? 'planned' : ''} ${canOpenModeFromSidebar ? 'mode-switch' : ''}`.trim()}
                     href={href}
                     prefetch={false}
                     key={item.href}
                     title={`${item.label}${activeModeSwitch ? `（当前${moduleModeSwitcher?.mode === 'sample' ? '样品' : '量产'}）` : item.planned ? '（规划中）' : ''}`}
                     aria-current={active ? 'page' : undefined}
-                    aria-controls={activeModeSwitch ? moduleModeSwitcher?.drawerId : undefined}
-                    aria-expanded={activeModeSwitch ? moduleModeSwitcher?.drawerOpen : undefined}
+                    aria-controls={canOpenModeFromSidebar ? moduleModeSwitcher?.drawerId : undefined}
+                    aria-expanded={canOpenModeFromSidebar ? moduleModeSwitcher?.drawerOpen : undefined}
                     onClick={activeModeSwitch ? event => {
                       event.preventDefault();
                       closeSidebar();
-                      moduleModeSwitcher?.onToggle();
+                      if (canOpenModeFromSidebar) moduleModeSwitcher?.onToggle();
                     } : undefined}
                   >
                     <Icon size={18} aria-hidden="true" />
                     <span>{item.label}</span>
                     {item.planned && <em>规划</em>}
-                    {activeModeSwitch && <><em className="mode-label">{moduleModeSwitcher?.mode === 'sample' ? '样品' : '量产'}</em><ChevronDown className={moduleModeSwitcher?.drawerOpen ? 'mode-chevron open' : 'mode-chevron'} size={13} aria-hidden="true" /></>}
+                    {activeModeSwitch && <><em className="mode-label">{moduleModeSwitcher?.mode === 'sample' ? '样品' : '量产'}</em>{canOpenModeFromSidebar && <ChevronDown className={moduleModeSwitcher?.drawerOpen ? 'mode-chevron open' : 'mode-chevron'} size={13} aria-hidden="true" />}</>}
                   </Link>
                 );
               })}

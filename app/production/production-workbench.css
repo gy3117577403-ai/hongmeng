@@ -5454,13 +5454,13 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   outline-offset: 2px;
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1920px) {
   .hm-production-workbench .production-dispatch-layout.rail-open {
     grid-template-columns: minmax(0, 1fr) 320px;
   }
 }
 
-@media (max-width: 1279px) {
+@media (max-width: 1919px) {
   .hm-production-workbench .production-dispatch-rail {
     position: fixed;
     top: 12px;
@@ -7727,7 +7727,7 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
   72%, 100% { transform: translateX(110%); }
 }
 
-@media (min-width: 1280px) {
+@media (min-width: 1920px) {
   .hm-production-workbench .production-dispatch-layout.rail-open {
     grid-template-columns: minmax(0, 1fr) 286px;
   }
