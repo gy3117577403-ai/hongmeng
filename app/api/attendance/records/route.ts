@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import {
+  attendanceEmployeeAllowed,
+  effectiveAttendanceWorkforceScope,
+  resolveAttendanceAccessBoundary,
+} from '@/lib/attendance-access';
+import {
   attendanceRange,
   attendanceTotals,
   defaultAttendanceSegments,
@@ -32,7 +37,7 @@ const include = {
 
 export async function GET(req: NextRequest) {
   try {
-    await requireUser();
+    const user = await requireUser();
     const period = req.nextUrl.searchParams.get('period') === 'month'
       ? 'month' as const
       : req.nextUrl.searchParams.get('period') === 'week'
@@ -43,14 +48,26 @@ export async function GET(req: NextRequest) {
     const end = parseWorkDate(range.end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const employeeId = cleanProcessText(req.nextUrl.searchParams.get('employeeId'), 80);
     const requestedScope = req.nextUrl.searchParams.get('scope');
-    const scope: AttendanceWorkforceScope = requestedScope
+    const parsedScope: AttendanceWorkforceScope = requestedScope
       ? parseAttendanceWorkforceScope(requestedScope)
       : 'ALL';
+    const boundary = await resolveAttendanceAccessBoundary(user);
+    const scope = effectiveAttendanceWorkforceScope(boundary, parsedScope);
+    if (employeeId && !attendanceEmployeeAllowed(boundary, employeeId)) {
+      return NextResponse.json({ ok: false, error: '只能查看本人负责范围内的员工考勤' }, { status: 403 });
+    }
+    const employeeBoundaryWhere = boundary.employeeIds === null
+      ? {}
+      : { id: { in: boundary.employeeIds } };
+    const recordBoundaryWhere = boundary.employeeIds === null
+      ? {}
+      : { employeeId: { in: boundary.employeeIds } };
     const [records, employees, productionCount, otherCount, allCount] = await Promise.all([
       prisma.attendanceRecord.findMany({
         where: {
           workDate: { gte: start, lt: end },
           ...(employeeId ? { employeeId } : {}),
+          ...recordBoundaryWhere,
           ...attendanceRecordScopeWhere(scope),
         },
         include,
@@ -59,13 +76,14 @@ export async function GET(req: NextRequest) {
       prisma.employee.findMany({
         where: {
           ...attendanceEmployeeWhere(scope),
+          ...employeeBoundaryWhere,
           ...(employeeId ? { id: employeeId } : {}),
         },
         orderBy: { employeeNo: 'asc' },
       }),
-      prisma.employee.count({ where: attendanceEmployeeWhere('PRODUCTION') }),
-      prisma.employee.count({ where: attendanceEmployeeWhere('OTHER') }),
-      prisma.employee.count({ where: attendanceEmployeeWhere('ALL') }),
+      prisma.employee.count({ where: { ...attendanceEmployeeWhere('PRODUCTION'), ...employeeBoundaryWhere } }),
+      prisma.employee.count({ where: { ...attendanceEmployeeWhere('OTHER'), ...employeeBoundaryWhere } }),
+      prisma.employee.count({ where: { ...attendanceEmployeeWhere('ALL'), ...employeeBoundaryWhere } }),
     ]);
     const confirmed = records.filter(item => item.status === 'confirmed');
     return NextResponse.json({
@@ -73,6 +91,11 @@ export async function GET(req: NextRequest) {
       period,
       scope,
       scopeCounts: { production: productionCount, other: otherCount, all: allCount },
+      permissions: {
+        allowedWorkforceScopes: boundary.allowedWorkforceScopes,
+        scopeLabel: boundary.scopeLabel,
+        unrestricted: boundary.unrestricted,
+      },
       date: range.date,
       rangeStart: range.start.toISOString(),
       rangeEnd: range.end.toISOString(),
@@ -100,6 +123,10 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const employeeId = cleanProcessText(body.employeeId, 80);
     if (!employeeId) return NextResponse.json({ ok: false, error: '请选择员工' }, { status: 400 });
+    const boundary = await resolveAttendanceAccessBoundary(user);
+    if (!attendanceEmployeeAllowed(boundary, employeeId)) {
+      return NextResponse.json({ ok: false, error: '只能登记本人负责范围内的员工考勤' }, { status: 403 });
+    }
     const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
     if (employee && !employee.isActive) {
       return NextResponse.json({ ok: false, error: '离职员工不能新增或修改考勤记录' }, { status: 409 });

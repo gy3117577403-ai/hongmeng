@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import type { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  attendanceEmployeeAllowed,
+  resolveAttendanceAccessBoundary,
+} from '@/lib/attendance-access';
 import { serializeAttendanceRecord } from '@/lib/attendance';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
@@ -18,6 +22,10 @@ export async function POST(_: Request, { params }: { params: { id: string } }) {
     const user = await requireUser();
     const existing = await prisma.attendanceRecord.findUnique({ where: { id: params.id } });
     if (!existing) return NextResponse.json({ ok: false, error: '考勤记录不存在' }, { status: 404 });
+    const boundary = await resolveAttendanceAccessBoundary(user);
+    if (!attendanceEmployeeAllowed(boundary, existing.employeeId)) {
+      return NextResponse.json({ ok: false, error: '只能确认本人负责范围内的员工考勤' }, { status: 403 });
+    }
     const record = await prisma.attendanceRecord.update({
       where: { id: existing.id },
       data: { status: 'confirmed', confirmedById: user.id, confirmedAt: new Date(), updatedById: user.id },

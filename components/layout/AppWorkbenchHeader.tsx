@@ -105,6 +105,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
       { href: '/workspace/abnormal-times', label: '异常工时', icon: TimerOff },
       { href: '/workspace/knowledge', label: '知识库', icon: BookOpen },
       { href: '/workspace/reports', label: '报表中心', icon: BarChart3 },
+      { href: '/workspace/permissions', label: '权限与数据联通', icon: ShieldCheck },
       { href: '/workspace/messages', label: '消息中心', icon: Bell },
     ],
   },

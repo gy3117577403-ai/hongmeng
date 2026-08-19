@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import {
+  effectiveAttendanceWorkforceScope,
+  resolveAttendanceAccessBoundary,
+} from '@/lib/attendance-access';
 import { parseWorkDate } from '@/lib/attendance';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
@@ -17,15 +21,18 @@ export async function POST(req: NextRequest) {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const workDate = parseWorkDate(body.workDate);
-    const scope: AttendanceWorkforceScope = body.scope
+    const requestedScope: AttendanceWorkforceScope = body.scope
       ? parseAttendanceWorkforceScope(body.scope)
       : 'ALL';
+    const boundary = await resolveAttendanceAccessBoundary(user);
+    const scope = effectiveAttendanceWorkforceScope(boundary, requestedScope);
     const now = new Date();
     const result = await prisma.attendanceRecord.updateMany({
       where: {
         workDate: workDate.value,
         status: 'draft',
         employee: { isActive: true, attendanceEnabled: true },
+        ...(boundary.employeeIds === null ? {} : { employeeId: { in: boundary.employeeIds } }),
         ...attendanceRecordScopeWhere(scope),
       },
       data: {

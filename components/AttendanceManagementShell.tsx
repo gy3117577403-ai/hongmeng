@@ -40,12 +40,23 @@ import type {
 
 type TabKey = 'attendance' | 'abnormal' | 'quality';
 type Period = 'today' | 'week' | 'month';
-type EmployeesResponse = { ok: boolean; employees?: EmployeeDTO[]; error?: string };
+type AttendancePermissions = {
+  allowedWorkforceScopes: AttendanceWorkforceScope[];
+  scopeLabel: string;
+  unrestricted: boolean;
+};
+type EmployeesResponse = {
+  ok: boolean;
+  employees?: EmployeeDTO[];
+  permissions?: AttendancePermissions;
+  error?: string;
+};
 type AttendanceResponse = {
   ok: boolean;
   records?: AttendanceRecordDTO[];
   scope?: AttendanceWorkforceScope;
   scopeCounts?: { production: number; other: number; all: number };
+  permissions?: AttendancePermissions;
   summary?: {
     enabledEmployeeCount: number;
     recordCount: number;
@@ -169,6 +180,8 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   const [workforceScope, setWorkforceScope] = useState<AttendanceWorkforceScope>('PRODUCTION');
   const [employeeDirectory, setEmployeeDirectory] = useState<EmployeeDTO[]>([]);
   const [scopeCounts, setScopeCounts] = useState({ production: 0, other: 0, all: 0 });
+  const [allowedWorkforceScopes, setAllowedWorkforceScopes] = useState<AttendanceWorkforceScope[]>(['PRODUCTION']);
+  const [accessScopeLabel, setAccessScopeLabel] = useState('生产范围');
   const [records, setRecords] = useState<AttendanceRecordDTO[]>([]);
   const [events, setEvents] = useState<AbnormalTimeEventDTO[]>([]);
   const [attendanceSummary, setAttendanceSummary] = useState(emptyAttendanceSummary);
@@ -206,7 +219,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     setError('');
     try {
       const [employeeResponse, attendanceResponse, eventResponse] = await Promise.all([
-        fetch('/api/employees?active=true', { cache: 'no-store', signal }),
+        fetch('/api/attendance/employees', { cache: 'no-store', signal }),
         fetch(`/api/attendance/records?period=today&date=${encodeURIComponent(date)}&scope=${workforceScope}`, { cache: 'no-store', signal }),
         fetch(`/api/abnormal-time-events?period=${period}&date=${encodeURIComponent(date)}`, { cache: 'no-store', signal }),
       ]);
@@ -219,6 +232,14 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       setEmployeeDirectory((employeeBody.employees || []).filter(item => item.attendanceEnabled));
       setRecords(attendanceBody.records || []);
       setScopeCounts(attendanceBody.scopeCounts || { production: 0, other: 0, all: 0 });
+      const permissions = attendanceBody.permissions || employeeBody.permissions;
+      if (permissions) {
+        setAllowedWorkforceScopes(permissions.allowedWorkforceScopes);
+        setAccessScopeLabel(permissions.scopeLabel);
+        if (!permissions.allowedWorkforceScopes.includes(workforceScope)) {
+          setWorkforceScope(permissions.allowedWorkforceScopes[0] || 'PRODUCTION');
+        }
+      }
       setEvents(eventBody.events || []);
       setAttendanceSummary(attendanceBody.summary || emptyAttendanceSummary);
       setEventSummary(eventBody.summary || emptyEventSummary);
@@ -275,6 +296,17 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       .toLocaleLowerCase('zh-CN').includes(normalized));
   }, [employees, keyword]);
   const visibleEvents = tab === 'quality' ? events.filter(item => item.qualityStatus === 'pending') : events;
+  const canOpenEmployeeAdmin = user.access.modules.includes('HR');
+  const canReviewQuality = user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW')
+    || (
+      user.access.capabilities.includes('PRODUCTION:EXECUTE_WORKFLOW')
+      && (user.access.productionScope === 'WORKSHOP' || user.access.productionScope === 'GLOBAL')
+    );
+  const canResolveAbnormal = user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW');
+
+  useEffect(() => {
+    if (tab === 'quality' && !canReviewQuality) setTab('abnormal');
+  }, [canReviewQuality, tab]);
 
   async function logout(): Promise<void> {
     await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
@@ -501,7 +533,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
           context={<><span>{attendanceSummary.confirmedCount} 条已确认</span><span>{eventSummary.pendingCount} 条待品质确认</span></>}
           search={<label><Search size={16} aria-hidden="true" /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索编号、姓名、岗位或班组" aria-label="搜索考勤员工" /></label>}
           actions={<>
-            <a href="/workspace/employees?view=directory"><UsersRound size={15} />人事管理</a>
+            {canOpenEmployeeAdmin && <a href="/workspace/employees?view=directory"><UsersRound size={15} />人事管理</a>}
             <button className="icon-only" type="button" aria-label="刷新" title="刷新" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={16} /></button>
             {tab === 'attendance'
               ? <button className="primary" type="button" disabled={saving} onClick={() => void batchDefault()}><Plus size={16} />生成正常出勤</button>
@@ -521,7 +553,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
           <div className="attendance-tabs" role="tablist" aria-label="考勤工作台视图">
             <button className={tab === 'attendance' ? 'active' : ''} type="button" role="tab" aria-selected={tab === 'attendance'} onClick={() => setTab('attendance')}><CalendarClock size={16} />考勤登记</button>
             <button className={tab === 'abnormal' ? 'active' : ''} type="button" role="tab" aria-selected={tab === 'abnormal'} onClick={() => setTab('abnormal')}><FileWarning size={16} />异常工时</button>
-            <button className={tab === 'quality' ? 'active' : ''} type="button" role="tab" aria-selected={tab === 'quality'} onClick={() => setTab('quality')}><ShieldCheck size={16} />品质确认 <em>{eventSummary.pendingCount}</em></button>
+            {canReviewQuality && <button className={tab === 'quality' ? 'active' : ''} type="button" role="tab" aria-selected={tab === 'quality'} onClick={() => setTab('quality')}><ShieldCheck size={16} />品质确认 <em>{eventSummary.pendingCount}</em></button>}
           </div>
           <label className="attendance-date"><span>基准日期</span><input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
           {tab !== 'attendance' && <div className="attendance-period" role="group" aria-label="异常汇总周期">{(['today', 'week', 'month'] as Period[]).map(item => <button className={period === item ? 'active' : ''} type="button" key={item} onClick={() => setPeriod(item)}>{periodLabel(item)}</button>)}</div>}
@@ -535,11 +567,11 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
         {tab === 'attendance' ? (
           <section className="attendance-ledger">
             <header>
-              <div><span>手工考勤 · {workforceLabel}</span><h1>{date} 出勤登记</h1><small>{workforceNote}</small></div>
+              <div><span>手工考勤 · {workforceLabel}</span><h1>{date} 出勤登记</h1><small>{workforceNote} · 当前权限：{accessScopeLabel}</small></div>
               <div className="attendance-workforce-switch" role="tablist" aria-label="考勤人员范围">
-                <button className={workforceScope === 'PRODUCTION' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'PRODUCTION'} onClick={() => { setWorkforceScope('PRODUCTION'); setAttendanceDraft(null); }}><strong>生产考勤</strong><em>{scopeCounts.production}</em></button>
-                <button className={workforceScope === 'OTHER' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'OTHER'} onClick={() => { setWorkforceScope('OTHER'); setAttendanceDraft(null); }}><strong>其他人员</strong><em>{scopeCounts.other}</em></button>
-                <button className={workforceScope === 'ALL' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'ALL'} onClick={() => { setWorkforceScope('ALL'); setAttendanceDraft(null); }}><strong>全部人员</strong><em>{scopeCounts.all}</em></button>
+                {allowedWorkforceScopes.includes('PRODUCTION') && <button className={workforceScope === 'PRODUCTION' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'PRODUCTION'} onClick={() => { setWorkforceScope('PRODUCTION'); setAttendanceDraft(null); }}><strong>生产考勤</strong><em>{scopeCounts.production}</em></button>}
+                {allowedWorkforceScopes.includes('OTHER') && <button className={workforceScope === 'OTHER' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'OTHER'} onClick={() => { setWorkforceScope('OTHER'); setAttendanceDraft(null); }}><strong>其他人员</strong><em>{scopeCounts.other}</em></button>}
+                {allowedWorkforceScopes.includes('ALL') && <button className={workforceScope === 'ALL' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'ALL'} onClick={() => { setWorkforceScope('ALL'); setAttendanceDraft(null); }}><strong>全部人员</strong><em>{scopeCounts.all}</em></button>}
               </div>
             </header>
             <div className="attendance-table-wrap hm-scroll-region" tabIndex={0}>
@@ -556,14 +588,14 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
                   <button type="button" onClick={() => openAttendance(employee)}><Pencil size={15} />{record ? '编辑' : '登记'}</button>
                 </div>;
               })}
-              {!loading && !filteredEmployees.length && <div className="attendance-empty"><UsersRound /><strong>当前范围没有可登记考勤的员工</strong><span>人员范围直接读取人事档案中的部门与考勤启用状态。</span><a href="/workspace/employees?view=directory">打开人事管理</a></div>}
+              {!loading && !filteredEmployees.length && <div className="attendance-empty"><UsersRound /><strong>当前权限范围没有可登记考勤的员工</strong><span>请检查账号的班组范围与员工档案中的班组归属、在职状态和考勤启用状态。</span>{canOpenEmployeeAdmin && <a href="/workspace/employees?view=directory">打开人事管理</a>}</div>}
             </div>
           </section>
         ) : (
           <section className="abnormal-ledger">
             <header>
               <div><span>{tab === 'quality' ? '二次确认' : '异常账本'}</span><h1>{tab === 'quality' ? '待品质确认异常' : `${periodLabel(period)}异常工时`}</h1></div>
-              <p>当前尚未启用角色权限，所有登录账号均可执行品质确认；系统会完整记录确认人、时间和说明。</p>
+              <p>异常数据按账号职责范围读取；品质确认仅对质量人员或生产主管开放，并完整记录确认人、时间和说明。</p>
             </header>
             <div className="abnormal-list hm-scroll-region" tabIndex={0}>
               {visibleEvents.map(event => <article className={`abnormal-card ${event.qualityStatus}`} key={event.id}>
@@ -580,11 +612,11 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
                 {event.qualityNote && <p className="quality-note">品质说明：{event.qualityNote}</p>}
                 <footer>
                   <button type="button" disabled={saving} onClick={() => editAbnormal(event)}><Pencil size={15} />编辑</button>
-                  {event.qualityStatus === 'pending' && <>
+                  {canReviewQuality && event.qualityStatus === 'pending' && <>
                     <button className="confirm" type="button" disabled={saving} onClick={() => void quality(event, 'confirmed')}><Check size={15} />确认</button>
                     <button type="button" disabled={saving} onClick={() => void quality(event, 'rejected')}><X size={15} />驳回</button>
                   </>}
-                  {event.resolutionStatus === 'open' && <button type="button" disabled={saving} onClick={() => void resolveEvent(event)}><CheckCircle2 size={15} />关闭异常</button>}
+                  {canResolveAbnormal && event.resolutionStatus === 'open' && <button type="button" disabled={saving} onClick={() => void resolveEvent(event)}><CheckCircle2 size={15} />关闭异常</button>}
                   <button className="danger" type="button" disabled={saving} onClick={() => void removeEvent(event)}><Trash2 size={15} />删除</button>
                 </footer>
               </article>)}

@@ -58,6 +58,9 @@ export const ACCESS_MODULES = [
   'ISSUE_MANAGEMENT',
   'CHANGE_MANAGEMENT',
   'DRAWING_LIBRARY',
+  'ASSEMBLY_MANUALS',
+  'PRODUCT_TIME',
+  'ATTENDANCE',
   'REPORT_CENTER',
   'TERMINAL_TOOLING',
   'PLANNING',
@@ -136,6 +139,9 @@ export const MODULE_ACTION_MATRIX = {
   ISSUE_MANAGEMENT: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
   CHANGE_MANAGEMENT: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
   DRAWING_LIBRARY: ['READ', 'CREATE', 'UPDATE'],
+  ASSEMBLY_MANUALS: ['READ'],
+  PRODUCT_TIME: ['READ'],
+  ATTENDANCE: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
   REPORT_CENTER: ['READ'],
   TERMINAL_TOOLING: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
   PLANNING: DEPARTMENT_OPERATION_ACTIONS,
@@ -495,13 +501,21 @@ export function resolveAccessContext(
       addBasicSummary(capabilities);
       addModuleActions(capabilities, 'PRODUCTION', DEPARTMENT_OPERATION_ACTIONS);
       capabilities.add(capabilityCode('TERMINAL_TOOLING', 'READ'));
+      capabilities.add(capabilityCode('DRAWING_LIBRARY', 'READ'));
+      capabilities.add(capabilityCode('ASSEMBLY_MANUALS', 'READ'));
+      capabilities.add(capabilityCode('PRODUCT_TIME', 'READ'));
+      addModuleActions(capabilities, 'ATTENDANCE', MODULE_ACTION_MATRIX.ATTENDANCE);
       addScope(scopeForGrant(grant, 'ACCOUNT_SELF', 'SELF', false));
       addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
       addScope(scopeForGrant(grant, 'BASIC_SUMMARY', 'GLOBAL', true));
       addScope(scopeForGrant(grant, 'TERMINAL_TOOLING', 'GLOBAL', true));
+      addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', true));
+      addScope(scopeForGrant(grant, 'ASSEMBLY_MANUALS', 'GLOBAL', true));
+      addScope(scopeForGrant(grant, 'PRODUCT_TIME', 'GLOBAL', true));
 
       const isSupervisor = grant.profile === 'WORKSHOP_SUPERVISOR';
       addScope(scopeForGrant(grant, 'PRODUCTION', isSupervisor ? 'WORKSHOP' : 'TEAM', false));
+      addScope(scopeForGrant(grant, 'ATTENDANCE', isSupervisor ? 'WORKSHOP' : 'TEAM', false));
       productionScope = strongerProductionScope(
         productionScope,
         isSupervisor ? 'WORKSHOP' : 'TEAM',

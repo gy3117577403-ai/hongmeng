@@ -336,6 +336,10 @@ test('workshop supervisor gets production operations for the whole workshop scop
   assert.equal(hasCapability(context, 'PRODUCTION', 'PERMANENT_DELETE'), false);
   assert.equal(context.productionScope, 'WORKSHOP');
   assert.deepEqual(allowedActions(context, 'TERMINAL_TOOLING'), ['READ']);
+  assert.deepEqual(allowedActions(context, 'DRAWING_LIBRARY'), ['READ']);
+  assert.deepEqual(allowedActions(context, 'ASSEMBLY_MANUALS'), ['READ']);
+  assert.deepEqual(allowedActions(context, 'PRODUCT_TIME'), ['READ']);
+  assert.deepEqual(allowedActions(context, 'ATTENDANCE'), ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
   assert.equal(scopeHintsFor(context, 'TERMINAL_TOOLING')[0]?.level, 'GLOBAL');
   assert.equal(scopeHintsFor(context, 'TERMINAL_TOOLING')[0]?.readOnly, true);
   assert.deepEqual(scopeHintsFor(context, 'PRODUCTION'), [{
@@ -348,6 +352,8 @@ test('workshop supervisor gets production operations for the whole workshop scop
     departmentCode: 'PRODUCTION',
     workshopId: 'workshop-a',
   }]);
+  assert.equal(scopeHintsFor(context, 'ATTENDANCE')[0]?.level, 'WORKSHOP');
+  assert.equal(scopeHintsFor(context, 'DRAWING_LIBRARY')[0]?.readOnly, true);
 });
 
 test('workshop team leader gets the same actions constrained to the assigned team', () => {
@@ -362,10 +368,16 @@ test('workshop team leader gets the same actions constrained to the assigned tea
   assert.equal(hasCapability(context, 'PRODUCTION', 'PERMANENT_DELETE'), false);
   assert.equal(context.productionScope, 'TEAM');
   assert.deepEqual(allowedActions(context, 'TERMINAL_TOOLING'), ['READ']);
+  assert.deepEqual(allowedActions(context, 'ASSEMBLY_MANUALS'), ['READ']);
+  assert.deepEqual(allowedActions(context, 'PRODUCT_TIME'), ['READ']);
+  assert.deepEqual(allowedActions(context, 'ATTENDANCE'), ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
 
   const scope = scopeHintsFor(context, 'PRODUCTION')[0];
   assert.equal(scope?.level, 'TEAM');
   assert.equal(scope?.teamId, 'team-2');
+  const attendanceScope = scopeHintsFor(context, 'ATTENDANCE')[0];
+  assert.equal(attendanceScope?.level, 'TEAM');
+  assert.equal(attendanceScope?.teamId, 'team-2');
 });
 
 test('multiple production grants preserve scope details and resolve to the broadest scope hint', () => {

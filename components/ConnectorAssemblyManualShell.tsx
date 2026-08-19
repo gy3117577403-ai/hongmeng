@@ -166,6 +166,8 @@ async function jsonResponse(response: Response): Promise<Record<string, unknown>
 }
 
 export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO }) {
+  const canManageManuals = user.access.capabilities.includes('ENGINEERING:CREATE')
+    && user.access.capabilities.includes('ENGINEERING:UPDATE');
   const [manuals, setManuals] = useState<ConnectorAssemblyManualDTO[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [selectedVersionId, setSelectedVersionId] = useState('');
@@ -895,8 +897,8 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
         activeHref="/connector-assembly-manuals"
         subtitle="检索、预览与版本维护"
         menuItems={[
-          { label: '回收站', onSelect: loadTrash },
-          { label: '操作日志', href: '/dashboard?openLogs=1' },
+          ...(canManageManuals ? [{ label: '回收站', onSelect: loadTrash }] : []),
+          ...(user.access.modules.includes('SYSTEM_CONFIGURATION') ? [{ label: '操作日志', href: '/dashboard?openLogs=1' }] : []),
           { label: '退出登录', onSelect: logout },
         ]}
       />
@@ -925,14 +927,14 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
               </div>
             </PortalMenu>
           </div>
-          <div className="hm-manual-support-links" aria-label="关联资料入口">
+          {canManageManuals && <div className="hm-manual-support-links" aria-label="关联资料入口">
             <a href="/connector-parameters?openFiles=1" title="打开原始资料附件"><Paperclip aria-hidden="true" />原始附件</a>
             <a href="/connector-parameters?openBatches=1" title="打开参数导入批次"><History aria-hidden="true" />导入批次</a>
-          </div>
-          <div className="hm-manual-command-actions" aria-label="说明书操作">
+          </div>}
+          {canManageManuals && <div className="hm-manual-command-actions" aria-label="说明书操作">
             <button className="hm-workbench-button" type="button" onClick={openCreateManual}><FilePlus2 aria-hidden="true" />新增</button>
             <button className="hm-workbench-button primary" type="button" onClick={() => setBulkOpen(true)}><Files aria-hidden="true" />批量导入</button>
-          </div>
+          </div>}
         </section>
 
         <section className={`manual-workspace hm-manual-workspace ${detailsOpen ? 'detail-open' : 'detail-collapsed'}`}>
@@ -956,7 +958,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
               );
             })}
             {loading && !manuals.length && <div className="manual-list-empty loading"><span className="manual-loader" /><strong>正在加载说明书</strong><p>正在读取列表和筛选条件。</p></div>}
-            {!loading && !manuals.length && <div className="manual-list-empty"><strong>{listFiltersActive ? '没有匹配的说明书' : '暂无组装说明书'}</strong><p>{listFiltersActive ? '当前条件没有结果，可清除筛选后重新查询。' : '可直接批量选择 PDF / 图片文件夹，或使用单份新增。'}</p><button type="button" onClick={listFiltersActive ? clearListFilters : () => setBulkOpen(true)}>{listFiltersActive ? '清除筛选' : '批量导入说明书'}</button></div>}
+            {!loading && !manuals.length && <div className="manual-list-empty"><strong>{listFiltersActive ? '没有匹配的说明书' : '暂无组装说明书'}</strong><p>{listFiltersActive ? '当前条件没有结果，可清除筛选后重新查询。' : canManageManuals ? '可直接批量选择 PDF / 图片文件夹，或使用单份新增。' : '资料库当前没有可阅读的说明书，请联系技术负责人上传。'}</p>{(listFiltersActive || canManageManuals) && <button type="button" onClick={listFiltersActive ? clearListFilters : () => setBulkOpen(true)}>{listFiltersActive ? '清除筛选' : '批量导入说明书'}</button>}</div>}
           </div>
           <div className="manual-pagination"><button type="button" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>上一页</button><button type="button" disabled={page >= totalPages} onClick={() => setPage(value => value + 1)}>下一页</button></div>
         </aside>
@@ -969,28 +971,28 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
               {!!selectedManual?.models.length && <div className="manual-current-models">{selectedManual.models.map(item => <i key={item}>{item}</i>)}</div>}
             </div>
             <div className="manual-current-actions">
-              <button className="primary-button" type="button" disabled={!selectedManual} onClick={openCreateVersion}>上传新版本</button>
+              {canManageManuals && <button className="primary-button" type="button" disabled={!selectedManual} onClick={openCreateVersion}>上传新版本</button>}
               <button ref={detailButtonRef} className="manual-detail-toggle" type="button" disabled={!selectedManual} aria-controls="manual-resource-panel" aria-expanded={detailsOpen} onClick={() => detailsOpen ? closeDetailPanel() : openDetailPanel()} title={detailsOpen ? '收起目录、版本与型号面板' : '打开目录、版本与型号面板'}>{detailsOpen ? '收起资料面板' : '目录 / 版本'}</button>
               <button ref={manualActionsButtonRef} type="button" disabled={!selectedManual} aria-expanded={manualActionsOpen} onClick={() => setManualActionsOpen(value => !value)}>更多</button>
               <PortalMenu open={manualActionsOpen} anchorRef={manualActionsButtonRef} className="manual-actions-menu" width={190} onClose={() => setManualActionsOpen(false)}>
-                <button type="button" onClick={() => { openEditManual(); setManualActionsOpen(false); }}>编辑说明书信息</button>
+                {canManageManuals && <button type="button" onClick={() => { openEditManual(); setManualActionsOpen(false); }}>编辑说明书信息</button>}
                 <button type="button" onClick={() => { setMoreInfoOpen(true); setManualActionsOpen(false); }}>更多信息</button>
-                <button type="button" disabled={!selectedVersion} onClick={() => { openEditVersion(); setManualActionsOpen(false); }}>编辑当前版本与目录</button>
-                <button className="danger" type="button" disabled={!selectedManual} onClick={() => { if (selectedManual) setDeleteTarget({ type: 'manual', item: selectedManual }); setManualActionsOpen(false); }}>删除说明书</button>
+                {canManageManuals && <button type="button" disabled={!selectedVersion} onClick={() => { openEditVersion(); setManualActionsOpen(false); }}>编辑当前版本与目录</button>}
+                {canManageManuals && <button className="danger" type="button" disabled={!selectedManual} onClick={() => { if (selectedManual) setDeleteTarget({ type: 'manual', item: selectedManual }); setManualActionsOpen(false); }}>删除说明书</button>}
               </PortalMenu>
             </div>
           </div>
           <div className="manual-preview-stage">
             {(loading || detailLoading) && <div className="manual-empty-preview"><span className="manual-loader" /><strong>说明书加载中</strong><p>正在读取版本和文件信息</p></div>}
-            {!loading && !detailLoading && !selectedManual && <div className="manual-empty-preview"><BookOpenText aria-hidden="true" /><strong>{statusFilter === 'deleted' ? '已删除说明书只在回收站恢复' : '建立连接器组装说明书资料库'}</strong><p>{statusFilter === 'deleted' ? '选择用户菜单中的回收站执行恢复，S3 原文件仍然保留。' : '集中管理 PDF、多图说明书、版本、目录和适用型号。'}</p><button type="button" onClick={statusFilter === 'deleted' ? loadTrash : () => setBulkOpen(true)}>{statusFilter === 'deleted' ? '打开回收站' : '批量导入第一批说明书'}</button></div>}
-            {!loading && !detailLoading && selectedManual && !selectedVersion && <div className="manual-empty-preview missing"><span>01</span><strong>这份说明书还没有版本</strong><p>先创建版本，再上传 PDF 或多张图片。</p><button type="button" onClick={openCreateVersion}>创建首个版本</button></div>}
-            {!loading && !detailLoading && selectedVersion && !selectedAsset && <div className="manual-empty-preview missing"><span>{selectedVersion.fileMode === 'PDF' ? 'PDF' : 'IMG'}</span><strong>当前版本尚未上传文件</strong><p>{selectedVersion.fileMode === 'PDF' ? '上传一个 PDF，系统会识别页数并提取可搜索文字。' : '可一次选择多张图片，并在版本面板调整顺序。'}</p><button type="button" onClick={() => setUploadOpen(true)}>上传文件</button></div>}
+            {!loading && !detailLoading && !selectedManual && <div className="manual-empty-preview"><BookOpenText aria-hidden="true" /><strong>{statusFilter === 'deleted' ? '已删除说明书只在回收站恢复' : canManageManuals ? '建立连接器组装说明书资料库' : '选择左侧说明书开始阅读'}</strong><p>{statusFilter === 'deleted' ? '选择用户菜单中的回收站执行恢复，S3 原文件仍然保留。' : canManageManuals ? '集中管理 PDF、多图说明书、版本、目录和适用型号。' : '当前账号为只读访问，可查看所有已发布说明书、版本与关联型号。'}</p>{canManageManuals && <button type="button" onClick={statusFilter === 'deleted' ? loadTrash : () => setBulkOpen(true)}>{statusFilter === 'deleted' ? '打开回收站' : '批量导入第一批说明书'}</button>}</div>}
+            {!loading && !detailLoading && selectedManual && !selectedVersion && <div className="manual-empty-preview missing"><span>01</span><strong>这份说明书还没有版本</strong><p>{canManageManuals ? '先创建版本，再上传 PDF 或多张图片。' : '请联系技术负责人上传说明书版本。'}</p>{canManageManuals && <button type="button" onClick={openCreateVersion}>创建首个版本</button>}</div>}
+            {!loading && !detailLoading && selectedVersion && !selectedAsset && <div className="manual-empty-preview missing"><span>{selectedVersion.fileMode === 'PDF' ? 'PDF' : 'IMG'}</span><strong>当前版本尚未上传文件</strong><p>{canManageManuals ? (selectedVersion.fileMode === 'PDF' ? '上传一个 PDF，系统会识别页数并提取可搜索文字。' : '可一次选择多张图片，并在版本面板调整顺序。') : '请联系技术负责人补充当前版本文件。'}</p>{canManageManuals && <button type="button" onClick={() => setUploadOpen(true)}>上传文件</button>}</div>}
             {!loading && !detailLoading && selectedVersion?.fileMode === 'PDF' && selectedAsset && (
-              <PdfViewer key={selectedVersion.id} dashboardMode fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} viewUrl={selectedAsset.contentUrl} page={pdfPage} onPageChange={setPdfPage} onAddToToc={addCurrentPageToToc} onTocSuggestions={setTocSuggestions} onCopyPageLink={copyCurrentPageLink} readingMode />
+              <PdfViewer key={selectedVersion.id} dashboardMode fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} viewUrl={selectedAsset.contentUrl} page={pdfPage} onPageChange={setPdfPage} onAddToToc={canManageManuals ? addCurrentPageToToc : undefined} onTocSuggestions={setTocSuggestions} onCopyPageLink={copyCurrentPageLink} readingMode />
             )}
             {!loading && !detailLoading && selectedVersion?.fileMode === 'IMAGE_SET' && selectedAsset && (
               <div className="manual-image-preview">
-                <ImageViewer key={selectedVersion.id} dashboardMode fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} page={imageIndex + 1} pageCount={activeAssets.length} onPageChange={value => setImageIndex(Math.max(0, value - 1))} onAddToToc={addCurrentPageToToc} onCopyPageLink={copyCurrentPageLink} gestureResetKey={selectedVersion.id} readingMode />
+                <ImageViewer key={selectedVersion.id} dashboardMode fileId={selectedAsset.id} title={selectedAsset.displayName || selectedAsset.originalName} contentUrl={selectedAsset.contentUrl} downloadUrl={selectedAsset.downloadUrl} page={imageIndex + 1} pageCount={activeAssets.length} onPageChange={value => setImageIndex(Math.max(0, value - 1))} onAddToToc={canManageManuals ? addCurrentPageToToc : undefined} onCopyPageLink={copyCurrentPageLink} gestureResetKey={selectedVersion.id} readingMode />
               </div>
             )}
           </div>
@@ -1011,31 +1013,31 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
             {rightTab === 'summary' && <ManualSideSummary manual={selectedManual} version={selectedVersion} />}
             {rightTab === 'toc' && (
               <div className="manual-toc-list">
-                <div className="manual-section-head"><strong>章节目录</strong><div><button type="button" disabled={!selectedVersion || selectedVersion.fileMode !== 'PDF'} onClick={openTocSuggestionDialog}>生成目录建议</button><button type="button" disabled={!selectedVersion} onClick={openEditVersion}>编辑全部</button></div></div>
+                <div className="manual-section-head"><strong>章节目录</strong>{canManageManuals && <div><button type="button" disabled={!selectedVersion || selectedVersion.fileMode !== 'PDF'} onClick={openTocSuggestionDialog}>生成目录建议</button><button type="button" disabled={!selectedVersion} onClick={openEditVersion}>编辑全部</button></div>}</div>
                 {selectedVersion?.tocJson.map((item, index) => {
                   const id = tocItemId(item, index);
                   const active = currentPreviewPage >= item.pageStart && currentPreviewPage <= item.pageEnd;
-                  return <article className={`${active ? 'active' : ''}${highlightedTocId === id ? ' highlighted' : ''}`} key={id}><button className="manual-toc-select" type="button" onClick={() => goToTocItem(item)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{item.title}</strong><small>{item.pageStart === item.pageEnd ? `第 ${item.pageStart} 页` : `${item.pageStart}-${item.pageEnd} 页`}</small></button><div className="manual-toc-actions"><button type="button" disabled={index === 0} onClick={() => void moveTocItem(index, -1)} title="上移">↑</button><button type="button" disabled={index === selectedVersion.tocJson.length - 1} onClick={() => void moveTocItem(index, 1)} title="下移">↓</button><button type="button" onClick={() => setTocEdit({ id, title: item.title, pageStart: item.pageStart, pageEnd: item.pageEnd })}>编辑</button><button className="danger-text" type="button" onClick={() => void deleteTocItem(item, index)}>删除</button></div></article>;
+                  return <article className={`${active ? 'active' : ''}${highlightedTocId === id ? ' highlighted' : ''}`} key={id}><button className="manual-toc-select" type="button" onClick={() => goToTocItem(item)}><span>{String(index + 1).padStart(2, '0')}</span><strong>{item.title}</strong><small>{item.pageStart === item.pageEnd ? `第 ${item.pageStart} 页` : `${item.pageStart}-${item.pageEnd} 页`}</small></button>{canManageManuals && <div className="manual-toc-actions"><button type="button" disabled={index === 0} onClick={() => void moveTocItem(index, -1)} title="上移">↑</button><button type="button" disabled={index === selectedVersion.tocJson.length - 1} onClick={() => void moveTocItem(index, 1)} title="下移">↓</button><button type="button" onClick={() => setTocEdit({ id, title: item.title, pageStart: item.pageStart, pageEnd: item.pageEnd })}>编辑</button><button className="danger-text" type="button" onClick={() => void deleteTocItem(item, index)}>删除</button></div>}</article>;
                 })}
                 {!selectedVersion?.tocJson.length && <div className="manual-side-empty">暂未识别目录，可手动添加</div>}
               </div>
             )}
             {rightTab === 'versions' && (
               <div className="manual-version-list">
-                <div className="manual-section-head"><strong>版本历史</strong><button type="button" disabled={!selectedManual} onClick={openCreateVersion}>新增版本</button></div>
+                <div className="manual-section-head"><strong>版本历史</strong>{canManageManuals && <button type="button" disabled={!selectedManual} onClick={openCreateVersion}>新增版本</button>}</div>
                 {selectedManual?.versions.map(version => (
                   <article className={selectedVersion?.id === version.id ? 'active' : ''} key={version.id}>
                     <button className="manual-version-select" type="button" onClick={() => setSelectedVersionId(version.id)}><strong>{version.revision}</strong>{(version.issuedAt || version.pageCount) && <span>{[dateText(version.issuedAt), version.pageCount ? `${version.pageCount} 页` : ''].filter(Boolean).join(' · ')}</span>}{version.isLatest && <b>最新版</b>}</button>
-                    <div><button type="button" onClick={() => { setSelectedVersionId(version.id); setVersionForm(versionFormFrom(version)); setVersionModal('edit'); }}>编辑</button>{!version.isLatest && <button type="button" onClick={() => markLatest(version)}>设最新</button>}<button className="danger-text" type="button" onClick={() => setDeleteTarget({ type: 'version', item: version })}>删除</button></div>
+                    {canManageManuals && <div><button type="button" onClick={() => { setSelectedVersionId(version.id); setVersionForm(versionFormFrom(version)); setVersionModal('edit'); }}>编辑</button>{!version.isLatest && <button type="button" onClick={() => markLatest(version)}>设最新</button>}<button className="danger-text" type="button" onClick={() => setDeleteTarget({ type: 'version', item: version })}>删除</button></div>}
                   </article>
                 ))}
-                {selectedVersion && <div className="manual-assets-manage"><div className="manual-section-head"><strong>当前版本文件</strong><button type="button" onClick={() => setUploadOpen(true)}>上传</button></div>{activeAssets.map((asset, index) => <div key={asset.id}><span>{index + 1}</span><strong title={asset.displayName || asset.originalName}>{asset.displayName || asset.originalName}</strong>{selectedVersion.fileMode === 'IMAGE_SET' && <><button type="button" title="上移文件" disabled={index === 0} onClick={() => reorderAsset(asset, -1)}>↑</button><button type="button" title="下移文件" disabled={index === activeAssets.length - 1} onClick={() => reorderAsset(asset, 1)}>↓</button></>}<a href={asset.downloadUrl}>下载</a><button className="danger-text" type="button" onClick={() => deleteAsset(asset)}>移除</button></div>)}</div>}
+                {selectedVersion && <div className="manual-assets-manage"><div className="manual-section-head"><strong>当前版本文件</strong>{canManageManuals && <button type="button" onClick={() => setUploadOpen(true)}>上传</button>}</div>{activeAssets.map((asset, index) => <div key={asset.id}><span>{index + 1}</span><strong title={asset.displayName || asset.originalName}>{asset.displayName || asset.originalName}</strong>{canManageManuals && selectedVersion.fileMode === 'IMAGE_SET' && <><button type="button" title="上移文件" disabled={index === 0} onClick={() => reorderAsset(asset, -1)}>↑</button><button type="button" title="下移文件" disabled={index === activeAssets.length - 1} onClick={() => reorderAsset(asset, 1)}>↓</button></>}<a href={asset.downloadUrl}>下载</a>{canManageManuals && <button className="danger-text" type="button" onClick={() => deleteAsset(asset)}>移除</button>}</div>)}</div>}
               </div>
             )}
             {rightTab === 'bindings' && (
               <div className="manual-binding-list">
-                <div className="manual-section-head"><strong>关联连接器参数</strong><button type="button" disabled={!selectedManual} onClick={() => setBindingOpen(true)}>关联型号</button></div>
-                {selectedManual?.bindings.map(binding => <article key={binding.id}><div><strong>{binding.model || '未设置型号'}</strong>{binding.rowNo !== null && binding.rowNo !== undefined && <span>序号 {binding.rowNo}</span>}</div><button type="button" onClick={() => unbindParameter(binding.id)}>解除</button></article>)}
+                <div className="manual-section-head"><strong>关联连接器参数</strong>{canManageManuals && <button type="button" disabled={!selectedManual} onClick={() => setBindingOpen(true)}>关联型号</button>}</div>
+                {selectedManual?.bindings.map(binding => <article key={binding.id}><div><strong>{binding.model || '未设置型号'}</strong>{binding.rowNo !== null && binding.rowNo !== undefined && <span>序号 {binding.rowNo}</span>}</div>{canManageManuals && <button type="button" onClick={() => unbindParameter(binding.id)}>解除</button>}</article>)}
                 {!selectedManual?.bindings.length && <div className="manual-side-empty">暂无关联型号。系统不会自动关联无法确认的参数。</div>}
               </div>
             )}
@@ -1045,17 +1047,17 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
 
       </div>
 
-      {manualModal && <ManualDialog mode={manualModal} form={manualForm} setForm={setManualForm} files={singleFiles} suggestion={singleSuggestion} parsing={singleParsing} setFiles={inspectSingleFiles} applySuggestion={applySingleSuggestion} bindingKeyword={bindingKeyword} setBindingKeyword={setBindingKeyword} bindingOptions={bindingOptions} saving={saving} close={() => setManualModal(null)} submit={saveManual} />}
-      {versionModal && <VersionDialog mode={versionModal} form={versionForm} setForm={setVersionForm} saving={saving} close={() => setVersionModal(null)} submit={saveVersion} />}
-      {uploadOpen && selectedVersion && <UploadDialog version={selectedVersion} files={uploadFiles} setFiles={setUploadFiles} saving={saving} close={() => { setUploadOpen(false); setUploadFiles([]); }} submit={uploadAssets} />}
-      {bindingOpen && <BindingDialog keyword={bindingKeyword} setKeyword={setBindingKeyword} options={bindingOptions} selected={bindingSelection} setSelected={setBindingSelection} boundIds={new Set(selectedManual?.bindings.map(item => item.id) || [])} close={() => setBindingOpen(false)} save={saveBindings} />}
-      {deleteTarget && <DeleteDialog target={deleteTarget} value={deleteText} setValue={setDeleteText} saving={saving} close={() => { setDeleteTarget(null); setDeleteText(''); }} confirm={confirmDelete} />}
-      {trashOpen && <ManualTrashDialog trash={trash} close={() => setTrashOpen(false)} restore={restoreTrash} />}
+      {canManageManuals && manualModal && <ManualDialog mode={manualModal} form={manualForm} setForm={setManualForm} files={singleFiles} suggestion={singleSuggestion} parsing={singleParsing} setFiles={inspectSingleFiles} applySuggestion={applySingleSuggestion} bindingKeyword={bindingKeyword} setBindingKeyword={setBindingKeyword} bindingOptions={bindingOptions} saving={saving} close={() => setManualModal(null)} submit={saveManual} />}
+      {canManageManuals && versionModal && <VersionDialog mode={versionModal} form={versionForm} setForm={setVersionForm} saving={saving} close={() => setVersionModal(null)} submit={saveVersion} />}
+      {canManageManuals && uploadOpen && selectedVersion && <UploadDialog version={selectedVersion} files={uploadFiles} setFiles={setUploadFiles} saving={saving} close={() => { setUploadOpen(false); setUploadFiles([]); }} submit={uploadAssets} />}
+      {canManageManuals && bindingOpen && <BindingDialog keyword={bindingKeyword} setKeyword={setBindingKeyword} options={bindingOptions} selected={bindingSelection} setSelected={setBindingSelection} boundIds={new Set(selectedManual?.bindings.map(item => item.id) || [])} close={() => setBindingOpen(false)} save={saveBindings} />}
+      {canManageManuals && deleteTarget && <DeleteDialog target={deleteTarget} value={deleteText} setValue={setDeleteText} saving={saving} close={() => { setDeleteTarget(null); setDeleteText(''); }} confirm={confirmDelete} />}
+      {canManageManuals && trashOpen && <ManualTrashDialog trash={trash} close={() => setTrashOpen(false)} restore={restoreTrash} />}
       {moreInfoOpen && selectedManual && <ManualMoreInfoDialog manual={selectedManual} version={selectedVersion} close={() => setMoreInfoOpen(false)} />}
-      {tocEdit && selectedVersion && <TocEditDialog value={tocEdit} setValue={setTocEdit} currentPage={currentPreviewPage} pageCount={selectedVersion.pageCount || Math.max(1, activeAssets.length)} saving={saving} close={() => setTocEdit(null)} submit={saveTocEdit} />}
-      {tocSuggestionOpen && <TocSuggestionDialog suggestions={availableTocSuggestions} selected={selectedTocSuggestions} setSelected={setSelectedTocSuggestions} saving={saving} close={() => setTocSuggestionOpen(false)} save={saveTocSuggestions} />}
-      <BulkConnectorManualImportModal open={bulkOpen} close={() => setBulkOpen(false)} completed={async () => { setRefreshKey(value => value + 1); }} />
-      <ConfirmDialog
+      {canManageManuals && tocEdit && selectedVersion && <TocEditDialog value={tocEdit} setValue={setTocEdit} currentPage={currentPreviewPage} pageCount={selectedVersion.pageCount || Math.max(1, activeAssets.length)} saving={saving} close={() => setTocEdit(null)} submit={saveTocEdit} />}
+      {canManageManuals && tocSuggestionOpen && <TocSuggestionDialog suggestions={availableTocSuggestions} selected={selectedTocSuggestions} setSelected={setSelectedTocSuggestions} saving={saving} close={() => setTocSuggestionOpen(false)} save={saveTocSuggestions} />}
+      {canManageManuals && <BulkConnectorManualImportModal open={bulkOpen} close={() => setBulkOpen(false)} completed={async () => { setRefreshKey(value => value + 1); }} />}
+      {canManageManuals && <ConfirmDialog
         open={Boolean(lightweightDeleteTarget)}
         title={lightweightDeleteTarget?.kind === 'toc' ? '删除目录条目？' : '移除说明书文件？'}
         description={lightweightDeleteTarget?.kind === 'toc'
@@ -1068,7 +1070,7 @@ export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO })
         busy={saving}
         onCancel={() => { if (!saving) setLightweightDeleteTarget(null); }}
         onConfirm={() => { void confirmLightweightDelete(); }}
-      />
+      />}
     </main>
   );
 }

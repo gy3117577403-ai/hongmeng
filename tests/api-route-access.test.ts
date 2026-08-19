@@ -249,6 +249,42 @@ test('workshop leaders can read terminal tooling but cannot change or publish it
   assert.equal(canAccessApiRoute(supervisor, '/api/terminal-tooling/setups/setup-1/publish', 'POST'), false);
 });
 
+test('workshop leaders read shared technical data and manage only scoped attendance', () => {
+  const leader = context({
+    profile: 'WORKSHOP_TEAM_LEADER',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'TEAM:A',
+  });
+  const readable = [
+    '/api/drawing-library',
+    '/api/connector-assembly-manuals',
+    '/api/connector-assembly-manual-versions/version-1',
+    '/api/connector-assembly-manual-assets/asset-1/content',
+    '/api/connector-parameters',
+    '/api/product-time-profiles',
+    '/api/product-time-profiles/item-1',
+    '/api/product-time-deployments/deployment-1',
+    '/api/attendance/employees',
+    '/api/attendance/records',
+  ];
+  for (const path of readable) assert.equal(canAccessApiRoute(leader, path, 'GET'), true, path);
+
+  const forbiddenWrites: Array<[string, string]> = [
+    ['/api/drawing-library', 'POST'],
+    ['/api/connector-assembly-manuals', 'POST'],
+    ['/api/connector-assembly-manual-versions/version-1', 'PATCH'],
+    ['/api/connector-assembly-manual-assets/asset-1', 'DELETE'],
+    ['/api/product-time-profiles/item-1', 'PUT'],
+    ['/api/product-time-profiles/item-1/publish', 'POST'],
+  ];
+  for (const [path, method] of forbiddenWrites) {
+    assert.equal(canAccessApiRoute(leader, path, method), false, `${method} ${path}`);
+  }
+  assert.equal(canAccessApiRoute(leader, '/api/attendance/records', 'POST'), true);
+  assert.equal(canAccessApiRoute(leader, '/api/employees', 'GET'), false);
+});
+
 test('team leaders cannot invoke workshop-wide or cross-team API operations', () => {
   const teamLeader = context({
     profile: 'WORKSHOP_TEAM_LEADER',

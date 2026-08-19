@@ -45,6 +45,20 @@ test('production supervisor can use production and planning collaboration pages'
   assert.equal(canAccessAppRoute(supervisor, '/weekly-plan-center'), false);
 });
 
+test('workshop leaders receive the requested shared technical and attendance pages', () => {
+  const leader = accessWithCapabilities(
+    ['ACCOUNT_SELF', 'BASIC_SUMMARY', 'PRODUCTION', 'DRAWING_LIBRARY', 'ASSEMBLY_MANUALS', 'PRODUCT_TIME', 'ATTENDANCE'],
+    ['PRODUCTION:UPDATE', 'DRAWING_LIBRARY:READ', 'ASSEMBLY_MANUALS:READ', 'PRODUCT_TIME:READ', 'ATTENDANCE:READ'],
+  );
+  assert.equal(canAccessAppRoute(leader, '/drawing-library'), true);
+  assert.equal(canAccessAppRoute(leader, '/connector-assembly-manuals'), true);
+  assert.equal(canAccessAppRoute(leader, '/workspace/product-times'), true);
+  assert.equal(canAccessAppRoute(leader, '/workspace/attendance'), true);
+  assert.equal(canAccessAppRoute(leader, '/connector-parameters'), false);
+  assert.equal(canAccessAppRoute(leader, '/workspace/time-standards'), false);
+  assert.equal(canAccessAppRoute(leader, '/workspace/employees'), false);
+});
+
 test('process specialist sees collaboration pages but not scheduling or QR print', () => {
   const process = accessWithCapabilities(
     ['ACCOUNT_SELF', 'BASIC_SUMMARY', 'PROCESS', 'ISSUE_MANAGEMENT', 'CHANGE_MANAGEMENT', 'DRAWING_LIBRARY', 'TERMINAL_TOOLING', 'PRODUCTION'],

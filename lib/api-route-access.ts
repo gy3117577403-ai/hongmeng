@@ -53,8 +53,12 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/employees', anyOf: ['HR'] },
   { prefix: '/api/recruitment', anyOf: ['HR'] },
   { prefix: '/api/skills', anyOf: ['HR'] },
-  { prefix: '/api/attendance', anyOf: ['HR'] },
-  { prefix: '/api/abnormal-time-events', anyOf: ['HR', 'QUALITY', 'PRODUCTION'] },
+  { prefix: '/api/attendance', anyOf: ['HR', 'ATTENDANCE'] },
+  {
+    prefix: '/api/abnormal-time-events',
+    anyOf: ['HR', 'QUALITY', 'PRODUCTION', 'ATTENDANCE'],
+    readOnlyModules: ['ATTENDANCE'],
+  },
 
   { prefix: '/api/material-follow-ups', anyOf: ['PROCUREMENT'] },
   { prefix: '/api/warehouse', anyOf: ['WAREHOUSE'] },
@@ -67,12 +71,29 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/change-snapshots', anyOf: ['ENGINEERING', 'QUALITY'] },
   {
     prefix: '/api/drawing-library',
-    anyOf: ['ENGINEERING', 'DRAWING_LIBRARY'],
+    anyOf: ['ENGINEERING', 'DRAWING_LIBRARY', 'PRODUCT_TIME'],
+    readOnlyModules: ['PRODUCT_TIME'],
   },
-  { prefix: '/api/connector-assembly-manuals', anyOf: ['ENGINEERING'] },
-  { prefix: '/api/connector-assembly-manual-versions', anyOf: ['ENGINEERING'] },
-  { prefix: '/api/connector-assembly-manual-assets', anyOf: ['ENGINEERING'] },
-  { prefix: '/api/connector-parameters', anyOf: ['ENGINEERING'] },
+  {
+    prefix: '/api/connector-assembly-manuals',
+    anyOf: ['ENGINEERING', 'ASSEMBLY_MANUALS'],
+    readOnlyModules: ['ASSEMBLY_MANUALS'],
+  },
+  {
+    prefix: '/api/connector-assembly-manual-versions',
+    anyOf: ['ENGINEERING', 'ASSEMBLY_MANUALS'],
+    readOnlyModules: ['ASSEMBLY_MANUALS'],
+  },
+  {
+    prefix: '/api/connector-assembly-manual-assets',
+    anyOf: ['ENGINEERING', 'ASSEMBLY_MANUALS'],
+    readOnlyModules: ['ASSEMBLY_MANUALS'],
+  },
+  {
+    prefix: '/api/connector-parameters',
+    anyOf: ['ENGINEERING', 'ASSEMBLY_MANUALS'],
+    readOnlyModules: ['ASSEMBLY_MANUALS'],
+  },
   { prefix: '/api/connector-parameter-files', anyOf: ['ENGINEERING'] },
   { prefix: '/api/connector-parameter-import-batches', anyOf: ['ENGINEERING'] },
 
@@ -86,7 +107,16 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
     actionsByMethod: { POST: 'UPDATE', PATCH: 'UPDATE', DELETE: 'UPDATE' },
   },
 
-  { prefix: '/api/product-time-profiles', anyOf: ['PROCESS'] },
+  {
+    prefix: '/api/product-time-profiles',
+    anyOf: ['PROCESS', 'PRODUCT_TIME'],
+    readOnlyModules: ['PRODUCT_TIME'],
+  },
+  {
+    prefix: '/api/product-time-deployments',
+    anyOf: ['PROCESS', 'PRODUCT_TIME'],
+    readOnlyModules: ['PRODUCT_TIME'],
+  },
   { prefix: '/api/process-time-standards', anyOf: ['PROCESS'] },
   { prefix: '/api/process-definitions', anyOf: ['PROCESS'] },
   { prefix: '/api/process-templates', anyOf: ['PROCESS'] },
