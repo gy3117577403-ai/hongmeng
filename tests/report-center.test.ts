@@ -72,5 +72,9 @@ test('risk and completeness use only verified core data checks', () => {
     { routeReady: true, standardReady: true, drawingReady: true },
     { routeReady: true, standardReady: false, drawingReady: true },
   ]), 8333);
+  assert.equal(reportCompletenessBasisPoints([
+    { routeReady: true, standardReady: true, drawingReady: true, materialRulePublished: true },
+    { routeReady: true, standardReady: true, drawingReady: true, materialRulePublished: false },
+  ]), 8750);
   assert.equal(reportCompletenessBasisPoints([]), null);
 });

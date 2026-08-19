@@ -116,11 +116,16 @@ export function reportCompletenessBasisPoints(items: Array<{
   routeReady: boolean;
   standardReady: boolean;
   drawingReady: boolean;
+  materialRulePublished?: boolean;
 }>): number | null {
   if (!items.length) return null;
   const completedChecks = items.reduce((sum, item) => sum
     + Number(item.routeReady)
     + Number(item.standardReady)
-    + Number(item.drawingReady), 0);
-  return reportBasisPoints(completedChecks, items.length * 3);
+    + Number(item.drawingReady)
+    + (typeof item.materialRulePublished === 'boolean' ? Number(item.materialRulePublished) : 0), 0);
+  const totalChecks = items.reduce((sum, item) => sum
+    + 3
+    + Number(typeof item.materialRulePublished === 'boolean'), 0);
+  return reportBasisPoints(completedChecks, totalChecks);
 }

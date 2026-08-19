@@ -1,0 +1,36 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import {
+  defaultReportRoute,
+  legacyReportRoute,
+  reportBranch,
+  reportDomain,
+  reportRoute,
+} from '../lib/report-center-navigation';
+
+test('report center exposes independent domain and branch routes', () => {
+  assert.equal(reportDomain('production')?.label, '生产结果');
+  assert.equal(reportBranch('production', 'quantity-attainment')?.label, '数量达成率');
+  assert.equal(reportRoute('governance', 'missing-drawing'), '/workspace/reports/governance/missing-drawing');
+  assert.equal(reportBranch('quality', 'quantity-attainment'), null);
+});
+
+test('full report users and report-only users land on an allowed independent branch', () => {
+  assert.equal(defaultReportRoute(['PRODUCTION']), '/workspace/reports/production/quantity-attainment');
+  assert.equal(defaultReportRoute(['REPORT_CENTER']), '/workspace/reports/people/employee-attainment');
+});
+
+test('legacy report links redirect to their closest independent branch', () => {
+  assert.equal(
+    legacyReportRoute({ view: 'production', section: 'load' }, ['PRODUCTION']),
+    '/workspace/reports/production/process-bottlenecks',
+  );
+  assert.equal(
+    legacyReportRoute({ view: 'labor' }, ['REPORT_CENTER']),
+    '/workspace/reports/people/employee-attainment',
+  );
+  assert.equal(
+    legacyReportRoute({ view: 'quality', section: 'events' }, ['PLANNING']),
+    '/workspace/reports/quality/event-ledger',
+  );
+});

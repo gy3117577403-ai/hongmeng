@@ -2046,6 +2046,13 @@ export type ReportCenterFocusItemDTO = {
   nextProcess: string | null;
   owner: string | null;
   dueAt: string | null;
+  dueSoon?: boolean;
+  startedAt?: string | null;
+  completedAt?: string | null;
+  submittedItemCount?: number;
+  pendingReviewCount?: number;
+  reviewedItemCount?: number;
+  publishedItemCount?: number;
   risk: ReportCenterRiskDTO;
   riskLabel: string;
   missingData: string[];

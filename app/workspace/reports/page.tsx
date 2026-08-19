@@ -1,9 +1,27 @@
-import ReportCenterDashboard from '@/components/ReportCenterDashboard';
+import { redirect } from 'next/navigation';
+import { legacyReportRoute } from '@/lib/report-center-navigation';
 import { requirePageAccess } from '@/lib/page-access';
-import './employee-attainment-report.css';
-import './report-center-workbench.css';
 
-export default async function ReportsPage() {
+type ReportsPageProps = {
+  searchParams?: Record<string, string | string[] | undefined>;
+};
+
+function appendLegacyFilters(
+  path: string,
+  searchParams: Record<string, string | string[] | undefined>,
+): string {
+  const query = new URLSearchParams();
+  Object.entries(searchParams).forEach(([key, raw]) => {
+    if (['view', 'branch', 'section'].includes(key)) return;
+    const values = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
+    values.filter(Boolean).forEach(value => query.append(key === 'workDate' ? 'date' : key, value));
+  });
+  const suffix = query.toString();
+  return suffix ? `${path}?${suffix}` : path;
+}
+
+export default async function ReportsPage({ searchParams = {} }: ReportsPageProps) {
   const user = await requirePageAccess('/workspace/reports');
-  return <ReportCenterDashboard user={user} />;
+  const path = legacyReportRoute(searchParams, user.access.modules);
+  redirect(appendLegacyFilters(path, searchParams));
 }

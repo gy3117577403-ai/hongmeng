@@ -143,10 +143,12 @@ function workOrderFocusItem(order: WorkOrderRecord, referenceAt: Date): ReportCe
     !readiness.routeReady ? '未建立工艺路线' : '',
     readiness.routeReady && !readiness.standardReady ? '标准工时未补齐' : '',
     !readiness.drawingReady ? '未关联当前图纸' : '',
+    !readiness.materialRulePublished ? '辅料规则未发布' : '',
   ].filter(Boolean);
   const completed = Boolean(order.completedAt || order.stage === 'completed' || order.status === 'completed');
   const started = Boolean(order.startedAt || order.progress > 0 || (quantity.completed || 0) > 0 || currentIndex >= 0);
   const state = reportWorkOrderStatus({ completed, started, dueAt, referenceAt });
+  const dueInDays = dueAt ? Math.ceil((dueAt.getTime() - referenceAt.getTime()) / 86_400_000) : null;
   let risk = reportRisk({
     status: state.status,
     dueAt,
@@ -177,6 +179,10 @@ function workOrderFocusItem(order: WorkOrderRecord, referenceAt: Date): ReportCe
     nextProcess: next?.processName || null,
     owner: order.productionOwner || null,
     dueAt: dueAt?.toISOString() || null,
+    dueSoon: state.status !== 'completed' && state.status !== 'overdue'
+      && dueInDays !== null && dueInDays >= 0 && dueInDays <= 2,
+    startedAt: order.startedAt?.toISOString() || null,
+    completedAt: order.completedAt?.toISOString() || null,
     risk: risk.risk,
     riskLabel: risk.label,
     missingData,
@@ -193,6 +199,9 @@ function sampleFocusItem(
     + task.photos.filter(photo => ['APPROVED', 'PUBLISHED'].includes(photo.reviewStatus)).length;
   const submittedCount = pendingReviewCount + reviewedCount;
   const state = reportSampleStatus({ status: task.status, dueAt: task.dueDate, referenceAt, pendingReviewCount });
+  const dueInDays = task.dueDate
+    ? Math.ceil((task.dueDate.getTime() - referenceAt.getTime()) / 86_400_000)
+    : null;
   const risk = reportRisk({
     status: state.status,
     dueAt: task.dueDate,
@@ -221,6 +230,15 @@ function sampleFocusItem(
     nextProcess: pendingReviewCount > 0 ? '发布产品资料' : null,
     owner: task.assignees.map(item => item.employee.name).join('、') || null,
     dueAt: task.dueDate?.toISOString() || null,
+    dueSoon: state.status !== 'completed' && state.status !== 'overdue'
+      && dueInDays !== null && dueInDays >= 0 && dueInDays <= 2,
+    startedAt: task.createdAt.toISOString(),
+    completedAt: task.completedAt?.toISOString() || null,
+    submittedItemCount: submittedCount,
+    pendingReviewCount,
+    reviewedItemCount: reviewedCount,
+    publishedItemCount: task.entries.filter(entry => entry.reviewStatus === 'PUBLISHED').length
+      + task.photos.filter(photo => photo.reviewStatus === 'PUBLISHED').length,
     risk: risk.risk,
     riskLabel: risk.label,
     missingData: [],
