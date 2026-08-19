@@ -249,7 +249,7 @@ test('workshop leaders can read terminal tooling but cannot change or publish it
   assert.equal(canAccessApiRoute(supervisor, '/api/terminal-tooling/setups/setup-1/publish', 'POST'), false);
 });
 
-test('workshop leaders read shared technical data and manage only scoped attendance', () => {
+test('workshop team leaders read shared data and manage every opened technical module', () => {
   const leader = context({
     profile: 'WORKSHOP_TEAM_LEADER',
     departmentCode: 'PRODUCTION',
@@ -270,22 +270,25 @@ test('workshop leaders read shared technical data and manage only scoped attenda
   ];
   for (const path of readable) assert.equal(canAccessApiRoute(leader, path, 'GET'), true, path);
 
-  const forbiddenWrites: Array<[string, string]> = [
+  const allowedWrites: Array<[string, string]> = [
     ['/api/drawing-library', 'POST'],
+    ['/api/drawing-library/item-1/sop/publish', 'POST'],
     ['/api/connector-assembly-manuals', 'POST'],
     ['/api/connector-assembly-manual-versions/version-1', 'PATCH'],
     ['/api/connector-assembly-manual-assets/asset-1', 'DELETE'],
     ['/api/product-time-profiles/item-1', 'PUT'],
     ['/api/product-time-profiles/item-1/publish', 'POST'],
+    ['/api/terminal-tooling/terminals', 'POST'],
+    ['/api/terminal-tooling/setups/setup-1/publish', 'POST'],
   ];
-  for (const [path, method] of forbiddenWrites) {
-    assert.equal(canAccessApiRoute(leader, path, method), false, `${method} ${path}`);
+  for (const [path, method] of allowedWrites) {
+    assert.equal(canAccessApiRoute(leader, path, method), true, `${method} ${path}`);
   }
   assert.equal(canAccessApiRoute(leader, '/api/attendance/records', 'POST'), true);
   assert.equal(canAccessApiRoute(leader, '/api/employees', 'GET'), false);
 });
 
-test('team leaders cannot invoke workshop-wide or cross-team API operations', () => {
+test('team leaders can invoke workshop-wide operations but not unopened Planning lifecycle commands', () => {
   const teamLeader = context({
     profile: 'WORKSHOP_TEAM_LEADER',
     departmentCode: 'PRODUCTION',
@@ -294,27 +297,31 @@ test('team leaders cannot invoke workshop-wide or cross-team API operations', ()
   });
   const denied: Array<[string, string]> = [
     ['/api/work-orders/week/activate-next/commit', 'POST'],
-    ['/api/abnormal-time-events/event-1/quality', 'POST'],
-    ['/api/process-management/routes/route-1/completions/completion-1/withdraw', 'POST'],
-    ['/api/resource-files/file-1/delete', 'POST'],
-    ['/api/daily-shipments', 'POST'],
-    ['/api/work-order-qr/prints', 'POST'],
-    ['/api/work-order-qr/prints/readiness', 'POST'],
     ['/api/work-orders/clear-weekly-plan/commit', 'POST'],
     ['/api/work-orders/week/close/commit', 'POST'],
-    ['/api/daily-plans/organization', 'GET'],
-    ['/api/work-orders/shared-work-order', 'PATCH'],
-    ['/api/work-orders/shared-work-order', 'DELETE'],
   ];
 
   for (const [path, method] of denied) {
     assert.equal(canAccessApiRoute(teamLeader, path, method), false, `${method} ${path}`);
   }
 
-  // General work-order operations with endpoint-level entity filters remain
-  // available to the leader's own team.
-  assert.equal(canAccessApiRoute(teamLeader, '/api/work-orders/w1/execution', 'PATCH'), true);
-  assert.equal(canAccessApiRoute(teamLeader, '/api/work-orders/batch-execution', 'POST'), true);
+  const allowed: Array<[string, string]> = [
+    ['/api/abnormal-time-events/event-1/quality', 'POST'],
+    ['/api/abnormal-time-events/event-1/resolve', 'POST'],
+    ['/api/process-management/routes/route-1/completions/completion-1/withdraw', 'POST'],
+    ['/api/resource-files/file-1/delete', 'POST'],
+    ['/api/daily-shipments', 'POST'],
+    ['/api/work-order-qr/prints', 'POST'],
+    ['/api/work-order-qr/prints/readiness', 'POST'],
+    ['/api/daily-plans/organization', 'GET'],
+    ['/api/work-orders/shared-work-order', 'PATCH'],
+    ['/api/work-orders/shared-work-order', 'DELETE'],
+    ['/api/work-orders/w1/execution', 'PATCH'],
+    ['/api/work-orders/batch-execution', 'POST'],
+  ];
+  for (const [path, method] of allowed) {
+    assert.equal(canAccessApiRoute(teamLeader, path, method), true, `${method} ${path}`);
+  }
 });
 
 test('planning owns week lifecycle and daily shipments while GM stays read-only', () => {
@@ -341,7 +348,7 @@ test('planning owns week lifecycle and daily shipments while GM stays read-only'
   assert.equal(canAccessApiRoute(gm, '/api/daily-shipments', 'POST'), false);
 });
 
-test('abnormal-event review is available to quality and workshop supervisors while team scope stays read-only', () => {
+test('abnormal-event review is available to quality, workshop supervisors and team leaders', () => {
   const quality = context({
     profile: 'DEPARTMENT_FULL',
     departmentCode: 'QUALITY',
@@ -374,7 +381,8 @@ test('abnormal-event review is available to quality and workshop supervisors whi
   assert.equal(canAccessApiRoute(workshop, '/api/abnormal-time-events', 'GET'), true);
   assert.equal(canAccessApiRoute(workshop, '/api/abnormal-time-events/event-1/quality', 'POST'), true);
   assert.equal(canAccessApiRoute(teamLeader, '/api/abnormal-time-events', 'GET'), true);
-  assert.equal(canAccessApiRoute(teamLeader, '/api/abnormal-time-events/event-1/quality', 'POST'), false);
+  assert.equal(canAccessApiRoute(teamLeader, '/api/abnormal-time-events/event-1/quality', 'POST'), true);
+  assert.equal(canAccessApiRoute(teamLeader, '/api/abnormal-time-events/event-1/resolve', 'POST'), true);
 });
 
 test('production bulk operations require workshop scope without restricting owning departments', () => {

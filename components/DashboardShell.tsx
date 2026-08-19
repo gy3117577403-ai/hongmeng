@@ -298,7 +298,7 @@ const accessProfileOptions: Array<{ value: AccessProfileKeyDTO; label: string; d
   { value: 'QUALITY_REVIEWER', label: '质量审核', description: '质量协同与审核，图纸资料只读，不含删除' },
   { value: 'FIELD_REPORTER', label: '扫码报工', description: '实名扫码进入现场报工' },
   { value: 'WORKSHOP_SUPERVISOR', label: '车间主管', description: '车间生产与计划协同' },
-  { value: 'WORKSHOP_TEAM_LEADER', label: '车间组长', description: '本班组生产与人员协同' },
+  { value: 'WORKSHOP_TEAM_LEADER', label: '车间组长', description: '已开放模块全操作，加载共享生产数据' },
   { value: 'GM_OFFICE_READER_APPROVER', label: '总经办', description: '基础摘要只读与重大审批' },
   { value: 'FINANCE_ACCOUNT_ONLY', label: '财务账号', description: '仅账号接入，业务模块待建设' },
   { value: 'ADMIN_GLOBAL', label: '系统管理员', description: '保留现有全部界面与权限' },

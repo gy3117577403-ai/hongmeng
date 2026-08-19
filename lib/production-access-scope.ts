@@ -133,8 +133,8 @@ export function resolveProductionEntityScope(
     level,
     canRead: effectiveCanRead,
     canWrite: effectiveCanWrite,
-    // Reconciliation mutates the whole workshop dataset. A team leader must
-    // never trigger it from a GET, and a read-only global user (GM) cannot.
+    // Reconciliation mutates the whole workshop dataset. Only writable
+    // workshop/global actors may run it; read-only global users (GM) cannot.
     canReconcile: effectiveCanWrite && (level === 'GLOBAL' || level === 'WORKSHOP'),
     readOnly: !effectiveCanWrite,
     teamKeys,

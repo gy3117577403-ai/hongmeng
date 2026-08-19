@@ -48,7 +48,7 @@ test('production supervisor can use production and planning collaboration pages'
 test('workshop leaders receive the requested shared technical and attendance pages', () => {
   const leader = accessWithCapabilities(
     ['ACCOUNT_SELF', 'BASIC_SUMMARY', 'PRODUCTION', 'DRAWING_LIBRARY', 'ASSEMBLY_MANUALS', 'PRODUCT_TIME', 'ATTENDANCE'],
-    ['PRODUCTION:UPDATE', 'DRAWING_LIBRARY:READ', 'ASSEMBLY_MANUALS:READ', 'PRODUCT_TIME:READ', 'ATTENDANCE:READ'],
+    ['PRODUCTION:UPDATE', 'DRAWING_LIBRARY:UPDATE', 'ASSEMBLY_MANUALS:UPDATE', 'PRODUCT_TIME:UPDATE', 'ATTENDANCE:UPDATE'],
   );
   assert.equal(canAccessAppRoute(leader, '/drawing-library'), true);
   assert.equal(canAccessAppRoute(leader, '/connector-assembly-manuals'), true);

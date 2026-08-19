@@ -44,7 +44,7 @@ test('GM is global read-only and cannot trigger reconciliation', () => {
   assert.throws(() => assertProductionScopeWrite(scope), ProductionAccessScopeError);
 });
 
-test('workshop supervisor manages the workshop but team leader is restricted to team keys', () => {
+test('workshop supervisor and team leader both manage the shared workshop dataset', () => {
   const supervisor = resolveProductionEntityScope({
     access: context('WORKSHOP_SUPERVISOR', 'WORKSHOP:PRODUCTION'),
   });
@@ -56,30 +56,23 @@ test('workshop supervisor manages the workshop but team leader is restricted to 
     access: context('WORKSHOP_TEAM_LEADER', 'TEAM:装配一组'),
     dailyPlanningTeamIds: ['stable-team-id'],
   });
-  assert.equal(leader.level, 'TEAM');
-  assert.deepEqual(leader.teamKeys, ['装配一组']);
+  assert.equal(leader.level, 'WORKSHOP');
+  assert.deepEqual(leader.teamKeys, []);
   assert.equal(leader.canWrite, true);
-  assert.equal(leader.canReconcile, false);
-  assert.equal(matchesProductionTeam(leader, { id: 'stable-team-id', name: '别组' }), false);
+  assert.equal(leader.canReconcile, true);
+  assert.equal(matchesProductionTeam(leader, { id: 'stable-team-id', name: '别组' }), true);
   assert.equal(matchesProductionTeam(leader, { id: 'other', legacyTeamName: '装配一组' }), true);
-  assert.equal(matchesProductionTeam(leader, { id: 'other', name: '装配二组' }), false);
-  assert.deepEqual(productionTeamScopeWhere(leader), {
-    OR: [
-      { id: { in: ['装配一组'] } },
-      { code: { in: ['装配一组'] } },
-      { name: { in: ['装配一组'] } },
-      { legacyTeamName: { in: ['装配一组'] } },
-    ],
-  });
+  assert.equal(matchesProductionTeam(leader, { id: 'other', name: '装配二组' }), true);
+  assert.equal(productionTeamScopeWhere(leader), null);
 });
 
-test('unbound team grant fails closed', () => {
+test('team identity is not required to read the shared workshop workbench', () => {
   const access = context('WORKSHOP_TEAM_LEADER', 'TEAM:');
   const scope = resolveProductionEntityScope({ access });
-  assert.equal(scope.level, 'NONE');
-  assert.equal(scope.canRead, false);
-  assert.equal(scope.canWrite, false);
-  assert.deepEqual(productionTeamScopeWhere(scope), { id: { in: [] } });
+  assert.equal(scope.level, 'WORKSHOP');
+  assert.equal(scope.canRead, true);
+  assert.equal(scope.canWrite, true);
+  assert.equal(productionTeamScopeWhere(scope), null);
 });
 
 test('basic summary is opt-in, global and always read-only', () => {
@@ -103,7 +96,7 @@ test('basic summary is opt-in, global and always read-only', () => {
     { access: context('WORKSHOP_TEAM_LEADER', 'TEAM:装配一组') },
     { allowBasicSummary: true },
   );
-  assert.equal(leader.level, 'TEAM');
+  assert.equal(leader.level, 'WORKSHOP');
 });
 
 test('explicit team grants override stale workshop-supervisor planning memberships', () => {

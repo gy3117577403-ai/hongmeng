@@ -166,8 +166,13 @@ async function jsonResponse(response: Response): Promise<Record<string, unknown>
 }
 
 export function ConnectorAssemblyManualShell({ user }: { user: CurrentUserDTO }) {
-  const canManageManuals = user.access.capabilities.includes('ENGINEERING:CREATE')
-    && user.access.capabilities.includes('ENGINEERING:UPDATE');
+  const canManageManuals = (
+    user.access.capabilities.includes('ENGINEERING:CREATE')
+    && user.access.capabilities.includes('ENGINEERING:UPDATE')
+  ) || (
+    user.access.capabilities.includes('ASSEMBLY_MANUALS:CREATE')
+    && user.access.capabilities.includes('ASSEMBLY_MANUALS:UPDATE')
+  );
   const [manuals, setManuals] = useState<ConnectorAssemblyManualDTO[]>([]);
   const [selectedId, setSelectedId] = useState('');
   const [selectedVersionId, setSelectedVersionId] = useState('');

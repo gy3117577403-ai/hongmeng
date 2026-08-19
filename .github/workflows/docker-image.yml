@@ -138,14 +138,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.18
+            org.opencontainers.image.version=v1.34.19
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.18
+            APP_VERSION=v1.34.19
             APP_REVISION=${{ github.sha }}
           load: true
           push: false

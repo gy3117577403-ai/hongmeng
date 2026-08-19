@@ -25,7 +25,7 @@ function departmentAccess(departmentCode: 'HR' | 'QUALITY' | 'PLANNING') {
   });
 }
 
-test('production read access cannot mutate abnormal-time records', () => {
+test('workshop production leaders can maintain opened abnormal-time records', () => {
   const production = accessFor({
     profile: 'WORKSHOP_SUPERVISOR',
     grantType: 'PRIMARY',
@@ -33,9 +33,9 @@ test('production read access cannot mutate abnormal-time records', () => {
     scopeKey: 'WORKSHOP:w1',
   });
 
-  assert.equal(canMutateAbnormalTimeEvent(production, 'CREATE'), false);
-  assert.equal(canMutateAbnormalTimeEvent(production, 'UPDATE'), false);
-  assert.equal(canMutateAbnormalTimeEvent(production, 'DELETE'), false);
+  assert.equal(canMutateAbnormalTimeEvent(production, 'CREATE'), true);
+  assert.equal(canMutateAbnormalTimeEvent(production, 'UPDATE'), true);
+  assert.equal(canMutateAbnormalTimeEvent(production, 'DELETE'), true);
 });
 
 test('HR and Quality maintain base abnormal-time events', () => {
@@ -61,7 +61,7 @@ test('daily shipment actions map to explicit Planning mutation capabilities', ()
   assert.equal(dailyShipmentRequiredAction('UNKNOWN'), null);
 });
 
-test('Planning and admin may mutate shipments; GM and Production remain read-only', () => {
+test('Planning, admin and production leaders may mutate shipments while GM remains read-only', () => {
   const planning = departmentAccess('PLANNING');
   const admin = accessFor({
     profile: 'ADMIN_GLOBAL',
@@ -85,7 +85,7 @@ test('Planning and admin may mutate shipments; GM and Production remain read-onl
     assert.equal(canMutateDailyShipment(planning, action), true);
     assert.equal(canMutateDailyShipment(admin, action), true);
     assert.equal(canMutateDailyShipment(gm, action), false);
-    assert.equal(canMutateDailyShipment(production, action), false);
+    assert.equal(canMutateDailyShipment(production, action), true);
   }
 });
 

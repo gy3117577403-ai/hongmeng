@@ -339,7 +339,7 @@ test('workshop supervisor gets production operations for the whole workshop scop
   assert.deepEqual(allowedActions(context, 'DRAWING_LIBRARY'), ['READ']);
   assert.deepEqual(allowedActions(context, 'ASSEMBLY_MANUALS'), ['READ']);
   assert.deepEqual(allowedActions(context, 'PRODUCT_TIME'), ['READ']);
-  assert.deepEqual(allowedActions(context, 'ATTENDANCE'), ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
+  assert.deepEqual(allowedActions(context, 'ATTENDANCE'), DEPARTMENT_OPERATION_ACTIONS);
   assert.equal(scopeHintsFor(context, 'TERMINAL_TOOLING')[0]?.level, 'GLOBAL');
   assert.equal(scopeHintsFor(context, 'TERMINAL_TOOLING')[0]?.readOnly, true);
   assert.deepEqual(scopeHintsFor(context, 'PRODUCTION'), [{
@@ -356,7 +356,7 @@ test('workshop supervisor gets production operations for the whole workshop scop
   assert.equal(scopeHintsFor(context, 'DRAWING_LIBRARY')[0]?.readOnly, true);
 });
 
-test('workshop team leader gets the same actions constrained to the assigned team', () => {
+test('workshop team leader gets full actions in every opened module over the shared workshop data', () => {
   const context = resolveAccessContext([
     grant('WORKSHOP_TEAM_LEADER', {
       departmentCode: 'PRODUCTION',
@@ -366,18 +366,23 @@ test('workshop team leader gets the same actions constrained to the assigned tea
 
   assert.equal(hasCapability(context, 'PRODUCTION', 'EXECUTE_WORKFLOW'), true);
   assert.equal(hasCapability(context, 'PRODUCTION', 'PERMANENT_DELETE'), false);
-  assert.equal(context.productionScope, 'TEAM');
-  assert.deepEqual(allowedActions(context, 'TERMINAL_TOOLING'), ['READ']);
-  assert.deepEqual(allowedActions(context, 'ASSEMBLY_MANUALS'), ['READ']);
-  assert.deepEqual(allowedActions(context, 'PRODUCT_TIME'), ['READ']);
-  assert.deepEqual(allowedActions(context, 'ATTENDANCE'), ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
+  assert.equal(context.productionScope, 'WORKSHOP');
+  for (const module of ['PRODUCTION', 'TERMINAL_TOOLING', 'DRAWING_LIBRARY', 'ASSEMBLY_MANUALS', 'PRODUCT_TIME', 'ATTENDANCE'] as const) {
+    assert.deepEqual(allowedActions(context, module), DEPARTMENT_OPERATION_ACTIONS, module);
+    assert.equal(hasCapability(context, module, 'PERMANENT_DELETE'), false, module);
+  }
 
   const scope = scopeHintsFor(context, 'PRODUCTION')[0];
-  assert.equal(scope?.level, 'TEAM');
+  assert.equal(scope?.level, 'WORKSHOP');
+  assert.equal(scope?.readOnly, false);
   assert.equal(scope?.teamId, 'team-2');
   const attendanceScope = scopeHintsFor(context, 'ATTENDANCE')[0];
-  assert.equal(attendanceScope?.level, 'TEAM');
+  assert.equal(attendanceScope?.level, 'WORKSHOP');
   assert.equal(attendanceScope?.teamId, 'team-2');
+  for (const module of ['TERMINAL_TOOLING', 'DRAWING_LIBRARY', 'ASSEMBLY_MANUALS', 'PRODUCT_TIME'] as const) {
+    assert.equal(scopeHintsFor(context, module)[0]?.level, 'GLOBAL');
+    assert.equal(scopeHintsFor(context, module)[0]?.readOnly, false);
+  }
 });
 
 test('multiple production grants preserve scope details and resolve to the broadest scope hint', () => {
@@ -399,7 +404,7 @@ test('multiple production grants preserve scope details and resolve to the broad
   assert.equal(context.productionScope, 'WORKSHOP');
   assert.deepEqual(
     scopeHintsFor(context, 'PRODUCTION').map(item => item.level),
-    ['TEAM', 'WORKSHOP'],
+    ['WORKSHOP', 'WORKSHOP'],
   );
 });
 

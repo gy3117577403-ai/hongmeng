@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import {
   ForbiddenError,
   forbidden,
-  requireCapability,
+  requireUser,
   unauthorized,
   UnauthorizedError,
 } from '@/lib/auth';
@@ -11,6 +11,7 @@ import { serializeAbnormalTimeEvent } from '@/lib/attendance';
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { canReviewAbnormalTimeEvent } from '@/lib/abnormal-time-access';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,12 +27,18 @@ const include = {
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await requireCapability('QUALITY', 'EXECUTE_WORKFLOW');
+    const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const resolutionNote = cleanProcessText(body.resolutionNote, 1000);
     if (!resolutionNote) return NextResponse.json({ ok: false, error: '请填写异常处理结果' }, { status: 400 });
-    const existing = await prisma.abnormalTimeEvent.findFirst({ where: { id: params.id, deletedAt: null } });
+    const existing = await prisma.abnormalTimeEvent.findFirst({
+      where: { id: params.id, deletedAt: null },
+      include: { allocations: { select: { employeeId: true } } },
+    });
     if (!existing) return NextResponse.json({ ok: false, error: '异常工时记录不存在' }, { status: 404 });
+    if (!(await canReviewAbnormalTimeEvent(user, existing.allocations.map(item => item.employeeId)))) {
+      throw new ForbiddenError();
+    }
     const event = await prisma.abnormalTimeEvent.update({
       where: { id: existing.id },
       data: {
@@ -53,7 +60,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ ok: true, event: serializeAbnormalTimeEvent(event) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
-    if (error instanceof ForbiddenError) return forbidden('仅质量部或管理员可以关闭异常工时');
+    if (error instanceof ForbiddenError) return forbidden('当前账号不能关闭该范围的异常工时');
     console.error('resolve abnormal time failed', error);
     return NextResponse.json({ ok: false, error: '关闭异常工时失败' }, { status: 500 });
   }

@@ -10,16 +10,18 @@ export type AbnormalTimeWriteOperation =
   | 'DELETE';
 
 /**
- * Abnormal-time records affect attendance and quality conclusions. Regardless
- * of broader read visibility, only HR/Quality may maintain the base event.
- * Quality review and resolution use direct capability checks at their routes.
+ * Abnormal-time records affect attendance and quality conclusions. HR and
+ * Quality may maintain them globally; workshop production leaders may also
+ * maintain them because the module is explicitly opened with full business
+ * permissions. Entity/workshop checks remain at the review routes.
  */
 export function canMutateAbnormalTimeEvent(
   access: Pick<AccessContext, 'capabilities'>,
   operation: AbnormalTimeWriteOperation,
 ): boolean {
   return hasCapability(access, 'HR', operation)
-    || hasCapability(access, 'QUALITY', operation);
+    || hasCapability(access, 'QUALITY', operation)
+    || hasCapability(access, 'PRODUCTION', operation);
 }
 
 export const DAILY_SHIPMENT_MUTATION_ACTIONS = [
@@ -69,5 +71,8 @@ export function canMutateDailyShipment(
 ): boolean {
   const requiredAction = dailyShipmentRequiredAction(action);
   return requiredAction !== null
-    && hasCapability(access, 'PLANNING', requiredAction);
+    && (
+      hasCapability(access, 'PLANNING', requiredAction)
+      || hasCapability(access, 'PRODUCTION', requiredAction)
+    );
 }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import {
   ForbiddenError,
   forbidden,
-  requireCapability,
+  requireUser,
   UnauthorizedError,
   unauthorized,
 } from '@/lib/auth';
@@ -71,7 +71,7 @@ function errorResponse(error: unknown, context: string): NextResponse {
 
 export async function GET(request: NextRequest) {
   try {
-    const user = await requireCapability('PLANNING', 'READ');
+    const user = await requireUser();
     const shipDate = request.nextUrl.searchParams.get('date') || chinaDateKey(new Date());
     const data = await loadDailyShipmentWorkbench({
       shipDate,
@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const user = await requireCapability('PLANNING', 'READ');
+    const user = await requireUser();
     const body = asRecord(await request.json());
     const action = String(body.action || '').trim();
     if (!dailyShipmentRequiredAction(action)) {

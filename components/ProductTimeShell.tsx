@@ -385,8 +385,13 @@ function SortableProductTimeGroup({
 }
 
 export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
-  const canManageProductTimes = user.access.capabilities.includes('PROCESS:UPDATE')
-    && user.access.capabilities.includes('PROCESS:CREATE');
+  const canManageProductTimes = (
+    user.access.capabilities.includes('PROCESS:UPDATE')
+    && user.access.capabilities.includes('PROCESS:CREATE')
+  ) || (
+    user.access.capabilities.includes('PRODUCT_TIME:UPDATE')
+    && user.access.capabilities.includes('PRODUCT_TIME:CREATE')
+  );
   const [items, setItems] = useState<ProductTimeListItemDTO[]>([]);
   const [definitions, setDefinitions] = useState<ProcessDefinition[]>([]);
   const [customers, setCustomers] = useState<CustomerOption[]>([]);

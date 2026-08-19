@@ -10,6 +10,8 @@ import {
   type DepartmentCode,
 } from '@/lib/department-access';
 import { resolveAttendanceAccessBoundary } from '@/lib/attendance-access';
+import { resolveProductionEntityScope } from '@/lib/production-access-scope';
+import { productionWorkOrderScopeWhere } from '@/lib/production-execution';
 import { legacyFallbackGrants } from '@/lib/legacy-access-policy';
 import { prisma } from '@/lib/prisma';
 
@@ -94,14 +96,26 @@ export async function GET() {
             access,
           })
         : null;
-      const modules = (Object.entries(ACCESS_DATA_CONTRACTS) as Array<[AccessModuleCode, NonNullable<(typeof ACCESS_DATA_CONTRACTS)[AccessModuleCode]>]>)
+      const productionBoundary = access.modules.includes('PRODUCTION')
+        ? resolveProductionEntityScope({ access })
+        : null;
+      const modules = await Promise.all((Object.entries(ACCESS_DATA_CONTRACTS) as Array<[AccessModuleCode, NonNullable<(typeof ACCESS_DATA_CONTRACTS)[AccessModuleCode]>]>)
         .filter(([module]) => access.modules.includes(module))
-        .map(([module, contract]) => {
+        .map(async ([module, contract]) => {
           const blockedEndpoints = contract.endpoints.filter(endpoint => canAccessApiRoute(access, endpoint, 'GET') !== true);
           const globalCount = contract.datasetKey ? datasets[contract.datasetKey] : null;
           const visibleCount = module === 'ATTENDANCE' && attendanceBoundary?.employeeIds !== null
             ? attendanceBoundary?.employeeIds.length ?? 0
-            : globalCount;
+            : module === 'PRODUCTION' && productionBoundary?.level === 'TEAM'
+              ? await prisma.workOrder.count({
+                  where: {
+                    deletedAt: null,
+                    ...productionWorkOrderScopeWhere(productionBoundary),
+                  },
+                })
+              : module === 'PRODUCTION' && !productionBoundary?.canRead
+                ? 0
+                : globalCount;
           const status = blockedEndpoints.length
             ? 'BROKEN_ACCESS'
             : globalCount === 0
@@ -115,12 +129,16 @@ export async function GET() {
             endpoints: contract.endpoints,
             blockedEndpoints,
             scoped: Boolean(contract.scoped),
-            scopeLabel: module === 'ATTENDANCE' ? attendanceBoundary?.scopeLabel || null : contract.scoped ? access.productionScope : null,
+            scopeLabel: module === 'ATTENDANCE'
+              ? attendanceBoundary?.scopeLabel || null
+              : module === 'PRODUCTION'
+                ? productionBoundary?.level || null
+                : contract.scoped ? access.productionScope : null,
             globalCount,
             visibleCount,
             status,
           };
-        });
+        }));
       const issues = [
         ...(!storedGrants.length ? ['账号仍使用兼容权限，建议确认并配置正式授权'] : []),
         ...modules.filter(module => module.status === 'BROKEN_ACCESS').map(module => `${module.label}菜单与接口权限不一致`),

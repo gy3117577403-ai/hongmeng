@@ -302,7 +302,11 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       user.access.capabilities.includes('PRODUCTION:EXECUTE_WORKFLOW')
       && (user.access.productionScope === 'WORKSHOP' || user.access.productionScope === 'GLOBAL')
     );
-  const canResolveAbnormal = user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW');
+  const canResolveAbnormal = user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW')
+    || (
+      user.access.capabilities.includes('PRODUCTION:EXECUTE_WORKFLOW')
+      && (user.access.productionScope === 'WORKSHOP' || user.access.productionScope === 'GLOBAL')
+    );
 
   useEffect(() => {
     if (tab === 'quality' && !canReviewQuality) setTab('abnormal');

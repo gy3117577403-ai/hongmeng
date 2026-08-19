@@ -77,22 +77,18 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   {
     prefix: '/api/connector-assembly-manuals',
     anyOf: ['ENGINEERING', 'ASSEMBLY_MANUALS'],
-    readOnlyModules: ['ASSEMBLY_MANUALS'],
   },
   {
     prefix: '/api/connector-assembly-manual-versions',
     anyOf: ['ENGINEERING', 'ASSEMBLY_MANUALS'],
-    readOnlyModules: ['ASSEMBLY_MANUALS'],
   },
   {
     prefix: '/api/connector-assembly-manual-assets',
     anyOf: ['ENGINEERING', 'ASSEMBLY_MANUALS'],
-    readOnlyModules: ['ASSEMBLY_MANUALS'],
   },
   {
     prefix: '/api/connector-parameters',
     anyOf: ['ENGINEERING', 'ASSEMBLY_MANUALS'],
-    readOnlyModules: ['ASSEMBLY_MANUALS'],
   },
   { prefix: '/api/connector-parameter-files', anyOf: ['ENGINEERING'] },
   { prefix: '/api/connector-parameter-import-batches', anyOf: ['ENGINEERING'] },
@@ -110,12 +106,10 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   {
     prefix: '/api/product-time-profiles',
     anyOf: ['PROCESS', 'PRODUCT_TIME'],
-    readOnlyModules: ['PRODUCT_TIME'],
   },
   {
     prefix: '/api/product-time-deployments',
     anyOf: ['PROCESS', 'PRODUCT_TIME'],
-    readOnlyModules: ['PRODUCT_TIME'],
   },
   { prefix: '/api/process-time-standards', anyOf: ['PROCESS'] },
   { prefix: '/api/process-definitions', anyOf: ['PROCESS'] },
@@ -158,7 +152,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/daily-plan-tasks', anyOf: ['PLANNING', 'PRODUCTION'], actionsByMethod: { GET: 'UPDATE' } },
   {
     prefix: '/api/daily-shipments',
-    anyOf: ['PLANNING'],
+    anyOf: ['PLANNING', 'PRODUCTION'],
     actionsByMethod: { POST: 'EXECUTE_WORKFLOW' },
   },
   { prefix: '/api/weekly-processes', anyOf: ['PLANNING', 'PRODUCTION'] },
@@ -268,7 +262,7 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
   if (/^\/api\/drawing-library\/(?:[^/]+\/sop\/(?:publish|versions\/[^/]+\/publish|pdf-overlay\/versions\/[^/]+\/publish)|bulk-index|bulk-originals|cleanup-empty\/commit)$/.test(path)) {
     return {
       prefix: '/api/drawing-library/engineering-command',
-      anyOf: ['ENGINEERING'],
+      anyOf: ['ENGINEERING', 'DRAWING_LIBRARY'],
       action: 'EXECUTE_WORKFLOW',
     };
   }
@@ -359,8 +353,9 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
   if (/^\/api\/abnormal-time-events\/[^/]+\/resolve$/.test(path)) {
     return {
       prefix: '/api/abnormal-time-events/:id/resolve',
-      anyOf: ['QUALITY'],
+      anyOf: ['QUALITY', 'PRODUCTION'],
       action: 'EXECUTE_WORKFLOW',
+      productionMinimumScope: 'WORKSHOP',
     };
   }
 

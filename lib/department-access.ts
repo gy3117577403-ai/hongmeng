@@ -138,12 +138,12 @@ export const MODULE_ACTION_MATRIX = {
   PROCESS: DEPARTMENT_OPERATION_ACTIONS,
   ISSUE_MANAGEMENT: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
   CHANGE_MANAGEMENT: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
-  DRAWING_LIBRARY: ['READ', 'CREATE', 'UPDATE'],
-  ASSEMBLY_MANUALS: ['READ'],
-  PRODUCT_TIME: ['READ'],
-  ATTENDANCE: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
+  DRAWING_LIBRARY: DEPARTMENT_OPERATION_ACTIONS,
+  ASSEMBLY_MANUALS: DEPARTMENT_OPERATION_ACTIONS,
+  PRODUCT_TIME: DEPARTMENT_OPERATION_ACTIONS,
+  ATTENDANCE: DEPARTMENT_OPERATION_ACTIONS,
   REPORT_CENTER: ['READ'],
-  TERMINAL_TOOLING: ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW'],
+  TERMINAL_TOOLING: DEPARTMENT_OPERATION_ACTIONS,
   PLANNING: DEPARTMENT_OPERATION_ACTIONS,
   HR: DEPARTMENT_OPERATION_ACTIONS,
   PRODUCTION: DEPARTMENT_OPERATION_ACTIONS,
@@ -481,7 +481,7 @@ export function resolveAccessContext(
       addModuleActions(capabilities, 'ISSUE_MANAGEMENT', MODULE_ACTION_MATRIX.ISSUE_MANAGEMENT);
       addModuleActions(capabilities, 'CHANGE_MANAGEMENT', MODULE_ACTION_MATRIX.CHANGE_MANAGEMENT);
       capabilities.add(capabilityCode('DRAWING_LIBRARY', 'READ'));
-      addModuleActions(capabilities, 'TERMINAL_TOOLING', MODULE_ACTION_MATRIX.TERMINAL_TOOLING);
+      addModuleActions(capabilities, 'TERMINAL_TOOLING', ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
       capabilities.add(capabilityCode('PRODUCTION', 'READ'));
       addScope(scopeForGrant(grant, 'ACCOUNT_SELF', 'SELF', false));
       addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
@@ -500,26 +500,28 @@ export function resolveAccessContext(
       addSelfService(capabilities);
       addBasicSummary(capabilities);
       addModuleActions(capabilities, 'PRODUCTION', DEPARTMENT_OPERATION_ACTIONS);
-      capabilities.add(capabilityCode('TERMINAL_TOOLING', 'READ'));
-      capabilities.add(capabilityCode('DRAWING_LIBRARY', 'READ'));
-      capabilities.add(capabilityCode('ASSEMBLY_MANUALS', 'READ'));
-      capabilities.add(capabilityCode('PRODUCT_TIME', 'READ'));
+      const isTeamLeader = grant.profile === 'WORKSHOP_TEAM_LEADER';
+      for (const technicalModule of ['TERMINAL_TOOLING', 'DRAWING_LIBRARY', 'ASSEMBLY_MANUALS', 'PRODUCT_TIME'] as const) {
+        if (isTeamLeader) addModuleActions(capabilities, technicalModule, MODULE_ACTION_MATRIX[technicalModule]);
+        else capabilities.add(capabilityCode(technicalModule, 'READ'));
+      }
       addModuleActions(capabilities, 'ATTENDANCE', MODULE_ACTION_MATRIX.ATTENDANCE);
       addScope(scopeForGrant(grant, 'ACCOUNT_SELF', 'SELF', false));
       addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
       addScope(scopeForGrant(grant, 'BASIC_SUMMARY', 'GLOBAL', true));
-      addScope(scopeForGrant(grant, 'TERMINAL_TOOLING', 'GLOBAL', true));
-      addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', true));
-      addScope(scopeForGrant(grant, 'ASSEMBLY_MANUALS', 'GLOBAL', true));
-      addScope(scopeForGrant(grant, 'PRODUCT_TIME', 'GLOBAL', true));
+      addScope(scopeForGrant(grant, 'TERMINAL_TOOLING', 'GLOBAL', !isTeamLeader));
+      addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', !isTeamLeader));
+      addScope(scopeForGrant(grant, 'ASSEMBLY_MANUALS', 'GLOBAL', !isTeamLeader));
+      addScope(scopeForGrant(grant, 'PRODUCT_TIME', 'GLOBAL', !isTeamLeader));
 
-      const isSupervisor = grant.profile === 'WORKSHOP_SUPERVISOR';
-      addScope(scopeForGrant(grant, 'PRODUCTION', isSupervisor ? 'WORKSHOP' : 'TEAM', false));
-      addScope(scopeForGrant(grant, 'ATTENDANCE', isSupervisor ? 'WORKSHOP' : 'TEAM', false));
-      productionScope = strongerProductionScope(
-        productionScope,
-        isSupervisor ? 'WORKSHOP' : 'TEAM',
-      );
+      // New collaboration rule: an opened production module always reads the
+      // shared workshop dataset. Team identity remains on the grant for
+      // staffing/assignment metadata, but it must not turn the workbench into
+      // an empty team-only shell. Team leaders also own every supported
+      // business action in their opened modules.
+      addScope(scopeForGrant(grant, 'PRODUCTION', 'WORKSHOP', false));
+      addScope(scopeForGrant(grant, 'ATTENDANCE', 'WORKSHOP', false));
+      productionScope = strongerProductionScope(productionScope, 'WORKSHOP');
     }
   }
 
