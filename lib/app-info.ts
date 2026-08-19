@@ -1,5 +1,5 @@
 export const APP_NAME = '杭连协同平台';
-export const APP_VERSION = process.env.APP_VERSION?.trim() || 'v1.34.22';
+export const APP_VERSION = process.env.APP_VERSION?.trim() || 'v1.34.23';
 export const APP_REVISION = process.env.APP_REVISION?.trim() || process.env.GITHUB_SHA?.trim() || 'local';
 
 export function appInfo() {

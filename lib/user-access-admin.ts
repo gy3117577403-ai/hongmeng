@@ -356,6 +356,7 @@ const PRODUCTION_ACCESS_PROFILES: readonly AccessProfileKey[] = [
   AccessProfileKey.FIELD_REPORTER,
   AccessProfileKey.WORKSHOP_SUPERVISOR,
   AccessProfileKey.WORKSHOP_TEAM_LEADER,
+  AccessProfileKey.PRODUCTION_COLLABORATOR,
 ];
 
 export function parseAccessProfileKey(value: unknown): AccessProfileKey | null {
@@ -445,6 +446,12 @@ export async function prepareAccessGrant(
   if (profile === AccessProfileKey.QUALITY_REVIEWER && department!.code !== 'QUALITY') {
     throw new AccessGrantInputError('质量审核模板必须选择质量部门');
   }
+  if (profile === AccessProfileKey.PLANNING_COLLABORATOR && department!.code !== 'PLANNING') {
+    throw new AccessGrantInputError('计划协同模板必须选择计划部门');
+  }
+  if (profile === AccessProfileKey.MATERIAL_FOLLOW_UP_OPERATOR && department!.code !== 'PROCUREMENT') {
+    throw new AccessGrantInputError('物料跟进模板必须选择采购部门');
+  }
   if (
     PRODUCTION_ACCESS_PROFILES.includes(profile)
     && department!.code !== 'PRODUCTION'
@@ -496,6 +503,9 @@ export async function prepareAccessGrant(
   if (profile === AccessProfileKey.FIELD_REPORTER) scopeKey = `EMPLOYEE:${employee!.id}`;
   if (profile === AccessProfileKey.WORKSHOP_SUPERVISOR) scopeKey = 'WORKSHOP:PRODUCTION';
   if (profile === AccessProfileKey.WORKSHOP_TEAM_LEADER) scopeKey = `TEAM:${targetTeam!.id}`;
+  if (profile === AccessProfileKey.PLANNING_COLLABORATOR) scopeKey = 'GLOBAL:PLANNING_COLLABORATION';
+  if (profile === AccessProfileKey.PRODUCTION_COLLABORATOR) scopeKey = 'WORKSHOP:PRODUCTION_COLLABORATION';
+  if (profile === AccessProfileKey.MATERIAL_FOLLOW_UP_OPERATOR) scopeKey = 'GLOBAL:MATERIAL_FOLLOW_UP';
 
   return {
     profile,

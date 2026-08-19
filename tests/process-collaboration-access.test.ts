@@ -53,6 +53,26 @@ test('process change collaboration is limited to process, requester or owner rec
   assert.equal(canMutateChangeForProcess(processSubject, { type: 'plan' }, 'UPDATE'), false);
 });
 
+test('workshop leaders are production issue handlers, not process specialists', () => {
+  const leaderSubject = {
+    id: 'user-leader',
+    employeeId: 'employee-leader',
+    access: access({
+      profile: 'WORKSHOP_TEAM_LEADER',
+      departmentCode: 'PRODUCTION',
+      grantType: 'PRIMARY',
+      scopeKey: 'TEAM:A',
+    }),
+  };
+  assert.equal(canCreateIssueForProcess(leaderSubject, { type: 'production' }), true);
+  assert.equal(canCreateIssueForProcess(leaderSubject, { type: 'material' }), true);
+  assert.equal(canCreateIssueForProcess(leaderSubject, { type: 'production', isMajorQuality: true }), false);
+  assert.equal(canMutateIssueForProcess(leaderSubject, { type: 'production' }, 'UPDATE'), true);
+  assert.equal(canMutateIssueForProcess(leaderSubject, { type: 'planning', assigneeEmployeeId: 'employee-leader' }, 'EXECUTE_WORKFLOW'), true);
+  assert.equal(canMutateIssueForProcess(leaderSubject, { type: 'planning' }, 'UPDATE'), false);
+  assert.equal(canMutateIssueForProcess(leaderSubject, { type: 'production', isMajorQuality: true }, 'UPDATE'), false);
+});
+
 test('quality and engineering owners keep their existing issue and change authority', () => {
   const qualitySubject = {
     id: 'quality-user',

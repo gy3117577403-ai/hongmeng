@@ -219,7 +219,11 @@ function issueWorkOrderOptionFromIssue(issue?: IssueDTO | null): IssueWorkOrderO
 }
 
 export default function IssueManagementShell({ user }: IssueManagementShellProps) {
-  const processIssueMode = user.access.capabilities.includes('ISSUE_MANAGEMENT:READ')
+  const processIssueMode = user.access.capabilities.includes('PROCESS:READ')
+    && user.access.capabilities.includes('ISSUE_MANAGEMENT:READ')
+    && !user.access.capabilities.includes('QUALITY:READ');
+  const productionIssueMode = user.access.capabilities.includes('PRODUCTION:READ')
+    && user.access.capabilities.includes('ISSUE_MANAGEMENT:READ')
     && !user.access.capabilities.includes('QUALITY:READ');
   const canCreateIssues = user.access.capabilities.includes('QUALITY:CREATE')
     || user.access.capabilities.includes('ISSUE_MANAGEMENT:CREATE');
@@ -277,9 +281,10 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const selectedContentLocked = selectedApprovalPending || selectedApprovedClosed;
   const canMaintainIssue = (issue: IssueDTO | null): boolean => !!issue
     && canUpdateIssues
-    && (!processIssueMode
+    && (!processIssueMode && !productionIssueMode
       || (!issue.isMajorQuality && (
-        issue.type === 'process'
+        (processIssueMode && issue.type === 'process')
+        || (productionIssueMode && issue.type === 'production')
         || issue.reporter?.id === user.id
         || issue.assignee?.id === user.employeeId
         || issue.collaborators.some(employee => employee.id === user.employeeId)
@@ -848,7 +853,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
             <div ref={queueRef} className="issue-queue-scroll hm-scroll-region" tabIndex={0}>
               {loading && queueMode === 'issues' && <div className="issue-loading"><Loader2 className="spin" />正在加载问题</div>}
               {!loading && error && <div className="issue-empty error"><AlertCircle /><strong>加载失败</strong><p>{error}</p><button type="button" onClick={() => { void loadIssues(); }}>重试</button></div>}
-              {!loading && !error && queueMode === 'issues' && !issues.length && <div className="issue-empty"><CheckCircle2 /><strong>当前筛选下没有问题</strong><p>{canCreateIssues ? (canConvertDetectedIssues ? '可以新建问题，或从异常收件箱将生产异常转入。' : '可以新建工艺问题并进入闭环处理。') : '当前没有可查看的问题记录。'}</p>{canCreateIssues && <button type="button" onClick={openCreate}>新建问题</button>}</div>}
+              {!loading && !error && queueMode === 'issues' && !issues.length && <div className="issue-empty"><CheckCircle2 /><strong>当前筛选下没有问题</strong><p>{canCreateIssues ? (canConvertDetectedIssues ? '可以新建问题，或从异常收件箱将生产异常转入。' : processIssueMode ? '可以新建工艺问题并进入闭环处理。' : '可以新建生产问题并进入闭环处理。') : '当前没有可查看的问题记录。'}</p>{canCreateIssues && <button type="button" onClick={openCreate}>新建问题</button>}</div>}
               {queueMode === 'issues' && issues.map(issue => (
                 <button className={`issue-card ${selected?.id === issue.id ? 'active' : ''} priority-${issue.priority}`} type="button" aria-pressed={selected?.id === issue.id} key={issue.id} onClick={() => selectIssue(issue)}>
                   <span className={`issue-status status-${issue.status}`}>{statusLabels[issue.status]}</span><em className={`priority-${issue.priority}`}>{priorityLabels[issue.priority]}</em>
@@ -871,7 +876,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           </section>
 
           <section className="issue-detail" aria-label="问题处理详情">
-            {!selected ? <div className="issue-detail-empty"><MessageSquareText /><h2>选择一个问题开始处理</h2><p>{canConvertDetectedIssues ? '左侧可选择问题，或从异常收件箱转入生产异常。' : '左侧可选择问题，或新建工艺问题进入闭环处理。'}</p></div> : <>
+            {!selected ? <div className="issue-detail-empty"><MessageSquareText /><h2>选择一个问题开始处理</h2><p>{canConvertDetectedIssues ? '左侧可选择问题，或从异常收件箱转入生产异常。' : processIssueMode ? '左侧可选择问题，或新建工艺问题进入闭环处理。' : '左侧可选择问题，或新建生产问题进入闭环处理。'}</p></div> : <>
               <header className="issue-detail-header">
                 <div><span>{selected.code} · {typeLabels[selected.type]}{selected.isMajorQuality && <em className="issue-major-chip">重大质量</em>}</span><h2 title={selected.title}>{selected.title}</h2><p>{sourceLabel(selected)} · 创建于 {formatDate(selected.createdAt)}</p></div>
                 <div><span className={`issue-status status-${selected.status}`}>{statusLabels[selected.status]}</span>{selected.majorApproval && <span className={`issue-approval-state state-${selected.majorApproval.status.toLowerCase()}`}>{majorApprovalStatusLabels[selected.majorApproval.status]}</span>}{!selectedContentLocked && canMaintainSelected && <button type="button" aria-label="编辑问题" title="编辑问题" onClick={() => openEdit(selected)}><Pencil size={16} /></button>}{!selected.majorApproval && canDeleteIssues && <button className="danger" type="button" aria-label="删除问题" title="删除问题" onClick={() => openIssueDelete(selected)}><Trash2 size={16} /></button>}</div>

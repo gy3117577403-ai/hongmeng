@@ -457,6 +457,9 @@ function employeeAccessProfileLabel(value?: string | null): string {
   if (value === 'FINANCE_ACCOUNT_ONLY') return '财务账号接入';
   if (value === 'WORKSHOP_SUPERVISOR') return '车间主管';
   if (value === 'WORKSHOP_TEAM_LEADER') return '车间组长';
+  if (value === 'PLANNING_COLLABORATOR') return '计划协同';
+  if (value === 'PRODUCTION_COLLABORATOR') return '生产协同只读';
+  if (value === 'MATERIAL_FOLLOW_UP_OPERATOR') return '物料跟进经办';
   return '旧权限兼容';
 }
 

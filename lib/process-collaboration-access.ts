@@ -25,7 +25,8 @@ export type ChangeCollaborationRecord = {
 };
 
 export function isProcessIssueCollaborator(subject: CollaborationAccessSubject): boolean {
-  return hasCapability(subject.access, 'ISSUE_MANAGEMENT', 'READ')
+  return hasCapability(subject.access, 'PROCESS', 'READ')
+    && hasCapability(subject.access, 'ISSUE_MANAGEMENT', 'READ')
     && !hasCapability(subject.access, 'QUALITY', 'READ');
 }
 
@@ -40,9 +41,9 @@ export function canCreateIssueForProcess(
   input: { type?: string | null; isMajorQuality?: boolean },
 ): boolean {
   if (hasCapability(subject.access, 'QUALITY', 'CREATE')) return true;
-  return hasCapability(subject.access, 'ISSUE_MANAGEMENT', 'CREATE')
-    && input.type === 'process'
-    && input.isMajorQuality !== true;
+  if (!hasCapability(subject.access, 'ISSUE_MANAGEMENT', 'CREATE')) return false;
+  if (input.isMajorQuality === true) return false;
+  return isProcessIssueCollaborator(subject) ? input.type === 'process' : true;
 }
 
 export function canMutateIssueForProcess(
@@ -53,13 +54,17 @@ export function canMutateIssueForProcess(
   if (hasCapability(subject.access, 'QUALITY', action)) return true;
   if (!hasCapability(subject.access, 'ISSUE_MANAGEMENT', action)) return false;
   if (issue.isMajorQuality) return false;
-  if (issue.type === 'process') return true;
+  if (isProcessIssueCollaborator(subject) && issue.type === 'process') return true;
   if (issue.reporterId === subject.id) return true;
   const employeeId = subject.employeeId || '';
-  return Boolean(employeeId) && (
+  const participates = Boolean(employeeId) && (
     issue.assigneeEmployeeId === employeeId
     || issue.collaborators?.some(item => item.employeeId === employeeId) === true
   );
+  if (participates) return true;
+  return !isProcessIssueCollaborator(subject)
+    && hasCapability(subject.access, 'PRODUCTION', 'READ')
+    && issue.type === 'production';
 }
 
 export function canCreateChangeForProcess(

@@ -19,7 +19,7 @@ import {
   UsersRound,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
@@ -96,6 +96,8 @@ type AttendanceDraft = {
   leaveMinutes: string;
   remark: string;
 };
+
+type AttendanceBatchDraft = Omit<AttendanceDraft, 'employeeId'>;
 
 type AbnormalDraft = {
   id?: string;
@@ -194,6 +196,8 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   useToastBridge(toast, setToast);
   const [refreshToken, setRefreshToken] = useState(0);
   const [attendanceDraft, setAttendanceDraft] = useState<AttendanceDraft | null>(null);
+  const [batchAttendanceDraft, setBatchAttendanceDraft] = useState<AttendanceBatchDraft | null>(null);
+  const [selectedEmployeeIds, setSelectedEmployeeIds] = useState<string[]>([]);
   const [abnormalDraft, setAbnormalDraft] = useState<AbnormalDraft | null>(null);
 
   useEffect(() => {
@@ -259,15 +263,16 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   }, [load, refreshToken]);
 
   useEffect(() => {
-    if (!attendanceDraft && !abnormalDraft) return;
+    if (!attendanceDraft && !batchAttendanceDraft && !abnormalDraft) return;
     function close(event: KeyboardEvent): void {
       if (event.key !== 'Escape') return;
       setAttendanceDraft(null);
+      setBatchAttendanceDraft(null);
       setAbnormalDraft(null);
     }
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
-  }, [attendanceDraft, abnormalDraft]);
+  }, [attendanceDraft, batchAttendanceDraft, abnormalDraft]);
 
   const productionEmployees = useMemo(
     () => employeeDirectory.filter(item => isProductionDepartment(item.department)),
@@ -295,6 +300,26 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     return employees.filter(item => `${item.id} ${item.employeeNo} ${item.name} ${item.department || ''} ${item.position || ''} ${item.team || ''}`
       .toLocaleLowerCase('zh-CN').includes(normalized));
   }, [employees, keyword]);
+  const visibleEmployeeIds = useMemo(() => filteredEmployees.map(employee => employee.id), [filteredEmployees]);
+  const visibleEmployeeIdSet = useMemo(() => new Set(visibleEmployeeIds), [visibleEmployeeIds]);
+  const selectedEmployeeIdSet = useMemo(() => new Set(selectedEmployeeIds), [selectedEmployeeIds]);
+  const selectedVisibleCount = visibleEmployeeIds.filter(employeeId => selectedEmployeeIdSet.has(employeeId)).length;
+  const allVisibleSelected = visibleEmployeeIds.length > 0 && selectedVisibleCount === visibleEmployeeIds.length;
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected;
+  const selectAllRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setSelectedEmployeeIds([]);
+    setBatchAttendanceDraft(null);
+  }, [date, workforceScope]);
+
+  useEffect(() => {
+    setSelectedEmployeeIds(current => current.filter(employeeId => visibleEmployeeIdSet.has(employeeId)));
+  }, [visibleEmployeeIdSet]);
+
+  useEffect(() => {
+    if (selectAllRef.current) selectAllRef.current.indeterminate = someVisibleSelected;
+  }, [someVisibleSelected]);
   const visibleEvents = tab === 'quality' ? events.filter(item => item.qualityStatus === 'pending') : events;
   const canOpenEmployeeAdmin = user.access.modules.includes('HR');
   const canReviewQuality = user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW')
@@ -335,12 +360,43 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     });
   }
 
-  async function batchDefault(): Promise<void> {
+  function toggleEmployeeSelection(employeeId: string, checked: boolean): void {
+    setSelectedEmployeeIds(current => checked
+      ? [...new Set([...current, employeeId])]
+      : current.filter(id => id !== employeeId));
+  }
+
+  function toggleVisibleSelection(checked: boolean): void {
+    setSelectedEmployeeIds(checked ? visibleEmployeeIds : []);
+  }
+
+  function openBatchAttendance(): void {
+    if (!selectedEmployeeIds.length) return;
+    setBatchAttendanceDraft({
+      attendanceType: 'normal',
+      morningStart: '08:00',
+      morningEnd: '12:00',
+      afternoonStart: '13:00',
+      afternoonEnd: '17:00',
+      overtimeStart: '',
+      overtimeEnd: '',
+      leaveMinutes: '0',
+      remark: '',
+    });
+  }
+
+  async function batchDefault(employeeIds?: string[]): Promise<void> {
     setSaving(true);
     setError('');
     try {
       const response = await fetch('/api/attendance/records/batch-default', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workDate: date, scope: workforceScope }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workDate: date,
+          scope: workforceScope,
+          ...(employeeIds?.length ? { employeeIds } : {}),
+        }),
       });
       const body = await response.json() as { ok: boolean; createdCount?: number; skippedCount?: number; error?: string };
       if (!response.ok) throw new Error(body.error || '生成失败');
@@ -353,20 +409,65 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     }
   }
 
-  async function batchConfirm(): Promise<void> {
-    if (!window.confirm(`确认 ${date} 的${workforceLabel}草稿？请先修改请假、缺勤和加班例外。`)) return;
+  async function batchConfirm(employeeIds?: string[]): Promise<void> {
+    const rangeLabel = employeeIds?.length ? `所选 ${employeeIds.length} 人` : workforceLabel;
+    if (!window.confirm(`确认 ${date} 的${rangeLabel}草稿？请先修改请假、缺勤和加班例外。`)) return;
     setSaving(true);
     setError('');
     try {
       const response = await fetch('/api/attendance/records/batch-confirm', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workDate: date, scope: workforceScope }),
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          workDate: date,
+          scope: workforceScope,
+          ...(employeeIds?.length ? { employeeIds } : {}),
+        }),
       });
-      const body = await response.json() as { ok: boolean; confirmedCount?: number; error?: string };
+      const body = await response.json() as { ok: boolean; confirmedCount?: number; skippedCount?: number; missingCount?: number; error?: string };
       if (!response.ok) throw new Error(body.error || '批量确认失败');
-      setToast(`已确认 ${body.confirmedCount || 0} 条考勤`);
+      setToast(`已确认 ${body.confirmedCount || 0} 条，跳过 ${body.skippedCount || 0} 条`);
+      if (employeeIds?.length) setSelectedEmployeeIds([]);
       setRefreshToken(value => value + 1);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '批量确认考勤失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveBatchAttendance(): Promise<void> {
+    if (!batchAttendanceDraft || !selectedEmployeeIds.length) return;
+    setSaving(true);
+    setError('');
+    try {
+      const segments = batchAttendanceDraft.attendanceType === 'normal'
+        ? [
+            { type: 'regular', startedAt: isoFor(date, batchAttendanceDraft.morningStart), endedAt: isoFor(date, batchAttendanceDraft.morningEnd) },
+            { type: 'regular', startedAt: isoFor(date, batchAttendanceDraft.afternoonStart), endedAt: isoFor(date, batchAttendanceDraft.afternoonEnd) },
+            ...(batchAttendanceDraft.overtimeStart && batchAttendanceDraft.overtimeEnd
+              ? [{ type: 'overtime', startedAt: isoFor(date, batchAttendanceDraft.overtimeStart), endedAt: isoFor(date, batchAttendanceDraft.overtimeEnd) }]
+              : []),
+          ]
+        : [];
+      const response = await fetch('/api/attendance/records/batch-set', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...batchAttendanceDraft,
+          workDate: date,
+          scope: workforceScope,
+          employeeIds: selectedEmployeeIds,
+          segments,
+        }),
+      });
+      const body = await response.json() as { ok: boolean; savedCount?: number; skippedCount?: number; error?: string };
+      if (!response.ok) throw new Error(body.error || '批量设置失败');
+      setBatchAttendanceDraft(null);
+      setToast(`已保存 ${body.savedCount || 0} 条草稿，已确认记录跳过 ${body.skippedCount || 0} 条`);
+      setRefreshToken(value => value + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '批量设置考勤失败');
     } finally {
       setSaving(false);
     }
@@ -540,7 +641,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
             {canOpenEmployeeAdmin && <a href="/workspace/employees?view=directory"><UsersRound size={15} />人事管理</a>}
             <button className="icon-only" type="button" aria-label="刷新" title="刷新" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={16} /></button>
             {tab === 'attendance'
-              ? <button className="primary" type="button" disabled={saving} onClick={() => void batchDefault()}><Plus size={16} />生成正常出勤</button>
+              ? <button className="primary" type="button" disabled={saving} onClick={() => void batchDefault(selectedEmployeeIds.length ? selectedEmployeeIds : undefined)}><Plus size={16} />{selectedEmployeeIds.length ? `为所选生成（${selectedEmployeeIds.length}）` : '生成正常出勤'}</button>
               : <button className="primary" type="button" onClick={beginAbnormal}><Plus size={16} />登记异常工时</button>}
           </>}
         />
@@ -562,7 +663,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
           <label className="attendance-date"><span>基准日期</span><input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
           {tab !== 'attendance' && <div className="attendance-period" role="group" aria-label="异常汇总周期">{(['today', 'week', 'month'] as Period[]).map(item => <button className={period === item ? 'active' : ''} type="button" key={item} onClick={() => setPeriod(item)}>{periodLabel(item)}</button>)}</div>}
           {tab === 'attendance'
-            ? <button type="button" disabled={saving || !attendanceSummary.draftCount} onClick={() => void batchConfirm()}><Check size={16} />确认全部草稿</button>
+            ? <button type="button" disabled={saving || (!attendanceSummary.draftCount && !selectedEmployeeIds.length)} onClick={() => void batchConfirm(selectedEmployeeIds.length ? selectedEmployeeIds : undefined)}><Check size={16} />{selectedEmployeeIds.length ? `确认所选（${selectedEmployeeIds.length}）` : '确认全部草稿'}</button>
             : null}
         </section>
 
@@ -578,11 +679,27 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
                 {allowedWorkforceScopes.includes('ALL') && <button className={workforceScope === 'ALL' ? 'active' : ''} type="button" role="tab" aria-selected={workforceScope === 'ALL'} onClick={() => { setWorkforceScope('ALL'); setAttendanceDraft(null); }}><strong>全部人员</strong><em>{scopeCounts.all}</em></button>}
               </div>
             </header>
+            <div className="attendance-selection-strip">
+              <label>
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={event => toggleVisibleSelection(event.target.checked)}
+                />
+                <span>{selectedEmployeeIds.length ? `已选 ${selectedEmployeeIds.length} 人` : '尚未选择员工'}</span>
+              </label>
+              <button type="button" disabled={!visibleEmployeeIds.length} onClick={() => toggleVisibleSelection(!allVisibleSelected)}>
+                {allVisibleSelected ? '取消当前筛选全选' : `全选当前筛选结果 ${visibleEmployeeIds.length} 人`}
+              </button>
+              <small>日期或人员范围切换后自动清空；搜索结果变化时仅保留当前可见人员。</small>
+            </div>
             <div className="attendance-table-wrap hm-scroll-region" tabIndex={0}>
-              <div className="attendance-table-head"><span>员工</span><span>状态</span><span>有效出勤</span><span>加班</span><span>请假</span><span>确认</span><span>操作</span></div>
+              <div className="attendance-table-head"><span className="attendance-checkbox-label">选择</span><span>员工</span><span>状态</span><span>有效出勤</span><span>加班</span><span>请假</span><span>确认</span><span>操作</span></div>
               {filteredEmployees.map(employee => {
                 const record = recordByEmployee.get(employee.id);
                 return <div className={`attendance-row ${record?.status || 'missing'}`} key={employee.id}>
+                  <label className="attendance-row-checkbox" aria-label={`选择 ${employee.name}`}><input type="checkbox" checked={selectedEmployeeIdSet.has(employee.id)} onChange={event => toggleEmployeeSelection(employee.id, event.target.checked)} /></label>
                   <div><strong>{employee.name}</strong><small>{employee.employeeNo} · {employee.position || '岗位未设置'} · {employee.team || '班组未设置'}</small></div>
                   <span>{record ? attendanceTypeLabel(record.attendanceType) : '未登记'}</span>
                   <b>{record ? formatProcessDuration(record.actualMilliseconds) : '-'}</b>
@@ -593,6 +710,13 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
                 </div>;
               })}
               {!loading && !filteredEmployees.length && <div className="attendance-empty"><UsersRound /><strong>当前权限范围没有可登记考勤的员工</strong><span>请检查账号的班组范围与员工档案中的班组归属、在职状态和考勤启用状态。</span>{canOpenEmployeeAdmin && <a href="/workspace/employees?view=directory">打开人事管理</a>}</div>}
+              {selectedEmployeeIds.length > 0 && <div className="attendance-bulk-bar" role="toolbar" aria-label="所选员工批量操作">
+                <span><strong>{selectedEmployeeIds.length}</strong><small>人已选择</small></span>
+                <button type="button" disabled={saving} onClick={() => void batchDefault(selectedEmployeeIds)}><Plus size={15} />生成正常考勤</button>
+                <button type="button" disabled={saving} onClick={openBatchAttendance}><Pencil size={15} />批量设置</button>
+                <button className="confirm" type="button" disabled={saving} onClick={() => void batchConfirm(selectedEmployeeIds)}><Check size={15} />确认所选草稿</button>
+                <button type="button" disabled={saving} onClick={() => setSelectedEmployeeIds([])}><X size={15} />清空选择</button>
+              </div>}
             </div>
           </section>
         ) : (
@@ -642,6 +766,22 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
             <label className="wide"><span>考勤备注</span><textarea maxLength={500} rows={3} value={attendanceDraft.remark} onChange={event => setAttendanceDraft({ ...attendanceDraft, remark: event.target.value })} placeholder="迟到、早退、连班或其他说明" /></label>
           </div>
           <footer><button type="button" disabled={saving} onClick={() => setAttendanceDraft(null)}>取消</button><button type="button" disabled={saving} onClick={() => void saveAttendance(false)}><Save size={16} />保存草稿</button><button className="primary-button" type="button" disabled={saving} onClick={() => void saveAttendance(true)}>{saving ? <Loader2 className="spin" size={16} /> : <Check size={16} />}保存并确认</button></footer>
+        </section>
+      </div>}
+
+      {batchAttendanceDraft && <div className="attendance-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setBatchAttendanceDraft(null); }}>
+        <section className="attendance-dialog batch-dialog" role="dialog" aria-modal="true" aria-labelledby="attendance-batch-dialog-title">
+          <header><div><span>批量考勤设置 · {workforceLabel}</span><h2 id="attendance-batch-dialog-title">{date} · 所选 {selectedEmployeeIds.length} 人</h2></div><button type="button" aria-label="关闭" title="关闭" onClick={() => setBatchAttendanceDraft(null)}><X size={18} /></button></header>
+          <div className="attendance-dialog-body">
+            <div className="attendance-batch-warning"><AlertTriangle size={16} /><span><strong>只保存为草稿</strong><small>已确认记录自动跳过，确认需回到列表执行“确认所选草稿”。</small></span></div>
+            <label><span>出勤类型</span><select value={batchAttendanceDraft.attendanceType} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, attendanceType: event.target.value as AttendanceType })}><option value="normal">正常出勤</option><option value="leave">全天请假</option><option value="absent">缺勤</option><option value="rest">休息日</option></select></label>
+            {batchAttendanceDraft.attendanceType === 'normal' && <>
+              <fieldset><legend>统一正常班（午休 12:00–13:00 不计）</legend><label><span>上午开始</span><input type="time" value={batchAttendanceDraft.morningStart} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, morningStart: event.target.value })} /></label><label><span>上午结束</span><input type="time" value={batchAttendanceDraft.morningEnd} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, morningEnd: event.target.value })} /></label><label><span>下午开始</span><input type="time" value={batchAttendanceDraft.afternoonStart} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, afternoonStart: event.target.value })} /></label><label><span>下午结束</span><input type="time" value={batchAttendanceDraft.afternoonEnd} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, afternoonEnd: event.target.value })} /></label></fieldset>
+              <fieldset><legend>统一加班与部分请假（可留空）</legend><label><span>加班开始</span><input type="time" value={batchAttendanceDraft.overtimeStart} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, overtimeStart: event.target.value })} /></label><label><span>加班结束</span><input type="time" value={batchAttendanceDraft.overtimeEnd} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, overtimeEnd: event.target.value })} /></label><label><span>部分请假（分钟）</span><input type="number" min="0" step="30" value={batchAttendanceDraft.leaveMinutes} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, leaveMinutes: event.target.value })} /></label></fieldset>
+            </>}
+            <label className="wide"><span>统一备注</span><textarea maxLength={500} rows={3} value={batchAttendanceDraft.remark} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, remark: event.target.value })} placeholder="选填；将写入所有未确认记录" /></label>
+          </div>
+          <footer><button type="button" disabled={saving} onClick={() => setBatchAttendanceDraft(null)}>取消</button><button className="primary-button" type="button" disabled={saving || !selectedEmployeeIds.length} onClick={() => void saveBatchAttendance()}>{saving ? <Loader2 className="spin" size={16} /> : <Save size={16} />}保存 {selectedEmployeeIds.length} 人草稿</button></footer>
         </section>
       </div>}
 

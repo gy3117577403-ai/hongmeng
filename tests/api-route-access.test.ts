@@ -249,6 +249,24 @@ test('workshop leaders can read terminal tooling but cannot change or publish it
   assert.equal(canAccessApiRoute(supervisor, '/api/terminal-tooling/setups/setup-1/publish', 'POST'), false);
 });
 
+test('workshop leaders can receive and close ordinary issues without major-quality or delete powers', () => {
+  const leader = context({
+    profile: 'WORKSHOP_TEAM_LEADER',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'TEAM:A',
+  });
+
+  assert.equal(canAccessApiRoute(leader, '/api/issues', 'GET'), true);
+  assert.equal(canAccessApiRoute(leader, '/api/issues', 'POST'), true);
+  assert.equal(canAccessApiRoute(leader, '/api/issues/assignee-options', 'GET'), true);
+  assert.equal(canAccessApiRoute(leader, '/api/issues/i1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(leader, '/api/issues/i1/transition', 'POST'), true);
+  assert.equal(canAccessApiRoute(leader, '/api/issues/i1', 'DELETE'), false);
+  assert.equal(canAccessApiRoute(leader, '/api/issues/i1/major-approval/quality-review', 'POST'), false);
+  assert.equal(canAccessApiRoute(leader, '/api/issues/i1/major-approval/final-decision', 'POST'), false);
+});
+
 test('workshop team leaders read shared data and manage every opened technical module', () => {
   const leader = context({
     profile: 'WORKSHOP_TEAM_LEADER',

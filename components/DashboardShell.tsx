@@ -299,6 +299,9 @@ const accessProfileOptions: Array<{ value: AccessProfileKeyDTO; label: string; d
   { value: 'FIELD_REPORTER', label: '扫码报工', description: '实名扫码进入现场报工' },
   { value: 'WORKSHOP_SUPERVISOR', label: '车间主管', description: '车间生产与计划协同' },
   { value: 'WORKSHOP_TEAM_LEADER', label: '车间组长', description: '已开放模块全操作，加载共享生产数据' },
+  { value: 'PLANNING_COLLABORATOR', label: '计划协同', description: '共享计划数据，可建单与维护排程，不含删除和周计划发布' },
+  { value: 'PRODUCTION_COLLABORATOR', label: '生产协同只读', description: '查看全车间生产执行与协同数据，不允许现场报工和删除' },
+  { value: 'MATERIAL_FOLLOW_UP_OPERATOR', label: '物料跟进经办', description: '共享物料任务，可认领、更新进度并提交仓库确认' },
   { value: 'GM_OFFICE_READER_APPROVER', label: '总经办', description: '基础摘要只读与重大审批' },
   { value: 'FINANCE_ACCOUNT_ONLY', label: '财务账号', description: '仅账号接入，业务模块待建设' },
   { value: 'ADMIN_GLOBAL', label: '系统管理员', description: '保留现有全部界面与权限' },
@@ -4258,13 +4261,19 @@ function AccountManager({
         ? 'GM_OFFICE'
         : profileKey === 'PROCESS_SPECIALIST'
           ? 'PROCESS'
-          : profileKey === 'QUALITY_REVIEWER'
-            ? 'QUALITY'
-            : profileKey === 'REPORT_PEOPLE_READER'
-              ? 'HR'
-              : ['FIELD_REPORTER', 'WORKSHOP_SUPERVISOR', 'WORKSHOP_TEAM_LEADER'].includes(profileKey)
-                ? 'PRODUCTION'
-                : null;
+          : profileKey === 'PLANNING_COLLABORATOR'
+            ? 'PLANNING'
+            : profileKey === 'PRODUCTION_COLLABORATOR'
+              ? 'PRODUCTION'
+              : profileKey === 'MATERIAL_FOLLOW_UP_OPERATOR'
+                ? 'PROCUREMENT'
+                : profileKey === 'QUALITY_REVIEWER'
+                  ? 'QUALITY'
+                  : profileKey === 'REPORT_PEOPLE_READER'
+                    ? 'HR'
+                    : ['FIELD_REPORTER', 'WORKSHOP_SUPERVISOR', 'WORKSHOP_TEAM_LEADER'].includes(profileKey)
+                      ? 'PRODUCTION'
+                      : null;
     return requiredCode
       ? departmentOptions.find(department => department.code === requiredCode)?.id || ''
       : currentDepartmentId;
@@ -4296,7 +4305,7 @@ function AccountManager({
           ? 'TEAM_LEAD'
           : 'EMPLOYEE',
       employeeId: profileKey === 'ADMIN_GLOBAL' ? '' : current.employeeId,
-      departmentId: profileKey === 'ADMIN_GLOBAL' ? '' : current.departmentId,
+      departmentId: profileKey === 'ADMIN_GLOBAL' ? '' : departmentIdForProfile(profileKey, current.departmentId),
       grantType: profileKey === 'ADMIN_GLOBAL' ? 'PRIMARY' : current.grantType,
       password: profileKey === 'FIELD_REPORTER' ? '' : current.password,
       fieldReportEnabled: recommendsFieldReporting(profileKey),
@@ -4472,7 +4481,7 @@ function AccountManager({
                       <label>账号状态<select value={accountEdit.accountStatus} onChange={event => { const accountStatus = event.target.value as AccountStatusDTO; setAccountEdit({ ...accountEdit, accountStatus, isActive: accountStatus === 'ACTIVE' }); }}><option value="ACTIVE">正常</option><option value="SUSPENDED">暂停登录</option><option value="DISABLED">停用账号</option></select></label>
                     </div></section>
                     <section className="account-drawer-section"><header><b>2</b><div><strong>后台主角色</strong><small>主角色与扫码能力分别保存</small></div></header><div className="account-form-grid">
-                      <label>权限方案<select value={accountEdit.profileKey} onChange={event => { const profileKey = event.target.value as AccessProfileKeyDTO; setAccountEdit({ ...accountEdit, profileKey, laborRole: profileKey === 'ADMIN_GLOBAL' ? 'ADMIN' : profileKey === 'WORKSHOP_SUPERVISOR' || profileKey === 'WORKSHOP_TEAM_LEADER' ? 'TEAM_LEAD' : 'EMPLOYEE', employeeId: profileKey === 'ADMIN_GLOBAL' ? '' : accountEdit.employeeId, departmentId: profileKey === 'ADMIN_GLOBAL' ? '' : accountEdit.departmentId, fieldReportEnabled: recommendsFieldReporting(profileKey) }); }}>{accessProfileOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                      <label>权限方案<select value={accountEdit.profileKey} onChange={event => { const profileKey = event.target.value as AccessProfileKeyDTO; setAccountEdit({ ...accountEdit, profileKey, laborRole: profileKey === 'ADMIN_GLOBAL' ? 'ADMIN' : profileKey === 'WORKSHOP_SUPERVISOR' || profileKey === 'WORKSHOP_TEAM_LEADER' ? 'TEAM_LEAD' : 'EMPLOYEE', employeeId: profileKey === 'ADMIN_GLOBAL' ? '' : accountEdit.employeeId, departmentId: profileKey === 'ADMIN_GLOBAL' ? '' : departmentIdForProfile(profileKey, accountEdit.departmentId), fieldReportEnabled: recommendsFieldReporting(profileKey) }); }}>{accessProfileOptions.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
                       <label>权限部门<select value={accountEdit.departmentId} disabled={accountEdit.profileKey === 'ADMIN_GLOBAL' || !departmentOptions.length} onChange={event => setAccountEdit({ ...accountEdit, departmentId: event.target.value })}><option value="">由员工主档案联动</option>{departmentOptions.map(department => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
                     </div></section>
                     <section className="account-drawer-section"><header><b>3</b><div><strong>访问方式</strong><small>车间主管可同时勾选两种入口</small></div></header><div className="account-access-choice-grid">

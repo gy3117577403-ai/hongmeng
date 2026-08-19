@@ -17,6 +17,8 @@ type ApiRule = {
    */
   action?: AccessActionCode;
   actionsByMethod?: Readonly<Record<string, AccessActionCode>>;
+  /** A mixed-module route may require a stronger action from one owner. */
+  actionsByModule?: Readonly<Partial<Record<AccessModuleCode, AccessActionCode>>>;
   /** Applied only when PRODUCTION is the capability that matched this rule. */
   productionMinimumScope?: 'WORKSHOP' | 'GLOBAL';
 };
@@ -313,7 +315,8 @@ export function apiRouteAccessRule(pathname: string): ApiRule | null {
     return {
       prefix: '/api/issues/assignee-options',
       anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'],
-      action: 'UPDATE',
+      action: 'READ',
+      actionsByModule: { QUALITY: 'UPDATE', ISSUE_MANAGEMENT: 'READ' },
     };
   }
 
@@ -587,8 +590,9 @@ export function canAccessApiRoute(
   } as const;
 
   return rule.anyOf.some(module => {
-    if (!hasCapability(access, module, action)) return false;
-    if (rule.readOnlyModules?.includes(module) && action !== 'READ') return false;
+    const moduleAction = rule.actionsByModule?.[module] ?? action;
+    if (!hasCapability(access, module, moduleAction)) return false;
+    if (rule.readOnlyModules?.includes(module) && moduleAction !== 'READ') return false;
     if (module !== 'PRODUCTION' || !rule.productionMinimumScope) return true;
     return productionScopeRank[access.productionScope]
       >= productionScopeRank[rule.productionMinimumScope];

@@ -36,6 +36,9 @@ export const ACCESS_PROFILE_CODES = [
   'FINANCE_ACCOUNT_ONLY',
   'WORKSHOP_SUPERVISOR',
   'WORKSHOP_TEAM_LEADER',
+  'PLANNING_COLLABORATOR',
+  'PRODUCTION_COLLABORATOR',
+  'MATERIAL_FOLLOW_UP_OPERATOR',
 ] as const;
 
 export type AccessProfileCode = typeof ACCESS_PROFILE_CODES[number];
@@ -470,6 +473,28 @@ export function resolveAccessContext(
       continue;
     }
 
+    if (grant.profile === 'PLANNING_COLLABORATOR') {
+      addWorkbenchCommon(capabilities, addScope, grant);
+      addModuleActions(capabilities, 'PLANNING', ['READ', 'CREATE', 'UPDATE']);
+      addScope(scopeForGrant(grant, 'PLANNING', 'GLOBAL', false));
+      continue;
+    }
+
+    if (grant.profile === 'PRODUCTION_COLLABORATOR') {
+      addWorkbenchCommon(capabilities, addScope, grant);
+      capabilities.add(capabilityCode('PRODUCTION', 'READ'));
+      addScope(scopeForGrant(grant, 'PRODUCTION', 'WORKSHOP', true));
+      productionScope = strongerProductionScope(productionScope, 'WORKSHOP');
+      continue;
+    }
+
+    if (grant.profile === 'MATERIAL_FOLLOW_UP_OPERATOR') {
+      addWorkbenchCommon(capabilities, addScope, grant);
+      addModuleActions(capabilities, 'PROCUREMENT', ['READ', 'UPDATE', 'EXECUTE_WORKFLOW']);
+      addScope(scopeForGrant(grant, 'PROCUREMENT', 'GLOBAL', false));
+      continue;
+    }
+
     if (grant.profile === 'PROCESS_SPECIALIST') {
       // A process specialist owns process standards while collaborating with
       // production, issues, changes and drawings through deliberately narrower
@@ -506,6 +531,7 @@ export function resolveAccessContext(
         else capabilities.add(capabilityCode(technicalModule, 'READ'));
       }
       addModuleActions(capabilities, 'ATTENDANCE', MODULE_ACTION_MATRIX.ATTENDANCE);
+      addModuleActions(capabilities, 'ISSUE_MANAGEMENT', MODULE_ACTION_MATRIX.ISSUE_MANAGEMENT);
       addScope(scopeForGrant(grant, 'ACCOUNT_SELF', 'SELF', false));
       addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
       addScope(scopeForGrant(grant, 'BASIC_SUMMARY', 'GLOBAL', true));
@@ -513,6 +539,7 @@ export function resolveAccessContext(
       addScope(scopeForGrant(grant, 'DRAWING_LIBRARY', 'GLOBAL', !isTeamLeader));
       addScope(scopeForGrant(grant, 'ASSEMBLY_MANUALS', 'GLOBAL', !isTeamLeader));
       addScope(scopeForGrant(grant, 'PRODUCT_TIME', 'GLOBAL', !isTeamLeader));
+      addScope(scopeForGrant(grant, 'ISSUE_MANAGEMENT', 'GLOBAL', false));
 
       // New collaboration rule: an opened production module always reads the
       // shared workshop dataset. Team identity remains on the grant for

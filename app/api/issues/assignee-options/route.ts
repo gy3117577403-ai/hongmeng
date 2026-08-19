@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { ForbiddenError, requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { hasCapability } from '@/lib/department-access';
+import { listIssueAssigneeOptions } from '@/lib/issue-assignee-access';
 import { prisma } from '@/lib/prisma';
 
 export const runtime = 'nodejs';
@@ -11,33 +12,12 @@ export async function GET() {
     const user = await requireUser();
     if (
       !hasCapability(user.access, 'QUALITY', 'UPDATE')
-      && !hasCapability(user.access, 'ISSUE_MANAGEMENT', 'UPDATE')
+      && !hasCapability(user.access, 'ISSUE_MANAGEMENT', 'READ')
     ) throw new ForbiddenError();
-    const employees = await prisma.employee.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        employeeNo: true,
-        name: true,
-        department: true,
-        position: true,
-        team: true,
-        isActive: true,
-        departmentRef: { select: { name: true } },
-      },
-      orderBy: [{ employeeNo: 'asc' }, { name: 'asc' }],
-    });
+    const employees = await listIssueAssigneeOptions(prisma);
     return NextResponse.json({
       ok: true,
-      employees: employees.map(employee => ({
-        id: employee.id,
-        employeeNo: employee.employeeNo,
-        name: employee.name,
-        department: employee.departmentRef?.name || employee.department,
-        position: employee.position,
-        team: employee.team,
-        isActive: employee.isActive,
-      })),
+      employees,
     });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();

@@ -7,7 +7,7 @@ import {
 } from '@/lib/attendance-access';
 import {
   defaultAttendanceSegments,
-  parseEmployeeIds,
+  parseAttendanceEmployeeIds,
   parseWorkDate,
   STANDARD_DAY_MILLISECONDS,
 } from '@/lib/attendance';
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
       : 'ALL';
     const boundary = await resolveAttendanceAccessBoundary(user);
     const scope = effectiveAttendanceWorkforceScope(boundary, requestedScope);
-    const requestedEmployeeIds = body.employeeIds === undefined ? [] : parseEmployeeIds(body.employeeIds);
+    const requestedEmployeeIds = body.employeeIds === undefined ? [] : parseAttendanceEmployeeIds(body.employeeIds);
     if (
       boundary.employeeIds !== null
       && requestedEmployeeIds.some(employeeId => !boundary.employeeIds!.includes(employeeId))
@@ -48,6 +48,9 @@ export async function POST(req: NextRequest) {
       },
       select: { id: true, department: true },
     });
+    if (requestedEmployeeIds.length && employees.length !== requestedEmployeeIds.length) {
+      return NextResponse.json({ ok: false, error: '所选员工不在当前考勤范围，请刷新列表后重试' }, { status: 409 });
+    }
     if (!employees.length) return NextResponse.json({ ok: false, error: '没有可生成考勤的在用员工' }, { status: 400 });
     const segments = defaultAttendanceSegments(workDate.key);
     const result = await prisma.attendanceRecord.createMany({
@@ -79,6 +82,7 @@ export async function POST(req: NextRequest) {
       requestedCount: employees.length,
       createdCount: result.count,
       skippedCount: employees.length - result.count,
+      items: employees.map(employee => ({ employeeId: employee.id })),
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

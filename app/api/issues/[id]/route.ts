@@ -9,6 +9,8 @@ import {
   canMutateIssueForProcess,
   isProcessIssueCollaborator,
 } from '@/lib/process-collaboration-access';
+import { IssueAssigneeAccessError, requireIssueAssigneeReady } from '@/lib/issue-assignee-access';
+import { createSystemNotification } from '@/lib/system-notifications';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,7 +43,12 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     });
     if (!current) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
     if (!canMutateIssueForProcess(user, current, 'UPDATE')) {
-      return NextResponse.json({ ok: false, error: '只能维护工艺问题或本人参与的问题' }, { status: 403 });
+      return NextResponse.json({
+        ok: false,
+        error: isProcessIssueCollaborator(user)
+          ? '只能维护工艺问题或本人参与的问题'
+          : '只能维护生产问题或本人参与的问题',
+      }, { status: 403 });
     }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const parsed = parseIssueInput(body, true);
@@ -90,6 +97,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       const employees = await prisma.employee.count({ where: { id: { in: employeeIds }, isActive: true } });
       if (employees !== employeeIds.length) return NextResponse.json({ ok: false, error: '负责人或协同人员不存在、已离职或已停用' }, { status: 404 });
     }
+    const nextAssignee = values.assigneeEmployeeId !== undefined
+      ? await requireIssueAssigneeReady(prisma, values.assigneeEmployeeId)
+      : null;
 
     const data: Prisma.IssueUncheckedUpdateInput = {};
     if (values.title !== undefined) data.title = values.title;
@@ -119,6 +129,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const nextCollaborators = collaboratorEmployeeIds?.slice().sort().join(',');
     const assignmentChanged = (values.assigneeEmployeeId !== undefined && values.assigneeEmployeeId !== current.assigneeEmployeeId)
       || (nextCollaborators !== undefined && nextCollaborators !== currentCollaborators);
+    const assigneeChanged = values.assigneeEmployeeId !== undefined
+      && values.assigneeEmployeeId !== current.assigneeEmployeeId;
     const action = assignmentChanged ? 'assign' : 'update';
     const issue = await prisma.$transaction(async tx => {
       const updated = await tx.issue.updateMany({
@@ -151,7 +163,24 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           detail: { fields: changed },
         },
       });
-      return tx.issue.findUniqueOrThrow({ where: { id: current.id }, include: issueDetailInclude });
+      const result = await tx.issue.findUniqueOrThrow({ where: { id: current.id }, include: issueDetailInclude });
+      if (assigneeChanged && nextAssignee && nextAssignee.userId !== user.id) {
+        await createSystemNotification(tx, {
+          eventType: 'ISSUE_ASSIGNED',
+          dedupeKey: `issue:${current.id}:assignment:${result.version}`,
+          category: 'TODO',
+          priority: result.priority === 'urgent' ? 'URGENT' : result.priority === 'high' ? 'HIGH' : 'NORMAL',
+          title: `问题已分派给你：ISS-${String(result.sequence).padStart(6, '0')} ${result.title}`,
+          body: '请进入问题管理查看详情、处理记录和截止时间。',
+          targetRoute: `/workspace/issues?issueId=${encodeURIComponent(current.id)}`,
+          sourceType: 'issue',
+          sourceId: current.id,
+          actorId: user.id,
+          metadata: { issueSequence: result.sequence, assigneeEmployeeId: nextAssignee.employeeId },
+          recipientUserIds: [nextAssignee.userId],
+        });
+      }
+      return result;
     });
     if (!issue) {
       return NextResponse.json({ ok: false, error: '问题或审批状态已变化，请刷新后重试' }, { status: 409 });
@@ -160,6 +189,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ ok: true, issue: serializeIssue(issue) });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
+    if (error instanceof IssueAssigneeAccessError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+    }
     console.error('issue update failed', error);
     return NextResponse.json({ ok: false, error: '问题更新失败' }, { status: 500 });
   }

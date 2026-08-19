@@ -206,6 +206,16 @@ export function parseEmployeeIds(value: unknown): string[] {
   return ids;
 }
 
+export function parseAttendanceEmployeeIds(value: unknown): string[] {
+  if (!Array.isArray(value)) throw new Error('请选择考勤员工');
+  if (value.length > 2000) throw new Error('单次最多批量处理 2000 名员工');
+  const normalizedIds = value.map(item => cleanProcessText(item, 80));
+  if (normalizedIds.some(id => !id)) throw new Error('考勤员工标识不能为空');
+  const ids = [...new Set(normalizedIds)];
+  if (!ids.length) throw new Error('至少选择一名考勤员工');
+  return ids;
+}
+
 export function parseOptionalPositiveInteger(value: unknown, label: string): number | null {
   if (value === undefined || value === null || String(value).trim() === '') return null;
   const parsed = Number(value);

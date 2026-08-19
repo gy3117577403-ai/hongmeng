@@ -6,9 +6,17 @@ import {
   basisPoints,
   defaultAttendanceSegments,
   parseAttendanceSegments,
+  parseAttendanceEmployeeIds,
   parseEventDateTimes,
   STANDARD_DAY_MILLISECONDS,
 } from '../lib/attendance';
+
+test('attendance bulk employee selection is unique, bounded and rejects invalid identifiers', () => {
+  assert.deepEqual(parseAttendanceEmployeeIds([' employee-1 ', 'employee-2', 'employee-1']), ['employee-1', 'employee-2']);
+  assert.throws(() => parseAttendanceEmployeeIds([]), /至少选择一名考勤员工/);
+  assert.throws(() => parseAttendanceEmployeeIds(['ok', '']), /员工标识不能为空/);
+  assert.throws(() => parseAttendanceEmployeeIds(Array.from({ length: 2001 }, (_, index) => `employee-${index}`)), /最多批量处理 2000 名员工/);
+});
 
 test('default attendance uses 08:00-12:00 and 13:00-17:00 for eight hours', () => {
   const segments = defaultAttendanceSegments('2026-07-17');

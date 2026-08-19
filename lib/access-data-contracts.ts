@@ -3,7 +3,7 @@ import type { AccessModuleCode } from '@/lib/department-access';
 export type AccessDataContract = {
   label: string;
   endpoints: readonly string[];
-  datasetKey?: 'workOrders' | 'drawings' | 'manuals' | 'productTimes' | 'attendance' | 'employees' | 'completions';
+  datasetKey?: 'workOrders' | 'drawings' | 'manuals' | 'productTimes' | 'attendance' | 'employees' | 'completions' | 'issues' | 'materialFollowUps';
   scoped?: boolean;
 };
 
@@ -15,12 +15,12 @@ export type AccessDataContract = {
 export const ACCESS_DATA_CONTRACTS: Partial<Record<AccessModuleCode, AccessDataContract>> = {
   FIELD_REPORT: { label: '现场报工', endpoints: ['/api/field-report/terminals'], scoped: true },
   BUSINESS: { label: '业务订单', endpoints: ['/api/work-orders'], datasetKey: 'workOrders' },
-  PROCUREMENT: { label: '物料跟进', endpoints: ['/api/material-follow-ups'] },
+  PROCUREMENT: { label: '物料跟进', endpoints: ['/api/material-follow-ups'], datasetKey: 'materialFollowUps' },
   WAREHOUSE: { label: '仓库管理', endpoints: ['/api/warehouse/material-tasks'] },
   ENGINEERING: { label: '技术资料', endpoints: ['/api/drawing-library'], datasetKey: 'drawings' },
-  QUALITY: { label: '质量协同', endpoints: ['/api/issues'] },
+  QUALITY: { label: '质量协同', endpoints: ['/api/issues'], datasetKey: 'issues' },
   PROCESS: { label: '工艺管理', endpoints: ['/api/product-time-profiles'], datasetKey: 'productTimes' },
-  ISSUE_MANAGEMENT: { label: '问题管理', endpoints: ['/api/issues'] },
+  ISSUE_MANAGEMENT: { label: '问题管理', endpoints: ['/api/issues'], datasetKey: 'issues' },
   CHANGE_MANAGEMENT: { label: '变更管理', endpoints: ['/api/changes'] },
   DRAWING_LIBRARY: { label: '图纸资料库', endpoints: ['/api/drawing-library'], datasetKey: 'drawings' },
   ASSEMBLY_MANUALS: {

@@ -65,6 +65,9 @@ test('stable department, profile and grant-type codes match the persistence cont
     'FINANCE_ACCOUNT_ONLY',
     'WORKSHOP_SUPERVISOR',
     'WORKSHOP_TEAM_LEADER',
+    'PLANNING_COLLABORATOR',
+    'PRODUCTION_COLLABORATOR',
+    'MATERIAL_FOLLOW_UP_OPERATOR',
   ]);
   assert.deepEqual(ACCESS_GRANT_TYPES, ['PRIMARY', 'CONCURRENT', 'ACTING']);
 });
@@ -340,6 +343,7 @@ test('workshop supervisor gets production operations for the whole workshop scop
   assert.deepEqual(allowedActions(context, 'ASSEMBLY_MANUALS'), ['READ']);
   assert.deepEqual(allowedActions(context, 'PRODUCT_TIME'), ['READ']);
   assert.deepEqual(allowedActions(context, 'ATTENDANCE'), DEPARTMENT_OPERATION_ACTIONS);
+  assert.deepEqual(allowedActions(context, 'ISSUE_MANAGEMENT'), ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
   assert.equal(scopeHintsFor(context, 'TERMINAL_TOOLING')[0]?.level, 'GLOBAL');
   assert.equal(scopeHintsFor(context, 'TERMINAL_TOOLING')[0]?.readOnly, true);
   assert.deepEqual(scopeHintsFor(context, 'PRODUCTION'), [{
@@ -353,6 +357,7 @@ test('workshop supervisor gets production operations for the whole workshop scop
     workshopId: 'workshop-a',
   }]);
   assert.equal(scopeHintsFor(context, 'ATTENDANCE')[0]?.level, 'WORKSHOP');
+  assert.equal(scopeHintsFor(context, 'ISSUE_MANAGEMENT')[0]?.level, 'GLOBAL');
   assert.equal(scopeHintsFor(context, 'DRAWING_LIBRARY')[0]?.readOnly, true);
 });
 
@@ -371,6 +376,9 @@ test('workshop team leader gets full actions in every opened module over the sha
     assert.deepEqual(allowedActions(context, module), DEPARTMENT_OPERATION_ACTIONS, module);
     assert.equal(hasCapability(context, module, 'PERMANENT_DELETE'), false, module);
   }
+  assert.deepEqual(allowedActions(context, 'ISSUE_MANAGEMENT'), ['READ', 'CREATE', 'UPDATE', 'EXECUTE_WORKFLOW']);
+  assert.equal(hasCapability(context, 'ISSUE_MANAGEMENT', 'DELETE'), false);
+  assert.equal(scopeHintsFor(context, 'ISSUE_MANAGEMENT')[0]?.level, 'GLOBAL');
 
   const scope = scopeHintsFor(context, 'PRODUCTION')[0];
   assert.equal(scope?.level, 'WORKSHOP');
@@ -383,6 +391,31 @@ test('workshop team leader gets full actions in every opened module over the sha
     assert.equal(scopeHintsFor(context, module)[0]?.level, 'GLOBAL');
     assert.equal(scopeHintsFor(context, module)[0]?.readOnly, false);
   }
+});
+
+test('cross-functional collaborator profiles expose shared data with deliberately bounded writes', () => {
+  const planning = resolveAccessContext([grant('PLANNING_COLLABORATOR', {
+    grantType: 'CONCURRENT', departmentCode: 'PLANNING', scopeKey: 'GLOBAL:PLANNING_COLLABORATION',
+  })], { now: NOW });
+  assert.deepEqual(allowedActions(planning, 'PLANNING'), ['READ', 'CREATE', 'UPDATE']);
+  assert.equal(scopeHintsFor(planning, 'PLANNING')[0]?.level, 'GLOBAL');
+  assert.equal(hasCapability(planning, 'PLANNING', 'DELETE'), false);
+  assert.equal(hasCapability(planning, 'PLANNING', 'EXECUTE_WORKFLOW'), false);
+
+  const production = resolveAccessContext([grant('PRODUCTION_COLLABORATOR', {
+    grantType: 'CONCURRENT', departmentCode: 'PRODUCTION', scopeKey: 'WORKSHOP:PRODUCTION_COLLABORATION',
+  })], { now: NOW });
+  assert.deepEqual(allowedActions(production, 'PRODUCTION'), ['READ']);
+  assert.equal(production.productionScope, 'WORKSHOP');
+  assert.equal(scopeHintsFor(production, 'PRODUCTION')[0]?.readOnly, true);
+
+  const material = resolveAccessContext([grant('MATERIAL_FOLLOW_UP_OPERATOR', {
+    grantType: 'CONCURRENT', departmentCode: 'PROCUREMENT', scopeKey: 'GLOBAL:MATERIAL_FOLLOW_UP',
+  })], { now: NOW });
+  assert.deepEqual(allowedActions(material, 'PROCUREMENT'), ['READ', 'UPDATE', 'EXECUTE_WORKFLOW']);
+  assert.equal(scopeHintsFor(material, 'PROCUREMENT')[0]?.level, 'GLOBAL');
+  assert.equal(hasCapability(material, 'PROCUREMENT', 'CREATE'), false);
+  assert.equal(hasCapability(material, 'PROCUREMENT', 'DELETE'), false);
 });
 
 test('multiple production grants preserve scope details and resolve to the broadest scope hint', () => {

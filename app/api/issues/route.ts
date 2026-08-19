@@ -24,6 +24,8 @@ import {
 } from '@/lib/issue-work-orders';
 import { snapshotChange, workOrderSnapshot } from '@/lib/change-snapshots';
 import { canCreateIssueForProcess, isProcessIssueCollaborator } from '@/lib/process-collaboration-access';
+import { IssueAssigneeAccessError, requireIssueAssigneeReady } from '@/lib/issue-assignee-access';
+import { createSystemNotification } from '@/lib/system-notifications';
 import type { IssuePriority, IssueStatus, IssueType, IssueWorkOrderDraftDTO } from '@/types';
 
 export const runtime = 'nodejs';
@@ -132,7 +134,12 @@ export async function POST(req: NextRequest) {
       type: data.type || 'production',
       isMajorQuality: data.isMajorQuality === true,
     })) {
-      return NextResponse.json({ ok: false, error: '工艺账号只能新建工艺问题，重大质量事项仍由质量部门发起' }, { status: 403 });
+      return NextResponse.json({
+        ok: false,
+        error: isProcessIssueCollaborator(user)
+          ? '工艺账号只能新建工艺问题，重大质量事项仍由质量部门发起'
+          : '重大质量事项必须由质量部门发起',
+      }, { status: 403 });
     }
     const majorQualityError = validateMajorQualityInput({
       type: data.type || 'production',
@@ -164,6 +171,7 @@ export async function POST(req: NextRequest) {
       const employees = await prisma.employee.count({ where: { id: { in: employeeIds }, isActive: true } });
       if (employees !== employeeIds.length) return NextResponse.json({ ok: false, error: '负责人或协同人员不存在、已离职或已停用' }, { status: 404 });
     }
+    const assignee = await requireIssueAssigneeReady(prisma, data.assigneeEmployeeId);
 
     if (body.allowDuplicate !== true && data.workOrderId) {
       const duplicateSignals: Prisma.IssueWhereInput[] = [
@@ -234,6 +242,22 @@ export async function POST(req: NextRequest) {
           },
         },
       });
+      if (assignee && assignee.userId !== user.id) {
+        await createSystemNotification(tx, {
+          eventType: 'ISSUE_ASSIGNED',
+          dedupeKey: `issue:${created.id}:assignment:${created.version}`,
+          category: 'TODO',
+          priority: created.priority === 'urgent' ? 'URGENT' : created.priority === 'high' ? 'HIGH' : 'NORMAL',
+          title: `新问题已分派：${issueCode(created.sequence)} ${created.title}`,
+          body: '请进入问题管理查看详情、处理记录和截止时间。',
+          targetRoute: `/workspace/issues?issueId=${encodeURIComponent(created.id)}`,
+          sourceType: 'issue',
+          sourceId: created.id,
+          actorId: user.id,
+          metadata: { issueSequence: created.sequence, assigneeEmployeeId: assignee.employeeId },
+          recipientUserIds: [assignee.userId],
+        });
+      }
       const issue = await tx.issue.findUniqueOrThrow({ where: { id: created.id }, include: issueDetailInclude });
       return { issue, createdWorkOrder };
     });
@@ -268,6 +292,9 @@ export async function POST(req: NextRequest) {
     }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();
+    if (error instanceof IssueAssigneeAccessError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: error.status });
+    }
     if (error instanceof IssueWorkOrderConflictError) {
       return NextResponse.json({
         ok: false,

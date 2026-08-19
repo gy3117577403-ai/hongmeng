@@ -41,6 +41,9 @@ test('every module exposed by a real access profile can read its registered data
     { profile: 'PROCESS_SPECIALIST', grantType: 'PRIMARY', departmentCode: 'PROCESS', scopeKey: 'DEPARTMENT:PROCESS' },
     { profile: 'WORKSHOP_SUPERVISOR', grantType: 'PRIMARY', departmentCode: 'PRODUCTION', scopeKey: 'WORKSHOP:MAIN' },
     { profile: 'WORKSHOP_TEAM_LEADER', grantType: 'PRIMARY', departmentCode: 'PRODUCTION', scopeKey: 'TEAM:A' },
+    { profile: 'PLANNING_COLLABORATOR', grantType: 'CONCURRENT', departmentCode: 'PLANNING', scopeKey: 'GLOBAL:PLANNING_COLLABORATION' },
+    { profile: 'PRODUCTION_COLLABORATOR', grantType: 'CONCURRENT', departmentCode: 'PRODUCTION', scopeKey: 'WORKSHOP:PRODUCTION_COLLABORATION' },
+    { profile: 'MATERIAL_FOLLOW_UP_OPERATOR', grantType: 'CONCURRENT', departmentCode: 'PROCUREMENT', scopeKey: 'GLOBAL:MATERIAL_FOLLOW_UP' },
     ...(['BUSINESS', 'PROCUREMENT', 'WAREHOUSE', 'ENGINEERING', 'QUALITY', 'PROCESS', 'PLANNING', 'HR'] as const).map(
       departmentCode => ({
         profile: 'DEPARTMENT_FULL' as const,
