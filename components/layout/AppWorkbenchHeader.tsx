@@ -41,8 +41,6 @@ import type { BusinessMode } from '@/components/layout/ModuleModeDrawer';
 import { canAccessAppRoute, landingRouteForAccess } from '@/lib/app-route-access';
 import type { CurrentUserDTO } from '@/types';
 
-const SIDEBAR_PREFERENCE_KEY = 'hm-platform-sidebar-expanded';
-
 type HeaderMenuItem = {
   label: string;
   href?: string;
@@ -84,7 +82,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
     label: '业务中心',
     items: [
       { href: '/production', label: '生产执行', icon: LayoutDashboard, modeSwitchable: true, openModeOnEnter: false },
-      { href: '/weekly-plan-center', label: '计划中心', icon: CalendarDays, modeSwitchable: true },
+      { href: '/weekly-plan-center', label: '计划中心', icon: CalendarDays, modeSwitchable: true, openModeOnEnter: false },
       { href: '/workspace/daily-plans', label: '日出货计划', icon: CalendarClock },
       { href: '/workspace/weekly-processes', label: '周工序总览', icon: ListTree },
       { href: '/drawing-library', label: '图纸资料库', icon: FolderKanban },
@@ -172,7 +170,6 @@ export function AppWorkbenchHeader({
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [internalSidebarExpanded, setInternalSidebarExpanded] = useState(false);
-  const [sidebarPreferenceLoaded, setSidebarPreferenceLoaded] = useState(false);
   const [sidebarTriggerTarget, setSidebarTriggerTarget] = useState<HTMLElement | null>(null);
   const userButtonRef = useRef<HTMLButtonElement>(null);
   const sidebarButtonRef = useRef<HTMLButtonElement>(null);
@@ -204,18 +201,8 @@ export function AppWorkbenchHeader({
   }, [sidebarTriggerTargetId]);
 
   useEffect(() => {
-    if (controlledSidebarExpanded !== undefined) {
-      setSidebarPreferenceLoaded(true);
-      return;
-    }
-    try {
-      setInternalSidebarExpanded(window.localStorage.getItem(SIDEBAR_PREFERENCE_KEY) === 'true');
-    } catch {
-      setInternalSidebarExpanded(false);
-    } finally {
-      setSidebarPreferenceLoaded(true);
-    }
-  }, [controlledSidebarExpanded]);
+    if (controlledSidebarExpanded === undefined) setInternalSidebarExpanded(false);
+  }, [activeHref, controlledSidebarExpanded]);
 
   useEffect(() => {
     const root = sidebarRef.current?.closest<HTMLElement>('.hm-workbench-root');
@@ -223,15 +210,6 @@ export function AppWorkbenchHeader({
     root.classList.toggle('hm-sidebar-expanded', sidebarExpanded);
     return () => root.classList.remove('hm-sidebar-expanded');
   }, [sidebarExpanded]);
-
-  useEffect(() => {
-    if (!sidebarPreferenceLoaded || controlledSidebarExpanded !== undefined) return;
-    try {
-      window.localStorage.setItem(SIDEBAR_PREFERENCE_KEY, String(sidebarExpanded));
-    } catch {
-      // Storage can be unavailable in hardened browser profiles; the in-page toggle still works.
-    }
-  }, [controlledSidebarExpanded, sidebarExpanded, sidebarPreferenceLoaded]);
 
   useEffect(() => {
     if (!sidebarExpanded) return;
@@ -254,9 +232,9 @@ export function AppWorkbenchHeader({
     return () => window.removeEventListener('keydown', openGlobalSearch);
   }, [router]);
 
-  function closeSidebar(): void {
+  function closeSidebar(restoreFocus = true): void {
     updateSidebarExpanded(false);
-    window.requestAnimationFrame(() => sidebarButtonRef.current?.focus());
+    if (restoreFocus) window.requestAnimationFrame(() => sidebarButtonRef.current?.focus());
   }
 
   const sidebarTrigger = (
@@ -267,14 +245,14 @@ export function AppWorkbenchHeader({
 
   return (
     <>
-      <button className={`hm-platform-sidebar-scrim ${sidebarExpanded ? 'open' : ''}`} type="button" aria-label="关闭平台导航" onClick={closeSidebar} />
+      <button className={`hm-platform-sidebar-scrim ${sidebarExpanded ? 'open' : ''}`} type="button" aria-label="关闭平台导航" onClick={() => closeSidebar()} />
       <aside ref={sidebarRef} className={`hm-platform-sidebar ${sidebarExpanded ? 'expanded' : ''}`} id="hm-platform-sidebar" aria-label={`${brandTitle}业务导航`}>
-        <button className="hm-platform-sidebar-close" type="button" aria-label="收起平台导航" title="收起平台导航" onClick={closeSidebar}><PanelLeftClose size={18} aria-hidden="true" /></button>
-        <Link className="hm-platform-brand" href={landingHref} prefetch={false} title={`返回${brandTitle}`}>
+        <button className="hm-platform-sidebar-close" type="button" aria-label="收起平台导航" title="收起平台导航" onClick={() => closeSidebar()}><PanelLeftClose size={18} aria-hidden="true" /></button>
+        <Link className="hm-platform-brand" href={landingHref} prefetch={false} title={`返回${brandTitle}`} onClick={() => closeSidebar(false)}>
           <span aria-hidden="true">杭</span>
           <div><strong>{brandTitle}</strong><small>生产与技术协同工作台</small></div>
         </Link>
-        {canOpenHome && <Link className={`hm-platform-home ${isActiveRoute(activeHref, '/home') ? 'active' : ''}`} href="/home" prefetch={false} title="首页" aria-current={isActiveRoute(activeHref, '/home') ? 'page' : undefined}>
+        {canOpenHome && <Link className={`hm-platform-home ${isActiveRoute(activeHref, '/home') ? 'active' : ''}`} href="/home" prefetch={false} title="首页" aria-current={isActiveRoute(activeHref, '/home') ? 'page' : undefined} onClick={() => closeSidebar(false)}>
           <Home size={18} aria-hidden="true" /><b>首页</b>
         </Link>}
         <nav className="hm-platform-side-nav">
@@ -303,11 +281,15 @@ export function AppWorkbenchHeader({
                     aria-current={active ? 'page' : undefined}
                     aria-controls={canOpenModeFromSidebar ? moduleModeSwitcher?.drawerId : undefined}
                     aria-expanded={canOpenModeFromSidebar ? moduleModeSwitcher?.drawerOpen : undefined}
-                    onClick={activeModeSwitch ? event => {
-                      event.preventDefault();
-                      closeSidebar();
-                      if (canOpenModeFromSidebar) moduleModeSwitcher?.onToggle();
-                    } : undefined}
+                    onClick={event => {
+                      if (activeModeSwitch) {
+                        event.preventDefault();
+                        closeSidebar();
+                        if (canOpenModeFromSidebar) moduleModeSwitcher?.onToggle();
+                        return;
+                      }
+                      closeSidebar(false);
+                    }}
                   >
                     <Icon size={18} aria-hidden="true" />
                     <span>{item.label}</span>
@@ -320,8 +302,8 @@ export function AppWorkbenchHeader({
           ))}
         </nav>
         <div className="hm-platform-sidebar-footer">
-          <Link href="/workspace/help" prefetch={false} title="使用帮助（规划中）" className="planned"><HelpCircle size={18} aria-hidden="true" /><span>使用帮助</span><em>规划</em></Link>
-          {canOpenSystemSettings && <Link href="/dashboard?openSettings=1" prefetch={false} title="系统设置"><Settings size={18} aria-hidden="true" /><span>系统设置</span></Link>}
+          <Link href="/workspace/help" prefetch={false} title="使用帮助（规划中）" className="planned" onClick={() => closeSidebar(false)}><HelpCircle size={18} aria-hidden="true" /><span>使用帮助</span><em>规划</em></Link>
+          {canOpenSystemSettings && <Link href="/dashboard?openSettings=1" prefetch={false} title="系统设置" onClick={() => closeSidebar(false)}><Settings size={18} aria-hidden="true" /><span>系统设置</span></Link>}
         </div>
       </aside>
 

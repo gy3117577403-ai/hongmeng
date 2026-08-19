@@ -260,6 +260,7 @@ export default function SampleTeamCenter({
   modeDrawerInitiallyOpen?: boolean;
 }) {
   const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [tasks, setTasks] = useState<SampleTaskDTO[]>([]);
   const [summary, setSummary] = useState<SampleTeamSummaryDTO>(emptySummary);
   const [selectedId, setSelectedId] = useState('');
@@ -652,6 +653,16 @@ export default function SampleTeamCenter({
     sampleTitle: '样品物料准备',
   };
 
+  function handleNavigationExpandedChange(expanded: boolean): void {
+    setNavigationOpen(expanded);
+    if (expanded) modeDrawer.close(false);
+  }
+
+  function toggleModeDrawer(): void {
+    if (!modeDrawer.open) setNavigationOpen(false);
+    modeDrawer.toggle();
+  }
+
   return (
     <main className="sample-team-page hm-workbench-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
@@ -660,7 +671,9 @@ export default function SampleTeamCenter({
         subtitle={moduleConfig.subtitle}
         hideHeader
         sidebarTriggerTargetId="sample-team-navigation-trigger"
-        moduleModeSwitcher={{ mode: 'sample', drawerId: moduleConfig.drawerId, drawerOpen: modeDrawer.open, onToggle: modeDrawer.toggle }}
+        sidebarExpanded={navigationOpen}
+        onSidebarExpandedChange={handleNavigationExpandedChange}
+        moduleModeSwitcher={{ mode: 'sample', drawerId: moduleConfig.drawerId, drawerOpen: modeDrawer.open, onToggle: toggleModeDrawer, openFromSidebar: false }}
         menuItems={[{ label: '退出登录', onSelect: () => { void logout(); } }]}
       />
 
@@ -670,7 +683,7 @@ export default function SampleTeamCenter({
             <span id="sample-team-navigation-trigger" className="sample-team-navigation-trigger" />
             <div className="sample-team-title-copy">
               <small>{moduleConfig.eyebrow}</small>
-              <div className="sample-team-title-line"><h1>{moduleConfig.title}</h1><ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="sample" onClick={modeDrawer.toggle} controls={moduleConfig.drawerId} compact /></div>
+              <div className="sample-team-title-line"><h1>{moduleConfig.title}</h1><ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="sample" onClick={toggleModeDrawer} controls={moduleConfig.drawerId} compact /></div>
               <p>{moduleConfig.description}</p>
             </div>
           </div>

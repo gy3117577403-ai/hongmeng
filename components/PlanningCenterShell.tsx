@@ -489,6 +489,7 @@ export default function PlanningCenterShell({
   modeDrawerInitiallyOpen?: boolean;
 }) {
   const modeDrawer = useModuleModeDrawer(modeDrawerInitiallyOpen);
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [view, setView] = useState<PlanningView>('schedule');
   const [orders, setOrders] = useState<ProductionPlanOrderDTO[]>([]);
   const [summary, setSummary] = useState<ProductionPlanningSummaryDTO>(emptySummary);
@@ -1748,6 +1749,16 @@ export default function PlanningCenterShell({
     { id: 'history', label: '历史计划', icon: History },
   ];
 
+  function handleNavigationExpandedChange(expanded: boolean): void {
+    setNavigationOpen(expanded);
+    if (expanded) modeDrawer.close(false);
+  }
+
+  function toggleModeDrawer(): void {
+    if (!modeDrawer.open) setNavigationOpen(false);
+    modeDrawer.toggle();
+  }
+
   return <>
     <main ref={mainRef} className="planning-center-shell hm-workbench-root hm-workbench-navigation-overlay">
       <AppWorkbenchHeader
@@ -1757,13 +1768,15 @@ export default function PlanningCenterShell({
         menuItems={[]}
         hideHeader
         sidebarTriggerTargetId="planning-navigation-trigger"
-        moduleModeSwitcher={{ mode: 'mass', drawerId: 'planning-mode-drawer', drawerOpen: modeDrawer.open, onToggle: modeDrawer.toggle }}
+        sidebarExpanded={navigationOpen}
+        onSidebarExpandedChange={handleNavigationExpandedChange}
+        moduleModeSwitcher={{ mode: 'mass', drawerId: 'planning-mode-drawer', drawerOpen: modeDrawer.open, onToggle: toggleModeDrawer, openFromSidebar: false }}
       />
 
       <div className={`planning-center-main${modeDrawer.open ? ' module-mode-open' : ''}`}>
         <header className="planning-titlebar">
           <div className="planning-navigation-trigger" id="planning-navigation-trigger" aria-label="平台导航入口" />
-          <div className="planning-title-copy"><span>生产计划</span><div className="planning-heading-line"><h1>计划中心</h1><ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="mass" onClick={modeDrawer.toggle} controls="planning-mode-drawer" compact /></div><p>订单、排程、配料、工艺与生产下达</p></div>
+          <div className="planning-title-copy"><span>生产计划</span><div className="planning-heading-line"><h1>计划中心</h1><ModuleModeTrigger buttonRef={modeDrawer.triggerRef} open={modeDrawer.open} mode="mass" onClick={toggleModeDrawer} controls="planning-mode-drawer" compact /></div><p>订单、排程、配料、工艺与生产下达</p></div>
           <nav aria-label="计划中心视图">
             {views.map(item => {
               const Icon = item.icon;
