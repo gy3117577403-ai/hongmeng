@@ -235,6 +235,27 @@ test('personnel report reader receives only read-only people report APIs', () =>
   assert.equal(canAccessApiRoute(people, '/api/process-labor-pools/pool-1/claims', 'POST'), false);
 });
 
+test('training collaborator reads shared employees and skills while owning the training workflow only', () => {
+  const training = context({
+    profile: 'TRAINING_COLLABORATOR',
+    departmentCode: 'HR',
+    grantType: 'CONCURRENT',
+    scopeKey: 'GLOBAL:TRAINING',
+  });
+
+  assert.equal(canAccessApiRoute(training, '/api/training/workbench', 'GET'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/courses', 'POST'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/plans/plan-1/transition', 'POST'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/participants/person-1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/export.xlsx', 'GET'), true);
+  assert.equal(canAccessApiRoute(training, '/api/employees', 'GET'), true);
+  assert.equal(canAccessApiRoute(training, '/api/employees', 'POST'), false);
+  assert.equal(canAccessApiRoute(training, '/api/skills', 'GET'), true);
+  assert.equal(canAccessApiRoute(training, '/api/skills', 'POST'), false);
+  assert.equal(canAccessApiRoute(training, '/api/attendance/records', 'GET'), false);
+  assert.equal(canAccessApiRoute(training, '/api/recruitment/demands', 'GET'), false);
+});
+
 test('workshop leaders can read terminal tooling but cannot change or publish it', () => {
   const supervisor = context({
     profile: 'WORKSHOP_SUPERVISOR',

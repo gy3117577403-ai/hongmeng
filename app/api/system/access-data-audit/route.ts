@@ -28,7 +28,7 @@ export async function GET() {
   try {
     await requireCapability('SYSTEM_CONFIGURATION', 'READ');
     const now = new Date();
-    const [users, workOrders, drawings, manuals, productTimes, attendance, employees, completions, issues, materialFollowUps] = await Promise.all([
+    const [users, workOrders, drawings, manuals, productTimes, attendance, employees, completions, issues, materialFollowUps, training] = await Promise.all([
       prisma.user.findMany({
         select: {
           id: true,
@@ -62,8 +62,9 @@ export async function GET() {
       prisma.processCompletion.count(),
       prisma.issue.count({ where: { deletedAt: null } }),
       prisma.materialFollowUpTask.count(),
+      prisma.trainingPlan.count({ where: { deletedAt: null } }),
     ]);
-    const datasets = { workOrders, drawings, manuals, productTimes, attendance, employees, completions, issues, materialFollowUps };
+    const datasets = { workOrders, drawings, manuals, productTimes, attendance, employees, completions, issues, materialFollowUps, training };
 
     const accounts = await Promise.all(users.map(async account => {
       const storedGrants: AccessGrant[] = account.accessGrants.map(grant => ({

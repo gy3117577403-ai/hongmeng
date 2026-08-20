@@ -52,9 +52,10 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
     productionMinimumScope: 'WORKSHOP',
   },
 
-  { prefix: '/api/employees', anyOf: ['HR'] },
+  { prefix: '/api/employees', anyOf: ['HR', 'TRAINING'], readOnlyModules: ['TRAINING'] },
   { prefix: '/api/recruitment', anyOf: ['HR'] },
-  { prefix: '/api/skills', anyOf: ['HR'] },
+  { prefix: '/api/skills', anyOf: ['HR', 'TRAINING'], readOnlyModules: ['TRAINING'] },
+  { prefix: '/api/training', anyOf: ['HR', 'TRAINING'] },
   { prefix: '/api/attendance', anyOf: ['HR', 'ATTENDANCE'] },
   {
     prefix: '/api/abnormal-time-events',

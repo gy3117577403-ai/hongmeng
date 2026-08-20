@@ -68,6 +68,7 @@ test('stable department, profile and grant-type codes match the persistence cont
     'PLANNING_COLLABORATOR',
     'PRODUCTION_COLLABORATOR',
     'MATERIAL_FOLLOW_UP_OPERATOR',
+    'TRAINING_COLLABORATOR',
   ]);
   assert.deepEqual(ACCESS_GRANT_TYPES, ['PRIMARY', 'CONCURRENT', 'ACTING']);
 });
@@ -460,6 +461,24 @@ test('admin has every registered capability with global scope', () => {
   assert.equal(hasCapability(context, 'SYSTEM_CONFIGURATION', 'MANAGE'), true);
   assert.equal(context.productionScope, 'GLOBAL');
   assert.equal(scopeHintsFor(context, 'PRODUCTION')[0]?.level, 'GLOBAL');
+});
+
+test('training collaborator operates the real training ledger without inheriting unrelated HR data', () => {
+  const context = resolveAccessContext([
+    grant('TRAINING_COLLABORATOR', {
+      departmentCode: 'HR',
+      grantType: 'CONCURRENT',
+      scopeKey: 'GLOBAL:TRAINING',
+    }),
+  ], { now: NOW });
+
+  assert.equal(hasCapability(context, 'TRAINING', 'READ'), true);
+  assert.equal(hasCapability(context, 'TRAINING', 'CREATE'), true);
+  assert.equal(hasCapability(context, 'TRAINING', 'UPDATE'), true);
+  assert.equal(hasCapability(context, 'TRAINING', 'DELETE'), true);
+  assert.equal(hasCapability(context, 'TRAINING', 'EXECUTE_WORKFLOW'), true);
+  assert.equal(hasCapability(context, 'HR', 'READ'), false);
+  assert.deepEqual(visibleModules(context).filter(module => ['HR', 'TRAINING'].includes(module)), ['TRAINING']);
 });
 
 test('disabled account resolves no access even when an admin grant is active', () => {

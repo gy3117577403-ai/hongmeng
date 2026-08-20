@@ -265,6 +265,7 @@ enum AccessProfileKey {
   PLANNING_COLLABORATOR
   PRODUCTION_COLLABORATOR
   MATERIAL_FOLLOW_UP_OPERATOR
+  TRAINING_COLLABORATOR
 
   @@map("access_profile_key")
 }
@@ -1142,6 +1143,7 @@ model Employee {
   fieldReportPinSessions           FieldReportPinSession[]
   principalProcessCompletions      ProcessCompletion[]               @relation("ProcessCompletionPrincipalEmployee")
   sampleTaskAssignments            SampleTaskAssignee[]
+  trainingParticipations           TrainingParticipant[]
 
   @@index([isActive, employeeNo])
   @@index([name])
@@ -1670,6 +1672,7 @@ model SkillDefinition {
   templates                 SkillAssessmentTemplate[]
   assessments               SkillAssessment[]
   rewardRules               SkillRewardRule[]
+  trainingCourses           TrainingCourse[]
 
   @@index([category, isActive, sortOrder])
   @@index([name])
@@ -2270,32 +2273,32 @@ model ProcessLaborClaim {
 }
 
 model AttendanceRecord {
-  id                   String    @id @default(uuid())
-  employeeId           String    @map("employee_id")
-  departmentSnapshot   String?   @map("department_snapshot")
-  teamSnapshot         String?   @map("team_snapshot")
-  positionSnapshot     String?   @map("position_snapshot")
-  attainmentEligibleSnapshot Boolean? @map("attainment_eligible_snapshot")
-  workDate             DateTime  @map("work_date") @db.Date
-  status               String    @default("draft")
-  attendanceType       String    @default("normal") @map("attendance_type")
-  plannedMilliseconds  Int       @default(28800000) @map("planned_milliseconds")
-  leaveMilliseconds    Int       @default(0) @map("leave_milliseconds")
-  actualMilliseconds   Int       @default(0) @map("actual_milliseconds")
-  overtimeMilliseconds Int       @default(0) @map("overtime_milliseconds")
-  segments             Json
-  source               String    @default("manual")
-  remark               String?
-  createdById          String?   @map("created_by_id")
-  updatedById          String?   @map("updated_by_id")
-  confirmedById        String?   @map("confirmed_by_id")
-  confirmedAt          DateTime? @map("confirmed_at")
-  createdAt            DateTime  @default(now()) @map("created_at")
-  updatedAt            DateTime  @updatedAt @map("updated_at")
-  employee             Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  createdBy            User?     @relation("AttendanceRecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedBy            User?     @relation("AttendanceRecordUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
-  confirmedBy          User?     @relation("AttendanceRecordConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  id                         String    @id @default(uuid())
+  employeeId                 String    @map("employee_id")
+  departmentSnapshot         String?   @map("department_snapshot")
+  teamSnapshot               String?   @map("team_snapshot")
+  positionSnapshot           String?   @map("position_snapshot")
+  attainmentEligibleSnapshot Boolean?  @map("attainment_eligible_snapshot")
+  workDate                   DateTime  @map("work_date") @db.Date
+  status                     String    @default("draft")
+  attendanceType             String    @default("normal") @map("attendance_type")
+  plannedMilliseconds        Int       @default(28800000) @map("planned_milliseconds")
+  leaveMilliseconds          Int       @default(0) @map("leave_milliseconds")
+  actualMilliseconds         Int       @default(0) @map("actual_milliseconds")
+  overtimeMilliseconds       Int       @default(0) @map("overtime_milliseconds")
+  segments                   Json
+  source                     String    @default("manual")
+  remark                     String?
+  createdById                String?   @map("created_by_id")
+  updatedById                String?   @map("updated_by_id")
+  confirmedById              String?   @map("confirmed_by_id")
+  confirmedAt                DateTime? @map("confirmed_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @updatedAt @map("updated_at")
+  employee                   Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdBy                  User?     @relation("AttendanceRecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy                  User?     @relation("AttendanceRecordUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  confirmedBy                User?     @relation("AttendanceRecordConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
 
   @@unique([employeeId, workDate])
   @@index([workDate, status])
@@ -4338,4 +4341,198 @@ model CapabilityShowcaseShare {
   @@index([siteId, revokedAt, createdAt])
   @@index([expiresAt])
   @@map("capability_showcase_shares")
+}
+
+model TrainingCourse {
+  id                     String               @id @default(uuid())
+  code                   String               @unique
+  name                   String
+  category               String               @default("岗位技能")
+  objective              String?
+  description            String?
+  targetAudience         String?              @map("target_audience")
+  defaultDurationMinutes Int                  @default(60) @map("default_duration_minutes")
+  mode                   String               @default("OFFLINE")
+  isRequired             Boolean              @default(false) @map("is_required")
+  assessmentMode         String               @default("NONE") @map("assessment_mode")
+  passScore              Int?                 @map("pass_score")
+  skillId                String?              @map("skill_id")
+  targetLevel            Int?                 @map("target_level")
+  validityMonths         Int?                 @map("validity_months")
+  retrainingMonths       Int?                 @map("retraining_months")
+  ownerEmployeeId        String?              @map("owner_employee_id")
+  status                 String               @default("ACTIVE")
+  version                Int                  @default(1)
+  createdById            String?              @map("created_by_id")
+  updatedById            String?              @map("updated_by_id")
+  deletedAt              DateTime?            @map("deleted_at")
+  createdAt              DateTime             @default(now()) @map("created_at")
+  updatedAt              DateTime             @updatedAt @map("updated_at")
+  skill                  SkillDefinition?     @relation(fields: [skillId], references: [id], onDelete: SetNull)
+  plans                  TrainingPlan[]
+  attachments            TrainingAttachment[]
+
+  @@index([status, deletedAt, updatedAt])
+  @@index([category, status])
+  @@index([skillId])
+  @@index([ownerEmployeeId])
+  @@map("training_courses")
+}
+
+model TrainingPlan {
+  id               String                @id @default(uuid())
+  code             String                @unique
+  title            String
+  courseId         String?               @map("course_id")
+  courseVersion    Int?                  @map("course_version")
+  courseSnapshot   Json?                 @map("course_snapshot")
+  purpose          String?
+  scopeType        String                @default("SELECTED") @map("scope_type")
+  scopeDescription String?               @map("scope_description")
+  organizerId      String?               @map("organizer_id")
+  trainerId        String?               @map("trainer_id")
+  reviewerId       String?               @map("reviewer_id")
+  departmentId     String?               @map("department_id")
+  startAt          DateTime              @map("start_at")
+  endAt            DateTime              @map("end_at")
+  location         String?
+  mode             String                @default("OFFLINE")
+  isRequired       Boolean               @default(false) @map("is_required")
+  assessmentMode   String                @default("NONE") @map("assessment_mode")
+  passScore        Int?                  @map("pass_score")
+  status           String                @default("DRAFT")
+  publishedAt      DateTime?             @map("published_at")
+  startedAt        DateTime?             @map("started_at")
+  submittedAt      DateTime?             @map("submitted_at")
+  completedAt      DateTime?             @map("completed_at")
+  cancelledAt      DateTime?             @map("cancelled_at")
+  cancelReason     String?               @map("cancel_reason")
+  version          Int                   @default(1)
+  createdById      String?               @map("created_by_id")
+  updatedById      String?               @map("updated_by_id")
+  deletedAt        DateTime?             @map("deleted_at")
+  createdAt        DateTime              @default(now()) @map("created_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+  course           TrainingCourse?       @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  sessions         TrainingSession[]
+  participants     TrainingParticipant[]
+  attachments      TrainingAttachment[]
+  activities       TrainingActivity[]
+
+  @@index([status, startAt, deletedAt])
+  @@index([courseId])
+  @@index([departmentId, startAt])
+  @@index([trainerId, startAt])
+  @@index([reviewerId, status])
+  @@map("training_plans")
+}
+
+model TrainingSession {
+  id            String               @id @default(uuid())
+  planId        String               @map("plan_id")
+  name          String
+  sequence      Int                  @default(1)
+  startAt       DateTime             @map("start_at")
+  endAt         DateTime             @map("end_at")
+  location      String?
+  trainerId     String?              @map("trainer_id")
+  status        String               @default("SCHEDULED")
+  actualStartAt DateTime?            @map("actual_start_at")
+  actualEndAt   DateTime?            @map("actual_end_at")
+  actualMinutes Int?                 @map("actual_minutes")
+  notes         String?
+  version       Int                  @default(1)
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+  plan          TrainingPlan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  attachments   TrainingAttachment[]
+
+  @@unique([planId, sequence])
+  @@index([startAt, status])
+  @@index([trainerId, startAt])
+  @@map("training_sessions")
+}
+
+model TrainingParticipant {
+  id                   String               @id @default(uuid())
+  planId               String               @map("plan_id")
+  employeeId           String               @map("employee_id")
+  employeeNoSnapshot   String               @map("employee_no_snapshot")
+  employeeNameSnapshot String               @map("employee_name_snapshot")
+  departmentSnapshot   String?              @map("department_snapshot")
+  positionSnapshot     String?              @map("position_snapshot")
+  teamSnapshot         String?              @map("team_snapshot")
+  isRequired           Boolean              @default(false) @map("is_required")
+  attendanceStatus     String               @default("INVITED") @map("attendance_status")
+  checkInAt            DateTime?            @map("check_in_at")
+  checkOutAt           DateTime?            @map("check_out_at")
+  actualMinutes        Int?                 @map("actual_minutes")
+  theoryScore          Int?                 @map("theory_score")
+  practicalScore       Int?                 @map("practical_score")
+  score                Int?
+  result               String               @default("PENDING")
+  status               String               @default("INVITED")
+  reviewStatus         String               @default("NOT_REQUIRED") @map("review_status")
+  reviewerId           String?              @map("reviewer_id")
+  reviewComment        String?              @map("review_comment")
+  absenceNote          String?              @map("absence_note")
+  certificationId      String?              @map("certification_id")
+  submittedAt          DateTime?            @map("submitted_at")
+  reviewedAt           DateTime?            @map("reviewed_at")
+  version              Int                  @default(1)
+  createdAt            DateTime             @default(now()) @map("created_at")
+  updatedAt            DateTime             @updatedAt @map("updated_at")
+  plan                 TrainingPlan         @relation(fields: [planId], references: [id], onDelete: Cascade)
+  employee             Employee             @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  attachments          TrainingAttachment[]
+
+  @@unique([planId, employeeId])
+  @@index([employeeId, status])
+  @@index([reviewStatus, updatedAt])
+  @@index([attendanceStatus, updatedAt])
+  @@map("training_participants")
+}
+
+model TrainingAttachment {
+  id            String               @id @default(uuid())
+  courseId      String?              @map("course_id")
+  planId        String?              @map("plan_id")
+  sessionId     String?              @map("session_id")
+  participantId String?              @map("participant_id")
+  kind          String               @default("OTHER")
+  objectKey     String               @unique @map("object_key")
+  originalName  String               @map("original_name")
+  displayName   String?              @map("display_name")
+  mimeType      String               @map("mime_type")
+  size          BigInt
+  uploadedById  String?              @map("uploaded_by_id")
+  deletedAt     DateTime?            @map("deleted_at")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  course        TrainingCourse?      @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  plan          TrainingPlan?        @relation(fields: [planId], references: [id], onDelete: Cascade)
+  session       TrainingSession?     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  participant   TrainingParticipant? @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, deletedAt, createdAt])
+  @@index([planId, deletedAt, createdAt])
+  @@index([sessionId, deletedAt, createdAt])
+  @@index([participantId, deletedAt, createdAt])
+  @@map("training_attachments")
+}
+
+model TrainingActivity {
+  id         String       @id @default(uuid())
+  planId     String       @map("plan_id")
+  action     String
+  fromStatus String?      @map("from_status")
+  toStatus   String?      @map("to_status")
+  content    String?
+  detail     Json?
+  actorId    String?      @map("actor_id")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  plan       TrainingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("training_activities")
 }

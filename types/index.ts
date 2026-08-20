@@ -314,7 +314,8 @@ export type AccessProfileKeyDTO =
   | 'WORKSHOP_TEAM_LEADER'
   | 'PLANNING_COLLABORATOR'
   | 'PRODUCTION_COLLABORATOR'
-  | 'MATERIAL_FOLLOW_UP_OPERATOR';
+  | 'MATERIAL_FOLLOW_UP_OPERATOR'
+  | 'TRAINING_COLLABORATOR';
 export type AccessGrantTypeDTO = 'PRIMARY' | 'CONCURRENT' | 'ACTING';
 
 export type DepartmentRefDTO = {
@@ -346,6 +347,7 @@ export type AccessModuleCodeDTO =
   | 'TERMINAL_TOOLING'
   | 'PLANNING'
   | 'HR'
+  | 'TRAINING'
   | 'PRODUCTION'
   | 'MAJOR_APPROVAL'
   | 'ACCOUNT_ADMIN'

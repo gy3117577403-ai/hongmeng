@@ -39,6 +39,7 @@ export const ACCESS_PROFILE_CODES = [
   'PLANNING_COLLABORATOR',
   'PRODUCTION_COLLABORATOR',
   'MATERIAL_FOLLOW_UP_OPERATOR',
+  'TRAINING_COLLABORATOR',
 ] as const;
 
 export type AccessProfileCode = typeof ACCESS_PROFILE_CODES[number];
@@ -68,6 +69,7 @@ export const ACCESS_MODULES = [
   'TERMINAL_TOOLING',
   'PLANNING',
   'HR',
+  'TRAINING',
   'PRODUCTION',
   'MAJOR_APPROVAL',
   'ACCOUNT_ADMIN',
@@ -107,6 +109,7 @@ export const BUSINESS_MODULES = [
   'PROCESS',
   'PLANNING',
   'HR',
+  'TRAINING',
   'PRODUCTION',
 ] as const satisfies readonly AccessModuleCode[];
 
@@ -149,6 +152,7 @@ export const MODULE_ACTION_MATRIX = {
   TERMINAL_TOOLING: DEPARTMENT_OPERATION_ACTIONS,
   PLANNING: DEPARTMENT_OPERATION_ACTIONS,
   HR: DEPARTMENT_OPERATION_ACTIONS,
+  TRAINING: DEPARTMENT_OPERATION_ACTIONS,
   PRODUCTION: DEPARTMENT_OPERATION_ACTIONS,
   MAJOR_APPROVAL: ['READ', 'APPROVE'],
   ACCOUNT_ADMIN: ['READ', 'CREATE', 'UPDATE', 'DELETE', 'MANAGE'],
@@ -440,6 +444,17 @@ export function resolveAccessContext(
       addScope(scopeForGrant(grant, 'NOTIFICATIONS', 'SELF', false));
       addScope(scopeForGrant(grant, 'BASIC_SUMMARY', 'GLOBAL', true));
       addScope(scopeForGrant(grant, moduleKey, 'DEPARTMENT', false));
+      if (departmentCode === 'HR') {
+        addModuleActions(capabilities, 'TRAINING', DEPARTMENT_OPERATION_ACTIONS);
+        addScope(scopeForGrant(grant, 'TRAINING', 'DEPARTMENT', false));
+      }
+      continue;
+    }
+
+    if (grant.profile === 'TRAINING_COLLABORATOR') {
+      addWorkbenchCommon(capabilities, addScope, grant);
+      addModuleActions(capabilities, 'TRAINING', DEPARTMENT_OPERATION_ACTIONS);
+      addScope(scopeForGrant(grant, 'TRAINING', 'GLOBAL', false));
       continue;
     }
 

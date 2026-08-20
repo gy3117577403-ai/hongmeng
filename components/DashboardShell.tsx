@@ -302,6 +302,7 @@ const accessProfileOptions: Array<{ value: AccessProfileKeyDTO; label: string; d
   { value: 'PLANNING_COLLABORATOR', label: '计划协同', description: '共享计划数据，可建单与维护排程，不含删除和周计划发布' },
   { value: 'PRODUCTION_COLLABORATOR', label: '生产协同只读', description: '查看全车间生产执行与协同数据，不允许现场报工和删除' },
   { value: 'MATERIAL_FOLLOW_UP_OPERATOR', label: '物料跟进经办', description: '共享物料任务，可认领、更新进度并提交仓库确认' },
+  { value: 'TRAINING_COLLABORATOR', label: '培训发展协同', description: '管理课程、培训计划、签到、考核审核和培训档案，不开放其他人事数据' },
   { value: 'GM_OFFICE_READER_APPROVER', label: '总经办', description: '基础摘要只读与重大审批' },
   { value: 'FINANCE_ACCOUNT_ONLY', label: '财务账号', description: '仅账号接入，业务模块待建设' },
   { value: 'ADMIN_GLOBAL', label: '系统管理员', description: '保留现有全部界面与权限' },
@@ -4269,6 +4270,8 @@ function AccountManager({
                 ? 'PROCUREMENT'
                 : profileKey === 'QUALITY_REVIEWER'
                   ? 'QUALITY'
+                  : profileKey === 'TRAINING_COLLABORATOR'
+                    ? 'HR'
                   : profileKey === 'REPORT_PEOPLE_READER'
                     ? 'HR'
                     : ['FIELD_REPORTER', 'WORKSHOP_SUPERVISOR', 'WORKSHOP_TEAM_LEADER'].includes(profileKey)

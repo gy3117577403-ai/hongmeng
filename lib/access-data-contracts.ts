@@ -3,7 +3,7 @@ import type { AccessModuleCode } from '@/lib/department-access';
 export type AccessDataContract = {
   label: string;
   endpoints: readonly string[];
-  datasetKey?: 'workOrders' | 'drawings' | 'manuals' | 'productTimes' | 'attendance' | 'employees' | 'completions' | 'issues' | 'materialFollowUps';
+  datasetKey?: 'workOrders' | 'drawings' | 'manuals' | 'productTimes' | 'attendance' | 'employees' | 'completions' | 'issues' | 'materialFollowUps' | 'training';
   scoped?: boolean;
 };
 
@@ -53,6 +53,7 @@ export const ACCESS_DATA_CONTRACTS: Partial<Record<AccessModuleCode, AccessDataC
   TERMINAL_TOOLING: { label: '端子调模', endpoints: ['/api/terminal-tooling/overview'] },
   PLANNING: { label: '计划中心', endpoints: ['/api/work-orders'], datasetKey: 'workOrders' },
   HR: { label: '人事管理', endpoints: ['/api/employees'], datasetKey: 'employees' },
+  TRAINING: { label: '培训发展', endpoints: ['/api/training/workbench'], datasetKey: 'training' },
   PRODUCTION: {
     label: '生产执行与协同',
     endpoints: [

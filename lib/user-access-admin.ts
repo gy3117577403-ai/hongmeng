@@ -452,6 +452,9 @@ export async function prepareAccessGrant(
   if (profile === AccessProfileKey.MATERIAL_FOLLOW_UP_OPERATOR && department!.code !== 'PROCUREMENT') {
     throw new AccessGrantInputError('物料跟进模板必须选择采购部门');
   }
+  if (profile === AccessProfileKey.TRAINING_COLLABORATOR && department!.code !== 'HR') {
+    throw new AccessGrantInputError('培训发展模板必须选择人事部门');
+  }
   if (
     PRODUCTION_ACCESS_PROFILES.includes(profile)
     && department!.code !== 'PRODUCTION'
@@ -506,6 +509,7 @@ export async function prepareAccessGrant(
   if (profile === AccessProfileKey.PLANNING_COLLABORATOR) scopeKey = 'GLOBAL:PLANNING_COLLABORATION';
   if (profile === AccessProfileKey.PRODUCTION_COLLABORATOR) scopeKey = 'WORKSHOP:PRODUCTION_COLLABORATION';
   if (profile === AccessProfileKey.MATERIAL_FOLLOW_UP_OPERATOR) scopeKey = 'GLOBAL:MATERIAL_FOLLOW_UP';
+  if (profile === AccessProfileKey.TRAINING_COLLABORATOR) scopeKey = 'GLOBAL:TRAINING';
 
   return {
     profile,

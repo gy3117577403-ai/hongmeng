@@ -58,6 +58,7 @@ import EmployeeNumberReorderDialog from '@/components/EmployeeNumberReorderDialo
 import { useToastBridge } from '@/components/ToastProvider';
 import { ResponsibilityMatrixWorkspace } from '@/components/ResponsibilityMatrixWorkspace';
 import SkillPerformanceWorkbench from '@/components/SkillPerformanceWorkbench';
+import TrainingDevelopmentWorkbench from '@/components/TrainingDevelopmentWorkbench';
 import {
   responsibilityPeople,
   responsibilityWorkItems,
@@ -463,6 +464,7 @@ function employeeAccessProfileLabel(value?: string | null): string {
   if (value === 'PLANNING_COLLABORATOR') return '计划协同';
   if (value === 'PRODUCTION_COLLABORATOR') return '生产协同只读';
   if (value === 'MATERIAL_FOLLOW_UP_OPERATOR') return '物料跟进经办';
+  if (value === 'TRAINING_COLLABORATOR') return '培训发展协同';
   return '旧权限兼容';
 }
 
@@ -667,7 +669,12 @@ function EmptyPanel({
 
 export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO }) {
   const canManageAccounts = user.laborRole === 'ADMIN';
-  const [view, setView] = useState<HrView>('overview');
+  const trainingOnly = user.access.modules.includes('TRAINING') && !user.access.modules.includes('HR');
+  const availableNavigation = useMemo(
+    () => trainingOnly ? hrNavigation.filter(item => item.id === 'training') : hrNavigation,
+    [trainingOnly],
+  );
+  const [view, setView] = useState<HrView>(trainingOnly ? 'training' : 'overview');
   const [employees, setEmployees] = useState<EmployeeDTO[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecordDTO[]>([]);
   const [attendanceSummary, setAttendanceSummary] = useState(emptyAttendanceSummary);
@@ -708,7 +715,6 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   const [recruitmentHireDraft, setRecruitmentHireDraft] = useState<RecruitmentHireDraft>(emptyRecruitmentHireDraft);
   const [selectedRecruitmentCandidateId, setSelectedRecruitmentCandidateId] = useState('');
   const [selectedRecruitmentInterviewId, setSelectedRecruitmentInterviewId] = useState('');
-  const [selectedTrainingPlanIndex, setSelectedTrainingPlanIndex] = useState(0);
   const [numberReorderOpen, setNumberReorderOpen] = useState(false);
   const [employmentDialog, setEmploymentDialog] = useState<EmploymentDialogMode>(null);
   const [employmentPreview, setEmploymentPreview] = useState<EmploymentActionResponse | null>(null);
@@ -729,7 +735,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requested = params.get('view') as HrView | null;
-    if (requested && hrNavigation.some(item => item.id === requested)) setView(requested);
+    if (requested && availableNavigation.some(item => item.id === requested)) setView(requested);
     const directoryMode = params.get('mode');
     if (directoryMode === 'edit') setDirectoryEditing(true);
     if (directoryMode === 'create') {
@@ -744,7 +750,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     if (recruitmentStage && recruitmentStageOptions.some(item => item.value === recruitmentStage)) {
       setRecruitingStageFilter(recruitmentStage);
     }
-  }, []);
+  }, [availableNavigation]);
 
   const selectedEmployee = useMemo(
     () => employees.find(employee => employee.id === selectedEmployeeId) || null,
@@ -758,6 +764,12 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   const editorUnlocked = creating || directoryEditing;
 
   const loadHumanResources = useCallback(async (): Promise<void> => {
+    if (trainingOnly) {
+      setLoading(false);
+      setError('');
+      setAuxiliaryWarning('');
+      return;
+    }
     setLoading(true);
     setError('');
     setAuxiliaryWarning('');
@@ -873,7 +885,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     } finally {
       setLoading(false);
     }
-  }, [canManageAccounts]);
+  }, [canManageAccounts, trainingOnly]);
 
   useEffect(() => {
     void loadHumanResources();
@@ -900,9 +912,9 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
     function applyHistoryLocation(): void {
       const params = new URLSearchParams(window.location.search);
       const requestedView = params.get('view') as HrView | null;
-      const nextView = requestedView && hrNavigation.some(item => item.id === requestedView)
+      const nextView = requestedView && availableNavigation.some(item => item.id === requestedView)
         ? requestedView
-        : 'overview';
+        : trainingOnly ? 'training' : 'overview';
       const mode = params.get('mode');
       const nextEditing = nextView === 'directory' && (mode === 'edit' || mode === 'create');
       const nextCreating = nextView === 'directory' && mode === 'create';
@@ -944,7 +956,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
 
     window.addEventListener('popstate', applyHistoryLocation);
     return () => window.removeEventListener('popstate', applyHistoryLocation);
-  }, [baseline, creating, directoryEditing, dirty, employees, selectedEmployeeId]);
+  }, [availableNavigation, baseline, creating, directoryEditing, dirty, employees, selectedEmployeeId, trainingOnly]);
 
   useEffect(() => {
     if (!employmentDialog) return;
@@ -1357,6 +1369,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   function changeView(nextView: HrView, directoryEmployeeId?: string): void {
+    if (!availableNavigation.some(item => item.id === nextView)) return;
     if (nextView === view && directoryEmployeeId === undefined) return;
     if (view === 'directory' && nextView !== 'directory' && !confirmDiscard()) return;
     if (view === 'directory' && nextView !== 'directory' && dirty) setDraft(baseline);
@@ -2778,54 +2791,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
   }
 
   function renderTraining() {
-    const trainingPlans = [
-      { title: '新员工岗位与安全说明', audience: '本月新建员工档案', count: summary.newThisMonth, owner: hrCoordinator?.name || '人事待配置', status: summary.newThisMonth ? '建议建立' : '无需安排', icon: ShieldCheck },
-      { title: '考勤与报工规范复训', audience: '考勤依据缺失人员', count: attainmentReport?.summary.attendanceMissingCount || 0, owner: hrCoordinator?.name || '人事待配置', status: (attainmentReport?.summary.attendanceMissingCount || 0) ? '需要关注' : '状态正常', icon: CalendarCheck2 },
-      { title: '岗位工艺能力提升', audience: '生产与工艺相关岗位', count: departmentStats.find(item => item.name.includes('生产'))?.active || 0, owner: '部门主管待确认', status: '规划中', icon: GraduationCap },
-    ];
-    const selectedTrainingPlan = trainingPlans[Math.min(selectedTrainingPlanIndex, trainingPlans.length - 1)];
-    return (
-      <div className="hr-view hr-module-view hr-training-view">
-        <section className="hr-module-hero">
-          <div><span className="hr-eyebrow">培训发展 · 前端工作区</span><h1>岗位能力与培养计划</h1><p>结合员工档案、考勤和绩效风险给出培训建议，正式培训记录将在后续接入。</p></div>
-          <button type="button" className="hr-primary-button" onClick={() => setToast('培训计划接口已预留，当前版本暂不写入数据')}><Plus size={17} />新建培训计划</button>
-        </section>
-        <DataUnavailable message="当前系统尚无培训台账。本页建议来自现有员工与工时数据，不代表培训已经执行或归档。" />
-        <div className="hr-training-layout">
-          <section className="hr-main-panel hr-training-plans">
-            <header className="hr-section-header"><div><span>能力建议</span><h2>培训计划工作区</h2></div><em>{trainingPlans.length} 项建议</em></header>
-            <div>
-              {trainingPlans.map((plan, index) => {
-                const Icon = plan.icon;
-                return (
-                  <article key={plan.title} className={selectedTrainingPlanIndex === index ? 'active' : ''}>
-                    <span><Icon /></span>
-                    <div><strong>{plan.title}</strong><p>{plan.audience} · 建议覆盖 {plan.count} 人</p><small>协调人：{plan.owner}</small></div>
-                    <em>{plan.status}</em>
-                    <button type="button" onClick={() => setSelectedTrainingPlanIndex(index)}>查看详情<ChevronRight /></button>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
-          <aside className="hr-main-panel hr-competency-panel">
-            <header className="hr-section-header"><div><span>档案质量</span><h2>能力数据准备度</h2></div></header>
-            <div className="hr-training-selection">
-              <span>{selectedTrainingPlan.status}</span>
-              <strong>{selectedTrainingPlan.title}</strong>
-              <p>{selectedTrainingPlan.audience} · 建议覆盖 {selectedTrainingPlan.count} 人</p>
-              <small>协调人：{selectedTrainingPlan.owner}</small>
-            </div>
-            <div className="hr-readiness-ring"><strong>{archiveCompleteness}%</strong><span>组织资料完整</span></div>
-            <ul>
-              <li><span>部门信息</span><strong>{employees.filter(item => item.department).length} / {summary.total}</strong></li>
-              <li><span>岗位信息</span><strong>{employees.filter(item => item.position).length} / {summary.total}</strong></li>
-              <li><span>班组信息</span><strong>{employees.filter(item => item.team).length} / {summary.total}</strong></li>
-            </ul>
-          </aside>
-        </div>
-      </div>
-    );
+    return <TrainingDevelopmentWorkbench />;
   }
 
   function renderOrganization() {
@@ -3023,7 +2989,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
       <div className="hr-shell">
         <nav className="hr-module-tabs" aria-label="人事管理功能导航">
           <div className="hr-module-tab-list">
-            {hrNavigation.map(item => {
+            {availableNavigation.map(item => {
               const Icon = item.icon;
               return (
                 <button
@@ -3043,7 +3009,7 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
           <label className="hr-module-mobile-select">
             <span>当前功能</span>
             <select value={view} onChange={event => changeView(event.target.value as HrView)} aria-label="切换人事功能">
-              {hrNavigation.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}
+              {availableNavigation.map(item => <option value={item.id} key={item.id}>{item.label}</option>)}
             </select>
           </label>
         </nav>

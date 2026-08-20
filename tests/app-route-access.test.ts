@@ -103,6 +103,14 @@ test('personnel report reader can open reports without receiving planning or pro
   assert.equal(canAccessAppRoute(hrReport, '/production'), false);
 });
 
+test('training collaborator opens the employee shell but not unrelated HR workspaces', () => {
+  const training = access('ACCOUNT_SELF', 'BASIC_SUMMARY', 'TRAINING');
+  assert.equal(canAccessAppRoute(training, '/workspace/employees?view=training'), true);
+  assert.equal(canAccessAppRoute(training, '/workspace/attendance'), false);
+  assert.equal(canAccessAppRoute(training, '/workspace/reports'), false);
+  assert.equal(canAccessAppRoute(training, '/weekly-plan-center'), false);
+});
+
 test('longest specific production rule is selected before general prefix', () => {
   assert.deepEqual(routeAccessRule('/production/qr-print')?.anyOf, ['PRODUCTION']);
 });
