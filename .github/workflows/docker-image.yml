@@ -138,14 +138,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.27
+            org.opencontainers.image.version=v1.34.28
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.27
+            APP_VERSION=v1.34.28
             APP_REVISION=${{ github.sha }}
           load: true
           push: false
@@ -264,10 +264,13 @@ jobs:
           done <<EOF
           $RELEASE_TAGS
           EOF
-      - name: Verify Sealos China mirror matches GHCR
+      - name: Verify Sealos China mirror manifest and blobs
         env:
           UPSTREAM_IMAGE: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
           SEALOS_IMAGE: ghcr.nju.edu.cn/${{ github.repository }}:${{ github.ref_name }}
+          SEALOS_REGISTRY: ghcr.nju.edu.cn
+          IMAGE_REPOSITORY: ${{ github.repository }}
+          IMAGE_REFERENCE: ${{ github.ref_name }}
         run: |
           upstream_digest="$(docker buildx imagetools inspect "$UPSTREAM_IMAGE" | awk '$1 == "Digest:" { print $2; exit }')"
           test -n "$upstream_digest"
@@ -287,10 +290,63 @@ jobs:
             exit 1
           fi
 
+          manifest_file="$(mktemp)"
+          blob_file="$(mktemp)"
+          cleanup_mirror_files() {
+            rm -f "$manifest_file" "$blob_file"
+          }
+          trap cleanup_mirror_files EXIT
+
+          manifest_url="https://${SEALOS_REGISTRY}/v2/${IMAGE_REPOSITORY}/manifests/${IMAGE_REFERENCE}"
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-all-errors --retry-delay 5 \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+            "$manifest_url" > "$manifest_file"
+
+          downloaded_manifest_digest="sha256:$(sha256sum "$manifest_file" | awk '{ print $1 }')"
+          if [ "$downloaded_manifest_digest" != "$upstream_digest" ]; then
+            echo "Downloaded Sealos manifest digest mismatch: expected=$upstream_digest actual=$downloaded_manifest_digest" >&2
+            exit 1
+          fi
+
+          mapfile -t blob_digests < <(jq -r '.config.digest, .layers[].digest' "$manifest_file")
+          if [ "${#blob_digests[@]}" -lt 2 ]; then
+            echo "Sealos manifest did not contain the expected config and layer blobs" >&2
+            exit 1
+          fi
+
+          for digest in "${blob_digests[@]}"; do
+            verified=0
+            blob_url="https://${SEALOS_REGISTRY}/v2/${IMAGE_REPOSITORY}/blobs/${digest}"
+            for attempt in $(seq 1 5); do
+              rm -f "$blob_file"
+              if curl --fail --silent --show-error --location \
+                --retry 3 --retry-all-errors --retry-delay 3 \
+                "$blob_url" > "$blob_file"; then
+                actual_digest="sha256:$(sha256sum "$blob_file" | awk '{ print $1 }')"
+                if [ "$actual_digest" = "$digest" ]; then
+                  verified=1
+                  echo "Verified Sealos blob $digest ($(stat -c%s "$blob_file") bytes)"
+                  break
+                fi
+                echo "Sealos blob digest mismatch ($attempt/5): expected=$digest actual=$actual_digest" >&2
+              else
+                echo "Sealos blob download failed ($attempt/5): $digest" >&2
+              fi
+              sleep $((attempt * 5))
+            done
+            if [ "$verified" != "1" ]; then
+              echo "Sealos blob verification failed after retries: $digest" >&2
+              exit 1
+            fi
+          done
+
           {
             echo "### Sealos deployment image"
             echo
             echo "\`$SEALOS_IMAGE\`"
             echo
             echo "Verified digest: \`$upstream_digest\`"
+            echo
+            echo "Downloaded and SHA-256 verified ${#blob_digests[@]} config/layer blobs from the Sealos mirror."
           } >> "$GITHUB_STEP_SUMMARY"

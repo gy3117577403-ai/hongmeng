@@ -16,7 +16,7 @@ const dockerfile = readFileSync(resolve(repositoryRoot, 'Dockerfile'), 'utf8');
 const workflow = readFileSync(resolve(repositoryRoot, '.github/workflows/docker-image.yml'), 'utf8');
 const appInfo = readFileSync(resolve(repositoryRoot, 'lib/app-info.ts'), 'utf8');
 
-const expectedPackageVersion = '1.34.27';
+const expectedPackageVersion = '1.34.28';
 const expectedImageVersion = `v${expectedPackageVersion}`;
 
 test('release version stays aligned across npm, Docker, and GHCR publishing', () => {
@@ -55,6 +55,16 @@ test('GHCR images retain immutable traceability tags and OCI identity labels', (
   assert.match(workflow, /^\s+declare -A pushed_tags=\(\)$/m);
   assert.match(workflow, /^\s+for attempt in \$\(seq 1 5\); do$/m);
   assert.match(workflow, /GHCR push failed after retries:/);
+  assert.match(workflow, /^\s+- name: Verify Sealos China mirror manifest and blobs$/m);
+  assert.match(workflow, /\/blobs\/\$\{digest\}/);
+  assert.match(workflow, /sha256sum "\$blob_file"/);
+  assert.match(workflow, /Sealos blob verification failed after retries:/);
+});
+
+test('release image changes the standalone application layer for every immutable release', () => {
+  assert.match(dockerfile, /\.next\/standalone\/\.release-image\.json/);
+  assert.match(dockerfile, /process\.env\.APP_VERSION/);
+  assert.match(dockerfile, /process\.env\.APP_REVISION/);
 });
 
 test('runtime image explicitly carries both PDF.js worker variants', () => {

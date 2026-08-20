@@ -1,5 +1,5 @@
 FROM node:20-alpine AS base
-ARG APP_VERSION=v1.34.27
+ARG APP_VERSION=v1.34.28
 ARG APP_REVISION=local
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1 APP_VERSION=$APP_VERSION APP_REVISION=$APP_REVISION
@@ -12,6 +12,7 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 RUN cp -r .next/static .next/standalone/.next/static && if [ -d public ]; then cp -r public .next/standalone/public; fi
+RUN node -e "const fs = require('node:fs'); fs.writeFileSync('.next/standalone/.release-image.json', JSON.stringify({ version: process.env.APP_VERSION, revision: process.env.APP_REVISION }) + '\\n')"
 
 FROM base AS runner
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0 DAILY_PLAN_ENABLED=true
