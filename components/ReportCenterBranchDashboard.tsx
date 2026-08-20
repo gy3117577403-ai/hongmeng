@@ -30,6 +30,7 @@ import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
+import { populateBusinessReportWorkbook, type BusinessExcelKpi, type BusinessExcelValue } from '@/lib/business-excel';
 import {
   REPORT_DOMAINS,
   hasFullReportAccess,
@@ -131,16 +132,43 @@ function rangeText(report: { rangeStart: string; rangeEnd: string } | null): str
   return `${dateOnly(report.rangeStart)} 至 ${dateOnly(end.toISOString())}`;
 }
 
-async function downloadWorkbook(name: string, rows: unknown[][], notes: unknown[][]): Promise<void> {
-  const XLSX = await import('xlsx');
-  const workbook = XLSX.utils.book_new();
-  const detail = XLSX.utils.aoa_to_sheet(rows);
-  const definitions = XLSX.utils.aoa_to_sheet(notes);
-  detail['!cols'] = rows[0]?.map((_, index) => ({ wch: index === 0 ? 24 : 16 })) || [];
-  definitions['!cols'] = [{ wch: 18 }, { wch: 70 }];
-  XLSX.utils.book_append_sheet(workbook, detail, '数据明细');
-  XLSX.utils.book_append_sheet(workbook, definitions, '统计口径');
-  XLSX.writeFile(workbook, name, { compression: true });
+async function downloadWorkbook(input: {
+  name: string;
+  title: string;
+  subtitle: string;
+  period: string;
+  scope: string;
+  generatedAt: string;
+  method: string;
+  kpis: BusinessExcelKpi[];
+  rows: BusinessExcelValue[][];
+}): Promise<void> {
+  const { Workbook } = await import('exceljs');
+  const workbook = new Workbook();
+  const [headers = [], ...body] = input.rows;
+  populateBusinessReportWorkbook(workbook, {
+    title: input.title,
+    subtitle: input.subtitle,
+    sheetName: input.title,
+    period: input.period,
+    scope: input.scope,
+    generatedAt: input.generatedAt,
+    method: input.method,
+    headers: headers.map(value => String(value ?? '')),
+    rows: body,
+    kpis: input.kpis,
+  });
+  const bytes = await workbook.xlsx.writeBuffer({ useStyles: true, useSharedStrings: true });
+  const url = URL.createObjectURL(new Blob([bytes as ArrayBuffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = input.name;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function safeHref(item: ReportCenterFocusItemDTO): string {
@@ -582,15 +610,28 @@ export default function ReportCenterBranchDashboard({
         ...claimRows(laborPools).map(({ pool, claim }) => [pool.workOrder.code, pool.step.processName, claim.employee.name, claim.quantity, pool.unitLabel, compactHours(claim.standardLaborMilliseconds), dateTimeText(claim.claimedAt)]),
       ];
     }
-    await downloadWorkbook(`${branch.label}-${stamp}.xlsx`, rows, [
-      ['项目', '说明'],
-      ['报表分支', `${domain.label} / ${branch.label}`],
-      ['统计范围', branchUsesSingleDate(initialBranch) ? date : rangeText(activeRange)],
-      ['筛选条件', [customer ? `客户=${customer}` : '', team ? `班组=${team}` : '', keyword ? `搜索=${keyword}` : ''].filter(Boolean).join('；') || '无'],
-      ['计算口径', branchMethod(initialBranch)],
-      ['生成时间', dateTimeText(new Date().toISOString())],
-    ]);
-    setToast('已导出当前分支 Excel，包含数据明细和统计口径');
+    const scopeText = [customer ? `客户=${customer}` : '', team ? `班组=${team}` : '', keyword ? `搜索=${keyword}` : ''].filter(Boolean).join('；') || '当前权限范围';
+    await downloadWorkbook({
+      name: `${branch.label}-${stamp}.xlsx`,
+      title: `${branch.label}业务报表`,
+      subtitle: `${domain.label} / ${branch.label} · 一个指标一个分支`,
+      period: branchUsesSingleDate(initialBranch) ? date : rangeText(activeRange),
+      scope: scopeText,
+      generatedAt: dateTimeText(new Date().toISOString()),
+      method: branchMethod(initialBranch),
+      kpis: [
+        { icon: '核', label: metric.label, value: metric.value, unit: metric.unit, note: metric.description, tone: metric.tone },
+        ...metric.stats.slice(0, 3).map((item, index) => ({
+          icon: ['量', '进', '险'][index],
+          label: item.label,
+          value: item.value,
+          note: item.note,
+          tone: (index === 0 ? 'green' : index === 1 ? 'blue' : 'red') as 'green' | 'blue' | 'red',
+        })),
+      ],
+      rows: rows as BusinessExcelValue[][],
+    });
+    setToast('已导出单页业务报表：核心指标、当前分支明细和统计说明在同一工作表');
   }
 
   async function logout(): Promise<void> {

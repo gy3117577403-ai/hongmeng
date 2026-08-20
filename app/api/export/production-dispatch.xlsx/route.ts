@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { populateBusinessReportWorkbook } from '@/lib/business-excel';
 import { logOp } from '@/lib/logs';
 import {
   loadProductionExecution,
@@ -25,6 +26,27 @@ function selectedIds(request: NextRequest): string[] {
     .filter(Boolean);
 }
 
+function finiteNumber(value: unknown): number {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function chinaDateKey(value: Date | null): string {
+  return value?.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' }) || '未建立周计划';
+}
+
+function chinaDateTime(value = new Date()): string {
+  return new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(value).replaceAll('/', '-');
+}
+
 export async function GET(request: NextRequest) {
   try {
     const user = await requireUser();
@@ -41,37 +63,65 @@ export async function GET(request: NextRequest) {
       productionScope,
     });
     const rows = buildProductionDispatchDocumentRows(data.items, selectedIds(request));
-    const workbook = XLSX.utils.book_new();
-    const sheet = XLSX.utils.json_to_sheet(rows.map(row => ({
-      规格: row.specification,
-      客户: row.customer,
-      品名: row.productName,
-      生产状态: row.productionStatus,
-      优先级: row.priority,
-      交期: row.deliveryDate,
-      工单数量: row.targetQty,
-      生产日期: row.workDate,
-      班次: row.shift,
-      班组: row.team,
-      排班状态: row.arrangementStatus,
-      工序范围: row.processes,
-      计划数量: row.plannedQty,
-      已报数量: row.completedQty,
-      剩余数量: row.remainingQty,
-      安排人员: row.employees,
-      人员分配: row.employeeQuantities,
-      计划工时小时: row.plannedHours,
-    })));
-    sheet['!freeze'] = { xSplit: 1, ySplit: 1 };
-    sheet['!cols'] = [
-      { wch: 24 }, { wch: 16 }, { wch: 22 }, { wch: 12 }, { wch: 9 }, { wch: 12 },
-      { wch: 10 }, { wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 11 }, { wch: 28 },
-      { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 28 }, { wch: 28 }, { wch: 12 },
-    ];
-    XLSX.utils.book_append_sheet(workbook, sheet, '生产调度排班');
-    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
-    await logOp({ userId: user.id, action: 'export_production_dispatch', targetType: 'work_order', detail: { count: rows.length } });
-    return new NextResponse(buffer, {
+    const workbook = new ExcelJS.Workbook();
+    const plannedQty = rows.reduce((sum, row) => sum + finiteNumber(row.plannedQty), 0);
+    const completedQty = rows.reduce((sum, row) => sum + finiteNumber(row.completedQty), 0);
+    const remainingQty = rows.reduce((sum, row) => sum + finiteNumber(row.remainingQty), 0);
+    const uniqueOrders = new Set(rows.map(row => row.workOrderId).filter(Boolean)).size;
+    const completionRate = plannedQty > 0 ? completedQty / plannedQty : 0;
+    const period = `${chinaDateKey(week.weekStart)} 至 ${chinaDateKey(week.weekEnd)}`;
+    populateBusinessReportWorkbook(workbook, {
+      title: '生产调度排班表',
+      subtitle: '工单、工序、人员与数量执行快照',
+      sheetName: '生产调度排班',
+      period,
+      scope: selectedIds(request).length ? `已选 ${uniqueOrders} 单` : `当前筛选 · ${uniqueOrders} 单`,
+      generatedAt: chinaDateTime(),
+      method: '数据来自当前生产执行筛选结果；计划、已报与剩余数量按排班记录汇总，同一工单存在多条排班时分别展示。',
+      kpis: [
+        { icon: '▣', label: '工单数量', value: uniqueOrders, unit: '单', note: `${rows.length} 条排班记录`, tone: 'orange' },
+        { icon: '✓', label: '已报数量', value: completedQty.toLocaleString('zh-CN'), note: `计划 ${plannedQty.toLocaleString('zh-CN')}`, tone: 'green' },
+        { icon: '↗', label: '完成率', value: `${(completionRate * 100).toFixed(1)}%`, note: '已报数量 ÷ 计划数量', tone: 'blue' },
+        { icon: '!', label: '剩余数量', value: remainingQty.toLocaleString('zh-CN'), note: '待排产或待报工数量', tone: remainingQty > 0 ? 'red' : 'green' },
+      ],
+      headers: [
+        '规格', '客户', '品名', '生产状态', '优先级', '交期', '工单数量', '生产日期', '班次', '班组',
+        '排班状态', '工序范围', '计划数量', '已报数量', '剩余数量', '安排人员', '人员分配', '计划工时(小时)',
+      ],
+      rows: rows.map(row => [
+        row.specification,
+        row.customer,
+        row.productName,
+        row.productionStatus,
+        row.priority,
+        row.deliveryDate,
+        row.targetQty,
+        row.workDate,
+        row.shift,
+        row.team,
+        row.arrangementStatus,
+        row.processes,
+        row.plannedQty,
+        row.completedQty,
+        row.remainingQty,
+        row.employees,
+        row.employeeQuantities,
+        row.plannedHours,
+      ]),
+    });
+    const buffer = await workbook.xlsx.writeBuffer();
+    await logOp({
+      userId: user.id,
+      action: 'export_production_dispatch',
+      targetType: 'work_order',
+      detail: { count: rows.length, workOrderCount: uniqueOrders, sheetCount: 1, period },
+    });
+    const responseBuffer = Buffer.from(buffer);
+    const responseBody = responseBuffer.buffer.slice(
+      responseBuffer.byteOffset,
+      responseBuffer.byteOffset + responseBuffer.byteLength,
+    ) as ArrayBuffer;
+    return new NextResponse(responseBody, {
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent('生产调度排班.xlsx')}`,

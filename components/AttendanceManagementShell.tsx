@@ -399,7 +399,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       }
       const disposition = response.headers.get('content-disposition') || '';
       const encodedName = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
-      const fileName = encodedName ? decodeURIComponent(encodedName) : `考勤-${date}.xlsx`;
+      const fileName = encodedName ? decodeURIComponent(encodedName) : `员工出勤记录表-${date}.xlsx`;
       const url = URL.createObjectURL(await response.blob());
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -407,7 +407,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       anchor.click();
       URL.revokeObjectURL(url);
       setExportOpen(false);
-      setToast('考勤 Excel 已导出，草稿与异常已单独列出');
+      setToast('员工出勤记录表已导出：一个文件、一张工作表');
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '考勤导出失败');
     } finally {
@@ -806,9 +806,9 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
 
       {exportOpen && <div className="attendance-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setExportOpen(false); }}>
         <section className="attendance-dialog attendance-export-dialog" role="dialog" aria-modal="true" aria-labelledby="attendance-export-title">
-          <header><div><span>Excel 工作簿</span><h2 id="attendance-export-title">导出考勤与异常数据</h2></div><button type="button" aria-label="关闭" title="关闭" onClick={() => setExportOpen(false)}><X size={18} /></button></header>
+          <header><div><span>单页业务报表</span><h2 id="attendance-export-title">导出员工出勤记录表</h2></div><button type="button" aria-label="关闭" title="关闭" onClick={() => setExportOpen(false)}><X size={18} /></button></header>
           <div className="attendance-dialog-body">
-            <div className="attendance-batch-warning"><ShieldCheck size={16} /><span><strong>页面与导出使用同一权限边界</strong><small>工作簿包含导出说明、员工汇总、每日明细、班组汇总、异常与草稿。</small></span></div>
+            <div className="attendance-batch-warning"><ShieldCheck size={16} /><span><strong>一个文件只输出一张员工出勤表</strong><small>顶部 4 项指标、每日工时矩阵、人员汇总和 2 张紧凑图表全部在同一工作表；草稿与缺失以状态标记，不再拆分多张表。</small></span></div>
             <fieldset><legend>统计周期</legend>{(['week', 'month', 'custom'] as ExportPeriod[]).map(item => <label key={item}><input type="radio" name="attendance-export-period" checked={exportPeriod === item} onChange={() => setExportPeriod(item)} /><span>{item === 'week' ? '按周' : item === 'month' ? '按月' : '自定义日期'}</span></label>)}</fieldset>
             {exportPeriod === 'custom' && <fieldset><legend>自定义日期（含首尾两天）</legend><label><span>开始日期</span><input type="date" value={exportStartDate} max={exportEndDate} onChange={event => setExportStartDate(event.target.value)} /></label><label><span>结束日期</span><input type="date" value={exportEndDate} min={exportStartDate} onChange={event => setExportEndDate(event.target.value)} /></label></fieldset>}
             <fieldset><legend>人员范围</legend><label><input type="radio" name="attendance-export-scope" checked={!exportSelectedOnly} onChange={() => setExportSelectedOnly(false)} /><span>当前权限范围 · {workforceLabel}</span></label><label><input type="radio" name="attendance-export-scope" checked={exportSelectedOnly} disabled={!selectedEmployeeIds.length} onChange={() => setExportSelectedOnly(true)} /><span>仅导出已选 {selectedEmployeeIds.length} 人</span></label></fieldset>
