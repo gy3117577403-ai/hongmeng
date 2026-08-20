@@ -156,6 +156,7 @@ export function serializeEmployee(employee: Employee): EmployeeDTO {
     notificationEnabled: employee.notificationEnabled,
     isActive: employee.isActive,
     attendanceEnabled: employee.attendanceEnabled,
+    attainmentEligible: employee.attainmentEligible,
     resignedAt: employee.resignedAt ? employee.resignedAt.toISOString().slice(0, 10) : null,
     resignationReason: employee.resignationReason,
     resignationNote: employee.resignationNote,
@@ -185,8 +186,10 @@ function addUtcDays(value: Date, days: number): Date {
 }
 
 export function employeeReportRange(
-  period: 'today' | 'week' | 'month',
+  period: 'today' | 'week' | 'month' | 'custom',
   requestedDate?: string | null,
+  requestedStartDate?: string | null,
+  requestedEndDate?: string | null,
 ): { date: string; start: Date; end: Date } {
   const fallback = chinaDateKey(new Date());
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedDate || ''))
@@ -194,6 +197,24 @@ export function employeeReportRange(
     : fallback;
   const anchor = chinaMidnight(date);
   if (Number.isNaN(anchor.getTime())) return employeeReportRange(period, fallback);
+  if (period === 'custom') {
+    const startKey = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedStartDate || ''))
+      ? String(requestedStartDate)
+      : date;
+    const endKey = /^\d{4}-\d{2}-\d{2}$/.test(String(requestedEndDate || ''))
+      ? String(requestedEndDate)
+      : startKey;
+    const start = chinaMidnight(startKey);
+    const inclusiveEnd = chinaMidnight(endKey);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(inclusiveEnd.getTime()) || inclusiveEnd < start) {
+      throw new Error('自定义统计周期的结束日期不能早于开始日期');
+    }
+    const end = addUtcDays(inclusiveEnd, 1);
+    if ((end.getTime() - start.getTime()) / 86_400_000 > 366) {
+      throw new Error('自定义统计周期最多支持 366 天');
+    }
+    return { date: startKey, start, end };
+  }
   if (period === 'today') return { date, start: anchor, end: addUtcDays(anchor, 1) };
   if (period === 'week') {
     const chinaNoon = new Date(`${date}T12:00:00+08:00`);

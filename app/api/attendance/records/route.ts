@@ -149,6 +149,9 @@ export async function POST(req: NextRequest) {
       create: {
         employeeId,
         departmentSnapshot: normalizeEmployeeDepartment(employee.department) || '',
+        teamSnapshot: employee.team,
+        positionSnapshot: employee.position,
+        attainmentEligibleSnapshot: employee.attainmentEligible,
         workDate: workDate.value,
         status: confirm ? 'confirmed' : 'draft',
         attendanceType,

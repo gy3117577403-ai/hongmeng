@@ -94,6 +94,7 @@ export function serializeEmployee(employee: Employee): EmployeeDTO {
     notificationEnabled: employee.notificationEnabled,
     isActive: employee.isActive,
     attendanceEnabled: employee.attendanceEnabled,
+    attainmentEligible: employee.attainmentEligible,
     resignedAt: employee.resignedAt ? employee.resignedAt.toISOString().slice(0, 10) : null,
     resignationReason: employee.resignationReason,
     resignationNote: employee.resignationNote,

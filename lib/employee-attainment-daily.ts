@@ -7,6 +7,8 @@ export type DailyAttainmentInput = {
   claimedStandardLaborMilliseconds: number;
   actualLaborMilliseconds: number;
   attendanceConfirmed: boolean;
+  /** Undefined is treated as eligible for backward-compatible historical inputs. */
+  attainmentEligible?: boolean;
 };
 
 export function aggregateDailyAttainment(days: Iterable<DailyAttainmentInput>) {
@@ -19,6 +21,7 @@ export function aggregateDailyAttainment(days: Iterable<DailyAttainmentInput>) {
   let attendanceMissingDays = 0;
 
   for (const day of days) {
+    if (day.attainmentEligible === false) continue;
     if (day.attendanceConfirmed && day.attendanceMilliseconds > 0) {
       const effective = Math.max(
         0,

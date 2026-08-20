@@ -1105,6 +1105,7 @@ model Employee {
   notificationEnabled              Boolean                           @default(true) @map("notification_enabled")
   isActive                         Boolean                           @default(true) @map("is_active")
   attendanceEnabled                Boolean                           @default(true) @map("attendance_enabled")
+  attainmentEligible               Boolean                           @default(true) @map("attainment_eligible")
   resignedAt                       DateTime?                         @map("resigned_at") @db.Date
   resignationReason                String?                           @map("resignation_reason")
   resignationNote                  String?                           @map("resignation_note")
@@ -2272,6 +2273,9 @@ model AttendanceRecord {
   id                   String    @id @default(uuid())
   employeeId           String    @map("employee_id")
   departmentSnapshot   String?   @map("department_snapshot")
+  teamSnapshot         String?   @map("team_snapshot")
+  positionSnapshot     String?   @map("position_snapshot")
+  attainmentEligibleSnapshot Boolean? @map("attainment_eligible_snapshot")
   workDate             DateTime  @map("work_date") @db.Date
   status               String    @default("draft")
   attendanceType       String    @default("normal") @map("attendance_type")

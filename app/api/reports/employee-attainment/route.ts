@@ -13,7 +13,8 @@ import {
   type DailyAttainmentInput,
 } from '@/lib/employee-attainment-daily';
 import { safeLaborMilliseconds } from '@/lib/process-labor-service';
-import { employeeReportRange, serializeEmployee } from '@/lib/process-time';
+import { serializeEmployee } from '@/lib/process-time';
+import { ReportDateRangeError, reportRangeQuery } from '@/lib/report-date-range';
 import {
   attendanceRecordScopeWhere,
   isProductionWorkforceEmployee,
@@ -27,6 +28,7 @@ export const dynamic = 'force-dynamic';
 function emptyRow(employee: Parameters<typeof serializeEmployee>[0]): EmployeeAttainmentRowDTO {
   return {
     employee: serializeEmployee(employee),
+    attainmentEligible: employee.attainmentEligible,
     standardLaborMilliseconds: 0,
     legacyExecutionStandardLaborMilliseconds: 0,
     claimedStandardLaborMilliseconds: 0,
@@ -57,7 +59,7 @@ function emptyRow(employee: Parameters<typeof serializeEmployee>[0]): EmployeeAt
 
 type DailyAttainment = DailyAttainmentInput;
 
-function emptyDailyAttainment(): DailyAttainment {
+function emptyDailyAttainment(attainmentEligible = true): DailyAttainment {
   return {
     attendanceMilliseconds: 0,
     exemptAbnormalMilliseconds: 0,
@@ -65,6 +67,7 @@ function emptyDailyAttainment(): DailyAttainment {
     claimedStandardLaborMilliseconds: 0,
     actualLaborMilliseconds: 0,
     attendanceConfirmed: false,
+    attainmentEligible,
   };
 }
 
@@ -80,12 +83,7 @@ function shanghaiDateKey(value: Date): string {
 export async function GET(req: NextRequest) {
   try {
     const actor = await requireUser();
-    const period = req.nextUrl.searchParams.get('period') === 'month'
-      ? 'month' as const
-      : req.nextUrl.searchParams.get('period') === 'week'
-        ? 'week' as const
-        : 'today' as const;
-    const { date, start, end } = employeeReportRange(period, req.nextUrl.searchParams.get('date'));
+    const { period, date, start, end } = reportRangeQuery(req.nextUrl.searchParams);
     const requestedEmployeeId = String(req.nextUrl.searchParams.get('employeeId') || '').trim();
     let scopedEmployeeIds: string[] | null = null;
     const canReadGlobalPeopleReport = hasCapability(actor.access, 'REPORT_CENTER', 'READ')
@@ -210,6 +208,7 @@ export async function GET(req: NextRequest) {
         select: {
           employeeId: true,
           departmentSnapshot: true,
+          attainmentEligibleSnapshot: true,
           workDate: true,
           actualMilliseconds: true,
         },
@@ -237,6 +236,7 @@ export async function GET(req: NextRequest) {
     }
     const groups = new Map<string, EmployeeAttainmentRowDTO>();
     for (const employee of employees) groups.set(employee.id, emptyRow(employee));
+    const employeeEligibility = new Map(employees.map(employee => [employee.id, employee.attainmentEligible]));
     const dailyGroups = new Map<string, Map<string, DailyAttainment>>();
     const activityEmployeeIds = new Set<string>();
     const dailyFor = (employeeIdValue: string, workDate: string) => {
@@ -247,7 +247,7 @@ export async function GET(req: NextRequest) {
       }
       let daily = employeeDays.get(workDate);
       if (!daily) {
-        daily = emptyDailyAttainment();
+        daily = emptyDailyAttainment(employeeEligibility.get(employeeIdValue) !== false);
         employeeDays.set(workDate, daily);
       }
       return daily;
@@ -258,6 +258,9 @@ export async function GET(req: NextRequest) {
       if (!row) continue;
       activityEmployeeIds.add(attendance.employeeId);
       const daily = dailyFor(attendance.employeeId, dateKeyFromDatabase(attendance.workDate));
+      daily.attainmentEligible = attendance.attainmentEligibleSnapshot
+        ?? employeeEligibility.get(attendance.employeeId)
+        ?? true;
       daily.attendanceMilliseconds += attendance.actualMilliseconds;
       row.attendanceMilliseconds += attendance.actualMilliseconds;
       if (attendance.actualMilliseconds > 0) {
@@ -370,6 +373,8 @@ export async function GET(req: NextRequest) {
     }
     for (const row of groups.values()) {
       const days = dailyGroups.get(row.employee.id) || new Map<string, DailyAttainment>();
+      row.attainmentEligible = [...days.values()].some(day => day.attainmentEligible)
+        || (days.size === 0 && row.employee.attainmentEligible);
       const dailySummary = aggregateDailyAttainment(days.values());
       row.standardLaborMilliseconds = dailySummary.standardLaborMilliseconds;
       row.claimedStandardLaborMilliseconds = dailySummary.claimedStandardLaborMilliseconds;
@@ -399,7 +404,7 @@ export async function GET(req: NextRequest) {
       (right.attainmentBasisPoints ?? -1) - (left.attainmentBasisPoints ?? -1)
       || right.standardLaborMilliseconds - left.standardLaborMilliseconds
       || left.employee.employeeNo.localeCompare(right.employee.employeeNo, 'zh-CN'));
-    const summary = rows.reduce((result, row) => ({
+    const summary = rows.filter(row => row.attainmentEligible).reduce((result, row) => ({
       employeeCount: result.employeeCount + 1,
       executionCount: result.executionCount + row.executionCount,
       claimCount: result.claimCount + row.claimCount,
@@ -478,6 +483,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ReportDateRangeError) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     console.error('employee attainment report failed', error);
     return NextResponse.json({ ok: false, error: '员工达成率报表加载失败' }, { status: 500 });
   }

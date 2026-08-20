@@ -97,6 +97,7 @@ export async function POST(req: NextRequest) {
           mobile,
           notificationEnabled: body.notificationEnabled !== false,
           attendanceEnabled: body.attendanceEnabled !== false,
+          attainmentEligible: body.attainmentEligible !== false,
         },
         include: employeeAccessAdminInclude,
       });

@@ -259,6 +259,9 @@ main.material-follow-up-workbench.hm-workbench-root.hm-workbench-root {
 .mf-latest-progress span { min-width: 0; display: grid; gap: 2px; }
 .mf-latest-progress strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .mf-latest-progress time { flex: 0 0 auto; color: var(--mf-muted); font-size: 9px; }
+.mf-latest-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 9px; }
+.mf-latest-actions button { min-height: 32px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(242,103,34,.3); border-radius: 8px; background: #fff7ef; color: var(--mf-orange-deep); font-size: 10px; font-weight: 800; transition: transform .16s var(--mf-ease), box-shadow .16s ease; }
+.mf-latest-actions button:hover { transform: translate3d(0,-1px,4px); box-shadow: 0 7px 14px rgba(190,78,20,.12); }
 
 .mf-update-console { min-height: 0; margin: 0 14px 13px; padding: 12px; display: grid; grid-template-rows: auto auto auto; gap: 10px; border: 1px solid rgba(86, 111, 153, .2); border-radius: 11px; background: linear-gradient(145deg, rgba(248,251,255,.98), rgba(242,247,253,.88)); box-shadow: 0 10px 24px rgba(40, 61, 95, .07), 0 1px 0 #fff inset; overflow-y: auto; }
 .mf-update-console > header { display: flex; align-items: center; justify-content: space-between; }
@@ -318,9 +321,54 @@ main.material-follow-up-workbench.hm-workbench-root.hm-workbench-root {
 .mf-empty span, .mf-detail-empty span { max-width: 260px; font-size: 10px; line-height: 1.5; }
 .mf-toast { position: fixed; right: 22px; bottom: 20px; z-index: var(--z-toast); padding: 11px 14px; display: flex; align-items: center; gap: 8px; border: 1px solid rgba(21,154,102,.25); border-radius: 10px; background: rgba(244,255,250,.97); color: #12714f; box-shadow: 0 15px 34px rgba(21,72,54,.18); font-weight: 750; animation: mf-toast-in .22s var(--mf-ease); }
 
+.mf-reschedule-backdrop { position: fixed; inset: 0; z-index: var(--z-modal); padding: 24px; display: grid; place-items: center; background: rgba(15,27,46,.46); backdrop-filter: blur(10px) saturate(115%); animation: mf-backdrop-in .18s ease-out; }
+.mf-reschedule-dialog { width: min(670px, 96vw); max-height: min(820px, 92dvh); overflow-y: auto; border: 1px solid rgba(255,255,255,.72); border-radius: 20px; background: linear-gradient(145deg, rgba(255,255,255,.97), rgba(244,248,253,.94)); box-shadow: 0 30px 80px rgba(13,27,48,.3), 0 1px 0 #fff inset; color: var(--mf-ink); transform-origin: 50% 70%; animation: mf-dialog-in .24s var(--mf-ease); }
+.mf-reschedule-dialog > header { padding: 20px 22px 16px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; border-bottom: 1px solid rgba(125,143,170,.18); background: radial-gradient(circle at 88% 0, rgba(242,103,34,.13), transparent 42%); }
+.mf-reschedule-dialog > header > div { min-width: 0; display: grid; gap: 3px; }
+.mf-reschedule-dialog > header span { display: inline-flex; align-items: center; gap: 6px; color: var(--mf-orange-deep); font-size: 10px; font-weight: 850; letter-spacing: .08em; }
+.mf-reschedule-dialog h2 { margin: 0; font-size: 21px; }
+.mf-reschedule-dialog > header p { margin: 0; overflow: hidden; color: var(--mf-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.mf-reschedule-dialog > header button { width: 36px; height: 36px; flex: 0 0 auto; display: grid; place-items: center; border: 1px solid rgba(125,143,170,.2); border-radius: 10px; background: rgba(255,255,255,.75); color: #607086; }
+.mf-reschedule-dialog > header button svg { width: 18px; }
+.mf-reschedule-plan-id { margin: 14px 22px 0; padding: 9px 11px; display: flex; align-items: center; gap: 9px; border: 1px solid rgba(37,99,235,.15); border-radius: 9px; background: #f4f7fc; }
+.mf-reschedule-plan-id span { color: var(--mf-muted); font-size: 9px; }
+.mf-reschedule-plan-id strong { overflow: hidden; flex: 1; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.mf-reschedule-plan-id em { padding: 3px 6px; border-radius: 5px; background: #e8f0ff; color: #1d4ed8; font-size: 8px; font-style: normal; font-weight: 800; }
+.mf-reschedule-fields { padding: 14px 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+.mf-reschedule-fields label { display: grid; gap: 6px; color: #4d5d74; font-size: 10px; font-weight: 750; }
+.mf-reschedule-fields label.wide { grid-column: 1 / -1; }
+.mf-reschedule-fields input, .mf-reschedule-fields textarea { width: 100%; border: 1px solid rgba(125,143,170,.3); border-radius: 9px; background: rgba(255,255,255,.9); padding: 9px 10px; color: var(--mf-ink); font: inherit; resize: vertical; }
+.mf-reschedule-fields input { height: 39px; }
+.mf-reschedule-fields input:focus, .mf-reschedule-fields textarea:focus { outline: 0; border-color: rgba(37,99,235,.5); box-shadow: 0 0 0 3px rgba(37,99,235,.08); }
+.mf-reschedule-guidance, .mf-reschedule-preview { margin: 0 22px 15px; border-radius: 11px; }
+.mf-reschedule-guidance { padding: 12px; display: flex; align-items: center; gap: 10px; border: 1px solid #f3d6a5; background: #fff9ec; color: #8b5705; }
+.mf-reschedule-guidance svg { flex: 0 0 auto; }
+.mf-reschedule-guidance span { display: grid; gap: 2px; }
+.mf-reschedule-guidance small { color: #8b6a36; font-size: 9px; line-height: 1.45; }
+.mf-reschedule-preview { padding: 13px; border: 1px solid rgba(21,154,102,.22); background: linear-gradient(145deg,#f2fcf7,#f8fbff); }
+.mf-reschedule-preview > header { display: flex; align-items: center; justify-content: space-between; }
+.mf-reschedule-preview > header span { color: #147a57; font-size: 9px; font-weight: 850; }
+.mf-reschedule-preview > header strong { color: var(--mf-ink); font-size: 11px; }
+.mf-reschedule-compare { margin-top: 9px; display: grid; grid-template-columns: minmax(0,1fr) 34px minmax(0,1fr); align-items: stretch; }
+.mf-reschedule-compare > svg { align-self: center; justify-self: center; color: var(--mf-orange); }
+.mf-reschedule-compare article { padding: 10px; display: grid; gap: 3px; border: 1px solid rgba(125,143,170,.18); border-radius: 9px; background: rgba(255,255,255,.76); }
+.mf-reschedule-compare article.after { border-color: rgba(21,154,102,.28); background: rgba(235,250,243,.85); }
+.mf-reschedule-compare small, .mf-reschedule-compare span, .mf-reschedule-compare em { color: var(--mf-muted); font-size: 8px; font-style: normal; }
+.mf-reschedule-compare strong { font-size: 17px; }
+.mf-reschedule-preview ul { margin: 10px 0 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; list-style: none; }
+.mf-reschedule-preview li { display: flex; align-items: center; gap: 4px; color: #36735c; font-size: 8px; }
+.mf-reschedule-preview li svg { width: 12px; }
+.mf-reschedule-dialog > .mf-form-error { margin: 0 22px 14px; }
+.mf-reschedule-dialog > footer { padding: 14px 22px 18px; display: flex; justify-content: flex-end; gap: 9px; border-top: 1px solid rgba(125,143,170,.16); }
+.mf-reschedule-dialog > footer button { min-width: 112px; min-height: 40px; border: 0; border-radius: 9px; background: linear-gradient(145deg,#ff8138,var(--mf-orange-deep)); color: #fff; box-shadow: 0 8px 18px rgba(211,73,10,.2); font-size: 11px; font-weight: 850; }
+.mf-reschedule-dialog > footer button.secondary { border: 1px solid rgba(125,143,170,.25); background: #fff; color: #536178; box-shadow: none; }
+.mf-reschedule-dialog button:disabled { opacity: .52; cursor: not-allowed; box-shadow: none; }
+
 @keyframes mf-flow-shine { 0%, 20% { transform: translateX(-100%); } 60%, 100% { transform: translateX(100%); } }
 @keyframes mf-node-breathe { 0%,100% { box-shadow: 0 0 0 5px rgba(242,103,34,.11),0 8px 18px rgba(214,80,17,.25); } 50% { box-shadow: 0 0 0 9px rgba(242,103,34,.045),0 11px 22px rgba(214,80,17,.31); } }
 @keyframes mf-toast-in { from { opacity: 0; transform: translate3d(0,12px,8px) scale(.97); } }
+@keyframes mf-backdrop-in { from { opacity: 0; } }
+@keyframes mf-dialog-in { from { opacity: 0; transform: translate3d(0,18px,20px) rotateX(-2deg) scale(.965); } }
 
 @media (max-width: 1180px) {
   .mf-command-deck { flex-wrap: wrap; }
@@ -349,6 +397,10 @@ main.material-follow-up-workbench.hm-workbench-root.hm-workbench-root {
   .mf-fact-grid { grid-template-columns: 1fr 1fr; }
   .mf-update-grid { grid-template-columns: 1fr; }
   .mf-update-grid label.wide { grid-column: auto; }
+  .mf-reschedule-backdrop { padding: 10px; }
+  .mf-reschedule-fields { grid-template-columns: 1fr; }
+  .mf-reschedule-fields label.wide { grid-column: auto; }
+  .mf-reschedule-preview ul { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

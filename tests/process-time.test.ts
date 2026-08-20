@@ -80,6 +80,7 @@ test('employee serialization keeps position and team as separate profile fields'
     notificationEnabled: true,
     isActive: true,
     attendanceEnabled: true,
+    attainmentEligible: true,
     resignedAt: null,
     resignationReason: null,
     resignationNote: null,

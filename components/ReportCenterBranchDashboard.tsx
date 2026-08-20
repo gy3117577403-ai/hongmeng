@@ -131,28 +131,22 @@ function rangeText(report: { rangeStart: string; rangeEnd: string } | null): str
   return `${dateOnly(report.rangeStart)} 至 ${dateOnly(end.toISOString())}`;
 }
 
-function csvCell(value: unknown): string {
-  return `"${String(value ?? '').replaceAll('"', '""')}"`;
-}
-
-function downloadCsv(name: string, rows: unknown[][]): void {
-  const content = `\uFEFF${rows.map(row => row.map(csvCell).join(',')).join('\r\n')}`;
-  const url = URL.createObjectURL(new Blob([content], { type: 'text/csv;charset=utf-8' }));
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  anchor.click();
-  URL.revokeObjectURL(url);
+async function downloadWorkbook(name: string, rows: unknown[][], notes: unknown[][]): Promise<void> {
+  const XLSX = await import('xlsx');
+  const workbook = XLSX.utils.book_new();
+  const detail = XLSX.utils.aoa_to_sheet(rows);
+  const definitions = XLSX.utils.aoa_to_sheet(notes);
+  detail['!cols'] = rows[0]?.map((_, index) => ({ wch: index === 0 ? 24 : 16 })) || [];
+  definitions['!cols'] = [{ wch: 18 }, { wch: 70 }];
+  XLSX.utils.book_append_sheet(workbook, detail, '数据明细');
+  XLSX.utils.book_append_sheet(workbook, definitions, '统计口径');
+  XLSX.writeFile(workbook, name, { compression: true });
 }
 
 function safeHref(item: ReportCenterFocusItemDTO): string {
   return item.entityType === 'workOrder'
     ? `/production?workOrderId=${encodeURIComponent(item.id)}`
     : '/weekly-plan-center?branch=samples';
-}
-
-function branchUsesMonth(branch: ReportBranchKey): boolean {
-  return OPERATIONS_BRANCHES.has(branch);
 }
 
 function branchUsesSingleDate(branch: ReportBranchKey): boolean {
@@ -248,7 +242,7 @@ function metricForBranch(
       { label: '达成率', value: percentText(summary?.completionBasisPoints), note: '最终工序口径' },
       { label: '统计天数', value: numberText(overview?.dailyTrend.length), note: '天' },
     ] },
-    'weekly-plan-attainment': { label: '周计划数量达成', value: percentText(operationsSummary?.quantityCompletionBasisPoints), description: '本月周计划完成数量 / 计划数量', tone: 'orange', stats: [
+    'weekly-plan-attainment': { label: '周计划数量达成', value: percentText(operationsSummary?.quantityCompletionBasisPoints), description: '所选周期周计划完成数量 / 计划数量', tone: 'orange', stats: [
       { label: '计划批次', value: numberText(operationsSummary?.plannedBatches), note: '批' },
       { label: '完成批次', value: numberText(operationsSummary?.completedBatches), note: '批' },
       { label: '批次达成', value: percentText(operationsSummary?.batchCompletionBasisPoints), note: '按批次' },
@@ -394,10 +388,11 @@ export default function ReportCenterBranchDashboard({
 
   const [period, setPeriod] = useState<ReportCenterPeriodDTO>(() => {
     const value = searchParams.get('period');
-    return value === 'today' || value === 'month' ? value : 'week';
+    return value === 'today' || value === 'month' || value === 'custom' ? value : searchParams.get('month') ? 'month' : 'week';
   });
-  const [date, setDate] = useState(() => searchParams.get('date') || todayKey());
-  const [month, setMonth] = useState(() => searchParams.get('month') || todayKey().slice(0, 7));
+  const [date, setDate] = useState(() => searchParams.get('date') || (searchParams.get('month') ? `${searchParams.get('month')}-15` : todayKey()));
+  const [startDate, setStartDate] = useState(() => searchParams.get('startDate') || todayKey());
+  const [endDate, setEndDate] = useState(() => searchParams.get('endDate') || todayKey());
   const [customer, setCustomer] = useState(() => searchParams.get('customer') || '');
   const [team, setTeam] = useState(() => searchParams.get('team') || '');
   const [keyword, setKeyword] = useState('');
@@ -425,27 +420,33 @@ export default function ReportCenterBranchDashboard({
     setLoading(true);
     setError('');
     async function load() {
+      const rangeParams = new URLSearchParams({ period, date });
+      if (period === 'custom') {
+        rangeParams.set('startDate', startDate);
+        rangeParams.set('endDate', endDate);
+      }
       if (OVERVIEW_BRANCHES.has(initialBranch)) {
         const mode: ReportCenterModeDTO = initialDomain === 'sample' ? 'sample' : 'mass';
-        const params = new URLSearchParams({ period, date, mode });
+        const params = new URLSearchParams(rangeParams);
+        params.set('mode', mode);
         if (customer) params.set('customer', customer);
         const response = await fetch(`/api/reports/overview?${params}`, { cache: 'no-store', signal: controller.signal });
         const body = await response.json() as ApiResponse<ReportCenterOverviewDTO>;
         if (!response.ok || !body.report) throw new Error(body.error || '业务报表加载失败');
         setOverview(body.report);
       } else if (OPERATIONS_BRANCHES.has(initialBranch)) {
-        const response = await fetch(`/api/reports/operations?month=${encodeURIComponent(month)}`, { cache: 'no-store', signal: controller.signal });
+        const response = await fetch(`/api/reports/operations?${rangeParams}`, { cache: 'no-store', signal: controller.signal });
         const body = await response.json() as ApiResponse<ReportOperationsDTO>;
         if (!response.ok || !body.report) throw new Error(body.error || '月度生产报表加载失败');
         setOperations(body.report);
       } else if (EMPLOYEE_BRANCHES.has(initialBranch)) {
-        const params = new URLSearchParams({ period, date });
+        const params = new URLSearchParams(rangeParams);
         const response = await fetch(`/api/reports/employee-attainment?${params}`, { cache: 'no-store', signal: controller.signal });
         const body = await response.json() as ApiResponse<EmployeeAttainmentReportDTO>;
         if (!response.ok || !body.report) throw new Error(body.error || '员工工时报表加载失败');
         setEmployees(body.report);
       } else if (QUALITY_BRANCHES.has(initialBranch)) {
-        const params = new URLSearchParams({ period, date });
+        const params = new URLSearchParams(rangeParams);
         const response = await fetch(`/api/reports/abnormal-time?${params}`, { cache: 'no-store', signal: controller.signal });
         const body = await response.json() as ApiResponse<AbnormalTimeReportDTO>;
         if (!response.ok || !body.report) throw new Error(body.error || '质量异常报表加载失败');
@@ -465,7 +466,7 @@ export default function ReportCenterBranchDashboard({
       }
     }).finally(() => setLoading(false));
     return () => controller.abort();
-  }, [customer, date, initialBranch, initialDomain, month, period, refreshToken]);
+  }, [customer, date, endDate, initialBranch, initialDomain, period, refreshToken, startDate]);
 
   useEffect(() => {
     if (!selectedFocus) return undefined;
@@ -497,7 +498,7 @@ export default function ReportCenterBranchDashboard({
     && (initialBranch !== 'open-events' || event.resolutionStatus === 'open')), [abnormal?.events, initialBranch, normalizedKeyword]);
   const teams = operations?.teamMonthly.map(item => item.team) || [];
   const metric = metricForBranch(initialBranch, overview, operations, employees, abnormal, laborPools, rawBranchItems);
-  const activeRange = overview || employees || abnormal;
+  const activeRange = overview || operations || employees || abnormal;
 
   function branchHref(targetDomain: ReportDomainKey, target: ReportBranchDefinition): string {
     const query = new URLSearchParams(searchParams.toString());
@@ -507,40 +508,89 @@ export default function ReportCenterBranchDashboard({
     return `${reportRoute(targetDomain, target.key)}${suffix ? `?${suffix}` : ''}`;
   }
 
-  function exportBranch(): void {
-    const stamp = branchUsesMonth(initialBranch) ? month : `${date}-${period}`;
-    if (OVERVIEW_BRANCHES.has(initialBranch)) {
-      downloadCsv(`${branch.label}-${stamp}.csv`, [
+  async function exportBranch(): Promise<void> {
+    const stamp = period === 'custom' ? `${startDate}_${endDate}` : `${date}-${period}`;
+    let rows: unknown[][] = [];
+    if (initialBranch === 'quantity-attainment' || initialBranch === 'production-trend') {
+      rows = [
+        ['日期', '计划数量', '最终工序良品', '数量缺口', '数量达成率'],
+        ...(overview?.dailyTrend || []).map(row => [row.date, row.plannedQty, row.completedQty, Math.max(0, row.plannedQty - row.completedQty), percentText(row.plannedQty > 0 ? Math.round(row.completedQty / row.plannedQty * 10_000) : null)]),
+      ];
+    } else if (initialBranch === 'order-status') {
+      rows = [
+        ['状态', '工单数量', '占比'],
+        ...(overview?.statusDistribution || []).map(row => [row.label, row.count, percentText(row.basisPoints)]),
+      ];
+    } else if (initialBranch === 'process-bottlenecks') {
+      rows = [
+        ['工序编码', '工序名称', '待处理数量', '涉及工单', '逾期影响工单'],
+        ...(overview?.processBottlenecks || []).map(row => [row.processCode, row.processName, row.pendingQty, row.workOrderCount, row.overdueWorkOrderCount]),
+      ];
+    } else if (initialBranch === 'completeness') {
+      rows = [
+        ['资料项', '缺口数量', '检查说明', '处理入口'],
+        ...(overview?.completeness || []).map(row => [row.label, row.count, row.note, row.route]),
+      ];
+    } else if (initialBranch === 'review-attainment') {
+      rows = [
+        ['样品任务', '进行中', '已完成', '已逾期', '待分项审核', '已审核', '已发布', '审核完成率'],
+        [overview?.sample.taskCount || 0, overview?.sample.activeCount || 0, overview?.sample.completedCount || 0, overview?.sample.overdueCount || 0, overview?.sample.pendingReviewCount || 0, overview?.sample.reviewedItemCount || 0, overview?.sample.publishedItemCount || 0, percentText(overview?.sample.reviewBasisPoints)],
+      ];
+    } else if (OVERVIEW_BRANCHES.has(initialBranch)) {
+      rows = [
         ['任务/工单', '客户', '产品', '规格', '计划数量', '完成数量', '状态', '当前环节', '责任人', '交期', '风险', '资料缺口'],
         ...branchItems.map(item => [item.code, item.customerName, item.productName, item.specification, item.plannedQty ?? '', item.completedQty ?? '', item.statusLabel, item.currentProcess || '', item.owner || '', dateOnly(item.dueAt), item.riskLabel, item.missingData.join('；')]),
-      ]);
+      ];
     } else if (initialBranch === 'weekly-plan-attainment') {
-      downloadCsv(`${branch.label}-${month}.csv`, [
+      rows = [
         ['周次', '日期范围', '计划批次', '完成批次', '批次达成率', '计划数量', '完成数量', '数量达成率'],
         ...(operations?.weeklyPlan || []).map(row => [row.label, `${row.startDate} 至 ${row.endDate}`, row.plannedBatches, row.completedBatches, percentText(row.batchCompletionBasisPoints), row.plannedQuantity, row.completedQuantity, percentText(row.quantityCompletionBasisPoints)]),
-      ]);
-    } else if (initialBranch === 'team-hours' || initialBranch === 'attendance-attainment' || initialBranch === 'employee-matrix') {
-      downloadCsv(`${branch.label}-${month}.csv`, [
-        ['班组', '员工编号', '员工', '应出勤工时', '有效出勤工时', '标准工时', '待匹配工时', '达成率'],
-        ...operationRows.map(row => [row.team, row.employee.employeeNo, row.employee.name, compactHours(row.plannedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), percentText(row.attainmentBasisPoints)]),
-      ]);
+      ];
+    } else if (initialBranch === 'attendance-attainment') {
+      rows = [
+        ['日期', '应到人数', '实到人数', '请假人数', '缺勤人数', '休息人数', '正式记录', '草稿记录', '应出勤工时', '有效出勤工时', '出勤达成率'],
+        ...(operations?.dailyAttendance || []).map(row => [row.date, row.plannedPeople, row.attendancePeople, row.leavePeople, row.absentPeople, row.restPeople, row.confirmedRecords, row.draftRecords, compactHours(row.plannedMilliseconds), compactHours(row.attendanceMilliseconds), percentText(row.attendanceBasisPoints)]),
+      ];
+    } else if (initialBranch === 'team-hours') {
+      rows = [
+        ['班组', '员工数', '出勤人数', '正式考勤', '应出勤工时', '有效出勤工时', '请假工时', '标准工时', '待匹配工时', '免责异常', '出勤率', '工时达成率'],
+        ...teamRows.map(row => [row.team, row.employeeCount, row.attendancePeople, row.confirmedRecords, compactHours(row.plannedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(row.leaveMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), compactHours(row.exemptAbnormalMilliseconds), percentText(row.attendanceBasisPoints), percentText(row.attainmentBasisPoints)]),
+      ];
+    } else if (initialBranch === 'employee-matrix') {
+      rows = [
+        ['班组', '员工编号', '员工', '统计资格', '应出勤工时', '有效出勤工时', '标准工时', '待匹配工时', '达成率'],
+        ...operationRows.map(row => [row.team, row.employee.employeeNo, row.employee.name, row.attainmentEligible ? '计入达成率' : '仅考勤，不计达成率', compactHours(row.plannedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), percentText(row.attainmentBasisPoints)]),
+      ];
     } else if (EMPLOYEE_BRANCHES.has(initialBranch)) {
-      downloadCsv(`${branch.label}-${stamp}.csv`, [
-        ['员工编号', '姓名', '班组', '确认出勤', '标准工时', '待匹配工时', '免责异常', '达成率'],
-        ...employeeRows.map(row => [row.employee.employeeNo, row.employee.name, row.employee.team || '', compactHours(row.attendanceMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), compactHours(row.exemptAbnormalMilliseconds), percentText(row.attainmentBasisPoints)]),
-      ]);
+      rows = [
+        ['员工编号', '姓名', '班组', '统计资格', '确认出勤', '标准工时', '待匹配工时', '免责异常', '达成率'],
+        ...employeeRows.map(row => [row.employee.employeeNo, row.employee.name, row.employee.team || '', row.attainmentEligible ? '计入达成率' : '仅考勤，不计达成率', compactHours(row.attendanceMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), compactHours(row.exemptAbnormalMilliseconds), percentText(row.attainmentBasisPoints)]),
+      ];
+    } else if (initialBranch === 'affected-labor' || initialBranch === 'cause-distribution') {
+      rows = [
+        ['异常类别', '事件数量', '事件时长', '影响人时', '已审批人时'],
+        ...(abnormal?.categories || []).map(row => [row.categoryLabel, row.eventCount, compactHours(row.incidentMilliseconds), compactHours(row.affectedPersonMilliseconds), compactHours(row.approvedPersonMilliseconds)]),
+      ];
     } else if (QUALITY_BRANCHES.has(initialBranch)) {
-      downloadCsv(`${branch.label}-${stamp}.csv`, [
+      rows = [
         ['序号', '类别', '标题', '事件时长', '影响人时', '品质状态', '处理状态', '责任部门'],
         ...qualityEvents.map(event => [event.sequence, event.categoryLabel, event.title, compactHours(event.durationMilliseconds), compactHours(event.affectedPersonMilliseconds), event.qualityStatus, event.resolutionStatus, event.responsibilityDepartment || '']),
-      ]);
+      ];
     } else if (initialBranch === 'labor-ledger') {
-      downloadCsv(`${branch.label}-${date}.csv`, [
+      rows = [
         ['工单', '工序', '员工', '数量', '单位', '标准工时', '记工时间'],
         ...claimRows(laborPools).map(({ pool, claim }) => [pool.workOrder.code, pool.step.processName, claim.employee.name, claim.quantity, pool.unitLabel, compactHours(claim.standardLaborMilliseconds), dateTimeText(claim.claimedAt)]),
-      ]);
+      ];
     }
-    setToast('已导出当前分支和筛选结果');
+    await downloadWorkbook(`${branch.label}-${stamp}.xlsx`, rows, [
+      ['项目', '说明'],
+      ['报表分支', `${domain.label} / ${branch.label}`],
+      ['统计范围', branchUsesSingleDate(initialBranch) ? date : rangeText(activeRange)],
+      ['筛选条件', [customer ? `客户=${customer}` : '', team ? `班组=${team}` : '', keyword ? `搜索=${keyword}` : ''].filter(Boolean).join('；') || '无'],
+      ['计算口径', branchMethod(initialBranch)],
+      ['生成时间', dateTimeText(new Date().toISOString())],
+    ]);
+    setToast('已导出当前分支 Excel，包含数据明细和统计口径');
   }
 
   async function logout(): Promise<void> {
@@ -568,16 +618,15 @@ export default function ReportCenterBranchDashboard({
       <section className="report-branch-header">
         <div className={`report-branch-heading tone-${metric.tone}`}><span>{branchIcon(initialDomain)}</span><div><small>{domain.label} / {domain.caption}</small><h1>{branch.label}</h1><p>{branch.description}</p></div></div>
         <div className="report-branch-controls">
-          {branchUsesMonth(initialBranch) ? <label><CalendarRange /><input type="month" value={month} onChange={event => { setMonth(event.target.value); replaceQuery({ month: event.target.value }); }} aria-label="统计月份" /></label>
-            : branchUsesSingleDate(initialBranch) ? <label><CalendarDays /><input type="date" value={date} onChange={event => { setDate(event.target.value); replaceQuery({ date: event.target.value }); }} aria-label="记工日期" /></label>
-              : <div className="report-period-switch" role="group" aria-label="统计周期">{([['today', '今日'], ['week', '本周'], ['month', '本月']] as Array<[ReportCenterPeriodDTO, string]>).map(([key, label]) => <button className={period === key ? 'active' : ''} type="button" key={key} onClick={() => { setPeriod(key); replaceQuery({ period: key }); }}>{label}</button>)}<label><CalendarDays /><input type="date" value={date} onChange={event => { setDate(event.target.value); replaceQuery({ date: event.target.value }); }} aria-label="基准日期" /></label></div>}
+          {branchUsesSingleDate(initialBranch) ? <label><CalendarDays /><input type="date" value={date} onChange={event => { setDate(event.target.value); replaceQuery({ date: event.target.value }); }} aria-label="记工日期" /></label>
+            : <div className="report-period-switch" role="group" aria-label="统计周期">{([['today', '今日'], ['week', '本周'], ['month', '本月'], ['custom', '自定义']] as Array<[ReportCenterPeriodDTO, string]>).map(([key, label]) => <button className={period === key ? 'active' : ''} type="button" key={key} onClick={() => { setPeriod(key); replaceQuery({ period: key }); }}>{label}</button>)}{period === 'custom' ? <span className="report-custom-range"><label><CalendarDays /><input type="date" value={startDate} max={endDate} onChange={event => { setStartDate(event.target.value); replaceQuery({ startDate: event.target.value }); }} aria-label="开始日期" /></label><i>至</i><label><CalendarRange /><input type="date" value={endDate} min={startDate} onChange={event => { setEndDate(event.target.value); replaceQuery({ endDate: event.target.value }); }} aria-label="结束日期" /></label></span> : <label><CalendarDays /><input type="date" value={date} onChange={event => { setDate(event.target.value); replaceQuery({ date: event.target.value }); }} aria-label="基准日期" /></label>}</div>}
           {OVERVIEW_BRANCHES.has(initialBranch) && <label><Layers3 /><select value={customer} onChange={event => { setCustomer(event.target.value); replaceQuery({ customer: event.target.value || null }); }} aria-label="客户筛选"><option value="">全部客户</option>{(overview?.customers || []).map(item => <option value={item} key={item}>{item}</option>)}</select></label>}
           {TEAM_FILTER_BRANCHES.has(initialBranch) && <label><UsersRound /><select value={team} onChange={event => { setTeam(event.target.value); replaceQuery({ team: event.target.value || null }); }} aria-label="班组筛选"><option value="">全部班组</option>{teams.map(item => <option value={item} key={item}>{item}</option>)}</select></label>}
           <button className="icon" type="button" title="刷新数据" aria-label="刷新数据" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} /></button>
-          <button type="button" onClick={exportBranch}><Download />导出本页</button>
+          <button type="button" onClick={() => void exportBranch()}><Download />导出 Excel</button>
         </div>
         <nav className="report-branch-tabs" aria-label={`${domain.label}分支`}>{allowedBranches.map(item => <Link className={item.key === initialBranch ? 'active' : ''} href={branchHref(initialDomain, item)} key={item.key}>{item.shortLabel}</Link>)}</nav>
-        <div className="report-branch-context"><span><CalendarRange />{branchUsesMonth(initialBranch) ? `${month} 月度口径` : branchUsesSingleDate(initialBranch) ? `${date} 单日口径` : rangeText(activeRange)}</span><span><ShieldCheck />{branchMethod(initialBranch)}</span></div>
+        <div className="report-branch-context"><span><CalendarRange />{branchUsesSingleDate(initialBranch) ? `${date} 单日口径` : rangeText(activeRange)}</span><span><ShieldCheck />{branchMethod(initialBranch)}</span></div>
       </section>
 
       <section className="report-topic-toolbar">
@@ -683,12 +732,12 @@ function BottleneckTable({ report }: { report: ReportCenterOverviewDTO | null })
 
 function WeeklyPlan({ report }: { report: ReportOperationsDTO | null }) {
   const rows = report?.weeklyPlan || [];
-  return <Panel kicker="周次拆解" title={`${report?.month || ''} 周计划批次与数量达成`} action={<span>最终工序良品口径</span>}><div className="report-week-grid">{rows.map(row => <article key={row.key}><header><div><small>{row.startDate.slice(5)}—{row.endDate.slice(5)}</small><h3>{row.label}</h3></div><strong>{percentText(row.quantityCompletionBasisPoints)}</strong></header><dl><div><dt>批次</dt><dd>{row.completedBatches}<em> / {row.plannedBatches}</em></dd><i><b style={{ width: `${Math.min(100, (row.batchCompletionBasisPoints || 0) / 100)}%` }} /></i></div><div><dt>数量</dt><dd>{numberText(row.completedQuantity)}<em> / {numberText(row.plannedQuantity)}</em></dd><i><b style={{ width: `${Math.min(100, (row.quantityCompletionBasisPoints || 0) / 100)}%` }} /></i></div></dl></article>)}</div>{!rows.length && <EmptyState icon={<CalendarRange />} title="本月没有周计划数据" />}</Panel>;
+  return <Panel kicker="周次拆解" title={`${rangeText(report)} 周计划批次与数量达成`} action={<span>最终工序良品口径</span>}><div className="report-week-grid">{rows.map(row => <article key={row.key}><header><div><small>{row.startDate.slice(5)}—{row.endDate.slice(5)}</small><h3>{row.label}</h3></div><strong>{percentText(row.quantityCompletionBasisPoints)}</strong></header><dl><div><dt>批次</dt><dd>{row.completedBatches}<em> / {row.plannedBatches}</em></dd><i><b style={{ width: `${Math.min(100, (row.batchCompletionBasisPoints || 0) / 100)}%` }} /></i></div><div><dt>数量</dt><dd>{numberText(row.completedQuantity)}<em> / {numberText(row.plannedQuantity)}</em></dd><i><b style={{ width: `${Math.min(100, (row.quantityCompletionBasisPoints || 0) / 100)}%` }} /></i></div></dl></article>)}</div>{!rows.length && <EmptyState icon={<CalendarRange />} title="当前周期没有周计划数据" />}</Panel>;
 }
 
 function AttendancePanel({ report }: { report: ReportOperationsDTO | null }) {
   const rows = report?.dailyAttendance || [];
-  return <Panel kicker="每日出勤" title={`${report?.month || ''} 生产车间出勤达成`} action={<span>人数与工时双口径</span>}><div className="report-attendance-bars">{rows.map(row => <article key={row.date}><header><strong>{row.date.slice(5)}</strong><span>{percentText(row.attendanceBasisPoints)}</span></header><div><i style={{ width: `${Math.min(100, (row.attendanceBasisPoints || 0) / 100)}%` }} /></div><dl><span>应到 {row.plannedPeople}</span><span>实到 {row.attendancePeople}</span><span>请假 {row.leavePeople}</span><span className={row.draftRecords ? 'danger' : ''}>草稿 {row.draftRecords}</span></dl></article>)}</div>{!rows.length && <EmptyState icon={<CalendarDays />} title="本月没有正式考勤记录" />}</Panel>;
+  return <Panel kicker="每日出勤" title={`${rangeText(report)} 生产车间出勤达成`} action={<span>人数与工时双口径</span>}><div className="report-attendance-bars">{rows.map(row => <article key={row.date}><header><strong>{row.date.slice(5)}</strong><span>{percentText(row.attendanceBasisPoints)}</span></header><div><i style={{ width: `${Math.min(100, (row.attendanceBasisPoints || 0) / 100)}%` }} /></div><dl><span>应到 {row.plannedPeople}</span><span>实到 {row.attendancePeople}</span><span>请假 {row.leavePeople}</span><span className={row.draftRecords ? 'danger' : ''}>草稿 {row.draftRecords}</span></dl></article>)}</div>{!rows.length && <EmptyState icon={<CalendarDays />} title="当前周期没有正式考勤记录" />}</Panel>;
 }
 
 function TeamHoursTable({ rows }: { rows: ReportOperationsLaborRowDTO[] }) {
@@ -701,7 +750,7 @@ function EmployeeTable({ rows, unmatchedOnly }: { rows: EmployeeAttainmentRowDTO
 
 function EmployeeMatrix({ report, rows }: { report: ReportOperationsDTO | null; rows: ReportOperationsEmployeeRowDTO[] }) {
   const dates = report?.dates || [];
-  return <Panel kicker="员工 × 日期" title={`${report?.month || ''} 个人达成率矩阵`} action={<span>横向滚动查看完整月份</span>}><div className="report-matrix-scroll"><table><thead><tr><th>班组</th><th>岗位</th><th>员工</th>{dates.map(day => <th key={day.date} className={day.isWeekend ? 'weekend' : ''}><strong>{day.day}号</strong><small>{day.weekday}</small></th>)}<th>月均</th></tr></thead><tbody>{rows.map(row => <tr key={row.employee.id}><td>{row.team}</td><td>{row.position}</td><td><strong>{row.employee.name}</strong><small>{row.employee.employeeNo}</small></td>{dates.map(day => { const cell = row.days.find(item => item.date === day.date); const value = cell?.attainmentBasisPoints; const text = cell?.status === 'draft' ? '草稿' : cell?.status === 'rest' ? '休' : value === null || value === undefined ? '—' : percentText(value); return <td key={day.date} className={`status-${cell?.status || 'missing'} ${value !== null && value !== undefined && value < 8500 ? 'risk' : ''}`} title={`${row.employee.name} ${day.date}：${text}`}><strong>{text}</strong></td>; })}<td className="average"><strong>{percentText(row.attainmentBasisPoints)}</strong></td></tr>)}</tbody></table></div>{!rows.length && <EmptyState icon={<Table2 />} title="没有符合筛选条件的员工矩阵" />}</Panel>;
+  return <Panel kicker="员工 × 日期" title={`${rangeText(report)} 个人达成率矩阵`} action={<span>横向滚动查看完整周期</span>}><div className="report-matrix-scroll"><table><thead><tr><th>班组</th><th>岗位</th><th>员工</th>{dates.map(day => <th key={day.date} className={day.isWeekend ? 'weekend' : ''}><strong>{day.day}号</strong><small>{day.weekday}</small></th>)}<th>周期均值</th></tr></thead><tbody>{rows.map(row => <tr key={row.employee.id}><td>{row.team}</td><td>{row.position}</td><td><strong>{row.employee.name}</strong><small>{row.employee.employeeNo}</small></td>{dates.map(day => { const cell = row.days.find(item => item.date === day.date); const value = cell?.attainmentBasisPoints; const text = cell?.status === 'draft' ? '草稿' : cell?.status === 'rest' ? '休' : value === null || value === undefined ? '—' : percentText(value); return <td key={day.date} className={`status-${cell?.status || 'missing'} ${value !== null && value !== undefined && value < 8500 ? 'risk' : ''}`} title={`${row.employee.name} ${day.date}：${text}`}><strong>{text}</strong></td>; })}<td className="average"><strong>{percentText(row.attainmentBasisPoints)}</strong></td></tr>)}</tbody></table></div>{!rows.length && <EmptyState icon={<Table2 />} title="没有符合筛选条件的员工矩阵" />}</Panel>;
 }
 
 function LaborLedger({ pools }: { pools: ProcessLaborPoolDTO[] }) {

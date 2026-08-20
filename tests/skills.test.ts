@@ -32,6 +32,7 @@ const employee: EmployeeDTO = {
   notificationEnabled: true,
   isActive: true,
   attendanceEnabled: true,
+  attainmentEligible: false,
   resignedAt: null,
   resignationReason: null,
   resignationNote: null,

@@ -102,6 +102,7 @@
 .attendance-dialog { width: min(720px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); display: grid; grid-template-rows: auto minmax(0, 1fr) auto; border: 1px solid #e2e7eb; border-radius: 14px; background: #fff; box-shadow: 0 22px 60px rgba(24, 32, 40, .24); overflow: hidden; }
 .attendance-dialog.abnormal-dialog { width: min(820px, calc(100vw - 32px)); }
 .attendance-dialog.batch-dialog { width: min(760px, calc(100vw - 32px)); }
+.attendance-dialog.attendance-export-dialog { width: min(680px, calc(100vw - 32px)); }
 .attendance-dialog > header { min-height: 62px; padding: 10px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #edf0f3; background: #fffaf6; }
 .attendance-dialog > header div { display: grid; gap: 2px; }
 .attendance-dialog > header span { color: #d95600; font-size: 9px; font-weight: 850; }
@@ -119,6 +120,8 @@
 .attendance-dialog-body fieldset { margin: 0; padding: 10px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; border: 1px solid #e2e7eb; border-radius: 9px; }
 .attendance-dialog-body fieldset legend { padding: 0 5px; color: #66717e; font-size: 10px; font-weight: 850; }
 .attendance-dialog-body fieldset label { display: grid; gap: 4px; color: #66717e; font-size: 9px; font-weight: 750; }
+.attendance-export-dialog .attendance-dialog-body fieldset label:has(input[type="radio"]) { min-height: 42px; padding: 8px 10px; display: flex; align-items: center; gap: 8px; border: 1px solid #e5e9ee; border-radius: 8px; background: #fafbfc; font-size: 11px; }
+.attendance-export-dialog .attendance-dialog-body input[type="radio"] { width: 16px; min-height: 16px; accent-color: #e85d04; }
 .attendance-dialog-body fieldset.employee-picker { max-height: 190px; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow-y: auto; }
 .employee-picker label { min-height: 46px; padding: 6px 8px; display: flex !important; align-items: center; gap: 8px; border: 1px solid #edf0f3; border-radius: 7px; }
 .employee-picker label input { width: 16px; min-height: 16px; }

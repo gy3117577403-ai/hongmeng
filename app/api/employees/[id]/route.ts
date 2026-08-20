@@ -88,6 +88,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         attendanceEnabled: existing.isActive && (body.attendanceEnabled === undefined
           ? existing.attendanceEnabled
           : body.attendanceEnabled === true),
+        attainmentEligible: body.attainmentEligible === undefined
+          ? existing.attainmentEligible
+          : body.attainmentEligible === true,
       },
       include: employeeAccessAdminInclude,
     });

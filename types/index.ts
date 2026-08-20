@@ -987,6 +987,16 @@ export type MaterialFollowUpTaskDTO = {
     weekEndDate?: string | null;
     planActive: boolean;
     priority: string;
+    planning?: {
+      batchId: string;
+      orderId: string;
+      releaseState: string;
+      weekStartDate: string;
+      weekEndDate: string;
+      plannedCompletionDate: string;
+      customerDueDate: string;
+      updatedAt: string;
+    } | null;
   };
   activities?: MaterialFollowUpActivityDTO[];
 };
@@ -1594,6 +1604,7 @@ export type EmployeeDTO = {
   notificationEnabled: boolean;
   isActive: boolean;
   attendanceEnabled: boolean;
+  attainmentEligible: boolean;
   resignedAt: string | null;
   resignationReason: string | null;
   resignationNote: string | null;
@@ -2024,7 +2035,7 @@ export type EmployeeLaborClaimDetailDTO = {
   corrected?: boolean;
 };
 
-export type ReportCenterPeriodDTO = 'today' | 'week' | 'month';
+export type ReportCenterPeriodDTO = 'today' | 'week' | 'month' | 'custom';
 export type ReportCenterModeDTO = 'all' | 'mass' | 'sample';
 export type ReportCenterRiskDTO = 'high' | 'medium' | 'low';
 export type ReportCenterFocusStatusDTO = 'completed' | 'in_progress' | 'pending' | 'overdue' | 'review';
@@ -2160,6 +2171,7 @@ export type ReportOperationsEmployeeDayDTO = {
   exemptAbnormalMilliseconds: number;
   attainmentCapacityMilliseconds: number;
   attainmentBasisPoints: number | null;
+  attainmentEligible: boolean;
 };
 
 export type ReportOperationsEmployeeRowDTO = {
@@ -2177,11 +2189,14 @@ export type ReportOperationsEmployeeRowDTO = {
   attainmentBasisPoints: number | null;
   confirmedDays: number;
   draftDays: number;
+  attainmentEligible: boolean;
   days: ReportOperationsEmployeeDayDTO[];
 };
 
 export type ReportOperationsDTO = {
   month: string;
+  period: ReportCenterPeriodDTO;
+  date: string;
   workforceScope: 'PRODUCTION';
   workforceLabel: string;
   rangeStart: string;
@@ -2256,6 +2271,7 @@ export type ReportOperationsDTO = {
 
 export type EmployeeAttainmentRowDTO = {
   employee: EmployeeDTO;
+  attainmentEligible: boolean;
   standardLaborMilliseconds: number;
   legacyExecutionStandardLaborMilliseconds: number;
   claimedStandardLaborMilliseconds: number;
@@ -2284,7 +2300,7 @@ export type EmployeeAttainmentRowDTO = {
 };
 
 export type EmployeeAttainmentReportDTO = {
-  period: 'today' | 'week' | 'month';
+  period: ReportCenterPeriodDTO;
   date: string;
   workforceScope?: 'PRODUCTION';
   workforceLabel?: string;
@@ -2320,7 +2336,7 @@ export type EmployeeAttainmentReportDTO = {
 };
 
 export type AbnormalTimeReportDTO = {
-  period: 'today' | 'week' | 'month';
+  period: ReportCenterPeriodDTO;
   date: string;
   rangeStart: string;
   rangeEnd: string;

@@ -74,6 +74,28 @@ test('zero-duration confirmed attendance does not match claimed labor', () => {
   assert.equal(result.attainmentCapacityMilliseconds, 0);
 });
 
+test('employees marked ineligible remain visible elsewhere but contribute nothing to attainment totals', () => {
+  const result = aggregateDailyAttainment([{
+    attendanceMilliseconds: 8 * hour,
+    exemptAbnormalMilliseconds: 0,
+    standardLaborMilliseconds: 9 * hour,
+    claimedStandardLaborMilliseconds: 9 * hour,
+    actualLaborMilliseconds: 8 * hour,
+    attendanceConfirmed: true,
+    attainmentEligible: false,
+  }]);
+
+  assert.deepEqual(result, {
+    standardLaborMilliseconds: 0,
+    claimedStandardLaborMilliseconds: 0,
+    unmatchedStandardLaborMilliseconds: 0,
+    effectiveProductionMilliseconds: 0,
+    attainmentCapacityMilliseconds: 0,
+    unexplainedMilliseconds: 0,
+    attendanceMissingDays: 0,
+  });
+});
+
 test('inactive employees remain in historical reports when the period has activity', () => {
   assert.equal(shouldIncludeEmployeeInAttainmentReport({
     isActive: false,

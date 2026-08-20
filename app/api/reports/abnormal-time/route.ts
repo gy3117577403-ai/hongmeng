@@ -4,12 +4,12 @@ import { forbidden, requireUser, unauthorized, UnauthorizedError } from '@/lib/a
 import { hasCapability } from '@/lib/department-access';
 import {
   abnormalCategoryLabel,
-  attendanceRange,
   parseAbnormalCategory,
   parseWorkDate,
   serializeAbnormalTimeEvent,
 } from '@/lib/attendance';
 import { prisma } from '@/lib/prisma';
+import { ReportDateRangeError, reportRangeQuery } from '@/lib/report-date-range';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -26,12 +26,8 @@ const include = {
 export async function GET(req: NextRequest) {
   try {
     const actor = await requireUser();
-    const period = req.nextUrl.searchParams.get('period') === 'month'
-      ? 'month' as const
-      : req.nextUrl.searchParams.get('period') === 'week'
-        ? 'week' as const
-        : 'today' as const;
-    const range = attendanceRange(period, req.nextUrl.searchParams.get('date'));
+    const range = reportRangeQuery(req.nextUrl.searchParams);
+    const { period } = range;
     const start = parseWorkDate(range.start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const end = parseWorkDate(range.end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     let scopedEmployeeIds: string[] | null = null;
@@ -121,6 +117,7 @@ export async function GET(req: NextRequest) {
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ReportDateRangeError) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     console.error('abnormal time report failed', error);
     return NextResponse.json({ ok: false, error: '异常工时汇总加载失败' }, { status: 500 });
   }

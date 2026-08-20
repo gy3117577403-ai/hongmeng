@@ -48,6 +48,10 @@ function mondayFor(dateKey: string): string {
 
 export function reportMonthWeekBuckets(month: string): ReportWeekBucket[] {
   const dateKeys = reportMonthDateKeys(month);
+  return reportRangeWeekBuckets(dateKeys);
+}
+
+export function reportRangeWeekBuckets(dateKeys: string[]): ReportWeekBucket[] {
   const buckets = new Map<string, { startDate: string; endDate: string }>();
   for (const dateKey of dateKeys) {
     const monday = mondayFor(dateKey);

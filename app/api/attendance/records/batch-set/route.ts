@@ -50,7 +50,7 @@ export async function POST(req: NextRequest) {
         ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
         id: { in: employeeIds },
       },
-      select: { id: true, department: true },
+      select: { id: true, department: true, team: true, position: true, attainmentEligible: true },
     });
     if (employees.length !== employeeIds.length) {
       return NextResponse.json({ ok: false, error: '所选员工不在当前考勤范围，请刷新列表后重试' }, { status: 409 });
@@ -78,6 +78,9 @@ export async function POST(req: NextRequest) {
         create: {
           employeeId: employee.id,
           departmentSnapshot: normalizeEmployeeDepartment(employee.department) || '',
+          teamSnapshot: employee.team,
+          positionSnapshot: employee.position,
+          attainmentEligibleSnapshot: employee.attainmentEligible,
           workDate: workDate.value,
           status: 'draft',
           attendanceType,

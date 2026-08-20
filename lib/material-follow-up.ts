@@ -56,6 +56,17 @@ export const materialFollowUpListInclude = Prisma.validator<Prisma.MaterialFollo
           weekEndDate: true,
           planActive: true,
           priority: true,
+          productionPlanBatch: {
+            select: {
+              id: true,
+              releaseState: true,
+              weekStartDate: true,
+              weekEndDate: true,
+              plannedCompletionDate: true,
+              updatedAt: true,
+              planOrder: { select: { id: true, customerDueDate: true } },
+            },
+          },
         },
       },
     },
@@ -257,6 +268,16 @@ export function serializeMaterialFollowUpTask(
       plannedAt: task.warehouseTask.workOrder.plannedAt?.toISOString() || null,
       weekStartDate: task.warehouseTask.workOrder.weekStartDate?.toISOString() || null,
       weekEndDate: task.warehouseTask.workOrder.weekEndDate?.toISOString() || null,
+      planning: task.warehouseTask.workOrder.productionPlanBatch ? {
+        batchId: task.warehouseTask.workOrder.productionPlanBatch.id,
+        orderId: task.warehouseTask.workOrder.productionPlanBatch.planOrder.id,
+        releaseState: task.warehouseTask.workOrder.productionPlanBatch.releaseState,
+        weekStartDate: task.warehouseTask.workOrder.productionPlanBatch.weekStartDate.toISOString(),
+        weekEndDate: task.warehouseTask.workOrder.productionPlanBatch.weekEndDate.toISOString(),
+        plannedCompletionDate: task.warehouseTask.workOrder.productionPlanBatch.plannedCompletionDate.toISOString(),
+        customerDueDate: task.warehouseTask.workOrder.productionPlanBatch.planOrder.customerDueDate.toISOString(),
+        updatedAt: task.warehouseTask.workOrder.productionPlanBatch.updatedAt.toISOString(),
+      } : null,
     },
     activities: Array.isArray(detail.activities)
       ? detail.activities.map(activity => ({

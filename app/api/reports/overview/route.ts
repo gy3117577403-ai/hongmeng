@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Prisma } from '@prisma/client';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
-import { employeeReportRange } from '@/lib/process-time';
+import { ReportDateRangeError, reportRangeQuery } from '@/lib/report-date-range';
 import { prisma } from '@/lib/prisma';
 import {
   parseReportQuantity,
@@ -20,7 +20,6 @@ import type {
   ReportCenterFocusStatusDTO,
   ReportCenterModeDTO,
   ReportCenterOverviewDTO,
-  ReportCenterPeriodDTO,
 } from '@/types';
 
 export const runtime = 'nodejs';
@@ -89,10 +88,6 @@ const workOrderSelect = Prisma.validator<Prisma.WorkOrderSelect>()({
 });
 
 type WorkOrderRecord = Prisma.WorkOrderGetPayload<{ select: typeof workOrderSelect }>;
-
-function reportPeriod(value: string | null): ReportCenterPeriodDTO {
-  return value === 'month' ? 'month' : value === 'today' ? 'today' : 'week';
-}
 
 function reportMode(value: string | null): ReportCenterModeDTO {
   return value === 'mass' ? 'mass' : value === 'sample' ? 'sample' : 'all';
@@ -281,10 +276,9 @@ function riskRank(value: ReportCenterFocusItemDTO): number {
 export async function GET(req: NextRequest) {
   try {
     await requireUser();
-    const period = reportPeriod(req.nextUrl.searchParams.get('period'));
+    const { period, date, start, end } = reportRangeQuery(req.nextUrl.searchParams);
     const mode = reportMode(req.nextUrl.searchParams.get('mode'));
     const customer = String(req.nextUrl.searchParams.get('customer') || '').trim().slice(0, 120);
-    const { date, start, end } = employeeReportRange(period, req.nextUrl.searchParams.get('date'));
     const now = new Date();
     const referenceAt = now < end ? now : new Date(end.getTime() - 1);
     const customerFilter = customer ? { contains: customer } : undefined;
@@ -599,6 +593,7 @@ export async function GET(req: NextRequest) {
     return result;
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ReportDateRangeError) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     console.error('report center overview failed', error);
     return NextResponse.json({ ok: false, error: '报表中心总览加载失败' }, { status: 500 });
   }

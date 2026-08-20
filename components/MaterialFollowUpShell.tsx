@@ -2,7 +2,9 @@
 
 import {
   AlertTriangle,
+  ArrowRight,
   CalendarClock,
+  CalendarRange,
   CheckCircle2,
   ChevronRight,
   CircleDot,
@@ -17,6 +19,7 @@ import {
   UserRoundCheck,
   UsersRound,
   Warehouse,
+  X,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
@@ -47,6 +50,36 @@ type UpdateForm = {
   status: 'IN_PROGRESS' | 'WAITING_ARRIVAL' | 'WAITING_WAREHOUSE';
   expectedAt: string;
   note: string;
+};
+
+type RescheduleForm = {
+  plannedCompletionDate: string;
+  customerDueDate: string;
+  reason: string;
+};
+
+type ReschedulePreview = {
+  taskId: string;
+  batchId: string;
+  workOrderId: string;
+  specification: string;
+  actualArrivalAt: string;
+  before: {
+    plannedCompletionDate: string;
+    weekStartDate: string;
+    weekEndDate: string;
+    customerDueDate: string;
+  };
+  after: {
+    plannedCompletionDate: string;
+    weekStartDate: string;
+    weekEndDate: string;
+    customerDueDate: string;
+  };
+  crossesWeek: boolean;
+  keepsWarehouseProgress: boolean;
+  keepsProcessProgress: boolean;
+  completedQuantityPreserved: boolean;
 };
 
 const emptySummary: MaterialFollowUpSummaryDTO = {
@@ -130,6 +163,14 @@ function formFor(task: MaterialFollowUpTaskDTO | null, currentUserId: string): U
   };
 }
 
+function rescheduleFormFor(task: MaterialFollowUpTaskDTO): RescheduleForm {
+  return {
+    plannedCompletionDate: task.workOrder.planning?.plannedCompletionDate.slice(0, 10) || '',
+    customerDueDate: task.workOrder.planning?.customerDueDate.slice(0, 10) || '',
+    reason: '',
+  };
+}
+
 export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }) {
   const [status, setStatus] = useState<StatusFilter>('ACTIVE');
   const [scope, setScope] = useState<WeekScope>('current');
@@ -149,10 +190,16 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [formError, setFormError] = useState('');
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [rescheduleForm, setRescheduleForm] = useState<RescheduleForm>({ plannedCompletionDate: '', customerDueDate: '', reason: '' });
+  const [reschedulePreview, setReschedulePreview] = useState<ReschedulePreview | null>(null);
+  const [rescheduleError, setRescheduleError] = useState('');
+  const [rescheduleSaving, setRescheduleSaving] = useState(false);
   const [toast, setToast] = useState('');
   const [reloadToken, setReloadToken] = useState(0);
   const pendingDeepLinkRef = useRef('');
   const canManage = user.access.capabilities.includes('PROCUREMENT:UPDATE');
+  const canUpdatePlan = user.access.capabilities.includes('PLANNING:UPDATE');
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -236,6 +283,9 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
       .then(task => {
         setSelected(task);
         setForm(formFor(task, user.id));
+        setRescheduleOpen(false);
+        setReschedulePreview(null);
+        setRescheduleError('');
       })
       .catch(reason => {
         if ((reason as { name?: string }).name !== 'AbortError') {
@@ -256,6 +306,11 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
 
   const activeStage = selected ? stageIndex(selected.status) : 0;
   const visibleActivities = useMemo(() => selected?.activities || [], [selected?.activities]);
+  const canReschedule = Boolean(
+    canUpdatePlan
+    && selected?.exceptionCase.actualArrivalAt
+    && selected.workOrder.planning,
+  );
   const updateDisabled = !canManage
     || saving
     || !selected
@@ -286,6 +341,54 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
       setFormError(reason instanceof Error ? reason.message : '物料异常跟进更新失败');
     } finally {
       setSaving(false);
+    }
+  }
+
+  function openReschedule(): void {
+    if (!selected || !canReschedule) return;
+    setRescheduleForm(rescheduleFormFor(selected));
+    setReschedulePreview(null);
+    setRescheduleError('');
+    setRescheduleOpen(true);
+  }
+
+  async function submitReschedule(confirm: boolean): Promise<void> {
+    if (!selected?.workOrder.planning) return;
+    setRescheduleSaving(true);
+    setRescheduleError('');
+    try {
+      const response = await fetch(`/api/material-follow-ups/${selected.id}/reschedule`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          ...rescheduleForm,
+          confirm,
+          version: selected.version,
+          batchUpdatedAt: selected.workOrder.planning.updatedAt,
+        }),
+      });
+      const result = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        preview?: ReschedulePreview;
+        task?: MaterialFollowUpTaskDTO;
+        error?: string;
+      };
+      if (!response.ok || !result.preview) throw new Error(result.error || '受影响计划调整失败');
+      if (!confirm) {
+        setReschedulePreview(result.preview);
+        return;
+      }
+      if (!result.task) throw new Error('计划已调整，但任务详情返回不完整，请刷新确认');
+      setSelected(result.task);
+      setTasks(current => current.map(task => task.id === result.task?.id ? result.task : task));
+      setRescheduleOpen(false);
+      setReschedulePreview(null);
+      setToast('新计划交期已生效，原报工与配料进度保持不变');
+      setReloadToken(value => value + 1);
+    } catch (reason) {
+      setRescheduleError(reason instanceof Error ? reason.message : '受影响计划调整失败');
+    } finally {
+      setRescheduleSaving(false);
     }
   }
 
@@ -402,7 +505,10 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
 
               <section className="mf-latest-progress">
                 <div><Clock3 /><span><small>最新进展</small><strong>{selected.latestProgress || selected.exceptionCase.exceptionNote || '等待跟进更新'}</strong></span></div>
-                <time>{dateTimeText(selected.updatedAt)}</time>
+                <div className="mf-latest-actions">
+                  {canReschedule && <button type="button" onClick={openReschedule}><CalendarRange size={15} />调整受影响计划</button>}
+                  <time>{dateTimeText(selected.updatedAt)}</time>
+                </div>
               </section>
 
               {selected.status !== 'RESOLVED' && selected.status !== 'CANCELLED' ? canManage ? <section className="mf-update-console">
@@ -437,6 +543,41 @@ export default function MaterialFollowUpShell({ user }: { user: CurrentUserDTO }
           </aside>
         </section>
       </div>
+
+      {rescheduleOpen && selected?.workOrder.planning && <div className="mf-reschedule-backdrop" role="presentation" onMouseDown={event => {
+        if (event.target === event.currentTarget && !rescheduleSaving) setRescheduleOpen(false);
+      }}>
+        <section className="mf-reschedule-dialog" role="dialog" aria-modal="true" aria-labelledby="mf-reschedule-title">
+          <header>
+            <div><span><CalendarRange size={15} />到料后改期</span><h2 id="mf-reschedule-title">调整受影响的正式计划</h2><p>{selected.workOrder.specification || selected.workOrder.code} · 实际到料 {dateTimeText(selected.exceptionCase.actualArrivalAt)}</p></div>
+            <button type="button" aria-label="关闭" disabled={rescheduleSaving} onClick={() => setRescheduleOpen(false)}><X /></button>
+          </header>
+
+          <div className="mf-reschedule-plan-id"><span>排产批次</span><strong>{selected.workOrder.planning.batchId}</strong><em>{selected.workOrder.planning.releaseState}</em></div>
+
+          <div className="mf-reschedule-fields">
+            <label><span>新计划完成日期 *</span><input type="date" value={rescheduleForm.plannedCompletionDate} onChange={event => { setRescheduleForm(current => ({ ...current, plannedCompletionDate: event.target.value })); setReschedulePreview(null); }} /></label>
+            <label><span>新客户交期</span><input type="date" value={rescheduleForm.customerDueDate} onChange={event => { setRescheduleForm(current => ({ ...current, customerDueDate: event.target.value })); setReschedulePreview(null); }} /></label>
+            <label className="wide"><span>改期原因 *</span><textarea rows={3} maxLength={300} value={rescheduleForm.reason} onChange={event => setRescheduleForm(current => ({ ...current, reason: event.target.value }))} placeholder="例如：物料已于 8 月 20 日到仓，结合剩余产能将计划完成日调整至 8 月 22 日。" /></label>
+          </div>
+
+          {reschedulePreview ? <section className="mf-reschedule-preview">
+            <header><span>影响预览</span><strong>{reschedulePreview.crossesWeek ? '将跨生产周调整' : '仍在原生产周'}</strong></header>
+            <div className="mf-reschedule-compare">
+              <article><small>调整前</small><strong>{reschedulePreview.before.plannedCompletionDate}</strong><span>{reschedulePreview.before.weekStartDate} - {reschedulePreview.before.weekEndDate}</span><em>客户交期 {reschedulePreview.before.customerDueDate}</em></article>
+              <ArrowRight aria-hidden="true" />
+              <article className="after"><small>调整后</small><strong>{reschedulePreview.after.plannedCompletionDate}</strong><span>{reschedulePreview.after.weekStartDate} - {reschedulePreview.after.weekEndDate}</span><em>客户交期 {reschedulePreview.after.customerDueDate}</em></article>
+            </div>
+            <ul><li><CheckCircle2 />已完成报工数量不回退</li><li><CheckCircle2 />现有工序进度不重置</li><li><CheckCircle2 />仓库配料与到料记录不覆盖</li></ul>
+          </section> : <section className="mf-reschedule-guidance"><AlertTriangle /><span><strong>先预览，再确认生效</strong><small>系统会检查任务版本、排产版本和是否已经完工；跨周时自动同步工单所属生产周。</small></span></section>}
+
+          {rescheduleError && <div className="mf-form-error" role="alert">{rescheduleError}</div>}
+          <footer>
+            <button className="secondary" type="button" disabled={rescheduleSaving} onClick={() => setRescheduleOpen(false)}>取消</button>
+            {!reschedulePreview ? <button type="button" disabled={rescheduleSaving || !rescheduleForm.plannedCompletionDate} onClick={() => void submitReschedule(false)}>{rescheduleSaving ? '检查中…' : '预览计划影响'}</button> : <button type="button" disabled={rescheduleSaving || !rescheduleForm.reason.trim()} onClick={() => void submitReschedule(true)}>{rescheduleSaving ? '提交中…' : '确认调整计划'}</button>}
+          </footer>
+        </section>
+      </div>}
 
       {toast && <div className="mf-toast" role="status"><CheckCircle2 size={17} />{toast}</div>}
     </main>

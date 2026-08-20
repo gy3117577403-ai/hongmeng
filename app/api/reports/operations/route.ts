@@ -9,13 +9,12 @@ import {
 import { prisma } from '@/lib/prisma';
 import { safeLaborMilliseconds } from '@/lib/process-labor-service';
 import { employeeReportRange, serializeEmployee } from '@/lib/process-time';
+import { ReportDateRangeError, reportDateRange, reportRangeDateKeys } from '@/lib/report-date-range';
 import { attendanceRecordScopeWhere, productionEmployeeWhere } from '@/lib/production-workforce';
 import {
   cappedBasisPoints,
-  nextReportMonth,
   parseReportMonth,
-  reportMonthDateKeys,
-  reportMonthWeekBuckets,
+  reportRangeWeekBuckets,
   reportWeekKey,
 } from '@/lib/report-operations';
 import type {
@@ -37,6 +36,7 @@ type MutableDay = {
   leaveMilliseconds: number;
   standardLaborMilliseconds: number;
   exemptAbnormalMilliseconds: number;
+  attainmentEligible: boolean;
 };
 
 function todayKey(now = new Date()): string {
@@ -60,7 +60,7 @@ function dayLabel(dateKey: string): { weekday: string; isWeekend: boolean } {
   };
 }
 
-function emptyDay(): MutableDay {
+function emptyDay(attainmentEligible = true): MutableDay {
   return {
     status: 'missing',
     attendanceType: null,
@@ -69,6 +69,7 @@ function emptyDay(): MutableDay {
     leaveMilliseconds: 0,
     standardLaborMilliseconds: 0,
     exemptAbnormalMilliseconds: 0,
+    attainmentEligible,
   };
 }
 
@@ -78,7 +79,7 @@ function teamLabel(employee: { team?: string | null; position?: string | null })
 
 function officialDay(day: MutableDay, date: string): ReportOperationsEmployeeDayDTO {
   const attendanceOfficial = day.status === 'confirmed' || day.status === 'rest';
-  const hasCapacity = attendanceOfficial && day.attendanceMilliseconds > 0;
+  const hasCapacity = day.attainmentEligible && attendanceOfficial && day.attendanceMilliseconds > 0;
   const effectiveAttendance = hasCapacity
     ? Math.max(0, day.attendanceMilliseconds - day.exemptAbnormalMilliseconds)
     : 0;
@@ -97,6 +98,7 @@ function officialDay(day: MutableDay, date: string): ReportOperationsEmployeeDay
     exemptAbnormalMilliseconds: attendanceOfficial ? day.exemptAbnormalMilliseconds : 0,
     attainmentCapacityMilliseconds: capacity,
     attainmentBasisPoints: basisPoints(standardLabor, capacity),
+    attainmentEligible: day.attainmentEligible,
   };
 }
 
@@ -131,12 +133,20 @@ export async function GET(req: NextRequest) {
     await requireUser();
     const now = new Date();
     const month = parseReportMonth(req.nextUrl.searchParams.get('month'), todayKey(now));
-    const { start, end } = employeeReportRange('month', `${month}-15`);
-    const nextMonth = nextReportMonth(month);
-    const startDate = parseWorkDate(`${month}-01`).value;
-    const endDate = parseWorkDate(`${nextMonth}-01`).value;
+    const hasPeriodQuery = Boolean(req.nextUrl.searchParams.get('period'));
+    const range = hasPeriodQuery
+      ? reportDateRange({
+          period: req.nextUrl.searchParams.get('period'),
+          date: req.nextUrl.searchParams.get('date'),
+          startDate: req.nextUrl.searchParams.get('startDate'),
+          endDate: req.nextUrl.searchParams.get('endDate'),
+        })
+      : { period: 'month' as const, ...employeeReportRange('month', `${month}-15`) };
+    const { period, date, start, end } = range;
+    const startDate = parseWorkDate(start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
+    const endDate = parseWorkDate(end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const cutoffAt = new Date(Math.min(now.getTime(), end.getTime() - 1));
-    const dateKeys = reportMonthDateKeys(month);
+    const dateKeys = reportRangeDateKeys(start, end);
 
     const employees = await prisma.employee.findMany({
       where: {
@@ -168,6 +178,7 @@ export async function GET(req: NextRequest) {
           workDate: true,
           status: true,
           attendanceType: true,
+          attainmentEligibleSnapshot: true,
           plannedMilliseconds: true,
           leaveMilliseconds: true,
           actualMilliseconds: true,
@@ -255,6 +266,7 @@ export async function GET(req: NextRequest) {
     }) : [];
 
     const employeeDayMap = new Map<string, Map<string, MutableDay>>();
+    const employeeEligibility = new Map(employees.map(employee => [employee.id, employee.attainmentEligible]));
     const mutableDay = (employeeId: string, date: string) => {
       let days = employeeDayMap.get(employeeId);
       if (!days) {
@@ -263,7 +275,7 @@ export async function GET(req: NextRequest) {
       }
       let day = days.get(date);
       if (!day) {
-        day = emptyDay();
+        day = emptyDay(employeeEligibility.get(employeeId) !== false);
         days.set(date, day);
       }
       return day;
@@ -281,6 +293,9 @@ export async function GET(req: NextRequest) {
       day.plannedMilliseconds = Math.max(0, record.plannedMilliseconds);
       day.leaveMilliseconds = Math.max(0, record.leaveMilliseconds);
       day.attendanceMilliseconds = Math.max(0, record.actualMilliseconds);
+      day.attainmentEligible = record.attainmentEligibleSnapshot
+        ?? employeeEligibility.get(record.employeeId)
+        ?? true;
     }
     for (const claim of laborClaims) {
       if (!claim.pool.countsForEfficiency) continue;
@@ -298,7 +313,10 @@ export async function GET(req: NextRequest) {
 
     const employeeMatrix: ReportOperationsEmployeeRowDTO[] = employees.map(employee => {
       const sourceDays = employeeDayMap.get(employee.id) || new Map<string, MutableDay>();
-      const days = dateKeys.map(date => officialDay(sourceDays.get(date) || emptyDay(), date));
+      const days = dateKeys.map(date => officialDay(
+        sourceDays.get(date) || emptyDay(employee.attainmentEligible),
+        date,
+      ));
       const totals = days.reduce((sum, day) => ({
         plannedMilliseconds: sum.plannedMilliseconds + day.plannedMilliseconds,
         attendanceMilliseconds: sum.attendanceMilliseconds + day.attendanceMilliseconds,
@@ -327,6 +345,7 @@ export async function GET(req: NextRequest) {
         ...totals,
         attendanceBasisPoints: basisPoints(totals.attendanceMilliseconds, totals.plannedMilliseconds),
         attainmentBasisPoints: basisPoints(totals.standardLaborMilliseconds, totals.attainmentCapacityMilliseconds),
+        attainmentEligible: days.some(day => day.attainmentEligible),
         days,
       };
     }).filter(row => row.employee.isActive
@@ -420,7 +439,7 @@ export async function GET(req: NextRequest) {
         (completedByWorkOrder.get(completion.workOrderId) || 0) + Math.max(0, completion.goodQty),
       );
     }
-    const weeklyPlan = reportMonthWeekBuckets(month).map(bucket => ({
+    const weeklyPlan = reportRangeWeekBuckets(dateKeys).map(bucket => ({
       ...bucket,
       plannedBatches: 0,
       completedBatches: 0,
@@ -486,6 +505,8 @@ export async function GET(req: NextRequest) {
 
     const response: ReportOperationsDTO = {
       month,
+      period,
+      date,
       workforceScope: 'PRODUCTION',
       workforceLabel: '生产部',
       rangeStart: start.toISOString(),
@@ -534,6 +555,7 @@ export async function GET(req: NextRequest) {
     return result;
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof ReportDateRangeError) return NextResponse.json({ ok: false, error: error.message }, { status: 400 });
     console.error('operations report failed', error);
     return NextResponse.json({ ok: false, error: '生产数据总表加载失败' }, { status: 500 });
   }
