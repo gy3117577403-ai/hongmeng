@@ -34,7 +34,7 @@ test('duplex packet keeps native SOP page sizes and rotation and adds only a pai
   const result = await buildWorkOrderPrintPacket({
     records: [duplexRecord()],
     target: 'all',
-    travelerImages: new Map([['print-1', ONE_PIXEL_PNG]]),
+    travelerImages: new Map([['print-1', [ONE_PIXEL_PNG]]]),
     sourceFiles: new Map([['sop-1', {
       bytes: await sourceSop(),
       fileName: 'SOP-v2.pdf',
@@ -77,7 +77,7 @@ test('duplex packet converts a landscape PNG SOP into an A4 landscape page', asy
   const result = await buildWorkOrderPrintPacket({
     records: [duplexRecord()],
     target: 'all',
-    travelerImages: new Map([['print-1', ONE_PIXEL_PNG]]),
+    travelerImages: new Map([['print-1', [ONE_PIXEL_PNG]]]),
     sourceFiles: new Map([['sop-1', {
       bytes: png,
       fileName: '现场SOP.png',
@@ -89,4 +89,39 @@ test('duplex packet converts a landscape PNG SOP into an A4 landscape page', asy
   assert.equal(packet.getPageCount(), 2);
   assert.ok(Math.abs(packet.getPage(1).getWidth() - 841.89) < 0.1);
   assert.ok(Math.abs(packet.getPage(1).getHeight() - 595.28) < 0.1);
+});
+
+test('multi-page traveler packet preserves every generated traveler page in order', async () => {
+  const result = await buildWorkOrderPrintPacket({
+    records: [{
+      printId: 'print-1',
+      mode: 'TRAVELER_ONLY',
+      items: [{ material: 'TRAVELER', copies: 1, fileId: null }],
+    }],
+    target: 'traveler',
+    travelerImages: new Map([['print-1', [ONE_PIXEL_PNG, ONE_PIXEL_PNG]]]),
+  });
+  const packet = await PDFDocument.load(result.bytes);
+  assert.equal(result.pageCount, 2);
+  assert.equal(packet.getPageCount(), 2);
+  for (const page of packet.getPages()) {
+    assert.ok(Math.abs(page.getWidth() - 595.28) < 0.1);
+    assert.ok(Math.abs(page.getHeight() - 841.89) < 0.1);
+  }
+});
+
+test('duplex packet pairs two traveler pages and two SOP pages without an extra blank', async () => {
+  const result = await buildWorkOrderPrintPacket({
+    records: [duplexRecord()],
+    target: 'all',
+    travelerImages: new Map([['print-1', [ONE_PIXEL_PNG, ONE_PIXEL_PNG]]]),
+    sourceFiles: new Map([['sop-1', {
+      bytes: await sourceSop(),
+      fileName: 'SOP-v2.pdf',
+      mimeType: 'application/pdf',
+    }]]),
+  });
+  const packet = await PDFDocument.load(result.bytes);
+  assert.equal(result.pageCount, 4);
+  assert.equal(packet.getPageCount(), 4);
 });

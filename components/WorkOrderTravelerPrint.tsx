@@ -3,14 +3,17 @@
 /* eslint-disable @next/next/no-img-element */
 
 import {
+  AlertTriangle,
   ArrowLeft,
   CheckCircle2,
   ExternalLink,
   FileCheck2,
   FileImage,
+  Files,
   FileText,
   LoaderCircle,
   Printer,
+  SlidersHorizontal,
   X,
 } from 'lucide-react';
 import QRCode from 'qrcode';
@@ -18,6 +21,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { calculateStandardHourlyCapacity } from '@/lib/process-capacity';
 import { workOrderPrintReturnLabel } from '@/lib/work-order-print-navigation';
 import type { WorkOrderTravelerPrintRecord } from '@/lib/work-order-qr-service';
+import {
+  AUTO_FIRST_PAGE_STEP_CAPACITY,
+  createTravelerPageManifest,
+  MAX_CUSTOM_TRAVELER_PAGES,
+  paginateTravelerSteps,
+  type TravelerLayoutMode,
+  type TravelerLayoutSelection,
+  type TravelerPageChunk,
+} from '@/lib/work-order-traveler-layout';
 
 type PrintTarget = 'all' | 'traveler' | 'sop';
 type PrintMaterial = 'TRAVELER' | 'SOP' | 'DRAWING';
@@ -27,6 +39,20 @@ type PacketState = {
   pageCount?: number;
   message?: string;
 };
+
+type TravelerStep = WorkOrderTravelerPrintRecord['snapshot']['steps'][number];
+type TravelerPage = TravelerPageChunk<TravelerStep>;
+
+const TRAVELER_LAYOUT_OPTIONS: Array<{
+  value: TravelerLayoutMode;
+  label: string;
+  description: string;
+}> = [
+  { value: 'auto', label: '自动分页', description: '按工序数自动保持清晰度' },
+  { value: 'single', label: '强制 1 页', description: '全部工序缩放到一张纸' },
+  { value: 'double', label: '固定 2 页', description: '均衡拆成两张流转单' },
+  { value: 'custom', label: '自定义多页', description: '指定流转单打印页数' },
+];
 
 function dateTimeText(value: string): string {
   const date = new Date(value);
@@ -112,6 +138,10 @@ function itemKey(printId: string, material: PrintMaterial) {
   return `${printId}:${material}`;
 }
 
+function travelerPageKey(printId: string, pageNumber: number) {
+  return `${printId}:${pageNumber}`;
+}
+
 function printItem(record: WorkOrderTravelerPrintRecord, material: PrintMaterial) {
   return record.items.find(item => item.material === material) || null;
 }
@@ -142,6 +172,8 @@ export default function WorkOrderTravelerPrint({
   const [confirmRequest, setConfirmRequest] = useState<{ printIds: string[]; materials: PrintMaterial[] } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState('');
+  const [layoutMode, setLayoutMode] = useState<TravelerLayoutMode>('auto');
+  const [customPageCount, setCustomPageCount] = useState(3);
   const travelerRefs = useRef<Record<string, HTMLElement | null>>({});
   const [confirmedItems, setConfirmedItems] = useState(() => new Set(records.flatMap(record => record.items
     .filter(item => item.status === 'CONFIRMED')
@@ -158,6 +190,27 @@ export default function WorkOrderTravelerPrint({
     ...(includesTraveler ? ['traveler' as const] : []),
     ...(includesSop ? ['sop' as const] : []),
   ]), [includesSop, includesTraveler]);
+  const travelerLayoutSelection = useMemo<TravelerLayoutSelection>(() => ({
+    mode: layoutMode,
+    customPageCount,
+  }), [customPageCount, layoutMode]);
+  const travelerPagesByPrintId = useMemo(() => new Map(records.map(record => [
+    record.printId,
+    paginateTravelerSteps(record.snapshot.steps, travelerLayoutSelection),
+  ])), [records, travelerLayoutSelection]);
+  const travelerPlanKey = useMemo(() => records.map(record => {
+    const pages = travelerPagesByPrintId.get(record.printId) || [];
+    return `${record.printId}:${record.snapshot.steps.length}:${pages.length}:${pages.map(page => `${page.startIndex}-${page.endIndexExclusive}`).join(',')}`;
+  }).join('|'), [records, travelerPagesByPrintId]);
+  const travelerRecords = records.filter(record => Boolean(printItem(record, 'TRAVELER')));
+  const totalTravelerPages = travelerRecords.reduce(
+    (sum, record) => sum + (travelerPagesByPrintId.get(record.printId)?.length || 0),
+    0,
+  );
+  const totalTravelerSteps = travelerRecords.reduce((sum, record) => sum + record.snapshot.steps.length, 0);
+  const maxTravelerSteps = Math.max(0, ...travelerRecords.map(record => record.snapshot.steps.length));
+  const singlePageReadabilityWarning = layoutMode === 'single'
+    && maxTravelerSteps > AUTO_FIRST_PAGE_STEP_CAPACITY;
 
   useEffect(() => {
     let cancelled = false;
@@ -184,7 +237,7 @@ export default function WorkOrderTravelerPrint({
     let cancelled = false;
     const controller = new AbortController();
     const objectUrls: string[] = [];
-    const capturedTravelers = new Map<string, Blob>();
+    const capturedTravelers = new Map<string, Blob[]>();
     setPacketStates({});
     setActiveTarget(duplexTravelerSop && includesTraveler && includesSop ? 'all' : (separateTargets[0] || 'traveler'));
 
@@ -195,27 +248,33 @@ export default function WorkOrderTravelerPrint({
       const html2canvas = (await import('html2canvas')).default;
       for (const record of records) {
         if (!printItem(record, 'TRAVELER')) continue;
-        const source = travelerRefs.current[record.printId];
-        if (!source) throw new Error('二维码流转单页面尚未就绪，请刷新后重试');
-        const images = [...source.querySelectorAll('img')];
-        await Promise.all(images.map(image => image.complete ? image.decode().catch(() => undefined) : new Promise<void>(resolve => {
-          image.addEventListener('load', () => resolve(), { once: true });
-          image.addEventListener('error', () => resolve(), { once: true });
-        })));
-        if (cancelled) return;
-        const canvas = await html2canvas(source, {
-          scale: 2,
-          backgroundColor: '#ffffff',
-          logging: false,
-          useCORS: true,
-          width: source.scrollWidth,
-          height: source.scrollHeight,
-          windowWidth: source.scrollWidth,
-          windowHeight: source.scrollHeight,
-        });
-        capturedTravelers.set(record.printId, await canvasPng(canvas));
-        canvas.width = 1;
-        canvas.height = 1;
+        const pages = travelerPagesByPrintId.get(record.printId) || [];
+        if (!pages.length) throw new Error('二维码流转单没有可打印工序，请检查工艺路线');
+        const pageBlobs: Blob[] = [];
+        for (const page of pages) {
+          const source = travelerRefs.current[travelerPageKey(record.printId, page.pageNumber)];
+          if (!source) throw new Error(`二维码流转单第 ${page.pageNumber} 页尚未就绪，请刷新后重试`);
+          const images = [...source.querySelectorAll('img')];
+          await Promise.all(images.map(image => image.complete ? image.decode().catch(() => undefined) : new Promise<void>(resolve => {
+            image.addEventListener('load', () => resolve(), { once: true });
+            image.addEventListener('error', () => resolve(), { once: true });
+          })));
+          if (cancelled) return;
+          const canvas = await html2canvas(source, {
+            scale: 2,
+            backgroundColor: '#ffffff',
+            logging: false,
+            useCORS: true,
+            width: source.scrollWidth,
+            height: source.scrollHeight,
+            windowWidth: source.scrollWidth,
+            windowHeight: source.scrollHeight,
+          });
+          pageBlobs.push(await canvasPng(canvas));
+          canvas.width = 1;
+          canvas.height = 1;
+        }
+        capturedTravelers.set(record.printId, pageBlobs);
       }
     }
 
@@ -228,7 +287,27 @@ export default function WorkOrderTravelerPrint({
         form.set('printIds', records.map(record => record.printId).join(','));
         form.set('target', target);
         if (target === 'all' || target === 'traveler') {
-          capturedTravelers.forEach((blob, printId) => form.set(`travelerImage:${printId}`, blob, `${printId}.png`));
+          for (const record of records) {
+            if (!printItem(record, 'TRAVELER')) continue;
+            const pages = travelerPagesByPrintId.get(record.printId) || [];
+            const pageBlobs = capturedTravelers.get(record.printId) || [];
+            if (pages.length !== pageBlobs.length) {
+              throw new Error(`二维码流转单生成不完整：应有 ${pages.length} 页，当前为 ${pageBlobs.length} 页`);
+            }
+            form.set(
+              `travelerManifest:${record.printId}`,
+              JSON.stringify(createTravelerPageManifest(
+                record.snapshot.steps.length,
+                pages,
+                travelerLayoutSelection,
+              )),
+            );
+            pageBlobs.forEach((blob, index) => form.set(
+              `travelerImage:${record.printId}:${index + 1}`,
+              blob,
+              `${record.printId}-${index + 1}.png`,
+            ));
+          }
         }
         const response = await fetch('/api/work-order-qr/prints/packet', {
           method: 'POST',
@@ -278,7 +357,19 @@ export default function WorkOrderTravelerPrint({
       controller.abort();
       objectUrls.forEach(url => URL.revokeObjectURL(url));
     };
-  }, [duplexTravelerSop, includesSop, includesTraveler, loadError, originKey, qrReady, records, separateTargets]);
+  }, [
+    duplexTravelerSop,
+    includesSop,
+    includesTraveler,
+    loadError,
+    originKey,
+    qrReady,
+    records,
+    separateTargets,
+    travelerLayoutSelection,
+    travelerPagesByPrintId,
+    travelerPlanKey,
+  ]);
 
   function openSourcePdf(url: string) {
     const popup = window.open('', '_blank');
@@ -337,31 +428,43 @@ export default function WorkOrderTravelerPrint({
     }
   }
 
-  function travelerSheet(record: WorkOrderTravelerPrintRecord, capture = false) {
+  function travelerSheet(record: WorkOrderTravelerPrintRecord, page: TravelerPage, capture = false) {
     const snapshot = record.snapshot;
+    const isContinuation = page.pageNumber > 1;
+    const isLastPage = page.pageNumber === page.pageCount;
+    const firstStep = page.steps[0];
+    const lastStep = page.steps.at(-1);
     return <article
-      className={`traveler-sheet${snapshot.steps.length > 18 ? ' dense' : ''}`}
-      key={`${record.printId}-traveler`}
-      ref={capture ? node => { travelerRefs.current[record.printId] = node; } : undefined}
-      data-traveler-source={capture ? record.printId : undefined}
+      className={`traveler-sheet${page.steps.length > 18 ? ' dense' : ''}${isContinuation ? ' continuation' : ''}${page.pageCount === 1 && snapshot.steps.length > AUTO_FIRST_PAGE_STEP_CAPACITY ? ' single-fit' : ''}`}
+      key={`${record.printId}-traveler-${page.pageNumber}`}
+      ref={capture ? node => { travelerRefs.current[travelerPageKey(record.printId, page.pageNumber)] = node; } : undefined}
+      data-traveler-source={capture ? `${record.printId}:${page.pageNumber}` : undefined}
     >
-      <header className="traveler-sheet-head">
-        <div className="traveler-brand"><b>杭</b><span><strong>杭连电子生产流转单</strong><small>扫码报工 · 整单随单流转</small></span></div>
-        <div className="traveler-version"><span>工艺版本</span><strong>V{snapshot.routeVersion}</strong><small>{dateTimeText(record.generatedAt)}</small></div>
-      </header>
-      <section className="traveler-order-grid">
-        <div className="traveler-order-main">
-          <span>产品 / 规格</span><strong>{snapshot.specification || snapshot.productName}</strong>
-          <small>{snapshot.customerName || '客户待维护'} · {snapshot.productName}</small>
-          <dl><div className="traveler-business-code"><dt>内部工单</dt><dd>{snapshot.businessWorkOrderCode || '待生成'}</dd></div><div><dt>生产数量</dt><dd>{snapshot.targetQty.toLocaleString()} {snapshot.unitLabel}</dd></div><div><dt>计划交期</dt><dd>{deliveryText(snapshot.deliveryDay)}</dd></div></dl>
-        </div>
-        <div className="traveler-qr">{qrImages[record.printId]
-          ? <><img src={qrImages[record.printId]} alt={`${snapshot.workOrderCode}现场报工二维码`} /></>
-          : <span><LoaderCircle className="spin" size={28} />生成中</span>}<strong>手机扫码报工</strong><small>短码 {record.shortCode}</small></div>
-      </section>
-      <section className="traveler-route-title"><span>工艺路线</span><strong>共 {snapshot.steps.length} 道工序</strong><small>扫码可单选或批量报工</small></section>
-      <table className="traveler-process-table"><thead><tr><th>序号</th><th>工序名称</th><th>标准工时</th><th>标准小时产能</th><th>首件确认</th><th>数量</th><th>员工姓名</th><th>日期 / 确认</th></tr></thead><tbody>{snapshot.steps.map(step => <tr key={step.id}><td>{String(step.position).padStart(2, '0')}</td><td><strong>{step.processName}</strong><small>第 {step.sequenceGroup} 顺序组</small></td><td>{standardTimeText(step.standardMillisecondsPerUnit, step.timeBasis, step.unitsPerProduct)}</td><td><strong>{hourlyCapacityText({ timeBasis: step.timeBasis, standardMillisecondsPerUnit: step.standardMillisecondsPerUnit, unitsPerProduct: step.unitsPerProduct, unitLabel: step.unitLabel || snapshot.unitLabel })}</strong><small>{step.timeBasis === 'per_unit' ? '理论值' : '批量待现场确认'}</small></td><td><span className="traveler-first-piece-box" aria-label="首件确认方框" /></td><td /><td /><td /></tr>)}</tbody></table>
-      <footer className="traveler-sheet-foot"><div><span>质量异常</span><b /></div><div><span>最终包装</span><b /></div><p>二维码仅用于定位工单，提交报工前必须使用员工编号登录并核对姓名。纸面版本与系统不一致时，以手机端最新工艺为准并重新打印。</p></footer>
+      {!isContinuation ? <>
+        <header className="traveler-sheet-head">
+          <div className="traveler-brand"><b>杭</b><span><strong>杭连电子生产流转单</strong><small>扫码报工 · 整单随单流转</small></span></div>
+          <div className="traveler-version"><span>工艺版本</span><strong>V{snapshot.routeVersion}</strong><small>{dateTimeText(record.generatedAt)}</small></div>
+        </header>
+        <section className="traveler-order-grid">
+          <div className="traveler-order-main">
+            <span>产品 / 规格</span><strong>{snapshot.specification || snapshot.productName}</strong>
+            <small>{snapshot.customerName || '客户待维护'} · {snapshot.productName}</small>
+            <dl><div className="traveler-business-code"><dt>内部工单</dt><dd>{snapshot.businessWorkOrderCode || '待生成'}</dd></div><div><dt>生产数量</dt><dd>{snapshot.targetQty.toLocaleString()} {snapshot.unitLabel}</dd></div><div><dt>计划交期</dt><dd>{deliveryText(snapshot.deliveryDay)}</dd></div></dl>
+          </div>
+          <div className="traveler-qr">{qrImages[record.printId]
+            ? <img src={qrImages[record.printId]} alt={`${snapshot.workOrderCode}现场报工二维码`} />
+            : <span><LoaderCircle className="spin" size={28} />生成中</span>}<strong>手机扫码报工</strong><small>短码 {record.shortCode}</small></div>
+        </section>
+      </> : <header className="traveler-continuation-head">
+        <div className="traveler-continuation-brand"><b>杭</b><span><small>生产流转单续页</small><strong>{snapshot.specification || snapshot.productName}</strong></span></div>
+        <dl><div><dt>内部工单</dt><dd>{snapshot.businessWorkOrderCode || '待生成'}</dd></div><div><dt>工艺版本</dt><dd>V{snapshot.routeVersion}</dd></div><div><dt>生产数量</dt><dd>{snapshot.targetQty.toLocaleString()} {snapshot.unitLabel}</dd></div></dl>
+        <div className="traveler-continuation-qr">{qrImages[record.printId]
+          ? <img src={qrImages[record.printId]} alt={`${snapshot.workOrderCode}续页报工二维码`} />
+          : <span>短码</span>}<small>{record.shortCode}</small></div>
+      </header>}
+      <section className="traveler-route-title"><span>{isContinuation ? '工艺路线续页' : '工艺路线'}</span><strong>共 {snapshot.steps.length} 道工序</strong><small>本页 {firstStep ? String(firstStep.position).padStart(2, '0') : '-'}～{lastStep ? String(lastStep.position).padStart(2, '0') : '-'}</small></section>
+      <table className="traveler-process-table"><thead><tr><th>序号</th><th>工序名称</th><th>标准工时</th><th>标准小时产能</th><th>首件确认</th><th>数量</th><th>员工姓名</th><th>日期 / 确认</th></tr></thead><tbody>{page.steps.map(step => <tr key={step.id}><td>{String(step.position).padStart(2, '0')}</td><td><strong>{step.processName}</strong><small>第 {step.sequenceGroup} 顺序组</small></td><td>{standardTimeText(step.standardMillisecondsPerUnit, step.timeBasis, step.unitsPerProduct)}</td><td><strong>{hourlyCapacityText({ timeBasis: step.timeBasis, standardMillisecondsPerUnit: step.standardMillisecondsPerUnit, unitsPerProduct: step.unitsPerProduct, unitLabel: step.unitLabel || snapshot.unitLabel })}</strong><small>{step.timeBasis === 'per_unit' ? '理论值' : '批量待现场确认'}</small></td><td><span className="traveler-first-piece-box" aria-label="首件确认方框" /></td><td /><td /><td /></tr>)}</tbody></table>
+      <footer className={`traveler-sheet-foot${isLastPage ? ' final' : ' continued'}`}>{isLastPage ? <><div><span>质量异常</span><b /></div><div><span>最终包装</span><b /></div><p>二维码仅用于定位工单，提交报工前必须使用员工编号登录并核对姓名。纸面版本与系统不一致时，以手机端最新工艺为准并重新打印。</p></> : <p>工艺路线未结束，请继续使用下一页；不得跳过、拆分或重新编号工序。</p>}<small className="traveler-page-number">{snapshot.businessWorkOrderCode || snapshot.workOrderCode} · 第 {page.pageNumber} / {page.pageCount} 页</small></footer>
     </article>;
   }
 
@@ -398,6 +501,39 @@ export default function WorkOrderTravelerPrint({
 
       {duplexTravelerSop && includesTraveler && includesSop && <div className="traveler-print-instruction"><FileText size={18} /><span><strong>统一 PDF 双面打印包</strong> PDF版SOP保留源页面，图片版SOP自动转为A4打印页；打印时选择“双面 / 长边翻转”，方向选择“自动”。</span></div>}
       {loadError && <div className="traveler-print-warning">资料加载失败：{loadError}</div>}
+
+      {includesTraveler && <section className="traveler-layout-settings" aria-labelledby="traveler-layout-title">
+        <header>
+          <span><SlidersHorizontal size={20} /><strong id="traveler-layout-title">流转单分页方式</strong><small>设置变更后自动重新生成预览；只影响二维码流转单，不改变 SOP 原始页数。</small></span>
+          <em><Files size={15} />{totalTravelerPages} 页 · {totalTravelerSteps}/{totalTravelerSteps} 道工序</em>
+        </header>
+        <div className="traveler-layout-body">
+          <div className="traveler-layout-options" role="radiogroup" aria-label="流转单分页方式">
+            {TRAVELER_LAYOUT_OPTIONS.map(option => <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={layoutMode === option.value}
+              className={layoutMode === option.value ? 'active' : ''}
+              onClick={() => setLayoutMode(option.value)}
+            ><span>{option.label}</span><small>{option.description}</small></button>)}
+          </div>
+          {layoutMode === 'custom' && <label className="traveler-layout-count" htmlFor="traveler-custom-page-count"><span>指定页数</span><input
+            id="traveler-custom-page-count"
+            type="number"
+            min={1}
+            max={MAX_CUSTOM_TRAVELER_PAGES}
+            value={customPageCount}
+            onChange={event => setCustomPageCount(Math.max(1, Math.min(MAX_CUSTOM_TRAVELER_PAGES, Number(event.target.value) || 1)))}
+          /><small>最多 {MAX_CUSTOM_TRAVELER_PAGES} 页；不会创建没有工序的空白流转单。</small></label>}
+          <div className={`traveler-layout-result${singlePageReadabilityWarning ? ' warning' : ''}`} aria-live="polite">
+            {singlePageReadabilityWarning ? <AlertTriangle size={20} /> : <CheckCircle2 size={20} />}
+            <span><strong>{layoutMode === 'single' ? '单页完整缩放' : layoutMode === 'double' ? '固定双页' : layoutMode === 'custom' ? `自定义 ${customPageCount} 页` : '自动清晰分页'}</strong><small>{singlePageReadabilityWarning
+              ? `最多 ${maxTravelerSteps} 道工序将完整缩放到单页，保证不裁切，但打印字号会变小。`
+              : `${totalTravelerSteps} 道工序已连续分配到 ${totalTravelerPages} 个流转单页面，页码和工序范围将由服务端再次校验。`}</small></span>
+          </div>
+        </div>
+      </section>}
 
       {includesDrawing && <section className="traveler-drawing-jobs" aria-label="原图打印清单">
         <header><span><FileImage size={19} /><strong>原图打印清单</strong><small>PDF保留源页面尺寸；JPG、PNG、WebP自动转换为所选A4/A3打印页。</small></span><em>{records.filter(record => printItem(record, 'DRAWING')).length} 项</em></header>
@@ -440,7 +576,9 @@ export default function WorkOrderTravelerPrint({
     </main>
 
     {includesTraveler && <div className="traveler-packet-sources" aria-hidden="true">
-      {records.filter(record => printItem(record, 'TRAVELER')).map(record => travelerSheet(record, true))}
+      {records.filter(record => printItem(record, 'TRAVELER')).flatMap(record => (
+        travelerPagesByPrintId.get(record.printId) || []
+      ).map(page => travelerSheet(record, page, true)))}
     </div>}
   </>;
 }

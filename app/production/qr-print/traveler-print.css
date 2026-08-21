@@ -15,6 +15,32 @@
 .traveler-print-instruction { max-width: 1120px; display: flex; align-items: center; gap: 10px; margin: 0 auto 12px; padding: 11px 14px; border: 1px solid #f4d2ae; border-radius: 12px; color: #8a4c12; background: #fff8ef; font-size: 12px; }
 .traveler-print-instruction > svg { flex: 0 0 auto; color: #e9630a; }.traveler-print-instruction span { line-height: 1.55; }.traveler-print-instruction strong { margin-right: 7px; color: #713a0b; }
 .traveler-print-warning { max-width: 1120px; margin: 0 auto 12px; padding: 10px 14px; border: 1px solid #fecaca; border-radius: 12px; background: #fff1f2; color: #b91c1c; }
+.traveler-layout-settings { max-width: 1120px; margin: 0 auto 16px; overflow: hidden; border: 1px solid #d9e1eb; border-radius: 16px; background: #fff; box-shadow: 0 12px 34px rgba(15,23,42,.08); }
+.traveler-layout-settings > header { min-height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 16px; border-bottom: 1px solid #e6ebf1; background: linear-gradient(135deg,#fff 55%,#fff6eb); }
+.traveler-layout-settings > header > span { min-width: 0; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 9px; }
+.traveler-layout-settings > header svg { grid-row: 1 / 3; color: #e9630a; }
+.traveler-layout-settings > header strong { color: #1f2f46; font-size: 15px; }
+.traveler-layout-settings > header small { color: #66758a; font-size: 11px; }
+.traveler-layout-settings > header em { min-height: 34px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; border: 1px solid #f4c79f; border-radius: 999px; color: #99500e; background: #fff5e9; font-size: 11px; font-style: normal; font-weight: 800; white-space: nowrap; }
+.traveler-layout-settings > header em svg { color: #d95b08; }
+.traveler-layout-body { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; padding: 12px; }
+.traveler-layout-options { min-width: 0; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; }
+.traveler-layout-options button { min-height: 54px; display: grid; align-content: center; gap: 3px; padding: 7px 11px; border: 1px solid #dce3eb; border-radius: 11px; color: #34445b; background: #f9fbfd; cursor: pointer; text-align: left; transition: border-color .18s ease, background-color .18s ease, box-shadow .18s ease; }
+.traveler-layout-options button:hover { border-color: #f0aa79; background: #fff9f3; }
+.traveler-layout-options button:focus-visible { outline: 3px solid rgba(249,115,22,.24); outline-offset: 2px; }
+.traveler-layout-options button.active { border-color: #f47a2a; color: #a94708; background: #fff4e9; box-shadow: 0 0 0 2px rgba(249,115,22,.09); }
+.traveler-layout-options button span { font-size: 12px; font-weight: 850; }
+.traveler-layout-options button small { color: #728096; font-size: 10px; line-height: 1.35; }
+.traveler-layout-count { min-width: 188px; display: grid; grid-template-columns: auto 68px; align-items: center; gap: 5px 8px; padding: 7px 10px; border: 1px solid #f1c9a8; border-radius: 11px; background: #fffaf5; }
+.traveler-layout-count > span { color: #7d491d; font-size: 11px; font-weight: 800; }
+.traveler-layout-count input { width: 68px; height: 42px; box-sizing: border-box; border: 1px solid #d9a77e; border-radius: 9px; color: #8d4109; background: #fff; font: 800 15px/1 system-ui,sans-serif; text-align: center; }
+.traveler-layout-count input:focus { outline: 3px solid rgba(249,115,22,.2); border-color: #ef761f; }
+.traveler-layout-count small { grid-column: 1 / -1; color: #806b5a; font-size: 9px; line-height: 1.4; }
+.traveler-layout-result { grid-column: 1 / -1; min-height: 46px; display: flex; align-items: center; gap: 9px; padding: 8px 11px; border: 1px solid #b8dfc7; border-radius: 10px; color: #176c42; background: #effaf4; }
+.traveler-layout-result > svg { flex: 0 0 auto; }
+.traveler-layout-result > span { display: grid; gap: 2px; }
+.traveler-layout-result strong { font-size: 11px; }.traveler-layout-result small { color: #527061; font-size: 10px; line-height: 1.45; }
+.traveler-layout-result.warning { border-color: #f1c382; color: #995006; background: #fff8e8; }.traveler-layout-result.warning small { color: #7a6043; }
 .traveler-drawing-jobs { max-width: 1120px; margin: 0 auto 16px; overflow: hidden; border: 1px solid #d9e1eb; border-radius: 16px; background: #fff; box-shadow: 0 12px 34px rgba(15,23,42,.08); }
 .traveler-drawing-jobs > header { min-height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 16px; border-bottom: 1px solid #e6ebf1; background: linear-gradient(135deg,#fff 60%,#fff7ee); }
 .traveler-drawing-jobs > header span { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 2px 9px; }
@@ -49,7 +75,7 @@
 .traveler-packet-loading, .traveler-packet-error { height: 100%; display: grid; place-content: center; justify-items: center; gap: 9px; padding: 30px; color: #718096; text-align: center; }.traveler-packet-loading svg { color: #ef690d; }.traveler-packet-loading strong, .traveler-packet-error strong { color: #26364d; font-size: 20px; }.traveler-packet-loading span, .traveler-packet-error span { max-width: 560px; line-height: 1.65; }.traveler-packet-error { background: #fffaf5; }.traveler-packet-error svg { color: #e9680d; }.traveler-packet-error small { color: #9a632f; }
 .traveler-packet-card > footer { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 15px; border-top: 1px solid #e1e7ef; background: #fff; }.traveler-packet-card > footer span { display: inline-flex; align-items: center; gap: 7px; color: #147a45; font-size: 11px; font-weight: 750; }.traveler-packet-card > footer small { color: #718096; font-size: 10px; }
 .traveler-packet-sources { width: 210mm; position: fixed; top: 0; left: -12000px; z-index: -100; pointer-events: none; }
-.traveler-sheet { width: 210mm; height: 297mm; min-height: 297mm; box-sizing: border-box; display: flex; flex-direction: column; padding: 10mm; background: #fff; box-shadow: none; overflow: hidden; }
+.traveler-sheet { width: 210mm; min-height: 297mm; box-sizing: border-box; display: flex; flex-direction: column; padding: 10mm; background: #fff; box-shadow: none; overflow: visible; }
 .traveler-sheet-head { display: flex; align-items: center; justify-content: space-between; padding-bottom: 4mm; border-bottom: 2px solid #f97316; }
 .traveler-brand { display: flex; align-items: center; gap: 3mm; }
 .traveler-brand > b { display: grid; place-items: center; width: 12mm; height: 12mm; border-radius: 3mm; background: linear-gradient(145deg,#fb923c,#ea580c); color: #fff; font-size: 7mm; }
@@ -83,9 +109,27 @@
 .traveler-process-table td:nth-child(2) { text-align: left; }.traveler-process-table td strong { display: block; }.traveler-process-table td small { display: block; margin-top: .5mm; color: #94a3b8; font-size: 2.2mm; }
 .traveler-first-piece-box { display: inline-block; width: 5mm; height: 5mm; border: .55mm solid #334155; border-radius: .8mm; background: #fff; }
 .traveler-sheet.dense .traveler-process-table { font-size: 2.55mm; }.traveler-sheet.dense .traveler-process-table th, .traveler-sheet.dense .traveler-process-table td { height: 6.5mm; }
+.traveler-sheet.single-fit { padding: 7mm; }
+.traveler-sheet.single-fit .traveler-sheet-head { padding-bottom: 2.5mm; }
+.traveler-sheet.single-fit .traveler-brand > b { width: 9mm; height: 9mm; border-radius: 2mm; font-size: 5mm; }
+.traveler-sheet.single-fit .traveler-brand strong { font-size: 4.8mm; }.traveler-sheet.single-fit .traveler-brand small, .traveler-sheet.single-fit .traveler-version span, .traveler-sheet.single-fit .traveler-version small { font-size: 2.35mm; }
+.traveler-sheet.single-fit .traveler-version strong { font-size: 4mm; }
+.traveler-sheet.single-fit .traveler-order-grid { grid-template-columns: 1fr 31mm; gap: 4mm; padding: 3mm 0; }
+.traveler-sheet.single-fit .traveler-order-main > strong { font-size: 5.6mm; }.traveler-sheet.single-fit .traveler-order-main > small { margin-top: .8mm; font-size: 2.7mm; }
+.traveler-sheet.single-fit .traveler-order-main dl { margin-top: 2mm; }.traveler-sheet.single-fit .traveler-order-main dl div { padding-bottom: .8mm; }.traveler-sheet.single-fit .traveler-order-main dt { font-size: 2.3mm; }.traveler-sheet.single-fit .traveler-order-main dd { font-size: 2.8mm; }
+.traveler-sheet.single-fit .traveler-qr img, .traveler-sheet.single-fit .traveler-qr > span { width: 28mm; height: 28mm; }.traveler-sheet.single-fit .traveler-qr strong { font-size: 2.8mm; }.traveler-sheet.single-fit .traveler-qr small { font-size: 2.2mm; }
+.traveler-sheet.single-fit .traveler-route-title { padding: 1.6mm 2mm; }.traveler-sheet.single-fit .traveler-route-title span { font-size: 2.5mm; }.traveler-sheet.single-fit .traveler-route-title strong { font-size: 3mm; }.traveler-sheet.single-fit .traveler-route-title small { font-size: 2.2mm; }
+.traveler-sheet.single-fit .traveler-process-table { margin-top: 1.8mm; font-size: 2.25mm; }.traveler-sheet.single-fit .traveler-process-table th, .traveler-sheet.single-fit .traveler-process-table td { height: 5.2mm; padding: .45mm .7mm; }.traveler-sheet.single-fit .traveler-process-table td small { margin-top: .2mm; font-size: 1.85mm; }.traveler-sheet.single-fit .traveler-first-piece-box { width: 4mm; height: 4mm; }
+.traveler-sheet.single-fit .traveler-sheet-foot { padding-top: 2mm; }.traveler-sheet.single-fit .traveler-sheet-foot p { margin-top: 2mm; padding: 1.4mm 2mm; font-size: 2mm; }
+.traveler-continuation-head { display: grid; grid-template-columns: minmax(0,1fr) 1.4fr 25mm; align-items: center; gap: 5mm; padding-bottom: 4mm; border-bottom: 2px solid #f97316; }
+.traveler-continuation-brand { min-width: 0; display: flex; align-items: center; gap: 3mm; }.traveler-continuation-brand > b { display: grid; place-items: center; width: 9mm; height: 9mm; border-radius: 2mm; color: #fff; background: #ea580c; font-size: 5mm; }.traveler-continuation-brand > span { min-width: 0; display: grid; gap: 1mm; }.traveler-continuation-brand small { color: #c2410c; font-size: 2.5mm; font-weight: 800; }.traveler-continuation-brand strong { overflow-wrap: anywhere; font-size: 4.5mm; line-height: 1.15; }
+.traveler-continuation-head dl { display: grid; grid-template-columns: 1.5fr .7fr .9fr; gap: 2mm; margin: 0; }.traveler-continuation-head dl div { min-width: 0; display: grid; gap: 1mm; }.traveler-continuation-head dt { color: #64748b; font-size: 2.35mm; }.traveler-continuation-head dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-size: 2.8mm; font-weight: 750; }
+.traveler-continuation-qr { display: grid; justify-items: center; gap: .6mm; }.traveler-continuation-qr img, .traveler-continuation-qr > span { width: 18mm; height: 18mm; }.traveler-continuation-qr > span { display: grid; place-items: center; border: 1px dashed #cbd5e1; color: #64748b; font-size: 2.3mm; }.traveler-continuation-qr small { color: #64748b; font-size: 2.1mm; }
 .traveler-sheet-foot { margin-top: auto; padding-top: 4mm; }
 .traveler-sheet-foot > div { display: inline-grid; grid-template-columns: 18mm 32mm; gap: 2mm; margin-right: 5mm; font-size: 3mm; }.traveler-sheet-foot > div b { border-bottom: 1px solid #475569; }
 .traveler-sheet-foot p { margin: 4mm 0 0; padding: 2.5mm 3mm; border-radius: 2mm; background: #f8fafc; color: #475569; font-size: 2.45mm; line-height: 1.5; }
+.traveler-sheet-foot.continued p { margin-top: 0; border: 1px solid #e2e8f0; background: #fff; }
+.traveler-page-number { display: block; margin-top: 2.5mm; color: #64748b; font-size: 2.2mm; text-align: right; }
 .traveler-print-confirm-backdrop { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 20px; background: rgba(16, 28, 45, .52); backdrop-filter: blur(5px); }
 .traveler-print-confirm-backdrop > section { width: min(480px, 94vw); position: relative; display: grid; justify-items: center; gap: 8px; padding: 28px; border-radius: 20px; color: #1d2b41; background: #fff; box-shadow: 0 28px 78px rgba(15, 23, 42, .28); }
 .traveler-print-confirm-backdrop > section > svg { color: #168652; }
@@ -107,4 +151,11 @@
   .traveler-packet-preview { min-height: 560px; }
   .traveler-packet-card > header { align-items: flex-start; flex-direction: column; }
   .traveler-packet-card > footer { align-items: flex-start; flex-direction: column; }
+  .traveler-layout-settings > header { align-items: flex-start; flex-direction: column; }
+  .traveler-layout-body { grid-template-columns: 1fr; }
+  .traveler-layout-options { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .traveler-layout-count { width: 100%; box-sizing: border-box; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .traveler-layout-options button { transition: none; }
 }

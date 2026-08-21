@@ -18,6 +18,7 @@ import {
   loadWorkOrderTravelerPrints,
   WorkOrderQrServiceError,
 } from '@/lib/work-order-qr-service';
+import { validateTravelerPageManifest } from '@/lib/work-order-traveler-layout';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -49,26 +50,50 @@ export async function POST(req: NextRequest) {
       .filter(Boolean);
     const records = await loadWorkOrderTravelerPrints(printIds);
 
-    const travelerImages = new Map<string, Uint8Array>();
+    const travelerImages = new Map<string, readonly Uint8Array[]>();
     let travelerImageTotal = 0;
     if (target === 'all' || target === 'traveler') {
       for (const record of records) {
         if (!record.items.some(item => item.material === 'TRAVELER')) continue;
-        const entry = form.get(`travelerImage:${record.printId}`);
-        if (!(entry instanceof File) || !entry.size) {
-          throw new WorkOrderPrintPacketError('二维码流转单页面尚未生成，请刷新后重试', 400, 'PRINT_PACKET_TRAVELER_MISSING');
+        const manifestEntry = form.get(`travelerManifest:${record.printId}`);
+        if (typeof manifestEntry !== 'string' || !manifestEntry.trim() || Buffer.byteLength(manifestEntry, 'utf8') > 32 * 1024) {
+          throw new WorkOrderPrintPacketError('二维码流转单分页清单缺失，请刷新后重试', 400, 'PRINT_PACKET_TRAVELER_MANIFEST_MISSING');
         }
-        if (entry.type && entry.type !== 'image/png') {
-          throw new WorkOrderPrintPacketError('二维码流转单页面格式无效', 400, 'PRINT_PACKET_TRAVELER_INVALID');
+        let manifestInput: unknown;
+        try {
+          manifestInput = JSON.parse(manifestEntry);
+        } catch {
+          throw new WorkOrderPrintPacketError('二维码流转单分页清单格式无效', 400, 'PRINT_PACKET_TRAVELER_MANIFEST_INVALID');
         }
-        if (entry.size > MAX_TRAVELER_IMAGE_BYTES) {
-          throw new WorkOrderPrintPacketError('单张二维码流转单超过 8MB，请减少批量后重试', 413, 'PRINT_PACKET_TRAVELER_TOO_LARGE');
+        let manifest;
+        try {
+          manifest = validateTravelerPageManifest(manifestInput, record.snapshot.steps.length);
+        } catch (error) {
+          throw new WorkOrderPrintPacketError(
+            error instanceof Error ? error.message : '二维码流转单分页清单无效',
+            400,
+            'PRINT_PACKET_TRAVELER_MANIFEST_INVALID',
+          );
         }
-        travelerImageTotal += entry.size;
-        if (travelerImageTotal > MAX_TRAVELER_IMAGE_TOTAL_BYTES) {
-          throw new WorkOrderPrintPacketError('本次流转单页面总量过大，请分批打印', 413, 'PRINT_PACKET_TRAVELER_BATCH_TOO_LARGE');
+        const pageImages: Uint8Array[] = [];
+        for (const page of manifest.pages) {
+          const entry = form.get(`travelerImage:${record.printId}:${page.pageNumber}`);
+          if (!(entry instanceof File) || !entry.size) {
+            throw new WorkOrderPrintPacketError(`二维码流转单第 ${page.pageNumber} 页缺失，请重新生成`, 400, 'PRINT_PACKET_TRAVELER_PAGE_MISSING');
+          }
+          if (entry.type && entry.type !== 'image/png') {
+            throw new WorkOrderPrintPacketError(`二维码流转单第 ${page.pageNumber} 页格式无效`, 400, 'PRINT_PACKET_TRAVELER_INVALID');
+          }
+          if (entry.size > MAX_TRAVELER_IMAGE_BYTES) {
+            throw new WorkOrderPrintPacketError(`二维码流转单第 ${page.pageNumber} 页超过 8MB，请减少批量后重试`, 413, 'PRINT_PACKET_TRAVELER_TOO_LARGE');
+          }
+          travelerImageTotal += entry.size;
+          if (travelerImageTotal > MAX_TRAVELER_IMAGE_TOTAL_BYTES) {
+            throw new WorkOrderPrintPacketError('本次流转单页面总量过大，请分批打印', 413, 'PRINT_PACKET_TRAVELER_BATCH_TOO_LARGE');
+          }
+          pageImages.push(new Uint8Array(await entry.arrayBuffer()));
         }
-        travelerImages.set(record.printId, new Uint8Array(await entry.arrayBuffer()));
+        travelerImages.set(record.printId, pageImages);
       }
     }
 

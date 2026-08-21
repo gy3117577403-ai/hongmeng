@@ -51,31 +51,37 @@ function addBlankBack(output: PDFDocument, previousPage: PDFPage | undefined) {
   blank.setRotation(previousPage.getRotation());
 }
 
-async function appendTraveler(
+async function appendTravelerPages(
   output: PDFDocument,
   printId: string,
-  travelerImages: ReadonlyMap<string, Uint8Array>,
+  travelerImages: ReadonlyMap<string, readonly Uint8Array[]>,
 ) {
-  const imageBytes = travelerImages.get(printId);
-  if (!imageBytes?.byteLength) {
+  const pages = travelerImages.get(printId);
+  if (!pages?.length) {
     throw new WorkOrderPrintPacketError('二维码流转单页面尚未生成，请刷新后重试', 400, 'PRINT_PACKET_TRAVELER_MISSING');
   }
-  let image;
-  try {
-    image = await output.embedPng(imageBytes);
-  } catch {
-    throw new WorkOrderPrintPacketError('二维码流转单页面格式无效，请刷新后重试', 400, 'PRINT_PACKET_TRAVELER_INVALID');
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    const imageBytes = pages[pageIndex];
+    if (!imageBytes?.byteLength) {
+      throw new WorkOrderPrintPacketError(`二维码流转单第 ${pageIndex + 1} 页缺失，请重新生成`, 400, 'PRINT_PACKET_TRAVELER_PAGE_MISSING');
+    }
+    let image;
+    try {
+      image = await output.embedPng(imageBytes);
+    } catch {
+      throw new WorkOrderPrintPacketError(`二维码流转单第 ${pageIndex + 1} 页格式无效，请刷新后重试`, 400, 'PRINT_PACKET_TRAVELER_INVALID');
+    }
+    const page = output.addPage([A4_WIDTH, A4_HEIGHT]);
+    const scale = Math.min(A4_WIDTH / image.width, A4_HEIGHT / image.height);
+    const width = image.width * scale;
+    const height = image.height * scale;
+    page.drawImage(image, {
+      x: (A4_WIDTH - width) / 2,
+      y: (A4_HEIGHT - height) / 2,
+      width,
+      height,
+    });
   }
-  const page = output.addPage([A4_WIDTH, A4_HEIGHT]);
-  const scale = Math.min(A4_WIDTH / image.width, A4_HEIGHT / image.height);
-  const width = image.width * scale;
-  const height = image.height * scale;
-  page.drawImage(image, {
-    x: (A4_WIDTH - width) / 2,
-    y: (A4_HEIGHT - height) / 2,
-    width,
-    height,
-  });
 }
 
 async function appendSourceFile(
@@ -93,7 +99,7 @@ async function appendSourceFile(
 export async function buildWorkOrderPrintPacket(input: {
   records: readonly WorkOrderPrintPacketRecord[];
   target: WorkOrderPrintPacketTarget;
-  travelerImages?: ReadonlyMap<string, Uint8Array>;
+  travelerImages?: ReadonlyMap<string, readonly Uint8Array[]>;
   sourceFiles?: ReadonlyMap<string, PrintableSourceInput>;
 }): Promise<{ bytes: Uint8Array; pageCount: number; hash: string }> {
   if (!input.records.length) {
@@ -107,7 +113,7 @@ export async function buildWorkOrderPrintPacket(input: {
   output.setTitle(input.target === 'all' ? '生产流转单与SOP' : input.target === 'traveler' ? '生产流转单' : '生产SOP');
   output.setCreator('杭连电子协同平台');
   output.setProducer('杭连电子协同平台');
-  const travelerImages = input.travelerImages || new Map<string, Uint8Array>();
+  const travelerImages = input.travelerImages || new Map<string, readonly Uint8Array[]>();
   const sourceFiles = input.sourceFiles || new Map<string, PrintableSourceInput>();
 
   for (const record of input.records) {
@@ -124,7 +130,7 @@ export async function buildWorkOrderPrintPacket(input: {
       }
       for (let copy = 0; copy < travelerCopies; copy += 1) {
         const packetStart = output.getPageCount();
-        await appendTraveler(output, record.printId, travelerImages);
+        await appendTravelerPages(output, record.printId, travelerImages);
         await appendSourceFile(output, sop.fileId, sourceFiles);
         const packetPageCount = output.getPageCount() - packetStart;
         if (packetPageCount % 2 === 1) {
@@ -135,7 +141,7 @@ export async function buildWorkOrderPrintPacket(input: {
     }
     if (input.target === 'traveler' && traveler) {
       for (let copy = 0; copy < positiveCopies(traveler.copies); copy += 1) {
-        await appendTraveler(output, record.printId, travelerImages);
+        await appendTravelerPages(output, record.printId, travelerImages);
       }
     }
     if (input.target === 'sop' && sop?.fileId) {
