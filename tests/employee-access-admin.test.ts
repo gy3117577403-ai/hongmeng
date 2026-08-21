@@ -59,6 +59,8 @@ function employeeRecord(overrides: Partial<EmployeeAccessAdminRecord> = {}): Emp
     isActive: true,
     attendanceEnabled: true,
     attainmentEligible: true,
+    attainmentFactorBasisPoints: 10_000,
+    attainmentStream: 'batch',
     resignedAt: null,
     resignationReason: null,
     resignationNote: null,

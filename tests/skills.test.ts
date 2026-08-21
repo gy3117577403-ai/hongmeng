@@ -33,6 +33,8 @@ const employee: EmployeeDTO = {
   isActive: true,
   attendanceEnabled: true,
   attainmentEligible: false,
+  attainmentFactorBasisPoints: 0,
+  attainmentStream: 'excluded',
   resignedAt: null,
   resignationReason: null,
   resignationNote: null,
