@@ -679,6 +679,7 @@ export type IssueDTO = {
   workOrderId?: string | null;
   reporter?: IssueUserDTO | null;
   assignee?: IssueEmployeeDTO | null;
+  verifier?: IssueEmployeeDTO | null;
   collaborators: IssueEmployeeDTO[];
   workOrder?: IssueWorkOrderDTO | null;
   dueAt?: string | null;

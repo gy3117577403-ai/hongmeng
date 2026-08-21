@@ -114,7 +114,7 @@ export async function listIssueAssigneeOptions(tx: IssueAssigneeTx) {
 export async function requireIssueAssigneeReady(
   tx: IssueAssigneeTx,
   employeeId: string | null | undefined,
-): Promise<{ employeeId: string; userId: string } | null> {
+): Promise<{ employeeId: string; userId: string; employeeName: string } | null> {
   if (!employeeId) return null;
   const employee = await tx.employee.findFirst({
     where: { id: employeeId, isActive: true, resignedAt: null },
@@ -127,5 +127,5 @@ export async function requireIssueAssigneeReady(
   if (!canHandleIssue(employee)) {
     throw new IssueAssigneeAccessError('该负责人尚未开通问题处理权限，请先完成账号授权');
   }
-  return { employeeId: employee.id, userId: employee.user.id };
+  return { employeeId: employee.id, userId: employee.user.id, employeeName: employee.name };
 }

@@ -84,6 +84,7 @@ export const issueDetailInclude = Prisma.validator<Prisma.IssueInclude>()({
   reporter: { select: issueUserSelect },
   assignee: { select: issueLegacyAssigneeSelect },
   assigneeEmployee: { select: issueEmployeeSelect },
+  verifierEmployee: { select: issueEmployeeSelect },
   collaborators: {
     include: { employee: { select: issueEmployeeSelect } },
     orderBy: { createdAt: 'asc' },
@@ -130,6 +131,7 @@ export type IssueInput = {
   description?: string | null;
   workOrderId?: string | null;
   assigneeEmployeeId?: string | null;
+  verifierEmployeeId?: string | null;
   collaboratorEmployeeIds?: string[];
   dueAt?: Date | null;
   processName?: string | null;
@@ -196,6 +198,7 @@ export function parseIssueInput(body: Record<string, unknown>, partial = false):
   if (body.workOrderId !== undefined) data.workOrderId = text(body.workOrderId, 80);
   const assigneeEmployeeId = body.assigneeEmployeeId !== undefined ? body.assigneeEmployeeId : body.assigneeId;
   if (assigneeEmployeeId !== undefined) data.assigneeEmployeeId = text(assigneeEmployeeId, 80);
+  if (body.verifierEmployeeId !== undefined) data.verifierEmployeeId = text(body.verifierEmployeeId, 80);
   if (body.collaboratorEmployeeIds !== undefined) {
     if (!Array.isArray(body.collaboratorEmployeeIds)) errors.push('协同人员格式不正确');
     else {
@@ -231,6 +234,85 @@ export function validateMajorQualityInput(input: {
   if (input.type !== 'quality') return '只有质量问题可以标记为重大质量事项';
   if (!String(input.majorQualityReason || '').trim()) return '重大质量事项必须填写重大判定原因';
   return null;
+}
+
+export const ISSUE_COLLABORATION_KINDS = [
+  'comment',
+  'task',
+  'task_complete',
+  'decision',
+  'decision_response',
+] as const;
+
+export type IssueCollaborationKind = typeof ISSUE_COLLABORATION_KINDS[number];
+
+export type IssueCollaborationInput = {
+  kind: IssueCollaborationKind;
+  content?: string | null;
+  assigneeEmployeeId?: string | null;
+  dueAt?: Date | null;
+  targetActivityId?: string | null;
+  decision?: 'approve' | 'return' | null;
+};
+
+export function parseIssueCollaborationInput(body: Record<string, unknown>): {
+  data: IssueCollaborationInput | null;
+  errors: string[];
+} {
+  const errors: string[] = [];
+  const kind = enumValue(body.kind ?? 'comment', ISSUE_COLLABORATION_KINDS);
+  if (!kind) return { data: null, errors: ['协同记录类型不正确'] };
+
+  const content = text(body.content, 2000);
+  const assigneeEmployeeId = text(body.assigneeEmployeeId, 80);
+  const targetActivityId = text(body.targetActivityId, 80);
+  const decision = enumValue(body.decision, ['approve', 'return'] as const);
+  let dueAt: Date | null = null;
+  if (body.dueAt !== undefined) {
+    const parsed = dateValue(body.dueAt);
+    if (parsed === 'invalid') errors.push('截止时间格式不正确');
+    else dueAt = parsed;
+  }
+
+  if (kind === 'comment' && !content) errors.push('协同回复不能为空');
+  if (kind === 'task') {
+    if (!content) errors.push('待办内容不能为空');
+    if (!assigneeEmployeeId) errors.push('请选择待办负责人');
+  }
+  if (kind === 'decision' && !content) errors.push('决策事项不能为空');
+  if ((kind === 'task_complete' || kind === 'decision_response') && !targetActivityId) {
+    errors.push('目标协同记录不存在');
+  }
+  if (kind === 'decision_response' && !decision) errors.push('请选择通过或退回');
+
+  return {
+    data: errors.length ? null : {
+      kind,
+      content,
+      assigneeEmployeeId,
+      dueAt,
+      targetActivityId,
+      decision,
+    },
+    errors,
+  };
+}
+
+export function issueVerificationBlockers(input: {
+  assigneeEmployeeId?: string | null;
+  verifierEmployeeId?: string | null;
+  rootCause?: string | null;
+  solution?: string | null;
+  attachmentCount: number;
+  isMajorQuality?: boolean;
+}): string[] {
+  const blockers: string[] = [];
+  if (!input.assigneeEmployeeId) blockers.push('未指定负责人');
+  if (!String(input.rootCause || '').trim()) blockers.push('未填写原因分析');
+  if (!String(input.solution || '').trim()) blockers.push('未填写处理方案');
+  if (input.attachmentCount < 1) blockers.push('未上传处理证据');
+  if (!input.isMajorQuality && !input.verifierEmployeeId) blockers.push('未指定验证人');
+  return blockers;
 }
 
 function simpleDetail(value: Prisma.JsonValue | null): Record<string, string | number | boolean | null> | null {
@@ -275,6 +357,19 @@ export function serializeIssue(issue: IssueDetailRecord): IssueDTO {
           isActive: issue.assignee.isActive,
         }
       : null;
+  const verifier = issue.verifierEmployee
+    ? {
+        id: issue.verifierEmployee.id,
+        employeeNo: issue.verifierEmployee.employeeNo,
+        name: issue.verifierEmployee.name,
+        displayName: issue.verifierEmployee.name,
+        username: issue.verifierEmployee.employeeNo,
+        department: issue.verifierEmployee.department,
+        position: issue.verifierEmployee.position,
+        team: issue.verifierEmployee.team,
+        isActive: issue.verifierEmployee.isActive,
+      }
+    : null;
   return {
     id: issue.id,
     sequence: issue.sequence,
@@ -292,6 +387,7 @@ export function serializeIssue(issue: IssueDetailRecord): IssueDTO {
     workOrderId: issue.workOrderId,
     reporter: issue.reporter,
     assignee,
+    verifier,
     collaborators: issue.collaborators.map(({ employee }) => ({
       id: employee.id,
       employeeNo: employee.employeeNo,

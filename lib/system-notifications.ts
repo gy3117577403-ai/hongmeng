@@ -177,6 +177,7 @@ export async function issueParticipantUserIds(
     select: {
       reporterId: true,
       assigneeEmployeeId: true,
+      verifierEmployeeId: true,
       collaborators: { select: { employeeId: true } },
     },
   });
@@ -184,6 +185,7 @@ export async function issueParticipantUserIds(
   const excluded = new Set(options.excludeUserIds || []);
   const employeeUsers = await activeUserIdsForEmployees(tx, [
     ...(issue.assigneeEmployeeId ? [issue.assigneeEmployeeId] : []),
+    ...(issue.verifierEmployeeId ? [issue.verifierEmployeeId] : []),
     ...issue.collaborators.map(item => item.employeeId),
   ], options);
   return [...new Set([

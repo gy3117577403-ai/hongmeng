@@ -5,6 +5,8 @@ import {
   issueAttachmentMutationLock,
   issueCode,
   issueFingerprint,
+  issueVerificationBlockers,
+  parseIssueCollaborationInput,
   parseIssueInput,
   priorityForAlert,
   transitionIssueData,
@@ -81,6 +83,41 @@ test('issue input rejects invalid affected quantities and collaborator payloads'
     collaboratorEmployeeIds: 'employee-002',
   });
   assert.deepEqual(parsed.errors, ['协同人员格式不正确', '影响数量必须是非负整数']);
+});
+
+test('structured issue collaboration validates durable tasks and decisions', () => {
+  const task = parseIssueCollaborationInput({
+    kind: 'task',
+    content: '复测 PVC 管径并上传对比照片',
+    assigneeEmployeeId: 'employee-003',
+    dueAt: '2026-08-22T09:00:00.000Z',
+  });
+  assert.deepEqual(task.errors, []);
+  assert.equal(task.data?.kind, 'task');
+  assert.equal(task.data?.assigneeEmployeeId, 'employee-003');
+
+  const invalidDecision = parseIssueCollaborationInput({
+    kind: 'decision_response',
+    targetActivityId: 'activity-1',
+  });
+  assert.deepEqual(invalidDecision.errors, ['请选择通过或退回']);
+});
+
+test('verification checklist blocks incomplete closure evidence', () => {
+  assert.deepEqual(issueVerificationBlockers({
+    assigneeEmployeeId: null,
+    verifierEmployeeId: null,
+    rootCause: '',
+    solution: '',
+    attachmentCount: 0,
+  }), ['未指定负责人', '未填写原因分析', '未填写处理方案', '未上传处理证据', '未指定验证人']);
+  assert.deepEqual(issueVerificationBlockers({
+    assigneeEmployeeId: 'employee-1',
+    verifierEmployeeId: 'employee-2',
+    rootCause: '规格引用错误',
+    solution: '修订规格并复测',
+    attachmentCount: 2,
+  }), []);
 });
 
 test('issue codes and production fingerprints are stable', () => {

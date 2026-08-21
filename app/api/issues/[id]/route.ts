@@ -91,14 +91,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       ?.filter(id => id !== effectiveAssigneeEmployeeId) || undefined;
     const employeeIds = Array.from(new Set([
       ...(values.assigneeEmployeeId ? [values.assigneeEmployeeId] : []),
+      ...(values.verifierEmployeeId ? [values.verifierEmployeeId] : []),
       ...(collaboratorEmployeeIds || []),
     ]));
     if (employeeIds.length) {
       const employees = await prisma.employee.count({ where: { id: { in: employeeIds }, isActive: true } });
-      if (employees !== employeeIds.length) return NextResponse.json({ ok: false, error: '负责人或协同人员不存在、已离职或已停用' }, { status: 404 });
+      if (employees !== employeeIds.length) return NextResponse.json({ ok: false, error: '负责人、验证人或协同人员不存在、已离职或已停用' }, { status: 404 });
     }
     const nextAssignee = values.assigneeEmployeeId !== undefined
       ? await requireIssueAssigneeReady(prisma, values.assigneeEmployeeId)
+      : null;
+    const nextVerifier = values.verifierEmployeeId !== undefined
+      ? await requireIssueAssigneeReady(prisma, values.verifierEmployeeId)
       : null;
 
     const data: Prisma.IssueUncheckedUpdateInput = {};
@@ -111,6 +115,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       data.assigneeEmployeeId = values.assigneeEmployeeId;
       data.assigneeId = null;
     }
+    if (values.verifierEmployeeId !== undefined) data.verifierEmployeeId = values.verifierEmployeeId;
     if (values.dueAt !== undefined) data.dueAt = values.dueAt;
     if (values.processName !== undefined) data.processName = values.processName;
     if (values.affectedQuantity !== undefined) data.affectedQuantity = values.affectedQuantity;
@@ -131,6 +136,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       || (nextCollaborators !== undefined && nextCollaborators !== currentCollaborators);
     const assigneeChanged = values.assigneeEmployeeId !== undefined
       && values.assigneeEmployeeId !== current.assigneeEmployeeId;
+    const verifierChanged = values.verifierEmployeeId !== undefined
+      && values.verifierEmployeeId !== current.verifierEmployeeId;
     const action = assignmentChanged ? 'assign' : 'update';
     const issue = await prisma.$transaction(async tx => {
       const updated = await tx.issue.updateMany({
@@ -178,6 +185,22 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           actorId: user.id,
           metadata: { issueSequence: result.sequence, assigneeEmployeeId: nextAssignee.employeeId },
           recipientUserIds: [nextAssignee.userId],
+        });
+      }
+      if (verifierChanged && nextVerifier && nextVerifier.userId !== user.id) {
+        await createSystemNotification(tx, {
+          eventType: 'ISSUE_VERIFICATION_ASSIGNED',
+          dedupeKey: `issue:${current.id}:verification-assignment:${result.version}`,
+          category: 'TODO',
+          priority: result.priority === 'urgent' ? 'URGENT' : result.priority === 'high' ? 'HIGH' : 'NORMAL',
+          title: `问题验证任务已指派：ISS-${String(result.sequence).padStart(6, '0')} ${result.title}`,
+          body: '问题处理完成后将由你进行独立验证，请关注闭环控制台。',
+          targetRoute: `/workspace/issues?issueId=${encodeURIComponent(current.id)}`,
+          sourceType: 'issue',
+          sourceId: current.id,
+          actorId: user.id,
+          metadata: { issueSequence: result.sequence, verifierEmployeeId: nextVerifier.employeeId },
+          recipientUserIds: [nextVerifier.userId],
         });
       }
       return result;
