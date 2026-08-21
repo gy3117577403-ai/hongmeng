@@ -1,7 +1,9 @@
 'use client';
 
 import { Check, ChevronDown, Copy, Loader2, Plus, Search, UserRound, X } from 'lucide-react';
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { CSSProperties, RefObject } from 'react';
+import { calculatePickerPopoverLayout } from '@/lib/issue-picker-layout';
 import type { IssueAssigneeOptionDTO, IssueWorkOrderDraftDTO, IssueWorkOrderOptionDTO } from '@/types';
 
 type BasePickerProps = {
@@ -70,10 +72,82 @@ function useOutsideClose(open: boolean, close: () => void) {
     const onPointerDown = (event: PointerEvent): void => {
       if (!rootRef.current?.contains(event.target as Node)) close();
     };
+    const onFocusIn = (event: FocusEvent): void => {
+      if (!rootRef.current?.contains(event.target as Node)) close();
+    };
     document.addEventListener('pointerdown', onPointerDown);
-    return () => document.removeEventListener('pointerdown', onPointerDown);
+    document.addEventListener('focusin', onFocusIn);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('focusin', onFocusIn);
+    };
   }, [close, open]);
   return rootRef;
+}
+
+function useAdaptivePickerPopover(open: boolean, rootRef: RefObject<HTMLDivElement>, preferredMinWidth = 320) {
+  const [layout, setLayout] = useState<ReturnType<typeof calculatePickerPopoverLayout> | null>(null);
+
+  const updatePosition = useCallback((): void => {
+    const root = rootRef.current;
+    if (!root) return;
+    const anchorRect = root.getBoundingClientRect();
+    const boundaryElement = root.closest<HTMLElement>('.issue-context-scroll, .issue-modal-body, .issue-detail');
+    const boundaryRect = boundaryElement?.getBoundingClientRect();
+    const viewportWidth = window.visualViewport?.width || window.innerWidth;
+    const viewportHeight = window.visualViewport?.height || window.innerHeight;
+    const isContextPicker = !!root.closest('.issue-context-scroll');
+    const contextWidth = boundaryRect ? Math.max(anchorRect.width, boundaryRect.width - 16) : preferredMinWidth;
+
+    setLayout(calculatePickerPopoverLayout({
+      anchor: {
+        top: anchorRect.top,
+        right: anchorRect.right,
+        bottom: anchorRect.bottom,
+        left: anchorRect.left,
+        width: anchorRect.width,
+      },
+      boundary: boundaryRect
+        ? { top: boundaryRect.top, right: boundaryRect.right, bottom: boundaryRect.bottom, left: boundaryRect.left }
+        : { top: 0, right: viewportWidth, bottom: viewportHeight, left: 0 },
+      viewportWidth,
+      viewportHeight,
+      preferredMinWidth: isContextPicker ? contextWidth : preferredMinWidth,
+    }));
+  }, [preferredMinWidth, rootRef]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePosition();
+    const root = rootRef.current;
+    const boundaryElement = root?.closest<HTMLElement>('.issue-context-scroll, .issue-modal-body, .issue-detail');
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(updatePosition);
+    if (root) resizeObserver?.observe(root);
+    if (boundaryElement) resizeObserver?.observe(boundaryElement);
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    window.visualViewport?.addEventListener('resize', updatePosition);
+    window.visualViewport?.addEventListener('scroll', updatePosition);
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+      window.visualViewport?.removeEventListener('resize', updatePosition);
+      window.visualViewport?.removeEventListener('scroll', updatePosition);
+    };
+  }, [open, rootRef, updatePosition]);
+
+  if (!open || !layout) return null;
+  const style: CSSProperties = {
+    position: 'fixed',
+    top: layout.top ?? 'auto',
+    right: 'auto',
+    bottom: layout.bottom ?? 'auto',
+    left: layout.left,
+    width: layout.width,
+    maxHeight: layout.maxHeight,
+  };
+  return { ...layout, style };
 }
 
 export function WorkOrderPicker({
@@ -392,44 +466,84 @@ export function EmployeePicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [activeIndex, setActiveIndex] = useState(-1);
   const listboxId = useId();
+  const inputName = `issue-employee-search-${listboxId.replace(/:/g, '')}`;
   const selected = useMemo(() => employees.find(employee => employee.id === value) || null, [employees, value]);
-  const close = (): void => { setOpen(false); setQuery(''); };
+  const close = useCallback((): void => { setOpen(false); setQuery(''); setActiveIndex(-1); }, []);
   const rootRef = useOutsideClose(open, close);
   const grouped = useMemo(() => groupEmployees(filterEmployees(employees, query)), [employees, query]);
+  const visibleEmployees = useMemo(() => grouped.flatMap(group => group.employees), [grouped]);
   const matchCount = grouped.reduce((total, group) => total + group.employees.length, 0);
   const displayValue = open ? query : selected ? employeeLabel(selected) : '';
+  const popoverLayout = useAdaptivePickerPopover(open, rootRef);
+
+  useEffect(() => {
+    setActiveIndex(open && visibleEmployees.length ? 0 : -1);
+  }, [open, query, visibleEmployees.length]);
+
+  const chooseEmployee = (employee: IssueAssigneeOptionDTO): void => {
+    onChange(employee.id);
+    close();
+  };
 
   return <div className={`issue-picker employee-picker ${open ? 'open' : ''}`} ref={rootRef}>
     <div className="issue-picker-control">
       <UserRound aria-hidden="true" />
       <input
-        type="text"
+        type="search"
+        name={inputName}
         role="combobox"
-        aria-label="搜索并选择负责人"
+        aria-label="筛选系统员工列表"
         aria-expanded={open}
         aria-controls={listboxId}
-        autoComplete="off"
+        aria-autocomplete="list"
+        aria-activedescendant={activeIndex >= 0 && visibleEmployees[activeIndex] ? `${listboxId}-option-${visibleEmployees[activeIndex].id}` : undefined}
+        autoComplete="one-time-code"
+        autoCorrect="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        inputMode="search"
+        enterKeyHint="search"
+        data-form-type="other"
+        data-lpignore="true"
+        data-1p-ignore="true"
         disabled={disabled}
         value={displayValue}
         placeholder={placeholder}
         onFocus={() => { setOpen(true); setQuery(''); }}
         onChange={event => { setOpen(true); setQuery(event.target.value); }}
-        onKeyDown={event => { if (event.key === 'Escape') close(); }}
+        onKeyDown={event => {
+          if (event.key === 'Escape') close();
+          if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && visibleEmployees.length) {
+            event.preventDefault();
+            if (!open) setOpen(true);
+            setActiveIndex(current => event.key === 'ArrowDown'
+              ? Math.min(visibleEmployees.length - 1, Math.max(0, current + 1))
+              : Math.max(0, current <= 0 ? visibleEmployees.length - 1 : current - 1));
+          }
+          if (event.key === 'Enter' && open && visibleEmployees[activeIndex]) {
+            event.preventDefault();
+            chooseEmployee(visibleEmployees[activeIndex]);
+          }
+        }}
       />
       {selected && <button type="button" className="clear" aria-label="清除负责人" title="清除负责人" onClick={() => { onChange(''); close(); }}><X /></button>}
-      <button type="button" className="toggle" aria-label="展开员工列表" title="展开员工列表" onClick={() => setOpen(current => !current)}><ChevronDown /></button>
+      <button type="button" className="toggle" aria-label="展开员工列表" title="展开员工列表" onClick={() => { if (open) close(); else setOpen(true); }}><ChevronDown /></button>
     </div>
-    {open && <div className="issue-picker-popover employees" id={listboxId} role="listbox">
+    {open && <div className={`issue-picker-popover employees adaptive ${popoverLayout?.side === 'up' ? 'placement-up' : 'placement-down'}`} style={popoverLayout?.style} id={listboxId} role="listbox">
       <header><strong>按部门选择负责人</strong><span>{matchCount} 人</span></header>
       {!query && <button type="button" className={`issue-picker-option none ${!value ? 'selected' : ''}`} onClick={() => { onChange(''); close(); }}><span>暂不分派</span><small>创建后可在责任信息中补充分派</small>{!value && <Check />}</button>}
       {grouped.map(group => <section className="employee-group" key={group.department}>
         <h4>{group.department}<span>{group.employees.length}</span></h4>
-        {group.employees.map(employee => <button type="button" role="option" aria-selected={employee.id === value} className={`employee-option ${employee.id === value ? 'selected' : ''}`} key={employee.id} onClick={() => { onChange(employee.id); close(); }}>
+        {group.employees.map(employee => {
+          const employeeIndex = visibleEmployees.findIndex(item => item.id === employee.id);
+          return <button id={`${listboxId}-option-${employee.id}`} type="button" role="option" aria-selected={employee.id === value} className={`employee-option ${employee.id === value ? 'selected' : ''} ${employeeIndex === activeIndex ? 'active' : ''}`} key={employee.id} onMouseEnter={() => setActiveIndex(employeeIndex)} onClick={() => chooseEmployee(employee)}>
           <span>{employee.name.slice(0, 1)}</span>
           <div><strong>{employee.name}</strong><small>{employee.employeeNo} · {employee.position || employee.team || '岗位未设置'}</small></div>
           {employee.id === value && <Check />}
-        </button>)}
+          </button>;
+        })}
       </section>)}
       {!matchCount && <p className="issue-picker-empty">没有匹配员工，请尝试姓名、工号、部门或岗位。</p>}
     </div>}
@@ -450,13 +564,21 @@ export function EmployeeMultiPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [activeIndex, setActiveIndex] = useState(-1);
   const listboxId = useId();
-  const close = (): void => { setOpen(false); setQuery(''); };
+  const inputName = `issue-collaborator-search-${listboxId.replace(/:/g, '')}`;
+  const close = useCallback((): void => { setOpen(false); setQuery(''); setActiveIndex(-1); }, []);
   const rootRef = useOutsideClose(open, close);
   const excluded = useMemo(() => new Set(excludeIds), [excludeIds]);
   const selected = useMemo(() => values.map(id => employees.find(employee => employee.id === id)).filter((item): item is IssueAssigneeOptionDTO => !!item), [employees, values]);
   const grouped = useMemo(() => groupEmployees(filterEmployees(employees, query)), [employees, query]);
+  const visibleEmployees = useMemo(() => grouped.flatMap(group => group.employees), [grouped]);
   const matchCount = grouped.reduce((total, group) => total + group.employees.length, 0);
+  const popoverLayout = useAdaptivePickerPopover(open, rootRef);
+
+  useEffect(() => {
+    setActiveIndex(open && visibleEmployees.length ? 0 : -1);
+  }, [open, query, visibleEmployees.length]);
 
   const toggleEmployee = (employeeId: string): void => {
     if (excluded.has(employeeId)) return;
@@ -468,30 +590,55 @@ export function EmployeeMultiPicker({
     <div className="issue-picker-control">
       <UserRound aria-hidden="true" />
       <input
-        type="text"
+        type="search"
+        name={inputName}
         role="combobox"
-        aria-label="搜索并选择协同人员"
+        aria-label="筛选系统协同员工列表"
         aria-expanded={open}
         aria-controls={listboxId}
-        autoComplete="off"
+        aria-autocomplete="list"
+        aria-activedescendant={activeIndex >= 0 && visibleEmployees[activeIndex] ? `${listboxId}-option-${visibleEmployees[activeIndex].id}` : undefined}
+        autoComplete="one-time-code"
+        autoCorrect="off"
+        autoCapitalize="none"
+        spellCheck={false}
+        inputMode="search"
+        enterKeyHint="search"
+        data-form-type="other"
+        data-lpignore="true"
+        data-1p-ignore="true"
         disabled={disabled}
         value={query}
         placeholder="搜索姓名、工号、部门；可选择多人"
         onFocus={() => setOpen(true)}
         onChange={event => { setOpen(true); setQuery(event.target.value); }}
-        onKeyDown={event => { if (event.key === 'Escape') close(); }}
+        onKeyDown={event => {
+          if (event.key === 'Escape') close();
+          if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && visibleEmployees.length) {
+            event.preventDefault();
+            if (!open) setOpen(true);
+            setActiveIndex(current => event.key === 'ArrowDown'
+              ? Math.min(visibleEmployees.length - 1, Math.max(0, current + 1))
+              : Math.max(0, current <= 0 ? visibleEmployees.length - 1 : current - 1));
+          }
+          if (event.key === 'Enter' && open && visibleEmployees[activeIndex]) {
+            event.preventDefault();
+            toggleEmployee(visibleEmployees[activeIndex].id);
+          }
+        }}
       />
       {!!values.length && <button type="button" className="clear" aria-label="清空协同人员" title="清空协同人员" onClick={() => onChange([])}><X /></button>}
-      <button type="button" className="toggle" aria-label="展开员工列表" title="展开员工列表" onClick={() => setOpen(current => !current)}><ChevronDown /></button>
+      <button type="button" className="toggle" aria-label="展开员工列表" title="展开员工列表" onClick={() => { if (open) close(); else setOpen(true); }}><ChevronDown /></button>
     </div>
-    {open && <div className="issue-picker-popover employees multi-options" id={listboxId} role="listbox" aria-multiselectable="true">
+    {open && <div className={`issue-picker-popover employees multi-options adaptive ${popoverLayout?.side === 'up' ? 'placement-up' : 'placement-down'}`} style={popoverLayout?.style} id={listboxId} role="listbox" aria-multiselectable="true">
       <header><strong>按部门选择协同人员</strong><span>已选 {values.length} 人</span></header>
       {grouped.map(group => <section className="employee-group" key={group.department}>
         <h4>{group.department}<span>{group.employees.length}</span></h4>
         {group.employees.map(employee => {
           const isExcluded = excluded.has(employee.id);
           const isSelected = values.includes(employee.id);
-          return <button type="button" role="option" aria-selected={isSelected} disabled={isExcluded} className={`employee-option ${isSelected ? 'selected' : ''}`} key={employee.id} onClick={() => toggleEmployee(employee.id)}>
+          const employeeIndex = visibleEmployees.findIndex(item => item.id === employee.id);
+          return <button id={`${listboxId}-option-${employee.id}`} type="button" role="option" aria-selected={isSelected} disabled={isExcluded} className={`employee-option ${isSelected ? 'selected' : ''} ${employeeIndex === activeIndex ? 'active' : ''}`} key={employee.id} onMouseEnter={() => setActiveIndex(employeeIndex)} onClick={() => toggleEmployee(employee.id)}>
             <span>{employee.name.slice(0, 1)}</span>
             <div><strong>{employee.name}</strong><small>{employee.employeeNo} · {isExcluded ? '已设为负责人' : employee.position || employee.team || '岗位未设置'}</small></div>
             <i className="employee-checkbox">{isSelected && <Check />}</i>

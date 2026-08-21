@@ -360,6 +360,47 @@ final result: passed
 
 final result: passed
 
+## 2026-08-21 问题闭环人员选择窗口遮挡修复
+
+### Sources and target
+
+- 用户问题截图：`C:\Windows\TEMP\codex-clipboard-db501dd4-d89d-401f-bc1d-70eaa2c2cb13.png`（2549 × 1384 像素）。
+- 最终实测截图：`artifacts/issue-picker-overlay-qa-20260821/implementation-focused-open.jpg`（1366 × 700 可见区域）。
+- 全视图同屏对照：`artifacts/issue-picker-overlay-qa-20260821/comparison-full-before-after.jpg`。
+- 责任与验证区域局部对照：`artifacts/issue-picker-overlay-qa-20260821/comparison-focused-before-after.jpg`。
+- 验收状态：问题 `PVC管大小用错` 已选中，右侧闭环控制台展开，“独立验证人”员工选择器打开；隔离验收库使用合成员工与问题数据，未写入现有业务数据。
+- 页面几何分别在 1366 × 1024 与 1366 × 700 CSS 视口测量；Codex 应用内浏览器本轮可导出的完整可见截图面为 1366 × 700，因此全视图截图按该可见区域归档，1024 高度结果以 DOM 几何测量和交互验证补充。
+
+### Root cause and implementation
+
+- 根因判断：用户截图中的白色人员菜单不属于应用 DOM，外观、项目代码和浏览器行为共同表明它是 Chrome 对人员搜索字段触发的身份/地址自动填充层；该层不受应用 z-index 或容器裁切控制。此结论有充分实现与复现证据，但无法从静态截图直接读取浏览器内部类型。
+- 员工搜索输入改为非身份语义的搜索字段，使用唯一业务字段名、`autocomplete="one-time-code"`、`data-form-type="other"`、主流密码管理器忽略标记以及关闭自动纠错/自动大写，降低浏览器将其识别为姓名或地址字段的概率。
+- 应用内员工列表改为 `position: fixed` 的自适应弹层，实时测量输入框、右侧控制台和可视视口；宽度被限制在所属业务面板内，并监听窗口、可视视口、滚动和尺寸变化。
+- 当下方空间不足时自动向上展开；上下两种方向都限制最大高度并保留内部滚动，不再覆盖面板外的发布、开始处理或关联应用区域。
+- 新增 ArrowUp、ArrowDown、Enter、Escape 键盘操作和活动项语义；单选与多选员工组件共用同一边界策略。
+
+### Visual and interaction verification
+
+- 1366 × 1024 实测：右侧控制台范围 `x=1050..1356`，菜单范围 `x=1058.67..1347.33`；菜单相对视口和控制台的左、右、上、下越界量全部为 0。
+- 1366 × 700 实测：下方空间不足时菜单切换为 `placement-up`，范围 `y=175.68..485.34`；视口和控制台四边越界量仍全部为 0。
+- 键盘实测：打开验证人列表后 ArrowDown 移动活动项，Enter 选择员工并关闭列表；本次仅修改页面草稿状态，没有点击保存。
+- 独立新标签页重新加载后，浏览器控制台 error 为 0、warning 为 0；页面中的人员菜单为应用自有列表，未再次出现浏览器身份/地址建议层。
+- 同屏局部对照确认：修复前浏览器菜单横跨业务面板且遮住后续字段；修复后菜单与右侧控制台等宽内缩，层级、滚动条、分组标题和员工行均完整可见。
+
+### Iteration history
+
+1. 第一轮把列表改为自适应定位后，真实测量发现旧 `.employees` 最小宽度仍覆盖行内宽度，菜单超出控制台 31.33 px、超出视口 12.67 px。
+2. 增加 `.employees.adaptive { min-width: 0; }` 并统一 `box-sizing: border-box`，第二轮在目标视口复测，所有越界指标归零。
+3. 在矮视口补测向上展开，在独立新标签补测控制台日志，并把参考图与最终实测图放入同一对照输入后完成最终视觉判断。
+
+### Final severity check
+
+- P0：无。
+- P1：无。
+- P2：无。
+
+final result: passed
+
 ## 2026-08-19 生产数据总表交互化报表中心
 
 ### 来源与统计边界
