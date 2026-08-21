@@ -37,6 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         sequence: true,
         title: true,
         priority: true,
+        status: true,
         type: true,
         isMajorQuality: true,
         reporterId: true,
@@ -45,8 +46,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       },
     });
     if (!issue) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
-    if (!canMutateIssueForProcess(user, issue, 'UPDATE')) {
+    if (user.laborRole !== 'ADMIN' && !canMutateIssueForProcess(user, issue, 'UPDATE')) {
       return NextResponse.json({ ok: false, error: '只能补充工艺问题或本人参与的问题' }, { status: 403 });
+    }
+    if (issue.status === 'closed') {
+      return NextResponse.json({ ok: false, error: '已完结问题为只读归档，请先重新打开后再补充协同记录' }, { status: 409 });
     }
 
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
@@ -77,6 +81,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       if (input.kind === 'task_complete') {
         const assignedEmployeeId = detailText(target.detail, 'assigneeEmployeeId');
         const canComplete = target.actorId === user.id
+          || user.laborRole === 'ADMIN'
           || (!!assignedEmployeeId && assignedEmployeeId === user.employeeId)
           || hasCapability(user.access, 'QUALITY', 'EXECUTE_WORKFLOW');
         if (!canComplete) {

@@ -4,6 +4,7 @@ import { hasCapability } from '@/lib/department-access';
 import {
   ISSUE_STATUSES,
   issueDetailInclude,
+  issueTransitionAuthority,
   issueVerificationBlockers,
   serializeIssue,
   transitionIssueData,
@@ -41,15 +42,41 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       },
     });
     if (!current) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
-    const selectedVerifierClosing = current.status === 'verifying'
-      && user.employeeId === current.verifierEmployeeId;
-    if (!selectedVerifierClosing && !canMutateIssueForProcess(user, current, 'EXECUTE_WORKFLOW')) {
-      return NextResponse.json({ ok: false, error: '只能流转工艺问题或本人参与的问题' }, { status: 403 });
-    }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const target = typeof body.status === 'string' ? body.status as IssueStatus : null;
     if (!target || !ISSUE_STATUSES.includes(target)) return NextResponse.json({ ok: false, error: '目标状态不正确' }, { status: 400 });
-    const transition = transitionIssueData(current, target, body);
+    const comment = typeof body.comment === 'string' ? body.comment.trim().slice(0, 2000) : '';
+    const authority = issueTransitionAuthority({
+      currentStatus: current.status as IssueStatus,
+      targetStatus: target,
+      userId: user.id,
+      employeeId: user.employeeId,
+      laborRole: user.laborRole,
+      reporterId: current.reporterId,
+      verifierEmployeeId: current.verifierEmployeeId,
+      hasWorkflowAccess: canMutateIssueForProcess(user, current, 'EXECUTE_WORKFLOW'),
+      hasQualityWorkflow: hasCapability(user.access, 'QUALITY', 'EXECUTE_WORKFLOW'),
+    });
+    if (!authority.allowed) {
+      return NextResponse.json({
+        ok: false,
+        error: current.status === 'awaiting_confirmation'
+          ? '只有问题发起人可以确认完结或退回处理'
+          : current.status === 'verifying'
+            ? '只有指定验证人或质量负责人可以提交验证结论'
+            : current.status === 'closed'
+              ? '只有问题发起人可以重新打开已关闭问题'
+              : '只能流转工艺问题或本人参与的问题',
+      }, { status: 403 });
+    }
+    if (authority.adminOverride && !comment) {
+      return NextResponse.json({ ok: false, error: '管理员代操作必须填写审计说明' }, { status: 400 });
+    }
+    if ((current.status === 'awaiting_confirmation' && target === 'processing')
+      || (current.status === 'closed' && target === 'processing')) {
+      if (!comment) return NextResponse.json({ ok: false, error: '退回或重新打开时必须填写说明' }, { status: 400 });
+    }
+    const transition = transitionIssueData(current, target, body, new Date(), user.id);
     if (transition.error) return NextResponse.json({ ok: false, error: transition.error }, { status: 409 });
     if (current.status === 'processing' && target === 'verifying') {
       const rootCause = typeof body.rootCause === 'string' ? body.rootCause.trim() : current.rootCause;
@@ -70,18 +97,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         }, { status: 409 });
       }
     }
-    if (
-      current.status === 'verifying'
-      && target === 'closed'
-      && !current.isMajorQuality
-      && user.employeeId !== current.verifierEmployeeId
-      && !hasCapability(user.access, 'QUALITY', 'EXECUTE_WORKFLOW')
-    ) {
-      return NextResponse.json({ ok: false, error: '只有指定验证人或质量负责人可以验证并关闭问题' }, { status: 403 });
-    }
-    const comment = typeof body.comment === 'string' ? body.comment.trim().slice(0, 2000) : '';
-    if (current.isMajorQuality && current.status === 'verifying' && target === 'closed') {
-      return NextResponse.json({ ok: false, error: '重大质量问题须由总经办终审通过后自动关闭' }, { status: 409 });
+    if (current.isMajorQuality && current.status === 'verifying' && target === 'awaiting_confirmation') {
+      return NextResponse.json({ ok: false, error: '重大质量问题须先完成质量复核和总经办终审' }, { status: 409 });
     }
     if (current.isMajorQuality && current.status === 'verifying' && target === 'processing' && !comment) {
       return NextResponse.json({ ok: false, error: '撤回重大审批并退回处理时必须填写原因' }, { status: 400 });
@@ -107,24 +124,38 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           fromStatus: current.status,
           toStatus: target,
           actorId: user.id,
+          detail: {
+            workflowAction: `${current.status}->${target}`,
+            adminOverride: authority.adminOverride,
+            actorLaborRole: user.laborRole,
+            actorUserId: user.id,
+          },
         },
       });
       const recipientUserIds = target === 'verifying' && current.verifierEmployeeId
         ? await activeUserIdsForEmployees(tx, [current.verifierEmployeeId], { excludeUserIds: [user.id] })
-        : await issueParticipantUserIds(tx, current.id, { excludeUserIds: [user.id] });
+        : target === 'awaiting_confirmation'
+          ? (!current.reporterId || current.reporterId === user.id ? [] : [current.reporterId])
+          : await issueParticipantUserIds(tx, current.id, { excludeUserIds: [user.id] });
       if (recipientUserIds.length) {
         const code = `ISS-${String(current.sequence).padStart(6, '0')}`;
         await createSystemNotification(tx, {
           eventType: target === 'verifying' ? 'ISSUE_SUBMITTED_FOR_VERIFICATION'
-            : target === 'closed' ? 'ISSUE_CLOSED'
-              : 'ISSUE_REOPENED',
+            : target === 'awaiting_confirmation' ? 'ISSUE_AWAITING_REQUESTER_CONFIRMATION'
+              : target === 'closed' ? 'ISSUE_CLOSED'
+                : 'ISSUE_RETURNED_TO_PROCESSING',
           dedupeKey: `issue:${current.id}:transition:${current.version + 1}:${target}`,
-          category: target === 'verifying' ? 'TODO' : 'SYSTEM',
+          category: target === 'verifying' || target === 'awaiting_confirmation' ? 'TODO' : 'SYSTEM',
           priority: current.priority === 'urgent' ? 'URGENT' : current.priority === 'high' ? 'HIGH' : 'NORMAL',
           title: target === 'verifying' ? `问题待你验证：${code} ${current.title}`
-            : target === 'closed' ? `问题已闭环：${code} ${current.title}`
-              : `问题已退回处理：${code} ${current.title}`,
-          body: comment || (target === 'verifying' ? '处理资料已齐全，请在闭环控制台验证。' : '请进入问题作战室查看状态变更。'),
+            : target === 'awaiting_confirmation' ? `问题待你确认完结：${code} ${current.title}`
+              : target === 'closed' ? `问题已由发起人确认完结：${code} ${current.title}`
+                : `问题已退回处理：${code} ${current.title}`,
+          body: comment || (target === 'verifying'
+            ? '处理资料已齐全，请在闭环控制台验证。'
+            : target === 'awaiting_confirmation'
+              ? '验证已通过，请发起人核对结果后确认完结或退回处理。'
+              : '请进入问题协同作战室查看状态变更。'),
           targetRoute: `/workspace/issues?issueId=${encodeURIComponent(current.id)}`,
           sourceType: 'issue',
           sourceId: current.id,
@@ -135,7 +166,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
       return tx.issue.findUniqueOrThrow({ where: { id: current.id }, include: issueDetailInclude });
     });
-    await logOp({ userId: user.id, action: 'transition_issue', targetType: 'issue', targetId: current.id, detail: { fromStatus: current.status, toStatus: target } });
+    await logOp({
+      userId: user.id,
+      action: 'transition_issue',
+      targetType: 'issue',
+      targetId: current.id,
+      detail: {
+        fromStatus: current.status,
+        toStatus: target,
+        adminOverride: authority.adminOverride,
+        comment: comment || null,
+      },
+    });
     return NextResponse.json({ ok: true, issue: serializeIssue(issue) });
   } catch (error) {
     if (error instanceof UnauthorizedError || error instanceof ForbiddenError) return unauthorized();

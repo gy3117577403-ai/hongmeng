@@ -309,6 +309,7 @@
 .hm-issue-workbench .issue-status.status-pending { background: #fff2db; color: #a96500; }
 .hm-issue-workbench .issue-status.status-processing { background: #eaf3ff; color: #236bb8; }
 .hm-issue-workbench .issue-status.status-verifying { background: #f1eefe; color: #7050b8; }
+.hm-issue-workbench .issue-status.status-awaiting_confirmation { background: #fff0e8; color: #bd4f0c; }
 .hm-issue-workbench .issue-status.status-closed { background: #e8f7ef; color: #168052; }
 .hm-issue-workbench .issue-card > em.priority-urgent { grid-column: 3; background: #fff0ef; color: #c73535; }
 .hm-issue-workbench .issue-card > em.priority-high { grid-column: 3; background: #fff5e8; color: #b46a00; }
@@ -980,7 +981,7 @@
 
 @media (max-width: 1024px) {
   .hm-issue-workbench .issue-workbench-main { gap: 6px; padding: 6px 7px 8px; }
-  .hm-issue-workbench .issue-summary { flex-basis: 52px; grid-template-columns: repeat(7, minmax(76px, 1fr)); overflow-x: auto; scrollbar-width: thin; }
+  .hm-issue-workbench .issue-summary { flex-basis: 52px; grid-template-columns: repeat(8, minmax(76px, 1fr)); overflow-x: auto; scrollbar-width: thin; }
   .hm-issue-workbench .issue-summary button { min-width: 92px; min-height: 48px; }
   .hm-issue-workbench .issue-summary button strong { font-size: 17px; }
   .hm-issue-workbench .issue-filter-bar select,
@@ -1586,7 +1587,7 @@
 .hm-issue-workbench.issue-case-room .case-lifecycle > header > div > span,
 .hm-issue-workbench.issue-case-room .case-linked-apps > header span { color: #8793a1; font-size: 8px; }
 .hm-issue-workbench.issue-case-room .case-lifecycle > header > strong { color: #168052; font-size: 16px; }
-.hm-issue-workbench.issue-case-room .case-lifecycle-track { position: relative; display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 9px; }
+.hm-issue-workbench.issue-case-room .case-lifecycle-track { position: relative; display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 9px; }
 .hm-issue-workbench.issue-case-room .case-lifecycle-track::before { position: absolute; top: 10px; right: 12%; left: 12%; height: 2px; background: #dce2e8; content: ''; }
 .hm-issue-workbench.issue-case-room .case-lifecycle-track div { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; }
 .hm-issue-workbench.issue-case-room .case-lifecycle-track div > span { width: 21px; height: 21px; display: grid; place-items: center; border: 2px solid #dce2e8; border-radius: 50%; background: #fff; color: #8793a1; font-size: 8px; font-weight: 800; }
@@ -1627,6 +1628,151 @@
 
 .hm-issue-workbench.issue-case-room .case-evidence-library .attachment-empty { padding: 7px; border: 1px dashed #dfe5eb; border-radius: 5px; text-align: center; }
 
+.hm-issue-workbench.issue-case-room .issue-archive-filter {
+  flex: 0 0 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid #d8e5dd;
+  border-radius: 8px;
+  background: linear-gradient(100deg, #f3faf6, #fff);
+}
+
+.hm-issue-workbench.issue-case-room .issue-archive-filter > div { flex: 0 0 auto; }
+.hm-issue-workbench.issue-case-room .issue-archive-filter strong,
+.hm-issue-workbench.issue-case-room .issue-archive-filter span { display: block; }
+.hm-issue-workbench.issue-case-room .issue-archive-filter strong { color: #176b49; font-size: 10px; }
+.hm-issue-workbench.issue-case-room .issue-archive-filter span { margin-top: 1px; color: #718094; font-size: 8px; }
+.hm-issue-workbench.issue-case-room .issue-archive-filter nav { min-width: 0; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; }
+.hm-issue-workbench.issue-case-room .issue-archive-filter button {
+  min-height: 28px;
+  flex: 0 0 auto;
+  padding: 0 8px;
+  border: 1px solid #d7e2dc;
+  border-radius: 999px;
+  background: #fff;
+  color: #5d6c7f;
+  font-size: 8px;
+  font-weight: 750;
+}
+.hm-issue-workbench.issue-case-room .issue-archive-filter button.active { border-color: #1a9764; background: #e7f6ef; color: #176b49; }
+
+.hm-issue-workbench.issue-case-room .issue-detail-branches {
+  flex: 0 0 44px;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(70px, 1fr));
+  gap: 3px;
+  padding: 4px 6px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--case-line);
+  background: #f7f9fb;
+  scrollbar-width: thin;
+}
+
+.hm-issue-workbench.issue-case-room .issue-detail-branches button {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #667589;
+  text-align: left;
+}
+.hm-issue-workbench.issue-case-room .issue-detail-branches strong,
+.hm-issue-workbench.issue-case-room .issue-detail-branches span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-issue-workbench.issue-case-room .issue-detail-branches strong { font-size: 8px; }
+.hm-issue-workbench.issue-case-room .issue-detail-branches span { margin-top: 1px; color: #96a0ac; font-size: 6px; }
+.hm-issue-workbench.issue-case-room .issue-detail-branches button:hover { background: #fff; }
+.hm-issue-workbench.issue-case-room .issue-detail-branches button.active { border-color: #efb88f; background: #fff4eb; color: #b84f0d; box-shadow: 0 2px 6px rgba(185, 79, 13, .08); }
+.hm-issue-workbench.issue-case-room .issue-detail-branches button.active span { color: #c57949; }
+
+.hm-issue-workbench.issue-case-room .issue-archive-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #cce6d8;
+  border-radius: 7px;
+  background: #f2faf6;
+  color: #176b49;
+}
+.hm-issue-workbench.issue-case-room .issue-archive-banner > div { display: flex; align-items: center; gap: 7px; }
+.hm-issue-workbench.issue-case-room .issue-archive-banner p { margin: 0; }
+.hm-issue-workbench.issue-case-room .issue-archive-banner strong,
+.hm-issue-workbench.issue-case-room .issue-archive-banner span { display: block; }
+.hm-issue-workbench.issue-case-room .issue-archive-banner strong { font-size: 9px; }
+.hm-issue-workbench.issue-case-room .issue-archive-banner span,
+.hm-issue-workbench.issue-case-room .issue-archive-banner time { color: #5f7d6e; font-size: 8px; }
+
+.hm-issue-workbench.issue-case-room .case-verification-branch,
+.hm-issue-workbench.issue-case-room .case-file-branch {
+  border: 1px solid var(--case-line);
+  border-radius: 8px;
+  background: #fff;
+}
+.hm-issue-workbench.issue-case-room .case-verification-branch > header,
+.hm-issue-workbench.issue-case-room .case-file-branch > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 11px; border-bottom: 1px solid #e8ecf0; }
+.hm-issue-workbench.issue-case-room .case-verification-branch > header span,
+.hm-issue-workbench.issue-case-room .case-file-branch > header span { display: block; color: var(--case-orange); font-size: 8px; font-weight: 800; }
+.hm-issue-workbench.issue-case-room .case-verification-branch > header h3,
+.hm-issue-workbench.issue-case-room .case-file-branch > header h3 { margin-top: 2px; font-size: 12px; }
+.hm-issue-workbench.issue-case-room .case-verification-branch > header > strong,
+.hm-issue-workbench.issue-case-room .case-file-branch > header > strong { padding: 3px 7px; border-radius: 999px; background: #eef2f6; color: #59687a; font-size: 8px; }
+.hm-issue-workbench.issue-case-room .case-verification-branch > header > strong.status-awaiting_confirmation { background: #fff0e8; color: #bd4f0c; }
+.hm-issue-workbench.issue-case-room .case-verification-branch > header > strong.status-closed { background: #e8f7ef; color: #168052; }
+.hm-issue-workbench.issue-case-room .case-verification-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding: 9px; }
+.hm-issue-workbench.issue-case-room .case-verification-grid article { min-width: 0; padding: 9px; border: 1px solid #e3e8ed; border-radius: 7px; background: #fafbfc; }
+.hm-issue-workbench.issue-case-room .case-verification-grid span,
+.hm-issue-workbench.issue-case-room .case-verification-grid strong,
+.hm-issue-workbench.issue-case-room .case-verification-grid small { display: block; }
+.hm-issue-workbench.issue-case-room .case-verification-grid span { color: #7c8998; font-size: 8px; }
+.hm-issue-workbench.issue-case-room .case-verification-grid strong { margin-top: 5px; color: #334257; font-size: 10px; line-height: 1.5; white-space: pre-wrap; }
+.hm-issue-workbench.issue-case-room .case-verification-grid small { margin-top: 4px; color: #8a96a4; font-size: 8px; }
+
+.hm-issue-workbench.issue-case-room .case-file-upload-bar { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 6px; padding: 8px 9px 0; }
+.hm-issue-workbench.issue-case-room .case-file-upload-bar select,
+.hm-issue-workbench.issue-case-room .case-file-upload-bar input,
+.hm-issue-workbench.issue-case-room .case-file-upload-bar button,
+.hm-issue-workbench.issue-case-room .context-file-classifier select,
+.hm-issue-workbench.issue-case-room .context-file-classifier input { min-width: 0; height: 31px; padding: 0 8px; border: 1px solid #d6dde5; border-radius: 6px; background: #fff; color: #405064; font: inherit; font-size: 8px; }
+.hm-issue-workbench.issue-case-room .case-file-upload-bar button { display: inline-flex; align-items: center; gap: 4px; border-color: var(--case-orange); background: var(--case-orange); color: #fff; font-weight: 750; }
+.hm-issue-workbench.issue-case-room .case-file-groups { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; padding: 9px; }
+.hm-issue-workbench.issue-case-room .case-file-groups > article { min-width: 0; overflow: hidden; border: 1px solid #e3e8ed; border-radius: 7px; background: #fafbfc; }
+.hm-issue-workbench.issue-case-room .case-file-groups > article > header { display: flex; align-items: center; justify-content: space-between; padding: 7px 8px; border-bottom: 1px solid #e7ebef; background: #f4f7f9; }
+.hm-issue-workbench.issue-case-room .case-file-groups > article > header strong { color: #3f5064; font-size: 9px; }
+.hm-issue-workbench.issue-case-room .case-file-groups > article > header span { min-width: 19px; padding: 2px 5px; border-radius: 999px; background: #fff; color: #6c7b8d; font-size: 8px; text-align: center; }
+.hm-issue-workbench.issue-case-room .case-file-groups section { min-width: 0; display: grid; grid-template-columns: 27px minmax(0, 1fr) auto 25px 25px 25px; align-items: center; gap: 5px; padding: 7px 8px; border-bottom: 1px solid #e7ebef; }
+.hm-issue-workbench.issue-case-room .case-file-groups section:last-child { border-bottom: 0; }
+.hm-issue-workbench.issue-case-room .case-file-groups section > span { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 5px; background: #fff0e6; color: var(--case-orange); }
+.hm-issue-workbench.issue-case-room .case-file-groups section > span svg { width: 15px; height: 15px; }
+.hm-issue-workbench.issue-case-room .case-file-groups section > div { min-width: 0; }
+.hm-issue-workbench.issue-case-room .case-file-groups section strong,
+.hm-issue-workbench.issue-case-room .case-file-groups section small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-issue-workbench.issue-case-room .case-file-groups section strong { color: #334257; font-size: 8px; }
+.hm-issue-workbench.issue-case-room .case-file-groups section small { margin-top: 2px; color: #8a96a4; font-size: 7px; }
+.hm-issue-workbench.issue-case-room .case-file-category-select { width: 100%; height: 22px; margin-top: 5px; padding: 0 18px 0 6px; border: 1px solid #dce3e9; border-radius: 4px; background: #fff; color: #53657a; font: inherit; font-size: 8px; }
+.hm-issue-workbench.issue-case-room .case-file-groups section em { padding: 2px 5px; border-radius: 999px; background: #edf2f6; color: #6c7b8d; font-size: 7px; font-style: normal; }
+.hm-issue-workbench.issue-case-room .case-file-groups section a,
+.hm-issue-workbench.issue-case-room .case-file-groups section button { width: 25px; height: 25px; display: grid; place-items: center; padding: 0; border: 1px solid #dce2e8; border-radius: 5px; background: #fff; color: #627185; }
+.hm-issue-workbench.issue-case-room .case-file-groups article.empty p { margin: 0; padding: 13px 8px; color: #9aa4af; font-size: 8px; text-align: center; }
+
+.hm-issue-workbench.issue-case-room .context-file-classifier { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 5px; margin: 6px 0; }
+.hm-issue-workbench.issue-case-room .issue-requester-confirm-note { display: flex; gap: 9px; padding: 10px; border: 1px solid #cce6d8; border-radius: 7px; background: #f2faf6; color: #168052; }
+.hm-issue-workbench.issue-case-room .issue-requester-confirm-note svg { flex: 0 0 auto; width: 20px; }
+.hm-issue-workbench.issue-case-room .issue-requester-confirm-note strong,
+.hm-issue-workbench.issue-case-room .issue-requester-confirm-note span { display: block; }
+.hm-issue-workbench.issue-case-room .issue-requester-confirm-note strong { font-size: 11px; }
+.hm-issue-workbench.issue-case-room .issue-requester-confirm-note span { margin-top: 3px; color: #5f7d6e; font-size: 9px; line-height: 1.5; }
+
 @media (max-width: 1280px) {
   .hm-issue-workbench.issue-case-room .issue-workspace-grid {
     grid-template-columns: minmax(224px, 238px) minmax(470px, 1fr) minmax(270px, 286px);
@@ -1648,4 +1794,7 @@
   .hm-issue-workbench.issue-case-room .case-resolution-strip article:last-child { border-bottom: 0; }
   .hm-issue-workbench.issue-case-room .case-composer-meta,
   .hm-issue-workbench.issue-case-room .case-composer-meta.decision { grid-template-columns: 1fr; }
+  .hm-issue-workbench.issue-case-room .case-verification-grid,
+  .hm-issue-workbench.issue-case-room .case-file-groups { grid-template-columns: 1fr; }
+  .hm-issue-workbench.issue-case-room .case-file-upload-bar { grid-template-columns: 1fr; }
 }

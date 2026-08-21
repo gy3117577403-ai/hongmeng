@@ -71,6 +71,14 @@ type ApprovalActor = {
   access: AccessContext;
 };
 
+function isAdminApprovalActor(actor: Pick<ApprovalActor, 'access'>): boolean {
+  return actor.access.effectiveGrants.some(grant => grant.profile === 'ADMIN_GLOBAL');
+}
+
+function auditedDecisionNote(actor: Pick<ApprovalActor, 'access'>, note: string): string {
+  return isAdminApprovalActor(actor) ? `[管理员代操作] ${note}` : note;
+}
+
 type SubmitIssue = {
   id: string;
   sequence: number;
@@ -303,10 +311,11 @@ export async function submitMajorQualityApproval(
     eligibleUserIdsForCapability(tx, 'QUALITY', 'EXECUTE_WORKFLOW', { excludeUserIds: [actor.id] }),
     eligibleUserIdsForCapability(tx, 'MAJOR_APPROVAL', 'APPROVE', { excludeUserIds: [actor.id] }),
   ]);
-  if (!qualityUserIds.length) {
+  const adminFallback = isAdminApprovalActor(actor);
+  if (!qualityUserIds.length && !adminFallback) {
     throw new MajorQualityApprovalError('没有可执行二次复核的其他质量账号，请先由管理员配置', 409, 'MAJOR_QUALITY_REVIEWER_MISSING');
   }
-  if (!gmUserIds.length || !distinctReviewPairExists(qualityUserIds, gmUserIds)) {
+  if ((!gmUserIds.length || !distinctReviewPairExists(qualityUserIds, gmUserIds)) && !adminFallback) {
     throw new MajorQualityApprovalError('没有与提交人、质量复核人相互独立的终审账号，请先由管理员配置', 409, 'MAJOR_QUALITY_APPROVER_MISSING');
   }
   const latest = await tx.issueMajorApproval.findFirst({
@@ -381,6 +390,7 @@ export async function reviewMajorQualityApproval(
   }
   const decision = parseMajorQualityDecision(rawInput.decision);
   const note = decisionNote(rawInput.note);
+  const auditNote = auditedDecisionNote(actor, note);
   return prisma.$transaction(async tx => {
     const approval = await tx.issueMajorApproval.findUnique({
       where: { id: rawInput.approvalId },
@@ -391,7 +401,7 @@ export async function reviewMajorQualityApproval(
     if (approval.status !== 'PENDING_QUALITY_REVIEW' || approval.version !== rawInput.expectedVersion) {
       throw new MajorQualityApprovalError('审批状态已变化，请刷新后重试', 409, 'MAJOR_QUALITY_VERSION_CONFLICT');
     }
-    if (approval.submittedById === actor.id) {
+    if (approval.submittedById === actor.id && !isAdminApprovalActor(actor)) {
       throw new MajorQualityApprovalError('提交人不能复核自己的重大质量事项', 409, 'MAJOR_QUALITY_SELF_REVIEW');
     }
     if (approval.issue.status !== 'verifying' || approval.issue.version !== approval.issueVersion) {
@@ -406,7 +416,7 @@ export async function reviewMajorQualityApproval(
       gmUserIds = await eligibleUserIdsForCapability(tx, 'MAJOR_APPROVAL', 'APPROVE', {
         excludeUserIds: [actor.id, approval.submittedById || ''],
       });
-      if (!gmUserIds.length) {
+      if (!gmUserIds.length && !isAdminApprovalActor(actor)) {
         throw new MajorQualityApprovalError('没有与提交人和复核人相互独立的终审账号', 409, 'MAJOR_QUALITY_APPROVER_MISSING');
       }
     }
@@ -417,7 +427,7 @@ export async function reviewMajorQualityApproval(
         version: { increment: 1 },
         qualityReviewedById: actor.id,
         qualityReviewedAt: now,
-        qualityReviewNote: note,
+        qualityReviewNote: auditNote,
         completedAt: decision === 'RETURN' ? now : null,
       },
     });
@@ -428,14 +438,14 @@ export async function reviewMajorQualityApproval(
         action: decision === 'APPROVE' ? 'QUALITY_APPROVE' : 'QUALITY_RETURN',
         fromStatus: approval.status,
         toStatus: nextStatus,
-        note,
+        note: auditNote,
         actorId: actor.id,
         actorName: actorName(actor),
       },
     });
     if (decision === 'APPROVE') {
       await tx.issueActivity.create({
-        data: { issueId: approval.issueId, action: 'major_quality_review', content: note, actorId: actor.id },
+        data: { issueId: approval.issueId, action: 'major_quality_review', content: auditNote, actorId: actor.id },
       });
       await createSystemNotification(tx, {
         eventType: 'MAJOR_QUALITY_FINAL_APPROVAL_REQUESTED',
@@ -461,7 +471,7 @@ export async function reviewMajorQualityApproval(
         data: {
           issueId: approval.issueId,
           action: 'major_quality_return',
-          content: note,
+          content: auditNote,
           fromStatus: 'verifying',
           toStatus: 'processing',
           actorId: actor.id,
@@ -474,7 +484,7 @@ export async function reviewMajorQualityApproval(
         category: 'APPROVAL',
         priority: 'HIGH',
         title: `重大质量问题 ${issueCode(approval.issue.sequence)} 已退回整改`,
-        body: note,
+        body: auditNote,
         targetRoute: '/workspace/issues',
         sourceType: 'issue_major_approval',
         sourceId: approval.id,
@@ -499,6 +509,7 @@ export async function decideMajorQualityApproval(
   }
   const decision = parseMajorQualityDecision(rawInput.decision);
   const note = decisionNote(rawInput.note);
+  const auditNote = auditedDecisionNote(actor, note);
   return prisma.$transaction(async tx => {
     const approval = await tx.issueMajorApproval.findUnique({
       where: { id: rawInput.approvalId },
@@ -509,7 +520,8 @@ export async function decideMajorQualityApproval(
     if (approval.status !== 'PENDING_GM_APPROVAL' || approval.version !== rawInput.expectedVersion) {
       throw new MajorQualityApprovalError('审批状态已变化，请刷新后重试', 409, 'MAJOR_QUALITY_VERSION_CONFLICT');
     }
-    if (approval.submittedById === actor.id || approval.qualityReviewedById === actor.id) {
+    if ((approval.submittedById === actor.id || approval.qualityReviewedById === actor.id)
+      && !isAdminApprovalActor(actor)) {
       throw new MajorQualityApprovalError('终审人必须与提交人、质量复核人相互独立', 409, 'MAJOR_QUALITY_SELF_APPROVAL');
     }
     if (approval.issue.status !== 'verifying' || approval.issue.version !== approval.issueVersion) {
@@ -524,17 +536,26 @@ export async function decideMajorQualityApproval(
         version: { increment: 1 },
         finalReviewedById: actor.id,
         finalReviewedAt: now,
-        finalReviewNote: note,
+        finalReviewNote: auditNote,
         completedAt: now,
       },
     });
     if (changed.count !== 1) throw new MajorQualityApprovalError('审批已被其他人处理，请刷新后重试', 409, 'MAJOR_QUALITY_VERSION_CONFLICT');
-    const issueStatus = decision === 'APPROVE' ? 'closed' : 'processing';
+    const issueStatus = decision === 'APPROVE' ? 'awaiting_confirmation' : 'processing';
     const issueChanged = await tx.issue.updateMany({
       where: { id: approval.issueId, status: 'verifying', version: approval.issueVersion, deletedAt: null },
       data: decision === 'APPROVE'
-        ? { status: issueStatus, verifiedAt: now, closedAt: now, version: { increment: 1 } }
-        : { status: issueStatus, resolvedAt: null, verifiedAt: null, closedAt: null, version: { increment: 1 } },
+        ? { status: issueStatus, verifiedAt: now, closedAt: null, version: { increment: 1 } }
+        : {
+            status: issueStatus,
+            resolvedAt: null,
+            verifiedAt: null,
+            closedAt: null,
+            requesterConfirmedAt: null,
+            requesterConfirmationNote: null,
+            requesterConfirmedById: null,
+            version: { increment: 1 },
+          },
     });
     if (issueChanged.count !== 1) throw new MajorQualityApprovalError('问题状态已变化，请刷新后重试', 409);
     await tx.issueMajorApprovalEvent.create({
@@ -543,7 +564,7 @@ export async function decideMajorQualityApproval(
         action: decision === 'APPROVE' ? 'FINAL_APPROVE' : 'FINAL_RETURN',
         fromStatus: approval.status,
         toStatus: nextStatus,
-        note,
+        note: auditNote,
         actorId: actor.id,
         actorName: actorName(actor),
       },
@@ -552,7 +573,7 @@ export async function decideMajorQualityApproval(
       data: {
         issueId: approval.issueId,
         action: decision === 'APPROVE' ? 'major_quality_approved' : 'major_quality_return',
-        content: note,
+        content: auditNote,
         fromStatus: 'verifying',
         toStatus: issueStatus,
         actorId: actor.id,
@@ -565,9 +586,9 @@ export async function decideMajorQualityApproval(
       category: 'APPROVAL',
       priority: decision === 'APPROVE' ? 'HIGH' : 'URGENT',
       title: decision === 'APPROVE'
-        ? `重大质量问题 ${issueCode(approval.issue.sequence)} 已终审通过并关闭`
+        ? `重大质量问题 ${issueCode(approval.issue.sequence)} 已终审通过，待发起人确认完结`
         : `重大质量问题 ${issueCode(approval.issue.sequence)} 已由总经办退回`,
-      body: note,
+      body: auditNote,
       targetRoute: '/workspace/issues',
       sourceType: 'issue_major_approval',
       sourceId: approval.id,

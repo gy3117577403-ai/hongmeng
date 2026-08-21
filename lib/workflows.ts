@@ -187,7 +187,7 @@ function steps(labels: string[], currentIndex: number, closed = false): Workflow
 function processStatus(status: string, entityType: WorkflowEntityType): WorkflowProcessStatus {
   if (entityType === 'issue') {
     if (status === 'closed') return 'closed';
-    if (status === 'verifying') return 'verifying';
+    if (status === 'verifying' || status === 'awaiting_confirmation') return 'verifying';
     return status === 'processing' ? 'processing' : 'waiting';
   }
   if (entityType === 'change') {
@@ -1287,26 +1287,28 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
     }),
   ]);
 
-  const issueLabels = ['待受理', '处理中', '待验证', '已关闭'];
+  const issueLabels = ['待受理', '处理中', '待验证', '待发起人确认', '已关闭'];
   const changeLabels = ['草稿', '待评估', '执行中', '待验证', '已关闭'];
   const items: WorkflowItemDTO[] = [];
 
   for (const issue of issues) {
     const status = issue.status as IssueStatus;
     const approval = issue.majorApprovals[0] || null;
-    const majorLabels = ['待受理', '整改处理中', '质量二次复核', '总经办终审', '已审批关闭'];
+    const majorLabels = ['待受理', '整改处理中', '质量二次复核', '总经办终审', '待发起人确认', '已审批关闭'];
     const majorIndex = status === 'pending'
       ? 0
       : status === 'processing'
         ? 1
         : status === 'closed'
-          ? 4
+          ? 5
+          : status === 'awaiting_confirmation'
+            ? 4
           : approval?.status === 'PENDING_GM_APPROVAL'
             ? 3
             : 2;
     const index = issue.isMajorQuality
       ? majorIndex
-      : Math.max(0, ['pending', 'processing', 'verifying', 'closed'].indexOf(status));
+      : Math.max(0, ['pending', 'processing', 'verifying', 'awaiting_confirmation', 'closed'].indexOf(status));
     const closed = status === 'closed';
     const dueAt = issue.dueAt?.toISOString() || null;
     const labels = issue.isMajorQuality ? majorLabels : issueLabels;
@@ -1316,7 +1318,7 @@ export async function loadWorkflowCenter(filters: WorkflowCenterFilters = {}): P
       subtitle: `${issue.isMajorQuality ? '重大质量事项' : issueTypeLabels[issue.type as IssueType]} · ${issue.workOrder?.specification || issue.workOrder?.code || '未关联工单'}`,
       processStatus: processStatus(status, 'issue'), currentStep, nextStep: nextLabel(labels, index),
       priority: issue.priority as WorkflowItemDTO['priority'], owner: issue.assigneeEmployee?.name || issue.assignee?.displayName || issue.assignee?.username || null,
-      dueAt, updatedAt: issue.updatedAt.toISOString(), route: issue.isMajorQuality && approval
+      dueAt, updatedAt: issue.updatedAt.toISOString(), route: issue.isMajorQuality && approval && status === 'verifying'
         ? `/workspace/approvals?approvalId=${encodeURIComponent(approval.id)}`
         : `/workspace/issues?issueId=${encodeURIComponent(issue.id)}`,
       sourceRoute: null, isOverdue: !closed && !!issue.dueAt && issue.dueAt.getTime() < now,

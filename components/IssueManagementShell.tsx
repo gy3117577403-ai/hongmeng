@@ -47,6 +47,8 @@ import type {
   CurrentUserDTO,
   DetectedIssueDTO,
   IssueAssigneeOptionDTO,
+  IssueAttachmentCategory,
+  IssueAttachmentDTO,
   IssueDTO,
   IssuePriority,
   IssueStatus,
@@ -104,10 +106,34 @@ type IssueFormState = {
 type TransitionState = { target: IssueStatus; rootCause: string; solution: string; verificationResult: string; comment: string };
 type ComposerMode = 'comment' | 'task' | 'decision';
 type AttachmentDeleteState = { id: string; name: string };
+type DetailBranch = 'overview' | 'analysis' | 'collaboration' | 'decisions' | 'files' | 'verification' | 'logs';
 
-const statusLabels: Record<IssueStatus, string> = { pending: '待受理', processing: '处理中', verifying: '待验证', closed: '已关闭' };
+const statusLabels: Record<IssueStatus, string> = {
+  pending: '待受理',
+  processing: '处理中',
+  verifying: '待验证',
+  awaiting_confirmation: '待发起人确认',
+  closed: '已关闭',
+};
 const priorityLabels: Record<IssuePriority, string> = { urgent: '紧急', high: '高', normal: '一般' };
 const typeLabels: Record<IssueType, string> = { production: '生产问题', planning: '计划问题', technical: '技术问题', process: '工艺问题', quality: '质量问题', material: '物料问题', equipment: '设备问题', other: '其他' };
+const attachmentCategoryLabels: Record<IssueAttachmentCategory, string> = {
+  site_original: '现场原始资料',
+  root_cause: '原因分析资料',
+  processing: '处理过程资料',
+  verification: '验证证据',
+  archive: '归档同步资料',
+  other: '其他未分类',
+};
+const detailBranches: Array<{ key: DetailBranch; label: string; hint: string }> = [
+  { key: 'overview', label: '问题总览', hint: '事实与当前状态' },
+  { key: 'analysis', label: '原因与方案', hint: '根因和处理措施' },
+  { key: 'collaboration', label: '协同任务', hint: '回复与待办' },
+  { key: 'decisions', label: '决策记录', hint: '审批和结论' },
+  { key: 'files', label: '文件与证据', hint: '分类归档资料' },
+  { key: 'verification', label: '验证与关闭', hint: '验证和发起人确认' },
+  { key: 'logs', label: '全量日志', hint: '完整审计轨迹' },
+];
 const activityLabels: Record<string, string> = {
   create: '创建问题', created: '创建问题', create_from_source: '由生产异常转入', restore_from_source: '从来源恢复',
   update: '更新问题信息', assign: '更新负责人', transition: '状态流转', status_changed: '状态流转', comment: '处理记录',
@@ -125,7 +151,7 @@ const majorApprovalStatusLabels = {
   GM_RETURNED: '总经办退回',
   CANCELLED: '审批已撤回',
 } as const;
-const emptySummary: IssueSummaryDTO = { total: 0, pending: 0, processing: 0, verifying: 0, closed: 0, overdue: 0, unassigned: 0 };
+const emptySummary: IssueSummaryDTO = { total: 0, pending: 0, processing: 0, verifying: 0, awaiting_confirmation: 0, closed: 0, overdue: 0, unassigned: 0 };
 const emptyFilters: Filters = { status: 'all', type: 'all', priority: 'all', assigneeId: '', overdue: false, unassigned: false };
 const emptyForm: IssueFormState = {
   title: '', type: 'production', priority: 'normal', description: '', workOrderId: '',
@@ -232,18 +258,19 @@ function issueWorkOrderOptionFromIssue(issue?: IssueDTO | null): IssueWorkOrderO
 }
 
 export default function IssueManagementShell({ user }: IssueManagementShellProps) {
+  const isAdmin = user.laborRole === 'ADMIN';
   const processIssueMode = user.access.capabilities.includes('PROCESS:READ')
     && user.access.capabilities.includes('ISSUE_MANAGEMENT:READ')
     && !user.access.capabilities.includes('QUALITY:READ');
   const productionIssueMode = user.access.capabilities.includes('PRODUCTION:READ')
     && user.access.capabilities.includes('ISSUE_MANAGEMENT:READ')
     && !user.access.capabilities.includes('QUALITY:READ');
-  const canCreateIssues = user.access.capabilities.includes('QUALITY:CREATE')
+  const canCreateIssues = isAdmin || user.access.capabilities.includes('QUALITY:CREATE')
     || user.access.capabilities.includes('ISSUE_MANAGEMENT:CREATE');
-  const canUpdateIssues = user.access.capabilities.includes('QUALITY:UPDATE')
+  const canUpdateIssues = isAdmin || user.access.capabilities.includes('QUALITY:UPDATE')
     || user.access.capabilities.includes('ISSUE_MANAGEMENT:UPDATE');
-  const canDeleteIssues = user.access.capabilities.includes('QUALITY:DELETE');
-  const canExecuteIssueWorkflow = user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW')
+  const canDeleteIssues = isAdmin || user.access.capabilities.includes('QUALITY:DELETE');
+  const canExecuteIssueWorkflow = isAdmin || user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW')
     || user.access.capabilities.includes('ISSUE_MANAGEMENT:EXECUTE_WORKFLOW');
   const canConvertDetectedIssues = user.access.capabilities.includes('QUALITY:CREATE');
   const defaultIssueForm = useMemo<IssueFormState>(() => ({
@@ -256,7 +283,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [keyword, setKeyword] = useState(initialParams.get('keyword') || '');
   const [filters, setFilters] = useState<Filters>(() => ({
     ...emptyFilters,
-    status: (['pending', 'processing', 'verifying', 'closed'].includes(initialParams.get('status') || '') ? initialParams.get('status') : 'all') as Filters['status'],
+    status: (['pending', 'processing', 'verifying', 'awaiting_confirmation', 'closed'].includes(initialParams.get('status') || '') ? initialParams.get('status') : 'all') as Filters['status'],
     overdue: initialParams.get('overdue') === 'true',
   }));
   const [queueMode, setQueueMode] = useState<QueueMode>(canConvertDetectedIssues && initialParams.get('inbox') === 'detected' ? 'detected' : 'issues');
@@ -286,6 +313,9 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   const [composerContent, setComposerContent] = useState('');
   const [composerAssigneeEmployeeId, setComposerAssigneeEmployeeId] = useState('');
   const [composerDueAt, setComposerDueAt] = useState('');
+  const [detailBranch, setDetailBranch] = useState<DetailBranch>('overview');
+  const [attachmentCategory, setAttachmentCategory] = useState<IssueAttachmentCategory>('site_original');
+  const [attachmentCaption, setAttachmentCaption] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
   const [compactContext, setCompactContext] = useState(false);
@@ -300,11 +330,12 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   });
   const selectedApprovalPending = ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL']
     .includes(selected?.majorApproval?.status || '');
-  const selectedApprovedClosed = selected?.status === 'closed' && selected.majorApproval?.status === 'APPROVED';
-  const selectedContentLocked = selectedApprovalPending || selectedApprovedClosed;
+  const selectedMajorFinalApproved = selected?.majorApproval?.status === 'APPROVED'
+    && (selected.status === 'awaiting_confirmation' || selected.status === 'closed');
+  const selectedContentLocked = selectedApprovalPending || selectedMajorFinalApproved || selected?.status === 'closed';
   const canMaintainIssue = (issue: IssueDTO | null): boolean => !!issue
     && canUpdateIssues
-    && (!processIssueMode && !productionIssueMode
+    && (isAdmin || (!processIssueMode && !productionIssueMode)
       || (!issue.isMajorQuality && (
         (processIssueMode && issue.type === 'process')
         || (productionIssueMode && issue.type === 'production')
@@ -352,8 +383,16 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
       setTotalPages(data.pagination.totalPages);
       const desired = preferredId || selected?.id || initialParams.get('issueId') || sessionStorage.getItem('hm-issue-selected') || '';
       const match = data.issues.find(item => item.id === desired);
+      const listIsScoped = !!keyword.trim()
+        || filters.status !== 'all'
+        || filters.type !== 'all'
+        || filters.priority !== 'all'
+        || !!filters.assigneeId
+        || filters.overdue
+        || filters.unassigned
+        || !!workOrderId;
       if (match) setSelected(match);
-      else if (desired) {
+      else if (desired && !listIsScoped) {
         try {
           const detail = await jsonRequest<IssueMutationResponse>(`/api/issues/${encodeURIComponent(desired)}`);
           setSelected(detail.issue || data.issues[0] || null);
@@ -624,6 +663,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
         try {
           const uploadBody = new FormData();
           uploadBody.append('file', file);
+          uploadBody.append('category', 'site_original');
           const uploaded = await jsonRequest<IssueMutationResponse>(`/api/issues/${savedIssue.id}/attachments/upload`, { method: 'POST', body: uploadBody });
           if (uploaded.issue) savedIssue = uploaded.issue;
         } catch {
@@ -754,10 +794,14 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
     if (!selected || !file) return;
     setSaving(true);
     try {
-      const body = new FormData(); body.append('file', file);
+      const body = new FormData();
+      body.append('file', file);
+      body.append('category', attachmentCategory);
+      if (attachmentCaption.trim()) body.append('caption', attachmentCaption.trim());
       const data = await jsonRequest<IssueMutationResponse>(`/api/issues/${selected.id}/attachments/upload`, { method: 'POST', body });
       if (data.issue) updateIssue(data.issue);
-      setToast('附件已上传');
+      setAttachmentCaption('');
+      setToast(`附件已归入“${attachmentCategoryLabels[attachmentCategory]}”`);
     } catch (uploadError) { setToast(uploadError instanceof Error ? uploadError.message : '附件上传失败'); }
     finally { setSaving(false); }
   }
@@ -837,7 +881,27 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
 
   function selectIssue(issue: IssueDTO): void {
     setSelected(issue);
+    setDetailBranch('overview');
+    setAttachmentCaption('');
     if (window.matchMedia('(max-width: 760px)').matches) setContextOpen(false);
+  }
+
+  async function classifyAttachment(file: IssueAttachmentDTO, category: IssueAttachmentCategory): Promise<void> {
+    if (!selected || category === file.category) return;
+    setSaving(true);
+    try {
+      const data = await jsonRequest<IssueMutationResponse>(`/api/issues/attachments/${file.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category, caption: file.caption || '', version: file.version }),
+      });
+      if (data.issue) updateIssue(data.issue);
+      setToast(`附件已移入“${attachmentCategoryLabels[category]}”`);
+    } catch (classifyError) {
+      setToast(classifyError instanceof Error ? classifyError.message : '附件分类更新失败');
+    } finally {
+      setSaving(false);
+    }
   }
 
   function openContext(): void {
@@ -866,10 +930,12 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
       { key: 'mine', label: '需我处理', hint: '负责人、协同人或我发起', items: [] },
       { key: 'waiting', label: '等待他人', hint: '协同处理中', items: [] },
       { key: 'verifying', label: '待验证', hint: '等待验证结论', items: [] },
-      { key: 'closed', label: '已闭环', hint: '已完成归档', items: [] },
+      { key: 'confirmation', label: '待发起人确认', hint: '验证通过，等待完结确认', items: [] },
+      { key: 'closed', label: '已完结问题库', hint: '按问题类型归档', items: [] },
     ];
     issues.forEach(issue => {
-      if (issue.status === 'closed') groups[3].items.push(issue);
+      if (issue.status === 'closed') groups[4].items.push(issue);
+      else if (issue.status === 'awaiting_confirmation') groups[3].items.push(issue);
       else if (issue.status === 'verifying') groups[2].items.push(issue);
       else {
         const mine = issue.reporter?.id === user.id
@@ -909,9 +975,40 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
   ] : [];
   const closureReady = closureChecklist.every(item => item.done);
   const canVerifySelected = !!selected && (
+    isAdmin
+    ||
     selected.verifier?.id === user.employeeId
     || user.access.capabilities.includes('QUALITY:EXECUTE_WORKFLOW')
   );
+  const canConfirmSelected = !!selected && (isAdmin || selected.reporter?.id === user.id);
+  const canTransitionSelected = !!selected && (
+    isAdmin
+    || ((selected.status === 'pending' || selected.status === 'processing') && canExecuteIssueWorkflow && canMaintainSelected)
+    || (selected.status === 'verifying' && canVerifySelected)
+    || ((selected.status === 'awaiting_confirmation' || selected.status === 'closed') && canConfirmSelected)
+  );
+  const visibleActivities = useMemo(() => {
+    const activities = selected?.activities || [];
+    if (detailBranch === 'logs') return activities;
+    if (detailBranch === 'overview') return activities.slice(-5);
+    if (detailBranch === 'collaboration') {
+      return activities.filter(activity => ['comment', 'task_create', 'task_complete'].includes(activity.action));
+    }
+    if (detailBranch === 'decisions') {
+      return activities.filter(activity => activity.action.startsWith('decision_')
+        || activity.action.startsWith('major_quality_')
+        || activity.action === 'transition');
+    }
+    return [];
+  }, [detailBranch, selected?.activities]);
+  const attachmentGroups = useMemo(() => Object.entries(attachmentCategoryLabels).map(([category, label]) => ({
+    category: category as IssueAttachmentCategory,
+    label,
+    files: (selected?.attachments || []).filter(file => file.category === category),
+  })), [selected?.attachments]);
+  const lifecycleStatuses: IssueStatus[] = ['pending', 'processing', 'verifying', 'awaiting_confirmation', 'closed'];
+  const lifecycleIndex = selected ? lifecycleStatuses.indexOf(selected.status) : 0;
+  const workflowProgress = selected ? Math.round((lifecycleIndex + 1) / lifecycleStatuses.length * 100) : 0;
 
   return (
     <main className="hm-issue-workbench issue-case-room hm-workbench-root hm-cockpit-root hm-workbench-navigation-overlay">
@@ -933,8 +1030,8 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           navigationTargetId="issue-navigation-trigger"
           icon={<ShieldCheck size={19} />}
           title="问题协同作战室"
-          subtitle="从反馈、协同处理到验证关闭，全程共享、可追溯"
-          context={<><span>{summary.processing} 条处理中</span><span>{summary.overdue} 条逾期</span>{canConvertDetectedIssues && <span>{pendingDetected} 条待转问题</span>}</>}
+          subtitle="从反馈、协同处理、独立验证到发起人确认完结，全程共享、可追溯"
+          context={<><span>{summary.processing} 条处理中</span><span>{summary.awaiting_confirmation} 条待发起人确认</span><span>{summary.overdue} 条逾期</span>{canConvertDetectedIssues && <span>{pendingDetected} 条待转问题</span>}</>}
           search={<label><Search size={16} aria-hidden="true" /><input value={keyword} onChange={event => { setKeyword(event.target.value); setPage(1); }} placeholder="搜索问题、工单、规格、客户" aria-label="搜索问题" />{keyword ? <button type="button" aria-label="清空搜索" title="清空搜索" onClick={() => setKeyword('')}><X size={14} /></button> : <kbd>Ctrl K</kbd>}</label>}
           actions={<>
             {initialParams.get('returnTo') && <a className="hm-workbench-button issue-return-link" href={initialParams.get('returnTo') || '/production'}><ArrowLeft size={15} />返回生产执行</a>}
@@ -948,7 +1045,8 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
         <section className="issue-summary hm-cockpit-stage-rail" aria-label="问题状态概览">
           {([
             ['all', '全部问题', summary.total], ['pending', '待受理', summary.pending], ['processing', '处理中', summary.processing],
-            ['verifying', '待验证', summary.verifying], ['closed', '已关闭', summary.closed], ['overdue', '已逾期', summary.overdue],
+            ['verifying', '待验证', summary.verifying], ['awaiting_confirmation', '待发起人确认', summary.awaiting_confirmation],
+            ['closed', '已关闭', summary.closed], ['overdue', '已逾期', summary.overdue],
           ] as const).map(([key, label, count]) => {
             const active = key === 'all' ? filters.status === 'all' && !filters.overdue : key === 'overdue' ? filters.overdue : filters.status === key;
             return <button className={`${key} ${active ? 'active' : ''}`} type="button" aria-pressed={active} key={key} onClick={() => {
@@ -957,6 +1055,11 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
           })}
           {canConvertDetectedIssues && <button className={`detected ${queueMode === 'detected' ? 'active' : ''}`} type="button" aria-pressed={queueMode === 'detected'} onClick={() => setQueueMode('detected')}><span>待转问题</span><strong>{pendingDetected}</strong></button>}
         </section>
+
+        {filters.status === 'closed' && <section className="issue-archive-filter" aria-label="已完结问题分类">
+          <div><strong>已完结问题库</strong><span>关闭后保留完整流程、责任、验证和文件快照</span></div>
+          <nav>{(['all', ...Object.keys(typeLabels)] as Array<'all' | IssueType>).map(type => <button type="button" className={filters.type === type ? 'active' : ''} key={type} onClick={() => { setFilters(current => ({ ...current, type })); setPage(1); }}>{type === 'all' ? '全部分类' : typeLabels[type]}</button>)}</nav>
+        </section>}
 
         <section className={`issue-filter-bar issue-filter-drawer ${filtersOpen ? 'open' : ''}`} aria-label="问题筛选" aria-hidden={!filtersOpen}>
           <select value={filters.type} aria-label="问题类型" onChange={event => { setFilters(current => ({ ...current, type: event.target.value as Filters['type'] })); setPage(1); }}><option value="all">全部类型</option>{Object.entries(typeLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>
@@ -1005,11 +1108,17 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
             {!selected ? <div className="issue-detail-empty"><MessageSquareText /><h2>选择一个问题开始处理</h2><p>{canConvertDetectedIssues ? '左侧可选择问题，或从异常收件箱转入生产异常。' : processIssueMode ? '左侧可选择问题，或新建工艺问题进入闭环处理。' : '左侧可选择问题，或新建生产问题进入闭环处理。'}</p></div> : <>
               <header className="issue-detail-header">
                 <div><span>{selected.code} · {typeLabels[selected.type]}{selected.isMajorQuality && <em className="issue-major-chip">重大质量</em>}</span><h2 title={selected.title}>{selected.title}</h2><p>{sourceLabel(selected)} · 创建于 {formatDate(selected.createdAt)}</p></div>
-                <div><span className={`issue-status status-${selected.status}`}>{statusLabels[selected.status]}</span>{selected.majorApproval && <span className={`issue-approval-state state-${selected.majorApproval.status.toLowerCase()}`}>{majorApprovalStatusLabels[selected.majorApproval.status]}</span>}{!selectedContentLocked && canMaintainSelected && <button type="button" aria-label="编辑问题" title="编辑问题" onClick={() => openEdit(selected)}><Pencil size={16} /></button>}{!selected.majorApproval && canDeleteIssues && <button className="danger" type="button" aria-label="删除问题" title="删除问题" onClick={() => openIssueDelete(selected)}><Trash2 size={16} /></button>}</div>
+                <div><span className={`issue-status status-${selected.status}`}>{statusLabels[selected.status]}</span>{selected.majorApproval && <span className={`issue-approval-state state-${selected.majorApproval.status.toLowerCase()}`}>{majorApprovalStatusLabels[selected.majorApproval.status]}</span>}{!selectedContentLocked && canMaintainSelected && <button type="button" aria-label="编辑问题" title="编辑问题" onClick={() => openEdit(selected)}><Pencil size={16} /></button>}{selected.status !== 'closed' && !selected.majorApproval && canDeleteIssues && <button className="danger" type="button" aria-label="删除问题" title="删除问题" onClick={() => openIssueDelete(selected)}><Trash2 size={16} /></button>}</div>
               </header>
 
+              <nav className="issue-detail-branches" aria-label="问题内容分支">
+                {detailBranches.map(branch => <button type="button" className={detailBranch === branch.key ? 'active' : ''} aria-current={detailBranch === branch.key ? 'page' : undefined} key={branch.key} onClick={() => setDetailBranch(branch.key)}><strong>{branch.label}</strong><span>{branch.hint}</span></button>)}
+              </nav>
+
               <div className="issue-detail-scroll hm-scroll-region">
-                <section className="case-room-intro">
+                {selected.status === 'closed' && <section className="issue-archive-banner"><div><ShieldCheck size={18} /><p><strong>已归档至“{typeLabels[selected.type]}”</strong><span>{selected.requesterConfirmedAt ? '内容只读，完整保留验证、发起人确认与文件历史。' : '历史关闭记录已只读归档；新流程将额外记录发起人确认。'}</span></p></div><time>完结于 {formatDate(selected.closedAt)}</time></section>}
+
+                {detailBranch === 'overview' && <section className="case-room-intro">
                   <header><span>问题提出</span><time>{formatDate(selected.createdAt)}</time></header>
                   <p>{selected.description || '尚未填写问题描述。'}</p>
                   <dl>
@@ -1019,18 +1128,34 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                     <div><dt>当前责任</dt><dd>{selected.assignee?.name || '待分派'}</dd></div>
                   </dl>
                   {selected.temporaryMeasure && <aside><AlertTriangle size={15} /><div><strong>现场临时措施</strong><p>{selected.temporaryMeasure}</p></div></aside>}
-                </section>
+                </section>}
 
-                <section className="case-resolution-strip" aria-label="闭环关键结论">
+                {(detailBranch === 'overview' || detailBranch === 'analysis') && <section className="case-resolution-strip" aria-label="闭环关键结论">
                   <article className={selected.rootCause ? 'complete' : ''}><span>01</span><div><strong>原因分析</strong><p>{selected.rootCause || '待负责人补充根因'}</p></div></article>
                   <article className={selected.solution ? 'complete' : ''}><span>02</span><div><strong>处理方案</strong><p>{selected.solution || '待形成可执行方案'}</p></div></article>
                   <article className={selected.verificationResult ? 'complete' : ''}><span>03</span><div><strong>验证结论</strong><p>{selected.verificationResult || '待验证人填写结论'}</p></div></article>
-                </section>
+                </section>}
 
-                <section className="case-room-stream">
-                  <header><div><h3>协同时间线</h3><span>所有部门共享同一条记录 · {selected.activityCount} 条</span></div><div><em>{openTaskCount} 待办</em><em>{openDecisionCount} 决策待定</em></div></header>
+                {detailBranch === 'verification' && <section className="case-verification-branch">
+                  <header><div><span>验证与关闭</span><h3>{selected.status === 'closed' ? selected.requesterConfirmedAt ? '发起人已确认完结' : '历史关闭记录' : selected.status === 'awaiting_confirmation' ? '等待发起人确认' : '验证流程进行中'}</h3></div><strong className={`status-${selected.status}`}>{statusLabels[selected.status]}</strong></header>
+                  <div className="case-verification-grid">
+                    <article><span>独立验证人</span><strong>{selected.verifier?.name || (selected.isMajorQuality ? '质量复核与总经办终审' : '尚未指定')}</strong><small>{selected.verifiedAt ? `验证完成 ${formatDate(selected.verifiedAt)}` : '尚未完成验证'}</small></article>
+                    <article><span>验证结论</span><strong>{selected.verificationResult || '尚未填写验证结论'}</strong><small>验证通过后不会直接关闭，必须由发起人确认</small></article>
+                    <article><span>问题发起人</span><strong>{selected.reporter?.displayName || selected.reporter?.username || '未知发起人'}</strong><small>{selected.requesterConfirmedAt ? `确认于 ${formatDate(selected.requesterConfirmedAt)}` : '尚未确认完结'}</small></article>
+                    <article><span>完结说明</span><strong>{selected.requesterConfirmationNote || (selected.requesterConfirmedAt ? '发起人确认问题已闭环' : selected.status === 'closed' ? '迁移前历史关闭记录，无发起人确认字段' : '等待发起人核对')}</strong><small>{selected.requesterConfirmedBy ? `操作人 ${selected.requesterConfirmedBy.displayName || selected.requesterConfirmedBy.username}` : '管理员代操作将显示真实操作账号'}</small></article>
+                  </div>
+                </section>}
+
+                {detailBranch === 'files' && <section className="case-file-branch">
+                  <header><div><span>文件与证据</span><h3>按流程用途归档</h3></div><strong>{selected.attachmentCount} 个文件</strong></header>
+                  {canMaintainSelected && !selectedContentLocked && <div className="case-file-upload-bar"><select value={attachmentCategory} onChange={event => setAttachmentCategory(event.target.value as IssueAttachmentCategory)}>{Object.entries(attachmentCategoryLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><input value={attachmentCaption} maxLength={500} onChange={event => setAttachmentCaption(event.target.value)} placeholder="文件说明（选填）" /><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传到当前分类</button></div>}
+                  <div className="case-file-groups">{attachmentGroups.map(group => <article className={group.files.length ? '' : 'empty'} key={group.category}><header><strong>{group.label}</strong><span>{group.files.length}</span></header><div>{group.files.map(file => <section key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{file.caption || `${formatBytes(file.size)} · ${formatDate(file.createdAt)}`}</small>{canMaintainSelected && !selectedContentLocked && <select className="case-file-category-select" aria-label={`调整 ${file.displayName || file.originalName} 的分类`} value={file.category} disabled={saving} onChange={event => { void classifyAttachment(file, event.target.value as IssueAttachmentCategory); }}>{Object.entries(attachmentCategoryLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select>}</div><em>{statusLabels[file.stage]}</em><a href={file.contentUrl} target="_blank" rel="noreferrer" title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} title="下载"><Download size={14} /></a>{canDeleteIssues && !selectedContentLocked && <button type="button" title="删除附件" onClick={() => openAttachmentDelete(file.id, file.displayName || file.originalName)}><Trash2 size={14} /></button>}</section>)}{!group.files.length && <p>暂无{group.label}</p>}</div></article>)}</div>
+                </section>}
+
+                {(['overview', 'collaboration', 'decisions', 'logs'] as DetailBranch[]).includes(detailBranch) && <section className="case-room-stream">
+                  <header><div><h3>{detailBranch === 'overview' ? '最近动态' : detailBranch === 'collaboration' ? '协同任务与回复' : detailBranch === 'decisions' ? '决策与审批记录' : '全量审计日志'}</h3><span>{detailBranch === 'logs' ? `完整保留 ${selected.activityCount} 条记录` : '所有部门共享同一条记录'}</span></div><div><em>{openTaskCount} 待办</em><em>{openDecisionCount} 决策待定</em></div></header>
                   <div className="case-stream-list">
-                    {selected.activities?.map(activity => {
+                    {visibleActivities.map(activity => {
                       const attachmentId = String(activity.detail?.attachmentId || '');
                       const evidence = selected.attachments?.find(file => file.id === attachmentId);
                       const assignedEmployeeId = String(activity.detail?.assigneeEmployeeId || '');
@@ -1061,12 +1186,12 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                         </div>
                       </article>;
                     })}
-                    {!selected.activities?.length && <p className="timeline-empty">暂无协同记录</p>}
+                    {!visibleActivities.length && <p className="timeline-empty">当前分支暂无记录</p>}
                   </div>
-                </section>
+                </section>}
               </div>
 
-              {canMaintainSelected && <form className="case-room-composer" onSubmit={submitCollaboration}>
+              {detailBranch === 'collaboration' && canMaintainSelected && selected.status !== 'closed' && !selectedMajorFinalApproved && <form className="case-room-composer" onSubmit={submitCollaboration}>
                 <div className="case-composer-tabs" role="tablist" aria-label="协同记录类型">
                   <button className={composerMode === 'comment' ? 'active' : ''} type="button" role="tab" aria-selected={composerMode === 'comment'} onClick={() => setComposerMode('comment')}><MessageSquareText size={14} />回复</button>
                   <button className={composerMode === 'task' ? 'active' : ''} type="button" role="tab" aria-selected={composerMode === 'task'} onClick={() => setComposerMode('task')}><ListChecks size={14} />创建待办</button>
@@ -1076,11 +1201,12 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                 {composerMode === 'decision' && <div className="case-composer-meta decision"><label>决策截止时间<input type="datetime-local" value={composerDueAt} onChange={event => setComposerDueAt(event.target.value)} /></label><p>协同人可直接在时间线通过或退回，结论永久留痕。</p></div>}
                 <div className="case-composer-input"><textarea value={composerContent} onChange={event => setComposerContent(event.target.value)} rows={2} maxLength={2000} placeholder={composerMode === 'task' ? '写清交付物、完成标准和需要上传的证据…' : composerMode === 'decision' ? '说明需要确认的方案、风险和决策边界…' : '回复处理进展，可 @ 协同人并补充现场事实…'} /><button type="button" aria-label="上传凭证" title="上传凭证" onClick={() => fileInputRef.current?.click()}><Paperclip size={16} /></button><button className="primary" type="submit" disabled={saving || !composerContent.trim() || (composerMode === 'task' && !composerAssigneeEmployeeId)}><Send size={15} />发布</button></div>
               </form>}
-              {canMaintainSelected && canExecuteIssueWorkflow && <div className="issue-transition-actions case-transition-actions">
-                <a className="issue-change-link" href={`/workspace/changes?action=new&issueId=${encodeURIComponent(selected.id)}${selected.workOrderId ? `&workOrderId=${encodeURIComponent(selected.workOrderId)}` : ''}`}><GitPullRequestArrow size={15} />发起变更</a>
+              {canTransitionSelected && <div className="issue-transition-actions case-transition-actions">
+                {canMaintainSelected && !selectedContentLocked && <a className="issue-change-link" href={`/workspace/changes?action=new&issueId=${encodeURIComponent(selected.id)}${selected.workOrderId ? `&workOrderId=${encodeURIComponent(selected.workOrderId)}` : ''}`}><GitPullRequestArrow size={15} />发起变更</a>}
                 {selected.status === 'pending' && <button className="primary" type="button" onClick={() => beginTransition('processing')}>开始处理</button>}
-                {selected.status === 'processing' && <button className="primary" type="button" disabled={!closureReady} title={closureReady ? '资料完整，可以提交验证' : '请先完成右侧闭环清单'} onClick={() => beginTransition('verifying')}>{selected.isMajorQuality ? '提交重大复核' : '提交验证'}</button>}
-                {selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('processing')}>{selected.isMajorQuality ? '撤回审批并退回处理' : '退回处理'}</button>{selected.isMajorQuality ? <Link className="issue-approval-link" href={`/workspace/approvals?approvalId=${encodeURIComponent(selected.majorApproval?.id || '')}`}>打开重大审批</Link> : canVerifySelected && <button className="primary" type="button" onClick={() => beginTransition('closed')}>验证通过并关闭</button>}</>}
+                {selected.status === 'processing' && <button className="primary" type="button" disabled={!closureReady} title={closureReady ? '资料完整，可以提交验证' : '请先完成右侧提交验证准备度'} onClick={() => beginTransition('verifying')}>{selected.isMajorQuality ? '提交重大复核' : '提交验证'}</button>}
+                {selected.status === 'verifying' && <><button type="button" onClick={() => beginTransition('processing')}>{selected.isMajorQuality ? '撤回审批并退回处理' : '验证退回处理'}</button>{selected.isMajorQuality ? <Link className="issue-approval-link" href={`/workspace/approvals?approvalId=${encodeURIComponent(selected.majorApproval?.id || '')}`}>打开重大审批</Link> : canVerifySelected && <button className="primary" type="button" onClick={() => beginTransition('awaiting_confirmation')}>验证通过，交发起人确认</button>}</>}
+                {selected.status === 'awaiting_confirmation' && <><button type="button" onClick={() => beginTransition('processing')}>退回继续处理</button><button className="primary" type="button" onClick={() => beginTransition('closed')}>{isAdmin && selected.reporter?.id !== user.id ? '管理员代确认完结' : '确认问题完结'}</button></>}
                 {selected.status === 'closed' && <button type="button" onClick={() => beginTransition('processing')}>重新打开问题</button>}
                 <button className="context-mobile" type="button" onClick={openContext}><ShieldCheck size={15} />闭环控制台</button>
               </div>}
@@ -1092,15 +1218,14 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
             <header><div><span>闭环控制台</span><strong>{selected?.code || '未选择问题'}</strong></div><button type="button" aria-label="关闭闭环控制台" title="关闭" onClick={closeContext}><X size={18} /></button></header>
             {!selected ? <div className="issue-context-empty">选择问题后查看闭环门槛、责任链和关联应用。</div> : <div className="issue-context-scroll hm-scroll-region">
               <section className="case-lifecycle context-section">
-                <header><div><h3><ShieldCheck size={15} />闭环进度</h3><span>{closureChecklist.filter(item => item.done).length}/{closureChecklist.length} 项完成</span></div><strong>{Math.round(closureChecklist.filter(item => item.done).length / Math.max(closureChecklist.length, 1) * 100)}%</strong></header>
-                <div className="case-lifecycle-track">{(['pending', 'processing', 'verifying', 'closed'] as IssueStatus[]).map((status, index) => {
-                  const statusIndex = (['pending', 'processing', 'verifying', 'closed'] as IssueStatus[]).indexOf(selected.status);
-                  return <div className={index <= statusIndex ? 'complete' : ''} key={status}><span>{index < statusIndex ? <Check size={12} /> : index + 1}</span><em>{statusLabels[status]}</em></div>;
+                <header><div><h3><ShieldCheck size={15} />流程进度</h3><span>第 {lifecycleIndex + 1}/{lifecycleStatuses.length} 阶段</span></div><strong>{workflowProgress}%</strong></header>
+                <div className="case-lifecycle-track">{lifecycleStatuses.map((status, index) => {
+                  return <div className={index <= lifecycleIndex ? 'complete' : ''} key={status}><span>{index < lifecycleIndex ? <Check size={12} /> : index + 1}</span><em>{statusLabels[status]}</em></div>;
                 })}</div>
               </section>
 
               <section className="case-closure-checklist context-section">
-                <header><h3><ListChecks size={15} />关闭前检查</h3><em className={closureReady ? 'ready' : ''}>{closureReady ? '可提交' : '有阻塞项'}</em></header>
+                <header><h3><ListChecks size={15} />提交验证准备度</h3><em className={closureReady ? 'ready' : ''}>{closureReady ? '资料已齐' : '有阻塞项'}</em></header>
                 <div>{closureChecklist.map(item => <article className={item.done ? 'done' : ''} key={item.key}><span>{item.done ? <Check size={13} /> : <Circle size={13} />}</span><strong>{item.label}</strong></article>)}</div>
               </section>
 
@@ -1111,7 +1236,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                 <div className="context-picker-field collaborators"><span>协同人员</span><EmployeeMultiPicker employees={employees} values={contextForm.collaboratorEmployeeIds} excludeIds={contextForm.assigneeEmployeeId ? [contextForm.assigneeEmployeeId] : []} disabled={!canMaintainSelected || selectedContentLocked} onChange={values => setContextForm(current => ({ ...current, collaboratorEmployeeIds: values }))} /></div>
                 <div className="case-responsibility-grid"><label>优先级<select disabled={!canMaintainSelected || selectedContentLocked} value={contextForm.priority} onChange={event => setContextForm(current => ({ ...current, priority: event.target.value as IssuePriority }))}>{Object.entries(priorityLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></label><label>截止时间<input type="datetime-local" disabled={!canMaintainSelected || selectedContentLocked} value={contextForm.dueAt} onChange={event => setContextForm(current => ({ ...current, dueAt: event.target.value }))} /></label></div>
                 {canMaintainSelected && !selectedContentLocked && <button className="primary" type="button" disabled={saving} onClick={() => { void saveContext(); }}>保存责任链</button>}
-                {selectedContentLocked && <p className="issue-context-lock-note">{selectedApprovalPending ? '审批进行中，责任信息和附件已锁定；可继续追加协同记录。' : '终审关闭后内容已锁定；如需整改，请先重新打开问题。'}</p>}
+                {selectedContentLocked && <p className="issue-context-lock-note">{selectedApprovalPending ? '审批进行中，责任信息和附件已锁定；可继续追加协同记录。' : selectedMajorFinalApproved && selected.status !== 'closed' ? '重大质量终审已通过，正文和证据已锁定；等待发起人确认完结或退回整改。' : '问题已由发起人确认完结并只读归档；如需整改，请先重新打开问题。'}</p>}
               </section>
 
               <section className="case-linked-apps context-section">
@@ -1124,8 +1249,9 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                 </div>
               </section>
 
-              <section className="context-section attachments case-evidence-library"><header><h3><Paperclip size={15} />闭环证据 <em>{selected.attachmentCount}</em></h3>{canMaintainSelected && !selectedContentLocked && <><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></>}</header>
-                <div>{selected.attachments?.map(file => <article key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{formatBytes(file.size)} · {formatDate(file.createdAt)}</small></div><a href={file.contentUrl} target="_blank" rel="noreferrer" aria-label={`预览 ${file.displayName || file.originalName}`} title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} aria-label={`下载 ${file.displayName || file.originalName}`} title="下载"><Download size={14} /></a>{canDeleteIssues && !selectedContentLocked && <button type="button" aria-label={`删除 ${file.displayName || file.originalName}`} title="删除附件" onClick={() => openAttachmentDelete(file.id, file.displayName || file.originalName)}><Trash2 size={14} /></button>}</article>)}{!selected.attachments?.length && <p className="attachment-empty">{canMaintainSelected && !selectedContentLocked ? '上传现场照片、复测记录或 PDF 作为闭环证据。' : '当前没有闭环证据。'}</p>}</div>
+              <section className="context-section attachments case-evidence-library"><header><h3><Paperclip size={15} />文件与证据 <em>{selected.attachmentCount}</em></h3>{canMaintainSelected && !selectedContentLocked && <><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Plus size={14} />上传</button><input ref={fileInputRef} type="file" accept="application/pdf,image/jpeg,image/png,image/webp" hidden onChange={uploadAttachment} /></>}</header>
+                {canMaintainSelected && !selectedContentLocked && <div className="context-file-classifier"><select aria-label="附件分类" value={attachmentCategory} onChange={event => setAttachmentCategory(event.target.value as IssueAttachmentCategory)}>{Object.entries(attachmentCategoryLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><input aria-label="附件说明" value={attachmentCaption} maxLength={500} onChange={event => setAttachmentCaption(event.target.value)} placeholder="文件说明（选填）" /></div>}
+                <div>{selected.attachments?.map(file => <article key={file.id}><span>{file.fileType === 'pdf' ? <FileText /> : <FileImage />}</span><div><strong title={file.displayName || file.originalName}>{file.displayName || file.originalName}</strong><small>{attachmentCategoryLabels[file.category]} · {file.caption || formatDate(file.createdAt)}</small></div><a href={file.contentUrl} target="_blank" rel="noreferrer" aria-label={`预览 ${file.displayName || file.originalName}`} title="预览"><ExternalLink size={14} /></a><a href={file.downloadUrl} aria-label={`下载 ${file.displayName || file.originalName}`} title="下载"><Download size={14} /></a>{canDeleteIssues && !selectedContentLocked && <button type="button" aria-label={`删除 ${file.displayName || file.originalName}`} title="删除附件" onClick={() => openAttachmentDelete(file.id, file.displayName || file.originalName)}><Trash2 size={14} /></button>}</article>)}{!selected.attachments?.length && <p className="attachment-empty">{canMaintainSelected && !selectedContentLocked ? '选择分类后上传现场照片、分析资料、复测记录或 PDF。' : '当前没有文件与证据。'}</p>}</div>
               </section>
             </div>}
           </aside>
@@ -1191,8 +1317,9 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
       {transition && selected && <div className="issue-modal-backdrop"><form className="issue-modal transition-modal" role="dialog" aria-modal="true" aria-labelledby="issue-transition-title" onSubmit={submitTransition}><header><div><span>状态流转</span><h2 id="issue-transition-title">{statusLabels[selected.status]} → {statusLabels[transition.target]}</h2></div><button type="button" aria-label="关闭" title="关闭" disabled={saving} onClick={() => setTransition(null)}><X size={19} /></button></header><div className="issue-modal-body">
         {transition.target === 'verifying' && selected.isMajorQuality && <div className="issue-major-transition-note"><AlertTriangle /><div><b>将发起第 {(selected.majorApproval?.round || 0) + 1} 轮重大质量审批</b><span>系统会通知其他质量人员二次复核；复核通过后再通知总经办终审。三名关键人员必须相互独立。</span></div></div>}
         {transition.target === 'verifying' && <><label className="wide">原因分析<textarea autoFocus required rows={4} value={transition.rootCause} onChange={event => setTransition(current => current ? { ...current, rootCause: event.target.value } : current)} placeholder="说明已经核实的根本原因，避免只写现象" /></label><label className="wide">处理方案<textarea required rows={4} value={transition.solution} onChange={event => setTransition(current => current ? { ...current, solution: event.target.value } : current)} placeholder="说明已经采取的处理措施及复测标准" /></label></>}
-        {transition.target === 'closed' && <label className="wide">验证结果<textarea autoFocus required rows={5} value={transition.verificationResult} onChange={event => setTransition(current => current ? { ...current, verificationResult: event.target.value } : current)} placeholder="说明如何验证问题已解决" /></label>}
-        <label className="wide">流转备注{selected.isMajorQuality && selected.status === 'verifying' && transition.target === 'processing' ? '' : '（可选）'}<textarea required={selected.isMajorQuality && selected.status === 'verifying' && transition.target === 'processing'} autoFocus={transition.target === 'processing'} rows={3} value={transition.comment} onChange={event => setTransition(current => current ? { ...current, comment: event.target.value } : current)} placeholder={selected.isMajorQuality && selected.status === 'verifying' && transition.target === 'processing' ? '必须说明撤回审批和退回整改的原因' : '补充本次状态变更说明'} /></label>
+        {transition.target === 'awaiting_confirmation' && <label className="wide">验证结果<textarea autoFocus required rows={5} value={transition.verificationResult} onChange={event => setTransition(current => current ? { ...current, verificationResult: event.target.value } : current)} placeholder="说明验证方法、样本、结果与通过依据；提交后由发起人确认完结" /></label>}
+        {transition.target === 'closed' && <div className="issue-requester-confirm-note"><ShieldCheck /><div><strong>确认问题已解决并完结</strong><span>本次操作会写入发起人确认记录；管理员代确认会保留管理员真实账号和说明。</span></div></div>}
+        <label className="wide">流转备注{(isAdmin || (transition.target === 'processing' && (selected.status === 'awaiting_confirmation' || selected.status === 'closed' || selected.isMajorQuality))) ? '' : '（可选）'}<textarea required={isAdmin || (transition.target === 'processing' && (selected.status === 'awaiting_confirmation' || selected.status === 'closed' || selected.isMajorQuality))} autoFocus={transition.target === 'processing' || transition.target === 'closed'} rows={3} value={transition.comment} onChange={event => setTransition(current => current ? { ...current, comment: event.target.value } : current)} placeholder={isAdmin ? '管理员代操作必须填写审计说明' : transition.target === 'processing' ? '说明退回或重新打开的具体原因' : transition.target === 'closed' ? '补充发起人确认说明（选填）' : '补充本次状态变更说明'} /></label>
       </div><footer><button type="button" disabled={saving} onClick={() => setTransition(null)}>取消</button><button className="primary" type="submit" disabled={saving}>{saving && <Loader2 className="spin" size={15} />}确认流转</button></footer></form></div>}
 
       {confirmDelete && <div className="issue-modal-backdrop"><section className="issue-confirm" role="alertdialog" aria-modal="true" aria-labelledby="issue-delete-title"><AlertTriangle /><h2 id="issue-delete-title">确认删除问题？</h2><p>{confirmDelete.code} · {confirmDelete.title}</p><span>问题将被软删除，关联工单和 S3 附件原文件不会被物理删除。</span><footer><button type="button" disabled={saving} onClick={() => setConfirmDelete(null)}>取消</button><button className="danger" type="button" disabled={saving} onClick={() => { void deleteIssue(); }}>确认删除</button></footer></section></div>}

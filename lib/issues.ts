@@ -11,6 +11,7 @@ import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import { prisma } from '@/lib/prisma';
 import type {
   DetectedIssueDTO,
+  IssueAttachmentCategory,
   IssueDTO,
   IssuePriority,
   IssueStatus,
@@ -18,15 +19,33 @@ import type {
   IssueType,
 } from '@/types';
 
-export const ISSUE_STATUSES: IssueStatus[] = ['pending', 'processing', 'verifying', 'closed'];
+export const ISSUE_STATUSES: IssueStatus[] = ['pending', 'processing', 'verifying', 'awaiting_confirmation', 'closed'];
 export const ISSUE_PRIORITIES: IssuePriority[] = ['urgent', 'high', 'normal'];
 export const ISSUE_TYPES: IssueType[] = ['production', 'planning', 'technical', 'process', 'quality', 'material', 'equipment', 'other'];
+export const ISSUE_ATTACHMENT_CATEGORIES: IssueAttachmentCategory[] = [
+  'site_original',
+  'root_cause',
+  'processing',
+  'verification',
+  'archive',
+  'other',
+];
 
 export const issueStatusLabels: Record<IssueStatus, string> = {
   pending: '待受理',
   processing: '处理中',
   verifying: '待验证',
+  awaiting_confirmation: '待发起人确认',
   closed: '已关闭',
+};
+
+export const issueAttachmentCategoryLabels: Record<IssueAttachmentCategory, string> = {
+  site_original: '现场原始资料',
+  root_cause: '原因分析资料',
+  processing: '处理过程资料',
+  verification: '验证证据',
+  archive: '归档同步资料',
+  other: '其他未分类',
 };
 
 export const issuePriorityLabels: Record<IssuePriority, string> = {
@@ -54,7 +73,9 @@ export function issueAttachmentMutationLock(
     approvalStatus === 'PENDING_QUALITY_REVIEW' || approvalStatus === 'PENDING_GM_APPROVAL')) {
     return 'approval_pending';
   }
-  if (status === 'closed' && approvalStatuses.includes('APPROVED')) return 'final_approved';
+  if ((status === 'awaiting_confirmation' || status === 'closed') && approvalStatuses.includes('APPROVED')) {
+    return 'final_approved';
+  }
   return null;
 }
 
@@ -85,6 +106,7 @@ export const issueDetailInclude = Prisma.validator<Prisma.IssueInclude>()({
   assignee: { select: issueLegacyAssigneeSelect },
   assigneeEmployee: { select: issueEmployeeSelect },
   verifierEmployee: { select: issueEmployeeSelect },
+  requesterConfirmedBy: { select: issueUserSelect },
   collaborators: {
     include: { employee: { select: issueEmployeeSelect } },
     orderBy: { createdAt: 'asc' },
@@ -410,6 +432,9 @@ export function serializeIssue(issue: IssueDetailRecord): IssueDTO {
     rootCause: issue.rootCause,
     solution: issue.solution,
     verificationResult: issue.verificationResult,
+    requesterConfirmedBy: issue.requesterConfirmedBy,
+    requesterConfirmedAt: issue.requesterConfirmedAt?.toISOString() || null,
+    requesterConfirmationNote: issue.requesterConfirmationNote,
     isMajorQuality: issue.isMajorQuality,
     majorQualityReason: issue.majorQualityReason,
     version: issue.version,
@@ -451,6 +476,10 @@ export function serializeIssue(issue: IssueDetailRecord): IssueDTO {
       mimeType: attachment.mimeType,
       fileType: attachment.fileType,
       size: Number(attachment.size),
+      category: attachment.category as IssueAttachmentCategory,
+      stage: attachment.stage as IssueStatus,
+      caption: attachment.caption,
+      version: attachment.version,
       uploadedBy: attachment.uploadedBy,
       createdAt: attachment.createdAt.toISOString(),
       contentUrl: `/api/issues/attachments/${attachment.id}/content`,
@@ -469,7 +498,8 @@ export async function loadIssueById(id: string): Promise<IssueDetailRecord | nul
 const allowedTransitions: Record<IssueStatus, IssueStatus[]> = {
   pending: ['processing'],
   processing: ['verifying'],
-  verifying: ['processing', 'closed'],
+  verifying: ['processing', 'awaiting_confirmation'],
+  awaiting_confirmation: ['processing', 'closed'],
   closed: ['processing'],
 };
 
@@ -477,11 +507,51 @@ export function canTransitionIssue(from: IssueStatus, to: IssueStatus): boolean 
   return allowedTransitions[from]?.includes(to) || false;
 }
 
+export type IssueTransitionAuthorityInput = {
+  currentStatus: IssueStatus;
+  targetStatus: IssueStatus;
+  userId: string;
+  employeeId?: string | null;
+  laborRole?: string | null;
+  reporterId?: string | null;
+  verifierEmployeeId?: string | null;
+  hasWorkflowAccess: boolean;
+  hasQualityWorkflow: boolean;
+};
+
+export function issueTransitionAuthority(input: IssueTransitionAuthorityInput): {
+  allowed: boolean;
+  adminOverride: boolean;
+} {
+  if (!canTransitionIssue(input.currentStatus, input.targetStatus)) {
+    return { allowed: false, adminOverride: false };
+  }
+
+  // Administrators can traverse every declared transition, but they always act
+  // as an audited fallback. Checking this before capability-based access avoids
+  // ADMIN_GLOBAL being mistaken for the issue's natural business owner.
+  if (input.laborRole === 'ADMIN') return { allowed: true, adminOverride: true };
+
+  let naturallyAllowed = false;
+  if (input.currentStatus === 'pending' || input.currentStatus === 'processing') {
+    naturallyAllowed = input.hasWorkflowAccess;
+  } else if (input.currentStatus === 'verifying') {
+    naturallyAllowed = input.hasQualityWorkflow
+      || (!!input.employeeId && input.employeeId === input.verifierEmployeeId);
+  } else if (input.currentStatus === 'awaiting_confirmation' || input.currentStatus === 'closed') {
+    naturallyAllowed = input.userId === input.reporterId;
+  }
+
+  if (naturallyAllowed) return { allowed: true, adminOverride: false };
+  return { allowed: false, adminOverride: false };
+}
+
 export function transitionIssueData(
   issue: { status: string; solution: string | null; verificationResult: string | null },
   target: IssueStatus,
   body: Record<string, unknown>,
   now = new Date(),
+  actorId?: string,
 ): { data: Prisma.IssueUpdateInput; error: string | null } {
   const current = issue.status as IssueStatus;
   if (!ISSUE_STATUSES.includes(current) || !canTransitionIssue(current, target)) {
@@ -490,7 +560,12 @@ export function transitionIssueData(
   const solution = text(body.solution, 4000) ?? issue.solution;
   const verificationResult = text(body.verificationResult, 4000) ?? issue.verificationResult;
   if (target === 'verifying' && !solution) return { data: {}, error: '提交验证前请填写处理方案' };
-  if (target === 'closed' && !verificationResult) return { data: {}, error: '关闭问题前请填写验证结果' };
+  if (target === 'awaiting_confirmation' && !verificationResult) {
+    return { data: {}, error: '提交发起人确认前请填写验证结果' };
+  }
+  if (target === 'closed' && !issue.verificationResult && !verificationResult) {
+    return { data: {}, error: '确认完结前缺少验证结果' };
+  }
 
   const data: Prisma.IssueUpdateInput = { status: target };
   data.version = { increment: 1 };
@@ -498,14 +573,23 @@ export function transitionIssueData(
   if (body.verificationResult !== undefined) data.verificationResult = verificationResult;
   if (body.rootCause !== undefined) data.rootCause = text(body.rootCause, 4000);
   if (target === 'verifying') data.resolvedAt = now;
-  if (target === 'closed') {
+  if (target === 'awaiting_confirmation') {
     data.verifiedAt = now;
+    data.closedAt = null;
+  }
+  if (target === 'closed') {
     data.closedAt = now;
+    data.requesterConfirmedAt = now;
+    data.requesterConfirmationNote = text(body.comment, 2000);
+    if (actorId) data.requesterConfirmedBy = { connect: { id: actorId } };
   }
   if (target === 'processing') {
     data.resolvedAt = null;
     data.verifiedAt = null;
     data.closedAt = null;
+    data.requesterConfirmedAt = null;
+    data.requesterConfirmationNote = null;
+    data.requesterConfirmedBy = { disconnect: true };
   }
   return { data, error: null };
 }
@@ -516,7 +600,16 @@ export async function summarizeIssues(): Promise<IssueSummaryDTO> {
     prisma.issue.count({ where: { deletedAt: null, status: { not: 'closed' }, dueAt: { lt: new Date() } } }),
     prisma.issue.count({ where: { deletedAt: null, status: { not: 'closed' }, assigneeId: null, assigneeEmployeeId: null } }),
   ]);
-  const counts: IssueSummaryDTO = { total: 0, pending: 0, processing: 0, verifying: 0, closed: 0, overdue, unassigned };
+  const counts: IssueSummaryDTO = {
+    total: 0,
+    pending: 0,
+    processing: 0,
+    verifying: 0,
+    awaiting_confirmation: 0,
+    closed: 0,
+    overdue,
+    unassigned,
+  };
   for (const group of groups) {
     const count = group._count._all;
     counts.total += count;

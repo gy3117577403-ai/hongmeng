@@ -546,9 +546,10 @@ export type TrashDTO = {
   connectorAssemblyManualAssets?: ConnectorAssemblyManualTrashAssetDTO[];
 };
 
-export type IssueStatus = 'pending' | 'processing' | 'verifying' | 'closed';
+export type IssueStatus = 'pending' | 'processing' | 'verifying' | 'awaiting_confirmation' | 'closed';
 export type IssuePriority = 'urgent' | 'high' | 'normal';
 export type IssueType = 'production' | 'planning' | 'technical' | 'process' | 'quality' | 'material' | 'equipment' | 'other';
+export type IssueAttachmentCategory = 'site_original' | 'root_cause' | 'processing' | 'verification' | 'archive' | 'other';
 export type MajorQualityApprovalStatusDTO =
   | 'PENDING_QUALITY_REVIEW'
   | 'PENDING_GM_APPROVAL'
@@ -656,6 +657,10 @@ export type IssueAttachmentDTO = {
   mimeType: string;
   fileType: string;
   size: number;
+  category: IssueAttachmentCategory;
+  stage: IssueStatus;
+  caption?: string | null;
+  version: number;
   uploadedBy?: IssueUserDTO | null;
   createdAt: string;
   contentUrl: string;
@@ -689,6 +694,9 @@ export type IssueDTO = {
   rootCause?: string | null;
   solution?: string | null;
   verificationResult?: string | null;
+  requesterConfirmedBy?: IssueUserDTO | null;
+  requesterConfirmedAt?: string | null;
+  requesterConfirmationNote?: string | null;
   isMajorQuality: boolean;
   majorQualityReason?: string | null;
   version: number;
@@ -710,6 +718,7 @@ export type IssueSummaryDTO = {
   pending: number;
   processing: number;
   verifying: number;
+  awaiting_confirmation: number;
   closed: number;
   overdue: number;
   unassigned: number;

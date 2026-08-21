@@ -42,13 +42,16 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       },
     });
     if (!current) return NextResponse.json({ ok: false, error: '问题不存在或已删除' }, { status: 404 });
-    if (!canMutateIssueForProcess(user, current, 'UPDATE')) {
+    if (user.laborRole !== 'ADMIN' && !canMutateIssueForProcess(user, current, 'UPDATE')) {
       return NextResponse.json({
         ok: false,
         error: isProcessIssueCollaborator(user)
           ? '只能维护工艺问题或本人参与的问题'
           : '只能维护生产问题或本人参与的问题',
       }, { status: 403 });
+    }
+    if (current.status === 'closed') {
+      return NextResponse.json({ ok: false, error: '已完结问题为只读归档，请先重新打开后再修改内容' }, { status: 409 });
     }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const parsed = parseIssueInput(body, true);
@@ -76,8 +79,10 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (pendingMajorApproval) {
       return NextResponse.json({ ok: false, error: '重大审批进行中，不能修改问题；请先退回处理' }, { status: 409 });
     }
-    if (current.status === 'closed' && current.majorApprovals.some(approval => approval.status === 'APPROVED')) {
-      return NextResponse.json({ ok: false, error: '已终审关闭的重大问题须先重新打开，才能修改内容' }, { status: 409 });
+    const approvedMajorAwaitingConfirmation = current.status === 'awaiting_confirmation'
+      && current.majorApprovals.some(approval => approval.status === 'APPROVED');
+    if (approvedMajorAwaitingConfirmation) {
+      return NextResponse.json({ ok: false, error: '重大问题终审通过后内容已锁定；如需整改，请由发起人退回处理' }, { status: 409 });
     }
 
     if (values.workOrderId) {
@@ -146,7 +151,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           version: current.version,
           deletedAt: null,
           majorApprovals: {
-            none: { status: { in: ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL'] } },
+            none: {
+              status: {
+                in: current.status === 'awaiting_confirmation'
+                  ? ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL', 'APPROVED']
+                  : ['PENDING_QUALITY_REVIEW', 'PENDING_GM_APPROVAL'],
+              },
+            },
           },
         },
         data: { ...data, version: { increment: 1 } },

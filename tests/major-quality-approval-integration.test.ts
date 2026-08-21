@@ -29,6 +29,15 @@ function actor(user: { id: string; username: string; displayName: string }, prof
   return { ...user, access };
 }
 
+function adminActor(user: { id: string; username: string; displayName: string }) {
+  return {
+    ...user,
+    access: resolveAccessContext([{
+      profile: 'ADMIN_GLOBAL', grantType: 'PRIMARY', scopeKey: 'GLOBAL',
+    }]),
+  };
+}
+
 test('major quality approval is transactional, separated by person, and notification reads are isolated', {
   skip: !runDatabaseIntegration,
 }, async () => {
@@ -41,16 +50,19 @@ test('major quality approval is transactional, separated by person, and notifica
     prisma.user.create({ data: { username: `${prefix}-submitter`, passwordHash: 'integration-test-only', displayName: '质量提交人' } }),
     prisma.user.create({ data: { username: `${prefix}-reviewer`, passwordHash: 'integration-test-only', displayName: '质量复核人' } }),
     prisma.user.create({ data: { username: `${prefix}-gm`, passwordHash: 'integration-test-only', displayName: '总经办终审人' } }),
+    prisma.user.create({ data: { username: `${prefix}-admin`, passwordHash: 'integration-test-only', displayName: '管理员兜底人', laborRole: 'ADMIN' } }),
   ]);
-  const [submitter, reviewer, gm] = users;
+  const [submitter, reviewer, gm, admin] = users;
   let issueId = '';
   let approvalId = '';
+  let adminIssueId = '';
   try {
     await prisma.userAccessGrant.createMany({
       data: [
         { userId: submitter.id, profile: 'DEPARTMENT_FULL', departmentId: qualityDepartment.id, scopeKey: 'DEPARTMENT:QUALITY', grantType: 'PRIMARY' },
         { userId: reviewer.id, profile: 'DEPARTMENT_FULL', departmentId: qualityDepartment.id, scopeKey: 'DEPARTMENT:QUALITY', grantType: 'PRIMARY' },
         { userId: gm.id, profile: 'GM_OFFICE_READER_APPROVER', departmentId: gmDepartment.id, scopeKey: 'DEPARTMENT:GM_OFFICE', grantType: 'PRIMARY' },
+        { userId: admin.id, profile: 'ADMIN_GLOBAL', scopeKey: 'GLOBAL', grantType: 'PRIMARY' },
       ],
     });
     const issue = await prisma.issue.create({
@@ -113,9 +125,10 @@ test('major quality approval is transactional, separated by person, and notifica
       note: '同意质量复核结论，按整改方案闭环',
     });
     assert.equal(approved.status, 'APPROVED');
-    const closedIssue = await prisma.issue.findUniqueOrThrow({ where: { id: issue.id } });
-    assert.equal(closedIssue.status, 'closed');
-    assert.ok(closedIssue.closedAt);
+    const awaitingRequesterIssue = await prisma.issue.findUniqueOrThrow({ where: { id: issue.id } });
+    assert.equal(awaitingRequesterIssue.status, 'awaiting_confirmation');
+    assert.equal(awaitingRequesterIssue.closedAt, null);
+    assert.ok(awaitingRequesterIssue.verifiedAt);
     assert.equal(await prisma.issueMajorApprovalEvent.count({ where: { approvalId } }), 3);
 
     await prisma.issue.update({ where: { id: issue.id }, data: { title: `${prefix} 后续整改标题` } });
@@ -150,8 +163,52 @@ test('major quality approval is transactional, separated by person, and notifica
     assert.equal(await prisma.systemNotificationRecipient.count({
       where: { userId: reviewer.id, notification: { dedupeKey: `${prefix}:dedupe` } },
     }), 1);
+
+    const adminIssue = await prisma.issue.create({
+      data: {
+        title: `${prefix} 管理员全流程兜底`,
+        type: 'quality',
+        priority: 'urgent',
+        status: 'processing',
+        isMajorQuality: true,
+        majorQualityReason: '验证管理员在人员缺席时仍可完成完整审计流程',
+        solution: '管理员按制度补齐审批并保留代操作说明',
+        verificationResult: '管理员复核证据完整',
+        reporterId: admin.id,
+      },
+    });
+    adminIssueId = adminIssue.id;
+    const allFlowAdmin = adminActor(admin);
+    const adminApprovalId = await prisma.$transaction(async tx => {
+      await tx.issue.update({
+        where: { id: adminIssue.id },
+        data: { status: 'verifying', resolvedAt: new Date(), version: { increment: 1 } },
+      });
+      return submitMajorQualityApproval(tx, adminIssue, allFlowAdmin, adminIssue.version + 1);
+    });
+    const adminPending = await prisma.issueMajorApproval.findUniqueOrThrow({ where: { id: adminApprovalId } });
+    const adminQualityApproved = await reviewMajorQualityApproval(allFlowAdmin, {
+      issueId: adminIssue.id,
+      approvalId: adminApprovalId,
+      expectedVersion: adminPending.version,
+      decision: 'APPROVE',
+      note: '质量人员缺席，管理员执行兜底复核',
+    });
+    const adminFinalApproved = await decideMajorQualityApproval(allFlowAdmin, {
+      issueId: adminIssue.id,
+      approvalId: adminApprovalId,
+      expectedVersion: adminQualityApproved.version,
+      decision: 'APPROVE',
+      note: '总经办人员缺席，管理员执行兜底终审',
+    });
+    assert.equal(adminFinalApproved.status, 'APPROVED');
+    assert.match(adminFinalApproved.qualityReviewNote || '', /^\[管理员代操作\]/);
+    assert.match(adminFinalApproved.finalReviewNote || '', /^\[管理员代操作\]/);
+    const adminAwaiting = await prisma.issue.findUniqueOrThrow({ where: { id: adminIssue.id } });
+    assert.equal(adminAwaiting.status, 'awaiting_confirmation');
   } finally {
-    if (issueId) await prisma.issue.deleteMany({ where: { id: issueId } });
+    const issueIds = [issueId, adminIssueId].filter(Boolean);
+    if (issueIds.length) await prisma.issue.deleteMany({ where: { id: { in: issueIds } } });
     await prisma.systemNotification.deleteMany({
       where: {
         OR: [

@@ -5,6 +5,7 @@ import {
   issueAttachmentMutationLock,
   issueCode,
   issueFingerprint,
+  issueTransitionAuthority,
   issueVerificationBlockers,
   parseIssueCollaborationInput,
   parseIssueInput,
@@ -17,6 +18,7 @@ import {
 test('major approval locks attachment mutations until return or explicit reopen', () => {
   assert.equal(issueAttachmentMutationLock('processing', ['PENDING_QUALITY_REVIEW']), 'approval_pending');
   assert.equal(issueAttachmentMutationLock('verifying', ['PENDING_GM_APPROVAL']), 'approval_pending');
+  assert.equal(issueAttachmentMutationLock('awaiting_confirmation', ['APPROVED']), 'final_approved');
   assert.equal(issueAttachmentMutationLock('closed', ['APPROVED']), 'final_approved');
   assert.equal(issueAttachmentMutationLock('processing', ['APPROVED']), null);
   assert.equal(issueAttachmentMutationLock('closed', []), null);
@@ -128,8 +130,11 @@ test('issue codes and production fingerprints are stable', () => {
 test('status transitions follow the accepted processing loop', () => {
   assert.equal(canTransitionIssue('pending', 'processing'), true);
   assert.equal(canTransitionIssue('processing', 'verifying'), true);
-  assert.equal(canTransitionIssue('verifying', 'closed'), true);
+  assert.equal(canTransitionIssue('verifying', 'awaiting_confirmation'), true);
+  assert.equal(canTransitionIssue('verifying', 'closed'), false);
   assert.equal(canTransitionIssue('verifying', 'processing'), true);
+  assert.equal(canTransitionIssue('awaiting_confirmation', 'closed'), true);
+  assert.equal(canTransitionIssue('awaiting_confirmation', 'processing'), true);
   assert.equal(canTransitionIssue('closed', 'processing'), true);
   assert.equal(canTransitionIssue('pending', 'closed'), false);
 });
@@ -143,16 +148,69 @@ test('submitting for verification requires a solution', () => {
   assert.equal(valid.data.solution, '更换端子并复核首件');
 });
 
-test('closing requires verification and reopening clears closure timestamps', () => {
-  const missing = transitionIssueData({ status: 'verifying', solution: '已处理', verificationResult: null }, 'closed', {});
-  assert.equal(missing.error, '关闭问题前请填写验证结果');
-  const closed = transitionIssueData({ status: 'verifying', solution: '已处理', verificationResult: null }, 'closed', { verificationResult: '抽检通过' });
+test('verification passes to requester confirmation before closure and reopening clears closure timestamps', () => {
+  const missing = transitionIssueData({ status: 'verifying', solution: '已处理', verificationResult: null }, 'awaiting_confirmation', {});
+  assert.equal(missing.error, '提交发起人确认前请填写验证结果');
+  const awaiting = transitionIssueData({ status: 'verifying', solution: '已处理', verificationResult: null }, 'awaiting_confirmation', { verificationResult: '抽检通过' });
+  assert.equal(awaiting.error, null);
+  assert.equal(awaiting.data.status, 'awaiting_confirmation');
+  assert.ok(awaiting.data.verifiedAt instanceof Date);
+  const closed = transitionIssueData({ status: 'awaiting_confirmation', solution: '已处理', verificationResult: '抽检通过' }, 'closed', { comment: '发起人复核现场正常' }, new Date('2026-08-21T08:00:00.000Z'), 'reporter-1');
   assert.equal(closed.error, null);
   assert.equal(closed.data.status, 'closed');
+  assert.equal(closed.data.requesterConfirmationNote, '发起人复核现场正常');
   const reopened = transitionIssueData({ status: 'closed', solution: '已处理', verificationResult: '抽检通过' }, 'processing', {});
   assert.equal(reopened.error, null);
   assert.equal(reopened.data.closedAt, null);
   assert.equal(reopened.data.verifiedAt, null);
+});
+
+test('transition authority keeps requester confirmation separate and lets administrators act with audit override', () => {
+  assert.deepEqual(issueTransitionAuthority({
+    currentStatus: 'awaiting_confirmation',
+    targetStatus: 'closed',
+    userId: 'reporter-1',
+    employeeId: 'employee-1',
+    laborRole: 'EMPLOYEE',
+    reporterId: 'reporter-1',
+    verifierEmployeeId: 'employee-2',
+    hasWorkflowAccess: false,
+    hasQualityWorkflow: false,
+  }), { allowed: true, adminOverride: false });
+  assert.deepEqual(issueTransitionAuthority({
+    currentStatus: 'awaiting_confirmation',
+    targetStatus: 'closed',
+    userId: 'verifier-user',
+    employeeId: 'employee-2',
+    laborRole: 'EMPLOYEE',
+    reporterId: 'reporter-1',
+    verifierEmployeeId: 'employee-2',
+    hasWorkflowAccess: true,
+    hasQualityWorkflow: true,
+  }), { allowed: false, adminOverride: false });
+  assert.deepEqual(issueTransitionAuthority({
+    currentStatus: 'awaiting_confirmation',
+    targetStatus: 'closed',
+    userId: 'admin-1',
+    employeeId: null,
+    laborRole: 'ADMIN',
+    reporterId: 'reporter-1',
+    verifierEmployeeId: 'employee-2',
+    hasWorkflowAccess: false,
+    hasQualityWorkflow: false,
+  }), { allowed: true, adminOverride: true });
+
+  assert.deepEqual(issueTransitionAuthority({
+    currentStatus: 'processing',
+    targetStatus: 'verifying',
+    userId: 'admin-user',
+    employeeId: 'admin-employee',
+    laborRole: 'ADMIN',
+    reporterId: 'reporter-user',
+    verifierEmployeeId: 'verifier-employee',
+    hasWorkflowAccess: true,
+    hasQualityWorkflow: true,
+  }), { allowed: true, adminOverride: true });
 });
 
 test('production alert mapping preserves urgency and ownership domain', () => {
