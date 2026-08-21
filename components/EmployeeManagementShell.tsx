@@ -70,6 +70,7 @@ import {
 import type {
   AbnormalTimeEventDTO,
   AttendanceRecordDTO,
+  AttainmentStream,
   CurrentUserDTO,
   EmployeeAttainmentReportDTO,
   EmployeeDTO,
@@ -108,6 +109,8 @@ type EmployeeDraft = {
   isActive: boolean;
   attendanceEnabled: boolean;
   attainmentEligible: boolean;
+  attainmentFactorBasisPoints: number;
+  attainmentStream: AttainmentStream;
 };
 
 type EmployeesResponse = {
@@ -301,6 +304,8 @@ const emptyDraft: EmployeeDraft = {
   isActive: true,
   attendanceEnabled: true,
   attainmentEligible: true,
+  attainmentFactorBasisPoints: 10000,
+  attainmentStream: 'batch',
 };
 
 const emptyAttendanceSummary: NonNullable<AttendanceResponse['summary']> = {
@@ -402,6 +407,8 @@ function toDraft(employee: EmployeeDTO): EmployeeDraft {
     isActive: employee.isActive,
     attendanceEnabled: employee.attendanceEnabled,
     attainmentEligible: employee.attainmentEligible,
+    attainmentFactorBasisPoints: employee.attainmentFactorBasisPoints,
+    attainmentStream: employee.attainmentStream,
   };
 }
 
@@ -2210,10 +2217,49 @@ export default function EmployeeManagementShell({ user }: { user: CurrentUserDTO
                       <input type="checkbox" disabled={!editorUnlocked || !draft.isActive} checked={draft.attendanceEnabled} onChange={event => setDraft(current => ({ ...current, attendanceEnabled: event.target.checked }))} />
                       <span><strong>启用员工考勤</strong><small>所有部门均可登记出勤；生产部进入达成率，其他部门仅统计出勤。</small></span>
                     </label>
-                    <label>
-                      <input type="checkbox" disabled={!editorUnlocked || !draft.isActive || !draft.attendanceEnabled} checked={draft.attainmentEligible} onChange={event => setDraft(current => ({ ...current, attainmentEligible: event.target.checked }))} />
-                      <span><strong>计入生产达成率</strong><small>主管、组长等管理岗建议关闭；仍参与生产的代班人员可以单独开启。</small></span>
-                    </label>
+                    <div className="hr-attainment-policy">
+                      <div><strong>达成率统计口径</strong><small>批量与样品分账；不计入用于主管、组长、调模等岗位。</small></div>
+                      <label>
+                        <span>统计分账</span>
+                        <select
+                          disabled={!editorUnlocked || !draft.isActive || !draft.attendanceEnabled}
+                          value={draft.attainmentStream}
+                          onChange={event => {
+                            const attainmentStream = event.target.value as AttainmentStream;
+                            setDraft(current => ({
+                              ...current,
+                              attainmentStream,
+                              attainmentFactorBasisPoints: attainmentStream === 'excluded'
+                                ? 0
+                                : current.attainmentFactorBasisPoints || 10000,
+                              attainmentEligible: attainmentStream !== 'excluded',
+                            }));
+                          }}
+                        >
+                          <option value="batch">批量生产</option>
+                          <option value="sample">样品组</option>
+                          <option value="excluded">不计入</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>默认计入比例</span>
+                        <span className="hr-attainment-factor-input">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.1"
+                            disabled={!editorUnlocked || !draft.isActive || !draft.attendanceEnabled || draft.attainmentStream === 'excluded'}
+                            value={draft.attainmentFactorBasisPoints / 100}
+                            onChange={event => {
+                              const factor = Math.max(0, Math.min(10000, Math.round(Number(event.target.value || 0) * 100)));
+                              setDraft(current => ({ ...current, attainmentFactorBasisPoints: factor, attainmentEligible: current.attainmentStream !== 'excluded' && factor > 0 }));
+                            }}
+                          />
+                          <b>%</b>
+                        </span>
+                      </label>
+                    </div>
                     {!creating && profileEmployee && (
                       <div className={`hr-employment-state ${profileEmployee.isActive ? 'active' : 'resigned'}`}>
                         <span>{profileEmployee.isActive ? <UserRoundCheck /> : <RotateCcw />}</span>

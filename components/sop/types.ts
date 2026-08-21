@@ -76,6 +76,9 @@ export type SopPublishedFile = {
 };
 
 export type SopVersionStatus = 'draft' | 'published';
+export type SopControlMode = 'controlled' | 'uncontrolled';
+export type SopStage = 'standard' | 'new_product' | 'validating';
+export type SopDrawingStatus = 'available' | 'missing';
 
 export type SopVersion = {
   id: string;
@@ -85,6 +88,7 @@ export type SopVersion = {
   /** Optimistic-concurrency counter. Never use this as a display label. */
   revision: number;
   status: SopVersionStatus;
+  controlMode?: SopControlMode | null;
   title: string;
   content: SopDocument;
   contentSchemaVersion: number;
@@ -111,6 +115,9 @@ export type SopWorkspaceDocument = {
   id: string;
   drawingLibraryItemId: string;
   title: string;
+  sopStage: SopStage;
+  drawingStatus: SopDrawingStatus;
+  remark?: string | null;
   currentPublishedVersionId?: string | null;
   createdBy?: SopActor | null;
   updatedBy?: SopActor | null;
@@ -140,11 +147,19 @@ export type PublishSopInput = {
   versionId: string;
   expectedRevision: number;
   title: string;
+  controlMode: SopControlMode;
   pdf: Blob;
+};
+
+export type UpdateSopMetadataInput = {
+  sopStage: SopStage;
+  drawingStatus: SopDrawingStatus;
+  remark: string;
 };
 
 export interface SopApiAdapter {
   load(): Promise<SopWorkspace>;
+  updateMetadata(input: UpdateSopMetadataInput): Promise<SopWorkspace>;
   saveDraft(input: SaveDraftInput): Promise<SopVersion>;
   uploadAsset(file: File, versionId?: string): Promise<SopAsset>;
   deleteAsset(assetId: string): Promise<void>;

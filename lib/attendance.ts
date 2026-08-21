@@ -4,6 +4,7 @@ import { cleanProcessText, employeeReportRange, serializeEmployee } from '@/lib/
 import type {
   AbnormalTimeCategory,
   AbnormalTimeEventDTO,
+  AttainmentStream,
   AttendanceRecordDTO,
   AttendanceSegmentDTO,
   AttendanceSegmentType,
@@ -91,8 +92,30 @@ export function chinaTodayDateKey(now = new Date()): string {
 }
 
 export function parseAttendanceType(value: unknown): AttendanceType {
-  if (value === 'leave' || value === 'absent' || value === 'rest') return value;
+  if (value === 'partial_leave' || value === 'leave' || value === 'absent' || value === 'rest') return value;
   return 'normal';
+}
+
+export function parseAttainmentStream(value: unknown, fallback: AttainmentStream = 'batch'): AttainmentStream {
+  if (value === 'sample' || value === 'excluded') return value;
+  if (value === 'batch') return value;
+  return fallback;
+}
+
+export function parseAttainmentFactorBasisPoints(value: unknown, fallback = 10_000): number {
+  if (value === undefined || value === null || String(value).trim() === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 10_000) {
+    throw new Error('生产达成计入比例必须在 0% 至 100% 之间');
+  }
+  return Math.round(parsed);
+}
+
+export function attainmentEligibleFromConfiguration(
+  factorBasisPoints: number,
+  stream: AttainmentStream,
+): boolean {
+  return stream !== 'excluded' && factorBasisPoints > 0;
 }
 
 export function parseAbnormalCategory(value: unknown): AbnormalTimeCategory {
@@ -177,6 +200,12 @@ export function attendanceTotals(input: {
   if (!Number.isFinite(leaveMinutes) || leaveMinutes < 0) throw new Error('请假分钟数不能小于 0');
   const leaveMilliseconds = Math.round(leaveMinutes * MINUTE_MILLISECONDS);
   if (leaveMilliseconds > total) throw new Error('请假时长不能超过已登记出勤时段');
+  if (input.attendanceType === 'partial_leave' && leaveMilliseconds <= 0) {
+    throw new Error('部分请假必须填写实际请假时长');
+  }
+  if (input.attendanceType === 'partial_leave' && leaveMilliseconds >= total) {
+    throw new Error('请假覆盖全部班次时请选择“全天请假”');
+  }
   return {
     leaveMilliseconds,
     actualMilliseconds: total - leaveMilliseconds,
@@ -249,6 +278,13 @@ export function serializeAttendanceRecord(record: AttendanceWithRelations): Atte
     workDate: dateKeyFromDatabase(record.workDate),
     status: record.status === 'confirmed' ? 'confirmed' : 'draft',
     attendanceType: parseAttendanceType(record.attendanceType),
+    attainmentFactorBasisPoints: record.attainmentFactorBasisPointsSnapshot
+      ?? record.employee.attainmentFactorBasisPoints
+      ?? (record.attainmentEligibleSnapshot === false ? 0 : 10_000),
+    attainmentStream: parseAttainmentStream(
+      record.attainmentStreamSnapshot,
+      parseAttainmentStream(record.employee.attainmentStream, record.attainmentEligibleSnapshot === false ? 'excluded' : 'batch'),
+    ),
     plannedMilliseconds: record.plannedMilliseconds,
     leaveMilliseconds: record.leaveMilliseconds,
     actualMilliseconds: record.actualMilliseconds,

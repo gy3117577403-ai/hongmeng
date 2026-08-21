@@ -40,7 +40,12 @@ export async function POST(req: NextRequest) {
         ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
         ...(requestedEmployeeIds.length ? { id: { in: requestedEmployeeIds } } : {}),
       },
-      select: { id: true },
+      select: {
+        id: true,
+        attainmentEligible: true,
+        attainmentFactorBasisPoints: true,
+        attainmentStream: true,
+      },
     });
     if (requestedEmployeeIds.length && employees.length !== requestedEmployeeIds.length) {
       return NextResponse.json({ ok: false, error: '所选员工不在当前考勤范围，请刷新列表后重试' }, { status: 409 });
@@ -53,28 +58,41 @@ export async function POST(req: NextRequest) {
         employeeId: { in: employeeIds },
         ...attendanceRecordScopeWhere(scope),
       },
-      select: { employeeId: true, status: true },
+      select: {
+        id: true,
+        employeeId: true,
+        status: true,
+        attainmentEligibleSnapshot: true,
+        attainmentFactorBasisPointsSnapshot: true,
+        attainmentStreamSnapshot: true,
+      },
     });
-    const draftIds = existingRecords.filter(record => record.status === 'draft').map(record => record.employeeId);
+    const draftRecords = existingRecords.filter(record => record.status === 'draft');
+    const draftIds = draftRecords.map(record => record.employeeId);
     const confirmedIds = new Set(existingRecords.filter(record => record.status === 'confirmed').map(record => record.employeeId));
     const recordIds = new Set(existingRecords.map(record => record.employeeId));
     const missingIds = employeeIds.filter(employeeId => !recordIds.has(employeeId));
     const now = new Date();
-    const result = await prisma.attendanceRecord.updateMany({
-      where: {
-        workDate: workDate.value,
-        status: 'draft',
-        employeeId: { in: draftIds },
-        employee: { isActive: true, attendanceEnabled: true },
-        ...attendanceRecordScopeWhere(scope),
-      },
-      data: {
-        status: 'confirmed',
-        confirmedById: user.id,
-        confirmedAt: now,
-        updatedById: user.id,
-      },
-    });
+    const employeeById = new Map(employees.map(employee => [employee.id, employee]));
+    const confirmedRecords = draftRecords.length
+      ? await prisma.$transaction(draftRecords.map(record => {
+          const employee = employeeById.get(record.employeeId)!;
+          return prisma.attendanceRecord.update({
+            where: { id: record.id },
+            data: {
+              status: 'confirmed',
+              attainmentEligibleSnapshot: record.attainmentEligibleSnapshot ?? employee.attainmentEligible,
+              attainmentFactorBasisPointsSnapshot: record.attainmentFactorBasisPointsSnapshot
+                ?? employee.attainmentFactorBasisPoints,
+              attainmentStreamSnapshot: record.attainmentStreamSnapshot ?? employee.attainmentStream,
+              confirmedById: user.id,
+              confirmedAt: now,
+              updatedById: user.id,
+            },
+            select: { id: true },
+          });
+        }))
+      : [];
     await logOp({
       userId: user.id,
       action: 'batch_confirm_attendance',
@@ -83,7 +101,7 @@ export async function POST(req: NextRequest) {
         workDate: workDate.key,
         scope,
         requestedCount: employeeIds.length,
-        confirmedCount: result.count,
+        confirmedCount: confirmedRecords.length,
         alreadyConfirmedCount: confirmedIds.size,
         missingCount: missingIds.length,
       },
@@ -91,8 +109,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       requestedCount: employeeIds.length,
-      confirmedCount: result.count,
-      skippedCount: employeeIds.length - result.count,
+      confirmedCount: confirmedRecords.length,
+      skippedCount: employeeIds.length - confirmedRecords.length,
       alreadyConfirmedCount: confirmedIds.size,
       missingCount: missingIds.length,
       items: employeeIds.map(employeeId => ({

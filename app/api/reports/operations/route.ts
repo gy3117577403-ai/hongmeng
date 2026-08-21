@@ -18,6 +18,7 @@ import {
   reportWeekKey,
 } from '@/lib/report-operations';
 import type {
+  AttainmentStream,
   AttendanceType,
   ReportOperationsDTO,
   ReportOperationsEmployeeDayDTO,
@@ -37,6 +38,8 @@ type MutableDay = {
   standardLaborMilliseconds: number;
   exemptAbnormalMilliseconds: number;
   attainmentEligible: boolean;
+  attainmentFactorBasisPoints: number;
+  attainmentStream: AttainmentStream;
 };
 
 function todayKey(now = new Date()): string {
@@ -60,7 +63,11 @@ function dayLabel(dateKey: string): { weekday: string; isWeekend: boolean } {
   };
 }
 
-function emptyDay(attainmentEligible = true): MutableDay {
+function emptyDay(
+  attainmentEligible = true,
+  attainmentFactorBasisPoints = attainmentEligible ? 10_000 : 0,
+  attainmentStream: AttainmentStream = attainmentEligible ? 'batch' : 'excluded',
+): MutableDay {
   return {
     status: 'missing',
     attendanceType: null,
@@ -70,6 +77,8 @@ function emptyDay(attainmentEligible = true): MutableDay {
     standardLaborMilliseconds: 0,
     exemptAbnormalMilliseconds: 0,
     attainmentEligible,
+    attainmentFactorBasisPoints,
+    attainmentStream,
   };
 }
 
@@ -77,13 +86,24 @@ function teamLabel(employee: { team?: string | null; position?: string | null })
   return String(employee.team || employee.position || '未分组').trim() || '未分组';
 }
 
+function normalizedAttainmentStream(value: unknown, eligible = true): AttainmentStream {
+  if (value === 'sample' || value === 'excluded') return value;
+  return eligible ? 'batch' : 'excluded';
+}
+
 function officialDay(day: MutableDay, date: string): ReportOperationsEmployeeDayDTO {
   const attendanceOfficial = day.status === 'confirmed' || day.status === 'rest';
-  const hasCapacity = day.attainmentEligible && attendanceOfficial && day.attendanceMilliseconds > 0;
+  const hasCapacity = day.attainmentEligible
+    && day.attainmentStream === 'batch'
+    && day.attainmentFactorBasisPoints > 0
+    && attendanceOfficial
+    && day.attendanceMilliseconds > 0;
   const effectiveAttendance = hasCapacity
     ? Math.max(0, day.attendanceMilliseconds - day.exemptAbnormalMilliseconds)
     : 0;
-  const capacity = attainmentCapacityMilliseconds(effectiveAttendance);
+  const capacity = Math.round(
+    attainmentCapacityMilliseconds(effectiveAttendance) * day.attainmentFactorBasisPoints / 10_000,
+  );
   const standardLabor = hasCapacity ? day.standardLaborMilliseconds : 0;
   const unmatchedStandardLabor = hasCapacity ? 0 : day.standardLaborMilliseconds;
   return {
@@ -99,6 +119,8 @@ function officialDay(day: MutableDay, date: string): ReportOperationsEmployeeDay
     attainmentCapacityMilliseconds: capacity,
     attainmentBasisPoints: basisPoints(standardLabor, capacity),
     attainmentEligible: day.attainmentEligible,
+    attainmentFactorBasisPoints: day.attainmentFactorBasisPoints,
+    attainmentStream: day.attainmentStream,
   };
 }
 
@@ -179,6 +201,8 @@ export async function GET(req: NextRequest) {
           status: true,
           attendanceType: true,
           attainmentEligibleSnapshot: true,
+          attainmentFactorBasisPointsSnapshot: true,
+          attainmentStreamSnapshot: true,
           plannedMilliseconds: true,
           leaveMilliseconds: true,
           actualMilliseconds: true,
@@ -266,7 +290,11 @@ export async function GET(req: NextRequest) {
     }) : [];
 
     const employeeDayMap = new Map<string, Map<string, MutableDay>>();
-    const employeeEligibility = new Map(employees.map(employee => [employee.id, employee.attainmentEligible]));
+    const employeeConfiguration = new Map(employees.map(employee => [employee.id, {
+      eligible: employee.attainmentEligible,
+      factor: employee.attainmentFactorBasisPoints,
+      stream: normalizedAttainmentStream(employee.attainmentStream, employee.attainmentEligible),
+    }]));
     const mutableDay = (employeeId: string, date: string) => {
       let days = employeeDayMap.get(employeeId);
       if (!days) {
@@ -275,7 +303,12 @@ export async function GET(req: NextRequest) {
       }
       let day = days.get(date);
       if (!day) {
-        day = emptyDay(employeeEligibility.get(employeeId) !== false);
+        const configuration = employeeConfiguration.get(employeeId);
+        day = emptyDay(
+          configuration?.eligible ?? true,
+          configuration?.factor ?? (configuration?.eligible === false ? 0 : 10_000),
+          configuration?.stream ?? (configuration?.eligible === false ? 'excluded' : 'batch'),
+        );
         days.set(date, day);
       }
       return day;
@@ -287,15 +320,22 @@ export async function GET(req: NextRequest) {
       day.status = record.status === 'confirmed'
         ? record.attendanceType === 'rest' ? 'rest' : 'confirmed'
         : 'draft';
-      day.attendanceType = ['leave', 'absent', 'rest'].includes(record.attendanceType)
+      day.attendanceType = ['partial_leave', 'leave', 'absent', 'rest'].includes(record.attendanceType)
         ? record.attendanceType as AttendanceType
         : 'normal';
       day.plannedMilliseconds = Math.max(0, record.plannedMilliseconds);
       day.leaveMilliseconds = Math.max(0, record.leaveMilliseconds);
       day.attendanceMilliseconds = Math.max(0, record.actualMilliseconds);
       day.attainmentEligible = record.attainmentEligibleSnapshot
-        ?? employeeEligibility.get(record.employeeId)
+        ?? employeeConfiguration.get(record.employeeId)?.eligible
         ?? true;
+      day.attainmentFactorBasisPoints = record.attainmentFactorBasisPointsSnapshot
+        ?? employeeConfiguration.get(record.employeeId)?.factor
+        ?? (day.attainmentEligible ? 10_000 : 0);
+      const stream = record.attainmentStreamSnapshot
+        ?? employeeConfiguration.get(record.employeeId)?.stream
+        ?? (day.attainmentEligible ? 'batch' : 'excluded');
+      day.attainmentStream = normalizedAttainmentStream(stream, day.attainmentEligible);
     }
     for (const claim of laborClaims) {
       if (!claim.pool.countsForEfficiency) continue;
@@ -314,7 +354,11 @@ export async function GET(req: NextRequest) {
     const employeeMatrix: ReportOperationsEmployeeRowDTO[] = employees.map(employee => {
       const sourceDays = employeeDayMap.get(employee.id) || new Map<string, MutableDay>();
       const days = dateKeys.map(date => officialDay(
-        sourceDays.get(date) || emptyDay(employee.attainmentEligible),
+        sourceDays.get(date) || emptyDay(
+          employee.attainmentEligible,
+          employee.attainmentFactorBasisPoints,
+          normalizedAttainmentStream(employee.attainmentStream, employee.attainmentEligible),
+        ),
         date,
       ));
       const totals = days.reduce((sum, day) => ({
@@ -345,7 +389,9 @@ export async function GET(req: NextRequest) {
         ...totals,
         attendanceBasisPoints: basisPoints(totals.attendanceMilliseconds, totals.plannedMilliseconds),
         attainmentBasisPoints: basisPoints(totals.standardLaborMilliseconds, totals.attainmentCapacityMilliseconds),
-        attainmentEligible: days.some(day => day.attainmentEligible),
+        attainmentEligible: days.some(day => day.attainmentEligible && day.attainmentStream === 'batch' && day.attainmentFactorBasisPoints > 0),
+        attainmentFactorBasisPoints: employee.attainmentFactorBasisPoints,
+        attainmentStream: normalizedAttainmentStream(employee.attainmentStream, employee.attainmentEligible),
         days,
       };
     }).filter(row => row.employee.isActive
@@ -544,7 +590,7 @@ export async function GET(req: NextRequest) {
       employeeMatrix,
       dailyAttainmentAverage,
       dataNotes: [
-        '工时达成率 = 已匹配标准产出工时 ÷（确认有效出勤工时 × 95%）；超过 110% 以紫色提示复核，不直接视为更优。',
+        '批量工时达成率 = 已匹配标准产出工时 ÷（确认实际出勤工时 × 95% × 当天个人计入比例）；部分请假按实际出勤小时计算，样品组独立分账。',
         '出勤率同时保留人数口径与工时口径；草稿考勤不进入正式指标，仅计入数据覆盖率。',
         '周计划批次与数量按计划完成日期分周，完成量取截至统计截止时点的最终工序良品并封顶到计划数量。',
         '金额与产值尚无权威单价来源，本模块不生成推测值；待单价主数据接入后再启用。',

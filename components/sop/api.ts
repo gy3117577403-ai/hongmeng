@@ -5,6 +5,7 @@ import type {
   SopAsset,
   SopVersion,
   SopWorkspace,
+  UpdateSopMetadataInput,
 } from './types';
 
 type JsonRecord = Record<string, unknown>;
@@ -51,6 +52,15 @@ export function createSopApiAdapter(itemId: string, fetcher: typeof fetch = fetc
       return unwrap<SopWorkspace>(payload, ['workspace', 'sop']);
     },
 
+    async updateMetadata(input: UpdateSopMetadataInput) {
+      const payload = await requestJson<JsonRecord>(fetcher, itemRoot, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      }, '保存 SOP 状态与备注失败');
+      return unwrap<SopWorkspace>(payload, ['workspace', 'sop']);
+    },
+
     async saveDraft(input: SaveDraftInput) {
       const updating = Boolean(input.versionId);
       const url = updating ? `${itemRoot}/versions/${encodeURIComponent(input.versionId || '')}` : `${itemRoot}/draft`;
@@ -83,6 +93,7 @@ export function createSopApiAdapter(itemId: string, fetcher: typeof fetch = fetc
       body.append('versionId', input.versionId);
       body.append('expectedRevision', String(input.expectedRevision));
       body.append('title', input.title);
+      body.append('controlMode', input.controlMode);
       body.append('pdf', input.pdf, `${input.title || 'SOP'}.pdf`);
       const payload = await requestJson<JsonRecord>(fetcher, `${itemRoot}/publish`, { method: 'POST', body }, '发布 SOP 失败');
       return unwrap<SopWorkspace>(payload, ['workspace', 'sop']);

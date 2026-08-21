@@ -110,3 +110,38 @@ test('inactive employees remain in historical reports when the period has activi
     hasPeriodActivity: false,
   }), true);
 });
+
+test('partial-day attendance and arbitrary capacity factors use actual eligible hours', () => {
+  const result = aggregateDailyAttainment([{
+    attendanceMilliseconds: 3 * hour,
+    exemptAbnormalMilliseconds: 0,
+    standardLaborMilliseconds: 1.425 * hour,
+    claimedStandardLaborMilliseconds: 1.425 * hour,
+    actualLaborMilliseconds: 3 * hour,
+    attendanceConfirmed: true,
+    attainmentEligible: true,
+    attainmentFactorBasisPoints: 5_000,
+    attainmentStream: 'batch',
+  }]);
+
+  assert.equal(result.effectiveProductionMilliseconds, 3 * hour);
+  assert.equal(result.attainmentCapacityMilliseconds, 1.425 * hour);
+  assert.equal(basisPoints(result.standardLaborMilliseconds, result.attainmentCapacityMilliseconds), 10_000);
+});
+
+test('sample stream is kept out of batch attainment totals', () => {
+  const result = aggregateDailyAttainment([{
+    attendanceMilliseconds: 8 * hour,
+    exemptAbnormalMilliseconds: 0,
+    standardLaborMilliseconds: 7.6 * hour,
+    claimedStandardLaborMilliseconds: 7.6 * hour,
+    actualLaborMilliseconds: 8 * hour,
+    attendanceConfirmed: true,
+    attainmentEligible: true,
+    attainmentFactorBasisPoints: 10_000,
+    attainmentStream: 'sample',
+  }]);
+
+  assert.equal(result.standardLaborMilliseconds, 0);
+  assert.equal(result.attainmentCapacityMilliseconds, 0);
+});

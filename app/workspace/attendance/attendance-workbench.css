@@ -120,6 +120,11 @@
 .attendance-dialog-body fieldset { margin: 0; padding: 10px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; border: 1px solid #e2e7eb; border-radius: 9px; }
 .attendance-dialog-body fieldset legend { padding: 0 5px; color: #66717e; font-size: 10px; font-weight: 850; }
 .attendance-dialog-body fieldset label { display: grid; gap: 4px; color: #66717e; font-size: 9px; font-weight: 750; }
+.attendance-dialog-body fieldset.attendance-attainment-policy { grid-template-columns: repeat(2, minmax(0, 1fr)); border-color: #fed7aa; background: #fffaf5; }
+.attendance-attainment-policy > small { grid-column: 1 / -1; color: #7a8796; font-size: 9px; line-height: 1.5; }
+.attendance-factor-input { min-height: 38px; display: grid; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; overflow: hidden; border: 1px solid #d9dfe5; border-radius: 8px; background: #fff; }
+.attendance-factor-input input { min-height: 36px !important; border: 0 !important; box-shadow: none !important; }
+.attendance-factor-input b { color: #d95600; font-size: 10px; }
 .attendance-export-dialog .attendance-dialog-body fieldset label:has(input[type="radio"]) { min-height: 42px; padding: 8px 10px; display: flex; align-items: center; gap: 8px; border: 1px solid #e5e9ee; border-radius: 8px; background: #fafbfc; font-size: 11px; }
 .attendance-export-dialog .attendance-dialog-body input[type="radio"] { width: 16px; min-height: 16px; accent-color: #e85d04; }
 .attendance-dialog-body fieldset.employee-picker { max-height: 190px; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow-y: auto; }

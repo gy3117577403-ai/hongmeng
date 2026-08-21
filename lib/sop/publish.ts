@@ -57,6 +57,7 @@ async function createPublishedSopFile(input: {
   mimeType: string;
   size: number;
   userId: string;
+  controlMode: 'controlled' | 'uncontrolled';
 }) {
   const { tx } = input;
   await lockSopScope(tx, input.itemId);
@@ -94,7 +95,7 @@ async function createPublishedSopFile(input: {
       objectKey: input.objectKey,
       uploadedById: input.userId,
       sourceSopVersionId: current.id,
-      remark: `在线 SOP 发布：${title}`,
+      remark: `在线 SOP 发布：${title}（${input.controlMode === 'controlled' ? '受控' : '未受控'}）`,
     },
     include: {
       category: { select: { id: true, name: true, code: true, sortOrder: true } },
@@ -117,6 +118,7 @@ async function createPublishedSopFile(input: {
       publishedAt,
       publishedById: input.userId,
       updatedById: input.userId,
+      controlMode: input.controlMode,
     },
   });
   if (updated.count !== 1) {
@@ -147,6 +149,7 @@ async function createPublishedSopFile(input: {
       publishedRevision: input.expectedRevision + 1,
       archivedFileIds,
       assetIds,
+      controlMode: input.controlMode,
       sync,
     } as unknown as Prisma.InputJsonValue,
   });
@@ -171,6 +174,10 @@ export async function publishSopVersion(
     const validationError = validateFileContent(upload.name, upload.type, upload.size, body);
     if (validationError) throw new SopRequestError(validationError);
     if (fileType(upload.name, upload.type) !== 'pdf') throw new SopRequestError('发布文件必须是 PDF');
+    const controlModeText = formText(form, 'controlMode') || 'uncontrolled';
+    if (controlModeText !== 'controlled' && controlModeText !== 'uncontrolled') {
+      throw new SopRequestError('SOP 受控状态无效');
+    }
 
     const ownedVersion = await prisma.sopVersion.findFirst({
       where: {
@@ -198,6 +205,7 @@ export async function publishSopVersion(
         mimeType,
         size: upload.size,
         userId: user.id,
+        controlMode: controlModeText,
       }));
     } catch (error) {
       await deleteObjectsBestEffort([objectKey]);

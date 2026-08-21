@@ -46,7 +46,15 @@ export async function POST(req: NextRequest) {
         ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
         ...(requestedEmployeeIds.length ? { id: { in: requestedEmployeeIds } } : {}),
       },
-      select: { id: true, department: true, team: true, position: true, attainmentEligible: true },
+      select: {
+        id: true,
+        department: true,
+        team: true,
+        position: true,
+        attainmentEligible: true,
+        attainmentFactorBasisPoints: true,
+        attainmentStream: true,
+      },
     });
     if (requestedEmployeeIds.length && employees.length !== requestedEmployeeIds.length) {
       return NextResponse.json({ ok: false, error: '所选员工不在当前考勤范围，请刷新列表后重试' }, { status: 409 });
@@ -60,6 +68,8 @@ export async function POST(req: NextRequest) {
         teamSnapshot: employee.team,
         positionSnapshot: employee.position,
         attainmentEligibleSnapshot: employee.attainmentEligible,
+        attainmentFactorBasisPointsSnapshot: employee.attainmentFactorBasisPoints,
+        attainmentStreamSnapshot: employee.attainmentStream,
         workDate: workDate.value,
         status: 'draft',
         attendanceType: 'normal',

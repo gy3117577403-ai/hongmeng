@@ -47,6 +47,21 @@ test('manual leave is excluded from effective attendance', () => {
   assert.equal(totals.actualMilliseconds, 6 * 60 * 60 * 1000);
 });
 
+test('partial leave keeps its own status semantics and actual worked hours', () => {
+  const totals = attendanceTotals({
+    attendanceType: 'partial_leave',
+    segments: defaultAttendanceSegments('2026-07-17'),
+    leaveMinutes: 300,
+  });
+  assert.equal(totals.leaveMilliseconds, 5 * 60 * 60 * 1000);
+  assert.equal(totals.actualMilliseconds, 3 * 60 * 60 * 1000);
+  assert.throws(() => attendanceTotals({
+    attendanceType: 'partial_leave',
+    segments: defaultAttendanceSegments('2026-07-17'),
+    leaveMinutes: 0,
+  }), /必须填写实际请假时长/);
+});
+
 test('full-day leave has no effective attendance', () => {
   const totals = attendanceTotals({ attendanceType: 'leave', segments: [], leaveMinutes: 0 });
   assert.equal(totals.leaveMilliseconds, STANDARD_DAY_MILLISECONDS);

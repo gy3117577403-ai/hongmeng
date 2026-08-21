@@ -34,6 +34,7 @@ import type {
   AbnormalTimeCategory,
   AbnormalTimeEventDTO,
   AttendanceRecordDTO,
+  AttainmentStream,
   AttendanceType,
   CurrentUserDTO,
   EmployeeDTO,
@@ -96,10 +97,12 @@ type AttendanceDraft = {
   overtimeStart: string;
   overtimeEnd: string;
   leaveMinutes: string;
+  attainmentFactorBasisPoints: number;
+  attainmentStream: AttainmentStream;
   remark: string;
 };
 
-type AttendanceBatchDraft = Omit<AttendanceDraft, 'employeeId'>;
+type AttendanceBatchDraft = Omit<AttendanceDraft, 'employeeId' | 'attainmentFactorBasisPoints' | 'attainmentStream'>;
 
 type AbnormalDraft = {
   id?: string;
@@ -164,7 +167,15 @@ function isoFor(date: string, time: string): string {
 }
 
 function attendanceTypeLabel(type: AttendanceType): string {
-  return type === 'leave' ? '请假' : type === 'absent' ? '缺勤' : type === 'rest' ? '休息日' : '正常出勤';
+  return type === 'partial_leave'
+    ? '部分请假'
+    : type === 'leave'
+      ? '全天请假'
+      : type === 'absent'
+        ? '缺勤'
+        : type === 'rest'
+          ? '休息日'
+          : '正常出勤';
 }
 
 function periodLabel(period: Period): string {
@@ -364,6 +375,8 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       overtimeStart: overtime ? toTime(overtime.startedAt) : '',
       overtimeEnd: overtime ? toTime(overtime.endedAt) : '',
       leaveMinutes: record ? String(record.leaveMilliseconds / 60000) : '0',
+      attainmentFactorBasisPoints: record?.attainmentFactorBasisPoints ?? employee.attainmentFactorBasisPoints,
+      attainmentStream: record?.attainmentStream ?? employee.attainmentStream,
       remark: record?.remark || '',
     });
   }
@@ -490,7 +503,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     setSaving(true);
     setError('');
     try {
-      const segments = batchAttendanceDraft.attendanceType === 'normal'
+      const segments = batchAttendanceDraft.attendanceType === 'normal' || batchAttendanceDraft.attendanceType === 'partial_leave'
         ? [
             { type: 'regular', startedAt: isoFor(date, batchAttendanceDraft.morningStart), endedAt: isoFor(date, batchAttendanceDraft.morningEnd) },
             { type: 'regular', startedAt: isoFor(date, batchAttendanceDraft.afternoonStart), endedAt: isoFor(date, batchAttendanceDraft.afternoonEnd) },
@@ -527,7 +540,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     setSaving(true);
     setError('');
     try {
-      const segments = attendanceDraft.attendanceType === 'normal'
+      const segments = attendanceDraft.attendanceType === 'normal' || attendanceDraft.attendanceType === 'partial_leave'
         ? [
             { type: 'regular', startedAt: isoFor(date, attendanceDraft.morningStart), endedAt: isoFor(date, attendanceDraft.morningEnd) },
             { type: 'regular', startedAt: isoFor(date, attendanceDraft.afternoonStart), endedAt: isoFor(date, attendanceDraft.afternoonEnd) },
@@ -821,11 +834,12 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
         <section className="attendance-dialog" role="dialog" aria-modal="true" aria-labelledby="attendance-dialog-title">
           <header><div><span>{workforceLabel}</span><h2 id="attendance-dialog-title">{employees.find(item => item.id === attendanceDraft.employeeId)?.name} · {date}</h2></div><button type="button" aria-label="关闭" title="关闭" onClick={() => setAttendanceDraft(null)}><X size={18} /></button></header>
           <div className="attendance-dialog-body">
-            <label><span>出勤类型</span><select value={attendanceDraft.attendanceType} onChange={event => setAttendanceDraft({ ...attendanceDraft, attendanceType: event.target.value as AttendanceType })}><option value="normal">正常出勤</option><option value="leave">全天请假</option><option value="absent">缺勤</option><option value="rest">休息日</option></select></label>
-            {attendanceDraft.attendanceType === 'normal' && <>
+            <label><span>出勤类型</span><select value={attendanceDraft.attendanceType} onChange={event => setAttendanceDraft({ ...attendanceDraft, attendanceType: event.target.value as AttendanceType, leaveMinutes: event.target.value === 'normal' ? '0' : attendanceDraft.leaveMinutes })}><option value="normal">正常出勤</option><option value="partial_leave">部分请假</option><option value="leave">全天请假</option><option value="absent">缺勤</option><option value="rest">休息日</option></select></label>
+            {(attendanceDraft.attendanceType === 'normal' || attendanceDraft.attendanceType === 'partial_leave') && <>
               <fieldset><legend>正常班（午休 12:00–13:00 不计）</legend><label><span>上午开始</span><input type="time" value={attendanceDraft.morningStart} onChange={event => setAttendanceDraft({ ...attendanceDraft, morningStart: event.target.value })} /></label><label><span>上午结束</span><input type="time" value={attendanceDraft.morningEnd} onChange={event => setAttendanceDraft({ ...attendanceDraft, morningEnd: event.target.value })} /></label><label><span>下午开始</span><input type="time" value={attendanceDraft.afternoonStart} onChange={event => setAttendanceDraft({ ...attendanceDraft, afternoonStart: event.target.value })} /></label><label><span>下午结束</span><input type="time" value={attendanceDraft.afternoonEnd} onChange={event => setAttendanceDraft({ ...attendanceDraft, afternoonEnd: event.target.value })} /></label></fieldset>
-              <fieldset><legend>不定时加班（可留空）</legend><label><span>加班开始</span><input type="time" value={attendanceDraft.overtimeStart} onChange={event => setAttendanceDraft({ ...attendanceDraft, overtimeStart: event.target.value })} /></label><label><span>加班结束</span><input type="time" value={attendanceDraft.overtimeEnd} onChange={event => setAttendanceDraft({ ...attendanceDraft, overtimeEnd: event.target.value })} /></label><label><span>部分请假（分钟）</span><input type="number" min="0" step="30" value={attendanceDraft.leaveMinutes} onChange={event => setAttendanceDraft({ ...attendanceDraft, leaveMinutes: event.target.value })} /></label></fieldset>
+              <fieldset><legend>不定时加班与请假</legend><label><span>加班开始</span><input type="time" value={attendanceDraft.overtimeStart} onChange={event => setAttendanceDraft({ ...attendanceDraft, overtimeStart: event.target.value })} /></label><label><span>加班结束</span><input type="time" value={attendanceDraft.overtimeEnd} onChange={event => setAttendanceDraft({ ...attendanceDraft, overtimeEnd: event.target.value })} /></label><label><span>{attendanceDraft.attendanceType === 'partial_leave' ? '实际请假分钟数' : '请假分钟数（应为 0）'}</span><input type="number" min="0" step="1" value={attendanceDraft.leaveMinutes} onChange={event => setAttendanceDraft({ ...attendanceDraft, leaveMinutes: event.target.value })} /></label></fieldset>
             </>}
+            <fieldset className="attendance-attainment-policy"><legend>当天达成率口径</legend><label><span>统计分账</span><select value={attendanceDraft.attainmentStream} onChange={event => { const attainmentStream = event.target.value as AttainmentStream; setAttendanceDraft({ ...attendanceDraft, attainmentStream, attainmentFactorBasisPoints: attainmentStream === 'excluded' ? 0 : attendanceDraft.attainmentFactorBasisPoints || 10000 }); }}><option value="batch">批量生产</option><option value="sample">样品组</option><option value="excluded">当天不计入</option></select></label><label><span>个人计入比例（任意值）</span><span className="attendance-factor-input"><input type="number" min="0" max="100" step="0.1" disabled={attendanceDraft.attainmentStream === 'excluded'} value={attendanceDraft.attainmentFactorBasisPoints / 100} onChange={event => setAttendanceDraft({ ...attendanceDraft, attainmentFactorBasisPoints: Math.max(0, Math.min(10000, Math.round(Number(event.target.value || 0) * 100))) })} /><b>%</b></span></label><small>部分请假先按实际出勤小时折算，再乘此比例；例如工作 3 小时、个人比例 50%，当天产能分母按 3h × 95% × 50% 计算。</small></fieldset>
             <label className="wide"><span>考勤备注</span><textarea maxLength={500} rows={3} value={attendanceDraft.remark} onChange={event => setAttendanceDraft({ ...attendanceDraft, remark: event.target.value })} placeholder="迟到、早退、连班或其他说明" /></label>
           </div>
           <footer><button type="button" disabled={saving} onClick={() => setAttendanceDraft(null)}>取消</button><button type="button" disabled={saving} onClick={() => void saveAttendance(false)}><Save size={16} />保存草稿</button><button className="primary-button" type="button" disabled={saving} onClick={() => void saveAttendance(true)}>{saving ? <Loader2 className="spin" size={16} /> : <Check size={16} />}保存并确认</button></footer>
@@ -837,10 +851,10 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
           <header><div><span>批量考勤设置 · {workforceLabel}</span><h2 id="attendance-batch-dialog-title">{date} · 所选 {selectedEmployeeIds.length} 人</h2></div><button type="button" aria-label="关闭" title="关闭" onClick={() => setBatchAttendanceDraft(null)}><X size={18} /></button></header>
           <div className="attendance-dialog-body">
             <div className="attendance-batch-warning"><AlertTriangle size={16} /><span><strong>只保存为草稿</strong><small>已确认记录自动跳过，确认需回到列表执行“确认所选草稿”。</small></span></div>
-            <label><span>出勤类型</span><select value={batchAttendanceDraft.attendanceType} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, attendanceType: event.target.value as AttendanceType })}><option value="normal">正常出勤</option><option value="leave">全天请假</option><option value="absent">缺勤</option><option value="rest">休息日</option></select></label>
-            {batchAttendanceDraft.attendanceType === 'normal' && <>
+            <label><span>出勤类型</span><select value={batchAttendanceDraft.attendanceType} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, attendanceType: event.target.value as AttendanceType, leaveMinutes: event.target.value === 'normal' ? '0' : batchAttendanceDraft.leaveMinutes })}><option value="normal">正常出勤</option><option value="partial_leave">部分请假</option><option value="leave">全天请假</option><option value="absent">缺勤</option><option value="rest">休息日</option></select></label>
+            {(batchAttendanceDraft.attendanceType === 'normal' || batchAttendanceDraft.attendanceType === 'partial_leave') && <>
               <fieldset><legend>统一正常班（午休 12:00–13:00 不计）</legend><label><span>上午开始</span><input type="time" value={batchAttendanceDraft.morningStart} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, morningStart: event.target.value })} /></label><label><span>上午结束</span><input type="time" value={batchAttendanceDraft.morningEnd} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, morningEnd: event.target.value })} /></label><label><span>下午开始</span><input type="time" value={batchAttendanceDraft.afternoonStart} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, afternoonStart: event.target.value })} /></label><label><span>下午结束</span><input type="time" value={batchAttendanceDraft.afternoonEnd} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, afternoonEnd: event.target.value })} /></label></fieldset>
-              <fieldset><legend>统一加班与部分请假（可留空）</legend><label><span>加班开始</span><input type="time" value={batchAttendanceDraft.overtimeStart} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, overtimeStart: event.target.value })} /></label><label><span>加班结束</span><input type="time" value={batchAttendanceDraft.overtimeEnd} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, overtimeEnd: event.target.value })} /></label><label><span>部分请假（分钟）</span><input type="number" min="0" step="30" value={batchAttendanceDraft.leaveMinutes} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, leaveMinutes: event.target.value })} /></label></fieldset>
+              <fieldset><legend>统一加班与部分请假</legend><label><span>加班开始</span><input type="time" value={batchAttendanceDraft.overtimeStart} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, overtimeStart: event.target.value })} /></label><label><span>加班结束</span><input type="time" value={batchAttendanceDraft.overtimeEnd} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, overtimeEnd: event.target.value })} /></label><label><span>实际请假分钟数</span><input type="number" min="0" step="1" value={batchAttendanceDraft.leaveMinutes} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, leaveMinutes: event.target.value })} /></label></fieldset>
             </>}
             <label className="wide"><span>统一备注</span><textarea maxLength={500} rows={3} value={batchAttendanceDraft.remark} onChange={event => setBatchAttendanceDraft({ ...batchAttendanceDraft, remark: event.target.value })} placeholder="选填；将写入所有未确认记录" /></label>
           </div>

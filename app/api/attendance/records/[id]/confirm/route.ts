@@ -20,7 +20,10 @@ const include = {
 export async function POST(_: Request, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const existing = await prisma.attendanceRecord.findUnique({ where: { id: params.id } });
+    const existing = await prisma.attendanceRecord.findUnique({
+      where: { id: params.id },
+      include: { employee: true },
+    });
     if (!existing) return NextResponse.json({ ok: false, error: '考勤记录不存在' }, { status: 404 });
     const boundary = await resolveAttendanceAccessBoundary(user);
     if (!attendanceEmployeeAllowed(boundary, existing.employeeId)) {
@@ -28,7 +31,16 @@ export async function POST(_: Request, { params }: { params: { id: string } }) {
     }
     const record = await prisma.attendanceRecord.update({
       where: { id: existing.id },
-      data: { status: 'confirmed', confirmedById: user.id, confirmedAt: new Date(), updatedById: user.id },
+      data: {
+        status: 'confirmed',
+        attainmentEligibleSnapshot: existing.attainmentEligibleSnapshot ?? existing.employee.attainmentEligible,
+        attainmentFactorBasisPointsSnapshot: existing.attainmentFactorBasisPointsSnapshot
+          ?? existing.employee.attainmentFactorBasisPoints,
+        attainmentStreamSnapshot: existing.attainmentStreamSnapshot ?? existing.employee.attainmentStream,
+        confirmedById: user.id,
+        confirmedAt: new Date(),
+        updatedById: user.id,
+      },
       include,
     });
     await logOp({

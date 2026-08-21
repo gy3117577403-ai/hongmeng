@@ -1,4 +1,5 @@
 import { attainmentCapacityMilliseconds } from '@/lib/attendance';
+import type { AttainmentStream } from '@/types';
 
 export type DailyAttainmentInput = {
   attendanceMilliseconds: number;
@@ -9,6 +10,9 @@ export type DailyAttainmentInput = {
   attendanceConfirmed: boolean;
   /** Undefined is treated as eligible for backward-compatible historical inputs. */
   attainmentEligible?: boolean;
+  /** Daily immutable snapshot. Undefined keeps the historical all-or-nothing behavior. */
+  attainmentFactorBasisPoints?: number;
+  attainmentStream?: AttainmentStream;
 };
 
 export function aggregateDailyAttainment(days: Iterable<DailyAttainmentInput>) {
@@ -21,7 +25,14 @@ export function aggregateDailyAttainment(days: Iterable<DailyAttainmentInput>) {
   let attendanceMissingDays = 0;
 
   for (const day of days) {
-    if (day.attainmentEligible === false) continue;
+    const stream = day.attainmentStream
+      ?? (day.attainmentEligible === false ? 'excluded' : 'batch');
+    const factorBasisPoints = Math.max(
+      0,
+      Math.min(10_000, Math.round(day.attainmentFactorBasisPoints
+        ?? (day.attainmentEligible === false ? 0 : 10_000))),
+    );
+    if (stream !== 'batch' || factorBasisPoints <= 0) continue;
     if (day.attendanceConfirmed && day.attendanceMilliseconds > 0) {
       const effective = Math.max(
         0,
@@ -30,7 +41,9 @@ export function aggregateDailyAttainment(days: Iterable<DailyAttainmentInput>) {
       standardLaborMilliseconds += day.standardLaborMilliseconds;
       claimedStandardLaborMilliseconds += day.claimedStandardLaborMilliseconds;
       effectiveProductionMilliseconds += effective;
-      attainmentCapacityTotalMilliseconds += attainmentCapacityMilliseconds(effective);
+      attainmentCapacityTotalMilliseconds += Math.round(
+        attainmentCapacityMilliseconds(effective) * factorBasisPoints / 10_000,
+      );
       unexplainedMilliseconds += Math.max(
         0,
         day.attendanceMilliseconds

@@ -18,6 +18,11 @@ import { prisma } from '@/lib/prisma';
 import { cleanProcessText } from '@/lib/process-time';
 import { chinaDateKey } from '@/lib/china-date';
 import {
+  attainmentEligibleFromConfiguration,
+  parseAttainmentFactorBasisPoints,
+  parseAttainmentStream,
+} from '@/lib/attendance';
+import {
   departmentRecordSelect,
   EmployeeDepartmentInputError,
   employeeAccessAdminInclude,
@@ -73,6 +78,12 @@ export async function POST(req: NextRequest) {
     if (!name) return NextResponse.json({ ok: false, error: '请填写员工姓名' }, { status: 400 });
     const hireDate = normalizeEmployeeHireDateInput(body.hireDate) ?? null;
     const mobile = normalizeEmployeeMobile(body.mobile);
+    const requestedStream = body.attainmentEligible === false
+      ? 'excluded'
+      : parseAttainmentStream(body.attainmentStream);
+    const requestedFactor = requestedStream === 'excluded'
+      ? 0
+      : parseAttainmentFactorBasisPoints(body.attainmentFactorBasisPoints, 10_000);
     const employee = await prisma.$transaction(async tx => {
       const resolvedDepartment = await resolveEmployeeDepartmentInput(body, lookup =>
         tx.department.findFirst({
@@ -97,7 +108,9 @@ export async function POST(req: NextRequest) {
           mobile,
           notificationEnabled: body.notificationEnabled !== false,
           attendanceEnabled: body.attendanceEnabled !== false,
-          attainmentEligible: body.attainmentEligible !== false,
+          attainmentEligible: attainmentEligibleFromConfiguration(requestedFactor, requestedStream),
+          attainmentFactorBasisPoints: requestedFactor,
+          attainmentStream: requestedStream,
         },
         include: employeeAccessAdminInclude,
       });

@@ -7,7 +7,10 @@ import {
 } from '@/lib/attendance-access';
 import {
   attendanceTotals,
+  attainmentEligibleFromConfiguration,
   defaultAttendanceSegments,
+  parseAttainmentFactorBasisPoints,
+  parseAttainmentStream,
   parseAttendanceSegments,
   parseAttendanceType,
   parseAttendanceEmployeeIds,
@@ -50,20 +53,33 @@ export async function POST(req: NextRequest) {
         ...(boundary.employeeIds === null ? {} : { id: { in: boundary.employeeIds } }),
         id: { in: employeeIds },
       },
-      select: { id: true, department: true, team: true, position: true, attainmentEligible: true },
+      select: {
+        id: true,
+        department: true,
+        team: true,
+        position: true,
+        attainmentEligible: true,
+        attainmentFactorBasisPoints: true,
+        attainmentStream: true,
+      },
     });
     if (employees.length !== employeeIds.length) {
       return NextResponse.json({ ok: false, error: '所选员工不在当前考勤范围，请刷新列表后重试' }, { status: 409 });
     }
 
-    const attendanceType = parseAttendanceType(body.attendanceType);
+    const requestedAttendanceType = parseAttendanceType(body.attendanceType);
     const segments = body.segments === undefined
-      ? attendanceType === 'normal' ? defaultAttendanceSegments(workDate.key) : []
+      ? requestedAttendanceType === 'normal' || requestedAttendanceType === 'partial_leave'
+        ? defaultAttendanceSegments(workDate.key)
+        : []
       : parseAttendanceSegments(body.segments, workDate.key);
-    if (attendanceType === 'normal' && !segments.length) {
-      return NextResponse.json({ ok: false, error: '正常出勤至少需要一个有效时段' }, { status: 400 });
+    if ((requestedAttendanceType === 'normal' || requestedAttendanceType === 'partial_leave') && !segments.length) {
+      return NextResponse.json({ ok: false, error: '出勤或部分请假至少需要一个有效班次' }, { status: 400 });
     }
-    const totals = attendanceTotals({ attendanceType, segments, leaveMinutes: body.leaveMinutes });
+    const totals = attendanceTotals({ attendanceType: requestedAttendanceType, segments, leaveMinutes: body.leaveMinutes });
+    const attendanceType = requestedAttendanceType === 'normal' && totals.leaveMilliseconds > 0
+      ? 'partial_leave'
+      : requestedAttendanceType;
     const existing = await prisma.attendanceRecord.findMany({
       where: { workDate: workDate.value, employeeId: { in: employeeIds } },
       select: { employeeId: true, status: true },
@@ -73,14 +89,22 @@ export async function POST(req: NextRequest) {
     const remark = cleanProcessText(body.remark, 500) || null;
 
     if (writable.length) {
-      await prisma.$transaction(writable.map(employee => prisma.attendanceRecord.upsert({
+      await prisma.$transaction(writable.map(employee => {
+        const attainmentStream = parseAttainmentStream(body.attainmentStream, parseAttainmentStream(employee.attainmentStream));
+        const attainmentFactorBasisPoints = attainmentStream === 'excluded'
+          ? 0
+          : parseAttainmentFactorBasisPoints(body.attainmentFactorBasisPoints, employee.attainmentFactorBasisPoints);
+        const attainmentEligible = attainmentEligibleFromConfiguration(attainmentFactorBasisPoints, attainmentStream);
+        return prisma.attendanceRecord.upsert({
         where: { employeeId_workDate: { employeeId: employee.id, workDate: workDate.value } },
         create: {
           employeeId: employee.id,
           departmentSnapshot: normalizeEmployeeDepartment(employee.department) || '',
           teamSnapshot: employee.team,
           positionSnapshot: employee.position,
-          attainmentEligibleSnapshot: employee.attainmentEligible,
+          attainmentEligibleSnapshot: attainmentEligible,
+          attainmentFactorBasisPointsSnapshot: attainmentFactorBasisPoints,
+          attainmentStreamSnapshot: attainmentStream,
           workDate: workDate.value,
           status: 'draft',
           attendanceType,
@@ -94,6 +118,9 @@ export async function POST(req: NextRequest) {
         },
         update: {
           status: 'draft',
+          attainmentEligibleSnapshot: attainmentEligible,
+          attainmentFactorBasisPointsSnapshot: attainmentFactorBasisPoints,
+          attainmentStreamSnapshot: attainmentStream,
           attendanceType,
           plannedMilliseconds: STANDARD_DAY_MILLISECONDS,
           ...totals,
@@ -104,7 +131,8 @@ export async function POST(req: NextRequest) {
           confirmedById: null,
           confirmedAt: null,
         },
-      })));
+        });
+      }));
     }
     await logOp({
       userId: user.id,

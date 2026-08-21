@@ -1108,6 +1108,8 @@ model Employee {
   isActive                         Boolean                           @default(true) @map("is_active")
   attendanceEnabled                Boolean                           @default(true) @map("attendance_enabled")
   attainmentEligible               Boolean                           @default(true) @map("attainment_eligible")
+  attainmentFactorBasisPoints      Int                               @default(10000) @map("attainment_factor_basis_points")
+  attainmentStream                 String                            @default("batch") @map("attainment_stream")
   resignedAt                       DateTime?                         @map("resigned_at") @db.Date
   resignationReason                String?                           @map("resignation_reason")
   resignationNote                  String?                           @map("resignation_note")
@@ -2275,32 +2277,34 @@ model ProcessLaborClaim {
 }
 
 model AttendanceRecord {
-  id                         String    @id @default(uuid())
-  employeeId                 String    @map("employee_id")
-  departmentSnapshot         String?   @map("department_snapshot")
-  teamSnapshot               String?   @map("team_snapshot")
-  positionSnapshot           String?   @map("position_snapshot")
-  attainmentEligibleSnapshot Boolean?  @map("attainment_eligible_snapshot")
-  workDate                   DateTime  @map("work_date") @db.Date
-  status                     String    @default("draft")
-  attendanceType             String    @default("normal") @map("attendance_type")
-  plannedMilliseconds        Int       @default(28800000) @map("planned_milliseconds")
-  leaveMilliseconds          Int       @default(0) @map("leave_milliseconds")
-  actualMilliseconds         Int       @default(0) @map("actual_milliseconds")
-  overtimeMilliseconds       Int       @default(0) @map("overtime_milliseconds")
-  segments                   Json
-  source                     String    @default("manual")
-  remark                     String?
-  createdById                String?   @map("created_by_id")
-  updatedById                String?   @map("updated_by_id")
-  confirmedById              String?   @map("confirmed_by_id")
-  confirmedAt                DateTime? @map("confirmed_at")
-  createdAt                  DateTime  @default(now()) @map("created_at")
-  updatedAt                  DateTime  @updatedAt @map("updated_at")
-  employee                   Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
-  createdBy                  User?     @relation("AttendanceRecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedBy                  User?     @relation("AttendanceRecordUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
-  confirmedBy                User?     @relation("AttendanceRecordConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  id                                  String    @id @default(uuid())
+  employeeId                          String    @map("employee_id")
+  departmentSnapshot                  String?   @map("department_snapshot")
+  teamSnapshot                        String?   @map("team_snapshot")
+  positionSnapshot                    String?   @map("position_snapshot")
+  attainmentEligibleSnapshot          Boolean?  @map("attainment_eligible_snapshot")
+  attainmentFactorBasisPointsSnapshot Int?      @map("attainment_factor_basis_points_snapshot")
+  attainmentStreamSnapshot            String?   @map("attainment_stream_snapshot")
+  workDate                            DateTime  @map("work_date") @db.Date
+  status                              String    @default("draft")
+  attendanceType                      String    @default("normal") @map("attendance_type")
+  plannedMilliseconds                 Int       @default(28800000) @map("planned_milliseconds")
+  leaveMilliseconds                   Int       @default(0) @map("leave_milliseconds")
+  actualMilliseconds                  Int       @default(0) @map("actual_milliseconds")
+  overtimeMilliseconds                Int       @default(0) @map("overtime_milliseconds")
+  segments                            Json
+  source                              String    @default("manual")
+  remark                              String?
+  createdById                         String?   @map("created_by_id")
+  updatedById                         String?   @map("updated_by_id")
+  confirmedById                       String?   @map("confirmed_by_id")
+  confirmedAt                         DateTime? @map("confirmed_at")
+  createdAt                           DateTime  @default(now()) @map("created_at")
+  updatedAt                           DateTime  @updatedAt @map("updated_at")
+  employee                            Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdBy                           User?     @relation("AttendanceRecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy                           User?     @relation("AttendanceRecordUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  confirmedBy                         User?     @relation("AttendanceRecordConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
 
   @@unique([employeeId, workDate])
   @@index([workDate, status])
@@ -2668,6 +2672,9 @@ model SopDocument {
   id                        String             @id @default(uuid())
   drawingLibraryItemId      String             @unique @map("drawing_library_item_id")
   title                     String
+  sopStage                  String             @default("standard") @map("sop_stage")
+  drawingStatus             String             @default("available") @map("drawing_status")
+  remark                    String?
   currentPublishedVersionId String?            @unique @map("current_published_version_id")
   createdById               String?            @map("created_by_id")
   updatedById               String?            @map("updated_by_id")
@@ -2692,6 +2699,7 @@ model SopVersion {
   version              Int
   revision             Int                 @default(0)
   status               String              @default("draft")
+  controlMode          String?             @map("control_mode")
   title                String
   content              Json
   contentSchemaVersion Int                 @default(1) @map("content_schema_version")
@@ -3282,54 +3290,54 @@ model SystemNotificationRecipient {
 }
 
 model Issue {
-  id                 String               @id @default(uuid())
-  sequence           Int                  @unique @default(autoincrement())
-  title              String
-  type               String               @default("production")
-  priority           String               @default("normal")
-  status             String               @default("pending")
-  description        String?
-  sourceType         String?              @map("source_type")
-  sourceId           String?              @map("source_id")
-  sourceCode         String?              @map("source_code")
-  sourceRoute        String?              @map("source_route")
-  sourceAlertCode    String?              @map("source_alert_code")
-  sourceFingerprint  String?              @unique @map("source_fingerprint")
-  workOrderId        String?              @map("work_order_id")
-  reporterId         String?              @map("reporter_id")
-  assigneeId         String?              @map("assignee_id")
-  assigneeEmployeeId String?              @map("assignee_employee_id")
-  verifierEmployeeId String?              @map("verifier_employee_id")
-  dueAt              DateTime?            @map("due_at")
-  processName        String?              @map("process_name")
-  affectedQuantity   Int?                 @map("affected_quantity")
-  temporaryMeasure   String?              @map("temporary_measure")
-  rootCause          String?              @map("root_cause")
-  solution           String?
-  verificationResult String?              @map("verification_result")
-  requesterConfirmedById String?          @map("requester_confirmed_by_id")
-  requesterConfirmedAt DateTime?          @map("requester_confirmed_at")
-  requesterConfirmationNote String?       @map("requester_confirmation_note")
-  isMajorQuality     Boolean              @default(false) @map("is_major_quality")
-  majorQualityReason String?              @map("major_quality_reason")
-  version            Int                  @default(0)
-  resolvedAt         DateTime?            @map("resolved_at")
-  verifiedAt         DateTime?            @map("verified_at")
-  closedAt           DateTime?            @map("closed_at")
-  createdAt          DateTime             @default(now()) @map("created_at")
-  updatedAt          DateTime             @updatedAt @map("updated_at")
-  deletedAt          DateTime?            @map("deleted_at")
-  workOrder          WorkOrder?           @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
-  reporter           User?                @relation("IssueReporter", fields: [reporterId], references: [id], onDelete: SetNull)
-  assignee           User?                @relation("IssueAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  assigneeEmployee   Employee?            @relation("IssueEmployeeAssignee", fields: [assigneeEmployeeId], references: [id], onDelete: SetNull)
-  verifierEmployee   Employee?            @relation("IssueVerifierEmployee", fields: [verifierEmployeeId], references: [id], onDelete: SetNull)
-  requesterConfirmedBy User?              @relation("IssueRequesterConfirmedBy", fields: [requesterConfirmedById], references: [id], onDelete: SetNull)
-  collaborators      IssueCollaborator[]
-  activities         IssueActivity[]
-  attachments        IssueAttachment[]
-  changeRequests     ChangeRequest[]
-  majorApprovals     IssueMajorApproval[]
+  id                        String               @id @default(uuid())
+  sequence                  Int                  @unique @default(autoincrement())
+  title                     String
+  type                      String               @default("production")
+  priority                  String               @default("normal")
+  status                    String               @default("pending")
+  description               String?
+  sourceType                String?              @map("source_type")
+  sourceId                  String?              @map("source_id")
+  sourceCode                String?              @map("source_code")
+  sourceRoute               String?              @map("source_route")
+  sourceAlertCode           String?              @map("source_alert_code")
+  sourceFingerprint         String?              @unique @map("source_fingerprint")
+  workOrderId               String?              @map("work_order_id")
+  reporterId                String?              @map("reporter_id")
+  assigneeId                String?              @map("assignee_id")
+  assigneeEmployeeId        String?              @map("assignee_employee_id")
+  verifierEmployeeId        String?              @map("verifier_employee_id")
+  dueAt                     DateTime?            @map("due_at")
+  processName               String?              @map("process_name")
+  affectedQuantity          Int?                 @map("affected_quantity")
+  temporaryMeasure          String?              @map("temporary_measure")
+  rootCause                 String?              @map("root_cause")
+  solution                  String?
+  verificationResult        String?              @map("verification_result")
+  requesterConfirmedById    String?              @map("requester_confirmed_by_id")
+  requesterConfirmedAt      DateTime?            @map("requester_confirmed_at")
+  requesterConfirmationNote String?              @map("requester_confirmation_note")
+  isMajorQuality            Boolean              @default(false) @map("is_major_quality")
+  majorQualityReason        String?              @map("major_quality_reason")
+  version                   Int                  @default(0)
+  resolvedAt                DateTime?            @map("resolved_at")
+  verifiedAt                DateTime?            @map("verified_at")
+  closedAt                  DateTime?            @map("closed_at")
+  createdAt                 DateTime             @default(now()) @map("created_at")
+  updatedAt                 DateTime             @updatedAt @map("updated_at")
+  deletedAt                 DateTime?            @map("deleted_at")
+  workOrder                 WorkOrder?           @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  reporter                  User?                @relation("IssueReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  assignee                  User?                @relation("IssueAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assigneeEmployee          Employee?            @relation("IssueEmployeeAssignee", fields: [assigneeEmployeeId], references: [id], onDelete: SetNull)
+  verifierEmployee          Employee?            @relation("IssueVerifierEmployee", fields: [verifierEmployeeId], references: [id], onDelete: SetNull)
+  requesterConfirmedBy      User?                @relation("IssueRequesterConfirmedBy", fields: [requesterConfirmedById], references: [id], onDelete: SetNull)
+  collaborators             IssueCollaborator[]
+  activities                IssueActivity[]
+  attachments               IssueAttachment[]
+  changeRequests            ChangeRequest[]
+  majorApprovals            IssueMajorApproval[]
 
   @@index([status])
   @@index([priority])

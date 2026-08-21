@@ -26,6 +26,7 @@ export type ReportBranchKey =
   | 'missing-drawing'
   | 'missing-material'
   | 'sample-tasks'
+  | 'sample-attainment'
   | 'pending-review'
   | 'published-materials'
   | 'review-attainment';
@@ -110,6 +111,7 @@ export const REPORT_DOMAINS: readonly ReportDomainDefinition[] = [
     caption: '采集与审核',
     branches: [
       { key: 'sample-tasks', label: '样品任务', shortLabel: '样品任务', description: '样品数据采集、过程照片和任务进度' },
+      { key: 'sample-attainment', label: '样品任务达成率', shortLabel: '样品达成', description: '按独立样品任务口径统计计划完成与逾期，不混入量产员工效率' },
       { key: 'pending-review', label: '待分项审核', shortLabel: '待分项审核', description: '实际已提交但尚未完成分项审核的数据和照片' },
       { key: 'published-materials', label: '已发布资料', shortLabel: '已发布资料', description: '审核完成并已发布到正式产品资料的样品数据' },
       { key: 'review-attainment', label: '审核完成率', shortLabel: '审核完成率', description: '已审核项目与已提交项目的完成比例' },

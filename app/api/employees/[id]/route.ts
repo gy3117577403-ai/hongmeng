@@ -9,6 +9,11 @@ import {
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { cleanProcessText } from '@/lib/process-time';
+import {
+  attainmentEligibleFromConfiguration,
+  parseAttainmentFactorBasisPoints,
+  parseAttainmentStream,
+} from '@/lib/attendance';
 import { normalizeEmployeeMobile, EmployeeContactError } from '@/lib/employee-contact';
 import {
   employeeHireDateToDate,
@@ -66,6 +71,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         select: departmentRecordSelect,
       }),
     );
+    const requestedStream = body.attainmentEligible === false
+      ? 'excluded'
+      : body.attainmentEligible === true && body.attainmentStream === undefined
+        ? 'batch'
+        : parseAttainmentStream(body.attainmentStream, parseAttainmentStream(existing.attainmentStream));
+    const requestedFactor = requestedStream === 'excluded'
+      ? 0
+      : parseAttainmentFactorBasisPoints(
+          body.attainmentFactorBasisPoints,
+          body.attainmentEligible === true && existing.attainmentFactorBasisPoints === 0
+            ? 10_000
+            : existing.attainmentFactorBasisPoints,
+        );
     const employee = await prisma.employee.update({
       where: { id: existing.id },
       data: {
@@ -88,9 +106,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         attendanceEnabled: existing.isActive && (body.attendanceEnabled === undefined
           ? existing.attendanceEnabled
           : body.attendanceEnabled === true),
-        attainmentEligible: body.attainmentEligible === undefined
-          ? existing.attainmentEligible
-          : body.attainmentEligible === true,
+        attainmentEligible: attainmentEligibleFromConfiguration(requestedFactor, requestedStream),
+        attainmentFactorBasisPoints: requestedFactor,
+        attainmentStream: requestedStream,
       },
       include: employeeAccessAdminInclude,
     });
@@ -105,6 +123,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         previousDepartmentId: existing.departmentId,
         departmentId: employee.departmentId,
         permissionSyncPending: serializedEmployee.permissionSyncPending,
+        attainmentFactorBasisPoints: employee.attainmentFactorBasisPoints,
+        attainmentStream: employee.attainmentStream,
       },
     });
     return NextResponse.json({ ok: true, employee: serializedEmployee });

@@ -73,7 +73,7 @@ type MetricDefinition = {
 const OVERVIEW_BRANCHES = new Set<ReportBranchKey>([
   'quantity-attainment', 'completed-orders', 'order-status', 'production-trend', 'process-bottlenecks',
   'delivery-risk', 'due-soon', 'delivery-orders', 'completeness', 'missing-route', 'missing-standard',
-  'missing-drawing', 'missing-material', 'sample-tasks', 'pending-review', 'published-materials', 'review-attainment',
+  'missing-drawing', 'missing-material', 'sample-tasks', 'sample-attainment', 'pending-review', 'published-materials', 'review-attainment',
 ]);
 const OPERATIONS_BRANCHES = new Set<ReportBranchKey>([
   'weekly-plan-attainment', 'attendance-attainment', 'team-hours', 'employee-matrix',
@@ -84,7 +84,7 @@ const SEARCHABLE_BRANCHES = new Set<ReportBranchKey>([
   'completed-orders', 'order-status', 'delivery-risk', 'due-soon', 'delivery-orders',
   'employee-attainment', 'employee-matrix', 'unmatched-labor', 'open-events', 'event-ledger',
   'missing-route', 'missing-standard', 'missing-drawing', 'missing-material',
-  'sample-tasks', 'pending-review', 'published-materials',
+  'sample-tasks', 'sample-attainment', 'pending-review', 'published-materials',
 ]);
 const TEAM_FILTER_BRANCHES = new Set<ReportBranchKey>(['team-hours', 'employee-matrix']);
 
@@ -194,8 +194,10 @@ function branchMethod(branch: ReportBranchKey): string {
   if (branch === 'completeness' || branch.startsWith('missing-')) {
     return '资料完整率核查工艺路线、标准工时、当前图纸与已发布辅料规则。';
   }
-  if (['sample-tasks', 'pending-review', 'published-materials', 'review-attainment'].includes(branch)) {
-    return '样品采集数据只有经过分项审核并发布后，才计入正式产品资料。';
+  if (['sample-tasks', 'sample-attainment', 'pending-review', 'published-materials', 'review-attainment'].includes(branch)) {
+    return branch === 'sample-attainment'
+      ? '样品达成按独立任务完成数 / 周期样品任务数计算，不计入量产员工标准工时效率。'
+      : '样品采集数据只有经过分项审核并发布后，才计入正式产品资料。';
   }
   return '当前页面只呈现这一指标及其直接明细，避免跨主题数据混在同一屏。';
 }
@@ -224,7 +226,7 @@ function focusItemsForBranch(items: ReportCenterFocusItemDTO[], branch: ReportBr
   if (branch === 'missing-standard') return workOrders.filter(item => item.missingData.includes('标准工时未补齐'));
   if (branch === 'missing-drawing') return workOrders.filter(item => item.missingData.includes('未关联当前图纸'));
   if (branch === 'missing-material') return workOrders.filter(item => item.missingData.includes('辅料规则未发布'));
-  if (branch === 'sample-tasks') return samples;
+  if (branch === 'sample-tasks' || branch === 'sample-attainment') return samples;
   if (branch === 'pending-review') return samples.filter(item => (item.pendingReviewCount || 0) > 0 || item.status === 'review');
   if (branch === 'published-materials') return samples.filter(item => (item.publishedItemCount || 0) > 0);
   return workOrders;
@@ -372,6 +374,11 @@ function metricForBranch(
     ] },
     'sample-tasks': { label: '样品任务', value: numberText(overview?.sample.taskCount), unit: '项', description: '采集数据、过程照片与任务进度', tone: 'blue', stats: [
       { label: '进行中', value: numberText(overview?.sample.activeCount), note: '项' },
+      { label: '已完成', value: numberText(overview?.sample.completedCount), note: '项' },
+      { label: '已逾期', value: numberText(overview?.sample.overdueCount), note: '项' },
+    ] },
+    'sample-attainment': { label: '样品任务达成率', value: percentText(overview?.sample.taskAttainmentBasisPoints), description: '完成样品任务 / 周期样品任务', tone: 'green', stats: [
+      { label: '样品任务', value: numberText(overview?.sample.taskCount), note: '项' },
       { label: '已完成', value: numberText(overview?.sample.completedCount), note: '项' },
       { label: '已逾期', value: numberText(overview?.sample.overdueCount), note: '项' },
     ] },
@@ -559,6 +566,11 @@ export default function ReportCenterBranchDashboard({
         ['资料项', '缺口数量', '检查说明', '处理入口'],
         ...(overview?.completeness || []).map(row => [row.label, row.count, row.note, row.route]),
       ];
+    } else if (initialBranch === 'sample-attainment') {
+      rows = [
+        ['统计口径', '样品任务', '已完成', '进行中', '已逾期', '任务达成率'],
+        ['独立样品任务', overview?.sample.taskCount || 0, overview?.sample.completedCount || 0, overview?.sample.activeCount || 0, overview?.sample.overdueCount || 0, percentText(overview?.sample.taskAttainmentBasisPoints)],
+      ];
     } else if (initialBranch === 'review-attainment') {
       rows = [
         ['样品任务', '进行中', '已完成', '已逾期', '待分项审核', '已审核', '已发布', '审核完成率'],
@@ -742,6 +754,7 @@ function BranchContent(props: {
   if (branch === 'open-events' || branch === 'event-ledger') return <AbnormalLedger events={qualityEvents} />;
   if (branch === 'completeness') return <GovernanceOverview report={overview} />;
   if (branch.startsWith('missing-')) return <FocusTable title="资料缺口工单" items={focusItems} onSelect={onFocus} />;
+  if (branch === 'sample-attainment') return <><SampleTaskAttainment report={overview} /><FocusTable title="样品任务达成明细" items={focusItems} onSelect={onFocus} /></>;
   if (branch === 'review-attainment') return <SampleReview report={overview} />;
   return <FocusTable title={branch === 'pending-review' ? '待分项审核任务' : branch === 'published-materials' ? '已发布资料任务' : '样品任务明细'} items={focusItems} onSelect={onFocus} />;
 }
@@ -786,7 +799,7 @@ function TeamHoursTable({ rows }: { rows: ReportOperationsLaborRowDTO[] }) {
 }
 
 function EmployeeTable({ rows, unmatchedOnly }: { rows: EmployeeAttainmentRowDTO[]; unmatchedOnly: boolean }) {
-  return <Panel kicker="人员维度" title={unmatchedOnly ? '待匹配标准工时员工' : '员工出勤达成率与标准工时'} action={<span>{rows.length} 人</span>}><div className="report-employee-table"><div><span>员工</span><span>确认出勤</span><span>标准工时</span><span>待匹配</span><span>免责异常</span><span>报工记录</span><span>达成率</span></div>{rows.map(row => <article key={row.employee.id}><span><strong>{row.employee.name}</strong><small>{row.employee.employeeNo} · {row.employee.team || row.employee.department || '未分组'}</small></span><span><b>{compactHours(row.attendanceMilliseconds)}</b><small>{row.attendanceConfirmedDays} 人日</small></span><span><b>{compactHours(row.standardLaborMilliseconds)}</b><small>正式口径</small></span><span className={row.unmatchedStandardLaborMilliseconds ? 'danger' : ''}><b>{compactHours(row.unmatchedStandardLaborMilliseconds)}</b><small>{row.attendanceMissingDays} 人日缺失</small></span><span><b>{compactHours(row.exemptAbnormalMilliseconds)}</b><small>品质确认</small></span><span><b>{row.claimCount + row.executionCount} 笔</b><small>良品 {numberText(row.goodQty)}</small></span><span className="attainment"><strong>{percentText(row.attainmentBasisPoints)}</strong><i><b style={{ width: `${Math.min(100, (row.attainmentBasisPoints || 0) / 100)}%` }} /></i></span></article>)}</div>{!rows.length && <EmptyState icon={<UsersRound />} title={unmatchedOnly ? '当前周期没有待匹配工时' : '当前周期没有员工正式数据'} />}</Panel>;
+  return <Panel kicker="人员维度" title={unmatchedOnly ? '待匹配标准工时员工' : '员工出勤达成率与标准工时'} action={<span>{rows.length} 人</span>}><div className="report-employee-table"><div><span>员工</span><span>确认出勤</span><span>标准工时</span><span>待匹配</span><span>免责异常</span><span>报工记录</span><span>达成率</span></div>{rows.map(row => { const policy = row.attainmentStream === 'sample' ? '样品独立统计' : row.attainmentStream === 'excluded' ? '不计入月均' : `批量口径 ${(row.attainmentFactorBasisPoints / 100).toFixed(row.attainmentFactorBasisPoints % 100 ? 2 : 0)}%`; return <article key={row.employee.id}><span><strong>{row.employee.name}</strong><small>{row.employee.employeeNo} · {row.employee.team || row.employee.department || '未分组'} · {policy}</small></span><span><b>{compactHours(row.attendanceMilliseconds)}</b><small>{row.attendanceConfirmedDays} 人日</small></span><span><b>{compactHours(row.standardLaborMilliseconds)}</b><small>正式口径</small></span><span className={row.unmatchedStandardLaborMilliseconds ? 'danger' : ''}><b>{compactHours(row.unmatchedStandardLaborMilliseconds)}</b><small>{row.attendanceMissingDays} 人日缺失</small></span><span><b>{compactHours(row.exemptAbnormalMilliseconds)}</b><small>品质确认</small></span><span><b>{row.claimCount + row.executionCount} 笔</b><small>良品 {numberText(row.goodQty)}</small></span><span className="attainment"><strong>{row.attainmentStream === 'batch' ? percentText(row.attainmentBasisPoints) : '—'}</strong><i><b style={{ width: `${row.attainmentStream === 'batch' ? Math.min(100, (row.attainmentBasisPoints || 0) / 100) : 0}%` }} /></i></span></article>; })}</div>{!rows.length && <EmptyState icon={<UsersRound />} title={unmatchedOnly ? '当前周期没有待匹配工时' : '当前周期没有员工正式数据'} />}</Panel>;
 }
 
 function EmployeeMatrix({ report, rows }: { report: ReportOperationsDTO | null; rows: ReportOperationsEmployeeRowDTO[] }) {
@@ -818,6 +831,16 @@ function AbnormalLedger({ events }: { events: AbnormalTimeReportDTO['events'] })
 function GovernanceOverview({ report }: { report: ReportCenterOverviewDTO | null }) {
   const total = Math.max(1, (report?.focusItems || []).filter(item => item.entityType === 'workOrder').length);
   return <Panel kicker="核心资料检查" title="正式生产资料完整性"><div className="report-governance-grid">{(report?.completeness || []).filter(row => row.key !== 'sample_review').map(row => <Link href={row.route} key={row.key}><span><FileWarning /></span><div><small>{row.note}</small><strong>{row.label}</strong><p>{numberText(row.count)} 单存在缺口</p><i><b style={{ width: `${Math.min(100, row.count / total * 100)}%` }} /></i></div><ChevronRight /></Link>)}</div></Panel>;
+}
+
+function SampleTaskAttainment({ report }: { report: ReportCenterOverviewDTO | null }) {
+  const rows = report?.dailyTrend || [];
+  const max = Math.max(1, ...rows.flatMap(row => [row.plannedQty, row.completedQty]));
+  return <Panel kicker="样品独立口径" title={`${rangeText(report)} 样品任务计划与完成`} action={<span>不计入量产员工效率</span>}>
+    <div className={`report-trend-chart ${rows.length > 14 ? 'long-range' : ''}`}>{rows.map(row => <article key={row.date} title={`${row.date}：任务 ${numberText(row.plannedQty)}，完成 ${numberText(row.completedQty)}`}><div><i className="planned" style={{ height: `${Math.max(2, row.plannedQty / max * 100)}%` }} /><i className="completed" style={{ height: `${Math.max(2, row.completedQty / max * 100)}%` }} /></div><strong>{row.label}</strong><span>{row.completedQty} / {row.plannedQty}</span></article>)}</div>
+    <div className="report-trend-ledger"><div><span>日期</span><span>样品任务</span><span>已完成</span><span>未完成</span><span>任务达成率</span></div>{rows.map(row => <article key={row.date}><span><strong>{row.date}</strong></span><span>{numberText(row.plannedQty)}</span><span>{numberText(row.completedQty)}</span><span>{numberText(Math.max(0, row.plannedQty - row.completedQty))}</span><span><b>{percentText(row.plannedQty > 0 ? Math.round(row.completedQty / row.plannedQty * 10_000) : null)}</b></span></article>)}</div>
+    {!rows.length && <EmptyState icon={<ClipboardCheck />} title="当前周期没有样品任务" />}
+  </Panel>;
 }
 
 function SampleReview({ report }: { report: ReportCenterOverviewDTO | null }) {

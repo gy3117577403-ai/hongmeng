@@ -494,6 +494,7 @@ export async function GET(req: NextRequest) {
       taskCount: sampleTasks.length,
       activeCount: activeSampleTasks.length,
       completedCount: completedSampleTasks.length,
+      taskAttainmentBasisPoints: reportBasisPoints(completedSampleTasks.length, sampleTasks.length),
       overdueCount: overdueSampleTasks.length,
       pendingReviewCount: pendingSampleReviewItems,
       publishedItemCount: publishedSampleItems,

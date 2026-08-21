@@ -592,6 +592,18 @@ button.hr-metric-card { cursor: pointer; }
 .hr-editor-switches span { min-width: 0; display: grid; gap: 3px; }
 .hr-editor-switches strong { font-size: 9px; }
 .hr-editor-switches small { color: #8492a4; font-size: 7px; line-height: 1.45; }
+.hr-attainment-policy { grid-column: 1 / -1; min-height: 70px; padding: 9px 10px; display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(110px, .8fr) minmax(110px, .8fr); align-items: center; gap: 9px; border: 1px solid #e4e9ef; border-radius: 11px; background: #fffaf5; }
+.hr-attainment-policy > div { min-width: 0; display: grid; gap: 3px; }
+.hr-attainment-policy > div strong { font-size: 12px; }
+.hr-attainment-policy > div small { color: #8492a4; font-size: 11px; line-height: 1.4; }
+.hr-attainment-policy label { min-height: 0 !important; padding: 0 !important; display: grid !important; gap: 4px !important; border: 0 !important; background: transparent !important; }
+.hr-attainment-policy label > span:first-child { color: #64748b; font-size: 10px; font-weight: 800; }
+.hr-attainment-policy select,
+.hr-attainment-factor-input { height: 36px; border: 1px solid #d8e0ea; border-radius: 9px; background: #fff; color: #24364f; font-size: 12px; font-weight: 800; }
+.hr-attainment-policy select { width: 100%; padding: 0 8px; }
+.hr-attainment-factor-input { display: grid !important; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; overflow: hidden; }
+.hr-attainment-factor-input input { width: 100%; height: 34px; padding: 0 4px 0 8px; border: 0; outline: 0; background: transparent; font: inherit; }
+.hr-attainment-factor-input b { color: #e55b0a; font-size: 11px; }
 .hr-editor-links { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .hr-editor-links a { min-width: 0; min-height: 58px; padding: 9px 10px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 16px; align-items: center; gap: 8px; border: 1px solid #dde7f7; border-radius: 11px; background: #f8fbff; color: #283b55; text-decoration: none; }
 .hr-editor-links a > svg:first-child { width: 18px; color: var(--hr-blue); }

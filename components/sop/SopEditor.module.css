@@ -241,6 +241,7 @@
 }
 .pageGroup { width: var(--sop-page-width); min-height: var(--sop-page-height); margin-bottom: 22px; }
 .a4Page {
+  position: relative;
   width: 210mm;
   min-height: 297mm;
   box-sizing: border-box;
@@ -253,6 +254,24 @@
   box-shadow: 0 17px 42px rgba(24, 39, 63, 0.18), 0 1px 0 rgba(255,255,255,.75) inset;
   overflow: hidden;
 }
+.controlMark {
+  position: absolute;
+  top: 8mm;
+  right: 12mm;
+  z-index: 2;
+  min-height: 25px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: .06em;
+}
+.controlledMark { color: #087047; background: #ebf8f2; border-color: #9fd8bd; }
+.uncontrolledMark { color: #7b5a23; background: #fff8e9; border-color: #e5c98d; }
 .pageContent { padding: 17mm 17mm 9mm; min-height: 0; }
 .pageFooter { margin: 0 17mm; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid #d8e0e9; color: #758398; font-size: 10px; }
 .pageFooter b { color: #425269; }
@@ -371,6 +390,31 @@ button.checkBox { cursor: pointer; }
 .metrics dd { margin: 3px 0 0; font-size: 15px; font-weight: 780; }
 .selectionCard,
 .lifecycle { margin-bottom: 12px; padding: 12px; border-radius: 11px; background: #f6f9fd; border: 1px solid #e2e9f2; }
+.metadataCard { margin-bottom: 12px; padding: 11px; border: 1px solid #dfe7f0; border-radius: 11px; background: #fbfcfe; }
+.metadataHeading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 9px; }
+.metadataHeading span { color: var(--sop-blue); font-size: 11px; font-weight: 780; }
+.metadataHeading strong { font-size: 12px; }
+.metadataForm { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.metadataForm label { min-width: 0; display: grid; gap: 4px; color: #66768b; font-size: 10px; }
+.metadataForm select,
+.metadataForm textarea { width: 100%; box-sizing: border-box; color: var(--sop-ink); background: #fff; border: 1px solid #d8e1ec; border-radius: 8px; outline: none; font: inherit; }
+.metadataForm select { height: 36px; padding: 0 7px; font-size: 11px; }
+.metadataForm textarea { min-height: 64px; padding: 8px; resize: vertical; font-size: 11px; line-height: 1.55; }
+.metadataForm select:focus,
+.metadataForm textarea:focus { border-color: #7aa8f5; box-shadow: 0 0 0 3px rgba(47,115,232,.09); }
+.metadataRemark { grid-column: 1 / -1; }
+.metadataForm > button { grid-column: 1 / -1; min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 8px; color: #fff; background: var(--sop-blue); font-weight: 750; cursor: pointer; }
+.metadataForm > button:disabled { opacity: .5; cursor: not-allowed; }
+.metadataSummary { display: flex; flex-wrap: wrap; gap: 6px; }
+.metadataSummary > span,
+.controlledBadge,
+.uncontrolledBadge { min-height: 25px; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 999px; font-size: 10px; font-weight: 750; }
+.metadataSummary > span { color: #41536a; background: #edf2f7; }
+.metadataSummary .controlledBadge,
+.controlledBadge { color: #087047; background: #e9f7f1; }
+.metadataSummary .uncontrolledBadge,
+.uncontrolledBadge { color: #8a5c17; background: #fff5dc; }
+.metadataSummary p { flex-basis: 100%; margin: 2px 0 0; color: var(--sop-muted); font-size: 11px; line-height: 1.55; white-space: pre-wrap; }
 .selectionCard { display: grid; gap: 6px; }
 .selectionCard strong { font-size: 14px; }
 .selectionCard p { margin: 0; color: var(--sop-muted); font-size: 11px; line-height: 1.55; }
@@ -415,6 +459,15 @@ button.checkBox { cursor: pointer; }
 .dialog > div > span { color: var(--sop-blue); font-size: 11px; font-weight: 750; }
 .dialog h2 { margin: 4px 0 6px; font-size: 19px; }
 .dialog p { margin: 0; color: var(--sop-muted); font-size: 12px; line-height: 1.65; }
+.controlChoice { grid-column: 1 / -1; display: grid; gap: 8px; padding: 12px; border: 1px solid #e0e7ef; border-radius: 12px; background: #f8fafc; }
+.controlChoice > span { color: #53657b; font-size: 11px; font-weight: 750; }
+.controlChoice > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.controlChoice button { min-height: 72px; display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; align-items: center; column-gap: 8px; padding: 10px; text-align: left; color: #44566d; background: #fff; border: 1px solid #dce4ee; border-radius: 10px; cursor: pointer; }
+.controlChoice button svg { grid-row: 1 / 3; color: #8391a3; }
+.controlChoice button strong { font-size: 13px; }
+.controlChoice button small { color: var(--sop-muted); font-size: 10px; line-height: 1.35; }
+.controlChoice .controlChoiceActive { color: #0b7048; border-color: #67bd98; background: #eff9f5; box-shadow: 0 0 0 3px rgba(22,155,98,.08); }
+.controlChoice .controlChoiceActive svg { color: var(--sop-green); }
 .dialog footer { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 
 .exportSurface { position: fixed; left: -12000px; top: 0; width: 210mm; pointer-events: none; background: #fff; }

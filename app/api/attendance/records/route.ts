@@ -9,7 +9,10 @@ import {
 import {
   attendanceRange,
   attendanceTotals,
+  attainmentEligibleFromConfiguration,
   defaultAttendanceSegments,
+  parseAttainmentFactorBasisPoints,
+  parseAttainmentStream,
   parseAttendanceSegments,
   parseAttendanceType,
   parseWorkDate,
@@ -134,14 +137,24 @@ export async function POST(req: NextRequest) {
     if (!employee) return NextResponse.json({ ok: false, error: '员工档案不存在' }, { status: 404 });
     if (!employee.attendanceEnabled) return NextResponse.json({ ok: false, error: '该员工未启用考勤' }, { status: 400 });
     const workDate = parseWorkDate(body.workDate);
-    const attendanceType = parseAttendanceType(body.attendanceType);
+    const requestedAttendanceType = parseAttendanceType(body.attendanceType);
     const requestedSegments = body.segments === undefined
-      ? attendanceType === 'normal' ? defaultAttendanceSegments(workDate.key) : []
+      ? requestedAttendanceType === 'normal' || requestedAttendanceType === 'partial_leave'
+        ? defaultAttendanceSegments(workDate.key)
+        : []
       : parseAttendanceSegments(body.segments, workDate.key);
-    if (attendanceType === 'normal' && !requestedSegments.length) {
-      return NextResponse.json({ ok: false, error: '正常出勤至少需要一个有效时段' }, { status: 400 });
+    if ((requestedAttendanceType === 'normal' || requestedAttendanceType === 'partial_leave') && !requestedSegments.length) {
+      return NextResponse.json({ ok: false, error: '出勤或部分请假至少需要一个有效班次' }, { status: 400 });
     }
-    const totals = attendanceTotals({ attendanceType, segments: requestedSegments, leaveMinutes: body.leaveMinutes });
+    const totals = attendanceTotals({ attendanceType: requestedAttendanceType, segments: requestedSegments, leaveMinutes: body.leaveMinutes });
+    const attendanceType = requestedAttendanceType === 'normal' && totals.leaveMilliseconds > 0
+      ? 'partial_leave'
+      : requestedAttendanceType;
+    const attainmentStream = parseAttainmentStream(body.attainmentStream, parseAttainmentStream(employee.attainmentStream));
+    const attainmentFactorBasisPoints = attainmentStream === 'excluded'
+      ? 0
+      : parseAttainmentFactorBasisPoints(body.attainmentFactorBasisPoints, employee.attainmentFactorBasisPoints);
+    const attainmentEligible = attainmentEligibleFromConfiguration(attainmentFactorBasisPoints, attainmentStream);
     const confirm = body.confirm === true;
     const now = new Date();
     const record = await prisma.attendanceRecord.upsert({
@@ -151,7 +164,9 @@ export async function POST(req: NextRequest) {
         departmentSnapshot: normalizeEmployeeDepartment(employee.department) || '',
         teamSnapshot: employee.team,
         positionSnapshot: employee.position,
-        attainmentEligibleSnapshot: employee.attainmentEligible,
+        attainmentEligibleSnapshot: attainmentEligible,
+        attainmentFactorBasisPointsSnapshot: attainmentFactorBasisPoints,
+        attainmentStreamSnapshot: attainmentStream,
         workDate: workDate.value,
         status: confirm ? 'confirmed' : 'draft',
         attendanceType,
@@ -166,6 +181,9 @@ export async function POST(req: NextRequest) {
       },
       update: {
         status: confirm ? 'confirmed' : 'draft',
+        attainmentEligibleSnapshot: attainmentEligible,
+        attainmentFactorBasisPointsSnapshot: attainmentFactorBasisPoints,
+        attainmentStreamSnapshot: attainmentStream,
         attendanceType,
         plannedMilliseconds: STANDARD_DAY_MILLISECONDS,
         ...totals,
@@ -182,7 +200,7 @@ export async function POST(req: NextRequest) {
       action: confirm ? 'confirm_attendance_record' : 'save_attendance_record',
       targetType: 'attendance_record',
       targetId: record.id,
-      detail: { employeeId, workDate: workDate.key, attendanceType },
+      detail: { employeeId, workDate: workDate.key, attendanceType, attainmentFactorBasisPoints, attainmentStream },
     });
     return NextResponse.json({ ok: true, record: serializeAttendanceRecord(record) });
   } catch (error) {

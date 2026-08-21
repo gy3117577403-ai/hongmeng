@@ -4,6 +4,7 @@ import { hasCapability } from '@/lib/department-access';
 import {
   basisPoints,
   dateKeyFromDatabase,
+  parseAttainmentStream,
   parseWorkDate,
 } from '@/lib/attendance';
 import { prisma } from '@/lib/prisma';
@@ -20,7 +21,7 @@ import {
   isProductionWorkforceEmployee,
   productionEmployeeWhere,
 } from '@/lib/production-workforce';
-import type { EmployeeAttainmentRowDTO, ProcessExecutionDTO } from '@/types';
+import type { AttainmentStream, EmployeeAttainmentRowDTO, ProcessExecutionDTO } from '@/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,6 +30,8 @@ function emptyRow(employee: Parameters<typeof serializeEmployee>[0]): EmployeeAt
   return {
     employee: serializeEmployee(employee),
     attainmentEligible: employee.attainmentEligible,
+    attainmentFactorBasisPoints: employee.attainmentFactorBasisPoints,
+    attainmentStream: parseAttainmentStream(employee.attainmentStream),
     standardLaborMilliseconds: 0,
     legacyExecutionStandardLaborMilliseconds: 0,
     claimedStandardLaborMilliseconds: 0,
@@ -59,7 +62,11 @@ function emptyRow(employee: Parameters<typeof serializeEmployee>[0]): EmployeeAt
 
 type DailyAttainment = DailyAttainmentInput;
 
-function emptyDailyAttainment(attainmentEligible = true): DailyAttainment {
+function emptyDailyAttainment(
+  attainmentEligible = true,
+  attainmentFactorBasisPoints = attainmentEligible ? 10_000 : 0,
+  attainmentStream: AttainmentStream = attainmentEligible ? 'batch' : 'excluded',
+): DailyAttainment {
   return {
     attendanceMilliseconds: 0,
     exemptAbnormalMilliseconds: 0,
@@ -68,6 +75,8 @@ function emptyDailyAttainment(attainmentEligible = true): DailyAttainment {
     actualLaborMilliseconds: 0,
     attendanceConfirmed: false,
     attainmentEligible,
+    attainmentFactorBasisPoints,
+    attainmentStream,
   };
 }
 
@@ -209,6 +218,8 @@ export async function GET(req: NextRequest) {
           employeeId: true,
           departmentSnapshot: true,
           attainmentEligibleSnapshot: true,
+          attainmentFactorBasisPointsSnapshot: true,
+          attainmentStreamSnapshot: true,
           workDate: true,
           actualMilliseconds: true,
         },
@@ -236,7 +247,11 @@ export async function GET(req: NextRequest) {
     }
     const groups = new Map<string, EmployeeAttainmentRowDTO>();
     for (const employee of employees) groups.set(employee.id, emptyRow(employee));
-    const employeeEligibility = new Map(employees.map(employee => [employee.id, employee.attainmentEligible]));
+    const employeeConfiguration = new Map(employees.map(employee => [employee.id, {
+      eligible: employee.attainmentEligible,
+      factor: employee.attainmentFactorBasisPoints,
+      stream: parseAttainmentStream(employee.attainmentStream),
+    }]));
     const dailyGroups = new Map<string, Map<string, DailyAttainment>>();
     const activityEmployeeIds = new Set<string>();
     const dailyFor = (employeeIdValue: string, workDate: string) => {
@@ -247,7 +262,12 @@ export async function GET(req: NextRequest) {
       }
       let daily = employeeDays.get(workDate);
       if (!daily) {
-        daily = emptyDailyAttainment(employeeEligibility.get(employeeIdValue) !== false);
+        const configuration = employeeConfiguration.get(employeeIdValue);
+        daily = emptyDailyAttainment(
+          configuration?.eligible ?? true,
+          configuration?.factor ?? (configuration?.eligible === false ? 0 : 10_000),
+          configuration?.stream ?? (configuration?.eligible === false ? 'excluded' : 'batch'),
+        );
         employeeDays.set(workDate, daily);
       }
       return daily;
@@ -259,8 +279,16 @@ export async function GET(req: NextRequest) {
       activityEmployeeIds.add(attendance.employeeId);
       const daily = dailyFor(attendance.employeeId, dateKeyFromDatabase(attendance.workDate));
       daily.attainmentEligible = attendance.attainmentEligibleSnapshot
-        ?? employeeEligibility.get(attendance.employeeId)
+        ?? employeeConfiguration.get(attendance.employeeId)?.eligible
         ?? true;
+      daily.attainmentFactorBasisPoints = attendance.attainmentFactorBasisPointsSnapshot
+        ?? employeeConfiguration.get(attendance.employeeId)?.factor
+        ?? (daily.attainmentEligible ? 10_000 : 0);
+      daily.attainmentStream = parseAttainmentStream(
+        attendance.attainmentStreamSnapshot,
+        employeeConfiguration.get(attendance.employeeId)?.stream
+          ?? (daily.attainmentEligible ? 'batch' : 'excluded'),
+      );
       daily.attendanceMilliseconds += attendance.actualMilliseconds;
       row.attendanceMilliseconds += attendance.actualMilliseconds;
       if (attendance.actualMilliseconds > 0) {
@@ -373,8 +401,16 @@ export async function GET(req: NextRequest) {
     }
     for (const row of groups.values()) {
       const days = dailyGroups.get(row.employee.id) || new Map<string, DailyAttainment>();
-      row.attainmentEligible = [...days.values()].some(day => day.attainmentEligible)
-        || (days.size === 0 && row.employee.attainmentEligible);
+      row.attainmentEligible = [...days.values()].some(day =>
+        day.attainmentEligible
+        && day.attainmentStream === 'batch'
+        && (day.attainmentFactorBasisPoints ?? 10_000) > 0)
+        || (days.size === 0
+          && row.employee.attainmentEligible
+          && row.employee.attainmentStream === 'batch'
+          && row.employee.attainmentFactorBasisPoints > 0);
+      row.attainmentFactorBasisPoints = row.employee.attainmentFactorBasisPoints;
+      row.attainmentStream = row.employee.attainmentStream;
       const dailySummary = aggregateDailyAttainment(days.values());
       row.standardLaborMilliseconds = dailySummary.standardLaborMilliseconds;
       row.claimedStandardLaborMilliseconds = dailySummary.claimedStandardLaborMilliseconds;

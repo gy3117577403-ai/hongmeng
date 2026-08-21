@@ -24,6 +24,8 @@ import {
   RotateCcw,
   Save,
   Send,
+  ShieldCheck,
+  ShieldOff,
   Table2,
   Trash2,
   Type,
@@ -46,7 +48,7 @@ import {
   tableCell,
   textFromInlineContent,
 } from './types';
-import type { SopApiAdapter, SopAsset, SopDocument, SopNode, SopVersion, SopWorkspace } from './types';
+import type { SopApiAdapter, SopAsset, SopControlMode, SopDocument, SopDrawingStatus, SopNode, SopStage, SopVersion, SopWorkspace } from './types';
 
 type EditorMode = 'edit' | 'published' | 'history';
 type InsertKind = 'heading' | 'paragraph' | 'steps' | 'image' | 'table' | 'warning' | 'checklist' | 'pageBreak';
@@ -55,6 +57,7 @@ type ConfirmAction = 'delete-draft' | 'publish' | null;
 type ActiveCommand = 'publishing' | 'restoring' | 'deleting-draft' | null;
 type IndexedNode = { node: SopNode; index: number };
 type PageModel = { entries: IndexedNode[]; breakBeforeIndex?: number };
+type SopMetadataDraft = { sopStage: SopStage; drawingStatus: SopDrawingStatus; remark: string };
 
 export type SopEditorProps = {
   itemId: string;
@@ -172,6 +175,18 @@ function versionStatus(version: SopVersion): string {
   return '草稿';
 }
 
+function sopStageText(value: SopStage): string {
+  return value === 'new_product' ? '新品' : value === 'validating' ? '验证中' : '标准';
+}
+
+function drawingStatusText(value: SopDrawingStatus): string {
+  return value === 'missing' ? '没图纸' : '有图纸';
+}
+
+function controlModeText(value?: SopControlMode | null): string {
+  return value === 'controlled' ? '受控' : '未受控';
+}
+
 function normalizeVersion(version: SopVersion | null | undefined, fallbackTitle?: string): SopVersion | null {
   if (!version?.id) return null;
   return {
@@ -194,9 +209,15 @@ function normalizeWorkspace(raw: SopWorkspace | null | undefined, itemId: string
     specification: fallbackTitle || '',
     libraryKey: '',
   };
+  const document = raw?.document ? {
+    ...raw.document,
+    sopStage: raw.document.sopStage || 'standard' as const,
+    drawingStatus: raw.document.drawingStatus || 'available' as const,
+    remark: raw.document.remark || null,
+  } : null;
   return {
     item,
-    document: raw?.document || null,
+    document,
     itemId,
     title: raw?.document?.title || raw?.title || fallbackTitle || 'SOP 作业指导书',
     draft,
@@ -241,6 +262,9 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
   const [historyOpen, setHistoryOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
   const [activeCommand, setActiveCommand] = useState<ActiveCommand>(null);
+  const [metadataDraft, setMetadataDraft] = useState<SopMetadataDraft>({ sopStage: 'standard', drawingStatus: 'available', remark: '' });
+  const [metadataSaving, setMetadataSaving] = useState(false);
+  const [publishControlMode, setPublishControlMode] = useState<SopControlMode>('uncontrolled');
   const [recovery, setRecovery] = useState<SopDocument | null>(null);
   const [undoStack, setUndoStack] = useState<SopDocument[]>([]);
   const [redoStack, setRedoStack] = useState<SopDocument[]>([]);
@@ -304,6 +328,12 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
         const nextContent = next.draft?.content || next.publishedVersion?.content || initialDocument;
         workspaceRef.current = next;
         setWorkspace(next);
+        setMetadataDraft({
+          sopStage: next.document?.sopStage || 'standard',
+          drawingStatus: next.document?.drawingStatus || 'available',
+          remark: next.document?.remark || '',
+        });
+        setPublishControlMode(next.publishedVersion?.controlMode || 'uncontrolled');
         setContent(nextContent);
         setMode(initialMode === 'published' && next.publishedVersion ? 'published' : 'edit');
         setLastSavedAt(next.draft?.updatedAt ? new Date(next.draft.updatedAt) : null);
@@ -350,6 +380,27 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
     setSaveState('idle');
     setMessage('');
   }, []);
+
+  const saveMetadata = useCallback(async () => {
+    if (commandRef.current || metadataSaving) return;
+    setMetadataSaving(true);
+    setMessage('');
+    try {
+      const next = normalizeWorkspace(await api.updateMetadata(metadataDraft), itemId, productLabel);
+      workspaceRef.current = next;
+      setWorkspace(next);
+      setMetadataDraft({
+        sopStage: next.document?.sopStage || 'standard',
+        drawingStatus: next.document?.drawingStatus || 'available',
+        remark: next.document?.remark || '',
+      });
+      setMessage('SOP 状态与备注已保存');
+    } catch (error) {
+      setMessage(errorMessage(error, '保存 SOP 状态与备注失败'));
+    } finally {
+      setMetadataSaving(false);
+    }
+  }, [api, itemId, metadataDraft, metadataSaving, productLabel]);
 
   const undo = useCallback(() => {
     if (commandRef.current) return;
@@ -642,6 +693,7 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
         versionId: version.id,
         expectedRevision: version.revision,
         title,
+        controlMode: publishControlMode,
         pdf,
       }), itemId, productLabel);
       workspaceRef.current = publishedWorkspace;
@@ -665,7 +717,7 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
     } finally {
       endCommand();
     }
-  }, [api, beginCommand, endCommand, flushSave, itemId, onPublished, productLabel, saveDraft]);
+  }, [api, beginCommand, endCommand, flushSave, itemId, onPublished, productLabel, publishControlMode, saveDraft]);
 
   const restoreVersion = useCallback(async (version: SopVersion) => {
     if (!beginCommand('restoring')) return;
@@ -767,6 +819,7 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
   const displayDocument = previewReadOnly ? previewVersion?.content || content : content;
   const pages = useMemo(() => paginate(displayDocument.content), [displayDocument]);
   const assets = workspace.assets;
+  const displayedControlMode = previewReadOnly ? previewVersion?.controlMode || 'uncontrolled' : publishControlMode;
 
   const statusText = activeCommand === 'publishing'
     ? '正在生成并发布'
@@ -893,6 +946,7 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
                     <div className={styles.pageBreakBar}><span>分页符 · 第 {pageIndex + 1} 页</span><button type="button" onClick={() => deleteNode(page.breakBeforeIndex as number)}>移除分页</button></div>
                   )}
                   <article className={styles.a4Page} aria-label={`SOP 第 ${pageIndex + 1} 页`}>
+                    <div className={`${styles.controlMark} ${displayedControlMode === 'controlled' ? styles.controlledMark : styles.uncontrolledMark}`}>{displayedControlMode === 'controlled' ? <ShieldCheck size={15} /> : <ShieldOff size={15} />}<span>{controlModeText(displayedControlMode)}文件</span></div>
                     <div className={styles.pageContent}>
                       {page.entries.length ? page.entries.map(renderNode) : <button className={styles.emptyPage} type="button" disabled={readOnly} onClick={() => !readOnly && insertNode(paragraph('在这里填写内容。'))}><Plus size={20} />空白页面，点击添加正文</button>}
                     </div>
@@ -912,6 +966,24 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
             <div><dt>版本</dt><dd>{previewVersion ? `V${previewVersion.version}` : workspace.draft ? `V${workspace.draft.version} · 草稿` : '草稿'}</dd></div>
             <div><dt>资源</dt><dd>{workspace.assets.length}</dd></div>
           </dl>
+          <div className={styles.metadataCard}>
+            <div className={styles.metadataHeading}><span>资料属性</span><strong>{previewReadOnly ? '发布信息' : '可编辑信息'}</strong></div>
+            {previewReadOnly ? (
+              <div className={styles.metadataSummary}>
+                <span>{sopStageText(workspace.document?.sopStage || 'standard')}</span>
+                <span>{drawingStatusText(workspace.document?.drawingStatus || 'available')}</span>
+                <span className={displayedControlMode === 'controlled' ? styles.controlledBadge : styles.uncontrolledBadge}>{displayedControlMode === 'controlled' ? <ShieldCheck size={13} /> : <ShieldOff size={13} />}{controlModeText(displayedControlMode)}</span>
+                <p>{workspace.document?.remark || '暂无备注'}</p>
+              </div>
+            ) : (
+              <div className={styles.metadataForm}>
+                <label><span>SOP 状态</span><select value={metadataDraft.sopStage} onChange={event => setMetadataDraft(current => ({ ...current, sopStage: event.target.value as SopStage }))}><option value="standard">标准</option><option value="new_product">新品</option><option value="validating">验证中</option></select></label>
+                <label><span>图纸状态</span><select value={metadataDraft.drawingStatus} onChange={event => setMetadataDraft(current => ({ ...current, drawingStatus: event.target.value as SopDrawingStatus }))}><option value="available">有图纸</option><option value="missing">没图纸</option></select></label>
+                <label className={styles.metadataRemark}><span>备注</span><textarea maxLength={500} value={metadataDraft.remark} onChange={event => setMetadataDraft(current => ({ ...current, remark: event.target.value }))} placeholder="例如：新品试制，端子压接参数待验证" /></label>
+                <button type="button" disabled={interactionLocked || metadataSaving} onClick={() => void saveMetadata()}>{metadataSaving ? <LoaderCircle className={styles.spin} size={15} /> : <Save size={15} />}保存资料属性</button>
+              </div>
+            )}
+          </div>
           {!previewReadOnly && selectedIndex !== null && content.content[selectedIndex] && (
             <div className={styles.selectionCard}>
               <span>当前选中</span><strong>{blockName(content.content[selectedIndex])}</strong>
@@ -934,6 +1006,7 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
       <div ref={exportSurfaceRef} className={styles.exportSurface} aria-hidden="true">
         {paginate(content.content).map((page, pageIndex, allPages) => (
           <article className={`${styles.a4Page} ${styles.exportPage}`} data-sop-export-page key={`export-${pageIndex}`}>
+            <div className={`${styles.controlMark} ${publishControlMode === 'controlled' ? styles.controlledMark : styles.uncontrolledMark}`}>{publishControlMode === 'controlled' ? <ShieldCheck size={15} /> : <ShieldOff size={15} />}<span>{controlModeText(publishControlMode)}文件</span></div>
             <div className={styles.pageContent}>
               {page.entries.map(({ node, index }) => (
                 <section className={`${styles.block} ${styles.blockReadOnly}`} key={`export-${index}-${node.type}`}>
@@ -954,6 +1027,7 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
               {workspace.versions.length ? workspace.versions.map(version => (
                 <article key={version.id} className={historyVersion?.id === version.id ? styles.historyActive : ''}>
                   <div><span>{versionStatus(version)}</span><strong>V{version.version}</strong><small>{safeDate(version.publishedAt || version.updatedAt || version.createdAt)} · {version.updatedBy?.displayName || '系统用户'}</small></div>
+                  <span className={version.controlMode === 'controlled' ? styles.controlledBadge : styles.uncontrolledBadge}>{version.controlMode === 'controlled' ? <ShieldCheck size={13} /> : <ShieldOff size={13} />}{controlModeText(version.controlMode)}</span>
                   <div className={styles.historyActions}>
                     <button type="button" disabled={interactionLocked} onClick={() => void openHistoryPreview(version)}><Eye size={15} />预览</button>
                     {version.status !== 'draft' && <button type="button" disabled={interactionLocked} onClick={() => void restoreVersion(version)}><RotateCcw size={15} />恢复为草稿</button>}
@@ -974,6 +1048,7 @@ export const SopEditor = forwardRef<SopEditorHandle, SopEditorProps>(function So
               <h2 id="sop-dialog-title">{confirmAction === 'delete-draft' ? '删除当前 SOP 草稿？' : '发布并生成正式 PDF'}</h2>
               <p>{confirmAction === 'delete-draft' ? '已发布版本和历史版本不会删除；未保存修改将无法恢复。' : '系统将保存当前草稿、生成 A4 PDF、上传对象存储，并建立不可变发布版本。'}</p>
             </div>
+            {confirmAction === 'publish' && <div className={styles.controlChoice}><span>发布控制状态</span><div><button type="button" className={publishControlMode === 'controlled' ? styles.controlChoiceActive : ''} onClick={() => setPublishControlMode('controlled')}><ShieldCheck size={18} /><strong>受控</strong><small>PDF 与版本显示受控标识</small></button><button type="button" className={publishControlMode === 'uncontrolled' ? styles.controlChoiceActive : ''} onClick={() => setPublishControlMode('uncontrolled')}><ShieldOff size={18} /><strong>未受控</strong><small>用于草案、验证或参考资料</small></button></div></div>}
             <footer><button type="button" className={styles.secondaryButton} disabled={interactionLocked} onClick={() => setConfirmAction(null)}>取消</button><button type="button" disabled={interactionLocked} className={confirmAction === 'delete-draft' ? styles.dangerButton : styles.primaryButton} onClick={() => confirmAction === 'delete-draft' ? void deleteDraft() : void publish()}>{activeCommand ? <><LoaderCircle className={styles.spin} size={16} />处理中…</> : confirmAction === 'delete-draft' ? <><Trash2 size={16} />确认删除草稿</> : <><UploadCloud size={16} />生成并发布</>}</button></footer>
           </section>
         </div>

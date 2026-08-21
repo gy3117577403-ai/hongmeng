@@ -1617,6 +1617,9 @@ export type EmployeeDTO = {
   isActive: boolean;
   attendanceEnabled: boolean;
   attainmentEligible: boolean;
+  /** 0-10000 basis points. 10000 means a full production-capacity headcount. */
+  attainmentFactorBasisPoints: number;
+  attainmentStream: AttainmentStream;
   resignedAt: string | null;
   resignationReason: string | null;
   resignationNote: string | null;
@@ -1767,8 +1770,9 @@ export type RecruitmentSummaryDTO = {
   overdueCount: number;
 };
 
+export type AttainmentStream = 'batch' | 'sample' | 'excluded';
 export type AttendanceStatus = 'draft' | 'confirmed';
-export type AttendanceType = 'normal' | 'leave' | 'absent' | 'rest';
+export type AttendanceType = 'normal' | 'partial_leave' | 'leave' | 'absent' | 'rest';
 export type AttendanceSegmentType = 'regular' | 'overtime';
 
 export type AttendanceSegmentDTO = {
@@ -1786,6 +1790,8 @@ export type AttendanceRecordDTO = {
   workDate: string;
   status: AttendanceStatus;
   attendanceType: AttendanceType;
+  attainmentFactorBasisPoints: number;
+  attainmentStream: AttainmentStream;
   plannedMilliseconds: number;
   leaveMilliseconds: number;
   actualMilliseconds: number;
@@ -2144,6 +2150,7 @@ export type ReportCenterOverviewDTO = {
     taskCount: number;
     activeCount: number;
     completedCount: number;
+    taskAttainmentBasisPoints: number | null;
     overdueCount: number;
     pendingReviewCount: number;
     publishedItemCount: number;
@@ -2184,6 +2191,8 @@ export type ReportOperationsEmployeeDayDTO = {
   attainmentCapacityMilliseconds: number;
   attainmentBasisPoints: number | null;
   attainmentEligible: boolean;
+  attainmentFactorBasisPoints: number;
+  attainmentStream: AttainmentStream;
 };
 
 export type ReportOperationsEmployeeRowDTO = {
@@ -2202,6 +2211,8 @@ export type ReportOperationsEmployeeRowDTO = {
   confirmedDays: number;
   draftDays: number;
   attainmentEligible: boolean;
+  attainmentFactorBasisPoints: number;
+  attainmentStream: AttainmentStream;
   days: ReportOperationsEmployeeDayDTO[];
 };
 
@@ -2284,6 +2295,8 @@ export type ReportOperationsDTO = {
 export type EmployeeAttainmentRowDTO = {
   employee: EmployeeDTO;
   attainmentEligible: boolean;
+  attainmentFactorBasisPoints: number;
+  attainmentStream: AttainmentStream;
   standardLaborMilliseconds: number;
   legacyExecutionStandardLaborMilliseconds: number;
   claimedStandardLaborMilliseconds: number;
