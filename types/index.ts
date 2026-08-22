@@ -1200,7 +1200,7 @@ export type ProcessStepStatus = 'pending' | 'current' | 'completed' | 'skipped';
 export type ProcessTimeBasis = 'per_unit' | 'per_batch';
 export type ProcessReportQuantityBasis = 'product' | 'action';
 export type ProcessReportingPolicy = 'free_sequence' | 'strict_sequence';
-export type ProductTimeProfileStatus = 'draft' | 'published' | 'archived';
+export type ProductTimeProfileStatus = 'draft' | 'published' | 'archived' | 'discarded';
 
 export type ProductTimeDeploymentStatus = 'preview' | 'pending' | 'applying' | 'active' | 'failed';
 

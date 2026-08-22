@@ -156,7 +156,7 @@ export function validateProductTimeEntries(value: unknown): ProductTimeEntryVali
 }
 
 function profileStatus(value: string): ProductTimeProfileStatus {
-  if (value === 'published' || value === 'archived') return value;
+  if (value === 'published' || value === 'archived' || value === 'discarded') return value;
   return 'draft';
 }
 

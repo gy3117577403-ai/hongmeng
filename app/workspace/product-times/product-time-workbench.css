@@ -617,6 +617,83 @@ html:has(.hm-product-time-workbench) {
   min-width: 0;
 }
 
+.hm-product-time-workbench .product-time-draft-sync-banner {
+  min-height: 52px;
+  margin: 6px 9px 0;
+  padding: 7px 9px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #efb27f;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #97450c;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-banner.success {
+  border-color: #a9d8bc;
+  background: #f0faf4;
+  color: #087443;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-banner.review {
+  border-color: #e5bd72;
+  background: #fff9e8;
+  color: #8a5a05;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-banner > svg,
+.hm-product-time-workbench .product-time-draft-sync-banner > em {
+  flex: 0 0 auto;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-banner > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-banner strong,
+.hm-product-time-workbench .product-time-draft-sync-banner small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-banner strong {
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-banner small,
+.hm-product-time-workbench .product-time-draft-sync-banner > em {
+  opacity: .82;
+  font-size: 9px;
+  font-style: normal;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-banner .hm-workbench-button {
+  min-width: 148px;
+  justify-content: center;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-actions {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-banner > em {
+  grid-column: 2;
+}
+
+.hm-product-time-workbench .product-time-draft-sync-actions .hm-workbench-button {
+  min-width: 0;
+}
+
 .hm-product-time-workbench .product-time-route-guidance {
   min-height: 46px;
   margin: 7px 9px 0;
@@ -926,6 +1003,12 @@ html:has(.hm-product-time-workbench) {
   font-size: 9px;
 }
 
+.hm-product-time-workbench .product-time-entry-list article.draft-sync-conflict:not(.invalid) {
+  border-color: #e7be70;
+  border-left-color: #d99010;
+  background: #fffdf6;
+}
+
 .hm-product-time-workbench .product-time-entry-formula {
   color: #5f6d80;
   line-height: 1.4;
@@ -933,6 +1016,11 @@ html:has(.hm-product-time-workbench) {
 
 .hm-product-time-workbench .product-time-entry-validation {
   color: #c4322b;
+  line-height: 1.4;
+}
+
+.hm-product-time-workbench .product-time-entry-sync-conflict {
+  color: #8a5a05;
   line-height: 1.4;
 }
 
@@ -1957,6 +2045,82 @@ html:has(.hm-product-time-workbench) {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.hm-product-time-workbench .product-time-rebuild-confirm-dialog {
+  width: min(540px, calc(100vw - 24px));
+}
+
+.hm-product-time-workbench .product-time-rebuild-version-map {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.hm-product-time-workbench .product-time-rebuild-version-map > span {
+  min-width: 0;
+  padding: 10px;
+  display: grid;
+  gap: 3px;
+  border: 1px solid #e1e6ec;
+  border-radius: 7px;
+  background: #fafbfc;
+}
+
+.hm-product-time-workbench .product-time-rebuild-version-map > svg {
+  color: #d76517;
+}
+
+.hm-product-time-workbench .product-time-rebuild-version-map small,
+.hm-product-time-workbench .product-time-rebuild-version-map em {
+  overflow: hidden;
+  color: #748194;
+  font-size: 9px;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-product-time-workbench .product-time-rebuild-version-map strong {
+  color: #243144;
+  font-size: 12px;
+}
+
+.hm-product-time-workbench .product-time-rebuild-confirmation {
+  display: grid;
+  gap: 5px;
+  color: #536174;
+  font-size: 10px;
+}
+
+.hm-product-time-workbench .product-time-rebuild-confirmation code {
+  padding: 7px 9px;
+  border: 1px dashed #e2a676;
+  border-radius: 6px;
+  background: #fff8f1;
+  color: #8f3f08;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  user-select: all;
+}
+
+.hm-product-time-workbench .product-time-rebuild-confirmation input {
+  width: 100%;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid #cfd7e2;
+  border-radius: 7px;
+  background: #fff;
+  color: #243144;
+  font-size: 11px;
+  outline: none;
+}
+
+.hm-product-time-workbench .product-time-rebuild-confirmation input:focus {
+  border-color: #e85d04;
+  box-shadow: 0 0 0 3px rgba(232, 93, 4, .12);
 }
 
 .hm-product-time-workbench .product-time-confirm-dialog > footer {

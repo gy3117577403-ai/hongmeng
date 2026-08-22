@@ -29,7 +29,10 @@ import { normalizeWorkDate } from '@/lib/daily-plan-domain';
 import { calculateAttainmentBasisPoints } from '@/lib/process-time';
 import { prisma } from '@/lib/prisma';
 import { productionEmployeeWhere } from '@/lib/production-workforce';
-import { syncDraftRoutesFromPublishedProductTime } from '@/lib/process-routing';
+import {
+  ProductTimeDeploymentError,
+  deployPublishedProductTimeRoutesInTransaction,
+} from '@/lib/product-time-deployment-service';
 import {
   ProcessRouteChangeDailyTaskSyncError,
   syncDailyTasksAfterProcessRouteChange,
@@ -3002,6 +3005,7 @@ type ProductEntryDraft = {
   reportQuantityBasis: string;
   reportUnitLabel: string;
   countsForEfficiency: boolean;
+  isCritical: boolean;
   remark: string | null;
 };
 
@@ -3076,6 +3080,7 @@ async function publishChangedProductProfile(
         reportQuantityBasis: entry.reportQuantityBasis,
         reportUnitLabel: entry.reportUnitLabel,
         countsForEfficiency: entry.countsForEfficiency,
+        isCritical: entry.isCritical,
         remark: entry.remark,
       }))
     : change.route.steps
@@ -3108,6 +3113,7 @@ async function publishChangedProductProfile(
             reportQuantityBasis: step.reportQuantityBasis,
             reportUnitLabel: step.reportUnitLabel,
             countsForEfficiency: step.countsForEfficiency,
+            isCritical: step.isCritical,
             remark: step.remark,
           };
         });
@@ -3155,6 +3161,7 @@ async function publishChangedProductProfile(
           ? clean(after.reportUnitLabel, 20) || '个'
           : clean(after.unitLabel, 20) || '件',
         countsForEfficiency: after.countsForEfficiency !== false,
+        isCritical: after.isCritical === true,
         remark: `由工艺变更 ${change.id} 新增`,
       });
     } else if (diff.kind === ProcessRouteChangeDiffKind.UPDATE_TIME) {
@@ -3506,6 +3513,9 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
       }
       const appliesCurrent = change.scope !== ProcessRouteChangeScope.FUTURE_PRODUCT_ONLY;
       const appliesFuture = change.scope !== ProcessRouteChangeScope.CURRENT_WORK_ORDER_ONLY;
+      if (appliesFuture && change.route.workOrder.drawingLibraryItemId) {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`product-time-deployment:${change.route.workOrder.drawingLibraryItemId}`}))`;
+      }
       const summary = emptyLaborCorrectionSummary();
       const resolvedDefinitionIds = new Map<string, string>();
       let insertedStep: { id: string; stageGroup: string } | null = null;
@@ -3573,13 +3583,23 @@ export async function activateProcessRouteChange(command: ActivateProcessRouteCh
       const profile = appliesFuture
         ? await publishChangedProductProfile(tx, change, resolvedDefinitionIds, identity.userId)
         : null;
-      const routeSync = profile
-        ? await syncDraftRoutesFromPublishedProductTime(tx, {
+      let routeSync = null;
+      if (profile) {
+        try {
+          routeSync = await deployPublishedProductTimeRoutesInTransaction(tx, {
+            itemId: change.route.workOrder.drawingLibraryItemId as string,
             profileId: profile.id,
             actorId: identity.userId,
+            sourceChangeId: change.id,
             excludeRouteId: change.routeId,
-          })
-        : null;
+          });
+        } catch (error) {
+          if (error instanceof ProductTimeDeploymentError) {
+            throw new ProcessRouteChangeServiceError(error.message, error.status, error.code);
+          }
+          throw error;
+        }
+      }
       let activatedRouteVersion: number | null = null;
       if (appliesCurrent) {
         const keepCompleted = !insertedStep && change.route.status === 'completed';

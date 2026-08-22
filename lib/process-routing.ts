@@ -1818,6 +1818,11 @@ async function synchronizeRemainingActiveProductTimeStandards(
     step.position !== entry.position || step.sequenceGroup !== entry.sequenceGroup
   ));
   const reviewRequired = profileHasNewSteps || unfinishedHasRemovedSteps || sequenceChanged;
+  // Remaining-step snapshot refresh is only safe when the route structure is
+  // already identical to the published profile. Advancing the route metadata
+  // while a new, removed, or moved occurrence is still missing makes the route
+  // claim a profile version it does not actually implement.
+  if (reviewRequired) return activeRouteSyncSkipped(true);
   const alreadySynchronized = routeProductTimeMetadataMatches(input.route, input.profile)
     && matchedSteps.every(({ step, entry }) => productTimeStepSnapshotMatches(step, input.profile, entry));
   if (alreadySynchronized) return activeRouteSyncSkipped(reviewRequired);

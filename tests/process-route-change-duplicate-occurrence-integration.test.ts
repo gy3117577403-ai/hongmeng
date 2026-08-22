@@ -81,6 +81,7 @@ test(
                 unitMilliseconds: 2_000,
                 occurrences: 1,
                 unitLabel: '件',
+                isCritical: true,
               },
             ],
           },
@@ -200,6 +201,49 @@ test(
         routeSource: 'product_time_profile',
         startedAt,
         firstStepStatus: 'current',
+      });
+      const progressedPeerOrder = await createOrder({
+        suffix: 'PEER-WITH-FACTS',
+        stage: 'finish',
+        status: 'processing',
+        routeStatus: 'in_progress',
+        routeSource: 'product_time_profile',
+        startedAt,
+        firstStepStatus: 'current',
+      });
+      await prisma.workOrderProcessStep.update({
+        where: { id: progressedPeerOrder.processRoute!.steps[0].id },
+        data: {
+          inputQty: 10,
+          processedQty: 10,
+          goodOutputQty: 10,
+          releasedGoodQty: 10,
+          status: 'completed',
+          startedAt,
+          completedAt: new Date(startedAt.getTime() + 60_000),
+          completedById: actor.id,
+          quantityVersion: { increment: 1 },
+        },
+      });
+      await prisma.workOrderProcessStep.update({
+        where: { id: progressedPeerOrder.processRoute!.steps[1].id },
+        data: {
+          inputQty: 10,
+          processedQty: 4,
+          goodOutputQty: 4,
+          releasedGoodQty: 4,
+          status: 'current',
+          startedAt: new Date(startedAt.getTime() + 60_000),
+          quantityVersion: { increment: 1 },
+        },
+      });
+      await prisma.workOrder.update({
+        where: { id: progressedPeerOrder.id },
+        data: {
+          progress: 40,
+          uncompletedQty: '6',
+          latestProgressRemark: '合压已产生 4 件生产事实',
+        },
       });
       const currentRoute = currentOrder.processRoute!;
       const targetPackingStep = currentRoute.steps[1];
@@ -342,6 +386,10 @@ test(
       assert.equal(new Set(profileStrippingEntries.map(entry => entry.id)).size, 2);
       assert.equal(new Set(profileStrippingEntries.map(entry => entry.occurrenceKey)).size, 2);
       assert.deepEqual(profileStrippingEntries.map(entry => entry.unitMilliseconds), [1_000, 9_000]);
+      assert.equal(
+        publishedProfile.entries.find(entry => entry.processDefinitionId === packing.id)?.isCritical,
+        true,
+      );
 
       async function assertRouteOccurrences(routeId: string) {
         const route = await prisma.workOrderProcessRoute.findUniqueOrThrow({
@@ -365,14 +413,57 @@ test(
         return route;
       }
 
-      const [currentAfter, draftAfter, factFreeAfter] = await Promise.all([
+      const [currentAfter, draftAfter, factFreeAfter, progressedPeerAfter] = await Promise.all([
         assertRouteOccurrences(currentRoute.id),
         assertRouteOccurrences(futureDraftOrder.processRoute!.id),
         assertRouteOccurrences(futureFactFreeOrder.processRoute!.id),
+        assertRouteOccurrences(progressedPeerOrder.processRoute!.id),
       ]);
       assert.equal(currentAfter.productTimeProfileId, publishedProfile.id);
       assert.equal(draftAfter.productTimeProfileId, publishedProfile.id);
       assert.equal(factFreeAfter.productTimeProfileId, publishedProfile.id);
+      assert.equal(progressedPeerAfter.productTimeProfileId, publishedProfile.id);
+      assert.equal(progressedPeerAfter.productTimeProfileVersion, publishedProfile.version);
+
+      const insertedProfileEntry = profileStrippingEntries.find(entry => entry.unitMilliseconds === 9_000);
+      assert.ok(insertedProfileEntry);
+      const progressedInsertedStep = progressedPeerAfter.steps.find(step => (
+        step.productTimeEntryId === insertedProfileEntry.id
+      ));
+      assert.ok(progressedInsertedStep, 'peer route must contain the newly published occurrence, not only its version marker');
+      assert.equal(progressedInsertedStep.executionMode, 'SUPPLEMENTAL_OBLIGATION');
+      assert.equal(progressedInsertedStep.status, 'current');
+      assert.equal(progressedInsertedStep.processedQty, 0);
+      assert.equal(progressedInsertedStep.goodOutputQty, 0);
+      assert.equal(progressedInsertedStep.releasedGoodQty, 0);
+      const progressedObligation = await prisma.processSupplementObligation.findUniqueOrThrow({
+        where: { displayStepId: progressedInsertedStep.id },
+        include: { coverage: true },
+      });
+      assert.equal(progressedObligation.changeId, null);
+      assert.equal(progressedObligation.occurrenceKey, insertedProfileEntry.occurrenceKey);
+      assert.equal(progressedObligation.requiredQty, 10);
+      assert.equal(progressedObligation.systemCoveredQty, 4);
+      assert.equal(progressedObligation.reportedQty, 0);
+      assert.equal(progressedObligation.fulfillmentMode, 'MIXED');
+      assert.equal(progressedObligation.status, 'ACTIVE');
+      assert.equal(progressedObligation.coverage?.policy, 'AUTO_BY_PROGRESS');
+      assert.equal(progressedObligation.coverage?.routeTargetQty, 10);
+      assert.equal(progressedObligation.coverage?.systemCoveredQty, 4);
+      assert.equal(progressedObligation.coverage?.actualRequiredQty, 6);
+      assert.equal(await prisma.processCompletion.count({ where: { stepId: progressedInsertedStep.id } }), 0);
+      assert.equal(await prisma.processExecution.count({ where: { stepId: progressedInsertedStep.id } }), 0);
+      assert.equal(await prisma.processLaborPool.count({ where: { stepId: progressedInsertedStep.id } }), 0);
+
+      const peerDeployment = await prisma.productTimeDeployment.findUniqueOrThrow({
+        where: { profileId: publishedProfile.id },
+        include: { routes: true },
+      });
+      assert.equal(peerDeployment.status, 'ACTIVE');
+      assert.equal(peerDeployment.routes.some(route => route.routeId === currentRoute.id), false);
+      assert.equal(peerDeployment.routes.some(route => (
+        route.routeId === progressedPeerOrder.processRoute!.id && route.status === 'SUCCEEDED'
+      )), true);
 
       const afterTicket = await loadFieldReportTicket(publicCode, { recordScan: false });
       assert.equal(afterTicket.publicCode, beforeTicket.publicCode);
@@ -383,8 +474,10 @@ test(
     } finally {
       if (publicCode) await prisma.workOrderQrTicket.deleteMany({ where: { publicCode } });
       if (routeIds.length) await prisma.processRouteActivity.deleteMany({ where: { routeId: { in: routeIds } } });
+      if (routeIds.length) await prisma.processSupplementCoverage.deleteMany({ where: { routeId: { in: routeIds } } });
+      if (routeIds.length) await prisma.processSupplementObligation.deleteMany({ where: { routeId: { in: routeIds } } });
+      if (drawingItemId) await prisma.productTimeDeployment.deleteMany({ where: { drawingLibraryItemId: drawingItemId } });
       if (changeId) {
-        await prisma.processSupplementObligation.deleteMany({ where: { changeId } });
         await prisma.processRouteChangeDiff.deleteMany({ where: { changeId } });
         await prisma.processRouteChangeOutbox.deleteMany({ where: { changeId } });
         await prisma.processRouteChangeEvent.deleteMany({ where: { changeId } });

@@ -683,6 +683,17 @@ async function loadPreviewContext(
     orderBy: [{ version: 'desc' }, { publishedAt: 'desc' }],
     include: productTimeProfileInclude,
   });
+  if (
+    profileStatus === 'draft'
+    && previous
+    && profile.version <= previous.version
+  ) {
+    throw new ProductTimeDeploymentError(
+      `当前草稿 V${profile.version} 已落后正式版本 V${previous.version}，请先同步最新正式版后再发布`,
+      409,
+      'PRODUCT_TIME_DRAFT_STALE',
+    );
+  }
   const routes = await tx.workOrderProcessRoute.findMany({
     where: {
       workOrder: {
@@ -1986,6 +1997,221 @@ function serializeDeployment(record: DeploymentRecord): ProductTimeDeploymentDTO
       };
     }),
   };
+}
+
+export type PublishedProductTimeRouteDeploymentSummary = {
+  deploymentId: string;
+  updated: number;
+  routeCount: number;
+  activeUpdated: number;
+  partiallyUpdated: number;
+  insertedProcesses: number;
+  movedProcesses: number;
+  updatedTimes: number;
+  historicalReports: number;
+  affectedEmployees: number;
+  supplementObligations: number;
+  systemCoveredQty: number;
+  actualRequiredQty: number;
+  reopenedRoutes: number;
+  reviewRequired: number;
+};
+
+function summarizePublishedRouteDeployment(
+  deployment: ProductTimeDeploymentDTO,
+): PublishedProductTimeRouteDeploymentSummary {
+  return deployment.routes.reduce<PublishedProductTimeRouteDeploymentSummary>((summary, route) => {
+    const supplementObligations = route.supplementObligations || 0;
+    summary.updated += route.status === 'succeeded' ? 1 : 0;
+    summary.routeCount += 1;
+    summary.activeUpdated += route.state === 'unstarted' ? 0 : 1;
+    summary.partiallyUpdated += supplementObligations > 0 ? 1 : 0;
+    summary.insertedProcesses += route.insertedProcesses || 0;
+    summary.movedProcesses += route.movedProcesses || 0;
+    summary.updatedTimes += route.updatedTimes || 0;
+    summary.historicalReports += route.historicalReports || 0;
+    summary.affectedEmployees += route.affectedEmployees || 0;
+    summary.supplementObligations += supplementObligations;
+    summary.systemCoveredQty += route.systemCoveredQty || 0;
+    summary.actualRequiredQty += route.actualRequiredQty || 0;
+    summary.reviewRequired += supplementObligations > 0 ? 1 : 0;
+    return summary;
+  }, {
+    deploymentId: deployment.id,
+    updated: 0,
+    routeCount: 0,
+    activeUpdated: 0,
+    partiallyUpdated: 0,
+    insertedProcesses: 0,
+    movedProcesses: 0,
+    updatedTimes: 0,
+    historicalReports: 0,
+    affectedEmployees: 0,
+    supplementObligations: 0,
+    systemCoveredQty: 0,
+    actualRequiredQty: 0,
+    reopenedRoutes: 0,
+    reviewRequired: 0,
+  });
+}
+
+/**
+ * Deploy an already-published employee route-change profile to every peer work
+ * order inside the caller's transaction. The source route is handled by the
+ * route-change service itself and can be excluded. Using the full deployment
+ * engine here is important: routes with production facts receive a real
+ * supplemental obligation and coverage ledger instead of a metadata-only
+ * profile-version bump.
+ */
+export async function deployPublishedProductTimeRoutesInTransaction(
+  tx: Tx,
+  input: {
+    itemId: string;
+    profileId: string;
+    actorId: string;
+    sourceChangeId: string;
+    excludeRouteId?: string;
+  },
+): Promise<PublishedProductTimeRouteDeploymentSummary> {
+  const context = await loadPreviewContext(tx, input.itemId, 'published');
+  if (context.profile.id !== input.profileId) {
+    throw new ProductTimeDeploymentError(
+      '员工工艺变更生成的正式版本已被其他版本替代，请重新启用',
+      409,
+      'PRODUCT_TIME_PUBLISHED_PROFILE_CONFLICT',
+    );
+  }
+  const scopedContext = {
+    ...context,
+    routes: input.excludeRouteId
+      ? context.routes.filter(route => route.id !== input.excludeRouteId)
+      : context.routes,
+  };
+  const preview = previewFromContext(input.itemId, scopedContext, {});
+  if (!preview.canPublish) {
+    const firstConflict = preview.conflicts[0];
+    throw new ProductTimeDeploymentError(
+      firstConflict
+        ? `同产品工单同步被阻断：${firstConflict.message}`
+        : '同产品工单存在阻断冲突，不能启用员工工艺变更',
+      409,
+      'PRODUCT_TIME_DEPLOYMENT_BLOCKED',
+    );
+  }
+
+  const existing = await tx.productTimeDeployment.findUnique({
+    where: { profileId: context.profile.id },
+    include: deploymentInclude,
+  });
+  if (existing?.status === ProductTimeDeploymentStatus.ACTIVE) {
+    return summarizePublishedRouteDeployment(serializeDeployment(existing));
+  }
+  if (existing) {
+    throw new ProductTimeDeploymentError(
+      '员工工艺变更版本存在未完成的同步记录，请先处理后重试',
+      409,
+      'PRODUCT_TIME_DEPLOYMENT_EXISTS',
+    );
+  }
+
+  const deployment = await tx.productTimeDeployment.create({
+    data: {
+      drawingLibraryItemId: input.itemId,
+      profileId: context.profile.id,
+      baseProfileId: context.previous?.id || null,
+      profileVersion: context.profile.version,
+      expectedRevision: context.profile.revision,
+      previewToken: preview.previewToken,
+      idempotencyKey: `product-time-route-change:${input.sourceChangeId}:${context.profile.id}`,
+      status: ProductTimeDeploymentStatus.APPLYING,
+      impact: preview.impact as unknown as Prisma.InputJsonValue,
+      diffs: preview.diffs as unknown as Prisma.InputJsonValue,
+      conflicts: preview.conflicts as unknown as Prisma.InputJsonValue,
+      actorId: input.actorId,
+      startedAt: new Date(),
+    },
+  });
+  const summary: PublishedProductTimeRouteDeploymentSummary = {
+    deploymentId: deployment.id,
+    updated: 0,
+    routeCount: scopedContext.routes.length,
+    activeUpdated: 0,
+    partiallyUpdated: 0,
+    insertedProcesses: 0,
+    movedProcesses: 0,
+    updatedTimes: 0,
+    historicalReports: 0,
+    affectedEmployees: 0,
+    supplementObligations: 0,
+    systemCoveredQty: 0,
+    actualRequiredQty: 0,
+    reopenedRoutes: 0,
+    reviewRequired: 0,
+  };
+  for (const route of scopedContext.routes) {
+    const ledger = await tx.productTimeDeploymentRoute.create({
+      data: {
+        deploymentId: deployment.id,
+        workOrderId: route.workOrderId,
+        routeId: route.id,
+        workOrderState: routeState(route),
+        status: ProductTimeDeploymentRouteStatus.APPLYING,
+        routeVersionBefore: route.version,
+      },
+    });
+    const applied = await applyRouteDeployment(tx, {
+      deploymentId: deployment.id,
+      deploymentRouteId: ledger.id,
+      actorId: input.actorId,
+      profile: context.profile,
+      previous: context.previous,
+      route,
+      diffs: preview.diffs,
+      policies: {},
+    });
+    await tx.productTimeDeploymentRoute.update({
+      where: { id: ledger.id },
+      data: {
+        status: ProductTimeDeploymentRouteStatus.SUCCEEDED,
+        routeVersionAfter: applied.routeVersionAfter,
+        result: applied.result as unknown as Prisma.InputJsonValue,
+      },
+    });
+    summary.updated += 1;
+    summary.activeUpdated += routeState(route) === 'unstarted' ? 0 : 1;
+    summary.partiallyUpdated += applied.result.supplementObligations > 0 ? 1 : 0;
+    summary.insertedProcesses += applied.result.insertedProcesses;
+    summary.movedProcesses += applied.result.movedProcesses;
+    summary.updatedTimes += applied.result.updatedTimes;
+    summary.historicalReports += applied.result.historicalReports;
+    summary.affectedEmployees += applied.result.affectedEmployees;
+    summary.supplementObligations += applied.result.supplementObligations;
+    summary.systemCoveredQty += applied.result.systemCoveredQty;
+    summary.actualRequiredQty += applied.result.actualRequiredQty;
+    summary.reopenedRoutes += applied.result.reopened ? 1 : 0;
+    summary.reviewRequired += applied.result.supplementObligations > 0 ? 1 : 0;
+  }
+  await tx.productTimeDeployment.update({
+    where: { id: deployment.id },
+    data: { status: ProductTimeDeploymentStatus.ACTIVE, completedAt: new Date() },
+  });
+  await tx.operationLog.create({
+    data: {
+      userId: input.actorId,
+      action: 'deploy_process_route_change_product_time_to_peer_orders',
+      targetType: 'product_time_deployment',
+      targetId: deployment.id,
+      detail: {
+        drawingLibraryItemId: input.itemId,
+        profileId: context.profile.id,
+        profileVersion: context.profile.version,
+        sourceChangeId: input.sourceChangeId,
+        excludedSourceRouteId: input.excludeRouteId || null,
+        ...summary,
+      },
+    },
+  });
+  return summary;
 }
 
 export async function getProductTimeDeployment(id: string): Promise<ProductTimeDeploymentDTO | null> {

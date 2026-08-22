@@ -103,6 +103,17 @@ type ProcessDefinition = {
 
 type CustomerOption = { customerName: string; count: number };
 type DiscardPrompt = { actionLabel: string; detail: string };
+type DraftRebuildPrompt = {
+  itemId: string;
+  specification: string;
+  draftVersion: number;
+  draftRevision: number;
+  publishedVersion: number;
+  publishedProcessCount: number;
+  confirmationText: string;
+  hadRouteChanges: boolean;
+  hadQuotationChanges: boolean;
+};
 type ProductTimePayload = {
   ok: boolean;
   error?: string;
@@ -128,8 +139,27 @@ type ProductTimeDetailPayload = {
 type ProductTimeDeploymentApiPayload = {
   ok?: boolean;
   error?: string;
+  code?: string;
   preview?: ProductTimeDeploymentPreviewDTO;
   deployment?: ProductTimeDeploymentDTO;
+};
+
+type ProductTimeDraftSyncSummary = {
+  baseVersion: number | null;
+  fromDraftVersion: number;
+  publishedVersion: number;
+  toDraftVersion: number;
+  addedFromPublished: number;
+  updatedFromPublished: number;
+  removedFromPublished: number;
+  preservedDraftChanges: number;
+  conflicts: Array<{
+    kind: string;
+    occurrenceKey: string | null;
+    processDefinitionId: string | null;
+    fields: string[];
+    resolution: 'draft_preserved' | 'published_restored';
+  }>;
 };
 
 function deploymentPreviewFromPayload(payload: ProductTimeDeploymentApiPayload): ProductTimeDeploymentPreviewDTO | null {
@@ -308,9 +338,18 @@ function entryFormula(entry: EntryDraft): string {
 }
 
 function statusText(item: ProductTimeListItemDTO): string {
+  if (item.draft && item.published && item.draft.version <= item.published.version) {
+    return `草稿待同步 · 正式 V${item.published.version}`;
+  }
   if (item.draft) return item.published ? '新版草稿' : '草稿';
   if (item.published) return `已发布 V${item.published.version}`;
   return '工时待维护';
+}
+
+function draftSyncConflictMessage(kind: string): string {
+  if (kind === 'PUBLISHED_DELETED_DRAFT_CHANGED') return '正式版已删除此工序，但旧草稿修改过它，当前保留草稿内容，请确认是否仍需重新下发。';
+  if (kind === 'DRAFT_DELETED_PUBLISHED_CHANGED') return '旧草稿曾删除此工序，但正式版后来又修改过它，当前已按正式版恢复，请重新确认。';
+  return '旧草稿和最新正式版都修改了此工序，当前保留草稿值；发布预览会再次展示差异，请重点复核。';
 }
 
 type StructuralUndo = {
@@ -415,6 +454,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const [quotationSaving, setQuotationSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [draftSyncing, setDraftSyncing] = useState(false);
+  const [draftSyncSummary, setDraftSyncSummary] = useState<(ProductTimeDraftSyncSummary & { itemId: string }) | null>(null);
+  const [draftRebuildPrompt, setDraftRebuildPrompt] = useState<DraftRebuildPrompt | null>(null);
+  const [draftRebuildConfirmText, setDraftRebuildConfirmText] = useState('');
+  const [draftRebuilding, setDraftRebuilding] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [deploymentOpen, setDeploymentOpen] = useState(false);
   const [deploymentPreviewLoading, setDeploymentPreviewLoading] = useState(false);
@@ -469,6 +513,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const copySearchRef = useRef<HTMLInputElement>(null);
   const copyTriggerRef = useRef<HTMLButtonElement>(null);
   const copyConfirmCloseRef = useRef<HTMLButtonElement>(null);
+  const draftRebuildInputRef = useRef<HTMLInputElement>(null);
+  const draftRebuildReturnFocusRef = useRef<HTMLElement | null>(null);
   const discardCloseRef = useRef<HTMLButtonElement>(null);
   const discardReturnFocusRef = useRef<HTMLElement | null>(null);
   const pendingDiscardActionRef = useRef<(() => void) | null>(null);
@@ -499,6 +545,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   const activeDraft = selectedItem?.draft || null;
   const activePublished = selectedItem?.published || null;
   const activeProfile = activeDraft || activePublished;
+  const staleDraft = Boolean(
+    activeDraft
+    && activePublished
+    && activeDraft.version <= activePublished.version,
+  );
   const activeQuotation = selectedItem?.quotation || null;
   const deploymentBusy = publishing || deployment?.status === 'pending' || deployment?.status === 'applying';
   const selectedCopySource = copySources.find(source => source.profileId === copySourceId) || null;
@@ -512,6 +563,11 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   );
   const selectedReferenceFile = visibleReferenceFiles.find(file => file.id === referenceFileId) || visibleReferenceFiles[0] || null;
   const routeSequenceGroups = useMemo(() => productTimeRouteGroups(entries), [entries]);
+  const draftSyncConflictByKey = useMemo(() => new Map(
+    (draftSyncSummary?.itemId === selectedItemId ? draftSyncSummary.conflicts : [])
+      .filter(conflict => conflict.occurrenceKey)
+      .map(conflict => [conflict.occurrenceKey as string, conflict] as const),
+  ), [draftSyncSummary, selectedItemId]);
   const effectiveLibraryBeforeGroupKey = routeSequenceGroups.some(group => group.key === libraryBeforeGroupKey)
     ? libraryBeforeGroupKey
     : null;
@@ -741,6 +797,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   useEffect(() => {
     setCopySourceId('');
     setCopySources([]);
+    setDraftSyncSummary(null);
   }, [selectedItemId]);
 
   useEffect(() => {
@@ -762,12 +819,13 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
   }, [dirty, quotationDirty]);
 
   useEffect(() => {
-    if (!libraryOpen && !importOpen && !referenceOpen && !deploymentOpen && !moveGroupKey && !copyConfirmOpen && !discardPrompt) return;
+    if (!libraryOpen && !importOpen && !referenceOpen && !deploymentOpen && !moveGroupKey && !copyConfirmOpen && !discardPrompt && !draftRebuildPrompt) return;
 
     const previousBodyOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     window.requestAnimationFrame(() => {
-      if (discardPrompt) discardCloseRef.current?.focus();
+      if (draftRebuildPrompt) draftRebuildInputRef.current?.focus();
+      else if (discardPrompt) discardCloseRef.current?.focus();
       else if (copyConfirmOpen) copyConfirmCloseRef.current?.focus();
       else if (deploymentOpen) deploymentCloseRef.current?.focus();
       else if (referenceOpen) referenceCloseRef.current?.focus();
@@ -778,11 +836,18 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     return () => {
       document.body.style.overflow = previousBodyOverflow;
     };
-  }, [copyConfirmOpen, deploymentOpen, discardPrompt, importOpen, libraryOpen, moveGroupKey, referenceOpen]);
+  }, [copyConfirmOpen, deploymentOpen, discardPrompt, draftRebuildPrompt, importOpen, libraryOpen, moveGroupKey, referenceOpen]);
 
   useEffect(() => {
     function onEscape(event: KeyboardEvent): void {
       if (event.key !== 'Escape') return;
+      if (draftRebuildPrompt) {
+        if (draftRebuilding) return;
+        setDraftRebuildPrompt(null);
+        setDraftRebuildConfirmText('');
+        window.requestAnimationFrame(() => draftRebuildReturnFocusRef.current?.focus());
+        return;
+      }
       if (discardPrompt) {
         pendingDiscardActionRef.current = null;
         setDiscardPrompt(null);
@@ -824,7 +889,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     }
     window.addEventListener('keydown', onEscape);
     return () => window.removeEventListener('keydown', onEscape);
-  }, [copyConfirmOpen, deploymentOpen, discardPrompt, importOpen, libraryOpen, moveGroupKey, referenceOpen, ruleHintOpen]);
+  }, [copyConfirmOpen, deploymentOpen, discardPrompt, draftRebuildPrompt, draftRebuilding, importOpen, libraryOpen, moveGroupKey, referenceOpen, ruleHintOpen]);
 
   useEffect(() => {
     const deploymentId = deployment?.id;
@@ -1252,6 +1317,136 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
     }
   }
 
+  async function syncDraftWithPublished(): Promise<void> {
+    if (!selectedItem || !activeDraft || !activePublished || !staleDraft) {
+      setError('当前草稿已经是最新基线，无需同步');
+      return;
+    }
+    setDraftSyncing(true);
+    setDraftSyncSummary(null);
+    setError('');
+    setMessage('');
+    try {
+      const savedDraft = dirty ? await saveDraft() : activeDraft;
+      if (!savedDraft) return;
+      const response = await fetch(`/api/product-time-profiles/${selectedItem.id}/draft/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expectedRevision: savedDraft.revision }),
+      });
+      const data = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        error?: string;
+        code?: string;
+        profile?: ProductTimeProfileDTO;
+        summary?: ProductTimeDraftSyncSummary;
+      };
+      if (!response.ok || !data.profile || !data.summary) {
+        throw new Error(data.error || '草稿同步最新正式版本失败');
+      }
+      setDirty(false);
+      setStructuralUndo(null);
+      setDeploymentPreview(null);
+      setDeployment(null);
+      setDeploymentError('');
+      setDeploymentOpen(false);
+      setDraftSyncSummary({ ...data.summary, itemId: selectedItem.id });
+      const conflictText = data.summary.conflicts.length
+        ? `；${data.summary.conflicts.length} 项双方同时修改内容已保留草稿值，请复核`
+        : '；未发现双方同时修改冲突';
+      setMessage(
+        `已把正式 V${data.summary.publishedVersion} 合并为 V${data.summary.toDraftVersion} 草稿：补入 ${data.summary.addedFromPublished} 道、更新 ${data.summary.updatedFromPublished} 道、移除 ${data.summary.removedFromPublished} 道${conflictText}`,
+      );
+      await load(selectedItem.id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '草稿同步最新正式版本失败');
+    } finally {
+      setDraftSyncing(false);
+    }
+  }
+
+  function openDraftRebuildConfirmation(): void {
+    if (!selectedItem || !activeDraft || !activePublished) {
+      setError('当前产品必须同时存在草稿和正式版本才能重建');
+      return;
+    }
+    draftRebuildReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    setDraftRebuildConfirmText('');
+    setDraftRebuildPrompt({
+      itemId: selectedItem.id,
+      specification: selectedItem.specification,
+      draftVersion: activeDraft.version,
+      draftRevision: activeDraft.revision,
+      publishedVersion: activePublished.version,
+      publishedProcessCount: activePublished.processCount,
+      confirmationText: `放弃草稿 V${activeDraft.version} 并重建 V${activePublished.version}`,
+      hadRouteChanges: dirty,
+      hadQuotationChanges: quotationDirty,
+    });
+  }
+
+  function closeDraftRebuildConfirmation(): void {
+    if (draftRebuilding) return;
+    setDraftRebuildPrompt(null);
+    setDraftRebuildConfirmText('');
+    window.requestAnimationFrame(() => draftRebuildReturnFocusRef.current?.focus());
+  }
+
+  async function rebuildDraftFromPublished(): Promise<void> {
+    if (!draftRebuildPrompt) return;
+    if (draftRebuildConfirmText.trim() !== draftRebuildPrompt.confirmationText) {
+      setError(`请完整输入“${draftRebuildPrompt.confirmationText}”后再确认`);
+      draftRebuildInputRef.current?.focus();
+      return;
+    }
+    setDraftRebuilding(true);
+    setError('');
+    setMessage('');
+    try {
+      const response = await fetch(`/api/product-time-profiles/${draftRebuildPrompt.itemId}/draft/rebuild`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          expectedRevision: draftRebuildPrompt.draftRevision,
+          expectedPublishedVersion: draftRebuildPrompt.publishedVersion,
+          confirmationText: draftRebuildConfirmText.trim(),
+        }),
+      });
+      const data = await response.json().catch(() => ({})) as {
+        ok?: boolean;
+        error?: string;
+        profile?: ProductTimeProfileDTO;
+        summary?: {
+          discardedDraftVersion: number;
+          publishedVersion: number;
+          rebuiltDraftVersion: number;
+          processCount: number;
+        };
+      };
+      if (!response.ok || !data.profile || !data.summary) {
+        throw new Error(data.error || '放弃草稿并重建失败');
+      }
+      setDirty(false);
+      setQuotationDirty(false);
+      setStructuralUndo(null);
+      setDraftSyncSummary(null);
+      setDeploymentPreview(null);
+      setDeployment(null);
+      setDeploymentError('');
+      setDeploymentOpen(false);
+      setDraftRebuildPrompt(null);
+      setDraftRebuildConfirmText('');
+      setMessage(`原草稿 V${data.summary.discardedDraftVersion} 已保留为放弃记录；已按正式 V${data.summary.publishedVersion} 重建 V${data.summary.rebuiltDraftVersion} 草稿，共 ${data.summary.processCount} 道工序`);
+      await load(draftRebuildPrompt.itemId);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '放弃草稿并重建失败');
+    } finally {
+      setDraftRebuilding(false);
+    }
+  }
+
   async function openPublishPreview(
     policyOverride?: Record<string, ProductTimeInsertPolicy>,
   ): Promise<void> {
@@ -1281,6 +1476,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         }),
       });
       const data = await response.json().catch(() => ({})) as ProductTimeDeploymentApiPayload;
+      if (data.code === 'PRODUCT_TIME_DRAFT_STALE') {
+        setDeploymentOpen(false);
+        setError(data.error || '当前草稿已落后正式版本，请先同步最新正式版');
+        await load(selectedItem.id);
+        return;
+      }
       const preview = deploymentPreviewFromPayload(data);
       if (!response.ok || !preview) throw new Error(data.error || '发布影响预览生成失败');
       setDeploymentPreview(preview);
@@ -1325,6 +1526,12 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
         }),
       });
       const data = await response.json().catch(() => ({})) as ProductTimeDeploymentApiPayload;
+      if (data.code === 'PRODUCT_TIME_DRAFT_STALE') {
+        setDeploymentOpen(false);
+        setError(data.error || '当前草稿已落后正式版本，请先同步最新正式版');
+        await load(selectedItem.id);
+        return;
+      }
       const next = deploymentFromPayload(data);
       // A failed all-or-nothing deployment is still a first-class result: the
       // backend returns its ledger id so the operator can inspect every route
@@ -1471,8 +1678,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
       ? `折合 ${duration(Math.round(parsedQuotationSeconds * 1000))}`
       : '请输入大于 0 且不超过 86400 的秒数'
     : '输入后会自动换算为分钟或小时';
-  const saveDisabledReason = saving
-    ? '正在保存草稿'
+  const saveDisabledReason = saving || draftSyncing
+    ? draftSyncing ? '正在同步最新正式版' : '正在保存草稿'
     : !dirty
       ? '当前工序路线没有未保存修改'
       : !entries.length
@@ -1482,6 +1689,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
           : '';
   const publishDisabledReason = deploymentBusy
     ? '当前正在发布同步'
+    : staleDraft
+      ? `草稿已落后正式 V${activePublished?.version || ''}，请先同步最新正式版`
     : dirty
       ? '请先保存当前工序草稿'
       : !activeDraft
@@ -1655,12 +1864,33 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <div className="product-time-route-metrics" aria-label="当前产品工时概览">
                 <span><small>工序数量</small><strong>{entries.length}</strong><em>实际参与工序</em></span>
                 <span><small>工时口径</small><strong>{perBatchEntryCount ? `${perBatchEntryCount} 道按批` : '全部按件'}</strong><em>{perBatchEntryCount ? '按批工时不折算为单套' : `单套估算 ${duration(totalMilliseconds)}`}</em></span>
-                <span><small>当前版本</small><strong>{activeProfile ? `V${activeProfile.version}` : '待创建'}</strong><em>{activeDraft ? '草稿待发布' : activePublished ? '正式版本' : '尚未维护'}</em></span>
+                <span><small>当前版本</small><strong>{activeProfile ? `V${activeProfile.version}` : '待创建'}</strong><em>{staleDraft ? `草稿落后正式 V${activePublished?.version}` : activeDraft ? '草稿待发布' : activePublished ? '正式版本' : '尚未维护'}</em></span>
                 <span><small>计划关联</small><strong>{selectedItem.planning?.batchCount || 0} 批</strong><em>{selectedItem.planning ? `${selectedItem.planning.totalQuantity.toLocaleString('zh-CN')} 件` : '当前范围无批次'}</em></span>
               </div>
 
-              {deployment?.itemId === selectedItem.id && <div className="product-time-route-notices">
-                <div className={`product-time-deployment-banner ${deployment.status}`}>
+              {(staleDraft || draftSyncSummary?.itemId === selectedItem.id || deployment?.itemId === selectedItem.id) && <div className="product-time-route-notices">
+                {staleDraft && <div className="product-time-draft-sync-banner stale" role="alert">
+                  <AlertTriangle size={18} aria-hidden="true" />
+                  <span>
+                    <strong>当前草稿 V{activeDraft?.version} 已落后正式 V{activePublished?.version}</strong>
+                    <small>过期草稿不能直接下发。同步会先保存当前编辑，再补入最新正式工序和工时；双方同时修改的项目保留草稿值并提示复核。</small>
+                  </span>
+                  {canManageProductTimes
+                    ? <div className="product-time-draft-sync-actions"><button className="hm-workbench-button primary" type="button" disabled={draftSyncing || draftRebuilding || saving || deploymentBusy} onClick={() => void syncDraftWithPublished()}><RefreshCw className={draftSyncing ? 'spin' : ''} size={15} aria-hidden="true" />{draftSyncing ? '正在合并' : '同步最新正式版'}</button><button className="hm-workbench-button danger" type="button" disabled={draftSyncing || draftRebuilding || saving || deploymentBusy} onClick={openDraftRebuildConfirmation}><RotateCcw size={15} aria-hidden="true" />放弃草稿并重建</button></div>
+                    : <em>请联系工艺人员同步草稿</em>}
+                </div>}
+
+                {!staleDraft && draftSyncSummary?.itemId === selectedItem.id && <div className={`product-time-draft-sync-banner ${draftSyncSummary.conflicts.length ? 'review' : 'success'}`} role="status">
+                  {draftSyncSummary.conflicts.length
+                    ? <AlertTriangle size={18} aria-hidden="true" />
+                    : <CheckCircle2 size={18} aria-hidden="true" />}
+                  <span>
+                    <strong>已同步正式 V{draftSyncSummary.publishedVersion}，当前为 V{draftSyncSummary.toDraftVersion} 草稿</strong>
+                    <small>补入 {draftSyncSummary.addedFromPublished} 道 · 更新 {draftSyncSummary.updatedFromPublished} 道 · 移除 {draftSyncSummary.removedFromPublished} 道 · 保留 {draftSyncSummary.preservedDraftChanges} 项草稿修改{draftSyncSummary.conflicts.length ? ` · ${draftSyncSummary.conflicts.length} 项冲突请复核` : ' · 无双方修改冲突'}</small>
+                  </span>
+                </div>}
+
+                {deployment?.itemId === selectedItem.id && <div className={`product-time-deployment-banner ${deployment.status}`}>
                   {deployment.status === 'pending' || deployment.status === 'applying'
                     ? <LoaderCircle className="spin" size={17} aria-hidden="true" />
                     : deployment.status === 'active'
@@ -1675,7 +1905,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                         : `正在同步 ${deployment.routes.length} 张关联工单、二维码及历史工时`}</small>
                   </span>
                   <button type="button" onClick={() => setDeploymentOpen(true)}>查看发布结果</button>
-                </div>
+                </div>}
               </div>}
 
               <div className={`product-time-route-editor${reorderMode ? ' reorder' : ''}`}>
@@ -1705,12 +1935,13 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                     const definition = definitions.find(item => item.id === entry.processDefinitionId);
                     const validation = entryValidation(entry);
                     const invalid = validation.messages.length > 0;
+                    const draftSyncConflict = draftSyncConflictByKey.get(entry.occurrenceKey) || null;
                     const validationId = `product-time-entry-validation-${entry.occurrenceKey}`;
                     const formula = entryFormula(entry);
                     const groupKey = groupKeyForProductTimeEntry(entries, entry.occurrenceKey);
                     const groupIndex = routeSequenceGroups.findIndex(group => group.key === groupKey);
                     const group = routeSequenceGroups[groupIndex];
-                    return <article className={invalid ? 'invalid' : ''} key={entry.occurrenceKey}>
+                    return <article className={[invalid ? 'invalid' : '', draftSyncConflict ? 'draft-sync-conflict' : ''].filter(Boolean).join(' ')} key={entry.occurrenceKey}>
                       <div className="product-time-process-name">
                         <b>{String(index + 1).padStart(2, '0')}</b>
                         <span><strong>{definition?.name || '工序已停用'}</strong><small>{definition ? stageText[definition.stageGroup] : '历史工序'}</small></span>
@@ -1728,6 +1959,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                         {entry.reportQuantityBasis === 'action' && <label><span>动作数量单位</span><input disabled={!canManageProductTimes} maxLength={20} aria-invalid={validation.reportUnitLabel} aria-describedby={invalid ? validationId : undefined} value={entry.reportUnitLabel} onChange={event => updateEntry(index, { reportUnitLabel: event.target.value })} placeholder="个" /></label>}
                         {formula && <small className="product-time-entry-formula">{formula}</small>}
                         {invalid && <small id={validationId} className="product-time-entry-validation" role="alert">{validation.messages.join('；')}。</small>}
+                        {draftSyncConflict && <small className="product-time-entry-sync-conflict" role="status">{draftSyncConflictMessage(draftSyncConflict.kind)}</small>}
                       </div>
                       <div className="product-time-process-options">
                         <label><input type="checkbox" disabled={!canManageProductTimes || index === 0} checked={entry.parallelWithPrevious} onChange={event => updateEntry(index, { parallelWithPrevious: event.target.checked })} /><span>{index === 0 ? '首道工序' : '与上一道并行'}</span></label>
@@ -1756,14 +1988,17 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                   {hasUnsavedChanges && <b><AlertTriangle size={13} aria-hidden="true" />未保存</b>}
                   <em>{invalidEntryCount
                     ? `${invalidEntryCount} 道工序工时无效`
-                    : activeDraft
-                      ? '保存草稿不会影响生产；正式发布前会预览全部工单、二维码和历史达成率影响。'
+                    : staleDraft
+                      ? `草稿已落后正式 V${activePublished?.version}，请先使用“同步最新正式版”；系统已禁止直接下发。`
+                      : activeDraft
+                        ? '保存草稿不会影响生产；正式发布前会预览全部工单、二维码和历史达成率影响。'
                       : activePublished
                         ? '当前为正式版本；后续修改会先形成草稿，不会静默改变二维码报工。'
                         : '保存草稿后检查无误，再发布并同步到二维码和全部关联工单。'}</em>
                 </span>
                 {canManageProductTimes ? <div>
                   <button className="hm-workbench-button" type="button" disabled={!hasUnsavedChanges || saving} title={!hasUnsavedChanges ? '当前没有未保存修改' : '恢复当前产品已保存的工序与报价内容'} onClick={resetChanges}><RotateCcw size={15} aria-hidden="true" />放弃修改</button>
+                  {activeDraft && activePublished && <button className="hm-workbench-button danger" type="button" disabled={draftSyncing || draftRebuilding || saving || deploymentBusy} title="保留原草稿审计记录，并按当前正式版本完整重建新草稿" onClick={openDraftRebuildConfirmation}><RotateCcw size={15} aria-hidden="true" />放弃草稿并重建</button>}
                   <button className="hm-workbench-button" type="button" disabled={Boolean(saveDisabledReason)} title={saveDisabledReason || undefined} onClick={() => void saveDraft()}><Save size={15} aria-hidden="true" />{saving ? '保存中' : '保存草稿'}</button>
                   <button className="hm-workbench-button primary product-time-publish-button" type="button" disabled={Boolean(publishDisabledReason)} title={publishDisabledReason || '先查看差异和影响范围，再确认正式发布'} onClick={() => void openPublishPreview()}><QrCode size={15} aria-hidden="true" />{deploymentBusy ? '正在发布同步' : '预览发布影响'}</button>
                 </div> : <strong>只读资料 · 如需调整请联系工艺人员</strong>}
@@ -1870,6 +2105,46 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             <p className="warning"><AlertTriangle size={16} aria-hidden="true" />放弃后无法从当前页面恢复这些修改。</p>
           </div>
           <footer><button className="hm-workbench-button" type="button" onClick={closeDiscardPrompt}>继续编辑</button><button className="hm-workbench-button danger" type="button" onClick={confirmDiscardAndContinue}>放弃修改并继续</button></footer>
+        </section>
+      </div>}
+
+      {draftRebuildPrompt && <div className="product-time-confirm-backdrop" role="presentation" onMouseDown={event => {
+        if (event.currentTarget === event.target) closeDraftRebuildConfirmation();
+      }}>
+        <section
+          className="product-time-confirm-dialog product-time-rebuild-confirm-dialog"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="product-time-rebuild-confirm-title"
+          aria-describedby="product-time-rebuild-confirm-description"
+          onKeyDown={event => {
+            if (event.key !== 'Tab') return;
+            const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled)'));
+            if (!focusable.length) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (event.shiftKey && document.activeElement === first) {
+              event.preventDefault();
+              last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+              event.preventDefault();
+              first.focus();
+            }
+          }}
+        >
+          <header><span><small>不可撤销的草稿替换</small><strong id="product-time-rebuild-confirm-title">放弃草稿并按正式版重建？</strong></span><button type="button" disabled={draftRebuilding} title="关闭" aria-label="关闭放弃草稿并重建确认" onClick={closeDraftRebuildConfirmation}><X size={17} /></button></header>
+          <div className="product-time-confirm-body">
+            <div className="product-time-rebuild-version-map" aria-label="重建版本范围">
+              <span><small>将放弃</small><strong>草稿 V{draftRebuildPrompt.draftVersion}</strong><em>{draftRebuildPrompt.specification}</em></span>
+              <ChevronRight size={19} aria-hidden="true" />
+              <span><small>重建基线</small><strong>正式 V{draftRebuildPrompt.publishedVersion}</strong><em>{draftRebuildPrompt.publishedProcessCount} 道工序</em></span>
+            </div>
+            <p id="product-time-rebuild-confirm-description">系统会保留原草稿及其工序明细作为审计记录，再创建一个更高版本的新草稿；当前正式版本和生产工单不会在这一步被修改。</p>
+            {(draftRebuildPrompt.hadRouteChanges || draftRebuildPrompt.hadQuotationChanges) && <p className="warning"><AlertTriangle size={16} aria-hidden="true" />当前页面还有未保存的{draftRebuildPrompt.hadRouteChanges && draftRebuildPrompt.hadQuotationChanges ? '工序路线和报价工时修改' : draftRebuildPrompt.hadRouteChanges ? '工序路线修改' : '报价工时修改'}，确认重建后也会一并放弃。若需保留，请先取消并保存。</p>}
+            <label className="product-time-rebuild-confirmation"><span>请输入以下完整文字以二次确认</span><code>{draftRebuildPrompt.confirmationText}</code><input ref={draftRebuildInputRef} value={draftRebuildConfirmText} disabled={draftRebuilding} autoComplete="off" spellCheck={false} onChange={event => setDraftRebuildConfirmText(event.target.value)} placeholder={draftRebuildPrompt.confirmationText} aria-label="放弃草稿并重建确认文字" /></label>
+            <p className="muted">“同步最新正式版”会保留并合并人工修改；只有此重建操作会放弃草稿内容，且必须经过本次显式确认。</p>
+          </div>
+          <footer><button className="hm-workbench-button" type="button" disabled={draftRebuilding} onClick={closeDraftRebuildConfirmation}>取消，保留草稿</button><button className="hm-workbench-button danger" type="button" disabled={draftRebuilding || draftRebuildConfirmText.trim() !== draftRebuildPrompt.confirmationText} onClick={() => void rebuildDraftFromPublished()}><RotateCcw className={draftRebuilding ? 'spin' : ''} size={15} aria-hidden="true" />{draftRebuilding ? '正在重建' : '确认放弃并重建'}</button></footer>
         </section>
       </div>}
 
