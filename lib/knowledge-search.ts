@@ -116,6 +116,7 @@ async function searchDrawings(options: SearchOptions, take: number): Promise<Kno
       { specification: { contains: options.keyword, mode: 'insensitive' } },
       { productName: { contains: options.keyword, mode: 'insensitive' } },
       { remark: { contains: options.keyword, mode: 'insensitive' } },
+      { sopDocument: { is: { deletedAt: null, remark: { contains: options.keyword, mode: 'insensitive' } } } },
       { files: { some: { deletedAt: null, OR: [{ originalName: { contains: options.keyword, mode: 'insensitive' } }, { displayName: { contains: options.keyword, mode: 'insensitive' } }] } } },
     ];
   }
@@ -123,7 +124,21 @@ async function searchDrawings(options: SearchOptions, take: number): Promise<Kno
     prisma.resourceCategory.findMany({ orderBy: { sortOrder: 'asc' } }),
     prisma.drawingLibraryItem.findMany({
       where,
-      include: { files: { where: { deletedAt: null }, include: { category: true, uploadedBy: { select: { displayName: true, username: true } } }, orderBy: [{ updatedAt: 'desc' }] } },
+      include: {
+        files: {
+          where: { deletedAt: null },
+          include: {
+            category: true,
+            uploadedBy: { select: { displayName: true, username: true } },
+            sourcePdfOverlayVersion: { select: { controlMode: true } },
+            sourceSopVersion: { select: { controlMode: true } },
+          },
+          orderBy: [{ updatedAt: 'desc' }],
+        },
+        sopDocument: {
+          select: { id: true, sopStage: true, drawingStatus: true, remark: true, deletedAt: true, updatedAt: true },
+        },
+      },
       orderBy: { updatedAt: 'desc' },
       take,
     }),

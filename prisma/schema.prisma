@@ -2788,6 +2788,7 @@ model PdfOverlayVersion {
   version              Int
   revision             Int                 @default(0)
   status               String              @default("draft")
+  controlMode          String              @default("uncontrolled") @map("control_mode")
   title                String
   content              Json
   contentSchemaVersion Int                 @default(1) @map("content_schema_version")

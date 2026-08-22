@@ -1,6 +1,6 @@
 'use client';
 
-import { ArchiveRestore, ArrowLeft, BookOpenText, Clock3, FileImage, Plus, Search, Trash2, Upload } from 'lucide-react';
+import { ArchiveRestore, ArrowLeft, BookOpenText, Clock3, FileCheck2, FileImage, FileWarning, Plus, Search, Settings2, ShieldCheck, ShieldOff, Trash2, Upload } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { BulkOriginalDrawingImportModal } from '@/components/BulkOriginalDrawingImportModal';
@@ -19,7 +19,7 @@ import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { safeDisplayFilename } from '@/lib/filenames';
 import { planningReturnContextFromSearch, type PlanningReturnContext } from '@/lib/planning-navigation';
 import { productTimeConfigurationRoute } from '@/lib/workflow-routes';
-import type { CurrentUserDTO, DrawingLibraryCustomerDTO, DrawingLibraryFileDTO, DrawingLibraryItemDTO, ResourceCategoryDTO } from '@/types';
+import type { CurrentUserDTO, DrawingLibraryCustomerDTO, DrawingLibraryFileDTO, DrawingLibraryItemDTO, ResourceCategoryDTO, SopDrawingStatusDTO, SopStageDTO } from '@/types';
 
 type DrawingLibraryForm = {
   customerName: string;
@@ -29,6 +29,8 @@ type DrawingLibraryForm = {
 };
 
 type DrawingFilter = 'all' | 'complete' | 'recent' | 'anomaly';
+type SopFilter = 'all' | 'unset' | SopStageDTO | 'missing_drawing';
+type SopMetadataForm = { sopStage: SopStageDTO; drawingStatus: SopDrawingStatusDTO; remark: string };
 type DrawingModal = { mode: 'create' | 'edit'; item?: DrawingLibraryItemDTO } | null;
 type PdfOverlayEditorSession = {
   itemId: string;
@@ -80,6 +82,15 @@ const filterOptions: Array<[DrawingFilter, string]> = [
   ['complete', '资料完整'],
   ['anomaly', '异常数据'],
 ];
+const sopFilterOptions: Array<[SopFilter, string]> = [
+  ['all', '全部 SOP'],
+  ['unset', '未登记'],
+  ['standard', '标准'],
+  ['new_product', '新品'],
+  ['validating', '验证中'],
+  ['missing_drawing', '没图纸'],
+];
+const sopStageLabels: Record<SopStageDTO, string> = { standard: '标准', new_product: '新品', validating: '验证中' };
 
 function dt(value?: string | null) {
   if (!value) return '-';
@@ -176,6 +187,7 @@ export function DrawingLibraryShell({
   const [customers, setCustomers] = useState(initialCustomers);
   const [keyword, setKeyword] = useState('');
   const [filter, setFilter] = useState<DrawingFilter>('all');
+  const [sopFilter, setSopFilter] = useState<SopFilter>('all');
   const [customer, setCustomer] = useState('全部客户');
   const requestedActiveItem = initialItems.find(item => item.id === requestedItemId) || null;
   const [selectedId, setSelectedId] = useState(requestedItemId ? (requestedActiveItem?.id || '') : (initialItems[0]?.id || ''));
@@ -195,6 +207,9 @@ export function DrawingLibraryShell({
   const [filePanelOpen, setFilePanelOpen] = useState(false);
   const [pdfOverlaySession, setPdfOverlaySession] = useState<PdfOverlayEditorSession | null>(null);
   const [pdfOverlayOpening, setPdfOverlayOpening] = useState(false);
+  const [sopMetadataOpen, setSopMetadataOpen] = useState(false);
+  const [sopMetadataSaving, setSopMetadataSaving] = useState(false);
+  const [sopMetadataForm, setSopMetadataForm] = useState<SopMetadataForm>({ sopStage: 'standard', drawingStatus: 'available', remark: '' });
   const [deleteTarget, setDeleteTarget] = useState<DrawingLibraryFileDTO | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [missingReference, setMissingReference] = useState<MissingDrawingReference | null>(null);
@@ -215,9 +230,13 @@ export function DrawingLibraryShell({
   const urlMissingWarnedRef = useRef(false);
   const requestedItemLoadingRef = useRef('');
 
-  const visibleItems = useMemo(() => (
-    customer === '全部客户' ? items : items.filter(item => item.customerName === customer)
-  ), [customer, items]);
+  const visibleItems = useMemo(() => items.filter(item => {
+    if (customer !== '全部客户' && item.customerName !== customer) return false;
+    if (sopFilter === 'all') return true;
+    if (sopFilter === 'unset') return !item.sopMetadata;
+    if (sopFilter === 'missing_drawing') return item.sopMetadata?.drawingStatus === 'missing';
+    return item.sopMetadata?.sopStage === sopFilter;
+  }), [customer, items, sopFilter]);
   const referenceResolutionPending = !selectedId && (referenceResolving || !!missingReference);
   const selectedItem = visibleItems.find(item => item.id === selectedId)
     || (!referenceResolutionPending ? visibleItems[0] : null);
@@ -236,7 +255,7 @@ export function DrawingLibraryShell({
     : [];
   const activeStructuredCount = activeStructuredRecords.length + activeConnectorParameters.length;
   const isSopCategory = activeCategory?.code === 'sop';
-  const hasActiveFilters = !!keyword.trim() || filter !== 'all' || customer !== '全部客户';
+  const hasActiveFilters = !!keyword.trim() || filter !== 'all' || customer !== '全部客户' || sopFilter !== 'all';
   const activeFilterLabel = filterOptions.find(([key]) => key === filter)?.[1] || '全部';
   const visibleFileCount = useMemo(() => visibleItems.reduce((total, item) => total + item.fileCount, 0), [visibleItems]);
 
@@ -364,11 +383,12 @@ export function DrawingLibraryShell({
       if (bulkImportOpen) setBulkImportOpen(false);
       else if (trashOpen) setTrashOpen(false);
       else if (bulkHelpOpen) setBulkHelpOpen(false);
+      else if (sopMetadataOpen) setSopMetadataOpen(false);
       else if (modal) setModal(null);
     }
     window.addEventListener('keydown', closeTransientLayer);
     return () => window.removeEventListener('keydown', closeTransientLayer);
-  }, [bulkHelpOpen, bulkImportOpen, modal, trashOpen]);
+  }, [bulkHelpOpen, bulkImportOpen, modal, sopMetadataOpen, trashOpen]);
 
   useEffect(() => {
     if (!filePanelOpen) return undefined;
@@ -379,7 +399,7 @@ export function DrawingLibraryShell({
     function keepFilePanelActive(event: KeyboardEvent) {
       const panel = filePanelRef.current;
       if (!panel) return;
-      const blockingLayerOpen = !!(bulkImportOpen || bulkHelpOpen || modal || trashOpen);
+      const blockingLayerOpen = !!(bulkImportOpen || bulkHelpOpen || modal || sopMetadataOpen || trashOpen);
       if (blockingLayerOpen) return;
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -410,7 +430,7 @@ export function DrawingLibraryShell({
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', keepFilePanelActive);
     };
-  }, [bulkHelpOpen, bulkImportOpen, filePanelOpen, modal, trashOpen]);
+  }, [bulkHelpOpen, bulkImportOpen, filePanelOpen, modal, sopMetadataOpen, trashOpen]);
 
   const loadData = useCallback(async () => {
     loadControllerRef.current?.abort();
@@ -524,6 +544,7 @@ export function DrawingLibraryShell({
     const form = new FormData();
     form.set('expectedRevision', String(payload.document.revision ?? session.initialDocument.revision ?? 0));
     form.set('document', JSON.stringify(payload.document));
+    form.set('controlMode', payload.controlMode);
     const manifest = payload.overlays.map(overlay => ({
       page: overlay.page,
       width: overlay.width,
@@ -565,6 +586,39 @@ export function DrawingLibraryShell({
     setKeyword('');
     setFilter('all');
     setCustomer('全部客户');
+    setSopFilter('all');
+  }
+
+  function openSopMetadataEditor() {
+    if (!selectedItem) return;
+    setSopMetadataForm({
+      sopStage: selectedItem.sopMetadata?.sopStage || 'standard',
+      drawingStatus: selectedItem.sopMetadata?.drawingStatus || 'available',
+      remark: selectedItem.sopMetadata?.remark || '',
+    });
+    setSopMetadataOpen(true);
+  }
+
+  async function saveSopMetadata(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedItem || sopMetadataSaving) return;
+    setSopMetadataSaving(true);
+    try {
+      const response = await fetch(`/api/drawing-library/${selectedItem.id}/sop`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(sopMetadataForm),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'SOP 状态保存失败');
+      setSopMetadataOpen(false);
+      await loadData();
+      setMsg('SOP 状态、图纸状态和备注已保存，并同步到资料列表');
+    } catch (error) {
+      setMsg(error instanceof Error ? error.message : 'SOP 状态保存失败');
+    } finally {
+      setSopMetadataSaving(false);
+    }
   }
 
   async function loadTrash(search = trashKeyword) {
@@ -858,10 +912,17 @@ export function DrawingLibraryShell({
             </select>
           </label>
 
+          <label className="hm-drawing-status-filter hm-drawing-sop-filter">
+            <span>SOP</span>
+            <select className="hm-workbench-input" value={sopFilter} onChange={event => setSopFilter(event.target.value as SopFilter)}>
+              {sopFilterOptions.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+          </label>
+
           <div className="hm-drawing-result-count" aria-live="polite">
             <span>{loading ? '正在检索' : '当前结果'}</span><strong>{loading ? '…' : visibleItems.length}</strong><small>规格 · {visibleFileCount} 文件</small>
           </div>
-          <span className="hm-drawing-filter-summary" title={[keyword.trim() ? `关键词：${keyword.trim()}` : '', customer !== '全部客户' ? `客户：${customer}` : '', filter !== 'all' ? `状态：${activeFilterLabel}` : ''].filter(Boolean).join(' · ') || '全部资料'}>{hasActiveFilters ? '已启用筛选' : '全部资料'}</span>
+          <span className="hm-drawing-filter-summary" title={[keyword.trim() ? `关键词：${keyword.trim()}` : '', customer !== '全部客户' ? `客户：${customer}` : '', filter !== 'all' ? `状态：${activeFilterLabel}` : '', sopFilter !== 'all' ? `SOP：${sopFilterOptions.find(([key]) => key === sopFilter)?.[1]}` : ''].filter(Boolean).join(' · ') || '全部资料'}>{hasActiveFilters ? '已启用筛选' : '全部资料'}</span>
           <details className="hm-drawing-more-filters">
             <summary className="hm-workbench-button">更多筛选</summary>
             <div role="group" aria-label="快捷资料状态筛选">
@@ -892,6 +953,7 @@ export function DrawingLibraryShell({
                   <div className="drawing-spec-title-line">
                     <strong title={item.specification}>{item.specification}</strong>
                     {item.isAnomaly && <span title={item.anomalyReason || '异常数据'}>异常</span>}
+                    {item.sopMetadata && <span className={`sop-stage ${item.sopMetadata.sopStage}`} title={`SOP：${sopStageLabels[item.sopMetadata.sopStage]}`}>{sopStageLabels[item.sopMetadata.sopStage]}</span>}
                   </div>
                   <p title={`${item.customerName} · ${item.productName || '未设置品名'}`}>{item.customerName} · {item.productName || '未设置品名'}</p>
                   <footer>
@@ -1031,9 +1093,28 @@ export function DrawingLibraryShell({
                   <input ref={fileInputRef} hidden multiple type="file" accept="application/pdf,.pdf,image/*" onChange={event => uploadFiles(event.target.files)} />
                   <>
                       <div className="drawing-preview-head">
-                        <span><b>{activeCategory?.name || '资料预览'}</b><small>{selectedFile ? `${selectedFile.version || 'V1.0'} · ${bytes(selectedFile.fileSize)}` : '当前分类'}</small></span>
+                        <span><b>{activeCategory?.name || '资料预览'}</b><small>{selectedFile ? `${selectedFile.version || 'V1.0'} · ${bytes(selectedFile.fileSize)}` : '当前分类'}{isSopCategory && selectedFile?.controlMode ? <em className={`drawing-control-inline ${selectedFile.controlMode}`}>{selectedFile.controlMode === 'controlled' ? '受控' : '未受控'}</em> : null}</small></span>
                         <strong title={selectedFile ? safeDisplayFilename(selectedFile) : ''}>{selectedFile ? safeDisplayFilename(selectedFile) : '暂无文件'}</strong>
                       </div>
+
+                      {isSopCategory ? (
+                        <div className="drawing-sop-metadata" aria-label="SOP 资料属性">
+                          <span className={`stage ${selectedItem.sopMetadata?.sopStage || 'unset'}`}>
+                            <FileCheck2 size={15} aria-hidden="true" />
+                            <small>SOP 状态</small><strong>{selectedItem.sopMetadata ? sopStageLabels[selectedItem.sopMetadata.sopStage] : '未登记'}</strong>
+                          </span>
+                          <span className={`drawing ${selectedItem.sopMetadata?.drawingStatus || 'unset'}`}>
+                            {selectedItem.sopMetadata?.drawingStatus === 'missing' ? <FileWarning size={15} aria-hidden="true" /> : <FileImage size={15} aria-hidden="true" />}
+                            <small>图纸状态</small><strong>{selectedItem.sopMetadata ? (selectedItem.sopMetadata.drawingStatus === 'missing' ? '没图纸' : '有图纸') : '未登记'}</strong>
+                          </span>
+                          <span className={`control ${selectedFile?.controlMode || 'unset'}`}>
+                            {selectedFile?.controlMode === 'controlled' ? <ShieldCheck size={15} aria-hidden="true" /> : <ShieldOff size={15} aria-hidden="true" />}
+                            <small>当前版本</small><strong>{selectedFile?.controlMode === 'controlled' ? '受控' : selectedFile?.controlMode === 'uncontrolled' ? '未受控' : '未标记'}</strong>
+                          </span>
+                          <p title={selectedItem.sopMetadata?.remark || '暂无 SOP 备注'}><small>备注</small><strong>{selectedItem.sopMetadata?.remark || '暂无备注'}</strong></p>
+                          {canManageDrawing ? <button type="button" onClick={openSopMetadataEditor}><Settings2 size={15} aria-hidden="true" />编辑属性</button> : null}
+                        </div>
+                      ) : null}
 
                       {!selectedFile && activeStructuredCount > 0 ? (
                         <div className="drawing-structured-records hm-scroll-region" tabIndex={0} aria-label={`${activeCategory?.name || '结构化资料'}，共 ${activeStructuredCount} 条`}>
@@ -1097,7 +1178,7 @@ export function DrawingLibraryShell({
                   <button key={file.id} className={selectedFile?.id === file.id ? 'active' : ''} type="button" onClick={() => setSelectedFileId(file.id)}>
                     <b>{file.fileType === 'pdf' ? 'PDF' : file.fileType === 'image' ? 'IMG' : 'FILE'}</b>
                     <span title={safeDisplayFilename(file)}>{safeDisplayFilename(file)}</span>
-                    <em>{file.version || 'V1.0'} · {bytes(file.fileSize)}</em>
+                    <em>{file.version || 'V1.0'} · {bytes(file.fileSize)}{file.controlMode ? ` · ${file.controlMode === 'controlled' ? '受控' : '未受控'}` : ''}</em>
                   </button>
                 ))}
               </div>
@@ -1118,6 +1199,37 @@ export function DrawingLibraryShell({
           </aside>}
         </section>
       </div>
+
+      {canManageDrawing && sopMetadataOpen && selectedItem && (
+        <div className="modal-backdrop drawing-sop-metadata-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setSopMetadataOpen(false); }}>
+          <form className="drawing-sop-metadata-dialog" onSubmit={saveSopMetadata}>
+            <header>
+              <span><FileCheck2 size={22} aria-hidden="true" /></span>
+              <div><small>SOP 资料属性</small><h3>{selectedItem.specification}</h3><p>状态用于资料检索；受控状态在发布 PDF 新版本时单独选择。</p></div>
+              <button type="button" aria-label="关闭 SOP 属性窗口" onClick={() => setSopMetadataOpen(false)}>×</button>
+            </header>
+            <fieldset>
+              <legend>SOP 状态</legend>
+              <div className="drawing-sop-choice-grid three">
+                {(['standard', 'new_product', 'validating'] as SopStageDTO[]).map(value => (
+                  <button key={value} type="button" className={sopMetadataForm.sopStage === value ? 'active' : ''} aria-pressed={sopMetadataForm.sopStage === value} onClick={() => setSopMetadataForm(current => ({ ...current, sopStage: value }))}>
+                    <FileCheck2 size={18} aria-hidden="true" /><strong>{sopStageLabels[value]}</strong><small>{value === 'standard' ? '正式常规资料' : value === 'new_product' ? '新品导入阶段' : '现场或工艺验证中'}</small>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>图纸状态</legend>
+              <div className="drawing-sop-choice-grid">
+                <button type="button" className={sopMetadataForm.drawingStatus === 'available' ? 'active available' : ''} aria-pressed={sopMetadataForm.drawingStatus === 'available'} onClick={() => setSopMetadataForm(current => ({ ...current, drawingStatus: 'available' }))}><FileImage size={18} /><strong>有图纸</strong><small>当前产品已有可用图纸</small></button>
+                <button type="button" className={sopMetadataForm.drawingStatus === 'missing' ? 'active missing' : ''} aria-pressed={sopMetadataForm.drawingStatus === 'missing'} onClick={() => setSopMetadataForm(current => ({ ...current, drawingStatus: 'missing' }))}><FileWarning size={18} /><strong>没图纸</strong><small>允许建档，后续可按状态追踪</small></button>
+              </div>
+            </fieldset>
+            <label className="drawing-sop-remark"><span>备注</span><textarea maxLength={500} value={sopMetadataForm.remark} onChange={event => setSopMetadataForm(current => ({ ...current, remark: event.target.value }))} placeholder="例如：新品试制，端子压接参数待验证；或当前客户尚未提供正式图纸。" /><small>{sopMetadataForm.remark.length}/500</small></label>
+            <footer><button className="hm-workbench-button" type="button" onClick={() => setSopMetadataOpen(false)}>取消</button><button className="hm-workbench-button primary" type="submit" disabled={sopMetadataSaving}>{sopMetadataSaving ? '保存中...' : '保存 SOP 属性'}</button></footer>
+          </form>
+        </div>
+      )}
 
       {canManageDrawing && modal && (
         <div className="modal-backdrop" role="presentation">

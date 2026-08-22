@@ -127,7 +127,12 @@ export function validatePdfOverlayDocument(input: unknown, identity: { itemId: s
 export async function loadEditablePdfSource(itemId: string, fileId: string) {
   const file = await prisma.drawingLibraryFile.findFirst({
     where: { id: fileId, libraryItemId: itemId, deletedAt: null, isCurrent: true, libraryItem: { deletedAt: null }, category: { code: 'sop' } },
-    include: { category: { select: { id: true, name: true, code: true, sortOrder: true } }, uploadedBy: { select: { displayName: true, username: true } } },
+    include: {
+      category: { select: { id: true, name: true, code: true, sortOrder: true } },
+      uploadedBy: { select: { displayName: true, username: true } },
+      sourcePdfOverlayVersion: { select: { controlMode: true } },
+      sourceSopVersion: { select: { controlMode: true } },
+    },
   });
   if (!file) throw new PdfOverlayRequestError('当前 SOP PDF 不存在、已删除或不是最新版本', 404, 'PDF_OVERLAY_SOURCE_NOT_FOUND');
   if (file.mimeType !== 'application/pdf' && !/\.pdf$/i.test(file.originalName)) throw new PdfOverlayRequestError('在线二次编辑仅支持 PDF 文件');

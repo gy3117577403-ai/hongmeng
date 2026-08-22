@@ -109,11 +109,22 @@ export type DrawingLibraryFileDTO = {
   updatedAt: string;
   deletedAt?: string | null;
   sourcePdfOverlayVersionId?: string | null;
+  controlMode?: 'controlled' | 'uncontrolled' | null;
   supersedesFileId?: string | null;
   isCurrent: boolean;
   contentUrl: string;
   viewUrl: string;
   downloadUrl: string;
+};
+
+export type SopStageDTO = 'standard' | 'new_product' | 'validating';
+export type SopDrawingStatusDTO = 'available' | 'missing';
+export type SopMetadataDTO = {
+  id: string;
+  sopStage: SopStageDTO;
+  drawingStatus: SopDrawingStatusDTO;
+  remark: string | null;
+  updatedAt: string;
 };
 
 export type ProductDataRecordDTO = {
@@ -173,6 +184,7 @@ export type DrawingLibraryItemDTO = {
   isComplete: boolean;
   isAnomaly: boolean;
   anomalyReason: string;
+  sopMetadata?: SopMetadataDTO | null;
   files: DrawingLibraryFileDTO[];
   structuredRecords?: ProductDataRecordDTO[];
   connectorParameters?: ProductConnectorParameterBindingDTO[];

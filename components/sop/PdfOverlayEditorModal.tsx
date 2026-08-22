@@ -22,6 +22,8 @@ import {
   Save,
   Scan,
   Send,
+  ShieldCheck,
+  ShieldOff,
   Square,
   Trash2,
   Type,
@@ -59,6 +61,7 @@ import type {
   PdfOverlayAnnotation,
   PdfOverlayAnnotationStyle,
   PdfOverlayDocument,
+  PdfOverlayControlMode,
   PdfOverlayEditorModalProps,
   PdfOverlayPersistenceResult,
   PdfOverlayPoint,
@@ -469,6 +472,8 @@ export function PdfOverlayEditorModal({
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [message, setMessage] = useState('');
   const [uploadingImage, setUploadingImage] = useState(false);
+  const [publishPromptOpen, setPublishPromptOpen] = useState(false);
+  const [publishControlMode, setPublishControlMode] = useState<PdfOverlayControlMode>('uncontrolled');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<SVGSVGElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -520,6 +525,8 @@ export function PdfOverlayEditorModal({
     setLastSavedAt(null);
     setMessage(identityError);
     setMinimized(false);
+    setPublishPromptOpen(false);
+    setPublishControlMode('uncontrolled');
   }, [baseFileId, fileName, identityError, initialDocument, open, sourceId, stableSourceKey]);
 
   useEffect(() => {
@@ -784,7 +791,7 @@ export function PdfOverlayEditorModal({
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [open, saveState]);
 
-  const publish = useCallback(async () => {
+  const publish = useCallback(async (controlMode: PdfOverlayControlMode) => {
     if (identityError) {
       setSaveState('error');
       setMessage(identityError);
@@ -794,7 +801,7 @@ export function PdfOverlayEditorModal({
       setMessage('当前未接入发布回调。');
       return;
     }
-    if (!window.confirm('确认发布当前批注版本？发布后应由业务层生成新的文件版本。')) return;
+    setPublishPromptOpen(false);
     const savedDocument = saveState === 'dirty' && onSave ? await save() : null;
     if (saveState === 'dirty' && onSave && !savedDocument) return;
     setSaveState('saving');
@@ -810,11 +817,11 @@ export function PdfOverlayEditorModal({
         pageSizes.push({ page, width: viewport.width, height: viewport.height });
       }
       const overlays = await exportPdfOverlayPngs(document, pageSizes);
-      const result = await onPublish({ document, overlays });
+      const result = await onPublish({ document, overlays, controlMode });
       applyPersistenceResult(document, result);
       setLastSavedAt(new Date());
       setSaveState('saved');
-      setMessage('当前批注版本已提交发布。');
+      setMessage(`当前批注版本已按${controlMode === 'controlled' ? '受控' : '未受控'}模式发布。`);
     } catch (error) {
       setSaveState('error');
       setMessage(error instanceof Error ? error.message : '发布失败，请稍后重试。');
@@ -1384,7 +1391,7 @@ export function PdfOverlayEditorModal({
           </button>
           <span className={styles.commandSpacer} />
           <button type="button" className={styles.secondaryAction} onClick={() => void save()} disabled={!onSave || saveState === 'saving' || Boolean(identityError)}><Save size={17} />保存草稿</button>
-          <button type="button" className={styles.primaryAction} onClick={() => void publish()} disabled={!onPublish || saveState === 'saving' || Boolean(identityError)}><Send size={17} />发布新版本</button>
+          <button type="button" className={styles.primaryAction} onClick={() => setPublishPromptOpen(true)} disabled={!onPublish || saveState === 'saving' || Boolean(identityError)}><Send size={17} />发布新版本</button>
         </div>
 
         <div className={styles.editorBody}>
@@ -1559,6 +1566,30 @@ export function PdfOverlayEditorModal({
       </section>
       <input ref={imageInputRef} className={styles.hiddenInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={handleImageChange} />
       {uploadingImage ? <div className={styles.uploadToast}><span className={styles.spinner} />正在插入图片…</div> : null}
+      {publishPromptOpen ? (
+        <div className={styles.publishBackdrop} role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPublishPromptOpen(false); }}>
+          <section className={styles.publishDialog} role="dialog" aria-modal="true" aria-labelledby="pdf-overlay-publish-title">
+            <header>
+              <span><ShieldCheck size={22} /></span>
+              <div><small>SOP 版本发布</small><h3 id="pdf-overlay-publish-title">选择文件受控状态</h3></div>
+              <button type="button" className={styles.iconButton} onClick={() => setPublishPromptOpen(false)} aria-label="关闭发布窗口"><X size={19} /></button>
+            </header>
+            <p>该状态会永久记录在本次发布的 PDF 版本上，并在资料预览和文件列表中展示。</p>
+            <div className={styles.controlModeGrid} role="radiogroup" aria-label="文件受控状态">
+              <button type="button" role="radio" aria-checked={publishControlMode === 'controlled'} className={publishControlMode === 'controlled' ? styles.controlModeActive : ''} onClick={() => setPublishControlMode('controlled')}>
+                <span><ShieldCheck size={22} /></span><strong>受控</strong><small>已审核并纳入正式生产资料，现场应优先使用此版本。</small><i>{publishControlMode === 'controlled' ? <Check size={16} /> : null}</i>
+              </button>
+              <button type="button" role="radio" aria-checked={publishControlMode === 'uncontrolled'} className={publishControlMode === 'uncontrolled' ? styles.controlModeActive : ''} onClick={() => setPublishControlMode('uncontrolled')}>
+                <span><ShieldOff size={22} /></span><strong>未受控</strong><small>用于验证、讨论或临时参考，不能替代正式受控版本。</small><i>{publishControlMode === 'uncontrolled' ? <Check size={16} /> : null}</i>
+              </button>
+            </div>
+            <footer>
+              <button type="button" className={styles.secondaryAction} onClick={() => setPublishPromptOpen(false)}>取消</button>
+              <button type="button" className={styles.primaryAction} onClick={() => void publish(publishControlMode)} disabled={saveState === 'saving'}><Send size={17} />确认发布</button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

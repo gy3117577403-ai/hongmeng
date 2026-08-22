@@ -4,7 +4,10 @@ import type {
   DrawingLibraryItem,
   ProductConnectorParameterBinding,
   ProductDataRecord,
+  PdfOverlayVersion,
   ResourceCategory,
+  SopDocument,
+  SopVersion,
   User,
 } from '@prisma/client';
 import { invalidSpecificationReason, isInvalidSpecification } from '@/lib/bulk-original-drawing-parser';
@@ -149,6 +152,8 @@ export function drawingFileType(file: { mimeType: string; originalName: string; 
 export type DrawingLibraryFileWithMeta = DrawingLibraryFile & {
   category?: Pick<ResourceCategory, 'id' | 'name' | 'code' | 'sortOrder'> | null;
   uploadedBy?: Pick<User, 'displayName' | 'username'> | null;
+  sourcePdfOverlayVersion?: Pick<PdfOverlayVersion, 'controlMode'> | null;
+  sourceSopVersion?: Pick<SopVersion, 'controlMode'> | null;
 };
 
 export type DrawingLibraryItemWithFiles = DrawingLibraryItem & {
@@ -156,10 +161,12 @@ export type DrawingLibraryItemWithFiles = DrawingLibraryItem & {
   productionPlanOrders?: DrawingLibraryPlanningLink[];
   productDataRecords?: ProductDataRecord[];
   connectorBindings?: Array<ProductConnectorParameterBinding & { connectorParameter: ConnectorParameter }>;
+  sopDocument?: Pick<SopDocument, 'id' | 'sopStage' | 'drawingStatus' | 'remark' | 'deletedAt' | 'updatedAt'> | null;
 };
 
 export function serializeDrawingLibraryFile(file: DrawingLibraryFileWithMeta) {
   const fileType = drawingFileType(file);
+  const persistedControlMode = file.sourcePdfOverlayVersion?.controlMode ?? file.sourceSopVersion?.controlMode;
   return {
     id: file.id,
     libraryItemId: file.libraryItemId,
@@ -179,6 +186,11 @@ export function serializeDrawingLibraryFile(file: DrawingLibraryFileWithMeta) {
     updatedAt: file.updatedAt.toISOString(),
     deletedAt: file.deletedAt?.toISOString() || null,
     sourcePdfOverlayVersionId: file.sourcePdfOverlayVersionId,
+    controlMode: persistedControlMode === 'controlled'
+      ? 'controlled' as const
+      : persistedControlMode === 'uncontrolled'
+        ? 'uncontrolled' as const
+        : null,
     supersedesFileId: file.supersedesFileId,
     isCurrent: file.isCurrent,
     contentUrl: `/api/drawing-library/files/${file.id}/content`,
@@ -231,6 +243,15 @@ export function serializeDrawingLibraryItem(item: DrawingLibraryItemWithFiles, c
     isComplete: completeness.isComplete,
     isAnomaly: !!anomalyReason,
     anomalyReason,
+    sopMetadata: item.sopDocument && !item.sopDocument.deletedAt
+      ? {
+          id: item.sopDocument.id,
+          sopStage: item.sopDocument.sopStage as 'standard' | 'new_product' | 'validating',
+          drawingStatus: item.sopDocument.drawingStatus as 'available' | 'missing',
+          remark: item.sopDocument.remark,
+          updatedAt: item.sopDocument.updatedAt.toISOString(),
+        }
+      : null,
     files: files.map(serializeDrawingLibraryFile),
     structuredRecords: (item.productDataRecords || []).map(record => ({
       id: record.id,

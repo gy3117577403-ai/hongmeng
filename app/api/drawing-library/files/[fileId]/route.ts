@@ -33,6 +33,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { fileId: st
         include: {
           category: { select: { id: true, name: true, code: true, sortOrder: true } },
           uploadedBy: { select: { displayName: true, username: true } },
+          sourcePdfOverlayVersion: { select: { controlMode: true } },
+          sourceSopVersion: { select: { controlMode: true } },
         },
       });
       await tx.drawingLibraryItem.update({ where: { id: file.libraryItemId }, data: { updatedAt: new Date() } });

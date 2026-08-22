@@ -23,6 +23,8 @@ function itemInclude() {
       include: {
         category: { select: { id: true, name: true, code: true, sortOrder: true } },
         uploadedBy: { select: { displayName: true, username: true } },
+        sourcePdfOverlayVersion: { select: { controlMode: true } },
+        sourceSopVersion: { select: { controlMode: true } },
       },
       orderBy: [{ createdAt: 'desc' as const }],
     },
@@ -39,6 +41,9 @@ function itemInclude() {
       where: { isCurrent: true },
       include: { connectorParameter: true },
       orderBy: [{ version: 'desc' as const }],
+    },
+    sopDocument: {
+      select: { id: true, sopStage: true, drawingStatus: true, remark: true, deletedAt: true, updatedAt: true },
     },
   };
 }
@@ -60,6 +65,14 @@ export async function GET(req: NextRequest) {
                 { productName: { contains: keyword, mode: 'insensitive' } },
                 { specification: { contains: keyword, mode: 'insensitive' } },
                 { remark: { contains: keyword, mode: 'insensitive' } },
+                {
+                  sopDocument: {
+                    is: {
+                      deletedAt: null,
+                      remark: { contains: keyword, mode: 'insensitive' },
+                    },
+                  },
+                },
                 {
                   files: {
                     some: {

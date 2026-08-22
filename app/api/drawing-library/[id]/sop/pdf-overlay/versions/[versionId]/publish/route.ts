@@ -27,6 +27,8 @@ type OverlayManifestEntry = {
   field: string;
 };
 
+type PdfOverlayControlMode = 'controlled' | 'uncontrolled';
+
 function ymd(date: Date) {
   return `${date.getFullYear()}${String(date.getMonth() + 1).padStart(2, '0')}${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -35,6 +37,11 @@ function parseNonNegativeInteger(value: FormDataEntryValue | null, label: string
   const parsed = typeof value === 'string' ? Number(value) : Number.NaN;
   if (!Number.isInteger(parsed) || parsed < 0) throw new PdfOverlayRequestError(`${label}无效`);
   return parsed;
+}
+
+function parseControlMode(value: FormDataEntryValue | null): PdfOverlayControlMode {
+  if (value === 'controlled' || value === 'uncontrolled') return value;
+  throw new PdfOverlayRequestError('文件受控状态无效');
 }
 
 function parseManifest(value: FormDataEntryValue | null, pageCount: number): OverlayManifestEntry[] {
@@ -74,6 +81,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     const { id: itemId, versionId } = await context.params;
     const form = await req.formData();
     const expectedRevision = parseNonNegativeInteger(form.get('expectedRevision'), '草稿版本号');
+    const controlMode = parseControlMode(form.get('controlMode'));
 
     const draft = await prisma.pdfOverlayVersion.findFirst({
       where: {
@@ -126,6 +134,8 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     }
     pdf.setModificationDate(new Date());
     pdf.setProducer('杭连电子协同平台 PDF 在线编辑器');
+    pdf.setSubject(controlMode === 'controlled' ? '受控 SOP 文件' : '未受控 SOP 文件');
+    pdf.setKeywords(['SOP', controlMode === 'controlled' ? '受控' : '未受控']);
     const publishedBody = Buffer.from(await pdf.save({ useObjectStreams: true }));
     const outputName = publishedName(source.file.displayName || source.file.originalName, draft.version);
     const objectKey = `drawing-library/${itemId}/sop/${ymd(new Date())}/${crypto.randomUUID()}-${safeFilename(outputName)}`;
@@ -164,6 +174,18 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
         where: { id: lockedDraft.sourceFileId },
         data: { isCurrent: false },
       });
+      await tx.pdfOverlayVersion.update({
+        where: { id: lockedDraft.id },
+        data: {
+          status: 'published',
+          controlMode,
+          content: document as unknown as Prisma.InputJsonValue,
+          revision: nextRevision,
+          updatedById: user.id,
+          publishedById: user.id,
+          publishedAt: new Date(),
+        },
+      });
       const created = await tx.drawingLibraryFile.create({
         data: {
           libraryItemId: itemId,
@@ -183,17 +205,8 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
         include: {
           category: { select: { id: true, name: true, code: true, sortOrder: true } },
           uploadedBy: { select: { displayName: true, username: true } },
-        },
-      });
-      await tx.pdfOverlayVersion.update({
-        where: { id: lockedDraft.id },
-        data: {
-          status: 'published',
-          content: document as unknown as Prisma.InputJsonValue,
-          revision: nextRevision,
-          updatedById: user.id,
-          publishedById: user.id,
-          publishedAt: new Date(),
+          sourcePdfOverlayVersion: { select: { controlMode: true } },
+          sourceSopVersion: { select: { controlMode: true } },
         },
       });
       await tx.pdfOverlayDocument.update({
@@ -222,6 +235,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
             version,
             annotationCount: document.annotations.length,
             overlayPages: manifest.map(entry => entry.page),
+            controlMode,
             planning,
             sync,
           },

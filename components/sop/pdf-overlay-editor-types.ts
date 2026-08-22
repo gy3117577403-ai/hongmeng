@@ -83,9 +83,12 @@ export type PdfOverlayPageImage = PdfOverlayPageSize & {
   pngDataUrl: string;
 };
 
+export type PdfOverlayControlMode = 'controlled' | 'uncontrolled';
+
 export type PdfOverlayPublishPayload = {
   document: PdfOverlayDocument;
   overlays: PdfOverlayPageImage[];
+  controlMode: PdfOverlayControlMode;
 };
 
 /**

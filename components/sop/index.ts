@@ -3,6 +3,7 @@ export type { SopEditorHandle, SopEditorProps } from './SopEditor';
 export { PdfOverlayEditorModal } from './PdfOverlayEditorModal';
 export type {
   PdfOverlayDocument,
+  PdfOverlayControlMode,
   PdfOverlayEditorModalProps,
   PdfOverlayPersistenceResult,
   PdfOverlayPublishPayload,

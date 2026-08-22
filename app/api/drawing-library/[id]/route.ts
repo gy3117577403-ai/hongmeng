@@ -14,6 +14,8 @@ const includeFiles = {
     include: {
       category: { select: { id: true, name: true, code: true, sortOrder: true } },
       uploadedBy: { select: { displayName: true, username: true } },
+      sourcePdfOverlayVersion: { select: { controlMode: true } },
+      sourceSopVersion: { select: { controlMode: true } },
     },
     orderBy: [{ createdAt: 'desc' as const }],
   },
@@ -30,6 +32,9 @@ const includeFiles = {
     where: { isCurrent: true },
     include: { connectorParameter: true },
     orderBy: [{ version: 'desc' as const }],
+  },
+  sopDocument: {
+    select: { id: true, sopStage: true, drawingStatus: true, remark: true, deletedAt: true, updatedAt: true },
   },
 };
 

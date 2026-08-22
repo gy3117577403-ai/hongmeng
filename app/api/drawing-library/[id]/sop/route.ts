@@ -43,6 +43,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
         where: { id: document.id },
         data: { sopStage, drawingStatus, remark: remark || null, updatedById: user.id },
       });
+      await tx.drawingLibraryItem.update({ where: { id: params.id }, data: { updatedAt: new Date() } });
       await createSopOperationLog(tx, {
         userId: user.id,
         action: 'update_sop_metadata',

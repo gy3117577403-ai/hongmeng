@@ -5,6 +5,10 @@ import test from 'node:test';
 
 const migrationPath = path.resolve('prisma', 'migrations', '202608010001_sop_online_editor', 'migration.sql');
 const migration = readFileSync(migrationPath, 'utf8');
+const overlayControlMigration = readFileSync(
+  path.resolve('prisma', 'migrations', '202608220001_pdf_overlay_control_mode', 'migration.sql'),
+  'utf8',
+);
 
 test('SOP migration separates mutable revisions from immutable version numbering', () => {
   assert.match(migration, /"version" INTEGER NOT NULL/);
@@ -30,4 +34,9 @@ test('published online SOP files are traceable without changing manual drawing-l
     migration,
     /FOREIGN KEY \("source_sop_version_id"\) REFERENCES "sop_versions"\("id"\) ON DELETE SET NULL/,
   );
+});
+
+test('published PDF overlay versions persist a backward-compatible control mode', () => {
+  assert.match(overlayControlMigration, /ALTER TABLE "pdf_overlay_versions"/);
+  assert.match(overlayControlMigration, /ADD COLUMN "control_mode" TEXT NOT NULL DEFAULT 'uncontrolled'/);
 });

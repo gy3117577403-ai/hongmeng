@@ -76,6 +76,7 @@ export async function GET(req: NextRequest) {
             { specification: { contains: keyword, mode: 'insensitive' } },
             { productName: { contains: keyword, mode: 'insensitive' } },
             { remark: { contains: keyword, mode: 'insensitive' } },
+            { sopDocument: { is: { deletedAt: null, remark: { contains: keyword, mode: 'insensitive' } } } },
           ],
         },
         include: {
@@ -84,8 +85,13 @@ export async function GET(req: NextRequest) {
             include: {
               category: { select: { id: true, name: true, code: true, sortOrder: true } },
               uploadedBy: { select: { displayName: true, username: true } },
+              sourcePdfOverlayVersion: { select: { controlMode: true } },
+              sourceSopVersion: { select: { controlMode: true } },
             },
             orderBy: [{ createdAt: 'desc' }],
+          },
+          sopDocument: {
+            select: { id: true, sopStage: true, drawingStatus: true, remark: true, deletedAt: true, updatedAt: true },
           },
         },
         orderBy: [{ updatedAt: 'desc' }],
