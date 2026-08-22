@@ -19,6 +19,10 @@ function order(overrides: Partial<ProductionPlanOrderDTO> = {}): ProductionPlanO
     drawingLibraryItemId: 'drawing-1',
     drawingFileCount: 0,
     sopFileCount: 0,
+    sopStage: null,
+    sopDrawingStatus: null,
+    sopRemark: null,
+    sopMetadataUpdatedAt: null,
     orderQuantity: 100,
     planningUnitMilliseconds: null,
     effectiveUnitMilliseconds: null,
@@ -119,10 +123,47 @@ test('combines deficiency filters with OR matching', () => {
   assert.equal(matchesPlanningReadiness(prepared, undefined, ['missing_time', 'missing_drawing']), false);
 });
 
+test('keeps SOP file readiness separate from the SOP lifecycle stage', () => {
+  const validatingWithFile = planningReadinessState(order({
+    drawingFileCount: 1,
+    sopFileCount: 1,
+    planningUnitMilliseconds: 20_000,
+    sopStage: 'validating',
+  }));
+  assert.equal(validatingWithFile.missing_sop, false);
+  assert.equal(validatingWithFile.sop_validating, true);
+  assert.equal(validatingWithFile.ready_preparation, true);
+
+  const validatingWithoutFile = planningReadinessState(order({
+    drawingFileCount: 1,
+    sopFileCount: 0,
+    planningUnitMilliseconds: 20_000,
+    sopStage: 'validating',
+  }));
+  assert.equal(validatingWithoutFile.missing_sop, true);
+  assert.equal(validatingWithoutFile.sop_validating, true);
+  assert.equal(validatingWithoutFile.ready_preparation, false);
+});
+
+test('classifies new-product and unregistered SOP metadata independently', () => {
+  assert.equal(planningReadinessState(order({ sopStage: 'new_product' })).sop_new_product, true);
+  assert.equal(planningReadinessState(order({ sopStage: 'new_product' })).sop_unregistered, false);
+  assert.equal(planningReadinessState(order({ sopStage: null })).sop_unregistered, true);
+});
+
 test('limits order-pool readiness filters to order-level information', () => {
   assert.deepEqual(
-    orderLevelReadinessFilters(['missing_time', 'missing_sop', 'missing_material', 'missing_process', 'ready_preparation']),
-    ['missing_time', 'missing_sop', 'ready_preparation'],
+    orderLevelReadinessFilters([
+      'missing_time',
+      'missing_sop',
+      'sop_validating',
+      'sop_new_product',
+      'sop_unregistered',
+      'missing_material',
+      'missing_process',
+      'ready_preparation',
+    ]),
+    ['missing_time', 'missing_sop', 'sop_validating', 'sop_new_product', 'sop_unregistered', 'ready_preparation'],
   );
 });
 

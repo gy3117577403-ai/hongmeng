@@ -4,6 +4,7 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
 import { reconcileProductionPlanDrawingLinks } from '@/lib/planning-product-link';
+import { normalizePlanningSopDrawingStatus, normalizePlanningSopStage } from '@/lib/planning-sop';
 import {
   chinaDate,
   chinaWeekRange,
@@ -151,8 +152,17 @@ export async function GET(req: NextRequest) {
           specification: true,
           productName: true,
           files: {
-            where: { deletedAt: null },
+            where: { deletedAt: null, isCurrent: true },
             select: { category: { select: { code: true } } },
+          },
+          sopDocument: {
+            select: {
+              sopStage: true,
+              drawingStatus: true,
+              remark: true,
+              deletedAt: true,
+              updatedAt: true,
+            },
           },
           productTimeProfiles: {
             where: { status: 'published' },
@@ -179,6 +189,7 @@ export async function GET(req: NextRequest) {
     }
     const productOptions: ProductionPlanProductOptionDTO[] = drawingProducts.map(item => {
       const profile = item.productTimeProfiles[0] || null;
+      const sopDocument = item.sopDocument && !item.sopDocument.deletedAt ? item.sopDocument : null;
       return {
         id: item.id,
         customerName: item.customerName,
@@ -188,6 +199,10 @@ export async function GET(req: NextRequest) {
         fileCount: item.files.length,
         drawingFileCount: item.files.filter(file => file.category.code === 'drawing').length,
         sopFileCount: item.files.filter(file => file.category.code === 'sop').length,
+        sopStage: normalizePlanningSopStage(sopDocument?.sopStage),
+        sopDrawingStatus: normalizePlanningSopDrawingStatus(sopDocument?.drawingStatus),
+        sopRemark: sopDocument?.remark || null,
+        sopMetadataUpdatedAt: sopDocument?.updatedAt.toISOString() || null,
         recommendedSalesperson: salespersonByCustomer.get(item.customerName) || null,
         publishedProductTimeVersion: profile?.version || null,
         unitMilliseconds: profile ? productTimeTotalMilliseconds(profile.entries) : null,

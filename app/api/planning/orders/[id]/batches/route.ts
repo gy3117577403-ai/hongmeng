@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 import {
+  automaticProductionPlanReleaseTarget,
   automaticallyReleaseProductionPlanBatch,
   effectivePlanningUnitMilliseconds,
   parseProductionPlanBatchInput,
@@ -35,6 +36,14 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
     }
     const updated = await prisma.$transaction(async tx => {
       const refs = await resolvePlanningReferences(tx, order);
+      const automaticTarget = automaticProductionPlanReleaseTarget({
+        weekStartDate: parsed.data.weekStartDate,
+        releaseState: 'draft',
+        workOrderId: null,
+      });
+      if (automaticTarget && refs.sopStage === 'validating' && body.confirmSopValidation !== true) {
+        throw new Error('PLAN_SOP_VALIDATION_CONFIRMATION_REQUIRED');
+      }
       const effectiveUnitMilliseconds = effectivePlanningUnitMilliseconds(
         parsed.data.unitMilliseconds,
         refs.unitMilliseconds,
@@ -87,6 +96,7 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
         batchId: batch.id,
         actorId: user.id,
         trigger: 'automatic_schedule',
+        confirmSopValidation: body.confirmSopValidation === true,
       });
       const record = await tx.productionPlanOrder.findUniqueOrThrow({
         where: { id: order.id },
@@ -101,6 +111,13 @@ export async function POST(req: NextRequest, context: { params: { id: string } }
     }, { status: 201 });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
+    if (error instanceof Error && error.message === 'PLAN_SOP_VALIDATION_CONFIRMATION_REQUIRED') {
+      return NextResponse.json({
+        ok: false,
+        requiresSopValidationConfirmation: true,
+        error: '该产品 SOP 处于验证中，请确认验证范围和使用条件后再进入生产',
+      }, { status: 409 });
+    }
     console.error('create planning batch failed', error);
     return NextResponse.json({ ok: false, error: '新增排产批次失败' }, { status: 500 });
   }

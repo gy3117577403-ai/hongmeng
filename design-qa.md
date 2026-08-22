@@ -820,3 +820,38 @@ passed
 - P2：无。
 
 final result: passed
+
+---
+
+# Planning Center SOP status design QA (v1.34.37)
+
+## Scope
+
+- Feature: surface the SOP lifecycle state from the drawing/SOP library in Planning Center.
+- Target viewport: `1366x1024` horizontal tablet; reference parity was additionally checked at `2404x1080` to match the supplied screenshot exactly.
+- Reference: `C:\Windows\TEMP\codex-clipboard-4df8ee6c-3a04-44b9-80ec-3be375a0c619.png`.
+- Implementation capture: `artifacts/planning-sop-status-v13437/implementation-2404x1080.png`.
+- Same-input comparison: `artifacts/planning-sop-status-v13437/reference-implementation-comparison.png`.
+- Filter capture: `artifacts/planning-sop-status-v13437/filter-open-1366x1024.png`.
+
+## Visual comparison
+
+- The existing Planning Center table structure, typography, row rhythm, green file-count badges, orange warning language and collapsed navigation were preserved.
+- File existence and lifecycle are no longer conflated: the production-material cell shows `SOP 1` independently from `验证中` / `新品` / `未登记`.
+- The lifecycle badge fits within the production-material column without covering the drawing badge, SOP count, warehouse state, process state or print controls.
+- The `准备状态` popover remains inside the `1366x1024` viewport and keeps each new SOP filter label paired with a short consequence description.
+- The local QA fixture contains only one order; the white area below the row is fixture sparsity, not a clipped or collapsed layout.
+
+## Interaction checks
+
+- `SOP 验证中`, `新品 SOP`, `SOP 未登记` and `SOP 缺文件` can be filtered independently.
+- The validation-state order can be scheduled normally, but current-week and next-week production release stays disabled until the operator checks the dedicated validation-risk confirmation.
+- Missing SOP files remain production-readiness blockers; a lifecycle state never fabricates file readiness.
+- SOP remark, last-update time and drawing/SOP-library link are provided through the order detail/status metadata.
+
+## Findings
+
+- P0: none.
+- P1: none.
+- P2: none.
+- Result: **PASS** for layout, information hierarchy and primary interaction at both target and reference viewports.

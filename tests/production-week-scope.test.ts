@@ -480,6 +480,63 @@ test('missing product process profile can release for warehouse preparation but 
   }
 });
 
+test('validating SOP remains schedulable but is surfaced as a separate release confirmation', async () => {
+  const tx = {
+    productionPlanBatch: {
+      findMany: async () => [{
+        id: 'batch-validating-sop',
+        quantity: 10,
+        releaseState: 'draft',
+        weekStartDate: new Date('2026-08-24T04:00:00.000Z'),
+        unitMillisecondsSnapshot: 20_000,
+        planOrder: {
+          drawingLibraryItemId: 'drawing-validating-sop',
+          customerName: '验证客户',
+          productName: '验证产品',
+          specification: 'SOP-VALIDATING-001',
+          planningUnitMilliseconds: 20_000,
+        },
+      }],
+    },
+    drawingLibraryItem: {
+      findFirst: async () => ({
+        id: 'drawing-validating-sop',
+        customerName: '验证客户',
+        productName: '验证产品',
+        specification: 'SOP-VALIDATING-001',
+        files: requiredProductionResourceFiles,
+        productTimeProfiles: [{
+          id: 'profile-validating-sop',
+          version: 1,
+          entries: [{ unitMilliseconds: 20_000 }],
+        }],
+        sopDocument: {
+          sopStage: 'validating',
+          drawingStatus: 'available',
+          remark: '样品参数需验证',
+          deletedAt: null,
+          updatedAt: new Date('2026-08-22T03:43:00.000Z'),
+        },
+      }),
+    },
+  } as unknown as Parameters<typeof previewProductionPlanRelease>[0];
+
+  const preview = await previewProductionPlanRelease(tx, {
+    batchIds: ['batch-validating-sop'],
+    target: 'preparation',
+    now: new Date('2026-08-22T04:00:00.000Z'),
+  });
+
+  assert.equal(preview.blockers, 0);
+  assert.equal(preview.validatingSopCount, 1);
+  assert.equal(preview.items[0].sopStage, 'validating');
+  assert.equal(preview.items[0].sopValidationRequired, true);
+  assert.equal(preview.items[0].sopRemark, '样品参数需验证');
+  assert.equal(preview.items[0].sopMetadataUpdatedAt, '2026-08-22T03:43:00.000Z');
+  assert.match(preview.items[0].warnings.join('；'), /SOP处于验证中/);
+  assert.match(preview.items[0].warnings.join('；'), /样品参数需验证/);
+});
+
 test('releasing without product time still creates a warehouse task and a pending production route', async () => {
   let createdWorkOrder: Record<string, unknown> | null = null;
   let warehouseTask: Record<string, unknown> | null = null;

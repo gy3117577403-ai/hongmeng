@@ -1254,6 +1254,35 @@ main.planning-center-shell.hm-workbench-root {
   text-overflow: ellipsis;
 }
 
+.planning-center-shell .planning-pool-resources {
+  margin-top: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.planning-center-shell .planning-pool-resources span {
+  min-height: 21px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.planning-center-shell .planning-pool-resources span.ready {
+  background: #edf8f0;
+  color: #287a45;
+}
+
+.planning-center-shell .planning-pool-resources span.warning {
+  background: #fff3dd;
+  color: #a15c05;
+}
+
 .planning-center-shell .planning-pool-list dl {
   margin: 8px 0;
   padding: 7px 0;
@@ -1546,6 +1575,51 @@ main.planning-center-shell.hm-workbench-root {
   background: #fff3dd;
 }
 
+.planning-center-shell .planning-document-status .planning-sop-stage {
+  grid-column: 1 / -1;
+  min-height: 23px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.planning-center-shell .planning-sop-stage.standard,
+.planning-center-shell .sop-stage.standard {
+  border-color: #b9e2c7;
+  background: #edf8f0;
+  color: #287a45;
+}
+
+.planning-center-shell .planning-sop-stage.new_product,
+.planning-center-shell .sop-stage.new_product {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #2563a9;
+}
+
+.planning-center-shell .planning-sop-stage.validating,
+.planning-center-shell .sop-stage.validating {
+  border-color: #f0b981;
+  background: #fff4e8;
+  color: #b75108;
+}
+
+.planning-center-shell .planning-sop-stage.unregistered,
+.planning-center-shell .sop-stage.unregistered {
+  border-color: #d7dee6;
+  background: #f3f5f7;
+  color: #667386;
+}
+
 .planning-center-shell .planning-print-status {
   min-width: 106px;
   display: flex;
@@ -1684,7 +1758,7 @@ main.planning-center-shell.hm-workbench-root {
 .planning-center-shell .planning-inline-inspector {
   padding: 9px 14px 10px 70px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(150px, 1fr)) auto;
+  grid-template-columns: repeat(4, minmax(128px, 1fr)) auto;
   gap: 12px;
   border-bottom: 1px solid #dfe5eb;
 }
@@ -1723,6 +1797,14 @@ main.planning-center-shell.hm-workbench-root {
   font-weight: 700;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.planning-center-shell .planning-inline-inspector .sop-text-validating {
+  color: #b75108;
+}
+
+.planning-center-shell .planning-inline-inspector .sop-text-standard {
+  color: #287a45;
 }
 
 .planning-center-shell .planning-linked-actions {
@@ -2433,6 +2515,38 @@ main.planning-center-shell.hm-workbench-root {
   font-style: normal;
 }
 
+.planning-product-option-badges {
+  flex: 0 0 auto;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+
+.planning-product-results > button .planning-product-option-badges em {
+  padding: 3px 6px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: #f5f7f9;
+}
+
+.planning-product-results > button .planning-product-option-badges .sop-stage.validating {
+  border-color: #f0b981;
+  background: #fff4e8;
+  color: #b75108;
+}
+
+.planning-product-results > button .planning-product-option-badges .sop-stage.new_product {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #2563a9;
+}
+
+.planning-product-results > button .planning-product-option-badges .sop-stage.standard {
+  border-color: #b9e2c7;
+  background: #edf8f0;
+  color: #287a45;
+}
+
 .planning-product-empty {
   min-height: 116px;
   display: grid;
@@ -2666,6 +2780,54 @@ main.planning-center-shell.hm-workbench-root {
   color: #76695e;
 }
 
+.planning-sop-confirmation {
+  margin-top: 12px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 18px 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  border: 1px solid #efb777;
+  border-radius: 9px;
+  background: #fff8ef;
+  color: #8b470d;
+  cursor: pointer;
+}
+
+.planning-sop-confirmation.release {
+  border-left: 4px solid #d95600;
+}
+
+.planning-sop-confirmation input {
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: #d95600;
+}
+
+.planning-sop-confirmation > svg {
+  width: 20px;
+  height: 20px;
+  color: #d95600;
+}
+
+.planning-sop-confirmation > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.planning-sop-confirmation strong {
+  color: #7d3d0a;
+  font-size: 12px;
+}
+
+.planning-sop-confirmation small {
+  color: #745f4e;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .planning-dialog-error {
   margin-top: 12px;
   padding: 10px 11px;
@@ -2712,6 +2874,10 @@ main.planning-center-shell.hm-workbench-root {
 
 .planning-release-summary strong.danger {
   color: #b42318;
+}
+
+.planning-release-summary strong.validation {
+  color: #d95600;
 }
 
 .planning-dialog > footer button.danger {
@@ -3202,6 +3368,19 @@ main.planning-center-shell.hm-workbench-root {
   border-radius: 7px;
 }
 
+.planning-warning-list article.sop-validating {
+  border-color: #efc18f;
+  background: #fffaf4;
+}
+
+.planning-warning-list article span.sop-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #b75108;
+  font-weight: 750;
+}
+
 .planning-warning-list article span {
   color: #9a5b08;
   font-size: 11px;
@@ -3671,6 +3850,10 @@ main.planning-center-shell.hm-workbench-root {
 }
 
 @media (max-width: 720px) {
+  .planning-release-summary.four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .planning-dialog.historical-delete-dialog {
     width: min(600px, calc(100vw - 20px));
     max-height: calc(100dvh - 20px);

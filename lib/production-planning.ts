@@ -11,6 +11,11 @@ import { shouldSynchronizeDrawingReleaseStatus } from '@/lib/production-drawing-
 import { createWorkOrderProcessRoute } from '@/lib/process-routing';
 import { allocateBusinessWorkOrderCode } from '@/lib/work-order-business-code';
 import { productTimeTotalMilliseconds } from '@/lib/product-time';
+import {
+  normalizePlanningSopDrawingStatus,
+  normalizePlanningSopStage,
+  planningSopRequiresReleaseConfirmation,
+} from '@/lib/planning-sop';
 import { normalizeWorkOrderStage } from '@/lib/work-orders';
 import type {
   ProductionPlanBatchDTO,
@@ -19,6 +24,8 @@ import type {
   ProductionPlanOrderStatus,
   ProductionPlanPriority,
   ProductionPlanReleaseState,
+  SopDrawingStatusDTO,
+  SopStageDTO,
 } from '@/types';
 
 export const productionPlanOrderInclude = {
@@ -44,6 +51,15 @@ export const productionPlanOrderInclude = {
           id: true,
           version: true,
           entries: { select: { unitMilliseconds: true } },
+        },
+      },
+      sopDocument: {
+        select: {
+          sopStage: true,
+          drawingStatus: true,
+          remark: true,
+          deletedAt: true,
+          updatedAt: true,
         },
       },
     },
@@ -198,12 +214,17 @@ export type ProductionPlanReleasePreview = {
   totalQuantity: number;
   warnings: number;
   blockers: number;
+  validatingSopCount: number;
   items: Array<{
     batchId: string;
     specification: string;
     quantity: number;
     warnings: string[];
     blockers: string[];
+    sopStage: SopStageDTO | null;
+    sopRemark: string | null;
+    sopMetadataUpdatedAt: string | null;
+    sopValidationRequired: boolean;
   }>;
 };
 
@@ -494,6 +515,10 @@ export async function resolvePlanningReferences(
   drawingFileVersion: string | null;
   sopFileId: string | null;
   sopFileVersion: string | null;
+  sopStage: SopStageDTO | null;
+  sopDrawingStatus: SopDrawingStatusDTO | null;
+  sopRemark: string | null;
+  sopMetadataUpdatedAt: string | null;
 }> {
   const itemId = text(input.drawingLibraryItemId, 80);
   const key = drawingLibraryKey(input.customerName, input.specification);
@@ -529,6 +554,15 @@ export async function resolvePlanningReferences(
         take: 1,
         select: { id: true, version: true, entries: { select: { unitMilliseconds: true } } },
       },
+      sopDocument: {
+        select: {
+          sopStage: true,
+          drawingStatus: true,
+          remark: true,
+          deletedAt: true,
+          updatedAt: true,
+        },
+      },
     },
   });
   const profile = drawing?.productTimeProfiles[0] || null;
@@ -537,6 +571,9 @@ export async function resolvePlanningReferences(
   const sopFiles = resourceFiles.filter(file => file.category.code === 'sop');
   const currentDrawing = drawingFiles[0] || null;
   const currentSop = sopFiles[0] || null;
+  const sopDocument = drawing?.sopDocument && !drawing.sopDocument.deletedAt
+    ? drawing.sopDocument
+    : null;
   return {
     drawingLibraryItemId: drawing?.id || null,
     customerName: drawing?.customerName || null,
@@ -551,6 +588,10 @@ export async function resolvePlanningReferences(
     drawingFileVersion: currentDrawing?.version || null,
     sopFileId: currentSop?.id || null,
     sopFileVersion: currentSop?.version || null,
+    sopStage: normalizePlanningSopStage(sopDocument?.sopStage),
+    sopDrawingStatus: normalizePlanningSopDrawingStatus(sopDocument?.drawingStatus),
+    sopRemark: sopDocument?.remark || null,
+    sopMetadataUpdatedAt: sopDocument?.updatedAt.toISOString() || null,
   };
 }
 
@@ -697,12 +738,20 @@ export async function previewProductionPlanRelease(
     } else if (!effectiveUnitMilliseconds) {
       warnings.push('已发布产品工时暂无有效总工时：可先下达仓库配料，生产启动前必须修正');
     }
+    const sopValidationRequired = planningSopRequiresReleaseConfirmation(refs.sopStage);
+    if (sopValidationRequired) {
+      warnings.push(`SOP处于验证中：${refs.sopRemark || '请确认验证范围和使用条件'}`);
+    }
     items.push({
       batchId: batch.id,
       specification: batch.planOrder.specification,
       quantity: batch.quantity,
       warnings,
       blockers,
+      sopStage: refs.sopStage,
+      sopRemark: refs.sopRemark,
+      sopMetadataUpdatedAt: refs.sopMetadataUpdatedAt,
+      sopValidationRequired,
     });
   }
   return {
@@ -713,6 +762,7 @@ export async function previewProductionPlanRelease(
     totalQuantity: items.reduce((sum, item) => sum + item.quantity, 0),
     warnings: items.reduce((sum, item) => sum + item.warnings.length, 0),
     blockers: items.reduce((sum, item) => sum + item.blockers.length, 0),
+    validatingSopCount: items.filter(item => item.sopValidationRequired).length,
     items,
   };
 }
@@ -1169,15 +1219,31 @@ type PlanningResourceFile = {
   category: { code: string };
 };
 
-function planningResourceSummary(item: { files: PlanningResourceFile[] } | null | undefined) {
+type PlanningSopDocument = {
+  sopStage: string;
+  drawingStatus: string;
+  remark: string | null;
+  deletedAt: Date | null;
+  updatedAt: Date;
+};
+
+function planningResourceSummary(item: {
+  files: PlanningResourceFile[];
+  sopDocument?: PlanningSopDocument | null;
+} | null | undefined) {
   const files = item?.files || [];
   const drawings = files.filter(file => file.category.code === 'drawing');
   const sops = files.filter(file => file.category.code === 'sop');
+  const sopDocument = item?.sopDocument && !item.sopDocument.deletedAt ? item.sopDocument : null;
   return {
     drawingFileCount: drawings.length,
     sopFileCount: sops.length,
     drawing: drawings[0] || null,
     sop: sops[0] || null,
+    sopStage: normalizePlanningSopStage(sopDocument?.sopStage),
+    sopDrawingStatus: normalizePlanningSopDrawingStatus(sopDocument?.drawingStatus),
+    sopRemark: sopDocument?.remark || null,
+    sopMetadataUpdatedAt: sopDocument?.updatedAt.toISOString() || null,
   };
 }
 
@@ -1307,6 +1373,10 @@ export function serializeProductionPlanOrder(order: ProductionPlanOrderRecord): 
     drawingLibraryItemId: order.drawingLibraryItemId,
     drawingFileCount: resources.drawingFileCount,
     sopFileCount: resources.sopFileCount,
+    sopStage: resources.sopStage,
+    sopDrawingStatus: resources.sopDrawingStatus,
+    sopRemark: resources.sopRemark,
+    sopMetadataUpdatedAt: resources.sopMetadataUpdatedAt,
     orderQuantity: order.orderQuantity,
     planningUnitMilliseconds: order.planningUnitMilliseconds,
     effectiveUnitMilliseconds,
@@ -1525,6 +1595,9 @@ export async function releaseProductionPlanBatch(
   } else if (!effectiveUnitMilliseconds) {
     warnings.push('产品工时待修正：仓库可先配料，生产启动前必须补齐有效总工时');
   }
+  if (planningSopRequiresReleaseConfirmation(references.sopStage)) {
+    warnings.push(`SOP处于验证中：${references.sopRemark || '需按验证条件执行并保留确认记录'}`);
+  }
   const code = workOrderCode(batch.planOrder.sourceOrderNo, batch.planOrder.sourceLineNo, batch.batchNo);
   const planActive = input.target === 'active';
   const hasOriginalDrawing = references.drawingFileCount > 0;
@@ -1659,6 +1732,8 @@ export async function releaseProductionPlanBatch(
       impactData: {
         warehouseTaskCreated: true,
         productTimePending,
+        sopStage: references.sopStage,
+        sopValidationRequired: planningSopRequiresReleaseConfirmation(references.sopStage),
         processWarnings: warnings.length,
         automaticallyStarted: started,
         weekRealigned: chinaDate(batch.weekStartDate) !== chinaDate(alignedWeek.weekStartDate),
@@ -1682,6 +1757,8 @@ export async function releaseProductionPlanBatch(
         workOrderId: workOrder.id,
         warehouseTaskCreated: true,
         productTimePending,
+        sopStage: references.sopStage,
+        sopValidationRequired: planningSopRequiresReleaseConfirmation(references.sopStage),
         warnings: warnings.length,
         automaticallyStarted: started,
         trigger: input.trigger || 'manual',
@@ -1698,6 +1775,7 @@ export async function automaticallyReleaseProductionPlanBatch(
     actorId: string;
     now?: Date;
     trigger?: 'automatic_schedule' | 'automatic_reconciliation';
+    confirmSopValidation?: boolean;
   },
 ): Promise<({ target: AutomaticProductionPlanReleaseTarget } & Awaited<ReturnType<typeof releaseProductionPlanBatch>>) | null> {
   const batch = await tx.productionPlanBatch.findUnique({
@@ -1720,6 +1798,7 @@ export async function automaticallyReleaseProductionPlanBatch(
     now: input.now,
   });
   if (preview.blockers > 0) return null;
+  if (preview.validatingSopCount > 0 && !input.confirmSopValidation) return null;
   const released = await releaseProductionPlanBatch(tx, {
     batchId: batch.id,
     target,

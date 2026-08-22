@@ -1069,6 +1069,10 @@ export type ProductionPlanProductOptionDTO = {
   fileCount: number;
   drawingFileCount: number;
   sopFileCount: number;
+  sopStage?: SopStageDTO | null;
+  sopDrawingStatus?: SopDrawingStatusDTO | null;
+  sopRemark?: string | null;
+  sopMetadataUpdatedAt?: string | null;
   recommendedSalesperson?: string | null;
   publishedProductTimeVersion?: number | null;
   unitMilliseconds?: number | null;
@@ -1125,6 +1129,10 @@ export type ProductionPlanOrderDTO = {
   drawingLibraryItemId?: string | null;
   drawingFileCount: number;
   sopFileCount: number;
+  sopStage?: SopStageDTO | null;
+  sopDrawingStatus?: SopDrawingStatusDTO | null;
+  sopRemark?: string | null;
+  sopMetadataUpdatedAt?: string | null;
   orderQuantity: number;
   planningUnitMilliseconds?: number | null;
   effectiveUnitMilliseconds?: number | null;

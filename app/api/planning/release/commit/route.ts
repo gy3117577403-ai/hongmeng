@@ -9,7 +9,12 @@ export const dynamic = 'force-dynamic';
 export async function POST(req: NextRequest) {
   try {
     const user = await requireUser();
-    const body = await req.json().catch(() => ({})) as { batchIds?: unknown; target?: unknown; confirmWarnings?: unknown };
+    const body = await req.json().catch(() => ({})) as {
+      batchIds?: unknown;
+      target?: unknown;
+      confirmWarnings?: unknown;
+      confirmSopValidation?: unknown;
+    };
     const batchIds = Array.isArray(body.batchIds)
       ? body.batchIds.map(value => String(value)).filter(Boolean).slice(0, 100)
       : [];
@@ -19,6 +24,9 @@ export async function POST(req: NextRequest) {
     const result = await prisma.$transaction(async tx => {
       const preview = await previewProductionPlanRelease(tx, { batchIds, target, now: releaseTime });
       if (preview.blockers > 0) throw new Error('PLAN_BATCH_BLOCKED');
+      if (preview.validatingSopCount > 0 && body.confirmSopValidation !== true) {
+        throw new Error('PLAN_SOP_VALIDATION_CONFIRMATION_REQUIRED');
+      }
       if (preview.warnings > 0 && body.confirmWarnings !== true) throw new Error('PLAN_BATCH_CONFIRMATION_REQUIRED');
       const released = [] as Array<{ batchId: string; workOrderId: string; warnings: string[] }>;
       for (const batchId of batchIds) {
@@ -56,6 +64,14 @@ export async function POST(req: NextRequest) {
     }
     if (message === 'PLAN_BATCH_CONFIRMATION_REQUIRED') {
       return NextResponse.json({ ok: false, requiresConfirmation: true, error: '存在资料、仓库或工艺提醒，请确认后继续' }, { status: 409 });
+    }
+    if (message === 'PLAN_SOP_VALIDATION_CONFIRMATION_REQUIRED') {
+      return NextResponse.json({
+        ok: false,
+        requiresConfirmation: true,
+        requiresSopValidationConfirmation: true,
+        error: '所选计划包含验证中 SOP，请确认验证范围和使用条件后再下达',
+      }, { status: 409 });
     }
     console.error('planning release commit failed', error);
     return NextResponse.json({ ok: false, error: '下达计划失败' }, { status: 500 });
