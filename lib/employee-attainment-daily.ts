@@ -8,6 +8,8 @@ export type DailyAttainmentInput = {
   claimedStandardLaborMilliseconds: number;
   actualLaborMilliseconds: number;
   attendanceConfirmed: boolean;
+  /** Confirmed leave/rest/absence has no production-performance denominator. */
+  excludedFromAttainmentBase?: boolean;
   /** Undefined is treated as eligible for backward-compatible historical inputs. */
   attainmentEligible?: boolean;
   /** Daily immutable snapshot. Undefined keeps the historical all-or-nothing behavior. */
@@ -52,7 +54,7 @@ export function aggregateDailyAttainment(days: Iterable<DailyAttainmentInput>) {
       );
     } else if (day.standardLaborMilliseconds > 0) {
       unmatchedStandardLaborMilliseconds += day.standardLaborMilliseconds;
-      attendanceMissingDays += 1;
+      if (!day.excludedFromAttainmentBase) attendanceMissingDays += 1;
     }
   }
 

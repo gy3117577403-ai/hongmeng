@@ -7,6 +7,7 @@ import {
   CalendarDays,
   CalendarRange,
   CheckCircle2,
+  ChevronLeft,
   ChevronRight,
   ClipboardCheck,
   Clock3,
@@ -28,7 +29,7 @@ import {
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { populateBusinessReportWorkbook, type BusinessExcelKpi, type BusinessExcelValue } from '@/lib/business-excel';
 import {
@@ -52,6 +53,7 @@ import type {
   ReportCenterModeDTO,
   ReportCenterOverviewDTO,
   ReportCenterPeriodDTO,
+  ReportCompletedBatchesDTO,
   ReportOperationsDTO,
   ReportOperationsEmployeeRowDTO,
   ReportOperationsLaborRowDTO,
@@ -71,10 +73,11 @@ type MetricDefinition = {
 };
 
 const OVERVIEW_BRANCHES = new Set<ReportBranchKey>([
-  'quantity-attainment', 'completed-orders', 'order-status', 'production-trend', 'process-bottlenecks',
+  'quantity-attainment', 'order-status', 'production-trend', 'process-bottlenecks',
   'delivery-risk', 'due-soon', 'delivery-orders', 'completeness', 'missing-route', 'missing-standard',
   'missing-drawing', 'missing-material', 'sample-tasks', 'sample-attainment', 'pending-review', 'published-materials', 'review-attainment',
 ]);
+const COMPLETED_BATCH_BRANCHES = new Set<ReportBranchKey>(['completed-orders']);
 const OPERATIONS_BRANCHES = new Set<ReportBranchKey>([
   'weekly-plan-attainment', 'attendance-attainment', 'team-hours', 'employee-matrix',
 ]);
@@ -124,6 +127,16 @@ function dateTimeText(value: string | null | undefined): string {
   return new Intl.DateTimeFormat('zh-CN', {
     timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(date).replaceAll('/', '-');
+}
+
+function employeeExclusionText(value: EmployeeAttainmentRowDTO['days'][number]['exclusionReason']): string {
+  if (value === 'leave') return '请假，不计达成';
+  if (value === 'rest') return '休息，不计达成';
+  if (value === 'absent') return '缺勤，无生产基数';
+  if (value === 'missing_attendance') return '考勤草稿或缺失';
+  if (value === 'zero_attendance') return '确认出勤为 0，待核对';
+  if (value === 'excluded_stream') return '非量产统计口径';
+  return '计入目标达成';
 }
 
 function rangeText(report: { rangeStart: string; rangeEnd: string } | null): string {
@@ -182,11 +195,14 @@ function branchUsesSingleDate(branch: ReportBranchKey): boolean {
 }
 
 function branchMethod(branch: ReportBranchKey): string {
+  if (branch === 'completed-orders') {
+    return '到期批次按计划完成日期入池；完成时点取最终工序累计非作废良品首次达到批次数量的时间，数量按批次封顶。';
+  }
   if (['quantity-attainment', 'production-trend', 'weekly-plan-attainment'].includes(branch)) {
     return '成品数量只统计最终工序良品；中间工序数量仅用于瓶颈和质量分析。';
   }
   if (['attendance-attainment', 'team-hours', 'employee-attainment', 'employee-matrix', 'unmatched-labor'].includes(branch)) {
-    return '效率只使用已确认考勤，并按标准工时与异常免责口径计算；草稿和缺失记录单独标识。';
+    return '净应出勤=排班+认可加班-确认请假；实际出勤已含加班。草稿、缺失、整日请假和休息不进入员工目标达成基数。';
   }
   if (QUALITY_BRANCHES.has(branch)) {
     return '异常影响人时按事件分配人员汇总，品质确认与闭环状态分别统计。';
@@ -239,6 +255,7 @@ function claimRows(pools: ProcessLaborPoolDTO[]) {
 function metricForBranch(
   branch: ReportBranchKey,
   overview: ReportCenterOverviewDTO | null,
+  completedBatches: ReportCompletedBatchesDTO | null,
   operations: ReportOperationsDTO | null,
   employees: EmployeeAttainmentReportDTO | null,
   abnormal: AbnormalTimeReportDTO | null,
@@ -246,6 +263,7 @@ function metricForBranch(
   branchItems: ReportCenterFocusItemDTO[],
 ): MetricDefinition {
   const summary = overview?.summary;
+  const batchSummary = completedBatches?.summary;
   const operationsSummary = operations?.summary;
   const employeeSummary = employees?.summary;
   const abnormalSummary = abnormal?.summary;
@@ -257,10 +275,10 @@ function metricForBranch(
       { label: '最终良品', value: numberText(summary?.completedQty), note: '已封顶' },
       { label: '数量缺口', value: numberText(Math.max(0, (summary?.plannedQty || 0) - (summary?.completedQty || 0))), note: '待完成' },
     ] },
-    'completed-orders': { label: '完成工单', value: numberText(summary?.completedOrders), unit: '单', description: '所选周期内已经完成归档', tone: 'green', stats: [
-      { label: '最终良品', value: numberText(summary?.completedQty), note: '套' },
-      { label: '进行中', value: numberText(summary?.activeOrders), note: '单' },
-      { label: '待开始', value: numberText(summary?.pendingOrders), note: '单' },
+    'completed-orders': { label: '按期批次达成率', value: percentText(batchSummary?.onTimeAttainmentBasisPoints), description: '按期完成批次 / 所选周期到期批次', tone: 'green', stats: [
+      { label: '到期批次', value: numberText(batchSummary?.dueBatches), note: '批' },
+      { label: '完成批次', value: numberText(batchSummary?.completedBatches), note: percentText(batchSummary?.batchCompletionBasisPoints) },
+      { label: '数量达成', value: percentText(batchSummary?.quantityAttainmentBasisPoints), note: `${numberText(batchSummary?.completedQuantity)} / ${numberText(batchSummary?.plannedQuantity)}` },
     ] },
     'order-status': { label: '工单总量', value: numberText((overview?.statusDistribution || []).reduce((t, row) => t + row.count, 0)), unit: '单', description: '当前筛选下的工单状态结构', tone: 'blue', stats: [
       { label: '完成', value: numberText(summary?.completedOrders), note: '单' },
@@ -297,20 +315,20 @@ function metricForBranch(
       { label: '进行中', value: numberText(branchItems.filter(item => item.status === 'in_progress').length), note: '单' },
       { label: '完成', value: numberText(branchItems.filter(item => item.status === 'completed').length), note: '单' },
     ] },
-    'attendance-attainment': { label: '全厂出勤达成率', value: percentText(operationsSummary?.attendanceBasisPoints), description: '有效出勤工时 / 应出勤工时', tone: 'blue', stats: [
-      { label: '应出勤', value: compactHours(operationsSummary?.plannedMilliseconds), note: '工时' },
-      { label: '有效出勤', value: compactHours(operationsSummary?.attendanceMilliseconds), note: '工时' },
-      { label: '草稿考勤', value: numberText(operationsSummary?.draftAttendanceRecords), note: '条' },
+    'attendance-attainment': { label: '全厂出勤得分', value: percentText(operationsSummary?.attendanceBasisPoints), description: '实际出勤 / 净应出勤，得分最高 100%', tone: 'blue', stats: [
+      { label: '净应出勤', value: compactHours(operationsSummary?.netExpectedMilliseconds), note: '排班+加班-请假' },
+      { label: '实际出勤', value: compactHours(operationsSummary?.attendanceMilliseconds), note: `超额 ${compactHours(operationsSummary?.extraAttendanceMilliseconds)}` },
+      { label: '认可加班', value: compactHours(operationsSummary?.recognizedOvertimeMilliseconds), note: `请假扣减 ${compactHours(operationsSummary?.leaveDeductionMilliseconds)}` },
     ] },
     'team-hours': { label: '班组数量', value: numberText(operationsSummary?.teamCount), unit: '组', description: '按班组核对出勤与标准产出', tone: 'green', stats: [
       { label: '生产员工', value: numberText(operationsSummary?.employeeCount), note: '人' },
       { label: '标准产出', value: compactHours(operationsSummary?.standardLaborMilliseconds), note: '工时' },
-      { label: '车间达成', value: percentText(operationsSummary?.attainmentBasisPoints), note: '效率' },
+      { label: '车间工时利用率', value: percentText(operationsSummary?.utilizationBasisPoints), note: '利用率' },
     ] },
-    'employee-attainment': { label: '员工出勤达成率', value: percentText(employeeSummary?.attainmentBasisPoints), description: '标准工时 / 有效出勤产能', tone: 'blue', stats: [
+    'employee-attainment': { label: '员工工时利用率', value: percentText(employeeSummary?.coverageBasisPoints), description: '生产实耗与免责异常覆盖的实际出勤占比', tone: 'blue', stats: [
       { label: '生产员工', value: numberText(employeeSummary?.employeeCount), note: '人' },
-      { label: '标准工时', value: compactHours(employeeSummary?.standardLaborMilliseconds), note: '工时' },
-      { label: '正式考勤', value: numberText(employeeSummary?.attendanceConfirmedDays), note: '人日' },
+      { label: '目标达成率', value: percentText(employeeSummary?.attainmentBasisPoints), note: '加权汇总' },
+      { label: '标准工时效率', value: percentText(employeeSummary?.processEfficiencyBasisPoints), note: '标准 / 实耗' },
     ] },
     'employee-matrix': { label: '矩阵员工', value: numberText(operations?.employeeMatrix.length), unit: '人', description: '员工 × 日期交叉达成状态', tone: 'purple', stats: [
       { label: '月均达成', value: percentText(operationsSummary?.attainmentBasisPoints), note: '车间' },
@@ -431,7 +449,10 @@ export default function ReportCenterBranchDashboard({
   const [customer, setCustomer] = useState(() => searchParams.get('customer') || '');
   const [team, setTeam] = useState(() => searchParams.get('team') || '');
   const [keyword, setKeyword] = useState('');
+  const deferredKeyword = useDeferredValue(keyword.trim());
+  const [batchPage, setBatchPage] = useState(1);
   const [overview, setOverview] = useState<ReportCenterOverviewDTO | null>(null);
+  const [completedBatches, setCompletedBatches] = useState<ReportCompletedBatchesDTO | null>(null);
   const [operations, setOperations] = useState<ReportOperationsDTO | null>(null);
   const [employees, setEmployees] = useState<EmployeeAttainmentReportDTO | null>(null);
   const [abnormal, setAbnormal] = useState<AbnormalTimeReportDTO | null>(null);
@@ -440,6 +461,7 @@ export default function ReportCenterBranchDashboard({
   const [error, setError] = useState('');
   const [refreshToken, setRefreshToken] = useState(0);
   const [selectedFocus, setSelectedFocus] = useState<ReportCenterFocusItemDTO | null>(null);
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeAttainmentRowDTO | null>(null);
   const [toast, setToast] = useState('');
   const [loadedAt, setLoadedAt] = useState('');
 
@@ -460,7 +482,17 @@ export default function ReportCenterBranchDashboard({
         rangeParams.set('startDate', startDate);
         rangeParams.set('endDate', endDate);
       }
-      if (OVERVIEW_BRANCHES.has(initialBranch)) {
+      if (COMPLETED_BATCH_BRANCHES.has(initialBranch)) {
+        const params = new URLSearchParams(rangeParams);
+        params.set('page', String(batchPage));
+        params.set('pageSize', '25');
+        if (customer) params.set('customer', customer);
+        if (deferredKeyword) params.set('keyword', deferredKeyword);
+        const response = await fetch(`/api/reports/completed-batches?${params}`, { cache: 'no-store', signal: controller.signal });
+        const body = await response.json() as ApiResponse<ReportCompletedBatchesDTO>;
+        if (!response.ok || !body.report) throw new Error(body.error || '批次达成报表加载失败');
+        setCompletedBatches(body.report);
+      } else if (OVERVIEW_BRANCHES.has(initialBranch)) {
         const mode: ReportCenterModeDTO = initialDomain === 'sample' ? 'sample' : 'mass';
         const params = new URLSearchParams(rangeParams);
         params.set('mode', mode);
@@ -501,14 +533,22 @@ export default function ReportCenterBranchDashboard({
       }
     }).finally(() => setLoading(false));
     return () => controller.abort();
-  }, [customer, date, endDate, initialBranch, initialDomain, period, refreshToken, startDate]);
+  }, [batchPage, customer, date, deferredKeyword, endDate, initialBranch, initialDomain, period, refreshToken, startDate]);
 
   useEffect(() => {
-    if (!selectedFocus) return undefined;
-    const close = (event: KeyboardEvent) => event.key === 'Escape' && setSelectedFocus(null);
+    setBatchPage(1);
+  }, [customer, date, deferredKeyword, endDate, initialBranch, period, startDate]);
+
+  useEffect(() => {
+    if (!selectedFocus && !selectedEmployee) return undefined;
+    const close = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setSelectedFocus(null);
+      setSelectedEmployee(null);
+    };
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
-  }, [selectedFocus]);
+  }, [selectedEmployee, selectedFocus]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -532,8 +572,8 @@ export default function ReportCenterBranchDashboard({
   const qualityEvents = useMemo(() => (abnormal?.events || []).filter(event => (!normalizedKeyword || `${event.sequence} ${event.categoryLabel} ${event.title} ${event.reason || ''} ${event.responsibilityDepartment || ''}`.toLocaleLowerCase('zh-CN').includes(normalizedKeyword))
     && (initialBranch !== 'open-events' || event.resolutionStatus === 'open')), [abnormal?.events, initialBranch, normalizedKeyword]);
   const teams = operations?.teamMonthly.map(item => item.team) || [];
-  const metric = metricForBranch(initialBranch, overview, operations, employees, abnormal, laborPools, rawBranchItems);
-  const activeRange = overview || operations || employees || abnormal;
+  const metric = metricForBranch(initialBranch, overview, completedBatches, operations, employees, abnormal, laborPools, rawBranchItems);
+  const activeRange = completedBatches || overview || operations || employees || abnormal;
 
   function branchHref(targetDomain: ReportDomainKey, target: ReportBranchDefinition): string {
     const query = new URLSearchParams(searchParams.toString());
@@ -576,6 +616,24 @@ export default function ReportCenterBranchDashboard({
         ['样品任务', '进行中', '已完成', '已逾期', '待分项审核', '已审核', '已发布', '审核完成率'],
         [overview?.sample.taskCount || 0, overview?.sample.activeCount || 0, overview?.sample.completedCount || 0, overview?.sample.overdueCount || 0, overview?.sample.pendingReviewCount || 0, overview?.sample.reviewedItemCount || 0, overview?.sample.publishedItemCount || 0, percentText(overview?.sample.reviewBasisPoints)],
       ];
+    } else if (initialBranch === 'completed-orders') {
+      const params = new URLSearchParams({ period, date, all: 'true' });
+      if (period === 'custom') {
+        params.set('startDate', startDate);
+        params.set('endDate', endDate);
+      }
+      if (customer) params.set('customer', customer);
+      if (deferredKeyword) params.set('keyword', deferredKeyword);
+      const response = await fetch(`/api/reports/completed-batches?${params}`, { cache: 'no-store' });
+      const body = await response.json() as ApiResponse<ReportCompletedBatchesDTO>;
+      if (!response.ok || !body.report) {
+        setToast(body.error || '批次达成明细导出失败');
+        return;
+      }
+      rows = [
+        ['订单行/批次', '工单', '客户', '产品', '规格', '计划数量', '最终良品', '数量达成', '计划完成日', '实际达成时间', '状态', '是否逾期', '当前工序', '责任人', '下发状态'],
+        ...body.report.rows.map(row => [row.batchLabel, row.workOrderCode || '', row.customerName, row.productName, row.specification, row.quantity, row.completedQuantity, percentText(row.quantityBasisPoints), dateOnly(row.plannedCompletionDate), dateTimeText(row.actualCompletionAt), row.statusLabel, row.overdue ? '是' : '否', row.currentProcess || '', row.owner || '', row.releaseState]),
+      ];
     } else if (OVERVIEW_BRANCHES.has(initialBranch)) {
       rows = [
         ['任务/工单', '客户', '产品', '规格', '计划数量', '完成数量', '状态', '当前环节', '责任人', '交期', '风险', '资料缺口'],
@@ -588,23 +646,28 @@ export default function ReportCenterBranchDashboard({
       ];
     } else if (initialBranch === 'attendance-attainment') {
       rows = [
-        ['日期', '应到人数', '实到人数', '请假人数', '缺勤人数', '休息人数', '正式记录', '草稿记录', '应出勤工时', '有效出勤工时', '出勤达成率'],
-        ...(operations?.dailyAttendance || []).map(row => [row.date, row.plannedPeople, row.attendancePeople, row.leavePeople, row.absentPeople, row.restPeople, row.confirmedRecords, row.draftRecords, compactHours(row.plannedMilliseconds), compactHours(row.attendanceMilliseconds), percentText(row.attendanceBasisPoints)]),
+        ['日期', '排班人数', '计入基数人数', '实到人数', '整日请假', '部分/整日请假', '缺勤', '休息', '正式记录', '草稿记录', '排班工时', '认可加班', '请假扣减', '净应出勤', '实际出勤', '超额出勤', '原始工时率', '出勤得分', '人数出勤率', '加班来源'],
+        ...(operations?.dailyAttendance || []).map(row => [row.date, row.scheduledPeople, row.plannedPeople, row.attendancePeople, row.fullLeavePeople, row.leavePeople, row.absentPeople, row.restPeople, row.confirmedRecords, row.draftRecords, compactHours(row.scheduledMilliseconds), compactHours(row.recognizedOvertimeMilliseconds), compactHours(row.leaveDeductionMilliseconds), compactHours(row.netExpectedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(row.extraAttendanceMilliseconds), percentText(row.attendanceRawBasisPoints), percentText(row.hoursBasisPoints), percentText(row.attendanceBasisPoints), `计划 ${row.planOvertimeRecords} / 考勤回退 ${row.attendanceFallbackRecords}`]),
       ];
     } else if (initialBranch === 'team-hours') {
       rows = [
-        ['班组', '员工数', '出勤人数', '正式考勤', '应出勤工时', '有效出勤工时', '请假工时', '标准工时', '待匹配工时', '免责异常', '出勤率', '工时达成率'],
-        ...teamRows.map(row => [row.team, row.employeeCount, row.attendancePeople, row.confirmedRecords, compactHours(row.plannedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(row.leaveMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), compactHours(row.exemptAbnormalMilliseconds), percentText(row.attendanceBasisPoints), percentText(row.attainmentBasisPoints)]),
+        ['班组', '员工数', '出勤人数', '正式考勤', '净应出勤', '实际出勤', '认可加班', '请假扣减', '生产实耗', '标准工时', '免责异常', '未解释工时', '出勤得分', '工时利用率', '标准工时效率', '目标达成率'],
+        ...teamRows.map(row => [row.team, row.employeeCount, row.attendancePeople, row.confirmedRecords, compactHours(row.netExpectedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(row.recognizedOvertimeMilliseconds), compactHours(row.leaveDeductionMilliseconds), compactHours(row.actualLaborMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.exemptAbnormalMilliseconds), compactHours(row.unexplainedMilliseconds), percentText(row.attendanceBasisPoints), percentText(row.utilizationBasisPoints), percentText(row.efficiencyBasisPoints), percentText(row.attainmentBasisPoints)]),
       ];
     } else if (initialBranch === 'employee-matrix') {
       rows = [
-        ['班组', '员工编号', '员工', '统计资格', '应出勤工时', '有效出勤工时', '标准工时', '待匹配工时', '达成率'],
-        ...operationRows.map(row => [row.team, row.employee.employeeNo, row.employee.name, row.attainmentEligible ? '计入达成率' : '仅考勤，不计达成率', compactHours(row.plannedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), percentText(row.attainmentBasisPoints)]),
+        ['班组', '员工编号', '员工', '统计资格', '净应出勤', '实际出勤', '生产实耗', '标准工时', '待匹配工时', '工时利用率', '标准效率', '目标达成率'],
+        ...operationRows.map(row => [row.team, row.employee.employeeNo, row.employee.name, row.attainmentEligible ? '计入达成率' : '仅考勤，不计达成率', compactHours(row.netExpectedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(row.actualLaborMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), percentText(row.utilizationBasisPoints), percentText(row.efficiencyBasisPoints), percentText(row.attainmentBasisPoints)]),
       ];
-    } else if (EMPLOYEE_BRANCHES.has(initialBranch)) {
+    } else if (initialBranch === 'employee-attainment') {
       rows = [
-        ['员工编号', '姓名', '班组', '统计资格', '确认出勤', '标准工时', '待匹配工时', '免责异常', '达成率'],
-        ...employeeRows.map(row => [row.employee.employeeNo, row.employee.name, row.employee.team || '', row.attainmentEligible ? '计入达成率' : '仅考勤，不计达成率', compactHours(row.attendanceMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), compactHours(row.exemptAbnormalMilliseconds), percentText(row.attainmentBasisPoints)]),
+        ['日期', '员工编号', '姓名', '班组', '考勤状态', '排班工时', '认可加班', '请假扣减', '净应出勤', '实际出勤', '超额出勤', '生产实耗', '标准工时', '免责异常', '工时利用率', '标准工时效率', '目标达成率', '是否计入', '剔除原因'],
+        ...employeeRows.flatMap(row => row.days.map(day => [day.date, row.employee.employeeNo, row.employee.name, row.employee.team || '', day.attendanceStatus, compactHours(day.scheduledMilliseconds), compactHours(day.recognizedOvertimeMilliseconds), compactHours(day.leaveDeductionMilliseconds), compactHours(day.netExpectedMilliseconds), compactHours(day.attendanceMilliseconds), compactHours(day.extraAttendanceMilliseconds), compactHours(day.actualLaborMilliseconds), compactHours(day.standardLaborMilliseconds), compactHours(day.exemptAbnormalMilliseconds), percentText(day.utilizationBasisPoints), percentText(day.efficiencyBasisPoints), percentText(day.targetAttainmentBasisPoints), day.includedInAttainment ? '是' : '否', employeeExclusionText(day.exclusionReason)])),
+      ];
+    } else if (initialBranch === 'unmatched-labor') {
+      rows = [
+        ['员工编号', '姓名', '班组', '确认出勤', '标准工时', '待匹配工时', '缺失人日', '报工记录'],
+        ...employeeRows.map(row => [row.employee.employeeNo, row.employee.name, row.employee.team || '', compactHours(row.attendanceMilliseconds), compactHours(row.standardLaborMilliseconds), compactHours(row.unmatchedStandardLaborMilliseconds), row.attendanceMissingDays, row.claimCount + row.executionCount]),
       ];
     } else if (initialBranch === 'affected-labor' || initialBranch === 'cause-distribution') {
       rows = [
@@ -673,7 +736,7 @@ export default function ReportCenterBranchDashboard({
         <div className="report-branch-controls">
           {branchUsesSingleDate(initialBranch) ? <label><CalendarDays /><input type="date" value={date} onChange={event => { setDate(event.target.value); replaceQuery({ date: event.target.value }); }} aria-label="记工日期" /></label>
             : <div className="report-period-switch" role="group" aria-label="统计周期">{([['today', '今日'], ['week', '本周'], ['month', '本月'], ['custom', '自定义']] as Array<[ReportCenterPeriodDTO, string]>).map(([key, label]) => <button className={period === key ? 'active' : ''} type="button" key={key} onClick={() => { setPeriod(key); replaceQuery({ period: key }); }}>{label}</button>)}{period === 'custom' ? <span className="report-custom-range"><label><CalendarDays /><input type="date" value={startDate} max={endDate} onChange={event => { setStartDate(event.target.value); replaceQuery({ startDate: event.target.value }); }} aria-label="开始日期" /></label><i>至</i><label><CalendarRange /><input type="date" value={endDate} min={startDate} onChange={event => { setEndDate(event.target.value); replaceQuery({ endDate: event.target.value }); }} aria-label="结束日期" /></label></span> : <label><CalendarDays /><input type="date" value={date} onChange={event => { setDate(event.target.value); replaceQuery({ date: event.target.value }); }} aria-label="基准日期" /></label>}</div>}
-          {OVERVIEW_BRANCHES.has(initialBranch) && <label><Layers3 /><select value={customer} onChange={event => { setCustomer(event.target.value); replaceQuery({ customer: event.target.value || null }); }} aria-label="客户筛选"><option value="">全部客户</option>{(overview?.customers || []).map(item => <option value={item} key={item}>{item}</option>)}</select></label>}
+          {(OVERVIEW_BRANCHES.has(initialBranch) || COMPLETED_BATCH_BRANCHES.has(initialBranch)) && <label><Layers3 /><select value={customer} onChange={event => { setCustomer(event.target.value); replaceQuery({ customer: event.target.value || null }); }} aria-label="客户筛选"><option value="">全部客户</option>{(completedBatches?.customers || overview?.customers || []).map(item => <option value={item} key={item}>{item}</option>)}</select></label>}
           {TEAM_FILTER_BRANCHES.has(initialBranch) && <label><UsersRound /><select value={team} onChange={event => { setTeam(event.target.value); replaceQuery({ team: event.target.value || null }); }} aria-label="班组筛选"><option value="">全部班组</option>{teams.map(item => <option value={item} key={item}>{item}</option>)}</select></label>}
           <button className="icon" type="button" title="刷新数据" aria-label="刷新数据" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw className={loading ? 'spin' : ''} /></button>
           <button type="button" onClick={() => void exportBranch()}><Download />导出 Excel</button>
@@ -687,7 +750,7 @@ export default function ReportCenterBranchDashboard({
           ? <label><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder={initialDomain === 'people' ? '搜索员工、工号、班组或岗位' : initialDomain === 'quality' ? '搜索异常标题、原因或责任部门' : '搜索工单、客户、产品、工序或资料缺口'} aria-label="搜索当前分支" /></label>
           : <p className="report-topic-insight"><Activity /><span><small>当前分析</small><strong>{branch.description}</strong></span></p>}
         <div><ListFilter /><span>{domain.label}</span><ChevronRight /><strong>{branch.label}</strong></div>
-        <em>{loading ? '正在刷新' : `更新于 ${dateTimeText(overview?.generatedAt || operations?.generatedAt || loadedAt || null)}`}</em>
+        <em>{loading ? '正在刷新' : `更新于 ${dateTimeText(completedBatches?.generatedAt || overview?.generatedAt || operations?.generatedAt || loadedAt || null)}`}</em>
       </section>
 
       <MetricHero metric={metric} />
@@ -698,6 +761,7 @@ export default function ReportCenterBranchDashboard({
         {!loading && !error && <BranchContent
           branch={initialBranch}
           overview={overview}
+          completedBatches={completedBatches}
           operations={operations}
           employees={employees}
           abnormal={abnormal}
@@ -708,11 +772,14 @@ export default function ReportCenterBranchDashboard({
           teamRows={teamRows}
           qualityEvents={qualityEvents}
           onFocus={setSelectedFocus}
+          onEmployee={setSelectedEmployee}
+          onBatchPage={setBatchPage}
         />}
       </section>
       {toast && <div className="report-branch-toast" role="status"><CheckCircle2 />{toast}</div>}
     </div>
     {selectedFocus && <FocusDrawer item={selectedFocus} onClose={() => setSelectedFocus(null)} />}
+    {selectedEmployee && <EmployeeDrawer row={selectedEmployee} onClose={() => setSelectedEmployee(null)} />}
   </main>;
 }
 
@@ -726,6 +793,7 @@ function MetricHero({ metric }: { metric: MetricDefinition }) {
 function BranchContent(props: {
   branch: ReportBranchKey;
   overview: ReportCenterOverviewDTO | null;
+  completedBatches: ReportCompletedBatchesDTO | null;
   operations: ReportOperationsDTO | null;
   employees: EmployeeAttainmentReportDTO | null;
   abnormal: AbnormalTimeReportDTO | null;
@@ -736,17 +804,19 @@ function BranchContent(props: {
   teamRows: ReportOperationsLaborRowDTO[];
   qualityEvents: AbnormalTimeReportDTO['events'];
   onFocus: (item: ReportCenterFocusItemDTO) => void;
+  onEmployee: (item: EmployeeAttainmentRowDTO) => void;
+  onBatchPage: (page: number) => void;
 }) {
-  const { branch, overview, operations, abnormal, laborPools, focusItems, employeeRows, operationRows, teamRows, qualityEvents, onFocus } = props;
+  const { branch, overview, completedBatches, operations, abnormal, laborPools, focusItems, employeeRows, operationRows, teamRows, qualityEvents, onFocus, onEmployee, onBatchPage } = props;
   if (branch === 'quantity-attainment' || branch === 'production-trend') return <TrendPanel report={overview} />;
-  if (branch === 'completed-orders') return <FocusTable title="完成工单明细" items={focusItems} onSelect={onFocus} />;
+  if (branch === 'completed-orders') return <CompletedBatchTable report={completedBatches} onPage={onBatchPage} />;
   if (branch === 'order-status') return <><StatusDistribution report={overview} /><FocusTable title="状态对应工单" items={focusItems} onSelect={onFocus} /></>;
   if (branch === 'weekly-plan-attainment') return <WeeklyPlan report={operations} />;
   if (branch === 'process-bottlenecks') return <BottleneckTable report={overview} />;
   if (branch === 'delivery-risk' || branch === 'due-soon' || branch === 'delivery-orders') return <FocusTable title={branch === 'delivery-risk' ? '逾期交付工单' : branch === 'due-soon' ? '即将到期工单' : '交付工单明细'} items={focusItems} onSelect={onFocus} />;
   if (branch === 'attendance-attainment') return <AttendancePanel report={operations} />;
   if (branch === 'team-hours') return <TeamHoursTable rows={teamRows} />;
-  if (branch === 'employee-attainment' || branch === 'unmatched-labor') return <EmployeeTable rows={employeeRows} unmatchedOnly={branch === 'unmatched-labor'} />;
+  if (branch === 'employee-attainment' || branch === 'unmatched-labor') return <EmployeeTable rows={employeeRows} unmatchedOnly={branch === 'unmatched-labor'} onSelect={onEmployee} />;
   if (branch === 'employee-matrix') return <EmployeeMatrix report={operations} rows={operationRows} />;
   if (branch === 'labor-ledger') return <LaborLedger pools={laborPools} />;
   if (branch === 'affected-labor') return <AffectedLabor report={abnormal} />;
@@ -789,22 +859,43 @@ function WeeklyPlan({ report }: { report: ReportOperationsDTO | null }) {
   return <Panel kicker="周次拆解" title={`${rangeText(report)} 周计划批次与数量达成`} action={<span>最终工序良品口径</span>}><div className="report-week-grid">{rows.map(row => <article key={row.key}><header><div><small>{row.startDate.slice(5)}—{row.endDate.slice(5)}</small><h3>{row.label}</h3></div><strong>{percentText(row.quantityCompletionBasisPoints)}</strong></header><dl><div><dt>批次</dt><dd>{row.completedBatches}<em> / {row.plannedBatches}</em></dd><i><b style={{ width: `${Math.min(100, (row.batchCompletionBasisPoints || 0) / 100)}%` }} /></i></div><div><dt>数量</dt><dd>{numberText(row.completedQuantity)}<em> / {numberText(row.plannedQuantity)}</em></dd><i><b style={{ width: `${Math.min(100, (row.quantityCompletionBasisPoints || 0) / 100)}%` }} /></i></div></dl></article>)}</div>{!rows.length && <EmptyState icon={<CalendarRange />} title="当前周期没有周计划数据" />}</Panel>;
 }
 
+function CompletedBatchTable({ report, onPage }: { report: ReportCompletedBatchesDTO | null; onPage: (page: number) => void }) {
+  const rows = report?.rows || [];
+  const pageCount = Math.max(1, Math.ceil((report?.total || 0) / Math.max(1, report?.pageSize || 25)));
+  return <Panel kicker="批次维度" title={`${rangeText(report)} 计划到期批次达成明细`} action={<span>{numberText(report?.total)} 批 · 逾期 {numberText(report?.summary.overdueBatches)}</span>}>
+    <div className="report-batch-table">
+      <div><span>订单行 / 批次</span><span>计划与良品</span><span>计划完成日</span><span>实际达成</span><span>状态</span><span>当前工序 / 责任人</span><span /></div>
+      {rows.map(row => <article key={row.id}>
+        <span><strong>{row.batchLabel}</strong><small>{row.workOrderCode || '尚未生成工单'} · {row.customerName}</small><em>{row.specification || row.productName}</em></span>
+        <span className="progress"><b>{row.completedQuantity} / {row.quantity}</b><i><em style={{ width: `${Math.min(100, (row.quantityBasisPoints || 0) / 100)}%` }} /></i><small>{percentText(row.quantityBasisPoints)} 最终良品</small></span>
+        <span><strong>{dateOnly(row.plannedCompletionDate)}</strong><small>计划到期</small></span>
+        <span><strong>{row.actualCompletionAt ? dateTimeText(row.actualCompletionAt) : '尚未达成'}</strong><small>{row.actualCompletionAt ? '首次达到批次数量' : `截止 ${dateTimeText(report?.cutoffAt)}`}</small></span>
+        <span><em className={`batch-${row.status}`}>{row.statusLabel}</em><small className={row.overdue ? 'danger' : ''}>{row.overdue ? '已超过计划完成日' : '未逾期'}</small></span>
+        <span><strong>{row.currentProcess || '工序待补充'}</strong><small>{row.owner || '责任人待安排'}</small></span>
+        {row.workOrderId ? <Link href={`/production?workOrderId=${encodeURIComponent(row.workOrderId)}`} aria-label={`打开工单 ${row.workOrderCode || row.batchLabel}`}><ChevronRight /></Link> : <span />}
+      </article>)}
+    </div>
+    {!rows.length && <EmptyState icon={<ClipboardCheck />} title="当前筛选没有计划到期批次" />}
+    {Boolean(report?.total) && <div className="report-pagination"><span>第 {report?.page || 1} / {pageCount} 页，共 {numberText(report?.total)} 批</span><div><button type="button" disabled={(report?.page || 1) <= 1} onClick={() => onPage(Math.max(1, (report?.page || 1) - 1))}><ChevronLeft />上一页</button><button type="button" disabled={(report?.page || 1) >= pageCount} onClick={() => onPage(Math.min(pageCount, (report?.page || 1) + 1))}>下一页<ChevronRight /></button></div></div>}
+  </Panel>;
+}
+
 function AttendancePanel({ report }: { report: ReportOperationsDTO | null }) {
   const rows = report?.dailyAttendance || [];
-  return <Panel kicker="每日出勤" title={`${rangeText(report)} 生产车间出勤达成`} action={<span>人数与工时双口径</span>}><div className="report-attendance-bars">{rows.map(row => <article key={row.date}><header><strong>{row.date.slice(5)}</strong><span>{percentText(row.attendanceBasisPoints)}</span></header><div><i style={{ width: `${Math.min(100, (row.attendanceBasisPoints || 0) / 100)}%` }} /></div><dl><span>应到 {row.plannedPeople}</span><span>实到 {row.attendancePeople}</span><span>请假 {row.leavePeople}</span><span className={row.draftRecords ? 'danger' : ''}>草稿 {row.draftRecords}</span></dl></article>)}</div>{!rows.length && <EmptyState icon={<CalendarDays />} title="当前周期没有正式考勤记录" />}</Panel>;
+  return <Panel kicker="每日出勤" title={`${rangeText(report)} 生产车间出勤得分`} action={<span>工时得分封顶 100%，超额单列</span>}><div className="report-attendance-bars">{rows.map(row => <article key={row.date}><header><strong>{row.date.slice(5)}</strong><span>{percentText(row.hoursBasisPoints)}</span></header><div><i style={{ width: `${Math.min(100, (row.hoursBasisPoints || 0) / 100)}%` }} /></div><dl><span>净应 {compactHours(row.netExpectedMilliseconds)}</span><span>实到 {compactHours(row.attendanceMilliseconds)}</span><span>加班 {compactHours(row.recognizedOvertimeMilliseconds)}</span><span>请假扣减 {compactHours(row.leaveDeductionMilliseconds)}</span><span>人数 {row.attendancePeople}/{row.plannedPeople}</span><span className={row.extraAttendanceMilliseconds ? 'accent' : ''}>超额 {compactHours(row.extraAttendanceMilliseconds)}</span><span className={row.draftRecords ? 'danger' : ''}>草稿 {row.draftRecords}</span><span className={row.attendanceFallbackRecords ? 'warning' : ''}>{row.planOvertimeRecords ? `计划加班 ${row.planOvertimeRecords}` : row.attendanceFallbackRecords ? `考勤回退 ${row.attendanceFallbackRecords}` : '无加班'}</span></dl></article>)}</div>{!rows.length && <EmptyState icon={<CalendarDays />} title="当前周期没有正式考勤记录" />}</Panel>;
 }
 
 function TeamHoursTable({ rows }: { rows: ReportOperationsLaborRowDTO[] }) {
-  return <Panel kicker="班组维度" title="应出勤、有效出勤与标准产出"><div className="report-team-table"><div><span>班组</span><span>员工</span><span>应出勤</span><span>有效出勤</span><span>标准产出</span><span>免责异常</span><span>出勤率</span><span>工时达成率</span></div>{rows.map(row => <article key={row.team}><span><strong>{row.team}</strong><small>{row.confirmedRecords} 条正式考勤</small></span><span>{row.attendancePeople} / {row.employeeCount} 人</span><span>{compactHours(row.plannedMilliseconds)}</span><span>{compactHours(row.attendanceMilliseconds)}</span><span>{compactHours(row.standardLaborMilliseconds)}</span><span>{compactHours(row.exemptAbnormalMilliseconds)}</span><span><b>{percentText(row.attendanceBasisPoints)}</b></span><span><b>{percentText(row.attainmentBasisPoints)}</b></span></article>)}</div>{!rows.length && <EmptyState icon={<UsersRound />} title="当前月份没有班组工时数据" />}</Panel>;
+  return <Panel kicker="班组维度" title="净应出勤、生产实耗、利用率与目标达成"><div className="report-team-table"><div><span>班组</span><span>员工</span><span>净应出勤</span><span>实际出勤</span><span>生产实耗</span><span>标准工时</span><span>工时利用率</span><span>标准效率</span><span>目标达成率</span></div>{rows.map(row => <article key={row.team}><span><strong>{row.team}</strong><small>{row.confirmedRecords} 条正式考勤 · 加班 {compactHours(row.recognizedOvertimeMilliseconds)}</small></span><span>{row.attendancePeople} / {row.employeeCount} 人</span><span>{compactHours(row.netExpectedMilliseconds)}<small>请假扣减 {compactHours(row.leaveDeductionMilliseconds)}</small></span><span>{compactHours(row.attendanceMilliseconds)}<small>超额 {compactHours(row.extraAttendanceMilliseconds)}</small></span><span>{compactHours(row.actualLaborMilliseconds)}<small>未解释 {compactHours(row.unexplainedMilliseconds)}</small></span><span>{compactHours(row.standardLaborMilliseconds)}<small>待匹配 {compactHours(row.unmatchedStandardLaborMilliseconds)}</small></span><span><b>{percentText(row.utilizationBasisPoints)}</b></span><span><b>{percentText(row.efficiencyBasisPoints)}</b></span><span><b>{percentText(row.attainmentBasisPoints)}</b></span></article>)}</div>{!rows.length && <EmptyState icon={<UsersRound />} title="当前周期没有班组工时数据" />}</Panel>;
 }
 
-function EmployeeTable({ rows, unmatchedOnly }: { rows: EmployeeAttainmentRowDTO[]; unmatchedOnly: boolean }) {
-  return <Panel kicker="人员维度" title={unmatchedOnly ? '待匹配标准工时员工' : '员工出勤达成率与标准工时'} action={<span>{rows.length} 人</span>}><div className="report-employee-table"><div><span>员工</span><span>确认出勤</span><span>标准工时</span><span>待匹配</span><span>免责异常</span><span>报工记录</span><span>达成率</span></div>{rows.map(row => { const policy = row.attainmentStream === 'sample' ? '样品独立统计' : row.attainmentStream === 'excluded' ? '不计入月均' : `批量口径 ${(row.attainmentFactorBasisPoints / 100).toFixed(row.attainmentFactorBasisPoints % 100 ? 2 : 0)}%`; return <article key={row.employee.id}><span><strong>{row.employee.name}</strong><small>{row.employee.employeeNo} · {row.employee.team || row.employee.department || '未分组'} · {policy}</small></span><span><b>{compactHours(row.attendanceMilliseconds)}</b><small>{row.attendanceConfirmedDays} 人日</small></span><span><b>{compactHours(row.standardLaborMilliseconds)}</b><small>正式口径</small></span><span className={row.unmatchedStandardLaborMilliseconds ? 'danger' : ''}><b>{compactHours(row.unmatchedStandardLaborMilliseconds)}</b><small>{row.attendanceMissingDays} 人日缺失</small></span><span><b>{compactHours(row.exemptAbnormalMilliseconds)}</b><small>品质确认</small></span><span><b>{row.claimCount + row.executionCount} 笔</b><small>良品 {numberText(row.goodQty)}</small></span><span className="attainment"><strong>{row.attainmentStream === 'batch' ? percentText(row.attainmentBasisPoints) : '—'}</strong><i><b style={{ width: `${row.attainmentStream === 'batch' ? Math.min(100, (row.attainmentBasisPoints || 0) / 100) : 0}%` }} /></i></span></article>; })}</div>{!rows.length && <EmptyState icon={<UsersRound />} title={unmatchedOnly ? '当前周期没有待匹配工时' : '当前周期没有员工正式数据'} />}</Panel>;
+function EmployeeTable({ rows, unmatchedOnly, onSelect }: { rows: EmployeeAttainmentRowDTO[]; unmatchedOnly: boolean; onSelect: (row: EmployeeAttainmentRowDTO) => void }) {
+  return <Panel kicker="人员维度" title={unmatchedOnly ? '待匹配标准工时员工' : '员工每日达成与工时利用'} action={<span>{rows.length} 人 · 点击查看每日明细</span>}><div className="report-employee-table"><div><span>员工</span><span>确认出勤</span><span>生产实耗</span><span>标准工时</span><span>待匹配</span><span>工时利用率</span><span>标准效率</span><span>目标达成率</span></div>{rows.map(row => { const policy = row.attainmentStream === 'sample' ? '样品独立统计' : row.attainmentStream === 'excluded' ? '不计入月均' : `批量口径 ${(row.attainmentFactorBasisPoints / 100).toFixed(row.attainmentFactorBasisPoints % 100 ? 2 : 0)}%`; return <button type="button" key={row.employee.id} onClick={() => onSelect(row)}><span><strong>{row.employee.name}</strong><small>{row.employee.employeeNo} · {row.employee.team || row.employee.department || '未分组'} · {policy}</small></span><span><b>{compactHours(row.attendanceMilliseconds)}</b><small>{row.attendanceConfirmedDays} 人日</small></span><span><b>{compactHours(row.actualLaborMilliseconds)}</b><small>报工实耗</small></span><span><b>{compactHours(row.standardLaborMilliseconds)}</b><small>正式匹配</small></span><span className={row.unmatchedStandardLaborMilliseconds ? 'danger' : ''}><b>{compactHours(row.unmatchedStandardLaborMilliseconds)}</b><small>{row.attendanceMissingDays} 人日待核对</small></span><span><b>{percentText(row.coverageBasisPoints)}</b><small>出勤覆盖</small></span><span><b>{percentText(row.processEfficiencyBasisPoints)}</b><small>标准 / 实耗</small></span><span className="attainment"><strong>{row.attainmentStream === 'batch' ? percentText(row.attainmentBasisPoints) : '—'}</strong><i><b style={{ width: `${row.attainmentStream === 'batch' ? Math.min(100, (row.attainmentBasisPoints || 0) / 100) : 0}%` }} /></i></span></button>; })}</div>{!rows.length && <EmptyState icon={<UsersRound />} title={unmatchedOnly ? '当前周期没有待匹配工时' : '当前周期没有员工正式数据'} />}</Panel>;
 }
 
 function EmployeeMatrix({ report, rows }: { report: ReportOperationsDTO | null; rows: ReportOperationsEmployeeRowDTO[] }) {
   const dates = report?.dates || [];
-  return <Panel kicker="员工 × 日期" title={`${rangeText(report)} 个人达成率矩阵`} action={<span>横向滚动查看完整周期</span>}><div className="report-matrix-scroll"><table><thead><tr><th>班组</th><th>岗位</th><th>员工</th>{dates.map(day => <th key={day.date} className={day.isWeekend ? 'weekend' : ''}><strong>{day.day}号</strong><small>{day.weekday}</small></th>)}<th>周期均值</th></tr></thead><tbody>{rows.map(row => <tr key={row.employee.id}><td>{row.team}</td><td>{row.position}</td><td><strong>{row.employee.name}</strong><small>{row.employee.employeeNo}</small></td>{dates.map(day => { const cell = row.days.find(item => item.date === day.date); const value = cell?.attainmentBasisPoints; const text = cell?.status === 'draft' ? '草稿' : cell?.status === 'rest' ? '休' : value === null || value === undefined ? '—' : percentText(value); return <td key={day.date} className={`status-${cell?.status || 'missing'} ${value !== null && value !== undefined && value < 8500 ? 'risk' : ''}`} title={`${row.employee.name} ${day.date}：${text}`}><strong>{text}</strong></td>; })}<td className="average"><strong>{percentText(row.attainmentBasisPoints)}</strong></td></tr>)}</tbody></table></div>{!rows.length && <EmptyState icon={<Table2 />} title="没有符合筛选条件的员工矩阵" />}</Panel>;
+  return <Panel kicker="员工 × 日期" title={`${rangeText(report)} 个人目标达成矩阵`} action={<span>请假、休息、草稿与缺失不按 0 计算</span>}><div className="report-matrix-scroll"><table><thead><tr><th>班组</th><th>岗位</th><th>员工</th>{dates.map(day => <th key={day.date} className={day.isWeekend ? 'weekend' : ''}><strong>{day.day}号</strong><small>{day.weekday}</small></th>)}<th>周期加权值</th></tr></thead><tbody>{rows.map(row => <tr key={row.employee.id}><td>{row.team}</td><td>{row.position}</td><td><strong>{row.employee.name}</strong><small>{row.employee.employeeNo}</small></td>{dates.map(day => { const cell = row.days.find(item => item.date === day.date); const value = cell?.attainmentBasisPoints; const text = cell?.status === 'draft' ? '草稿' : cell?.status === 'rest' ? '休' : cell?.attendanceType === 'leave' ? '请假' : cell?.attendanceType === 'absent' ? '缺勤' : cell?.status === 'missing' ? '待登记' : value === null || value === undefined ? '—' : percentText(value); return <td key={day.date} className={`status-${cell?.status || 'missing'} ${value !== null && value !== undefined && value < 8500 ? 'risk' : ''}`} title={`${row.employee.name} ${day.date}：${text}；净应 ${compactHours(cell?.netExpectedMilliseconds)}，实际 ${compactHours(cell?.attendanceMilliseconds)}`}><strong>{text}</strong></td>; })}<td className="average"><strong>{percentText(row.attainmentBasisPoints)}</strong></td></tr>)}</tbody></table></div>{!rows.length && <EmptyState icon={<Table2 />} title="没有符合筛选条件的员工矩阵" />}</Panel>;
 }
 
 function LaborLedger({ pools }: { pools: ProcessLaborPoolDTO[] }) {
@@ -862,6 +953,19 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 
 function EmptyState({ icon, title }: { icon: ReactNode; title: string }) {
   return <div className="report-branch-empty">{icon}<strong>{title}</strong><span>可调整日期、客户、班组或搜索条件后重试。</span></div>;
+}
+
+function EmployeeDrawer({ row, onClose }: { row: EmployeeAttainmentRowDTO; onClose: () => void }) {
+  return <div className="report-focus-drawer-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}><aside className="report-focus-drawer report-employee-drawer" role="dialog" aria-modal="true" aria-label={`${row.employee.name}每日达成详情`}><header><div><small>员工每日达成</small><h2>{row.employee.name}</h2><p>{row.employee.employeeNo} · {row.employee.team || row.employee.department || '未分组'} · {row.employee.position || '岗位未设置'}</p></div><button type="button" aria-label="关闭员工详情" onClick={onClose}><X /></button></header>
+    <div className="report-employee-drawer-summary"><article><small>目标达成率</small><strong>{row.attainmentStream === 'batch' ? percentText(row.attainmentBasisPoints) : '不计入'}</strong><span>标准工时 / 合格人日目标产能</span></article><article><small>工时利用率</small><strong>{percentText(row.coverageBasisPoints)}</strong><span>实耗 + 免责异常 / 实际出勤</span></article><article><small>标准工时效率</small><strong>{percentText(row.processEfficiencyBasisPoints)}</strong><span>标准工时 / 生产实耗</span></article><article><small>待匹配标准工时</small><strong>{compactHours(row.unmatchedStandardLaborMilliseconds)}</strong><span>{row.attendanceMissingDays} 人日待核对</span></article></div>
+    <section className="report-employee-day-section"><header><div><small>逐日证据</small><h3>考勤、加班、请假与报工明细</h3></div><span>{row.days.length} 天</span></header><div className="report-employee-day-list">{row.days.map(day => {
+      const future = day.date > todayKey();
+      const claims = row.claimDetails.filter(item => item.workDate === day.date);
+      const executions = row.details.filter(item => dateOnly(item.endedAt) === day.date);
+      const statusText = future ? '日期未到' : day.includedInAttainment ? '计入目标达成' : employeeExclusionText(day.exclusionReason);
+      return <details key={day.date} className={day.includedInAttainment ? 'included' : 'excluded'}><summary><span><strong>{day.date}</strong><small>{statusText}</small></span><span><b>{day.includedInAttainment ? percentText(day.targetAttainmentBasisPoints) : '—'}</b><small>目标达成</small></span><ChevronRight /></summary><div className="report-employee-day-metrics"><dl><div><dt>排班</dt><dd>{compactHours(day.scheduledMilliseconds)}</dd></div><div><dt>认可加班</dt><dd>{compactHours(day.recognizedOvertimeMilliseconds)}</dd></div><div><dt>请假扣减</dt><dd>{compactHours(day.leaveDeductionMilliseconds)}</dd></div><div><dt>净应出勤</dt><dd>{compactHours(day.netExpectedMilliseconds)}</dd></div><div><dt>实际出勤</dt><dd>{compactHours(day.attendanceMilliseconds)}</dd></div><div><dt>超额出勤</dt><dd>{compactHours(day.extraAttendanceMilliseconds)}</dd></div><div><dt>生产实耗</dt><dd>{compactHours(day.actualLaborMilliseconds)}</dd></div><div><dt>标准工时</dt><dd>{compactHours(day.standardLaborMilliseconds)}</dd></div><div><dt>工时利用率</dt><dd>{percentText(day.utilizationBasisPoints)}</dd></div><div><dt>标准效率</dt><dd>{percentText(day.efficiencyBasisPoints)}</dd></div></dl><p>加班来源：{day.overtimeSource === 'confirmed_plan' ? '已确认日计划' : day.overtimeSource === 'attendance_fallback' ? '已确认考勤回退' : '无认可加班'}；考勤状态：{day.attendanceStatus === 'confirmed' ? '已确认' : day.attendanceStatus === 'draft' ? '草稿' : '未登记'}。{day.overlapMilliseconds > 0 ? ` 实耗与免责异常重叠 ${compactHours(day.overlapMilliseconds)}，需核对。` : ''}</p>{Boolean(claims.length || executions.length) && <ul>{claims.slice(0, 6).map(item => <li key={item.id}><span>{item.workOrderCode} · {item.processName}</span><b>{item.quantity} {item.unitLabel} / {compactHours(item.standardLaborMilliseconds)}</b></li>)}{executions.slice(0, 6).map(item => <li key={item.id}><span>{item.workOrderCode} · {item.processName}</span><b>良品 {item.goodQty} / {compactHours(item.standardLaborMilliseconds)}</b></li>)}</ul>}</div></details>;
+    })}</div></section>
+  </aside></div>;
 }
 
 function FocusDrawer({ item, onClose }: { item: ReportCenterFocusItemDTO; onClose: () => void }) {

@@ -52,7 +52,7 @@ export const REPORT_DOMAINS: readonly ReportDomainDefinition[] = [
     caption: '计划与完工',
     branches: [
       { key: 'quantity-attainment', label: '数量达成率', shortLabel: '数量达成', description: '计划数量、最终工序良品、缺口与每日达成趋势' },
-      { key: 'completed-orders', label: '完成工单', shortLabel: '完成工单', description: '所选周期内已经完成归档的量产工单' },
+      { key: 'completed-orders', label: '批次按期达成', shortLabel: '批次达成', description: '按计划完成日期核对批次是否按期完成、累计良品与逾期缺口' },
       { key: 'order-status', label: '工单状态分布', shortLabel: '工单状态', description: '已完成、进行中、待开始、待审核和逾期工单结构' },
       { key: 'production-trend', label: '生产趋势', shortLabel: '生产趋势', description: '按日对比计划数量与最终工序良品数量' },
       { key: 'weekly-plan-attainment', label: '周计划达成', shortLabel: '周计划达成', description: '按月拆解各周计划批次与计划数量完成情况' },
@@ -74,9 +74,9 @@ export const REPORT_DOMAINS: readonly ReportDomainDefinition[] = [
     label: '人员工时',
     caption: '出勤与效率',
     branches: [
-      { key: 'attendance-attainment', label: '全厂出勤达成率', shortLabel: '出勤达成', description: '确认考勤、有效出勤工时和每日出勤趋势' },
-      { key: 'team-hours', label: '班组工时', shortLabel: '班组工时', description: '按班组查看应出勤、有效出勤、标准产出与达成率' },
-      { key: 'employee-attainment', label: '员工达成率', shortLabel: '员工达成', description: '按员工核对确认出勤、标准工时、免责异常与达成率' },
+      { key: 'attendance-attainment', label: '全厂出勤得分', shortLabel: '出勤得分', description: '按净应出勤核对实际出勤、认可加班、请假扣减与数据完整性' },
+      { key: 'team-hours', label: '班组工时', shortLabel: '班组工时', description: '按班组拆分净应出勤、生产实耗、工时利用率、标准效率与目标达成' },
+      { key: 'employee-attainment', label: '员工每日达成', shortLabel: '员工每日达成', description: '按员工及日期核对净应出勤、报工明细、工时利用率和目标达成' },
       { key: 'employee-matrix', label: '个人达成矩阵', shortLabel: '个人矩阵', description: '员工与日期交叉查看每日达成率、草稿、休息和缺失状态' },
       { key: 'labor-ledger', label: '自动记工明细', shortLabel: '自动记工', description: '报工记录与员工标准工时自动入账映射' },
       { key: 'unmatched-labor', label: '待匹配工时', shortLabel: '待匹配工时', description: '有报工但尚未匹配确认考勤的标准工时' },

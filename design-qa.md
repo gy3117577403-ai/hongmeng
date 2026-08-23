@@ -855,3 +855,78 @@ final result: passed
 - P1: none.
 - P2: none.
 - Result: **PASS** for layout, information hierarchy and primary interaction at both target and reference viewports.
+
+---
+
+# 报表中心出勤工时、员工每日达成与批次按期达成（v1.34.40）
+
+## 验收范围与来源
+
+- 主验收视口：`1366 × 1024` CSS px，截图密度 `1×`；补充检查 `1024 × 768` 与 `390 × 844`。
+- 用户标注来源：
+  - `C:\Windows\TEMP\codex-clipboard-2894b171-785d-4ad6-8329-e70655c55315.png`（全厂出勤与加班口径）。
+  - `C:\Windows\TEMP\codex-clipboard-7b2d71aa-4643-482e-bc85-96a54bbfff25.png`（班组工时利用率）。
+  - `C:\Windows\TEMP\codex-clipboard-315d4ca4-2a20-45c5-87bb-58a83a23bedc.png`（员工每日达成及报工明细）。
+  - `C:\Windows\TEMP\codex-clipboard-11b88120-9e56-4fd1-a962-d94d431f77f1.png`（完成工单改为批次达成）。
+- 最终实现截图：
+  - `output/playwright/report-center-v13440/final-attendance-1366x1024.png`。
+  - `output/playwright/report-center-v13440/final-team-hours-1366x1024.png`。
+  - `output/playwright/report-center-v13440/final-employee-daily-partial-leave-1366x1024.png`。
+  - `output/playwright/report-center-v13440/final-employee-full-leave-excluded-1366x1024.png`。
+  - `output/playwright/report-center-v13440/final-employee-matrix-1366x1024.png`。
+  - `output/playwright/report-center-v13440/final-batch-attainment-1366x1024.png`。
+- 同屏对照输入：
+  - `output/playwright/report-center-v13440/final-comparison-attendance.png`。
+  - `output/playwright/report-center-v13440/final-comparison-team-hours.png`。
+  - `output/playwright/report-center-v13440/final-comparison-employee-daily.png`。
+  - `output/playwright/report-center-v13440/final-comparison-batch-attainment.png`。
+
+用户原图与项目目标视口的像素尺寸不同；同屏图将两侧分别按比例装入 `1366 × 1024` 面板，没有单轴拉伸。实现端截图均来自原生 `1366 × 1024` 浏览器视口。
+
+## 指标、内容与视觉对照
+
+- 全厂主指标改为“出勤得分”，以“实际出勤 ÷ 净应出勤”计算并封顶 `100%`；超额出勤独立显示，不再用超过 `100%` 的分数掩盖加班口径问题。
+- 净应出勤明确拆为“排班常规工时 + 认可加班 - 已确认请假”。实际出勤已经包含加班，因此实现没有把加班重复叠加到分子。
+- 每日卡片补齐净应出勤、实际出勤、认可加班、请假扣减、出勤人数、超额、草稿及加班来源，保持原报表中心的橙色主题、白色卡片、蓝色进度与紧凑信息密度。
+- 班组页同时展示净应出勤、实际出勤、生产实耗、标准工时、工时利用率、标准效率和目标达成率；顶部指标已由含混的“车间达成”改为“车间工时利用率”。
+- 员工页签改为“员工每日达成”，员工行可打开逐日证据抽屉；抽屉展示考勤、加班、请假、生产实耗、标准工时及具体工单/工序报工来源。
+- 个人矩阵用不同状态显示请假、休息、草稿、待登记和缺勤；请假、休息、草稿与缺失不会被伪装成 `0%`。
+- 原“完成工单”分支改为“批次按期达成”。主卡显示按期批次率、到期批次、完成批次和数量达成；明细显示计划数量/最终工序累计良品、计划完成日、首次达到批次数量的时间、状态、当前工序和责任人。
+- 实现继续使用现有 Lucide 图标和项目设计令牌，没有新增伪造图片、CSS 插画、内联 SVG 或另一套视觉体系。目标视口下未发现主控件裁切、卡片重叠、文字越界或页面级横向滚动。
+
+## 真实数据与交互回归
+
+- 隔离 PostgreSQL 中使用 12 名生产员工、4 个班组、228 条考勤、175 条报工事实及 13 个到期批次进行回归；这些是明确限定前缀的 QA 数据，不是线上生产数据。
+- 赵凯 `2026-08-08`：排班 `8h`、认可加班 `1h`、净应出勤 `9h`、实际出勤 `9h`，加班来源明确为“已确认考勤回退”，没有重复加班。
+- 张伟 `2026-08-06`：全天请假，排班 `8h`、请假扣减 `8h`、净应出勤 `0h`，界面显示“请假，不计达成 / —”，而不是 `0%`。
+- 周璐 `2026-08-15`：部分请假，排班 `8h`、请假扣减 `4h`、净应出勤 `4h`、实际出勤 `4h`；只缩减当日基数，不删除当天真实出勤。
+- 班组工时与员工汇总均由逐员工、逐日结果相加，利用率、标准效率和目标达成率分别计算，不再复用同一个“达成率”标签。
+- 批次页全客户范围得到 13 个到期批次；筛选“杭州昆泰”后为 4 个批次；搜索 `HM-2604` 后精确收敛为一个批次，清除条件后恢复 13 个批次。
+- 批次完成时点取最终工序非作废良品累计首次达到批次数量的时间；摘要、客户筛选、搜索、分页和 Excel 导出使用同一全量筛选结果，摘要不按当前页切片。
+- 导出实测成功：`final-personal-attainment-matrix.xlsx` 为 9,703 字节，`final-batch-attainment.xlsx` 为 10,124 字节；两者均为有效 ZIP/OOXML 工作簿，文件头为 `50 4B 03 04`。
+- 分支导航、客户筛选、搜索、员工抽屉、每日展开项和两个 Excel 下载路径均在真实浏览器中操作通过。
+
+## 响应式、可访问性与诊断
+
+- `1366 × 1024`、`1024 × 768` 和 `390 × 844` 下，`documentElement.scrollWidth === clientWidth`，没有页面级横向溢出；表格在窄屏使用内部滚动，不挤坏页面框架。
+- 主要筛选、日期、导出、员工行与抽屉关闭按钮均使用语义化控件和可访问名称；抽屉具备 `dialog` 语义，状态不只依赖颜色表达。
+- 最终全新 Playwright 会话控制台：`0 errors / 0 warnings`。首次页面请求、CSS、JavaScript、图标、RSC 预取和报表接口均返回成功状态。
+- TypeScript、Prisma schema、Lint、851 个单元测试和生产构建均通过；Lint 只保留 3 条与本功能无关的既有 `<img>` 性能提醒。
+
+## 迭代记录
+
+1. 先把出勤分子、排班、加班和请假拆开，修复实际出勤已含加班却仍可能二次相加的口径风险，并增加明确的加班来源。
+2. 将全天请假、休息、草稿和缺失从达成率基数剔除；将部分请假作为基数扣减；保留正式缺勤在出勤得分分母中。
+3. 浏览器插入部分请假回归数据时发现数据库检查约束仍只允许旧状态，新增 Prisma 迁移允许 `partial_leave` 后重新应用并复测通过。
+4. 将班组“工时达成率”改为“工时利用率”，并把工时利用率、标准效率和目标达成率拆成三列及三个独立汇总口径。
+5. 增加员工逐日证据抽屉、个人矩阵状态语义及同口径 Excel 导出，验证全天请假显示为破折号而非零分。
+6. 将完成工单改为计划到期批次报表，接入最终工序累计良品阈值、按期/延期/逾期/未下发/缺路线状态和统一筛选导出。
+7. 首轮验收服务缺少新 `public` 静态资源，导致图标与 Service Worker 请求错误；同步最终构建静态资源后新建全新浏览器会话，最终控制台归零。
+
+## 最终严重度检查
+
+- P0：无。
+- P1：无。
+- P2：无。
+
+final result: passed

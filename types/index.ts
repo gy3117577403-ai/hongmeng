@@ -2188,13 +2188,26 @@ export type ReportOperationsLaborRowDTO = {
   attendancePeople: number;
   confirmedRecords: number;
   plannedMilliseconds: number;
+  scheduledMilliseconds: number;
+  plannedOvertimeMilliseconds: number;
+  recognizedOvertimeMilliseconds: number;
+  actualOvertimeMilliseconds: number;
+  leaveDeductionMilliseconds: number;
+  netExpectedMilliseconds: number;
   attendanceMilliseconds: number;
+  extraAttendanceMilliseconds: number;
   leaveMilliseconds: number;
   exemptAbnormalMilliseconds: number;
+  actualLaborMilliseconds: number;
   standardLaborMilliseconds: number;
   unmatchedStandardLaborMilliseconds: number;
+  overlapMilliseconds: number;
+  unexplainedMilliseconds: number;
   attainmentCapacityMilliseconds: number;
+  attendanceRawBasisPoints: number | null;
   attendanceBasisPoints: number | null;
+  utilizationBasisPoints: number | null;
+  efficiencyBasisPoints: number | null;
   attainmentBasisPoints: number | null;
 };
 
@@ -2203,13 +2216,28 @@ export type ReportOperationsEmployeeDayDTO = {
   status: ReportOperationsDayStatusDTO;
   attendanceType: AttendanceType | null;
   plannedMilliseconds: number;
+  scheduledMilliseconds: number;
+  plannedOvertimeMilliseconds: number;
+  recognizedOvertimeMilliseconds: number;
+  actualOvertimeMilliseconds: number;
+  leaveDeductionMilliseconds: number;
+  netExpectedMilliseconds: number;
   attendanceMilliseconds: number;
+  extraAttendanceMilliseconds: number;
   leaveMilliseconds: number;
+  actualLaborMilliseconds: number;
   standardLaborMilliseconds: number;
   unmatchedStandardLaborMilliseconds: number;
   exemptAbnormalMilliseconds: number;
+  overlapMilliseconds: number;
+  unexplainedMilliseconds: number;
   attainmentCapacityMilliseconds: number;
+  attendanceRawBasisPoints: number | null;
+  attendanceBasisPoints: number | null;
+  utilizationBasisPoints: number | null;
+  efficiencyBasisPoints: number | null;
   attainmentBasisPoints: number | null;
+  overtimeSource: 'confirmed_plan' | 'attendance_fallback' | 'none';
   attainmentEligible: boolean;
   attainmentFactorBasisPoints: number;
   attainmentStream: AttainmentStream;
@@ -2220,16 +2248,30 @@ export type ReportOperationsEmployeeRowDTO = {
   team: string;
   position: string;
   plannedMilliseconds: number;
+  scheduledMilliseconds: number;
+  plannedOvertimeMilliseconds: number;
+  recognizedOvertimeMilliseconds: number;
+  actualOvertimeMilliseconds: number;
+  leaveDeductionMilliseconds: number;
+  netExpectedMilliseconds: number;
   attendanceMilliseconds: number;
+  extraAttendanceMilliseconds: number;
   leaveMilliseconds: number;
+  actualLaborMilliseconds: number;
   standardLaborMilliseconds: number;
   unmatchedStandardLaborMilliseconds: number;
   exemptAbnormalMilliseconds: number;
+  overlapMilliseconds: number;
+  unexplainedMilliseconds: number;
   attainmentCapacityMilliseconds: number;
+  attendanceRawBasisPoints: number | null;
   attendanceBasisPoints: number | null;
+  utilizationBasisPoints: number | null;
+  efficiencyBasisPoints: number | null;
   attainmentBasisPoints: number | null;
   confirmedDays: number;
   draftDays: number;
+  missingDays: number;
   attainmentEligible: boolean;
   attainmentFactorBasisPoints: number;
   attainmentStream: AttainmentStream;
@@ -2258,15 +2300,29 @@ export type ReportOperationsDTO = {
     employeeCount: number;
     teamCount: number;
     plannedMilliseconds: number;
+    scheduledMilliseconds: number;
+    plannedOvertimeMilliseconds: number;
+    recognizedOvertimeMilliseconds: number;
+    actualOvertimeMilliseconds: number;
+    leaveDeductionMilliseconds: number;
+    netExpectedMilliseconds: number;
     attendanceMilliseconds: number;
+    extraAttendanceMilliseconds: number;
+    actualLaborMilliseconds: number;
     standardLaborMilliseconds: number;
     unmatchedStandardLaborMilliseconds: number;
     exemptAbnormalMilliseconds: number;
+    overlapMilliseconds: number;
+    unexplainedMilliseconds: number;
     attainmentCapacityMilliseconds: number;
+    attendanceRawBasisPoints: number | null;
     attendanceBasisPoints: number | null;
+    utilizationBasisPoints: number | null;
+    efficiencyBasisPoints: number | null;
     attainmentBasisPoints: number | null;
     confirmedAttendanceRecords: number;
     draftAttendanceRecords: number;
+    missingAttendanceRecords: number;
     dataCoverageBasisPoints: number | null;
     plannedBatches: number;
     completedBatches: number;
@@ -2291,17 +2347,29 @@ export type ReportOperationsDTO = {
   }>;
   dailyAttendance: Array<{
     date: string;
+    scheduledPeople: number;
     plannedPeople: number;
     attendancePeople: number;
     leavePeople: number;
+    fullLeavePeople: number;
     absentPeople: number;
     restPeople: number;
     confirmedRecords: number;
     draftRecords: number;
     plannedMilliseconds: number;
+    scheduledMilliseconds: number;
+    plannedOvertimeMilliseconds: number;
+    recognizedOvertimeMilliseconds: number;
+    actualOvertimeMilliseconds: number;
+    leaveDeductionMilliseconds: number;
+    netExpectedMilliseconds: number;
     attendanceMilliseconds: number;
+    extraAttendanceMilliseconds: number;
+    attendanceRawBasisPoints: number | null;
     attendanceBasisPoints: number | null;
     hoursBasisPoints: number | null;
+    planOvertimeRecords: number;
+    attendanceFallbackRecords: number;
   }>;
   employeeMatrix: ReportOperationsEmployeeRowDTO[];
   dailyAttainmentAverage: Array<{
@@ -2340,8 +2408,101 @@ export type EmployeeAttainmentRowDTO = {
   executionCount: number;
   claimCount: number;
   claimQuantity: number;
+  days: EmployeeAttainmentDayDTO[];
   details: ProcessExecutionDTO[];
   claimDetails: EmployeeLaborClaimDetailDTO[];
+};
+
+export type EmployeeAttainmentDayDTO = {
+  date: string;
+  attendanceStatus: 'missing' | 'draft' | 'confirmed';
+  attendanceType: AttendanceType | null;
+  scheduledMilliseconds: number;
+  recognizedOvertimeMilliseconds: number;
+  actualOvertimeMilliseconds: number;
+  leaveDeductionMilliseconds: number;
+  netExpectedMilliseconds: number;
+  attendanceMilliseconds: number;
+  extraAttendanceMilliseconds: number;
+  actualLaborMilliseconds: number;
+  standardLaborMilliseconds: number;
+  claimedStandardLaborMilliseconds: number;
+  exemptAbnormalMilliseconds: number;
+  unexplainedMilliseconds: number;
+  overlapMilliseconds: number;
+  attendanceBasisPoints: number | null;
+  utilizationBasisPoints: number | null;
+  efficiencyBasisPoints: number | null;
+  targetAttainmentBasisPoints: number | null;
+  attainmentCapacityMilliseconds: number;
+  overtimeSource: 'confirmed_plan' | 'attendance_fallback' | 'none';
+  includedInAttainment: boolean;
+  exclusionReason: 'leave' | 'rest' | 'absent' | 'missing_attendance' | 'zero_attendance' | 'excluded_stream' | null;
+};
+
+export type ReportCompletedBatchStatusDTO =
+  | 'completed_on_time'
+  | 'completed_late'
+  | 'overdue'
+  | 'in_progress'
+  | 'pending'
+  | 'unreleased'
+  | 'route_missing';
+
+export type ReportCompletedBatchRowDTO = {
+  id: string;
+  sourceOrderNo: string;
+  sourceLineNo: number;
+  batchNo: number;
+  batchLabel: string;
+  workOrderId: string | null;
+  workOrderCode: string | null;
+  customerName: string;
+  productName: string;
+  specification: string;
+  quantity: number;
+  completedQuantity: number;
+  quantityBasisPoints: number | null;
+  plannedCompletionDate: string;
+  actualCompletionAt: string | null;
+  status: ReportCompletedBatchStatusDTO;
+  statusLabel: string;
+  overdue: boolean;
+  currentProcess: string | null;
+  owner: string | null;
+  releaseState: string;
+};
+
+export type ReportCompletedBatchesDTO = {
+  period: ReportCenterPeriodDTO;
+  date: string;
+  rangeStart: string;
+  rangeEnd: string;
+  cutoffAt: string;
+  generatedAt: string;
+  customer: string;
+  keyword: string;
+  customers: string[];
+  summary: {
+    dueBatches: number;
+    completedBatches: number;
+    onTimeCompletedBatches: number;
+    lateCompletedBatches: number;
+    overdueBatches: number;
+    inProgressBatches: number;
+    pendingBatches: number;
+    unreleasedBatches: number;
+    routeMissingBatches: number;
+    plannedQuantity: number;
+    completedQuantity: number;
+    batchCompletionBasisPoints: number | null;
+    onTimeAttainmentBasisPoints: number | null;
+    quantityAttainmentBasisPoints: number | null;
+  };
+  page: number;
+  pageSize: number;
+  total: number;
+  rows: ReportCompletedBatchRowDTO[];
 };
 
 export type EmployeeAttainmentReportDTO = {

@@ -1,6 +1,7 @@
 import ExcelJS, { type Cell, type Worksheet } from 'exceljs';
 import sharp from 'sharp';
 import { EXCEL_THEME, excelColumnName, safeExcelSheetName } from '@/lib/business-excel';
+import { attendanceDayMetrics } from '@/lib/report-labor-metrics';
 
 export type AttendanceWorkbookStatus = 'confirmed' | 'draft';
 export type AttendanceWorkbookType = 'normal' | 'leave' | 'absent' | 'rest';
@@ -142,10 +143,10 @@ function statusStyle(cell: Cell, value: string | number, weekend: 'saturday' | '
   }
 }
 
-function rateFormula(normalHours: number, plannedHours: number, plannedRef: string, actualRef: string, overtimeRef: string) {
+function rateFormula(actualHours: number, expectedHours: number, expectedRef: string, actualRef: string) {
   return {
-    formula: `IF(${plannedRef}=0,0,MAX(0,(${actualRef}-${overtimeRef})/${plannedRef}))`,
-    result: plannedHours > 0 ? Math.max(0, normalHours / plannedHours) : 0,
+    formula: `IF(${expectedRef}=0,"",MIN(1,MAX(0,${actualRef}/${expectedRef})))`,
+    result: expectedHours > 0 ? Math.min(1, Math.max(0, actualHours / expectedHours)) : '',
   };
 }
 
@@ -274,17 +275,31 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
   const recordMap = new Map(input.records.map(record => [`${record.employeeId}:${record.dateKey}`, record]));
   const employeeTotals = input.employees.map(employee => {
     const confirmed = input.dateKeys.map(dateKey => recordMap.get(`${employee.id}:${dateKey}`)).filter((record): record is AttendanceWorkbookRecord => record?.status === 'confirmed');
-    const planned = hours(confirmed.reduce((sum, record) => sum + (record.attendanceType === 'rest' ? 0 : record.plannedMilliseconds), 0));
-    const actual = hours(confirmed.reduce((sum, record) => sum + record.actualMilliseconds, 0));
-    const overtime = hours(confirmed.reduce((sum, record) => sum + record.overtimeMilliseconds, 0));
-    const normal = Math.max(0, actual - overtime);
-    return { employee, planned, actual, overtime, normal, rate: planned > 0 ? normal / planned : 0 };
+    const metrics = confirmed.map(record => attendanceDayMetrics({
+      attendanceType: record.attendanceType,
+      scheduledMilliseconds: record.plannedMilliseconds,
+      plannedOvertimeMilliseconds: 0,
+      actualOvertimeMilliseconds: record.overtimeMilliseconds,
+      leaveMilliseconds: record.leaveMilliseconds,
+      actualAttendanceMilliseconds: record.actualMilliseconds,
+    }));
+    const expected = hours(metrics.reduce((sum, metric) => sum + metric.netExpectedMilliseconds, 0));
+    const actual = hours(metrics.reduce((sum, metric) => sum + metric.actualAttendanceMilliseconds, 0));
+    const overtime = hours(metrics.reduce((sum, metric) => sum + metric.actualOvertimeMilliseconds, 0));
+    const extra = hours(metrics.reduce((sum, metric) => sum + metric.extraAttendanceMilliseconds, 0));
+    return {
+      employee,
+      expected,
+      actual,
+      overtime,
+      extra,
+      rate: expected > 0 ? Math.min(1, Math.max(0, actual / expected)) : null,
+    };
   });
-  const expectedTotal = Number(employeeTotals.reduce((sum, row) => sum + row.planned, 0).toFixed(2));
+  const expectedTotal = Number(employeeTotals.reduce((sum, row) => sum + row.expected, 0).toFixed(2));
   const actualTotal = Number(employeeTotals.reduce((sum, row) => sum + row.actual, 0).toFixed(2));
   const overtimeTotal = Number(employeeTotals.reduce((sum, row) => sum + row.overtime, 0).toFixed(2));
-  const normalTotal = Math.max(0, actualTotal - overtimeTotal);
-  const rateTotal = expectedTotal > 0 ? normalTotal / expectedTotal : 0;
+  const rateTotal = expectedTotal > 0 ? Math.min(1, Math.max(0, actualTotal / expectedTotal)) : 0;
   const confirmedRecordCount = input.records.filter(record => record.status === 'confirmed').length;
   const draftRecordCount = input.records.filter(record => record.status === 'draft').length;
   const missingRecordCount = Math.max(0, input.employees.length * input.dateKeys.length - input.records.length);
@@ -333,14 +348,14 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
     : 0;
   const rateFormulaValue: ExcelJS.CellFormulaValue | number = input.employees.length
     ? {
-      formula: `IF(${excelColumnName(cardSpans[0][0])}4=0,0,MAX(0,(${excelColumnName(cardSpans[1][0])}4-${excelColumnName(cardSpans[2][0])}4)/${excelColumnName(cardSpans[0][0])}4))`,
+      formula: `IF(${excelColumnName(cardSpans[0][0])}4=0,"",MIN(1,MAX(0,${excelColumnName(cardSpans[1][0])}4/${excelColumnName(cardSpans[0][0])}4)))`,
       result: rateTotal,
     }
     : 0;
-  setCard(sheet, ...cardSpans[0], '应出勤小时数', '应', expectedFormula, '已确认排班口径', { strong: EXCEL_THEME.green, soft: EXCEL_THEME.greenSoft }, '#,##0.0');
+  setCard(sheet, ...cardSpans[0], '净应出勤小时数', '应', expectedFormula, '排班 + 认可加班 - 已确认请假', { strong: EXCEL_THEME.green, soft: EXCEL_THEME.greenSoft }, '#,##0.0');
   setCard(sheet, ...cardSpans[1], '实际出勤小时数', '实', actualFormula, '有效出勤，包含已确认加班', { strong: EXCEL_THEME.blue, soft: EXCEL_THEME.blueSoft }, '#,##0.0');
   setCard(sheet, ...cardSpans[2], '加班小时数', '加', overtimeFormula, '直接取已确认加班时段', { strong: EXCEL_THEME.orange, soft: EXCEL_THEME.orangeSoft }, '#,##0.0');
-  setCard(sheet, ...cardSpans[3], '出勤率', '率', rateFormulaValue, '正常有效出勤 ÷ 应出勤', { strong: EXCEL_THEME.green, soft: EXCEL_THEME.greenSoft }, '0.0%');
+  setCard(sheet, ...cardSpans[3], '出勤得分', '率', rateFormulaValue, '实际出勤 ÷ 净应出勤，最高 100%', { strong: EXCEL_THEME.green, soft: EXCEL_THEME.greenSoft }, '0.0%');
   sheet.getRow(3).height = 21;
   sheet.getRow(4).height = 28;
   sheet.getRow(5).height = 23;
@@ -396,7 +411,7 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
     cell.border = border('FF2E6F48');
   });
-  ['应出勤小时', '实际出勤小时', '加班小时', '出勤率'].forEach((header, index) => {
+  ['净应出勤', '实际出勤小时', '加班小时', '出勤得分'].forEach((header, index) => {
     const cell = sheet.getCell(MAIN_HEADER_ROW, plannedColumn + index);
     cell.value = header;
     cell.font = { name: 'Microsoft YaHei', size: 9.5, bold: true, color: { argb: EXCEL_THEME.paper } };
@@ -437,18 +452,17 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
     const actualStart = `${excelColumnName(IDENTITY_COLUMN_COUNT + 1)}${rowNumber}`;
     const actualEnd = `${excelColumnName(IDENTITY_COLUMN_COUNT + dateCount)}${rowNumber}`;
     const plannedCell = sheet.getCell(rowNumber, plannedColumn);
-    plannedCell.value = summary.planned;
+    plannedCell.value = summary.expected;
     const actualCell = sheet.getCell(rowNumber, actualColumn);
     actualCell.value = dateCount ? { formula: `SUM(${actualStart}:${actualEnd})`, result: summary.actual } : summary.actual;
     const overtimeCell = sheet.getCell(rowNumber, overtimeColumn);
     overtimeCell.value = summary.overtime;
     const rateCell = sheet.getCell(rowNumber, rateColumn);
     rateCell.value = rateFormula(
-      summary.normal,
-      summary.planned,
+      summary.actual,
+      summary.expected,
       `${excelColumnName(plannedColumn)}${rowNumber}`,
       `${excelColumnName(actualColumn)}${rowNumber}`,
-      `${excelColumnName(overtimeColumn)}${rowNumber}`,
     );
     [plannedCell, actualCell, overtimeCell, rateCell].forEach((cell, index) => {
       cell.font = { name: 'Microsoft YaHei', size: 9.5, bold: true, color: { argb: index === 3 ? EXCEL_THEME.blue : EXCEL_THEME.ink } };
@@ -457,7 +471,10 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
       cell.border = border(EXCEL_THEME.softLine);
       cell.numFmt = index === 3 ? '0.0%' : '#,##0.0';
     });
-    if (summary.rate < 0.85) {
+    if (summary.rate === null) {
+      rateCell.fill = fill('FFF1F4F7');
+      rateCell.font = { ...rateCell.font, color: { argb: EXCEL_THEME.muted } };
+    } else if (summary.rate < 0.85) {
       rateCell.fill = fill(EXCEL_THEME.redSoft);
       rateCell.font = { ...rateCell.font, color: { argb: EXCEL_THEME.red } };
     } else if (summary.rate < 0.95) {
@@ -534,7 +551,7 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
     alignment: { horizontal: 'left', vertical: 'middle', indent: 1 },
     border: border('FFCDE6D6'),
   });
-  ['员工姓名', '工号', '应出勤', '实际出勤', '加班', '出勤率'].forEach((header, index) => {
+  ['员工姓名', '工号', '净应出勤', '实际出勤', '加班', '出勤得分'].forEach((header, index) => {
     setMergedCell(sheet, summaryHeaderRow, summarySpans[index][0], summarySpans[index][1], header, {
       font: { name: 'Microsoft YaHei', size: 9.5, bold: true, color: { argb: EXCEL_THEME.paper } },
       fill: EXCEL_THEME.green,
@@ -549,7 +566,7 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
     sourceColumns.forEach((sourceColumn, columnIndex) => {
       const cell = setMergedCell(sheet, row, summarySpans[columnIndex][0], summarySpans[columnIndex][1], {
         formula: `${excelColumnName(sourceColumn)}${sourceRow}`,
-        result: columnIndex === 0 ? summary.employee.name : columnIndex === 1 ? summary.employee.employeeNo : columnIndex === 2 ? summary.planned : columnIndex === 3 ? summary.actual : columnIndex === 4 ? summary.overtime : summary.rate,
+        result: columnIndex === 0 ? summary.employee.name : columnIndex === 1 ? summary.employee.employeeNo : columnIndex === 2 ? summary.expected : columnIndex === 3 ? summary.actual : columnIndex === 4 ? summary.overtime : summary.rate ?? '',
       }, {
         numFmt: columnIndex === 5 ? '0.0%' : columnIndex >= 2 ? '#,##0.0' : '@',
         font: { name: 'Microsoft YaHei', size: 9, color: { argb: EXCEL_THEME.ink }, bold: columnIndex === 0 },
@@ -584,9 +601,9 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
 
   const notes = [
     '1. 每日单元格记录已确认实际出勤小时，数值中包含已确认加班；草稿与未登记数据不进入正式汇总。',
-    '2. 加班小时直接取考勤中的加班时段，不使用“实际出勤－应出勤”计算，避免出现负加班。',
-    '3. 出勤率＝（实际出勤－加班）÷应出勤；休息、请假、缺勤和未登记使用不同状态标识。',
-    '4. 主管、组长等人员仍保留在人事考勤表中；是否计入生产达成率由报表中心另行判断。',
+    '2. 净应出勤＝排班常规工时＋认可加班－已确认请假；本导出无日计划容量时，认可加班回退为已确认考勤加班。',
+    '3. 出勤得分＝实际出勤÷净应出勤并封顶 100%；整日请假与休息剔除基数，部分请假缩减基数，超额出勤不再推高得分。',
+    '4. 正式缺勤保留在出勤基数；草稿和未登记不按 0 计算。主管、组长是否计入生产达成率由报表中心另行判断。',
   ];
   let noteRow = contentEndRow + 1;
   setMergedCell(sheet, noteRow, 1, totalColumns, '统计说明', {
