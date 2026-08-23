@@ -21,12 +21,70 @@ export type TrainingWorkbookRow = {
   certificationId: string | null;
 };
 
+export type TrainingSessionWorkbookRow = {
+  planCode: string;
+  planTitle: string;
+  sessionSequence: number;
+  sessionName: string;
+  sessionStartAt: Date;
+  sessionEndAt: Date;
+  location: string | null;
+  employeeNo: string;
+  employeeName: string;
+  department: string | null;
+  team: string | null;
+  attendanceStatus: string;
+  checkInAt: Date | null;
+  checkOutAt: Date | null;
+  source: string | null;
+  correctionReason: string | null;
+};
+
+export type TrainingFeedbackWorkbookRow = {
+  planCode: string;
+  planTitle: string;
+  sessionSequence: number;
+  sessionName: string;
+  employeeNo: string;
+  employeeName: string;
+  department: string | null;
+  team: string | null;
+  overallRating: number;
+  contentRating: number;
+  trainerRating: number;
+  practicalValueRating: number;
+  issueTags: string[];
+  comment: string | null;
+  followUpRequested: boolean;
+  submittedAt: Date;
+  updatedAt: Date;
+};
+
+export type TrainingFeedbackSummaryRow = {
+  planCode: string;
+  planTitle: string;
+  sessionSequence: number;
+  sessionName: string;
+  participantCount: number;
+  attendedCount: number;
+  eligibleFeedbackCount: number;
+  feedbackCount: number;
+  feedbackRate: number;
+  averageOverallRating: number | null;
+  averageContentRating: number | null;
+  averageTrainerRating: number | null;
+  averagePracticalValueRating: number | null;
+  followUpCount: number;
+};
+
 const attendanceText: Record<string, string> = {
   INVITED: '未签到',
   PRESENT: '正常签到',
   LATE: '迟到',
   ABSENT: '缺席',
   LEAVE: '请假',
+  PARTIAL: '部分出勤',
+  NOT_INITIALIZED: '记录未初始化',
 };
 
 const resultText: Record<string, string> = { PENDING: '待考核', PASSED: '合格', FAILED: '不合格' };
@@ -37,6 +95,9 @@ export async function createTrainingWorkbook(input: {
   endDate: string;
   generatedAt: string;
   rows: readonly TrainingWorkbookRow[];
+  sessionRows?: readonly TrainingSessionWorkbookRow[];
+  feedbackRows?: readonly TrainingFeedbackWorkbookRow[];
+  feedbackSummaries?: readonly TrainingFeedbackSummaryRow[];
 }) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = '杭连电子协同平台';
@@ -125,6 +186,106 @@ export async function createTrainingWorkbook(input: {
   sheet.autoFilter = { from: 'A5', to: `R${Math.max(5, input.rows.length + 5)}` };
   sheet.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9, margins: { left: 0.25, right: 0.25, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };
   sheet.headerFooter.oddFooter = '&L杭连电子协同平台&C第 &P / &N 页&R培训发展台账';
+
+  const detailHeader = (target: ExcelJS.Worksheet, headers: string[]) => {
+    target.getRow(1).values = headers;
+    target.getRow(1).height = 30;
+    target.getRow(1).eachCell(cell => {
+      cell.font = { name: '微软雅黑', size: 10, bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC2410C' } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+    });
+    target.autoFilter = { from: 'A1', to: `${target.getColumn(headers.length).letter}1` };
+  };
+  const detailBody = (target: ExcelJS.Worksheet) => {
+    target.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      row.height = 25;
+      row.eachCell(cell => {
+        cell.font = { name: '微软雅黑', size: 9.5, color: { argb: 'FF0F172A' } };
+        cell.alignment = { vertical: 'middle', wrapText: true };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: rowNumber % 2 ? 'FFFFFFFF' : 'FFFFF8F3' } };
+        cell.border = { bottom: { style: 'hair', color: { argb: 'FFE2E8F0' } } };
+      });
+    });
+    target.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+    target.headerFooter.oddFooter = '&L杭连电子协同平台&C第 &P / &N 页&R培训发展明细';
+  };
+
+  const attendanceSheet = workbook.addWorksheet('课次签到明细', { views: [{ state: 'frozen', ySplit: 1, xSplit: 4 }] });
+  detailHeader(attendanceSheet, ['序号', '计划编号', '培训计划', '课次', '课次名称', '课次开始', '课次结束', '地点', '部门', '班组', '工号', '员工姓名', '出勤状态', '签到时间', '签退时间', '来源', '人工修正原因']);
+  (input.sessionRows || []).forEach((item, index) => attendanceSheet.addRow([
+    index + 1,
+    item.planCode,
+    item.planTitle,
+    item.sessionSequence,
+    item.sessionName,
+    item.sessionStartAt,
+    item.sessionEndAt,
+    item.location || '',
+    item.department || '',
+    item.team || '',
+    item.employeeNo,
+    item.employeeName,
+    attendanceText[item.attendanceStatus] || item.attendanceStatus,
+    item.checkInAt || '',
+    item.checkOutAt || '',
+    ({ SYSTEM_INVITE: '系统邀请', SYSTEM_FINALIZE: '课次结束自动结转', QR_SELF: '个人账号扫码', ADMIN_MANUAL: '负责人手工修正', LEGACY_MIGRATION: '历史数据迁移' } as Record<string, string>)[item.source || ''] || item.source || '',
+    item.correctionReason || '',
+  ]));
+  [6, 7, 14, 15].forEach(column => { attendanceSheet.getColumn(column).numFmt = 'yyyy-mm-dd hh:mm'; });
+  [7, 18, 25, 8, 22, 18, 18, 18, 14, 14, 12, 13, 14, 18, 18, 18, 30].forEach((width, index) => { attendanceSheet.getColumn(index + 1).width = width; });
+  detailBody(attendanceSheet);
+
+  const feedbackSheet = workbook.addWorksheet('课后反馈明细', { views: [{ state: 'frozen', ySplit: 1, xSplit: 4 }] });
+  detailHeader(feedbackSheet, ['序号', '计划编号', '培训计划', '课次', '课次名称', '部门', '班组', '工号', '员工姓名', '整体', '内容', '讲师', '实用性', '改进标签', '改进建议', '需要跟进', '首次提交', '最后更新']);
+  (input.feedbackRows || []).forEach((item, index) => feedbackSheet.addRow([
+    index + 1,
+    item.planCode,
+    item.planTitle,
+    item.sessionSequence,
+    item.sessionName,
+    item.department || '',
+    item.team || '',
+    item.employeeNo,
+    item.employeeName,
+    item.overallRating,
+    item.contentRating,
+    item.trainerRating,
+    item.practicalValueRating,
+    item.issueTags.join('、'),
+    item.comment || '',
+    item.followUpRequested ? '是' : '否',
+    item.submittedAt,
+    item.updatedAt,
+  ]));
+  [17, 18].forEach(column => { feedbackSheet.getColumn(column).numFmt = 'yyyy-mm-dd hh:mm'; });
+  [7, 18, 25, 8, 22, 14, 14, 12, 13, 9, 9, 9, 9, 26, 38, 12, 18, 18].forEach((width, index) => { feedbackSheet.getColumn(index + 1).width = width; });
+  detailBody(feedbackSheet);
+
+  const summarySheet = workbook.addWorksheet('反馈汇总', { views: [{ state: 'frozen', ySplit: 1, xSplit: 3 }] });
+  detailHeader(summarySheet, ['序号', '计划编号', '培训计划', '课次', '课次名称', '应到', '已到', '应反馈（已到）', '反馈数', '反馈率', '整体均分', '内容均分', '讲师均分', '实用性均分', '待跟进']);
+  (input.feedbackSummaries || []).forEach((item, index) => summarySheet.addRow([
+    index + 1,
+    item.planCode,
+    item.planTitle,
+    item.sessionSequence,
+    item.sessionName,
+    item.participantCount,
+    item.attendedCount,
+    item.eligibleFeedbackCount,
+    item.feedbackCount,
+    item.feedbackRate / 100,
+    item.averageOverallRating ?? '',
+    item.averageContentRating ?? '',
+    item.averageTrainerRating ?? '',
+    item.averagePracticalValueRating ?? '',
+    item.followUpCount,
+  ]));
+  summarySheet.getColumn(10).numFmt = '0.0%';
+  [7, 18, 26, 8, 22, 10, 10, 15, 10, 12, 12, 12, 12, 14, 11].forEach((width, index) => { summarySheet.getColumn(index + 1).width = width; });
+  detailBody(summarySheet);
+
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
 }

@@ -3,6 +3,10 @@ import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import {
+  ensureTrainingSessionAttendanceRows,
+  syncTrainingParticipantAttendance,
+} from '@/lib/training-qr-service';
+import {
   addTrainingMonths,
   calculateTrainingScore,
   cleanTrainingText,
@@ -40,26 +44,46 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     await prisma.$transaction(async tx => {
       if (action === 'attendance') {
         const attendanceStatus = cleanTrainingText(body.attendanceStatus, 30) as TrainingAttendanceStatus;
-        if (!TRAINING_ATTENDANCE_STATUSES.includes(attendanceStatus)) throw new TrainingInputError('签到状态不正确');
-        const absenceNote = cleanTrainingText(body.absenceNote, 800) || null;
+        if (!TRAINING_ATTENDANCE_STATUSES.includes(attendanceStatus) || attendanceStatus === 'PARTIAL') {
+          throw new TrainingInputError('签到状态不正确');
+        }
+        if (expectedVersion !== current.version) throw new TrainingInputError('签到记录已被其他人更新，请刷新后重试', 409);
+        const reason = cleanTrainingText(body.reason ?? body.absenceNote, 800);
+        if (!reason) throw new TrainingInputError('手工修改出勤必须填写原因');
+        const sessions = await tx.trainingSession.findMany({
+          where: { planId: current.planId, status: { not: 'CANCELLED' } },
+          select: { id: true },
+        });
+        if (sessions.length !== 1) {
+          throw new TrainingInputError('多课次计划请在“现场执行”中按课次登记出勤', 409);
+        }
+        await ensureTrainingSessionAttendanceRows(tx, current.planId);
+        const attendance = await tx.trainingSessionAttendance.findUniqueOrThrow({
+          where: {
+            sessionId_participantId: {
+              sessionId: sessions[0].id,
+              participantId: current.id,
+            },
+          },
+        });
         const attended = ['PRESENT', 'LATE'].includes(attendanceStatus);
-        const result = await tx.trainingParticipant.updateMany({
-          where: { id: current.id, version: expectedVersion },
+        const result = await tx.trainingSessionAttendance.updateMany({
+          where: { id: attendance.id, version: attendance.version },
           data: {
-            attendanceStatus,
-            checkInAt: attended ? (current.checkInAt || now) : null,
-            checkOutAt: body.checkOut === true && attended ? now : current.checkOutAt,
-            actualMinutes: body.actualMinutes === undefined
-              ? current.actualMinutes
-              : parseOptionalTrainingInteger(body.actualMinutes, '实到分钟', 0, 24 * 60),
-            absenceNote: attended ? null : absenceNote,
-            status: attended ? 'ATTENDED' : attendanceStatus === 'INVITED' ? 'INVITED' : 'ABSENT',
-            reviewStatus: attended && current.plan.assessmentMode !== 'NONE' ? current.reviewStatus : 'NOT_REQUIRED',
+            status: attendanceStatus,
+            checkInAt: attended ? (attendance.checkInAt || now) : null,
+            checkOutAt: body.checkOut === true && attended ? now : (attended ? attendance.checkOutAt : null),
+            source: 'ADMIN_MANUAL',
+            qrWindowId: null,
+            correctedAt: now,
+            correctedById: user.id,
+            correctionReason: reason,
             version: { increment: 1 },
           },
         });
         if (result.count !== 1) throw new TrainingInputError('签到记录已被其他人更新，请刷新后重试', 409);
-        operationDetail = { attendanceStatus, absenceNote };
+        await syncTrainingParticipantAttendance(tx, current.id);
+        operationDetail = { attendanceStatus, reason, sessionId: sessions[0].id };
       } else if (action === 'save_result') {
         if (!['PRESENT', 'LATE'].includes(current.attendanceStatus)) throw new TrainingInputError('请先完成签到再录入考核结果', 409);
         if (current.plan.assessmentMode === 'NONE') throw new TrainingInputError('当前计划无需考核');

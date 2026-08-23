@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { ensureTrainingSessionAttendanceRows } from '@/lib/training-qr-service';
 import {
   parsePlanInput,
   serializeTrainingPlan,
@@ -112,6 +113,11 @@ export async function POST(req: NextRequest) {
               endAt: input.endAt,
               location: input.location,
               trainerId: input.trainerId,
+              checkInOpenMinutes: input.checkInOpenMinutes,
+              lateAfterMinutes: input.lateAfterMinutes,
+              checkInCloseMinutes: input.checkInCloseMinutes,
+              feedbackDeadlineHours: input.feedbackDeadlineHours,
+              feedbackRequired: input.feedbackRequired,
             },
           },
           participants: {
@@ -131,6 +137,7 @@ export async function POST(req: NextRequest) {
           },
         },
       });
+      await ensureTrainingSessionAttendanceRows(tx, created.id);
       await tx.trainingActivity.create({
         data: {
           planId: created.id,

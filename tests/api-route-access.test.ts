@@ -247,6 +247,9 @@ test('training collaborator reads shared employees and skills while owning the t
   assert.equal(canAccessApiRoute(training, '/api/training/courses', 'POST'), true);
   assert.equal(canAccessApiRoute(training, '/api/training/plans/plan-1/transition', 'POST'), true);
   assert.equal(canAccessApiRoute(training, '/api/training/participants/person-1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/sessions/session-1/qr-windows', 'POST'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/sessions/session-1/start', 'POST'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/session-attendance/attendance-1', 'PATCH'), true);
   assert.equal(canAccessApiRoute(training, '/api/training/export.xlsx', 'GET'), true);
   assert.equal(canAccessApiRoute(training, '/api/employees', 'GET'), true);
   assert.equal(canAccessApiRoute(training, '/api/employees', 'POST'), false);
@@ -254,6 +257,21 @@ test('training collaborator reads shared employees and skills while owning the t
   assert.equal(canAccessApiRoute(training, '/api/skills', 'POST'), false);
   assert.equal(canAccessApiRoute(training, '/api/attendance/records', 'GET'), false);
   assert.equal(canAccessApiRoute(training, '/api/recruitment/demands', 'GET'), false);
+});
+
+test('training self-service QR routes stay outside HR capability routing and enforce participant identity in the handler', () => {
+  const ordinaryEmployee = context({
+    profile: 'FIELD_REPORTER',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'SELF:FIELD_REPORT',
+  });
+
+  assert.equal(canAccessApiRoute(ordinaryEmployee, '/api/training-self/scan/code', 'GET'), null);
+  assert.equal(canAccessApiRoute(ordinaryEmployee, '/api/training-self/scan/code/check-in', 'POST'), null);
+  assert.equal(canAccessApiRoute(ordinaryEmployee, '/api/training-self/scan/code/feedback', 'PUT'), null);
+  assert.equal(canAccessApiRoute(ordinaryEmployee, '/api/training/sessions/session-1/live', 'GET'), false);
+  assert.equal(canAccessApiRoute(ordinaryEmployee, '/api/training/sessions/session-1/start', 'POST'), false);
 });
 
 test('workshop leaders can read terminal tooling but cannot change or publish it', () => {

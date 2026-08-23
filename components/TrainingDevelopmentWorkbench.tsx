@@ -17,11 +17,17 @@ import {
   FileText,
   GraduationCap,
   Loader2,
+  LockKeyhole,
+  Maximize2,
+  MessageSquareText,
   Paperclip,
   PencilLine,
   Play,
   Plus,
+  Printer,
+  QrCode,
   RefreshCw,
+  RotateCw,
   Search,
   Send,
   ShieldCheck,
@@ -30,6 +36,8 @@ import {
   UsersRound,
   X,
 } from 'lucide-react';
+import Image from 'next/image';
+import QRCode from 'qrcode';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
 
@@ -118,6 +126,23 @@ type TrainingPlan = {
   passScore: number | null;
   status: string;
   version: number;
+  sessions: Array<{
+    id: string;
+    name: string;
+    sequence: number;
+    startAt: string;
+    endAt: string;
+    location: string | null;
+    status: string;
+    actualStartAt: string | null;
+    actualEndAt: string | null;
+    checkInOpenMinutes: number;
+    lateAfterMinutes: number;
+    checkInCloseMinutes: number;
+    feedbackDeadlineHours: number;
+    feedbackRequired: boolean;
+    version: number;
+  }>;
   participants: TrainingParticipant[];
   attachments: TrainingAttachment[];
   activities: Array<{ id: string; action: string; content: string | null; createdAt: string }>;
@@ -129,6 +154,66 @@ type TrainingPlan = {
     passRate: number;
     pendingReviewCount: number;
     belowPassCount: number;
+  };
+};
+
+type TrainingLive = {
+  serverTime: string;
+  plan: { id: string; code: string; title: string; status: string };
+  session: {
+    id: string;
+    name: string;
+    sequence: number;
+    startAt: string;
+    endAt: string;
+    location: string | null;
+    status: string;
+    actualStartAt: string | null;
+    actualEndAt: string | null;
+    checkInOpenMinutes: number;
+    lateAfterMinutes: number;
+    checkInCloseMinutes: number;
+    feedbackDeadlineHours: number;
+    feedbackRequired: boolean;
+    version: number;
+  };
+  windows: Array<{
+    id: string;
+    sessionId: string;
+    purpose: 'CHECK_IN' | 'FEEDBACK';
+    status: 'SCHEDULED' | 'OPEN' | 'EXPIRED' | 'CLOSED' | 'REVOKED';
+    generation: number;
+    opensAt: string;
+    expiresAt: string;
+    scanPath: string | null;
+  }>;
+  participants: Array<{
+    id: string;
+    employeeId: string;
+    employeeNo: string;
+    employeeName: string;
+    department: string | null;
+    position: string | null;
+    team: string | null;
+    accountReady: boolean;
+    attendance: { id: string; status: string; checkInAt: string | null; source: string; correctionReason: string | null; version: number } | null;
+    feedback: { id: string; overallRating: number; followUpRequested: boolean; updatedAt: string; version: number } | null;
+  }>;
+  summary: {
+    participantCount: number;
+    presentCount: number;
+    lateCount: number;
+    absentCount: number;
+    leaveCount: number;
+    invitedCount: number;
+    feedbackEligibleCount: number;
+    feedbackCount: number;
+    feedbackRate: number;
+    followUpCount: number;
+    averageOverallRating: number | null;
+    averageContentRating: number | null;
+    averageTrainerRating: number | null;
+    averagePracticalValueRating: number | null;
   };
 };
 
@@ -181,7 +266,9 @@ function localInputDate(offsetHours = 1): string {
 
 const emptyPlan = {
   title: '', courseId: '', purpose: '', organizerId: '', trainerId: '', reviewerId: '', departmentId: '', startAt: localInputDate(24), endAt: localInputDate(26),
-  location: '', mode: 'OFFLINE', isRequired: false, assessmentMode: 'NONE', passScore: '80', participantIds: [] as string[],
+  location: '', mode: 'OFFLINE', isRequired: false, assessmentMode: 'NONE', passScore: '80',
+  checkInOpenMinutes: '30', lateAfterMinutes: '5', checkInCloseMinutes: '15', feedbackDeadlineHours: '24', feedbackRequired: false,
+  participantIds: [] as string[],
 };
 
 function fmtDate(value: string | null | undefined, withTime = true): string {
@@ -197,8 +284,9 @@ function fmtDate(value: string | null | undefined, withTime = true): string {
 function statusLabel(status: string): string {
   const labels: Record<string, string> = {
     DRAFT: '草稿', PUBLISHED: '已发布', IN_PROGRESS: '进行中', PENDING_REVIEW: '待结审', COMPLETED: '已完成', CANCELLED: '已取消',
-    INVITED: '未签到', PRESENT: '已签到', LATE: '迟到', ABSENT: '缺席', LEAVE: '请假',
+    INVITED: '未签到', PRESENT: '已签到', LATE: '迟到', PARTIAL: '部分出勤', ABSENT: '缺席', LEAVE: '请假',
     NOT_REQUIRED: '无需审核', PENDING: '待审核', APPROVED: '已审核', RETURNED: '已退回', PASSED: '合格', FAILED: '不合格',
+    SCHEDULED: '等待开放', OPEN: '开放中', EXPIRED: '已过期', CLOSED: '已关闭', REVOKED: '已作废',
   };
   return labels[status] || status;
 }
@@ -233,6 +321,10 @@ export default function TrainingDevelopmentWorkbench() {
   const [planDraft, setPlanDraft] = useState({ ...emptyPlan, participantIds: [] as string[] });
   const [participantDraft, setParticipantDraft] = useState<{ id: string; employeeName: string; version: number; theoryScore: string; practicalScore: string; reviewComment: string } | null>(null);
   const [selectedParticipantIds, setSelectedParticipantIds] = useState<string[]>([]);
+  const [selectedSessionId, setSelectedSessionId] = useState('');
+  const [live, setLive] = useState<TrainingLive | null>(null);
+  const [liveLoading, setLiveLoading] = useState(false);
+  const [qrDataUrl, setQrDataUrl] = useState('');
   const [exportRange, setExportRange] = useState(() => {
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -240,6 +332,7 @@ export default function TrainingDevelopmentWorkbench() {
     return { start: start.toLocaleDateString('en-CA'), end: end.toLocaleDateString('en-CA') };
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const qrPanelRef = useRef<HTMLElement>(null);
   useToastBridge(toast, setToast);
 
   const load = useCallback(async (quiet = false) => {
@@ -266,6 +359,57 @@ export default function TrainingDevelopmentWorkbench() {
   useEffect(() => { void load(); }, [load]);
 
   const selectedPlan = useMemo(() => data?.plans.find(plan => plan.id === selectedPlanId) || null, [data, selectedPlanId]);
+  useEffect(() => {
+    const sessions = selectedPlan?.sessions || [];
+    setSelectedSessionId(current => sessions.some(session => session.id === current) ? current : sessions[0]?.id || '');
+  }, [selectedPlan]);
+
+  const loadLive = useCallback(async (sessionId: string, quiet = false) => {
+    if (!sessionId) {
+      setLive(null);
+      return;
+    }
+    if (!quiet) setLiveLoading(true);
+    try {
+      const response = await fetch(`/api/training/sessions/${sessionId}/live`, { cache: 'no-store' });
+      const body = await response.json().catch(() => ({})) as { data?: TrainingLive; error?: string };
+      if (!response.ok || !body.data) throw new Error(body.error || '培训现场数据加载失败');
+      setLive(body.data);
+    } catch (reason) {
+      if (!quiet) setError(reason instanceof Error ? reason.message : '培训现场数据加载失败');
+    } finally {
+      if (!quiet) setLiveLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (view !== 'execution' || !selectedSessionId) return undefined;
+    void loadLive(selectedSessionId);
+    const timer = window.setInterval(() => void loadLive(selectedSessionId, true), 5_000);
+    return () => window.clearInterval(timer);
+  }, [loadLive, selectedSessionId, view]);
+
+  const activeQrWindow = useMemo(() => live?.windows.find(window => (
+    ['SCHEDULED', 'OPEN'].includes(window.status) && Boolean(window.scanPath)
+  )) || null, [live]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeQrWindow?.scanPath) {
+      setQrDataUrl('');
+      return undefined;
+    }
+    const link = `${window.location.origin}${activeQrWindow.scanPath}`;
+    void QRCode.toDataURL(link, {
+      margin: 1,
+      width: 360,
+      errorCorrectionLevel: 'M',
+      color: { dark: '#172033', light: '#ffffff' },
+    }).then(url => { if (!cancelled) setQrDataUrl(url); }).catch(() => {
+      if (!cancelled) setQrDataUrl('');
+    });
+    return () => { cancelled = true; };
+  }, [activeQrWindow]);
   const departments = useMemo(() => [...new Set((data?.employees || []).map(person => person.department || '').filter(Boolean))], [data]);
   const filteredEmployees = useMemo(() => {
     const q = keyword.trim().toLocaleLowerCase('zh-CN');
@@ -292,7 +436,7 @@ export default function TrainingDevelopmentWorkbench() {
     event.preventDefault();
     setSaving(true);
     try {
-      await jsonRequest('/api/training/plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...planDraft, startAt: new Date(planDraft.startAt).toISOString(), endAt: new Date(planDraft.endAt).toISOString(), passScore: planDraft.assessmentMode === 'NONE' ? null : Number(planDraft.passScore) }) });
+      await jsonRequest('/api/training/plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...planDraft, startAt: new Date(planDraft.startAt).toISOString(), endAt: new Date(planDraft.endAt).toISOString(), passScore: planDraft.assessmentMode === 'NONE' ? null : Number(planDraft.passScore), checkInOpenMinutes: Number(planDraft.checkInOpenMinutes), lateAfterMinutes: Number(planDraft.lateAfterMinutes), checkInCloseMinutes: Number(planDraft.checkInCloseMinutes), feedbackDeadlineHours: Number(planDraft.feedbackDeadlineHours) }) });
       setDrawer(null);
       setPlanDraft({ ...emptyPlan, startAt: localInputDate(24), endAt: localInputDate(26), participantIds: [] });
       setToast('培训计划已建立，可发布通知');
@@ -327,27 +471,102 @@ export default function TrainingDevelopmentWorkbench() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : '计划状态更新失败'); } finally { setSaving(false); }
   }
 
-  async function updateAttendance(person: TrainingParticipant, attendanceStatus: string) {
+  async function startSession(sessionId: string, version: number) {
     setSaving(true);
     try {
-      await jsonRequest(`/api/training/participants/${person.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'attendance', attendanceStatus, version: person.version }) });
-      await load(true);
+      const result = await jsonRequest(`/api/training/sessions/${sessionId}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ version }),
+      }) as { ok?: boolean; idempotent?: boolean };
+      setToast(result.idempotent ? '本课次已经开始，本次没有重复变更' : '本课次已开始，其他未来课次保持待开始');
+      await Promise.all([load(true), loadLive(sessionId, true)]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '课次开始失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function updateAttendance(person: TrainingLive['participants'][number], attendanceStatus: string, sharedReason?: string) {
+    if (!person.attendance) {
+      setError('课次出勤记录尚未初始化，请刷新现场数据');
+      return;
+    }
+    const reason = sharedReason || window.prompt(`请填写将 ${person.employeeName} 改为“${statusLabel(attendanceStatus)}”的原因`, '培训负责人现场登记')?.trim();
+    if (!reason) return;
+    setSaving(true);
+    try {
+      await jsonRequest(`/api/training/session-attendance/${person.attendance.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: attendanceStatus, version: person.attendance.version, reason }) });
+      await Promise.all([loadLive(selectedSessionId, true), load(true)]);
       setToast(`${person.employeeName}：${statusLabel(attendanceStatus)}`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '签到保存失败'); } finally { setSaving(false); }
   }
 
   async function batchAttendance(attendanceStatus: string) {
-    const people = selectedPlan?.participants.filter(person => selectedParticipantIds.includes(person.id)) || [];
+    const people = live?.participants.filter(person => selectedParticipantIds.includes(person.id)) || [];
     if (!people.length) return;
+    if (people.some(person => !person.attendance)) {
+      setError('部分课次出勤记录尚未初始化，请刷新后重试');
+      return;
+    }
+    const reason = window.prompt(`请填写批量标记 ${people.length} 人为“${statusLabel(attendanceStatus)}”的原因`, '培训负责人现场批量登记')?.trim();
+    if (!reason) return;
     setSaving(true);
     try {
       for (const person of people) {
-        await jsonRequest(`/api/training/participants/${person.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'attendance', attendanceStatus, version: person.version }) });
+        await jsonRequest(`/api/training/session-attendance/${person.attendance!.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: attendanceStatus, version: person.attendance!.version, reason }) });
       }
       setSelectedParticipantIds([]);
       setToast(`已批量更新 ${people.length} 人签到状态`);
-      await load(true);
+      await Promise.all([loadLive(selectedSessionId, true), load(true)]);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '批量签到失败'); } finally { setSaving(false); }
+  }
+
+  async function openQrWindow(purpose: 'CHECK_IN' | 'FEEDBACK') {
+    if (!selectedSessionId) return;
+    if (purpose === 'FEEDBACK' && !window.confirm('确认结束本课并开放课后反馈吗？签到二维码将关闭，仍未签到人员会标记为缺勤；后续可填写原因进行人工纠正。')) return;
+    setSaving(true);
+    try {
+      await jsonRequest(`/api/training/sessions/${selectedSessionId}/qr-windows`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ purpose }),
+      });
+      setToast(purpose === 'CHECK_IN' ? '签到二维码已开放' : '本课已结束，课后反馈二维码已开放');
+      await Promise.all([loadLive(selectedSessionId), load(true)]);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '二维码开放失败'); } finally { setSaving(false); }
+  }
+
+  async function closeQrWindow(windowId: string) {
+    if (!window.confirm('确认关闭当前二维码吗？关闭后不能继续扫码，但已产生的签到或反馈不会删除。')) return;
+    setSaving(true);
+    try {
+      await jsonRequest(`/api/training/qr-windows/${windowId}/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      setToast('二维码已关闭，历史记录保持不变');
+      await loadLive(selectedSessionId);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '二维码关闭失败'); } finally { setSaving(false); }
+  }
+
+  async function rotateQrWindow(windowId: string) {
+    if (!window.confirm('确认重新生成二维码吗？当前二维码会立即作废，已完成的签到和反馈不会删除。')) return;
+    setSaving(true);
+    try {
+      await jsonRequest(`/api/training/qr-windows/${windowId}/rotate`, { method: 'POST' });
+      setToast('新二维码已生成，旧二维码已经作废');
+      await loadLive(selectedSessionId);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '二维码重新生成失败'); } finally { setSaving(false); }
+  }
+
+  async function checkAccountReadiness(plan: TrainingPlan) {
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/training/plans/${plan.id}/account-readiness`, { cache: 'no-store' });
+      const body = await response.json().catch(() => ({})) as { data?: { readyCount: number; blockedCount: number; participants: Array<{ employeeName: string; issue: string | null }> }; error?: string };
+      if (!response.ok || !body.data) throw new Error(body.error || '参训账号检查失败');
+      if (!body.data.blockedCount) setToast(`账号检查通过：${body.data.readyCount} 名参训员工均可使用个人账号`);
+      else setError(`有 ${body.data.blockedCount} 名员工账号异常：${body.data.participants.filter(item => item.issue).slice(0, 4).map(item => `${item.employeeName}（${item.issue}）`).join('、')}`);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '参训账号检查失败'); } finally { setSaving(false); }
   }
 
   async function saveParticipantResult(event: React.FormEvent) {
@@ -415,11 +634,13 @@ export default function TrainingDevelopmentWorkbench() {
   }
 
   function renderPlanDetail(plan: TrainingPlan) {
+    const nextSession = plan.sessions.find(session => session.status === 'SCHEDULED') || null;
     return (
       <section className="td-plan-detail">
         <header><div><span>{statusLabel(plan.status)}</span><h2>{plan.title}</h2><p>{plan.code} · {plan.course?.name || '临时培训'} · {modeLabel(plan.mode)}</p></div><div className="td-plan-actions">
+          {['DRAFT', 'PUBLISHED'].includes(plan.status) && <button type="button" disabled={saving} onClick={() => void checkAccountReadiness(plan)}><UserCheck />账号检查</button>}
           {plan.status === 'DRAFT' && <button type="button" className="primary" disabled={saving} onClick={() => void transition('publish')}><Send />发布</button>}
-          {plan.status === 'PUBLISHED' && <button type="button" className="primary" disabled={saving} onClick={() => void transition('start')}><Play />开始</button>}
+          {nextSession && ['PUBLISHED', 'IN_PROGRESS'].includes(plan.status) && <button type="button" className="primary" disabled={saving} onClick={() => void startSession(nextSession.id, nextSession.version)}><Play />{plan.status === 'PUBLISHED' ? '开始首课' : '开始下一课次'}</button>}
           {plan.status === 'IN_PROGRESS' && <button type="button" className="primary" disabled={saving} onClick={() => void transition(plan.assessmentMode === 'NONE' ? 'complete' : 'submit_review')}><ClipboardCheck />{plan.assessmentMode === 'NONE' ? '完成归档' : '提交审核'}</button>}
           {plan.status === 'PENDING_REVIEW' && <button type="button" className="primary" disabled={saving || plan.summary.pendingReviewCount > 0} onClick={() => void transition('complete')}><CheckCircle2 />完成归档</button>}
           {!['COMPLETED', 'CANCELLED'].includes(plan.status) && <button type="button" disabled={saving} onClick={() => void transition('cancel')}>取消</button>}
@@ -435,10 +656,48 @@ export default function TrainingDevelopmentWorkbench() {
 
   function renderExecution(plan: TrainingPlan | null) {
     if (!plan) return <div className="td-empty"><GraduationCap /><strong>尚无培训计划</strong><p>先在计划管理中创建培训计划。</p></div>;
-    const allSelected = plan.participants.length > 0 && plan.participants.every(person => selectedParticipantIds.includes(person.id));
-    return <div className="td-execution"><header className="td-section-title"><div><span>现场执行</span><h2>{plan.title}</h2><p>{fmtDate(plan.startAt)} · {plan.location || '地点待定'} · {assessmentLabel(plan.assessmentMode)}</p></div><select value={plan.id} onChange={event => { setSelectedPlanId(event.target.value); setSelectedParticipantIds([]); }}>{data!.plans.filter(item => !['COMPLETED', 'CANCELLED'].includes(item.status)).map(item => <option value={item.id} key={item.id}>{item.title}</option>)}</select></header>
-      {selectedParticipantIds.length > 0 && <div className="td-batch-bar"><strong>已选 {selectedParticipantIds.length} 人</strong><button type="button" onClick={() => void batchAttendance('PRESENT')}>批量签到</button><button type="button" onClick={() => void batchAttendance('ABSENT')}>批量缺席</button><button type="button" onClick={() => setSelectedParticipantIds([])}>取消选择</button></div>}
-      <div className="td-table-wrap"><table><thead><tr><th><input type="checkbox" checked={allSelected} onChange={event => setSelectedParticipantIds(event.target.checked ? plan.participants.map(item => item.id) : [])} /></th><th>参训人员</th><th>组织</th><th>签到</th><th>成绩</th><th>审核</th><th>操作</th></tr></thead><tbody>{plan.participants.map(person => <tr key={person.id}><td><input type="checkbox" checked={selectedParticipantIds.includes(person.id)} onChange={event => setSelectedParticipantIds(current => event.target.checked ? [...new Set([...current, person.id])] : current.filter(id => id !== person.id))} /></td><td><strong>{person.employeeName}</strong><small>{person.employeeNo} · {person.position || '岗位待维护'}</small></td><td>{person.department || '未分组'}<small>{person.team || '班组未设置'}</small></td><td><span className={`td-pill ${person.attendanceStatus.toLowerCase()}`}>{statusLabel(person.attendanceStatus)}</span><small>{fmtDate(person.checkInAt)}</small></td><td><strong>{person.score ?? '—'}</strong><small>{person.result === 'PENDING' ? assessmentLabel(plan.assessmentMode) : statusLabel(person.result)}</small></td><td><span className={`td-pill ${person.reviewStatus.toLowerCase()}`}>{statusLabel(person.reviewStatus)}</span><small>{person.certificationId ? '证书已同步' : person.reviewComment || ''}</small></td><td><div className="td-row-actions"><button type="button" disabled={saving} onClick={() => void updateAttendance(person, 'PRESENT')}><Check />签到</button><button type="button" disabled={saving} onClick={() => void updateAttendance(person, 'LEAVE')}>请假</button>{plan.assessmentMode !== 'NONE' && ['PRESENT', 'LATE'].includes(person.attendanceStatus) && <button type="button" className="primary" onClick={() => { setParticipantDraft({ id: person.id, employeeName: person.employeeName, version: person.version, theoryScore: String(person.theoryScore ?? ''), practicalScore: String(person.practicalScore ?? ''), reviewComment: '' }); setDrawer('participant'); }}><PencilLine />录分</button>}</div></td></tr>)}</tbody></table></div>
+    const currentSession = plan.sessions.find(session => session.id === selectedSessionId) || plan.sessions[0] || null;
+    const currentLive = live?.session.id === currentSession?.id ? live : null;
+    const people = currentLive?.participants || [];
+    const allSelected = people.length > 0 && people.every(person => selectedParticipantIds.includes(person.id));
+    const checkInWindow = currentLive?.windows.find(window => window.purpose === 'CHECK_IN' && ['SCHEDULED', 'OPEN'].includes(window.status)) || null;
+    const feedbackWindow = currentLive?.windows.find(window => window.purpose === 'FEEDBACK' && ['SCHEDULED', 'OPEN'].includes(window.status)) || null;
+    const shownWindow = feedbackWindow || checkInWindow;
+    return <div className="td-execution td-live-execution">
+      <header className="td-section-title td-live-header"><div><span>现场执行</span><h2>{plan.title}</h2><p>{fmtDate(currentSession?.startAt || plan.startAt)} · {currentSession?.location || plan.location || '地点待定'} · {assessmentLabel(plan.assessmentMode)}</p></div><div className="td-live-selectors"><select value={plan.id} onChange={event => { setSelectedPlanId(event.target.value); setSelectedParticipantIds([]); setLive(null); }}>{data!.plans.filter(item => !['COMPLETED', 'CANCELLED'].includes(item.status)).map(item => <option value={item.id} key={item.id}>{item.title}</option>)}</select><select value={currentSession?.id || ''} onChange={event => { setSelectedSessionId(event.target.value); setSelectedParticipantIds([]); setLive(null); }}>{plan.sessions.map(session => <option value={session.id} key={session.id}>第 {session.sequence} 课次 · {session.name}</option>)}</select></div></header>
+
+      {currentLive && <section className="td-live-metrics">
+        <article><span>应到</span><strong>{currentLive.summary.participantCount}</strong><small>个人账号参训</small></article>
+        <article className="green"><span>已到</span><strong>{currentLive.summary.presentCount + currentLive.summary.lateCount}</strong><small>正常 {currentLive.summary.presentCount} · 迟到 {currentLive.summary.lateCount}</small></article>
+        <article className="amber"><span>未处理</span><strong>{currentLive.summary.invitedCount}</strong><small>缺勤 {currentLive.summary.absentCount} · 请假 {currentLive.summary.leaveCount}</small></article>
+        <article className="blue"><span>反馈</span><strong>{currentLive.summary.feedbackRate}%</strong><small>{currentLive.summary.feedbackCount}/{currentLive.summary.feedbackEligibleCount} 份 · 待跟进 {currentLive.summary.followUpCount}</small></article>
+        <article className="violet"><span>综合评分</span><strong>{currentLive.summary.averageOverallRating ?? '—'}</strong><small>内容 {currentLive.summary.averageContentRating ?? '—'} · 讲师 {currentLive.summary.averageTrainerRating ?? '—'}</small></article>
+      </section>}
+
+      {selectedParticipantIds.length > 0 && <div className="td-batch-bar"><strong>已选 {selectedParticipantIds.length} 人</strong><button type="button" disabled={saving} onClick={() => void batchAttendance('PRESENT')}>批量到场</button><button type="button" disabled={saving} onClick={() => void batchAttendance('ABSENT')}>批量缺勤</button><button type="button" disabled={saving} onClick={() => void batchAttendance('LEAVE')}>批量请假</button><button type="button" onClick={() => setSelectedParticipantIds([])}>取消选择</button></div>}
+
+      <div className="td-live-workspace">
+        <section className="td-live-roster">
+          {liveLoading && !currentLive ? <div className="td-loading compact"><Loader2 className="spin" />正在读取现场数据</div> : <div className="td-table-wrap"><table><thead><tr><th><input type="checkbox" checked={allSelected} onChange={event => setSelectedParticipantIds(event.target.checked ? people.map(item => item.id) : [])} /></th><th>参训人员</th><th>账号</th><th>课次出勤</th><th>课后反馈</th><th>考核</th></tr></thead><tbody>{people.map(person => {
+            const planPerson = plan.participants.find(item => item.id === person.id);
+            return <tr key={person.id}><td><input type="checkbox" checked={selectedParticipantIds.includes(person.id)} onChange={event => setSelectedParticipantIds(current => event.target.checked ? [...new Set([...current, person.id])] : current.filter(id => id !== person.id))} /></td><td><strong>{person.employeeName}</strong><small>{person.employeeNo} · {person.position || '岗位待维护'}</small><small>{person.department || '未分组'} / {person.team || '班组未设置'}</small></td><td><span className={`td-account-state ${person.accountReady ? 'ready' : 'blocked'}`}>{person.accountReady ? '可扫码' : '账号异常'}</span></td><td><select className={`td-attendance-select ${(person.attendance?.status || 'INVITED').toLowerCase()}`} value={person.attendance?.status || 'INVITED'} disabled={saving || !person.attendance} onChange={event => void updateAttendance(person, event.target.value)}><option value="INVITED">未签到</option><option value="PRESENT">已到场</option><option value="LATE">迟到</option><option value="LEAVE">请假</option><option value="ABSENT">缺勤</option></select><small>{fmtDate(person.attendance?.checkInAt)}</small>{person.attendance?.correctionReason && <small title={person.attendance.correctionReason}>人工：{person.attendance.correctionReason}</small>}</td><td>{person.feedback ? <><span className="td-feedback-done"><MessageSquareText />已提交 · {person.feedback.overallRating}分</span><small>{person.feedback.followUpRequested ? '需要跟进' : fmtDate(person.feedback.updatedAt)}</small></> : <span className="td-pill invited">未提交</span>}</td><td>{planPerson ? <><strong>{planPerson.score ?? '—'}</strong><small>{planPerson.result === 'PENDING' ? assessmentLabel(plan.assessmentMode) : statusLabel(planPerson.result)}</small>{plan.assessmentMode !== 'NONE' && ['PRESENT', 'LATE'].includes(planPerson.attendanceStatus) && <button type="button" className="td-inline-action" onClick={() => { setParticipantDraft({ id: planPerson.id, employeeName: planPerson.employeeName, version: planPerson.version, theoryScore: String(planPerson.theoryScore ?? ''), practicalScore: String(planPerson.practicalScore ?? ''), reviewComment: '' }); setDrawer('participant'); }}><PencilLine />录分</button>}</> : '—'}</td></tr>;
+          })}{!people.length && <tr><td colSpan={6}><div className="td-empty compact"><UsersRound /><strong>当前课次没有参训人员</strong></div></td></tr>}</tbody></table></div>}
+        </section>
+
+        <aside className="td-qr-console" ref={qrPanelRef}>
+          <header><div><span><QrCode /></span><div><small>{shownWindow?.purpose === 'FEEDBACK' ? '课后反馈二维码' : '课前签到二维码'}</small><strong>{shownWindow ? `${shownWindow.status === 'SCHEDULED' ? '等待开放' : '正在开放'} · 第 ${shownWindow.generation} 代` : '二维码未开放'}</strong></div></div>{shownWindow && <em className={shownWindow.status.toLowerCase()}>{statusLabel(shownWindow.status)}</em>}</header>
+          {shownWindow && qrDataUrl ? <div className="td-qr-image"><Image unoptimized priority width={320} height={320} src={qrDataUrl} alt={`${shownWindow.purpose === 'CHECK_IN' ? '培训签到' : '课后反馈'}二维码`} /><strong>{plan.title}</strong><span>{currentSession?.name}</span><small>{shownWindow.status === 'SCHEDULED' ? `开放：${fmtDate(shownWindow.opensAt)}` : `截止：${fmtDate(shownWindow.expiresAt)}`}</small></div> : <div className="td-qr-empty"><QrCode /><strong>尚未生成现场二维码</strong><p>签到码用于开课前确认身份；反馈码会在结束本课后开放。</p></div>}
+          <div className="td-qr-flow"><span className={checkInWindow ? 'active' : currentSession?.status === 'COMPLETED' ? 'done' : ''}><i>1</i><b>签到</b></span><i /><span className={currentSession?.status === 'IN_PROGRESS' ? 'active' : currentSession?.status === 'COMPLETED' ? 'done' : ''}><i>2</i><b>授课</b></span><i /><span className={feedbackWindow ? 'active' : ''}><i>3</i><b>反馈</b></span></div>
+          <div className="td-qr-actions">
+            {!checkInWindow && currentSession?.status !== 'COMPLETED' && ['PUBLISHED', 'IN_PROGRESS'].includes(plan.status) && <button type="button" className="primary" disabled={saving} onClick={() => void openQrWindow('CHECK_IN')}><QrCode />开放签到</button>}
+            {currentSession?.status === 'SCHEDULED' && ['PUBLISHED', 'IN_PROGRESS'].includes(plan.status) && <button type="button" className="primary" disabled={saving} onClick={() => void startSession(currentSession.id, currentSession.version)}><Play />开始本课</button>}
+            {!feedbackWindow && ['IN_PROGRESS', 'COMPLETED'].includes(currentSession?.status || '') && ['IN_PROGRESS', 'PENDING_REVIEW', 'COMPLETED'].includes(plan.status) && <button type="button" className="primary" disabled={saving} onClick={() => void openQrWindow('FEEDBACK')}><MessageSquareText />结束本课并开放反馈</button>}
+            {shownWindow && <><button type="button" disabled={saving} onClick={() => void qrPanelRef.current?.requestFullscreen()}><Maximize2 />全屏</button><button type="button" disabled={saving} onClick={() => window.print()}><Printer />打印</button><button type="button" disabled={saving} onClick={() => void rotateQrWindow(shownWindow.id)}><RotateCw />重新生成</button><button type="button" disabled={saving} onClick={() => void closeQrWindow(shownWindow.id)}><LockKeyhole />关闭</button></>}
+            <button type="button" disabled={liveLoading} onClick={() => void loadLive(selectedSessionId)}><RefreshCw className={liveLoading ? 'spin' : ''} />刷新现场</button>
+          </div>
+          <p className="td-qr-note">签到默认提前 {currentSession?.checkInOpenMinutes ?? 30} 分钟开放，开课后 {currentSession?.checkInCloseMinutes ?? 15} 分钟截止，{currentSession?.lateAfterMinutes ?? 5} 分钟起记迟到；反馈开放 {currentSession?.feedbackDeadlineHours ?? 24} 小时。员工身份来自当前个人账号，反馈不会自动生成签退，也不会改变成绩或证书。</p>
+        </aside>
+      </div>
     </div>;
   }
 
@@ -464,7 +723,7 @@ export default function TrainingDevelopmentWorkbench() {
 
     {view === 'retraining' && <div className="td-page"><header className="td-section-title td-page-title"><div><span>有效期管理</span><h2>到期复训与证书续期</h2><p>展示已到期及未来 90 天内到期的正式技能证书。</p></div><em>{data.expiringCertifications.length} 项</em></header><section className="td-retraining-grid">{data.expiringCertifications.map(item => <article key={item.id} className={item.expired ? 'expired' : ''}><span><Award /></span><div><small>{item.employeeNo} · {item.department || '未分组'} / {item.team || '未分组'}</small><strong>{item.employeeName}</strong><p>{item.skillName} · L{item.level}</p></div><div><em>{item.expired ? '已到期' : '即将到期'}</em><strong>{item.expiresAt || '—'}</strong></div><button type="button" onClick={() => { const course = data.courses.find(course => course.skillId && course.skill?.name === item.skillName); setPlanDraft({ ...emptyPlan, startAt: localInputDate(24), endAt: localInputDate(26), title: `${item.skillName}复训`, courseId: course?.id || '', participantIds: [item.employeeId], assessmentMode: course?.assessmentMode || 'COMBINED', passScore: String(course?.passScore || 80), mode: course?.mode || 'OFFLINE', isRequired: true }); setDrawer('plan'); }}>创建复训<ChevronRight /></button></article>)}{!data.expiringCertifications.length && <div className="td-empty"><Award /><strong>未来 90 天没有到期证书</strong><p>关联技能的培训审核通过后会进入有效期管理。</p></div>}</section></div>}
 
-    {view === 'reports' && <div className="td-page"><section className="td-export-card"><div className="td-export-art"><Download /></div><div><span>一张表看清培训结果</span><h2>员工培训发展记录表</h2><p>每名参训员工一行，只输出计划、人员、签到、学时、成绩、审核和技能证书，不在表头堆砌无关数字。</p><ul><li><Check />冻结表头与自动筛选</li><li><Check />状态颜色和异常突出</li><li><Check />适配打印与后续分析</li></ul></div><form onSubmit={event => { event.preventDefault(); window.location.href = `/api/training/export.xlsx?period=custom&startDate=${exportRange.start}&endDate=${exportRange.end}`; }}><label>开始日期<input type="date" required value={exportRange.start} onChange={event => setExportRange(current => ({ ...current, start: event.target.value }))} /></label><label>结束日期<input type="date" required value={exportRange.end} onChange={event => setExportRange(current => ({ ...current, end: event.target.value }))} /></label><button type="submit" className="primary"><Download />导出 Excel 台账</button><small>导出行为会写入系统操作日志</small></form></section></div>}
+    {view === 'reports' && <div className="td-page"><section className="td-export-card"><div className="td-export-art"><Download /></div><div><span>四张工作表还原培训事实</span><h2>员工培训发展记录表</h2><p>同时导出计划台账、课次签到明细、课后反馈明细和反馈汇总；人工修正原因与扫码来源可追溯。</p><ul><li><Check />冻结表头与自动筛选</li><li><Check />签到来源和修正原因</li><li><Check />反馈明细与匿名汇总</li></ul></div><form onSubmit={event => { event.preventDefault(); window.location.href = `/api/training/export.xlsx?period=custom&startDate=${exportRange.start}&endDate=${exportRange.end}`; }}><label>开始日期<input type="date" required value={exportRange.start} onChange={event => setExportRange(current => ({ ...current, start: event.target.value }))} /></label><label>结束日期<input type="date" required value={exportRange.end} onChange={event => setExportRange(current => ({ ...current, end: event.target.value }))} /></label><button type="submit" className="primary"><Download />导出 Excel 台账</button><small>导出行为会写入系统操作日志</small></form></section></div>}
 
     {drawer && <div className="td-drawer-backdrop" role="presentation"><aside className="td-drawer" role="dialog" aria-modal="true"><header><div><span>{drawer === 'course' ? '课程标准' : drawer === 'plan' ? '培训安排' : '考核录分'}</span><h2>{drawer === 'course' ? '新建培训课程' : drawer === 'plan' ? '新建培训计划' : `${participantDraft?.employeeName || ''} · 录入成绩`}</h2></div><button type="button" onClick={() => { setDrawer(null); setParticipantDraft(null); }}><X /></button></header>
       {drawer === 'course' && <form className="td-form" onSubmit={submitCourse}><div className="td-form-scroll"><section><strong>课程基础</strong><div className="td-form-grid"><label className="wide">课程名称<input required value={courseDraft.name} onChange={event => setCourseDraft({ ...courseDraft, name: event.target.value })} placeholder="如：全自动压接机安全与操作" /></label><label>课程分类<input value={courseDraft.category} onChange={event => setCourseDraft({ ...courseDraft, category: event.target.value })} /></label><label>培训方式<select value={courseDraft.mode} onChange={event => setCourseDraft({ ...courseDraft, mode: event.target.value })}><option value="OFFLINE">线下</option><option value="ONLINE">线上</option><option value="BLENDED">混合</option></select></label><label>默认时长（分钟）<input type="number" min="1" max="1440" value={courseDraft.defaultDurationMinutes} onChange={event => setCourseDraft({ ...courseDraft, defaultDurationMinutes: event.target.value })} /></label><label>课程负责人<select value={courseDraft.ownerEmployeeId} onChange={event => setCourseDraft({ ...courseDraft, ownerEmployeeId: event.target.value })}><option value="">待指定</option>{data.employees.map(person => <option key={person.id} value={person.id}>{person.employeeNo} · {person.name}</option>)}</select></label><label className="wide">课程目标<textarea value={courseDraft.objective} onChange={event => setCourseDraft({ ...courseDraft, objective: event.target.value })} placeholder="完成后应掌握什么" /></label><label className="wide">适用对象<input value={courseDraft.targetAudience} onChange={event => setCourseDraft({ ...courseDraft, targetAudience: event.target.value })} placeholder="如：压接岗位新员工、换岗人员" /></label></div></section><section><strong>考核与技能联动</strong><div className="td-form-grid"><label>考核方式<select value={courseDraft.assessmentMode} onChange={event => setCourseDraft({ ...courseDraft, assessmentMode: event.target.value })}><option value="NONE">无需考核</option><option value="THEORY">理论</option><option value="PRACTICAL">实操</option><option value="COMBINED">理论 + 实操</option></select></label><label>合格分<input type="number" min="0" max="100" disabled={courseDraft.assessmentMode === 'NONE'} value={courseDraft.passScore} onChange={event => setCourseDraft({ ...courseDraft, passScore: event.target.value })} /></label><label>关联技能<select value={courseDraft.skillId} onChange={event => { const skill = data.skills.find(item => item.id === event.target.value); setCourseDraft({ ...courseDraft, skillId: event.target.value, validityMonths: String(skill?.defaultValidityMonths || 12) }); }}><option value="">不关联证书</option>{data.skills.map(skill => <option key={skill.id} value={skill.id}>{skill.code} · {skill.name}</option>)}</select></label><label>认证等级<select disabled={!courseDraft.skillId} value={courseDraft.targetLevel} onChange={event => setCourseDraft({ ...courseDraft, targetLevel: event.target.value })}>{[1, 2, 3, 4, 5].map(level => <option key={level} value={level}>L{level}</option>)}</select></label><label>证书有效（月）<input type="number" min="1" max="120" disabled={!courseDraft.skillId} value={courseDraft.validityMonths} onChange={event => setCourseDraft({ ...courseDraft, validityMonths: event.target.value })} /></label><label>复训周期（月）<input type="number" min="1" max="120" value={courseDraft.retrainingMonths} onChange={event => setCourseDraft({ ...courseDraft, retrainingMonths: event.target.value })} /></label><label className="td-check wide"><input type="checkbox" checked={courseDraft.isRequired} onChange={event => setCourseDraft({ ...courseDraft, isRequired: event.target.checked })} /><span><strong>必修课程</strong><small>计划创建时默认标记为必修</small></span></label></div></section></div><footer><button type="button" onClick={() => setDrawer(null)}>取消</button><button type="submit" className="primary" disabled={saving}>{saving ? <Loader2 className="spin" /> : <Check />}保存课程</button></footer></form>}

@@ -50,6 +50,10 @@ jobs:
         run: npx prisma migrate deploy
       - name: Verify Prisma migration status
         run: npx prisma migrate status
+      - name: Training QR and feedback PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npm run test:training-integration
       - name: Daily plan PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -138,14 +142,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.38
+            org.opencontainers.image.version=v1.34.39
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.38
+            APP_VERSION=v1.34.39
             APP_REVISION=${{ github.sha }}
           load: true
           push: false

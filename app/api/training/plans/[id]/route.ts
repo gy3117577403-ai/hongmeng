@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { ensureTrainingSessionAttendanceRows } from '@/lib/training-qr-service';
 import {
   cleanTrainingText,
   parsePlanInput,
@@ -40,7 +41,13 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const current = await prisma.trainingPlan.findFirst({ where: { id: params.id, deletedAt: null }, include: { participants: true } });
+    const current = await prisma.trainingPlan.findFirst({
+      where: { id: params.id, deletedAt: null },
+      include: {
+        participants: true,
+        sessions: { where: { sequence: 1 }, take: 1 },
+      },
+    });
     if (!current) return NextResponse.json({ ok: false, error: '培训计划不存在或已删除' }, { status: 404 });
     if (!['DRAFT', 'PUBLISHED'].includes(current.status)) throw new TrainingInputError('计划开始后不能修改基础安排', 409);
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
@@ -61,6 +68,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       isRequired: body.isRequired ?? current.isRequired,
       assessmentMode: body.assessmentMode ?? current.assessmentMode,
       passScore: body.passScore ?? current.passScore,
+      checkInOpenMinutes: body.checkInOpenMinutes ?? current.sessions[0]?.checkInOpenMinutes,
+      lateAfterMinutes: body.lateAfterMinutes ?? current.sessions[0]?.lateAfterMinutes,
+      checkInCloseMinutes: body.checkInCloseMinutes ?? current.sessions[0]?.checkInCloseMinutes,
+      feedbackDeadlineHours: body.feedbackDeadlineHours ?? current.sessions[0]?.feedbackDeadlineHours,
+      feedbackRequired: body.feedbackRequired ?? current.sessions[0]?.feedbackRequired,
       participantIds: body.participantIds ?? current.participants.map(person => person.employeeId),
     });
     if (!input.participantIds.length) throw new TrainingInputError('请至少选择一名参训人员');
@@ -93,7 +105,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       if (updated.count !== 1) throw new TrainingInputError('计划已被其他人更新，请刷新后重试', 409);
       await tx.trainingSession.updateMany({
         where: { planId: current.id, sequence: 1 },
-        data: { name: '主培训场次', startAt: input.startAt, endAt: input.endAt, location: input.location, trainerId: input.trainerId, version: { increment: 1 } },
+        data: {
+          name: '主培训场次',
+          startAt: input.startAt,
+          endAt: input.endAt,
+          location: input.location,
+          trainerId: input.trainerId,
+          checkInOpenMinutes: input.checkInOpenMinutes,
+          lateAfterMinutes: input.lateAfterMinutes,
+          checkInCloseMinutes: input.checkInCloseMinutes,
+          feedbackDeadlineHours: input.feedbackDeadlineHours,
+          feedbackRequired: input.feedbackRequired,
+          version: { increment: 1 },
+        },
       });
       await tx.trainingParticipant.deleteMany({ where: { planId: current.id, employeeId: { notIn: input.participantIds } } });
       for (const employee of employees) {
@@ -124,6 +148,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           },
         });
       }
+      await ensureTrainingSessionAttendanceRows(tx, current.id);
       await tx.trainingActivity.create({
         data: { planId: current.id, action: 'update', fromStatus: current.status, toStatus: current.status, content: `更新计划安排与人员，共 ${employees.length} 人`, actorId: user.id },
       });

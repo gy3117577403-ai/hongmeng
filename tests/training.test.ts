@@ -39,11 +39,25 @@ test('training inputs normalize participants and require a valid time window', (
   assert.equal(plan.title, '压接机安全培训');
   assert.deepEqual(plan.participantIds, ['employee-1', 'employee-2']);
   assert.equal(plan.passScore, 80);
+  assert.deepEqual({
+    open: plan.checkInOpenMinutes,
+    late: plan.lateAfterMinutes,
+    close: plan.checkInCloseMinutes,
+    feedbackHours: plan.feedbackDeadlineHours,
+    feedbackRequired: plan.feedbackRequired,
+  }, { open: 30, late: 5, close: 15, feedbackHours: 24, feedbackRequired: false });
   assert.throws(() => parsePlanInput({
     title: '反向时间',
     startAt: '2026-08-22T10:00:00+08:00',
     endAt: '2026-08-22T08:00:00+08:00',
   }), /结束时间必须晚于开始时间/);
+  assert.throws(() => parsePlanInput({
+    title: '错误签到窗口',
+    startAt: '2026-08-22T08:00:00+08:00',
+    endAt: '2026-08-22T10:00:00+08:00',
+    lateAfterMinutes: 20,
+    checkInCloseMinutes: 10,
+  }), /签到截止分钟不能早于迟到宽限分钟/);
 });
 
 test('course assessment rules and certificate month arithmetic stay deterministic', () => {

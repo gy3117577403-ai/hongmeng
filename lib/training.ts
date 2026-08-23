@@ -14,6 +14,7 @@ export const TRAINING_ATTENDANCE_STATUSES = [
   'INVITED',
   'PRESENT',
   'LATE',
+  'PARTIAL',
   'ABSENT',
   'LEAVE',
 ] as const;
@@ -186,6 +187,12 @@ export function parsePlanInput(body: Record<string, unknown>) {
   const passScore = assessmentMode === 'NONE'
     ? null
     : parseOptionalTrainingInteger(body.passScore, '合格分', 0, 100) ?? 80;
+  const checkInOpenMinutes = parseOptionalTrainingInteger(body.checkInOpenMinutes, '签到提前开放分钟', 0, 1_440) ?? 30;
+  const lateAfterMinutes = parseOptionalTrainingInteger(body.lateAfterMinutes, '迟到宽限分钟', 0, 1_440) ?? 5;
+  const checkInCloseMinutes = parseOptionalTrainingInteger(body.checkInCloseMinutes, '签到截止分钟', 0, 1_440) ?? 15;
+  if (checkInCloseMinutes < lateAfterMinutes) {
+    throw new TrainingInputError('签到截止分钟不能早于迟到宽限分钟');
+  }
   const rawIds = Array.isArray(body.participantIds) ? body.participantIds : [];
   const participantIds = [...new Set(rawIds.map(id => cleanTrainingText(id, 80)).filter(Boolean))];
   return {
@@ -205,6 +212,11 @@ export function parsePlanInput(body: Record<string, unknown>) {
     isRequired: body.isRequired === true,
     assessmentMode,
     passScore,
+    checkInOpenMinutes,
+    lateAfterMinutes,
+    checkInCloseMinutes,
+    feedbackDeadlineHours: parseOptionalTrainingInteger(body.feedbackDeadlineHours, '反馈截止小时', 1, 720) ?? 24,
+    feedbackRequired: body.feedbackRequired === true,
     participantIds,
   };
 }
@@ -358,6 +370,11 @@ export function serializeTrainingPlan(plan: TrainingPlanRecord, people: Readonly
       actualStartAt: session.actualStartAt?.toISOString() || null,
       actualEndAt: session.actualEndAt?.toISOString() || null,
       actualMinutes: session.actualMinutes,
+      checkInOpenMinutes: session.checkInOpenMinutes,
+      lateAfterMinutes: session.lateAfterMinutes,
+      checkInCloseMinutes: session.checkInCloseMinutes,
+      feedbackDeadlineHours: session.feedbackDeadlineHours,
+      feedbackRequired: session.feedbackRequired,
       notes: session.notes,
       version: session.version,
       attachments: session.attachments.map(serializeAttachment),
