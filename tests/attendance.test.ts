@@ -1,15 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  ABNORMAL_TIME_CATEGORIES,
+  abnormalCategoryLabel,
   attendanceTotals,
   attainmentCapacityMilliseconds,
   basisPoints,
   defaultAttendanceSegments,
   parseAttendanceSegments,
   parseAttendanceEmployeeIds,
+  parseAbnormalCategory,
   parseEventDateTimes,
   STANDARD_DAY_MILLISECONDS,
 } from '../lib/attendance';
+
+test('training is an active abnormal-time category across reporting and review', () => {
+  assert.ok(ABNORMAL_TIME_CATEGORIES.some(item => item.value === 'training' && item.label === '培训'));
+  assert.equal(parseAbnormalCategory('training'), 'training');
+  assert.equal(abnormalCategoryLabel('training'), '培训');
+});
 
 test('attendance bulk employee selection is unique, bounded and rejects invalid identifiers', () => {
   assert.deepEqual(parseAttendanceEmployeeIds([' employee-1 ', 'employee-2', 'employee-1']), ['employee-1', 'employee-2']);

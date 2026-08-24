@@ -17,6 +17,7 @@ export const ATTAINMENT_CAPACITY_FACTOR = 0.95;
 
 export const ABNORMAL_TIME_CATEGORIES: Array<{ value: AbnormalTimeCategory; label: string }> = [
   { value: 'personal', label: '个人问题' },
+  { value: 'training', label: '培训' },
   { value: 'drawing_technical', label: '图纸 / 技术问题' },
   { value: 'process', label: '工艺问题' },
   { value: 'quality', label: '质量问题' },

@@ -627,13 +627,20 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   async function quality(event: AbnormalTimeEventDTO, decision: 'confirmed' | 'rejected'): Promise<void> {
     const note = decision === 'rejected'
       ? window.prompt('请输入驳回原因')
-      : window.prompt('品质确认说明（可选）', '现场异常记录属实');
+      : '';
     if (note === null || (decision === 'rejected' && !note.trim())) return;
     setSaving(true);
     setError('');
     try {
       const response = await fetch(`/api/abnormal-time-events/${event.id}/quality`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ decision, note }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          decision,
+          note,
+          employeeExempt: decision === 'confirmed'
+            ? event.source === 'FIELD_REPORT' ? true : event.employeeExempt
+            : false,
+          expectedVersion: event.version,
+        }),
       });
       const body = await response.json() as EventsResponse;
       if (!response.ok) throw new Error(body.error || '品质确认失败');
@@ -804,7 +811,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
                 <footer>
                   <button type="button" disabled={saving} onClick={() => editAbnormal(event)}><Pencil size={15} />编辑</button>
                   {canReviewQuality && event.qualityStatus === 'pending' && <>
-                    <button className="confirm" type="button" disabled={saving} onClick={() => void quality(event, 'confirmed')}><Check size={15} />确认</button>
+                    <button className="confirm" type="button" disabled={saving} onClick={() => void quality(event, 'confirmed')}><Check size={15} />同意</button>
                     <button type="button" disabled={saving} onClick={() => void quality(event, 'rejected')}><X size={15} />驳回</button>
                   </>}
                   {canResolveAbnormal && event.resolutionStatus === 'open' && <button type="button" disabled={saving} onClick={() => void resolveEvent(event)}><CheckCircle2 size={15} />关闭异常</button>}

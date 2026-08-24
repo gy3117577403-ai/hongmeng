@@ -1262,6 +1262,7 @@ export type ProductTimeDeploymentRouteDTO = {
   routeVersionAfter?: number | null;
   insertedProcesses?: number;
   movedProcesses?: number;
+  retiredProcesses?: number;
   updatedTimes?: number;
   historicalReports?: number;
   affectedEmployees?: number;
@@ -1827,6 +1828,7 @@ export type AttendanceRecordDTO = {
 
 export type AbnormalTimeCategory =
   | 'personal'
+  | 'training'
   | 'drawing_technical'
   | 'process'
   | 'quality'

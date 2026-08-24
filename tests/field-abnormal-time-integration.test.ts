@@ -112,7 +112,7 @@ test(
         employeeId: employee.id,
         body: {
           stepId: step.id,
-          category: 'process',
+          category: 'training',
           workDate: '2026-08-13',
           startedAt: '2026-08-13T02:00:00.000Z',
           durationMinutes: 30,
@@ -125,6 +125,8 @@ test(
       });
       assert.equal(result.created, true);
       assert.equal(result.event.source, 'FIELD_REPORT');
+      assert.equal(result.event.category, 'training');
+      assert.equal(result.event.categoryLabel, '培训');
       assert.equal(result.event.qualityStatus, 'pending');
       assert.equal(result.event.employeeExempt, false);
       assert.equal(result.event.reason, null);
@@ -139,7 +141,7 @@ test(
         employeeId: employee.id,
         body: {
           stepId: step.id,
-          category: 'process',
+          category: 'training',
           workDate: '2026-08-13',
           startedAt: '2026-08-13T02:00:00.000Z',
           durationMinutes: 30,

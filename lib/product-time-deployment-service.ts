@@ -68,6 +68,7 @@ export type ProductTimeDeploymentRouteDTO = {
   routeVersionAfter?: number | null;
   insertedProcesses?: number;
   movedProcesses?: number;
+  retiredProcesses?: number;
   updatedTimes?: number;
   historicalReports?: number;
   affectedEmployees?: number;
@@ -191,6 +192,7 @@ const routeInclude = Prisma.validator<Prisma.WorkOrderProcessRouteInclude>()({
           principalEmployeeId: true,
           completedAt: true,
           processedQty: true,
+          participants: { select: { employeeId: true } },
           laborPool: {
             select: {
               id: true,
@@ -716,15 +718,27 @@ function previewFromContext(
   const { profile, previous, routes } = context;
   const policies = normalizeProductTimeInsertPolicies(policiesInput);
   const diffs = buildDiffs(previous, profile, policies);
+  const inProgressMissingCriticalKeys = new Set<string>();
+  for (const route of routes) {
+    if (routeState(route) !== 'in_progress') continue;
+    for (const entry of routeDeploymentDrift(route, profile).createdEntries) {
+      if (entry.isCritical) inProgressMissingCriticalKeys.add(entry.occurrenceKey);
+    }
+  }
   const conflicts: ProductTimeDeploymentConflictDTO[] = [];
   for (const diff of diffs) {
-    if (diff.kind !== 'insert' || !diff.policyRequired) continue;
+    if (diff.kind !== 'insert' || !diff.isCritical) continue;
+    const policyRequired = inProgressMissingCriticalKeys.has(diff.occurrenceKey) && !diff.policy;
+    diff.policyRequired = policyRequired;
+    if (!inProgressMissingCriticalKeys.has(diff.occurrenceKey) && !diff.policy) {
+      diff.policy = 'AUTO_BY_PROGRESS';
+    }
+    if (!policyRequired) continue;
     conflicts.push({
       code: 'CRITICAL_PROCESS_POLICY_REQUIRED',
       message: `${diff.processName} 已标记为安全/质量关键工序，发布前必须明确选择“仅未来/未开工产品生效”或“召回返工”`,
     });
   }
-  const nextByKey = new Map(profile.entries.map(entry => [entry.occurrenceKey, entry] as const));
   let supplementObligations = 0;
   let keptCompleted = 0;
   let systemCoveredQty = 0;
@@ -737,7 +751,38 @@ function previewFromContext(
     const state = routeState(route);
     const routeFacts = routeHasFacts(route);
     const drift = routeDeploymentDrift(route, profile);
-    const timeChangedKeys = new Set(drift.timeChangedEntries.map(entry => entry.occurrenceKey));
+    if (state === 'completed') {
+      keptCompleted += 1;
+      return {
+        workOrderId: route.workOrderId,
+        workOrderCode: route.workOrder.code,
+        state,
+        status: 'unchanged' as const,
+        qrUpdated: false,
+        routeVersionBefore: route.version,
+        routeVersionAfter: route.version,
+        insertedProcesses: 0,
+        movedProcesses: 0,
+        retiredProcesses: 0,
+        updatedTimes: 0,
+        historicalReports: 0,
+        affectedEmployees: 0,
+        supplementObligations: 0,
+        systemCoveredQty: 0,
+        actualRequiredQty: 0,
+        fulfillmentModes: [],
+        error: null,
+      };
+    }
+    const reportAffectedStepIds = new Set<string>([
+      ...drift.timeChangedEntries
+        .map(entry => drift.currentByKey.get(entry.occurrenceKey)?.id)
+        .filter((id): id is string => Boolean(id)),
+      ...[...drift.movedKeys]
+        .map(key => drift.currentByKey.get(key)?.id)
+        .filter((id): id is string => Boolean(id)),
+      ...drift.removedSteps.map(step => step.id),
+    ]);
     let routeReports = 0;
     const routeEmployees = new Set<string>();
     if (route.processRouteChanges.length) {
@@ -747,57 +792,6 @@ function previewFromContext(
         workOrderId: route.workOrderId,
         workOrderCode: route.workOrder.code,
       });
-    }
-    if (routeFacts) {
-      for (const occurrenceKey of drift.movedKeys) {
-        const movedStep = drift.currentByKey.get(occurrenceKey);
-        const desired = nextByKey.get(occurrenceKey);
-        if (!movedStep || !desired) continue;
-        const lower = Math.min(movedStep.position, desired.position);
-        const upper = Math.max(movedStep.position, desired.position);
-        const crossesQuantityFacts = route.steps.some(step => {
-          return step.position >= lower
-            && step.position <= upper
-            && (
-              stepHasFacts(step)
-              || step.inputQty > 0
-              || step._count.sourceQuantityMovements > 0
-              || step._count.targetQuantityMovements > 0
-            );
-        });
-        if (crossesQuantityFacts) {
-          conflicts.push({
-            code: 'MOVE_CROSSES_QUANTITY_FACTS',
-            message: `${desired.processDefinition.name} 的调序跨越了已有投入、报工或数量台账；直接改顺序会破坏转序闭环，请另建后续版本或先完成当前工单`,
-            workOrderId: route.workOrderId,
-            workOrderCode: route.workOrder.code,
-          });
-        }
-      }
-    }
-    for (const removed of drift.removedSteps) {
-      if (
-        removed
-        && removed.executionMode === ProcessStepExecutionMode.NORMAL
-        && removed.status !== 'completed'
-        && removed.status !== 'skipped'
-        && (
-          removed.inputQty > 0
-          || removed.processedQty > 0
-          || removed.goodOutputQty > 0
-          || removed.defectOutputQty > 0
-          || removed.releasedGoodQty > 0
-          || removed._count.sourceQuantityMovements > 0
-          || removed._count.targetQuantityMovements > 0
-        )
-      ) {
-        conflicts.push({
-          code: 'DELETE_ACTIVE_QUANTITY_FACTS',
-          message: `${removed.processName} 仍有在途投入或数量台账，直接删除会丢失转序数量；只能在该工序完成后退役，或另行做数量调整`,
-          workOrderId: route.workOrderId,
-          workOrderCode: route.workOrder.code,
-        });
-      }
     }
     const keys = new Set<string>();
     for (const step of route.steps) {
@@ -819,10 +813,10 @@ function previewFromContext(
           workOrderCode: route.workOrder.code,
         });
       }
-      if (key && timeChangedKeys.has(key)) {
+      if (reportAffectedStepIds.has(step.id)) {
         historicalReports += step.completions.length;
         routeReports += step.completions.length;
-        attainmentRecords += step.executions.length;
+        attainmentRecords += step.completions.length + step.executions.length;
         for (const execution of step.executions) {
           employees.add(execution.employeeId);
           routeEmployees.add(execution.employeeId);
@@ -831,6 +825,10 @@ function previewFromContext(
           if (completion.principalEmployeeId) {
             employees.add(completion.principalEmployeeId);
             routeEmployees.add(completion.principalEmployeeId);
+          }
+          for (const participant of completion.participants) {
+            employees.add(participant.employeeId);
+            routeEmployees.add(participant.employeeId);
           }
           for (const claim of completion.laborPool?.claims || []) {
             employees.add(claim.employeeId);
@@ -852,7 +850,7 @@ function previewFromContext(
       for (const entry of drift.createdEntries) {
         const diff = diffs.find(item => item.kind === 'insert' && item.occurrenceKey === entry.occurrenceKey);
         const policy = diff?.policy
-          || (!entry.isCritical ? 'AUTO_BY_PROGRESS' : policies[entry.occurrenceKey]);
+          || (state === 'unstarted' || !entry.isCritical ? 'AUTO_BY_PROGRESS' : policies[entry.occurrenceKey]);
         if (!policy) {
           conflicts.push({
             code: 'CRITICAL_PROCESS_POLICY_REQUIRED',
@@ -881,7 +879,7 @@ function previewFromContext(
         projections.push(projectProductTimeCoverage({
           routeTargetQty: targetQty,
           routeHasFacts: routeFacts,
-          routeCompleted: state === 'completed',
+          routeCompleted: false,
           hasNextExistingStep: boundary.hasNextExistingStep,
           downstreamHasFacts: boundary.downstreamHasFacts,
           boundaryProgressQty: boundary.boundaryProgressQty,
@@ -896,14 +894,6 @@ function previewFromContext(
     supplementObligations += routeSupplements;
     systemCoveredQty += routeSystemCoveredQty;
     actualRequiredQty += routeActualRequiredQty;
-    if (
-      state === 'completed'
-      && drift.createdEntries.length > 0
-      && projections.length === drift.createdEntries.length
-      && projections.every(item => !item.shouldReopenCompletedRoute)
-    ) {
-      keptCompleted += 1;
-    }
     return {
       workOrderId: route.workOrderId,
       workOrderCode: route.workOrder.code,
@@ -916,6 +906,7 @@ function previewFromContext(
       routeVersionAfter: null,
       insertedProcesses: drift.createdEntries.length,
       movedProcesses: drift.movedKeys.size,
+      retiredProcesses: drift.removedSteps.length,
       updatedTimes: drift.timeChangedEntries.length,
       historicalReports: routeReports,
       affectedEmployees: routeEmployees.size,
@@ -998,12 +989,14 @@ async function correctHistoricalStandard(
     profile: ProductTimeProfileRecord;
     entry: ProductTimeProfileRecord['entries'][number];
     actorId: string;
+    routeVersionAfter: number;
   },
 ): Promise<CorrectionSummary> {
   const standard = entryStandard(input.entry);
   const completions = await tx.processCompletion.findMany({
     where: { stepId: input.stepId, voidedAt: null },
     include: {
+      participants: { select: { employeeId: true } },
       laborPool: {
         include: {
           claims: {
@@ -1020,6 +1013,10 @@ async function correctHistoricalStandard(
     orderBy: [{ endedAt: 'asc' }, { id: 'asc' }],
   });
   const employees = new Set(executions.map(execution => execution.employeeId));
+  for (const completion of completions) {
+    if (completion.principalEmployeeId) employees.add(completion.principalEmployeeId);
+    for (const participant of completion.participants) employees.add(participant.employeeId);
+  }
   const eligiblePools = completions.filter(item => (
     item.laborPool && item.laborPool.status !== ProcessLaborPoolStatus.VOIDED
   ));
@@ -1059,6 +1056,7 @@ async function correctHistoricalStandard(
         productTimeProfileId: input.profile.id,
         productTimeEntryId: input.entry.id,
         productTimeProfileVersion: input.profile.version,
+        routeVersion: input.routeVersionAfter,
         standardSource: 'product_time_deployment',
         timeBasis: standard.timeBasis,
         unitLabel: standard.unitLabel,
@@ -1225,6 +1223,521 @@ async function correctHistoricalStandard(
   };
 }
 
+async function synchronizeHistoricalReportVersion(
+  tx: Tx,
+  input: {
+    stepId: string;
+    profile: ProductTimeProfileRecord;
+    entry: ProductTimeProfileRecord['entries'][number];
+    routeVersionAfter: number;
+  },
+): Promise<CorrectionSummary> {
+  const completions = await tx.processCompletion.findMany({
+    where: { stepId: input.stepId, voidedAt: null },
+    include: {
+      participants: { select: { employeeId: true } },
+      laborPool: {
+        select: {
+          id: true,
+          claims: {
+            where: { status: ProcessLaborClaimStatus.ACTIVE },
+            select: { employeeId: true },
+          },
+        },
+      },
+    },
+    orderBy: [{ completedAt: 'asc' }, { id: 'asc' }],
+  });
+  const executions = await tx.processExecution.findMany({
+    where: { stepId: input.stepId, voidedAt: null },
+    select: { id: true, employeeId: true },
+  });
+  const employees = new Set(executions.map(execution => execution.employeeId));
+  for (const completion of completions) {
+    if (completion.principalEmployeeId) employees.add(completion.principalEmployeeId);
+    for (const participant of completion.participants) employees.add(participant.employeeId);
+    for (const claim of completion.laborPool?.claims || []) employees.add(claim.employeeId);
+  }
+  if (completions.length) {
+    await tx.processCompletion.updateMany({
+      where: { id: { in: completions.map(completion => completion.id) }, voidedAt: null },
+      data: {
+        productTimeProfileId: input.profile.id,
+        productTimeEntryId: input.entry.id,
+        productTimeProfileVersion: input.profile.version,
+        routeVersion: input.routeVersionAfter,
+      },
+    });
+  }
+  const poolIds = completions
+    .map(completion => completion.laborPool?.id)
+    .filter((id): id is string => Boolean(id));
+  if (poolIds.length) {
+    await tx.processLaborPool.updateMany({
+      where: { id: { in: poolIds }, status: { not: ProcessLaborPoolStatus.VOIDED } },
+      data: {
+        productTimeProfileVersion: input.profile.version,
+        version: { increment: 1 },
+      },
+    });
+  }
+  if (executions.length) {
+    await tx.processExecution.updateMany({
+      where: { id: { in: executions.map(execution => execution.id) }, voidedAt: null },
+      data: { productTimeProfileVersion: input.profile.version },
+    });
+  }
+  return {
+    completions: completions.length,
+    executions: executions.length,
+    pools: poolIds.length,
+    claims: 0,
+    employeeIds: [...employees],
+  };
+}
+
+async function deactivateRetiredStepReporting(
+  tx: Tx,
+  input: {
+    deploymentId: string;
+    stepId: string;
+    profile: ProductTimeProfileRecord;
+    actorId: string;
+    routeVersionAfter: number;
+  },
+): Promise<CorrectionSummary> {
+  const completions = await tx.processCompletion.findMany({
+    where: { stepId: input.stepId, voidedAt: null },
+    include: {
+      participants: { select: { employeeId: true } },
+      laborPool: {
+        include: {
+          claims: {
+            where: { status: ProcessLaborClaimStatus.ACTIVE },
+            orderBy: [{ claimedAt: 'asc' }, { id: 'asc' }],
+          },
+        },
+      },
+    },
+    orderBy: [{ completedAt: 'asc' }, { id: 'asc' }],
+  });
+  const executions = await tx.processExecution.findMany({
+    where: { stepId: input.stepId, voidedAt: null },
+    select: { id: true, employeeId: true },
+  });
+  const employees = new Set(executions.map(execution => execution.employeeId));
+  const now = new Date();
+  let pools = 0;
+  let claims = 0;
+  for (const completion of completions) {
+    if (completion.principalEmployeeId) employees.add(completion.principalEmployeeId);
+    for (const participant of completion.participants) employees.add(participant.employeeId);
+    await tx.processCompletion.update({
+      where: { id: completion.id },
+      data: {
+        productTimeProfileId: input.profile.id,
+        productTimeEntryId: null,
+        productTimeProfileVersion: input.profile.version,
+        routeVersion: input.routeVersionAfter,
+        standardSource: 'product_time_deployment_retired',
+        countsForEfficiency: false,
+      },
+    });
+    const pool = completion.laborPool;
+    if (!pool || pool.status === ProcessLaborPoolStatus.VOIDED) continue;
+    for (const claim of pool.claims) {
+      employees.add(claim.employeeId);
+      const key = `product-time-deployment:${input.deploymentId}:retire:${claim.id}`;
+      await tx.processLaborClaim.update({
+        where: { id: claim.id },
+        data: {
+          status: ProcessLaborClaimStatus.VOIDED,
+          voidedAt: now,
+          voidedById: input.actorId,
+          voidReason: `产品工序与工时 V${input.profile.version} 删除工序后撤销效率归集`,
+        },
+      });
+      await tx.processLaborClaim.create({
+        data: {
+          poolId: pool.id,
+          employeeId: claim.employeeId,
+          quantity: -claim.quantity,
+          standardLaborMilliseconds: -claim.standardLaborMilliseconds,
+          workDate: claim.workDate,
+          status: ProcessLaborClaimStatus.REVERSAL,
+          source: 'product_time_deployment_retired',
+          idempotencyKey: `${key}:reverse`.slice(0, 120),
+          claimedById: input.actorId,
+          claimedAt: now,
+          reversalOfId: claim.id,
+        },
+      });
+      claims += 1;
+    }
+    await tx.processLaborPool.update({
+      where: { id: pool.id },
+      data: {
+        status: ProcessLaborPoolStatus.VOIDED,
+        countsForEfficiency: false,
+        standardSource: 'product_time_deployment_retired',
+        productTimeProfileVersion: input.profile.version,
+        version: { increment: 1 },
+      },
+    });
+    pools += 1;
+  }
+  if (executions.length) {
+    await tx.processExecution.updateMany({
+      where: { id: { in: executions.map(execution => execution.id) }, voidedAt: null },
+      data: {
+        countsForEfficiency: false,
+        standardSource: 'product_time_deployment_retired',
+        productTimeProfileVersion: input.profile.version,
+      },
+    });
+  }
+  return {
+    completions: completions.length,
+    executions: executions.length,
+    pools,
+    claims,
+    employeeIds: [...employees],
+  };
+}
+
+async function bypassRetiredStepGroupOpenQuantity(
+  tx: Tx,
+  input: {
+    deploymentId: string;
+    route: DeploymentRouteRecord;
+    steps: DeploymentStepRecord[];
+    profile: ProductTimeProfileRecord;
+    stepIdByKey: Map<string, string>;
+    retainedIds: Set<string>;
+    actorId: string;
+  },
+): Promise<{ quantity: number; targetStepIds: string[]; finishedGoodQty: number }> {
+  if (!input.steps.length) return { quantity: 0, targetStepIds: [], finishedGoodQty: 0 };
+  const orderedSteps = [...input.steps].sort((left, right) => left.position - right.position || left.id.localeCompare(right.id));
+  const sequenceGroup = orderedSteps[0].sequenceGroup;
+  const originalGroup = input.route.steps.filter(step => (
+    step.executionMode === ProcessStepExecutionMode.NORMAL && step.sequenceGroup === sequenceGroup
+  ));
+  // A deleted member of a still-active parallel group does not own a separate
+  // stream of product. The retained members already hold the same group input,
+  // so forwarding the removed member's quantity would duplicate production.
+  if (originalGroup.some(step => input.retainedIds.has(step.id))) {
+    return { quantity: 0, targetStepIds: [], finishedGoodQty: 0 };
+  }
+  const openQuantities = orderedSteps.map(step => (
+    Math.max(0, step.inputQty - step.processedQty)
+    + Math.max(0, step.goodOutputQty - step.releasedGoodQty)
+  ));
+  // Parallel members receive the same product stream. Only the quantity that
+  // remains valid across every removed member can bypass the retired group.
+  const quantity = Math.min(...openQuantities);
+  if (quantity <= 0) return { quantity: 0, targetStepIds: [], finishedGoodQty: 0 };
+
+  const removedKeys = new Set(orderedSteps.map(step => stepOccurrenceKey(step)).filter((key): key is string => Boolean(key)));
+  const replacementEntry = input.profile.entries.find(entry => (
+    removedKeys.has(entry.occurrenceKey) && input.stepIdByKey.has(entry.occurrenceKey)
+  ));
+  const maxRemovedPosition = Math.max(...orderedSteps.map(step => step.position));
+  const retainedSuccessor = input.route.steps
+    .filter(step => input.retainedIds.has(step.id) && step.position > maxRemovedPosition)
+    .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id))[0];
+  const retainedSuccessorKey = retainedSuccessor ? stepOccurrenceKey(retainedSuccessor) : null;
+  const successorEntry = retainedSuccessorKey
+    ? input.profile.entries.find(entry => entry.occurrenceKey === retainedSuccessorKey)
+    : null;
+  const createdSuccessor = input.profile.entries.find(entry => (
+    entry.position >= Math.min(...orderedSteps.map(step => step.position))
+    && input.stepIdByKey.has(entry.occurrenceKey)
+    && !input.route.steps.some(step => stepOccurrenceKey(step) === entry.occurrenceKey)
+  ));
+  const nextEntry = replacementEntry || successorEntry || createdSuccessor || null;
+  const targetStepIds = nextEntry
+    ? input.profile.entries
+        .filter(entry => entry.sequenceGroup === nextEntry.sequenceGroup)
+        .map(entry => input.stepIdByKey.get(entry.occurrenceKey))
+        .filter((id): id is string => Boolean(id))
+    : [];
+  const now = new Date();
+  const removedStepIds = orderedSteps.map(step => step.id);
+  const priorGroupExists = input.route.steps.some(step => (
+    step.executionMode === ProcessStepExecutionMode.NORMAL && step.sequenceGroup < sequenceGroup
+  ));
+  let rewiredQuantity = 0;
+  if (priorGroupExists) {
+    const incoming = await tx.processQuantityMovement.findMany({
+      where: {
+        workOrderId: input.route.workOrderId,
+        targetStepId: { in: removedStepIds },
+        type: { in: [ProcessMovementType.GOOD_TRANSFER, ProcessMovementType.REWORK_RETURN] },
+        voidedAt: null,
+      },
+      include: {
+        reversals: { where: { voidedAt: null }, select: { quantity: true } },
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    });
+    const effective = incoming.map(movement => ({
+      movement,
+      quantity: movement.quantity - movement.reversals.reduce((sum, reversal) => sum + reversal.quantity, 0),
+    })).filter(item => item.quantity > 0);
+    const events = new Map<string, typeof effective>();
+    for (const item of effective) {
+      const key = [
+        item.movement.completionId,
+        item.movement.sourceStepId,
+        item.movement.branchWorkOrderId || '',
+        item.movement.sourceSequenceGroup,
+      ].join(':');
+      const group = events.get(key) || [];
+      group.push(item);
+      events.set(key, group);
+    }
+    const candidates = [...events.entries()].map(([key, rows]) => {
+      const perStep = removedStepIds.map(stepId => rows
+        .filter(row => row.movement.targetStepId === stepId)
+        .reduce((sum, row) => sum + row.quantity, 0));
+      return {
+        key,
+        rows,
+        available: Math.min(...perStep),
+        createdAt: Math.max(...rows.map(row => row.movement.createdAt.getTime())),
+      };
+    }).filter(event => event.available > 0)
+      .sort((left, right) => right.createdAt - left.createdAt || right.key.localeCompare(left.key));
+    const available = candidates.reduce((sum, event) => sum + event.available, 0);
+    if (available < quantity) {
+      throw new ProductTimeDeploymentError(
+        `${orderedSteps.map(step => step.processName).join(' / ')} 的有效入站台账仅 ${available} 件，少于待承接 ${quantity} 件，不能静默改写数量`,
+        409,
+        'PRODUCT_TIME_DELETE_LEDGER_CONFLICT',
+      );
+    }
+    let remaining = quantity;
+    let eventIndex = 0;
+    for (const event of candidates) {
+      if (remaining <= 0) break;
+      const eventQuantity = Math.min(remaining, event.available);
+      for (const removedStepId of removedStepIds) {
+        let targetRemaining = eventQuantity;
+        const rows = event.rows.filter(row => row.movement.targetStepId === removedStepId);
+        for (const row of rows) {
+          if (targetRemaining <= 0) break;
+          const reversalQuantity = Math.min(targetRemaining, row.quantity);
+          await tx.processQuantityMovement.create({
+            data: {
+              completionId: row.movement.completionId,
+              workOrderId: row.movement.workOrderId,
+              sourceStepId: row.movement.sourceStepId,
+              targetStepId: row.movement.targetStepId,
+              branchWorkOrderId: row.movement.branchWorkOrderId,
+              type: ProcessMovementType.REVERSAL,
+              quantity: reversalQuantity,
+              sourceSequenceGroup: row.movement.sourceSequenceGroup,
+              targetSequenceGroup: row.movement.targetSequenceGroup,
+              reversalOfId: row.movement.id,
+              idempotencyKey: `product-time:${input.deploymentId}:delete-reversal:${row.movement.id}:${reversalQuantity}`.slice(0, 190),
+            },
+          });
+          targetRemaining -= reversalQuantity;
+        }
+      }
+      const source = event.rows[0].movement;
+      if (targetStepIds.length) {
+        await tx.processQuantityMovement.createMany({
+          data: targetStepIds.map(targetStepId => ({
+            completionId: source.completionId,
+            workOrderId: source.workOrderId,
+            sourceStepId: source.sourceStepId,
+            targetStepId,
+            branchWorkOrderId: source.branchWorkOrderId,
+            type: ProcessMovementType.GOOD_TRANSFER,
+            quantity: eventQuantity,
+            sourceSequenceGroup: source.sourceSequenceGroup,
+            targetSequenceGroup: nextEntry?.sequenceGroup || null,
+            idempotencyKey: `product-time:${input.deploymentId}:delete-bypass:${eventIndex}:${targetStepId}`.slice(0, 190),
+          })),
+        });
+      } else {
+        await tx.processQuantityMovement.create({
+          data: {
+            completionId: source.completionId,
+            workOrderId: source.workOrderId,
+            sourceStepId: source.sourceStepId,
+            targetStepId: null,
+            branchWorkOrderId: source.branchWorkOrderId,
+            type: ProcessMovementType.FINISHED_GOOD,
+            quantity: eventQuantity,
+            sourceSequenceGroup: source.sourceSequenceGroup,
+            targetSequenceGroup: null,
+            idempotencyKey: `product-time:${input.deploymentId}:delete-finished:${eventIndex}`.slice(0, 190),
+          },
+        });
+      }
+      rewiredQuantity += eventQuantity;
+      remaining -= eventQuantity;
+      eventIndex += 1;
+    }
+  }
+  for (const targetStepId of targetStepIds) {
+    const target = await tx.workOrderProcessStep.findUniqueOrThrow({
+      where: { id: targetStepId },
+      select: { quantityVersion: true, status: true, startedAt: true },
+    });
+    const updated = await tx.workOrderProcessStep.updateMany({
+      where: { id: targetStepId, quantityVersion: target.quantityVersion },
+      data: {
+        inputQty: { increment: quantity },
+        status: target.status === 'completed' || target.status === 'skipped' ? 'current' : target.status,
+        startedAt: target.startedAt || now,
+        completedAt: target.status === 'completed' || target.status === 'skipped' ? null : undefined,
+        completedById: target.status === 'completed' || target.status === 'skipped' ? null : undefined,
+        quantityVersion: { increment: 1 },
+      },
+    });
+    if (updated.count !== 1) {
+      throw new ProductTimeDeploymentError(
+        '删除工序承接数量时目标工序已变化，请刷新后重试发布',
+        409,
+        'PRODUCT_TIME_DELETE_BYPASS_CONFLICT',
+      );
+    }
+  }
+  let finishedGoodQty = 0;
+  if (!targetStepIds.length) {
+    const summary = getProductionQuantitySummary(input.route.workOrder);
+    const targetQty = summary.targetQty || 0;
+    const nextCompletedQty = (summary.completedQty || 0) + quantity;
+    if (targetQty <= 0 || nextCompletedQty > targetQty) {
+      throw new ProductTimeDeploymentError(
+        `${orderedSteps.map(step => step.processName).join(' / ')} 删除后的成品承接会使完成数量 ${nextCompletedQty} 超过目标 ${targetQty}`,
+        409,
+        'PRODUCT_TIME_DELETE_FINISHED_QUANTITY_CONFLICT',
+      );
+    }
+    await tx.workOrder.update({
+      where: { id: input.route.workOrderId },
+      data: {
+        completedQty: String(nextCompletedQty),
+        progress: Math.min(100, Math.round(nextCompletedQty / targetQty * 100)),
+        executionVersion: { increment: 1 },
+        lastProgressAt: now,
+        latestProgressRemark: `产品工序与工时 V${input.profile.version} 删除末道工序，${quantity} 件在途数量转为成品`,
+      },
+    });
+    finishedGoodQty = quantity;
+  }
+  await tx.processRouteActivity.create({
+    data: {
+      routeId: input.route.id,
+      stepId: orderedSteps[0].id,
+      action: 'product_time_deleted_step_quantity_bypassed',
+      content: targetStepIds.length
+        ? `${orderedSteps.map(step => step.processName).join(' / ')} 删除后，${quantity} 件在途数量已承接到新后续工序`
+        : `${orderedSteps.map(step => step.processName).join(' / ')} 删除后，${quantity} 件在途数量已转为成品`,
+      actorId: input.actorId,
+      detail: {
+        deploymentId: input.deploymentId,
+        sourceStepIds: removedStepIds,
+        targetStepIds,
+        openQuantities,
+        quantity,
+        rewiredQuantity,
+        finishedGoodQty,
+      },
+    },
+  });
+  return { quantity, targetStepIds, finishedGoodQty };
+}
+
+async function reconcileRouteAfterForcedProductTimeMigration(
+  tx: Tx,
+  input: {
+    routeId: string;
+    workOrderId: string;
+    profileVersion: number;
+  },
+): Promise<boolean> {
+  const [unfinishedNormalSteps, activeSupplements, order] = await Promise.all([
+    tx.workOrderProcessStep.count({
+      where: {
+        routeId: input.routeId,
+        retiredAt: null,
+        executionMode: ProcessStepExecutionMode.NORMAL,
+        status: { notIn: ['completed', 'skipped'] },
+      },
+    }),
+    tx.processSupplementObligation.count({
+      where: { routeId: input.routeId, status: ProcessSupplementObligationStatus.ACTIVE },
+    }),
+    tx.workOrder.findUniqueOrThrow({
+      where: { id: input.workOrderId },
+      select: {
+        productionTargetQty: true,
+        uncompletedQty: true,
+        completedQty: true,
+        completedAt: true,
+      },
+    }),
+  ]);
+  if (unfinishedNormalSteps > 0 || activeSupplements > 0) return false;
+  const quantity = getProductionQuantitySummary(order);
+  const targetQty = quantity.targetQty || 0;
+  const completedQty = quantity.completedQty || 0;
+  if (targetQty <= 0 || completedQty < targetQty) return false;
+
+  let frontier = [input.workOrderId];
+  const visited = new Set(frontier);
+  let activeDescendantBranches = false;
+  while (frontier.length && !activeDescendantBranches) {
+    const children = await tx.workOrder.findMany({
+      where: { parentWorkOrderId: { in: frontier }, deletedAt: null },
+      select: { id: true, branchStatus: true },
+    });
+    activeDescendantBranches = children.some(child => (
+      child.branchStatus !== 'RESOLVED' && child.branchStatus !== 'CANCELLED'
+    ));
+    const next: string[] = [];
+    for (const child of children) {
+      if (visited.has(child.id)) {
+        throw new ProductTimeDeploymentError(
+          '工单分支层级存在循环，不能确认强制迁移后的完成状态',
+          409,
+          'PRODUCT_TIME_BRANCH_ANCESTRY_CYCLE',
+        );
+      }
+      visited.add(child.id);
+      next.push(child.id);
+    }
+    frontier = next;
+  }
+
+  const now = new Date();
+  await tx.workOrderProcessRoute.update({
+    where: { id: input.routeId },
+    data: { status: 'completed', completedAt: now },
+  });
+  await tx.workOrder.update({
+    where: { id: input.workOrderId },
+    data: {
+      stage: activeDescendantBranches ? 'backend' : 'completed',
+      status: activeDescendantBranches ? 'processing' : 'done',
+      progress: 100,
+      completedAt: activeDescendantBranches ? null : order.completedAt || now,
+      lastProgressAt: now,
+      latestProgressRemark: activeDescendantBranches
+        ? `产品工序与工时 V${input.profileVersion} 强制迁移完成主路线，等待不良分支闭环`
+        : `产品工序与工时 V${input.profileVersion} 强制迁移后工单生产完成`,
+      executionVersion: { increment: 1 },
+    },
+  });
+  return true;
+}
+
 async function retireRemovedStep(tx: Tx, step: DeploymentStepRecord, deploymentRouteId: string) {
   const now = new Date();
   let cancelledSupplement = false;
@@ -1269,6 +1782,7 @@ async function retireRemovedStep(tx: Tx, step: DeploymentStepRecord, deploymentR
       productTimeDeploymentRouteId: deploymentRouteId,
       status: step.status === 'completed' ? 'completed' : 'skipped',
       remark: [step.remark, '产品工序与工时发布后退役；历史报工保留'].filter(Boolean).join('；'),
+      quantityVersion: { increment: 1 },
     },
   });
   return { cancelledSupplement };
@@ -1442,6 +1956,30 @@ async function applyRouteDeployment(
   },
 ) {
   const { route, profile, previous } = input;
+  if (routeState(route) === 'completed') {
+    return {
+      unchanged: true,
+      result: {
+        insertedProcesses: 0,
+        movedProcesses: 0,
+        retiredProcesses: 0,
+        updatedTimes: 0,
+        historicalReports: 0,
+        affectedEmployees: 0,
+        supplementObligations: 0,
+        systemCoveredQty: 0,
+        actualRequiredQty: 0,
+        bypassedQuantity: 0,
+        fulfillmentModes: [],
+        reopened: false,
+        closedAfterSupplementCancellation: false,
+        taskSync: null,
+        stepChanges: [],
+        keptCompleted: true,
+      },
+      routeVersionAfter: route.version,
+    };
+  }
   const routeLock = await tx.workOrderProcessRoute.updateMany({
     where: { id: route.id, version: route.version },
     data: {
@@ -1485,6 +2023,7 @@ async function applyRouteDeployment(
   let supplements = 0;
   let systemCoveredQty = 0;
   let actualRequiredQty = 0;
+  let bypassedQuantity = 0;
   const fulfillmentModes = new Set<string>();
   let reopened = false;
   let cancelledSupplement = false;
@@ -1516,6 +2055,7 @@ async function applyRouteDeployment(
           profile,
           entry,
           actorId: input.actorId,
+          routeVersionAfter: route.version + 1,
         });
         correctedReports += correction.completions;
         for (const employeeId of correction.employeeIds) affectedEmployeeIds.add(employeeId);
@@ -1525,6 +2065,15 @@ async function applyRouteDeployment(
           kind: 'update_time',
           previousStandardMillisecondsPerUnit: existing.standardMillisecondsPerUnit,
         });
+      } else if (routeDrift.movedKeys.has(entry.occurrenceKey) && stepHasFacts(existing)) {
+        const correction = await synchronizeHistoricalReportVersion(tx, {
+          stepId: existing.id,
+          profile,
+          entry,
+          routeVersionAfter: route.version + 1,
+        });
+        correctedReports += correction.completions;
+        for (const employeeId of correction.employeeIds) affectedEmployeeIds.add(employeeId);
       }
       const synchronized = await tx.workOrderProcessStep.updateMany({
         where: {
@@ -1583,7 +2132,7 @@ async function applyRouteDeployment(
     ));
     const insertPolicy = insertDiff?.policy
       || input.policies[entry.occurrenceKey]
-      || (!entry.isCritical ? 'AUTO_BY_PROGRESS' : null);
+      || (!facts || !entry.isCritical ? 'AUTO_BY_PROGRESS' : null);
     if (!insertPolicy) {
       throw new ProductTimeDeploymentError(
         `${entry.processDefinition.name} 缺少新增工序生效策略，请重新预览`,
@@ -1753,10 +2302,44 @@ async function applyRouteDeployment(
     fulfillmentModes.add(projection.fulfillmentMode);
   }
 
+  const removedGroups = new Map<number, DeploymentStepRecord[]>();
   for (const step of route.steps) {
     if (retainedIds.has(step.id)) continue;
-    const retired = await retireRemovedStep(tx, step, input.deploymentRouteId);
-    cancelledSupplement = cancelledSupplement || retired.cancelledSupplement;
+    const group = removedGroups.get(step.sequenceGroup) || [];
+    group.push(step);
+    removedGroups.set(step.sequenceGroup, group);
+  }
+  for (const [, groupSteps] of [...removedGroups.entries()].sort(([left], [right]) => left - right)) {
+    const bypass = await bypassRetiredStepGroupOpenQuantity(tx, {
+      deploymentId: input.deploymentId,
+      route,
+      steps: groupSteps,
+      profile,
+      stepIdByKey,
+      retainedIds,
+      actorId: input.actorId,
+    });
+    bypassedQuantity += bypass.quantity;
+    for (const step of groupSteps) {
+      if (stepHasFacts(step)) {
+        const correction = await deactivateRetiredStepReporting(tx, {
+          deploymentId: input.deploymentId,
+          stepId: step.id,
+          profile,
+          actorId: input.actorId,
+          routeVersionAfter: route.version + 1,
+        });
+        correctedReports += correction.completions;
+        for (const employeeId of correction.employeeIds) affectedEmployeeIds.add(employeeId);
+      }
+      const retired = await retireRemovedStep(tx, step, input.deploymentRouteId);
+      cancelledSupplement = cancelledSupplement || retired.cancelledSupplement;
+      stepChanges.push({
+        stepId: step.id,
+        kind: 'delete',
+        previousStandardMillisecondsPerUnit: step.standardMillisecondsPerUnit,
+      });
+    }
   }
   for (const occurrenceKey of routeDrift.movedKeys) {
     const stepId = stepIdByKey.get(occurrenceKey);
@@ -1853,8 +2436,15 @@ async function applyRouteDeployment(
     }
   }
 
+  const closedAfterForcedMigration = removedGroups.size > 0
+    ? await reconcileRouteAfterForcedProductTimeMigration(tx, {
+        routeId: route.id,
+        workOrderId: route.workOrderId,
+        profileVersion: profile.version,
+      })
+    : false;
   let closedAfterSupplementCancellation = false;
-  if (cancelledSupplement && supplements === 0) {
+  if (!closedAfterForcedMigration && cancelledSupplement && supplements === 0) {
     const [activeSupplements, unfinishedNormalSteps] = await Promise.all([
       tx.processSupplementObligation.count({
         where: { routeId: route.id, status: ProcessSupplementObligationStatus.ACTIVE },
@@ -1919,14 +2509,17 @@ async function applyRouteDeployment(
   const result = {
     insertedProcesses: insertedEntries.length,
     movedProcesses: routeDrift.movedKeys.size,
+    retiredProcesses: routeDrift.removedSteps.length,
     updatedTimes: timeChangedStepIds.length,
     historicalReports: correctedReports,
     affectedEmployees: affectedEmployeeIds.size,
     supplementObligations: supplements,
     systemCoveredQty,
     actualRequiredQty,
+    bypassedQuantity,
     fulfillmentModes: [...fulfillmentModes],
     reopened,
+    closedAfterForcedMigration,
     closedAfterSupplementCancellation,
     taskSync,
     stepChanges,
@@ -1940,7 +2533,7 @@ async function applyRouteDeployment(
       detail: { deploymentId: input.deploymentId, ...result },
     },
   });
-  return { result, routeVersionAfter: routeAfter.version };
+  return { unchanged: false, result, routeVersionAfter: routeAfter.version };
 }
 
 function deploymentStatus(status: ProductTimeDeploymentStatus): ProductTimeDeploymentDTO['status'] {
@@ -1984,6 +2577,7 @@ function serializeDeployment(record: DeploymentRecord): ProductTimeDeploymentDTO
         routeVersionAfter: route.routeVersionAfter,
         insertedProcesses: Number(result.insertedProcesses || 0),
         movedProcesses: Number(result.movedProcesses || 0),
+        retiredProcesses: Number(result.retiredProcesses || 0),
         updatedTimes: Number(result.updatedTimes || 0),
         historicalReports: Number(result.historicalReports || 0),
         affectedEmployees: Number(result.affectedEmployees || 0),
@@ -2172,24 +2766,28 @@ export async function deployPublishedProductTimeRoutesInTransaction(
     await tx.productTimeDeploymentRoute.update({
       where: { id: ledger.id },
       data: {
-        status: ProductTimeDeploymentRouteStatus.SUCCEEDED,
+        status: applied.unchanged
+          ? ProductTimeDeploymentRouteStatus.UNCHANGED
+          : ProductTimeDeploymentRouteStatus.SUCCEEDED,
         routeVersionAfter: applied.routeVersionAfter,
         result: applied.result as unknown as Prisma.InputJsonValue,
       },
     });
-    summary.updated += 1;
-    summary.activeUpdated += routeState(route) === 'unstarted' ? 0 : 1;
-    summary.partiallyUpdated += applied.result.supplementObligations > 0 ? 1 : 0;
-    summary.insertedProcesses += applied.result.insertedProcesses;
-    summary.movedProcesses += applied.result.movedProcesses;
-    summary.updatedTimes += applied.result.updatedTimes;
-    summary.historicalReports += applied.result.historicalReports;
-    summary.affectedEmployees += applied.result.affectedEmployees;
-    summary.supplementObligations += applied.result.supplementObligations;
-    summary.systemCoveredQty += applied.result.systemCoveredQty;
-    summary.actualRequiredQty += applied.result.actualRequiredQty;
-    summary.reopenedRoutes += applied.result.reopened ? 1 : 0;
-    summary.reviewRequired += applied.result.supplementObligations > 0 ? 1 : 0;
+    if (!applied.unchanged) {
+      summary.updated += 1;
+      summary.activeUpdated += routeState(route) === 'unstarted' ? 0 : 1;
+      summary.partiallyUpdated += applied.result.supplementObligations > 0 ? 1 : 0;
+      summary.insertedProcesses += applied.result.insertedProcesses;
+      summary.movedProcesses += applied.result.movedProcesses;
+      summary.updatedTimes += applied.result.updatedTimes;
+      summary.historicalReports += applied.result.historicalReports;
+      summary.affectedEmployees += applied.result.affectedEmployees;
+      summary.supplementObligations += applied.result.supplementObligations;
+      summary.systemCoveredQty += applied.result.systemCoveredQty;
+      summary.actualRequiredQty += applied.result.actualRequiredQty;
+      summary.reopenedRoutes += applied.result.reopened ? 1 : 0;
+      summary.reviewRequired += applied.result.supplementObligations > 0 ? 1 : 0;
+    }
   }
   await tx.productTimeDeployment.update({
     where: { id: deployment.id },
@@ -2436,7 +3034,9 @@ export async function publishProductTimeDeployment(input: {
             await tx.productTimeDeploymentRoute.update({
               where: { id: ledger.id },
               data: {
-                status: ProductTimeDeploymentRouteStatus.SUCCEEDED,
+                status: applied.unchanged
+                  ? ProductTimeDeploymentRouteStatus.UNCHANGED
+                  : ProductTimeDeploymentRouteStatus.SUCCEEDED,
                 routeVersionAfter: applied.routeVersionAfter,
                 result: applied.result as unknown as Prisma.InputJsonValue,
               },
@@ -2696,7 +3296,9 @@ export async function reconcilePublishedProductTimeDeployment(input: {
       await tx.productTimeDeploymentRoute.update({
         where: { id: ledger.id },
         data: {
-          status: ProductTimeDeploymentRouteStatus.SUCCEEDED,
+          status: applied.unchanged
+            ? ProductTimeDeploymentRouteStatus.UNCHANGED
+            : ProductTimeDeploymentRouteStatus.SUCCEEDED,
           routeVersionAfter: applied.routeVersionAfter,
           result: applied.result as unknown as Prisma.InputJsonValue,
         },

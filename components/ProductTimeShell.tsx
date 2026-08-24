@@ -2314,7 +2314,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
 
           <div id="product-time-deployment-description" className="product-time-deployment-scope">
             <Route size={17} aria-hidden="true" />
-            <span><strong>已完成保持完成，在制按工序边界拆分，未开工执行完整新路线</strong><small>系统历史承接只写独立审计记录，不伪造管理员/员工报工，不生成工时或达成率；原二维码无需重印。关键工序必须明确选择仅未来生效或召回返工。</small></span>
+            <span><strong>已完成冻结历史，在制强制迁移，未开工执行完整新路线</strong><small>在制工单同步新工序、顺序和工时，并校正扫码员工效率；系统历史承接只写独立审计记录，不伪造人员报工。关键工序仍需明确选择仅未来生效或召回返工。</small></span>
           </div>
 
           {deploymentError && <div className="product-time-deployment-error" role="alert"><AlertTriangle size={17} aria-hidden="true" /><span>{deploymentError}</span></div>}
@@ -2361,8 +2361,8 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
               <div className="product-time-deployment-impact-grid">
                 <span><small>关联工单</small><strong>{deploymentImpact.workOrders.total}</strong><em>未报工 {deploymentImpact.workOrders.unstarted} · 在制 {deploymentImpact.workOrders.inProgress} · 已完成 {deploymentImpact.workOrders.completed}</em></span>
                 <span><small>原二维码</small><strong>{deploymentImpact.qrTickets}</strong><em>无需重印，扫码读取最新路线</em></span>
-                <span><small>历史报工</small><strong>{deploymentImpact.historicalReports}</strong><em>仅工时标准变更时重算，原记录保留</em></span>
-                <span><small>影响员工</small><strong>{deploymentImpact.affectedEmployees}</strong><em>{deploymentImpact.attainmentRecords} 条达成率记录重算</em></span>
+                <span><small>受影响扫码报工</small><strong>{deploymentImpact.historicalReports}</strong><em>调序、删除或工时变化均同步有效口径，原始扫码事实保留</em></span>
+                <span><small>影响员工</small><strong>{deploymentImpact.affectedEmployees}</strong><em>{deploymentImpact.attainmentRecords} 条个人效率记录重算</em></span>
                 <span><small>系统历史承接</small><strong>{deploymentImpact.systemCoveredQty ?? 0}</strong><em>独立审计，不生成员工报工/工时</em></span>
                 <span><small>剩余实际执行</small><strong>{deploymentImpact.actualRequiredQty ?? 0}</strong><em>仅未越过新增工序的产品需实报</em></span>
                 <span><small>保持已完成</small><strong>{criticalPolicyPending ? '待策略' : deploymentImpact.keptCompleted ?? 0}</strong><em>{criticalPolicyPending ? '关键工序选择策略后重新计算' : '默认不反向打开历史完成工单'}</em></span>
@@ -2383,7 +2383,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
                 {deploymentRoutes.map(route => <article key={route.workOrderId} className={route.status}>
                   <span><strong>{route.workOrderCode}</strong><small>{route.workOrderId.slice(0, 12)}</small></span>
                   <span>{productTimeDeploymentRouteStateText(route.state)}</span>
-                  <span><small>新增 {route.insertedProcesses || 0} · 调序 {route.movedProcesses || 0} · 工时 {route.updatedTimes || 0}</small><small>系统承接 {route.systemCoveredQty || 0} · 待实报 {route.actualRequiredQty || 0} · 审计 {route.supplementObligations || 0}</small></span>
+                  <span><small>新增 {route.insertedProcesses || 0} · 调序 {route.movedProcesses || 0} · 退役 {route.retiredProcesses || 0} · 工时 {route.updatedTimes || 0}</small><small>系统承接 {route.systemCoveredQty || 0} · 待实报 {route.actualRequiredQty || 0} · 审计 {route.supplementObligations || 0}</small></span>
                   <span><small>{deployment ? (route.qrUpdated ? '二维码已更新' : route.status === 'unchanged' ? '二维码无需更新' : '二维码未更新') : '发布后同步二维码'}</small><small>{route.routeVersionBefore == null ? '路线待生成' : `V${route.routeVersionBefore} → ${route.routeVersionAfter == null ? '待发布' : `V${route.routeVersionAfter}`}`}</small></span>
                   <span><b>{deployment ? productTimeDeploymentRouteStatusText(route.status) : route.status === 'blocked' ? '冲突阻断' : '待同步'}</b>{route.error && <small title={route.error}>{route.error}</small>}</span>
                 </article>)}
@@ -2405,7 +2405,7 @@ export default function ProductTimeShell({ user }: { user: CurrentUserDTO }) {
             <div>
               <button className="hm-workbench-button" type="button" onClick={closeDeployment}>{deploymentBusy ? '后台同步，关闭详情' : deployment?.status === 'active' ? '完成' : '关闭'}</button>
               {!deployment && <button className="hm-workbench-button" type="button" disabled={deploymentPreviewLoading || publishing} onClick={() => void openPublishPreview()}><RefreshCw size={15} aria-hidden="true" />重新计算影响</button>}
-              {!deployment && deploymentPreview && <button className="hm-workbench-button primary" type="button" disabled={publishing || !deploymentPreview.canPublish} onClick={() => void publish()}><QrCode size={15} aria-hidden="true" />{publishing ? '正在启动发布' : `确认发布并同步 ${deploymentImpact?.workOrders.total || 0} 张工单`}</button>}
+              {!deployment && deploymentPreview && <button className="hm-workbench-button primary" type="button" disabled={publishing || !deploymentPreview.canPublish} onClick={() => void publish()}><QrCode size={15} aria-hidden="true" />{publishing ? '正在启动发布' : `确认发布并强制迁移 ${deploymentImpact?.workOrders.inProgress || 0} 张在制工单`}</button>}
               {deployment?.status === 'failed' && failedDeploymentRoutes.length > 0 && <button className="hm-workbench-button primary" type="button" disabled={deploymentRetrying} onClick={() => void retryDeployment()}><RefreshCw className={deploymentRetrying ? 'spin' : ''} size={15} aria-hidden="true" />{deploymentRetrying ? '正在重试' : `一键重试 ${failedDeploymentRoutes.length} 个失败项`}</button>}
             </div>
           </footer>

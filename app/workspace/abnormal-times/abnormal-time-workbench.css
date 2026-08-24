@@ -61,6 +61,7 @@
 .abnormal-time-list article > footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .abnormal-time-list article > footer span { overflow: hidden; color: #7a8796; font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .abnormal-time-list article > footer button { min-height: 30px; padding: 0 9px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid #fdba74; border-radius: 7px; background: #fff7ed; color: #c2410c; font-size: 9px; font-weight: 850; white-space: nowrap; }
+.abnormal-time-list article > footer button.approve { border-color: #ea580c; background: #ea580c; color: #fff; }
 .abnormal-time-empty { position: absolute; inset: 52px 0 0; display: grid; place-items: center; align-content: center; gap: 7px; color: #7a8796; text-align: center; pointer-events: none; }
 .abnormal-time-empty svg { color: #2d8a4e; }
 .abnormal-time-empty strong { color: #394553; font-size: 13px; }

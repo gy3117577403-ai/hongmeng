@@ -50,8 +50,6 @@ type AbnormalTimeResponse = {
 
 type ReviewDraft = {
   event: AbnormalTimeEventDTO;
-  approvedMinutes: string;
-  employeeExempt: boolean;
   note: string;
   error: string;
 };
@@ -163,18 +161,39 @@ export default function AbnormalTimeWorkbench({ user }: { user: CurrentUserDTO }
   function beginReview(event: AbnormalTimeEventDTO): void {
     setReview({
       event,
-      approvedMinutes: event.durationMilliseconds >= 60_000
-        ? String(Math.floor(event.durationMilliseconds / 60_000))
-        : '',
-      employeeExempt: event.qualityStatus === 'pending' ? event.source === 'FIELD_REPORT' : event.employeeExempt,
       note: '',
       error: '',
     });
   }
 
-  async function submitReview(decision: 'confirmed' | 'rejected'): Promise<void> {
+  async function approve(event: AbnormalTimeEventDTO): Promise<void> {
+    if (saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/abnormal-time-events/${encodeURIComponent(event.id)}/quality`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          decision: 'confirmed',
+          employeeExempt: event.source === 'FIELD_REPORT' ? true : event.employeeExempt,
+          expectedVersion: event.version,
+        }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error || '异常工时审核失败');
+      setToast('异常工时已同意，个人工时口径已同步');
+      setRefreshToken(value => value + 1);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '异常工时审核失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitReview(): Promise<void> {
     if (!review || saving) return;
-    if (decision === 'rejected' && !review.note.trim()) {
+    if (!review.note.trim()) {
       setReview({ ...review, error: '驳回时请填写审核说明' });
       return;
     }
@@ -185,11 +204,7 @@ export default function AbnormalTimeWorkbench({ user }: { user: CurrentUserDTO }
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          decision,
-          approvedDurationMinutes: decision === 'confirmed' && review.approvedMinutes.trim()
-            ? Number(review.approvedMinutes)
-            : undefined,
-          employeeExempt: decision === 'confirmed' && review.employeeExempt,
+          decision: 'rejected',
           note: review.note,
           expectedVersion: review.event.version,
         }),
@@ -197,7 +212,7 @@ export default function AbnormalTimeWorkbench({ user }: { user: CurrentUserDTO }
       const body = await response.json().catch(() => ({})) as { error?: string };
       if (!response.ok) throw new Error(body.error || '异常工时审核失败');
       setReview(null);
-      setToast(decision === 'confirmed' ? '异常工时已审核，个人工时口径已同步' : '异常工时已驳回，不计入个人工时');
+      setToast('异常工时已驳回，不计入个人工时');
       setRefreshToken(value => value + 1);
     } catch (reason) {
       setReview(current => current ? { ...current, error: reason instanceof Error ? reason.message : '异常工时审核失败' } : current);
@@ -268,7 +283,7 @@ export default function AbnormalTimeWorkbench({ user }: { user: CurrentUserDTO }
               <div><dt>责任信息</dt><dd>{[event.responsibilityDepartment, event.responsibilityObject].filter(Boolean).join(' · ') || '未填写'}</dd></div>
             </dl>
             {(event.subcategory || event.reason) && <blockquote>{[event.subcategory, event.reason].filter(Boolean).join(' · ')}</blockquote>}
-            <footer><span>登记人：{event.reportedByEmployee?.name || '后台登记'}{event.affectedQuantity ? ` · 影响 ${event.affectedQuantity} 件` : ''}</span>{data?.permissions.canReview && event.qualityStatus === 'pending' && <button type="button" onClick={() => beginReview(event)}><ShieldCheck size={15} />主管审核</button>}</footer>
+            <footer><span>登记人：{event.reportedByEmployee?.name || '后台登记'}{event.affectedQuantity ? ` · 影响 ${event.affectedQuantity} 件` : ''}</span>{data?.permissions.canReview && event.qualityStatus === 'pending' && <><button type="button" disabled={saving} onClick={() => beginReview(event)}>驳回</button><button className="approve" type="button" disabled={saving} onClick={() => void approve(event)}>{saving ? <Loader2 className="spin" size={15} /> : <CheckCircle2 size={15} />}同意</button></>}</footer>
           </article>)}</div>
           {!loading && !visibleEvents.length && <div className="abnormal-time-empty"><CheckCircle2 size={34} /><strong>当前筛选没有异常记录</strong><span>扫码登记不会阻断正常报工，也不会改变订单完整性。</span></div>}
         </section>
@@ -279,15 +294,13 @@ export default function AbnormalTimeWorkbench({ user }: { user: CurrentUserDTO }
     {toast && <div className="abnormal-time-toast" role="status"><CheckCircle2 size={17} />{toast}</div>}
     {review && <div className="abnormal-time-review-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) setReview(null); }}>
       <section className="abnormal-time-review" role="dialog" aria-modal="true" aria-labelledby="abnormal-review-title">
-        <header><div><span>主管审核 · #{review.event.sequence}</span><h2 id="abnormal-review-title">{review.event.processStep?.processName || review.event.title}</h2></div><button type="button" disabled={saving} aria-label="关闭审核" onClick={() => setReview(null)}><X size={19} /></button></header>
+        <header><div><span>主管驳回 · #{review.event.sequence}</span><h2 id="abnormal-review-title">{review.event.processStep?.processName || review.event.title}</h2></div><button type="button" disabled={saving} aria-label="关闭审核" onClick={() => setReview(null)}><X size={19} /></button></header>
         <div>
           <section><Clock3 /><span><small>现场登记</small><strong>{durationText(review.event.durationMilliseconds)} · {review.event.allocations.map(item => item.employee.name).join('、')}</strong></span></section>
-          <label><span>审核认可时长 <b>可调整</b></span><div><input type="number" min="1" max={Math.max(1, Math.floor(review.event.durationMilliseconds / 60_000))} step="1" value={review.approvedMinutes} disabled={saving} onChange={event => setReview({ ...review, approvedMinutes: event.target.value, error: '' })} placeholder="留空按原始时长" /><em>分钟</em></div><small>可下调，不可超过现场原始登记时长；留空按原始时长确认。</small></label>
-          <label className="abnormal-time-exempt"><input type="checkbox" checked={review.employeeExempt} disabled={saving} onChange={event => setReview({ ...review, employeeExempt: event.target.checked })} /><span><strong>计入个人解释工时</strong><small>审核通过后从个人有效生产时段中扣除，不增加标准产出工时。</small></span></label>
-          <label><span>审核说明 <b>驳回时必填</b></span><textarea rows={4} maxLength={500} value={review.note} disabled={saving} onChange={event => setReview({ ...review, note: event.target.value, error: '' })} placeholder="确认依据、调整说明或驳回原因" /></label>
+          <label><span>驳回原因 <b>必填</b></span><textarea rows={4} maxLength={500} value={review.note} disabled={saving} onChange={event => setReview({ ...review, note: event.target.value, error: '' })} placeholder="请说明驳回原因" /></label>
           {review.error && <p role="alert"><AlertTriangle size={15} />{review.error}</p>}
         </div>
-        <footer><button type="button" disabled={saving} onClick={() => void submitReview('rejected')}>驳回</button><button className="primary" type="button" disabled={saving} onClick={() => void submitReview('confirmed')}>{saving ? <><Loader2 className="spin" size={17} />提交中</> : <><CheckCircle2 size={17} />确认审核</>}</button></footer>
+        <footer><button type="button" disabled={saving} onClick={() => setReview(null)}>取消</button><button className="primary" type="button" disabled={saving} onClick={() => void submitReview()}>{saving ? <><Loader2 className="spin" size={17} />提交中</> : '确认驳回'}</button></footer>
       </section>
     </div>}
   </main>;

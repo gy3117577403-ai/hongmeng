@@ -18,6 +18,19 @@ test('logout clears the session even when audit logging is unavailable', () => {
   assert.match(source, /maxAge:\s*0/);
 });
 
+test('abnormal-time approval is one click while rejection still requires a reason', () => {
+  const workbench = readFileSync(resolve(repositoryRoot, 'components/AbnormalTimeWorkbench.tsx'), 'utf8');
+  const attendance = readFileSync(resolve(repositoryRoot, 'components/AttendanceManagementShell.tsx'), 'utf8');
+
+  assert.match(workbench, /async function approve\(event: AbnormalTimeEventDTO\)/);
+  assert.match(workbench, /decision:\s*'confirmed',[\s\S]*employeeExempt:\s*event\.source === 'FIELD_REPORT' \? true : event\.employeeExempt,[\s\S]*expectedVersion:\s*event\.version/);
+  assert.match(workbench, /onClick=\{\(\) => void approve\(event\)\}[\s\S]*同意/);
+  assert.match(workbench, /驳回时请填写审核说明/);
+  assert.doesNotMatch(workbench, /审核时长（分钟）/);
+  assert.match(attendance, /decision === 'rejected'[\s\S]*window\.prompt\('请输入驳回原因'\)[\s\S]*:\s*''/);
+  assert.match(attendance, /employeeExempt:\s*decision === 'confirmed'[\s\S]*event\.source === 'FIELD_REPORT' \? true : event\.employeeExempt/);
+});
+
 test('production reassignment presents business process information instead of internal plan ids', () => {
   const source = readFileSync(resolve(repositoryRoot, 'components/ProductionExecutionCenter.tsx'), 'utf8');
   const dialogStart = source.indexOf('function ProductionReassignmentDialog');
