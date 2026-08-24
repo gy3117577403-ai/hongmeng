@@ -108,12 +108,10 @@ type AbnormalDraft = {
   id?: string;
   category: AbnormalTimeCategory;
   title: string;
-  startedAt: string;
-  endedAt: string;
+  workDate: string;
+  durationMinutes: string;
   employeeIds: string[];
-  employeeExempt: boolean;
   responsibilityDepartment: string;
-  expectedResolvedAt: string;
   reason: string;
   workOrderId: string;
 };
@@ -226,12 +224,9 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     if (employeeId) setKeyword(employeeId);
     const workOrderId = params.get('workOrderId') || '';
     if (requestedTab === 'abnormal' && workOrderId) {
-      const now = new Date();
-      const later = new Date(now.getTime() + 30 * 60 * 1000);
       setAbnormalDraft({
-        category: 'other', title: '', startedAt: toDateTimeLocal(now.toISOString()),
-        endedAt: toDateTimeLocal(later.toISOString()), employeeIds: [], employeeExempt: true,
-        responsibilityDepartment: '', expectedResolvedAt: '', reason: '', workOrderId,
+        category: 'other', title: '', workDate: todayKey(), durationMinutes: '30',
+        employeeIds: [], responsibilityDepartment: '', reason: '', workOrderId,
       });
     }
   }, []);
@@ -567,12 +562,9 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   }
 
   function beginAbnormal(): void {
-    const now = new Date();
-    const later = new Date(now.getTime() + 30 * 60 * 1000);
     setAbnormalDraft({
-      category: 'equipment', title: '', startedAt: toDateTimeLocal(now.toISOString()),
-      endedAt: toDateTimeLocal(later.toISOString()), employeeIds: [], employeeExempt: true,
-      responsibilityDepartment: '', expectedResolvedAt: '', reason: '', workOrderId: '',
+      category: 'equipment', title: '', workDate: date, durationMinutes: '30',
+      employeeIds: [], responsibilityDepartment: '', reason: '', workOrderId: '',
     });
   }
 
@@ -581,12 +573,10 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       id: event.id,
       category: event.category,
       title: event.title,
-      startedAt: toDateTimeLocal(event.startedAt),
-      endedAt: toDateTimeLocal(event.endedAt),
+      workDate: event.workDate,
+      durationMinutes: String(Math.max(1, Math.round(event.durationMilliseconds / 60_000))),
       employeeIds: event.allocations.map(item => item.employeeId),
-      employeeExempt: event.employeeExempt,
       responsibilityDepartment: event.responsibilityDepartment || '',
-      expectedResolvedAt: toDateTimeLocal(event.expectedResolvedAt),
       reason: event.reason || '',
       workOrderId: event.workOrder?.id || '',
     });
@@ -597,23 +587,21 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     setSaving(true);
     setError('');
     try {
-      const workDate = abnormalDraft.startedAt.slice(0, 10);
+      const durationMinutes = Number(abnormalDraft.durationMinutes);
+      if (!Number.isSafeInteger(durationMinutes) || durationMinutes <= 0) {
+        throw new Error('异常时长必须是大于 0 的整数分钟');
+      }
       const response = await fetch(abnormalDraft.id ? `/api/abnormal-time-events/${abnormalDraft.id}` : '/api/abnormal-time-events', {
         method: abnormalDraft.id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...abnormalDraft,
-          workDate,
-          startedAt: new Date(`${abnormalDraft.startedAt}:00+08:00`).toISOString(),
-          endedAt: new Date(`${abnormalDraft.endedAt}:00+08:00`).toISOString(),
-          expectedResolvedAt: abnormalDraft.expectedResolvedAt
-            ? new Date(`${abnormalDraft.expectedResolvedAt}:00+08:00`).toISOString()
-            : null,
+          durationMinutes,
         }),
       });
       const body = await response.json() as EventsResponse;
       if (!response.ok) throw new Error(body.error || '异常工时保存失败');
       setAbnormalDraft(null);
-      setDate(workDate);
+      setDate(abnormalDraft.workDate);
       setPeriod('today');
       setToast(abnormalDraft.id ? '异常工时已更新，需重新品质确认' : '异常工时已登记，等待品质确认');
       setRefreshToken(value => value + 1);
@@ -636,9 +624,6 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
           decision,
           note,
-          employeeExempt: decision === 'confirmed'
-            ? event.source === 'FIELD_REPORT' ? true : event.employeeExempt
-            : false,
           expectedVersion: event.version,
         }),
       });
@@ -799,11 +784,11 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
               {visibleEvents.map(event => <article className={`abnormal-card ${event.qualityStatus}`} key={event.id}>
                 <header><div><em>#{event.sequence}</em><span>{event.categoryLabel}</span><strong>{event.title}</strong></div><b>{eventStatusLabel(event)}</b></header>
                 <div className="abnormal-card-grid">
-                  <span><small>异常时段</small><strong>{toTime(event.startedAt)}–{toTime(event.endedAt)}</strong></span>
-                  <span><small>事件时长</small><strong>{formatProcessDuration(event.durationMilliseconds)}</strong></span>
+                  <span><small>异常日期</small><strong>{event.workDate}</strong></span>
+                  <span><small>异常时长</small><strong>{formatProcessDuration(event.durationMilliseconds)}</strong></span>
                   <span><small>影响人时</small><strong>{formatProcessDuration(event.affectedPersonMilliseconds)}</strong></span>
                   <span><small>受影响员工</small><strong title={event.allocations.map(item => item.employee.name).join('、')}>{event.allocations.map(item => item.employee.name).join('、')}</strong></span>
-                  <span><small>免责口径</small><strong>{event.employeeExempt ? '申请不影响个人达成率' : '不申请免责'}</strong></span>
+                  <span><small>达成率口径</small><strong>{event.qualityStatus === 'confirmed' ? '已剔除异常时长' : '审核后剔除异常时长'}</strong></span>
                   <span><small>处理状态</small><strong>{event.resolutionStatus === 'resolved' ? '已关闭' : '处理中'}</strong></span>
                 </div>
                 {event.reason && <p>{event.reason}</p>}
@@ -875,12 +860,11 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
           <div className="attendance-dialog-body">
             <label><span>异常分类</span><select value={abnormalDraft.category} onChange={event => setAbnormalDraft({ ...abnormalDraft, category: event.target.value as AbnormalTimeCategory })}>{ABNORMAL_TIME_CATEGORIES.map(item => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
             <label className="wide"><span>异常标题</span><input maxLength={160} value={abnormalDraft.title} onChange={event => setAbnormalDraft({ ...abnormalDraft, title: event.target.value })} placeholder="例如：端子缺料等待补料" /></label>
-            <label><span>开始时间</span><input type="datetime-local" value={abnormalDraft.startedAt} onChange={event => setAbnormalDraft({ ...abnormalDraft, startedAt: event.target.value })} /></label>
-            <label><span>结束时间</span><input type="datetime-local" value={abnormalDraft.endedAt} onChange={event => setAbnormalDraft({ ...abnormalDraft, endedAt: event.target.value })} /></label>
+            <label><span>异常日期</span><input type="date" value={abnormalDraft.workDate} onChange={event => setAbnormalDraft({ ...abnormalDraft, workDate: event.target.value })} /></label>
+            <label><span>异常时长（分钟）</span><input inputMode="numeric" type="number" min="1" step="1" value={abnormalDraft.durationMinutes} onFocus={event => event.currentTarget.select()} onChange={event => setAbnormalDraft({ ...abnormalDraft, durationMinutes: event.target.value })} /></label>
             <label><span>责任部门</span><input maxLength={100} value={abnormalDraft.responsibilityDepartment} onChange={event => setAbnormalDraft({ ...abnormalDraft, responsibilityDepartment: event.target.value })} placeholder="可选" /></label>
-            <label><span>预计恢复时间</span><input type="datetime-local" value={abnormalDraft.expectedResolvedAt} onChange={event => setAbnormalDraft({ ...abnormalDraft, expectedResolvedAt: event.target.value })} /></label>
             <fieldset className="employee-picker"><legend>受影响生产员工（可多选）</legend>{productionEmployees.map(employee => <label key={employee.id}><input type="checkbox" checked={abnormalDraft.employeeIds.includes(employee.id)} onChange={change => setAbnormalDraft({ ...abnormalDraft, employeeIds: change.target.checked ? [...abnormalDraft.employeeIds, employee.id] : abnormalDraft.employeeIds.filter(id => id !== employee.id) })} /><span><strong>{employee.name}</strong><small>{employee.employeeNo} · {employee.position || '岗位未设置'}</small></span></label>)}</fieldset>
-            <label className="attendance-exempt"><input type="checkbox" checked={abnormalDraft.employeeExempt} onChange={event => setAbnormalDraft({ ...abnormalDraft, employeeExempt: event.target.checked })} /><span><strong>申请员工达成率免责</strong><small>品质确认后，此时段才会从个人有效生产时段中扣除；管理端仍统计异常损失。</small></span></label>
+            <div className="attendance-exempt"><ShieldCheck size={18} /><span><strong>审核后自动保护个人达成率</strong><small>完整异常时长从个人达成率有效工时分母中扣除；不增加标准产出工时。</small></span></div>
             <label className="wide"><span>异常原因与现场说明</span><textarea maxLength={1000} rows={3} value={abnormalDraft.reason} onChange={event => setAbnormalDraft({ ...abnormalDraft, reason: event.target.value })} /></label>
           </div>
           <footer><button type="button" disabled={saving} onClick={() => setAbnormalDraft(null)}>取消</button><button className="primary-button" type="button" disabled={saving} onClick={() => void saveAbnormal()}>{saving ? <Loader2 className="spin" size={16} /> : <FileWarning size={16} />}提交品质确认</button></footer>

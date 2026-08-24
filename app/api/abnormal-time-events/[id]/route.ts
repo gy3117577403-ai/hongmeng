@@ -10,7 +10,7 @@ import {
 import {
   parseAbnormalCategory,
   parseEmployeeIds,
-  parseEventDateTimes,
+  parseAbnormalTimeDuration,
   parseOptionalPositiveInteger,
   serializeAbnormalTimeEvent,
 } from '@/lib/attendance';
@@ -42,10 +42,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     });
     if (!existing) return NextResponse.json({ ok: false, error: '异常工时记录不存在' }, { status: 404 });
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const times = parseEventDateTimes({
+    const duration = parseAbnormalTimeDuration({
       workDate: body.workDate === undefined ? existing.workDate.toISOString().slice(0, 10) : body.workDate,
-      startedAt: body.startedAt === undefined ? existing.startedAt.toISOString() : body.startedAt,
-      endedAt: body.endedAt === undefined ? existing.endedAt.toISOString() : body.endedAt,
+      durationMinutes: body.durationMinutes === undefined
+        ? existing.durationMilliseconds / 60_000
+        : body.durationMinutes,
     });
     const employeeIds = body.employeeIds === undefined
       ? existing.allocations.map(item => item.employeeId)
@@ -70,19 +71,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return tx.abnormalTimeEvent.update({
         where: { id: existing.id },
         data: {
-          workDate: times.workDate,
+          workDate: duration.workDate,
           category: body.category === undefined ? existing.category : parseAbnormalCategory(body.category),
           subcategory: body.subcategory === undefined ? existing.subcategory : cleanProcessText(body.subcategory, 100) || null,
           title,
           reason: body.reason === undefined ? existing.reason : cleanProcessText(body.reason, 1000) || null,
-          startedAt: times.startedAt,
-          endedAt: times.endedAt,
-          durationMilliseconds: times.durationMilliseconds,
+          startedAt: null,
+          endedAt: null,
+          durationMilliseconds: duration.durationMilliseconds,
           approvedDurationMilliseconds: null,
           affectedQuantity: body.affectedQuantity === undefined
             ? existing.affectedQuantity
             : parseOptionalPositiveInteger(body.affectedQuantity, '受影响数量'),
-          employeeExempt: body.employeeExempt === undefined ? existing.employeeExempt : body.employeeExempt === true,
+          employeeExempt: true,
           responsibilityDepartment: body.responsibilityDepartment === undefined
             ? existing.responsibilityDepartment
             : cleanProcessText(body.responsibilityDepartment, 100) || null,
@@ -101,8 +102,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           allocations: {
             create: employeeIds.map(employeeId => ({
               employeeId,
-              workDate: times.workDate,
-              durationMilliseconds: times.durationMilliseconds,
+              workDate: duration.workDate,
+              durationMilliseconds: duration.durationMilliseconds,
             })),
           },
         },

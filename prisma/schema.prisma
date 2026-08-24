@@ -2322,8 +2322,8 @@ model AbnormalTimeEvent {
   subcategory                  String?
   title                        String
   reason                       String?
-  startedAt                    DateTime                 @map("started_at")
-  endedAt                      DateTime                 @map("ended_at")
+  startedAt                    DateTime?                @map("started_at")
+  endedAt                      DateTime?                @map("ended_at")
   durationMilliseconds         Int                      @map("duration_milliseconds")
   approvedDurationMilliseconds Int?                     @map("approved_duration_milliseconds")
   affectedQuantity             Int?                     @map("affected_quantity")

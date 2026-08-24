@@ -21,14 +21,28 @@ test('logout clears the session even when audit logging is unavailable', () => {
 test('abnormal-time approval is one click while rejection still requires a reason', () => {
   const workbench = readFileSync(resolve(repositoryRoot, 'components/AbnormalTimeWorkbench.tsx'), 'utf8');
   const attendance = readFileSync(resolve(repositoryRoot, 'components/AttendanceManagementShell.tsx'), 'utf8');
+  const reviewService = readFileSync(resolve(repositoryRoot, 'lib/abnormal-time-review-service.ts'), 'utf8');
 
   assert.match(workbench, /async function approve\(event: AbnormalTimeEventDTO\)/);
-  assert.match(workbench, /decision:\s*'confirmed',[\s\S]*employeeExempt:\s*event\.source === 'FIELD_REPORT' \? true : event\.employeeExempt,[\s\S]*expectedVersion:\s*event\.version/);
+  assert.match(workbench, /decision:\s*'confirmed',[\s\S]*expectedVersion:\s*event\.version/);
   assert.match(workbench, /onClick=\{\(\) => void approve\(event\)\}[\s\S]*同意/);
   assert.match(workbench, /驳回时请填写审核说明/);
   assert.doesNotMatch(workbench, /审核时长（分钟）/);
   assert.match(attendance, /decision === 'rejected'[\s\S]*window\.prompt\('请输入驳回原因'\)[\s\S]*:\s*''/);
-  assert.match(attendance, /employeeExempt:\s*decision === 'confirmed'[\s\S]*event\.source === 'FIELD_REPORT' \? true : event\.employeeExempt/);
+  assert.match(reviewService, /approvedDurationMilliseconds:\s*input\.decision === 'confirmed'[\s\S]*existing\.durationMilliseconds/);
+  assert.match(reviewService, /const employeeExempt = input\.decision === 'confirmed'/);
+});
+
+test('abnormal-time entry is duration-only and review has no interval overlap gate', () => {
+  const attendance = readFileSync(resolve(repositoryRoot, 'components/AttendanceManagementShell.tsx'), 'utf8');
+  const fieldReport = readFileSync(resolve(repositoryRoot, 'components/FieldReportMobile.tsx'), 'utf8');
+  const reviewService = readFileSync(resolve(repositoryRoot, 'lib/abnormal-time-review-service.ts'), 'utf8');
+
+  assert.doesNotMatch(attendance, /datetime-local/);
+  assert.doesNotMatch(fieldReport, /datetime-local|max="1200"/);
+  assert.match(attendance, /异常时长（分钟）/);
+  assert.match(fieldReport, /异常时长 <b>必填<\/b>/);
+  assert.doesNotMatch(reviewService, /attendanceRecord|processExecution|startedAt|endedAt/);
 });
 
 test('production reassignment presents business process information instead of internal plan ids', () => {

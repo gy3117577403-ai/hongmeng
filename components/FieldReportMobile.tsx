@@ -136,7 +136,6 @@ type FieldAbnormalTimeDraft = {
   category: '' | AbnormalTimeCategory;
   subcategory: string;
   workDate: string;
-  startedAt: string;
   durationMinutes: string;
   affectedQuantity: string;
   employeeIds: string[];
@@ -256,10 +255,6 @@ function newIdempotencyKey(): string {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? `qr-${crypto.randomUUID()}`
     : `qr-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function chinaLocalDateTimeValue(date = new Date()): string {
-  return new Date(date.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 16);
 }
 
 function fieldAbnormalIdempotencyKey(): string {
@@ -464,15 +459,13 @@ export default function FieldReportMobile({
 
   function openAbnormalTime(step: ProcessCompletionContext['routeSteps'][number]): void {
     if (!payload?.currentEmployee) return;
-    const startedAt = chinaLocalDateTimeValue();
     setAbnormalMoreOpen(false);
     setAbnormalDraft({
       stepId: step.id,
       processName: step.processName,
       category: '',
       subcategory: '',
-      workDate: startedAt.slice(0, 10),
-      startedAt,
+      workDate: todayKey(),
       durationMinutes: '0',
       affectedQuantity: '',
       employeeIds: [payload.currentEmployee.id],
@@ -491,17 +484,16 @@ export default function FieldReportMobile({
       setAbnormalDraft({ ...abnormalDraft, error: '请选择异常问题分类' });
       return;
     }
-    if (!Number.isSafeInteger(minutes) || minutes <= 0 || minutes > 1200) {
-      setAbnormalDraft({ ...abnormalDraft, error: '请输入 1 至 1200 分钟的异常时长' });
+    if (!Number.isSafeInteger(minutes) || minutes <= 0) {
+      setAbnormalDraft({ ...abnormalDraft, error: '请输入大于 0 的整数分钟' });
       return;
     }
     if (!abnormalDraft.employeeIds.includes(payload.currentEmployee.id)) {
       setAbnormalDraft({ ...abnormalDraft, error: '受影响员工必须包含当前登录人' });
       return;
     }
-    const startedAt = new Date(`${abnormalDraft.startedAt}:00+08:00`);
-    if (Number.isNaN(startedAt.getTime())) {
-      setAbnormalDraft({ ...abnormalDraft, error: '请选择有效的异常开始时间' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(abnormalDraft.workDate)) {
+      setAbnormalDraft({ ...abnormalDraft, error: '请选择有效的异常日期' });
       return;
     }
     setAbnormalSaving(true);
@@ -515,7 +507,6 @@ export default function FieldReportMobile({
           category: abnormalDraft.category,
           subcategory: abnormalDraft.subcategory,
           workDate: abnormalDraft.workDate,
-          startedAt: startedAt.toISOString(),
           durationMinutes: minutes,
           affectedQuantity: abnormalDraft.affectedQuantity,
           employeeIds: abnormalDraft.employeeIds,
@@ -946,11 +937,11 @@ export default function FieldReportMobile({
       <section className="field-report-abnormal-sheet" role="dialog" aria-modal="true" aria-labelledby="field-report-abnormal-title">
         <header><span><small>独立登记 · 不改变报工数量</small><strong id="field-report-abnormal-title">{abnormalDraft.processName}</strong><em>异常工时</em></span><button type="button" disabled={abnormalSaving} aria-label="关闭异常登记" onClick={() => setAbnormalDraft(null)}><X size={22} /></button></header>
         <div>
-          <section className="field-report-abnormal-notice"><ShieldCheck size={21} /><span><strong>不填不影响正常报工</strong><small>本记录单独送主管审核；审核通过后才进入个人解释工时，不增加标准产出工时。</small></span></section>
+          <section className="field-report-abnormal-notice"><ShieldCheck size={21} /><span><strong>不填不影响正常报工</strong><small>本记录单独送主管审核；审核通过后完整计入个人解释工时，不增加标准产出工时。</small></span></section>
           <div className="field-report-abnormal-grid">
             <label><span>问题分类 <b>必填</b></span><select value={abnormalDraft.category} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, category: event.target.value as FieldAbnormalTimeDraft['category'], error: '' })}><option value="">请选择</option>{ABNORMAL_TIME_CATEGORIES.map(item => <option value={item.value} key={item.value}>{item.label}</option>)}</select></label>
-            <label><span>异常时长 <b>必填</b></span><div><input inputMode="numeric" type="number" min="1" max="1200" step="1" value={abnormalDraft.durationMinutes} disabled={abnormalSaving} onFocus={event => event.currentTarget.select()} onChange={event => setAbnormalDraft({ ...abnormalDraft, durationMinutes: event.target.value, error: '' })} /><em>分钟</em></div></label>
-            <label className="wide"><span>异常开始时间 <b>必填</b></span><input type="datetime-local" value={abnormalDraft.startedAt} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, startedAt: event.target.value, workDate: event.target.value.slice(0, 10), error: '' })} /></label>
+            <label><span>异常时长 <b>必填</b></span><div><input inputMode="numeric" type="number" min="1" step="1" value={abnormalDraft.durationMinutes} disabled={abnormalSaving} onFocus={event => event.currentTarget.select()} onChange={event => setAbnormalDraft({ ...abnormalDraft, durationMinutes: event.target.value, error: '' })} /><em>分钟</em></div></label>
+            <label className="wide"><span>异常日期 <b>必填</b></span><input type="date" max={todayKey()} value={abnormalDraft.workDate} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, workDate: event.target.value, error: '' })} /></label>
             <label><span>受影响数量 <i>可选</i></span><div><input inputMode="numeric" type="number" min="1" step="1" value={abnormalDraft.affectedQuantity} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, affectedQuantity: event.target.value, error: '' })} /><em>{ticket.workOrder.unitLabel}</em></div></label>
             <label><span>细分原因 <i>可选</i></span><input value={abnormalDraft.subcategory} maxLength={100} disabled={abnormalSaving} onChange={event => setAbnormalDraft({ ...abnormalDraft, subcategory: event.target.value })} placeholder="例如等待确认、设备停机" /></label>
           </div>

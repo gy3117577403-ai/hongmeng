@@ -214,18 +214,22 @@ export function attendanceTotals(input: {
   };
 }
 
-export function parseEventDateTimes(input: {
+export function parseAbnormalTimeDuration(input: {
   workDate: unknown;
-  startedAt: unknown;
-  endedAt: unknown;
-}): { workDateKey: string; workDate: Date; startedAt: Date; endedAt: Date; durationMilliseconds: number } {
+  durationMinutes: unknown;
+}): { workDateKey: string; workDate: Date; durationMilliseconds: number } {
   const parsedDate = parseWorkDate(input.workDate);
-  const startedAt = parseDateTime(input.startedAt, parsedDate.key, '异常开始时间');
-  const endedAt = parseDateTime(input.endedAt, parsedDate.key, '异常结束时间');
-  if (endedAt <= startedAt) throw new Error('异常结束时间必须晚于开始时间');
-  const durationMilliseconds = endedAt.getTime() - startedAt.getTime();
-  if (durationMilliseconds > 20 * 60 * 60 * 1000) throw new Error('单条异常时长不能超过 20 小时');
-  return { workDateKey: parsedDate.key, workDate: parsedDate.value, startedAt, endedAt, durationMilliseconds };
+  const durationMinutes = Number(input.durationMinutes);
+  if (!Number.isSafeInteger(durationMinutes) || durationMinutes <= 0) {
+    throw new Error('异常时长必须是大于 0 的整数分钟');
+  }
+  const durationMilliseconds = durationMinutes * MINUTE_MILLISECONDS;
+  // PostgreSQL INTEGER is the only technical boundary. There is deliberately
+  // no daily/business cap: the approved duration is recorded exactly as filed.
+  if (!Number.isSafeInteger(durationMilliseconds) || durationMilliseconds > 2_147_483_647) {
+    throw new Error('异常时长超出系统可记录范围');
+  }
+  return { workDateKey: parsedDate.key, workDate: parsedDate.value, durationMilliseconds };
 }
 
 export function parseEmployeeIds(value: unknown): string[] {
@@ -319,8 +323,8 @@ export function serializeAbnormalTimeEvent(event: AbnormalEventWithRelations): A
     subcategory: event.subcategory,
     title: event.title,
     reason: event.reason,
-    startedAt: event.startedAt.toISOString(),
-    endedAt: event.endedAt.toISOString(),
+    startedAt: event.startedAt?.toISOString() || null,
+    endedAt: event.endedAt?.toISOString() || null,
     durationMilliseconds: event.durationMilliseconds,
     approvedDurationMilliseconds,
     affectedPersonMilliseconds: allocations.reduce((sum, item) => sum + item.durationMilliseconds, 0),

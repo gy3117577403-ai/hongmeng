@@ -74,10 +74,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/field-report-password-integration.test.ts
-      - name: Field abnormal-time PostgreSQL integration
+      - name: Duration-only abnormal-time PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
-        run: npx tsx --test --test-concurrency=1 tests/field-abnormal-time-integration.test.ts
+        run: npx tsx --test --test-concurrency=1 tests/field-abnormal-time-integration.test.ts tests/abnormal-time-duration-review-integration.test.ts
       - name: QR traveler print PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -142,14 +142,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.41
+            org.opencontainers.image.version=v1.34.42
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.41
+            APP_VERSION=v1.34.42
             APP_REVISION=${{ github.sha }}
           load: true
           push: false

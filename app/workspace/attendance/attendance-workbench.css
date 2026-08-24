@@ -133,7 +133,7 @@
 .employee-picker label span { min-width: 0; display: grid; gap: 1px; }
 .employee-picker label strong, .employee-picker label small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .employee-picker label small { color: #7a8796; font-size: 8px; }
-.attendance-dialog-body label.attendance-exempt { min-height: 62px; padding: 9px 11px; display: flex; align-items: center; gap: 9px; border: 1px solid #fed7aa; border-radius: 9px; background: #fffaf6; }
+.attendance-dialog-body .attendance-exempt { min-height: 62px; padding: 9px 11px; display: flex; align-items: center; gap: 9px; border: 1px solid #fed7aa; border-radius: 9px; background: #fffaf6; }
 .attendance-exempt input { width: 17px; min-height: 17px; }
 .attendance-exempt span { display: grid; gap: 2px; }
 .attendance-exempt small { color: #7a8796; font-size: 9px; font-weight: 500; }

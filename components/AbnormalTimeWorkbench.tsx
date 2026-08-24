@@ -68,14 +68,6 @@ function durationText(milliseconds: number): string {
   return remainder ? `${hours} 小时 ${remainder} 分` : `${hours} 小时`;
 }
 
-function dateTimeText(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
-  }).format(date).replace(/\//g, '-');
-}
-
 function statusLabel(event: AbnormalTimeEventDTO): string {
   if (event.qualityStatus === 'confirmed') return event.employeeExempt ? '已审核 · 计入免责' : '已审核 · 不免责';
   if (event.qualityStatus === 'rejected') return '已驳回';
@@ -176,7 +168,6 @@ export default function AbnormalTimeWorkbench({ user }: { user: CurrentUserDTO }
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           decision: 'confirmed',
-          employeeExempt: event.source === 'FIELD_REPORT' ? true : event.employeeExempt,
           expectedVersion: event.version,
         }),
       });
@@ -275,7 +266,7 @@ export default function AbnormalTimeWorkbench({ user }: { user: CurrentUserDTO }
           <div className="abnormal-time-list">{visibleEvents.map(event => <article className={`status-${event.qualityStatus}`} key={event.id}>
             <header><span><em>#{event.sequence}</em><b>{event.categoryLabel}</b>{event.source === 'FIELD_REPORT' && <i>扫码登记</i>}</span><strong>{statusLabel(event)}</strong></header>
             <h3>{event.processStep?.processName || event.title}</h3>
-            <p>{event.workOrder ? `${event.workOrder.specification || event.workOrder.code} · ${event.workOrder.customerName || '客户待维护'}` : '未关联工单'} · {dateTimeText(event.startedAt)}–{new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(event.endedAt))}</p>
+            <p>{event.workOrder ? `${event.workOrder.specification || event.workOrder.code} · ${event.workOrder.customerName || '客户待维护'}` : '未关联工单'} · {event.workDate} · {durationText(event.durationMilliseconds)}</p>
             <dl>
               <div><dt>登记时长</dt><dd>{durationText(event.durationMilliseconds)}</dd></div>
               <div><dt>受影响员工</dt><dd>{event.allocations.map(item => item.employee.name).join('、')}</dd></div>

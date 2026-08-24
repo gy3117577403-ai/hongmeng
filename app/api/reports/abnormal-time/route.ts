@@ -63,7 +63,7 @@ export async function GET(req: NextRequest) {
             : {}),
         },
       },
-      orderBy: [{ startedAt: 'desc' }, { sequence: 'desc' }],
+      orderBy: [{ createdAt: 'desc' }, { sequence: 'desc' }],
       take: 2000,
     });
     const serialized = events.map(serializeAbnormalTimeEvent);

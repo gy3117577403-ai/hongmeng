@@ -1867,8 +1867,8 @@ export type AbnormalTimeEventDTO = {
   subcategory?: string | null;
   title: string;
   reason?: string | null;
-  startedAt: string;
-  endedAt: string;
+  startedAt: string | null;
+  endedAt: string | null;
   durationMilliseconds: number;
   approvedDurationMilliseconds?: number | null;
   affectedPersonMilliseconds: number;

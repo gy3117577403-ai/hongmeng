@@ -114,7 +114,6 @@ test(
           stepId: step.id,
           category: 'training',
           workDate: '2026-08-13',
-          startedAt: '2026-08-13T02:00:00.000Z',
           durationMinutes: 30,
           employeeIds: [employee.id],
           reason: '',
@@ -128,11 +127,13 @@ test(
       assert.equal(result.event.category, 'training');
       assert.equal(result.event.categoryLabel, '培训');
       assert.equal(result.event.qualityStatus, 'pending');
-      assert.equal(result.event.employeeExempt, false);
+      assert.equal(result.event.employeeExempt, true);
       assert.equal(result.event.reason, null);
       assert.equal(result.event.responsibilityDepartment, null);
       assert.equal(result.event.responsibilityObject, null);
       assert.equal(result.event.durationMilliseconds, 30 * 60_000);
+      assert.equal(result.event.startedAt, null);
+      assert.equal(result.event.endedAt, null);
       assert.equal(result.event.allocations[0].employeeId, employee.id);
 
       const duplicate = await createFieldAbnormalTimeEvent({
@@ -143,7 +144,6 @@ test(
           stepId: step.id,
           category: 'training',
           workDate: '2026-08-13',
-          startedAt: '2026-08-13T02:00:00.000Z',
           durationMinutes: 30,
           employeeIds: [employee.id],
           idempotencyKey: key,

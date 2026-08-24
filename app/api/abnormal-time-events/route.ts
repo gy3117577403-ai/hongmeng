@@ -13,7 +13,7 @@ import {
   isAbnormalTimeCategory,
   parseAbnormalCategory,
   parseEmployeeIds,
-  parseEventDateTimes,
+  parseAbnormalTimeDuration,
   parseOptionalPositiveInteger,
   parseWorkDate,
   serializeAbnormalTimeEvent,
@@ -82,7 +82,7 @@ export async function GET(req: NextRequest) {
             : { where: { employeeId: { in: scopedEmployeeIds } } }),
         },
       },
-      orderBy: [{ startedAt: 'desc' }, { sequence: 'desc' }],
+      orderBy: [{ createdAt: 'desc' }, { sequence: 'desc' }],
       take: 2000,
     });
     const serialized = events.map(serializeAbnormalTimeEvent);
@@ -150,10 +150,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const title = cleanProcessText(body.title, 160);
     if (!title) return NextResponse.json({ ok: false, error: '请填写异常标题' }, { status: 400 });
-    const times = parseEventDateTimes({
+    const duration = parseAbnormalTimeDuration({
       workDate: body.workDate,
-      startedAt: body.startedAt,
-      endedAt: body.endedAt,
+      durationMinutes: body.durationMinutes,
     });
     const employeeIds = parseEmployeeIds(body.employeeIds);
     const employees = await prisma.employee.findMany({
@@ -172,16 +171,16 @@ export async function POST(req: NextRequest) {
     const processStepId = cleanProcessText(body.processStepId, 80) || null;
     const event = await prisma.abnormalTimeEvent.create({
       data: {
-        workDate: times.workDate,
+        workDate: duration.workDate,
         category: parseAbnormalCategory(body.category),
         subcategory: cleanProcessText(body.subcategory, 100) || null,
         title,
         reason: cleanProcessText(body.reason, 1000) || null,
-        startedAt: times.startedAt,
-        endedAt: times.endedAt,
-        durationMilliseconds: times.durationMilliseconds,
+        startedAt: null,
+        endedAt: null,
+        durationMilliseconds: duration.durationMilliseconds,
         affectedQuantity: parseOptionalPositiveInteger(body.affectedQuantity, '受影响数量'),
-        employeeExempt: body.employeeExempt === true,
+        employeeExempt: true,
         responsibilityDepartment: cleanProcessText(body.responsibilityDepartment, 100) || null,
         responsibilityObject: cleanProcessText(body.responsibilityObject, 160) || null,
         expectedResolvedAt,
@@ -193,8 +192,8 @@ export async function POST(req: NextRequest) {
         allocations: {
           create: employeeIds.map(employeeId => ({
             employeeId,
-            workDate: times.workDate,
-            durationMilliseconds: times.durationMilliseconds,
+            workDate: duration.workDate,
+            durationMilliseconds: duration.durationMilliseconds,
           })),
         },
       },

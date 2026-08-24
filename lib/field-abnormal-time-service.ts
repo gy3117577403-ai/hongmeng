@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
 import {
   ABNORMAL_TIME_CATEGORIES,
+  parseAbnormalTimeDuration,
   parseEmployeeIds,
-  parseEventDateTimes,
   parseOptionalPositiveInteger,
   serializeAbnormalTimeEvent,
 } from '@/lib/attendance';
@@ -56,14 +56,6 @@ function topLevelCategory(value: unknown): typeof ABNORMAL_TIME_CATEGORIES[numbe
   return matched.value;
 }
 
-function durationMinutes(value: unknown): number {
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed <= 0 || parsed > 20 * 60) {
-    throw new FieldAbnormalTimeError('异常时长必须是 1 至 1200 分钟的整数');
-  }
-  return parsed;
-}
-
 export async function createFieldAbnormalTimeEvent(input: FieldAbnormalTimeInput) {
   if (!input.employeeId) {
     throw new FieldAbnormalTimeError('当前账号未绑定在职生产员工，不能登记异常工时', 403, 'FIELD_EMPLOYEE_REQUIRED');
@@ -95,15 +87,15 @@ export async function createFieldAbnormalTimeEvent(input: FieldAbnormalTimeInput
   }
 
   const category = topLevelCategory(input.body.category);
-  const minutes = durationMinutes(input.body.durationMinutes);
-  const startedAt = new Date(cleanProcessText(input.body.startedAt, 80));
-  if (Number.isNaN(startedAt.getTime())) throw new FieldAbnormalTimeError('请选择有效的异常开始时间');
-  const endedAt = new Date(startedAt.getTime() + minutes * 60 * 1000);
-  const times = parseEventDateTimes({
-    workDate: input.body.workDate,
-    startedAt: startedAt.toISOString(),
-    endedAt: endedAt.toISOString(),
-  });
+  let duration: ReturnType<typeof parseAbnormalTimeDuration>;
+  try {
+    duration = parseAbnormalTimeDuration({
+      workDate: input.body.workDate,
+      durationMinutes: input.body.durationMinutes,
+    });
+  } catch (error) {
+    throw new FieldAbnormalTimeError(error instanceof Error ? error.message : '请填写有效的异常日期和时长');
+  }
   const employeeIds = parseEmployeeIds(input.body.employeeIds);
   if (!employeeIds.includes(reporter.id)) {
     throw new FieldAbnormalTimeError('受影响员工必须包含当前登录人');
@@ -122,16 +114,16 @@ export async function createFieldAbnormalTimeEvent(input: FieldAbnormalTimeInput
     const event = await prisma.$transaction(async tx => {
       const created = await tx.abnormalTimeEvent.create({
         data: {
-          workDate: times.workDate,
+          workDate: duration.workDate,
           category,
           subcategory: cleanProcessText(input.body.subcategory, 100) || null,
           title,
           reason: cleanProcessText(input.body.reason, 1000) || null,
-          startedAt: times.startedAt,
-          endedAt: times.endedAt,
-          durationMilliseconds: times.durationMilliseconds,
+          startedAt: null,
+          endedAt: null,
+          durationMilliseconds: duration.durationMilliseconds,
           affectedQuantity: parseOptionalPositiveInteger(input.body.affectedQuantity, '受影响数量'),
-          employeeExempt: false,
+          employeeExempt: true,
           qualityStatus: 'pending',
           responsibilityDepartment: cleanProcessText(input.body.responsibilityDepartment, 100) || null,
           responsibilityObject: cleanProcessText(input.body.responsibilityObject, 160) || null,
@@ -146,8 +138,8 @@ export async function createFieldAbnormalTimeEvent(input: FieldAbnormalTimeInput
           allocations: {
             create: employeeIds.map(employeeId => ({
               employeeId,
-              workDate: times.workDate,
-              durationMilliseconds: times.durationMilliseconds,
+              workDate: duration.workDate,
+              durationMilliseconds: duration.durationMilliseconds,
             })),
           },
         },
@@ -164,7 +156,7 @@ export async function createFieldAbnormalTimeEvent(input: FieldAbnormalTimeInput
             workOrderId: ticket.workOrder.id,
             processStepId: step.id,
             category,
-            durationMinutes: minutes,
+            durationMinutes: duration.durationMilliseconds / 60_000,
             employeeCount: employeeIds.length,
           },
         },

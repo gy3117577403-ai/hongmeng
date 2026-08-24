@@ -7,10 +7,10 @@ import {
   attainmentCapacityMilliseconds,
   basisPoints,
   defaultAttendanceSegments,
+  parseAbnormalTimeDuration,
   parseAttendanceSegments,
   parseAttendanceEmployeeIds,
   parseAbnormalCategory,
-  parseEventDateTimes,
   STANDARD_DAY_MILLISECONDS,
 } from '../lib/attendance';
 
@@ -87,13 +87,16 @@ test('attendance segments reject overlap and cross-day ranges', () => {
   ], '2026-07-17'), /暂不支持跨天班次/);
 });
 
-test('abnormal time stays within one work date', () => {
-  const event = parseEventDateTimes({
+test('abnormal time is duration-only and has no 1200-minute business cap', () => {
+  const event = parseAbnormalTimeDuration({
     workDate: '2026-07-17',
-    startedAt: '2026-07-17T17:30:00+08:00',
-    endedAt: '2026-07-17T19:00:00+08:00',
+    durationMinutes: 1500,
   });
-  assert.equal(event.durationMilliseconds, 90 * 60 * 1000);
+  assert.equal(event.durationMilliseconds, 1500 * 60 * 1000);
+  assert.throws(() => parseAbnormalTimeDuration({
+    workDate: '2026-07-17',
+    durationMinutes: 0,
+  }), /大于 0/);
 });
 
 test('attainment denominator with no effective production time is explicit null', () => {
