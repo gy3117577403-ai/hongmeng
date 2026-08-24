@@ -1003,6 +1003,12 @@ main.planning-center-shell.hm-workbench-root {
   color: #c44e00;
 }
 
+.planning-center-shell .planning-board-heading button.export {
+  border-color: #7eb79a;
+  background: #f1faf5;
+  color: #177248;
+}
+
 .planning-center-shell .planning-board-heading button:hover {
   border-color: #ef9b62;
   color: #c44e00;
@@ -2270,6 +2276,10 @@ main.planning-center-shell.hm-workbench-root {
   width: min(900px, calc(100vw - 32px));
 }
 
+.planning-dialog.weekly-export-dialog {
+  width: min(920px, calc(100vw - 32px));
+}
+
 .planning-dialog > header {
   min-height: 76px;
   padding: 15px 18px;
@@ -2878,6 +2888,177 @@ main.planning-center-shell.hm-workbench-root {
 
 .planning-release-summary strong.validation {
   color: #d95600;
+}
+
+.weekly-export-body {
+  display: grid;
+  gap: 16px;
+}
+
+.weekly-export-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.weekly-export-summary article {
+  min-width: 0;
+  min-height: 84px;
+  padding: 12px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  border: 1px solid #dfe6ed;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.weekly-export-summary article.carryover {
+  border-color: #f1cf9b;
+  background: #fff9ea;
+}
+
+.weekly-export-summary article.total {
+  border-color: #9ac9b1;
+  background: #eef9f3;
+}
+
+.weekly-export-summary span {
+  color: #718096;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.weekly-export-summary strong {
+  color: #172b4d;
+  font-size: 20px;
+}
+
+.weekly-export-summary article.carryover strong {
+  color: #9a6700;
+}
+
+.weekly-export-summary article.total strong {
+  color: #157347;
+}
+
+.weekly-export-summary small {
+  min-width: 0;
+  overflow: hidden;
+  color: #65758b;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.weekly-export-options {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.weekly-export-options legend {
+  margin-bottom: 8px;
+  color: #455468;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.weekly-export-option-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.weekly-export-option-grid label {
+  min-width: 0;
+  min-height: 96px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: 20px 42px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #dce3ea;
+  border-radius: 11px;
+  background: #fff;
+  cursor: pointer;
+  transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease;
+}
+
+.weekly-export-option-grid label:hover {
+  border-color: #e5a57c;
+  background: #fffaf6;
+}
+
+.weekly-export-option-grid label.selected {
+  border-color: #e85d04;
+  background: #fff7f0;
+  box-shadow: 0 0 0 2px rgba(232, 93, 4, .1);
+}
+
+.weekly-export-option-grid input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #e85d04;
+}
+
+.weekly-export-option-grid i {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: #eef4f8;
+  color: #31546f;
+}
+
+.weekly-export-option-grid label.selected i {
+  background: #ffeadc;
+  color: #d95600;
+}
+
+.weekly-export-option-grid i svg {
+  width: 21px;
+  height: 21px;
+}
+
+.weekly-export-option-grid span {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.weekly-export-option-grid strong {
+  color: #26374d;
+  font-size: 12px;
+}
+
+.weekly-export-option-grid small {
+  color: #748196;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.weekly-export-option-grid em {
+  padding: 4px 6px;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: #637186;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.weekly-export-option-grid label.selected em {
+  background: #ffe4d2;
+  color: #b94d0b;
+}
+
+.weekly-export-options.range-options .weekly-export-option-grid label {
+  min-height: 88px;
 }
 
 .planning-dialog > footer button.danger {
@@ -3852,6 +4033,20 @@ main.planning-center-shell.hm-workbench-root {
 @media (max-width: 720px) {
   .planning-release-summary.four {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .weekly-export-summary,
+  .weekly-export-option-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .weekly-export-option-grid label {
+    grid-template-columns: 20px 38px minmax(0, 1fr);
+  }
+
+  .weekly-export-option-grid em {
+    grid-column: 2 / -1;
+    justify-self: start;
   }
 
   .planning-dialog.historical-delete-dialog {

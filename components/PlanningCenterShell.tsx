@@ -295,6 +295,38 @@ type PlanningImportDialog = {
   loading: boolean;
 };
 
+type WeeklyPlanExportVersion = 'full' | 'orders';
+type WeeklyPlanExportRange = 'execution' | 'current';
+
+type WeeklyPlanExportMetric = {
+  batchCount: number;
+  orderCount: number;
+  quantity: number;
+  totalHours: number;
+  quantityMissingCount: number;
+  hoursMissingCount: number;
+};
+
+type WeeklyPlanExportPreview = {
+  weekStartDate: string;
+  weekEndDate: string;
+  summary: {
+    current: WeeklyPlanExportMetric;
+    previousCarryover: WeeklyPlanExportMetric;
+    olderCarryover: WeeklyPlanExportMetric;
+    carryover: WeeklyPlanExportMetric;
+    execution: WeeklyPlanExportMetric;
+  };
+};
+
+type WeeklyPlanExportDialog = {
+  version: WeeklyPlanExportVersion;
+  range: WeeklyPlanExportRange;
+  preview: WeeklyPlanExportPreview | null;
+  loading: boolean;
+  exporting: boolean;
+};
+
 const emptySummary: ProductionPlanningSummaryDTO = {
   orderCount: 0,
   pendingOrderCount: 0,
@@ -502,6 +534,22 @@ async function responseBody<T>(response: Response): Promise<T & { error?: string
   return response.json().catch(() => ({})) as Promise<T & { error?: string; requiresConfirmation?: boolean; requiresProductRestore?: boolean }>;
 }
 
+function weeklyPlanExportHours(metric: WeeklyPlanExportMetric): string {
+  const known = `${metric.totalHours.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}h`;
+  return metric.hoursMissingCount ? `${known} + ${metric.hoursMissingCount}批待补` : known;
+}
+
+function responseDownloadFileName(response: Response, fallback: string): string {
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  if (!encoded) return fallback;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return fallback;
+  }
+}
+
 function productTimeHref(
   order: ProductionPlanOrderDTO,
   batch: ProductionPlanBatchDTO,
@@ -575,6 +623,7 @@ export default function PlanningCenterShell({
   const [movePreview, setMovePreview] = useState<MovePreview | null>(null);
   const [moveBatchIds, setMoveBatchIds] = useState<string[]>([]);
   const [importDialog, setImportDialog] = useState<PlanningImportDialog | null>(null);
+  const [weeklyPlanExportDialog, setWeeklyPlanExportDialog] = useState<WeeklyPlanExportDialog | null>(null);
   const [changes, setChanges] = useState<ProductionPlanChangeDTO[]>([]);
   const [changesLoading, setChangesLoading] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -596,7 +645,7 @@ export default function PlanningCenterShell({
   const pendingReturnScrollRef = useRef<{ scheduleScrollTop: number; windowScrollY: number } | null>(null);
   const pendingBatchFocusRef = useRef<string | null>(null);
   const lastExternalRefreshRef = useRef(0);
-  const activeDialog = Boolean(orderDialog || batchDialog || releasePreview || deletePreview || historicalDeleteTarget || activationPreview || movePreview || importDialog);
+  const activeDialog = Boolean(orderDialog || batchDialog || releasePreview || deletePreview || historicalDeleteTarget || activationPreview || movePreview || importDialog || weeklyPlanExportDialog);
 
   useModalLayer({
     open: activeDialog,
@@ -1113,6 +1162,7 @@ export default function PlanningCenterShell({
     setMovePreview(null);
     setMoveBatchIds([]);
     setImportDialog(null);
+    setWeeklyPlanExportDialog(null);
     setProductPickerOpen(false);
     setProductEntryMode('select');
     setActiveProductIndex(-1);
@@ -1717,6 +1767,75 @@ export default function PlanningCenterShell({
     }
   }
 
+  async function openWeeklyPlanExport(trigger: HTMLElement): Promise<void> {
+    if (selectedWeekKey !== 'current' || !periods?.current) {
+      setToast('本周计划加载完成后才能导出');
+      return;
+    }
+    dialogTriggerRef.current = trigger;
+    setError('');
+    setWeeklyPlanExportDialog({
+      version: 'full',
+      range: 'execution',
+      preview: null,
+      loading: true,
+      exporting: false,
+    });
+    try {
+      const response = await fetch('/api/planning/weekly-plan-export/preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weekStartDate: periods.current.weekStartDate }),
+      });
+      const body = await responseBody<{ preview?: WeeklyPlanExportPreview }>(response);
+      if (response.status === 401) {
+        location.href = '/login';
+        return;
+      }
+      if (!response.ok || !body.preview) throw new Error(body.error || '本周计划导出预览生成失败');
+      setWeeklyPlanExportDialog(current => current ? { ...current, preview: body.preview!, loading: false } : current);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '本周计划导出预览生成失败');
+      setWeeklyPlanExportDialog(current => current ? { ...current, loading: false } : current);
+    }
+  }
+
+  async function downloadWeeklyPlanExport(): Promise<void> {
+    if (!weeklyPlanExportDialog?.preview || weeklyPlanExportDialog.exporting) return;
+    const { version, range, preview } = weeklyPlanExportDialog;
+    setError('');
+    setWeeklyPlanExportDialog(current => current ? { ...current, exporting: true } : current);
+    try {
+      const query = new URLSearchParams({ version, range });
+      const response = await fetch(`/api/planning/weekly-plan-export.xlsx?${query.toString()}`, { cache: 'no-store' });
+      if (response.status === 401) {
+        location.href = '/login';
+        return;
+      }
+      if (!response.ok) {
+        const body = await responseBody<Record<string, never>>(response);
+        throw new Error(body.error || '本周生产计划导出失败');
+      }
+      const fallback = `本周生产计划_${preview.weekStartDate}至${preview.weekEndDate}_${version === 'full' ? '完整版' : '订单简版'}_${range === 'execution' ? '含遗留' : '仅本周'}.xlsx`;
+      const filename = responseDownloadFileName(response, fallback);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.style.display = 'none';
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setToast(`${version === 'full' ? '完整计划版' : '订单简版'}已导出${range === 'execution' ? '，包含有效遗留' : '，未包含遗留'}`);
+      setWeeklyPlanExportDialog(null);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '本周生产计划导出失败');
+      setWeeklyPlanExportDialog(current => current ? { ...current, exporting: false } : current);
+    }
+  }
+
   function openPlanningImport(trigger: HTMLElement): void {
     if (!selectedWeek) {
       setToast('计划周期尚未加载完成');
@@ -1981,6 +2100,7 @@ export default function PlanningCenterShell({
               </div>
               <div>
                 <button ref={orderPoolTriggerRef} className="pool" type="button" aria-haspopup="dialog" aria-expanded={orderPoolOpen} onClick={() => setOrderPoolOpen(true)}><PanelLeftOpen size={15} />订单池<b>{orderPool.length}</b></button>
+                {selectedWeekKey === 'current' && <button className="export" type="button" aria-haspopup="dialog" onClick={event => { void openWeeklyPlanExport(event.currentTarget); }}><FileSpreadsheet size={15} />导出本周计划</button>}
                 <button className="import" type="button" onClick={event => openPlanningImport(event.currentTarget)}><Upload size={15} />导入{editableWeekLabel(selectedWeekKey)}清单</button>
                 <button type="button" onClick={selectAllDrafts}><Check size={15} />全选草稿</button>
                 <em>{readinessFilters.length ? `筛选 ${scheduleRows.length} / ${baseScheduleRows.length} 批` : `${scheduleRows.length} 批`} · {selectedWeekQuantity.toLocaleString()} 件 · {selectedWeekTotalMilliseconds ? duration(selectedWeekTotalMilliseconds) : '工时待补'}</em>
@@ -2151,6 +2271,77 @@ export default function PlanningCenterShell({
       aria-label="关闭弹窗"
       onClick={closeDialog}
     />}
+
+    {weeklyPlanExportDialog && <div ref={dialogRef} className="planning-dialog weekly-export-dialog" role="dialog" aria-modal="true" aria-labelledby="weekly-plan-export-title">
+      <header>
+        <div><span>本周生产计划</span><h2 id="weekly-plan-export-title">选择 Excel 导出版本</h2></div>
+        <button type="button" onClick={closeDialog} disabled={weeklyPlanExportDialog.exporting} aria-label="关闭导出弹窗"><X /></button>
+      </header>
+      <div className="planning-dialog-body weekly-export-body">
+        {weeklyPlanExportDialog.loading && <div className="planning-loading compact">正在同步有效遗留并计算本周工作量...</div>}
+        {weeklyPlanExportDialog.preview && <>
+          <section className="weekly-export-summary" aria-label="本周计划导出统计">
+            <article><span>本周新计划</span><strong>{weeklyPlanExportDialog.preview.summary.current.batchCount} 批</strong><small>{weeklyPlanExportDialog.preview.summary.current.quantity.toLocaleString()} 件 · {weeklyPlanExportHours(weeklyPlanExportDialog.preview.summary.current)}</small></article>
+            <article className="carryover"><span>上周遗留</span><strong>{weeklyPlanExportDialog.preview.summary.previousCarryover.batchCount} 批</strong><small>{weeklyPlanExportDialog.preview.summary.previousCarryover.quantity.toLocaleString()} 件 · {weeklyPlanExportHours(weeklyPlanExportDialog.preview.summary.previousCarryover)}</small></article>
+            <article className="carryover"><span>更早遗留</span><strong>{weeklyPlanExportDialog.preview.summary.olderCarryover.batchCount} 批</strong><small>{weeklyPlanExportDialog.preview.summary.olderCarryover.quantity.toLocaleString()} 件 · {weeklyPlanExportHours(weeklyPlanExportDialog.preview.summary.olderCarryover)}</small></article>
+            <article className="total"><span>本周执行合计</span><strong>{weeklyPlanExportDialog.preview.summary.execution.batchCount} 批</strong><small>{weeklyPlanExportDialog.preview.summary.execution.quantity.toLocaleString()} 件 · {weeklyPlanExportHours(weeklyPlanExportDialog.preview.summary.execution)}</small></article>
+          </section>
+
+          <fieldset className="weekly-export-options">
+            <legend>导出版本</legend>
+            <div className="weekly-export-option-grid">
+              <label className={weeklyPlanExportDialog.version === 'full' ? 'selected' : ''}>
+                <input type="radio" name="weekly-export-version" value="full" checked={weeklyPlanExportDialog.version === 'full'} onChange={() => setWeeklyPlanExportDialog(current => current ? { ...current, version: 'full' } : current)} />
+                <i><FileSpreadsheet /></i>
+                <span><strong>完整生产计划版</strong><small>按模板输出 22 列，包含产品、业务员、批次、工时、资料、仓库、工艺、流程、异常与备注。</small></span>
+                <em>A3 横向</em>
+              </label>
+              <label className={weeklyPlanExportDialog.version === 'orders' ? 'selected' : ''}>
+                <input type="radio" name="weekly-export-version" value="orders" checked={weeklyPlanExportDialog.version === 'orders'} onChange={() => setWeeklyPlanExportDialog(current => current ? { ...current, version: 'orders' } : current)} />
+                <i><ClipboardList /></i>
+                <span><strong>订单简版</strong><small>只保留订单编号、客户、规格、数量、交期五列；同一计划订单的多个批次数量自动汇总。</small></span>
+                <em>A4 横向</em>
+              </label>
+            </div>
+          </fieldset>
+
+          <fieldset className="weekly-export-options range-options">
+            <legend>数据范围</legend>
+            <div className="weekly-export-option-grid">
+              <label className={weeklyPlanExportDialog.range === 'execution' ? 'selected' : ''}>
+                <input type="radio" name="weekly-export-range" value="execution" checked={weeklyPlanExportDialog.range === 'execution'} onChange={() => setWeeklyPlanExportDialog(current => current ? { ...current, range: 'execution' } : current)} />
+                <i><Boxes /></i>
+                <span><strong>本周执行清单（推荐）</strong><small>本周新计划加已生效的上周及更早遗留；遗留只计剩余数量和剩余标准工时。</small></span>
+                <em>含遗留</em>
+              </label>
+              <label className={weeklyPlanExportDialog.range === 'current' ? 'selected' : ''}>
+                <input type="radio" name="weekly-export-range" value="current" checked={weeklyPlanExportDialog.range === 'current'} onChange={() => setWeeklyPlanExportDialog(current => current ? { ...current, range: 'current' } : current)} />
+                <i><CalendarCheck2 /></i>
+                <span><strong>仅本周新计划</strong><small>排除 {weeklyPlanExportDialog.preview.summary.carryover.batchCount} 个有效遗留批次；Excel 顶部会明确注明未包含的遗留工作量。</small></span>
+                <em>不含遗留</em>
+              </label>
+            </div>
+          </fieldset>
+
+          <div className={`planning-dialog-note ${weeklyPlanExportDialog.range === 'current' && weeklyPlanExportDialog.preview.summary.carryover.batchCount ? 'warning' : ''}`}>
+            {weeklyPlanExportDialog.range === 'execution' ? <CheckCircle2 /> : <AlertTriangle />}
+            <span>
+              <strong>{weeklyPlanExportDialog.range === 'execution' ? '导出完整的本周执行范围' : '本次文件不会包含遗留批次'}</strong>
+              <small>{weeklyPlanExportDialog.range === 'execution'
+                ? `有效遗留 ${weeklyPlanExportDialog.preview.summary.carryover.batchCount} 批将进入文件，且不会重复计算已经完成的数量。`
+                : `将排除 ${weeklyPlanExportDialog.preview.summary.carryover.batchCount} 批、${weeklyPlanExportDialog.preview.summary.carryover.quantity.toLocaleString()} 件遗留工作量。`}</small>
+            </span>
+          </div>
+        </>}
+        {error && <div className="planning-dialog-error"><AlertTriangle />{error}</div>}
+      </div>
+      <footer>
+        <button type="button" onClick={closeDialog} disabled={weeklyPlanExportDialog.exporting}>取消</button>
+        <button type="button" className="primary" disabled={weeklyPlanExportDialog.loading || weeklyPlanExportDialog.exporting || !weeklyPlanExportDialog.preview} onClick={() => { void downloadWeeklyPlanExport(); }}>
+          {weeklyPlanExportDialog.exporting ? '正在生成 Excel...' : `导出${weeklyPlanExportDialog.version === 'full' ? '完整计划版' : '订单简版'}`}
+        </button>
+      </footer>
+    </div>}
 
     {orderDialog && <div ref={dialogRef} className="planning-dialog order-dialog" role="dialog" aria-modal="true" aria-labelledby="planning-order-dialog-title">
       <header><div><span>{orderDialog.mode === 'create' ? '实时订单池' : '订单变更'}</span><h2 id="planning-order-dialog-title">{orderDialog.mode === 'create' ? '新建计划订单' : '编辑计划订单'}</h2></div><button type="button" onClick={closeDialog} aria-label="关闭"><X /></button></header>

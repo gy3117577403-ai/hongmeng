@@ -100,6 +100,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npx tsx --test --test-concurrency=1 tests/production-carryover.test.ts tests/production-carryover-integration.test.ts tests/production-test-data-retirement-integration.test.ts
+      - name: Weekly plan Excel export PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npm run test:weekly-plan-export-integration
       - name: Production correction and product-time sync PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -142,14 +146,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.42
+            org.opencontainers.image.version=v1.34.43
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.42
+            APP_VERSION=v1.34.43
             APP_REVISION=${{ github.sha }}
           load: true
           push: false
