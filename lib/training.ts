@@ -241,6 +241,38 @@ export function addTrainingMonths(date: Date, months: number): Date {
   ));
 }
 
+export function trainingCourseSnapshot(course: {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  objective: string | null;
+  description: string | null;
+  targetAudience: string | null;
+  version: number;
+  skillId: string | null;
+  skill?: { name: string } | null;
+  targetLevel: number | null;
+  validityMonths: number | null;
+  retrainingMonths: number | null;
+}): Prisma.InputJsonObject {
+  return {
+    id: course.id,
+    code: course.code,
+    name: course.name,
+    category: course.category,
+    objective: course.objective,
+    description: course.description,
+    targetAudience: course.targetAudience,
+    version: course.version,
+    skillId: course.skillId,
+    skillName: course.skill?.name || null,
+    targetLevel: course.targetLevel,
+    validityMonths: course.validityMonths,
+    retrainingMonths: course.retrainingMonths,
+  };
+}
+
 export function calculateTrainingScore(input: {
   mode: string;
   theoryScore: number | null;
@@ -260,6 +292,19 @@ export function nextTrainingPlanStatus(current: string, action: string): Trainin
   if (action === 'complete' && ['IN_PROGRESS', 'PENDING_REVIEW'].includes(current)) return 'COMPLETED';
   if (action === 'cancel' && !['COMPLETED', 'CANCELLED'].includes(current)) return 'CANCELLED';
   throw new TrainingInputError('当前计划状态不能执行此操作', 409);
+}
+
+export function isFormalTrainingRecord(input: {
+  planStatus: string;
+  assessmentMode: string;
+  attendanceStatus: string;
+  result: string;
+  reviewStatus: string;
+}): boolean {
+  if (input.planStatus !== 'COMPLETED') return false;
+  if (!['PRESENT', 'LATE'].includes(input.attendanceStatus)) return false;
+  if (input.assessmentMode === 'NONE') return input.reviewStatus === 'NOT_REQUIRED';
+  return input.reviewStatus === 'APPROVED' && ['PASSED', 'FAILED'].includes(input.result);
 }
 
 function serializeAttachment(attachment: {
@@ -357,6 +402,15 @@ export function serializeTrainingPlan(plan: TrainingPlanRecord, people: Readonly
     completedAt: plan.completedAt?.toISOString() || null,
     cancelledAt: plan.cancelledAt?.toISOString() || null,
     cancelReason: plan.cancelReason,
+    archivedAt: plan.archivedAt?.toISOString() || null,
+    archivedById: plan.archivedById,
+    archiveReason: plan.archiveReason,
+    deletedAt: plan.deletedAt?.toISOString() || null,
+    deletedById: plan.deletedById,
+    deleteReason: plan.deleteReason,
+    restoredAt: plan.restoredAt?.toISOString() || null,
+    restoredById: plan.restoredById,
+    restoreReason: plan.restoreReason,
     sessions: plan.sessions.map(session => ({
       id: session.id,
       name: session.name,
@@ -423,7 +477,9 @@ export function serializeTrainingPlan(plan: TrainingPlanRecord, people: Readonly
       attendedCount: attended,
       attendanceRate: plan.participants.length ? Math.round(attended / plan.participants.length * 100) : 0,
       passedCount: passed,
-      passRate: attended ? Math.round(passed / attended * 100) : 0,
+      passRate: plan.assessmentMode === 'NONE'
+        ? null
+        : (attended ? Math.round(passed / attended * 100) : null),
       pendingReviewCount: pendingReview,
       belowPassCount: plan.participants.filter(item => item.score !== null && item.score < passScore).length,
     },
@@ -434,12 +490,18 @@ export function serializeTrainingPlan(plan: TrainingPlanRecord, people: Readonly
 
 export function summarizeTraining(plans: ReturnType<typeof serializeTrainingPlan>[], courses: ReturnType<typeof serializeTrainingCourse>[]) {
   const now = Date.now();
-  const upcoming = plans.filter(plan => ['DRAFT', 'PUBLISHED'].includes(plan.status) && new Date(plan.startAt).getTime() >= now);
-  const active = plans.filter(plan => ['PUBLISHED', 'IN_PROGRESS'].includes(plan.status));
-  const completed = plans.filter(plan => plan.status === 'COMPLETED');
-  const allParticipants = plans.flatMap(plan => plan.participants);
+  const currentPlans = plans.filter(plan => !plan.archivedAt);
+  const upcoming = currentPlans.filter(plan => ['DRAFT', 'PUBLISHED'].includes(plan.status) && new Date(plan.startAt).getTime() >= now);
+  const active = currentPlans.filter(plan => ['PUBLISHED', 'IN_PROGRESS'].includes(plan.status));
+  const completed = currentPlans.filter(plan => plan.status === 'COMPLETED');
+  const reportingPlans = currentPlans.filter(plan => plan.status !== 'CANCELLED');
+  const allParticipants = reportingPlans.flatMap(plan => plan.participants);
+  const assessedParticipants = reportingPlans
+    .filter(plan => plan.assessmentMode !== 'NONE')
+    .flatMap(plan => plan.participants);
   const attended = allParticipants.filter(item => ['PRESENT', 'LATE'].includes(item.attendanceStatus));
-  const passed = attended.filter(item => item.result === 'PASSED');
+  const assessedAttended = assessedParticipants.filter(item => ['PRESENT', 'LATE'].includes(item.attendanceStatus));
+  const passed = assessedAttended.filter(item => item.result === 'PASSED');
   return {
     activeCourseCount: courses.filter(course => course.status === 'ACTIVE').length,
     upcomingPlanCount: upcoming.length,
@@ -448,6 +510,6 @@ export function summarizeTraining(plans: ReturnType<typeof serializeTrainingPlan
     completedPlanCount: completed.length,
     participantCount: allParticipants.length,
     attendanceRate: allParticipants.length ? Math.round(attended.length / allParticipants.length * 100) : 0,
-    passRate: attended.length ? Math.round(passed.length / attended.length * 100) : 0,
+    passRate: assessedAttended.length ? Math.round(passed.length / assessedAttended.length * 100) : null,
   };
 }

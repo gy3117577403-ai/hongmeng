@@ -9,6 +9,7 @@ import {
   serializeTrainingPlan,
   TrainingInputError,
   trainingCode,
+  trainingCourseSnapshot,
   trainingPlanInclude,
   type TrainingPerson,
 } from '@/lib/training';
@@ -66,21 +67,7 @@ export async function POST(req: NextRequest) {
     const passScore = assessmentMode === 'NONE' ? null : (body.passScore === undefined && course ? course.passScore : input.passScore) ?? 80;
     const isRequired = body.isRequired === undefined && course ? course.isRequired : input.isRequired;
     const mode = body.mode === undefined && course ? course.mode : input.mode;
-    const courseSnapshot = course ? {
-      id: course.id,
-      code: course.code,
-      name: course.name,
-      category: course.category,
-      objective: course.objective,
-      description: course.description,
-      targetAudience: course.targetAudience,
-      version: course.version,
-      skillId: course.skillId,
-      skillName: course.skill?.name || null,
-      targetLevel: course.targetLevel,
-      validityMonths: course.validityMonths,
-      retrainingMonths: course.retrainingMonths,
-    } satisfies Prisma.InputJsonObject : null;
+    const courseSnapshot = course ? trainingCourseSnapshot(course) : null;
     const plan = await prisma.$transaction(async tx => {
       const created = await tx.trainingPlan.create({
         data: {

@@ -35,8 +35,8 @@ function validateAttachment(file: File, body: Buffer): string | null {
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const plan = await prisma.trainingPlan.findFirst({ where: { id: params.id, deletedAt: null }, select: { id: true, code: true, status: true } });
-    if (!plan) return NextResponse.json({ ok: false, error: '培训计划不存在或已删除' }, { status: 404 });
+    const plan = await prisma.trainingPlan.findFirst({ where: { id: params.id, deletedAt: null, archivedAt: null }, select: { id: true, code: true, status: true } });
+    if (!plan) return NextResponse.json({ ok: false, error: '培训计划不存在、已删除或已归档' }, { status: 404 });
     const form = await req.formData();
     const upload = form.get('file');
     if (!(upload instanceof File)) throw new TrainingInputError('请选择培训附件');

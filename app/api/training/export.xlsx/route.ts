@@ -47,6 +47,7 @@ export async function GET(req: NextRequest) {
       position: participant.positionSnapshot,
       attendanceStatus: participant.attendanceStatus,
       actualMinutes: participant.actualMinutes,
+      assessmentMode: plan.assessmentMode,
       theoryScore: participant.theoryScore,
       practicalScore: participant.practicalScore,
       score: participant.score,

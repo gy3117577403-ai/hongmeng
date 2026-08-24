@@ -108,6 +108,7 @@ test('training workbook exports plan, session attendance, feedback detail and fe
     position: '操作员',
     attendanceStatus: 'PRESENT',
     actualMinutes: 120,
+    assessmentMode: 'NONE',
     theoryScore: null,
     practicalScore: null,
     score: null,
@@ -181,4 +182,5 @@ test('training workbook exports plan, session attendance, feedback detail and fe
   assert.equal(workbook.getWorksheet('课次签到明细')?.getCell('P2').value, '个人账号扫码');
   assert.equal(workbook.getWorksheet('课后反馈明细')?.getCell('O2').value, '建议增加演练');
   assert.equal(workbook.getWorksheet('反馈汇总')?.getCell('J2').value, 1);
+  assert.equal(workbook.getWorksheet('培训台账')?.getCell('Q6').value, '完成 / 无需考核');
 });

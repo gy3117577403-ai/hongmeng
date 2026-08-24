@@ -26,10 +26,10 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const action = cleanTrainingText(body.action, 40);
     const reason = cleanTrainingText(body.reason, 800) || null;
     const current = await prisma.trainingPlan.findFirst({
-      where: { id: params.id, deletedAt: null },
+      where: { id: params.id, deletedAt: null, archivedAt: null },
       include: { participants: true, sessions: true },
     });
-    if (!current) return NextResponse.json({ ok: false, error: '培训计划不存在或已删除' }, { status: 404 });
+    if (!current) return NextResponse.json({ ok: false, error: '培训计划不存在、已删除或已归档' }, { status: 404 });
     const nextStatus = nextTrainingPlanStatus(current.status, action);
     const requestedSessionId = cleanTrainingText(body.sessionId, 80);
     const startSession = action === 'start'
@@ -152,6 +152,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         });
       }
       if (action === 'complete') {
+        if (current.assessmentMode === 'NONE') {
+          await tx.trainingParticipant.updateMany({
+            where: {
+              planId: current.id,
+              attendanceStatus: { in: ['PRESENT', 'LATE'] },
+            },
+            data: {
+              status: 'PASSED',
+              result: 'PASSED',
+              reviewStatus: 'NOT_REQUIRED',
+              submittedAt: now,
+              version: { increment: 1 },
+            },
+          });
+        }
         await tx.trainingSession.updateMany({
           where: { planId: current.id, status: { not: 'CANCELLED' } },
           data: { status: 'COMPLETED', actualEndAt: now, version: { increment: 1 } },
@@ -173,7 +188,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           action,
           fromStatus: current.status,
           toStatus: nextStatus,
-          content: action === 'cancel' ? `取消计划：${reason}` : `${current.status} → ${nextStatus}`,
+          content: action === 'cancel'
+            ? `取消计划：${reason}`
+            : action === 'complete'
+              ? '培训执行已完成，等待按需归档'
+              : `${current.status} → ${nextStatus}`,
           actorId: user.id,
           detail: action === 'start' ? { sessionId: startSession!.id } : undefined,
         },

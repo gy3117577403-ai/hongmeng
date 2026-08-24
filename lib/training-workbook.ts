@@ -13,6 +13,7 @@ export type TrainingWorkbookRow = {
   position: string | null;
   attendanceStatus: string;
   actualMinutes: number | null;
+  assessmentMode?: string;
   theoryScore: number | null;
   practicalScore: number | null;
   score: number | null;
@@ -158,7 +159,9 @@ export async function createTrainingWorkbook(input: {
       item.theoryScore ?? '',
       item.practicalScore ?? '',
       item.score ?? '',
-      `${resultText[item.result] || item.result} / ${reviewText[item.reviewStatus] || item.reviewStatus}`,
+      item.assessmentMode === 'NONE'
+        ? '完成 / 无需考核'
+        : `${resultText[item.result] || item.result} / ${reviewText[item.reviewStatus] || item.reviewStatus}`,
       item.certificationId ? '已同步' : '',
     ]);
     row.height = 26;
@@ -175,7 +178,7 @@ export async function createTrainingWorkbook(input: {
     if (item.result === 'FAILED' || item.reviewStatus === 'RETURNED') {
       resultCell.font = { name: '微软雅黑', size: 9.5, bold: true, color: { argb: 'FFDC2626' } };
       resultCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEE2E2' } };
-    } else if (item.result === 'PASSED' && item.reviewStatus === 'APPROVED') {
+    } else if ((item.result === 'PASSED' && item.reviewStatus === 'APPROVED') || item.assessmentMode === 'NONE') {
       resultCell.font = { name: '微软雅黑', size: 9.5, bold: true, color: { argb: 'FF15803D' } };
       resultCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDCFCE7' } };
     }

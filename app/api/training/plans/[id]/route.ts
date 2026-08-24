@@ -1,13 +1,20 @@
+import { Prisma } from '@prisma/client';
 import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { activeUserIdsForEmployees, createSystemNotification } from '@/lib/system-notifications';
 import { ensureTrainingSessionAttendanceRows } from '@/lib/training-qr-service';
 import {
+  prepareTrainingPlanChange,
+  readTrainingPlanLifecycleImpact,
+  trainingPlanCanDelete,
+} from '@/lib/training-plan-lifecycle';
+import {
   cleanTrainingText,
-  parsePlanInput,
   serializeTrainingPlan,
   TrainingInputError,
+  trainingCourseSnapshot,
   trainingPlanInclude,
   type TrainingPerson,
 } from '@/lib/training';
@@ -41,49 +48,63 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const current = await prisma.trainingPlan.findFirst({
-      where: { id: params.id, deletedAt: null },
-      include: {
-        participants: true,
-        sessions: { where: { sequence: 1 }, take: 1 },
-      },
-    });
-    if (!current) return NextResponse.json({ ok: false, error: '培训计划不存在或已删除' }, { status: 404 });
-    if (!['DRAFT', 'PUBLISHED'].includes(current.status)) throw new TrainingInputError('计划开始后不能修改基础安排', 409);
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const input = parsePlanInput({
-      title: body.title ?? current.title,
-      courseId: body.courseId ?? current.courseId,
-      purpose: body.purpose ?? current.purpose,
-      scopeType: body.scopeType ?? current.scopeType,
-      scopeDescription: body.scopeDescription ?? current.scopeDescription,
-      organizerId: body.organizerId ?? current.organizerId,
-      trainerId: body.trainerId ?? current.trainerId,
-      reviewerId: body.reviewerId ?? current.reviewerId,
-      departmentId: body.departmentId ?? current.departmentId,
-      startAt: body.startAt ?? current.startAt.toISOString(),
-      endAt: body.endAt ?? current.endAt.toISOString(),
-      location: body.location ?? current.location,
-      mode: body.mode ?? current.mode,
-      isRequired: body.isRequired ?? current.isRequired,
-      assessmentMode: body.assessmentMode ?? current.assessmentMode,
-      passScore: body.passScore ?? current.passScore,
-      checkInOpenMinutes: body.checkInOpenMinutes ?? current.sessions[0]?.checkInOpenMinutes,
-      lateAfterMinutes: body.lateAfterMinutes ?? current.sessions[0]?.lateAfterMinutes,
-      checkInCloseMinutes: body.checkInCloseMinutes ?? current.sessions[0]?.checkInCloseMinutes,
-      feedbackDeadlineHours: body.feedbackDeadlineHours ?? current.sessions[0]?.feedbackDeadlineHours,
-      feedbackRequired: body.feedbackRequired ?? current.sessions[0]?.feedbackRequired,
-      participantIds: body.participantIds ?? current.participants.map(person => person.employeeId),
-    });
-    if (!input.participantIds.length) throw new TrainingInputError('请至少选择一名参训人员');
-    const employees = await prisma.employee.findMany({ where: { id: { in: input.participantIds }, isActive: true } });
-    if (employees.length !== input.participantIds.length) throw new TrainingInputError('参训人员包含离职或不存在的员工', 409);
-    const expectedVersion = Number(body.version ?? current.version);
-    await prisma.$transaction(async tx => {
+    const prepared = await prepareTrainingPlanChange(params.id, body);
+    const {
+      current,
+      mainSession,
+      input,
+      expectedVersion,
+      employees,
+      course,
+      changedFields,
+      blockers,
+      removedParticipantIds,
+      requiresConfirmation,
+      scheduleChanged,
+    } = prepared;
+    if (blockers.length) throw new TrainingInputError(blockers.join('；'), 409);
+    if (!changedFields.length) return NextResponse.json({ ok: true, unchanged: true, plan: await planResponse(current.id) });
+    const reason = cleanTrainingText(body.reason, 800);
+    if (requiresConfirmation && body.confirmed !== true) {
+      throw new TrainingInputError('已发布计划的变更必须先确认影响', 409);
+    }
+    if (requiresConfirmation && !reason) throw new TrainingInputError('变更已发布计划时请填写变更原因');
+    const plan = await prisma.$transaction(async tx => {
+      if (removedParticipantIds.length) {
+        const changedFacts = await tx.trainingParticipant.count({
+          where: {
+            id: { in: removedParticipantIds },
+            planId: current.id,
+            OR: [
+              { attendanceStatus: { not: 'INVITED' } },
+              { checkInAt: { not: null } },
+              { checkOutAt: { not: null } },
+              { theoryScore: { not: null } },
+              { practicalScore: { not: null } },
+              { score: { not: null } },
+              { submittedAt: { not: null } },
+              { reviewStatus: { in: ['PENDING', 'APPROVED', 'RETURNED'] } },
+              { certificationId: { not: null } },
+              { sessionAttendances: { some: { status: { not: 'INVITED' } } } },
+              { feedbacks: { some: {} } },
+            ],
+          },
+        });
+        if (changedFacts) throw new TrainingInputError('变更确认后又产生了签到、反馈或成绩事实，请刷新影响预览', 409);
+      }
       const updated = await tx.trainingPlan.updateMany({
-        where: { id: current.id, version: expectedVersion, deletedAt: null },
+        where: { id: current.id, version: expectedVersion, status: current.status, deletedAt: null, archivedAt: null },
         data: {
           title: input.title,
+          courseId: input.courseId,
+          // A published plan is an immutable record of the course rules that were
+          // issued to employees. A later schedule-only change must not silently
+          // replace that snapshot when the reusable course has since been edited.
+          courseVersion: current.status === 'PUBLISHED' ? current.courseVersion : (course?.version || null),
+          courseSnapshot: current.status === 'PUBLISHED'
+            ? (current.courseSnapshot === null ? Prisma.JsonNull : current.courseSnapshot as Prisma.InputJsonValue)
+            : (course ? trainingCourseSnapshot(course) : Prisma.JsonNull),
           purpose: input.purpose,
           scopeType: input.scopeType,
           scopeDescription: input.scopeDescription,
@@ -104,7 +125,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       });
       if (updated.count !== 1) throw new TrainingInputError('计划已被其他人更新，请刷新后重试', 409);
       await tx.trainingSession.updateMany({
-        where: { planId: current.id, sequence: 1 },
+        where: { id: mainSession.id, planId: current.id, sequence: 1 },
         data: {
           name: '主培训场次',
           startAt: input.startAt,
@@ -119,7 +140,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
           version: { increment: 1 },
         },
       });
-      await tx.trainingParticipant.deleteMany({ where: { planId: current.id, employeeId: { notIn: input.participantIds } } });
+      if (removedParticipantIds.length) {
+        await tx.trainingParticipant.deleteMany({ where: { planId: current.id, id: { in: removedParticipantIds } } });
+      }
       for (const employee of employees) {
         await tx.trainingParticipant.upsert({
           where: { planId_employeeId: { planId: current.id, employeeId: employee.id } },
@@ -149,12 +172,59 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         });
       }
       await ensureTrainingSessionAttendanceRows(tx, current.id);
+      if (current.status === 'PUBLISHED' && scheduleChanged) {
+        await tx.trainingQrWindow.updateMany({
+          where: { session: { planId: current.id }, status: { in: ['SCHEDULED', 'OPEN'] } },
+          data: { status: 'REVOKED', closedAt: new Date(), closedById: user.id },
+        });
+      }
       await tx.trainingActivity.create({
-        data: { planId: current.id, action: 'update', fromStatus: current.status, toStatus: current.status, content: `更新计划安排与人员，共 ${employees.length} 人`, actorId: user.id },
+        data: {
+          planId: current.id,
+          action: current.status === 'PUBLISHED' ? 'change_published_plan' : 'update_draft',
+          fromStatus: current.status,
+          toStatus: current.status,
+          content: `${current.status === 'PUBLISHED' ? '变更已发布计划' : '更新草稿'}：${changedFields.map(field => field.label).join('、')}`,
+          actorId: user.id,
+          detail: {
+            reason: reason || null,
+            participantCount: employees.length,
+            changes: changedFields.map(field => ({ key: field.key, label: field.label, before: field.before, after: field.after })),
+          },
+        },
       });
+      if (current.status === 'PUBLISHED') {
+        const recipientUserIds = await activeUserIdsForEmployees(tx, input.participantIds, { excludeUserIds: [user.id] });
+        await createSystemNotification(tx, {
+          eventType: 'TRAINING_PLAN_CHANGED',
+          dedupeKey: `training-plan-changed:${current.id}:v${expectedVersion + 1}`,
+          category: 'TODO',
+          priority: current.isRequired ? 'HIGH' : 'NORMAL',
+          title: `培训计划有变更：${input.title}`,
+          body: `${reason}；变更项：${changedFields.map(field => field.label).join('、')}`,
+          targetRoute: null,
+          sourceType: 'training_plan',
+          sourceId: current.id,
+          actorId: user.id,
+          metadata: { code: current.code, reason, changedFields: changedFields.map(field => field.key) },
+          recipientUserIds,
+        });
+      }
+      return tx.trainingPlan.findUniqueOrThrow({ where: { id: current.id }, include: trainingPlanInclude });
     });
-    await logOp({ userId: user.id, action: 'update_training_plan', targetType: 'training_plan', targetId: current.id, detail: { code: current.code, participantCount: employees.length } });
-    return NextResponse.json({ ok: true, plan: await planResponse(current.id) });
+    await logOp({
+      userId: user.id,
+      action: current.status === 'PUBLISHED' ? 'change_published_training_plan' : 'update_training_plan_draft',
+      targetType: 'training_plan',
+      targetId: current.id,
+      detail: { code: current.code, reason: reason || null, participantCount: employees.length, changedFields: changedFields.map(field => field.key) },
+    });
+    const roleIds = [plan.organizerId, plan.trainerId, plan.reviewerId].filter((value): value is string => Boolean(value));
+    const peopleRows = roleIds.length ? await prisma.employee.findMany({
+      where: { id: { in: roleIds } },
+      select: { id: true, employeeNo: true, name: true, department: true, position: true, team: true, isActive: true },
+    }) : [];
+    return NextResponse.json({ ok: true, plan: serializeTrainingPlan(plan, new Map(peopleRows.map(person => [person.id, person as TrainingPerson]))) });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof TrainingInputError) return NextResponse.json({ ok: false, error: error.message }, { status: error.statusCode });
@@ -166,16 +236,49 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const user = await requireUser();
-    const current = await prisma.trainingPlan.findFirst({ where: { id: params.id, deletedAt: null } });
+    const current = await prisma.trainingPlan.findFirst({ where: { id: params.id, deletedAt: null, archivedAt: null } });
     if (!current) return NextResponse.json({ ok: false, error: '培训计划不存在或已删除' }, { status: 404 });
-    if (['IN_PROGRESS', 'PENDING_REVIEW', 'COMPLETED'].includes(current.status)) {
-      throw new TrainingInputError('执行中或已归档计划不能删除，可取消后保留审计记录', 409);
-    }
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
-    const reason = cleanTrainingText(body.reason, 500) || null;
-    await prisma.trainingPlan.update({ where: { id: current.id }, data: { deletedAt: new Date(), cancelReason: reason, updatedById: user.id, version: { increment: 1 } } });
-    await logOp({ userId: user.id, action: 'delete_training_plan', targetType: 'training_plan', targetId: current.id, detail: { code: current.code, reason } });
-    return NextResponse.json({ ok: true });
+    const reason = cleanTrainingText(body.reason, 500);
+    const confirmationCode = cleanTrainingText(body.confirmationCode, 120);
+    const expectedVersion = Number(body.version ?? current.version);
+    if (!reason) throw new TrainingInputError('删除草稿时请填写原因');
+    if (confirmationCode !== current.code) throw new TrainingInputError('请输入完整计划编号确认删除');
+    const result = await prisma.$transaction(async tx => {
+      const impact = await readTrainingPlanLifecycleImpact(tx, current.id);
+      if (!trainingPlanCanDelete(current.status, impact)) {
+        throw new TrainingInputError('只有未产生执行事实的草稿可以删除；已发布计划请取消，已完成计划请归档', 409);
+      }
+      const now = new Date();
+      const updated = await tx.trainingPlan.updateMany({
+        where: { id: current.id, version: expectedVersion, status: 'DRAFT', deletedAt: null, archivedAt: null },
+        data: {
+          deletedAt: now,
+          deletedById: user.id,
+          deleteReason: reason,
+          restoredAt: null,
+          restoredById: null,
+          restoreReason: null,
+          updatedById: user.id,
+          version: { increment: 1 },
+        },
+      });
+      if (updated.count !== 1) throw new TrainingInputError('计划已被其他人更新，请刷新后重试', 409);
+      await tx.trainingActivity.create({
+        data: {
+          planId: current.id,
+          action: 'soft_delete_draft',
+          fromStatus: current.status,
+          toStatus: current.status,
+          content: `删除草稿：${reason}`,
+          actorId: user.id,
+          detail: { reason, impact },
+        },
+      });
+      return { impact, deletedAt: now };
+    });
+    await logOp({ userId: user.id, action: 'soft_delete_training_plan_draft', targetType: 'training_plan', targetId: current.id, detail: { code: current.code, reason, impact: result.impact } });
+    return NextResponse.json({ ok: true, deletedAt: result.deletedAt.toISOString(), recoverable: true });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();
     if (error instanceof TrainingInputError) return NextResponse.json({ ok: false, error: error.message }, { status: error.statusCode });

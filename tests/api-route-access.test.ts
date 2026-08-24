@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canAccessApiRoute } from '../lib/api-route-access';
+import { apiRouteAccessRule, canAccessApiRoute } from '../lib/api-route-access';
 import { resolveAccessContext, type AccessGrant } from '../lib/department-access';
 
 function context(grant: AccessGrant) {
@@ -246,6 +246,14 @@ test('training collaborator reads shared employees and skills while owning the t
   assert.equal(canAccessApiRoute(training, '/api/training/workbench', 'GET'), true);
   assert.equal(canAccessApiRoute(training, '/api/training/courses', 'POST'), true);
   assert.equal(canAccessApiRoute(training, '/api/training/plans/plan-1/transition', 'POST'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/plans/plan-1/change-preview', 'POST'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/plans/plan-1/delete-preview', 'POST'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/plans/plan-1/archive', 'POST'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/plans/plan-1/unarchive', 'POST'), true);
+  assert.equal(canAccessApiRoute(training, '/api/training/plans/plan-1/restore', 'POST'), true);
+  assert.equal(apiRouteAccessRule('/api/training/plans/plan-1/change-preview')?.action, 'UPDATE');
+  assert.equal(apiRouteAccessRule('/api/training/plans/plan-1/delete-preview')?.action, 'DELETE');
+  assert.equal(apiRouteAccessRule('/api/training/plans/plan-1/archive')?.action, 'EXECUTE_WORKFLOW');
   assert.equal(canAccessApiRoute(training, '/api/training/participants/person-1', 'PATCH'), true);
   assert.equal(canAccessApiRoute(training, '/api/training/sessions/session-1/qr-windows', 'POST'), true);
   assert.equal(canAccessApiRoute(training, '/api/training/sessions/session-1/start', 'POST'), true);

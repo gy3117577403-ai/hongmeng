@@ -265,6 +265,30 @@ function pathOnly(value: string): string {
 export function apiRouteAccessRule(pathname: string): ApiRule | null {
   const path = pathOnly(pathname);
 
+  if (/^\/api\/training\/plans\/[^/]+\/(?:transition|archive|unarchive)$/.test(path)) {
+    return {
+      prefix: '/api/training/plans/:id/workflow',
+      anyOf: ['HR', 'TRAINING'],
+      action: 'EXECUTE_WORKFLOW',
+    };
+  }
+
+  if (/^\/api\/training\/plans\/[^/]+\/change-preview$/.test(path)) {
+    return {
+      prefix: '/api/training/plans/:id/change-preview',
+      anyOf: ['HR', 'TRAINING'],
+      action: 'UPDATE',
+    };
+  }
+
+  if (/^\/api\/training\/plans\/[^/]+\/(?:delete-preview|restore)$/.test(path)) {
+    return {
+      prefix: '/api/training/plans/:id/recycle',
+      anyOf: ['HR', 'TRAINING'],
+      action: 'DELETE',
+    };
+  }
+
   if (/^\/api\/drawing-library\/(?:[^/]+\/sop\/(?:publish|versions\/[^/]+\/publish|pdf-overlay\/versions\/[^/]+\/publish)|bulk-index|bulk-originals|cleanup-empty\/commit)$/.test(path)) {
     return {
       prefix: '/api/drawing-library/engineering-command',

@@ -2,6 +2,8 @@
 
 import {
   AlertCircle,
+  Archive,
+  ArchiveRestore,
   ArrowRight,
   Award,
   BarChart3,
@@ -31,6 +33,7 @@ import {
   Search,
   Send,
   ShieldCheck,
+  Trash2,
   Upload,
   UserCheck,
   UsersRound,
@@ -126,6 +129,15 @@ type TrainingPlan = {
   passScore: number | null;
   status: string;
   version: number;
+  archivedAt: string | null;
+  archivedById: string | null;
+  archiveReason: string | null;
+  deletedAt: string | null;
+  deletedById: string | null;
+  deleteReason: string | null;
+  restoredAt: string | null;
+  restoredById: string | null;
+  restoreReason: string | null;
   sessions: Array<{
     id: string;
     name: string;
@@ -151,7 +163,7 @@ type TrainingPlan = {
     attendedCount: number;
     attendanceRate: number;
     passedCount: number;
-    passRate: number;
+    passRate: number | null;
     pendingReviewCount: number;
     belowPassCount: number;
   };
@@ -230,12 +242,13 @@ type Workbench = {
     completedPlanCount: number;
     participantCount: number;
     attendanceRate: number;
-    passRate: number;
+    passRate: number | null;
   };
   employees: TrainingEmployee[];
   skills: TrainingSkill[];
   courses: TrainingCourse[];
   plans: TrainingPlan[];
+  deletedPlans: TrainingPlan[];
   expiringCertifications: Array<{
     id: string;
     employeeId: string;
@@ -252,6 +265,38 @@ type Workbench = {
 
 type ViewKey = 'overview' | 'courses' | 'plans' | 'execution' | 'review' | 'records' | 'retraining' | 'reports';
 type DrawerKey = 'course' | 'plan' | 'participant' | null;
+type PlanViewKey = 'active' | 'completed' | 'cancelled' | 'archived' | 'deleted';
+
+type TrainingPlanImpact = {
+  participantCount: number;
+  attendanceFactCount: number;
+  feedbackCount: number;
+  scoreOrReviewFactCount: number;
+  certificationCount: number;
+  activeQrWindowCount: number;
+  attachmentCount: number;
+  hasExecutionFacts: boolean;
+};
+
+type PlanChangePreview = {
+  changedFields: Array<{ key: string; label: string; before: string; after: string; lockedAfterPublish: boolean; scheduleSensitive: boolean }>;
+  addedParticipantCount: number;
+  removedParticipantCount: number;
+  impact: TrainingPlanImpact;
+  blockers: string[];
+  warnings: string[];
+  requiresConfirmation: boolean;
+  canApply: boolean;
+};
+
+type PlanDialog = {
+  kind: 'change' | 'delete' | 'archive' | 'unarchive' | 'restore' | 'cancel';
+  plan: TrainingPlan;
+  reason: string;
+  confirmationCode: string;
+  impact: TrainingPlanImpact | null;
+  preview: PlanChangePreview | null;
+};
 
 const emptyCourse = {
   name: '', category: '岗位技能', objective: '', description: '', targetAudience: '', defaultDurationMinutes: '60', mode: 'OFFLINE',
@@ -261,6 +306,13 @@ const emptyCourse = {
 function localInputDate(offsetHours = 1): string {
   const value = new Date(Date.now() + offsetHours * 60 * 60 * 1000);
   const local = new Date(value.getTime() - value.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
+}
+
+function localDateTimeValue(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 16);
 }
 
@@ -299,6 +351,42 @@ function assessmentLabel(mode: string): string {
   return mode === 'THEORY' ? '理论' : mode === 'PRACTICAL' ? '实操' : mode === 'COMBINED' ? '理论 + 实操' : '无需考核';
 }
 
+function planChangeValueLabel(
+  fieldKey: string,
+  value: string,
+  employees: TrainingEmployee[],
+  courses: TrainingCourse[],
+): string {
+  if (value === '未设置') return value;
+  if (['organizerId', 'trainerId', 'reviewerId'].includes(fieldKey)) {
+    const employee = employees.find(person => person.id === value);
+    return employee ? `${employee.employeeNo} · ${employee.name}` : '原人员已不在在岗名单';
+  }
+  if (fieldKey === 'courseId') {
+    const course = courses.find(item => item.id === value);
+    return course ? `${course.code} · ${course.name}` : '原课程已停用或删除';
+  }
+  if (fieldKey === 'startAt' || fieldKey === 'endAt') return fmtDate(value);
+  if (fieldKey === 'mode') return modeLabel(value);
+  if (fieldKey === 'assessmentMode') return assessmentLabel(value);
+  if (fieldKey === 'passScore') return `${value} 分`;
+  if (['checkInOpenMinutes', 'lateAfterMinutes', 'checkInCloseMinutes'].includes(fieldKey)) return `${value} 分钟`;
+  if (fieldKey === 'feedbackDeadlineHours') return `${value} 小时`;
+  return value;
+}
+
+function planDialogCopy(kind: PlanDialog['kind']) {
+  const copies: Record<PlanDialog['kind'], { eyebrow: string; title: string; description: string; confirm: string }> = {
+    change: { eyebrow: '已发布计划变更', title: '确认影响后保存变更', description: '系统不会覆盖历史签到、反馈或成绩；受影响员工会收到本次变更通知。', confirm: '确认变更并通知' },
+    delete: { eyebrow: '可恢复删除', title: '将草稿移入回收站', description: '只允许删除未产生执行事实的草稿。课程资料和计划数据不会物理清除，可从回收站恢复。', confirm: '确认删除草稿' },
+    archive: { eyebrow: '资料归档', title: '归档已结束计划', description: '归档后从日常计划中隐藏，但员工培训档案、签到、反馈、成绩、附件和审计记录继续保留。', confirm: '确认归档' },
+    unarchive: { eyebrow: '历史资料', title: '取消计划归档', description: '计划会重新出现在已完成或已取消列表，业务状态和历史事实不会改变。', confirm: '取消归档' },
+    restore: { eyebrow: '回收站恢复', title: '恢复培训计划草稿', description: '恢复后计划回到待处理列表，仍保持草稿状态，不会自动发布或通知员工。', confirm: '确认恢复草稿' },
+    cancel: { eyebrow: '取消执行', title: '取消培训计划', description: '取消后保留计划、人员和已经产生的事实，不可再继续签到或考核；后续可以归档。', confirm: '确认取消计划' },
+  };
+  return copies[kind];
+}
+
 async function jsonRequest(url: string, init?: RequestInit) {
   const response = await fetch(url, init);
   const body = await response.json().catch(() => ({})) as { ok?: boolean; error?: string };
@@ -314,6 +402,10 @@ export default function TrainingDevelopmentWorkbench() {
   const [toast, setToast] = useState('');
   const [view, setView] = useState<ViewKey>('overview');
   const [drawer, setDrawer] = useState<DrawerKey>(null);
+  const [editingPlanId, setEditingPlanId] = useState('');
+  const [planView, setPlanView] = useState<PlanViewKey>('active');
+  const [planDialog, setPlanDialog] = useState<PlanDialog | null>(null);
+  const [pendingPlanPayload, setPendingPlanPayload] = useState<Record<string, unknown> | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [keyword, setKeyword] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
@@ -343,9 +435,10 @@ export default function TrainingDevelopmentWorkbench() {
       const body = await response.json() as Workbench;
       if (!response.ok) throw new Error(body.error || '培训发展数据加载失败');
       setData(body);
-      setSelectedPlanId(current => body.plans.some(plan => plan.id === current) ? current : body.plans[0]?.id || '');
+      const allPlans = [...body.plans, ...(body.deletedPlans || [])];
+      setSelectedPlanId(current => allPlans.some(plan => plan.id === current) ? current : body.plans.find(plan => !plan.archivedAt)?.id || body.plans[0]?.id || body.deletedPlans?.[0]?.id || '');
       const requestedPlan = new URLSearchParams(window.location.search).get('planId');
-      if (requestedPlan && body.plans.some(plan => plan.id === requestedPlan)) {
+      if (requestedPlan && allPlans.some(plan => plan.id === requestedPlan)) {
         setSelectedPlanId(requestedPlan);
         setView('plans');
       }
@@ -358,7 +451,11 @@ export default function TrainingDevelopmentWorkbench() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const selectedPlan = useMemo(() => data?.plans.find(plan => plan.id === selectedPlanId) || null, [data, selectedPlanId]);
+  const selectedPlan = useMemo(() => {
+    const plans = [...(data?.plans || []), ...(data?.deletedPlans || [])];
+    return plans.find(plan => plan.id === selectedPlanId) || null;
+  }, [data, selectedPlanId]);
+  const editingPlan = useMemo(() => data?.plans.find(plan => plan.id === editingPlanId) || null, [data, editingPlanId]);
   useEffect(() => {
     const sessions = selectedPlan?.sessions || [];
     setSelectedSessionId(current => sessions.some(session => session.id === current) ? current : sessions[0]?.id || '');
@@ -418,7 +515,22 @@ export default function TrainingDevelopmentWorkbench() {
     ));
   }, [data, departmentFilter, keyword]);
   const pendingReviews = useMemo(() => (data?.plans || []).flatMap(plan => plan.participants.filter(person => person.reviewStatus === 'PENDING').map(person => ({ plan, person }))), [data]);
-  const completedRecords = useMemo(() => (data?.plans || []).flatMap(plan => plan.participants.filter(person => ['APPROVED', 'NOT_REQUIRED'].includes(person.reviewStatus) && ['PASSED', 'FAILED'].includes(person.result)).map(person => ({ plan, person }))), [data]);
+  const completedRecords = useMemo(() => (data?.plans || []).flatMap(plan => plan.participants.filter(person => (
+    plan.status === 'COMPLETED'
+    && ['PRESENT', 'LATE'].includes(person.attendanceStatus)
+    && (plan.assessmentMode === 'NONE'
+      ? person.reviewStatus === 'NOT_REQUIRED'
+      : person.reviewStatus === 'APPROVED' && ['PASSED', 'FAILED'].includes(person.result))
+  )).map(person => ({ plan, person }))), [data]);
+  const currentPlans = useMemo(() => (data?.plans || []).filter(plan => !plan.archivedAt), [data]);
+  const visiblePlans = useMemo(() => {
+    if (!data) return [];
+    if (planView === 'deleted') return data.deletedPlans || [];
+    if (planView === 'archived') return data.plans.filter(plan => Boolean(plan.archivedAt));
+    if (planView === 'completed') return data.plans.filter(plan => !plan.archivedAt && plan.status === 'COMPLETED');
+    if (planView === 'cancelled') return data.plans.filter(plan => !plan.archivedAt && plan.status === 'CANCELLED');
+    return data.plans.filter(plan => !plan.archivedAt && ['DRAFT', 'PUBLISHED', 'IN_PROGRESS', 'PENDING_REVIEW'].includes(plan.status));
+  }, [data, planView]);
 
   async function submitCourse(event: React.FormEvent) {
     event.preventDefault();
@@ -432,17 +544,100 @@ export default function TrainingDevelopmentWorkbench() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : '课程创建失败'); } finally { setSaving(false); }
   }
 
+  function planPayload(plan?: TrainingPlan): Record<string, unknown> {
+    return {
+      ...planDraft,
+      startAt: new Date(planDraft.startAt).toISOString(),
+      endAt: new Date(planDraft.endAt).toISOString(),
+      passScore: planDraft.assessmentMode === 'NONE' ? null : Number(planDraft.passScore),
+      checkInOpenMinutes: Number(planDraft.checkInOpenMinutes),
+      lateAfterMinutes: Number(planDraft.lateAfterMinutes),
+      checkInCloseMinutes: Number(planDraft.checkInCloseMinutes),
+      feedbackDeadlineHours: Number(planDraft.feedbackDeadlineHours),
+      ...(plan ? { version: plan.version } : {}),
+    };
+  }
+
+  function openCreatePlan(seed?: Partial<typeof emptyPlan>) {
+    setEditingPlanId('');
+    setPlanDraft({ ...emptyPlan, startAt: localInputDate(24), endAt: localInputDate(26), participantIds: [], ...seed });
+    setKeyword('');
+    setDepartmentFilter('');
+    setDrawer('plan');
+  }
+
+  function openEditPlan(plan: TrainingPlan) {
+    const session = plan.sessions[0];
+    setEditingPlanId(plan.id);
+    setPlanDraft({
+      ...emptyPlan,
+      title: plan.title,
+      courseId: plan.courseId || '',
+      purpose: plan.purpose || '',
+      organizerId: plan.organizerId || '',
+      trainerId: plan.trainerId || '',
+      reviewerId: plan.reviewerId || '',
+      departmentId: plan.departmentId || '',
+      startAt: localDateTimeValue(plan.startAt),
+      endAt: localDateTimeValue(plan.endAt),
+      location: plan.location || '',
+      mode: plan.mode,
+      isRequired: plan.isRequired,
+      assessmentMode: plan.assessmentMode,
+      passScore: String(plan.passScore ?? 80),
+      checkInOpenMinutes: String(session?.checkInOpenMinutes ?? 30),
+      lateAfterMinutes: String(session?.lateAfterMinutes ?? 5),
+      checkInCloseMinutes: String(session?.checkInCloseMinutes ?? 15),
+      feedbackDeadlineHours: String(session?.feedbackDeadlineHours ?? 24),
+      feedbackRequired: session?.feedbackRequired ?? false,
+      participantIds: plan.participants.map(person => person.employeeId),
+    });
+    setKeyword('');
+    setDepartmentFilter('');
+    setDrawer('plan');
+  }
+
   async function submitPlan(event: React.FormEvent) {
     event.preventDefault();
     setSaving(true);
     try {
-      await jsonRequest('/api/training/plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...planDraft, startAt: new Date(planDraft.startAt).toISOString(), endAt: new Date(planDraft.endAt).toISOString(), passScore: planDraft.assessmentMode === 'NONE' ? null : Number(planDraft.passScore), checkInOpenMinutes: Number(planDraft.checkInOpenMinutes), lateAfterMinutes: Number(planDraft.lateAfterMinutes), checkInCloseMinutes: Number(planDraft.checkInCloseMinutes), feedbackDeadlineHours: Number(planDraft.feedbackDeadlineHours) }) });
+      const editingPlan = editingPlanId ? data?.plans.find(plan => plan.id === editingPlanId) || null : null;
+      const payload = planPayload(editingPlan || undefined);
+      if (!editingPlan) {
+        await jsonRequest('/api/training/plans', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        setDrawer(null);
+        setPlanDraft({ ...emptyPlan, startAt: localInputDate(24), endAt: localInputDate(26), participantIds: [] });
+        setToast('培训计划已建立，可发布通知');
+        await load(true);
+        setPlanView('active');
+        setView('plans');
+        return;
+      }
+      const previewResult = await jsonRequest(`/api/training/plans/${editingPlan.id}/change-preview`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      }) as { preview?: PlanChangePreview };
+      const preview = previewResult.preview;
+      if (!preview) throw new Error('未取得培训计划变更影响');
+      if (!preview.canApply || preview.blockers.length) throw new Error(preview.blockers.join('；') || '当前变更不能保存');
+      if (!preview.changedFields.length) {
+        setToast('计划内容没有变化');
+        setDrawer(null);
+        setEditingPlanId('');
+        return;
+      }
+      if (preview.requiresConfirmation) {
+        setPendingPlanPayload(payload);
+        setPlanDialog({ kind: 'change', plan: editingPlan, reason: '', confirmationCode: '', impact: preview.impact, preview });
+        return;
+      }
+      await jsonRequest(`/api/training/plans/${editingPlan.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+      });
       setDrawer(null);
-      setPlanDraft({ ...emptyPlan, startAt: localInputDate(24), endAt: localInputDate(26), participantIds: [] });
-      setToast('培训计划已建立，可发布通知');
+      setEditingPlanId('');
+      setToast('培训计划草稿已更新');
       await load(true);
-      setView('plans');
-    } catch (reason) { setError(reason instanceof Error ? reason.message : '计划创建失败'); } finally { setSaving(false); }
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '计划保存失败'); } finally { setSaving(false); }
   }
 
   function chooseCourse(courseId: string) {
@@ -461,14 +656,102 @@ export default function TrainingDevelopmentWorkbench() {
 
   async function transition(action: string) {
     if (!selectedPlan) return;
-    const reason = action === 'cancel' ? window.prompt('请填写取消原因')?.trim() : '';
-    if (action === 'cancel' && !reason) return;
+    if (action === 'cancel') {
+      setPlanDialog({ kind: 'cancel', plan: selectedPlan, reason: '', confirmationCode: '', impact: null, preview: null });
+      return;
+    }
     setSaving(true);
     try {
-      await jsonRequest(`/api/training/plans/${selectedPlan.id}/transition`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, version: selectedPlan.version, reason }) });
-      setToast(action === 'publish' ? '计划已发布并通知有账号的参训员工' : action === 'start' ? '培训已开始' : action === 'submit_review' ? '培训成绩已提交审核' : action === 'complete' ? '培训计划已完成归档' : '培训计划已取消');
+      await jsonRequest(`/api/training/plans/${selectedPlan.id}/transition`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, version: selectedPlan.version }) });
+      setToast(action === 'publish' ? '计划已发布并通知有账号的参训员工' : action === 'start' ? '培训已开始' : action === 'submit_review' ? '培训成绩已提交审核' : action === 'complete' ? '培训已完成，可核对后归档' : '培训计划已取消');
       await load(true);
     } catch (reason) { setError(reason instanceof Error ? reason.message : '计划状态更新失败'); } finally { setSaving(false); }
+  }
+
+  async function openPlanLifecycleDialog(kind: PlanDialog['kind'], plan: TrainingPlan) {
+    setSaving(true);
+    try {
+      let impact: TrainingPlanImpact | null = null;
+      if (kind === 'delete') {
+        const result = await jsonRequest(`/api/training/plans/${plan.id}/delete-preview`, { method: 'POST' }) as {
+          preview?: { impact: TrainingPlanImpact; canDelete: boolean; blockers: string[] };
+        };
+        if (!result.preview) throw new Error('未取得草稿删除影响');
+        if (!result.preview.canDelete) throw new Error(result.preview.blockers.join('；') || '当前草稿不能删除');
+        impact = result.preview.impact;
+      } else if (['archive', 'unarchive', 'restore'].includes(kind)) {
+        const result = await jsonRequest(`/api/training/plans/${plan.id}/lifecycle-preview`) as { preview?: { impact: TrainingPlanImpact } };
+        impact = result.preview?.impact || null;
+      }
+      setPlanDialog({ kind, plan, reason: '', confirmationCode: '', impact, preview: null });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '计划影响加载失败');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function confirmPlanDialog() {
+    if (!planDialog) return;
+    const { kind, plan } = planDialog;
+    const reason = planDialog.reason.trim();
+    if (['change', 'delete', 'restore', 'cancel'].includes(kind) && !reason) {
+      setError('请填写本次操作原因');
+      return;
+    }
+    if (['delete', 'restore'].includes(kind) && planDialog.confirmationCode.trim() !== plan.code) {
+      setError(`请输入完整计划编号 ${plan.code}`);
+      return;
+    }
+    setSaving(true);
+    try {
+      if (kind === 'change') {
+        if (!pendingPlanPayload) throw new Error('变更内容已失效，请重新编辑');
+        await jsonRequest(`/api/training/plans/${plan.id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...pendingPlanPayload, confirmed: true, reason }),
+        });
+        setDrawer(null);
+        setEditingPlanId('');
+        setPendingPlanPayload(null);
+        setToast('已发布培训计划已变更，并通知相关员工');
+      } else if (kind === 'delete') {
+        await jsonRequest(`/api/training/plans/${plan.id}`, {
+          method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: plan.version, reason, confirmationCode: planDialog.confirmationCode.trim() }),
+        });
+        setPlanView('deleted');
+        setToast('草稿已移入回收站，可恢复');
+      } else if (kind === 'restore') {
+        await jsonRequest(`/api/training/plans/${plan.id}/restore`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: plan.version, reason, confirmationCode: planDialog.confirmationCode.trim() }),
+        });
+        setPlanView('active');
+        setToast('培训计划草稿已恢复');
+      } else if (kind === 'archive') {
+        await jsonRequest(`/api/training/plans/${plan.id}/archive`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: plan.version, reason, confirmed: true }),
+        });
+        setPlanView('archived');
+        setToast('培训计划已归档，培训档案与附件仍完整保留');
+      } else if (kind === 'unarchive') {
+        await jsonRequest(`/api/training/plans/${plan.id}/unarchive`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ version: plan.version, reason, confirmed: true }),
+        });
+        setPlanView(plan.status === 'COMPLETED' ? 'completed' : 'cancelled');
+        setToast('培训计划已取消归档');
+      } else if (kind === 'cancel') {
+        await jsonRequest(`/api/training/plans/${plan.id}/transition`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'cancel', version: plan.version, reason }),
+        });
+        setPlanView('cancelled');
+        setToast('培训计划已取消，历史信息保留');
+      }
+      setPlanDialog(null);
+      await load(true);
+    } catch (reasonValue) {
+      setError(reasonValue instanceof Error ? reasonValue.message : '计划操作失败');
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function startSession(sessionId: string, version: number) {
@@ -624,10 +907,11 @@ export default function TrainingDevelopmentWorkbench() {
   if (!data) return <div className="td-fatal"><AlertCircle /><strong>{error || '培训发展数据不可用'}</strong><button type="button" onClick={() => void load()}>重新加载</button></div>;
 
   function planCard(plan: TrainingPlan) {
+    const recordState = plan.deletedAt ? '回收站' : plan.archivedAt ? '已归档' : statusLabel(plan.status);
     return (
-      <button type="button" key={plan.id} className={`td-plan-card ${selectedPlanId === plan.id ? 'active' : ''}`} onClick={() => setSelectedPlanId(plan.id)}>
+      <button type="button" key={plan.id} className={`td-plan-card ${selectedPlanId === plan.id ? 'active' : ''} ${plan.archivedAt ? 'archived' : ''} ${plan.deletedAt ? 'deleted' : ''}`} onClick={() => setSelectedPlanId(plan.id)}>
         <span className={`td-status-dot ${plan.status.toLowerCase()}`} />
-        <div><small>{plan.code} · {statusLabel(plan.status)}</small><strong>{plan.title}</strong><p>{fmtDate(plan.startAt)} · {plan.trainerName || '讲师待定'} · {plan.summary.participantCount} 人</p></div>
+        <div><small>{plan.code} · {recordState}</small><strong>{plan.title}</strong><p>{fmtDate(plan.startAt)} · {plan.trainerName || '讲师待定'} · {plan.summary.participantCount} 人</p></div>
         <em>{plan.summary.attendanceRate}%<small>到课</small></em><ChevronRight />
       </button>
     );
@@ -635,20 +919,28 @@ export default function TrainingDevelopmentWorkbench() {
 
   function renderPlanDetail(plan: TrainingPlan) {
     const nextSession = plan.sessions.find(session => session.status === 'SCHEDULED') || null;
+    const isLockedRecord = Boolean(plan.archivedAt || plan.deletedAt);
     return (
       <section className="td-plan-detail">
-        <header><div><span>{statusLabel(plan.status)}</span><h2>{plan.title}</h2><p>{plan.code} · {plan.course?.name || '临时培训'} · {modeLabel(plan.mode)}</p></div><div className="td-plan-actions">
-          {['DRAFT', 'PUBLISHED'].includes(plan.status) && <button type="button" disabled={saving} onClick={() => void checkAccountReadiness(plan)}><UserCheck />账号检查</button>}
-          {plan.status === 'DRAFT' && <button type="button" className="primary" disabled={saving} onClick={() => void transition('publish')}><Send />发布</button>}
-          {nextSession && ['PUBLISHED', 'IN_PROGRESS'].includes(plan.status) && <button type="button" className="primary" disabled={saving} onClick={() => void startSession(nextSession.id, nextSession.version)}><Play />{plan.status === 'PUBLISHED' ? '开始首课' : '开始下一课次'}</button>}
-          {plan.status === 'IN_PROGRESS' && <button type="button" className="primary" disabled={saving} onClick={() => void transition(plan.assessmentMode === 'NONE' ? 'complete' : 'submit_review')}><ClipboardCheck />{plan.assessmentMode === 'NONE' ? '完成归档' : '提交审核'}</button>}
-          {plan.status === 'PENDING_REVIEW' && <button type="button" className="primary" disabled={saving || plan.summary.pendingReviewCount > 0} onClick={() => void transition('complete')}><CheckCircle2 />完成归档</button>}
-          {!['COMPLETED', 'CANCELLED'].includes(plan.status) && <button type="button" disabled={saving} onClick={() => void transition('cancel')}>取消</button>}
+        <header><div><span>{plan.deletedAt ? '回收站草稿' : plan.archivedAt ? `${statusLabel(plan.status)} · 已归档` : statusLabel(plan.status)}</span><h2>{plan.title}</h2><p>{plan.code} · {plan.course?.name || '临时培训'} · {modeLabel(plan.mode)}</p></div><div className="td-plan-actions">
+          {plan.deletedAt && data!.permissions.canDelete && <button type="button" className="primary" disabled={saving} onClick={() => void openPlanLifecycleDialog('restore', plan)}><ArchiveRestore />恢复草稿</button>}
+          {plan.archivedAt && data!.permissions.canExecute && <button type="button" disabled={saving} onClick={() => void openPlanLifecycleDialog('unarchive', plan)}><ArchiveRestore />取消归档</button>}
+          {!isLockedRecord && ['DRAFT', 'PUBLISHED'].includes(plan.status) && data!.permissions.canUpdate && <button type="button" disabled={saving} onClick={() => openEditPlan(plan)}><PencilLine />{plan.status === 'PUBLISHED' ? '变更计划' : '编辑草稿'}</button>}
+          {!isLockedRecord && plan.status === 'DRAFT' && data!.permissions.canDelete && <button type="button" className="danger" disabled={saving} onClick={() => void openPlanLifecycleDialog('delete', plan)}><Trash2 />删除草稿</button>}
+          {!isLockedRecord && ['DRAFT', 'PUBLISHED'].includes(plan.status) && <button type="button" disabled={saving} onClick={() => void checkAccountReadiness(plan)}><UserCheck />账号检查</button>}
+          {!isLockedRecord && plan.status === 'DRAFT' && <button type="button" className="primary" disabled={saving} onClick={() => void transition('publish')}><Send />发布</button>}
+          {!isLockedRecord && nextSession && ['PUBLISHED', 'IN_PROGRESS'].includes(plan.status) && <button type="button" className="primary" disabled={saving} onClick={() => void startSession(nextSession.id, nextSession.version)}><Play />{plan.status === 'PUBLISHED' ? '开始首课' : '开始下一课次'}</button>}
+          {!isLockedRecord && plan.status === 'IN_PROGRESS' && <button type="button" className="primary" disabled={saving} onClick={() => void transition(plan.assessmentMode === 'NONE' ? 'complete' : 'submit_review')}><ClipboardCheck />{plan.assessmentMode === 'NONE' ? '完成培训' : '提交审核'}</button>}
+          {!isLockedRecord && plan.status === 'PENDING_REVIEW' && <button type="button" className="primary" disabled={saving || plan.summary.pendingReviewCount > 0} onClick={() => void transition('complete')}><CheckCircle2 />完成培训</button>}
+          {!isLockedRecord && !['COMPLETED', 'CANCELLED'].includes(plan.status) && <button type="button" disabled={saving} onClick={() => void transition('cancel')}>取消计划</button>}
+          {!isLockedRecord && ['COMPLETED', 'CANCELLED'].includes(plan.status) && data!.permissions.canExecute && <button type="button" className="primary" disabled={saving} onClick={() => void openPlanLifecycleDialog('archive', plan)}><Archive />归档计划</button>}
         </div></header>
+        {plan.archivedAt && <div className="td-record-banner archived"><Archive /><span><strong>该计划已归档</strong><small>{fmtDate(plan.archivedAt)} · {plan.archiveReason || '未填写归档说明'}；员工培训档案、签到、反馈、附件和审计记录均保留。</small></span></div>}
+        {plan.deletedAt && <div className="td-record-banner deleted"><Trash2 /><span><strong>该草稿位于回收站</strong><small>{fmtDate(plan.deletedAt)} · {plan.deleteReason || '未填写删除原因'}；当前不参与计划执行，可按计划编号恢复。</small></span></div>}
         <div className="td-detail-metrics"><article><span>计划时间</span><strong>{fmtDate(plan.startAt)} — {fmtDate(plan.endAt)}</strong></article><article><span>地点 / 方式</span><strong>{plan.location || '地点待定'} · {modeLabel(plan.mode)}</strong></article><article><span>讲师 / 审核</span><strong>{plan.trainerName || '待定'} / {plan.reviewerName || '待定'}</strong></article><article><span>考核规则</span><strong>{assessmentLabel(plan.assessmentMode)}{plan.passScore !== null ? ` · ${plan.passScore} 分` : ''}</strong></article></div>
-        <div className="td-progress-pair"><div><span>到课率 <b>{plan.summary.attendanceRate}%</b></span><i><b style={{ width: `${plan.summary.attendanceRate}%` }} /></i></div><div><span>合格率 <b>{plan.summary.passRate}%</b></span><i><b className="green" style={{ width: `${plan.summary.passRate}%` }} /></i></div></div>
+        <div className="td-progress-pair"><div><span>到课率 <b>{plan.summary.attendanceRate}%</b></span><i><b style={{ width: `${plan.summary.attendanceRate}%` }} /></i></div><div><span>{plan.assessmentMode === 'NONE' ? '考核规则' : '合格率'} <b>{plan.summary.passRate === null ? '无需考核' : `${plan.summary.passRate}%`}</b></span><i><b className="green" style={{ width: `${plan.summary.passRate ?? 100}%` }} /></i></div></div>
         <div className="td-detail-grid"><article><span>参训人员</span><strong>{plan.summary.participantCount}</strong><small>已到 {plan.summary.attendedCount} 人</small></article><article><span>待审核</span><strong>{plan.summary.pendingReviewCount}</strong><small>低于合格线 {plan.summary.belowPassCount} 人</small></article><article><span>课程资料</span><strong>{plan.attachments.length}</strong><small>对象存储附件</small></article><article><span>技能联动</span><strong>{plan.participants.filter(item => item.certificationId).length}</strong><small>已同步正式证书</small></article></div>
-        <section className="td-attachment-zone"><header><div><strong>培训资料与现场证据</strong><small>PDF、图片、Office、MP4；文件存储在对象存储</small></div>{data!.permissions.canUpdate && <><input ref={fileInputRef} hidden type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.xlsx,.pptx,.mp4" onChange={event => { const file = event.target.files?.[0]; if (file) void uploadAttachment(file); }} /><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Upload />上传资料</button></>}</header><div>{plan.attachments.map(file => <a key={file.id} href={file.contentUrl} target="_blank" rel="noreferrer"><FileText /><span><strong>{file.name}</strong><small>{file.kind} · {(file.size / 1024).toFixed(1)} KB</small></span><ArrowRight /></a>)}{!plan.attachments.length && <p><Paperclip />尚未上传资料，可在执行前补充课件、签到表或现场照片。</p>}</div></section>
+        <section className="td-attachment-zone"><header><div><strong>培训资料与现场证据</strong><small>PDF、图片、Office、MP4；文件存储在对象存储</small></div>{data!.permissions.canUpdate && !isLockedRecord && <><input ref={fileInputRef} hidden type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,.docx,.xlsx,.pptx,.mp4" onChange={event => { const file = event.target.files?.[0]; if (file) void uploadAttachment(file); }} /><button type="button" disabled={saving} onClick={() => fileInputRef.current?.click()}><Upload />上传资料</button></>}</header><div>{plan.attachments.map(file => <a key={file.id} href={file.contentUrl} target="_blank" rel="noreferrer"><FileText /><span><strong>{file.name}</strong><small>{file.kind} · {(file.size / 1024).toFixed(1)} KB</small></span><ArrowRight /></a>)}{!plan.attachments.length && <p><Paperclip />尚未上传资料，可在执行前补充课件、签到表或现场照片。</p>}</div></section>
         <section className="td-activity"><header><strong>最近动态</strong><small>{plan.activities.length} 条</small></header><div>{plan.activities.slice(0, 6).map(item => <article key={item.id}><i /><span><strong>{item.content || item.action}</strong><small>{fmtDate(item.createdAt)}</small></span></article>)}</div></section>
       </section>
     );
@@ -702,34 +994,42 @@ export default function TrainingDevelopmentWorkbench() {
   }
 
   return <div className="td-workbench">
-    <header className="td-hero"><div className="td-hero-title"><span><GraduationCap /></span><div><small>人事管理 · 能力发展</small><h1>培训发展中心</h1><p>课程、计划、签到、考核、审核、技能证书与复训提醒形成一条真实数据链。</p></div></div><div className="td-hero-actions"><button type="button" title="刷新" onClick={() => void load()}><RefreshCw /></button>{data.permissions.canCreate && <button type="button" onClick={() => setDrawer('course')}><BookOpenCheck />新建课程</button>}{data.permissions.canCreate && <button type="button" className="primary" onClick={() => setDrawer('plan')}><Plus />新建计划</button>}</div></header>
+    <header className="td-hero"><div className="td-hero-title"><span><GraduationCap /></span><div><small>人事管理 · 能力发展</small><h1>培训发展中心</h1><p>课程、计划、签到、考核、审核、技能证书与复训提醒形成一条真实数据链。</p></div></div><div className="td-hero-actions"><button type="button" title="刷新" onClick={() => void load()}><RefreshCw /></button>{data.permissions.canCreate && <button type="button" onClick={() => setDrawer('course')}><BookOpenCheck />新建课程</button>}{data.permissions.canCreate && <button type="button" className="primary" onClick={() => openCreatePlan()}><Plus />新建计划</button>}</div></header>
     <nav className="td-nav">{navigation.map(item => { const Icon = item.icon; return <button type="button" key={item.id} className={view === item.id ? 'active' : ''} onClick={() => setView(item.id)}><Icon /><span>{item.label}</span>{typeof item.count === 'number' && <em>{item.count}</em>}</button>; })}</nav>
     {error && <div className="td-error"><AlertCircle />{error}<button type="button" onClick={() => setError('')}>关闭</button></div>}
 
     {view === 'overview' && <div className="td-page"><section className="td-kpis"><article className="orange"><BookOpenCheck /><span><small>有效课程</small><strong>{data.summary.activeCourseCount}</strong><em>标准化课程库</em></span></article><article className="blue"><CalendarDays /><span><small>待开展计划</small><strong>{data.summary.upcomingPlanCount}</strong><em>进行中 {data.summary.activePlanCount}</em></span></article><article className="violet"><ClipboardCheck /><span><small>待分项审核</small><strong>{data.summary.pendingReviewCount}</strong><em>成绩必须审核后入档</em></span></article><article className="green"><UserCheck /><span><small>综合到课率</small><strong>{data.summary.attendanceRate}%</strong><em>{data.summary.participantCount} 人次</em></span></article><article className="amber"><Award /><span><small>到期复训</small><strong>{data.expiringCertifications.length}</strong><em>未来 90 天</em></span></article></section>
-      <div className="td-overview-grid"><section className="td-panel td-overview-plans"><header className="td-section-title"><div><span>近期计划</span><h2>培训执行节奏</h2></div><button type="button" onClick={() => setView('plans')}>查看全部<ArrowRight /></button></header><div>{data.plans.slice(0, 6).map(planCard)}{!data.plans.length && <div className="td-empty compact"><CalendarDays /><strong>尚无培训计划</strong><button type="button" onClick={() => setDrawer('plan')}>建立第一条计划</button></div>}</div></section>
-        <section className="td-panel td-radar"><header className="td-section-title"><div><span>质量门禁</span><h2>审核与复训预警</h2></div></header><div className="td-radar-ring"><strong>{data.summary.passRate}%</strong><span>已审核合格率</span></div><div className="td-risk-list"><button type="button" onClick={() => setView('review')}><span className="red"><ClipboardCheck /></span><div><strong>{data.summary.pendingReviewCount} 项待审核</strong><small>审核通过后才进入正式技能资料</small></div><ChevronRight /></button><button type="button" onClick={() => setView('retraining')}><span className="amber"><Award /></span><div><strong>{data.expiringCertifications.length} 项到期提醒</strong><small>证书到期前可一键创建复训计划</small></div><ChevronRight /></button><button type="button" onClick={() => setView('reports')}><span className="blue"><Download /></span><div><strong>培训台账可追溯导出</strong><small>计划、员工、签到、成绩、审核和证书一行呈现</small></div><ChevronRight /></button></div></section></div>
+      <div className="td-overview-grid"><section className="td-panel td-overview-plans"><header className="td-section-title"><div><span>近期计划</span><h2>培训执行节奏</h2></div><button type="button" onClick={() => setView('plans')}>查看全部<ArrowRight /></button></header><div>{currentPlans.filter(plan => ['DRAFT', 'PUBLISHED', 'IN_PROGRESS', 'PENDING_REVIEW'].includes(plan.status)).slice(0, 6).map(planCard)}{!currentPlans.length && <div className="td-empty compact"><CalendarDays /><strong>尚无培训计划</strong><button type="button" onClick={() => openCreatePlan()}>建立第一条计划</button></div>}</div></section>
+        <section className="td-panel td-radar"><header className="td-section-title"><div><span>质量门禁</span><h2>审核与复训预警</h2></div></header><div className="td-radar-ring"><strong>{data.summary.passRate === null ? '—' : `${data.summary.passRate}%`}</strong><span>{data.summary.passRate === null ? '暂无需考核样本' : '已审核合格率'}</span></div><div className="td-risk-list"><button type="button" onClick={() => setView('review')}><span className="red"><ClipboardCheck /></span><div><strong>{data.summary.pendingReviewCount} 项待审核</strong><small>审核通过后才进入正式技能资料</small></div><ChevronRight /></button><button type="button" onClick={() => setView('retraining')}><span className="amber"><Award /></span><div><strong>{data.expiringCertifications.length} 项到期提醒</strong><small>证书到期前可一键创建复训计划</small></div><ChevronRight /></button><button type="button" onClick={() => setView('reports')}><span className="blue"><Download /></span><div><strong>培训台账可追溯导出</strong><small>计划、员工、签到、成绩、审核和证书一行呈现</small></div><ChevronRight /></button></div></section></div>
       <section className="td-panel td-course-strip"><header className="td-section-title"><div><span>课程库</span><h2>岗位能力课程</h2></div><button type="button" onClick={() => setView('courses')}>管理课程<ArrowRight /></button></header><div>{data.courses.slice(0, 5).map(course => <article key={course.id}><span><BookOpenCheck /></span><div><small>{course.category} · {course.code}</small><strong>{course.name}</strong><p>{course.targetAudience || '适用对象待补充'}</p></div><em>{assessmentLabel(course.assessmentMode)}</em></article>)}</div></section></div>}
 
-    {view === 'courses' && <div className="td-page"><section className="td-toolbar"><div><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索课程名称、分类或技能" /></div><span>{data.courses.length} 门真实课程</span>{data.permissions.canCreate && <button type="button" className="primary" onClick={() => setDrawer('course')}><Plus />新建课程</button>}</section><section className="td-course-grid">{data.courses.filter(course => !keyword || [course.name, course.code, course.category, course.skill?.name].some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(keyword.toLocaleLowerCase('zh-CN')))).map(course => <article key={course.id}><header><span><BookOpenCheck /></span><div><small>{course.category} · {course.code}</small><h2>{course.name}</h2></div><em>{course.status === 'ACTIVE' ? '启用' : '停用'}</em></header><p>{course.objective || course.description || '课程目标待补充'}</p><dl><div><dt>适用对象</dt><dd>{course.targetAudience || '待设置'}</dd></div><div><dt>培训规则</dt><dd>{course.defaultDurationMinutes} 分钟 · {modeLabel(course.mode)}</dd></div><div><dt>考核</dt><dd>{assessmentLabel(course.assessmentMode)}{course.passScore !== null ? ` · ${course.passScore}分` : ''}</dd></div><div><dt>技能联动</dt><dd>{course.skill ? `${course.skill.name} · L${course.targetLevel || 1}` : '不关联技能证书'}</dd></div></dl><footer><span>{course.isRequired ? '必修' : '选修'} · {course.retrainingMonths ? `${course.retrainingMonths}个月复训` : '无复训周期'}</span><button type="button" onClick={() => { setPlanDraft(current => ({ ...current, participantIds: [] })); chooseCourse(course.id); setDrawer('plan'); }}>据此建计划<ArrowRight /></button></footer></article>)}</section></div>}
+    {view === 'courses' && <div className="td-page"><section className="td-toolbar"><div><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索课程名称、分类或技能" /></div><span>{data.courses.length} 门真实课程</span>{data.permissions.canCreate && <button type="button" className="primary" onClick={() => setDrawer('course')}><Plus />新建课程</button>}</section><section className="td-course-grid">{data.courses.filter(course => !keyword || [course.name, course.code, course.category, course.skill?.name].some(value => String(value || '').toLocaleLowerCase('zh-CN').includes(keyword.toLocaleLowerCase('zh-CN')))).map(course => <article key={course.id}><header><span><BookOpenCheck /></span><div><small>{course.category} · {course.code}</small><h2>{course.name}</h2></div><em>{course.status === 'ACTIVE' ? '启用' : '停用'}</em></header><p>{course.objective || course.description || '课程目标待补充'}</p><dl><div><dt>适用对象</dt><dd>{course.targetAudience || '待设置'}</dd></div><div><dt>培训规则</dt><dd>{course.defaultDurationMinutes} 分钟 · {modeLabel(course.mode)}</dd></div><div><dt>考核</dt><dd>{assessmentLabel(course.assessmentMode)}{course.passScore !== null ? ` · ${course.passScore}分` : ''}</dd></div><div><dt>技能联动</dt><dd>{course.skill ? `${course.skill.name} · L${course.targetLevel || 1}` : '不关联技能证书'}</dd></div></dl><footer><span>{course.isRequired ? '必修' : '选修'} · {course.retrainingMonths ? `${course.retrainingMonths}个月复训` : '无复训周期'}</span><button type="button" onClick={() => openCreatePlan({ courseId: course.id, title: course.name, purpose: course.objective || '', mode: course.mode, isRequired: course.isRequired, assessmentMode: course.assessmentMode, passScore: String(course.passScore ?? 80) })}>据此建计划<ArrowRight /></button></footer></article>)}</section></div>}
 
-    {view === 'plans' && <div className="td-page td-plan-workspace"><aside className="td-plan-list"><header><div><span>全部计划</span><strong>{data.plans.length}</strong></div><button type="button" onClick={() => setDrawer('plan')}><Plus /></button></header><div>{data.plans.map(planCard)}</div></aside>{selectedPlan ? renderPlanDetail(selectedPlan) : <div className="td-empty"><CalendarDays /><strong>请选择培训计划</strong></div>}</div>}
+    {view === 'plans' && <div className="td-page td-plan-workspace"><aside className="td-plan-list"><header><div><span>计划管理</span><strong>{visiblePlans.length}</strong></div>{data.permissions.canCreate && <button type="button" onClick={() => openCreatePlan()}><Plus /></button>}</header><nav className="td-plan-filters">{([
+      ['active', '待处理'], ['completed', '已完成'], ['cancelled', '已取消'], ['archived', '已归档'], ['deleted', '回收站'],
+    ] as Array<[PlanViewKey, string]>).map(([key, label]) => <button type="button" key={key} className={planView === key ? 'active' : ''} onClick={() => { setPlanView(key); const first = key === 'deleted' ? data.deletedPlans?.[0] : key === 'archived' ? data.plans.find(plan => plan.archivedAt) : key === 'completed' ? data.plans.find(plan => !plan.archivedAt && plan.status === 'COMPLETED') : key === 'cancelled' ? data.plans.find(plan => !plan.archivedAt && plan.status === 'CANCELLED') : data.plans.find(plan => !plan.archivedAt && ['DRAFT', 'PUBLISHED', 'IN_PROGRESS', 'PENDING_REVIEW'].includes(plan.status)); setSelectedPlanId(first?.id || ''); }}>{label}</button>)}</nav><div>{visiblePlans.map(planCard)}{!visiblePlans.length && <div className="td-empty compact"><CalendarDays /><strong>当前分类没有计划</strong></div>}</div></aside>{selectedPlan && visiblePlans.some(plan => plan.id === selectedPlan.id) ? renderPlanDetail(selectedPlan) : <div className="td-empty"><CalendarDays /><strong>请选择培训计划</strong></div>}</div>}
 
-    {view === 'execution' && <div className="td-page td-panel">{renderExecution(selectedPlan || data.plans.find(plan => ['PUBLISHED', 'IN_PROGRESS', 'PENDING_REVIEW'].includes(plan.status)) || data.plans[0] || null)}</div>}
+    {view === 'execution' && <div className="td-page td-panel">{renderExecution(selectedPlan && !selectedPlan.archivedAt && !selectedPlan.deletedAt ? selectedPlan : data.plans.find(plan => !plan.archivedAt && ['PUBLISHED', 'IN_PROGRESS', 'PENDING_REVIEW'].includes(plan.status)) || null)}</div>}
 
     {view === 'review' && <div className="td-page"><header className="td-section-title td-page-title"><div><span>质量门禁</span><h2>培训成绩分项审核</h2><p>只有审核通过的数据才能同步为正式技能证书。</p></div><em>{pendingReviews.length} 项待审核</em></header><section className="td-review-list">{pendingReviews.map(({ plan, person }) => <article key={person.id}><div className="td-avatar">{person.employeeName.slice(0, 1)}</div><div><small>{plan.code} · {plan.title}</small><strong>{person.employeeName} · {person.employeeNo}</strong><p>{person.department || '未分组'} / {person.team || '未分组'} · {assessmentLabel(plan.assessmentMode)}</p></div><div className="td-score"><span>理论 <b>{person.theoryScore ?? '—'}</b></span><span>实操 <b>{person.practicalScore ?? '—'}</b></span><strong>{person.score ?? '—'}<small>综合</small></strong></div><div className="td-review-actions"><button type="button" disabled={saving} onClick={() => void reviewParticipant(plan, person, 'return')}>退回</button><button type="button" className="primary" disabled={saving} onClick={() => void reviewParticipant(plan, person, 'approve')}><ShieldCheck />审核通过</button></div></article>)}{!pendingReviews.length && <div className="td-empty"><CheckCircle2 /><strong>当前没有待审核成绩</strong><p>培训执行录分后，审核任务会在这里汇总。</p></div>}</section></div>}
 
-    {view === 'records' && <div className="td-page"><header className="td-section-title td-page-title"><div><span>正式档案</span><h2>员工培训与认证记录</h2><p>保留计划快照、签到、成绩、审核和技能证书关联。</p></div><button type="button" onClick={() => setView('reports')}><Download />导出台账</button></header><div className="td-table-wrap td-record-table"><table><thead><tr><th>员工</th><th>培训计划 / 课程</th><th>培训日期</th><th>到课</th><th>成绩</th><th>审核</th><th>技能证书</th></tr></thead><tbody>{completedRecords.map(({ plan, person }) => <tr key={`${plan.id}-${person.id}`}><td><strong>{person.employeeName}</strong><small>{person.employeeNo} · {person.department || '未分组'}</small></td><td><strong>{plan.title}</strong><small>{plan.course?.name || '临时培训'} · {plan.code}</small></td><td>{fmtDate(plan.startAt)}</td><td><span className={`td-pill ${person.attendanceStatus.toLowerCase()}`}>{statusLabel(person.attendanceStatus)}</span></td><td><strong>{person.score ?? '—'}</strong><small>{statusLabel(person.result)}</small></td><td><span className={`td-pill ${person.reviewStatus.toLowerCase()}`}>{statusLabel(person.reviewStatus)}</span></td><td>{person.certificationId ? <span className="td-certificate"><Award />已同步</span> : '—'}</td></tr>)}</tbody></table></div></div>}
+    {view === 'records' && <div className="td-page"><header className="td-section-title td-page-title"><div><span>正式档案</span><h2>员工培训与认证记录</h2><p>保留计划快照、签到、成绩、审核和技能证书关联；无需考核的到课记录也会正式入档。</p></div><button type="button" onClick={() => setView('reports')}><Download />导出台账</button></header><div className="td-table-wrap td-record-table"><table><thead><tr><th>员工</th><th>培训计划 / 课程</th><th>培训日期</th><th>到课</th><th>成绩</th><th>审核</th><th>技能证书</th></tr></thead><tbody>{completedRecords.map(({ plan, person }) => <tr key={`${plan.id}-${person.id}`}><td><strong>{person.employeeName}</strong><small>{person.employeeNo} · {person.department || '未分组'}</small></td><td><strong>{plan.title}</strong><small>{plan.course?.name || '临时培训'} · {plan.code}{plan.archivedAt ? ' · 已归档' : ''}</small></td><td>{fmtDate(plan.startAt)}</td><td><span className={`td-pill ${person.attendanceStatus.toLowerCase()}`}>{statusLabel(person.attendanceStatus)}</span></td><td><strong>{plan.assessmentMode === 'NONE' ? '无需考核' : person.score ?? '—'}</strong><small>{plan.assessmentMode === 'NONE' ? '完成培训' : statusLabel(person.result)}</small></td><td><span className={`td-pill ${person.reviewStatus.toLowerCase()}`}>{plan.assessmentMode === 'NONE' ? '无需审核' : statusLabel(person.reviewStatus)}</span></td><td>{person.certificationId ? <span className="td-certificate"><Award />已同步</span> : '—'}</td></tr>)}</tbody></table></div></div>}
 
-    {view === 'retraining' && <div className="td-page"><header className="td-section-title td-page-title"><div><span>有效期管理</span><h2>到期复训与证书续期</h2><p>展示已到期及未来 90 天内到期的正式技能证书。</p></div><em>{data.expiringCertifications.length} 项</em></header><section className="td-retraining-grid">{data.expiringCertifications.map(item => <article key={item.id} className={item.expired ? 'expired' : ''}><span><Award /></span><div><small>{item.employeeNo} · {item.department || '未分组'} / {item.team || '未分组'}</small><strong>{item.employeeName}</strong><p>{item.skillName} · L{item.level}</p></div><div><em>{item.expired ? '已到期' : '即将到期'}</em><strong>{item.expiresAt || '—'}</strong></div><button type="button" onClick={() => { const course = data.courses.find(course => course.skillId && course.skill?.name === item.skillName); setPlanDraft({ ...emptyPlan, startAt: localInputDate(24), endAt: localInputDate(26), title: `${item.skillName}复训`, courseId: course?.id || '', participantIds: [item.employeeId], assessmentMode: course?.assessmentMode || 'COMBINED', passScore: String(course?.passScore || 80), mode: course?.mode || 'OFFLINE', isRequired: true }); setDrawer('plan'); }}>创建复训<ChevronRight /></button></article>)}{!data.expiringCertifications.length && <div className="td-empty"><Award /><strong>未来 90 天没有到期证书</strong><p>关联技能的培训审核通过后会进入有效期管理。</p></div>}</section></div>}
+    {view === 'retraining' && <div className="td-page"><header className="td-section-title td-page-title"><div><span>有效期管理</span><h2>到期复训与证书续期</h2><p>展示已到期及未来 90 天内到期的正式技能证书。</p></div><em>{data.expiringCertifications.length} 项</em></header><section className="td-retraining-grid">{data.expiringCertifications.map(item => <article key={item.id} className={item.expired ? 'expired' : ''}><span><Award /></span><div><small>{item.employeeNo} · {item.department || '未分组'} / {item.team || '未分组'}</small><strong>{item.employeeName}</strong><p>{item.skillName} · L{item.level}</p></div><div><em>{item.expired ? '已到期' : '即将到期'}</em><strong>{item.expiresAt || '—'}</strong></div><button type="button" onClick={() => { const course = data.courses.find(course => course.skillId && course.skill?.name === item.skillName); openCreatePlan({ title: `${item.skillName}复训`, courseId: course?.id || '', participantIds: [item.employeeId], assessmentMode: course?.assessmentMode || 'COMBINED', passScore: String(course?.passScore || 80), mode: course?.mode || 'OFFLINE', isRequired: true }); }}>创建复训<ChevronRight /></button></article>)}{!data.expiringCertifications.length && <div className="td-empty"><Award /><strong>未来 90 天没有到期证书</strong><p>关联技能的培训审核通过后会进入有效期管理。</p></div>}</section></div>}
 
     {view === 'reports' && <div className="td-page"><section className="td-export-card"><div className="td-export-art"><Download /></div><div><span>四张工作表还原培训事实</span><h2>员工培训发展记录表</h2><p>同时导出计划台账、课次签到明细、课后反馈明细和反馈汇总；人工修正原因与扫码来源可追溯。</p><ul><li><Check />冻结表头与自动筛选</li><li><Check />签到来源和修正原因</li><li><Check />反馈明细与匿名汇总</li></ul></div><form onSubmit={event => { event.preventDefault(); window.location.href = `/api/training/export.xlsx?period=custom&startDate=${exportRange.start}&endDate=${exportRange.end}`; }}><label>开始日期<input type="date" required value={exportRange.start} onChange={event => setExportRange(current => ({ ...current, start: event.target.value }))} /></label><label>结束日期<input type="date" required value={exportRange.end} onChange={event => setExportRange(current => ({ ...current, end: event.target.value }))} /></label><button type="submit" className="primary"><Download />导出 Excel 台账</button><small>导出行为会写入系统操作日志</small></form></section></div>}
 
-    {drawer && <div className="td-drawer-backdrop" role="presentation"><aside className="td-drawer" role="dialog" aria-modal="true"><header><div><span>{drawer === 'course' ? '课程标准' : drawer === 'plan' ? '培训安排' : '考核录分'}</span><h2>{drawer === 'course' ? '新建培训课程' : drawer === 'plan' ? '新建培训计划' : `${participantDraft?.employeeName || ''} · 录入成绩`}</h2></div><button type="button" onClick={() => { setDrawer(null); setParticipantDraft(null); }}><X /></button></header>
+    {drawer && <div className="td-drawer-backdrop" role="presentation"><aside className="td-drawer" role="dialog" aria-modal="true"><header><div><span>{drawer === 'course' ? '课程标准' : drawer === 'plan' ? '培训安排' : '考核录分'}</span><h2>{drawer === 'course' ? '新建培训课程' : drawer === 'plan' ? editingPlan ? (editingPlan.status === 'PUBLISHED' ? '变更已发布计划' : '编辑培训计划草稿') : '新建培训计划' : `${participantDraft?.employeeName || ''} · 录入成绩`}</h2></div><button type="button" onClick={() => { setDrawer(null); setParticipantDraft(null); setEditingPlanId(''); setPendingPlanPayload(null); }}><X /></button></header>
       {drawer === 'course' && <form className="td-form" onSubmit={submitCourse}><div className="td-form-scroll"><section><strong>课程基础</strong><div className="td-form-grid"><label className="wide">课程名称<input required value={courseDraft.name} onChange={event => setCourseDraft({ ...courseDraft, name: event.target.value })} placeholder="如：全自动压接机安全与操作" /></label><label>课程分类<input value={courseDraft.category} onChange={event => setCourseDraft({ ...courseDraft, category: event.target.value })} /></label><label>培训方式<select value={courseDraft.mode} onChange={event => setCourseDraft({ ...courseDraft, mode: event.target.value })}><option value="OFFLINE">线下</option><option value="ONLINE">线上</option><option value="BLENDED">混合</option></select></label><label>默认时长（分钟）<input type="number" min="1" max="1440" value={courseDraft.defaultDurationMinutes} onChange={event => setCourseDraft({ ...courseDraft, defaultDurationMinutes: event.target.value })} /></label><label>课程负责人<select value={courseDraft.ownerEmployeeId} onChange={event => setCourseDraft({ ...courseDraft, ownerEmployeeId: event.target.value })}><option value="">待指定</option>{data.employees.map(person => <option key={person.id} value={person.id}>{person.employeeNo} · {person.name}</option>)}</select></label><label className="wide">课程目标<textarea value={courseDraft.objective} onChange={event => setCourseDraft({ ...courseDraft, objective: event.target.value })} placeholder="完成后应掌握什么" /></label><label className="wide">适用对象<input value={courseDraft.targetAudience} onChange={event => setCourseDraft({ ...courseDraft, targetAudience: event.target.value })} placeholder="如：压接岗位新员工、换岗人员" /></label></div></section><section><strong>考核与技能联动</strong><div className="td-form-grid"><label>考核方式<select value={courseDraft.assessmentMode} onChange={event => setCourseDraft({ ...courseDraft, assessmentMode: event.target.value })}><option value="NONE">无需考核</option><option value="THEORY">理论</option><option value="PRACTICAL">实操</option><option value="COMBINED">理论 + 实操</option></select></label><label>合格分<input type="number" min="0" max="100" disabled={courseDraft.assessmentMode === 'NONE'} value={courseDraft.passScore} onChange={event => setCourseDraft({ ...courseDraft, passScore: event.target.value })} /></label><label>关联技能<select value={courseDraft.skillId} onChange={event => { const skill = data.skills.find(item => item.id === event.target.value); setCourseDraft({ ...courseDraft, skillId: event.target.value, validityMonths: String(skill?.defaultValidityMonths || 12) }); }}><option value="">不关联证书</option>{data.skills.map(skill => <option key={skill.id} value={skill.id}>{skill.code} · {skill.name}</option>)}</select></label><label>认证等级<select disabled={!courseDraft.skillId} value={courseDraft.targetLevel} onChange={event => setCourseDraft({ ...courseDraft, targetLevel: event.target.value })}>{[1, 2, 3, 4, 5].map(level => <option key={level} value={level}>L{level}</option>)}</select></label><label>证书有效（月）<input type="number" min="1" max="120" disabled={!courseDraft.skillId} value={courseDraft.validityMonths} onChange={event => setCourseDraft({ ...courseDraft, validityMonths: event.target.value })} /></label><label>复训周期（月）<input type="number" min="1" max="120" value={courseDraft.retrainingMonths} onChange={event => setCourseDraft({ ...courseDraft, retrainingMonths: event.target.value })} /></label><label className="td-check wide"><input type="checkbox" checked={courseDraft.isRequired} onChange={event => setCourseDraft({ ...courseDraft, isRequired: event.target.checked })} /><span><strong>必修课程</strong><small>计划创建时默认标记为必修</small></span></label></div></section></div><footer><button type="button" onClick={() => setDrawer(null)}>取消</button><button type="submit" className="primary" disabled={saving}>{saving ? <Loader2 className="spin" /> : <Check />}保存课程</button></footer></form>}
-      {drawer === 'plan' && <form className="td-form" onSubmit={submitPlan}><div className="td-form-scroll"><section><strong>计划安排</strong><div className="td-form-grid"><label className="wide">计划名称<input required value={planDraft.title} onChange={event => setPlanDraft({ ...planDraft, title: event.target.value })} /></label><label className="wide">选择课程<select value={planDraft.courseId} onChange={event => chooseCourse(event.target.value)}><option value="">临时培训（不引用课程）</option>{data.courses.filter(course => course.status === 'ACTIVE').map(course => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}</select></label><label>开始时间<input required type="datetime-local" value={planDraft.startAt} onChange={event => setPlanDraft({ ...planDraft, startAt: event.target.value })} /></label><label>结束时间<input required type="datetime-local" value={planDraft.endAt} onChange={event => setPlanDraft({ ...planDraft, endAt: event.target.value })} /></label><label>地点<input value={planDraft.location} onChange={event => setPlanDraft({ ...planDraft, location: event.target.value })} placeholder="培训室 / 现场工位" /></label><label>方式<select value={planDraft.mode} onChange={event => setPlanDraft({ ...planDraft, mode: event.target.value })}><option value="OFFLINE">线下</option><option value="ONLINE">线上</option><option value="BLENDED">混合</option></select></label><label>组织人<select value={planDraft.organizerId} onChange={event => setPlanDraft({ ...planDraft, organizerId: event.target.value })}><option value="">待指定</option>{data.employees.map(person => <option key={person.id} value={person.id}>{person.employeeNo} · {person.name}</option>)}</select></label><label>讲师<select value={planDraft.trainerId} onChange={event => setPlanDraft({ ...planDraft, trainerId: event.target.value })}><option value="">待指定</option>{data.employees.map(person => <option key={person.id} value={person.id}>{person.employeeNo} · {person.name}</option>)}</select></label><label>审核人<select value={planDraft.reviewerId} onChange={event => setPlanDraft({ ...planDraft, reviewerId: event.target.value })}><option value="">待指定</option>{data.employees.map(person => <option key={person.id} value={person.id}>{person.employeeNo} · {person.name}</option>)}</select></label><label>考核方式<select value={planDraft.assessmentMode} onChange={event => setPlanDraft({ ...planDraft, assessmentMode: event.target.value })}><option value="NONE">无需考核</option><option value="THEORY">理论</option><option value="PRACTICAL">实操</option><option value="COMBINED">理论 + 实操</option></select></label><label className="wide">培训目的<textarea value={planDraft.purpose} onChange={event => setPlanDraft({ ...planDraft, purpose: event.target.value })} /></label></div></section><section><strong>选择参训人员 <em>{planDraft.participantIds.length} 人</em></strong><div className="td-picker-tools"><div><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索姓名、工号、岗位或班组" /></div><select value={departmentFilter} onChange={event => setDepartmentFilter(event.target.value)}><option value="">全部部门</option>{departments.map(department => <option key={department} value={department}>{department}</option>)}</select><button type="button" onClick={() => setPlanDraft(current => ({ ...current, participantIds: [...new Set([...current.participantIds, ...filteredEmployees.map(person => person.id)])] }))}>全选当前</button></div><div className="td-employee-picker">{filteredEmployees.map(person => <label key={person.id} className={planDraft.participantIds.includes(person.id) ? 'selected' : ''}><input type="checkbox" checked={planDraft.participantIds.includes(person.id)} onChange={event => setPlanDraft(current => ({ ...current, participantIds: event.target.checked ? [...current.participantIds, person.id] : current.participantIds.filter(id => id !== person.id) }))} /><span>{person.name.slice(0, 1)}</span><div><strong>{person.name}</strong><small>{person.employeeNo} · {person.position || '岗位待维护'}</small><em>{person.department || '未分组'} / {person.team || '未分组'}</em></div></label>)}</div></section></div><footer><button type="button" onClick={() => setDrawer(null)}>取消</button><button type="submit" className="primary" disabled={saving || !planDraft.participantIds.length}>{saving ? <Loader2 className="spin" /> : <Check />}建立计划</button></footer></form>}
+      {drawer === 'plan' && <form className="td-form" onSubmit={submitPlan}><div className="td-form-scroll"><section><strong>计划安排</strong>{editingPlan?.status === 'PUBLISHED' && <p className="td-form-help">已发布计划可变更时间、地点、人员和负责人；课程标准、考核方式、合格分及必修属性保持发布时版本。保存前会先展示影响并要求填写原因。</p>}<div className="td-form-grid"><label className="wide">计划名称<input required value={planDraft.title} onChange={event => setPlanDraft({ ...planDraft, title: event.target.value })} /></label><label className="wide">选择课程<select disabled={editingPlan?.status === 'PUBLISHED'} value={planDraft.courseId} onChange={event => chooseCourse(event.target.value)}><option value="">临时培训（不引用课程）</option>{data.courses.filter(course => course.status === 'ACTIVE').map(course => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}</select></label><label>开始时间<input required type="datetime-local" value={planDraft.startAt} onChange={event => setPlanDraft({ ...planDraft, startAt: event.target.value })} /></label><label>结束时间<input required type="datetime-local" value={planDraft.endAt} onChange={event => setPlanDraft({ ...planDraft, endAt: event.target.value })} /></label><label>地点<input value={planDraft.location} onChange={event => setPlanDraft({ ...planDraft, location: event.target.value })} placeholder="培训室 / 现场工位" /></label><label>方式<select value={planDraft.mode} onChange={event => setPlanDraft({ ...planDraft, mode: event.target.value })}><option value="OFFLINE">线下</option><option value="ONLINE">线上</option><option value="BLENDED">混合</option></select></label><label>组织人<select value={planDraft.organizerId} onChange={event => setPlanDraft({ ...planDraft, organizerId: event.target.value })}><option value="">待指定</option>{data.employees.map(person => <option key={person.id} value={person.id}>{person.employeeNo} · {person.name}</option>)}</select></label><label>讲师<select value={planDraft.trainerId} onChange={event => setPlanDraft({ ...planDraft, trainerId: event.target.value })}><option value="">待指定</option>{data.employees.map(person => <option key={person.id} value={person.id}>{person.employeeNo} · {person.name}</option>)}</select></label><label>审核人<select value={planDraft.reviewerId} onChange={event => setPlanDraft({ ...planDraft, reviewerId: event.target.value })}><option value="">待指定</option>{data.employees.map(person => <option key={person.id} value={person.id}>{person.employeeNo} · {person.name}</option>)}</select></label><label>考核方式<select disabled={editingPlan?.status === 'PUBLISHED'} value={planDraft.assessmentMode} onChange={event => setPlanDraft({ ...planDraft, assessmentMode: event.target.value })}><option value="NONE">无需考核</option><option value="THEORY">理论</option><option value="PRACTICAL">实操</option><option value="COMBINED">理论 + 实操</option></select></label><label className="wide">培训目的<textarea value={planDraft.purpose} onChange={event => setPlanDraft({ ...planDraft, purpose: event.target.value })} /></label></div></section><section><strong>选择参训人员 <em>{planDraft.participantIds.length} 人</em></strong><div className="td-picker-tools"><div><Search /><input value={keyword} onChange={event => setKeyword(event.target.value)} placeholder="搜索姓名、工号、岗位或班组" /></div><select value={departmentFilter} onChange={event => setDepartmentFilter(event.target.value)}><option value="">全部部门</option>{departments.map(department => <option key={department} value={department}>{department}</option>)}</select><button type="button" onClick={() => setPlanDraft(current => ({ ...current, participantIds: [...new Set([...current.participantIds, ...filteredEmployees.map(person => person.id)])] }))}>全选当前</button></div><div className="td-employee-picker">{filteredEmployees.map(person => <label key={person.id} className={planDraft.participantIds.includes(person.id) ? 'selected' : ''}><input type="checkbox" checked={planDraft.participantIds.includes(person.id)} onChange={event => setPlanDraft(current => ({ ...current, participantIds: event.target.checked ? [...current.participantIds, person.id] : current.participantIds.filter(id => id !== person.id) }))} /><span>{person.name.slice(0, 1)}</span><div><strong>{person.name}</strong><small>{person.employeeNo} · {person.position || '岗位待维护'}</small><em>{person.department || '未分组'} / {person.team || '未分组'}</em></div></label>)}</div></section></div><footer><button type="button" onClick={() => { setDrawer(null); setEditingPlanId(''); }}>取消</button><button type="submit" className="primary" disabled={saving || !planDraft.participantIds.length}>{saving ? <Loader2 className="spin" /> : <Check />}{editingPlan ? '预览并保存变更' : '建立计划'}</button></footer></form>}
       {drawer === 'participant' && participantDraft && <form className="td-form" onSubmit={saveParticipantResult}><div className="td-form-scroll"><section><strong>分项成绩</strong><p className="td-form-help">成绩保存后进入“分项审核”，审核通过才会同步正式技能资料。</p><div className="td-form-grid"><label>理论成绩<input type="number" min="0" max="100" disabled={selectedPlan?.assessmentMode === 'PRACTICAL'} value={participantDraft.theoryScore} onChange={event => setParticipantDraft({ ...participantDraft, theoryScore: event.target.value })} /></label><label>实操成绩<input type="number" min="0" max="100" disabled={selectedPlan?.assessmentMode === 'THEORY'} value={participantDraft.practicalScore} onChange={event => setParticipantDraft({ ...participantDraft, practicalScore: event.target.value })} /></label></div></section></div><footer><button type="button" onClick={() => { setDrawer(null); setParticipantDraft(null); }}>取消</button><button type="submit" className="primary" disabled={saving}>{saving ? <Loader2 className="spin" /> : <Send />}提交审核</button></footer></form>}
     </aside></div>}
+    {planDialog && (() => { const copy = planDialogCopy(planDialog.kind); return <div className="td-confirm-backdrop" role="presentation"><section className="td-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="training-plan-confirm-title"><header><div><span>{copy.eyebrow}</span><h2 id="training-plan-confirm-title">{copy.title}</h2><p>{planDialog.plan.code} · {planDialog.plan.title}</p></div><button type="button" aria-label="关闭" onClick={() => { setPlanDialog(null); if (planDialog.kind === 'change') setPendingPlanPayload(null); }}><X /></button></header><div className="td-confirm-body"><p className="td-confirm-description">{copy.description}</p>
+      {planDialog.preview && <section className="td-change-preview"><header><strong>本次变更 {planDialog.preview.changedFields.length} 项</strong><span>新增 {planDialog.preview.addedParticipantCount} 人 · 移除 {planDialog.preview.removedParticipantCount} 人</span></header><div>{planDialog.preview.changedFields.map(field => <article key={field.key}><strong>{field.label}</strong><small>{planChangeValueLabel(field.key, field.before, data.employees, data.courses)}</small><ArrowRight /><small>{planChangeValueLabel(field.key, field.after, data.employees, data.courses)}</small></article>)}</div>{planDialog.preview.warnings.map(warning => <p key={warning}><AlertCircle />{warning}</p>)}</section>}
+      {planDialog.impact && <section className="td-impact-grid"><article><span>参训人员</span><strong>{planDialog.impact.participantCount}</strong></article><article><span>签到事实</span><strong>{planDialog.impact.attendanceFactCount}</strong></article><article><span>反馈</span><strong>{planDialog.impact.feedbackCount}</strong></article><article><span>成绩/审核</span><strong>{planDialog.impact.scoreOrReviewFactCount}</strong></article><article><span>证书</span><strong>{planDialog.impact.certificationCount}</strong></article><article><span>附件</span><strong>{planDialog.impact.attachmentCount}</strong></article></section>}
+      <label>操作原因{!['archive', 'unarchive'].includes(planDialog.kind) && <em>必填</em>}<textarea value={planDialog.reason} onChange={event => setPlanDialog(current => current ? { ...current, reason: event.target.value } : current)} placeholder={planDialog.kind === 'change' ? '说明为什么要变更已发布计划' : planDialog.kind === 'cancel' ? '说明取消原因' : '填写本次操作说明，便于审计追溯'} /></label>
+      {['delete', 'restore'].includes(planDialog.kind) && <label>输入计划编号确认 <em>必填</em><input value={planDialog.confirmationCode} onChange={event => setPlanDialog(current => current ? { ...current, confirmationCode: event.target.value } : current)} placeholder={planDialog.plan.code} /><small>请完整输入：{planDialog.plan.code}</small></label>}
+    </div><footer><button type="button" onClick={() => { setPlanDialog(null); if (planDialog.kind === 'change') setPendingPlanPayload(null); }}>返回</button><button type="button" className={planDialog.kind === 'delete' || planDialog.kind === 'cancel' ? 'danger' : 'primary'} disabled={saving} onClick={() => void confirmPlanDialog()}>{saving ? <Loader2 className="spin" /> : planDialog.kind === 'delete' ? <Trash2 /> : planDialog.kind === 'archive' ? <Archive /> : <Check />}{copy.confirm}</button></footer></section></div>; })()}
     {saving && <div className="td-saving"><Loader2 className="spin" />正在保存真实培训数据</div>}
   </div>;
 }

@@ -20,7 +20,7 @@ export async function GET() {
     const now = new Date();
     const expiryHorizon = new Date(now.getTime());
     expiryHorizon.setUTCMonth(expiryHorizon.getUTCMonth() + 3);
-    const [employeeRows, skillRows, courseRows, planRows, expiryRows] = await Promise.all([
+    const [employeeRows, skillRows, courseRows, planRows, deletedPlanRows, expiryRows] = await Promise.all([
       prisma.employee.findMany({
         where: { isActive: true },
         orderBy: [{ department: 'asc' }, { team: 'asc' }, { employeeNo: 'asc' }],
@@ -51,6 +51,12 @@ export async function GET() {
         orderBy: [{ startAt: 'desc' }, { updatedAt: 'desc' }],
         take: 500,
       }),
+      prisma.trainingPlan.findMany({
+        where: { deletedAt: { not: null } },
+        include: trainingPlanInclude,
+        orderBy: [{ deletedAt: 'desc' }, { updatedAt: 'desc' }],
+        take: 100,
+      }),
       prisma.employeeSkillCertification.findMany({
         where: {
           status: 'ACTIVE',
@@ -65,6 +71,7 @@ export async function GET() {
     const people = new Map(employeeRows.map(person => [person.id, person as TrainingPerson]));
     const courses = courseRows.map(serializeTrainingCourse);
     const plans = planRows.map(plan => serializeTrainingPlan(plan, people));
+    const deletedPlans = deletedPlanRows.map(plan => serializeTrainingPlan(plan, people));
     return NextResponse.json({
       ok: true,
       generatedAt: now.toISOString(),
@@ -81,6 +88,7 @@ export async function GET() {
       skills: skillRows,
       courses,
       plans,
+      deletedPlans,
       expiringCertifications: expiryRows.map(row => ({
         id: row.id,
         employeeId: row.employeeId,
