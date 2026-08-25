@@ -11,6 +11,7 @@ import {
   ChevronRight,
   Clock3,
   ClipboardCheck,
+  FileArchive,
   FolderKanban,
   GitPullRequestArrow,
   HelpCircle,
@@ -96,6 +97,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
     label: '协同规划',
     items: [
       { href: '/workspace/issues', label: '问题管理', icon: ShieldCheck },
+      { href: '/workspace/quality/8d', label: '8D档案', icon: FileArchive },
       { href: '/workspace/approvals', label: '重大审批', icon: ClipboardCheck },
       { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
       { href: '/workspace/workflows', label: '流程中心', icon: Workflow },

@@ -13,6 +13,7 @@ import {
   ClipboardCheck,
   Download,
   ExternalLink,
+  FileArchive,
   FileImage,
   FileText,
   GitPullRequestArrow,
@@ -1244,6 +1245,7 @@ export default function IssueManagementShell({ user }: IssueManagementShellProps
                 <div>
                   {selected.workOrder && <a href={`/production?workOrderId=${encodeURIComponent(selected.workOrder.id)}`}><span><FileText size={15} /></span><div><strong>生产执行</strong><small>{selected.workOrder.specification || selected.workOrder.code}</small></div><ExternalLink size={13} /></a>}
                   {selected.workOrder && <a href={`/drawing-library?workOrderId=${encodeURIComponent(selected.workOrder.id)}`}><span><FileImage size={15} /></span><div><strong>图纸资料库</strong><small>{selected.workOrder.drawingStatus || '资料状态待确认'}</small></div><ExternalLink size={13} /></a>}
+                  <a href={`/workspace/quality/8d?issueId=${encodeURIComponent(selected.id)}`}><span><FileArchive size={15} /></span><div><strong>8D PDF档案</strong><small>查看或关联本问题的8D报告</small></div><ExternalLink size={13} /></a>
                   <a href={`/workspace/changes?action=new&issueId=${encodeURIComponent(selected.id)}`}><span><GitPullRequestArrow size={15} /></span><div><strong>变更管理</strong><small>从本问题发起受控变更</small></div><ExternalLink size={13} /></a>
                   {selected.isMajorQuality && <a href={`/workspace/approvals?approvalId=${encodeURIComponent(selected.majorApproval?.id || '')}`}><span><ClipboardCheck size={15} /></span><div><strong>重大审批</strong><small>{selected.majorApproval ? majorApprovalStatusLabels[selected.majorApproval.status] : '尚未提交'}</small></div><ExternalLink size={13} /></a>}
                 </div>

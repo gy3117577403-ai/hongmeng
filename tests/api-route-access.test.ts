@@ -198,6 +198,26 @@ test('process specialist can collaborate without receiving scheduling, reporting
   assert.equal(canAccessApiRoute(process, '/api/major-quality-approvals', 'GET'), false);
 });
 
+test('8D archive APIs reuse quality action permissions without creating a new role system', () => {
+  const quality = context({
+    profile: 'DEPARTMENT_FULL',
+    departmentCode: 'QUALITY',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:QUALITY',
+  });
+  const planning = context({
+    profile: 'DEPARTMENT_FULL',
+    departmentCode: 'PLANNING',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:PLANNING',
+  });
+  assert.equal(canAccessApiRoute(quality, '/api/quality/8d', 'GET'), true);
+  assert.equal(canAccessApiRoute(quality, '/api/quality/8d', 'POST'), true);
+  assert.equal(canAccessApiRoute(quality, '/api/quality/8d/r1', 'PATCH'), true);
+  assert.equal(canAccessApiRoute(quality, '/api/quality/8d/r1', 'DELETE'), true);
+  assert.equal(canAccessApiRoute(planning, '/api/quality/8d', 'GET'), false);
+});
+
 test('drawing reader and editor share data while write and destructive actions remain separated', () => {
   const reader = context({
     profile: 'DRAWING_LIBRARY_READER',

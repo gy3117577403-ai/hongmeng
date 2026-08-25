@@ -736,6 +736,97 @@ export type IssueSummaryDTO = {
   unassigned: number;
 };
 
+export type EightDReportStatus = 'active' | 'archived';
+
+export type EightDReportProductDTO = {
+  id: string;
+  customerName: string;
+  customerCode?: string | null;
+  productName?: string | null;
+  specification: string;
+};
+
+export type EightDReportIssueDTO = {
+  id: string;
+  sequence: number;
+  code: string;
+  title: string;
+  status: IssueStatus;
+  priority: IssuePriority;
+  type: IssueType;
+  affectedQuantity?: number | null;
+  workOrder?: IssueWorkOrderDTO | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type EightDReportVersionDTO = {
+  id: string;
+  reportId: string;
+  versionNumber: number;
+  versionLabel: string;
+  originalName: string;
+  displayName?: string | null;
+  mimeType: string;
+  size: number;
+  sha256: string;
+  pageCount?: number | null;
+  note?: string | null;
+  uploadedBy?: string | null;
+  deletedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  contentUrl: string;
+  downloadUrl: string;
+};
+
+export type EightDReportActivityDTO = {
+  id: string;
+  action: string;
+  content?: string | null;
+  actorName: string;
+  detail?: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+export type EightDReportDTO = {
+  id: string;
+  sequence: number;
+  reportNo: string;
+  title: string;
+  reportDate?: string | null;
+  responsibleDepartment?: string | null;
+  keywords?: string | null;
+  status: EightDReportStatus;
+  version: number;
+  currentVersionId?: string | null;
+  deletedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  products: EightDReportProductDTO[];
+  issues: EightDReportIssueDTO[];
+  versions: EightDReportVersionDTO[];
+  currentVersion?: EightDReportVersionDTO | null;
+  activities: EightDReportActivityDTO[];
+};
+
+export type EightDReportSummaryDTO = {
+  total: number;
+  active: number;
+  archived: number;
+  deleted: number;
+  productCount: number;
+  issueCount: number;
+  unlinked: number;
+};
+
+export type EightDReportOptionsDTO = {
+  products: EightDReportProductDTO[];
+  issues: EightDReportIssueDTO[];
+};
+
 export type DetectedIssueDTO = {
   id: string;
   fingerprint: string;

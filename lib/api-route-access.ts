@@ -71,6 +71,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/material-follow-ups', anyOf: ['PROCUREMENT'] },
   { prefix: '/api/warehouse', anyOf: ['WAREHOUSE'] },
 
+  { prefix: '/api/quality/8d', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/api/issues/from-production-alert', anyOf: ['QUALITY'] },
   { prefix: '/api/issues/detected', anyOf: ['QUALITY'] },
   { prefix: '/api/issues', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },

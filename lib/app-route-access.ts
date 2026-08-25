@@ -37,6 +37,7 @@ export const APP_ROUTE_ACCESS_RULES: readonly RouteAccessRule[] = [
   { prefix: '/connector-parameters', anyOf: ['ENGINEERING'] },
   { prefix: '/workspace/terminal-tooling', anyOf: ['TERMINAL_TOOLING'] },
   { prefix: '/workspace/capability-showcase', anyOf: ['ACCOUNT_SELF'] },
+  { prefix: '/workspace/quality/8d', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/workspace/issues', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/workspace/approvals', anyOf: ['QUALITY', 'MAJOR_APPROVAL'] },
   { prefix: '/workspace/changes', anyOf: ['ENGINEERING', 'QUALITY', 'CHANGE_MANAGEMENT'] },

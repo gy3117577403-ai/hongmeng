@@ -461,6 +461,10 @@ model User {
   assignedIssues                 Issue[]                            @relation("IssueAssignee")
   issueActivities                IssueActivity[]                    @relation("IssueActivityActor")
   issueAttachments               IssueAttachment[]                  @relation("IssueAttachmentUploader")
+  createdEightDReports           EightDReport[]                     @relation("EightDReportCreatedBy")
+  updatedEightDReports           EightDReport[]                     @relation("EightDReportUpdatedBy")
+  uploadedEightDReportVersions   EightDReportVersion[]              @relation("EightDReportVersionUploadedBy")
+  eightDReportActivities         EightDReportActivity[]             @relation("EightDReportActivityActor")
   requesterConfirmedIssues       Issue[]                            @relation("IssueRequesterConfirmedBy")
   requestedChanges               ChangeRequest[]                    @relation("ChangeRequester")
   ownedChanges                   ChangeRequest[]                    @relation("ChangeOwner")
@@ -2644,6 +2648,7 @@ model DrawingLibraryItem {
   sampleTasks            SampleTask[]
   productDataRecords     ProductDataRecord[]
   connectorBindings      ProductConnectorParameterBinding[]
+  eightDReportLinks      EightDReportProduct[]
 
   @@index([customerName])
   @@index([customerCode])
@@ -3358,6 +3363,7 @@ model Issue {
   collaborators             IssueCollaborator[]
   activities                IssueActivity[]
   attachments               IssueAttachment[]
+  eightDReportLinks         EightDReportIssue[]
   changeRequests            ChangeRequest[]
   majorApprovals            IssueMajorApproval[]
 
@@ -3485,6 +3491,108 @@ model IssueAttachment {
   @@index([uploadedById])
   @@index([deletedAt])
   @@map("issue_attachments")
+}
+
+model EightDReport {
+  id                    String                 @id @default(uuid())
+  sequence              Int                    @unique @default(autoincrement())
+  reportNo              String                 @unique @map("report_no")
+  title                 String
+  reportDate            DateTime?              @map("report_date")
+  responsibleDepartment String?                @map("responsible_department")
+  keywords              String?
+  status                String                 @default("active")
+  version               Int                    @default(0)
+  currentVersionId      String?                @unique @map("current_version_id")
+  createdById           String?                @map("created_by_id")
+  updatedById           String?                @map("updated_by_id")
+  deletedAt             DateTime?              @map("deleted_at")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  currentVersion        EightDReportVersion?   @relation("EightDReportCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions              EightDReportVersion[]  @relation("EightDReportVersions")
+  products              EightDReportProduct[]
+  issues                EightDReportIssue[]
+  activities            EightDReportActivity[]
+  createdBy             User?                  @relation("EightDReportCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy             User?                  @relation("EightDReportUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([status, updatedAt])
+  @@index([reportDate])
+  @@index([deletedAt])
+  @@index([createdById])
+  @@index([updatedById])
+  @@map("eight_d_reports")
+}
+
+model EightDReportVersion {
+  id            String        @id @default(uuid())
+  reportId      String        @map("report_id")
+  versionNumber Int           @map("version_number")
+  originalName  String        @map("original_name")
+  displayName   String?       @map("display_name")
+  mimeType      String        @default("application/pdf") @map("mime_type")
+  size          BigInt
+  sha256        String
+  objectKey     String        @unique @map("object_key")
+  pageCount     Int?          @map("page_count")
+  note          String?
+  uploadedById  String?       @map("uploaded_by_id")
+  deletedAt     DateTime?     @map("deleted_at")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  report        EightDReport  @relation("EightDReportVersions", fields: [reportId], references: [id], onDelete: Cascade)
+  currentFor    EightDReport? @relation("EightDReportCurrentVersion")
+  uploadedBy    User?         @relation("EightDReportVersionUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@unique([reportId, versionNumber])
+  @@unique([reportId, sha256])
+  @@index([reportId, deletedAt, versionNumber])
+  @@index([uploadedById])
+  @@index([deletedAt])
+  @@map("eight_d_report_versions")
+}
+
+model EightDReportProduct {
+  reportId             String             @map("report_id")
+  drawingLibraryItemId String             @map("drawing_library_item_id")
+  createdAt            DateTime           @default(now()) @map("created_at")
+  report               EightDReport       @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  product              DrawingLibraryItem @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, drawingLibraryItemId])
+  @@index([drawingLibraryItemId, reportId])
+  @@map("eight_d_report_products")
+}
+
+model EightDReportIssue {
+  reportId  String       @map("report_id")
+  issueId   String       @map("issue_id")
+  createdAt DateTime     @default(now()) @map("created_at")
+  report    EightDReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  issue     Issue        @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, issueId])
+  @@index([issueId, reportId])
+  @@map("eight_d_report_issues")
+}
+
+model EightDReportActivity {
+  id        String       @id @default(uuid())
+  reportId  String       @map("report_id")
+  action    String
+  content   String?
+  actorId   String?      @map("actor_id")
+  actorName String       @map("actor_name")
+  detail    Json?
+  createdAt DateTime     @default(now()) @map("created_at")
+  report    EightDReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  actor     User?        @relation("EightDReportActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([reportId, createdAt])
+  @@index([actorId])
+  @@index([action])
+  @@map("eight_d_report_activities")
 }
 
 model ChangeRequest {

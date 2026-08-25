@@ -74,6 +74,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:issue-work-order-integration
+      - name: 8D PDF archive PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npm run test:eight-d-integration
       - name: Major quality approval PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
@@ -154,14 +158,14 @@ jobs:
             type=sha
           labels: |
             org.opencontainers.image.title=hongmeng-workorder-resource
-            org.opencontainers.image.version=v1.34.50
+            org.opencontainers.image.version=v1.34.51
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
       - uses: docker/build-push-action@v6
         with:
           context: .
           build-args: |
-            APP_VERSION=v1.34.50
+            APP_VERSION=v1.34.51
             APP_REVISION=${{ github.sha }}
           load: true
           push: false

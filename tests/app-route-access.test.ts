@@ -114,3 +114,9 @@ test('training collaborator opens the employee shell but not unrelated HR worksp
 test('longest specific production rule is selected before general prefix', () => {
   assert.deepEqual(routeAccessRule('/production/qr-print')?.anyOf, ['PRODUCTION']);
 });
+
+test('8D archive follows existing quality and issue-management page access', () => {
+  assert.equal(canAccessAppRoute(access('QUALITY'), '/workspace/quality/8d'), true);
+  assert.equal(canAccessAppRoute(access('ISSUE_MANAGEMENT'), '/workspace/quality/8d?issueId=i1'), true);
+  assert.equal(canAccessAppRoute(access('PLANNING'), '/workspace/quality/8d'), false);
+});
