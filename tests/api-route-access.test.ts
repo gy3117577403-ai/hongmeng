@@ -218,6 +218,44 @@ test('8D archive APIs reuse quality action permissions without creating a new ro
   assert.equal(canAccessApiRoute(planning, '/api/quality/8d', 'GET'), false);
 });
 
+test('internal quality risks reuse quality permissions while issue collaboration remains read only', () => {
+  const quality = context({
+    profile: 'DEPARTMENT_FULL',
+    departmentCode: 'QUALITY',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:QUALITY',
+  });
+  const process = context({
+    profile: 'PROCESS_SPECIALIST',
+    departmentCode: 'PROCESS',
+    grantType: 'PRIMARY',
+    scopeKey: 'DEPARTMENT:PROCESS',
+  });
+  const workshop = context({
+    profile: 'WORKSHOP_SUPERVISOR',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'WORKSHOP:main',
+  });
+  const teamLeader = context({
+    profile: 'WORKSHOP_TEAM_LEADER',
+    departmentCode: 'PRODUCTION',
+    grantType: 'PRIMARY',
+    scopeKey: 'TEAM:A',
+  });
+
+  assert.equal(canAccessApiRoute(quality, '/api/quality/internal-risks', 'GET'), true);
+  assert.equal(canAccessApiRoute(quality, '/api/quality/internal-risks', 'POST'), true);
+  assert.equal(canAccessApiRoute(process, '/api/quality/internal-risks', 'GET'), true);
+  assert.equal(canAccessApiRoute(process, '/api/quality/internal-risks/r1', 'PATCH'), false);
+  assert.equal(canAccessApiRoute(workshop, '/api/work-orders/w1/quality-alerts', 'GET'), true);
+  assert.equal(canAccessApiRoute(workshop, '/api/work-orders/w1/quality-alerts/a1/acknowledge', 'POST'), true);
+  assert.equal(canAccessApiRoute(teamLeader, '/api/work-orders/w1/quality-alerts', 'GET'), true);
+  assert.equal(canAccessApiRoute(teamLeader, '/api/work-orders/w1/quality-alerts/a1/acknowledge', 'POST'), true);
+  assert.equal(canAccessApiRoute(workshop, '/api/work-orders/w1/quality-alerts/link', 'POST'), false);
+  assert.equal(canAccessApiRoute(quality, '/api/work-orders/w1/quality-alerts/link', 'POST'), true);
+});
+
 test('drawing reader and editor share data while write and destructive actions remain separated', () => {
   const reader = context({
     profile: 'DRAWING_LIBRARY_READER',

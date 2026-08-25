@@ -11,7 +11,6 @@ import {
   ChevronRight,
   Clock3,
   ClipboardCheck,
-  FileArchive,
   FolderKanban,
   GitPullRequestArrow,
   HelpCircle,
@@ -25,6 +24,7 @@ import {
   Settings,
   Settings2,
   PanelsTopLeft,
+  ShieldAlert,
   ShieldCheck,
   TimerOff,
   UsersRound,
@@ -97,7 +97,7 @@ const sideNavigation: Array<{ label: string; items: SideNavigationItem[] }> = [
     label: '协同规划',
     items: [
       { href: '/workspace/issues', label: '问题管理', icon: ShieldCheck },
-      { href: '/workspace/quality/8d', label: '8D档案', icon: FileArchive },
+      { href: '/workspace/quality', label: '质量管理', icon: ShieldAlert },
       { href: '/workspace/approvals', label: '重大审批', icon: ClipboardCheck },
       { href: '/workspace/changes', label: '变更管理', icon: GitPullRequestArrow },
       { href: '/workspace/workflows', label: '流程中心', icon: Workflow },
@@ -135,7 +135,10 @@ function routePath(href: string): string {
 }
 
 function isActiveRoute(activeHref: string, href: string): boolean {
-  return routePath(activeHref) === routePath(href);
+  const active = routePath(activeHref);
+  const target = routePath(href);
+  if (target === '/workspace/quality') return active === target || active.startsWith(`${target}/`);
+  return active === target;
 }
 
 function activeModuleName(activeHref: string): string {

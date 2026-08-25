@@ -24,7 +24,9 @@ import { subscribeProductionDataInvalidations } from '@/lib/production-data-clie
 import { productTimeConfigurationRoute, type ProductTimeRouteScope } from '@/lib/workflow-routes';
 import type {
   CurrentUserDTO,
+  InternalQualityRiskSeverity,
   ProcessReportQuantityBasis,
+  WorkOrderQualityAlertsDTO,
   WorkOrderProcessRouteDTO,
 } from '@/types';
 
@@ -32,7 +34,7 @@ type StageKey = 'not_issued' | 'frontend' | 'backend' | 'completed';
 type ViewKey = 'board' | 'today' | 'exceptions';
 type WeekScope = 'current' | 'carryover' | 'next' | 'afterNext' | 'history';
 type QuickFilter = 'overdue' | 'urgent' | 'drawing' | 'drawing_confirmation' | 'material' | 'documents' | 'tail_remaining' | 'completed' | 'due_today' | 'due_soon' | 'updated_today' | 'completed_today' | 'delivery_missing' | 'specification_invalid' | 'customer_missing' | 'in_production' | 'not_started' | 'has_next_process' | 'waiting_transfer' | 'arrangement_unassigned' | 'arrangement_scheduled' | 'arrangement_today' | 'arrangement_overdue' | 'arrangement_partial';
-type DetailTab = 'production' | 'drawing' | 'progress' | 'source';
+type DetailTab = 'production' | 'quality' | 'drawing' | 'progress' | 'source';
 type BatchOperation = 'set_priority' | 'add_remark';
 type DuePreset = '' | 'today' | 'tomorrow' | 'overdue' | 'week' | 'custom';
 type ProductionFlowAction = 'start_process_route';
@@ -45,6 +47,7 @@ type DispatchRisk = {
   detail: string;
   tone: DispatchTone;
   alert?: ProductionAlert;
+  quality?: boolean;
 };
 
 type DispatchActivity = {
@@ -319,6 +322,8 @@ type ProductionOrder = {
   } | null;
   processRoute?: WorkOrderProcessRouteDTO | null;
   drawingLibraryItemId?: string | null;
+  qualityRiskAlertCount: number;
+  qualityRiskHighestSeverity?: InternalQualityRiskSeverity | null;
   documentCompleteness: string;
   documentFilledCount: number;
   documentTotalCount: number;
@@ -918,6 +923,15 @@ function nextProcessName(order: ProductionOrder): string {
 }
 
 function dispatchRisk(order: ProductionOrder): DispatchRisk {
+  if (order.qualityRiskAlertCount > 0) {
+    const highRisk = order.qualityRiskHighestSeverity === 'CRITICAL' || order.qualityRiskHighestSeverity === 'HIGH';
+    return {
+      label: `质量预警 ${order.qualityRiskAlertCount} 条`,
+      detail: highRisk ? '重大异常，进入详情查看控制要求' : '进入详情查看原因与结论',
+      tone: highRisk ? 'danger' : 'warning',
+      quality: true,
+    };
+  }
   const criticalAlert = order.productionAlerts.find(alert => alert.tone === 'red');
   if (criticalAlert) return { label: criticalAlert.label, detail: '需要立即处理', tone: 'danger', alert: criticalAlert };
   const remainingDays = daysUntilDelivery(order);
@@ -1129,6 +1143,15 @@ export default function ProductionExecutionCenter({
   const canSelectProduction = canAdministerProduction || canScheduleProduction;
   const canPrintTravelers = user.access.capabilities.includes('PRODUCTION:EXECUTE_WORKFLOW')
     || user.access.capabilities.includes('SYSTEM_CONFIGURATION:READ');
+  const canViewQualityRisks = user.laborRole === 'ADMIN'
+    || user.access.modules.includes('QUALITY')
+    || user.access.modules.includes('ISSUE_MANAGEMENT');
+  const canManageQualityRisks = user.laborRole === 'ADMIN'
+    || user.access.capabilities.includes('QUALITY:UPDATE');
+  const canAcknowledgeQualityRisks = canManageQualityRisks
+    || user.access.capabilities.includes('PRODUCTION:UPDATE')
+    || user.access.capabilities.includes('BUSINESS:UPDATE')
+    || user.access.capabilities.includes('PLANNING:UPDATE');
   const [summary, setSummary] = useState<ProductionSummary | null>(null);
   const [board, setBoard] = useState<BoardPayload | null>(null);
   const [view, setView] = useState<ViewKey>('board');
@@ -2484,9 +2507,9 @@ export default function ProductionExecutionCenter({
     }
   }
 
-  function openDetail(order: ProductionOrder): void {
+  function openDetail(order: ProductionOrder, initialTab: DetailTab = 'production'): void {
     setDetailOrder(order);
-    setDetailTab('production');
+    setDetailTab(initialTab);
     setProgressLogs([]);
   }
 
@@ -2936,7 +2959,7 @@ export default function ProductionExecutionCenter({
         {drawingMenuOrder && drawingStatuses.map(status => <button className={drawingMenuOrder.drawingStatus === status ? 'active' : ''} type="button" disabled={saving} key={status} onClick={() => void saveDrawingStatus(drawingMenuOrder, status)}>{status}</button>)}
       </PortalMenu>
 
-      {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} canPrintTraveler={canPrintTravelers} travelerPrinting={false} printTraveler={() => printTravelers([detailOrder.id])} />}
+      {detailOrder && <DetailDialog order={detailOrder} tab={detailTab} setTab={switchDetailTab} progressLogs={progressLogs} progressLoading={progressLoading} close={() => setDetailOrder(null)} resources={() => openWorkOrderResources(detailOrder)} drawingLibrary={() => openDrawingLibrary(detailOrder, detailOrder.stage)} canPrintTraveler={canPrintTravelers} travelerPrinting={false} printTraveler={() => printTravelers([detailOrder.id])} canViewQualityRisks={canViewQualityRisks} canManageQualityRisks={canManageQualityRisks} canAcknowledgeQualityRisks={canAcknowledgeQualityRisks} userId={user.id} />}
       <OlderCarryoverDrawer
         open={olderCarryoverOpen}
         targetWeekStart={summary?.navigation.current.weekStartDate || ''}
@@ -3018,7 +3041,7 @@ type ProductionDispatchRowProps = {
   selected: string[];
   saving: boolean;
   toggleSelected: (id: string) => void;
-  openDetail: (order: ProductionOrder) => void;
+  openDetail: (order: ProductionOrder, tab?: DetailTab) => void;
   openNextStep: (order: ProductionOrder, displayStage: StageKey) => void;
   openDrawingLibrary: (order: ProductionOrder, focusedStage?: StageKey) => void;
   openWorkflow: (order: ProductionOrder, focusedStage?: StageKey) => void;
@@ -3212,7 +3235,9 @@ function ProductionDispatchRow({
 
     <div className={`production-dispatch-risk ${risk.tone}`}>
       <strong>{deliveryText(order) || '交期待补'}</strong>
-      {risk.alert
+      {risk.quality
+        ? <button type="button" title="查看该工单质量问题预警" onClick={() => openDetail(order, 'quality')}>{risk.label}</button>
+        : risk.alert
         ? <button type="button" title="进入问题管理处理该异常" onClick={() => openIssue(order, risk.alert!.code, displayStage)}>{risk.label}</button>
         : <span>{risk.label}</span>}
       <small>{risk.detail}</small>
@@ -3945,11 +3970,94 @@ function StageChangeDialog({ request, saving, close, confirm }: { request: Stage
   </section></div>;
 }
 
-function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close, resources, drawingLibrary, canPrintTraveler, travelerPrinting, printTraveler }: { order: ProductionOrder; tab: DetailTab; setTab: (tab: DetailTab) => void; progressLogs: ProgressLog[]; progressLoading: boolean; close: () => void; resources: () => void; drawingLibrary: () => void; canPrintTraveler: boolean; travelerPrinting: boolean; printTraveler: () => void }) {
+function qualityRiskSeverityText(severity: InternalQualityRiskSeverity): string {
+  return ({ LOW: '低风险', MEDIUM: '中风险', HIGH: '高风险', CRITICAL: '重大风险' } as const)[severity];
+}
+
+function qualityAlertStateText(state: WorkOrderQualityAlertsDTO['alerts'][number]['state']): string {
+  return ({ ACTIVE: '待知悉', ACKNOWLEDGED: '已知悉', SUPERSEDED: '已被新版替代', REVOKED: '已撤销', EXPIRED: '已到期' } as const)[state];
+}
+
+function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close, resources, drawingLibrary, canPrintTraveler, travelerPrinting, printTraveler, canViewQualityRisks, canManageQualityRisks, canAcknowledgeQualityRisks, userId }: { order: ProductionOrder; tab: DetailTab; setTab: (tab: DetailTab) => void; progressLogs: ProgressLog[]; progressLoading: boolean; close: () => void; resources: () => void; drawingLibrary: () => void; canPrintTraveler: boolean; travelerPrinting: boolean; printTraveler: () => void; canViewQualityRisks: boolean; canManageQualityRisks: boolean; canAcknowledgeQualityRisks: boolean; userId: string }) {
+  const [qualityData, setQualityData] = useState<WorkOrderQualityAlertsDTO | null>(null);
+  const [qualityLoading, setQualityLoading] = useState(true);
+  const [qualityError, setQualityError] = useState('');
+  const [qualityActionId, setQualityActionId] = useState('');
+  const [qualityReloadToken, setQualityReloadToken] = useState(0);
+  const [pendingProductRisk, setPendingProductRisk] = useState<{
+    reportId: string;
+    reportNo: string;
+    reportTitle: string;
+    expectedVersion: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setQualityLoading(true);
+    setQualityError('');
+    fetch(`/api/work-orders/${encodeURIComponent(order.id)}/quality-alerts`, { cache: 'no-store', signal: controller.signal })
+      .then(async response => {
+        const body = await response.json().catch(() => ({})) as WorkOrderQualityAlertsDTO & { error?: string };
+        if (response.status === 401) location.href = '/login';
+        if (!response.ok) throw new Error(body.error || '质量预警加载失败');
+        return body;
+      })
+      .then(body => setQualityData(body))
+      .catch(error => {
+        if ((error as { name?: string }).name !== 'AbortError') setQualityError(error instanceof Error ? error.message : '质量预警加载失败');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setQualityLoading(false);
+      });
+    return () => controller.abort();
+  }, [order.id, qualityReloadToken]);
+
+  async function acknowledgeQualityAlert(alertId: string): Promise<void> {
+    setQualityActionId(alertId);
+    setQualityError('');
+    try {
+      const response = await fetch(`/api/work-orders/${encodeURIComponent(order.id)}/quality-alerts/${encodeURIComponent(alertId)}/acknowledge`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: '已在生产工单详情中确认知悉' }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error || '预警知悉失败');
+      setQualityReloadToken(value => value + 1);
+    } catch (error) {
+      setQualityError(error instanceof Error ? error.message : '预警知悉失败');
+    } finally {
+      setQualityActionId('');
+    }
+  }
+
+  async function confirmProductRisk(): Promise<void> {
+    if (!pendingProductRisk) return;
+    const { reportId, expectedVersion } = pendingProductRisk;
+    setQualityActionId(reportId);
+    setQualityError('');
+    try {
+      const response = await fetch(`/api/work-orders/${encodeURIComponent(order.id)}/quality-alerts/link`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportId, expectedVersion }),
+      });
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      if (!response.ok) throw new Error(body.error || '产品风险关联失败');
+      setPendingProductRisk(null);
+      setQualityReloadToken(value => value + 1);
+    } catch (error) {
+      setQualityError(error instanceof Error ? error.message : '产品风险关联失败');
+    } finally {
+      setQualityActionId('');
+    }
+  }
+
+  const qualityAlertCount = qualityData?.alerts.filter(alert => alert.state === 'ACTIVE' || alert.state === 'ACKNOWLEDGED').length ?? order.qualityRiskAlertCount;
   return (
-    <div className="modal-backdrop"><section className="production-dialog detail" role="dialog" aria-modal="true" aria-label="生产工单详情">
+    <><div className="modal-backdrop"><section className="production-dialog detail" role="dialog" aria-modal="true" aria-label="生产工单详情">
       <div className="dialog-title"><div><strong>{specText(order)}</strong><small>{order.customerName || '客户待补充'} · {order.productName || '品名待补充'}</small></div><button type="button" aria-label="关闭" onClick={close}>×</button></div>
-      <div className="production-detail-tabs">{([['production', '生产信息'], ['drawing', '工单资料'], ['progress', '进度记录'], ['source', '来源信息']] as Array<[DetailTab, string]>).map(item => <button className={tab === item[0] ? 'active' : ''} type="button" key={item[0]} onClick={() => setTab(item[0])}>{item[1]}</button>)}</div>
+      <div className="production-detail-tabs">{([['production', '生产信息'], ['quality', `质量预警 ${qualityAlertCount}`], ['drawing', '工单资料'], ['progress', '进度记录'], ['source', '来源信息']] as Array<[DetailTab, string]>).map(item => <button className={tab === item[0] ? 'active' : ''} type="button" key={item[0]} onClick={() => setTab(item[0])}>{item[1]}</button>)}</div>
       <div className="production-detail-body">
         {tab === 'production' && <><InfoGrid items={[
           ['状态', order.stageText], ['优先级', priorityText(order.priority)], ['周计划原始目标', order.importedTargetQty === null ? order.uncompletedQty || '-' : formatProductionQuantity(order.importedTargetQty)], ['当前生产目标', formatProductionQuantity(order.quantitySummary.targetQty)],
@@ -3972,6 +4080,24 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
             <Link href={`/workspace/workflows?workOrderId=${encodeURIComponent(branch.id)}&from=production&returnTo=${encodeURIComponent('/production')}`} prefetch={false}>查看分支流程</Link>
           </article>)}</div>
         </section>}</>}
+        {tab === 'quality' && <div className="production-quality-risk-panel">
+          <header className="production-quality-risk-heading"><div><AlertTriangle size={18} /><span><strong>工单质量问题预警</strong><small>已归档重大异常会同步原因、结论与现场控制要求；预警本身不会自动暂停生产。</small></span></div>{canViewQualityRisks && <Link href={`/workspace/quality/internal-risks?workOrderId=${encodeURIComponent(order.id)}`} prefetch={false}>进入质量管理</Link>}</header>
+          {qualityLoading && <div className="production-loading"><Loader2 className="spin" size={16} />质量预警加载中...</div>}
+          {qualityError && <div className="form-error">{qualityError}<button type="button" onClick={() => setQualityReloadToken(value => value + 1)}>重试</button></div>}
+          {!qualityLoading && qualityData && <>
+            <section className="production-quality-risk-section"><div className="production-quality-risk-section-title"><strong>当前工单预警</strong><span>{qualityData.alerts.length} 条记录</span></div>
+              <div className="production-quality-risk-list">{qualityData.alerts.map(alert => {
+                const acknowledgedByMe = alert.acknowledgements.some(item => item.acknowledgedById === userId);
+                return <article className={`production-quality-risk-card severity-${alert.severity.toLowerCase()} state-${alert.state.toLowerCase()}`} key={alert.id}>
+                  <header><span><em>{qualityRiskSeverityText(alert.severity)}</em><b>{alert.reportNo} · {alert.reportTitle}</b></span><i>{qualityAlertStateText(alert.state)}</i></header>
+                  <div className="production-quality-risk-facts"><p><span>不良现象</span><strong>{alert.defectPhenomenon || '归档记录未填写'}</strong></p><p><span>原因</span><strong>{alert.rootCause || '归档记录未填写'}</strong></p><p><span>结论</span><strong>{alert.finalConclusion || '归档记录未填写'}</strong></p><p className="wide"><span>现场控制要求</span><strong>{alert.controlRequirement || '按现行检验与工艺要求执行'}</strong></p></div>
+                  <footer><span>归档版本 R{alert.revisionNumber} · {dateTimeText(alert.archivedAt)}{alert.effectiveUntil ? ` · 有效至 ${dateText(alert.effectiveUntil)}` : ' · 长期有效'}</span><div>{canViewQualityRisks && <Link href={`/workspace/quality/internal-risks?reportId=${encodeURIComponent(alert.reportId)}`} prefetch={false}>查看完整异常</Link>}{canAcknowledgeQualityRisks && (alert.state === 'ACTIVE' || alert.state === 'ACKNOWLEDGED') && <button type="button" disabled={acknowledgedByMe || qualityActionId === alert.id} onClick={() => acknowledgeQualityAlert(alert.id)}>{qualityActionId === alert.id ? '提交中...' : acknowledgedByMe ? '我已知悉' : '确认知悉'}</button>}</div></footer>
+                </article>;
+              })}{!qualityData.alerts.length && <div className="production-task-empty"><CheckCircle2 size={20} />当前工单没有生效中的质量异常预警</div>}</div>
+            </section>
+            {!!qualityData.suggestions.length && <section className="production-quality-risk-section suggestions"><div className="production-quality-risk-section-title"><strong>同产品历史风险待确认</strong><span>{qualityData.suggestions.length} 条建议</span></div><p className="production-quality-risk-explainer">系统只根据相同产品主数据提出建议，必须由质量人员人工确认后才会写入当前工单。</p><div className="production-quality-risk-list">{qualityData.suggestions.map(suggestion => <article className={`production-quality-risk-card suggestion severity-${suggestion.severity.toLowerCase()}`} key={suggestion.id}><header><span><em>{qualityRiskSeverityText(suggestion.severity)}</em><b>{suggestion.reportNo} · {suggestion.title}</b></span><i>待质量确认</i></header><p className="production-quality-risk-suggestion-reason">{suggestion.reason}</p><div className="production-quality-risk-facts"><p><span>历史原因</span><strong>{suggestion.rootCause || '未填写'}</strong></p><p><span>历史结论</span><strong>{suggestion.finalConclusion || '未填写'}</strong></p></div><footer><span>归档版本 R{suggestion.revisionNumber || 1}{suggestion.effectiveUntil ? ` · 有效至 ${dateText(suggestion.effectiveUntil)}` : ' · 长期有效'}</span><div>{canViewQualityRisks && <Link href={`/workspace/quality/internal-risks?reportId=${encodeURIComponent(suggestion.id)}`} prefetch={false}>查看依据</Link>}{canManageQualityRisks && <button className="primary-button" type="button" disabled={qualityActionId === suggestion.id} onClick={() => { setQualityError(''); setPendingProductRisk({ reportId: suggestion.id, reportNo: suggestion.reportNo, reportTitle: suggestion.title, expectedVersion: suggestion.version }); }}>{qualityActionId === suggestion.id ? '关联中...' : '确认同步预警'}</button>}</div></footer></article>)}</div></section>}
+          </>}
+        </div>}
         {tab === 'drawing' && <div className="production-drawing-detail"><div className="production-drawing-score"><span>工单资料完整度</span><strong>{order.documentFilledCount}/{order.documentTotalCount || 5}</strong></div><div className="production-category-status">{categoryLabels.map(category => <span className={order.documentCategoryCodes.includes(category.code) ? 'ready' : 'missing'} key={category.code}><i />{category.label}<b>{order.documentCategoryCodes.includes(category.code) ? '已有资料' : '待补充'}</b></span>)}</div><div className="production-drawing-actions"><button className="primary-button" type="button" onClick={resources}>打开工单资料</button><button type="button" onClick={drawingLibrary}>查看图纸资料库</button></div></div>}
         {tab === 'progress' && <div className="production-progress-list">{progressLoading && <div className="production-loading">进度记录加载中...</div>}{progressLogs.map(log => <article key={log.id}><time>{dateTimeText(log.createdAt)}</time><strong>{log.createdBy || '操作人未记录'}</strong><span>状态：{log.previousStageText && log.previousStage !== log.stage ? `${log.previousStageText} → ` : ''}{log.stageText}</span>{log.completedQty && <span>完成：{log.completedQty}</span>}{(log.productionOwner || log.workstation) && <span>历史记录：{log.productionOwner || ''}{log.productionOwner && log.workstation ? ' · ' : ''}{log.workstation || ''}</span>}<p>{log.remark || '未填写备注'}</p></article>)}{!progressLoading && !progressLogs.length && <div className="production-task-empty">暂无进度记录</div>}</div>}
         {tab === 'source' && <InfoGrid items={[
@@ -3982,6 +4108,14 @@ function DetailDialog({ order, tab, setTab, progressLogs, progressLoading, close
       </div>
       <div className="dialog-actions"><button type="button" onClick={resources}>工单资料</button>{order.processRoute && <Link href={`/workspace/workflows?workOrderId=${encodeURIComponent(order.id)}&from=production`}><GitPullRequestArrow size={15} />工艺变更</Link>}{canPrintTraveler && <button type="button" disabled={travelerPrinting || !order.processRoute || order.processRoute.status === 'draft'} title={!order.processRoute || order.processRoute.status === 'draft' ? '确认工艺路线后才能打印' : '生成一工单一码流转单'} onClick={printTraveler}><Printer size={15} />{travelerPrinting ? '生成中...' : '打印流转单'}</button>}<button className="primary-button" type="button" onClick={close}>关闭</button></div>
     </section></div>
+    {pendingProductRisk && <div className="modal-backdrop production-risk-confirm-backdrop"><section className="production-dialog production-stage-confirm production-risk-confirm" role="dialog" aria-modal="true" aria-label="确认同步质量预警">
+      <div className="dialog-title"><div><strong>确认同步质量预警</strong><small>由质量人员确认同产品历史风险是否适用于当前工单</small></div><button type="button" disabled={!!qualityActionId} onClick={() => setPendingProductRisk(null)} aria-label="关闭">×</button></div>
+      <div className="production-risk-confirm-target"><AlertTriangle size={19} /><span><small>{pendingProductRisk.reportNo}</small><strong>{pendingProductRisk.reportTitle}</strong></span></div>
+      <ul className="production-risk-confirm-rules"><li>确认后，当前工单将新增一条可知悉的质量预警。</li><li>同步归档版本中的原因、结论和现场控制要求。</li><li><b>不会自动暂停生产</b>，停线或放行仍由现场制度与人员决策。</li></ul>
+      {qualityError && <div className="form-error">{qualityError}</div>}
+      <div className="dialog-actions"><button type="button" disabled={!!qualityActionId} onClick={() => setPendingProductRisk(null)}>取消</button><button className="primary-button" type="button" disabled={!!qualityActionId} onClick={confirmProductRisk}>{qualityActionId ? '同步中...' : '确认并同步'}</button></div>
+    </section></div>}
+    </>
   );
 }
 

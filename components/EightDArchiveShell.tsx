@@ -28,6 +28,7 @@ import { useSearchParams } from 'next/navigation';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
 import { PdfViewer } from '@/components/PdfViewer';
+import { QualityModuleTabs } from '@/components/QualityModuleTabs';
 import { useToastBridge } from '@/components/ToastProvider';
 import type {
   CurrentUserDTO,
@@ -598,6 +599,8 @@ export default function EightDArchiveShell({ user }: EightDArchiveShellProps) {
           {canCreate && <button className="primary" type="button" onClick={openCreate}><Plus size={16} />上传8D PDF</button>}
         </>}
       />
+
+      <QualityModuleTabs active="eight-d" eightDCount={summary.total} />
 
       <section className="eight-d-summary hm-cockpit-stage-rail" aria-label="8D档案状态">
         {statusItems.map(([key, label, count]) => <button className={status === key ? 'active' : ''} type="button" key={key} onClick={() => setStatus(key)}><span>{label}</span><strong>{count}</strong></button>)}

@@ -89,6 +89,17 @@ export const productionExecutionInclude = Prisma.validator<Prisma.WorkOrderInclu
   rejoinStep: {
     select: { id: true, processName: true },
   },
+  qualityRiskAlerts: {
+    where: {
+      state: { in: ['ACTIVE', 'ACKNOWLEDGED'] },
+      report: { deletedAt: null },
+    },
+    select: {
+      severity: true,
+      effectiveFrom: true,
+      effectiveUntil: true,
+    },
+  },
 });
 
 // List and dashboard calculations only need lightweight readiness relations.
@@ -830,6 +841,17 @@ export function serializeProductionOrder(
         message: flowResolution.error.message,
       },
     };
+  const effectiveQualityRiskAlerts = order.qualityRiskAlerts.filter(alert => (
+    (!alert.effectiveFrom || alert.effectiveFrom.getTime() <= now.getTime())
+    && (!alert.effectiveUntil || alert.effectiveUntil.getTime() >= now.getTime())
+  ));
+  const qualityRiskSeverityRank: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+  const qualityRiskHighestSeverity = effectiveQualityRiskAlerts.reduce<(typeof effectiveQualityRiskAlerts)[number]['severity'] | null>(
+    (highest, alert) => !highest || qualityRiskSeverityRank[alert.severity] > qualityRiskSeverityRank[highest]
+      ? alert.severity
+      : highest,
+    null,
+  );
   return {
     id: order.id,
     code: order.code,
@@ -889,6 +911,8 @@ export function serializeProductionOrder(
     } : null,
     processRoute: order.processRoute ? serializeProcessRoute(order.processRoute) : null,
     drawingLibraryItemId: order.drawingLibraryItemId,
+    qualityRiskAlertCount: effectiveQualityRiskAlerts.length,
+    qualityRiskHighestSeverity,
     documentCategoryCodes: [...new Set(order.drawingLibraryItem?.files.map(file => file.category.code) || [])],
     documentCompleteness: completeness.text,
     documentFilledCount: completeness.filled,

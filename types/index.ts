@@ -827,6 +827,239 @@ export type EightDReportOptionsDTO = {
   issues: EightDReportIssueDTO[];
 };
 
+export type InternalQualityRiskStatus = 'DRAFT' | 'REVISING' | 'ARCHIVED';
+export type InternalQualityRiskSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+export type WorkOrderQualityAlertState = 'ACTIVE' | 'ACKNOWLEDGED' | 'SUPERSEDED' | 'REVOKED' | 'EXPIRED';
+
+export type InternalQualityRiskWorkOrderDTO = {
+  id: string;
+  code: string;
+  businessCode?: string | null;
+  displayCode: string;
+  customerName?: string | null;
+  productName: string;
+  specification?: string | null;
+  stage: string;
+  drawingLibraryItemId?: string | null;
+  planActive: boolean;
+  deletedAt?: string | null;
+  source?: 'DIRECT' | 'PRODUCT_CONFIRMATION';
+};
+
+export type InternalQualityRiskProductDTO = EightDReportProductDTO & {
+  deletedAt?: string | null;
+};
+
+export type InternalQualityRiskIssueDTO = {
+  id: string;
+  sequence: number;
+  code: string;
+  title: string;
+  type: IssueType;
+  priority: IssuePriority;
+  status: IssueStatus;
+  isMajorQuality: boolean;
+  majorApproval?: {
+    id: string;
+    round: number;
+    status: string;
+    completedAt?: string | null;
+  } | null;
+  workOrder?: InternalQualityRiskWorkOrderDTO | null;
+  deletedAt?: string | null;
+};
+
+export type InternalQualityRiskEightDDTO = {
+  id: string;
+  reportNo: string;
+  title: string;
+  status: EightDReportStatus;
+  deletedAt?: string | null;
+};
+
+export type InternalQualityRiskRevisionDTO = {
+  id: string;
+  revisionNumber: number;
+  archivedAt: string;
+  archivedById?: string | null;
+};
+
+export type InternalQualityRiskAlertSummaryDTO = {
+  id: string;
+  revisionId: string;
+  revisionNumber: number;
+  workOrder: InternalQualityRiskWorkOrderDTO;
+  state: WorkOrderQualityAlertState;
+  source: 'DIRECT_ARCHIVE' | 'PRODUCT_SUGGESTION_CONFIRMED';
+  severity: InternalQualityRiskSeverity;
+  acknowledgementCount: number;
+  archivedAt: string;
+  updatedAt: string;
+};
+
+export type InternalQualityRiskActivityDTO = {
+  id: string;
+  action: string;
+  content?: string | null;
+  actorName: string;
+  detail?: Record<string, unknown> | null;
+  createdAt: string;
+};
+
+export type InternalQualityRiskDTO = {
+  id: string;
+  sequence: number;
+  reportNo: string;
+  title: string;
+  severity: InternalQualityRiskSeverity;
+  status: InternalQualityRiskStatus;
+  occurrenceDate?: string | null;
+  workshopArea?: string | null;
+  processName?: string | null;
+  responsibleDepartment?: string | null;
+  defectPhenomenon?: string | null;
+  occurrenceCause?: string | null;
+  escapeCause?: string | null;
+  systemCause?: string | null;
+  rootCause?: string | null;
+  secondaryCause?: string | null;
+  containmentAction?: string | null;
+  disposition?: string | null;
+  correctiveAction?: string | null;
+  preventiveAction?: string | null;
+  verificationResult?: string | null;
+  finalConclusion?: string | null;
+  evidenceSummary?: string | null;
+  riskScope?: string | null;
+  applicableProcess?: string | null;
+  effectiveFrom?: string | null;
+  effectiveUntil?: string | null;
+  version: number;
+  currentRevisionId?: string | null;
+  currentRevisionNumber?: number | null;
+  archivedAt?: string | null;
+  deletedAt?: string | null;
+  deleteReason?: string | null;
+  purgeEligibleAt?: string | null;
+  canPurge: boolean;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string | null;
+  updatedBy?: string | null;
+  archivedBy?: string | null;
+  deletedBy?: string | null;
+  products: InternalQualityRiskProductDTO[];
+  issues: InternalQualityRiskIssueDTO[];
+  workOrders: InternalQualityRiskWorkOrderDTO[];
+  eightDReports: InternalQualityRiskEightDDTO[];
+  revisions: InternalQualityRiskRevisionDTO[];
+  alerts: InternalQualityRiskAlertSummaryDTO[];
+  activities: InternalQualityRiskActivityDTO[];
+};
+
+export type InternalQualityRiskSummaryDTO = {
+  total: number;
+  draft: number;
+  revising: number;
+  archived: number;
+  deleted: number;
+  critical: number;
+  activeAlerts: number;
+  unlinked: number;
+};
+
+export type InternalQualityRiskOptionIssueDTO = Omit<InternalQualityRiskIssueDTO, 'majorApproval' | 'deletedAt'> & {
+  majorApprovalStatus?: string | null;
+  updatedAt: string;
+};
+
+export type InternalQualityRiskOptionEightDDTO = {
+  id: string;
+  reportNo: string;
+  title: string;
+  status: EightDReportStatus;
+  updatedAt: string;
+};
+
+export type InternalQualityRiskOptionsDTO = {
+  products: EightDReportProductDTO[];
+  issues: InternalQualityRiskOptionIssueDTO[];
+  workOrders: InternalQualityRiskWorkOrderDTO[];
+  eightDReports: InternalQualityRiskOptionEightDDTO[];
+};
+
+export type InternalQualityRiskReadinessDTO = {
+  ready: boolean;
+  blockers: Array<{ code: string; message: string }>;
+  warnings: Array<{ code: string; message: string }>;
+  revisionNumber: number;
+  workOrderCount: number;
+  productCount: number;
+  issueCount: number;
+  alertCount: number;
+};
+
+export type WorkOrderQualityAlertAcknowledgementDTO = {
+  id: string;
+  note?: string | null;
+  acknowledgedAt: string;
+  acknowledgedBy?: string | null;
+  acknowledgedById: string;
+};
+
+export type WorkOrderQualityAlertDTO = {
+  id: string;
+  reportId: string;
+  reportNo: string;
+  reportTitle: string;
+  reportVersion: number;
+  revisionId: string;
+  revisionNumber: number;
+  workOrderId: string;
+  state: WorkOrderQualityAlertState;
+  persistedState: Exclude<WorkOrderQualityAlertState, 'EXPIRED'>;
+  source: 'DIRECT_ARCHIVE' | 'PRODUCT_SUGGESTION_CONFIRMED';
+  severity: InternalQualityRiskSeverity;
+  title: string;
+  defectPhenomenon?: string | null;
+  rootCause?: string | null;
+  finalConclusion?: string | null;
+  controlRequirement?: string | null;
+  applicableProcess?: string | null;
+  effectiveFrom?: string | null;
+  effectiveUntil?: string | null;
+  archivedAt: string;
+  supersededAt?: string | null;
+  revokedAt?: string | null;
+  revokeReason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  workOrder: InternalQualityRiskWorkOrderDTO;
+  acknowledgements: WorkOrderQualityAlertAcknowledgementDTO[];
+};
+
+export type WorkOrderQualityRiskSuggestionDTO = {
+  id: string;
+  reportNo: string;
+  title: string;
+  severity: InternalQualityRiskSeverity;
+  defectPhenomenon?: string | null;
+  rootCause?: string | null;
+  finalConclusion?: string | null;
+  applicableProcess?: string | null;
+  effectiveUntil?: string | null;
+  version: number;
+  revisionNumber?: number | null;
+  archivedAt?: string | null;
+  reason: string;
+};
+
+export type WorkOrderQualityAlertsDTO = {
+  workOrder: InternalQualityRiskWorkOrderDTO;
+  alerts: WorkOrderQualityAlertDTO[];
+  suggestions: WorkOrderQualityRiskSuggestionDTO[];
+};
+
 export type DetectedIssueDTO = {
   id: string;
   fingerprint: string;

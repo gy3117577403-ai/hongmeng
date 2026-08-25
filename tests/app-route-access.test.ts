@@ -115,8 +115,11 @@ test('longest specific production rule is selected before general prefix', () =>
   assert.deepEqual(routeAccessRule('/production/qr-print')?.anyOf, ['PRODUCTION']);
 });
 
-test('8D archive follows existing quality and issue-management page access', () => {
+test('quality management parent, internal risks and 8D archive share quality and issue-management page access', () => {
+  assert.equal(canAccessAppRoute(access('QUALITY'), '/workspace/quality'), true);
+  assert.equal(canAccessAppRoute(access('QUALITY'), '/workspace/quality/internal-risks'), true);
   assert.equal(canAccessAppRoute(access('QUALITY'), '/workspace/quality/8d'), true);
+  assert.equal(canAccessAppRoute(access('ISSUE_MANAGEMENT'), '/workspace/quality/internal-risks?workOrderId=w1'), true);
   assert.equal(canAccessAppRoute(access('ISSUE_MANAGEMENT'), '/workspace/quality/8d?issueId=i1'), true);
-  assert.equal(canAccessAppRoute(access('PLANNING'), '/workspace/quality/8d'), false);
+  assert.equal(canAccessAppRoute(access('PLANNING'), '/workspace/quality'), false);
 });

@@ -71,6 +71,7 @@ export const API_ROUTE_ACCESS_RULES: readonly ApiRule[] = [
   { prefix: '/api/material-follow-ups', anyOf: ['PROCUREMENT'] },
   { prefix: '/api/warehouse', anyOf: ['WAREHOUSE'] },
 
+  { prefix: '/api/quality/internal-risks', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'], readOnlyModules: ['ISSUE_MANAGEMENT'] },
   { prefix: '/api/quality/8d', anyOf: ['QUALITY', 'ISSUE_MANAGEMENT'] },
   { prefix: '/api/issues/from-production-alert', anyOf: ['QUALITY'] },
   { prefix: '/api/issues/detected', anyOf: ['QUALITY'] },
@@ -270,6 +271,30 @@ function pathOnly(value: string): string {
 
 export function apiRouteAccessRule(pathname: string): ApiRule | null {
   const path = pathOnly(pathname);
+
+  if (/^\/api\/work-orders\/[^/]+\/quality-alerts\/link$/.test(path)) {
+    return {
+      prefix: '/api/work-orders/:id/quality-alerts/link',
+      anyOf: ['QUALITY'],
+      action: 'UPDATE',
+    };
+  }
+
+  if (/^\/api\/work-orders\/[^/]+\/quality-alerts\/[^/]+\/acknowledge$/.test(path)) {
+    return {
+      prefix: '/api/work-orders/:id/quality-alerts/:alertId/acknowledge',
+      anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'QUALITY'],
+      action: 'UPDATE',
+    };
+  }
+
+  if (/^\/api\/work-orders\/[^/]+\/quality-alerts$/.test(path)) {
+    return {
+      prefix: '/api/work-orders/:id/quality-alerts',
+      anyOf: ['BUSINESS', 'PLANNING', 'PRODUCTION', 'ENGINEERING', 'QUALITY', 'ISSUE_MANAGEMENT'],
+      action: 'READ',
+    };
+  }
 
   if (/^\/api\/training\/plans\/[^/]+\/(?:transition|archive|unarchive)$/.test(path)) {
     return {

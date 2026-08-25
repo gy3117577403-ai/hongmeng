@@ -9663,3 +9663,343 @@ main.hm-production-workbench.hm-workbench-root.hm-workbench-navigation-overlay >
     display: none;
   }
 }
+
+/* Archived internal-quality risks surfaced in the production work-order detail. */
+.hm-production-workbench .production-quality-risk-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.hm-production-workbench .production-quality-risk-heading {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 14px;
+  border: 1px solid #f2c59e;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #fff7ed 0%, #fffdfa 100%);
+}
+
+.hm-production-workbench .production-quality-risk-heading > div {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  color: #d95d0b;
+}
+
+.hm-production-workbench .production-quality-risk-heading span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.hm-production-workbench .production-quality-risk-heading strong {
+  color: #6e3513;
+  font-size: 13px;
+}
+
+.hm-production-workbench .production-quality-risk-heading small {
+  color: #95613e;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.hm-production-workbench .production-quality-risk-heading > a {
+  min-height: 32px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid #efb27e;
+  border-radius: 7px;
+  background: #fff;
+  color: #c95408;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.hm-production-workbench .production-quality-risk-panel > .form-error {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hm-production-workbench .production-quality-risk-panel > .form-error button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.hm-production-workbench .production-quality-risk-section,
+.hm-production-workbench .production-quality-risk-list {
+  display: grid;
+  gap: 9px;
+}
+
+.hm-production-workbench .production-quality-risk-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hm-production-workbench .production-quality-risk-section-title strong {
+  color: #263246;
+  font-size: 12px;
+}
+
+.hm-production-workbench .production-quality-risk-section-title span {
+  color: #8a94a5;
+  font-size: 10px;
+}
+
+.hm-production-workbench .production-quality-risk-card {
+  overflow: hidden;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #e1e6ed;
+  border-left: 4px solid #d08a3f;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(31, 45, 67, .04);
+}
+
+.hm-production-workbench .production-quality-risk-card.severity-critical { border-left-color: #c9362b; }
+.hm-production-workbench .production-quality-risk-card.severity-high { border-left-color: #e26419; }
+.hm-production-workbench .production-quality-risk-card.severity-medium { border-left-color: #d59a19; }
+.hm-production-workbench .production-quality-risk-card.severity-low { border-left-color: #5387a7; }
+.hm-production-workbench .production-quality-risk-card.state-expired { opacity: .68; }
+
+.hm-production-workbench .production-quality-risk-card > header,
+.hm-production-workbench .production-quality-risk-card > footer {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.hm-production-workbench .production-quality-risk-card > header > span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hm-production-workbench .production-quality-risk-card > header em {
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  border-radius: 999px;
+  background: #fff1e7;
+  color: #c6530c;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.hm-production-workbench .production-quality-risk-card.severity-critical > header em {
+  background: #fff0ef;
+  color: #b72c25;
+}
+
+.hm-production-workbench .production-quality-risk-card > header b {
+  overflow: hidden;
+  color: #263246;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-quality-risk-card > header > i {
+  flex: 0 0 auto;
+  color: #7c8798;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+}
+
+.hm-production-workbench .production-quality-risk-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.hm-production-workbench .production-quality-risk-facts p {
+  min-width: 0;
+  margin: 0;
+  padding: 8px 9px;
+  display: grid;
+  gap: 4px;
+  border-radius: 7px;
+  background: #f7f9fb;
+}
+
+.hm-production-workbench .production-quality-risk-facts p.wide { grid-column: 1 / -1; }
+
+.hm-production-workbench .production-quality-risk-facts span {
+  color: #8a94a5;
+  font-size: 9px;
+}
+
+.hm-production-workbench .production-quality-risk-facts strong {
+  color: #38455a;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+.hm-production-workbench .production-quality-risk-card > footer > span {
+  color: #8791a1;
+  font-size: 9px;
+}
+
+.hm-production-workbench .production-quality-risk-card > footer > div {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.hm-production-workbench .production-quality-risk-card > footer a,
+.hm-production-workbench .production-quality-risk-card > footer button {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 9px;
+  border: 1px solid #d7dde6;
+  border-radius: 6px;
+  background: #fff;
+  color: #526176;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.hm-production-workbench .production-quality-risk-card > footer button.primary-button {
+  border-color: #ed6a16;
+  background: #ed6a16;
+  color: #fff;
+}
+
+.hm-production-workbench .production-quality-risk-card > footer button:disabled {
+  cursor: default;
+  opacity: .58;
+}
+
+.hm-production-workbench .production-quality-risk-section.suggestions {
+  padding-top: 12px;
+  border-top: 1px solid #e6eaf0;
+}
+
+.hm-production-workbench .production-quality-risk-explainer,
+.hm-production-workbench .production-quality-risk-suggestion-reason {
+  margin: 0;
+  color: #7b6958;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.hm-production-workbench .production-quality-risk-explainer {
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: #fff8ed;
+}
+
+.hm-production-workbench .production-quality-risk-panel .production-task-empty {
+  min-height: 92px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px dashed #dce2e9;
+  border-radius: 8px;
+  background: #fafbfd;
+  color: #7c8798;
+  font-size: 11px;
+}
+
+.hm-production-workbench .production-risk-confirm-backdrop {
+  z-index: calc(var(--z-modal) + 1);
+  background: rgba(22, 29, 39, .48);
+}
+
+.hm-production-workbench .production-risk-confirm {
+  display: grid;
+  gap: 14px;
+}
+
+.hm-production-workbench .production-risk-confirm-target {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #f0bf97;
+  border-radius: 9px;
+  background: #fff7ee;
+  color: #d45b0d;
+}
+
+.hm-production-workbench .production-risk-confirm-target > span {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.hm-production-workbench .production-risk-confirm-target small {
+  color: #a86130;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hm-production-workbench .production-risk-confirm-target strong {
+  overflow: hidden;
+  color: #5e3418;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hm-production-workbench .production-risk-confirm-rules {
+  margin: 0;
+  padding: 0 0 0 20px;
+  display: grid;
+  gap: 8px;
+  color: #566175;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.hm-production-workbench .production-risk-confirm-rules b {
+  color: #bd3e2f;
+}
+
+.hm-production-workbench .production-risk-confirm > .form-error {
+  margin: 0;
+}
+
+@media (max-width: 720px) {
+  .hm-production-workbench .production-quality-risk-heading,
+  .hm-production-workbench .production-quality-risk-card > footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .hm-production-workbench .production-quality-risk-facts {
+    grid-template-columns: 1fr;
+  }
+
+  .hm-production-workbench .production-quality-risk-facts p.wide { grid-column: auto; }
+}

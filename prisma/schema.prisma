@@ -434,142 +434,149 @@ enum RecruitmentInterviewStatus {
 }
 
 model User {
-  id                             String                             @id @default(uuid())
-  username                       String                             @unique
-  passwordHash                   String                             @map("password_hash")
-  displayName                    String                             @map("display_name")
-  isActive                       Boolean                            @default(true) @map("is_active")
-  accountStatus                  AccountStatus                      @default(ACTIVE) @map("account_status")
-  sessionVersion                 Int                                @default(0) @map("session_version")
-  mustChangePassword             Boolean                            @default(false) @map("must_change_password")
-  fieldPasswordOnly              Boolean                            @default(false) @map("field_password_only")
-  lastLoginAt                    DateTime?                          @map("last_login_at")
-  failedLoginAttempts            Int                                @default(0) @map("failed_login_attempts")
-  lockedUntil                    DateTime?                          @map("locked_until")
-  laborRole                      LaborAccessRole                    @default(EMPLOYEE) @map("labor_role")
-  employeeId                     String?                            @unique @map("employee_id")
-  createdAt                      DateTime                           @default(now()) @map("created_at")
-  updatedAt                      DateTime                           @updatedAt @map("updated_at")
-  employee                       Employee?                          @relation(fields: [employeeId], references: [id], onDelete: SetNull)
-  accessGrants                   UserAccessGrant[]                  @relation("AccessGrantUser")
-  grantedAccessGrants            UserAccessGrant[]                  @relation("AccessGrantGrantedBy")
-  uploadedFiles                  ResourceFile[]                     @relation("UploadedFiles")
-  drawingLibraryFiles            DrawingLibraryFile[]               @relation("UploadedDrawingLibraryFiles")
+  id                             String                                 @id @default(uuid())
+  username                       String                                 @unique
+  passwordHash                   String                                 @map("password_hash")
+  displayName                    String                                 @map("display_name")
+  isActive                       Boolean                                @default(true) @map("is_active")
+  accountStatus                  AccountStatus                          @default(ACTIVE) @map("account_status")
+  sessionVersion                 Int                                    @default(0) @map("session_version")
+  mustChangePassword             Boolean                                @default(false) @map("must_change_password")
+  fieldPasswordOnly              Boolean                                @default(false) @map("field_password_only")
+  lastLoginAt                    DateTime?                              @map("last_login_at")
+  failedLoginAttempts            Int                                    @default(0) @map("failed_login_attempts")
+  lockedUntil                    DateTime?                              @map("locked_until")
+  laborRole                      LaborAccessRole                        @default(EMPLOYEE) @map("labor_role")
+  employeeId                     String?                                @unique @map("employee_id")
+  createdAt                      DateTime                               @default(now()) @map("created_at")
+  updatedAt                      DateTime                               @updatedAt @map("updated_at")
+  employee                       Employee?                              @relation(fields: [employeeId], references: [id], onDelete: SetNull)
+  accessGrants                   UserAccessGrant[]                      @relation("AccessGrantUser")
+  grantedAccessGrants            UserAccessGrant[]                      @relation("AccessGrantGrantedBy")
+  uploadedFiles                  ResourceFile[]                         @relation("UploadedFiles")
+  drawingLibraryFiles            DrawingLibraryFile[]                   @relation("UploadedDrawingLibraryFiles")
   operationLogs                  OperationLog[]
-  employeeNumberReorderBatches   EmployeeNumberReorderBatch[]       @relation("EmployeeNumberReorderCreatedBy")
-  reportedIssues                 Issue[]                            @relation("IssueReporter")
-  assignedIssues                 Issue[]                            @relation("IssueAssignee")
-  issueActivities                IssueActivity[]                    @relation("IssueActivityActor")
-  issueAttachments               IssueAttachment[]                  @relation("IssueAttachmentUploader")
-  createdEightDReports           EightDReport[]                     @relation("EightDReportCreatedBy")
-  updatedEightDReports           EightDReport[]                     @relation("EightDReportUpdatedBy")
-  uploadedEightDReportVersions   EightDReportVersion[]              @relation("EightDReportVersionUploadedBy")
-  eightDReportActivities         EightDReportActivity[]             @relation("EightDReportActivityActor")
-  requesterConfirmedIssues       Issue[]                            @relation("IssueRequesterConfirmedBy")
-  requestedChanges               ChangeRequest[]                    @relation("ChangeRequester")
-  ownedChanges                   ChangeRequest[]                    @relation("ChangeOwner")
-  changeActivities               ChangeActivity[]                   @relation("ChangeActivityActor")
-  changeAttachments              ChangeAttachment[]                 @relation("ChangeAttachmentUploader")
-  completedMaterialTasks         WarehouseMaterialTask[]            @relation("WarehouseTaskCompletedBy")
-  updatedMaterialTasks           WarehouseMaterialTask[]            @relation("WarehouseTaskUpdatedBy")
-  warehouseActivities            WarehouseMaterialActivity[]        @relation("WarehouseActivityActor")
-  reportedWarehouseExceptions    WarehouseMaterialExceptionCase[]   @relation("WarehouseExceptionReportedBy")
-  estimatedWarehouseExceptions   WarehouseMaterialExceptionCase[]   @relation("WarehouseExceptionExpectedBy")
-  arrivedWarehouseExceptions     WarehouseMaterialExceptionCase[]   @relation("WarehouseExceptionArrivedBy")
-  resolvedWarehouseExceptions    WarehouseMaterialExceptionCase[]   @relation("WarehouseExceptionResolvedBy")
-  createdMaterialFollowUps       MaterialFollowUpTask[]             @relation("MaterialFollowUpCreatedBy")
-  ownedMaterialFollowUps         MaterialFollowUpTask[]             @relation("MaterialFollowUpOwner")
-  resolvedMaterialFollowUps      MaterialFollowUpTask[]             @relation("MaterialFollowUpResolvedBy")
-  materialFollowUpActivities     MaterialFollowUpActivity[]         @relation("MaterialFollowUpActivityActor")
-  createdProcessTemplates        ProcessTemplate[]                  @relation("ProcessTemplateCreatedBy")
-  createdProcessTimeStandards    ProcessTimeStandard[]              @relation("ProcessTimeStandardCreatedBy")
-  createdProductTimeProfiles     ProductTimeProfile[]               @relation("ProductTimeProfileCreatedBy")
-  updatedProductTimeProfiles     ProductTimeProfile[]               @relation("ProductTimeProfileUpdatedBy")
-  publishedProductTimeProfiles   ProductTimeProfile[]               @relation("ProductTimeProfilePublishedBy")
-  createdProductQuotationTimes   ProductQuotationTime[]             @relation("ProductQuotationTimeCreatedBy")
-  confirmedProcessRoutes         WorkOrderProcessRoute[]            @relation("ProcessRouteConfirmedBy")
-  completedProcessSteps          WorkOrderProcessStep[]             @relation("ProcessStepCompletedBy")
-  recordedProcessExecutions      ProcessExecution[]                 @relation("ProcessExecutionRecordedBy")
-  processRouteActivities         ProcessRouteActivity[]             @relation("ProcessRouteActivityActor")
-  createdKnowledgeArticles       KnowledgeArticle[]                 @relation("KnowledgeArticleCreatedBy")
-  updatedKnowledgeArticles       KnowledgeArticle[]                 @relation("KnowledgeArticleUpdatedBy")
-  knowledgeAttachments           KnowledgeAttachment[]              @relation("KnowledgeAttachmentUploader")
-  createdAttendanceRecords       AttendanceRecord[]                 @relation("AttendanceRecordCreatedBy")
-  updatedAttendanceRecords       AttendanceRecord[]                 @relation("AttendanceRecordUpdatedBy")
-  confirmedAttendanceRecords     AttendanceRecord[]                 @relation("AttendanceRecordConfirmedBy")
-  createdAbnormalTimeEvents      AbnormalTimeEvent[]                @relation("AbnormalTimeEventCreatedBy")
-  updatedAbnormalTimeEvents      AbnormalTimeEvent[]                @relation("AbnormalTimeEventUpdatedBy")
-  qualityConfirmedAbnormalEvents AbnormalTimeEvent[]                @relation("AbnormalTimeEventQualityConfirmedBy")
-  resolvedAbnormalTimeEvents     AbnormalTimeEvent[]                @relation("AbnormalTimeEventResolvedBy")
-  createdRecruitmentDemands      RecruitmentDemand[]                @relation("RecruitmentDemandCreatedBy")
-  updatedRecruitmentDemands      RecruitmentDemand[]                @relation("RecruitmentDemandUpdatedBy")
-  approvedRecruitmentDemands     RecruitmentDemand[]                @relation("RecruitmentDemandApprovedBy")
-  createdRecruitmentCandidates   RecruitmentCandidate[]             @relation("RecruitmentCandidateCreatedBy")
-  updatedRecruitmentCandidates   RecruitmentCandidate[]             @relation("RecruitmentCandidateUpdatedBy")
-  createdRecruitmentInterviews   RecruitmentInterview[]             @relation("RecruitmentInterviewCreatedBy")
-  updatedRecruitmentInterviews   RecruitmentInterview[]             @relation("RecruitmentInterviewUpdatedBy")
-  recruitmentActivities          RecruitmentActivity[]              @relation("RecruitmentActivityActor")
-  createdProductionPlanOrders    ProductionPlanOrder[]              @relation("ProductionPlanOrderCreatedBy")
-  updatedProductionPlanOrders    ProductionPlanOrder[]              @relation("ProductionPlanOrderUpdatedBy")
-  releasedProductionPlanBatches  ProductionPlanBatch[]              @relation("ProductionPlanBatchReleasedBy")
-  activatedProductionPlanBatches ProductionPlanBatch[]              @relation("ProductionPlanBatchActivatedBy")
-  includedProductionCarryovers   ProductionCarryover[]              @relation("ProductionCarryoverIncludedBy")
-  productionPlanChanges          ProductionPlanChange[]             @relation("ProductionPlanChangeActor")
-  createdProcessCompletions      ProcessCompletion[]                @relation("ProcessCompletionCreatedBy")
-  voidedProcessCompletions       ProcessCompletion[]                @relation("ProcessCompletionVoidedBy")
-  claimedProcessLaborClaims      ProcessLaborClaim[]                @relation("ProcessLaborClaimClaimedBy")
-  voidedProcessLaborClaims       ProcessLaborClaim[]                @relation("ProcessLaborClaimVoidedBy")
-  createdSopDocuments            SopDocument[]                      @relation("SopDocumentCreatedBy")
-  updatedSopDocuments            SopDocument[]                      @relation("SopDocumentUpdatedBy")
-  createdSopVersions             SopVersion[]                       @relation("SopVersionCreatedBy")
-  updatedSopVersions             SopVersion[]                       @relation("SopVersionUpdatedBy")
-  publishedSopVersions           SopVersion[]                       @relation("SopVersionPublishedBy")
-  uploadedSopAssets              SopAsset[]                         @relation("SopAssetUploadedBy")
-  createdPdfOverlayDocuments     PdfOverlayDocument[]               @relation("PdfOverlayDocumentCreatedBy")
-  updatedPdfOverlayDocuments     PdfOverlayDocument[]               @relation("PdfOverlayDocumentUpdatedBy")
-  createdPdfOverlayVersions      PdfOverlayVersion[]                @relation("PdfOverlayVersionCreatedBy")
-  updatedPdfOverlayVersions      PdfOverlayVersion[]                @relation("PdfOverlayVersionUpdatedBy")
-  publishedPdfOverlayVersions    PdfOverlayVersion[]                @relation("PdfOverlayVersionPublishedBy")
-  uploadedPdfOverlayAssets       PdfOverlayAsset[]                  @relation("PdfOverlayAssetUploadedBy")
-  createdDailyProductionPlans    DailyProductionPlan[]              @relation("DailyPlanCreatedBy")
-  updatedDailyProductionPlans    DailyProductionPlan[]              @relation("DailyPlanUpdatedBy")
-  confirmedDailyProductionPlans  DailyProductionPlan[]              @relation("DailyPlanConfirmedBy")
-  assignedDailyTaskAssignments   DailyTaskAssignment[]              @relation("DailyAssignmentAssignedBy")
-  setDailyCapacityOverrides      DailyCapacityOverride[]            @relation("DailyCapacityOverrideSetBy")
-  dailyPlanRevisions             DailyPlanRevision[]                @relation("DailyPlanRevisionActor")
-  requestedDailyCrossTeam        DailyCrossTeamRequest[]            @relation("DailyCrossTeamRequestedBy")
-  reviewedDailyCrossTeam         DailyCrossTeamRequest[]            @relation("DailyCrossTeamReviewedBy")
-  createdDailyShipmentPlans      DailyShipmentPlan[]                @relation("DailyShipmentPlanCreatedBy")
-  updatedDailyShipmentPlans      DailyShipmentPlan[]                @relation("DailyShipmentPlanUpdatedBy")
-  confirmedDailyShipmentPlans    DailyShipmentPlan[]                @relation("DailyShipmentPlanConfirmedBy")
-  closedDailyShipmentPlans       DailyShipmentPlan[]                @relation("DailyShipmentPlanClosedBy")
-  createdDailyShipmentItems      DailyShipmentPlanItem[]            @relation("DailyShipmentItemCreatedBy")
-  updatedDailyShipmentItems      DailyShipmentPlanItem[]            @relation("DailyShipmentItemUpdatedBy")
-  dailyShipmentEvents            ShipmentEvent[]                    @relation("ShipmentEventActor")
-  dailyShipmentRevisions         DailyShipmentRevision[]            @relation("DailyShipmentRevisionActor")
-  createdWeeklyWorkerPresets     WeeklyProcessWorkerPreset[]        @relation("WeeklyProcessWorkerPresetCreatedBy")
-  updatedWeeklyWorkerPresets     WeeklyProcessWorkerPreset[]        @relation("WeeklyProcessWorkerPresetUpdatedBy")
-  createdWorkOrderQrTickets      WorkOrderQrTicket[]                @relation("WorkOrderQrTicketCreatedBy")
-  printedWorkOrderQrPrints       WorkOrderQrPrint[]                 @relation("WorkOrderQrPrintPrintedBy")
-  confirmedWorkOrderQrPrints     WorkOrderQrPrint[]                 @relation("WorkOrderQrPrintConfirmedBy")
-  confirmedWorkOrderQrPrintItems WorkOrderQrPrintItem[]             @relation("WorkOrderQrPrintItemConfirmedBy")
-  employeeEmploymentEvents       EmployeeEmploymentEvent[]          @relation("EmployeeEmploymentEventActor")
-  createdSystemNotifications     SystemNotification[]               @relation("SystemNotificationActor")
+  employeeNumberReorderBatches   EmployeeNumberReorderBatch[]           @relation("EmployeeNumberReorderCreatedBy")
+  reportedIssues                 Issue[]                                @relation("IssueReporter")
+  assignedIssues                 Issue[]                                @relation("IssueAssignee")
+  issueActivities                IssueActivity[]                        @relation("IssueActivityActor")
+  issueAttachments               IssueAttachment[]                      @relation("IssueAttachmentUploader")
+  createdEightDReports           EightDReport[]                         @relation("EightDReportCreatedBy")
+  updatedEightDReports           EightDReport[]                         @relation("EightDReportUpdatedBy")
+  uploadedEightDReportVersions   EightDReportVersion[]                  @relation("EightDReportVersionUploadedBy")
+  eightDReportActivities         EightDReportActivity[]                 @relation("EightDReportActivityActor")
+  createdInternalQualityRisks    InternalQualityRiskReport[]            @relation("InternalQualityRiskCreatedBy")
+  updatedInternalQualityRisks    InternalQualityRiskReport[]            @relation("InternalQualityRiskUpdatedBy")
+  archivedInternalQualityRisks   InternalQualityRiskReport[]            @relation("InternalQualityRiskArchivedBy")
+  deletedInternalQualityRisks    InternalQualityRiskReport[]            @relation("InternalQualityRiskDeletedBy")
+  archivedQualityRiskRevisions   InternalQualityRiskRevision[]          @relation("InternalQualityRiskRevisionArchivedBy")
+  internalQualityRiskActivities  InternalQualityRiskActivity[]          @relation("InternalQualityRiskActivityActor")
+  qualityAlertAcknowledgements   WorkOrderQualityAlertAcknowledgement[] @relation("WorkOrderQualityAlertAcknowledgedBy")
+  requesterConfirmedIssues       Issue[]                                @relation("IssueRequesterConfirmedBy")
+  requestedChanges               ChangeRequest[]                        @relation("ChangeRequester")
+  ownedChanges                   ChangeRequest[]                        @relation("ChangeOwner")
+  changeActivities               ChangeActivity[]                       @relation("ChangeActivityActor")
+  changeAttachments              ChangeAttachment[]                     @relation("ChangeAttachmentUploader")
+  completedMaterialTasks         WarehouseMaterialTask[]                @relation("WarehouseTaskCompletedBy")
+  updatedMaterialTasks           WarehouseMaterialTask[]                @relation("WarehouseTaskUpdatedBy")
+  warehouseActivities            WarehouseMaterialActivity[]            @relation("WarehouseActivityActor")
+  reportedWarehouseExceptions    WarehouseMaterialExceptionCase[]       @relation("WarehouseExceptionReportedBy")
+  estimatedWarehouseExceptions   WarehouseMaterialExceptionCase[]       @relation("WarehouseExceptionExpectedBy")
+  arrivedWarehouseExceptions     WarehouseMaterialExceptionCase[]       @relation("WarehouseExceptionArrivedBy")
+  resolvedWarehouseExceptions    WarehouseMaterialExceptionCase[]       @relation("WarehouseExceptionResolvedBy")
+  createdMaterialFollowUps       MaterialFollowUpTask[]                 @relation("MaterialFollowUpCreatedBy")
+  ownedMaterialFollowUps         MaterialFollowUpTask[]                 @relation("MaterialFollowUpOwner")
+  resolvedMaterialFollowUps      MaterialFollowUpTask[]                 @relation("MaterialFollowUpResolvedBy")
+  materialFollowUpActivities     MaterialFollowUpActivity[]             @relation("MaterialFollowUpActivityActor")
+  createdProcessTemplates        ProcessTemplate[]                      @relation("ProcessTemplateCreatedBy")
+  createdProcessTimeStandards    ProcessTimeStandard[]                  @relation("ProcessTimeStandardCreatedBy")
+  createdProductTimeProfiles     ProductTimeProfile[]                   @relation("ProductTimeProfileCreatedBy")
+  updatedProductTimeProfiles     ProductTimeProfile[]                   @relation("ProductTimeProfileUpdatedBy")
+  publishedProductTimeProfiles   ProductTimeProfile[]                   @relation("ProductTimeProfilePublishedBy")
+  createdProductQuotationTimes   ProductQuotationTime[]                 @relation("ProductQuotationTimeCreatedBy")
+  confirmedProcessRoutes         WorkOrderProcessRoute[]                @relation("ProcessRouteConfirmedBy")
+  completedProcessSteps          WorkOrderProcessStep[]                 @relation("ProcessStepCompletedBy")
+  recordedProcessExecutions      ProcessExecution[]                     @relation("ProcessExecutionRecordedBy")
+  processRouteActivities         ProcessRouteActivity[]                 @relation("ProcessRouteActivityActor")
+  createdKnowledgeArticles       KnowledgeArticle[]                     @relation("KnowledgeArticleCreatedBy")
+  updatedKnowledgeArticles       KnowledgeArticle[]                     @relation("KnowledgeArticleUpdatedBy")
+  knowledgeAttachments           KnowledgeAttachment[]                  @relation("KnowledgeAttachmentUploader")
+  createdAttendanceRecords       AttendanceRecord[]                     @relation("AttendanceRecordCreatedBy")
+  updatedAttendanceRecords       AttendanceRecord[]                     @relation("AttendanceRecordUpdatedBy")
+  confirmedAttendanceRecords     AttendanceRecord[]                     @relation("AttendanceRecordConfirmedBy")
+  createdAbnormalTimeEvents      AbnormalTimeEvent[]                    @relation("AbnormalTimeEventCreatedBy")
+  updatedAbnormalTimeEvents      AbnormalTimeEvent[]                    @relation("AbnormalTimeEventUpdatedBy")
+  qualityConfirmedAbnormalEvents AbnormalTimeEvent[]                    @relation("AbnormalTimeEventQualityConfirmedBy")
+  resolvedAbnormalTimeEvents     AbnormalTimeEvent[]                    @relation("AbnormalTimeEventResolvedBy")
+  createdRecruitmentDemands      RecruitmentDemand[]                    @relation("RecruitmentDemandCreatedBy")
+  updatedRecruitmentDemands      RecruitmentDemand[]                    @relation("RecruitmentDemandUpdatedBy")
+  approvedRecruitmentDemands     RecruitmentDemand[]                    @relation("RecruitmentDemandApprovedBy")
+  createdRecruitmentCandidates   RecruitmentCandidate[]                 @relation("RecruitmentCandidateCreatedBy")
+  updatedRecruitmentCandidates   RecruitmentCandidate[]                 @relation("RecruitmentCandidateUpdatedBy")
+  createdRecruitmentInterviews   RecruitmentInterview[]                 @relation("RecruitmentInterviewCreatedBy")
+  updatedRecruitmentInterviews   RecruitmentInterview[]                 @relation("RecruitmentInterviewUpdatedBy")
+  recruitmentActivities          RecruitmentActivity[]                  @relation("RecruitmentActivityActor")
+  createdProductionPlanOrders    ProductionPlanOrder[]                  @relation("ProductionPlanOrderCreatedBy")
+  updatedProductionPlanOrders    ProductionPlanOrder[]                  @relation("ProductionPlanOrderUpdatedBy")
+  releasedProductionPlanBatches  ProductionPlanBatch[]                  @relation("ProductionPlanBatchReleasedBy")
+  activatedProductionPlanBatches ProductionPlanBatch[]                  @relation("ProductionPlanBatchActivatedBy")
+  includedProductionCarryovers   ProductionCarryover[]                  @relation("ProductionCarryoverIncludedBy")
+  productionPlanChanges          ProductionPlanChange[]                 @relation("ProductionPlanChangeActor")
+  createdProcessCompletions      ProcessCompletion[]                    @relation("ProcessCompletionCreatedBy")
+  voidedProcessCompletions       ProcessCompletion[]                    @relation("ProcessCompletionVoidedBy")
+  claimedProcessLaborClaims      ProcessLaborClaim[]                    @relation("ProcessLaborClaimClaimedBy")
+  voidedProcessLaborClaims       ProcessLaborClaim[]                    @relation("ProcessLaborClaimVoidedBy")
+  createdSopDocuments            SopDocument[]                          @relation("SopDocumentCreatedBy")
+  updatedSopDocuments            SopDocument[]                          @relation("SopDocumentUpdatedBy")
+  createdSopVersions             SopVersion[]                           @relation("SopVersionCreatedBy")
+  updatedSopVersions             SopVersion[]                           @relation("SopVersionUpdatedBy")
+  publishedSopVersions           SopVersion[]                           @relation("SopVersionPublishedBy")
+  uploadedSopAssets              SopAsset[]                             @relation("SopAssetUploadedBy")
+  createdPdfOverlayDocuments     PdfOverlayDocument[]                   @relation("PdfOverlayDocumentCreatedBy")
+  updatedPdfOverlayDocuments     PdfOverlayDocument[]                   @relation("PdfOverlayDocumentUpdatedBy")
+  createdPdfOverlayVersions      PdfOverlayVersion[]                    @relation("PdfOverlayVersionCreatedBy")
+  updatedPdfOverlayVersions      PdfOverlayVersion[]                    @relation("PdfOverlayVersionUpdatedBy")
+  publishedPdfOverlayVersions    PdfOverlayVersion[]                    @relation("PdfOverlayVersionPublishedBy")
+  uploadedPdfOverlayAssets       PdfOverlayAsset[]                      @relation("PdfOverlayAssetUploadedBy")
+  createdDailyProductionPlans    DailyProductionPlan[]                  @relation("DailyPlanCreatedBy")
+  updatedDailyProductionPlans    DailyProductionPlan[]                  @relation("DailyPlanUpdatedBy")
+  confirmedDailyProductionPlans  DailyProductionPlan[]                  @relation("DailyPlanConfirmedBy")
+  assignedDailyTaskAssignments   DailyTaskAssignment[]                  @relation("DailyAssignmentAssignedBy")
+  setDailyCapacityOverrides      DailyCapacityOverride[]                @relation("DailyCapacityOverrideSetBy")
+  dailyPlanRevisions             DailyPlanRevision[]                    @relation("DailyPlanRevisionActor")
+  requestedDailyCrossTeam        DailyCrossTeamRequest[]                @relation("DailyCrossTeamRequestedBy")
+  reviewedDailyCrossTeam         DailyCrossTeamRequest[]                @relation("DailyCrossTeamReviewedBy")
+  createdDailyShipmentPlans      DailyShipmentPlan[]                    @relation("DailyShipmentPlanCreatedBy")
+  updatedDailyShipmentPlans      DailyShipmentPlan[]                    @relation("DailyShipmentPlanUpdatedBy")
+  confirmedDailyShipmentPlans    DailyShipmentPlan[]                    @relation("DailyShipmentPlanConfirmedBy")
+  closedDailyShipmentPlans       DailyShipmentPlan[]                    @relation("DailyShipmentPlanClosedBy")
+  createdDailyShipmentItems      DailyShipmentPlanItem[]                @relation("DailyShipmentItemCreatedBy")
+  updatedDailyShipmentItems      DailyShipmentPlanItem[]                @relation("DailyShipmentItemUpdatedBy")
+  dailyShipmentEvents            ShipmentEvent[]                        @relation("ShipmentEventActor")
+  dailyShipmentRevisions         DailyShipmentRevision[]                @relation("DailyShipmentRevisionActor")
+  createdWeeklyWorkerPresets     WeeklyProcessWorkerPreset[]            @relation("WeeklyProcessWorkerPresetCreatedBy")
+  updatedWeeklyWorkerPresets     WeeklyProcessWorkerPreset[]            @relation("WeeklyProcessWorkerPresetUpdatedBy")
+  createdWorkOrderQrTickets      WorkOrderQrTicket[]                    @relation("WorkOrderQrTicketCreatedBy")
+  printedWorkOrderQrPrints       WorkOrderQrPrint[]                     @relation("WorkOrderQrPrintPrintedBy")
+  confirmedWorkOrderQrPrints     WorkOrderQrPrint[]                     @relation("WorkOrderQrPrintConfirmedBy")
+  confirmedWorkOrderQrPrintItems WorkOrderQrPrintItem[]                 @relation("WorkOrderQrPrintItemConfirmedBy")
+  employeeEmploymentEvents       EmployeeEmploymentEvent[]              @relation("EmployeeEmploymentEventActor")
+  createdSystemNotifications     SystemNotification[]                   @relation("SystemNotificationActor")
   systemNotificationRecipients   SystemNotificationRecipient[]
-  submittedMajorQualityApprovals IssueMajorApproval[]               @relation("IssueMajorApprovalSubmittedBy")
-  qualityReviewedMajorApprovals  IssueMajorApproval[]               @relation("IssueMajorApprovalQualityReviewedBy")
-  finalReviewedMajorApprovals    IssueMajorApproval[]               @relation("IssueMajorApprovalFinalReviewedBy")
-  majorQualityApprovalEvents     IssueMajorApprovalEvent[]          @relation("IssueMajorApprovalEventActor")
-  resetFieldReportPinCredentials EmployeeFieldReportPinCredential[] @relation("FieldReportPinCredentialResetBy")
-  createdFieldReportTerminals    FieldReportTerminal[]              @relation("FieldReportTerminalCreatedBy")
-  updatedFieldReportTerminals    FieldReportTerminal[]              @relation("FieldReportTerminalUpdatedBy")
+  submittedMajorQualityApprovals IssueMajorApproval[]                   @relation("IssueMajorApprovalSubmittedBy")
+  qualityReviewedMajorApprovals  IssueMajorApproval[]                   @relation("IssueMajorApprovalQualityReviewedBy")
+  finalReviewedMajorApprovals    IssueMajorApproval[]                   @relation("IssueMajorApprovalFinalReviewedBy")
+  majorQualityApprovalEvents     IssueMajorApprovalEvent[]              @relation("IssueMajorApprovalEventActor")
+  resetFieldReportPinCredentials EmployeeFieldReportPinCredential[]     @relation("FieldReportPinCredentialResetBy")
+  createdFieldReportTerminals    FieldReportTerminal[]                  @relation("FieldReportTerminalCreatedBy")
+  updatedFieldReportTerminals    FieldReportTerminal[]                  @relation("FieldReportTerminalUpdatedBy")
   fieldReportPinSessions         FieldReportPinSession[]
-  createdProcessRouteChanges     ProcessRouteChange[]               @relation("ProcessRouteChangeCreatedBy")
-  updatedProcessRouteChanges     ProcessRouteChange[]               @relation("ProcessRouteChangeUpdatedBy")
-  reviewedProcessRouteChanges    ProcessRouteChange[]               @relation("ProcessRouteChangeReviewedBy")
-  activatedProcessRouteChanges   ProcessRouteChange[]               @relation("ProcessRouteChangeActivatedBy")
-  processRouteChangeEvents       ProcessRouteChangeEvent[]          @relation("ProcessRouteChangeEventActor")
-  processSupplementCoverages     ProcessSupplementCoverage[]        @relation("ProcessSupplementCoverageActor")
+  createdProcessRouteChanges     ProcessRouteChange[]                   @relation("ProcessRouteChangeCreatedBy")
+  updatedProcessRouteChanges     ProcessRouteChange[]                   @relation("ProcessRouteChangeUpdatedBy")
+  reviewedProcessRouteChanges    ProcessRouteChange[]                   @relation("ProcessRouteChangeReviewedBy")
+  activatedProcessRouteChanges   ProcessRouteChange[]                   @relation("ProcessRouteChangeActivatedBy")
+  processRouteChangeEvents       ProcessRouteChangeEvent[]              @relation("ProcessRouteChangeEventActor")
+  processSupplementCoverages     ProcessSupplementCoverage[]            @relation("ProcessSupplementCoverageActor")
 
   @@map("users")
 }
@@ -617,91 +624,93 @@ model UserAccessGrant {
 }
 
 model WorkOrder {
-  id                      String                        @id @default(uuid())
-  code                    String                        @unique
-  businessCode            String?                       @unique @map("business_code")
-  customerName            String?                       @map("customer_name")
-  productName             String                        @map("product_name")
-  stage                   String
-  progress                Int                           @default(0)
-  priority                String                        @default("normal")
-  status                  String                        @default("processing")
-  plannedAt               DateTime?                     @map("planned_at")
-  remark                  String?
-  sourceOrderNo           String?                       @map("source_order_no")
-  salesperson             String?
-  orderDate               DateTime?                     @map("order_date")
-  customerLevel           String?                       @map("customer_level")
-  specification           String?
-  processName             String?                       @map("process_name")
-  uncompletedQty          String?                       @map("uncompleted_qty")
-  productionTargetQty     Int?                          @map("production_target_qty")
-  unitWorkHours           String?                       @map("unit_work_hours")
-  totalWorkHours          String?                       @map("total_work_hours")
-  drawingStatus           String?                       @map("drawing_status")
-  deliveryDay             String?                       @map("delivery_day")
-  materialStatus          String?                       @map("material_status")
-  drawingIssuedAt         DateTime?                     @map("drawing_issued_at")
-  drawingIssueNote        String?                       @map("drawing_issue_note")
-  importBatchId           String?                       @map("import_batch_id")
-  sourceSheetName         String?                       @map("source_sheet_name")
-  sourceRowNo             Int?                          @map("source_row_no")
-  planType                String?                       @map("plan_type")
-  weekStartDate           DateTime?                     @map("week_start_date")
-  weekEndDate             DateTime?                     @map("week_end_date")
-  planActive              Boolean                       @default(true) @map("plan_active")
-  planClearedAt           DateTime?                     @map("plan_cleared_at")
-  planClearedBy           String?                       @map("plan_cleared_by")
-  libraryKey              String?                       @map("library_key")
-  drawingLibraryItemId    String?                       @map("drawing_library_item_id")
-  productionOwner         String?                       @map("production_owner")
-  workstation             String?
-  completedQty            String?                       @map("completed_qty")
-  frontendTransferredQty  Int?                          @map("frontend_transferred_qty")
-  executionVersion        Int                           @default(0) @map("execution_version")
-  parentWorkOrderId       String?                       @map("parent_work_order_id")
-  rootWorkOrderId         String?                       @map("root_work_order_id")
-  branchType              WorkOrderBranchType?          @map("branch_type")
-  branchStatus            WorkOrderBranchStatus?        @map("branch_status")
-  originCompletionId      String?                       @unique @map("origin_completion_id")
-  originStepId            String?                       @map("origin_step_id")
-  rejoinStepId            String?                       @map("rejoin_step_id")
-  branchSequence          Int?                          @map("branch_sequence")
-  startedAt               DateTime?                     @map("started_at")
-  completedAt             DateTime?                     @map("completed_at")
-  lastProgressAt          DateTime?                     @map("last_progress_at")
-  latestProgressRemark    String?                       @map("latest_progress_remark")
-  createdAt               DateTime                      @default(now()) @map("created_at")
-  updatedAt               DateTime                      @updatedAt @map("updated_at")
-  deletedAt               DateTime?                     @map("deleted_at")
-  resourceFiles           ResourceFile[]
-  drawingLibraryItem      DrawingLibraryItem?           @relation("DrawingLibraryWorkOrders", fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
-  lastDrawingLibraryItems DrawingLibraryItem[]          @relation("LastDrawingLibraryWorkOrder")
-  progressLogs            WorkOrderProgressLog[]
-  issues                  Issue[]
-  changeRequests          ChangeRequest[]
-  materialTask            WarehouseMaterialTask?
-  processRoute            WorkOrderProcessRoute?
-  abnormalTimeEvents      AbnormalTimeEvent[]
-  productionPlanBatch     ProductionPlanBatch?
-  productionCarryovers    ProductionCarryover[]
-  parentWorkOrder         WorkOrder?                    @relation("WorkOrderBranchParent", fields: [parentWorkOrderId], references: [id], onDelete: SetNull)
-  branchWorkOrders        WorkOrder[]                   @relation("WorkOrderBranchParent")
-  rootWorkOrder           WorkOrder?                    @relation("WorkOrderBranchRoot", fields: [rootWorkOrderId], references: [id], onDelete: SetNull)
-  rootBranchWorkOrders    WorkOrder[]                   @relation("WorkOrderBranchRoot")
-  originCompletion        ProcessCompletion?            @relation("CompletionBranchWorkOrder", fields: [originCompletionId], references: [id], onDelete: SetNull)
-  originStep              WorkOrderProcessStep?         @relation("WorkOrderBranchOriginStep", fields: [originStepId], references: [id], onDelete: SetNull)
-  rejoinStep              WorkOrderProcessStep?         @relation("WorkOrderBranchRejoinStep", fields: [rejoinStepId], references: [id], onDelete: SetNull)
-  processCompletions      ProcessCompletion[]           @relation("CompletionWorkOrder")
-  quantityMovements       ProcessQuantityMovement[]     @relation("MovementWorkOrder")
-  branchQuantityMovements ProcessQuantityMovement[]     @relation("MovementBranchWorkOrder")
-  processLaborPools       ProcessLaborPool[]
-  dailyProcessTasks       DailyProcessTask[]
-  dailyShipmentItems      DailyShipmentPlanItem[]
-  qrTicket                WorkOrderQrTicket?
-  processRouteChanges     ProcessRouteChange[]
-  supplementObligations   ProcessSupplementObligation[]
-  productTimeDeployments  ProductTimeDeploymentRoute[]
+  id                       String                         @id @default(uuid())
+  code                     String                         @unique
+  businessCode             String?                        @unique @map("business_code")
+  customerName             String?                        @map("customer_name")
+  productName              String                         @map("product_name")
+  stage                    String
+  progress                 Int                            @default(0)
+  priority                 String                         @default("normal")
+  status                   String                         @default("processing")
+  plannedAt                DateTime?                      @map("planned_at")
+  remark                   String?
+  sourceOrderNo            String?                        @map("source_order_no")
+  salesperson              String?
+  orderDate                DateTime?                      @map("order_date")
+  customerLevel            String?                        @map("customer_level")
+  specification            String?
+  processName              String?                        @map("process_name")
+  uncompletedQty           String?                        @map("uncompleted_qty")
+  productionTargetQty      Int?                           @map("production_target_qty")
+  unitWorkHours            String?                        @map("unit_work_hours")
+  totalWorkHours           String?                        @map("total_work_hours")
+  drawingStatus            String?                        @map("drawing_status")
+  deliveryDay              String?                        @map("delivery_day")
+  materialStatus           String?                        @map("material_status")
+  drawingIssuedAt          DateTime?                      @map("drawing_issued_at")
+  drawingIssueNote         String?                        @map("drawing_issue_note")
+  importBatchId            String?                        @map("import_batch_id")
+  sourceSheetName          String?                        @map("source_sheet_name")
+  sourceRowNo              Int?                           @map("source_row_no")
+  planType                 String?                        @map("plan_type")
+  weekStartDate            DateTime?                      @map("week_start_date")
+  weekEndDate              DateTime?                      @map("week_end_date")
+  planActive               Boolean                        @default(true) @map("plan_active")
+  planClearedAt            DateTime?                      @map("plan_cleared_at")
+  planClearedBy            String?                        @map("plan_cleared_by")
+  libraryKey               String?                        @map("library_key")
+  drawingLibraryItemId     String?                        @map("drawing_library_item_id")
+  productionOwner          String?                        @map("production_owner")
+  workstation              String?
+  completedQty             String?                        @map("completed_qty")
+  frontendTransferredQty   Int?                           @map("frontend_transferred_qty")
+  executionVersion         Int                            @default(0) @map("execution_version")
+  parentWorkOrderId        String?                        @map("parent_work_order_id")
+  rootWorkOrderId          String?                        @map("root_work_order_id")
+  branchType               WorkOrderBranchType?           @map("branch_type")
+  branchStatus             WorkOrderBranchStatus?         @map("branch_status")
+  originCompletionId       String?                        @unique @map("origin_completion_id")
+  originStepId             String?                        @map("origin_step_id")
+  rejoinStepId             String?                        @map("rejoin_step_id")
+  branchSequence           Int?                           @map("branch_sequence")
+  startedAt                DateTime?                      @map("started_at")
+  completedAt              DateTime?                      @map("completed_at")
+  lastProgressAt           DateTime?                      @map("last_progress_at")
+  latestProgressRemark     String?                        @map("latest_progress_remark")
+  createdAt                DateTime                       @default(now()) @map("created_at")
+  updatedAt                DateTime                       @updatedAt @map("updated_at")
+  deletedAt                DateTime?                      @map("deleted_at")
+  resourceFiles            ResourceFile[]
+  drawingLibraryItem       DrawingLibraryItem?            @relation("DrawingLibraryWorkOrders", fields: [drawingLibraryItemId], references: [id], onDelete: SetNull)
+  lastDrawingLibraryItems  DrawingLibraryItem[]           @relation("LastDrawingLibraryWorkOrder")
+  progressLogs             WorkOrderProgressLog[]
+  issues                   Issue[]
+  changeRequests           ChangeRequest[]
+  materialTask             WarehouseMaterialTask?
+  processRoute             WorkOrderProcessRoute?
+  abnormalTimeEvents       AbnormalTimeEvent[]
+  productionPlanBatch      ProductionPlanBatch?
+  productionCarryovers     ProductionCarryover[]
+  parentWorkOrder          WorkOrder?                     @relation("WorkOrderBranchParent", fields: [parentWorkOrderId], references: [id], onDelete: SetNull)
+  branchWorkOrders         WorkOrder[]                    @relation("WorkOrderBranchParent")
+  rootWorkOrder            WorkOrder?                     @relation("WorkOrderBranchRoot", fields: [rootWorkOrderId], references: [id], onDelete: SetNull)
+  rootBranchWorkOrders     WorkOrder[]                    @relation("WorkOrderBranchRoot")
+  originCompletion         ProcessCompletion?             @relation("CompletionBranchWorkOrder", fields: [originCompletionId], references: [id], onDelete: SetNull)
+  originStep               WorkOrderProcessStep?          @relation("WorkOrderBranchOriginStep", fields: [originStepId], references: [id], onDelete: SetNull)
+  rejoinStep               WorkOrderProcessStep?          @relation("WorkOrderBranchRejoinStep", fields: [rejoinStepId], references: [id], onDelete: SetNull)
+  processCompletions       ProcessCompletion[]            @relation("CompletionWorkOrder")
+  quantityMovements        ProcessQuantityMovement[]      @relation("MovementWorkOrder")
+  branchQuantityMovements  ProcessQuantityMovement[]      @relation("MovementBranchWorkOrder")
+  processLaborPools        ProcessLaborPool[]
+  dailyProcessTasks        DailyProcessTask[]
+  dailyShipmentItems       DailyShipmentPlanItem[]
+  qrTicket                 WorkOrderQrTicket?
+  processRouteChanges      ProcessRouteChange[]
+  supplementObligations    ProcessSupplementObligation[]
+  productTimeDeployments   ProductTimeDeploymentRoute[]
+  internalQualityRiskLinks InternalQualityRiskWorkOrder[]
+  qualityRiskAlerts        WorkOrderQualityAlert[]
 
   @@unique([parentWorkOrderId, branchSequence])
   @@index([code])
@@ -2624,31 +2633,32 @@ model ResourceFile {
 }
 
 model DrawingLibraryItem {
-  id                     String                             @id @default(uuid())
-  customerName           String                             @map("customer_name")
-  customerCode           String?                            @map("customer_code")
-  productName            String?                            @map("product_name")
-  specification          String
-  libraryKey             String                             @unique @map("library_key")
-  remark                 String?
-  deletedAt              DateTime?                          @map("deleted_at")
-  createdAt              DateTime                           @default(now()) @map("created_at")
-  updatedAt              DateTime                           @updatedAt @map("updated_at")
-  lastWorkOrderId        String?                            @map("last_work_order_id")
-  lastImportedAt         DateTime?                          @map("last_imported_at")
-  files                  DrawingLibraryFile[]
-  workOrders             WorkOrder[]                        @relation("DrawingLibraryWorkOrders")
-  lastWorkOrder          WorkOrder?                         @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
-  productTimeProfiles    ProductTimeProfile[]
-  quotationTimes         ProductQuotationTime[]
-  productionPlanOrders   ProductionPlanOrder[]
-  productTimeDeployments ProductTimeDeployment[]
-  sopDocument            SopDocument?
-  pdfOverlayDocuments    PdfOverlayDocument[]
-  sampleTasks            SampleTask[]
-  productDataRecords     ProductDataRecord[]
-  connectorBindings      ProductConnectorParameterBinding[]
-  eightDReportLinks      EightDReportProduct[]
+  id                       String                             @id @default(uuid())
+  customerName             String                             @map("customer_name")
+  customerCode             String?                            @map("customer_code")
+  productName              String?                            @map("product_name")
+  specification            String
+  libraryKey               String                             @unique @map("library_key")
+  remark                   String?
+  deletedAt                DateTime?                          @map("deleted_at")
+  createdAt                DateTime                           @default(now()) @map("created_at")
+  updatedAt                DateTime                           @updatedAt @map("updated_at")
+  lastWorkOrderId          String?                            @map("last_work_order_id")
+  lastImportedAt           DateTime?                          @map("last_imported_at")
+  files                    DrawingLibraryFile[]
+  workOrders               WorkOrder[]                        @relation("DrawingLibraryWorkOrders")
+  lastWorkOrder            WorkOrder?                         @relation("LastDrawingLibraryWorkOrder", fields: [lastWorkOrderId], references: [id], onDelete: SetNull)
+  productTimeProfiles      ProductTimeProfile[]
+  quotationTimes           ProductQuotationTime[]
+  productionPlanOrders     ProductionPlanOrder[]
+  productTimeDeployments   ProductTimeDeployment[]
+  sopDocument              SopDocument?
+  pdfOverlayDocuments      PdfOverlayDocument[]
+  sampleTasks              SampleTask[]
+  productDataRecords       ProductDataRecord[]
+  connectorBindings        ProductConnectorParameterBinding[]
+  eightDReportLinks        EightDReportProduct[]
+  internalQualityRiskLinks InternalQualityRiskProduct[]
 
   @@index([customerName])
   @@index([customerCode])
@@ -3317,53 +3327,54 @@ model SystemNotificationRecipient {
 }
 
 model Issue {
-  id                        String               @id @default(uuid())
-  sequence                  Int                  @unique @default(autoincrement())
+  id                        String                     @id @default(uuid())
+  sequence                  Int                        @unique @default(autoincrement())
   title                     String
-  type                      String               @default("production")
-  priority                  String               @default("normal")
-  status                    String               @default("pending")
+  type                      String                     @default("production")
+  priority                  String                     @default("normal")
+  status                    String                     @default("pending")
   description               String?
-  sourceType                String?              @map("source_type")
-  sourceId                  String?              @map("source_id")
-  sourceCode                String?              @map("source_code")
-  sourceRoute               String?              @map("source_route")
-  sourceAlertCode           String?              @map("source_alert_code")
-  sourceFingerprint         String?              @unique @map("source_fingerprint")
-  workOrderId               String?              @map("work_order_id")
-  reporterId                String?              @map("reporter_id")
-  assigneeId                String?              @map("assignee_id")
-  assigneeEmployeeId        String?              @map("assignee_employee_id")
-  verifierEmployeeId        String?              @map("verifier_employee_id")
-  dueAt                     DateTime?            @map("due_at")
-  processName               String?              @map("process_name")
-  affectedQuantity          Int?                 @map("affected_quantity")
-  temporaryMeasure          String?              @map("temporary_measure")
-  rootCause                 String?              @map("root_cause")
+  sourceType                String?                    @map("source_type")
+  sourceId                  String?                    @map("source_id")
+  sourceCode                String?                    @map("source_code")
+  sourceRoute               String?                    @map("source_route")
+  sourceAlertCode           String?                    @map("source_alert_code")
+  sourceFingerprint         String?                    @unique @map("source_fingerprint")
+  workOrderId               String?                    @map("work_order_id")
+  reporterId                String?                    @map("reporter_id")
+  assigneeId                String?                    @map("assignee_id")
+  assigneeEmployeeId        String?                    @map("assignee_employee_id")
+  verifierEmployeeId        String?                    @map("verifier_employee_id")
+  dueAt                     DateTime?                  @map("due_at")
+  processName               String?                    @map("process_name")
+  affectedQuantity          Int?                       @map("affected_quantity")
+  temporaryMeasure          String?                    @map("temporary_measure")
+  rootCause                 String?                    @map("root_cause")
   solution                  String?
-  verificationResult        String?              @map("verification_result")
-  requesterConfirmedById    String?              @map("requester_confirmed_by_id")
-  requesterConfirmedAt      DateTime?            @map("requester_confirmed_at")
-  requesterConfirmationNote String?              @map("requester_confirmation_note")
-  isMajorQuality            Boolean              @default(false) @map("is_major_quality")
-  majorQualityReason        String?              @map("major_quality_reason")
-  version                   Int                  @default(0)
-  resolvedAt                DateTime?            @map("resolved_at")
-  verifiedAt                DateTime?            @map("verified_at")
-  closedAt                  DateTime?            @map("closed_at")
-  createdAt                 DateTime             @default(now()) @map("created_at")
-  updatedAt                 DateTime             @updatedAt @map("updated_at")
-  deletedAt                 DateTime?            @map("deleted_at")
-  workOrder                 WorkOrder?           @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
-  reporter                  User?                @relation("IssueReporter", fields: [reporterId], references: [id], onDelete: SetNull)
-  assignee                  User?                @relation("IssueAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
-  assigneeEmployee          Employee?            @relation("IssueEmployeeAssignee", fields: [assigneeEmployeeId], references: [id], onDelete: SetNull)
-  verifierEmployee          Employee?            @relation("IssueVerifierEmployee", fields: [verifierEmployeeId], references: [id], onDelete: SetNull)
-  requesterConfirmedBy      User?                @relation("IssueRequesterConfirmedBy", fields: [requesterConfirmedById], references: [id], onDelete: SetNull)
+  verificationResult        String?                    @map("verification_result")
+  requesterConfirmedById    String?                    @map("requester_confirmed_by_id")
+  requesterConfirmedAt      DateTime?                  @map("requester_confirmed_at")
+  requesterConfirmationNote String?                    @map("requester_confirmation_note")
+  isMajorQuality            Boolean                    @default(false) @map("is_major_quality")
+  majorQualityReason        String?                    @map("major_quality_reason")
+  version                   Int                        @default(0)
+  resolvedAt                DateTime?                  @map("resolved_at")
+  verifiedAt                DateTime?                  @map("verified_at")
+  closedAt                  DateTime?                  @map("closed_at")
+  createdAt                 DateTime                   @default(now()) @map("created_at")
+  updatedAt                 DateTime                   @updatedAt @map("updated_at")
+  deletedAt                 DateTime?                  @map("deleted_at")
+  workOrder                 WorkOrder?                 @relation(fields: [workOrderId], references: [id], onDelete: SetNull)
+  reporter                  User?                      @relation("IssueReporter", fields: [reporterId], references: [id], onDelete: SetNull)
+  assignee                  User?                      @relation("IssueAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
+  assigneeEmployee          Employee?                  @relation("IssueEmployeeAssignee", fields: [assigneeEmployeeId], references: [id], onDelete: SetNull)
+  verifierEmployee          Employee?                  @relation("IssueVerifierEmployee", fields: [verifierEmployeeId], references: [id], onDelete: SetNull)
+  requesterConfirmedBy      User?                      @relation("IssueRequesterConfirmedBy", fields: [requesterConfirmedById], references: [id], onDelete: SetNull)
   collaborators             IssueCollaborator[]
   activities                IssueActivity[]
   attachments               IssueAttachment[]
   eightDReportLinks         EightDReportIssue[]
+  internalQualityRiskLinks  InternalQualityRiskIssue[]
   changeRequests            ChangeRequest[]
   majorApprovals            IssueMajorApproval[]
 
@@ -3494,28 +3505,29 @@ model IssueAttachment {
 }
 
 model EightDReport {
-  id                    String                 @id @default(uuid())
-  sequence              Int                    @unique @default(autoincrement())
-  reportNo              String                 @unique @map("report_no")
-  title                 String
-  reportDate            DateTime?              @map("report_date")
-  responsibleDepartment String?                @map("responsible_department")
-  keywords              String?
-  status                String                 @default("active")
-  version               Int                    @default(0)
-  currentVersionId      String?                @unique @map("current_version_id")
-  createdById           String?                @map("created_by_id")
-  updatedById           String?                @map("updated_by_id")
-  deletedAt             DateTime?              @map("deleted_at")
-  createdAt             DateTime               @default(now()) @map("created_at")
-  updatedAt             DateTime               @updatedAt @map("updated_at")
-  currentVersion        EightDReportVersion?   @relation("EightDReportCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
-  versions              EightDReportVersion[]  @relation("EightDReportVersions")
-  products              EightDReportProduct[]
-  issues                EightDReportIssue[]
-  activities            EightDReportActivity[]
-  createdBy             User?                  @relation("EightDReportCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  updatedBy             User?                  @relation("EightDReportUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  id                       String                            @id @default(uuid())
+  sequence                 Int                               @unique @default(autoincrement())
+  reportNo                 String                            @unique @map("report_no")
+  title                    String
+  reportDate               DateTime?                         @map("report_date")
+  responsibleDepartment    String?                           @map("responsible_department")
+  keywords                 String?
+  status                   String                            @default("active")
+  version                  Int                               @default(0)
+  currentVersionId         String?                           @unique @map("current_version_id")
+  createdById              String?                           @map("created_by_id")
+  updatedById              String?                           @map("updated_by_id")
+  deletedAt                DateTime?                         @map("deleted_at")
+  createdAt                DateTime                          @default(now()) @map("created_at")
+  updatedAt                DateTime                          @updatedAt @map("updated_at")
+  currentVersion           EightDReportVersion?              @relation("EightDReportCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions                 EightDReportVersion[]             @relation("EightDReportVersions")
+  products                 EightDReportProduct[]
+  issues                   EightDReportIssue[]
+  activities               EightDReportActivity[]
+  internalQualityRiskLinks InternalQualityRiskEightDReport[]
+  createdBy                User?                             @relation("EightDReportCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy                User?                             @relation("EightDReportUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
 
   @@index([status, updatedAt])
   @@index([reportDate])
@@ -3593,6 +3605,205 @@ model EightDReportActivity {
   @@index([actorId])
   @@index([action])
   @@map("eight_d_report_activities")
+}
+
+model InternalQualityRiskReport {
+  id                    String                            @id @default(uuid())
+  sequence              Int                               @unique @default(autoincrement())
+  reportNo              String                            @unique @map("report_no")
+  title                 String
+  severity              String                            @default("HIGH")
+  status                String                            @default("DRAFT")
+  occurrenceDate        DateTime?                         @map("occurrence_date")
+  workshopArea          String?                           @map("workshop_area")
+  processName           String?                           @map("process_name")
+  responsibleDepartment String?                           @map("responsible_department")
+  defectPhenomenon      String?                           @map("defect_phenomenon")
+  occurrenceCause       String?                           @map("occurrence_cause")
+  escapeCause           String?                           @map("escape_cause")
+  systemCause           String?                           @map("system_cause")
+  rootCause             String?                           @map("root_cause")
+  secondaryCause        String?                           @map("secondary_cause")
+  containmentAction     String?                           @map("containment_action")
+  disposition           String?
+  correctiveAction      String?                           @map("corrective_action")
+  preventiveAction      String?                           @map("preventive_action")
+  verificationResult    String?                           @map("verification_result")
+  finalConclusion       String?                           @map("final_conclusion")
+  evidenceSummary       String?                           @map("evidence_summary")
+  riskScope             String?                           @map("risk_scope")
+  applicableProcess     String?                           @map("applicable_process")
+  effectiveFrom         DateTime?                         @map("effective_from")
+  effectiveUntil        DateTime?                         @map("effective_until")
+  version               Int                               @default(0)
+  currentRevisionId     String?                           @unique @map("current_revision_id")
+  archivedAt            DateTime?                         @map("archived_at")
+  archivedById          String?                           @map("archived_by_id")
+  createdById           String?                           @map("created_by_id")
+  updatedById           String?                           @map("updated_by_id")
+  deletedAt             DateTime?                         @map("deleted_at")
+  deletedById           String?                           @map("deleted_by_id")
+  deleteReason          String?                           @map("delete_reason")
+  createdAt             DateTime                          @default(now()) @map("created_at")
+  updatedAt             DateTime                          @updatedAt @map("updated_at")
+  currentRevision       InternalQualityRiskRevision?      @relation("InternalQualityRiskCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+  revisions             InternalQualityRiskRevision[]     @relation("InternalQualityRiskRevisions")
+  issues                InternalQualityRiskIssue[]
+  workOrders            InternalQualityRiskWorkOrder[]
+  products              InternalQualityRiskProduct[]
+  eightDReports         InternalQualityRiskEightDReport[]
+  activities            InternalQualityRiskActivity[]
+  alerts                WorkOrderQualityAlert[]
+  createdBy             User?                             @relation("InternalQualityRiskCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy             User?                             @relation("InternalQualityRiskUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  archivedBy            User?                             @relation("InternalQualityRiskArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
+  deletedBy             User?                             @relation("InternalQualityRiskDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+
+  @@index([status, updatedAt])
+  @@index([severity, status])
+  @@index([occurrenceDate])
+  @@index([deletedAt])
+  @@index([createdById])
+  @@index([updatedById])
+  @@index([archivedById])
+  @@index([deletedById])
+  @@map("quality_risk_reports")
+}
+
+model InternalQualityRiskRevision {
+  id             String                     @id @default(uuid())
+  reportId       String                     @map("report_id")
+  revisionNumber Int                        @map("revision_number")
+  snapshot       Json
+  archivedById   String?                    @map("archived_by_id")
+  archivedAt     DateTime                   @default(now()) @map("archived_at")
+  createdAt      DateTime                   @default(now()) @map("created_at")
+  report         InternalQualityRiskReport  @relation("InternalQualityRiskRevisions", fields: [reportId], references: [id], onDelete: Cascade)
+  currentFor     InternalQualityRiskReport? @relation("InternalQualityRiskCurrentRevision")
+  archivedBy     User?                      @relation("InternalQualityRiskRevisionArchivedBy", fields: [archivedById], references: [id], onDelete: SetNull)
+  alerts         WorkOrderQualityAlert[]
+
+  @@unique([reportId, revisionNumber])
+  @@index([reportId, archivedAt])
+  @@index([archivedById])
+  @@map("quality_risk_revisions")
+}
+
+model InternalQualityRiskIssue {
+  reportId  String                    @map("report_id")
+  issueId   String                    @map("issue_id")
+  createdAt DateTime                  @default(now()) @map("created_at")
+  report    InternalQualityRiskReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  issue     Issue                     @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, issueId])
+  @@index([issueId, reportId])
+  @@map("quality_risk_issues")
+}
+
+model InternalQualityRiskWorkOrder {
+  reportId    String                    @map("report_id")
+  workOrderId String                    @map("work_order_id")
+  source      String                    @default("DIRECT")
+  createdAt   DateTime                  @default(now()) @map("created_at")
+  report      InternalQualityRiskReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  workOrder   WorkOrder                 @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, workOrderId])
+  @@index([workOrderId, reportId])
+  @@map("quality_risk_work_orders")
+}
+
+model InternalQualityRiskProduct {
+  reportId             String                    @map("report_id")
+  drawingLibraryItemId String                    @map("drawing_library_item_id")
+  createdAt            DateTime                  @default(now()) @map("created_at")
+  report               InternalQualityRiskReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  product              DrawingLibraryItem        @relation(fields: [drawingLibraryItemId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, drawingLibraryItemId])
+  @@index([drawingLibraryItemId, reportId])
+  @@map("quality_risk_products")
+}
+
+model InternalQualityRiskEightDReport {
+  reportId       String                    @map("report_id")
+  eightDReportId String                    @map("eight_d_report_id")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  report         InternalQualityRiskReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  eightDReport   EightDReport              @relation(fields: [eightDReportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, eightDReportId])
+  @@index([eightDReportId, reportId])
+  @@map("quality_risk_8d_reports")
+}
+
+model InternalQualityRiskActivity {
+  id        String                    @id @default(uuid())
+  reportId  String                    @map("report_id")
+  action    String
+  content   String?
+  actorId   String?                   @map("actor_id")
+  actorName String                    @map("actor_name")
+  detail    Json?
+  createdAt DateTime                  @default(now()) @map("created_at")
+  report    InternalQualityRiskReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  actor     User?                     @relation("InternalQualityRiskActivityActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([reportId, createdAt])
+  @@index([actorId])
+  @@index([action])
+  @@map("quality_risk_activities")
+}
+
+model WorkOrderQualityAlert {
+  id                 String                                 @id @default(uuid())
+  reportId           String                                 @map("report_id")
+  revisionId         String                                 @map("revision_id")
+  workOrderId        String                                 @map("work_order_id")
+  state              String                                 @default("ACTIVE")
+  source             String                                 @default("DIRECT_ARCHIVE")
+  severity           String
+  title              String
+  defectPhenomenon   String?                                @map("defect_phenomenon")
+  rootCause          String?                                @map("root_cause")
+  finalConclusion    String?                                @map("final_conclusion")
+  controlRequirement String?                                @map("control_requirement")
+  applicableProcess  String?                                @map("applicable_process")
+  effectiveFrom      DateTime?                              @map("effective_from")
+  effectiveUntil     DateTime?                              @map("effective_until")
+  archivedAt         DateTime                               @map("archived_at")
+  supersededAt       DateTime?                              @map("superseded_at")
+  revokedAt          DateTime?                              @map("revoked_at")
+  revokeReason       String?                                @map("revoke_reason")
+  createdAt          DateTime                               @default(now()) @map("created_at")
+  updatedAt          DateTime                               @updatedAt @map("updated_at")
+  report             InternalQualityRiskReport              @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  revision           InternalQualityRiskRevision            @relation(fields: [revisionId], references: [id], onDelete: Cascade)
+  workOrder          WorkOrder                              @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  acknowledgements   WorkOrderQualityAlertAcknowledgement[]
+
+  @@unique([revisionId, workOrderId])
+  @@index([workOrderId, state, updatedAt])
+  @@index([reportId, state])
+  @@index([revisionId])
+  @@index([effectiveUntil])
+  @@map("work_order_quality_alerts")
+}
+
+model WorkOrderQualityAlertAcknowledgement {
+  id               String                @id @default(uuid())
+  alertId          String                @map("alert_id")
+  acknowledgedById String                @map("acknowledged_by_id")
+  note             String?
+  acknowledgedAt   DateTime              @default(now()) @map("acknowledged_at")
+  updatedAt        DateTime              @updatedAt @map("updated_at")
+  alert            WorkOrderQualityAlert @relation(fields: [alertId], references: [id], onDelete: Cascade)
+  acknowledgedBy   User                  @relation("WorkOrderQualityAlertAcknowledgedBy", fields: [acknowledgedById], references: [id], onDelete: Cascade)
+
+  @@unique([alertId, acknowledgedById])
+  @@index([acknowledgedById, acknowledgedAt])
+  @@map("work_order_quality_alert_acknowledgements")
 }
 
 model ChangeRequest {
