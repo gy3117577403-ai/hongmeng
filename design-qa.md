@@ -58,3 +58,56 @@ The focused artifact makes the date-area change legible: weekday headers align t
 - No separate mobile layout was required because the project target is the 1366 x 1024 horizontal tablet. Responsive CSS remains in place for narrower widths, but it was not used as the acceptance viewport for this request.
 
 final result: passed
+
+---
+
+# Internal Quality Risk Search UI — Design QA
+
+Date: 2026-08-26
+Release candidate: v1.34.53
+Target viewport: 1366 × 1024 horizontal tablet
+Reference comparison viewport: 2555 × 1401
+
+## Evidence
+
+- Reference: `C:\Windows\TEMP\codex-clipboard-c8d94a69-ab89-4cbe-84a6-65a54b35db27.png`
+- Reference detail: `C:\Windows\TEMP\codex-clipboard-1582fb04-a504-4591-9f2f-ad26d1a49029.png`
+- Implementation overview: `artifacts/quality-risk-search-v13453/implementation-1366x1024.png`
+- Implementation at reference size: `artifacts/quality-risk-search-v13453/implementation-2555x1401.png`
+- Search interaction: `artifacts/quality-risk-search-v13453/source-issue-search-1366x1024.png`
+
+The 2555 × 1401 reference and implementation were inspected together in one comparison pass. The implementation intentionally differs by removing the highlighted top spacer, replacing the three native association selects with search-enabled controls, and displaying isolated QA fixture data.
+
+## Layout and visual fidelity
+
+- Passed: the hidden workbench header no longer reserves 64 px; the command bar starts at the top edge beside the navigation rail.
+- Passed: command bar, quality module tabs, status rail, filter column, result queue and detail panel retain the existing orange workbench language.
+- Passed: the left filter column remains compact and fully visible at 1366 × 1024.
+- Passed: search triggers preserve the prior 34 px control height, borders, radius and neutral/orange selected states.
+- Passed: the search popover stays above the workbench panels, uses a bounded scroll region, and does not clip inside the filter column.
+- Passed: no cropped labels, unwanted horizontal page scroll, overlapping controls or broken panel edges were observed.
+
+## Interaction and accessibility
+
+- Passed: product search matches specification, product name, customer name and customer code.
+- Passed: source issue search matches issue number, title, linked work order and status.
+- Passed: work order search matches display code, internal code, business code, product, specification and customer.
+- Passed: each selector retains an explicit “全部” option, shows the selected value, and participates in the existing global “清空” action.
+- Passed: keyboard navigation supports Up/Down and Enter; Escape/outside focus closes through the shared portal layer.
+- Passed: combobox, dialog, listbox, option, expanded and selected semantics are exposed in the DOM.
+- Passed: selecting an exact source issue or work order refreshes the report queue to the matching report.
+
+## Runtime checks
+
+- Passed: implementation rendered against a clean PostgreSQL database with all 100 Prisma migrations.
+- Passed: isolated S3-compatible MinIO bucket was available.
+- Passed: browser console contained 0 errors and 0 warnings during open, search and selection flows.
+- Passed: focused UI and release tests passed; production build completed.
+
+## Severity review
+
+- P0: none
+- P1: none
+- P2: none
+
+final result: passed

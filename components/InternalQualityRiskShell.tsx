@@ -6,6 +6,7 @@ import {
   Boxes,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   ClipboardCheck,
@@ -24,10 +25,11 @@ import {
   X,
 } from 'lucide-react';
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { AppWorkbenchHeader } from '@/components/layout/AppWorkbenchHeader';
 import { WorkbenchCockpitCommand } from '@/components/layout/WorkbenchCockpitCommand';
+import { PortalMenu } from '@/components/PortalMenu';
 import { QualityModuleTabs } from '@/components/QualityModuleTabs';
 import { useToastBridge } from '@/components/ToastProvider';
 import type {
@@ -139,6 +141,146 @@ async function jsonRequest<T>(url: string, init?: RequestInit): Promise<T> {
   const body = await response.json().catch(() => ({ ok: false, error: '服务返回格式异常' })) as T & { error?: string };
   if (!response.ok) throw new Error(body.error || '请求失败');
   return body;
+}
+
+type RiskFilterOption = {
+  id: string;
+  label: string;
+  meta: string;
+  searchText: string;
+};
+
+const MAX_VISIBLE_FILTER_OPTIONS = 120;
+
+function SearchableRiskFilter({ label, allLabel, searchPlaceholder, value, options, onChange }: {
+  label: string;
+  allLabel: string;
+  searchPlaceholder: string;
+  value: string;
+  options: RiskFilterOption[];
+  onChange: (value: string) => void;
+}) {
+  const reactId = useId().replace(/:/g, '');
+  const listboxId = `risk-filter-list-${reactId}`;
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
+  const selected = useMemo(() => options.find(item => item.id === value) || null, [options, value]);
+  const normalizedQuery = query.trim().toLocaleLowerCase('zh-CN');
+  const matches = useMemo(() => options.filter(item => !normalizedQuery || item.searchText.toLocaleLowerCase('zh-CN').includes(normalizedQuery)), [normalizedQuery, options]);
+  const visible = useMemo(() => matches.slice(0, MAX_VISIBLE_FILTER_OPTIONS), [matches]);
+  const navigable = useMemo(() => [{ id: '', label: allLabel, meta: '不限制关联对象', searchText: '' }, ...visible], [allLabel, visible]);
+
+  useEffect(() => {
+    if (!open) return;
+    setQuery('');
+    setActiveIndex(0);
+    window.requestAnimationFrame(() => searchRef.current?.focus());
+  }, [open]);
+
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [normalizedQuery]);
+
+  const choose = (nextValue: string): void => {
+    onChange(nextValue);
+    setOpen(false);
+  };
+
+  return <div className="risk-filter-field">
+    <span>{label}</span>
+    <button
+      ref={anchorRef}
+      className={`risk-filter-trigger ${value ? 'selected' : ''}`}
+      type="button"
+      role="combobox"
+      aria-label={`筛选${label}`}
+      aria-expanded={open}
+      aria-controls={listboxId}
+      onClick={() => setOpen(current => !current)}
+    >
+      <span><Search size={12} /><em title={selected?.label || allLabel}>{selected?.label || allLabel}</em></span>
+      <ChevronDown size={13} />
+    </button>
+    <PortalMenu
+      open={open}
+      anchorRef={anchorRef}
+      className="risk-filter-popover"
+      align="left"
+      width={320}
+      offset={5}
+      closeOnSelect={false}
+      role="dialog"
+      ariaLabel={`${label}筛选`}
+      onClose={() => setOpen(false)}
+    >
+      <header>
+        <label htmlFor={`risk-filter-search-${reactId}`}><Search size={14} />
+          <input
+            ref={searchRef}
+            id={`risk-filter-search-${reactId}`}
+            type="search"
+            role="combobox"
+            aria-label={searchPlaceholder}
+            aria-expanded="true"
+            aria-controls={listboxId}
+            aria-activedescendant={navigable[activeIndex] ? `${listboxId}-${navigable[activeIndex].id || 'all'}` : undefined}
+            autoComplete="off"
+            value={query}
+            placeholder={searchPlaceholder}
+            onChange={event => setQuery(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                setActiveIndex(current => Math.min(navigable.length - 1, current + 1));
+              }
+              if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                setActiveIndex(current => Math.max(0, current - 1));
+              }
+              if (event.key === 'Enter' && navigable[activeIndex]) {
+                event.preventDefault();
+                choose(navigable[activeIndex].id);
+              }
+            }}
+          />
+        </label>
+        {query && <button type="button" title="清空搜索" aria-label="清空搜索" onClick={() => setQuery('')}><X size={13} /></button>}
+      </header>
+      <div id={listboxId} className="risk-filter-options hm-scroll-region" role="listbox" aria-label={`${label}选项`}>
+        <button
+          id={`${listboxId}-all`}
+          className={`risk-filter-option ${!value ? 'selected' : ''} ${activeIndex === 0 ? 'active' : ''}`}
+          type="button"
+          role="option"
+          aria-selected={!value}
+          onMouseEnter={() => setActiveIndex(0)}
+          onClick={() => choose('')}
+        >
+          <span><strong>{allLabel}</strong><small>不限制关联对象</small></span>{!value && <Check size={14} />}
+        </button>
+        {visible.map((item, index) => <button
+          id={`${listboxId}-${item.id}`}
+          className={`risk-filter-option ${value === item.id ? 'selected' : ''} ${activeIndex === index + 1 ? 'active' : ''}`}
+          type="button"
+          role="option"
+          aria-selected={value === item.id}
+          key={item.id}
+          onMouseEnter={() => setActiveIndex(index + 1)}
+          onClick={() => choose(item.id)}
+        >
+          <span><strong>{item.label}</strong><small>{item.meta}</small></span>{value === item.id && <Check size={14} />}
+        </button>)}
+        {!visible.length && <p>没有匹配的{label}，请更换关键词</p>}
+      </div>
+      <footer>
+        <span>{normalizedQuery ? `匹配 ${matches.length}` : `显示 ${visible.length}`} / 共 {options.length} 条</span>
+        <small>{matches.length > visible.length ? `仅展示前 ${MAX_VISIBLE_FILTER_OPTIONS} 条，请继续输入` : '↑↓ 选择 · Enter 确认'}</small>
+      </footer>
+    </PortalMenu>
+  </div>;
 }
 
 function TogglePicker({ title, icon, items, selected, onToggle, emptyText }: {
@@ -374,9 +516,27 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
   const workOrderPickerItems = options.workOrders.map(item => ({ id: item.id, title: item.displayCode, subtitle: `${item.customerName || '客户未填'} · ${item.productName || '品名未填'}`, badge: item.planActive ? '当前' : '历史' }));
   const productPickerItems = options.products.map(item => ({ id: item.id, title: item.specification || item.productName || '未命名产品', subtitle: `${item.customerName || '客户未填'}${item.productName ? ` · ${item.productName}` : ''}` }));
   const eightDPickerItems = options.eightDReports.map(item => ({ id: item.id, title: item.reportNo, subtitle: `${item.title} · ${item.status === 'active' ? '在用' : '已归档'}` }));
+  const productFilterItems = options.products.map(item => ({
+    id: item.id,
+    label: item.specification || item.productName || '未命名产品',
+    meta: `${item.customerName || '客户未填'}${item.productName ? ` · ${item.productName}` : ''}`,
+    searchText: `${item.specification || ''} ${item.productName || ''} ${item.customerName || ''} ${item.customerCode || ''}`,
+  }));
+  const issueFilterItems = options.issues.map(item => ({
+    id: item.id,
+    label: `${item.code} · ${item.title}`,
+    meta: `${item.workOrder?.displayCode || '未关联工单'} · ${item.status}`,
+    searchText: `${item.code} ${item.title} ${item.workOrder?.displayCode || ''} ${item.status}`,
+  }));
+  const workOrderFilterItems = options.workOrders.map(item => ({
+    id: item.id,
+    label: item.displayCode,
+    meta: `${item.customerName || '客户未填'} · ${item.productName || '品名未填'}${item.specification ? ` · ${item.specification}` : ''}`,
+    searchText: `${item.displayCode} ${item.code} ${item.businessCode || ''} ${item.customerName || ''} ${item.productName || ''} ${item.specification || ''}`,
+  }));
   const suggestedWorkOrders = options.workOrders.filter(item => item.drawingLibraryItemId && form.productIds.includes(item.drawingLibraryItemId) && !form.workOrderIds.includes(item.id));
 
-  return <main className="hm-workbench-root internal-risk-shell">
+  return <main className="hm-workbench-root hm-cockpit-root internal-risk-shell">
     <AppWorkbenchHeader user={user} activeHref="/workspace/quality/internal-risks" subtitle="车间重大不良闭环与工单风险预知" menuItems={[]} hideHeader sidebarTriggerTargetId="internal-risk-navigation-trigger" />
     <div className="internal-risk-frame">
       <WorkbenchCockpitCommand
@@ -396,7 +556,12 @@ export default function InternalQualityRiskShell({ user, initialReportId = '', i
         <aside className="risk-filter-panel">
           <header><div><Link2 size={15} /><strong>风险筛选</strong></div>{(severity !== 'ALL' || productId || issueId || workOrderId) && <button type="button" onClick={() => { setSeverity('ALL'); setProductId(''); setIssueId(''); setWorkOrderId(''); }}>清空</button>}</header>
           <section><strong>风险等级</strong><div className="risk-severity-filter">{(['ALL', 'CRITICAL', 'HIGH', 'MEDIUM', 'LOW'] as const).map(key => <button className={severity === key ? 'active' : ''} type="button" key={key} onClick={() => setSeverity(key)}><span className={`severity-dot severity-${key.toLowerCase()}`} />{key === 'ALL' ? '全部等级' : severityLabels[key]}</button>)}</div></section>
-          <section className="risk-select-filters"><strong>关联对象</strong><label>产品<select value={productId} onChange={event => setProductId(event.target.value)}><option value="">全部产品</option>{options.products.map(item => <option value={item.id} key={item.id}>{item.specification} · {item.customerName}</option>)}</select></label><label>来源问题<select value={issueId} onChange={event => setIssueId(event.target.value)}><option value="">全部问题</option>{options.issues.map(item => <option value={item.id} key={item.id}>{item.code} · {item.title}</option>)}</select></label><label>工单<select value={workOrderId} onChange={event => setWorkOrderId(event.target.value)}><option value="">全部工单</option>{options.workOrders.map(item => <option value={item.id} key={item.id}>{item.displayCode} · {item.customerName || ''}</option>)}</select></label></section>
+          <section className="risk-select-filters">
+            <strong>关联对象</strong>
+            <SearchableRiskFilter label="产品" allLabel="全部产品" searchPlaceholder="搜索规格、品名或客户" value={productId} options={productFilterItems} onChange={setProductId} />
+            <SearchableRiskFilter label="来源问题" allLabel="全部问题" searchPlaceholder="搜索问题编号、标题或工单" value={issueId} options={issueFilterItems} onChange={setIssueId} />
+            <SearchableRiskFilter label="工单" allLabel="全部工单" searchPlaceholder="搜索工单号、产品、规格或客户" value={workOrderId} options={workOrderFilterItems} onChange={setWorkOrderId} />
+          </section>
           <section className="risk-rule-card"><Sparkles size={16} /><div><strong>产品预知规则</strong><p>仅按产品主数据提出历史风险建议，质量人员确认后才写入未来工单；不会自动阻断生产。</p></div></section>
           <section className="risk-delete-rule"><Archive size={15} /><div><strong>管理员回收规则</strong><p>所有异常均可软删除；归档异常删除时同步撤销预警。满30天且无活动预警后才可彻底删除。</p></div></section>
         </aside>

@@ -151,3 +151,16 @@ test('workbench exposes administrator-only recycle interactions and production w
   assert.match(production, /确认并同步/);
   assert.doesNotMatch(production, /window\.confirm/);
 });
+
+test('quality risk workbench removes hidden-header spacing and offers searchable association filters', () => {
+  assert.match(workbench, /className="hm-workbench-root hm-cockpit-root internal-risk-shell"/);
+  assert.match(workbench, /function SearchableRiskFilter/);
+  assert.match(workbench, /role="combobox"/);
+  assert.match(workbench, /label="产品"[\s\S]*?searchPlaceholder="搜索规格、品名或客户"/);
+  assert.match(workbench, /label="来源问题"[\s\S]*?searchPlaceholder="搜索问题编号、标题或工单"/);
+  assert.match(workbench, /label="工单"[\s\S]*?searchPlaceholder="搜索工单号、产品、规格或客户"/);
+  assert.match(workbench, /↑↓ 选择 · Enter 确认/);
+  assert.match(workbench, /MAX_VISIBLE_FILTER_OPTIONS = 120/);
+  assert.doesNotMatch(workbench, /<label>来源问题<select/);
+  assert.doesNotMatch(workbench, /<label>工单<select/);
+});

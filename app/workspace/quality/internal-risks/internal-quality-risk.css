@@ -24,8 +24,36 @@ main.internal-risk-shell.hm-workbench-root { height: 100dvh; overflow: hidden; b
 .severity-dot.severity-medium { background: #d49b2c; box-shadow: 0 0 0 3px #fff7df; }
 .severity-dot.severity-low { background: #4f8e68; box-shadow: 0 0 0 3px #eaf6ee; }
 .risk-select-filters { display: grid; gap: 8px; }
-.risk-select-filters label { display: grid; gap: 4px; color: #7d8897; font-size: 8px; }
-.risk-select-filters select { width: 100%; min-height: 33px; padding: 0 7px; overflow: hidden; border: 1px solid #dde2e8; border-radius: 6px; outline: 0; background: #fafbfc; color: #505d6f; font-size: 9px; text-overflow: ellipsis; }
+.risk-filter-field { min-width: 0; display: grid; gap: 4px; }
+.risk-filter-field > span { color: #7d8897; font-size: 8px; }
+.risk-filter-trigger { width: 100%; min-width: 0; min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 8px; overflow: hidden; border: 1px solid #dde2e8; border-radius: 6px; outline: 0; background: #fafbfc; color: #505d6f; font-size: 9px; text-align: left; transition: border-color .16s ease, background .16s ease, box-shadow .16s ease; }
+.risk-filter-trigger:hover, .risk-filter-trigger[aria-expanded="true"] { border-color: #e0a276; background: #fff; box-shadow: 0 0 0 2px rgba(228, 104, 28, .08); }
+.risk-filter-trigger.selected { border-color: #edc4a5; background: #fff8f3; color: #b74c0c; }
+.risk-filter-trigger > span { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.risk-filter-trigger > span > svg { flex: 0 0 auto; color: #919baa; }
+.risk-filter-trigger em { min-width: 0; overflow: hidden; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.risk-filter-trigger > svg { flex: 0 0 auto; color: #7d8998; transition: transform .16s ease; }
+.risk-filter-trigger[aria-expanded="true"] > svg { transform: rotate(180deg); }
+
+.risk-filter-popover.app-dropdown-layer { z-index: calc(var(--z-popover, 900) + 8); max-height: min(314px, calc(100dvh - 24px)); display: flex; flex-direction: column; padding: 7px; overflow: hidden; border: 1px solid #dce2e8; border-radius: 9px; background: #fff; box-shadow: 0 16px 38px rgba(31, 45, 60, .2); }
+.risk-filter-popover > header { flex: 0 0 auto; display: flex; align-items: center; gap: 5px; padding: 0 0 7px; border-bottom: 1px solid #edf0f3; }
+.risk-filter-popover > header > label { min-width: 0; min-height: 34px; flex: 1; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid #dfe4e9; border-radius: 6px; background: #fafbfc; color: #8a95a3; }
+.risk-filter-popover > header > label:focus-within { border-color: #df9865; background: #fff; box-shadow: 0 0 0 2px rgba(229, 105, 29, .1); }
+.risk-filter-popover > header input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: #3e4b5c; font-size: 10px; }
+.risk-filter-popover > header input::-webkit-search-cancel-button { display: none; appearance: none; }
+.risk-filter-popover > header > button { width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 30px; padding: 0; border: 0; border-radius: 5px; background: #f2f4f6; color: #778494; }
+.risk-filter-options { min-height: 76px; max-height: 218px; flex: 1; padding-top: 4px; overflow: auto; overscroll-behavior: contain; }
+.risk-filter-option { width: 100%; min-width: 0; min-height: 43px; display: grid; grid-template-columns: minmax(0, 1fr) 18px; align-items: center; gap: 7px; margin-top: 2px; padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; background: #fff; color: #4d5a6b; text-align: left; }
+.risk-filter-option:hover, .risk-filter-option.active { border-color: #f0d3bd; background: #fffaf6; }
+.risk-filter-option.selected { border-color: #edbd99; background: #fff5ed; color: #b64b0c; }
+.risk-filter-option > span { min-width: 0; }
+.risk-filter-option strong, .risk-filter-option small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.risk-filter-option strong { font-size: 9px; }
+.risk-filter-option small { margin-top: 3px; color: #8a95a2; font-size: 8px; font-weight: 400; }
+.risk-filter-option > svg { color: #dd641a; }
+.risk-filter-options > p { margin: 28px 8px; color: #929ca8; font-size: 9px; text-align: center; }
+.risk-filter-popover > footer { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 7px 3px 0; border-top: 1px solid #edf0f3; color: #8c97a4; font-size: 8px; }
+.risk-filter-popover > footer small { color: #a0a8b2; font-size: 7px; }
 .risk-rule-card, .risk-delete-rule { display: flex; gap: 8px; margin: 8px; padding: 9px !important; border: 1px solid #efd0b8 !important; border-radius: 7px; background: #fff7f1; color: #cf5c16; }
 .risk-delete-rule { border-color: #e5d8d0 !important; background: #faf8f6; color: #8f6650; }
 .risk-rule-card div, .risk-delete-rule div { min-width: 0; }

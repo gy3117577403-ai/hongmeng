@@ -11,6 +11,7 @@ type ActiveMenu = {
 let activeMenu: ActiveMenu | null = null;
 
 type MenuAlign = 'left' | 'right';
+type PortalMenuRole = 'menu' | 'dialog' | 'listbox';
 
 type PortalMenuProps = {
   open: boolean;
@@ -22,6 +23,8 @@ type PortalMenuProps = {
   offset?: number;
   onClose?: () => void;
   closeOnSelect?: boolean;
+  role?: PortalMenuRole;
+  ariaLabel?: string;
 };
 
 type LayerPosition = {
@@ -40,6 +43,8 @@ export function PortalMenu({
   offset = 8,
   onClose,
   closeOnSelect = true,
+  role = 'menu',
+  ariaLabel,
 }: PortalMenuProps) {
   const reactId = useId();
   const menuId = `portal-menu-${reactId.replace(/:/g, '')}`;
@@ -62,13 +67,13 @@ export function PortalMenu({
   useEffect(() => {
     const anchor = anchorRef.current;
     if (!anchor) return undefined;
-    anchor.setAttribute('aria-haspopup', 'menu');
+    anchor.setAttribute('aria-haspopup', role);
     anchor.setAttribute('aria-controls', menuId);
     anchor.setAttribute('aria-expanded', open ? 'true' : 'false');
     return () => {
       anchor.setAttribute('aria-expanded', 'false');
     };
-  }, [anchorRef, menuId, open]);
+  }, [anchorRef, menuId, open, role]);
 
   useEffect(() => {
     if (!open || !mounted) return undefined;
@@ -161,7 +166,7 @@ export function PortalMenu({
   };
 
   return createPortal(
-    <div ref={layerRef} id={menuId} role="menu" className={`app-dropdown-layer ${className}`} style={style} onClick={handleMenuClick}>
+    <div ref={layerRef} id={menuId} role={role} aria-label={ariaLabel} className={`app-dropdown-layer ${className}`} style={style} onClick={handleMenuClick}>
       {children}
     </div>,
     document.body,
