@@ -2344,6 +2344,7 @@ export type ReportOperationsDTO = {
     label: string;
     startDate: string;
     endDate: string;
+    isFutureWeek: boolean;
     scheduledBatches: number;
     plannedBatches: number;
     futureBatches: number;

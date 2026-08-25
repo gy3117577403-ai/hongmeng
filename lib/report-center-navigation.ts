@@ -51,7 +51,7 @@ export const REPORT_DOMAINS: readonly ReportDomainDefinition[] = [
     label: '生产结果',
     caption: '计划与完工',
     branches: [
-      { key: 'weekly-plan-attainment', label: '周计划达成率', shortLabel: '周计划达成率', description: '按月拆解各周到期计划批次完成情况，未到期周不按 0 计算' },
+      { key: 'weekly-plan-attainment', label: '周计划达成率', shortLabel: '周计划达成率', description: '按月拆解各生产周计划完成进度，提前完成立即计入，未来周不按 0 计算' },
       { key: 'process-bottlenecks', label: '工序瓶颈', shortLabel: '工序瓶颈', description: '按工序分析待处理数量、涉及工单与逾期影响' },
     ],
   },

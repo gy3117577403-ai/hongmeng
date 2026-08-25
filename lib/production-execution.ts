@@ -1,7 +1,7 @@
 import { DailyProcessTaskStatus, DailyProductionPlanStatus, DailyTaskAssignmentStatus, Prisma } from '@prisma/client';
 import { isInvalidSpecification } from '@/lib/drawing-library';
 import { prisma } from '@/lib/prisma';
-import { productionPlanAttainment } from '@/lib/production-plan-attainment';
+import { productionPlanAttainmentForScope } from '@/lib/production-plan-attainment';
 import {
   productionTeamScopeWhere,
   type ProductionEntityScope,
@@ -1299,6 +1299,7 @@ function summarizeProductionRecords(
   let dispatchWithNextProcess = 0;
   let dispatchDueSoon = 0;
   let dispatchCompleted = 0;
+  const planAttainmentRecords: Array<{ completed: boolean; weekStartDateKey: string | null }> = [];
   for (const order of orders) {
     const stage = normalizeWorkOrderStage(order.stage || order.status) || 'not_issued';
     const flowResolution = resolveEffectiveFrontendTransferredQty(order);
@@ -1352,7 +1353,12 @@ function summarizeProductionRecords(
     if (hasNextProductionProcess(order)) dispatchWithNextProcess += 1;
     if (isProductionDueSoon(order, now)) dispatchDueSoon += 1;
     if (stage === 'completed') dispatchCompleted += 1;
+    planAttainmentRecords.push({
+      completed: stage === 'completed',
+      weekStartDateKey: order.weekStartDate ? chinaYmd(order.weekStartDate) : null,
+    });
   }
+  const currentWeekPlanKey = week.scope === 'current' && week.weekStart ? chinaYmd(week.weekStart) : null;
   return {
     scope: week.scope,
     readOnly: week.scope === 'history' || scope?.readOnly === true,
@@ -1378,7 +1384,7 @@ function summarizeProductionRecords(
       dueSoon: dispatchDueSoon,
       completed: dispatchCompleted,
     },
-    planTotals: productionPlanAttainment(dispatchCompleted, orders.length),
+    planTotals: productionPlanAttainmentForScope(planAttainmentRecords, currentWeekPlanKey),
     arrangementMetrics: summarizeArrangementMetrics(orders, arrangementsByOrder),
     quantityTotals: {
       targetQty: targetQuantity,

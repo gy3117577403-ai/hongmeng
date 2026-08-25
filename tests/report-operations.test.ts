@@ -9,6 +9,8 @@ import {
   reportMonthDateKeys,
   reportMonthWeekBuckets,
   reportWeekKey,
+  reportWeekStorageRange,
+  summarizeWeeklyPlanProgress,
 } from '@/lib/report-operations';
 
 test('report month parsing rejects invalid and out-of-range values', () => {
@@ -28,6 +30,15 @@ test('report month dates and week buckets cover each calendar day exactly once',
   assert.equal(weeks[0]?.startDate, '2026-08-01');
   assert.equal(weeks.at(-1)?.endDate, '2026-08-31');
   assert.equal(reportWeekKey('2026-08-19'), '2026-08-17');
+});
+
+test('weekly plan storage range includes every timestamp on the same Shanghai production week', () => {
+  const range = reportWeekStorageRange(reportMonthWeekBuckets('2026-08'));
+  assert.ok(range);
+  assert.equal(range.gte.toISOString(), '2026-07-26T16:00:00.000Z');
+  assert.equal(range.lt.toISOString(), '2026-09-06T16:00:00.000Z');
+  assert.ok(new Date('2026-08-24T00:00:00.000Z') >= range.gte);
+  assert.ok(new Date('2026-08-24T04:00:00.000Z') < range.lt);
 });
 
 test('semantic metric tones flag low, target, and unusually high values', () => {
@@ -54,4 +65,31 @@ test('one work order completion is allocated once across multiple plan batches',
   assert.equal(allocations.get('first'), 60);
   assert.equal(allocations.get('later'), 40);
   assert.equal(allocations.get('other'), 12);
+});
+
+test('current production week counts all planned batches and credits early completion immediately', () => {
+  const weeks = reportMonthWeekBuckets('2026-08');
+  const currentBatches = Array.from({ length: 28 }, (_, index) => ({
+    id: `current-${index + 1}`,
+    weekStartDateKey: '2026-08-24',
+    quantity: index === 0 ? 2_000 : 400,
+    completedQuantity: index === 0 ? 2_000 : 0,
+  }));
+  const rows = summarizeWeeklyPlanProgress(weeks, [
+    ...currentBatches,
+    { id: 'future', weekStartDateKey: '2026-08-31', quantity: 100, completedQuantity: 100 },
+  ], '2026-08-25');
+  const current = rows.find(row => row.key === '2026-08-24');
+  const future = rows.find(row => row.key === '2026-08-31');
+
+  assert.equal(current?.isFutureWeek, false);
+  assert.equal(current?.plannedBatches, 28);
+  assert.equal(current?.completedBatches, 1);
+  assert.equal(current?.batchCompletionBasisPoints, 357);
+  assert.equal(current?.futureBatches, 0);
+  assert.equal(future?.isFutureWeek, true);
+  assert.equal(future?.plannedBatches, 0);
+  assert.equal(future?.completedBatches, 0);
+  assert.equal(future?.futureBatches, 1);
+  assert.equal(future?.batchCompletionBasisPoints, null);
 });

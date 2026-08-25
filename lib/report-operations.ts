@@ -16,6 +16,27 @@ export type PlanBatchAllocationInput = {
   plannedDateKey: string;
 };
 
+export type WeeklyPlanProgressInput = {
+  id: string;
+  weekStartDateKey: string;
+  quantity: number;
+  completedQuantity: number;
+};
+
+export type WeeklyPlanProgressRow = ReportWeekBucket & {
+  isFutureWeek: boolean;
+  scheduledBatches: number;
+  plannedBatches: number;
+  futureBatches: number;
+  completedBatches: number;
+  scheduledQuantity: number;
+  plannedQuantity: number;
+  futureQuantity: number;
+  completedQuantity: number;
+  batchCompletionBasisPoints: number | null;
+  quantityCompletionBasisPoints: number | null;
+};
+
 const DAY_MILLISECONDS = 86_400_000;
 
 export function parseReportMonth(value: unknown, fallbackDate: string): string {
@@ -78,6 +99,23 @@ export function reportWeekKey(dateKey: string): string {
   return mondayFor(dateKey);
 }
 
+/**
+ * Production-plan week dates have historically been stored at more than one
+ * UTC time (for example UTC midnight and Shanghai noon). Query by the complete
+ * Shanghai calendar-week window so those equivalent business dates are not
+ * lost by an exact timestamp comparison.
+ */
+export function reportWeekStorageRange(
+  buckets: readonly ReportWeekBucket[],
+): { gte: Date; lt: Date } | null {
+  const first = buckets[0];
+  const last = buckets[buckets.length - 1];
+  if (!first || !last) return null;
+  const gte = new Date(`${first.key}T00:00:00+08:00`);
+  const lastStart = new Date(`${last.key}T00:00:00+08:00`);
+  return { gte, lt: new Date(lastStart.getTime() + (7 * DAY_MILLISECONDS)) };
+}
+
 export function reportMetricTone(value: number | null | undefined): ReportMetricTone {
   if (value === null || value === undefined) return 'empty';
   if (value > 11_000) return 'over';
@@ -90,6 +128,63 @@ export function reportMetricTone(value: number | null | undefined): ReportMetric
 export function cappedBasisPoints(numerator: number, denominator: number): number | null {
   const ratio = basisPoints(Math.max(0, numerator), Math.max(0, denominator));
   return ratio === null ? null : Math.min(10_000, ratio);
+}
+
+/**
+ * A weekly-plan rate measures progress for production weeks that have started.
+ * Every batch assigned to the current or a historical production week belongs
+ * to the denominator immediately, and an early completion belongs to the
+ * numerator immediately. Entire weeks that have not started remain future and
+ * deliberately have no rate instead of being shown as zero percent.
+ */
+export function summarizeWeeklyPlanProgress(
+  buckets: readonly ReportWeekBucket[],
+  batches: readonly WeeklyPlanProgressInput[],
+  cutoffDateKey: string,
+): WeeklyPlanProgressRow[] {
+  const cutoffWeekKey = reportWeekKey(cutoffDateKey);
+  const rows = buckets.map(bucket => ({
+    ...bucket,
+    isFutureWeek: bucket.key > cutoffWeekKey,
+    scheduledBatches: 0,
+    plannedBatches: 0,
+    futureBatches: 0,
+    completedBatches: 0,
+    scheduledQuantity: 0,
+    plannedQuantity: 0,
+    futureQuantity: 0,
+    completedQuantity: 0,
+    batchCompletionBasisPoints: null as number | null,
+    quantityCompletionBasisPoints: null as number | null,
+  }));
+  const rowByWeek = new Map(rows.map(row => [row.key, row]));
+
+  for (const batch of batches) {
+    const row = rowByWeek.get(reportWeekKey(batch.weekStartDateKey));
+    if (!row) continue;
+    const plannedQuantity = Math.max(0, Math.trunc(batch.quantity || 0));
+    const completedQuantity = Math.min(
+      plannedQuantity,
+      Math.max(0, Math.trunc(batch.completedQuantity || 0)),
+    );
+    row.scheduledBatches += 1;
+    row.scheduledQuantity += plannedQuantity;
+    if (row.isFutureWeek) {
+      row.futureBatches += 1;
+      row.futureQuantity += plannedQuantity;
+      continue;
+    }
+    row.plannedBatches += 1;
+    row.plannedQuantity += plannedQuantity;
+    row.completedQuantity += completedQuantity;
+    if (plannedQuantity > 0 && completedQuantity >= plannedQuantity) row.completedBatches += 1;
+  }
+
+  for (const row of rows) {
+    row.batchCompletionBasisPoints = cappedBasisPoints(row.completedBatches, row.plannedBatches);
+    row.quantityCompletionBasisPoints = cappedBasisPoints(row.completedQuantity, row.plannedQuantity);
+  }
+  return rows;
 }
 
 /**

@@ -24,7 +24,8 @@ import {
   cappedBasisPoints,
   parseReportMonth,
   reportRangeWeekBuckets,
-  reportWeekKey,
+  reportWeekStorageRange,
+  summarizeWeeklyPlanProgress,
 } from '@/lib/report-operations';
 import type {
   AttainmentStream,
@@ -242,6 +243,8 @@ export async function GET(req: NextRequest) {
     const endDate = parseWorkDate(end.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' })).value;
     const cutoffAt = new Date(Math.min(now.getTime(), end.getTime() - 1));
     const dateKeys = reportRangeDateKeys(start, end);
+    const weeklyPlanBuckets = reportRangeWeekBuckets(dateKeys);
+    const weeklyPlanWeekRange = reportWeekStorageRange(weeklyPlanBuckets);
 
     const employees = await prisma.employee.findMany({
       where: {
@@ -356,11 +359,12 @@ export async function GET(req: NextRequest) {
         where: {
           deletedAt: null,
           releaseState: { not: 'cancelled' },
-          plannedCompletionDate: { gte: start, lt: end },
+          ...(weeklyPlanWeekRange ? { weekStartDate: weeklyPlanWeekRange } : {}),
         },
         select: {
           id: true,
           quantity: true,
+          weekStartDate: true,
           plannedCompletionDate: true,
           workOrderId: true,
           workOrder: {
@@ -726,42 +730,16 @@ export async function GET(req: NextRequest) {
       completedByWorkOrder,
     );
     const cutoffDateKey = todayKey(cutoffAt);
-    const weeklyPlan = reportRangeWeekBuckets(dateKeys).map(bucket => ({
-      ...bucket,
-      scheduledBatches: 0,
-      plannedBatches: 0,
-      futureBatches: 0,
-      completedBatches: 0,
-      scheduledQuantity: 0,
-      plannedQuantity: 0,
-      futureQuantity: 0,
-      completedQuantity: 0,
-      batchCompletionBasisPoints: null as number | null,
-      quantityCompletionBasisPoints: null as number | null,
-    }));
-    const weekMap = new Map(weeklyPlan.map(week => [week.key, week]));
-    for (const batch of batches) {
-      const plannedDateKey = shanghaiDateKey(batch.plannedCompletionDate);
-      const week = weekMap.get(reportWeekKey(plannedDateKey));
-      if (!week) continue;
-      const plannedQuantity = Math.max(0, batch.quantity);
-      week.scheduledBatches += 1;
-      week.scheduledQuantity += plannedQuantity;
-      if (plannedDateKey > cutoffDateKey) {
-        week.futureBatches += 1;
-        week.futureQuantity += plannedQuantity;
-        continue;
-      }
-      const completedQuantity = allocatedByBatch.get(batch.id) || 0;
-      week.plannedBatches += 1;
-      week.plannedQuantity += plannedQuantity;
-      week.completedQuantity += completedQuantity;
-      if (plannedQuantity > 0 && completedQuantity >= plannedQuantity) week.completedBatches += 1;
-    }
-    for (const week of weeklyPlan) {
-      week.batchCompletionBasisPoints = cappedBasisPoints(week.completedBatches, week.plannedBatches);
-      week.quantityCompletionBasisPoints = cappedBasisPoints(week.completedQuantity, week.plannedQuantity);
-    }
+    const weeklyPlan = summarizeWeeklyPlanProgress(
+      weeklyPlanBuckets,
+      batches.map(batch => ({
+        id: batch.id,
+        weekStartDateKey: shanghaiDateKey(batch.weekStartDate),
+        quantity: batch.quantity,
+        completedQuantity: allocatedByBatch.get(batch.id) || 0,
+      })),
+      cutoffDateKey,
+    );
 
     const dailyAttainmentAverage = dateKeys.map(date => {
       const rows = employeeMatrix.map(row => row.days.find(day => day.date === date)).filter(Boolean);
@@ -887,7 +865,7 @@ export async function GET(req: NextRequest) {
         '净应出勤 = 排班常规工时 + 已确认实际加班 - 已确认请假；实际出勤已经包含加班，不重复相加。',
         '出勤得分按实际出勤 ÷ 净应出勤计算并封顶 100%，超出部分单列；整日请假和休息日剔除基数，部分请假缩减基数，正式缺勤仍保留在出勤基数。草稿与缺失考勤不按 0 计算。',
         '工时利用率 = min(实际出勤，生产实耗工时 + 已确认免责异常工时) ÷ 实际出勤；标准工时效率 = 标准工时 ÷ 生产实耗工时；目标达成率 = 标准工时 ÷（有效出勤 × 95% × 个人计入比例）。',
-        '周计划按计划完成日期分周，只以统计截止日前已到期批次为达成率基数；未来批次显示为未到期。最终工序良品按同一工单的批次先后顺序一次分配，不重复计入多个批次。',
+        '周计划按生产周分组：已开始周的全部计划批次进入达成率基数，提前完成立即计入；尚未开始的整周显示为未来周，不按 0 计算。最终工序良品按同一工单的批次先后顺序一次分配，不重复计入多个批次。',
         '金额与产值尚无权威单价来源，本模块不生成推测值；待单价主数据接入后再启用。',
       ],
     };
