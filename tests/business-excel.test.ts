@@ -71,7 +71,7 @@ test('attendance export follows the one-sheet employee attendance standard', asy
   assert.equal(result.employeeCount, 3);
   assert.equal(result.confirmedRecordCount, 5);
   assert.equal(result.draftRecordCount, 1);
-  assert.equal(result.missingRecordCount, 12);
+  assert.equal(result.missingRecordCount, 9);
 
   const workbook = new ExcelJS.Workbook();
   const workbookBytes = result.buffer.buffer.slice(
@@ -88,6 +88,9 @@ test('attendance export follows the one-sheet employee attendance standard', asy
   assert.equal(sheet.getCell('G10').value, '假');
   assert.equal(sheet.getCell('H9').value, '待');
   assert.equal(sheet.getCell('K9').value, '休');
+  assert.equal(sheet.getCell('L9').value, '周休');
+  assert.equal(sheet.getCell('L10').value, '周休');
+  assert.equal(sheet.getCell('L11').value, '周休');
   assert.equal(sheet.getCell('F11').value, '未');
   assert.equal(sheet.getCell('H11').value, '未');
   assert.equal((sheet.getCell('N9').value as ExcelJS.CellFormulaValue).formula, 'SUM(F9:L9)');

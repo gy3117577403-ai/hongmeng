@@ -20,6 +20,8 @@ import {
   serializeAttendanceRecord,
   STANDARD_DAY_MILLISECONDS,
 } from '@/lib/attendance';
+import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
+import { attendanceCalendarDayLabel, resolveAttendanceCalendarDay } from '@/lib/attendance-calendar';
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
@@ -68,7 +70,7 @@ export async function GET(req: NextRequest) {
     const recordBoundaryWhere = boundary.employeeIds === null
       ? {}
       : { employeeId: { in: boundary.employeeIds } };
-    const [records, employees, productionCount, otherCount, allCount] = await Promise.all([
+    const [records, employees, productionCount, otherCount, allCount, calendarOverrides] = await Promise.all([
       prisma.attendanceRecord.findMany({
         where: {
           workDate: { gte: start, lt: end },
@@ -91,9 +93,24 @@ export async function GET(req: NextRequest) {
       prisma.employee.count({ where: { ...attendanceEmployeeWhere('PRODUCTION'), AND: [employeeHiredBeforeWhere(end)], ...employeeBoundaryWhere } }),
       prisma.employee.count({ where: { ...attendanceEmployeeWhere('OTHER'), AND: [employeeHiredBeforeWhere(end)], ...employeeBoundaryWhere } }),
       prisma.employee.count({ where: { ...attendanceEmployeeWhere('ALL'), AND: [employeeHiredBeforeWhere(end)], ...employeeBoundaryWhere } }),
+      prisma.attendanceCalendarDay.findMany({
+        where: { workDate: { gte: start, lt: end } },
+        select: { workDate: true, dayType: true, label: true, remark: true },
+      }),
     ]);
     const effectiveRecords = records.filter(item => isEmployeeHiredOnDate(item.employee, dateKeyFromDatabase(item.workDate)));
-    const confirmed = effectiveRecords.filter(item => item.status === 'confirmed');
+    const calendarOverrideByDate = new Map(calendarOverrides.map(item => [dateKeyFromDatabase(item.workDate), item]));
+    const resolveDay = (dateKey: string) => {
+      const override = calendarOverrideByDate.get(dateKey);
+      return resolveAttendanceCalendarDay(dateKey, override ? {
+        dayType: override.dayType as 'default' | 'holiday' | 'temporary_workday',
+        label: override.label,
+        remark: override.remark,
+      } : null);
+    };
+    const reportingRecords = effectiveRecords.filter(item => resolveDay(dateKeyFromDatabase(item.workDate)).isWorkday);
+    const confirmed = reportingRecords.filter(item => item.status === 'confirmed');
+    const selectedCalendarDay = resolveDay(range.date);
     return NextResponse.json({
       ok: true,
       period,
@@ -105,14 +122,18 @@ export async function GET(req: NextRequest) {
         unrestricted: boundary.unrestricted,
       },
       date: range.date,
+      calendar: {
+        ...selectedCalendarDay,
+        displayLabel: attendanceCalendarDayLabel(selectedCalendarDay),
+      },
       rangeStart: range.start.toISOString(),
       rangeEnd: range.end.toISOString(),
       records: effectiveRecords.map(serializeAttendanceRecord),
       summary: {
         enabledEmployeeCount: employees.length,
-        recordCount: effectiveRecords.length,
+        recordCount: reportingRecords.length,
         confirmedCount: confirmed.length,
-        draftCount: effectiveRecords.length - confirmed.length,
+        draftCount: reportingRecords.length - confirmed.length,
         actualMilliseconds: confirmed.reduce((sum, item) => sum + item.actualMilliseconds, 0),
         overtimeMilliseconds: confirmed.reduce((sum, item) => sum + item.overtimeMilliseconds, 0),
         leaveMilliseconds: confirmed.reduce((sum, item) => sum + item.leaveMilliseconds, 0),
@@ -132,6 +153,7 @@ export async function POST(req: NextRequest) {
     const employeeId = cleanProcessText(body.employeeId, 80);
     if (!employeeId) return NextResponse.json({ ok: false, error: '请选择员工' }, { status: 400 });
     const workDate = parseWorkDate(body.workDate);
+    await requireAttendanceWorkday(workDate.key);
     const boundary = await resolveAttendanceAccessBoundary(user);
     if (!attendanceEmployeeAllowed(boundary, employeeId)) {
       return NextResponse.json({ ok: false, error: '只能登记本人负责范围内的员工考勤' }, { status: 403 });

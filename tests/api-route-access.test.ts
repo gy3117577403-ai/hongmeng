@@ -264,6 +264,7 @@ test('training collaborator reads shared employees and skills while owning the t
   assert.equal(canAccessApiRoute(training, '/api/skills', 'GET'), true);
   assert.equal(canAccessApiRoute(training, '/api/skills', 'POST'), false);
   assert.equal(canAccessApiRoute(training, '/api/attendance/records', 'GET'), false);
+  assert.equal(canAccessApiRoute(training, '/api/attendance/calendar', 'GET'), false);
   assert.equal(canAccessApiRoute(training, '/api/recruitment/demands', 'GET'), false);
 });
 

@@ -2320,6 +2320,21 @@ model AttendanceRecord {
   @@map("attendance_records")
 }
 
+model AttendanceCalendarDay {
+  id          String   @id @default(uuid())
+  workDate    DateTime @unique @map("work_date") @db.Date
+  dayType     String   @default("default") @map("day_type")
+  label       String?
+  remark      String?
+  updatedById String?  @map("updated_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([dayType, workDate])
+  @@index([updatedById])
+  @@map("attendance_calendar_days")
+}
+
 model AbnormalTimeEvent {
   id                           String                   @id @default(uuid())
   sequence                     Int                      @unique @default(autoincrement())

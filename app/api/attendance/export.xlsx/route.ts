@@ -6,6 +6,7 @@ import {
 } from '@/lib/attendance-access';
 import { createAttendanceWorkbook } from '@/lib/attendance-workbook';
 import { dateKeyFromDatabase, parseAttendanceEmployeeIds, parseWorkDate } from '@/lib/attendance';
+import { resolveAttendanceCalendarDay } from '@/lib/attendance-calendar';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import {
@@ -59,14 +60,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ ok: false, error: '部分员工已不在当前考勤范围，请刷新后重试' }, { status: 409 });
     }
     const employeeIds = employees.map(employee => employee.id);
-    const records = employeeIds.length ? await prisma.attendanceRecord.findMany({
+    const [records, calendarOverrides] = await Promise.all([employeeIds.length ? prisma.attendanceRecord.findMany({
       where: {
         employeeId: { in: employeeIds },
         workDate: { gte: startDate, lt: endDate },
         ...attendanceRecordScopeWhere(scope),
       },
       orderBy: [{ workDate: 'asc' }, { employee: { employeeNo: 'asc' } }],
-    }) : [];
+    }) : Promise.resolve([]), prisma.attendanceCalendarDay.findMany({
+      where: { workDate: { gte: startDate, lt: endDate } },
+      select: { workDate: true, dayType: true, label: true, remark: true },
+    })]);
     const employeeById = new Map(employees.map(employee => [employee.id, employee]));
     const effectiveRecords = records.filter(record => isEmployeeHiredOnDate(
       employeeById.get(record.employeeId),
@@ -76,6 +80,16 @@ export async function GET(req: NextRequest) {
     const rangeEndKey = endInclusive.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
     const rangeStartKey = range.start.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
     const dateKeys = reportRangeDateKeys(range.start, range.end);
+    const calendarOverrideByDate = new Map(calendarOverrides.map(item => [dateKeyFromDatabase(item.workDate), item]));
+    const calendarDays = dateKeys.map(dateKey => {
+      const override = calendarOverrideByDate.get(dateKey);
+      const day = resolveAttendanceCalendarDay(dateKey, override ? {
+        dayType: override.dayType as 'default' | 'holiday' | 'temporary_workday',
+        label: override.label,
+        remark: override.remark,
+      } : null);
+      return { dateKey, effectiveDayType: day.effectiveDayType, label: day.label, isWorkday: day.isWorkday };
+    });
     const departmentLabels = [...new Set(employees.map(employee => employee.department || '').filter(Boolean))];
     const periodName = range.period === 'week' ? '周度' : range.period === 'month' ? '月度' : '自定义周期';
     const workbook = await createAttendanceWorkbook({
@@ -109,6 +123,7 @@ export async function GET(req: NextRequest) {
         remark: record.remark,
       })),
       dateKeys,
+      calendarDays,
     });
     await logOp({
       userId: actor.id,

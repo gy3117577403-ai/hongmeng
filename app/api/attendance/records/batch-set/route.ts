@@ -17,6 +17,7 @@ import {
   parseWorkDate,
   STANDARD_DAY_MILLISECONDS,
 } from '@/lib/attendance';
+import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
 import { cleanProcessText } from '@/lib/process-time';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
@@ -36,6 +37,7 @@ export async function POST(req: NextRequest) {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const workDate = parseWorkDate(body.workDate);
+    await requireAttendanceWorkday(workDate.key);
     const employeeIds = parseAttendanceEmployeeIds(body.employeeIds);
     const requestedScope: AttendanceWorkforceScope = body.scope
       ? parseAttendanceWorkforceScope(body.scope)

@@ -22,6 +22,10 @@
 .attendance-toolbar > button:disabled { opacity: .5; }
 .attendance-error { min-height: 36px; padding: 8px 11px; display: flex; align-items: center; gap: 7px; border: 1px solid #fecaca; border-radius: 8px; background: #fff1f0; color: #b42318; font-size: 11px; font-weight: 700; }
 .attendance-error:empty { display: none; }
+.attendance-calendar-notice { min-height: 42px; padding: 8px 11px; display: flex; align-items: center; gap: 8px; border: 1px solid #fed7aa; border-radius: 8px; background: #fff7ed; color: #9a3412; }
+.attendance-calendar-notice > span { display: grid; gap: 2px; }
+.attendance-calendar-notice strong { font-size: 10px; }
+.attendance-calendar-notice small { color: #7a8796; font-size: 9px; }
 .attendance-ledger, .abnormal-ledger { min-height: 0; flex: 1 1 auto; display: grid; grid-template-rows: auto minmax(0, 1fr); border: 1px solid var(--hm-color-border); border-radius: var(--hm-radius-lg); background: #fff; box-shadow: var(--hm-shadow-sm); overflow: hidden; }
 .attendance-ledger { grid-template-rows: auto auto minmax(0, 1fr); }
 .attendance-ledger > header, .abnormal-ledger > header { min-height: 58px; padding: 8px 13px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #edf0f3; background: linear-gradient(90deg, #fff7ed, #fff 48%); }

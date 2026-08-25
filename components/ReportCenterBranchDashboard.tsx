@@ -4,6 +4,8 @@ import {
   Activity,
   AlertTriangle,
   BarChart3,
+  CalendarCheck2,
+  CalendarCog,
   CalendarDays,
   CalendarRange,
   CheckCircle2,
@@ -22,6 +24,7 @@ import {
   RefreshCw,
   Search,
   ShieldCheck,
+  Sparkles,
   Table2,
   UsersRound,
   Workflow,
@@ -61,6 +64,8 @@ import type {
 
 type ApiResponse<T> = { ok: boolean; report?: T; error?: string };
 type LaborResponse = { ok: boolean; pools?: ProcessLaborPoolDTO[]; error?: string };
+type AttendanceCalendarRow = ReportOperationsDTO['dailyAttendance'][number];
+type AttendanceCalendarDayType = 'default' | 'holiday' | 'temporary_workday';
 type MetricTone = 'orange' | 'green' | 'blue' | 'red' | 'purple';
 
 type MetricDefinition = {
@@ -95,6 +100,20 @@ function todayKey(): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
+}
+
+function monthKey(value: string): string {
+  return /^\d{4}-\d{2}/.test(value) ? value.slice(0, 7) : todayKey().slice(0, 7);
+}
+
+function monthAnchor(value: string): string {
+  return `${monthKey(value)}-15`;
+}
+
+function shiftedMonth(value: string, delta: number): string {
+  const [year, month] = monthKey(value).split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1 + delta, 15));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-15`;
 }
 
 function numberText(value: number | null | undefined): string {
@@ -214,7 +233,7 @@ function branchMethod(branch: ReportBranchKey): string {
   }
   if (['attendance-attainment', 'team-hours', 'employee-attainment', 'employee-matrix', 'unmatched-labor'].includes(branch)) {
     if (branch === 'attendance-attainment') {
-      return '生产部出勤得分只汇总历史完整确认日；当日显示统计中，草稿或缺失不会按 0 计分，但会阻止该日形成正式得分。';
+      return '周一至周六默认工作、周日默认周休；节假日与周休剔除，周末临时工作需先在月历启用。只有已确认考勤进入正式统计。';
     }
     return '净应出勤=排班+已确认实际加班-确认请假；实际出勤已含加班。未入职、整日请假和休息不进入员工目标达成基数。';
   }
@@ -331,7 +350,7 @@ function metricForBranch(
       { label: '完成', value: numberText(branchItems.filter(item => item.status === 'completed').length), note: '单' },
     ] },
     'attendance-attainment': { label: `${attendanceScore?.workforceLabel || '生产部'}出勤得分`, value: percentText(attendanceScore?.attendanceBasisPoints), description: attendanceScore?.lastFinalizedDate
-      ? `截至 ${attendanceScore.lastFinalizedDate.slice(5)}，${attendanceScore.finalizedDays} 个完整确认日`
+      ? `截至 ${attendanceScore.lastFinalizedDate.slice(5)}，${attendanceScore.finalizedDays} 个完整确认工作日`
       : '暂无可发布的完整确认日', tone: 'blue', stats: [
       { label: '数据覆盖', value: percentText(attendanceScore?.dataCoverageBasisPoints), note: `${numberText(attendanceScore?.resolvedRecords)} / ${numberText(attendanceScore?.requiredRecords)} 条已确认` },
       { label: '实际 / 净应', value: compactHourPair(attendanceScore?.attendanceMilliseconds, attendanceScore?.netExpectedMilliseconds), note: `缺口 ${compactHours(attendanceScore?.shortfallMilliseconds)}` },
@@ -480,6 +499,8 @@ export default function ReportCenterBranchDashboard({
   const [refreshToken, setRefreshToken] = useState(0);
   const [selectedFocus, setSelectedFocus] = useState<ReportCenterFocusItemDTO | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeAttainmentRowDTO | null>(null);
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<AttendanceCalendarRow | null>(null);
+  const [savingCalendarDay, setSavingCalendarDay] = useState(false);
   const [toast, setToast] = useState('');
   const [loadedAt, setLoadedAt] = useState('');
 
@@ -495,8 +516,9 @@ export default function ReportCenterBranchDashboard({
     setLoading(true);
     setError('');
     async function load() {
-      const rangeParams = new URLSearchParams({ period, date });
-      if (period === 'custom') {
+      const effectivePeriod = initialBranch === 'attendance-attainment' ? 'month' : period;
+      const rangeParams = new URLSearchParams({ period: effectivePeriod, date });
+      if (effectivePeriod === 'custom') {
         rangeParams.set('startDate', startDate);
         rangeParams.set('endDate', endDate);
       }
@@ -558,15 +580,16 @@ export default function ReportCenterBranchDashboard({
   }, [customer, date, deferredKeyword, endDate, initialBranch, period, startDate]);
 
   useEffect(() => {
-    if (!selectedFocus && !selectedEmployee) return undefined;
+    if (!selectedFocus && !selectedEmployee && !selectedCalendarDay) return undefined;
     const close = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       setSelectedFocus(null);
       setSelectedEmployee(null);
+      setSelectedCalendarDay(null);
     };
     window.addEventListener('keydown', close);
     return () => window.removeEventListener('keydown', close);
-  }, [selectedEmployee, selectedFocus]);
+  }, [selectedCalendarDay, selectedEmployee, selectedFocus]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -605,6 +628,38 @@ export default function ReportCenterBranchDashboard({
     query.delete('team');
     const suffix = query.toString();
     return `${reportRoute(targetDomain, target.key)}${suffix ? `?${suffix}` : ''}`;
+  }
+
+  function selectAttendanceMonth(nextDate: string): void {
+    const anchor = monthAnchor(nextDate);
+    setPeriod('month');
+    setDate(anchor);
+    replaceQuery({ period: 'month', date: anchor, month: anchor.slice(0, 7), startDate: null, endDate: null });
+  }
+
+  async function saveAttendanceCalendarDay(input: {
+    workDate: string;
+    dayType: AttendanceCalendarDayType;
+    label: string;
+    remark: string;
+  }): Promise<void> {
+    setSavingCalendarDay(true);
+    try {
+      const response = await fetch('/api/attendance/calendar', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+      const body = await response.json() as { ok?: boolean; error?: string; message?: string };
+      if (!response.ok || !body.ok) throw new Error(body.error || '出勤日历保存失败');
+      setToast(body.message || '出勤日历已更新');
+      setSelectedCalendarDay(null);
+      setRefreshToken(value => value + 1);
+    } catch (reason) {
+      setToast(reason instanceof Error ? reason.message : '出勤日历保存失败');
+    } finally {
+      setSavingCalendarDay(false);
+    }
   }
 
   async function exportBranch(): Promise<void> {
@@ -670,8 +725,8 @@ export default function ReportCenterBranchDashboard({
       ];
     } else if (initialBranch === 'attendance-attainment') {
       rows = [
-        ['日期', '发布状态', '应处理记录', '已确认记录', '草稿记录', '缺失记录', '数据覆盖', '排班人数', '计入基数人数', '实到人数', '整日请假', '部分/整日请假', '缺勤', '休息', '排班工时', '实际加班', '请假扣减', '净应出勤', '实际出勤', '出勤缺口', '超额出勤', '原始预览率', '正式出勤得分', '人数出勤率'],
-        ...(operations?.dailyAttendance || []).map(row => [row.date, row.publicationState === 'finalized' ? '已完整确认' : row.publicationState === 'in_progress' ? '统计中' : row.publicationState === 'incomplete' ? '考勤未完整' : row.publicationState === 'future' ? '未到日期' : '未开启考勤', row.requiredRecords, row.resolvedRecords, row.draftRecords, row.missingRecords, percentText(row.dataCoverageBasisPoints), row.scheduledPeople, row.plannedPeople, row.attendancePeople, row.fullLeavePeople, row.leavePeople, row.absentPeople, row.restPeople, compactHours(row.scheduledMilliseconds), compactHours(row.actualOvertimeMilliseconds), compactHours(row.leaveDeductionMilliseconds), compactHours(row.netExpectedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(Math.max(0, row.netExpectedMilliseconds - row.attendanceMilliseconds)), compactHours(row.extraAttendanceMilliseconds), percentText(row.attendanceRawBasisPoints), percentText(row.hoursBasisPoints), percentText(row.attendanceBasisPoints)]),
+        ['日期', '日历类型', '日历名称', '发布状态', '应处理记录', '已确认记录', '草稿记录', '缺失记录', '数据覆盖', '排班人数', '计入基数人数', '实到人数', '整日请假', '部分/整日请假', '缺勤', '休息', '排班工时', '实际加班', '请假扣减', '净应出勤', '实际出勤', '出勤缺口', '超额出勤', '原始预览率', '正式出勤得分', '人数出勤率'],
+        ...(operations?.dailyAttendance || []).map(row => [row.date, row.calendarDayType === 'weekly_rest' ? '周休' : row.calendarDayType === 'holiday' ? '节假日' : row.calendarDayType === 'temporary_workday' ? '临时工作日' : '正常工作日', row.calendarLabel || '', row.publicationState === 'finalized' ? '已完整确认' : row.publicationState === 'in_progress' ? '统计中' : row.publicationState === 'incomplete' ? '考勤未完整' : row.publicationState === 'future' ? '未到日期' : row.publicationState === 'weekly_rest' ? '周休剔除' : row.publicationState === 'holiday' ? '节假日剔除' : '未开启考勤', row.requiredRecords, row.resolvedRecords, row.draftRecords, row.missingRecords, percentText(row.dataCoverageBasisPoints), row.scheduledPeople, row.plannedPeople, row.attendancePeople, row.fullLeavePeople, row.leavePeople, row.absentPeople, row.restPeople, compactHours(row.scheduledMilliseconds), compactHours(row.actualOvertimeMilliseconds), compactHours(row.leaveDeductionMilliseconds), compactHours(row.netExpectedMilliseconds), compactHours(row.attendanceMilliseconds), compactHours(Math.max(0, row.netExpectedMilliseconds - row.attendanceMilliseconds)), compactHours(row.extraAttendanceMilliseconds), percentText(row.attendanceRawBasisPoints), percentText(row.hoursBasisPoints), percentText(row.attendanceBasisPoints)]),
       ];
     } else if (initialBranch === 'team-hours') {
       rows = [
@@ -758,7 +813,9 @@ export default function ReportCenterBranchDashboard({
       <section className="report-branch-header">
         <div className={`report-branch-heading tone-${metric.tone}`}><span>{branchIcon(initialDomain)}</span><div><small>{domain.label} / {domain.caption}</small><h1>{branch.label}</h1><p>{branch.description}</p></div></div>
         <div className="report-branch-controls">
-          {branchUsesSingleDate(initialBranch) ? <label><CalendarDays /><input type="date" value={date} onChange={event => { setDate(event.target.value); replaceQuery({ date: event.target.value }); }} aria-label="记工日期" /></label>
+          {initialBranch === 'attendance-attainment'
+            ? <div className="report-attendance-month-nav" role="group" aria-label="出勤历史月份"><button className="icon" type="button" title="上一个月" aria-label="上一个月" onClick={() => selectAttendanceMonth(shiftedMonth(date, -1))}><ChevronLeft /></button><label><CalendarDays /><span>历史月份</span><input type="month" value={monthKey(date)} onChange={event => selectAttendanceMonth(`${event.target.value}-15`)} aria-label="选择出勤月份" /></label><button className="icon" type="button" title="下一个月" aria-label="下一个月" onClick={() => selectAttendanceMonth(shiftedMonth(date, 1))}><ChevronRight /></button><button className="report-current-month" type="button" onClick={() => selectAttendanceMonth(todayKey())}>本月</button></div>
+            : branchUsesSingleDate(initialBranch) ? <label><CalendarDays /><input type="date" value={date} onChange={event => { setDate(event.target.value); replaceQuery({ date: event.target.value }); }} aria-label="记工日期" /></label>
             : <div className="report-period-switch" role="group" aria-label="统计周期">{([['week', '本周'], ['month', '本月'], ['custom', '自定义']] as Array<[ReportCenterPeriodDTO, string]>).map(([key, label]) => <button className={period === key ? 'active' : ''} type="button" key={key} onClick={() => { setPeriod(key); replaceQuery({ period: key }); }}>{label}</button>)}{period === 'custom' ? <span className="report-custom-range"><label><CalendarDays /><input type="date" value={startDate} max={endDate} onChange={event => { setStartDate(event.target.value); replaceQuery({ startDate: event.target.value }); }} aria-label="开始日期" /></label><i>至</i><label><CalendarRange /><input type="date" value={endDate} min={startDate} onChange={event => { setEndDate(event.target.value); replaceQuery({ endDate: event.target.value }); }} aria-label="结束日期" /></label></span> : <label><CalendarDays /><input type="date" value={date} onChange={event => { setDate(event.target.value); replaceQuery({ date: event.target.value }); }} aria-label="基准日期" /></label>}</div>}
           {(OVERVIEW_BRANCHES.has(initialBranch) || COMPLETED_BATCH_BRANCHES.has(initialBranch)) && <label><Layers3 /><select value={customer} onChange={event => { setCustomer(event.target.value); replaceQuery({ customer: event.target.value || null }); }} aria-label="客户筛选"><option value="">全部客户</option>{(completedBatches?.customers || overview?.customers || []).map(item => <option value={item} key={item}>{item}</option>)}</select></label>}
           {TEAM_FILTER_BRANCHES.has(initialBranch) && <label><UsersRound /><select value={team} onChange={event => { setTeam(event.target.value); replaceQuery({ team: event.target.value || null }); }} aria-label="班组筛选"><option value="">全部班组</option>{teams.map(item => <option value={item} key={item}>{item}</option>)}</select></label>}
@@ -797,6 +854,7 @@ export default function ReportCenterBranchDashboard({
           qualityEvents={qualityEvents}
           onFocus={setSelectedFocus}
           onEmployee={setSelectedEmployee}
+          onCalendarDay={setSelectedCalendarDay}
           onBatchPage={setBatchPage}
         />}
       </section>
@@ -804,6 +862,7 @@ export default function ReportCenterBranchDashboard({
     </div>
     {selectedFocus && <FocusDrawer item={selectedFocus} onClose={() => setSelectedFocus(null)} />}
     {selectedEmployee && <EmployeeDrawer row={selectedEmployee} onClose={() => setSelectedEmployee(null)} />}
+    {selectedCalendarDay && <AttendanceCalendarDialog day={selectedCalendarDay} saving={savingCalendarDay} onClose={() => setSelectedCalendarDay(null)} onSave={saveAttendanceCalendarDay} />}
   </main>;
 }
 
@@ -829,16 +888,17 @@ function BranchContent(props: {
   qualityEvents: AbnormalTimeReportDTO['events'];
   onFocus: (item: ReportCenterFocusItemDTO) => void;
   onEmployee: (item: EmployeeAttainmentRowDTO) => void;
+  onCalendarDay: (item: AttendanceCalendarRow) => void;
   onBatchPage: (page: number) => void;
 }) {
-  const { branch, overview, completedBatches, operations, abnormal, laborPools, focusItems, employeeRows, operationRows, teamRows, qualityEvents, onFocus, onEmployee, onBatchPage } = props;
+  const { branch, overview, completedBatches, operations, abnormal, laborPools, focusItems, employeeRows, operationRows, teamRows, qualityEvents, onFocus, onEmployee, onCalendarDay, onBatchPage } = props;
   if (branch === 'quantity-attainment' || branch === 'production-trend') return <TrendPanel report={overview} />;
   if (branch === 'completed-orders') return <CompletedBatchTable report={completedBatches} onPage={onBatchPage} />;
   if (branch === 'order-status') return <><StatusDistribution report={overview} /><FocusTable title="状态对应工单" items={focusItems} onSelect={onFocus} /></>;
   if (branch === 'weekly-plan-attainment') return <WeeklyPlan report={operations} />;
   if (branch === 'process-bottlenecks') return <BottleneckTable report={overview} />;
   if (branch === 'delivery-risk' || branch === 'due-soon' || branch === 'delivery-orders') return <FocusTable title={branch === 'delivery-risk' ? '逾期交付工单' : branch === 'due-soon' ? '即将到期工单' : '交付工单明细'} items={focusItems} onSelect={onFocus} />;
-  if (branch === 'attendance-attainment') return <AttendancePanel report={operations} />;
+  if (branch === 'attendance-attainment') return <AttendancePanel report={operations} onSelectDay={onCalendarDay} />;
   if (branch === 'team-hours') return <TeamHoursTable rows={teamRows} />;
   if (branch === 'employee-attainment' || branch === 'unmatched-labor') return <EmployeeTable rows={employeeRows} unmatchedOnly={branch === 'unmatched-labor'} onSelect={onEmployee} />;
   if (branch === 'employee-matrix') return <EmployeeMatrix report={operations} rows={operationRows} />;
@@ -904,32 +964,76 @@ function CompletedBatchTable({ report, onPage }: { report: ReportCompletedBatche
   </Panel>;
 }
 
-function AttendancePanel({ report }: { report: ReportOperationsDTO | null }) {
+function AttendancePanel({ report, onSelectDay }: { report: ReportOperationsDTO | null; onSelectDay: (day: AttendanceCalendarRow) => void }) {
   const rows = report?.dailyAttendance || [];
   const summary = report?.attendanceScore;
-  return <Panel kicker="每日出勤" title={`${rangeText(report)} ${summary?.workforceLabel || '生产部'}出勤得分`} action={<span>完整确认日 {numberText(summary?.finalizedDays)} 天 · 未完整 {numberText(summary?.incompleteDays)} 天</span>}><div className="report-attendance-bars">{rows.map(row => {
+  const firstOffset = rows.length ? (new Date(`${rows[0].date}T12:00:00Z`).getUTCDay() + 6) % 7 : 0;
+  const trailing = rows.length ? (7 - (firstOffset + rows.length) % 7) % 7 : 0;
+  return <Panel kicker="月度出勤日历" title={`${rangeText(report)} ${summary?.workforceLabel || '生产部'}出勤得分`} action={<span>完整确认 {numberText(summary?.finalizedDays)} 天 · 周休 {numberText(summary?.weeklyRestDays)} 天 · 节假日 {numberText(summary?.holidayDays)} 天</span>}>
+    <div className="report-attendance-calendar-note"><CalendarCog /><span><strong>点击日期设置出勤规则</strong><small>周一至周六默认工作，周日默认周休；节假日与周休不计入分母，临时周末工作需先启用。</small></span></div>
+    <div className="report-attendance-weekdays" aria-hidden="true">{['周一', '周二', '周三', '周四', '周五', '周六', '周日'].map(label => <span key={label}>{label}</span>)}</div>
+    <div className="report-attendance-calendar">{Array.from({ length: firstOffset }, (_, index) => <span className="calendar-spacer" key={`leading-${index}`} />)}{rows.map(row => {
     const stateLabel = row.publicationState === 'finalized' ? '已完整确认'
       : row.publicationState === 'in_progress' ? '统计中'
         : row.publicationState === 'incomplete' ? '考勤未完整'
           : row.publicationState === 'future' ? '未到日期'
-            : '未开启考勤';
+            : row.publicationState === 'weekly_rest' ? '周休'
+              : row.publicationState === 'holiday' ? (row.calendarLabel || '节假日')
+                : '未开启考勤';
     const pendingRecords = row.draftRecords + row.missingRecords;
     const scoreBar = row.isFinalized ? row.hoursBasisPoints : row.dataCoverageBasisPoints;
     const shortfall = Math.max(0, row.netExpectedMilliseconds - row.attendanceMilliseconds);
-    const noMetrics = row.publicationState === 'future' || row.publicationState === 'no_roster';
-    return <article key={row.date} className={`state-${row.publicationState}`}>
-      <header><div><strong>{row.date.slice(5)}</strong><small>{stateLabel}</small></div><span>{row.isFinalized ? percentText(row.hoursBasisPoints) : '—'}</span></header>
+    const excluded = row.publicationState === 'weekly_rest' || row.publicationState === 'holiday';
+    const noMetrics = excluded || row.publicationState === 'future' || row.publicationState === 'no_roster';
+    const calendarBadge = row.calendarDayType === 'temporary_workday' ? '临时工作' : row.calendarDayType === 'holiday' ? '节假日' : row.calendarDayType === 'weekly_rest' ? '周休' : null;
+    return <button type="button" key={row.date} data-date={row.date} className={`state-${row.publicationState} calendar-${row.calendarDayType}`} onClick={() => onSelectDay(row)} aria-label={`${row.date} ${stateLabel}，点击设置出勤日历`}>
+      <header><div><strong><em>{Number(row.date.slice(-2))}</em><small>{new Date(`${row.date}T12:00:00Z`).toLocaleDateString('zh-CN', { weekday: 'short', timeZone: 'Asia/Shanghai' })}</small></strong><span>{stateLabel}</span></div><b>{row.isFinalized ? percentText(row.hoursBasisPoints) : calendarBadge || '设置'}</b></header>
       <div className="report-attendance-progress" title={row.isFinalized ? '正式出勤得分' : `数据覆盖 ${percentText(row.dataCoverageBasisPoints)}`}><i style={{ width: `${Math.min(100, (scoreBar || 0) / 100)}%` }} /></div>
       {noMetrics
-        ? <p className="report-attendance-empty">{row.publicationState === 'future' ? '未到统计日期' : '当日未开启生产考勤'}</p>
+        ? <p className="report-attendance-empty">{excluded ? <><strong>{row.calendarLabel || (row.publicationState === 'weekly_rest' ? '每周日固定休息' : '已设置节假日')}</strong><span>不计入出勤基数{row.confirmedRecords + row.draftRecords ? ` · 保留 ${row.confirmedRecords + row.draftRecords} 条历史记录` : ''}</span></> : row.publicationState === 'future' ? '未到统计日期' : '当日尚未生成考勤'}</p>
         : <dl>
           <span>数据覆盖 <b>{percentText(row.dataCoverageBasisPoints)}</b></span><span>已确认 {row.resolvedRecords}/{row.requiredRecords}</span>
           {row.isFinalized
             ? <><span>净应 {compactHours(row.netExpectedMilliseconds)}</span><span>实到 {compactHours(row.attendanceMilliseconds)}</span><span>加班 {compactHours(row.actualOvertimeMilliseconds)}</span><span>请假扣减 {compactHours(row.leaveDeductionMilliseconds)}</span><span>人数 {row.attendancePeople}/{row.plannedPeople}</span><span className={shortfall ? 'danger' : row.extraAttendanceMilliseconds ? 'accent' : ''}>{shortfall ? `缺口 ${compactHours(shortfall)}` : `超额 ${compactHours(row.extraAttendanceMilliseconds)}`}</span></>
-            : <><span className={pendingRecords ? 'warning' : ''}>待处理 {pendingRecords}</span><span>草稿 {row.draftRecords}</span><span>缺失 {row.missingRecords}</span><span>已采集实到 {compactHours(row.attendanceMilliseconds)}</span></>}
+            : <><span className={pendingRecords ? 'warning' : ''}>待处理 {pendingRecords}</span><span>草稿 {row.draftRecords}</span><span>缺失 {row.missingRecords}</span><span>有效实到 {compactHours(row.attendanceMilliseconds)}</span></>}
         </dl>}
-    </article>;
-  })}</div>{!rows.length && <EmptyState icon={<CalendarDays />} title="当前周期没有生产部考勤记录" />}</Panel>;
+      {calendarBadge && <span className="report-calendar-badge"><Sparkles />{calendarBadge}</span>}
+    </button>;
+  })}{Array.from({ length: trailing }, (_, index) => <span className="calendar-spacer" key={`trailing-${index}`} />)}</div>{!rows.length && <EmptyState icon={<CalendarDays />} title="当前月份没有生产部考勤日历" />}</Panel>;
+}
+
+function AttendanceCalendarDialog({
+  day,
+  saving,
+  onClose,
+  onSave,
+}: {
+  day: AttendanceCalendarRow;
+  saving: boolean;
+  onClose: () => void;
+  onSave: (input: { workDate: string; dayType: AttendanceCalendarDayType; label: string; remark: string }) => Promise<void>;
+}) {
+  const [dayType, setDayType] = useState<AttendanceCalendarDayType>(day.calendarOverrideType || 'default');
+  const [label, setLabel] = useState(day.calendarLabel || '');
+  const [remark, setRemark] = useState(day.calendarRemark || '');
+  const [acknowledged, setAcknowledged] = useState(false);
+  const isSunday = new Date(`${day.date}T12:00:00Z`).getUTCDay() === 0;
+  const excludesDate = dayType === 'holiday' || dayType === 'default' && isSunday;
+  const retainedRecords = day.confirmedRecords + day.draftRecords;
+  const needsAcknowledgement = excludesDate && retainedRecords > 0;
+  const preview = dayType === 'holiday' ? (label.trim() || '节假日') : dayType === 'temporary_workday' ? (label.trim() || '临时工作日') : isSunday ? '周休' : '正常工作日';
+  return <div className="report-calendar-dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget && !saving) onClose(); }}><form className="report-calendar-dialog" role="dialog" aria-modal="true" aria-label={`${day.date} 出勤日历设置`} onSubmit={event => { event.preventDefault(); if (!needsAcknowledgement || acknowledged) void onSave({ workDate: day.date, dayType, label, remark }); }}>
+    <header><div><small>出勤日历设置</small><h2>{day.date} · {new Date(`${day.date}T12:00:00Z`).toLocaleDateString('zh-CN', { weekday: 'long', timeZone: 'Asia/Shanghai' })}</h2><p>当前：{day.calendarDayType === 'weekly_rest' ? '周休' : day.calendarDayType === 'holiday' ? day.calendarLabel || '节假日' : day.calendarDayType === 'temporary_workday' ? day.calendarLabel || '临时工作日' : '正常工作日'}</p></div><button type="button" aria-label="关闭出勤日历设置" disabled={saving} onClick={onClose}><X /></button></header>
+    <section className="report-calendar-options" aria-label="日期规则">
+      <label className={dayType === 'default' ? 'active' : ''}><input type="radio" name="calendar-day-type" value="default" checked={dayType === 'default'} onChange={() => { setDayType('default'); setAcknowledged(false); }} /><CalendarCheck2 /><span><strong>默认规则</strong><small>{isSunday ? '周日按周休处理' : '周一至周六按工作日处理'}</small></span></label>
+      <label className={dayType === 'holiday' ? 'active' : ''}><input type="radio" name="calendar-day-type" value="holiday" checked={dayType === 'holiday'} onChange={() => { setDayType('holiday'); setAcknowledged(false); }} /><CalendarDays /><span><strong>节假日</strong><small>整日剔除出勤与得分基数</small></span></label>
+      <label className={dayType === 'temporary_workday' ? 'active' : ''}><input type="radio" name="calendar-day-type" value="temporary_workday" checked={dayType === 'temporary_workday'} onChange={() => { setDayType('temporary_workday'); setAcknowledged(false); }} /><Clock3 /><span><strong>临时工作日</strong><small>允许周末临时加班考勤</small></span></label>
+    </section>
+    {dayType !== 'default' && <div className="report-calendar-fields"><label><span>日历名称</span><input value={label} onChange={event => setLabel(event.target.value)} maxLength={80} placeholder={dayType === 'holiday' ? '例如：国庆节' : '例如：交付赶工'} /></label><label><span>备注</span><textarea value={remark} onChange={event => setRemark(event.target.value)} maxLength={300} placeholder="说明放假或临时工作的原因（可选）" /></label></div>}
+    <div className={`report-calendar-impact ${excludesDate ? 'excluded' : 'included'}`}><CalendarCog /><span><strong>保存后：{preview}</strong><small>{excludesDate ? '该日不进入应确认人数、工时、覆盖率和出勤得分。' : dayType === 'temporary_workday' ? '该日可以生成和确认考勤，只统计实际建档人员。' : '该日按正常生产考勤规则统计。'} 历史记录始终保留。</small></span></div>
+    {needsAcknowledgement && <label className="report-calendar-ack"><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)} /><span>我已确认：现有 {day.confirmedRecords} 条已确认、{day.draftRecords} 条草稿记录不会删除，但本日期将从有效统计中剔除。</span></label>}
+    <footer><button type="button" disabled={saving} onClick={onClose}>取消</button><button className="primary" type="submit" disabled={saving || needsAcknowledgement && !acknowledged}>{saving ? <Loader2 className="spin" /> : <CheckCircle2 />}{saving ? '正在保存' : '确认保存规则'}</button></footer>
+  </form></div>;
 }
 
 function TeamHoursTable({ rows }: { rows: ReportOperationsLaborRowDTO[] }) {

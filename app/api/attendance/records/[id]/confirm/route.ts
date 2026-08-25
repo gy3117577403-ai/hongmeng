@@ -6,6 +6,7 @@ import {
   resolveAttendanceAccessBoundary,
 } from '@/lib/attendance-access';
 import { serializeAttendanceRecord } from '@/lib/attendance';
+import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import { isEmployeeHiredOnDate } from '@/lib/production-workforce';
@@ -31,6 +32,7 @@ export async function POST(_: Request, { params }: { params: { id: string } }) {
       return NextResponse.json({ ok: false, error: '只能确认本人负责范围内的员工考勤' }, { status: 403 });
     }
     const workDateKey = existing.workDate.toISOString().slice(0, 10);
+    await requireAttendanceWorkday(workDateKey);
     if (!isEmployeeHiredOnDate(existing.employee, workDateKey)) {
       return NextResponse.json({ ok: false, error: '不能确认员工入职前的考勤记录' }, { status: 409 });
     }

@@ -2183,7 +2183,9 @@ export type ReportCenterOverviewDTO = {
 };
 
 export type ReportOperationsDayStatusDTO = 'not_employed' | 'missing' | 'draft' | 'confirmed' | 'rest';
-export type ReportAttendancePublicationStateDTO = 'future' | 'in_progress' | 'incomplete' | 'finalized' | 'no_roster';
+export type ReportAttendancePublicationStateDTO = 'future' | 'in_progress' | 'incomplete' | 'finalized' | 'no_roster' | 'weekly_rest' | 'holiday';
+export type ReportAttendanceCalendarDayTypeDTO = 'workday' | 'weekly_rest' | 'holiday' | 'temporary_workday';
+export type ReportAttendanceCalendarOverrideTypeDTO = 'default' | 'holiday' | 'temporary_workday' | null;
 
 export type ReportOperationsLaborRowDTO = {
   team: string;
@@ -2299,6 +2301,11 @@ export type ReportOperationsDTO = {
     weekday: string;
     isWeekend: boolean;
     isFuture: boolean;
+    calendarDayType: ReportAttendanceCalendarDayTypeDTO;
+    calendarOverrideType: ReportAttendanceCalendarOverrideTypeDTO;
+    calendarLabel: string | null;
+    calendarRemark: string | null;
+    isWorkday: boolean;
   }>;
   summary: {
     employeeCount: number;
@@ -2349,6 +2356,8 @@ export type ReportOperationsDTO = {
     finalizedDays: number;
     incompleteDays: number;
     inProgressDays: number;
+    weeklyRestDays: number;
+    holidayDays: number;
     lastFinalizedDate: string | null;
     netExpectedMilliseconds: number;
     attendanceMilliseconds: number;
@@ -2380,6 +2389,11 @@ export type ReportOperationsDTO = {
   }>;
   dailyAttendance: Array<{
     date: string;
+    calendarDayType: ReportAttendanceCalendarDayTypeDTO;
+    calendarOverrideType: ReportAttendanceCalendarOverrideTypeDTO;
+    calendarLabel: string | null;
+    calendarRemark: string | null;
+    isWorkday: boolean;
     scheduledPeople: number;
     plannedPeople: number;
     attendancePeople: number;

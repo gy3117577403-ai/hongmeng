@@ -214,6 +214,26 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
 .report-custom-range label:first-child { border-left: 1px solid var(--report-line); }
 .report-custom-range label:last-child { border-left: 0; }
 
+.report-attendance-month-nav {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.report-attendance-month-nav > label {
+  min-height: 40px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--report-line);
+  border-radius: 9px;
+  background: #f8fafb;
+}
+.report-attendance-month-nav > label > span { color: #66758a; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.report-attendance-month-nav > label input { min-width: 116px; width: 116px; }
+.report-attendance-month-nav > button.report-current-month { min-height: 40px; padding-inline: 12px; border-color: #f0bd9c; background: #fff7f1; color: var(--report-orange-dark); }
+
 .report-branch-controls > button {
   min-height: 40px;
   padding: 0 13px;
@@ -483,28 +503,53 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
 .report-pagination button:disabled { opacity: .42; cursor: not-allowed; }
 .report-pagination svg { width: 14px; }
 
-.report-attendance-bars { padding: 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 9px; }
-.report-attendance-bars article { min-height: 132px; padding: 11px; border: 1px solid #e2e8ee; border-radius: 10px; background: #fbfcfd; }
-.report-attendance-bars article.state-finalized { border-color: #cfe7dc; background: #fbfefc; }
-.report-attendance-bars article.state-in_progress { border-color: #8fbae9; background: #f5faff; box-shadow: inset 0 0 0 1px #dbeaf9; }
-.report-attendance-bars article.state-incomplete { border-color: #f0ba8f; background: #fff9f4; }
-.report-attendance-bars article.state-future,
-.report-attendance-bars article.state-no_roster { background: #f6f8fa; }
-.report-attendance-bars header { display: flex; justify-content: space-between; gap: 8px; }
-.report-attendance-bars header > div { display: grid; gap: 1px; }
-.report-attendance-bars header strong { color: #34445a; }
-.report-attendance-bars header small { color: #8592a3; font-size: 9px; font-weight: 750; }
-.report-attendance-bars header span { color: var(--report-blue); font-weight: 850; }
-.report-attendance-bars .report-attendance-progress { height: 7px; margin: 9px 0; border-radius: 999px; background: #e5ebf1; overflow: hidden; }
-.report-attendance-bars .report-attendance-progress i { height: 100%; display: block; border-radius: inherit; background: var(--report-blue); }
-.report-attendance-bars .state-finalized .report-attendance-progress i { background: var(--report-green); }
-.report-attendance-bars .state-incomplete .report-attendance-progress i { background: var(--report-orange); }
-.report-attendance-bars dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; color: #6f7e91; font-size: 9px; }
-.report-attendance-bars dl b { color: #33455b; }
-.report-attendance-empty { min-height: 48px; margin: 0; display: grid; place-items: center; color: #94a0af; font-size: 9px; text-align: center; }
-.report-attendance-bars .danger { color: var(--report-red); font-weight: 800; }
-.report-attendance-bars .accent { color: var(--report-blue); font-weight: 800; }
-.report-attendance-bars .warning { color: #a85b00; font-weight: 800; }
+.report-attendance-calendar-note { margin: 9px 12px 5px; padding: 7px 10px; display: flex; align-items: center; gap: 8px; border: 1px solid #dbe7f3; border-radius: 9px; background: #f4f9ff; color: #2366b8; }
+.report-attendance-calendar-note > svg { width: 18px; flex: 0 0 auto; }
+.report-attendance-calendar-note > span { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.report-attendance-calendar-note strong { font-size: 10px; white-space: nowrap; }
+.report-attendance-calendar-note small { overflow: hidden; color: #69809a; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.report-attendance-weekdays { padding: 3px 12px 0; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.report-attendance-weekdays span { min-height: 22px; display: grid; place-items: center; color: #788698; font-size: 9px; font-weight: 850; }
+.report-attendance-weekdays span:last-child { color: #cf4d53; }
+.report-attendance-calendar { padding: 5px 12px 12px; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.report-attendance-calendar > button,
+.report-attendance-calendar > .calendar-spacer { min-width: 0; min-height: 94px; }
+.report-attendance-calendar > button { position: relative; padding: 7px 8px; display: block; border: 1px solid #e0e7ee; border-radius: 10px; background: #fbfcfd; color: inherit; text-align: left; cursor: pointer; overflow: hidden; transition: transform .14s ease, border-color .14s ease, box-shadow .14s ease; }
+.report-attendance-calendar > button:hover { z-index: 1; border-color: #9fc2e9; box-shadow: 0 7px 18px rgba(34, 70, 105, .1); transform: translateY(-1px); }
+.report-attendance-calendar > button:focus-visible { outline: 2px solid #2f7fd8; outline-offset: 2px; }
+.report-attendance-calendar > button.state-finalized { border-color: #c7e4d5; background: #f9fdfb; }
+.report-attendance-calendar > button.state-in_progress { border-color: #8fbae9; background: #f4f9ff; box-shadow: inset 0 0 0 1px #dbeaf9; }
+.report-attendance-calendar > button.state-incomplete { border-color: #efb788; background: #fff9f3; }
+.report-attendance-calendar > button.state-future,
+.report-attendance-calendar > button.state-no_roster { background: #f5f7f9; }
+.report-attendance-calendar > button.calendar-weekly_rest { border-color: #e5d7da; background: #fff8f8; }
+.report-attendance-calendar > button.calendar-holiday { border-color: #f2c2c3; background: #fff5f4; }
+.report-attendance-calendar > button.calendar-temporary_workday { border-color: #f0b47f; background: #fff8f0; }
+.report-attendance-calendar header { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; }
+.report-attendance-calendar header > div { min-width: 0; display: grid; gap: 1px; }
+.report-attendance-calendar header strong { display: flex; align-items: baseline; gap: 4px; color: #33455b; }
+.report-attendance-calendar header strong em { font-size: 16px; font-style: normal; line-height: 1; }
+.report-attendance-calendar header strong small { color: #8995a4; font-size: 8px; font-weight: 750; }
+.report-attendance-calendar header span { overflow: hidden; color: #7b8898; font-size: 8px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.report-attendance-calendar header > b { color: var(--report-blue); font-size: 10px; white-space: nowrap; }
+.report-attendance-calendar .calendar-weekly_rest header > b,
+.report-attendance-calendar .calendar-holiday header > b { color: #c34348; }
+.report-attendance-calendar .calendar-temporary_workday header > b { color: var(--report-orange-dark); }
+.report-attendance-progress { height: 5px; margin: 6px 0; border-radius: 999px; background: #e4eaf0; overflow: hidden; }
+.report-attendance-progress i { height: 100%; display: block; border-radius: inherit; background: var(--report-blue); }
+.report-attendance-calendar .state-finalized .report-attendance-progress i { background: var(--report-green); }
+.report-attendance-calendar .state-incomplete .report-attendance-progress i { background: var(--report-orange); }
+.report-attendance-calendar dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 5px; color: #6f7e91; font-size: 8px; line-height: 1.25; }
+.report-attendance-calendar dl span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.report-attendance-calendar dl b { color: #33455b; }
+.report-attendance-empty { min-height: 43px; margin: 0; display: grid; place-content: center; gap: 2px; color: #929eac; font-size: 8px; line-height: 1.35; text-align: center; }
+.report-attendance-empty strong { color: #7f5d61; font-size: 9px; }
+.report-attendance-empty span { color: #9a8387; }
+.report-attendance-calendar .danger { color: var(--report-red); font-weight: 800; }
+.report-attendance-calendar .accent { color: var(--report-blue); font-weight: 800; }
+.report-attendance-calendar .warning { color: #a85b00; font-weight: 800; }
+.report-calendar-badge { position: absolute; right: 6px; bottom: 5px; display: inline-flex; align-items: center; gap: 2px; color: #b25a18; font-size: 7px; font-weight: 850; opacity: .82; }
+.report-calendar-badge svg { width: 9px; height: 9px; }
 
 .report-team-table > div,
 .report-team-table > article { min-height: 64px; padding: 0 14px; display: grid; grid-template-columns: 1.22fr .7fr repeat(4, .88fr) .82fr .82fr .9fr; align-items: center; gap: 10px; border-bottom: 1px solid #e8edf2; }
@@ -678,6 +723,48 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
 }
 .report-branch-toast svg { width: 18px; color: #5fe09f; }
 
+.report-calendar-dialog-backdrop { position: fixed; inset: 0; z-index: 240; display: grid; place-items: center; padding: 20px; background: rgba(14, 28, 44, .42); backdrop-filter: blur(5px); }
+.report-calendar-dialog { width: min(650px, 96vw); max-height: min(860px, 94dvh); padding: 18px; display: grid; gap: 13px; border: 1px solid rgba(255, 255, 255, .8); border-radius: 16px; background: #fff; box-shadow: 0 24px 70px rgba(14, 28, 44, .24); overflow-y: auto; }
+.report-calendar-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.report-calendar-dialog > header > div { min-width: 0; }
+.report-calendar-dialog > header small { color: var(--report-orange); font-size: 10px; font-weight: 850; letter-spacing: .05em; }
+.report-calendar-dialog > header h2 { margin: 3px 0; color: #1a2d43; font-size: 22px; }
+.report-calendar-dialog > header p { margin: 0; color: #778597; font-size: 11px; }
+.report-calendar-dialog > header button { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid #dce4eb; border-radius: 9px; background: #fff; color: #657489; cursor: pointer; }
+.report-calendar-dialog > header button svg { width: 17px; }
+.report-calendar-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.report-calendar-options > label { min-width: 0; min-height: 88px; padding: 11px; display: grid; grid-template-columns: 26px minmax(0, 1fr); align-content: center; gap: 8px; border: 1px solid #dfe6ed; border-radius: 11px; background: #fafbfd; cursor: pointer; transition: border-color .14s ease, background .14s ease, box-shadow .14s ease; }
+.report-calendar-options > label:hover { border-color: #f0ad83; }
+.report-calendar-options > label.active { border-color: var(--report-orange); background: #fff7f1; box-shadow: inset 0 0 0 1px rgba(232, 93, 4, .12); }
+.report-calendar-options input { position: absolute; opacity: 0; pointer-events: none; }
+.report-calendar-options svg { width: 24px; height: 24px; color: #78889a; }
+.report-calendar-options label.active svg { color: var(--report-orange); }
+.report-calendar-options span { min-width: 0; display: grid; gap: 3px; }
+.report-calendar-options strong { color: #26394e; font-size: 12px; }
+.report-calendar-options small { color: #8390a0; font-size: 9px; line-height: 1.4; }
+.report-calendar-fields { display: grid; grid-template-columns: .8fr 1.2fr; gap: 9px; }
+.report-calendar-fields label { display: grid; gap: 5px; }
+.report-calendar-fields label > span { color: #536378; font-size: 10px; font-weight: 800; }
+.report-calendar-fields input,
+.report-calendar-fields textarea { width: 100%; border: 1px solid #dce4eb; border-radius: 9px; outline: 0; background: #fbfcfd; color: #26394e; font: inherit; font-size: 11px; }
+.report-calendar-fields input { min-height: 40px; padding: 0 10px; }
+.report-calendar-fields textarea { min-height: 72px; padding: 9px 10px; resize: vertical; }
+.report-calendar-fields input:focus,
+.report-calendar-fields textarea:focus { border-color: #ea9058; box-shadow: 0 0 0 3px rgba(232, 93, 4, .1); }
+.report-calendar-impact { padding: 11px 12px; display: flex; align-items: flex-start; gap: 9px; border: 1px solid #cce6d9; border-radius: 10px; background: #f0faf5; color: #167649; }
+.report-calendar-impact.excluded { border-color: #f0c8c8; background: #fff6f5; color: #bd3d42; }
+.report-calendar-impact > svg { width: 19px; flex: 0 0 auto; }
+.report-calendar-impact > span { display: grid; gap: 2px; }
+.report-calendar-impact strong { font-size: 11px; }
+.report-calendar-impact small { color: #6d7c8e; font-size: 9px; line-height: 1.45; }
+.report-calendar-ack { padding: 9px 11px; display: flex; align-items: flex-start; gap: 8px; border: 1px solid #f0b1b3; border-radius: 9px; background: #fff8f7; color: #a93a3f; font-size: 10px; line-height: 1.45; cursor: pointer; }
+.report-calendar-ack input { width: 16px; height: 16px; margin: 0; flex: 0 0 auto; accent-color: var(--report-orange); }
+.report-calendar-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; }
+.report-calendar-dialog > footer button { min-height: 40px; padding: 0 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #dce4eb; border-radius: 9px; background: #fff; color: #526277; font-size: 11px; font-weight: 850; cursor: pointer; }
+.report-calendar-dialog > footer button.primary { border-color: var(--report-orange); background: var(--report-orange); color: #fff; }
+.report-calendar-dialog > footer button:disabled { opacity: .5; cursor: not-allowed; }
+.report-calendar-dialog > footer svg { width: 16px; }
+
 .report-focus-drawer-backdrop { position: fixed; inset: 0; z-index: 200; display: flex; justify-content: flex-end; background: rgba(15, 28, 44, .34); backdrop-filter: blur(4px); }
 .report-focus-drawer { width: min(440px, 92vw); height: 100%; padding: 18px; display: grid; grid-template-rows: auto auto auto 1fr auto; gap: 14px; background: rgba(255, 255, 255, .97); box-shadow: -20px 0 50px rgba(16, 30, 46, .18); overflow-y: auto; }
 .report-focus-drawer > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
@@ -760,6 +847,8 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
   .report-branch-context span:last-child { justify-content: flex-start; text-align: left; }
   .report-review-flow { grid-template-columns: 1fr; }
   .report-review-flow > svg { transform: rotate(90deg); justify-self: center; }
+  .report-attendance-month-nav { flex-wrap: wrap; }
+  .report-attendance-calendar-note > span { display: grid; gap: 2px; }
   .report-team-table,
   .report-employee-table,
   .report-batch-table,
@@ -793,6 +882,10 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
   .report-branch-controls { display: grid; grid-template-columns: 1fr 40px auto; }
   .report-period-switch { grid-column: 1 / -1; overflow-x: auto; }
   .report-branch-controls > label { grid-column: 1 / -1; }
+  .report-attendance-month-nav { grid-column: 1 / -1; display: grid; grid-template-columns: 40px minmax(0, 1fr) 40px auto; }
+  .report-attendance-month-nav > label { min-width: 0; }
+  .report-attendance-month-nav > label > span { display: none; }
+  .report-attendance-month-nav > label input { min-width: 0; width: 100%; }
   .report-topic-toolbar { grid-template-columns: 1fr; }
   .report-topic-toolbar > em { display: none; }
   .report-week-grid { grid-template-columns: 1fr; }
@@ -801,6 +894,19 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
   .report-metric-stats article { padding: 8px 0; grid-template-columns: 1fr auto auto; align-items: center; border-left: 0; border-top: 1px solid #e5ebf0; }
   .report-metric-stats strong { font-size: 18px; }
   .report-employee-drawer-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .report-attendance-calendar-note small { white-space: normal; }
+  .report-attendance-weekdays,
+  .report-attendance-calendar { gap: 3px; padding-inline: 6px; }
+  .report-attendance-calendar > button,
+  .report-attendance-calendar > .calendar-spacer { min-height: 82px; }
+  .report-attendance-calendar > button { padding: 5px; border-radius: 7px; }
+  .report-attendance-calendar header strong small,
+  .report-attendance-calendar header span,
+  .report-attendance-calendar dl span:nth-child(n+3),
+  .report-calendar-badge { display: none; }
+  .report-attendance-calendar dl { grid-template-columns: 1fr; }
+  .report-calendar-options,
+  .report-calendar-fields { grid-template-columns: 1fr; }
   .report-focus-drawer .report-employee-day-metrics dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .report-trend-chart { grid-template-columns: repeat(auto-fit, minmax(64px, 1fr)); padding-inline: 10px; }
   .report-trend-ledger { overflow-x: auto; }

@@ -3,6 +3,7 @@ import sharp from 'sharp';
 import { EXCEL_THEME, excelColumnName, safeExcelSheetName } from '@/lib/business-excel';
 import { attendanceDayMetrics } from '@/lib/report-labor-metrics';
 import { isEmployeeHiredOnDate } from '@/lib/production-workforce';
+import { resolveAttendanceCalendarDay, type EffectiveAttendanceCalendarDayType } from '@/lib/attendance-calendar';
 
 export type AttendanceWorkbookStatus = 'confirmed' | 'draft';
 export type AttendanceWorkbookType = 'normal' | 'leave' | 'absent' | 'rest';
@@ -38,6 +39,12 @@ export interface AttendanceWorkbookInput {
   employees: AttendanceWorkbookEmployee[];
   records: AttendanceWorkbookRecord[];
   dateKeys: string[];
+  calendarDays?: Array<{
+    dateKey: string;
+    effectiveDayType: EffectiveAttendanceCalendarDayType;
+    label: string | null;
+    isWorkday: boolean;
+  }>;
 }
 
 export interface AttendanceWorkbookResult {
@@ -145,6 +152,12 @@ function statusStyle(cell: Cell, value: string | number, weekend: 'saturday' | '
   } else if (value === '未') {
     cell.fill = fill('FFF1F4F7');
     cell.font = { ...cell.font, color: { argb: EXCEL_THEME.muted }, bold: true };
+  } else if (value === '周休') {
+    cell.fill = fill('FFF7F2F3');
+    cell.font = { ...cell.font, color: { argb: 'FF9B6267' }, bold: true };
+  } else if (value === '节') {
+    cell.fill = fill(EXCEL_THEME.redSoft);
+    cell.font = { ...cell.font, color: { argb: EXCEL_THEME.red }, bold: true };
   }
 }
 
@@ -278,9 +291,13 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
   const averageRow = totalRow + 1;
 
   const recordMap = new Map(input.records.map(record => [`${record.employeeId}:${record.dateKey}`, record]));
+  const calendarByDate = new Map((input.calendarDays || input.dateKeys.map(dateKey => {
+    const day = resolveAttendanceCalendarDay(dateKey);
+    return { dateKey, effectiveDayType: day.effectiveDayType, label: day.label, isWorkday: day.isWorkday };
+  })).map(day => [day.dateKey, day]));
   const employeeTotals = input.employees.map(employee => {
     const confirmed = input.dateKeys
-      .filter(dateKey => isEmployeeHiredOnDate(employee, dateKey))
+      .filter(dateKey => isEmployeeHiredOnDate(employee, dateKey) && calendarByDate.get(dateKey)?.isWorkday !== false)
       .map(dateKey => recordMap.get(`${employee.id}:${dateKey}`))
       .filter((record): record is AttendanceWorkbookRecord => record?.status === 'confirmed');
     const metrics = confirmed.map(record => attendanceDayMetrics({
@@ -309,12 +326,13 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
   const actualTotal = Number(employeeTotals.reduce((sum, row) => sum + row.actual, 0).toFixed(2));
   const overtimeTotal = Number(employeeTotals.reduce((sum, row) => sum + row.overtime, 0).toFixed(2));
   const rateTotal = expectedTotal > 0 ? Math.min(1, Math.max(0, actualTotal / expectedTotal)) : 0;
-  const confirmedRecordCount = input.records.filter(record => record.status === 'confirmed').length;
-  const draftRecordCount = input.records.filter(record => record.status === 'draft').length;
+  const confirmedRecordCount = input.records.filter(record => record.status === 'confirmed' && calendarByDate.get(record.dateKey)?.isWorkday !== false).length;
+  const draftRecordCount = input.records.filter(record => record.status === 'draft' && calendarByDate.get(record.dateKey)?.isWorkday !== false).length;
   const eligibleEmployeeDays = input.employees.reduce((sum, employee) => (
-    sum + input.dateKeys.filter(dateKey => isEmployeeHiredOnDate(employee, dateKey)).length
+    sum + input.dateKeys.filter(dateKey => isEmployeeHiredOnDate(employee, dateKey) && calendarByDate.get(dateKey)?.isWorkday !== false).length
   ), 0);
-  const missingRecordCount = Math.max(0, eligibleEmployeeDays - input.records.length);
+  const effectiveRecordCount = input.records.filter(record => calendarByDate.get(record.dateKey)?.isWorkday !== false).length;
+  const missingRecordCount = Math.max(0, eligibleEmployeeDays - effectiveRecordCount);
 
   sheet.pageSetup = {
     paperSize: 9,
@@ -450,10 +468,15 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
     input.dateKeys.forEach((dateKey, dayIndex) => {
       const record = recordMap.get(`${employee.id}:${dateKey}`);
       const employed = isEmployeeHiredOnDate(employee, dateKey);
-      const value = employed ? attendanceCellValue(record) : '未';
+      const calendar = calendarByDate.get(dateKey);
+      const value = calendar?.isWorkday === false
+        ? calendar.effectiveDayType === 'holiday' ? '节' : '周休'
+        : employed ? attendanceCellValue(record) : '未';
       const cell = sheet.getCell(rowNumber, IDENTITY_COLUMN_COUNT + dayIndex + 1);
       cell.value = value;
-      const note = employed ? attendanceCellNote(record) : '尚未入职，不计入考勤与达成率基数。';
+      const note = calendar?.isWorkday === false
+        ? `${calendar.label || (calendar.effectiveDayType === 'holiday' ? '节假日' : '每周日固定周休')}，不计入出勤与得分基数；历史记录保留但不参与汇总。`
+        : employed ? attendanceCellNote(record) : '尚未入职，不计入考勤与达成率基数。';
       if (note) cell.note = note;
       statusStyle(cell, value, weekday(dateKey).weekend);
       if (typeof value === 'number') {
@@ -613,10 +636,10 @@ export async function createAttendanceWorkbook(input: AttendanceWorkbookInput): 
   }
 
   const notes = [
-    '1. 每日单元格记录已确认实际出勤小时，数值中包含已确认加班；草稿与未登记数据不进入正式汇总。',
+    '1. 每日单元格记录已确认实际出勤小时，数值中包含已确认加班；草稿与未登记数据不进入正式汇总。周休和节假日整日剔除。',
     '2. 净应出勤＝排班常规工时＋已确认实际加班－已确认请假；实际出勤已含加班，不重复相加。',
     '3. 出勤得分＝实际出勤÷净应出勤并封顶 100%；整日请假与休息剔除基数，部分请假缩减基数，超额出勤不再推高得分。',
-    '4. 正式缺勤保留在出勤基数；未入职、草稿和未登记不按 0 计算。主管、储备生、组长不进入个人生产达成矩阵。',
+    '4. 周一至周六默认工作、周日默认周休；临时周末工作只有先在出勤日历启用后才统计。正式缺勤保留在出勤基数；未入职、草稿和未登记不按 0 计算。',
   ];
   let noteRow = contentEndRow + 1;
   setMergedCell(sheet, noteRow, 1, totalColumns, '统计说明', {

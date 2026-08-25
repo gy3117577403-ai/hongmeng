@@ -5,6 +5,7 @@ import {
   resolveAttendanceAccessBoundary,
 } from '@/lib/attendance-access';
 import { parseAttendanceEmployeeIds, parseWorkDate } from '@/lib/attendance';
+import { requireAttendanceWorkday } from '@/lib/attendance-calendar-service';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
 import {
@@ -23,6 +24,7 @@ export async function POST(req: NextRequest) {
     const user = await requireUser();
     const body = await req.json().catch(() => ({})) as Record<string, unknown>;
     const workDate = parseWorkDate(body.workDate);
+    await requireAttendanceWorkday(workDate.key);
     const requestedScope: AttendanceWorkforceScope = body.scope
       ? parseAttendanceWorkforceScope(body.scope)
       : 'ALL';

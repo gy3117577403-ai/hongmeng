@@ -11,6 +11,7 @@ const HOUR = 60 * 60 * 1000;
 function day(overrides: Partial<AttendancePeriodDayInput> = {}): AttendancePeriodDayInput {
   const base = {
     date: '2026-08-24',
+    calendarDayType: 'workday' as const,
     requiredRecords: 2,
     confirmedRecords: 2,
     draftRecords: 0,
@@ -72,7 +73,7 @@ test('period score reconciles only finalized days and reports coverage separatel
     leaveDeductionMilliseconds: HOUR,
   });
   const incomplete = day({
-    date: '2026-08-23',
+    date: '2026-08-22',
     requiredRecords: 2,
     confirmedRecords: 1,
     missingRecords: 1,
@@ -97,4 +98,55 @@ test('period score reconciles only finalized days and reports coverage separatel
   assert.equal(summary.attendanceMilliseconds, 15 * HOUR);
   assert.equal(summary.shortfallMilliseconds, HOUR);
   assert.equal(summary.attendanceBasisPoints, 9375);
+});
+
+test('weekly rest and holidays never enter coverage or attendance-score denominators', () => {
+  const weeklyRest = day({
+    date: '2026-08-23',
+    calendarDayType: 'weekly_rest',
+    requiredRecords: 35,
+    confirmedRecords: 3,
+    missingRecords: 32,
+    attendanceMilliseconds: 24 * HOUR,
+    netExpectedMilliseconds: 24 * HOUR,
+  });
+  const holiday = day({
+    date: '2026-08-21',
+    calendarDayType: 'holiday',
+    requiredRecords: 35,
+    confirmedRecords: 35,
+  });
+  const finalized = day();
+  const summary = summarizeFinalizedAttendance([holiday, weeklyRest, finalized]);
+  assert.equal(weeklyRest.publicationState, 'weekly_rest');
+  assert.equal(weeklyRest.isFinalized, false);
+  assert.equal(weeklyRest.hoursBasisPoints, null);
+  assert.equal(holiday.publicationState, 'holiday');
+  assert.equal(summary.weeklyRestDays, 1);
+  assert.equal(summary.holidayDays, 1);
+  assert.equal(summary.requiredRecords, finalized.requiredRecords);
+  assert.equal(summary.resolvedRecords, finalized.resolvedRecords);
+  assert.equal(summary.attendanceMilliseconds, finalized.attendanceMilliseconds);
+});
+
+test('temporary weekend work follows the same confirmation gate as a normal workday', () => {
+  const incomplete = day({
+    date: '2026-08-23',
+    calendarDayType: 'temporary_workday',
+    requiredRecords: 3,
+    confirmedRecords: 2,
+    missingRecords: 1,
+  });
+  const finalized = day({
+    date: '2026-08-23',
+    calendarDayType: 'temporary_workday',
+    requiredRecords: 3,
+    confirmedRecords: 3,
+    plannedPeople: 3,
+    attendancePeople: 3,
+  });
+  assert.equal(incomplete.publicationState, 'incomplete');
+  assert.equal(incomplete.hoursBasisPoints, null);
+  assert.equal(finalized.publicationState, 'finalized');
+  assert.equal(finalized.hoursBasisPoints, 10_000);
 });

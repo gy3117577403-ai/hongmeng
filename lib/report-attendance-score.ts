@@ -3,10 +3,15 @@ export type AttendancePublicationState =
   | 'in_progress'
   | 'incomplete'
   | 'finalized'
-  | 'no_roster';
+  | 'no_roster'
+  | 'weekly_rest'
+  | 'holiday';
+
+export type AttendanceCalendarReportingDayType = 'workday' | 'weekly_rest' | 'holiday' | 'temporary_workday';
 
 export type AttendanceDayPublicationInput = {
   date: string;
+  calendarDayType: AttendanceCalendarReportingDayType;
   requiredRecords: number;
   confirmedRecords: number;
   draftRecords: number;
@@ -44,6 +49,8 @@ export type AttendancePeriodSummary = {
   finalizedDays: number;
   incompleteDays: number;
   inProgressDays: number;
+  weeklyRestDays: number;
+  holidayDays: number;
   lastFinalizedDate: string | null;
   netExpectedMilliseconds: number;
   attendanceMilliseconds: number;
@@ -73,7 +80,9 @@ export function finalizeAttendanceDay(
     && input.missingRecords === 0;
 
   let publicationState: AttendancePublicationState;
-  if (input.date > todayDateKey) publicationState = 'future';
+  if (input.calendarDayType === 'weekly_rest') publicationState = 'weekly_rest';
+  else if (input.calendarDayType === 'holiday') publicationState = 'holiday';
+  else if (input.date > todayDateKey) publicationState = 'future';
   else if (input.date === todayDateKey) publicationState = 'in_progress';
   else if (requiredRecords === 0) publicationState = 'no_roster';
   else if (complete) publicationState = 'finalized';
@@ -96,7 +105,7 @@ export function finalizeAttendanceDay(
 export function summarizeFinalizedAttendance(
   days: AttendancePeriodDayInput[],
 ): AttendancePeriodSummary {
-  const relevantDays = days.filter(day => day.publicationState !== 'future' && day.publicationState !== 'no_roster');
+  const relevantDays = days.filter(day => !['future', 'no_roster', 'weekly_rest', 'holiday'].includes(day.publicationState));
   const finalized = days.filter(day => day.isFinalized);
   const requiredRecords = relevantDays.reduce((sum, day) => sum + day.requiredRecords, 0);
   const resolvedRecords = relevantDays.reduce((sum, day) => sum + day.resolvedRecords, 0);
@@ -115,6 +124,8 @@ export function summarizeFinalizedAttendance(
     finalizedDays: finalized.length,
     incompleteDays: days.filter(day => day.publicationState === 'incomplete').length,
     inProgressDays: days.filter(day => day.publicationState === 'in_progress').length,
+    weeklyRestDays: days.filter(day => day.publicationState === 'weekly_rest').length,
+    holidayDays: days.filter(day => day.publicationState === 'holiday').length,
     lastFinalizedDate: finalized.length ? finalized[finalized.length - 1].date : null,
     netExpectedMilliseconds,
     attendanceMilliseconds,

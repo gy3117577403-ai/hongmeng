@@ -60,6 +60,14 @@ type AttendanceResponse = {
   scope?: AttendanceWorkforceScope;
   scopeCounts?: { production: number; other: number; all: number };
   permissions?: AttendancePermissions;
+  calendar?: {
+    date: string;
+    effectiveDayType: 'workday' | 'weekly_rest' | 'holiday' | 'temporary_workday';
+    isWorkday: boolean;
+    displayLabel: string;
+    label: string | null;
+    remark: string | null;
+  };
   summary?: {
     enabledEmployeeCount: number;
     recordCount: number;
@@ -198,6 +206,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
   const [records, setRecords] = useState<AttendanceRecordDTO[]>([]);
   const [events, setEvents] = useState<AbnormalTimeEventDTO[]>([]);
   const [attendanceSummary, setAttendanceSummary] = useState(emptyAttendanceSummary);
+  const [attendanceCalendar, setAttendanceCalendar] = useState<AttendanceResponse['calendar']>();
   const [eventSummary, setEventSummary] = useState(emptyEventSummary);
   const [keyword, setKeyword] = useState('');
   const [loading, setLoading] = useState(true);
@@ -259,6 +268,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
       }
       setEvents(eventBody.events || []);
       setAttendanceSummary(attendanceBody.summary || emptyAttendanceSummary);
+      setAttendanceCalendar(attendanceBody.calendar);
       setEventSummary(eventBody.summary || emptyEventSummary);
     } catch (reason) {
       if ((reason as { name?: string }).name !== 'AbortError') {
@@ -307,6 +317,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
     : workforceScope === 'OTHER'
       ? '仅统计出勤，不参与生产报工与达成率'
       : '汇总全员出勤；生产达成率仍只读取生产考勤';
+  const attendanceEditable = attendanceCalendar?.isWorkday !== false;
   const recordByEmployee = useMemo(() => new Map(records.map(item => [item.employeeId, item])), [records]);
   const filteredEmployees = useMemo(() => {
     const normalized = keyword.trim().toLocaleLowerCase('zh-CN');
@@ -696,7 +707,7 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
             <button type="button" onClick={() => { setExportSelectedOnly(selectedEmployeeIds.length > 0); setExportOpen(true); }}><Download size={16} />导出考勤</button>
             <button className="icon-only" type="button" aria-label="刷新" title="刷新" onClick={() => setRefreshToken(value => value + 1)}><RefreshCw size={16} /></button>
             {tab === 'attendance'
-              ? <button className="primary" type="button" disabled={saving} onClick={() => void batchDefault(selectedEmployeeIds.length ? selectedEmployeeIds : undefined)}><Plus size={16} />{selectedEmployeeIds.length ? `为所选生成（${selectedEmployeeIds.length}）` : '生成正常出勤'}</button>
+              ? <button className="primary" type="button" disabled={saving || !attendanceEditable} onClick={() => void batchDefault(selectedEmployeeIds.length ? selectedEmployeeIds : undefined)}><Plus size={16} />{selectedEmployeeIds.length ? `为所选生成（${selectedEmployeeIds.length}）` : '生成正常出勤'}</button>
               : <button className="primary" type="button" onClick={beginAbnormal}><Plus size={16} />登记异常工时</button>}
           </>}
         />
@@ -718,11 +729,12 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
           <label className="attendance-date"><span>基准日期</span><input type="date" value={date} onChange={event => setDate(event.target.value)} /></label>
           {tab !== 'attendance' && <div className="attendance-period" role="group" aria-label="异常汇总周期">{(['today', 'week', 'month'] as Period[]).map(item => <button className={period === item ? 'active' : ''} type="button" key={item} onClick={() => setPeriod(item)}>{periodLabel(item)}</button>)}</div>}
           {tab === 'attendance'
-            ? <button type="button" disabled={saving || (!attendanceSummary.draftCount && !selectedEmployeeIds.length)} onClick={() => void batchConfirm(selectedEmployeeIds.length ? selectedEmployeeIds : undefined)}><Check size={16} />{selectedEmployeeIds.length ? `确认所选（${selectedEmployeeIds.length}）` : '确认全部草稿'}</button>
+            ? <button type="button" disabled={saving || !attendanceEditable || (!attendanceSummary.draftCount && !selectedEmployeeIds.length)} onClick={() => void batchConfirm(selectedEmployeeIds.length ? selectedEmployeeIds : undefined)}><Check size={16} />{selectedEmployeeIds.length ? `确认所选（${selectedEmployeeIds.length}）` : '确认全部草稿'}</button>
             : null}
         </section>
 
         {error && <div className="attendance-error" role="alert"><AlertTriangle size={16} />{error}</div>}
+        {tab === 'attendance' && attendanceCalendar && !attendanceCalendar.isWorkday && <div className="attendance-calendar-notice" role="status"><CalendarClock size={16} /><span><strong>{date} · {attendanceCalendar.displayLabel}</strong><small>历史记录仍可查看，但不进入有效出勤、工时或达成率；如为临时加班，请先在报表中心出勤日历设为“临时工作日”。</small></span></div>}
 
         {tab === 'attendance' ? (
           <section className="attendance-ledger">
@@ -761,15 +773,15 @@ export default function AttendanceManagementShell({ user }: { user: CurrentUserD
                   <b>{record ? formatProcessDuration(record.overtimeMilliseconds) : '-'}</b>
                   <b>{record ? formatProcessDuration(record.leaveMilliseconds) : '-'}</b>
                   <em>{record?.status === 'confirmed' ? '已确认' : record ? '草稿' : '缺失'}</em>
-                  <button type="button" onClick={() => openAttendance(employee)}><Pencil size={15} />{record ? '编辑' : '登记'}</button>
+                  <button type="button" disabled={!attendanceEditable} onClick={() => openAttendance(employee)}><Pencil size={15} />{record ? '编辑' : '登记'}</button>
                 </div>;
               })}
               {!loading && !filteredEmployees.length && <div className="attendance-empty"><UsersRound /><strong>当前权限范围没有可登记考勤的员工</strong><span>请检查账号的班组范围与员工档案中的班组归属、在职状态和考勤启用状态。</span>{canOpenEmployeeAdmin && <a href="/workspace/employees?view=directory">打开人事管理</a>}</div>}
               {selectedEmployeeIds.length > 0 && <div className="attendance-bulk-bar" role="toolbar" aria-label="所选员工批量操作">
                 <span><strong>{selectedEmployeeIds.length}</strong><small>人已选择</small></span>
-                <button type="button" disabled={saving} onClick={() => void batchDefault(selectedEmployeeIds)}><Plus size={15} />生成正常考勤</button>
-                <button type="button" disabled={saving} onClick={openBatchAttendance}><Pencil size={15} />批量设置</button>
-                <button className="confirm" type="button" disabled={saving} onClick={() => void batchConfirm(selectedEmployeeIds)}><Check size={15} />确认所选草稿</button>
+                <button type="button" disabled={saving || !attendanceEditable} onClick={() => void batchDefault(selectedEmployeeIds)}><Plus size={15} />生成正常考勤</button>
+                <button type="button" disabled={saving || !attendanceEditable} onClick={openBatchAttendance}><Pencil size={15} />批量设置</button>
+                <button className="confirm" type="button" disabled={saving || !attendanceEditable} onClick={() => void batchConfirm(selectedEmployeeIds)}><Check size={15} />确认所选草稿</button>
                 <button type="button" disabled={saving} onClick={() => setSelectedEmployeeIds([])}><X size={15} />清空选择</button>
               </div>}
             </div>
