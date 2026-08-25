@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { isProductionDepartment } from '@/lib/production-workforce';
 import {
   cleanSkillText,
   parseBoundedInteger,
@@ -44,6 +45,9 @@ export async function POST(req: NextRequest) {
     const skillId = cleanSkillText(body.skillId, 80);
     if (!name) throw new SkillInputError('请填写考核表名称');
     if (!department) throw new SkillInputError('请选择适用部门');
+    if (!isProductionDepartment(department)) {
+      throw new SkillInputError('技能等级考核只适用于生产员工');
+    }
     if (!position) throw new SkillInputError('请选择适用岗位');
     if (!skillId) throw new SkillInputError('请选择考核技能');
     const skill = await prisma.skillDefinition.findFirst({

@@ -116,10 +116,14 @@ export function serializeSkill(skill: {
   category: string;
   description: string | null;
   sourceProcessDefinitionId: string | null;
+  isCore: boolean;
+  isSubsidyEligible: boolean;
+  subsidyMinimumLevel: number | null;
   isCritical: boolean;
   defaultValidityMonths: number;
   isActive: boolean;
   sortOrder: number;
+  version: number;
   createdAt: Date;
   updatedAt: Date;
 }): SkillDefinitionDTO {

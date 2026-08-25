@@ -7,8 +7,13 @@ import {
 } from '../lib/skills';
 import {
   evaluateSkillReward,
+  evaluateSkillSubsidy,
   skillRewardRuleMatchesEmployee,
 } from '../lib/skill-rewards';
+import {
+  isProductionWorkforceEmployee,
+  productionEmployeeWhere,
+} from '../lib/production-workforce';
 import type {
   EmployeeDTO,
   EmployeeSkillCertificationDTO,
@@ -49,10 +54,14 @@ const skill: SkillDefinitionDTO = {
   category: 'PROCESS',
   description: null,
   sourceProcessDefinitionId: null,
+  isCore: true,
+  isSubsidyEligible: false,
+  subsidyMinimumLevel: null,
   isCritical: true,
   defaultValidityMonths: 12,
   isActive: true,
   sortOrder: 1,
+  version: 0,
   createdAt: now,
   updatedAt: now,
 };
@@ -237,4 +246,38 @@ test('reward eligibility requires an active unexpired certification at the confi
     evaluateSkillReward(rule, rewardEmployee, { level: 4, status: 'REVOKED', expiresAt: null }).qualified,
     false,
   );
+});
+
+test('skill subsidy only evaluates application qualification and honors level, expiry and status', () => {
+  const subsidySkill: SkillDefinitionDTO = {
+    ...skill,
+    isSubsidyEligible: true,
+    subsidyMinimumLevel: 3,
+  };
+
+  assert.deepEqual(
+    evaluateSkillSubsidy(subsidySkill, { level: 3, status: 'ACTIVE', expiresAt: null }),
+    { configured: true, qualified: true, currentLevel: 3, minimumLevel: 3, remainingLevels: 0 },
+  );
+  assert.deepEqual(
+    evaluateSkillSubsidy(subsidySkill, { level: 2, status: 'ACTIVE', expiresAt: null }),
+    { configured: true, qualified: false, currentLevel: 2, minimumLevel: 3, remainingLevels: 1 },
+  );
+  assert.equal(
+    evaluateSkillSubsidy(subsidySkill, { level: 4, status: 'REVOKED', expiresAt: null }).qualified,
+    false,
+  );
+  assert.equal(
+    evaluateSkillSubsidy({ ...subsidySkill, isSubsidyEligible: false, subsidyMinimumLevel: null }, null).configured,
+    false,
+  );
+});
+
+test('skill workforce scope includes active production employees and excludes non-production employees', () => {
+  assert.equal(isProductionWorkforceEmployee(employee, { requireAttendance: false }), true);
+  assert.equal(isProductionWorkforceEmployee({ ...employee, department: '采购部' }, { requireAttendance: false }), false);
+  assert.deepEqual(productionEmployeeWhere({ requireAttendance: false }), {
+    isActive: true,
+    department: { in: ['生产部', '生产'] },
+  });
 });

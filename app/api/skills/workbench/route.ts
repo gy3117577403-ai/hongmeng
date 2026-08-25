@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
+import { hasCapability } from '@/lib/department-access';
 import { prisma } from '@/lib/prisma';
+import {
+  productionEmployeeWhere,
+  PRODUCTION_DEPARTMENT_ALIASES,
+} from '@/lib/production-workforce';
 import {
   serializeAssessment,
   serializeCertification,
@@ -19,7 +24,8 @@ export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
-    await requireUser();
+    const user = await requireUser();
+    const productionEmployeeScope = productionEmployeeWhere({ requireAttendance: false });
     const [
       employees,
       skills,
@@ -30,7 +36,8 @@ export async function GET() {
       assessments,
     ] = await Promise.all([
       prisma.employee.findMany({
-        orderBy: [{ isActive: 'desc' }, { employeeNo: 'asc' }],
+        where: productionEmployeeScope,
+        orderBy: [{ employeeNo: 'asc' }],
         take: 1000,
       }),
       prisma.skillDefinition.findMany({
@@ -38,10 +45,18 @@ export async function GET() {
         take: 500,
       }),
       prisma.positionSkillRequirement.findMany({
+        where: {
+          department: { in: [...PRODUCTION_DEPARTMENT_ALIASES] },
+          skill: { is: { isActive: true } },
+        },
         orderBy: [{ department: 'asc' }, { position: 'asc' }, { team: 'asc' }],
         take: 3000,
       }),
       prisma.employeeSkillCertification.findMany({
+        where: {
+          employee: { is: productionEmployeeScope },
+          skill: { is: { isActive: true } },
+        },
         orderBy: [{ updatedAt: 'desc' }],
         take: 5000,
       }),
@@ -50,12 +65,17 @@ export async function GET() {
         take: 500,
       }),
       prisma.skillAssessmentTemplate.findMany({
-        where: { status: { not: 'DISABLED' } },
+        where: {
+          status: { not: 'DISABLED' },
+          department: { in: [...PRODUCTION_DEPARTMENT_ALIASES] },
+          skill: { is: { isActive: true } },
+        },
         include: skillTemplateInclude,
         orderBy: [{ status: 'asc' }, { updatedAt: 'desc' }],
         take: 500,
       }),
       prisma.skillAssessment.findMany({
+        where: { employee: { is: productionEmployeeScope } },
         include: skillAssessmentInclude,
         orderBy: [{ updatedAt: 'desc' }],
         take: 1000,
@@ -84,6 +104,8 @@ export async function GET() {
       templates: templates.map(serializeTemplate),
       assessments: assessmentDtos,
       summary,
+      canManageSkills: user.laborRole === 'ADMIN'
+        || hasCapability(user.access, 'ACCOUNT_ADMIN', 'MANAGE'),
     });
   } catch (error) {
     if (error instanceof UnauthorizedError) return unauthorized();

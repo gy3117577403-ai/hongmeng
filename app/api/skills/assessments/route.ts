@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
 import {
   cleanSkillText,
   parseSkillLevel,
@@ -14,9 +15,20 @@ import {
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-async function activeEmployee(id: string, label: string) {
-  const employee = await prisma.employee.findFirst({ where: { id, isActive: true } });
-  if (!employee) throw new SkillInputError(`${label}不是在岗员工`);
+async function activeEmployee(id: string, label: string, productionOnly = false) {
+  const employee = await prisma.employee.findFirst({
+    where: {
+      id,
+      ...(productionOnly
+        ? productionEmployeeWhere({ requireAttendance: false })
+        : { isActive: true }),
+    },
+  });
+  if (!employee) {
+    throw new SkillInputError(productionOnly
+      ? `${label}必须是在岗生产员工`
+      : `${label}不是在岗员工`);
+  }
   return employee;
 }
 
@@ -35,7 +47,7 @@ export async function POST(req: NextRequest) {
     if (reviewerId === employeeId) throw new SkillInputError('被考核员工不能审核自己的考核');
     if (reviewerId === assessorId) throw new SkillInputError('审核人应与填报或考核人分开');
     const [employee, assessor, reviewer, template] = await Promise.all([
-      activeEmployee(employeeId, '被考核员工'),
+      activeEmployee(employeeId, '被考核员工', true),
       activeEmployee(assessorId, '填报或考核人'),
       activeEmployee(reviewerId, '审核人'),
       prisma.skillAssessmentTemplate.findFirst({

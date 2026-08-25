@@ -1665,10 +1665,14 @@ model SkillDefinition {
   category                  String                       @default("PROCESS")
   description               String?
   sourceProcessDefinitionId String?                      @unique @map("source_process_definition_id")
+  isCore                    Boolean                      @default(false) @map("is_core")
+  isSubsidyEligible         Boolean                      @default(false) @map("is_subsidy_eligible")
+  subsidyMinimumLevel       Int?                         @map("subsidy_minimum_level")
   isCritical                Boolean                      @default(false) @map("is_critical")
   defaultValidityMonths     Int                          @default(12) @map("default_validity_months")
   isActive                  Boolean                      @default(true) @map("is_active")
   sortOrder                 Int                          @default(0) @map("sort_order")
+  version                   Int                          @default(0)
   createdAt                 DateTime                     @default(now()) @map("created_at")
   updatedAt                 DateTime                     @updatedAt @map("updated_at")
   requirements              PositionSkillRequirement[]
@@ -1679,6 +1683,8 @@ model SkillDefinition {
   trainingCourses           TrainingCourse[]
 
   @@index([category, isActive, sortOrder])
+  @@index([isCore, isActive, sortOrder])
+  @@index([isSubsidyEligible, isActive])
   @@index([name])
   @@map("skill_definitions")
 }

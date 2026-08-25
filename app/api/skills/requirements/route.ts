@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { isProductionDepartment } from '@/lib/production-workforce';
 import {
   cleanSkillText,
   parseSkillLevel,
@@ -22,6 +23,9 @@ export async function POST(req: NextRequest) {
     const team = cleanSkillText(body.team, 80);
     const skillId = cleanSkillText(body.skillId, 80);
     if (!department) throw new SkillInputError('请选择部门');
+    if (!isProductionDepartment(department)) {
+      throw new SkillInputError('技能等级参考只适用于生产员工');
+    }
     if (!position) throw new SkillInputError('请选择岗位');
     if (!skillId) throw new SkillInputError('请选择技能');
     const skill = await prisma.skillDefinition.findFirst({

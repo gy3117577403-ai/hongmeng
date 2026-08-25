@@ -5209,6 +5209,7 @@ button.skill-matrix-person:hover { background: #f7faff; }
 .skill-dialog.dialog-template,
 .skill-dialog.dialog-assessment,
 .skill-dialog.dialog-legacy { width: min(1180px, calc(100vw - 32px)); }
+.skill-dialog.dialog-catalog-settings { width: min(980px, calc(100vw - 32px)); }
 .skill-dialog.dialog-reward-rule { width: min(1040px, calc(100vw - 32px)); }
 .skill-dialog > header {
   min-height: 70px;
@@ -5229,6 +5230,40 @@ button.skill-matrix-person:hover { background: #f7faff; }
   background: linear-gradient(180deg, #d9ad45, #b77c14);
   box-shadow: 0 8px 18px rgba(153, 103, 14, .2);
 }
+
+.skill-catalog-manager { min-height: 430px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 12px; }
+.skill-catalog-manager > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.skill-catalog-manager > header > div { display: grid; gap: 2px; }
+.skill-catalog-manager > header small { color: #7d8b9e; font-size: 9px; font-weight: 800; }
+.skill-catalog-manager > header h3 { margin: 0; color: #263b53; font-size: 16px; }
+.skill-catalog-manager > div { min-height: 0; display: grid; align-content: start; gap: 7px; overflow-y: auto; scrollbar-width: thin; }
+.skill-catalog-manager article {
+  min-height: 62px;
+  padding: 9px 11px;
+  display: grid;
+  grid-template-columns: 38px minmax(180px, 1fr) minmax(145px, auto) auto auto;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #e0e7ef;
+  border-radius: 12px;
+  background: #fff;
+}
+.skill-catalog-manager article.inactive { background: #f6f8fa; opacity: .72; }
+.skill-catalog-order { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #eef4ff; color: #286eea; font-size: 10px; font-weight: 900; }
+.skill-catalog-manager article > div { min-width: 0; display: grid; gap: 2px; }
+.skill-catalog-manager article > div strong { color: #253951; font-size: 12px; }
+.skill-catalog-manager article > div small { color: #8491a1; font-size: 9px; }
+.skill-catalog-manager article > em { padding: 5px 8px; border-radius: 999px; background: #f0f3f7; color: #7f8a98; font-size: 8px; font-style: normal; font-weight: 800; white-space: nowrap; }
+.skill-catalog-manager article > em.subsidy { display: inline-flex; align-items: center; gap: 4px; background: #fff3cf; color: #936313; }
+.skill-catalog-manager article > em svg { width: 11px; height: 11px; }
+.skill-catalog-manager article > button { min-height: 31px; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: 1px solid #d9e2ec; border-radius: 9px; background: #fff; color: #52657c; font-size: 9px; font-weight: 800; }
+.skill-catalog-manager article > button svg { width: 12px; height: 12px; }
+.skill-catalog-manager article > button.danger { border-color: #f0ced1; color: #bd434c; }
+.skill-catalog-manager > aside { padding: 10px 12px; display: flex; align-items: center; gap: 9px; border: 1px solid #cfe0fb; border-radius: 12px; background: #f4f8ff; color: #2f73f6; }
+.skill-catalog-manager > aside > svg { width: 19px; flex: none; }
+.skill-catalog-manager > aside > span { display: grid; gap: 2px; }
+.skill-catalog-manager > aside strong { color: #355783; font-size: 10px; }
+.skill-catalog-manager > aside small { color: #6f83a0; font-size: 9px; line-height: 1.45; }
 
 .skill-delete-confirmation {
   max-width: 590px;
@@ -5682,6 +5717,8 @@ button.skill-matrix-person:hover { background: #f7faff; }
   .skill-person-identity-stats { display: none; }
   .skill-person-actions { margin-left: auto; }
   .skill-dialog-backdrop { padding: 10px; }
+  .skill-catalog-manager article { grid-template-columns: 34px minmax(150px, 1fr) auto; }
+  .skill-catalog-manager article > em { grid-column: 2 / -1; justify-self: start; }
   .skill-form-grid { grid-template-columns: minmax(0, 1fr); }
   .skill-form-grid > label.wide,
   .skill-form-grid > .wide { grid-column: auto; }

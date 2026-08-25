@@ -36,7 +36,12 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useToastBridge } from '@/components/ToastProvider';
-import { evaluateSkillReward, skillRewardRuleMatchesEmployee } from '@/lib/skill-rewards';
+import {
+  evaluateSkillReward,
+  evaluateSkillSubsidy,
+  skillRewardRuleMatchesEmployee,
+} from '@/lib/skill-rewards';
+import { isProductionDepartment } from '@/lib/production-workforce';
 import type {
   EmployeeDTO,
   EmployeeSkillCertificationDTO,
@@ -49,7 +54,7 @@ import type {
 } from '@/types';
 
 type SkillView = 'matrix' | 'people' | 'assessments';
-type SkillDialog = 'skill' | 'requirement' | 'remove-requirement' | 'remove-certification' | 'reward-rule' | 'remove-reward-rule' | 'template' | 'remove-template' | 'launch' | 'assessment' | 'legacy' | null;
+type SkillDialog = 'catalog-settings' | 'skill' | 'requirement' | 'remove-requirement' | 'remove-certification' | 'reward-rule' | 'remove-reward-rule' | 'template' | 'remove-template' | 'launch' | 'assessment' | 'legacy' | null;
 type AssessmentRecordScope = 'template' | 'all';
 
 export type SkillWorkbenchResponse = {
@@ -67,6 +72,7 @@ export type SkillWorkbenchResponse = {
   removedTemplateId?: string;
   archived?: boolean;
   retainedAssessmentCount?: number;
+  canManageSkills?: boolean;
   error?: string;
 };
 
@@ -240,6 +246,7 @@ export default function SkillPerformanceWorkbench({
   const [templates, setTemplates] = useState<SkillAssessmentTemplateDTO[]>(initialData?.templates || []);
   const [assessments, setAssessments] = useState<SkillAssessmentDTO[]>(initialData?.assessments || []);
   const [summary, setSummary] = useState<SkillWorkbenchSummaryDTO>(initialData?.summary || emptySummary);
+  const [canManageSkills, setCanManageSkills] = useState(initialData?.canManageSkills === true);
   const [loading, setLoading] = useState(!initialData);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -255,11 +262,17 @@ export default function SkillPerformanceWorkbench({
   const [assessmentRecordScope, setAssessmentRecordScope] = useState<AssessmentRecordScope>('template');
   const [templateBaseId, setTemplateBaseId] = useState('');
   const [skillDraft, setSkillDraft] = useState({
+    id: '',
+    version: 0,
+    isCore: false,
     name: '',
-    category: 'PROCESS',
     description: '',
     defaultValidityMonths: '12',
     isCritical: false,
+    isActive: true,
+    sortOrder: '100',
+    isSubsidyEligible: false,
+    subsidyMinimumLevel: '1',
   });
   const [requirementDraft, setRequirementDraft] = useState({
     department: '',
@@ -325,6 +338,7 @@ export default function SkillPerformanceWorkbench({
       setTemplates(body.templates || []);
       setAssessments(body.assessments || []);
       setSummary(body.summary || emptySummary);
+      setCanManageSkills(body.canManageSkills === true);
       setSelectedEmployeeId(current => (
         nextEmployees.some(employee => employee.id === current) ? current : nextEmployees.find(employee => employee.isActive)?.id || ''
       ));
@@ -344,7 +358,7 @@ export default function SkillPerformanceWorkbench({
   }, [initialData, loadWorkbench]);
 
   const activeEmployees = useMemo(
-    () => employees.filter(employee => employee.isActive),
+    () => employees.filter(employee => employee.isActive && isProductionDepartment(employee.department)),
     [employees],
   );
   const departments = useMemo(
@@ -424,9 +438,9 @@ export default function SkillPerformanceWorkbench({
     () => new Set([
       ...employeeRequirements.map(requirement => requirement.skillId),
       ...certifications.filter(certification => certification.employeeId === selectedEmployeeId).map(certification => certification.skillId),
-      ...employeeRewardRules.map(rule => rule.skillId),
+      ...visibleSkills.filter(skill => skill.isSubsidyEligible).map(skill => skill.id),
     ]),
-    [certifications, employeeRequirements, employeeRewardRules, selectedEmployeeId],
+    [certifications, employeeRequirements, selectedEmployeeId, visibleSkills],
   );
   const employeeSkills = visibleSkills.filter(skill => employeeSkillIds.has(skill.id));
   const filteredTemplates = templates.filter(template => template.status === 'ACTIVE');
@@ -454,8 +468,27 @@ export default function SkillPerformanceWorkbench({
     }
   }
 
-  function openSkillDialog(): void {
-    setSkillDraft({ name: '', category: 'PROCESS', description: '', defaultValidityMonths: '12', isCritical: false });
+  function openCatalogSettings(): void {
+    if (!canManageSkills) return;
+    setDialogError('');
+    setDialog('catalog-settings');
+  }
+
+  function openSkillDialog(skill?: SkillDefinitionDTO): void {
+    if (!canManageSkills) return;
+    setSkillDraft({
+      id: skill?.id || '',
+      version: skill?.version || 0,
+      isCore: skill?.isCore || false,
+      name: skill?.name || '',
+      description: skill?.description || '',
+      defaultValidityMonths: String(skill?.defaultValidityMonths || 12),
+      isCritical: skill?.isCritical || false,
+      isActive: skill?.isActive ?? true,
+      sortOrder: String(skill?.sortOrder ?? ((skills.length + 1) * 10)),
+      isSubsidyEligible: skill?.isSubsidyEligible || false,
+      subsidyMinimumLevel: String(skill?.subsidyMinimumLevel || 1),
+    });
     setDialogError('');
     setDialog('skill');
   }
@@ -669,21 +702,41 @@ export default function SkillPerformanceWorkbench({
     setDialog(shouldOpenDialog ? 'assessment' : null);
   }
 
-  async function syncProcesses(): Promise<void> {
+  async function saveSkill(): Promise<void> {
     await execute(async () => {
-      const body = await postJson('/api/skills/catalog', { action: 'sync_processes' });
-      const result = body as SkillWorkbenchResponse & { result?: { created: number; updated: number } };
+      await postJson('/api/skills/catalog', {
+        action: skillDraft.id ? 'update' : 'create',
+        ...skillDraft,
+        defaultValidityMonths: Number(skillDraft.defaultValidityMonths),
+        sortOrder: Number(skillDraft.sortOrder),
+        subsidyMinimumLevel: Number(skillDraft.subsidyMinimumLevel),
+      });
       setDialog(null);
-      setToast(`工序技能目录已同步：新增 ${result.result?.created || 0}，更新 ${result.result?.updated || 0}`);
+      setToast(skillDraft.id ? '等级参考技能已更新' : '自定义等级参考技能已新增');
       await loadWorkbench();
     });
   }
 
-  async function createSkill(): Promise<void> {
+  async function setSkillActive(skill: SkillDefinitionDTO, isActive: boolean): Promise<void> {
+    if (skill.isCore || !canManageSkills) return;
+    if (!window.confirm(isActive
+      ? `重新启用“${skill.name}”作为等级参考技能？`
+      : `停用“${skill.name}”？已有认证、考核和培训历史会保留，但矩阵不再显示该列。`)) return;
     await execute(async () => {
-      await postJson('/api/skills/catalog', { action: 'create', ...skillDraft });
-      setDialog(null);
-      setToast('技能已加入目录');
+      await postJson('/api/skills/catalog', {
+        action: 'update',
+        id: skill.id,
+        version: skill.version,
+        name: skill.name,
+        description: skill.description || '',
+        defaultValidityMonths: skill.defaultValidityMonths,
+        isCritical: skill.isCritical,
+        isActive,
+        sortOrder: skill.sortOrder,
+        isSubsidyEligible: isActive && skill.isSubsidyEligible,
+        subsidyMinimumLevel: skill.subsidyMinimumLevel || 1,
+      });
+      setToast(isActive ? `已启用“${skill.name}”` : `已停用“${skill.name}”，历史数据已保留`);
       await loadWorkbench();
     });
   }
@@ -905,24 +958,22 @@ export default function SkillPerformanceWorkbench({
             {positions.map(position => <option value={position} key={position}>{position}</option>)}
           </select>
           <button type="button" className="skill-secondary-button" onClick={() => openRequirementDialog()}><BookOpenCheck />配置岗位要求</button>
-          <button type="button" className="skill-primary-button" onClick={openSkillDialog}><Plus />新增技能</button>
+          {canManageSkills && <button type="button" className="skill-primary-button" onClick={openCatalogSettings}><Settings2 />技能设置</button>}
         </section>
         {!visibleSkills.length ? (
           <section className="skill-empty-state">
             <span><Grid3X3 /></span>
             <div>
-              <small>技能目录尚未建立</small>
-              <h2>从现有产品工序生成第一版技能目录</h2>
-              <p>只读取已发布的工序名称，不会修改工时、生产路线或人员达成率；同步后再为岗位配置目标等级。</p>
-              <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void syncProcesses()}>
-                {saving ? <Loader2 className="spin" /> : <RefreshCw />}同步现有工序
-              </button>
+              <small>等级参考技能尚未建立</small>
+              <h2>请由管理员建立员工等级参考项</h2>
+              <p>参考技能独立维护，不会从产品明细工序自动生成，也不会修改工时、生产路线或报工数据。</p>
+              {canManageSkills && <button type="button" className="skill-primary-button" onClick={openCatalogSettings}><Settings2 />打开技能设置</button>}
             </div>
           </section>
         ) : (
           <section className="skill-matrix-panel">
             <header>
-              <div><span className="skill-eyebrow">员工 × 技能</span><h2>技能矩阵</h2></div>
+              <div><span className="skill-eyebrow">生产员工 × 等级参考</span><h2>技能矩阵</h2></div>
               <div className="skill-level-legend">
                 <span><i className="l0" />未认证</span>
                 <span><i className="l1" />L1 了解</span>
@@ -936,9 +987,11 @@ export default function SkillPerformanceWorkbench({
                 <div className="skill-matrix-person sticky"><strong>人员 / 岗位</strong><small>{visibleEmployees.length} 人</small></div>
                 {visibleSkills.map(skill => (
                   <div className="skill-matrix-skill" key={skill.id}>
-                    <span>{skill.category === 'PROCESS' ? '工序技能' : '岗位能力'}</span>
+                    <span>{skill.isCore ? '核心参考' : '自定义参考'}</span>
                     <strong>{skill.name}</strong>
-                    {skill.isCritical && <small>关键技能</small>}
+                    {skill.isSubsidyEligible
+                      ? <small>可申请补贴 · L{skill.subsidyMinimumLevel}+</small>
+                      : skill.isCritical && <small>关键参考</small>}
                   </div>
                 ))}
                 {visibleEmployees.map(employee => (
@@ -965,12 +1018,11 @@ export default function SkillPerformanceWorkbench({
       const certification = certificationsByPair.get(`${selectedEmployeeId}:${requirement.skillId}`);
       return certification && certification.level >= requirement.targetLevel;
     }).length;
-    const activeRewardRules = rewardRules.filter(rule => rule.isActive);
-    const qualifiedRewardCount = selectedEmployee
-      ? employeeRewardRules.filter(rule => evaluateSkillReward(
-        rule,
-        selectedEmployee,
-        certificationsByPair.get(`${selectedEmployee.id}:${rule.skillId}`),
+    const subsidySkills = visibleSkills.filter(skill => skill.isSubsidyEligible);
+    const qualifiedSubsidyCount = selectedEmployee
+      ? subsidySkills.filter(skill => evaluateSkillSubsidy(
+        skill,
+        certificationsByPair.get(`${selectedEmployee.id}:${skill.id}`),
       ).qualified).length
       : 0;
     return (
@@ -1016,36 +1068,35 @@ export default function SkillPerformanceWorkbench({
                   <header>
                     <div><span className="skill-eyebrow">能力证据</span><h2>岗位技能与认证</h2></div>
                     <div className="skill-person-skill-actions">
-                      <button type="button" className="reward" onClick={() => openRewardRuleDialog()}><Settings2 />奖励规则</button>
+                      {canManageSkills && <button type="button" className="reward" onClick={openCatalogSettings}><Settings2 />补贴技能设置</button>}
                       <button type="button" onClick={() => openRequirementDialog(selectedEmployee)}><Plus />补充岗位技能</button>
                     </div>
                   </header>
                   <section className="skill-reward-strip">
                     <header>
                       <span><Trophy /></span>
-                      <div><small>关键岗位奖励</small><strong>{employeeRewardRules.length ? `${qualifiedRewardCount}/${employeeRewardRules.length} 项达标` : '当前岗位暂无匹配规则'}</strong></div>
+                      <div><small>技能补贴申请资格</small><strong>{subsidySkills.length ? `${qualifiedSubsidyCount}/${subsidySkills.length} 项达到申请门槛` : '尚未设置可申请补贴的技能'}</strong></div>
                     </header>
                     <div>
-                      {activeRewardRules.slice(0, 5).map(rule => {
-                        const skill = visibleSkills.find(item => item.id === rule.skillId);
-                        const certification = selectedEmployee ? certificationsByPair.get(`${selectedEmployee.id}:${rule.skillId}`) : undefined;
-                        const evaluation = selectedEmployee ? evaluateSkillReward(rule, selectedEmployee, certification) : null;
+                      {subsidySkills.slice(0, 8).map(skill => {
+                        const certification = selectedEmployee ? certificationsByPair.get(`${selectedEmployee.id}:${skill.id}`) : undefined;
+                        const evaluation = evaluateSkillSubsidy(skill, certification);
                         return (
                           <button
                             type="button"
-                            className={evaluation?.qualified ? 'qualified' : evaluation?.applicable ? 'progress' : ''}
-                            key={rule.id}
-                            title={rule.rewardDescription || rule.rewardName}
-                            onClick={() => openRewardRuleDialog(rule)}
+                            className={evaluation.qualified ? 'qualified' : 'progress'}
+                            key={skill.id}
+                            title="仅表示满足补贴申请资格，不会自动发放或计入工资"
+                            onClick={() => canManageSkills && openSkillDialog(skill)}
                           >
-                            <span>{rule.jobName}<small>{skill?.name || '技能待维护'} · L{rule.minimumLevel}+</small></span>
-                            <em>{evaluation?.qualified ? '奖励达标' : evaluation?.applicable ? `当前 L${evaluation.currentLevel}` : '岗位未匹配'}</em>
+                            <span>{skill.name}<small>申请门槛 · L{skill.subsidyMinimumLevel}+</small></span>
+                            <em>{evaluation.qualified ? '可申请' : `当前 L${evaluation.currentLevel}`}</em>
                           </button>
                         );
                       })}
-                      {!activeRewardRules.length && <p>尚未配置关键岗位奖励规则</p>}
+                      {!subsidySkills.length && <p>尚未标记可申请补贴的等级参考技能</p>}
                     </div>
-                    <button type="button" onClick={() => openRewardRuleDialog()}><Sparkles />新增规则</button>
+                    {canManageSkills && <button type="button" onClick={openCatalogSettings}><Settings2 />设置</button>}
                   </section>
                   <div>
                     {employeeSkills.map(skill => {
@@ -1053,20 +1104,17 @@ export default function SkillPerformanceWorkbench({
                       const certification = certificationsByPair.get(`${selectedEmployee.id}:${skill.id}`);
                       const level = certification?.level || 0;
                       const expired = certification?.expiresAt && new Date(certification.expiresAt).getTime() < Date.now();
-                      const rewardRule = employeeRewardRules.find(rule => rule.skillId === skill.id && rule.isActive);
-                      const rewardEvaluation = rewardRule
-                        ? evaluateSkillReward(rewardRule, selectedEmployee, certification)
-                        : null;
+                      const subsidyEvaluation = evaluateSkillSubsidy(skill, certification);
                       const cardTone = expired ? 'expired' : certification ? 'certified' : 'gap';
                       return (
-                        <article key={skill.id} className={`${cardTone}${rewardEvaluation?.qualified ? ' reward-qualified' : rewardRule ? ' reward-progress' : ''}`}>
+                        <article key={skill.id} className={`${cardTone}${subsidyEvaluation.qualified ? ' reward-qualified' : subsidyEvaluation.configured ? ' reward-progress' : ''}`}>
                           <header>
                             <span><Award /></span>
                             <div><small>{requirement ? `岗位要求 L${requirement.targetLevel}` : '扩展技能'}</small><h3>{skill.name}</h3></div>
                             <div className="skill-card-head-actions">
-                              {rewardRule && (
-                                <span className={rewardEvaluation?.qualified ? 'skill-reward-badge qualified' : 'skill-reward-badge'}>
-                                  <Trophy />{rewardEvaluation?.qualified ? '奖励达标' : `奖励 L${rewardRule.minimumLevel}+`}
+                              {subsidyEvaluation.configured && (
+                                <span className={subsidyEvaluation.qualified ? 'skill-reward-badge qualified' : 'skill-reward-badge'}>
+                                  <Trophy />{subsidyEvaluation.qualified ? '可申请补贴' : `申请门槛 L${subsidyEvaluation.minimumLevel}+`}
                                 </span>
                               )}
                               <b className={certification?.source === 'LEGACY_ENTRY' ? 'legacy' : ''}>
@@ -1414,8 +1462,8 @@ export default function SkillPerformanceWorkbench({
             <header>
               <div>
                 <span className="skill-eyebrow">
-                  {dialog === 'skill'
-                    ? '技能目录'
+                  {dialog === 'catalog-settings' || dialog === 'skill'
+                    ? '等级参考技能'
                     : dialog === 'requirement' || dialog === 'remove-requirement'
                       ? '岗位标准'
                       : dialog === 'remove-certification'
@@ -1431,8 +1479,10 @@ export default function SkillPerformanceWorkbench({
                                 : '在线考核'}
                 </span>
                 <h2>
-                  {dialog === 'skill'
-                    ? '新增技能'
+                  {dialog === 'catalog-settings'
+                    ? '技能设置'
+                    : dialog === 'skill'
+                    ? skillDraft.id ? `编辑“${skillDraft.name}”` : '新增自定义参考技能'
                     : dialog === 'requirement'
                       ? '配置岗位技能要求'
                       : dialog === 'remove-requirement'
@@ -1454,6 +1504,8 @@ export default function SkillPerformanceWorkbench({
                                     : selectedAssessment?.template.name}
                 </h2>
                 {dialog === 'assessment' && selectedAssessment && <p>{selectedAssessment.employee.name} · {selectedAssessment.skill.name} · {statusLabels[selectedAssessment.status]}</p>}
+                {dialog === 'catalog-settings' && <p>仅用于生产员工等级参考；不与产品明细工序归并或自动同步</p>}
+                {dialog === 'skill' && <p>{skillDraft.isCore ? '核心参考项名称固定，可调整补贴资格与显示顺序' : '自定义参考项可编辑或停用；历史认证与考核始终保留'}</p>}
                 {dialog === 'legacy' && selectedEmployee && <p>{selectedEmployee.department || '部门待维护'} · {selectedEmployee.position || '岗位待维护'} · 批量建档，不生成考核任务</p>}
                 {dialog === 'remove-requirement' && requirementRemovalTarget && <p>{requirementRemovalTarget.requirement.department} · {requirementRemovalTarget.requirement.position}{requirementRemovalTarget.requirement.team ? ` · ${requirementRemovalTarget.requirement.team}` : ''}</p>}
                 {dialog === 'remove-certification' && certificationRemovalTarget && <p>{certificationRemovalTarget.employee.name} · {certificationRemovalTarget.skill.name} · 历史登记 L{certificationRemovalTarget.certification.level}</p>}
@@ -1465,14 +1517,52 @@ export default function SkillPerformanceWorkbench({
             </header>
 
             <div className="skill-dialog-body">
+              {dialog === 'catalog-settings' && (
+                <div className="skill-catalog-manager">
+                  <header>
+                    <div><small>当前目录</small><h3>8 项核心参考 + 管理员自定义项</h3></div>
+                    <button type="button" className="skill-primary-button" onClick={() => openSkillDialog()}><Plus />新增参考项</button>
+                  </header>
+                  <div>
+                    {skills.map(skill => (
+                      <article key={skill.id} className={skill.isActive ? '' : 'inactive'}>
+                        <span className="skill-catalog-order">{String(skill.sortOrder).padStart(2, '0')}</span>
+                        <div>
+                          <strong>{skill.name}</strong>
+                          <small>{skill.isCore ? '核心参考项' : '自定义参考项'} · {skill.isActive ? '矩阵显示' : '已停用，历史保留'}</small>
+                        </div>
+                        {skill.isSubsidyEligible
+                          ? <em className="subsidy"><Trophy />可申请补贴 · L{skill.subsidyMinimumLevel}+</em>
+                          : <em>未开放补贴申请</em>}
+                        <button type="button" onClick={() => openSkillDialog(skill)}><Settings2 />编辑</button>
+                        {!skill.isCore && (
+                          <button
+                            type="button"
+                            className={skill.isActive ? 'danger' : ''}
+                            disabled={saving}
+                            onClick={() => void setSkillActive(skill, !skill.isActive)}
+                          >
+                            {skill.isActive ? '停用' : '启用'}
+                          </button>
+                        )}
+                      </article>
+                    ))}
+                  </div>
+                  <aside><ShieldCheck /><span><strong>目录与生产工序完全解耦</strong><small>停用只影响后续显示和选择，不会删除员工认证、考核、岗位要求或培训历史；补贴标记只代表可申请资格，不自动计薪。</small></span></aside>
+                </div>
+              )}
+
               {dialog === 'skill' && (
                 <div className="skill-form-grid">
-                  <label><span>技能名称 *</span><input value={skillDraft.name} onChange={event => setSkillDraft(current => ({ ...current, name: event.target.value }))} placeholder="例如：压接设备独立操作" /></label>
-                  <label><span>技能分类 *</span><select value={skillDraft.category} onChange={event => setSkillDraft(current => ({ ...current, category: event.target.value }))}><option value="PROCESS">生产工序</option><option value="QUALITY">质量检验</option><option value="WAREHOUSE">仓库作业</option><option value="SAFETY">安全规范</option><option value="MANAGEMENT">管理能力</option><option value="GENERAL">通用能力</option></select></label>
+                  <label><span>参考技能名称 *</span><input disabled={skillDraft.isCore} value={skillDraft.name} onChange={event => setSkillDraft(current => ({ ...current, name: event.target.value }))} placeholder="例如：设备换型" /><small>{skillDraft.isCore ? '核心参考项名称不可修改' : '填写可作为员工 L1–L4 等级参考的能力名称'}</small></label>
+                  <label><span>显示排序 *</span><input type="number" min="0" max="9999" value={skillDraft.sortOrder} onChange={event => setSkillDraft(current => ({ ...current, sortOrder: event.target.value }))} /></label>
                   <label><span>默认有效期（月）</span><input type="number" min="1" max="120" value={skillDraft.defaultValidityMonths} onChange={event => setSkillDraft(current => ({ ...current, defaultValidityMonths: event.target.value }))} /></label>
-                  <label className="skill-check"><input type="checkbox" checked={skillDraft.isCritical} onChange={event => setSkillDraft(current => ({ ...current, isCritical: event.target.checked }))} /><span><strong>关键技能</strong><small>考核时默认作为重点能力</small></span></label>
-                  <label className="wide"><span>技能说明</span><textarea value={skillDraft.description} onChange={event => setSkillDraft(current => ({ ...current, description: event.target.value }))} placeholder="适用范围、独立操作标准和注意事项" /></label>
-                  <button type="button" className="skill-inline-action wide" disabled={saving} onClick={() => void syncProcesses()}><RefreshCw />也可以从产品工序与工时同步全部现有工序</button>
+                  <label className="skill-check"><input type="checkbox" checked={skillDraft.isCritical} onChange={event => setSkillDraft(current => ({ ...current, isCritical: event.target.checked }))} /><span><strong>关键等级参考</strong><small>考核时作为重点能力提示</small></span></label>
+                  {!skillDraft.isCore && <label className="skill-check"><input type="checkbox" checked={skillDraft.isActive} onChange={event => setSkillDraft(current => ({ ...current, isActive: event.target.checked }))} /><span><strong>在矩阵中启用</strong><small>停用后历史数据保留</small></span></label>}
+                  <label className="skill-check"><input type="checkbox" checked={skillDraft.isSubsidyEligible} onChange={event => setSkillDraft(current => ({ ...current, isSubsidyEligible: event.target.checked }))} /><span><strong>允许申请技能补贴</strong><small>仅形成申请资格，不自动发放</small></span></label>
+                  {skillDraft.isSubsidyEligible && <label className="wide"><span>补贴申请最低等级 *</span><div className="skill-level-picker reward">{[1, 2, 3, 4].map(level => <button type="button" className={skillDraft.subsidyMinimumLevel === String(level) ? 'active' : ''} onClick={() => setSkillDraft(current => ({ ...current, subsidyMinimumLevel: String(level) }))} key={level}><strong>L{level}</strong><small>{levelLabels[level].replace(`L${level} `, '')}</small></button>)}</div></label>}
+                  <label className="wide"><span>参考说明</span><textarea value={skillDraft.description} onChange={event => setSkillDraft(current => ({ ...current, description: event.target.value }))} placeholder="说明等级判断标准、适用岗位或考核证据" /></label>
+                  <div className="skill-version-note wide"><ShieldCheck /><span><strong>不连接产品明细工序</strong><small>此处只维护员工等级参考；不会增删生产路线、工序工时或报工记录。</small></span></div>
                 </div>
               )}
 
@@ -1829,7 +1919,7 @@ export default function SkillPerformanceWorkbench({
 
             <footer>
               <button type="button" className="skill-secondary-button" disabled={saving} onClick={() => setDialog(null)}>取消</button>
-              {dialog === 'skill' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void createSkill()}>{saving ? <Loader2 className="spin" /> : <Save />}保存技能</button>}
+              {dialog === 'skill' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void saveSkill()}>{saving ? <Loader2 className="spin" /> : <Save />}{skillDraft.id ? '保存参考项' : '新增参考项'}</button>}
               {dialog === 'requirement' && <button type="button" className="skill-primary-button" disabled={saving} onClick={() => void saveRequirement()}>{saving ? <Loader2 className="spin" /> : <Save />}保存岗位要求</button>}
               {dialog === 'remove-requirement' && <button type="button" className="skill-return-button" disabled={saving} onClick={() => void removeRequirement()}>{saving ? <Loader2 className="spin" /> : <Trash2 />}确认删除</button>}
               {dialog === 'remove-certification' && <button type="button" className="skill-return-button" disabled={saving} onClick={() => void removeLegacyCertification()}>{saving ? <Loader2 className="spin" /> : <Trash2 />}删除历史技能</button>}

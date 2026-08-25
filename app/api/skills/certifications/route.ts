@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requireUser, unauthorized, UnauthorizedError } from '@/lib/auth';
 import { logOp } from '@/lib/logs';
 import { prisma } from '@/lib/prisma';
+import { productionEmployeeWhere } from '@/lib/production-workforce';
 import {
   cleanSkillText,
   parseSkillLevel,
@@ -68,9 +69,12 @@ export async function POST(req: NextRequest) {
     if (rawEntries.length > 50) throw new SkillInputError('一次最多录入 50 项历史技能');
 
     const employee = await prisma.employee.findFirst({
-      where: { id: employeeId, isActive: true },
+      where: {
+        id: employeeId,
+        ...productionEmployeeWhere({ requireAttendance: false }),
+      },
     });
-    if (!employee) throw new SkillInputError('所选员工不存在或已离职', 404);
+    if (!employee) throw new SkillInputError('所选员工不是在岗生产员工', 404);
 
     const seenSkillIds = new Set<string>();
     const entries = rawEntries.map((entry, index) => {
