@@ -5,6 +5,7 @@ import {
   attendanceRecordScopeWhere,
   employeeHiredBeforeWhere,
   employeeHiredOnOrBeforeWhere,
+  isEmployeeEmployedOnDate,
   isEmployeeHiredOnDate,
   isProductionDepartment,
   isProductionWorkforceEmployee,
@@ -51,4 +52,16 @@ test('attendance effective date excludes employees before their hire date', () =
   assert.deepEqual(employeeHiredBeforeWhere(new Date('2026-09-01T00:00:00.000Z')), {
     OR: [{ hireDate: null }, { hireDate: { lt: new Date('2026-09-01T00:00:00.000Z') } }],
   });
+});
+
+test('attendance effective date excludes employees from the resignation date onward', () => {
+  const employee = {
+    hireDate: '2026-08-12',
+    resignedAt: '2026-08-20',
+  };
+  assert.equal(isEmployeeEmployedOnDate(employee, '2026-08-11'), false);
+  assert.equal(isEmployeeEmployedOnDate(employee, '2026-08-12'), true);
+  assert.equal(isEmployeeEmployedOnDate(employee, '2026-08-19'), true);
+  assert.equal(isEmployeeEmployedOnDate(employee, '2026-08-20'), false);
+  assert.equal(isEmployeeEmployedOnDate({ hireDate: null, resignedAt: null }, '2026-08-01'), true);
 });

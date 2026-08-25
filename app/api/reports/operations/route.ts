@@ -16,9 +16,14 @@ import { ReportDateRangeError, reportDateRange, reportRangeDateKeys } from '@/li
 import {
   attendanceRecordScopeWhere,
   employeeHiredBeforeWhere,
-  isEmployeeHiredOnDate,
+  isEmployeeEmployedOnDate,
+  isProductionDepartment,
   productionEmployeeWhere,
 } from '@/lib/production-workforce';
+import {
+  finalizeAttendanceDay,
+  summarizeFinalizedAttendance,
+} from '@/lib/report-attendance-score';
 import {
   allocatePlanBatchCompletionQuantities,
   cappedBasisPoints,
@@ -109,7 +114,7 @@ function normalizedAttainmentStream(value: unknown, eligible = true): Attainment
   return eligible ? 'batch' : 'excluded';
 }
 
-function officialDay(day: MutableDay, date: string): ReportOperationsEmployeeDayDTO {
+function officialDay(day: MutableDay, date: string, attendanceRequired = false): ReportOperationsEmployeeDayDTO {
   const attendanceOfficial = day.status === 'confirmed' || day.status === 'rest';
   const attendance = attendanceDayMetrics({
     attendanceType: attendanceOfficial ? day.attendanceType : null,
@@ -140,6 +145,7 @@ function officialDay(day: MutableDay, date: string): ReportOperationsEmployeeDay
   return {
     date,
     status: day.status,
+    attendanceRequired,
     attendanceType: day.attendanceType,
     plannedMilliseconds: attendance.scheduledMilliseconds,
     scheduledMilliseconds: attendance.scheduledMilliseconds,
@@ -174,6 +180,7 @@ function notEmployedDay(date: string): ReportOperationsEmployeeDayDTO {
   return {
     ...officialDay(emptyDay(false, 0, 'excluded'), date),
     status: 'not_employed',
+    attendanceRequired: false,
     attendanceType: null,
   };
 }
@@ -228,6 +235,7 @@ export async function GET(req: NextRequest) {
   try {
     await requireUser();
     const now = new Date();
+    const currentDateKey = todayKey(now);
     const month = parseReportMonth(req.nextUrl.searchParams.get('month'), todayKey(now));
     const hasPeriodQuery = Boolean(req.nextUrl.searchParams.get('period'));
     const range = hasPeriodQuery
@@ -499,11 +507,17 @@ export async function GET(req: NextRequest) {
         += Math.max(0, allocation.event.approvedDurationMilliseconds ?? allocation.durationMilliseconds);
     }
 
+    const rosterOpenDates = new Set<string>();
+    for (const days of employeeDayMap.values()) {
+      for (const date of days.keys()) rosterOpenDates.add(date);
+    }
+
     const employeeMatrix: ReportOperationsEmployeeRowDTO[] = employees.map(employee => {
       const sourceDays = employeeDayMap.get(employee.id) || new Map<string, MutableDay>();
       const currentStream = normalizedAttainmentStream(employee.attainmentStream, employee.attainmentEligible);
       const days = dateKeys.map(date => {
-        if (!isEmployeeHiredOnDate(employee, date)) return notEmployedDay(date);
+        if (!isEmployeeEmployedOnDate(employee, date)) return notEmployedDay(date);
+        const sourceExists = sourceDays.has(date);
         const source = sourceDays.get(date) || emptyDay(
           employee.attainmentEligible,
           employee.attainmentFactorBasisPoints,
@@ -514,7 +528,12 @@ export async function GET(req: NextRequest) {
           source.attainmentFactorBasisPoints = 0;
           source.attainmentStream = currentStream;
         }
-        return officialDay(source, date);
+        const belongsToHistoricalProductionRoster = isProductionDepartment(employee.department)
+          && rosterOpenDates.has(date)
+          && (employee.isActive && employee.attendanceEnabled || Boolean(employee.resignedAt));
+        const attendanceRequired = date <= currentDateKey
+          && (sourceExists || belongsToHistoricalProductionRoster);
+        return officialDay(source, date, attendanceRequired);
       });
       const totals = days.reduce((sum, day) => ({
         plannedMilliseconds: sum.plannedMilliseconds + day.plannedMilliseconds,
@@ -534,9 +553,9 @@ export async function GET(req: NextRequest) {
         overlapMilliseconds: sum.overlapMilliseconds + day.overlapMilliseconds,
         unexplainedMilliseconds: sum.unexplainedMilliseconds + day.unexplainedMilliseconds,
         attainmentCapacityMilliseconds: sum.attainmentCapacityMilliseconds + day.attainmentCapacityMilliseconds,
-        confirmedDays: sum.confirmedDays + (day.status === 'confirmed' || day.status === 'rest' ? 1 : 0),
-        draftDays: sum.draftDays + (day.status === 'draft' ? 1 : 0),
-        missingDays: sum.missingDays + (day.status === 'missing' && day.date <= todayKey(now) ? 1 : 0),
+        confirmedDays: sum.confirmedDays + (day.attendanceRequired && (day.status === 'confirmed' || day.status === 'rest') ? 1 : 0),
+        draftDays: sum.draftDays + (day.attendanceRequired && day.status === 'draft' ? 1 : 0),
+        missingDays: sum.missingDays + (day.attendanceRequired && day.status === 'missing' ? 1 : 0),
       }), {
         plannedMilliseconds: 0,
         scheduledMilliseconds: 0,
@@ -581,6 +600,7 @@ export async function GET(req: NextRequest) {
     }).filter(row => row.employee.isActive
       || row.confirmedDays > 0
       || row.draftDays > 0
+      || row.missingDays > 0
       || row.standardLaborMilliseconds > 0
       || row.unmatchedStandardLaborMilliseconds > 0);
 
@@ -653,8 +673,11 @@ export async function GET(req: NextRequest) {
       fullLeavePeople: 0,
       absentPeople: 0,
       restPeople: 0,
+      requiredRecords: 0,
+      resolvedRecords: 0,
       confirmedRecords: 0,
       draftRecords: 0,
+      missingRecords: 0,
       plannedMilliseconds: 0,
       scheduledMilliseconds: 0,
       plannedOvertimeMilliseconds: 0,
@@ -674,12 +697,18 @@ export async function GET(req: NextRequest) {
       for (const employeeDay of employee.days) {
         const day = attendanceByDate.get(employeeDay.date);
         if (!day) continue;
+        if (employeeDay.attendanceRequired) day.requiredRecords += 1;
         if (employeeDay.status === 'draft') {
-          day.draftRecords += 1;
+          if (employeeDay.attendanceRequired) day.draftRecords += 1;
           continue;
         }
-        if (employeeDay.status === 'missing' || employeeDay.status === 'not_employed') continue;
+        if (employeeDay.status === 'missing') {
+          if (employeeDay.attendanceRequired) day.missingRecords += 1;
+          continue;
+        }
+        if (employeeDay.status === 'not_employed') continue;
         day.confirmedRecords += 1;
+        if (employeeDay.attendanceRequired) day.resolvedRecords += 1;
         if (employeeDay.attendanceType === 'rest') {
           day.restPeople += 1;
           continue;
@@ -703,15 +732,11 @@ export async function GET(req: NextRequest) {
         day.extraAttendanceMilliseconds += employeeDay.extraAttendanceMilliseconds;
       }
     }
-    const dailyAttendance = [...attendanceByDate.values()].map(day => {
-      const raw = basisPoints(day.attendanceMilliseconds, day.netExpectedMilliseconds);
-      return {
-        ...day,
-        attendanceRawBasisPoints: raw,
-        attendanceBasisPoints: cappedBasisPoints(day.attendancePeople, day.plannedPeople),
-        hoursBasisPoints: raw === null ? null : Math.min(10_000, raw),
-      };
-    });
+    const dailyAttendance = [...attendanceByDate.values()].map(day => ({
+      ...day,
+      ...finalizeAttendanceDay(day, currentDateKey),
+    }));
+    const attendanceScore = summarizeFinalizedAttendance(dailyAttendance);
 
     const completedByWorkOrder = new Map<string, number>();
     for (const completion of finalCompletions) {
@@ -855,6 +880,10 @@ export async function GET(req: NextRequest) {
         batchCompletionBasisPoints: cappedBasisPoints(planSummary.completedBatches, planSummary.plannedBatches),
         quantityCompletionBasisPoints: cappedBasisPoints(planSummary.completedQuantity, planSummary.plannedQuantity),
       },
+      attendanceScore: {
+        workforceLabel: '生产部',
+        ...attendanceScore,
+      },
       teamMonthly,
       teamDaily,
       weeklyPlan,
@@ -863,7 +892,8 @@ export async function GET(req: NextRequest) {
       dailyAttainmentAverage,
       dataNotes: [
         '净应出勤 = 排班常规工时 + 已确认实际加班 - 已确认请假；实际出勤已经包含加班，不重复相加。',
-        '出勤得分按实际出勤 ÷ 净应出勤计算并封顶 100%，超出部分单列；整日请假和休息日剔除基数，部分请假缩减基数，正式缺勤仍保留在出勤基数。草稿与缺失考勤不按 0 计算。',
+        '出勤得分按实际出勤 ÷ 净应出勤计算并封顶 100%，超出部分单列；整日请假和休息日剔除基数，部分请假缩减基数，正式缺勤仍保留在出勤基数。草稿与缺失考勤不按 0 计算，但会阻止该日发布正式得分。',
+        '当日始终显示统计中；历史日只有生产部应处理考勤全部确认后才纳入周期得分。数据覆盖率单独展示，避免少量已确认记录形成虚假 100%。',
         '工时利用率 = min(实际出勤，生产实耗工时 + 已确认免责异常工时) ÷ 实际出勤；标准工时效率 = 标准工时 ÷ 生产实耗工时；目标达成率 = 标准工时 ÷（有效出勤 × 95% × 个人计入比例）。',
         '周计划按生产周分组：已开始周的全部计划批次进入达成率基数，提前完成立即计入；尚未开始的整周显示为未来周，不按 0 计算。最终工序良品按同一工单的批次先后顺序一次分配，不重复计入多个批次。',
         '金额与产值尚无权威单价来源，本模块不生成推测值；待单价主数据接入后再启用。',

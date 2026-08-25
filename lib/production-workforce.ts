@@ -15,6 +15,10 @@ type EmployeeHireDateShape = {
   hireDate?: Date | string | null;
 };
 
+type EmployeeEmploymentDateShape = EmployeeHireDateShape & {
+  resignedAt?: Date | string | null;
+};
+
 function normalizedDepartmentKey(value: unknown): string {
   return String(value ?? '')
     .normalize('NFKC')
@@ -85,6 +89,26 @@ export function isEmployeeHiredOnDate(
     ? employee.hireDate.toISOString().slice(0, 10)
     : String(employee.hireDate).slice(0, 10);
   return hireDateKey <= workDateKey;
+}
+
+function employmentDateKey(value: Date | string): string {
+  return value instanceof Date
+    ? value.toISOString().slice(0, 10)
+    : String(value).slice(0, 10);
+}
+
+/**
+ * Employment effective-date boundary used by historical attendance reports.
+ * The resignation date is the first day the employee is no longer expected
+ * to attend, matching offboarding's removal of capacity from that date onward.
+ */
+export function isEmployeeEmployedOnDate(
+  employee: EmployeeEmploymentDateShape | null | undefined,
+  workDateKey: string,
+): boolean {
+  if (!isEmployeeHiredOnDate(employee, workDateKey)) return false;
+  if (!employee?.resignedAt) return true;
+  return workDateKey < employmentDateKey(employee.resignedAt);
 }
 
 export function attendanceEmployeeWhere(scope: AttendanceWorkforceScope): Prisma.EmployeeWhereInput {

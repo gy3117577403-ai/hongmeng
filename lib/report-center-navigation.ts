@@ -60,7 +60,7 @@ export const REPORT_DOMAINS: readonly ReportDomainDefinition[] = [
     label: '人员工时',
     caption: '出勤与效率',
     branches: [
-      { key: 'attendance-attainment', label: '全厂出勤得分', shortLabel: '出勤得分', description: '按排班、实际加班与确认请假核对净应出勤和实际出勤' },
+      { key: 'attendance-attainment', label: '生产部出勤得分', shortLabel: '出勤得分', description: '按完整确认日核对生产部净应出勤、实际出勤与数据覆盖' },
       { key: 'employee-matrix', label: '个人达成矩阵', shortLabel: '个人矩阵', description: '员工与日期交叉查看每日达成率、草稿、休息和缺失状态' },
       { key: 'labor-ledger', label: '自动记工明细', shortLabel: '自动记工', description: '报工记录与员工标准工时自动入账映射' },
       { key: 'unmatched-labor', label: '待匹配工时', shortLabel: '待匹配工时', description: '有报工但尚未匹配确认考勤的标准工时' },

@@ -2183,6 +2183,7 @@ export type ReportCenterOverviewDTO = {
 };
 
 export type ReportOperationsDayStatusDTO = 'not_employed' | 'missing' | 'draft' | 'confirmed' | 'rest';
+export type ReportAttendancePublicationStateDTO = 'future' | 'in_progress' | 'incomplete' | 'finalized' | 'no_roster';
 
 export type ReportOperationsLaborRowDTO = {
   team: string;
@@ -2216,6 +2217,7 @@ export type ReportOperationsLaborRowDTO = {
 export type ReportOperationsEmployeeDayDTO = {
   date: string;
   status: ReportOperationsDayStatusDTO;
+  attendanceRequired: boolean;
   attendanceType: AttendanceType | null;
   plannedMilliseconds: number;
   scheduledMilliseconds: number;
@@ -2337,6 +2339,26 @@ export type ReportOperationsDTO = {
     completedQuantity: number;
     quantityCompletionBasisPoints: number | null;
   };
+  attendanceScore: {
+    workforceLabel: string;
+    requiredRecords: number;
+    resolvedRecords: number;
+    draftRecords: number;
+    missingRecords: number;
+    dataCoverageBasisPoints: number | null;
+    finalizedDays: number;
+    incompleteDays: number;
+    inProgressDays: number;
+    lastFinalizedDate: string | null;
+    netExpectedMilliseconds: number;
+    attendanceMilliseconds: number;
+    shortfallMilliseconds: number;
+    extraAttendanceMilliseconds: number;
+    actualOvertimeMilliseconds: number;
+    leaveDeductionMilliseconds: number;
+    attendanceRawBasisPoints: number | null;
+    attendanceBasisPoints: number | null;
+  };
   teamMonthly: ReportOperationsLaborRowDTO[];
   teamDaily: Array<ReportOperationsLaborRowDTO & { date: string }>;
   weeklyPlan: Array<{
@@ -2365,8 +2387,14 @@ export type ReportOperationsDTO = {
     fullLeavePeople: number;
     absentPeople: number;
     restPeople: number;
+    requiredRecords: number;
+    resolvedRecords: number;
     confirmedRecords: number;
     draftRecords: number;
+    missingRecords: number;
+    dataCoverageBasisPoints: number | null;
+    publicationState: ReportAttendancePublicationStateDTO;
+    isFinalized: boolean;
     plannedMilliseconds: number;
     scheduledMilliseconds: number;
     plannedOvertimeMilliseconds: number;

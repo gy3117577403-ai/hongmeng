@@ -356,7 +356,7 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
 .report-metric-primary strong em { margin-left: 5px; color: #536176; font-size: 13px; font-style: normal; letter-spacing: 0; }
 .report-metric-primary p { overflow: hidden; margin: 0 0 2px; color: #7b8999; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 
-.report-metric-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; }
+.report-metric-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(126px, 1fr)); align-items: stretch; }
 .report-metric-stats article { min-width: 0; padding: 8px 18px; display: grid; align-content: center; gap: 2px; border-left: 1px solid #e5ebf0; }
 .report-metric-stats article:first-child { border-left: 0; }
 .report-metric-stats small { color: #7a8798; font-size: 11px; font-weight: 700; }
@@ -484,13 +484,24 @@ main.report-center-branch-workbench.hm-workbench-root.hm-workbench-root {
 .report-pagination svg { width: 14px; }
 
 .report-attendance-bars { padding: 14px; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 9px; }
-.report-attendance-bars article { padding: 11px; border: 1px solid #e2e8ee; border-radius: 10px; background: #fbfcfd; }
+.report-attendance-bars article { min-height: 132px; padding: 11px; border: 1px solid #e2e8ee; border-radius: 10px; background: #fbfcfd; }
+.report-attendance-bars article.state-finalized { border-color: #cfe7dc; background: #fbfefc; }
+.report-attendance-bars article.state-in_progress { border-color: #8fbae9; background: #f5faff; box-shadow: inset 0 0 0 1px #dbeaf9; }
+.report-attendance-bars article.state-incomplete { border-color: #f0ba8f; background: #fff9f4; }
+.report-attendance-bars article.state-future,
+.report-attendance-bars article.state-no_roster { background: #f6f8fa; }
 .report-attendance-bars header { display: flex; justify-content: space-between; gap: 8px; }
+.report-attendance-bars header > div { display: grid; gap: 1px; }
 .report-attendance-bars header strong { color: #34445a; }
+.report-attendance-bars header small { color: #8592a3; font-size: 9px; font-weight: 750; }
 .report-attendance-bars header span { color: var(--report-blue); font-weight: 850; }
-.report-attendance-bars article > div { height: 7px; margin: 9px 0; border-radius: 999px; background: #e5ebf1; overflow: hidden; }
-.report-attendance-bars article > div i { height: 100%; display: block; border-radius: inherit; background: var(--report-blue); }
-.report-attendance-bars dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; color: #758397; font-size: 9px; }
+.report-attendance-bars .report-attendance-progress { height: 7px; margin: 9px 0; border-radius: 999px; background: #e5ebf1; overflow: hidden; }
+.report-attendance-bars .report-attendance-progress i { height: 100%; display: block; border-radius: inherit; background: var(--report-blue); }
+.report-attendance-bars .state-finalized .report-attendance-progress i { background: var(--report-green); }
+.report-attendance-bars .state-incomplete .report-attendance-progress i { background: var(--report-orange); }
+.report-attendance-bars dl { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; color: #6f7e91; font-size: 9px; }
+.report-attendance-bars dl b { color: #33455b; }
+.report-attendance-empty { min-height: 48px; margin: 0; display: grid; place-items: center; color: #94a0af; font-size: 9px; text-align: center; }
 .report-attendance-bars .danger { color: var(--report-red); font-weight: 800; }
 .report-attendance-bars .accent { color: var(--report-blue); font-weight: 800; }
 .report-attendance-bars .warning { color: #a85b00; font-weight: 800; }
