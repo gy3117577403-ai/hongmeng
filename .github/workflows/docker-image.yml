@@ -54,6 +54,10 @@ jobs:
         env:
           RUN_DB_INTEGRATION: "1"
         run: npm run test:training-integration
+      - name: Skill reference catalog PostgreSQL integration
+        env:
+          RUN_DB_INTEGRATION: "1"
+        run: npm run test:skill-integration
       - name: Daily plan PostgreSQL integration
         env:
           RUN_DB_INTEGRATION: "1"
